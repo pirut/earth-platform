@@ -106,34 +106,57 @@ public final class RollingGateClient {
         final Object fence=new Object();final WorldIdentity world;final long epoch;final EnginePaletteContext palette;final CoreGateProfile profile;
         final ClientLevel carrier;final ClientPacketListener connection;final CoreInputLatch input;final RollingGateReplica replica;final RenderPublicationGuard guard;
         final Map<CubePos,SceneMesh> published=new LinkedHashMap<>(),candidate=new LinkedHashMap<>();
-        final Set<SceneMesh> owned=Collections.newSetFromMap(new IdentityHashMap<>());final ArrayDeque<CubePos> builds=new ArrayDeque<>();
-        CoreCollisionBinding collision;DynamicTexture light;DhGeographicLodView far;SceneMesh.Build nativeBuild;
+        final Set<SceneMesh> owned=Collections.newSetFromMap(new IdentityHashMap<>());
+        final RollingMeshWorkQueue<SceneMesh.Build,SceneMesh> meshWork;
+        final WorkTiming farInitialization=new WorkTiming(),farCoverage=new WorkTiming(),pairInstallation=new WorkTiming(),updateWork=new WorkTiming();
+        CoreCollisionBinding collision;DynamicTexture light;DhGeographicLodView far;
         boolean closed,disposed,visible,pending,edit,preparedSent,allowed,pairSent,intentPending,drawn;
-        long publication,coverageGeneration,acceptedSnapshots,peakResident,peakMeshes,maxUpdateNanos,lastIntent,lastEditX=4,lastEditY,lastEditZ=4;int reports,screenshots;
+        boolean closingPublicationPending,closingPreparedSent;int closingQueuedTargets=-1,closingActiveBuilds=-1,closingCompletedSlots=-1;
+        RollingMeshWorkQueue.Phase lastWorkPhase=RollingMeshWorkQueue.Phase.IDLE;
+        long sourceHeightCallbacks,sourceColorCallbacks,maxSourceHeightCallbacksPerUpdate,maxSourceColorCallbacksPerUpdate;
+        long publication,coverageGeneration,acceptedSnapshots,peakResident,peakMeshes,peakMeshReservations,maxUpdateNanos,lastIntent,lastEditX=4,lastEditY,lastEditZ=4;int reports,screenshots;
         String digest="",status="Opening rolling replica",capture="";Vec3 camera=Vec3.ZERO;
         Session(WorldIdentity world,long epoch,EnginePaletteContext palette,CoreGateProfile profile){
             RenderSystem.assertOnRenderThread();var g=Minecraft.getInstance();this.world=world;this.epoch=epoch;this.palette=palette;this.profile=profile;lastEditY=profile.commandEdit().getY();
             carrier=Objects.requireNonNull(g.level);connection=Objects.requireNonNull(g.getConnection());input=new CoreInputLatch(g.options.keyAttack.isDown(),g.options.keyUse.isDown());
             if(!carrier.dimension().equals(SceneCommands.CARRIER)||!world.equals(RollingGateFixture.provider(palette,profile).identity()))throw new IllegalArgumentException("Rolling carrier/provider identity mismatch");
             replica=new RollingGateReplica(world,epoch,palette,profile);guard=new RenderPublicationGuard(replica.admission(),RollingCubePlan.MAX_STAGED_OWNERS);
+            meshWork=new RollingMeshWorkQueue<>(new RollingMeshWorkQueue.Driver<SceneMesh.Build,SceneMesh>(){
+                public SceneMesh.Build begin(CubePos pos){
+                    // Reserve before the candidate can acquire CPU buffers or any GPU generation.
+                    if(owned.size()>=RollingCubePlan.MAX_STAGED_MESH_GENERATIONS)throw new IllegalStateException("Native mesh generation reservation exhausted");
+                    peakMeshReservations=Math.max(peakMeshReservations,owned.size()+1L);
+                    return SceneMesh.begin(guard,Objects.requireNonNull(replica.cubes().get(pos)),new SceneNeighborhood(replica.cubes(),SceneRenderEnvelope.PLAYER_DIAGNOSTIC_PADDING));
+                }
+                public RollingMeshWorkQueue.StepStats step(SceneMesh.Build build,int maxCallbacks,long softNanos){
+                    var v=build.step(maxCallbacks,softNanos);
+                    return new RollingMeshWorkQueue.StepStats(v.blocks(),v.completedBlocks(),v.totalBlocks(),v.elapsedNanos(),v.budgetNanos(),v.overshootNanos(),v.maxBlockNanos(),v.complete());
+                }
+                public SceneMesh finish(SceneMesh.Build build){return build.finish();}
+                public void closeBuild(SceneMesh.Build build){build.close();}
+                public void closeMesh(SceneMesh mesh){mesh.close();}
+            });
         }
         void initialize(){collision=new CoreCollisionBinding(carrier,Objects.requireNonNull(Minecraft.getInstance().player).getUUID(),epoch);light=new DynamicTexture(16,16,false);var pixels=Objects.requireNonNull(light.getPixels());for(int y=0;y<16;y++)for(int x=0;x<16;x++)pixels.setPixelRGBA(x,y,-1);light.upload();report("STARTED");}
         boolean valid(){var g=Minecraft.getInstance();return !closed&&g.level==carrier&&g.getConnection()==connection&&g.player!=null&&(g.player.isSpectator()||(g.gameMode!=null&&g.gameMode.getPlayerMode()==net.minecraft.world.level.GameType.ADVENTURE));}
         void invalidate(){synchronized(fence){visible=false;guard.requestInvalidation();if(far!=null)far.requestInvalidation();fenceCollision();}}
         void metadata(long id,RollingCubeActor.StageMetadata m){
             if(closed||guard.invalidationRequested())return;if(pending||id<=publication)throw new IllegalArgumentException("Overlapping/replayed rolling publication");
-            replica.acceptMetadata(m);publication=id;pending=true;edit=false;preparedSent=allowed=pairSent=false;digest="";status="Staging adjacent native window; old collision retained";report("STAGING_"+id);
+            capture="";drawn=false;replica.acceptMetadata(m);publication=id;pending=true;edit=false;preparedSent=allowed=pairSent=false;digest="";status="Staging adjacent native window; old collision retained";report("STAGING_"+id);
         }
         void snapshot(long generation,EngineCubeSnapshot snapshot){if(closed||guard.invalidationRequested())return;replica.acceptSnapshot(generation,snapshot);acceptedSnapshots++;peakResident=Math.max(peakResident,replica.cubes().size());}
         void ready(long id,RollingCubeActor.StageReady ready){
             if(!pending||id!=publication||!digest.isEmpty())throw new IllegalArgumentException("Unexpected rolling readiness");replica.acceptReady(ready);digest=replica.candidateManifestDigest();
-            if(!candidate.isEmpty()||!builds.isEmpty())throw new IllegalStateException("Previous candidate owns resources");
-            for(var pos:replica.candidateTargets()){var old=published.get(pos);if(old!=null&&old.isCurrent())candidate.put(pos,old);else builds.add(pos);}
-            status="Building private native candidate; committed pair retained";
+            if(!candidate.isEmpty()||!meshWork.isDrained())throw new IllegalStateException("Previous candidate owns resources");
+            var jobs=new ArrayList<CubePos>();
+            for(var pos:replica.candidateTargets()){var old=published.get(pos);if(old!=null&&old.isCurrent())candidate.put(pos,old);else jobs.add(pos);}
+            long expectedPublication=publication,expectedResource=guard.resourceGeneration();String expectedDigest=digest;
+            meshWork.start(List.copyOf(jobs),expectedPublication,expectedResource,()->valid()&&pending&&!guard.invalidationRequested()&&publication==expectedPublication&&guard.resourceGeneration()==expectedResource&&digest.equals(expectedDigest));
+            status="Slicing private native candidate; committed pair retained";
         }
         void beginEdit(long id,long x,long y,long z){
             if(pending||id<=publication||!RollingCubePlan.isEditableInterior(profile.target(),x,y,z))throw new IllegalArgumentException("Unexpected rolling edit barrier");
-            publication=id;pending=true;edit=true;preparedSent=allowed=pairSent=false;digest="";intentPending=false;lastEditX=x;lastEditY=y;lastEditZ=z;
+            capture="";drawn=false;publication=id;pending=true;edit=true;preparedSent=allowed=pairSent=false;digest="";intentPending=false;lastEditX=x;lastEditY=y;lastEditZ=z;
             replica.beginEdit();visible=false;fenceCollision();status="Durable interior edit pending; pair fenced";report("EDIT_PENDING_"+id);
         }
         void ack(long id,String result,long revision,String detail){if(!pending||!edit||id!=publication)throw new IllegalArgumentException("Stale rolling edit acknowledgement");replica.acknowledge(result,revision);status="Durable edit "+result+" revision "+revision+"; exact manifest pending";report("EDIT_ACK_"+publication);}
@@ -143,24 +166,17 @@ public final class RollingGateClient {
             checkPair(id,resource,exact);if(!pairSent)throw new IllegalStateException("Commit precedes paired rendering");
             if(!edit)replica.commitStage(replica.stagedMetadata().generation());
             Map<CubePos,EngineCubeSnapshot> currentSnapshots=new LinkedHashMap<>();for(var p:replica.currentPositions125())currentSnapshots.put(p,Objects.requireNonNull(replica.cubes().get(p)).snapshot());
-            collision.publish(world,epoch,palette,Map.copyOf(currentSnapshots));pending=false;edit=false;allowed=false;intentPending=false;status="READY: rolling collision125 + exact near/DH | revision "+replica.revision();capture="READY_"+publication;report(capture);
+            collision.publish(world,epoch,palette,Map.copyOf(currentSnapshots));drawn=false;pending=false;edit=false;allowed=false;intentPending=false;status="READY: rolling collision125 + exact near/DH | revision "+replica.revision();capture="READY_"+publication;report(capture);
         }
         void send(RollingGateControlPayload p){var g=Minecraft.getInstance();g.execute(()->{if(g.getConnection()==connection)PacketDistributor.sendToServer(p);});}
         void fenceCollision(){var binding=collision;if(binding==null)return;var g=Minecraft.getInstance();g.execute(()->{binding.fence();if(current==this&&g.level==carrier&&g.player!=null){g.player.setOnGround(false);g.player.resetFallDistance();g.player.setDeltaMovement(Vec3.ZERO);}if(closed||guard.invalidationRequested())send(new RollingGateControlPayload(epoch,publication,guard.resourceGeneration(),RollingGateControlPayload.FENCED,"",false));reportFence(binding);});}
         void reportFence(CoreCollisionBinding binding){var j=new JsonObject();j.addProperty("stage","COLLISION_FENCED");j.addProperty("epoch",epoch);j.addProperty("publication",publication);j.addProperty("closed",closed);j.addProperty("disposed",disposed);j.addProperty("collisionOwners",binding.residentOwners());j.addProperty("collisionReady",binding.ready());write("collision-fenced-"+publication+"-"+(closed?"closed":"active"),j);EarthPlatformMod.LOGGER.info("ROLLING_CLIENT_COLLISION_FENCED epoch={} publication={} closed={} owners={}",epoch,publication,closed,binding.residentOwners());}
         void render(RenderLevelStageEvent e){synchronized(fence){
-            if(!valid()||guard.invalidationRequested())return;camera=e.getCamera().getPosition();long start=System.nanoTime();
-            if(pending&&!digest.isEmpty()&&!preparedSent){
-                if(!builds.isEmpty()){
-                    if(owned.size()>=RollingCubePlan.MAX_STAGED_MESH_GENERATIONS)throw new IllegalStateException("Native mesh generation reservation exhausted");
-                    var pos=builds.removeFirst();nativeBuild=SceneMesh.begin(guard,Objects.requireNonNull(replica.cubes().get(pos)),new SceneNeighborhood(replica.cubes(),SceneRenderEnvelope.PLAYER_DIAGNOSTIC_PADDING));
-                    while(!nativeBuild.isComplete())nativeBuild.step(CubePos.VOLUME,Long.MAX_VALUE);
-                    var mesh=nativeBuild.finish();owned.add(mesh);nativeBuild.close();nativeBuild=null;candidate.put(pos,mesh);peakMeshes=Math.max(peakMeshes,owned.size());if(owned.size()>RollingCubePlan.MAX_STAGED_MESH_GENERATIONS)throw new IllegalStateException("Native mesh generation cap exceeded");
-                }
-                if(builds.isEmpty()){for(var m:candidate.values())if(!m.isCurrent())throw new IllegalStateException("Private native candidate stale");preparedSent=true;send(new RollingGateControlPayload(epoch,publication,guard.resourceGeneration(),RollingGateControlPayload.PREPARED,digest,false));status="Candidate prepared; waiting for server movement fence";}
-            }
-            if(allowed&&!pairSent){installPair();}
-            maxUpdateNanos=Math.max(maxUpdateNanos,System.nanoTime()-start);
+            if(!valid()||guard.invalidationRequested())return;camera=e.getCamera().getPosition();long start=System.nanoTime(),heightBefore=sourceHeightCallbacks,colorBefore=sourceColorCallbacks;
+            try{
+                if(pending&&!digest.isEmpty()&&!preparedSent)prepareCandidateWork();
+                if(allowed&&!pairSent){long pairStart=System.nanoTime();try{installPair();}finally{pairInstallation.record(pairStart);}}
+            }finally{long elapsed=updateWork.record(start);maxUpdateNanos=Math.max(maxUpdateNanos,elapsed);maxSourceHeightCallbacksPerUpdate=Math.max(maxSourceHeightCallbacksPerUpdate,sourceHeightCallbacks-heightBefore);maxSourceColorCallbacksPerUpdate=Math.max(maxSourceColorCallbacksPerUpdate,sourceColorCallbacks-colorBefore);}
             if(guard.invalidationRequested()||!visible)return;
             for(var m:published.values())if(!m.isCurrent())throw new IllegalStateException("Published native dependency stale");
             if(!far.coverageReady(coverageGeneration))throw new IllegalStateException("Far coverage does not match visible native batch");
@@ -168,13 +184,28 @@ public final class RollingGateClient {
             far.draw(new Matrix4f(projection).mul(view),camera.x,camera.y,camera.z,guard.resourceGeneration());
             if(guard.invalidationRequested())return;for(var m:published.values())if(!m.draw(view,projection,camera.x,camera.y,camera.z,light.getId())){if(guard.invalidationRequested())return;throw new IllegalStateException("Native paired draw rejected");}drawn=true;
         }}
+        void prepareCandidateWork(){
+            // Exactly one begin, callback slice, or finish/upload phase per AFTER_LEVEL frame.
+            lastWorkPhase=meshWork.pump();
+            meshWork.publishCompleted((pos,mesh)->{
+                // Register ownership before either map insertion or a later fence may fail.
+                owned.add(mesh);candidate.put(pos,mesh);peakMeshes=Math.max(peakMeshes,owned.size());
+                if(owned.size()>RollingCubePlan.MAX_STAGED_MESH_GENERATIONS)throw new IllegalStateException("Native mesh generation cap exceeded");
+            });
+            if(meshWork.isDrained()){
+                if(candidate.size()!=replica.candidateTargets().size())throw new IllegalStateException("Candidate queue drained before all targets were published");
+                for(var m:candidate.values())if(!m.isCurrent())throw new IllegalStateException("Private native candidate stale");
+                preparedSent=true;send(new RollingGateControlPayload(epoch,publication,guard.resourceGeneration(),RollingGateControlPayload.PREPARED,digest,false));status="Candidate prepared; waiting for server movement fence";
+            }else status="Slicing native candidate: queued "+meshWork.queuedTargets()+", active "+meshWork.activeBuilds()+"; committed collision retained";
+        }
         void installPair(){
             if(candidate.size()!=replica.candidateTargets().size())throw new IllegalStateException("Incomplete native candidate");
             for(var m:candidate.values())if(!m.isCurrent())throw new IllegalStateException("Candidate lost exact revision");
             if(!candidate.containsKey(profile.target()))throw new IllegalStateException("Edited central volume lost pinned native coverage");
-            if(far==null){var sampler=new SceneSurfaceSampler(){public long surfaceY(long x,long z){return profile.anchorY();}public int argb(long x,long z,long y){return 0xFF808080;}public String identity(){return world.datasetVersion();}};far=new DhGeographicLodView(sampler,world,epoch,guard.resourceGeneration(),0,0);far.initialize();}
+            if(!meshWork.isDrained())throw new IllegalStateException("Native work remains before pair installation");
+            if(far==null){long start=System.nanoTime();try{var sampler=new SceneSurfaceSampler(){public long surfaceY(long x,long z){sourceHeightCallbacks=Math.incrementExact(sourceHeightCallbacks);return profile.anchorY();}public int argb(long x,long z,long y){sourceColorCallbacks=Math.incrementExact(sourceColorCallbacks);return 0xFF808080;}public String identity(){return world.datasetVersion();}};far=new DhGeographicLodView(sampler,world,epoch,guard.resourceGeneration(),0,0);far.initialize();}finally{farInitialization.record(start);}}
             var ready=candidate.values().stream().filter(m->profile.distantMaskEligible(m.snapshot().position())).map(m->{var s=m.snapshot();return new SceneReadyCube(s.position(),world,epoch,s.leaseGeneration(),s.revision(),guard.resourceGeneration());}).toList();
-            long next=Math.incrementExact(coverageGeneration);if(!far.replaceCoverage(next,ready))throw new IllegalStateException("Far refused bounded exact rolling coverage");coverageGeneration=next;
+            long next=Math.incrementExact(coverageGeneration),coverageStart=System.nanoTime();try{if(!far.replaceCoverage(next,ready))throw new IllegalStateException("Far refused bounded exact rolling coverage");coverageGeneration=next;}finally{farCoverage.record(coverageStart);}
             visible=false;
             Set<SceneMesh> keep=Collections.newSetFromMap(new IdentityHashMap<>());keep.addAll(candidate.values());closeExcept(keep);
             published.clear();published.putAll(candidate);candidate.clear();visible=true;pairSent=true;
@@ -184,17 +215,23 @@ public final class RollingGateClient {
         Path directory(){return Path.of("earthplatform-evidence","rolling-core-gate");}
         void write(String suffix,JsonObject j){try{Files.createDirectories(directory());Files.writeString(directory().resolve("epoch-"+epoch+"-"+suffix.toLowerCase(Locale.ROOT)+".json"),j+"\n");}catch(IOException failure){EarthPlatformMod.LOGGER.warn("Rolling evidence write failed",failure);}}
         void report(String stage){
-            if(reports++>=256&&!stage.equals("CLOSED"))return;var j=new JsonObject();j.addProperty("stage",stage);j.addProperty("epoch",epoch);j.addProperty("profile",profile.id());j.addProperty("publication",publication);j.addProperty("coverageGeneration",coverageGeneration);j.addProperty("resourceGeneration",guard.resourceGeneration());j.addProperty("world",world.toString());j.addProperty("residentCubes",disposed?0:replica.cubes().size());j.addProperty("peakResidentCubes",peakResident);j.addProperty("publishedNativeMeshes",published.size());j.addProperty("candidateNativeMeshes",candidate.size());j.addProperty("ownedNativeMeshes",owned.size());j.addProperty("peakOwnedNativeMeshes",peakMeshes);j.addProperty("nativeVertexBytes",owned.stream().mapToLong(m->(long)m.vertices()*32).sum());j.addProperty("nativeVertexByteCap",(long)RollingCubePlan.MAX_STAGED_MESH_GENERATIONS*SceneMesh.MAX_VERTEX_BYTES);j.addProperty("nativeSequentialIndexUpperBoundBytes",owned.stream().mapToLong(m->(long)m.vertices()/4*6*4).sum());j.addProperty("maxConcurrentCpuMeshBuilders",1);j.addProperty("ownedCpuMeshBuilders",nativeBuild==null?0:1);j.addProperty("maxCpuBuilderLayerCapacityBytes",3L*SceneMesh.MAX_VERTEX_BYTES);j.addProperty("acceptedSnapshots",acceptedSnapshots);j.addProperty("targetRevision",disposed?-1:replica.revision());j.addProperty("publicationPending",pending);j.addProperty("pairedDrawVisible",visible);j.addProperty("collisionOwners",collision==null?0:collision.residentOwners());j.addProperty("collisionReady",collision!=null&&collision.ready());j.addProperty("closed",closed);j.addProperty("disposed",disposed);j.addProperty("maxCpuUpdateNanos",maxUpdateNanos);j.addProperty("nativeCameraX",camera.x);j.addProperty("nativeCameraY",camera.y);j.addProperty("nativeCameraZ",camera.z);j.addProperty("lastEditX",lastEditX);j.addProperty("lastEditY",lastEditY);j.addProperty("lastEditZ",lastEditZ);j.addProperty("editedCentralMeshPinned",true);j.addProperty("immutableOneBlockEditShell",true);j.addProperty("hardwareGpuPerformanceClaim",false);if(!disposed&&replica.currentCenter()!=null)j.addProperty("currentCenter",replica.currentCenter().toString());if(far!=null)j.add("distantHorizons",far.diagnostics());write(stage,j);EarthPlatformMod.LOGGER.info("ROLLING_{} epoch={} publication={} residents={} meshes={} collision={}",stage,epoch,publication,disposed?0:replica.cubes().size(),owned.size(),collision==null?0:collision.residentOwners());
+            if(reports++>=256&&!stage.equals("CLOSED"))return;var j=new JsonObject();j.addProperty("stage",stage);j.addProperty("epoch",epoch);j.addProperty("profile",profile.id());j.addProperty("publication",publication);j.addProperty("coverageGeneration",coverageGeneration);j.addProperty("resourceGeneration",guard.resourceGeneration());j.addProperty("world",world.toString());j.addProperty("residentCubes",disposed?0:replica.cubes().size());j.addProperty("peakResidentCubes",peakResident);j.addProperty("publishedNativeMeshes",published.size());j.addProperty("candidateNativeMeshes",candidate.size());j.addProperty("ownedNativeMeshes",owned.size());j.addProperty("peakOwnedNativeMeshes",peakMeshes);j.addProperty("nativeVertexBytes",owned.stream().mapToLong(m->(long)m.vertices()*32).sum());j.addProperty("nativeVertexByteCap",(long)RollingCubePlan.MAX_STAGED_MESH_GENERATIONS*SceneMesh.MAX_VERTEX_BYTES);j.addProperty("nativeSequentialIndexUpperBoundBytes",owned.stream().mapToLong(m->(long)m.vertices()/4*6*4).sum());j.addProperty("maxConcurrentCpuMeshBuilders",1);j.addProperty("ownedCpuMeshBuilders",meshWork.activeBuilds());j.addProperty("retainedCompletedMeshSlots",meshWork.completedSlots());j.addProperty("queuedNativeTargets",meshWork.queuedTargets());j.addProperty("lastNativeWorkPhase",lastWorkPhase.name());j.addProperty("closingQueuedNativeTargets",closingQueuedTargets);j.addProperty("closingActiveCpuBuilds",closingActiveBuilds);j.addProperty("closingRetainedMeshSlots",closingCompletedSlots);j.addProperty("closingPublicationPending",closingPublicationPending);j.addProperty("closingPreparedSent",closingPreparedSent);j.addProperty("peakNativeGenerationReservations",peakMeshReservations);j.addProperty("maxCpuBuilderLayerCapacityBytes",3L*SceneMesh.MAX_VERTEX_BYTES);j.addProperty("acceptedSnapshots",acceptedSnapshots);j.addProperty("targetRevision",disposed?-1:replica.revision());j.addProperty("publicationPending",pending);j.addProperty("pairedDrawVisible",visible);j.addProperty("collisionOwners",collision==null?0:collision.residentOwners());j.addProperty("collisionReady",collision!=null&&collision.ready());j.addProperty("closed",closed);j.addProperty("disposed",disposed);j.addProperty("maxCpuUpdateNanos",maxUpdateNanos);j.addProperty("nativeCameraX",camera.x);j.addProperty("nativeCameraY",camera.y);j.addProperty("nativeCameraZ",camera.z);j.addProperty("lastEditX",lastEditX);j.addProperty("lastEditY",lastEditY);j.addProperty("lastEditZ",lastEditZ);j.addProperty("editedCentralMeshPinned",true);j.addProperty("immutableOneBlockEditShell",true);j.addProperty("hardwareGpuPerformanceClaim",false);if(!disposed&&replica.currentCenter()!=null)j.addProperty("currentCenter",replica.currentCenter().toString());j.addProperty("farSourceHeightCallbacks",sourceHeightCallbacks);j.addProperty("farSourceColorCallbacks",sourceColorCallbacks);j.addProperty("maxFarSourceHeightCallbacksPerUpdate",maxSourceHeightCallbacksPerUpdate);j.addProperty("maxFarSourceColorCallbacksPerUpdate",maxSourceColorCallbacksPerUpdate);j.addProperty("farSourceCounterScope","Actual flat-fixture sampler calls, including initialize and coverage replacement; not distinct cells or DEM I/O");j.add("nativeWork",new com.google.gson.Gson().toJsonTree(meshWork.metrics()));j.addProperty("nativeCallbackBudgetNanos",RollingMeshWorkQueue.SOFT_SLICE_NANOS);j.addProperty("nativeCallbackHardLimit",RollingMeshWorkQueue.MAX_CALLBACKS);j.addProperty("nativeWorkSlicedOnOwnerThread",true);j.addProperty("timingClock","System.nanoTime owner-thread elapsed time; not CPU-time or GPU-duration measurement");j.addProperty("nativeFinishUploadSliced",false);j.addProperty("dhCoverageReplacementSliced",false);j.add("farInitializationTiming",farInitialization.json());j.add("farCoverageReplacementTiming",farCoverage.json());j.add("pairInstallationTiming",pairInstallation.json());j.add("updateWorkTiming",updateWork.json());if(far!=null)j.add("distantHorizons",far.diagnostics());write(stage,j);EarthPlatformMod.LOGGER.info("ROLLING_{} epoch={} publication={} residents={} meshes={} collision={}",stage,epoch,publication,disposed?0:replica.cubes().size(),owned.size(),collision==null?0:collision.residentOwners());
         }
-        void afterHud(){if(capture.isEmpty()||!drawn||screenshots>=12)return;String stage=capture;capture="";try(var image=Screenshot.takeScreenshot(Minecraft.getInstance().getMainRenderTarget())){Files.createDirectories(directory());image.writeToFile(directory().resolve("epoch-"+epoch+"-"+stage.toLowerCase(Locale.ROOT)+".png"));screenshots++;report(stage);}catch(IOException failure){EarthPlatformMod.LOGGER.warn("Rolling screenshot failed",failure);}}
+        void afterHud(){if(!capture.isEmpty()&&(pending||!capture.equals("READY_"+publication))){capture="";return;}if(capture.isEmpty()||!drawn||screenshots>=12)return;String stage=capture;capture="";try(var image=Screenshot.takeScreenshot(Minecraft.getInstance().getMainRenderTarget())){Files.createDirectories(directory());image.writeToFile(directory().resolve("epoch-"+epoch+"-"+stage.toLowerCase(Locale.ROOT)+".png"));screenshots++;}catch(IOException failure){EarthPlatformMod.LOGGER.warn("Rolling screenshot failed",failure);}}
         public void close(){synchronized(fence){
-            if(disposed)return;closed=true;visible=false;guard.close();fenceCollision();Throwable failure=null;
-            try{if(nativeBuild!=null){nativeBuild.close();nativeBuild=null;}}catch(RuntimeException|Error e){failure=e;}
+            if(disposed)return;if(!closed){closingQueuedTargets=meshWork.queuedTargets();closingActiveBuilds=meshWork.activeBuilds();closingCompletedSlots=meshWork.completedSlots();closingPublicationPending=pending;closingPreparedSent=preparedSent;}closed=true;visible=false;guard.close();fenceCollision();Throwable failure=null;
+            try{meshWork.close();}catch(RuntimeException|Error e){failure=e;}
             try{closeExcept(Set.of());}catch(RuntimeException|Error e){if(failure==null)failure=e;else failure.addSuppressed(e);}
             try{if(far!=null)far.close();}catch(RuntimeException|Error e){if(failure==null)failure=e;else failure.addSuppressed(e);}
             try{if(light!=null){light.close();light=null;}}catch(RuntimeException|Error e){if(failure==null)failure=e;else failure.addSuppressed(e);}
             if(failure instanceof RuntimeException e)throw e;if(failure instanceof Error e)throw e;
-            published.clear();candidate.clear();builds.clear();replica.close();disposed=true;report("CLOSED");
+            published.clear();candidate.clear();replica.close();disposed=true;report("CLOSED");
         }}
+        private static final class WorkTiming {
+            long calls,totalNanos,maxNanos;
+            long record(long start){long elapsed=Math.max(0,System.nanoTime()-start);calls=calls==Long.MAX_VALUE?calls:calls+1;totalNanos=Long.MAX_VALUE-totalNanos<elapsed?Long.MAX_VALUE:totalNanos+elapsed;maxNanos=Math.max(maxNanos,elapsed);return elapsed;}
+            JsonObject json(){var j=new JsonObject();j.addProperty("calls",calls);j.addProperty("totalNanos",totalNanos);j.addProperty("maxNanos",maxNanos);return j;}
+        }
+
     }
 }

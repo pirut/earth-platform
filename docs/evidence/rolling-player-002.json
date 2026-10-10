@@ -1,0 +1,679 @@
+{
+  "status": "SLICED_ROLLING_NATIVE_REBUILD_CANCEL_RETURN_ENDPOINT_GUI_PASS",
+  "headlessTests": 626,
+  "epochsClosed": 3,
+  "allActorDrainsSuccessful": true,
+  "allServerCollisionOwnersZeroAtClose": true,
+  "allNativeAndFarOwnersZeroAtClose": true,
+  "allFarGlDeleted": true,
+  "closedBeforeFarAllocationEpochs": [],
+  "pendingBootstrapCancellation": [],
+  "allClientPostFenceCollisionOwnersZero": true,
+  "mainClosedCollisionCounters": [
+    [
+      1,
+      0
+    ],
+    [
+      2,
+      125
+    ],
+    [
+      3,
+      125
+    ]
+  ],
+  "postFenceCollisionCounters": [
+    [
+      1,
+      0
+    ],
+    [
+      2,
+      0
+    ],
+    [
+      3,
+      0
+    ]
+  ],
+  "directPairedReports": 17,
+  "validReadyReports": 17,
+  "excludedTimingAmbiguousReadyReports": [],
+  "timingCaveat": "READY screenshot capture no longer rewrites JSON; all exact readiness records remain coherent. Main CLOSED and queued collision receipts prove their separate owner phases. Timings are System.nanoTime elapsed owner-thread measurements, not CPU or GPU duration. PAIR_READY is emitted inside the enclosing pair/update span, so final READY/CLOSED records are used for timing totals; nested spans must not be added as disjoint work.",
+  "peakSourceCoordinates": 150,
+  "peakNativeMeshGenerations": 45,
+  "peakFarPageTileOwners": 49,
+  "maxCpuUpdateNanos": 330856675,
+  "readyCentersRevisions": [
+    {
+      "epoch": 1,
+      "publication": 1,
+      "center": "CubePos[x=0, y=8, z=0]",
+      "revision": 0,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 1,
+      "publication": 2,
+      "center": "CubePos[x=0, y=8, z=-1]",
+      "revision": 0,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 1,
+      "publication": 3,
+      "center": "CubePos[x=0, y=8, z=-1]",
+      "revision": 1,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 1,
+      "publication": 4,
+      "center": "CubePos[x=0, y=8, z=0]",
+      "revision": 1,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 1,
+      "publication": 5,
+      "center": "CubePos[x=0, y=8, z=1]",
+      "revision": 1,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 1,
+      "publication": 6,
+      "center": "CubePos[x=0, y=8, z=2]",
+      "revision": 1,
+      "sourceCubes": 134,
+      "nativeMeshes": 28,
+      "collision": 125
+    },
+    {
+      "epoch": 1,
+      "publication": 7,
+      "center": "CubePos[x=0, y=8, z=1]",
+      "revision": 1,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 1,
+      "publication": 8,
+      "center": "CubePos[x=0, y=8, z=0]",
+      "revision": 1,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 1,
+      "publication": 9,
+      "center": "CubePos[x=0, y=8, z=-1]",
+      "revision": 1,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 2,
+      "publication": 1,
+      "center": "CubePos[x=0, y=8, z=0]",
+      "revision": 1,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 2,
+      "publication": 2,
+      "center": "CubePos[x=0, y=8, z=-1]",
+      "revision": 1,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 3,
+      "publication": 1,
+      "center": "CubePos[x=0, y=553, z=0]",
+      "revision": 0,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 3,
+      "publication": 2,
+      "center": "CubePos[x=0, y=553, z=-1]",
+      "revision": 0,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 3,
+      "publication": 3,
+      "center": "CubePos[x=0, y=553, z=0]",
+      "revision": 0,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 3,
+      "publication": 4,
+      "center": "CubePos[x=0, y=553, z=1]",
+      "revision": 0,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 3,
+      "publication": 5,
+      "center": "CubePos[x=0, y=553, z=0]",
+      "revision": 0,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    },
+    {
+      "epoch": 3,
+      "publication": 6,
+      "center": "CubePos[x=0, y=553, z=-1]",
+      "revision": 0,
+      "sourceCubes": 125,
+      "nativeMeshes": 27,
+      "collision": 125
+    }
+  ],
+  "physicsReports": [
+    {
+      "epoch": 1,
+      "stage": "PRE_CLOSE",
+      "center": "CubePos[x=0, y=8, z=-1]",
+      "revision": 1,
+      "last": {
+        "tick": 3035,
+        "x": 4.499999999999999,
+        "feetY": 129.0,
+        "z": 2.1796102146079464,
+        "onGround": true,
+        "verticalVelocity": -0.0784000015258789,
+        "collisionReady": true,
+        "revision": 1,
+        "coverageGeneration": 9,
+        "support": "BlockPos{x=4, y=128, z=2}",
+        "health": 20.0,
+        "vanillaSupportState": "Block{minecraft:air}"
+      },
+      "actor": {
+        "lifecycle": "STAGING",
+        "queuedEvents": 0,
+        "queuedSnapshots": 0,
+        "queuedEdits": 0,
+        "queuedCommits": 0,
+        "queuedGoals": 1,
+        "pendingEdit": false,
+        "committedGeneration": 8,
+        "stagedGeneration": 9,
+        "currentCenter": {
+          "x": 0,
+          "y": 8,
+          "z": -1
+        },
+        "candidateCenter": {
+          "x": 0,
+          "y": 8,
+          "z": 0
+        },
+        "residentCubes": 150,
+        "readyCubes": 150,
+        "tickets": 3,
+        "encodedSnapshotCaches": 150,
+        "retainedVersionSlots": 250,
+        "physicalProviders": 0,
+        "queuedGeneration": 0,
+        "cancelledGeneration": 0,
+        "stagedSnapshotsPublished": 25,
+        "publishedSnapshots": 317,
+        "admittedEdits": 1
+      }
+    },
+    {
+      "epoch": 2,
+      "stage": "PRE_CLOSE",
+      "center": "CubePos[x=0, y=8, z=-1]",
+      "revision": 1,
+      "last": {
+        "tick": 5017,
+        "x": 4.5,
+        "feetY": 131.0,
+        "z": -1.5,
+        "onGround": false,
+        "verticalVelocity": 0.0,
+        "collisionReady": true,
+        "revision": 1,
+        "coverageGeneration": 2,
+        "support": "none",
+        "health": 20.0,
+        "vanillaSupportState": "none"
+      },
+      "actor": {
+        "lifecycle": "OPEN",
+        "queuedEvents": 0,
+        "queuedSnapshots": 0,
+        "queuedEdits": 0,
+        "queuedCommits": 0,
+        "queuedGoals": 0,
+        "pendingEdit": false,
+        "committedGeneration": 2,
+        "stagedGeneration": 0,
+        "currentCenter": {
+          "x": 0,
+          "y": 8,
+          "z": -1
+        },
+        "residentCubes": 125,
+        "readyCubes": 125,
+        "tickets": 2,
+        "encodedSnapshotCaches": 125,
+        "retainedVersionSlots": 125,
+        "physicalProviders": 0,
+        "queuedGeneration": 0,
+        "cancelledGeneration": 0,
+        "stagedSnapshotsPublished": 0,
+        "publishedSnapshots": 150,
+        "admittedEdits": 0
+      }
+    },
+    {
+      "epoch": 3,
+      "stage": "PRE_CLOSE",
+      "center": "CubePos[x=0, y=553, z=-1]",
+      "revision": 0,
+      "last": {
+        "tick": 6636,
+        "x": 12.72261723835645,
+        "feetY": 8850.0,
+        "z": -2.995855817042077,
+        "onGround": true,
+        "verticalVelocity": -0.0784000015258789,
+        "collisionReady": true,
+        "revision": 0,
+        "coverageGeneration": 6,
+        "support": "BlockPos{x=12, y=8849, z=-3}",
+        "health": 20.0,
+        "vanillaSupportState": "Block{minecraft:void_air}"
+      },
+      "actor": {
+        "lifecycle": "OPEN",
+        "queuedEvents": 0,
+        "queuedSnapshots": 0,
+        "queuedEdits": 0,
+        "queuedCommits": 0,
+        "queuedGoals": 0,
+        "pendingEdit": false,
+        "committedGeneration": 6,
+        "stagedGeneration": 0,
+        "currentCenter": {
+          "x": 0,
+          "y": 553,
+          "z": -1
+        },
+        "residentCubes": 125,
+        "readyCubes": 125,
+        "tickets": 2,
+        "encodedSnapshotCaches": 125,
+        "retainedVersionSlots": 125,
+        "physicalProviders": 0,
+        "queuedGeneration": 0,
+        "cancelledGeneration": 0,
+        "stagedSnapshotsPublished": 0,
+        "publishedSnapshots": 250,
+        "admittedEdits": 0
+      }
+    }
+  ],
+  "sourceArchiveSha256": "104c3fad4a988fd3727a074c3f821a984a1bfbcca29923e5670bd709e1f1ec11",
+  "sourceManifestSha256": "680d0d85ccf40976329d5995de3d85abdc0be421f0d990791ee02a25615166ad",
+  "preservedFilesSha256": "4691875bd678a356bf74064ce026b8945203187e47bf95b888c49b87cbe860de",
+  "performanceStatus": "NATIVE_SLICING_AND_LIFECYCLE_PASS_OVERALL_FRAME_PACING_NOT_ACCEPTED",
+  "limitations": [
+    "Original editable cube only; immutable one-block shell, no edited far retirement.",
+    "Fixed512m flat-summary diagnostic far fixture; huge-distance/moving far ring unachieved.",
+    "One block callback may exceed2ms; native finish/upload and full DH coverage replacement remain synchronous and separately measured.",
+    "Timings are owner-thread elapsed time, not CPU-time/GPU duration; no hardware/frame-pacing acceptance.",
+    "Actual short GUI protocol passed for this exact source using Mesa llvmpipe software OpenGL; no hardware-GPU performance claim.",
+    "Prepared candidate can conservatively wait for player-body containment; autonomous timeout/replanning is not implemented.",
+    "Upstream VertexBuffer constructor-internal multi-handle failure has no exposed rollback hook.",
+    "Vanilla material/fluid/entity/tick/survival and general mod compatibility incomplete.",
+    "Live bounds are observed values;213 coordinate and cancellation maxima are separately headless-tested.",
+    "Ordinary body/player-mod behavior remains bounded to the diagnostic fixture."
+  ],
+  "nativeScheduling": {
+    "perEpoch": [
+      {
+        "epoch": 1,
+        "nativeWork": {
+          "batches": 10,
+          "completedMeshes": 107,
+          "publishedMeshes": 107,
+          "reportedCallbacks": 441063,
+          "maxCallbacksPerSlice": 4096,
+          "maxCallbackNanos": 6402971,
+          "maxSoftOvershootNanos": 7994690,
+          "peakQueuedTargets": 27,
+          "peakActiveBuilds": 1,
+          "peakCompletedMeshes": 1,
+          "begin": {
+            "calls": 108,
+            "totalNanos": 40548975,
+            "maxNanos": 9845582
+          },
+          "slice": {
+            "calls": 294,
+            "totalNanos": 496485923,
+            "maxNanos": 9994690
+          },
+          "finishUpload": {
+            "calls": 107,
+            "totalNanos": 18831360,
+            "maxNanos": 1607348
+          },
+          "publication": {
+            "calls": 107,
+            "totalNanos": 1240474,
+            "maxNanos": 181848
+          },
+          "buildClose": {
+            "calls": 108,
+            "totalNanos": 330321,
+            "maxNanos": 42996
+          },
+          "meshClose": {
+            "calls": 0,
+            "totalNanos": 0,
+            "maxNanos": 0
+          }
+        },
+        "farInitializationTiming": {
+          "calls": 1,
+          "totalNanos": 273449945,
+          "maxNanos": 273449945
+        },
+        "farCoverageReplacementTiming": {
+          "calls": 9,
+          "totalNanos": 199478601,
+          "maxNanos": 51139448
+        },
+        "pairInstallationTiming": {
+          "calls": 9,
+          "totalNanos": 503531129,
+          "maxNanos": 330854446
+        },
+        "updateWorkTiming": {
+          "calls": 4575,
+          "totalNanos": 1084064302,
+          "maxNanos": 330856675
+        },
+        "sourceHeightCalls": 67252,
+        "sourceColorCalls": 67252,
+        "maxSourceHeightCallsPerUpdate": 11075,
+        "maxSourceColorCallsPerUpdate": 11075,
+        "peakReservations": 45,
+        "closingQueuedTargets": 8,
+        "closingActiveBuilds": 1,
+        "closingCompletedSlots": 0,
+        "closingPublicationPending": true,
+        "closingPreparedSent": false,
+        "lastPhase": "STEP"
+      },
+      {
+        "epoch": 2,
+        "nativeWork": {
+          "batches": 2,
+          "completedMeshes": 36,
+          "publishedMeshes": 36,
+          "reportedCallbacks": 147456,
+          "maxCallbacksPerSlice": 4096,
+          "maxCallbackNanos": 5187977,
+          "maxSoftOvershootNanos": 3539267,
+          "peakQueuedTargets": 27,
+          "peakActiveBuilds": 1,
+          "peakCompletedMeshes": 1,
+          "begin": {
+            "calls": 36,
+            "totalNanos": 9892166,
+            "maxNanos": 1301468
+          },
+          "slice": {
+            "calls": 102,
+            "totalNanos": 180962889,
+            "maxNanos": 5539267
+          },
+          "finishUpload": {
+            "calls": 36,
+            "totalNanos": 10404105,
+            "maxNanos": 3912039
+          },
+          "publication": {
+            "calls": 36,
+            "totalNanos": 381653,
+            "maxNanos": 36394
+          },
+          "buildClose": {
+            "calls": 36,
+            "totalNanos": 217074,
+            "maxNanos": 100022
+          },
+          "meshClose": {
+            "calls": 0,
+            "totalNanos": 0,
+            "maxNanos": 0
+          }
+        },
+        "farInitializationTiming": {
+          "calls": 1,
+          "totalNanos": 16259185,
+          "maxNanos": 16259185
+        },
+        "farCoverageReplacementTiming": {
+          "calls": 2,
+          "totalNanos": 21853036,
+          "maxNanos": 13261789
+        },
+        "pairInstallationTiming": {
+          "calls": 2,
+          "totalNanos": 47691263,
+          "maxNanos": 28330233
+        },
+        "updateWorkTiming": {
+          "calls": 1779,
+          "totalNanos": 254094545,
+          "maxNanos": 28330836
+        },
+        "sourceHeightCalls": 18054,
+        "sourceColorCalls": 18054,
+        "maxSourceHeightCallsPerUpdate": 11075,
+        "maxSourceColorCallsPerUpdate": 11075,
+        "peakReservations": 36,
+        "closingQueuedTargets": 0,
+        "closingActiveBuilds": 0,
+        "closingCompletedSlots": 0,
+        "closingPublicationPending": false,
+        "closingPreparedSent": true,
+        "lastPhase": "FINISH"
+      },
+      {
+        "epoch": 3,
+        "nativeWork": {
+          "batches": 6,
+          "completedMeshes": 72,
+          "publishedMeshes": 72,
+          "reportedCallbacks": 294912,
+          "maxCallbacksPerSlice": 4096,
+          "maxCallbackNanos": 951760,
+          "maxSoftOvershootNanos": 329595,
+          "peakQueuedTargets": 27,
+          "peakActiveBuilds": 1,
+          "peakCompletedMeshes": 1,
+          "begin": {
+            "calls": 72,
+            "totalNanos": 20426903,
+            "maxNanos": 3223530
+          },
+          "slice": {
+            "calls": 185,
+            "totalNanos": 302262649,
+            "maxNanos": 2329595
+          },
+          "finishUpload": {
+            "calls": 72,
+            "totalNanos": 9398531,
+            "maxNanos": 939578
+          },
+          "publication": {
+            "calls": 72,
+            "totalNanos": 1183875,
+            "maxNanos": 498275
+          },
+          "buildClose": {
+            "calls": 72,
+            "totalNanos": 315092,
+            "maxNanos": 36732
+          },
+          "meshClose": {
+            "calls": 0,
+            "totalNanos": 0,
+            "maxNanos": 0
+          }
+        },
+        "farInitializationTiming": {
+          "calls": 1,
+          "totalNanos": 9260632,
+          "maxNanos": 9260632
+        },
+        "farCoverageReplacementTiming": {
+          "calls": 6,
+          "totalNanos": 90173773,
+          "maxNanos": 44842756
+        },
+        "pairInstallationTiming": {
+          "calls": 6,
+          "totalNanos": 116110381,
+          "maxNanos": 49935440
+        },
+        "updateWorkTiming": {
+          "calls": 2812,
+          "totalNanos": 460531632,
+          "maxNanos": 49936046
+        },
+        "sourceHeightCalls": 45970,
+        "sourceColorCalls": 45970,
+        "maxSourceHeightCallsPerUpdate": 11075,
+        "maxSourceColorCallsPerUpdate": 11075,
+        "peakReservations": 36,
+        "closingQueuedTargets": 0,
+        "closingActiveBuilds": 0,
+        "closingCompletedSlots": 0,
+        "closingPublicationPending": false,
+        "closingPreparedSent": true,
+        "lastPhase": "FINISH"
+      }
+    ],
+    "actualPausedBuildCancellationEpochs": [
+      1
+    ],
+    "interpretation": "Completed callback counts exclude failed/invalidated callbacks; their elapsed slice cost still contributes to timings. A single callback may exceed the soft2ms budget. Finish/upload and DH remain synchronous."
+  },
+  "actualGui": {
+    "operator": "Actual native-client GUI validation; no synthetic screenshots",
+    "world": "New World",
+    "originalOverworld": {
+      "x": -20.5,
+      "y": 66.0,
+      "z": 54.5,
+      "mode": "Creative"
+    },
+    "base": {
+      "durableMouseRevision": 1,
+      "forwardAndReverseSeamsPassed": true,
+      "returnedEditedBlockVisible": true,
+      "returnedScreenshot": "actual-run/manual-screenshots/2026-10-09_22.43.23.png",
+      "reentryRevision": 1,
+      "reentryBlockVisible": true,
+      "reentryScreenshot": "actual-run/manual-screenshots/2026-10-09_22.44.56.png"
+    },
+    "reload": {
+      "utc": "2026-10-10T02:43:25Z",
+      "epoch": 1,
+      "publication": 10,
+      "lastPhase": "STEP",
+      "activeBuildsBeforeCleanup": 1,
+      "queuedTargetsBeforeCleanup": 8,
+      "preparedSent": false,
+      "begunBuilds": 108,
+      "completedBuilds": 107,
+      "successfulBlockCallbacksInInterruptedBuild": 2791,
+      "remainingBlockCallbacksInInterruptedBuild": 1305,
+      "allFinalOwnersZero": true
+    },
+    "summit": {
+      "groundY": 8849,
+      "feetY": 8850,
+      "forwardPosition": [
+        12.723,
+        8850,
+        24.214
+      ],
+      "forwardPublication": 4,
+      "returnedCenterZ": -1,
+      "returnedPublication": 6,
+      "screenshot": "actual-run/manual-screenshots/2026-10-09_22.46.13.png"
+    },
+    "sameWorldRestartRetested": false,
+    "abyssAndDeathRetested": false,
+    "regressionScope": "Short sliced-build gate: real mouse edit, moving/reversing window, paused native-build F3+T cancellation, durable host reentry and summit seams. Same-world restart, abyss and death recovery remain separately proven by immutable prior gates.",
+    "clientStoppedUtc": "2026-10-10T02:47:13.477Z",
+    "gradleExit": "BUILD SUCCESSFUL"
+  },
+  "timingSummaryMilliseconds": {
+    "epoch1": {
+      "maxNativeSlice": 9.99469,
+      "maxSingleBlockCallback": 6.402971,
+      "maxFinishUpload": 1.607348,
+      "farInitialization": 273.449945,
+      "maxFarCoverageReplacement": 51.139448,
+      "maxUpdate": 330.856675
+    },
+    "warmBaseEpoch2": {
+      "maxNativeSlice": 5.539267,
+      "maxFinishUpload": 3.912039,
+      "farInitialization": 16.259185,
+      "maxFarCoverageReplacement": 13.261789,
+      "maxUpdate": 28.330836
+    },
+    "warmSummitEpoch3": {
+      "maxNativeSlice": 2.329595,
+      "maxFinishUpload": 0.939578,
+      "farInitialization": 9.260632,
+      "maxFarCoverageReplacement": 44.842756,
+      "maxUpdate": 49.936046
+    },
+    "interpretation": "Owner-thread elapsed maxima, not paired benchmarks or hardware GPU measurements. Native callback work is sliced; the warm summit still has a44.84ms synchronous far replacement. Draw/frame-time performance is outside these update timings."
+  }
+}

@@ -1,0 +1,4 @@
+minecraft/src/main/java/io/earthplatform/minecraft/coregate/RollingGateClient.java
+minecraft/src/main/java/io/earthplatform/minecraft/coregate/RollingMeshWorkQueue.java
+minecraft/src/test/java/io/earthplatform/minecraft/coregate/RollingMeshWorkQueueTest.java
+minecraft/src/test/java/io/earthplatform/minecraft/coregate/RollingSlicedClientContractTest.java
