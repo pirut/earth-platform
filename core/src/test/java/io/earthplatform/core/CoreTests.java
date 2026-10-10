@@ -36,6 +36,8 @@ public final class CoreTests {
         run("teleports reclaim stale queued disk reads", CoreTests::queuedReadReclamation);
         run("mass executor rejection cannot strand requests", CoreTests::rejectionStorm);
         run("uncertain rename retry repairs directory durability", CoreTests::durabilityRetry);
+        run("uncertain writes cannot become ready after eviction", CoreTests::durabilityReentry);
+        run("reopened uncertain writes require a durability barrier", CoreTests::durabilityReopen);
         run("reentrant callbacks cannot create unticketed residents", CoreTests::reentrantTickets);
         run("all old subscriptions retire before reentrant admission", CoreTests::reentrantSubscriptions);
         run("unused-world async close never blocks its caller", CoreTests::unusedAsyncClose);
@@ -374,6 +376,99 @@ public final class CoreTests {
             check(syncs.get() > before); failures.set(0); store.save(edit); equal(edit, store.load(edit.position()).snapshot());
         }
     }
+    private static void durabilityReentry() throws Exception {
+        long x = -1, y = -11000, z = -17; CubePos position = CubePos.fromBlock(x, y, z);
+        int index = CubePos.indexOfBlock(x, y, z);
+        CubeProvider provider = (p, t) -> CompletableFuture.completedFuture(ImmutableCube.uniform(7));
+        // Exercise both a first primary and a replacement with a valid previous-generation backup.
+        for (int priorRevisions : new int[] {0, 2}) {
+            Path directory = Files.createTempDirectory("earth-core-durability-reentry-");
+            CubeSyncFault fault = new CubeSyncFault(directory);
+            FileEditStore store = new FileEditStore(directory, ID, fault);
+            try (CubicWorld world = new CubicWorld(ID, provider, store, Runnable::run, 1, 1, 1, 1)) {
+                world.updateTicket("p", position, 0, 0); await(world.ready(position));
+                for (int revision = 1; revision <= priorRevisions; revision++)
+                    equal((long) revision, await(world.setBlock(x, y, z, 10 + revision)));
+                EditSnapshot before = world.view(position).orElseThrow().edits();
+                byte[] previousPrimary = priorRevisions == 0 ? null : Files.readAllBytes(store.primaryPath(position));
+                // A replacement first syncs its backup; fail only after the new primary rename.
+                fault.failAfter(priorRevisions == 0 ? 0 : 1);
+                expectFuture(IOException.class, world.setBlock(x, y, z, 0));
+                equal(before, world.view(position).orElseThrow().edits());
+                equal(priorRevisions == 0 ? 7 : 12, world.getBlock(x, y, z));
+                equal(0, world.stats().pendingEdits());
+                EditSnapshot uncertain = before.withBlock(index, 0);
+                equal(uncertain, store.load(position).snapshot()); // Inspection preserves uncertain bytes.
+                byte[] uncertainPrimary = Files.readAllBytes(store.primaryPath(position));
+                expect(IOException.class, () -> store.save(uncertain));
+                world.removeTicket("p"); world.updateTicket("p", position, 0, 0);
+                expectFuture(IOException.class, world.ready(position));
+                check(world.view(position).isEmpty()); equal(0, world.stats().readyCubes());
+                expect(IllegalStateException.class, () -> world.getBlock(x, y, z));
+                expectFuture(IOException.class, world.retry(position));
+                check(world.view(position).isEmpty()); equal(0, world.stats().readyCubes());
+                equal("earth-overlay-io", fault.lastCubeSyncThread.get());
+                check(Arrays.equals(uncertainPrimary, Files.readAllBytes(store.primaryPath(position))));
+                if (previousPrimary != null)
+                    check(Arrays.equals(previousPrimary, Files.readAllBytes(store.backupPath(position))));
+                else check(!Files.exists(store.backupPath(position)));
+                // Recovery accepts that exact uncertain revision only after the barrier succeeds.
+                fault.clear(); equal(uncertain, await(world.retry(position)).edits());
+                equal(0, world.getBlock(x, y, z)); equal(1, world.stats().readyCubes());
+                equal(7, world.view(position).orElseThrow().base().get(index));
+                check(Arrays.equals(uncertainPrimary, Files.readAllBytes(store.primaryPath(position))));
+                if (previousPrimary != null)
+                    check(Arrays.equals(previousPrimary, Files.readAllBytes(store.backupPath(position))));
+                else check(!Files.exists(store.backupPath(position)));
+                store.save(uncertain); equal(uncertain, store.load(position).snapshot());
+                equal(uncertain.revision() + 1, await(world.setBlock(x, y, z, 8)));
+            }
+        }
+    }
+    private static void durabilityReopen() throws Exception {
+        long x = -17, y = -1, z = -1; CubePos position = CubePos.fromBlock(x, y, z);
+        int index = CubePos.indexOfBlock(x, y, z);
+        CubeProvider provider = (p, t) -> CompletableFuture.completedFuture(ImmutableCube.uniform(9));
+        for (int priorRevisions : new int[] {0, 2}) {
+            Path directory = Files.createTempDirectory("earth-core-durability-reopen-");
+            CubeSyncFault fault = new CubeSyncFault(directory);
+            EditSnapshot previous = EditSnapshot.empty(position);
+            EditSnapshot uncertain; byte[] uncertainPrimary, previousPrimary;
+            try (FileEditStore store = new FileEditStore(directory, ID, fault)) {
+                for (int revision = 1; revision <= priorRevisions; revision++) {
+                    previous = previous.withBlock(index, 10 + revision); store.save(previous);
+                }
+                previousPrimary = priorRevisions == 0 ? null : Files.readAllBytes(store.primaryPath(position));
+                uncertain = previous.withBlock(index, 0);
+                fault.failAfter(priorRevisions == 0 ? 0 : 1);
+                expect(IOException.class, () -> store.save(uncertain));
+                uncertainPrimary = Files.readAllBytes(store.primaryPath(position));
+                equal(uncertain, store.load(position).snapshot());
+            }
+            // Neither process-local state nor a successful reopen can certify the cube's directory.
+            FileEditStore reopened = new FileEditStore(directory, ID, fault);
+            try (CubicWorld world = new CubicWorld(ID, provider, reopened, Runnable::run, 1, 1, 1, 1)) {
+                equal(uncertain, reopened.load(position).snapshot());
+                world.updateTicket("p", position, 0, 0);
+                expectFuture(IOException.class, world.ready(position));
+                expectFuture(IOException.class, world.retry(position));
+                check(world.view(position).isEmpty()); equal(0, world.stats().readyCubes());
+                expect(IllegalStateException.class, () -> world.getBlock(x, y, z));
+                check(Arrays.equals(uncertainPrimary, Files.readAllBytes(reopened.primaryPath(position))));
+                if (previousPrimary != null)
+                    check(Arrays.equals(previousPrimary, Files.readAllBytes(reopened.backupPath(position))));
+                else check(!Files.exists(reopened.backupPath(position)));
+                fault.clear(); equal(uncertain, await(world.retry(position)).edits());
+                equal(0, world.getBlock(x, y, z)); equal(9, world.view(position).orElseThrow().base().get(index));
+                equal("earth-overlay-io", fault.lastCubeSyncThread.get());
+                check(Arrays.equals(uncertainPrimary, Files.readAllBytes(reopened.primaryPath(position))));
+            }
+            try (CubicWorld world = new CubicWorld(ID, provider, new FileEditStore(directory, ID, fault), Runnable::run, 1, 1, 1, 1)) {
+                world.updateTicket("p", position, 0, 0);
+                equal(uncertain, await(world.ready(position)).edits()); equal(0, world.getBlock(x, y, z));
+            }
+        }
+    }
     private static void reentrantTickets() throws Exception {
         ManualExecutor executor = new ManualExecutor(); FakeProvider provider = new FakeProvider();
         try (CubicWorld world = new CubicWorld(ID, provider, new FileEditStore(Files.createTempDirectory("earth-core-reentry-"), ID), executor, 1, 1, 1, 1)) {
@@ -509,6 +604,23 @@ public final class CoreTests {
         }
     }
     private record Call(CubePos position, CancellationToken token, CompletableFuture<ImmutableCube> future) {}
+    private static final class CubeSyncFault implements FileEditStore.DirectorySync {
+        private final Path cubeDirectory;
+        private final AtomicBoolean fail = new AtomicBoolean();
+        private final AtomicInteger allowedSyncs = new AtomicInteger();
+        final AtomicReference<String> lastCubeSyncThread = new AtomicReference<>();
+        CubeSyncFault(Path directory) { cubeDirectory = directory.toAbsolutePath().normalize().resolve("cubes"); }
+        void failAfter(int successfulSyncs) { allowedSyncs.set(successfulSyncs); fail.set(true); }
+        void clear() { fail.set(false); }
+        @Override public void force(Path path) throws IOException {
+            if (path.equals(cubeDirectory)) {
+                lastCubeSyncThread.set(Thread.currentThread().getName());
+                if (fail.get() && allowedSyncs.getAndDecrement() <= 0)
+                    throw new IOException("Injected persistent cube-directory fsync failure after primary rename");
+            }
+            try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) { channel.force(true); }
+        }
+    }
     private static final class BlockingStore implements EditStore {
         final CountDownLatch entered = new CountDownLatch(1), proceed = new CountDownLatch(1);
         EditSnapshot snapshot = EditSnapshot.empty(new CubePos(0, 0, 0)); boolean closed;

@@ -35,17 +35,19 @@ public final class DhGeographicLodView implements AutoCloseable {
     private final SceneSurfaceSampler sampler;
     private final WorldIdentity world;
     private final long epoch,resources;
-    private final DhGeographicLodData source;
+    private final DhAdaptiveTerrainData source;
     private final Driver driver;
     private final String renderer;
     private Map<DhGeographicLodData.TileKey,Mesh> meshes=new LinkedHashMap<>();
     // Every owner remains reachable until deletion succeeds, including rejected staging resources.
     private final List<Mesh> retiring=new ArrayList<>();
     private List<SceneReadyCube> coverage=List.of();
-    private long coverageGeneration=-1;
+    private long coverageGeneration=-1,refinementGeneration;
+    private List<CubePos> refinementProfile=List.of();
+    private String refinementIdentity="coarse";
     private boolean invalidated,closed,objectsDeleted,initializationStarted,initialized;
     private long drawCalls,submittedVertices,uploadedVertexBytes,rejectedCoverageChanges,coverageChanges,drawSubmissionNanos;
-    private int currentFaces,clippedSourceFaces,peakResidentTileOwners;
+    private int currentFaces,clippedSourceFaces,peakResidentTileOwners,sampledCells,knownCells,unknownCells,sourceFaces,refinedCells,transitionFaces;
     private String lastFailure="";
 
     public DhGeographicLodView(SceneSurfaceSampler sampler,WorldIdentity world,long epoch,long resourceGeneration,long centerX,long centerZ) {
@@ -56,7 +58,7 @@ public final class DhGeographicLodView implements AutoCloseable {
         this.sampler=java.util.Objects.requireNonNull(sampler);this.world=java.util.Objects.requireNonNull(world);
         if(epoch<0||resourceGeneration<1)throw new IllegalArgumentException("Valid scene epoch/resource generation required");
         this.epoch=epoch;resources=resourceGeneration;renderer=driver.renderer();
-        source=new DhGeographicLodData(sampler,centerX,centerZ);
+        source=new DhAdaptiveTerrainData(sampler,centerX,centerZ);
         require(world.datasetVersion().equals(source.identity()),"Near world identity must pin the exact shared source/appearance sampler");
     }
     /** Caller must retain this owner before initialization, so failed cleanup can be retried. */
@@ -86,9 +88,11 @@ public final class DhGeographicLodView implements AutoCloseable {
             if(generation==coverageGeneration)return immutable.equals(coverage)||reject("Same generation changed its native-ready batch");
             if(generation<0||generation<coverageGeneration)return reject("Stale near coverage generation");
         }
-        final DhGeographicLodData.Batch batch;
+        final DhAdaptiveTerrainData.Batch batch;
+        List<CubePos> proposedProfile=positions.isEmpty()?refinementProfile:positions.stream().sorted().toList();
+        String proposedProfileIdentity=profileIdentity(proposedProfile);
         // Only pure geometry budget validation is an ordinary refusal. Driver failures must remain visible.
-        try{batch=source.clip(List.copyOf(positions));}catch(IllegalArgumentException budget){return reject(budget.getMessage());}
+        try{batch=source.clip(List.copyOf(positions),proposedProfile);}catch(IllegalArgumentException budget){return reject(budget.getMessage());}
         Map<DhGeographicLodData.TileKey,Mesh> candidates=new LinkedHashMap<>();
         State state=driver.captureState();Throwable failure=null;long bytesUploaded=0;
         try {
@@ -114,7 +118,10 @@ public final class DhGeographicLodView implements AutoCloseable {
                 return reject("Far candidates became stale before publication");
             }
             retiring.addAll(meshes.values());meshes=candidates;coverage=immutable;coverageGeneration=generation;
-            currentFaces=batch.faces();clippedSourceFaces=batch.clippedSourceFaces();uploadedVertexBytes+=bytesUploaded;coverageChanges++;lastFailure="";
+            currentFaces=batch.faces();clippedSourceFaces=batch.clippedSourceFaces();
+            sampledCells=batch.sampledCells();knownCells=batch.knownCells();unknownCells=batch.unknownCells();sourceFaces=batch.sourceFaces();refinedCells=batch.refinedCells();transitionFaces=batch.transitionFaces();
+            refinementProfile=proposedProfile;if(!refinementIdentity.equals(proposedProfileIdentity)){refinementGeneration++;refinementIdentity=proposedProfileIdentity;}
+            uploadedVertexBytes+=bytesUploaded;coverageChanges++;lastFailure="";
             Throwable cleanup=drainRetirements();
             // Commit is already visible. Cleanup failure is fatal/fenced, never a normal false refusal.
             if(cleanup!=null){invalidated=true;throw propagate(cleanup);}
@@ -141,8 +148,9 @@ public final class DhGeographicLodView implements AutoCloseable {
             out.addProperty("scope","Actual source-bounded geographic height summaries and unchanged DH terrain shaders; visual-only native-coordinate scene");
             out.addProperty("sourceAppearanceIdentity",source.identity());out.addProperty("epoch",epoch);out.addProperty("resourceGeneration",resources);
             out.addProperty("radiusBlocks",DhGeographicLodData.RADIUS);out.addProperty("cellSizeBlocks",DhGeographicLodData.CELL_SIZE);
-            out.addProperty("sampledCells",4096);out.addProperty("knownCells",source.knownCells());out.addProperty("unknownCells",source.unknownCells());
-            out.addProperty("sourceFaces",source.sourceFaces());out.addProperty("publishedFaces",currentFaces);out.addProperty("clippedSourceFaces",clippedSourceFaces);
+            out.addProperty("sampledCells",sampledCells);out.addProperty("knownCells",knownCells);out.addProperty("unknownCells",unknownCells);
+            out.addProperty("refinedCells",refinedCells);out.addProperty("transitionFaces",transitionFaces);out.addProperty("refinementProfileIdentity",refinementIdentity);out.addProperty("refinementProfileGeneration",refinementGeneration);
+            out.addProperty("sourceFaces",sourceFaces);out.addProperty("publishedFaces",currentFaces);out.addProperty("clippedSourceFaces",clippedSourceFaces);
             out.addProperty("retirementPending",retiring.size());out.addProperty("driverPartialOwners",driver.pendingOwners());out.addProperty("pageTileOwners",meshes.size());out.addProperty("nearReadyCubes",coverage.size());out.addProperty("coverageGeneration",coverageGeneration);
             out.addProperty("peakResidentPageTileOwners",peakResidentTileOwners);out.addProperty("maxPublishedPageTileOwners",64);out.addProperty("maxResidentIncludingPrivateStaging",128);
             out.addProperty("coverageChanges",coverageChanges);out.addProperty("rejectedCoverageChanges",rejectedCoverageChanges);out.addProperty("lastFailure",lastFailure);
@@ -150,6 +158,12 @@ public final class DhGeographicLodView implements AutoCloseable {
             out.addProperty("currentVertexBytes",meshes.values().stream().mapToLong(Mesh::bytes).sum());out.addProperty("lastCpuSubmissionNanos",drawSubmissionNanos);
             out.addProperty("hardwareGpuPerformanceClaim",false);out.addProperty("renderer",renderer);out.addProperty("stockDhModLoaded",false);
             out.addProperty("closed",closed);out.addProperty("invalidated",invalidated);out.addProperty("ownedGlObjectsDeleted",objectsDeleted);return out;}
+    }
+    private static String profileIdentity(List<CubePos> profile) {
+        if(profile.isEmpty())return "coarse";
+        String text=profile.stream().map(p->p.x()+","+p.z()).distinct().sorted().collect(java.util.stream.Collectors.joining(";"));
+        try{return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)));}
+        catch(java.security.NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
     }
     private boolean reject(String reason){rejectedCoverageChanges++;lastFailure=reason;return false;}
     private Throwable drainRetirements() {

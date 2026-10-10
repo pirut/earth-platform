@@ -1,76 +1,61 @@
-# Earth Platform
+# Earth Cubic Platform
 
-A Minecraft Java cubic-world platform prototype. The development priority is the general-purpose cubic core and engine integration; the Earth geography provider is an optional stress fixture and future plugin.
+Private development of a general-purpose cubic-world platform for Minecraft Java 1.21.1 / NeoForge 21.1.256. The priority is the cubic core and engine integration. Earth geography is an optional test provider and a later plugin.
 
-Status: active prototype, October 9, 2026. A NeoForge mod builds, creates disposable Creative worlds, and renders three real-data terrain windows; this is not yet a complete playable Earth platform. A passing standalone core test does not prove that Minecraft supports its coordinates, lighting, entities, networking or rendering.
+## Current checkpoint: authoritative core runtime 001
+
+This is an experimental development checkpoint, not a playable full-height world or release-ready mod. The current source is frozen from the tested core-runtime001 checkpoint.
+
+Implemented and checked:
+
+- Signed 3D cube coordinates, bounded asynchronous residency, immutable snapshots and durable player-edit overlays.
+- A server-owned cube actor connected to the existing core, native block palettes and actual NeoForge framed snapshot packets.
+- Bounded native baked-block meshes plus an isolated adapter using actual Distant Horizons 3.3.3 terrain builder/shaders.
+- Server-authoritative operator edits, a near/far draw barrier, save/restart preservation, explicit-air erase and resource cleanup.
+
+The frozen native suite passed **303 tests**. Actual native-client testing passed five complete close/reopen epochs, a same-world integrated-server restart preserving revision 1/diorite, revision 2/air erase persistence, and resource reload. All final actor, native mesh and far-render owners closed cleanly. See [the gate and commands](docs/AUTHORITATIVE_CORE_RUNTIME.md) and [machine-readable verification](docs/evidence/core-runtime-001.json).
+
+The current runtime gate uses an analytic flat provider, a fixed 125-cube working set, 27 inner mesh targets and a 512 m far field. It hosts a spectator camera in an empty stock-height carrier dimension. Player collision, ordinary mouse block interaction, native lighting, fluids/entities and general edited distant terrain are not completed in this checkpoint. A measured 296 ms maximum CPU update is an unresolved control-rebuild hitch. Mesa software-OpenGL results do not establish hardware FPS or smooth performance.
+
+## Other verified experiment
+
+Terrain-view003 separately passed native movement, moving far-field recentering, near/far coverage and resource lifecycle checks, with 306 headless tests. It still has significant startup/upload stalls and no gameplay or hardware-performance acceptance. [Its verification report](docs/evidence/terrain-view-003.json) records the limits. Its separate frozen source is tracked as an experimental snapshot rather than silently mixed into this server-authority checkpoint. The older terrain-view001 seam failure is historical and is not the current default gate.
 
 ## Modules
 
-- `core`: signed 3D cube coordinates, bounded residency, asynchronous generation and durable player-edit overlays.
-- `geography`: documented projection and elevation/bathymetry providers, source provenance and reproducible data packs.
-- `minecraft`: Minecraft engine adapter, native-class tests and experimental integration gates.
-- `streaming`: bounded world/epoch/lease/revision admission for cube snapshots; engine transport integration is pending.
+- core: generic signed XYZ cubes, bounded loading and durable edit storage
+- streaming: versioned world/epoch/lease/revision snapshot admission
+- minecraft: native engine adapter, server-authoritative runtime fixture and tests
+- geography: optional source-attributed elevation/classified-cover fixtures and import tools
 
-## Required proofs
+The general provider accepts full 3D cubes; heightfield Earth fixtures are not the generic world-generation contract. One projected metre per block does not imply measured one-metre global terrain accuracy or a uniform global ground-metre scale.
 
-1. Blocks at approximately Y=+8849 and Y=-11000, without vertical compression.
-2. Bounded cube count, in-flight requests, cache bytes and network traffic while travelling and teleporting.
-3. Place/break, fluids, entities and block lighting across vertical cube boundaries.
-4. Correct skylight under an unloaded mountain and after opening a shaft.
-5. Save, restart and restore player edits without rewriting them when data sources change.
-6. Cold/warm caches, offline operation, provider failures and cancellation.
-7. Multiple clients at widely separated heights without loading entire columns between them.
-8. Actual measured client frame time/server tick time on stated hardware. No performance claims based only on asymptotic reasoning.
-9. Distant Horizons or Voxy integration with genuinely long-distance views that communicate Earth scale. Required by the user October 9; loader compatibility alone is insufficient. Verify native wide-Y, bounded far-field generation, edits and cache identity before claiming support.
+## Build and test
 
-## Data accuracy
+Install Java 21 and set JAVA_HOME. Gradle resolves official Minecraft and NeoForge dependencies locally; these are not included here.
 
-One block represents one meter in the chosen coordinate system. This does not imply measured one-meter terrain data everywhere. Worldwide public land DEMs and ocean grids have substantially coarser spacing. Vertical datums, source dates and uncertainty must be recorded. Terrain is a surface/seafloor representation; global underground geology is not available as a measured three-dimensional voxel dataset. Any procedural caves/ores will be identified as procedural.
+From the repository root:
 
-## Safety and scope
+```sh
+./scripts/test-independent.sh
+cd minecraft
+bash scripts/gradle.sh test build
+```
 
-Development runs in dot's own isolated cloud workspace. This is a private development repository for the project owner. No credentials, game binaries, runtime worlds or unrelated personal files are included. Third-party source/data licenses must be checked before reuse and distribution. Public map-tile services are not a bulk download backend. This is an independent project, not endorsed by Mojang or Microsoft.
+The independent geography import checks additionally need Python, NumPy and Pillow; see requirements-dev.txt. No GitHub Actions workflow is enabled in this checkpoint. Reported tests were run in the isolated development workspace.
 
-See `docs/ARCHITECTURE.md` and `docs/SOURCES.md`. Check each module's test report for current implementation status.
+## Run the bounded core diagnostic
 
-## Reproduce independent validation
+Separately obtain the official Distant Horizons 3.3.3 build for Minecraft 1.21.1. From minecraft, with JAVA_HOME set:
 
-With Java21 available through JAVA_HOME, run `./scripts/test-independent.sh`. This runs the core, geography, source-composition, terrain-variety, streaming and land-cover suites without Minecraft or network access once the checked data packs are present. Python3, NumPy and Pillow are required for the higher-resolution importer checks; tested package versions are in `requirements-dev.txt`. See the module READMEs for their exact dependencies. Native engine tests and launch are separate under `minecraft/`.
+```sh
+export EARTH_DH_PROBE_JAR=/absolute/path/to/DistantHorizons-3.3.3-1.21.1-fabric-neoforge.jar
+export JAVA_TOOL_OPTIONS="-Dearthplatform.experimental.authoritativeCoreGate=true"
+bash scripts/gradle.sh runClient
+```
 
-See `docs/DECISIONS.md` for unresolved geometry, lighting, compatibility and data-fidelity choices.
+Create a disposable Creative test world with commands enabled. Use /earth_core enter, /earth_core edit, /earth_core erase and /earth_core leave; the gate document describes the exact bounded target and restart/reload checks. Do not use an existing valuable world for this prototype.
 
-## Verified native preview (October 9)
+## Source and data scope
 
-The checkpoint004 client loaded NOAA San Francisco, Everest and Mariana windows in a disposable Creative world. Screenshots are real in-game captures, not concept art. This preview uses separate 256-block vertical windows with explicit canonical Earth-Y offsets, not continuous full-height travel. The first preview has placeholder grass/trees at Everest; its surface palette is not a land-cover reconstruction. The Mariana screenshot uses Creative night vision. All dimensions saved successfully on exit.
-
-Checkpoint005 separately passed 44 native-class tests, including constructor-safe sparse LevelChunk/EmptyLevelChunk facades and direct reads/writes at Y=-11000/+8849. That isolated fixture is not yet the live world shown in the screenshots. Native ServerLevel/ClientLevel, render, collision, lighting and save integration remain subsequent gates.
-
-## Native sparse-level verification (October 9, 21:52 UTC)
-
-Checkpoint006 passed 68 headless tests, then two root-operated native client runs passed with actual isolated ServerLevel/ClientLevel objects and their caches. At native Y=-11000/+8849 each endpoint retained two cube owners and one column facade, with zero tall legacy section/postprocessing arrays and zero vanilla cached columns/holders. The client constructor's EmptyLevelChunk also allocated zero legacy slots. Generation-qualified retirement/reload and stale-lease rejection passed in two successive epochs. These are data-only diagnostic levels: no player movement, lighting, GPU terrain rendering or playable full-height world is implied.
-
-Distant Horizons integration is an active requirement. Its stock 12-bit terrain height representation cannot cover this Earth's full vertical envelope unchanged. The adaptation uses explicit page origins and is being verified against actual pinned DH classes and shaders. CPU packing/data/quad proofs are not GPU or gameplay compatibility.
-
-## Consolidated source checkpoint 003
-
-This frozen checkpoint combines native006, Copernicus003 and native-render001, the completed opt-in DH first diagnostic, and verified core, geography, streaming and WorldCover land-cover inputs. The exact combined tree passed 97 Minecraft tests and an offline build, plus all independent suites. See `evidence/checkpoint-test-summary.json` and `docs/CHECKPOINT_003.md` for source identities, fresh test counts, recorded native GUI evidence and reproduction steps.
-
-The native renderer now has recorded real graphics-path evidence at Y = -11,000 and +8,849, with retirement, VBO rebuilding and cleanup. It remains an isolated diagnostic with fixed lighting and labeled cameras. The Copernicus ridge remains a separate 256-block preview. Graphics results use software OpenGL. No playable full-height world, actual resource-pack reload, completed near/far coexistence or full DH mod integration is claimed.
-
-WorldCover 2021 adds two bounded, source-backed classification samples with CC BY 4.0 notices. It is not integrated into Minecraft materials or biomes. The later natural-mountain-surface work is intentionally outside this checkpoint.
-
-Run `python3 scripts/verify-checkpoint.py` after extraction. The archive is explicitly allowlisted and contains no game binaries, dependency caches, runtime worlds, credentials or excluded research data.
-
-## Latest published source: sparse terrain-view gate 001
-
-The code in this repository includes the frozen sparse terrain-view gate and its complete engine adapter source. 224 headless native tests passed on the frozen source. Actual GUI testing showed native camera movement, near cube meshes and DH draw working, but revealed coarse shelves and sky cracks at the near/far transition. The visual seam gate FAILED and a correction is pending; this snapshot is not visually accepted. This is a visual-only spectator carrier: no completed cubic collision, player edits, native lighting, full-world persistence, moving far ring or giant view-distance claim is implied. The diagnostic DH adapter uses pinned actual DH classes/shaders; it is not a stock DH compatibility release.
-
-See [the current gate](docs/SPARSE_TERRAIN_VIEW.md), [geographic engine gate](GEOGRAPHIC_ENGINE_GATE.md), and [third-party notices](THIRD_PARTY_NOTICES.md). Historical checkpoint evidence described above applies only to its named snapshot.
-
-### Portable build and optional visual diagnostic
-
-Install a Java 21 JDK and set JAVA_HOME. Run `cd minecraft && bash scripts/gradle.sh test build`. Gradle downloads official Minecraft/NeoForge dependencies locally; they are not included in this repository. The official Gradle wrapper JAR is included only as the build bootstrap.
-
-For the optional terrain-view diagnostic, separately obtain the official Distant Horizons 3.3.3 build for Minecraft 1.21.1, set EARTH_DH_PROBE_JAR to its absolute local path, set JAVA_TOOL_OPTIONS to `-Dearthplatform.experimental.sparseTerrainView=true -Dearthplatform.sceneNaturalRelief=true`, and run `bash scripts/gradle.sh runClient` from minecraft. The checked terrain samples are redistributable fixture data with their original source/license notices. See the gate documentation for commands and limits.
-
-No GitHub Actions workflow is enabled in this initial source checkpoint. Validation reported here was performed in the development workspace, not by GitHub CI.
+This repository contains project source, tests, build bootstrap, source-attributed redistributable fixture crops and license notices. It excludes proprietary Minecraft binaries/assets/decompiled code, the DH runtime JAR, JDKs, Gradle caches, runtime saves, credentials, unrelated private photographs and the research-only Mariana dataset. See [third-party notices](THIRD_PARTY_NOTICES.md) and each data fixture's source-lock/provenance files. This independent project is not endorsed by Mojang or Microsoft.

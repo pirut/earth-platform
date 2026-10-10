@@ -8,6 +8,7 @@ import java.util.concurrent.*;
  * Engine-independent residency and durable edit facade. Only ticketed cubes have resident payloads.
  * Generation is asynchronous. Disk reads and write-through edits run on one bounded, owned I/O worker.
  * Successful setBlock completion means the overlay is durable; eviction cannot discard it.
+ * Readiness reestablishes primary-overlay durability before exposing an earlier uncertain write.
  * close drains accepted disk work and therefore must not run on a game tick or this world's I/O thread.
  */
 public final class CubicWorld implements AutoCloseable {
@@ -87,6 +88,10 @@ public final class CubicWorld implements AutoCloseable {
                     EditStore.LoadedEdits loaded = store.load(position);
                     if (loaded.status() == EditStore.Status.RECOVERED_BACKUP)
                         throw new IOException(loaded.warning()); // No silent downgrade of a player's edits.
+                    // A failed save may have renamed its primary before directory fsync failed.
+                    // Reading those bytes is not a durability acknowledgement. An equal save repairs
+                    // the barrier without a new revision, also after eviction or reopening the store.
+                    if (loaded.status() == EditStore.Status.PRIMARY) store.save(loaded.snapshot());
                     CubeView view = new CubeView(position, base, loaded.snapshot());
                     synchronized (lock) {
                         if (closed || residents.get(position) != resident) return;

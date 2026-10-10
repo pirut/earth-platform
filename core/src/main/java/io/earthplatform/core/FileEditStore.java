@@ -62,6 +62,10 @@ public final class FileEditStore implements EditStore {
     public Path primaryPath(CubePos position) { return cubeDirectory.resolve(fileName(position)); }
     public Path backupPath(CubePos position) { return cubeDirectory.resolve(fileName(position) + ".bak"); }
     private static String fileName(CubePos position) { return position.x() + "_" + position.y() + "_" + position.z() + ".cube"; }
+    /**
+     * Inspect valid bytes, including an uncertain primary left by a failed post-rename sync.
+     * A load is not a durability acknowledgement; save the same snapshot to reestablish that barrier.
+     */
     @Override public synchronized LoadedEdits load(CubePos position) throws IOException {
         ensureOpen(); Objects.requireNonNull(position);
         Path primary = primaryPath(position), backup = backupPath(position);

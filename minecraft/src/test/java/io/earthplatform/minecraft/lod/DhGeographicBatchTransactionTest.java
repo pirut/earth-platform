@@ -51,7 +51,10 @@ class DhGeographicBatchTransactionTest {
 
     private static List<SceneReadyCube> ready32() {
         List<SceneReadyCube> ready = new ArrayList<>();
-        for (int z = -2; z < 2; z++) for (int x = -4; x < 4; x++) ready.add(ready(x, z));
+        for (int z = -2; z < 2; z++) for (int x = -2; x < 2; x++) {
+            ready.add(ready(x, z));
+            ready.add(new SceneReadyCube(new CubePos(x, 61, z), WORLD, EPOCH, 11, 7, RESOURCES));
+        }
         return List.copyOf(ready);
     }
 
@@ -153,29 +156,35 @@ class DhGeographicBatchTransactionTest {
         try (var view = view(driver)) {
             List<SceneReadyCube> mask = ready32();
             List<FakeMesh> previous = driver.live();
+            int peak=previous.size();String profile=null;
             for (int generation = 1; generation <= 3; generation++) {
                 List<SceneReadyCube> proposed = generation == 2 ? List.of() : mask;
                 assertTrue(view.replaceCoverage(generation, proposed));
                 assertTrue(previous.stream().allMatch(FakeMesh::deleted));
                 assertEquals(proposed.size(), number(view, "nearReadyCubes"));
-                assertEquals(4096 - proposed.size(), number(view, "publishedFaces"));
-                assertEquals(proposed.size(), number(view, "clippedSourceFaces"));
-                assertEquals(16, number(view, "pageTileOwners"));
-                assertEquals(16, driver.liveMeshes());
+                var expected=geometry(proposed,mask);
+                peak=Math.max(peak,previous.size()+expected.tiles().size());
+                assertEquals(expected.faces(), number(view, "publishedFaces"));
+                assertEquals(expected.clippedSourceFaces(), number(view, "clippedSourceFaces"));
+                assertEquals(expected.tiles().size(), number(view, "pageTileOwners"));
+                assertEquals(expected.tiles().size(), driver.liveMeshes());
+                String currentProfile=view.diagnostics().get("refinementProfileIdentity").getAsString();
+                if(profile!=null)assertEquals(profile,currentProfile,"Empty mask must retain the refined fallback");
+                profile=currentProfile;assertEquals(1,number(view,"refinementProfileGeneration"));
                 assertEquals(0, number(view, "retirementPending"));
                 assertTrue(view.coverageReady(generation));
                 assertFalse(view.coverageReady(generation - 1));
                 assertGeometry(view, driver, proposed);
                 previous = driver.live();
             }
-            assertEquals(32, driver.maxLiveMeshes);
-            assertEquals(32, number(view, "peakResidentPageTileOwners"));
+            assertEquals(peak, driver.maxLiveMeshes);
+            assertEquals(peak, number(view, "peakResidentPageTileOwners"));
         }
         assertEquals(0, driver.liveMeshes());
     }
 
     @Test void failedFirstMiddleAndLastUploadsCleanEveryPrivateCandidateAndKeepTheOldGenerationDrawable() {
-        for (int failedCandidate : new int[]{1, 8, 16}) {
+        for (int failedCandidate : new int[]{1, 8, geometry(ready32(),ready32()).tiles().size()}) {
             FakeDriver driver = new FakeDriver();
             try (var view = view(driver)) {
                 List<SceneReadyCube> prior = List.of(ready(0, 0));
@@ -230,7 +239,7 @@ class DhGeographicBatchTransactionTest {
                 assertEquals(1, number(view, "coverageGeneration"));
                 assertTrue(view.coverageReady(1));
                 assertTrue(old.stream().noneMatch(FakeMesh::deleted));
-                assertEquals(32, driver.liveMeshes());
+                assertEquals(old.size()+geometry(ready32(),ready32()).tiles().size(), driver.liveMeshes());
             };
             assertTrue(view.replaceCoverage(2, ready32()));
             driver.onRestore = () -> {};
@@ -251,7 +260,7 @@ class DhGeographicBatchTransactionTest {
         assertThrows(InjectedFailure.class, () -> view.replaceCoverage(2, ready32()));
         assertEquals(1, number(view, "coverageGeneration"));
         assertEquals(1, number(view, "nearReadyCubes"));
-        assertEquals(16, number(view, "pageTileOwners"));
+        assertEquals(old.size(), number(view, "pageTileOwners"));
         assertTrue(flag(view, "invalidated"));
         assertFalse(view.coverageReady(1));
         assertTrue(old.stream().noneMatch(FakeMesh::deleted));
@@ -275,7 +284,7 @@ class DhGeographicBatchTransactionTest {
         assertThrows(InjectedFailure.class, () -> view.replaceCoverage(2, ready32()));
         assertEquals(2, number(view, "coverageGeneration"));
         assertEquals(32, number(view, "nearReadyCubes"));
-        assertEquals(16, number(view, "pageTileOwners"));
+        assertEquals(geometry(ready32(),ready32()).tiles().size(), number(view, "pageTileOwners"));
         assertEquals(2, number(view, "retirementPending"));
         assertTrue(flag(view, "invalidated"));
         assertFalse(view.coverageReady(1));
@@ -284,7 +293,7 @@ class DhGeographicBatchTransactionTest {
             assertEquals(1, mesh.closeCalls, "All retired owners must receive a cleanup attempt");
             assertEquals(!failed.contains(mesh.id), mesh.deleted());
         }
-        assertEquals(18, driver.liveMeshes());
+        assertEquals(geometry(ready32(),ready32()).tiles().size()+2, driver.liveMeshes());
         int uploads = driver.uploadCalls;
         assertFalse(view.replaceCoverage(3, List.of()));
         assertEquals(uploads, driver.uploadCalls);
@@ -340,7 +349,7 @@ class DhGeographicBatchTransactionTest {
         assertTrue(flag(view, "invalidated"));
         assertFalse(view.coverageReady(1));
         assertTrue(old.stream().noneMatch(FakeMesh::deleted));
-        assertEquals(18, driver.liveMeshes());
+        assertEquals(old.size()+2, driver.liveMeshes());
         for (var candidate : driver.allocated.subList(start, driver.allocated.size())) {
             assertEquals(1, candidate.closeCalls, "One failing candidate must not abort the cleanup loop");
             assertEquals(!driver.failMeshClose.contains(candidate.id), candidate.deleted());
@@ -369,7 +378,7 @@ class DhGeographicBatchTransactionTest {
         assertTrue(flag(view, "invalidated"));
         assertFalse(view.coverageReady(1));
         assertTrue(old.stream().noneMatch(FakeMesh::deleted));
-        assertEquals(17, driver.liveMeshes());
+        assertEquals(old.size()+1, driver.liveMeshes());
         for (var candidate : driver.allocated.subList(start, driver.allocated.size() - 1)) assertTrue(candidate.deleted());
         int uploads = driver.uploadCalls;
         assertFalse(view.replaceCoverage(3, List.of()));
@@ -561,8 +570,13 @@ class DhGeographicBatchTransactionTest {
         }
     }
 
+    private static DhAdaptiveTerrainData.Batch geometry(List<SceneReadyCube> ready,List<SceneReadyCube> profile) {
+        return new DhAdaptiveTerrainData(FLAT,0,0).clip(ready.stream().map(SceneReadyCube::position).toList(),profile.stream().map(SceneReadyCube::position).toList());
+    }
+
     private static void assertGeometry(DhGeographicLodView view, FakeDriver driver, List<SceneReadyCube> ready) {
-        var expected = new DhGeographicLodData(FLAT, 0, 0).clip(ready.stream().map(SceneReadyCube::position).toList());
+        if(!ready.isEmpty())driver.expectedRefinement=List.copyOf(ready);
+        var expected=geometry(ready,driver.expectedRefinement);
         view.draw(new Matrix4f(), 0, 1000, 0, RESOURCES);
         assertEquals(expected.tiles().keySet(), driver.lastDraw.keySet());
         for (var entry : driver.lastDraw.entrySet()) {
@@ -620,6 +634,7 @@ class DhGeographicBatchTransactionTest {
 
     private static final class FakeDriver implements DhGeographicLodView.Driver {
         final Thread owner = Thread.currentThread();
+        List<SceneReadyCube> expectedRefinement=List.of();
         final List<FakeMesh> allocated = new ArrayList<>();
         final List<FakeMesh> incomplete = new ArrayList<>();
         final List<String> events = new ArrayList<>();

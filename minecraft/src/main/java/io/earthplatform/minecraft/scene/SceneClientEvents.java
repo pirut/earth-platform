@@ -48,6 +48,7 @@ public final class SceneClientEvents {
         catch(RuntimeException failure){EarthPlatformMod.LOGGER.error("Sparse view failed closed",failure);closeCurrent("Scene stopped: "+failure.getMessage());}
     }
     @SubscribeEvent public static void hud(RenderGuiEvent.Post event) {
+        if(!Boolean.getBoolean(SceneCommands.OPT_IN))return;
         var game=Minecraft.getInstance();if(game.level==null||game.player==null||game.options.hideGui||!game.level.dimension().equals(SceneCommands.CARRIER))return;
         var session=current;var gui=event.getGuiGraphics();
         List<String> lines=session==null?List.of("EARTH VISUAL-ONLY CARRIER | no cubic collision/edit/save",stopped):List.of(

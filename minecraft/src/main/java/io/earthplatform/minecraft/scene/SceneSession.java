@@ -154,7 +154,7 @@ public final class SceneSession implements AutoCloseable {
                 if(admission.commit(token.token(),()->cubes.put(lease.position(),cube))!=CubeStreamAdmission.Rejection.NONE)
                     throw new IllegalStateException("Native view owner publication became stale");
                 generatedCubes++;loaded++;maxResident=Math.max(maxResident,cubes.size());
-            } catch(MissingTerrainException missing) {deferred=true;status="Unknown source halo: "+missing.getMessage();return;}
+            } catch(MissingTerrainException missing) {deferred=true;status="Unknown source halo: "+missing.getMessage();writeReport("NEAR_DEFERRED");return;}
         }
         if(!loads.isEmpty()){status="Loading native source/halo: "+cubes.size()+"/"+plan.owners().size();return;}
         if(!builds.isEmpty()) {
@@ -162,7 +162,7 @@ public final class SceneSession implements AutoCloseable {
             try {
                 var mesh=SceneMesh.build(guard,Objects.requireNonNull(cubes.get(position)),new SceneNeighborhood(cubes));
                 meshes.put(position,mesh);status="Compiling native models: "+meshes.size()+"/"+plan.renderTargets().size();
-            }catch(SparseFacadeException unknown){deferred=true;status="Native mesh deferred: "+unknown.getMessage();return;}
+            }catch(SparseFacadeException unknown){deferred=true;status="Native mesh deferred: "+unknown.getMessage();writeReport("NEAR_DEFERRED");return;}
             // One native mesh compilation per frame; far terrain remains fully visible while the batch is private.
         }
         if(builds.isEmpty()&&!nearVisible) {
@@ -187,7 +187,7 @@ public final class SceneSession implements AutoCloseable {
         for(var mesh:meshes.values())mesh.close();meshes.clear();builds.clear();loads.clear();
         var change=admission.replaceInterest(next.owners());
         for(var retired:change.retired()){cubes.remove(retired.lease().position());retiredOwners++;}
-        loads.addAll(change.requested());builds.addAll(new TreeSet<>(next.renderTargets()));
+        loads.addAll(SceneLoadQueue.rebuild(next.owners(),admission.view(),cubes.keySet()));builds.addAll(new TreeSet<>(next.renderTargets()));
         plan=next;plans++;deferred=false;
         if(cubes.size()>SceneInterestPlan.MAX_OWNERS)throw new IllegalStateException("Native cube budget escaped");
     }
@@ -210,7 +210,7 @@ public final class SceneSession implements AutoCloseable {
         out.addProperty("carrierMinY",carrier.getMinBuildHeight());out.addProperty("carrierHeight",carrier.getHeight());out.addProperty("fullHeightLevelInstalledInVanillaRenderer",false);
         out.addProperty("residentCubes",cubes.size());out.addProperty("residentLimit",256);out.addProperty("maxResidentCubes",maxResident);out.addProperty("meshCandidates",meshes.size());out.addProperty("nearDrawReady",nearCount());out.addProperty("nearBatchVisible",nearVisible);
         out.addProperty("nativeVertexBytes",meshes.values().stream().mapToLong(SceneMesh::bytes).sum());out.addProperty("nativeVertices",meshes.values().stream().mapToLong(SceneMesh::vertices).sum());
-        out.addProperty("pendingOwnerLoads",loads.size());out.addProperty("pendingMeshBuilds",builds.size());out.addProperty("plans",plans);out.addProperty("generatedCubes",generatedCubes);out.addProperty("retiredOwners",retiredOwners);out.addProperty("completedNearBatches",completedBatches);
+        out.addProperty("pendingOwnerLoads",loads.size());out.addProperty("activeAdmissionLeases",admission.view().metrics().activeLeases());out.addProperty("loadedAdmissionLeases",admission.view().metrics().loadedLeases());out.addProperty("pendingMeshBuilds",builds.size());out.addProperty("plans",plans);out.addProperty("generatedCubes",generatedCubes);out.addProperty("retiredOwners",retiredOwners);out.addProperty("completedNearBatches",completedBatches);
         out.addProperty("coverageGeneration",coverageGeneration);out.addProperty("resourceGeneration",guard.resourceGeneration());out.addProperty("frames",frames);out.addProperty("lastCpuUpdateNanos",lastUpdateNanos);out.addProperty("maxCpuUpdateNanos",maxUpdateNanos);out.addProperty("lastCpuDrawNanos",lastDrawNanos);out.addProperty("maxCpuDrawNanos",maxDrawNanos);
         out.addProperty("hardwareGpuPerformanceClaim",false);out.addProperty("closed",closed);out.addProperty("disposed",disposed);out.addProperty("status",status);out.addProperty("screenshot",lastScreenshot);if(far!=null)out.add("distantHorizons",far.diagnostics());
         try {Files.createDirectories(evidenceDirectory());Files.writeString(evidenceDirectory().resolve("epoch-"+epoch()+"-"+stage.toLowerCase(Locale.ROOT)+".json"),out+"\n");}
