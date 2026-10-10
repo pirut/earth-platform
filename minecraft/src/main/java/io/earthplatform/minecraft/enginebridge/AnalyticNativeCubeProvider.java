@@ -24,7 +24,7 @@ public final class AnalyticNativeCubeProvider implements CubeProvider {
     public static final String GENERATOR_ID = "earthplatform:analytic-native-cube";
     public static final String GENERATOR_VERSION = "analytic-native-cube-v1";
     public static final String CONFIG_VERSION = "analytic-fixtures-v1";
-    public enum Fixture { FLAT, SLOPE, VOID, OVERHANG }
+    public enum Fixture { FLAT, SLOPE, VOID, OVERHANG, BOUNDED_COLLISION }
 
     /**
      * All generation inputs. anchorY is an actual signed block Y, with no vertical compression.
@@ -58,6 +58,7 @@ public final class AnalyticNativeCubeProvider implements CubeProvider {
             return standard(Fixture.SLOPE, originY, riseX, riseZ, run);
         }
         public static Config voidWorld() { return standard(Fixture.VOID, 0, 0, 0, 1); }
+        public static Config boundedCollision(long groundY) { return standard(Fixture.BOUNDED_COLLISION, groundY, 0, 0, 1); }
         public static Config overhang(long groundY) { return standard(Fixture.OVERHANG, groundY, 0, 0, 1); }
 
         private static Config standard(Fixture fixture, long y, int riseX, int riseZ, int run) {
@@ -123,6 +124,16 @@ public final class AnalyticNativeCubeProvider implements CubeProvider {
             case VOID -> false;
             case FLAT -> y <= config.anchorY();
             case SLOPE -> y <= config.anchorY() + Math.floorDiv(x * config.riseX() + z * config.riseZ(), config.run());
+            case BOUNDED_COLLISION -> {
+                if (y <= config.anchorY()) yield true;
+                long dy = y - config.anchorY();
+                // A finite true-3D fixture, wholly inside native cube X/Z 0, Y anchor..anchor+15.
+                // The far capability is exactly the flat base outside that pinned native volume.
+                boolean roof = dy == 4 && x >= 2 && x < 7 && z >= 3 && z < 10;
+                boolean support = dy >= 1 && dy <= 3 && x == 2 && z >= 3 && z < 5;
+                boolean wall = dy >= 1 && dy <= 3 && x == 9 && z >= 1 && z < 9;
+                yield roof || support || wall;
+            }
             case OVERHANG -> {
                 if (y <= config.anchorY()) yield true;
                 long relativeY = y - config.anchorY();

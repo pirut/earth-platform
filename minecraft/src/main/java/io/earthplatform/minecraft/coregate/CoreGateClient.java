@@ -88,8 +88,8 @@ public final class CoreGateClient {
         s.intentSent=true;s.lastIntentNanos=now;s.intentPending=true;s.status="Validating authoritative server ray";
         net.neoforged.neoforge.network.PacketDistributor.sendToServer(new CoreGateIntentPayload(s.epoch,event.isUseItem()));
     }
-    @SubscribeEvent public static void hud(RenderGuiEvent.Post e){var game=Minecraft.getInstance();if(game.level==null||game.player==null||game.options.hideGui||!game.level.dimension().equals(SceneCommands.CARRIER))return;var s=current;if(s==null)return;var g=e.getGuiGraphics();
-        List<String> lines=List.of("CUBIC CORE | server-owned generation / store / streamed snapshots", "Fixed125 cubes +27 native meshes | 512m DH | fixed light | spectator",s.status,"Mouse: left remove / right diorite | cube(0,8,0) revision="+s.revision()+" | /earth_core leave");
+    @SubscribeEvent public static void hud(RenderGuiEvent.Post e){var game=Minecraft.getInstance();if(game.level==null||game.player==null||game.options.hideGui||!game.level.dimension().equals(SceneCommands.CARRIER))return;var s=current;if(s==null){if(CoreGateFixture.collision()&&((io.earthplatform.minecraft.enginebridge.NativeCollisionLevelAccess)game.level).earthplatform$coreCollisionView()!=null)e.getGuiGraphics().drawString(game.font,"Native collision fenced: /earth_core leave then enter",8,8,0xFFFFAA66);return;}var g=e.getGuiGraphics();
+        List<String> lines=List.of("CUBIC CORE | server-owned generation / store / streamed snapshots", "Fixed125 cubes +27 native meshes | 512m DH | fixed light | "+(CoreGateFixture.collision()?"/earth_core walk or fly":"spectator"),(s.collision==null?s.status:s.collision.boundaryStatus()+" | "+s.status),"Mouse: left remove / right diorite | revision="+s.revision()+" | feetY="+String.format(java.util.Locale.ROOT,"%.3f",game.player.getY())+" grounded="+game.player.onGround()+" | /earth_core leave");
         int h=lines.size()*(game.font.lineHeight+2)+8,y=game.getDebugOverlay().showDebugScreen()?g.guiHeight()-h-6:6;
         int w=Math.min(g.guiWidth()-12,lines.stream().mapToInt(game.font::width).max().orElse(0)+10);g.fill(6,y,6+w,y+h,0xDD101820);g.enableScissor(6,y,6+w,y+h);
         for(int i=0;i<lines.size();i++)g.drawString(game.font,lines.get(i),11,y+4+i*(game.font.lineHeight+2),i==2?0xF2D178:0xE5F0F6);g.disableScissor();if(game.options.getCameraType().isFirstPerson()){int cx=g.guiWidth()/2,cy=g.guiHeight()/2;g.fill(cx-5,cy-1,cx+6,cy+2,0xFF101820);g.fill(cx-1,cy-5,cx+2,cy+6,0xFF101820);g.fill(cx-4,cy,cx+5,cy+1,0xFFFFFFFF);g.fill(cx,cy-4,cx+1,cy+5,0xFFFFFFFF);}g.flush();s.afterHud();}
@@ -102,13 +102,13 @@ public final class CoreGateClient {
         final CoreGateReplica replica;final CubeStreamAdmission admission;final RenderPublicationGuard guard;
         final List<CubePos> targets;final Map<CubePos,SceneCube> cubes;final Map<CubePos,SceneMesh> meshes=new LinkedHashMap<>();
         final ArrayDeque<CubePos> builds=new ArrayDeque<>();
-        DynamicTexture light;DhGeographicLodView far;boolean closed,disposed,paused,visible,rebuildQueued,reported,intentPending,intentSent;
+        DynamicTexture light;DhGeographicLodView far;CoreCollisionBinding collision;boolean closed,disposed,paused,visible,rebuildQueued,reported,intentPending,intentSent;
         long frames,coverageGeneration,acceptedSnapshots,ackRevision=-1,maxUpdateNanos,lastIntentNanos,lastEditX=4,lastEditY=129,lastEditZ=4;int screenshots;String status="Receiving authoritative native cubes",capture="";Vec3 camera=Vec3.ZERO;
         Session(WorldIdentity world,long epoch,CubePos center,List<CubePos> owners,List<Long> leases,List<CubePos> targets){
             RenderSystem.assertOnRenderThread();var game=Minecraft.getInstance();carrier=Objects.requireNonNull(game.level);connection=Objects.requireNonNull(game.getConnection());inputLatch=new CoreInputLatch(game.options.keyAttack.isDown(),game.options.keyUse.isDown());
             if(!carrier.dimension().equals(SceneCommands.CARRIER)||!center.equals(CoreGateCommands.CENTER))throw new IllegalArgumentException("Core carrier/center mismatch");
             palette=EnginePaletteContext.create(carrier.registryAccess().registryOrThrow(Registries.BIOME));
-            var expected=new AnalyticNativeCubeProvider(0,AnalyticNativeCubeProvider.Config.flat(128),palette).identity();
+            var expected=CoreGateFixture.provider(palette).identity();
             if(!world.equals(expected))throw new IllegalArgumentException("Authoritative generator/store/palette identity mismatch");
             var expectedOwners=CubeTickets.box(center,2,2,125).stream().sorted().toList();
             var expectedTargets=CubeTickets.box(center,1,1,27).stream().sorted().toList();
@@ -116,22 +116,38 @@ public final class CoreGateClient {
             this.world=world;this.epoch=epoch;this.targets=List.copyOf(targets);
             replica=new CoreGateReplica(world,epoch,palette,owners,leases,targets);admission=replica.admission();cubes=replica.cubes();guard=new RenderPublicationGuard(admission,125);
         }
-        void initialize(){light=new DynamicTexture(16,16,false);var image=Objects.requireNonNull(light.getPixels());for(int y=0;y<16;y++)for(int x=0;x<16;x++)image.setPixelRGBA(x,y,-1);light.upload();report("STARTED");}
-        boolean valid(){var g=Minecraft.getInstance();return !closed&&g.level==carrier&&g.getConnection()==connection&&g.player!=null&&g.player.isSpectator();}
-        void invalidate(){synchronized(fence){guard.requestInvalidation();if(far!=null)far.requestInvalidation();visible=false;}}
+        void initialize(){if(CoreGateFixture.collision())collision=new CoreCollisionBinding(carrier);light=new DynamicTexture(16,16,false);var image=Objects.requireNonNull(light.getPixels());for(int y=0;y<16;y++)for(int x=0;x<16;x++)image.setPixelRGBA(x,y,-1);light.upload();report("STARTED");}
+        boolean valid(){var g=Minecraft.getInstance();return !closed&&g.level==carrier&&g.getConnection()==connection&&g.player!=null&&(g.player.isSpectator()||(collision!=null&&g.gameMode!=null&&g.gameMode.getPlayerMode()==net.minecraft.world.level.GameType.ADVENTURE));}
+        void invalidate(){synchronized(fence){fenceCollision();guard.requestInvalidation();if(far!=null)far.requestInvalidation();visible=false;}}
         void accept(EngineCubeSnapshot snapshot){
             if(closed||guard.invalidationRequested())return;
             replica.accept(snapshot);
             acceptedSnapshots++;status="Streamed "+cubes.size()+"/125 native cubes";
             if(cubes.size()==125&&!paused&&!rebuildQueued&&!visible)queueRebuild();
         }
-        void beginEdit(long x,long y,long z){if(!CubePos.fromBlock(x,y,z).equals(CoreGateCommands.TARGET))throw new IllegalArgumentException("Edit target exceeds pinned native cube");lastEditX=x;lastEditY=y;lastEditZ=z;intentPending=false;replica.beginEdit();paused=true;visible=false;status="Durable edit pending; near/far pair fenced";report("EDIT_PENDING");}
+        void beginEdit(long x,long y,long z){if(!CubePos.fromBlock(x,y,z).equals(CoreGateCommands.TARGET))throw new IllegalArgumentException("Edit target exceeds pinned native cube");lastEditX=x;lastEditY=y;lastEditZ=z;fenceCollision();intentPending=false;replica.beginEdit();paused=true;visible=false;status="Durable edit pending; near/far pair fenced";report("EDIT_PENDING");}
         void ack(String result,long revision,String detail){
             replica.acknowledge(result,revision);ackRevision=replica.acknowledgedRevision();
             paused=false;status="Edit "+result+" revision "+revision+"; rebuilding exact native coverage";
             if(cubes.size()==125)queueRebuild();report("ACK_"+result);
         }
-        void queueRebuild(){visible=false;clearMeshes();if(far!=null){far.close();far=null;}builds.clear();builds.addAll(targets);rebuildQueued=true;reported=false;}
+        void queueRebuild(){fenceCollision();visible=false;clearMeshes();if(far!=null){far.close();far=null;}builds.clear();builds.addAll(targets);rebuildQueued=true;reported=false;}
+        void fenceCollision(){
+            if(collision==null)return;var game=Minecraft.getInstance();var binding=collision;
+            // Native movement and collision publication are serialized on the game owner thread.
+            // Background asset invalidation immediately fences rendering; current immutable
+            // collision data remains authoritative until this queued owner-thread close.
+            game.execute(()->{binding.fence();if(current==this&&game.level==carrier&&game.getConnection()==connection&&((io.earthplatform.minecraft.enginebridge.NativeCollisionLevelAccess)carrier).earthplatform$coreCollisionView()==binding&&game.player!=null){game.player.setOnGround(false);game.player.resetFallDistance();game.player.setDeltaMovement(Vec3.ZERO);}notifyCollision(false);});
+        }
+        void notifyCollision(boolean ready){
+            if(collision==null)return;var payload=new CoreGateCollisionPayload(epoch,revision(),coverageGeneration,ready);var game=Minecraft.getInstance();
+            game.execute(()->{if(game.getConnection()==connection)net.neoforged.neoforge.network.PacketDistributor.sendToServer(payload);});
+        }
+        void publishCollision(){
+            if(collision==null)return;
+            Map<CubePos,EngineCubeSnapshot> snapshots=new HashMap<>();for(var entry:cubes.entrySet())snapshots.put(entry.getKey(),entry.getValue().snapshot());
+            collision.publish(world,epoch,palette,Map.copyOf(snapshots));notifyCollision(true);
+        }
         long revision(){var cube=cubes.get(CoreGateCommands.TARGET);return cube==null?-1:cube.snapshot().revision();}
         void render(RenderLevelStageEvent e){synchronized(fence){
             if(!valid()||guard.invalidationRequested())return;frames++;camera=e.getCamera().getPosition();
@@ -146,7 +162,7 @@ public final class CoreGateClient {
                     coverageGeneration++;if(!far.replaceCoverage(coverageGeneration,ready))throw new IllegalStateException("Far refused exact authoritative coverage");
                     // Every permitted edit lies in TARGET, which must stay covered by a real current mesh.
                     if(!meshes.containsKey(CoreGateCommands.TARGET)||!meshes.get(CoreGateCommands.TARGET).isCurrent())throw new IllegalStateException("Edited volume lost its pinned native coverage");
-                    rebuildQueued=false;visible=true;status="READY: server cubes + durable revision "+revision()+" + exact near/far mask";capture="READY_REV_"+revision();report(capture);
+                    rebuildQueued=false;visible=true;publishCollision();status="READY: server cubes + durable revision "+revision()+" + exact near/far mask";capture="READY_REV_"+revision();report(capture);
                 }
             }
             maxUpdateNanos=Math.max(maxUpdateNanos,System.nanoTime()-start);
@@ -160,9 +176,9 @@ public final class CoreGateClient {
         }}
         void afterHud(){if(capture.isEmpty()||!reported||screenshots>=6)return;String stage=capture;capture="";try(var image=Screenshot.takeScreenshot(Minecraft.getInstance().getMainRenderTarget())){Files.createDirectories(directory());image.writeToFile(directory().resolve("epoch-"+epoch+"-"+stage.toLowerCase(Locale.ROOT)+".png"));screenshots++;report(stage);}catch(IOException failure){throw new UncheckedIOException(failure);}}
         Path directory(){return Path.of("earthplatform-evidence","authoritative-core-gate");}
-        void report(String stage){var j=new JsonObject();j.addProperty("stage",stage);j.addProperty("epoch",epoch);j.addProperty("scope","Server-owned generation/durable store/network snapshots; fixed native coverage; spectator carrier; collision not integrated");j.addProperty("world",world.toString());j.addProperty("residentCubes",cubes.size());j.addProperty("nativeMeshes",meshes.size());j.addProperty("nativeVertices",meshes.values().stream().mapToInt(SceneMesh::vertices).sum());j.addProperty("acceptedNetworkSnapshots",acceptedSnapshots);j.addProperty("targetRevision",revision());j.addProperty("lastDurableAckRevision",ackRevision);j.addProperty("lastEditX",lastEditX);j.addProperty("lastEditY",lastEditY);j.addProperty("lastEditZ",lastEditZ);j.addProperty("targetStateId",cubes.containsKey(CoreGateCommands.TARGET)?Block.BLOCK_STATE_REGISTRY.getId(cubes.get(CoreGateCommands.TARGET).state(CubePos.local(lastEditX),CubePos.local(lastEditY),CubePos.local(lastEditZ))):-1);j.addProperty("coverageGeneration",coverageGeneration);j.addProperty("pausedForDurability",paused);j.addProperty("pairedDrawVisible",visible);j.addProperty("fixedEditedVolumePinnedToActualNativeCoverage",true);j.addProperty("editAwareDistant3DSummaryAvailable",false);j.addProperty("nativeCameraX",camera.x);j.addProperty("nativeCameraY",camera.y);j.addProperty("nativeCameraZ",camera.z);j.addProperty("maxCpuUpdateNanos",maxUpdateNanos);j.addProperty("closed",closed);j.addProperty("disposed",disposed);j.addProperty("hardwareGpuPerformanceClaim",false);if(far!=null)j.add("distantHorizons",far.diagnostics());
+        void report(String stage){var j=new JsonObject();j.addProperty("stage",stage);j.addProperty("epoch",epoch);j.addProperty("collisionOwners",collision==null?0:collision.residentOwners());j.addProperty("nativeCollisionFrameReady",collision!=null&&collision.ready());j.addProperty("scope","Server-owned generation/durable store/network snapshots; fixed native coverage; optional bounded collision-only walk gate; full survival and material/tick compatibility incomplete");j.addProperty("world",world.toString());j.addProperty("residentCubes",cubes.size());j.addProperty("nativeMeshes",meshes.size());j.addProperty("nativeVertices",meshes.values().stream().mapToInt(SceneMesh::vertices).sum());j.addProperty("acceptedNetworkSnapshots",acceptedSnapshots);j.addProperty("targetRevision",revision());j.addProperty("lastDurableAckRevision",ackRevision);j.addProperty("lastEditX",lastEditX);j.addProperty("lastEditY",lastEditY);j.addProperty("lastEditZ",lastEditZ);j.addProperty("targetStateId",cubes.containsKey(CoreGateCommands.TARGET)?Block.BLOCK_STATE_REGISTRY.getId(cubes.get(CoreGateCommands.TARGET).state(CubePos.local(lastEditX),CubePos.local(lastEditY),CubePos.local(lastEditZ))):-1);j.addProperty("coverageGeneration",coverageGeneration);j.addProperty("pausedForDurability",paused);j.addProperty("pairedDrawVisible",visible);j.addProperty("fixedEditedVolumePinnedToActualNativeCoverage",true);j.addProperty("editAwareDistant3DSummaryAvailable",false);j.addProperty("nativeCameraX",camera.x);j.addProperty("nativeCameraY",camera.y);j.addProperty("nativeCameraZ",camera.z);j.addProperty("maxCpuUpdateNanos",maxUpdateNanos);j.addProperty("closed",closed);j.addProperty("disposed",disposed);j.addProperty("hardwareGpuPerformanceClaim",false);if(far!=null)j.add("distantHorizons",far.diagnostics());
             try{Files.createDirectories(directory());Files.writeString(directory().resolve("epoch-"+epoch+"-"+stage.toLowerCase(Locale.ROOT)+".json"),j+"\n");}catch(IOException e){throw new UncheckedIOException(e);}EarthPlatformMod.LOGGER.info("CORE_GATE_{} epoch={} revision={} nativeOwners={} meshes={}",stage,epoch,revision(),cubes.size(),meshes.size());}
         void clearMeshes(){Throwable failure=null;for(var it=meshes.entrySet().iterator();it.hasNext();){var entry=it.next();try{entry.getValue().close();it.remove();}catch(RuntimeException|Error e){if(failure==null)failure=e;else failure.addSuppressed(e);}}if(failure instanceof RuntimeException e)throw e;if(failure instanceof Error e)throw e;}
-        public void close(){synchronized(fence){if(disposed)return;closed=true;visible=false;guard.close();Throwable failure=null;try{clearMeshes();}catch(RuntimeException|Error e){failure=e;}try{if(far!=null)far.close();}catch(RuntimeException|Error e){if(failure==null)failure=e;else failure.addSuppressed(e);}try{if(light!=null)light.close();}catch(RuntimeException|Error e){if(failure==null)failure=e;else failure.addSuppressed(e);}replica.close();builds.clear();if(failure instanceof RuntimeException e)throw e;if(failure instanceof Error e)throw e;disposed=true;report("CLOSED");}}
+        public void close(){synchronized(fence){if(disposed)return;closed=true;visible=false;fenceCollision();guard.close();Throwable failure=null;try{clearMeshes();}catch(RuntimeException|Error e){failure=e;}try{if(far!=null)far.close();}catch(RuntimeException|Error e){if(failure==null)failure=e;else failure.addSuppressed(e);}try{if(light!=null)light.close();}catch(RuntimeException|Error e){if(failure==null)failure=e;else failure.addSuppressed(e);}replica.close();builds.clear();if(failure instanceof RuntimeException e)throw e;if(failure instanceof Error e)throw e;disposed=true;report("CLOSED");}}
     }
 }

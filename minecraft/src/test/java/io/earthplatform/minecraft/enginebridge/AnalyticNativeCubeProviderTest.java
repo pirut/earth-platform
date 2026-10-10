@@ -77,6 +77,23 @@ class AnalyticNativeCubeProviderTest {
         }
     }
 
+    @Test void boundedCollisionFixtureKeepsExactFlatFarOutsidePinnedCube() {
+        var p=provider(AnalyticNativeCubeProvider.Config.boundedCollision(128));
+        for(int x:new int[]{-100,-1,16,32,100})for(int z:new int[]{-100,-1,16,32,100}) {
+            assertEquals(p.config().solidState(),read(p,x,128,z));
+            assertEquals(p.config().airState(),read(p,x,132,z));
+        }
+        assertNotEquals(provider(AnalyticNativeCubeProvider.Config.flat(128)).identity(),p.identity());
+    }
+    @Test void boundedCollisionRoofHasTrueAirBelowAndAboveAndSeparateWall() {
+        var p=provider(AnalyticNativeCubeProvider.Config.boundedCollision(128));
+        assertEquals(p.config().airState(),read(p,4,131,5));
+        assertEquals(p.config().solidState(),read(p,4,132,5));
+        assertEquals(p.config().airState(),read(p,4,133,5));
+        assertEquals(p.config().solidState(),read(p,9,131,5));
+        assertEquals(p.config().airState(),read(p,8,131,5));
+    }
+
     @Test void identityPinsEveryConfigurationInputAndNativePalette() {
         var base = AnalyticNativeCubeProvider.Config.slope(8849, 2, -1, 3);
         var one = provider(base);
