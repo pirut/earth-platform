@@ -19,7 +19,7 @@ The current runtime gate uses an analytic flat provider, a fixed 125-cube workin
 
 ## Other verified experiment
 
-Terrain-view003 separately passed native movement, moving far-field recentering, near/far coverage and resource lifecycle checks, with 306 headless tests. It still has significant startup/upload stalls and no gameplay or hardware-performance acceptance. [Its verification report](docs/evidence/terrain-view-003.json) records the limits. Its separate frozen source is tracked as an experimental snapshot rather than silently mixed into this server-authority checkpoint. The older terrain-view001 seam failure is historical and is not the current default gate.
+Terrain-view003 separately passed native movement, moving far-field recentering, near/far coverage and resource lifecycle checks, with 306 headless tests. It still has significant startup/upload stalls and no gameplay or hardware-performance acceptance. [Its verification report](docs/evidence/terrain-view-003.json) records the limits. Its [separate frozen source branch](https://github.com/pirut/earth-cubic-platform/blob/experiments/terrain-view-003/README.md) preserves that experiment without mixing it into this server-authority checkpoint. The older terrain-view001 seam failure is historical and is not the current default gate.
 
 ## Modules
 
