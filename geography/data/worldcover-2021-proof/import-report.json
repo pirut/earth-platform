@@ -1,0 +1,64 @@
+{
+  "independentDecodersAgreeBitExactly": true,
+  "limitations": [
+    "Satellite-classified 2021 land cover, not full biomes, climate, species, forest inventory or geology.",
+    "Permanent-water labels have no water level, depth, coastline datum or tide stage; keep existing water logic separate.",
+    "Snow and glacier shadows may be misclassified as water; Everest water labels are not verified lakes.",
+    "No-data/outside coverage stays unknown; no grass fallback. No subpixel measured detail is invented."
+  ],
+  "nativeCells": 2097152,
+  "noTerrainElevationChanges": true,
+  "regions": [
+    {
+      "classCounts": {
+        "10": 462098,
+        "20": 8124,
+        "30": 127390,
+        "40": 198,
+        "50": 49843,
+        "60": 4684,
+        "80": 391655,
+        "90": 4584
+      },
+      "eastEdge": -122.488,
+      "elcSha256": "82408a2d5707518f9d3deb69bc05645b1ea5674f935d3110653f830b88cfb27c",
+      "height": 1024,
+      "id": "marin-headlands",
+      "northEdge": 37.89066666666667,
+      "originalCodeBytesSha256": "b1d08076cdc68156d9aff340d9e84fc6aeb302c022534649e7ceaaed35dd2c5c",
+      "originalColumnStart": 5120,
+      "originalRowStart": 13312,
+      "sourceBlockIndex": 473,
+      "sourceUrl": "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N36W123_Map.tif",
+      "southEdge": 37.80533333333334,
+      "stepDegrees": 8.333333333333333e-05,
+      "westEdge": -122.57333333333334,
+      "width": 1024
+    },
+    {
+      "classCounts": {
+        "100": 147,
+        "60": 26532,
+        "70": 1021126,
+        "80": 771
+      },
+      "eastEdge": 86.98666666666666,
+      "elcSha256": "5276fb2adcf1c570e8328c126bc03a7c757cef2b8553f85a5a107b4a2608fdc7",
+      "height": 1024,
+      "id": "everest",
+      "northEdge": 28.037333333333333,
+      "originalCodeBytesSha256": "6f5c067d1c24bf3070abc5070de4f3bab3742c0f31aae860891fdcb8e9690d34",
+      "originalColumnStart": 34816,
+      "originalRowStart": 23552,
+      "sourceBlockIndex": 862,
+      "sourceUrl": "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N27E084_Map.tif",
+      "southEdge": 27.951999999999998,
+      "stepDegrees": 8.333333333333333e-05,
+      "westEdge": 86.90133333333333,
+      "width": 1024
+    }
+  ],
+  "schema": "earth-worldcover-import-report-v1",
+  "sourceRangeBytes": 192049,
+  "wholeSourceObjectBytesNotDownloaded": 191822773
+}

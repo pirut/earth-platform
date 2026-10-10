@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://assets.opendata.aws/css/bootstrap.min.css"
+    integrity="sha384-QgMEqHzUTK+LoHUhEPkPPb5doQ7O2/sBRiq03GWdbo3k3eNPu/LMiRtrWI+SdVzu" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://assets.opendata.aws/css/awsod.css"
+    integrity="sha384-xJI5lYTAHi5szIar83e2pooIt8BOLN3vGa4dRrLi07y45XFAbgzl9F0mMNyw5SzN" crossorigin="anonymous">
+  <title>Copernicus Digital Elevation Model datasets</title>
+  
+  <style type="text/css">
+    th, td {
+      padding:0 15px;
+    }
+    </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="col-md-8 col-md-offset-2">
+      <h1>Copernicus Digital Elevation Model datasets</h1>
+
+      <p>The Copernicus DEM is a Digital Surface Model (DSM) which represents the surface of the Earth including
+        buildings, infrastructure and vegetation. We provide two instances of Copernicus DEM named GLO-30 Public and
+        GLO-90. GLO-90 provides worldwide coverage at 90 meters. GLO-30 Public provides limited worldwide coverage at 30
+        meters because a small subset of tiles covering specific countries are not yet released to the public by the
+        Copernicus Programme. Note that in both cases ocean areas do not have tiles, there one can assume height values
+        equal to zero. Data is provided as Cloud Optimized GeoTIFFs.</p>
+        
+      <po>For source data, we used the COP-DEM_GLO-30-DGED dataset for 30 meters, and the COP-DEM_GLO-90-DGED dataset for 90 meters DEM. For more info about the source datasets, check out this <a href="https://spacedata.copernicus.eu/en/web/guest/collections/copernicus-digital-elevation-model/">page</a>.
+      </po>
+
+      <h2 id="data-processing">Data processing</h2>
+
+      Original tiles share one row or column with neighboring tiles, and have sizes such as 3601 by 3601 pixels, 2401 by 2401 pixels, 1801 by 1801 pixels, or something else, depending on the longitude. We removed these shared rows and columns on east and south edges to got the dimensions that are nicely divisible by two, so we could create nice COG overviews.
+
+      The common properties of COG files are:
+
+      <ul>
+        <li>DEFLATE compression using predictor for floating points (PREDICTOR=3)</li>
+        <li>average downsampling</li>
+      </ul>
+
+      <h3>GLO-30 Public</h3>
+
+      The properties of COG files specific to this dataset:
+      
+      <ul>
+        <li>original height: 3601 pixels</li>
+        <li>COG height: 3600 pixels</li>
+        <li>TIFF tile size: 1024 * 1024 pixels</li>
+      </ul>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Longitude spacing</th>
+            <th>Latitude spacing</th>
+            <th>original width</th>
+            <th>COG width</th>
+            <th>overview widths</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>0 - 50</td>
+            <td>1x</td>
+            <td>3601</td>
+            <td>3600</td>
+            <td>1800, 900, 450</td>
+          </tr>
+          <tr>
+            <td>50 - 60</td>
+            <td>1.5x</td>
+            <td>2401</td>
+            <td>2400</td>
+            <td>1200, 600, 300</td>
+          </tr>
+          <tr>
+            <td>60 - 70</td>
+            <td>2x</td>
+            <td>1801</td>
+            <td>1800</td>
+            <td>900, 450, 225</td>
+          </tr>
+          <tr>
+            <td>70 - 80</td>
+            <td>3x</td>
+            <td>1201</td>
+            <td>1200</td>
+            <td>600, 300, 150</td>
+          </tr>
+          <tr>
+            <td>80 - 85</td>
+            <td>5x</td>
+            <td>721</td>
+            <td>720</td>
+            <td>360, 180, 90</td>
+          </tr>
+          <tr>
+            <td>85 - 90</td>
+            <td>10x</td>
+            <td>361</td>
+            <td>360</td>
+            <td>180, 90, 45</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>GLO-90</h3>
+
+      The properties of COG files specific to this dataset:
+      
+      <ul>
+        <li>original height: 1201 pixels</li>
+        <li>COG height: 1200 pixels</li>
+        <li>TIFF tile size: 2048 * 2048 pixels</li>
+      </ul>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Longitude spacing</th>
+            <th>Latitude spacing</th>
+            <th>original width</th>
+            <th>COG width</th>
+            <th>overview widths</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>0 - 50</td>
+            <td>1x</td>
+            <td>1201</td>
+            <td>1200</td>
+            <td>600, 300</td>
+          </tr>
+          <tr>
+            <td>50 - 60</td>
+            <td>1.5x</td>
+            <td>801</td>
+            <td>800</td>
+            <td>400, 200</td>
+          </tr>
+          <tr>
+            <td>60 - 70</td>
+            <td>2x</td>
+            <td>601</td>
+            <td>600</td>
+            <td>300, 150</td>
+          </tr>
+          <tr>
+            <td>70 - 80</td>
+            <td>3x</td>
+            <td>401</td>
+            <td>400</td>
+            <td>200, 100</td>
+          </tr>
+          <tr>
+            <td>80 - 85</td>
+            <td>5x</td>
+            <td>241</td>
+            <td>240</td>
+            <td>100, 50</td>
+          </tr>
+          <tr>
+            <td>85 - 90</td>
+            <td>10x</td>
+            <td>121</td>
+            <td>120</td>
+            <td>50, 25</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 id="data-structure">Data structure</h2>
+
+      <p>Each file is its own object in Amazon S3. The data are organised per tiles in <a
+          href="https://spacedata.copernicus.eu/documents/20126/0/GEO1988-CopernicusDEM-RP-001_ValidationReport_V1.0.pdf/edc88601-897e-82df-5604-b6b60cbecb57?t=1586527010843">original
+          1x1 degree grid</a> (latest Shapefiles for <a
+          href="https://copernicus-dem-30m.s3.amazonaws.com/grid.zip">GLO-30 Public</a> and <a
+          href="https://copernicus-dem-90m.s3.amazonaws.com/grid.zip">GLO-90</a>).
+        The basic data format is the following:</p>
+      <p>
+        <code>Copernicus_DSM_COG_[resolution]_[northing]_[easting]_DEM/</code>
+      </p>
+
+      <p>
+        For example, the files for individual tile are available in the following location:
+        <code>s3://copernicus-dem-90m/Copernicus_DSM_COG_30_S90_00_W178_00_DEM/</code>
+      </p>
+
+      <p>Where:</p>
+      <ul>
+        <li>
+          <p><code>[resolution]</code> - resolution in arc seconds (not meters!), which is <code>10</code> for GLO-30,
+            and <code>30</code> for GLO-90.</p>
+        </li>
+        <li>
+          <p><code>[northing]</code> = e.g. <code>S50_00</code> - decimal degrees where the decimal part is always
+            <code>00</code>.</p>
+            
+            In original files, this is the northing of the center of the bottom-most pixels, while in our files, because we removed the bottom-most pixels, the center of the new bottom-most pixels is one pixel-length (resolution) away to north.
+        </li>
+        <li>
+          <p><code>[easting]</code> = e.g. <code>w125_00</code> - decimal degrees where the decimal part is always
+            <code>00</code>.</p>
+            
+            The easting of of the center of the left-most pixels.
+        </li>
+      </ul>
+
+      <h4>Metadata</h4>
+      <p>The list of tiles is saved in each bucket as <code>tileList.txt</code>.
+
+      <h2 id="accessing-the--dataset">Accessing the Copernicus Digital Elevation Model</h2>
+      <p>If you use the AWS Command Line Interface, you can list data in the bucket with the &ldquo;ls&rdquo; command:
+      </p>
+
+      <p>
+        <code>aws s3 ls s3://copernicus-dem-30m/</code> and <code>aws s3 ls s3://copernicus-dem-90m/</code>
+      </p>
+
+      <h2 id="contact">Contact</h2>
+
+      <p>If you have questions about the data, please use <a href="https://forum.sentinel-hub.com/">Sentinel Hub
+          forum</a></p>
+
+      <h2 id="license">License</h2>
+
+      <p>GLO-30 Public and GLO-90 are available on a free basis for the general public under the terms and conditions of
+        the Licence found <a
+          href="https://spacedata.copernicus.eu/en/web/guest/collections/copernicus-digital-elevation-model/#Licencing">here</a>.</p>
+
+      <footer>
+        <hr>
+        <a href="http://aws.amazon.com/public-datasets">AWS Public Datasets</a>
+      </footer>
+    </div>
+  </div>
+</body>
+
+</html>

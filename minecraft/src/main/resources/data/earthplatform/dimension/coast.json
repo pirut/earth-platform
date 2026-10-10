@@ -1,0 +1,12 @@
+{
+  "type": "earthplatform:window",
+  "generator": {
+    "type": "earthplatform:calibration_window",
+    "biome_source": {
+      "type": "minecraft:fixed",
+      "biome": "minecraft:plains"
+    },
+    "earth_origin_y": -64,
+    "calibration_surface_y": 0
+  }
+}

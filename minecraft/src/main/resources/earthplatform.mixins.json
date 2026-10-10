@@ -1,0 +1,10 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "io.earthplatform.minecraft.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "plugin": "io.earthplatform.minecraft.mixin.EarthMixinPlugin",
+  "mixins": ["ChunkSerializerMixin", "SparseChunkAccessMixin", "SparseLevelChunkMixin", "SparseLevelChunkExtrasMixin", "SparseEmptyChunkExtrasMixin", "SparseDimensionMixin", "NativeSparseLevelMixin", "NativeSparseServerCacheMixin", "NativeSparseServerLevelMixin"],
+  "client": ["NativeSparseClientCacheMixin", "NativeSparseClientLevelMixin"],
+  "injectors": {"defaultRequire": 1}
+}

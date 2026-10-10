@@ -1,0 +1,212 @@
+[
+    {
+        "name": "EMAG2v3_UpCont",
+        "label": "EMAG2v3_UpCont",
+        "resolution": "0.03333333333333333",
+        "previewLayerId": "emag2v3_upcont_hillshade",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/EMAG2v3/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=F32&interpolation=+RSP_NearestNeighbor&compression=LZ77&nodata=-999&mosaicRule={\"where\":\"Name='EMAG2_V3_20170530_UpCont'\"}&f=image",
+        "description": "EMAG2: Earth Magnetic Anomaly Grid (2-arc-minute resolution) - Upward Continued version. Values are in nT.<br/><a href=\"https://www.ngdc.noaa.gov/geomag/emag2.html\" target=\"_blank\">More information about EMAG2 at NCEI</a>",
+        "group": "EMAG2",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "EMAG2v3_SeaLevel",
+        "label": "EMAG2v3_SeaLevel",
+        "resolution": "0.03333333333333333",
+        "previewLayerId": "emag2v3_sealevel_hillshade",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/EMAG2v3/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=F32&interpolation=+RSP_NearestNeighbor&compression=LZ77&nodata=-999&mosaicRule={\"where\":\"Name='EMAG2_V3_20170530_SeaLevel'\"}&f=image",
+        "description": "EMAG2: Earth Magnetic Anomaly Grid (2-arc-minute resolution) - Sea Level version. Values are in nT.<br/><a href=\"https://www.ngdc.noaa.gov/geomag/emag2.html\" target=\"_blank\">More information about EMAG2 at NCEI</a>",
+        "group": "EMAG2",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "EMAG2v3_Error",
+        "label": "EMAG2v3_Error",
+        "resolution": "0.03333333333333333",
+        "previewLayerId": "emag2v3_error",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/EMAG2v3/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=F32&interpolation=+RSP_NearestNeighbor&compression=LZ77&nodata=-999&mosaicRule={\"where\":\"Name='EMAG2_V3_20170530_Error'\"}&f=image",
+        "description": "EMAG2: Earth Magnetic Anomaly Grid (2-arc-minute resolution) - Error estimate grid. The error estimate is in nT.<br/><a href=\"https://www.ngdc.noaa.gov/geomag/emag2.html\" target=\"_blank\">More information about EMAG2 at NCEI</a>",
+        "group": "EMAG2",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "EMAG2v3_Code",
+        "label": "EMAG2v3_Code",
+        "resolution": "0.03333333333333333",
+        "previewLayerId": "emag2v3_code",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/EMAG2v3_Code/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=U16&interpolation=+RSP_NearestNeighbor&compression=LZ77&nodata=999&f=image",
+        "description": "EMAG2: Earth Magnetic Anomaly Grid (2-arc-minute resolution) - Data source code. Values are stored as 16-bit integers. Code values are listed <a href=\"https://www.ngdc.noaa.gov/geomag/data/EMAG2/EMAG2_readme.txt\" target=\"_blank\">here</a>.<br/><a href=\"https://www.ngdc.noaa.gov/geomag/emag2.html\" target=\"_blank\">More information about EMAG2 at NCEI</a>",
+        "group": "EMAG2",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "Multibeam Mosaic",
+        "label": "Multibeam Mosaic",
+        "resolution": "0.00083333333333333333",
+        "previewLayerId": "multibeam_mosaic_hillshade",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/multibeam_mosaic/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&nodata=0&pixelType=F32&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"none\"}&f=image",
+        "description": "<a href=\"https://noaa.maps.arcgis.com/home/item.html?id=0441041574c544dc9b6b8a513cad5e95\" target=\"_blank\">NCEI Multibeam Bathymetry Mosaic</a>. The depth values are in meters, stored as 32-bit floating point values. The cell size is 3 arcseconds (approx. 90m).",
+        "group": "DEM",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "Multibeam Mosaic Hillshade",
+        "label": "Multibeam Mosaic Hillshade",
+        "resolution": "0.00083333333333333333",
+        "previewLayerId": "multibeam_mosaic_hillshade",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/multibeam_mosaic/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&nodata=0,0,0&pixelType=U8&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"MultidirectionalHillshadeHaxby_8000-0\"}&f=image",
+        "description": "Color shaded relief visualization of the <a href=\"https://noaa.maps.arcgis.com/home/item.html?id=0441041574c544dc9b6b8a513cad5e95\" target=\"_blank\">NCEI Multibeam Bathymetry Mosaic</a>. The cell size is 3 arcseconds (approx. 90m). The depths are represented using the color ramp shown below.<br/><img width=80 src=\"images/haxby_color_scale_8000-0.png\" />",
+        "group": "DEM",
+        "maxDimensions": 6000
+    },
+    {
+        "name": "great_lakes",
+        "label": "Great Lakes Bathymetry",
+        "previewLayerId": "great_lakes",
+        "resolution": "0.000833333333333334",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=F32&interpolation=+RSP_NearestNeighbor&compression=LZ77&mosaicRule={\"mosaicMethod\":\"esriMosaicAttribute\",\"where\":\"name='greatlakes_lakedatum'\"}&f=image",
+        "description": "Great Lakes Bathymetry (3-second resolution)",
+        "group": "DEM",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "CRM Mosaic",
+        "label": "Coastal Relief Model (CRM) Mosaic",
+        "resolution": 8.3333333333333333333333333333333e-4,        
+        "previewLayerId": "crm_hillshade",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/CRM_mosaic/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=F32&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"none\"}&f=image",
+        "description": "Extract a grid from the <a href=\"https://noaa.maps.arcgis.com/home/item.html?id=5f6fab8ec63b4b8582189e8628f286bc\" target=\"_blank\">NCEI Coastal Relief Models (CRM) Mosaic</a>, a bathymetry/topography mosaic that includes NCEI-stewarded DEMs. The depth values are in meters, stored as 32-bit floating point values. The cell size of the CRM is 1 arc-second. <a href=\"https://www.ncei.noaa.gov/products/coastal-relief-model\" target=\"_blank\">More information about Coastal Relief Models at NCEI</a>",
+        "group": "DEM",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "CRM Mosaic Hillshade",
+        "label": "Coastal Relief Model (CRM) Mosaic Hillshade",
+        "resolution": 8.3333333333333333333333333333333e-4,        
+        "previewLayerId": "crm_hillshade",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/CRM_mosaic/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&nodata=0,0,0&pixelType=U8&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"ColorHillshade\"}&f=image",
+        "description": "Extract a color shaded relief visualization from the <a href=\"https://noaa.maps.arcgis.com/home/item.html?id=5f6fab8ec63b4b8582189e8628f286bc\" target=\"_blank\">NCEI Coastal Relief Models (CRM) Mosaic</a>, a bathymetry/topography mosaic that includes NCEI-stewarded DEMs. The depth values are in meters, stored as 32-bit floating point values. The cell size of the CRM is 1 arc-second. <a href=\"https://www.ncei.noaa.gov/products/coastal-relief-model\" target=\"_blank\">More information about Coastal Relief Models at NCEI</a>. The color scale is shown below.<br/><img width=80 src=\"https://www.ncei.noaa.gov/maps/bathymetry/images/dem_color_scale.png\"/>",
+        "group": "DEM",
+        "maxDimensions": 6000
+    },
+    {
+        "name": "ETOPO_2022 (Ice Surface; 15 arcseconds)",
+        "label": "ETOPO_2022 (Ice Surface; 15 arcseconds)",
+        "resolution": 0.00416666666666666666666666666667,
+        "previewLayerId": "etopo_2022_ice_hillshade_15s",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=F32&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"none\"}&mosaicRule={\"where\":\"Name='ETOPO_2022_v1_15s_surface_elev'\"}&f=image",
+        "description": "Extract a grid from NCEI's <a href=\"https://www.ncei.noaa.gov/products/etopo-global-relief-model\" target=\"_blank\">ETOPO 2022</a> grid. This option will extract from the \"Ice Surface\" version that includes the Greenland and Antarctic ice sheets. The cell size of this version is 15 arcseconds. For more information, please see the <a href=\"https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/docs/1.2%20ETOPO%202022%20User%20Guide.pdf\" target=\"_blank\">ETOPO 2022 User Guide</a>.",
+        "group": "DEM",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "ETOPO_2022 Hillshade (Ice Surface; 15 arcseconds)",
+        "label": "ETOPO_2022 Hillshade (Ice Surface; 15 arcseconds)",
+        "resolution": 0.00416666666666666666666666666667,
+        "previewLayerId": "etopo_2022_ice_hillshade_15s",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=U8&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"ColorHillshade\"}&mosaicRule={\"where\":\"Name='ETOPO_2022_v1_15s_surface_elev'\"}&f=image",
+        "description": "Extract a grid from NCEI's <a href=\"https://www.ncei.noaa.gov/products/etopo-global-relief-model\" target=\"_blank\">ETOPO 2022</a> grid. This option will extract from the \"Ice Surface\" version that includes the Greenland and Antarctic ice sheets. The cell size of this version is 15 arcseconds. For more information, please see the <a href=\"https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/docs/1.2%20ETOPO%202022%20User%20Guide.pdf\" target=\"_blank\">ETOPO 2022 User Guide</a>.",
+        "group": "DEM",
+        "maxDimensions": 6000
+    },
+    {
+        "name": "ETOPO_2022 (Ice Surface; 30 arcseconds)",
+        "label": "ETOPO_2022 (Ice Surface; 30 arcseconds)",
+        "resolution": 0.00833333333333333333333333333333,
+        "previewLayerId": "etopo_2022_ice_hillshade_30s",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=F32&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"none\"}&mosaicRule={\"where\":\"Name='ETOPO_2022_v1_30s_surface'\"}&f=image",
+        "description": "Extract a grid from NCEI's <a href=\"https://www.ncei.noaa.gov/products/etopo-global-relief-model\" target=\"_blank\">ETOPO 2022</a> grid. This option will extract from the \"Ice Surface\" version that includes the Greenland and Antarctic ice sheets. The cell size of this version is 30 arcseconds. For more information, please see the <a href=\"https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/docs/1.2%20ETOPO%202022%20User%20Guide.pdf\" target=\"_blank\">ETOPO 2022 User Guide</a>.",
+        "group": "DEM",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "ETOPO_2022 Hillshade (Ice Surface; 30 arcseconds)",
+        "label": "ETOPO_2022 Hillshade (Ice Surface; 30 arcseconds)",
+        "resolution": 0.00833333333333333333333333333333,
+        "previewLayerId": "etopo_2022_ice_hillshade_30s",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=U8&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"ColorHillshade\"}&mosaicRule={\"where\":\"Name='ETOPO_2022_v1_30s_surface'\"}&f=image",
+        "description": "Extract a grid from NCEI's <a href=\"https://www.ncei.noaa.gov/products/etopo-global-relief-model\" target=\"_blank\">ETOPO 2022</a> grid. This option will extract from the \"Ice Surface\" version that includes the Greenland and Antarctic ice sheets. The cell size of this version is 30 arcseconds. For more information, please see the <a href=\"https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/docs/1.2%20ETOPO%202022%20User%20Guide.pdf\" target=\"_blank\">ETOPO 2022 User Guide</a>.",
+        "group": "DEM",
+        "maxDimensions": 6000
+    },
+    {
+        "name": "ETOPO_2022 (Ice Surface; 60 arcseconds)",
+        "label": "ETOPO_2022 (Ice Surface; 60 arcseconds)",
+        "resolution": 0.01666666666666666666666666666667,
+        "previewLayerId": "etopo_2022_ice_hillshade_60s",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=F32&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"none\"}&mosaicRule={\"where\":\"Name='ETOPO_2022_v1_60s_surface'\"}&f=image",
+        "description": "Extract a grid from NCEI's <a href=\"https://www.ncei.noaa.gov/products/etopo-global-relief-model\" target=\"_blank\">ETOPO 2022</a> grid. This option will extract from the \"Ice Surface\" version that includes the Greenland and Antarctic ice sheets. The cell size of this version is 60 arcseconds. For more information, please see the <a href=\"https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/docs/1.2%20ETOPO%202022%20User%20Guide.pdf\" target=\"_blank\">ETOPO 2022 User Guide</a>.",
+        "group": "DEM",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "ETOPO_2022 Hillshade (Ice Surface; 60 arcseconds)",
+        "label": "ETOPO_2022 Hillshade (Ice Surface; 60 arcseconds)",
+        "resolution": 0.01666666666666666666666666666667,
+        "previewLayerId": "etopo_2022_ice_hillshade_60s",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=U8&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"ColorHillshade\"}&mosaicRule={\"where\":\"Name='ETOPO_2022_v1_60s_surface'\"}&f=image",
+        "description": "Extract a grid from NCEI's <a href=\"https://www.ncei.noaa.gov/products/etopo-global-relief-model\" target=\"_blank\">ETOPO 2022</a> grid. This option will extract from the \"Ice Surface\" version that includes the Greenland and Antarctic ice sheets. The cell size of this version is 60 arcseconds. For more information, please see the <a href=\"https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/docs/1.2%20ETOPO%202022%20User%20Guide.pdf\" target=\"_blank\">ETOPO 2022 User Guide</a>.",
+        "group": "DEM",
+        "maxDimensions": 6000
+    },
+    {
+        "name": "ETOPO_2022 (Bedrock; 15 arcseconds)",
+        "label": "ETOPO_2022 (Bedrock; 15 arcseconds)",
+        "resolution": 0.00416666666666666666666666666667,
+        "previewLayerId": "etopo_2022_bed_hillshade_15s",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=F32&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"none\"}&mosaicRule={\"where\":\"Name='ETOPO_2022_v1_15s_bed_elev'\"}&f=image",
+        "description": "Extract a grid from NCEI's <a href=\"https://www.ncei.noaa.gov/products/etopo-global-relief-model\" target=\"_blank\">ETOPO 2022</a> grid. This option will extract from the \"Bedrock\" version that that provides bedrock elevations under the surface of the Greenland and Antarctic ice sheets. The cell size of this version is 15 arcseconds. For more information, please see the <a href=\"https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/docs/1.2%20ETOPO%202022%20User%20Guide.pdf\" target=\"_blank\">ETOPO 2022 User Guide</a>.",
+        "group": "DEM",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "ETOPO_2022 Hillshade (Bedrock; 15 arcseconds)",
+        "label": "ETOPO_2022 Hillshade (Bedrock; 15 arcseconds)",
+        "resolution": 0.00416666666666666666666666666667,
+        "previewLayerId": "etopo_2022_bed_hillshade_15s",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=U8&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"ColorHillshade\"}&mosaicRule={\"where\":\"Name='ETOPO_2022_v1_15s_bed_elev'\"}&f=image",
+        "description": "Extract a grid from NCEI's <a href=\"https://www.ncei.noaa.gov/products/etopo-global-relief-model\" target=\"_blank\">ETOPO 2022</a> grid. This option will extract from the \"Bedrock\" version that that provides bedrock elevations under the surface of the Greenland and Antarctic ice sheets. The cell size of this version is 15 arcseconds. For more information, please see the <a href=\"https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/docs/1.2%20ETOPO%202022%20User%20Guide.pdf\" target=\"_blank\">ETOPO 2022 User Guide</a>.",
+        "group": "DEM",
+        "maxDimensions": 6000
+    },
+    {
+        "name": "ETOPO_2022 (Bedrock; 30 arcseconds)",
+        "label": "ETOPO_2022 (Bedrock; 30 arcseconds)",
+        "resolution": 0.00833333333333333333333333333333,
+        "previewLayerId": "etopo_2022_bed_hillshade_30s",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=F32&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"none\"}&mosaicRule={\"where\":\"Name='ETOPO_2022_v1_30s_bed'\"}&f=image",
+        "description": "Extract a grid from NCEI's <a href=\"https://www.ncei.noaa.gov/products/etopo-global-relief-model\" target=\"_blank\">ETOPO 2022</a> grid. This option will extract from the \"Bedrock\" version that that provides bedrock elevations under the surface of the Greenland and Antarctic ice sheets. The cell size of this version is 30 arcseconds. For more information, please see the <a href=\"https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/docs/1.2%20ETOPO%202022%20User%20Guide.pdf\" target=\"_blank\">ETOPO 2022 User Guide</a>.",
+        "group": "DEM",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "ETOPO_2022 Hillshade (Bedrock; 30 arcseconds)",
+        "label": "ETOPO_2022 Hillshade (Bedrock; 30 arcseconds)",
+        "resolution": 0.00833333333333333333333333333333,
+        "previewLayerId": "etopo_2022_bed_hillshade_30s",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=U8&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"ColorHillshade\"}&mosaicRule={\"where\":\"Name='ETOPO_2022_v1_30s_bed'\"}&f=image",
+        "description": "Extract a grid from NCEI's <a href=\"https://www.ncei.noaa.gov/products/etopo-global-relief-model\" target=\"_blank\">ETOPO 2022</a> grid. This option will extract from the \"Bedrock\" version that that provides bedrock elevations under the surface of the Greenland and Antarctic ice sheets. The cell size of this version is 30 arcseconds. For more information, please see the <a href=\"https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/docs/1.2%20ETOPO%202022%20User%20Guide.pdf\" target=\"_blank\">ETOPO 2022 User Guide</a>.",
+        "group": "DEM",
+        "maxDimensions": 6000
+    },
+    {
+        "name": "ETOPO_2022 (Bedrock; 60 arcseconds)",
+        "label": "ETOPO_2022 (Bedrock; 60 arcseconds)",
+        "resolution": 0.01666666666666666666666666666667,
+        "previewLayerId": "etopo_2022_bed_hillshade_60s",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=F32&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"none\"}&mosaicRule={\"where\":\"Name='ETOPO_2022_v1_60s_bed'\"}&f=image",
+        "description": "Extract a grid from NCEI's <a href=\"https://www.ncei.noaa.gov/products/etopo-global-relief-model\" target=\"_blank\">ETOPO 2022</a> grid. This option will extract from the \"Bedrock\" version that that provides bedrock elevations under the surface of the Greenland and Antarctic ice sheets. The cell size of this version is 60 arcseconds. For more information, please see the <a href=\"https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/docs/1.2%20ETOPO%202022%20User%20Guide.pdf\" target=\"_blank\">ETOPO 2022 User Guide</a>.",
+        "group": "DEM",
+        "maxDimensions": 10000
+    },
+    {
+        "name": "ETOPO_2022 Hillshade (Bedrock; 60 arcseconds)",
+        "label": "ETOPO_2022 Hillshade (Bedrock; 60 arcseconds)",
+        "resolution": 0.01666666666666666666666666666667,
+        "previewLayerId": "etopo_2022_bed_hillshade_60s",
+        "urlTemplate": "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_all/ImageServer/exportImage?bbox=${bbox}&bboxSR=4326&size=${width},${height}&imageSR=4326&format=tiff&pixelType=U8&interpolation=+RSP_NearestNeighbor&compression=LZ77&renderingRule={\"rasterFunction\":\"ColorHillshade\"}&mosaicRule={\"where\":\"Name='ETOPO_2022_v1_60s_bed'\"}&f=image",
+        "description": "Extract a grid from NCEI's <a href=\"https://www.ncei.noaa.gov/products/etopo-global-relief-model\" target=\"_blank\">ETOPO 2022</a> grid. This option will extract from the \"Bedrock\" version that that provides bedrock elevations under the surface of the Greenland and Antarctic ice sheets. The cell size of this version is 60 arcseconds. For more information, please see the <a href=\"https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO2022/docs/1.2%20ETOPO%202022%20User%20Guide.pdf\" target=\"_blank\">ETOPO 2022 User Guide</a>.",
+        "group": "DEM",
+        "maxDimensions": 6000
+    }
+]

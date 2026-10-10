@@ -1,0 +1,16 @@
+.toolchain/
+.gradle/
+**/.gradle*/
+**/build*/
+**/run/
+**/runs/
+**/__pycache__/
+*.pyc
+*.log
+*.hprof
+.env
+.env.*
+deliverables/
+runtime-inputs/
+**/runtime-inputs/
+geography/data/research-only-mariana/

@@ -1,0 +1,101 @@
+{
+  "sha": "ad911709f06d3bdd5b1a500023a9156999216351",
+  "node_id": "C_kwDONQQHqdoAKGFkOTExNzA5ZjA2ZDNiZGQ1YjFhNTAwMDIzYTkxNTY5OTkyMTYzNTE",
+  "commit": {
+    "author": {
+      "name": "neoforge-mdk-automation[bot]",
+      "email": "173375039+neoforge-mdk-automation[bot]@users.noreply.github.com",
+      "date": "2026-10-07T04:30:52Z"
+    },
+    "committer": {
+      "name": "GitHub",
+      "email": "noreply@github.com",
+      "date": "2026-10-07T04:30:52Z"
+    },
+    "message": "Update MDK with new output from mod generator (#78)\n\n* Update MDK with new output from mod generator\n\n* Update MDK with new output from mod generator\n\n* Update MDK with new output from mod generator\n\n* Update MDK with new output from mod generator\n\n---------\n\nCo-authored-by: NeoForge MDK Automation <173375039+neoforge-mdk-automation[bot]@users.noreply.github.com>",
+    "tree": {
+      "sha": "641d6dd0d0b817f3a7fdfbd08ffcf2e63061af7c",
+      "url": "https://api.github.com/repos/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/git/trees/641d6dd0d0b817f3a7fdfbd08ffcf2e63061af7c"
+    },
+    "url": "https://api.github.com/repos/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/git/commits/ad911709f06d3bdd5b1a500023a9156999216351",
+    "comment_count": 0,
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJqxcr8CRC1aQ7uu5UhlAAAWFIQAGPo7zAknvnOKBOu24c5NfhK\npT+A/OcqHr3C87oeZVWyBhPE5G41ln6KQxMQjDWywENZRl8WuPzpLs4LhTo0DC6w\n29IZHnUIpGWFJMoVEYUDK5M4AiolOAzkIbbDtT/aGi8U74ePNh2eeCDLJMwO1cFV\n0ih/fV+JoXoDLZmH5Z49Fqhf0XSkYuBkYTHOnLJntu/nkpm+Hn7EGW6TNy5nabKa\nDmADDrWBUnbCCRpqwxvh6r5/wJm136ZVc+oOHeMpzrE8i09qpYEhUbUdppuq2dx8\nYDcm/b6GOcOLl2ievBLgvDjU2nO/hePDdE/17b3besddobWXXFdieOYtlc7KbBMB\nSW2Ujt7Fp9pwdK60UZdYZxvXevofnx33EwjDAyijim8XYAk0xmW+okesVvcMywik\nCOkthYSLxIpAwGG+SuZeM4ZWyKaNmezhy2iFlpMXY8mVev2CRjJimTm3R0dG5WoM\njuzr4Kd+QXtSfX4fkvf/fYpSnNcZYCnynhkBMmtwTZpuznxr7W3Jgew8hzWpSXRA\neNEq7g5ZllLGizU6M5bA3i9C3YVsIEUxus0upC9NCudx/1q3eeXlxq43frDW7Qs3\n191gBwF6ZHjSovj1w5Ilm3qxz5a0RrQx5/cBmqE+5fKb1oeJe4JStzVi6eSFfv/t\ntc+TIVXNSmYaLMUrypVP\n=MpiR\n-----END PGP SIGNATURE-----\n",
+      "payload": "tree 641d6dd0d0b817f3a7fdfbd08ffcf2e63061af7c\nparent 7819b902a351b03fe71db00754d103b5a31c4ebf\nauthor neoforge-mdk-automation[bot] <173375039+neoforge-mdk-automation[bot]@users.noreply.github.com> 1791347452 +0000\ncommitter GitHub <noreply@github.com> 1791347452 +0000\n\nUpdate MDK with new output from mod generator (#78)\n\n* Update MDK with new output from mod generator\n\n* Update MDK with new output from mod generator\n\n* Update MDK with new output from mod generator\n\n* Update MDK with new output from mod generator\n\n---------\n\nCo-authored-by: NeoForge MDK Automation <173375039+neoforge-mdk-automation[bot]@users.noreply.github.com>",
+      "verified_at": "2026-10-07T04:30:52Z"
+    }
+  },
+  "url": "https://api.github.com/repos/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/commits/ad911709f06d3bdd5b1a500023a9156999216351",
+  "html_url": "https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/commit/ad911709f06d3bdd5b1a500023a9156999216351",
+  "comments_url": "https://api.github.com/repos/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/commits/ad911709f06d3bdd5b1a500023a9156999216351/comments",
+  "author": {
+    "login": "neoforge-mdk-automation[bot]",
+    "id": 173375039,
+    "node_id": "BOT_kgDOClV-Pw",
+    "avatar_url": "https://avatars.githubusercontent.com/u/173360952?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/neoforge-mdk-automation%5Bbot%5D",
+    "html_url": "https://github.com/apps/neoforge-mdk-automation",
+    "followers_url": "https://api.github.com/users/neoforge-mdk-automation%5Bbot%5D/followers",
+    "following_url": "https://api.github.com/users/neoforge-mdk-automation%5Bbot%5D/following{/other_user}",
+    "gists_url": "https://api.github.com/users/neoforge-mdk-automation%5Bbot%5D/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/neoforge-mdk-automation%5Bbot%5D/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/neoforge-mdk-automation%5Bbot%5D/subscriptions",
+    "organizations_url": "https://api.github.com/users/neoforge-mdk-automation%5Bbot%5D/orgs",
+    "repos_url": "https://api.github.com/users/neoforge-mdk-automation%5Bbot%5D/repos",
+    "events_url": "https://api.github.com/users/neoforge-mdk-automation%5Bbot%5D/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/neoforge-mdk-automation%5Bbot%5D/received_events",
+    "type": "Bot",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "committer": {
+    "login": "web-flow",
+    "id": 19864447,
+    "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+    "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/web-flow",
+    "html_url": "https://github.com/web-flow",
+    "followers_url": "https://api.github.com/users/web-flow/followers",
+    "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+    "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+    "organizations_url": "https://api.github.com/users/web-flow/orgs",
+    "repos_url": "https://api.github.com/users/web-flow/repos",
+    "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/web-flow/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "parents": [
+    {
+      "sha": "7819b902a351b03fe71db00754d103b5a31c4ebf",
+      "url": "https://api.github.com/repos/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/commits/7819b902a351b03fe71db00754d103b5a31c4ebf",
+      "html_url": "https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/commit/7819b902a351b03fe71db00754d103b5a31c4ebf"
+    }
+  ],
+  "stats": {
+    "total": 2,
+    "additions": 1,
+    "deletions": 1
+  },
+  "files": [
+    {
+      "sha": "6789300a1cdc3a77b1151767cc661ec047e4aebe",
+      "filename": "gradle.properties",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "changes": 2,
+      "blob_url": "https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/blob/ad911709f06d3bdd5b1a500023a9156999216351/gradle.properties",
+      "raw_url": "https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/raw/ad911709f06d3bdd5b1a500023a9156999216351/gradle.properties",
+      "contents_url": "https://api.github.com/repos/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/contents/gradle.properties?ref=ad911709f06d3bdd5b1a500023a9156999216351",
+      "patch": "@@ -18,7 +18,7 @@ minecraft_version=1.21.1\n # as they do not follow standard versioning conventions.\n minecraft_version_range=[1.21.1]\n # The Neo version must agree with the Minecraft version to get a valid artifact\n-neo_version=21.1.252\n+neo_version=21.1.256\n # The loader version range can only use the major version of FML as bounds\n loader_version_range=[1,)\n "
+    }
+  ]
+}
