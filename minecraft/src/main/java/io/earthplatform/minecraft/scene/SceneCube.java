@@ -13,12 +13,13 @@ public final class SceneCube {
     private final EngineCubeSnapshot snapshot;
     private final BlockState[] states;
 
-    public SceneCube(EngineCubeSnapshot snapshot, EnginePaletteContext palette) {
+    public SceneCube(EngineCubeSnapshot snapshot, EnginePaletteContext palette) { this(snapshot,palette,SceneRenderEnvelope.NATIVE); }
+
+    public SceneCube(EngineCubeSnapshot snapshot, EnginePaletteContext palette, SceneRenderEnvelope envelope) {
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
         Objects.requireNonNull(palette, "palette");
         CubePos position = snapshot.position();
-        if (position.minBlockY() < SceneNeighborhood.MIN_Y
-                || position.minBlockY() + CubePos.SIZE > SceneNeighborhood.MIN_Y + SceneNeighborhood.HEIGHT) {
+        if (!Objects.requireNonNull(envelope,"envelope").contains(position)) {
             throw new IllegalArgumentException("Scene cube exceeds the native Earth height envelope");
         }
         // Native model APIs take unpacked, signed integer BlockPos coordinates.

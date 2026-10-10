@@ -1,14 +1,15 @@
-# Collision gate review and verification scope
+# Independent source and native-test review
 
-The final aggregate runs 397 native tests with zero failures, errors or skips. The official Distant Horizons builder tests use the pinned runtime JAR. Nine additional integration-review tests cover native hook descriptors/installation, the reasons a movement-only fence is insufficient, bounded geometry/coverage, epoch replay, and persistence event ordering. Actual transformed Level tests query collision at Y−11000 and +8849 while the Level remains stock height384 with24 sections.
+Based on immutable collision001 plus reviewed full-height-contracts001. Native endpoint integration was reviewed read-only against pinned Minecraft/NeoForge sources before GUI handoff.
 
-Review closed these integration faults before the GUI gate:
+Important corrections made before freezing:
+- PlayerRespawnEvent fires before connection.player is replaced. Recovery is deferred to the next owner-thread tick and requires live exact replacement/player-list/connection identity plus an unchanged validated persisted record.
+- Cancelled travel or mode restoration retains recovery; a fresh gate cannot overwrite unresolved recovery. No dead-player mode mutation occurs before native inventory/XP policy. Hardcore entry is excluded and orphan recovery preserves its spectator policy.
+- A bounded one-slot recovery queue replaces repeated same-UUID clone objects, rejects a different live owner without throwing, and discards cleared/changed records.
+- Full-height spectator failed-return states retain a zero-cube exact-player void lease until verified return or disconnect. Cleanup also handles actor-drained/session-null recovery, invalid-record fallback and logout.
+- Rendering has explicit small native halo padding; gameplay/raycast/DH limits stay unchanged. All27 native dependencies remain pinned, while only18 in-domain actual meshes mask far geometry.
+- HUD wraps to viewport width. Client post-fence zero-owner receipts resolve the timing ambiguity in collision001 CLOSED reports.
 
-1. Vanilla server movement can assign packet coordinates after Entity.move, even when that call was cancelled. A server-thread packet-entry fence now prevents that path for closed or overbudget experimental walking frames.
-2. Walk activation checks the current carrier, authoritative known-clear body and paired readiness. It verifies Adventure was actually accepted, then clears delayed spectator physics/flight flags before subsequent packets.
-3. Normal logout/stopping restores the captured origin before vanilla persists the player. A validated persistent recovery record covers orphan carrier login; missing/invalid data recovers safely to Overworld spectator. If another mod cancels safe transition, teardown retains an explicit zero-owner boundary.
-4. Background asset invalidation immediately fences rendering, but collision close and support reset run together on the client owner thread. A queued old callback cannot reset a newer session: Level, connection, session and exact binding must still match.
+Headless tests exercise actual transformed Level collision and Player.checkBelowWorld paths, positive/negative signed provider/network/replica admission, durable edit/reopen at each endpoint, exact signed far masks/pages, recovery slot/record policy and pinned respawn bytecode ordering. These do not replace actual GUI walking/reload/death/restart acceptance.
 
-Pinned Minecraft/NeoForge source artifact reviewed: neoforge-21.1.256-sources.jar, SHA-256 fa5b7bffbe27c7b467b485ab502b4c822fa3ca9aa28c169ca7aa7c8344580b51.
-
-Headless tests do not prove actual player motion, latency or renderer appearance. Required GUI checks are landing/support, open jump, roof and wall contacts, unknown boundary, durable edit/collision convergence, reload freeze, fly/leave, and Save & Quit/reopen directly from walking. Live collision is at Y128; full native-height player mechanics remain a later scoped integration.
+Remaining limits: synchronous control mesh/far rebuild, fixed125/27 ownership and512m field, narrow inert full-block palette, central-cube edits only, no general survival/material/fluid/block-entity/tick or arbitrary edited far-summary support. Actual bounded endpoint GUI acceptance subsequently passed; see docs/evidence/full-height-player-001.json. This does not expand the compatibility or performance scope above.

@@ -40,8 +40,10 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
@@ -200,6 +202,81 @@ class CoreCollisionIntegrationReviewTest {
             var handler = CoreGateCommands.class.getDeclaredMethod(event.getKey(), Class.forName(event.getValue().replace('/', '.')));
             assertTrue(handler.isAnnotationPresent(net.neoforged.bus.api.SubscribeEvent.class));
         }
+    }
+
+    @Test void deathCloneRecoveryRunsAfterNativeInventoryPolicyAndCopiesPersistedNamespace() throws Exception {
+        var player = nativeClass("net/minecraft/server/level/ServerPlayer");
+        var restore = player.methods.stream().filter(m -> m.name.equals("restoreFrom")
+                && m.desc.equals("(Lnet/minecraft/server/level/ServerPlayer;Z)V")).findFirst().orElseThrow();
+        int clone = invocationIndex(restore, "net/neoforged/neoforge/event/EventHooks", "onPlayerClone");
+        assertTrue(calls(restore).stream().filter(i -> i.name.equals("replaceWith"))
+                .allMatch(i -> restore.instructions.indexOf(i) < clone), "Death recovery must not rewrite vanilla inventory/drop policy");
+        assertTrue(calls(restore).stream().anyMatch(i -> i.owner.equals("net/minecraft/nbt/CompoundTag")
+                && i.name.equals("put") && restore.instructions.indexOf(i) < clone));
+        assertTrue(CoreGateCommands.class.getDeclaredMethod("clonePlayer", net.neoforged.neoforge.event.entity.player.PlayerEvent.Clone.class)
+                .isAnnotationPresent(net.neoforged.bus.api.SubscribeEvent.class));
+    }
+
+    @Test void respawnEventRegistersReplacementButDoesNotEstablishConnectionOwnership() throws Exception {
+        var playerList = nativeClass("net/minecraft/server/players/PlayerList");
+        var respawn = playerList.methods.stream().filter(m -> m.name.equals("respawn")
+                && m.desc.startsWith("(Lnet/minecraft/server/level/ServerPlayer;Z")).findFirst().orElseThrow();
+        int event = invocationIndex(respawn, "net/neoforged/neoforge/event/EventHooks", "firePlayerRespawnEvent");
+        int clone = invocationIndex(respawn, "net/minecraft/server/level/ServerPlayer", "restoreFrom");
+        int registered = invocationIndex(respawn, "net/minecraft/server/level/ServerLevel", "addRespawnedPlayer");
+        assertTrue(clone < registered && registered < event,
+                "Registration precedes the event, but is not sufficient evidence that connection.player is the replacement");
+        assertTrue(calls(respawn).stream().anyMatch(i -> i.name.equals("moveTo") && respawn.instructions.indexOf(i) < event));
+        assertTrue(CoreGateCommands.class.getDeclaredMethod("respawn", net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerRespawnEvent.class)
+                .isAnnotationPresent(net.neoforged.bus.api.SubscribeEvent.class));
+    }
+
+    @Test void connectionPlayerReplacementOccursOnlyAfterTheEntireRespawnCallReturns() throws Exception {
+        String listenerName = "net/minecraft/server/network/ServerGamePacketListenerImpl";
+        String playerDescriptor = "Lnet/minecraft/server/level/ServerPlayer;";
+        var playerList = nativeClass("net/minecraft/server/players/PlayerList");
+        var respawn = playerList.methods.stream().filter(m -> m.name.equals("respawn")
+                && m.desc.startsWith("(Lnet/minecraft/server/level/ServerPlayer;Z")).findFirst().orElseThrow();
+        int event = invocationIndex(respawn, "net/neoforged/neoforge/event/EventHooks", "firePlayerRespawnEvent");
+        boolean returnsAfterEvent = false;
+        for (var instruction : respawn.instructions) {
+            if (instruction.getOpcode() == Opcodes.ARETURN) {
+                assertTrue(event < respawn.instructions.indexOf(instruction),
+                        "The event executes before control returns to the connection handler");
+                returnsAfterEvent = true;
+            }
+            if (instruction instanceof FieldInsnNode field && field.getOpcode() == Opcodes.PUTFIELD)
+                assertFalse(field.owner.equals(listenerName) && field.name.equals("player")
+                        && field.desc.equals(playerDescriptor), "PlayerList.respawn does not replace connection.player");
+        }
+        assertTrue(returnsAfterEvent);
+
+        var listener = nativeClass(listenerName);
+        var handler = listener.methods.stream().filter(m -> m.name.equals("handleClientCommand")
+                && m.desc.equals("(Lnet/minecraft/network/protocol/game/ServerboundClientCommandPacket;)V"))
+                .findFirst().orElseThrow();
+        var respawnCalls = calls(handler).stream().filter(i -> i.owner.equals(playerList.name)
+                && i.name.equals(respawn.name) && i.desc.equals(respawn.desc)).toList();
+        assertEquals(2, respawnCalls.size(), "Both death and End-return branches require this ownership check");
+        for (var call : respawnCalls) {
+            var next = call.getNext();
+            while (next != null && next.getOpcode() < 0) next = next.getNext();
+            var assignment = assertInstanceOf(FieldInsnNode.class, next,
+                    "The returned replacement is assigned only after PlayerList.respawn has completed");
+            assertEquals(Opcodes.PUTFIELD, assignment.getOpcode());
+            assertEquals(listenerName, assignment.owner);
+            assertEquals("player", assignment.name);
+            assertEquals(playerDescriptor, assignment.desc);
+            assertTrue(handler.instructions.indexOf(call) < handler.instructions.indexOf(assignment));
+        }
+
+        var teleport = listener.methods.stream().filter(m -> m.name.equals("teleport")
+                && m.desc.equals("(DDDFFLjava/util/Set;)V")).findFirst().orElseThrow();
+        assertTrue(calls(teleport).stream().anyMatch(i -> i.owner.equals("net/minecraft/server/level/ServerPlayer")
+                && i.name.equals("absMoveTo")), "Connection teleport moves its player field, not an event's player argument");
+        assertTrue(Arrays.stream(teleport.instructions.toArray()).anyMatch(i -> i instanceof FieldInsnNode field
+                && field.getOpcode() == Opcodes.GETFIELD && field.owner.equals(listenerName)
+                && field.name.equals("player") && field.desc.equals(playerDescriptor)));
     }
 
     @Test void closedEpochAndGenerationCannotReopenTheWalkHandshake() {

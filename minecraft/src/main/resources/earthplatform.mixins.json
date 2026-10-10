@@ -16,7 +16,8 @@
     "NativeSparseServerLevelMixin",
     "CoreCollisionLevelMixin",
     "CoreCollisionMotionMixin",
-    "CoreCollisionServerMoveMixin"
+    "CoreCollisionServerMoveMixin",
+    "CorePlayerVoidMixin"
   ],
   "client": [
     "NativeSparseClientCacheMixin",

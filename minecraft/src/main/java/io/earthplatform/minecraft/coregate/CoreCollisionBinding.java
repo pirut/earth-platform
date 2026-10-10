@@ -19,14 +19,17 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 
 /** Collision policy only. The unavailable boundary never enters terrain, rendering or storage. */
-final class CoreCollisionBinding implements BlockGetter, io.earthplatform.minecraft.enginebridge.NativeCollisionMotionFence {
+final class CoreCollisionBinding implements BlockGetter, io.earthplatform.minecraft.enginebridge.NativeCollisionMotionFence, io.earthplatform.minecraft.enginebridge.NativePlayerVoidSafety {
     static final String OPT_IN = "earthplatform.experimental.coreCollisionGate";
     private final Level level;
+    private final CorePlayerSafetyLease safety;
     private final Thread owner=Thread.currentThread();
     private volatile NativeCollisionView current;
     private AtomicBoolean frame;
     private boolean detached;
-    CoreCollisionBinding(Level level) {
+    CoreCollisionBinding(Level level) {this(level,null,0);}
+    CoreCollisionBinding(Level level,java.util.UUID player,long epoch) {
+        safety=player==null?null:new CorePlayerSafetyLease(player,epoch);
         if (!Boolean.getBoolean(OPT_IN) || !level.dimension().equals(SceneCommands.CARRIER))
             throw new IllegalArgumentException("Explicit collision carrier required");
         this.level = level;
@@ -61,7 +64,10 @@ final class CoreCollisionBinding implements BlockGetter, io.earthplatform.minecr
         if (!access.earthplatform$replaceCoreCollisionView(this, null))
             throw new IllegalStateException("Cannot detach a different collision owner");
         detached = true;
+        if(safety!=null)safety.close();
     }
+    boolean safetyOwnedBy(java.util.UUID player){return !detached&&safety!=null&&safety.ownedBy(player);}
+    @Override public boolean preventsStockVoidCheck(java.util.UUID player,net.minecraft.world.phys.AABB body){return !detached&&safety!=null&&safety.contains(player,body);}
     @Override public boolean blocksPlayerMovement() { return !ready(); }
     int residentOwners() { var view = current; return view == null ? 0 : view.residentOwners(); }
     String boundaryStatus() { var view=current; if(view==null)return "collision frame unavailable";var last=view.counters().lastBoundary();return last==null?"known collision box X/Z [-32,48)":"blocked unknown: "+last.reason(); }

@@ -25,8 +25,12 @@ public final class SceneNeighborhood implements BlockAndTintGetter {
     public static final int COSMETIC_GRASS_TINT = 0x91BD59;
     private final Map<CubePos, SceneCube> cubes;
     private final Consumer<SceneCube> onRead;
+    private final SceneRenderEnvelope envelope;
 
-    public SceneNeighborhood(Map<CubePos, SceneCube> cubes) {
+    public SceneNeighborhood(Map<CubePos, SceneCube> cubes) { this(cubes,SceneRenderEnvelope.NATIVE); }
+
+    public SceneNeighborhood(Map<CubePos, SceneCube> cubes, SceneRenderEnvelope envelope) {
+        this.envelope=Objects.requireNonNull(envelope,"envelope");
         Objects.requireNonNull(cubes, "cubes");
         if (cubes.isEmpty() || cubes.size() > MAX_OWNERS) {
             throw new IllegalArgumentException("Scene neighborhoods require 1.." + MAX_OWNERS + " owners");
@@ -43,6 +47,7 @@ public final class SceneNeighborhood implements BlockAndTintGetter {
                     || first.snapshot().epoch() != cube.snapshot().epoch()) {
                 throw new IllegalArgumentException("A scene neighborhood cannot mix worlds or connection epochs");
             }
+            if(!envelope.contains(entry.getKey()))throw new IllegalArgumentException("Neighborhood cube outside explicit render envelope");
             owned.put(entry.getKey(), cube);
             if (owned.size() > MAX_OWNERS) throw new IllegalArgumentException("Neighborhood owner budget exceeded");
         }
@@ -50,13 +55,14 @@ public final class SceneNeighborhood implements BlockAndTintGetter {
         onRead = ignored -> {};
     }
 
-    private SceneNeighborhood(Map<CubePos, SceneCube> cubes, Consumer<SceneCube> onRead) {
+    private SceneNeighborhood(Map<CubePos, SceneCube> cubes, Consumer<SceneCube> onRead, SceneRenderEnvelope envelope) {
         this.cubes = cubes;
+        this.envelope=envelope;
         this.onRead = Objects.requireNonNull(onRead);
     }
 
     /** Compilation gets a private read observer; the source neighborhood remains immutable. */
-    SceneNeighborhood tracking(Consumer<SceneCube> onRead) { return new SceneNeighborhood(cubes, onRead); }
+    SceneNeighborhood tracking(Consumer<SceneCube> onRead) { return new SceneNeighborhood(cubes, onRead, envelope); }
     SceneCube cube(CubePos position) { return cubes.get(position); }
     public int size() { return cubes.size(); }
     public boolean contains(CubePos position) { return cubes.containsKey(position); }
@@ -72,8 +78,8 @@ public final class SceneNeighborhood implements BlockAndTintGetter {
 
     @Override public FluidState getFluidState(BlockPos pos) { return getBlockState(pos).getFluidState(); }
     @Override public BlockEntity getBlockEntity(BlockPos pos) { getBlockState(pos); return null; }
-    @Override public int getHeight() { return HEIGHT; }
-    @Override public int getMinBuildHeight() { return MIN_Y; }
+    @Override public int getHeight() { return envelope.height(); }
+    @Override public int getMinBuildHeight() { return envelope.minY(); }
     @Override public float getShade(Direction direction, boolean shade) {
         if (!shade) return 1;
         return switch (direction) {

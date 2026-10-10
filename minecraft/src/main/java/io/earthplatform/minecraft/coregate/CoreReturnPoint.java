@@ -25,7 +25,16 @@ record CoreReturnPoint(ResourceKey<Level> dimension,double x,double y,double z,f
         GameType mode=null;for(var value:GameType.values())if(value.getName().equals(tag.getString("mode")))mode=value;if(mode==null)return Optional.empty();
         return Optional.of(new CoreReturnPoint(ResourceKey.create(Registries.DIMENSION,id),tag.getDouble("x"),tag.getDouble("y"),tag.getDouble("z"),tag.getFloat("yaw"),tag.getFloat("pitch"),mode));
     }catch(RuntimeException invalid){return Optional.empty();}}
-    void remember(ServerPlayer p){p.getPersistentData().put(KEY,encode());}
-    static Optional<CoreReturnPoint> remembered(ServerPlayer p){return decode(p.getPersistentData().getCompound(KEY));}
-    static void clear(ServerPlayer p){p.getPersistentData().remove(KEY);}
+    void remember(CompoundTag root){var kept=root.getCompound(net.minecraft.world.entity.player.Player.PERSISTED_NBT_TAG);kept.put(KEY,encode());root.put(net.minecraft.world.entity.player.Player.PERSISTED_NBT_TAG,kept);root.remove(KEY);}
+    void remember(ServerPlayer p){remember(p.getPersistentData());}
+    static Optional<CoreReturnPoint> remembered(CompoundTag root){
+        var kept=root.getCompound(net.minecraft.world.entity.player.Player.PERSISTED_NBT_TAG);
+        // A malformed newer record cannot revive an older stale root record.
+        if(kept.contains(KEY))return decode(kept.getCompound(KEY));
+        return decode(root.getCompound(KEY));
+    }
+    static Optional<CoreReturnPoint> remembered(ServerPlayer p){return remembered(p.getPersistentData());}
+    static void clear(CompoundTag root){root.getCompound(net.minecraft.world.entity.player.Player.PERSISTED_NBT_TAG).remove(KEY);root.remove(KEY);}
+    static void clear(ServerPlayer p){clear(p.getPersistentData());}
+    static void copyRecovery(CompoundTag original,CompoundTag replacement){remembered(original).ifPresent(point->point.remember(replacement));}
 }
