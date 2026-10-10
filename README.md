@@ -36,6 +36,8 @@ Terrain-view003 separately passed native movement, moving far-field recentering,
 
 [Terrain-view007](https://github.com/pirut/earth-cubic-platform/blob/experiments/terrain-view-007/README.md) separately preserves resumable near-source planning, 476 tests and actual reload interruption at 192/2304 samples. Its constructor, callback and initialization stalls remain documented. It is not merged into rolling001.
 
+[Terrain-view008](https://github.com/pirut/earth-cubic-platform/blob/experiments/terrain-view-008/README.md) separately adds paired owner-CPU/elapsed diagnostics, with 513 full tests, 80 focused cases and three clean GUI epochs. Eleven CPU-greater-than-elapsed anomalies have unknown magnitudes and affected stages, so aggregate paired statistics remain provisional. It is a diagnostic, not an overall performance or hardware-FPS acceptance, and is not merged into rolling001.
+
 ## Modules
 
 - core: generic signed XYZ cubes, bounded loading and durable edit storage
