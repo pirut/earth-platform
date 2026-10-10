@@ -2,26 +2,29 @@
 
 Private development of a general-purpose cubic-world platform for Minecraft Java 1.21.1 / NeoForge 21.1.256. The priority is the cubic core and engine integration. Earth geography is an optional test provider and a later plugin.
 
-## Current checkpoint: bounded full-height native player 001
+## Current checkpoint: bounded rolling native player 001
 
-This experimental checkpoint validates actual player mechanics at two extreme native Y coordinates. It is still a bounded diagnostic, not a continuous full-height survival world or general mod-compatibility release. Cubic core integration remains the priority; Earth geography is a later optional provider.
+This experimental integrated-player checkpoint adds a server-owned moving 5×5×5 cubic window to the verified full-height player gate. It uses generic XYZ cube providers and durable edits, actual network snapshots, native block models/collision and the isolated official Distant Horizons adapter. Earth geography remains a later optional provider.
 
-Implemented and checked:
+The frozen native suite passed **550 tests** with zero failures, errors or skips. Actual native-client validation established:
 
-- Generic signed XYZ cube providers, bounded asynchronous residency, immutable network snapshots and durable edit stores.
-- Native baked-block rendering and scoped vanilla collision against sparse native blocks, with wall/roof fixtures and unknown-boundary motion fences.
-- Actual walking, support and jumping at ground Y−11000 and Y+8849, using real signed block/player coordinates rather than display offsets.
-- Ordinary mouse edits: abyss placement revision 1 then removal revision 2; summit placement revision 1. Independent profile stores survive same-world reopening.
-- A narrow exact-player/level safety lease prevents stock void damage within the diagnostic envelope, including loading, reload and failed return. Other players and damage rules retain their original path.
-- Direct walking Save & Quit restores the original Creative position/mode. A deliberate /kill and Respawn also ends the gate and restores the original location/mode.
+- More than 90 m forward walking across cube boundaries, return to the original edited cube with revision 1 retained, and horizontal diagonal plus vertical residency changes.
+- 37 direct paired native/DH publications, with bounded server collision throughout committed windows.
+- Same-world restart preserving the edit and restoring the original Creative location/mode.
+- Ordinary mouse rejection at the immutable editable-cube shell without a revision change.
+- Idle resource reload motion fencing, plus interruption of a streaming bootstrap after 23 client snapshots, before DH allocation. This is not a mid-GPU-upload cancellation claim.
+- Horizontal rolling at native ground Y−11000 and Y+8849 with real native support.
+- Six clean closed epochs and six final post-fence client collision receipts. The bootstrap-cancelled epoch never allocated far GL resources.
 
-The frozen native suite passed **432 tests**. Actual native-client validation additionally confirmed abyss F3+T motion fencing with health 20, four closed epochs and four final post-fence client collision receipts with zero owners. See [the gate and commands](docs/FULL_HEIGHT_PLAYER_001.md) and [machine-readable verification](docs/evidence/full-height-player-001.json). Older checkpoint reports are retained as historical evidence.
+See [the gate and commands](docs/ROLLING_PLAYER_001.md) and [machine-readable verification](docs/evidence/rolling-player-001.json). Five delayed auto-READY screenshot/report records contain publication-timing mismatches and are explicitly excluded from acceptance; direct paired reports and exact server commit evidence are retained. Main CLOSED reports can precede queued client collision disposal, so final collision claims use paired post-fence receipts. Earlier checkpoint reports remain historical.
 
 ## Bounds and remaining work
 
-Each profile uses 125 authoritative cube owners, 27 native mesh targets and 18 fully in-domain ready meshes in the exact 3D far mask. The central editable cube and its dependencies stay pinned. Gameplay/raycast/collision support is bounded to Y[−11008,8864); provider-backed render halos use Y[−11040,8896). The carrier still has vanilla height 384 and 24 sections, without dense full-height allocation. The DH far field remains a fixed 512 m radius.
+Current collision covers 125 cubes. Current/candidate/pinned source coordinates have a tested cap of 213; the actual run peaked at 177. Physical native mesh generations are capped at 55; 45 were observed. These are separate ownership/accounting bounds, not total JVM/native/GPU memory claims. The original editable cube retains 27 pinned dependencies and an actual native mesh. Only local X/Y/Z 1..14 inside that original cube can be edited, and it must be within the current ray/collision window. Its one-block shell is immutable; edited geometry cannot yet retire into a distant summary.
 
-This is not continuous traversal between the endpoint fixtures or moving cubic interest. Ordinary Level.getBlockState still returns void air at extreme Y, so material/friction/fluid/block-entity/survival/tick compatibility remains incomplete. Lighting is fixed diagnostic illumination. Hardcore entry is rejected; death ends the gate rather than implementing native-world survival. Public-server flood protection, arbitrary edited far summaries and broad third-party mod compatibility remain unverified. The observed maximum synchronous update was 872.8 ms on a contended cloud host. Synchronous native/far rebuilds and software rendering can hitch; no hardware FPS or frame-pacing acceptance is claimed.
+The diagnostic far field remains a fixed 512 m radius, with X/Z safety limited to ±512 m and gameplay Y[−11008,8864). The carrier retains vanilla height 384 and 24 sections; provider-backed render padding is Y[−11040,8896). The endpoint fixtures and rolling window do not establish an unbounded survival world, a moving far ring or huge view distance.
+
+The maximum observed synchronous update was **397.030 ms**. Native builds and complete far-mask replacements can hitch. Lighting is fixed diagnostic illumination; vanilla material/fluid/entity/tick/survival integration and general mod compatibility remain incomplete. There is no hostile public-server packet-flood protection claim. The upstream VertexBuffer constructor does not expose rollback handles for its own internal partial construction failure. Mesa llvmpipe is software OpenGL; smooth frame pacing and hardware FPS are not accepted. Health briefly reached 18 after flight descent; post-reload full hearts do not establish health 20 throughout the run.
 
 ## Other verified experiments
 
@@ -29,7 +32,9 @@ Terrain-view003 separately passed native movement, moving far-field recentering,
 
 [Terrain-view005](https://github.com/pirut/earth-cubic-platform/blob/experiments/terrain-view-005/README.md) is the separate off-thread official DH vertex experiment: 344 native tests and three actual GUI lifecycle epochs passed. Render-owner builder calls were zero. That run recorded zero cancellations and zero recenter commits, so its evidence does not replace terrain003's recenter validation or prove a live build/reload race. Startup and overall-update stalls remain; performance is only partially improved. It is not merged into this collision checkpoint.
 
-[Terrain-view006](https://github.com/pirut/earth-cubic-platform/blob/experiments/terrain-view-006/README.md) separately validates resumable native model construction: 445 native tests, three clean GUI lifecycle epochs, seven cancelled partial builds, five retained pairs and one safe budget unmask. Its 2 ms slice target is soft; individual callbacks, planning, uploads and draw stalls can exceed it. Reload was idle and host contention prevents a controlled speedup claim. This visual-only terrain work is not merged into the endpoint player checkpoint.
+[Terrain-view006](https://github.com/pirut/earth-cubic-platform/blob/experiments/terrain-view-006/README.md) separately validates resumable native model construction: 445 native tests, three clean GUI lifecycle epochs, seven cancelled partial builds, five retained pairs and one safe budget unmask. Its 2 ms slice target is soft; individual callbacks, planning, uploads and draw stalls can exceed it. Reload was idle and host contention prevents a controlled speedup claim. This visual-only terrain scheduling is not merged into the rolling player checkpoint. Only the narrow verified terrain006 native mesh cleanup helpers are included in rolling001.
+
+[Terrain-view007](https://github.com/pirut/earth-cubic-platform/blob/experiments/terrain-view-007/README.md) separately preserves resumable near-source planning, 476 tests and actual reload interruption at 192/2304 samples. Its constructor, callback and initialization stalls remain documented. It is not merged into rolling001.
 
 ## Modules
 
@@ -60,11 +65,11 @@ Separately obtain the official Distant Horizons 3.3.3 build for Minecraft 1.21.1
 
 ```sh
 export EARTH_DH_PROBE_JAR=/absolute/path/to/DistantHorizons-3.3.3-1.21.1-fabric-neoforge.jar
-export JAVA_TOOL_OPTIONS="-Dearthplatform.experimental.authoritativeCoreGate=true -Dearthplatform.experimental.coreCollisionGate=true -Dearthplatform.experimental.fullHeightPlayerGate=true -Dearthplatform.experimental.sparseTerrainView=false"
+export JAVA_TOOL_OPTIONS="-Dearthplatform.experimental.authoritativeCoreGate=true -Dearthplatform.experimental.coreCollisionGate=true -Dearthplatform.experimental.fullHeightPlayerGate=true -Dearthplatform.experimental.rollingCubeGate=true -Dearthplatform.experimental.sparseTerrainView=false"
 bash scripts/gradle.sh runClient
 ```
 
-Create a disposable Creative test world with commands enabled. Use /earth_core enter abyss or /earth_core enter summit, wait for READY, then /earth_core walk. The default /earth_core enter retains the base fixture. /earth_core fly restores spectator mode; right/left mouse inputs edit the bounded area. /earth_core status records diagnostics and /earth_core leave closes the gate. Profile stores are separate. Do not run the Earth terrain viewer simultaneously or use an existing valuable world. Follow the gate document for exact bounds, reload and recovery procedures.
+Create a disposable Creative test world with commands enabled. Use /earth_roam enter for the base fixture, /earth_roam enter abyss or /earth_roam enter summit for the native-height endpoints. Wait for READY, then /earth_roam walk. /earth_roam fly restores spectator mode; right/left mouse inputs edit the original bounded cube. /earth_roam status records diagnostics and /earth_roam leave closes the gate. Profile stores are separate. Do not run the Earth terrain viewer simultaneously or use an existing valuable world. Follow the gate document for exact edit bounds, rolling, reload and recovery procedures.
 
 ## Source and data scope
 

@@ -62,7 +62,7 @@ public final class CoreGateCommands {
         .then(Commands.literal("edit").executes(c->edit(c.getSource().getPlayerOrException(),false)))
         .then(Commands.literal("erase").executes(c->edit(c.getSource().getPlayerOrException(),true)))
         .then(Commands.literal("status").executes(c->status(c.getSource().getPlayerOrException()))));}
-    private static boolean allowed(ServerPlayer p){return Boolean.getBoolean(OPT_IN)&&p.server.isSingleplayer()&&!p.server.isDedicatedServer();}
+    private static boolean allowed(ServerPlayer p){return !RollingGateFixture.enabled()&&Boolean.getBoolean(OPT_IN)&&p.server.isSingleplayer()&&!p.server.isDedicatedServer();}
     private static int enter(ServerPlayer p,CoreGateProfile profile){
         if(!allowed(p)){say(p,"Explicit integrated core-gate opt-in required.");return 0;}
         if(profile!=CoreGateProfile.BASE&&!CoreGateFixture.fullHeight()){say(p,"Endpoint profiles require the full-height player opt-in.");return 0;}
@@ -192,6 +192,7 @@ public final class CoreGateCommands {
     }
     private static int leave(ServerPlayer p){var s=session;if(!owns(p,s))return recoverOrphan(p);stop(s,p);return restoreOrigin(p,s.origin)?1:0;}
     @SubscribeEvent public static void logout(net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent e){
+        if(RollingGateFixture.enabled())return;
         if(e.getEntity() instanceof ServerPlayer p){var s=session;if(owns(p,s)){stop(s,p);if(p.level().dimension().equals(SceneCommands.CARRIER))restoreOrigin(p,s.origin);}releaseDisconnectedSafety(p);}
     }
     @SubscribeEvent public static void login(net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent e){

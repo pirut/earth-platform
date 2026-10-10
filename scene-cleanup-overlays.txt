@@ -1,0 +1,7 @@
+minecraft/src/main/java/io/earthplatform/minecraft/scene/SceneMesh.java
+minecraft/src/main/java/io/earthplatform/minecraft/scene/SceneBuildStepper.java
+minecraft/src/test/java/io/earthplatform/minecraft/scene/SceneBuildStepperTest.java
+minecraft/src/main/java/io/earthplatform/minecraft/scene/SceneBuildResources.java
+minecraft/src/test/java/io/earthplatform/minecraft/scene/SceneBuildResourcesTest.java
+minecraft/src/main/java/io/earthplatform/minecraft/scene/SceneAppearanceSignature.java
+minecraft/src/test/java/io/earthplatform/minecraft/scene/SceneAppearanceSignatureTest.java

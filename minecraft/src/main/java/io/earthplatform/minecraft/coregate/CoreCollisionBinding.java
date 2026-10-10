@@ -70,7 +70,7 @@ final class CoreCollisionBinding implements BlockGetter, io.earthplatform.minecr
     @Override public boolean preventsStockVoidCheck(java.util.UUID player,net.minecraft.world.phys.AABB body){return !detached&&safety!=null&&safety.contains(player,body);}
     @Override public boolean blocksPlayerMovement() { return !ready(); }
     int residentOwners() { var view = current; return view == null ? 0 : view.residentOwners(); }
-    String boundaryStatus() { var view=current; if(view==null)return "collision frame unavailable";var last=view.counters().lastBoundary();return last==null?"known collision box X/Z [-32,48)":"blocked unknown: "+last.reason(); }
+    String boundaryStatus() { var view=current; if(view==null)return "collision frame unavailable";var last=view.counters().lastBoundary();return last==null?"known sparse collision box":"blocked unknown: "+last.reason(); }
     boolean ready() { var view = current; return view != null && view.isCurrent(); }
     @Override public BlockState getBlockState(BlockPos pos) {
         var view = current;
