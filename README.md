@@ -2,20 +2,20 @@
 
 Private development of a general-purpose cubic-world platform for Minecraft Java 1.21.1 / NeoForge 21.1.256. The priority is the cubic core and engine integration. Earth geography is an optional test provider and a later plugin.
 
-## Current checkpoint: authoritative core runtime 001
+## Current checkpoint: authoritative core runtime 002
 
-This is an experimental development checkpoint, not a playable full-height world or release-ready mod. The current source is frozen from the tested core-runtime001 checkpoint.
+This is an experimental development checkpoint, not a playable full-height world or release-ready mod. The current source is frozen from the tested core-runtime002 checkpoint.
 
 Implemented and checked:
 
 - Signed 3D cube coordinates, bounded asynchronous residency, immutable snapshots and durable player-edit overlays.
 - A server-owned cube actor connected to the existing core, native block palettes and actual NeoForge framed snapshot packets.
 - Bounded native baked-block meshes plus an isolated adapter using actual Distant Horizons 3.3.3 terrain builder/shaders.
-- Server-authoritative operator edits, a near/far draw barrier, save/restart preservation, explicit-air erase and resource cleanup.
+- Server-authoritative first-person mouse edits, a near/far draw barrier, save/restart preservation, explicit-air erase and resource cleanup.
 
-The frozen native suite passed **303 tests**. Actual native-client testing passed five complete close/reopen epochs, a same-world integrated-server restart preserving revision 1/diorite, revision 2/air erase persistence, and resource reload. All final actor, native mesh and far-render owners closed cleanly. See [the gate and commands](docs/AUTHORITATIVE_CORE_RUNTIME.md) and [machine-readable verification](docs/evidence/core-runtime-001.json).
+The frozen native suite passed **356 tests**. Actual native-client testing passed three ordinary mouse edits (right/left/right, revisions 1/2/3), held-button no-repeat, sky/outside-cube/third-person rejection, same-world restart and resource reload preserving revision 3, and four cleanly closed epochs. All final actor, native mesh and far-render owners closed cleanly. See [the gate and commands](docs/AUTHORITATIVE_CORE_RUNTIME.md) and [machine-readable verification](docs/evidence/core-runtime-002.json).
 
-The current runtime gate uses an analytic flat provider, a fixed 125-cube working set, 27 inner mesh targets and a 512 m far field. It hosts a spectator camera in an empty stock-height carrier dimension. Player collision, ordinary mouse block interaction, native lighting, fluids/entities and general edited distant terrain are not completed in this checkpoint. A measured 296 ms maximum CPU update is an unresolved control-rebuild hitch. Mesa software-OpenGL results do not establish hardware FPS or smooth performance.
+The current runtime gate uses an analytic flat provider, a fixed 125-cube working set, 27 inner mesh targets and a 512 m far field. It hosts a spectator camera in an empty stock-height carrier dimension. Mouse edits have an 8 m reach and are restricted to the known central 16³ cube. Player collision, survival, native lighting, fluids/entities, public-server flood protection and general edited distant terrain are not completed in this checkpoint. A measured 225.9 ms maximum CPU update is an unresolved control-rebuild hitch. Mesa software-OpenGL results do not establish hardware FPS or smooth performance.
 
 ## Other verified experiment
 
@@ -42,7 +42,7 @@ cd minecraft
 bash scripts/gradle.sh test build
 ```
 
-The independent geography import checks additionally need Python, NumPy and Pillow; see requirements-dev.txt. No GitHub Actions workflow is enabled in this checkpoint. Reported tests were run in the isolated development workspace.
+For the full official-builder native tests without skips, also set EARTH_DH_PROBE_JAR as described below. The independent geography import checks additionally need Python, NumPy and Pillow; see requirements-dev.txt. No GitHub Actions workflow is enabled in this checkpoint. Reported tests were run in the isolated development workspace.
 
 ## Run the bounded core diagnostic
 
@@ -54,7 +54,7 @@ export JAVA_TOOL_OPTIONS="-Dearthplatform.experimental.authoritativeCoreGate=tru
 bash scripts/gradle.sh runClient
 ```
 
-Create a disposable Creative test world with commands enabled. Use /earth_core enter, /earth_core edit, /earth_core erase and /earth_core leave; the gate document describes the exact bounded target and restart/reload checks. Do not use an existing valuable world for this prototype.
+Create a disposable Creative test world with commands enabled. Use /earth_core enter, then ordinary right/left mouse input in the bounded editable area. /earth_core edit and /earth_core erase remain operator diagnostics; /earth_core leave closes the gate. The gate document describes reach, target bounds and restart/reload checks. Do not use an existing valuable world for this prototype.
 
 ## Source and data scope
 

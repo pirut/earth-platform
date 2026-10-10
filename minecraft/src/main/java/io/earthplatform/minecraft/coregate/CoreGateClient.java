@@ -64,8 +64,9 @@ public final class CoreGateClient {
             synchronized(session.fence){
                 switch(kind){
                     case CoreGatePayload.SNAPSHOT -> session.accept(EngineCubeSnapshot.readFrame(buffer,session.world,epoch,session.palette));
-                    case CoreGatePayload.EDIT_BEGIN -> {requireEnd(buffer);session.beginEdit();}
+                    case CoreGatePayload.EDIT_BEGIN -> {long x=buffer.readLong(),y=buffer.readLong(),z=buffer.readLong();requireEnd(buffer);session.beginEdit(x,y,z);}
                     case CoreGatePayload.EDIT_ACK -> {String status=buffer.readUtf(64);long revision=buffer.readLong();String detail=buffer.readUtf(512);requireEnd(buffer);session.ack(status,revision,detail);}
+                    case CoreGatePayload.INTENT_REJECTED -> {String detail=buffer.readUtf(512);requireEnd(buffer);session.intentPending=false;session.status="Server ray rejected: "+detail;}
                     case CoreGatePayload.STOP -> {requireEnd(buffer);closeCurrent("Server core host draining");}
                     default -> throw new IllegalArgumentException("Unknown core frame kind");
                 }
@@ -74,27 +75,37 @@ public final class CoreGateClient {
     }
     private static void requireEnd(FriendlyByteBuf b){if(b.isReadable())throw new IllegalArgumentException("Trailing core envelope bytes");}
     private static boolean closeCurrent(String reason){stopped=reason;var s=current;if(s==null)return true;try{s.close();current=null;return true;}catch(RuntimeException failure){stopped="Core cleanup pending; retained owners are fenced";EarthPlatformMod.LOGGER.error(stopped,failure);return false;}}
-    @SubscribeEvent public static void tick(ClientTickEvent.Post e){var s=current;if(s!=null&&(!s.valid()||s.guard.invalidationRequested()))closeCurrent("Core view closed; /earth_core leave then enter rebuilds");}
+    @SubscribeEvent public static void tick(ClientTickEvent.Post e){var s=current;if(s!=null){var game=Minecraft.getInstance();s.inputLatch.observe(game.options.keyAttack.isDown(),game.options.keyUse.isDown());if(s.intentPending&&!s.paused&&System.nanoTime()-s.lastIntentNanos>3_000_000_000L){s.intentPending=false;s.status="Server intent response delayed; release before retrying";}}if(s!=null&&(!s.valid()||s.guard.invalidationRequested()))closeCurrent("Core view closed; /earth_core leave then enter rebuilds");}
     @SubscribeEvent public static void logout(ClientPlayerNetworkEvent.LoggingOut e){closeCurrent("Core disconnected");lastConnection=null;lastEpoch=0;}
     @SubscribeEvent public static void render(RenderLevelStageEvent e){if(e.getStage()!=RenderLevelStageEvent.Stage.AFTER_LEVEL)return;var s=current;if(s==null)return;try{s.render(e);}catch(RuntimeException failure){EarthPlatformMod.LOGGER.error("CORE_GATE_RENDER_FAILED",failure);closeCurrent("Core rendering stopped: "+failure.getMessage());}}
+    @SubscribeEvent public static void input(InputEvent.InteractionKeyMappingTriggered event){
+        var s=current;var game=Minecraft.getInstance();if(s==null||!s.valid()||game.screen!=null||(!event.isAttack()&&!event.isUseItem()))return;
+        event.setCanceled(true);event.setSwingHand(false);
+        if(!s.inputLatch.claim(event.isUseItem()))return;
+        if(!game.options.getCameraType().isFirstPerson()){s.status="Core mouse editing requires first-person view";return;}
+        if(!s.visible||s.paused||s.rebuildQueued||s.intentPending)return;
+        long now=System.nanoTime();if(s.intentSent&&now-s.lastIntentNanos<250_000_000L)return;
+        s.intentSent=true;s.lastIntentNanos=now;s.intentPending=true;s.status="Validating authoritative server ray";
+        net.neoforged.neoforge.network.PacketDistributor.sendToServer(new CoreGateIntentPayload(s.epoch,event.isUseItem()));
+    }
     @SubscribeEvent public static void hud(RenderGuiEvent.Post e){var game=Minecraft.getInstance();if(game.level==null||game.player==null||game.options.hideGui||!game.level.dimension().equals(SceneCommands.CARRIER))return;var s=current;if(s==null)return;var g=e.getGuiGraphics();
-        List<String> lines=List.of("CUBIC CORE | server-owned generation / store / streamed snapshots", "Fixed125 cubes +27 native meshes | 512m DH | fixed light | spectator",s.status,"Target(4,129,4) durable revision="+s.revision()+" | /earth_core edit / erase / leave");
+        List<String> lines=List.of("CUBIC CORE | server-owned generation / store / streamed snapshots", "Fixed125 cubes +27 native meshes | 512m DH | fixed light | spectator",s.status,"Mouse: left remove / right diorite | cube(0,8,0) revision="+s.revision()+" | /earth_core leave");
         int h=lines.size()*(game.font.lineHeight+2)+8,y=game.getDebugOverlay().showDebugScreen()?g.guiHeight()-h-6:6;
         int w=Math.min(g.guiWidth()-12,lines.stream().mapToInt(game.font::width).max().orElse(0)+10);g.fill(6,y,6+w,y+h,0xDD101820);g.enableScissor(6,y,6+w,y+h);
-        for(int i=0;i<lines.size();i++)g.drawString(game.font,lines.get(i),11,y+4+i*(game.font.lineHeight+2),i==2?0xF2D178:0xE5F0F6);g.disableScissor();g.flush();s.afterHud();}
+        for(int i=0;i<lines.size();i++)g.drawString(game.font,lines.get(i),11,y+4+i*(game.font.lineHeight+2),i==2?0xF2D178:0xE5F0F6);g.disableScissor();if(game.options.getCameraType().isFirstPerson()){int cx=g.guiWidth()/2,cy=g.guiHeight()/2;g.fill(cx-5,cy-1,cx+6,cy+2,0xFF101820);g.fill(cx-1,cy-5,cx+2,cy+6,0xFF101820);g.fill(cx-4,cy,cx+5,cy+1,0xFFFFFFFF);g.fill(cx,cy-4,cx+1,cy+5,0xFFFFFFFF);}g.flush();s.afterHud();}
     @EventBusSubscriber(modid=EarthPlatformMod.MOD_ID,value=Dist.CLIENT,bus=EventBusSubscriber.Bus.MOD)
     public static final class Resources {@SubscribeEvent public static void register(RegisterClientReloadListenersEvent e){e.registerReloadListener((barrier,manager,prepare,apply,background,game)->{var s=current;if(s!=null)s.invalidate();return barrier.wait(null).thenRunAsync(()->closeCurrent("Resource reload closed core view; leave and enter to rebuild"),game);});}}
 
     private static final class Session implements AutoCloseable {
-        final Object fence=new Object();final ClientLevel carrier;final ClientPacketListener connection;
+        final Object fence=new Object();final CoreInputLatch inputLatch;final ClientLevel carrier;final ClientPacketListener connection;
         final WorldIdentity world;final long epoch;final EnginePaletteContext palette;
         final CoreGateReplica replica;final CubeStreamAdmission admission;final RenderPublicationGuard guard;
         final List<CubePos> targets;final Map<CubePos,SceneCube> cubes;final Map<CubePos,SceneMesh> meshes=new LinkedHashMap<>();
         final ArrayDeque<CubePos> builds=new ArrayDeque<>();
-        DynamicTexture light;DhGeographicLodView far;boolean closed,disposed,paused,visible,rebuildQueued,reported;
-        long frames,coverageGeneration,acceptedSnapshots,ackRevision=-1,maxUpdateNanos;int screenshots;String status="Receiving authoritative native cubes",capture="";Vec3 camera=Vec3.ZERO;
+        DynamicTexture light;DhGeographicLodView far;boolean closed,disposed,paused,visible,rebuildQueued,reported,intentPending,intentSent;
+        long frames,coverageGeneration,acceptedSnapshots,ackRevision=-1,maxUpdateNanos,lastIntentNanos,lastEditX=4,lastEditY=129,lastEditZ=4;int screenshots;String status="Receiving authoritative native cubes",capture="";Vec3 camera=Vec3.ZERO;
         Session(WorldIdentity world,long epoch,CubePos center,List<CubePos> owners,List<Long> leases,List<CubePos> targets){
-            RenderSystem.assertOnRenderThread();var game=Minecraft.getInstance();carrier=Objects.requireNonNull(game.level);connection=Objects.requireNonNull(game.getConnection());
+            RenderSystem.assertOnRenderThread();var game=Minecraft.getInstance();carrier=Objects.requireNonNull(game.level);connection=Objects.requireNonNull(game.getConnection());inputLatch=new CoreInputLatch(game.options.keyAttack.isDown(),game.options.keyUse.isDown());
             if(!carrier.dimension().equals(SceneCommands.CARRIER)||!center.equals(CoreGateCommands.CENTER))throw new IllegalArgumentException("Core carrier/center mismatch");
             palette=EnginePaletteContext.create(carrier.registryAccess().registryOrThrow(Registries.BIOME));
             var expected=new AnalyticNativeCubeProvider(0,AnalyticNativeCubeProvider.Config.flat(128),palette).identity();
@@ -114,7 +125,7 @@ public final class CoreGateClient {
             acceptedSnapshots++;status="Streamed "+cubes.size()+"/125 native cubes";
             if(cubes.size()==125&&!paused&&!rebuildQueued&&!visible)queueRebuild();
         }
-        void beginEdit(){replica.beginEdit();paused=true;visible=false;status="Durable edit pending; near/far pair fenced";report("EDIT_PENDING");}
+        void beginEdit(long x,long y,long z){if(!CubePos.fromBlock(x,y,z).equals(CoreGateCommands.TARGET))throw new IllegalArgumentException("Edit target exceeds pinned native cube");lastEditX=x;lastEditY=y;lastEditZ=z;intentPending=false;replica.beginEdit();paused=true;visible=false;status="Durable edit pending; near/far pair fenced";report("EDIT_PENDING");}
         void ack(String result,long revision,String detail){
             replica.acknowledge(result,revision);ackRevision=replica.acknowledgedRevision();
             paused=false;status="Edit "+result+" revision "+revision+"; rebuilding exact native coverage";
@@ -149,7 +160,7 @@ public final class CoreGateClient {
         }}
         void afterHud(){if(capture.isEmpty()||!reported||screenshots>=6)return;String stage=capture;capture="";try(var image=Screenshot.takeScreenshot(Minecraft.getInstance().getMainRenderTarget())){Files.createDirectories(directory());image.writeToFile(directory().resolve("epoch-"+epoch+"-"+stage.toLowerCase(Locale.ROOT)+".png"));screenshots++;report(stage);}catch(IOException failure){throw new UncheckedIOException(failure);}}
         Path directory(){return Path.of("earthplatform-evidence","authoritative-core-gate");}
-        void report(String stage){var j=new JsonObject();j.addProperty("stage",stage);j.addProperty("epoch",epoch);j.addProperty("scope","Server-owned generation/durable store/network snapshots; fixed native coverage; spectator carrier; collision not integrated");j.addProperty("world",world.toString());j.addProperty("residentCubes",cubes.size());j.addProperty("nativeMeshes",meshes.size());j.addProperty("nativeVertices",meshes.values().stream().mapToInt(SceneMesh::vertices).sum());j.addProperty("acceptedNetworkSnapshots",acceptedSnapshots);j.addProperty("targetRevision",revision());j.addProperty("lastDurableAckRevision",ackRevision);j.addProperty("targetStateId",cubes.containsKey(CoreGateCommands.TARGET)?Block.BLOCK_STATE_REGISTRY.getId(cubes.get(CoreGateCommands.TARGET).state(4,1,4)):-1);j.addProperty("coverageGeneration",coverageGeneration);j.addProperty("pausedForDurability",paused);j.addProperty("pairedDrawVisible",visible);j.addProperty("fixedEditedVolumePinnedToActualNativeCoverage",true);j.addProperty("editAwareDistant3DSummaryAvailable",false);j.addProperty("nativeCameraX",camera.x);j.addProperty("nativeCameraY",camera.y);j.addProperty("nativeCameraZ",camera.z);j.addProperty("maxCpuUpdateNanos",maxUpdateNanos);j.addProperty("closed",closed);j.addProperty("disposed",disposed);j.addProperty("hardwareGpuPerformanceClaim",false);if(far!=null)j.add("distantHorizons",far.diagnostics());
+        void report(String stage){var j=new JsonObject();j.addProperty("stage",stage);j.addProperty("epoch",epoch);j.addProperty("scope","Server-owned generation/durable store/network snapshots; fixed native coverage; spectator carrier; collision not integrated");j.addProperty("world",world.toString());j.addProperty("residentCubes",cubes.size());j.addProperty("nativeMeshes",meshes.size());j.addProperty("nativeVertices",meshes.values().stream().mapToInt(SceneMesh::vertices).sum());j.addProperty("acceptedNetworkSnapshots",acceptedSnapshots);j.addProperty("targetRevision",revision());j.addProperty("lastDurableAckRevision",ackRevision);j.addProperty("lastEditX",lastEditX);j.addProperty("lastEditY",lastEditY);j.addProperty("lastEditZ",lastEditZ);j.addProperty("targetStateId",cubes.containsKey(CoreGateCommands.TARGET)?Block.BLOCK_STATE_REGISTRY.getId(cubes.get(CoreGateCommands.TARGET).state(CubePos.local(lastEditX),CubePos.local(lastEditY),CubePos.local(lastEditZ))):-1);j.addProperty("coverageGeneration",coverageGeneration);j.addProperty("pausedForDurability",paused);j.addProperty("pairedDrawVisible",visible);j.addProperty("fixedEditedVolumePinnedToActualNativeCoverage",true);j.addProperty("editAwareDistant3DSummaryAvailable",false);j.addProperty("nativeCameraX",camera.x);j.addProperty("nativeCameraY",camera.y);j.addProperty("nativeCameraZ",camera.z);j.addProperty("maxCpuUpdateNanos",maxUpdateNanos);j.addProperty("closed",closed);j.addProperty("disposed",disposed);j.addProperty("hardwareGpuPerformanceClaim",false);if(far!=null)j.add("distantHorizons",far.diagnostics());
             try{Files.createDirectories(directory());Files.writeString(directory().resolve("epoch-"+epoch+"-"+stage.toLowerCase(Locale.ROOT)+".json"),j+"\n");}catch(IOException e){throw new UncheckedIOException(e);}EarthPlatformMod.LOGGER.info("CORE_GATE_{} epoch={} revision={} nativeOwners={} meshes={}",stage,epoch,revision(),cubes.size(),meshes.size());}
         void clearMeshes(){Throwable failure=null;for(var it=meshes.entrySet().iterator();it.hasNext();){var entry=it.next();try{entry.getValue().close();it.remove();}catch(RuntimeException|Error e){if(failure==null)failure=e;else failure.addSuppressed(e);}}if(failure instanceof RuntimeException e)throw e;if(failure instanceof Error e)throw e;}
         public void close(){synchronized(fence){if(disposed)return;closed=true;visible=false;guard.close();Throwable failure=null;try{clearMeshes();}catch(RuntimeException|Error e){failure=e;}try{if(far!=null)far.close();}catch(RuntimeException|Error e){if(failure==null)failure=e;else failure.addSuppressed(e);}try{if(light!=null)light.close();}catch(RuntimeException|Error e){if(failure==null)failure=e;else failure.addSuppressed(e);}replica.close();builds.clear();if(failure instanceof RuntimeException e)throw e;if(failure instanceof Error e)throw e;disposed=true;report("CLOSED");}}

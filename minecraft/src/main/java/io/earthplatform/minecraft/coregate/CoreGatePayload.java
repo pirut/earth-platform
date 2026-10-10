@@ -14,7 +14,7 @@ import net.minecraft.resources.ResourceLocation;
 /** Small bounded envelope; nested snapshot CRC/schema/palette are verified before admission. */
 public final class CoreGatePayload implements CustomPacketPayload {
     public static final int MAX_BYTES=40_000;
-    public static final int START=1,SNAPSHOT=2,EDIT_BEGIN=3,EDIT_ACK=4,STOP=5,FAILURE=6;
+    public static final int START=1,SNAPSHOT=2,EDIT_BEGIN=3,EDIT_ACK=4,STOP=5,FAILURE=6,INTENT_REJECTED=7;
     public static final Type<CoreGatePayload> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath("earthplatform","core_gate"));
     public static final StreamCodec<RegistryFriendlyByteBuf,CoreGatePayload> CODEC=new StreamCodec<>() {
         public CoreGatePayload decode(RegistryFriendlyByteBuf b){return new CoreGatePayload(b.readByteArray(MAX_BYTES));}
