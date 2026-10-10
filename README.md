@@ -21,9 +21,11 @@ The current gate uses an analytic flat provider with a finite wall/roof fixture,
 
 Cleanup evidence has an explicit timing limit: client CLOSED reports precede a queued collision fence, so epoch 3 still reports 125 collision owners at that sampling point. Epochs 1 and 2 report zero. All three server collision releases, actor drains, native/far owner releases and DH GL cleanup passed; the final post-fence client collision receipt is absent, so measured final client collision zero is not claimed.
 
-## Other verified experiment
+## Other verified experiments
 
 Terrain-view003 separately passed native movement, moving far-field recentering, near/far coverage and resource lifecycle checks, with 306 headless tests. It still has significant startup/upload stalls and no gameplay or hardware-performance acceptance. [Its verification report](docs/evidence/terrain-view-003.json) records the limits. Its [separate frozen source branch](https://github.com/pirut/earth-cubic-platform/blob/experiments/terrain-view-003/README.md) preserves that experiment without mixing it into this server-authority checkpoint. The older terrain-view001 seam failure is historical and is not the current default gate.
+
+[Terrain-view005](https://github.com/pirut/earth-cubic-platform/blob/experiments/terrain-view-005/README.md) is the newer separate off-thread official DH vertex experiment: 344 native tests and three actual GUI lifecycle epochs passed. Render-owner builder calls were zero. That run recorded zero cancellations and zero recenter commits, so its evidence does not replace terrain003's recenter validation or prove a live build/reload race. Startup and overall-update stalls remain; performance is only partially improved. It is not merged into this collision checkpoint.
 
 ## Modules
 
