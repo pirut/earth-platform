@@ -78,8 +78,11 @@ public final class CubicClient {
     @SubscribeEvent public static void debugText(CustomizeGuiOverlayEvent.DebugText event) {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null) return;
-        event.getLeft().add("Cubic: " + world.loadedCubes() + " cubes, " + world.renderer().meshCount() + " meshes, "
-                + world.renderer().pendingCount() + " to compile, " + world.far().drawnCount() + "/" + world.far().columnCount() + " far columns, "
+        // Near the top, where small windows still show it.
+        int at = Math.min(3, event.getLeft().size());
+        event.getLeft().add(at, "Cubic: " + world.loadedCubes() + " cubes, " + world.renderer().meshCount() + " meshes, "
+                + world.renderer().pendingCount() + " to compile");
+        event.getLeft().add(at + 1, "Far: " + world.far().drawnCount() + "/" + world.far().columnCount() + " columns, "
                 + world.far().vertexBytes() / (1 << 20) + " MB");
     }
 

@@ -159,8 +159,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         int bottom = (min - v) >> (level + 4), highest = max >> (level + 4);
         // Columns taller than the section budget keep their top, where the view is.
         bottom = Math.max(bottom, highest - Far.MAX_SECTIONS + 1);
-        int sections = highest - bottom + 1;
+        int sections = highest - bottom + 1, base = bottom * width;
         out.bottom = bottom;
+        for (int cz = 0; cz < 16; cz++) for (int cx = 0; cx < 16; cx++) {
+            int g = (cz + 1) * 18 + cx + 1;
+            out.drops[cz * 16 + cx] = drop(ground[g], water[g], base, v);
+        }
         LevelChunkSection[] stack = new LevelChunkSection[sections];
         for (int si = 0; si < sections; si++) {
             LevelChunkSection section = new LevelChunkSection(
@@ -184,18 +188,33 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     }
 
     /**
-     * The block a voxel of {@code v} blocks starting at y0 stands for: solid once a quarter of it
-     * is ground, its top block if the voxel above is not, else water filled to the column's level.
+     * The block a voxel of {@code v} blocks starting at y0 stands for: ground once any of it is,
+     * its top block if the voxel above is not ground, and under standing water the water's top
+     * voxel is all water, so shallow lakes still show from afar. The column's drop then lowers the
+     * voxels so the top one ends at the real height.
      */
     private static BlockState voxel(int h, int water, int y0, int v, BlockState top, BlockState under) {
-        if ((h - y0 + 1) * 4 >= v) {
-            if ((h - y0 - v + 1) * 4 < v) return top;
-            return (h - y0 - 2 * v + 1) * 4 < v ? under : STONE;
+        int ceiling = Integer.MAX_VALUE;
+        if (water != DRY && water > h) {
+            ceiling = Math.floorDiv(water, v) * v;
+            if (y0 >= ceiling) return y0 == ceiling ? WATER : AIR;
         }
-        if (water == DRY) return AIR;
-        // The top water block's surface sits a little under its top, as near water is drawn.
-        BlockState filled = Far.water(water - y0 + Far.WATER_SURFACE, v);
-        return filled == null ? AIR : filled;
+        if (h < y0) return ceiling == Integer.MAX_VALUE ? AIR : WATER;
+        if (h < y0 + v || y0 + v == ceiling) return top;
+        return h < y0 + 2 * v || y0 + 2 * v == ceiling ? under : STONE;
+    }
+
+    /**
+     * How far a voxel column's stack sits below the voxel grid, in 1/{@link Far#DROP_UNIT}
+     * blocks, so the top of its highest ground or water voxel lands on the real surface: the top
+     * of the ground, or the water's surface a little under the top of its top block, as near
+     * water is drawn.
+     */
+    private static short drop(int h, int water, int base, int v) {
+        double surface = (water != DRY && water > h ? water + Far.WATER_SURFACE : h + 1) - base;
+        int row = (int) Math.ceil(surface / v) - 1;
+        double drop = (row + 1) * (double) v - surface;
+        return (short) Math.clamp(Math.round(drop * Far.DROP_UNIT), 0, v * Far.DROP_UNIT - 1);
     }
 
     private PalettedContainer<Holder<Biome>> farBiomes(Holder<Biome>[] biome) {

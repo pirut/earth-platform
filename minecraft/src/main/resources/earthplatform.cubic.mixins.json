@@ -20,7 +20,9 @@
     "CubicPredictionMixin",
     "CubicDestroyProgressMixin",
     "CubicFarPlaneMixin",
-    "CubicShaderFarMixin"
+    "CubicShaderFarMixin",
+    "CubicIrisSourceNamesMixin",
+    "CubicIrisProgramSetMixin"
   ],
   "injectors": {
     "defaultRequire": 1

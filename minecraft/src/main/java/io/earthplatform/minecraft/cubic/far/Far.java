@@ -8,21 +8,33 @@ import net.minecraft.world.level.block.state.BlockState;
 /**
  * Far terrain as a voxel pyramid, the way Voxy draws distance: level L holds 16^3-voxel sections
  * whose voxels are 2^L blocks, stacked in columns. Every level keeps a square of columns around
- * the player and the next finer level replaces its middle, so voxels grow with distance: each
- * level reaches about 120 of its voxels from the player before the next coarser one takes over,
- * and the coarsest level (64-block voxels) reaches at least 15 km.
+ * the player and the next finer level replaces its middle, so voxels grow with distance. With the
+ * default detail each level reaches about 370 of its voxels from the player before the next
+ * coarser one takes over, so a voxel never covers more than a few pixels, as Voxy aims for, and
+ * the coarsest level (64-block voxels) reaches about 23 km.
  *
- * <p>A water voxel's level property says how full it is: level k above 0 fills the bottom
- * (16 - k) / 16 of the voxel, so the water surface sits at its real height on every level.
+ * <p>Each voxel column of a far column also carries a drop: how far its whole stack sits below the
+ * voxel grid, so the top of its ground or water lands at the real height instead of a voxel
+ * boundary, as Distant Horizons keeps exact heights. A water voxel's level property can still say
+ * how full it is (level k above 0 fills the bottom (16 - k) / 16 of the voxel), for water that
+ * stands lower than the column's top.
  */
 public final class Far {
     public static final int MIN_LEVEL = 1, MAX_LEVEL = 6, SIZE = 16;
-    /** Half-width, in columns, of the middle of each level that the next finer level takes over. */
-    public static final int HOLE = 7;
+    /** Most detail a client may ask for, in {@link #HOLE} columns. */
+    public static final int MAX_HOLE = 24;
+    /**
+     * Half-width, in columns, of the middle of each level that the next finer level takes over:
+     * how many voxels each level keeps before coarser ones take over, so how many pixels a voxel
+     * covers on screen. Set with {@code -Dearthplatform.far.detail} (4 to 24, default 11).
+     */
+    public static final int HOLE = Math.clamp(Integer.getInteger("earthplatform.far.detail", 11), 4, MAX_HOLE);
     /** Half-width of the coarsest level's square. */
     public static final int OUTER = 2 * HOLE + 1;
-    /** How far a request may stray from the player, in columns of its level, before the server ignores it. */
-    public static final int SLACK = OUTER + 2;
+    /** How far a request may stray from the player, in columns of its level, before the server ignores it; covers every detail setting. */
+    public static final int SLACK = 2 * MAX_HOLE + 3;
+    /** Drops are kept in 1/256ths of a block. */
+    public static final int DROP_UNIT = 256;
     /** Levels whose voxels are small enough (16 blocks or less) to show what players built. */
     public static final int EDIT_LEVELS = 4;
     /** Most sections one column may hold. */

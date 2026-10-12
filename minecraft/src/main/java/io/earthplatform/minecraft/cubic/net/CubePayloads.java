@@ -95,27 +95,31 @@ public final class CubePayloads {
 
     /**
      * One far-terrain column: its lowest section's Y in level units, then each section's vanilla
-     * section bytes (voxels as blocks, plus biomes) from the bottom up; empty for an all-air section.
+     * section bytes (voxels as blocks, plus biomes) from the bottom up, empty for an all-air
+     * section, then each voxel column's drop (see {@link io.earthplatform.minecraft.cubic.gen.FarColumn#drops}).
      */
-    public record FarColumnData(long key, int bottom, List<byte[]> sections) implements CustomPacketPayload {
+    public record FarColumnData(long key, int bottom, List<byte[]> sections, short[] drops) implements CustomPacketPayload {
         public static final Type<FarColumnData> TYPE = new Type<>(id("far_column"));
         public static final StreamCodec<RegistryFriendlyByteBuf, FarColumnData> CODEC = StreamCodec.of((buf, p) -> {
             buf.writeLong(p.key);
             buf.writeInt(p.bottom);
             buf.writeVarInt(p.sections.size());
             for (byte[] section : p.sections) buf.writeByteArray(section);
+            for (short drop : p.drops) buf.writeShort(drop);
         }, buf -> {
             long key = buf.readLong();
             int bottom = buf.readInt(), count = Math.min(buf.readVarInt(), Far.MAX_SECTIONS);
             List<byte[]> sections = new ArrayList<>(count);
             for (int i = 0; i < count; i++) sections.add(buf.readByteArray(1 << 20));
-            return new FarColumnData(key, bottom, sections);
+            short[] drops = new short[256];
+            for (int i = 0; i < 256; i++) drops[i] = buf.readShort();
+            return new FarColumnData(key, bottom, sections, drops);
         });
         @Override public Type<FarColumnData> type() { return TYPE; }
     }
 
     public static void register(RegisterPayloadHandlersEvent event) {
-        var registrar = event.registrar("cubic-1");
+        var registrar = event.registrar("cubic-2");
         registrar.playToClient(CubeData.TYPE, CubeData.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.cube(p); });
         registrar.playToClient(CubeUnload.TYPE, CubeUnload.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.unload(p); });
         registrar.playToClient(BlockChanges.TYPE, BlockChanges.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.changes(p); });

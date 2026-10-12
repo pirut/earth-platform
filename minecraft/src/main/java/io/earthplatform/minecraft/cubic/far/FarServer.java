@@ -45,7 +45,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
  * remade and pushed again when a player's edits are saved, so builds show from afar.
  */
 public final class FarServer {
-    private static final int SEND_PER_TICK = 48, CACHE = 4096;
+    private static final int SEND_PER_TICK = 64, CACHE = 8192;
     private static final AtomicInteger THREADS = new AtomicInteger();
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
@@ -136,7 +136,7 @@ public final class FarServer {
         if (level <= Far.EDIT_LEVELS) foldSavedCubes(level, Far.x(key), Far.z(key), column);
         List<byte[]> sections = new ArrayList<>(column.sections.size());
         for (LevelChunkSection section : column.sections) sections.add(section == null ? new byte[0] : CubeCodec.sectionBytes(section));
-        CubePayloads.FarColumnData data = new CubePayloads.FarColumnData(key, column.bottom, sections);
+        CubePayloads.FarColumnData data = new CubePayloads.FarColumnData(key, column.bottom, sections, column.drops);
         if (cache.size() > CACHE) cache.clear();
         cache.put(key, data);
         return data;

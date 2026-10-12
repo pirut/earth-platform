@@ -7,8 +7,13 @@ import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.far.Far;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import javax.annotation.Nullable;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.core.Direction;
@@ -21,14 +26,15 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 
 /**
- * Builds one far column as block-format quads: every voxel face that touches air, as a box the
- * voxel's size, textured with the block's own sprite for that side and tinted for its biome. On
- * coarse levels, and on walls, faces take the sprite's average colour instead, and matching
- * neighbours merge into one quad. Voxels whose cube the client already draws are left
- * out, and count as air for their neighbours so the seam stays closed. Faces hidden only by the
- * next column go in a separate wall per side, drawn when that column is not (where a finer or
- * coarser level takes over), so level changes never open holes. Water goes in its own mesh, drawn
- * see-through like near water, over lake and sea floors that darken with depth.
+ * Builds one far column's faces: every voxel face that touches air, as a box the voxel's size,
+ * packed in 16 bytes each (see {@link FarGpu}) for the far terrain's own shader, as Voxy packs its
+ * quads. Each voxel column's stack is lowered by its drop so the top lands at the real height, so
+ * a side face may be partly hidden by a neighbour that sits lower or higher; only the visible
+ * parts are kept. Matching faces merge: flat tops into rectangles, sides into runs. Voxels whose
+ * cube the client already draws are left out, and count as air for their neighbours so the seam
+ * stays closed. Faces hidden only by the next column go in a separate wall per side, drawn when
+ * that column is not (where a finer or coarser level takes over), so level changes never open
+ * holes. Water goes in its own block-format mesh, drawn see-through like near water.
  */
 final class FarMesher {
     private static final BlockState AIR = Blocks.AIR.defaultBlockState(), GROUND = Blocks.STONE.defaultBlockState();
@@ -40,194 +46,357 @@ final class FarMesher {
     private static final int WALL_DEPTH = 8;
     /** How far below a column's own top it closes seams against cubes drawn up close, in voxels. */
     private static final int SEAM_DEPTH = 16;
+    /** Face groups: the column's own faces by direction (down, up, north, south, west, east), then its walls north, south, west, east. */
+    static final int GROUPS = 10, FIRST_WALL = 6;
+    /** Heights inside the mesher are in 1/256 blocks, as drops are; faces store 1/16 blocks. */
+    private static final int UNIT = Far.DROP_UNIT;
 
     private FarMesher() {}
 
     /** A same-level column next to this one: north, south, west, east. */
-    record Side(@Nullable LevelChunkSection[] sections, int bottom) {}
+    record Side(@Nullable LevelChunkSection[] sections, int bottom, short[] drops) {}
 
     /** Everything a worker needs; sections are never changed after they arrive, so sharing them is safe. */
-    record Job(long key, int version, int level, int x0, int z0, int bottom, @Nullable LevelChunkSection[] sections,
-               @Nullable Side[] sides, @Nullable LongOpenHashSet drawn, float[] shade, boolean textured,
-               float[] white, FarFaces faces, @Nullable Object2IntMap<BlockState> shaderIds) {}
+    record Job(long key, int version, int level, int slot, int x0, int z0, int bottom, LevelChunkSection[] sections, short[] drops,
+               @Nullable Side[] sides, @Nullable LongOpenHashSet drawn, boolean textured, FarLooks looks, FarFaces faces,
+               @Nullable Object2IntMap<BlockState> shaderIds, float[] shade, float[] white) {}
 
-    /** A finished mesh and the memory holding it. */
+    /** A finished water mesh and the memory holding it. */
     record Part(MeshData mesh, ByteBufferBuilder memory) {
         void free() { mesh.close(); memory.close(); }
         long bytes() { return mesh.vertexBuffer().remaining(); }
     }
 
     /**
-     * The column's opaque mesh, its four walls (north, south, west, east) and its water, drawn
-     * see-through after everything opaque; any may be null when empty.
+     * The column's opaque faces, 4 ints each, grouped as {@link #GROUPS} with {@code counts}
+     * faces per group in order, and its water, drawn see-through after everything opaque.
      */
-    record Built(long key, int version, @Nullable Part main, @Nullable Part[] walls, @Nullable Part water) {
-        void free() {
-            if (main != null) main.free();
-            if (walls != null) for (Part wall : walls) if (wall != null) wall.free();
-            if (water != null) water.free();
-        }
-
-        long bytes() {
-            long total = (main == null ? 0 : main.bytes()) + (water == null ? 0 : water.bytes());
-            if (walls != null) for (Part wall : walls) if (wall != null) total += wall.bytes();
-            return total;
-        }
+    record Built(long key, int version, int[] quads, int[] counts, @Nullable Part water) {
+        void free() { if (water != null) water.free(); }
+        long bytes() { return quads.length * 4L + (water == null ? 0 : water.bytes()); }
     }
 
     static Built build(Job job) {
-        Targets targets = new Targets();
-        int v = 1 << job.level;
-        float[] surface = surface(job, v);
-        int[] tops = tops(job.sections);
-        int[][] sideTops = sideTops(job);
-        LevelChunkSection[] sections = job.sections;
-        // Flat faces (every face on coarse levels, and walls on all) are gathered first and matching
-        // neighbours merged into larger quads.
-        Merger merger = new Merger(sections.length * 16);
-        for (int si = 0; si < sections.length; si++) {
-            LevelChunkSection section = sections[si];
-            if (section == null || section.hasOnlyAir()) continue;
-            for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
-                BlockState state = section.getBlockState(x, y, z);
-                if (state.isAir()) continue;
-                int vy = si * 16 + y;
-                if (drawn(job, x, vy, z)) continue;
-                boolean liquid = seeThrough(state);
-                // Under water, sky light fades a level per block of water above, as it does near by.
-                int light = liquid ? LightTexture.FULL_SKY
-                        : LightTexture.pack(0, Mth.clamp(15 - (int) (surface[z * 16 + x] - (vy + 1) * v), 0, 15));
-                Holder<Biome> biome = null;
-                for (Direction direction : DIRECTIONS) {
-                    int nx = x + direction.getStepX(), ny = vy + direction.getStepY(), nz = z + direction.getStepZ();
-                    BlockState neighbour = at(job, nx, ny, nz);
-                    int wall = -1;
-                    if (drawn(job, nx, ny, nz)) {
-                        // The cubes there are drawn up close; water carries on into theirs without a wall.
-                        if (liquid && seeThrough(neighbour) || vy < tops[z * 16 + x] - SEAM_DEPTH) continue;
-                    } else if (hides(state, neighbour, direction)) {
-                        wall = side(nx, nz);
-                        if (wall < 0 || liquid || vy < sideTops[wall][wall < 2 ? x : z] - WALL_DEPTH) continue;
-                    }
-                    if (biome == null) biome = section.getBiomes().get(x >> 2, y >> 2, z >> 2);
-                    int target = wall >= 0 ? wall : liquid ? Targets.WATER : Targets.MAIN;
-                    boolean textured = job.textured && wall < 0;
-                    int argb = colour(job, state, biome, direction, liquid, textured);
-                    if (!textured) { merger.add(direction, x, vy, z, new Look(state, argb, light, target)); continue; }
-                    BufferBuilder builder = targets.builder(target);
-                    ShaderBlocks.begin(builder, job.shaderIds, state, !state.getFluidState().isEmpty(), x, y, z);
-                    face(builder, job, state, argb, direction, x * v, vy * v, z * v, v, v, v, light, true);
-                    ShaderBlocks.end(builder, job.shaderIds);
+        return new Builder(job).build();
+    }
+
+    private static final class Builder {
+        final Job job;
+        final int v, voxel;
+        final int[] tops;
+        final int[][] sideTops;
+        final float[] surface;
+        final Flat opaqueFlat = new Flat(), waterFlat = new Flat();
+        /** Side face pieces by direction (north, south, west, east) and voxel column. */
+        @SuppressWarnings("unchecked") final List<Piece>[][] pieces = new List[4][256];
+        @Nullable ByteBufferBuilder waterMemory;
+        @Nullable BufferBuilder water;
+
+        Builder(Job job) {
+            this.job = job;
+            v = 1 << job.level;
+            voxel = v * UNIT;
+            tops = tops(job.sections);
+            sideTops = sideTops(job);
+            surface = surface(job, v);
+        }
+
+        Built build() {
+            LevelChunkSection[] sections = job.sections;
+            for (int si = 0; si < sections.length; si++) {
+                LevelChunkSection section = sections[si];
+                if (section == null || section.hasOnlyAir()) continue;
+                for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+                    BlockState state = section.getBlockState(x, y, z);
+                    if (state.isAir()) continue;
+                    int vy = si * 16 + y;
+                    if (drawn(job, x, vy, z)) continue;
+                    voxel(section, state, x, y, vy, z);
                 }
             }
-        }
-        merger.emit(job, targets, v);
-        return targets.built(job);
-    }
-
-    /** The column's meshes, each started when its first face arrives: the four walls, then the main mesh and the water. */
-    private static final class Targets {
-        static final int MAIN = 4, WATER = 5;
-        private final ByteBufferBuilder[] memory = new ByteBufferBuilder[6];
-        private final BufferBuilder[] builders = new BufferBuilder[6];
-
-        BufferBuilder builder(int index) {
-            if (builders[index] == null) {
-                memory[index] = new ByteBufferBuilder(index == MAIN ? 65536 : 8192);
-                builders[index] = new BufferBuilder(memory[index], VertexFormat.Mode.QUADS, DefaultVertexFormat.BLOCK);
+            IntArrayList[] groups = new IntArrayList[GROUPS];
+            for (int g = 0; g < GROUPS; g++) groups[g] = new IntArrayList();
+            opaqueFlat.emitQuads(this, groups);
+            emitSides(groups);
+            waterFlat.emitWater(this);
+            int total = 0;
+            int[] counts = new int[GROUPS];
+            for (int g = 0; g < GROUPS; g++) { counts[g] = groups[g].size() / 4; total += groups[g].size(); }
+            int[] quads = new int[total];
+            int at = 0;
+            for (IntArrayList group : groups) { group.getElements(0, quads, at, group.size()); at += group.size(); }
+            Part waterPart = null;
+            if (water != null) {
+                MeshData mesh = water.build();
+                if (mesh == null) waterMemory.close();
+                else waterPart = new Part(mesh, waterMemory);
             }
-            return builders[index];
+            return new Built(job.key, job.version, quads, counts, waterPart);
         }
 
-        @Nullable private Part part(int index) { return builders[index] == null ? null : FarMesher.part(builders[index], memory[index]); }
-
-        Built built(Job job) {
-            Part[] walls = new Part[4];
-            boolean anyWall = false;
-            for (int side = 0; side < 4; side++) anyWall |= (walls[side] = part(side)) != null;
-            return new Built(job.key, job.version, part(MAIN), anyWall ? walls : null, part(WATER));
-        }
-    }
-
-    /** What a face needs to match a neighbour's to share one quad with it, including which mesh it goes in. */
-    private record Look(BlockState state, int argb, int light, int target) {}
-
-    /**
-     * Collects a column's faces per direction and merges each plane's runs of matching faces into
-     * rectangles, so flat ground and long cliffs cost a few quads instead of one per voxel.
-     */
-    private static final class Merger {
-        private final int height;
-        private final int[][] faces = new int[6][];
-        private final java.util.List<Look> looks = new java.util.ArrayList<>();
-        private final java.util.Map<Look, Integer> ids = new java.util.HashMap<>();
-
-        Merger(int height) { this.height = height; }
-
-        void add(Direction direction, int x, int vy, int z, Look look) {
-            int[] plane = faces[direction.ordinal()];
-            if (plane == null) plane = faces[direction.ordinal()] = new int[16 * 16 * height];
-            Integer id = ids.get(look);
-            if (id == null) { id = looks.size() + 1; looks.add(look); ids.put(look, id); }
-            plane[(vy * 16 + z) * 16 + x] = id;
-        }
-
-        void emit(Job job, Targets targets, int v) {
+        private void voxel(LevelChunkSection section, BlockState state, int x, int y, int vy, int z) {
+            int cell = z * 16 + x, drop = job.drops[cell];
+            boolean liquid = seeThrough(state);
+            // Under water, sky light fades a level per block of water above, as it does near by.
+            int sky = liquid ? 15 : Mth.clamp(15 - (int) (surface[cell] - ((vy + 1) * voxel - drop) / (float) UNIT), 0, 15);
+            int bottom = vy * voxel - drop, top = bottom + Math.round(voxel * Far.fill(state));
+            Holder<Biome> biome = null;
             for (Direction direction : DIRECTIONS) {
-                int[] plane = faces[direction.ordinal()];
-                if (plane == null) continue;
-                // Each slice is a plane facing this direction; u and w run across it.
-                boolean vertical = direction.getAxis() == Direction.Axis.Y;
-                int slices = vertical ? height : 16, across = vertical ? 16 : height;
-                for (int slice = 0; slice < slices; slice++) {
-                    for (int w = 0; w < across; w++) for (int u = 0; u < 16; u++) {
-                        int id = plane[index(direction, slice, u, w)];
-                        if (id == 0) continue;
-                        Look look = looks.get(id - 1);
-                        int width = 1;
-                        while (u + width < 16 && plane[index(direction, slice, u + width, w)] == id) width++;
-                        // Part-filled water only ever tops a stack, so it never merges upward.
-                        int tall = 1;
-                        boolean grow = vertical || Far.fill(look.state) >= 1.0F;
-                        rows:
-                        while (grow && w + tall < across) {
-                            for (int k = 0; k < width; k++) if (plane[index(direction, slice, u + k, w + tall)] != id) break rows;
-                            tall++;
-                        }
-                        for (int t = 0; t < tall; t++) for (int k = 0; k < width; k++) plane[index(direction, slice, u + k, w + t)] = 0;
-                        rectangle(job, targets, v, direction, slice, u, w, width, tall, look);
+                if (direction.getAxis() == Direction.Axis.Y) {
+                    int ny = vy + direction.getStepY();
+                    BlockState neighbour = at(job, x, ny, z);
+                    if (drawn(job, x, ny, z)) {
+                        if (liquid && seeThrough(neighbour) || vy < tops[cell] - SEAM_DEPTH) continue;
+                    } else if (hides(state, neighbour, direction)) continue;
+                    if (biome == null) biome = section.getBiomes().get(x >> 2, y >> 2, z >> 2);
+                    int height = direction == Direction.UP ? top : bottom;
+                    if (!liquid) opaqueFlat.add(direction, x, vy, z, height, look(state, biome, direction, sky));
+                    else if (!job.textured) waterFlat.add(direction, x, vy, z, height, waterLook(state, biome, direction));
+                    else waterFace(state, biome, direction, x, z, height, 0);
+                    continue;
+                }
+                int nx = x + direction.getStepX(), nz = z + direction.getStepZ(), wall = side(nx, nz);
+                int neighbourDrop = wall < 0 ? job.drops[nz * 16 + nx] : sideDrop(wall, nx, nz, drop);
+                // The neighbour's rows sit delta lower than ours: our face meets two of them, split where they meet.
+                int delta = neighbourDrop - drop, lowRow, highRow, split;
+                if (delta >= 0) { lowRow = vy; highRow = vy + 1; split = bottom + voxel - delta; }
+                else { lowRow = vy - 1; highRow = vy; split = bottom - delta; }
+                for (int part = 0; part < 2; part++) {
+                    int from = part == 0 ? bottom : Math.max(bottom, split), to = part == 0 ? Math.min(split, top) : top;
+                    if (to <= from) continue;
+                    int row = part == 0 ? lowRow : highRow;
+                    BlockState neighbour = at(job, nx, row, nz);
+                    int group;
+                    if (drawn(job, nx, row, nz)) {
+                        // The cubes there are drawn up close; water carries on into theirs without a wall.
+                        if (liquid && seeThrough(neighbour) || vy < tops[cell] - SEAM_DEPTH) continue;
+                        group = direction.get3DDataValue();
+                    } else if (hides(state, neighbour, direction)) {
+                        if (wall < 0 || liquid || vy < sideTops[wall][wall < 2 ? x : z] - WALL_DEPTH) continue;
+                        group = FIRST_WALL + wall;
+                    } else group = direction.get3DDataValue();
+                    if (biome == null) biome = section.getBiomes().get(x >> 2, y >> 2, z >> 2);
+                    if (liquid) waterFace(state, biome, direction, x, z, from, to - from);
+                    else {
+                        int index = direction.get3DDataValue() - 2;
+                        List<Piece> list = pieces[index][cell];
+                        if (list == null) list = pieces[index][cell] = new ArrayList<>(2);
+                        list.add(new Piece(from, to, look(state, biome, direction, sky), group));
                     }
                 }
             }
         }
 
-        private static int index(Direction direction, int slice, int u, int w) {
-            return switch (direction.getAxis()) {
-                case Y -> (slice * 16 + w) * 16 + u;
-                case Z -> (w * 16 + slice) * 16 + u;
-                case X -> (w * 16 + u) * 16 + slice;
-            };
+        /**
+         * The drop of a voxel column in the next column; unknown columns count as level with this
+         * one. Both columns lower their rows the same way, so a drop compares directly with ours.
+         */
+        private int sideDrop(int wall, int nx, int nz, int own) {
+            Side side = job.sides == null ? null : job.sides[wall];
+            if (side == null || (nx < 0 || nx > 15) && (nz < 0 || nz > 15)) return own;
+            return side.drops[(nz & 15) * 16 + (nx & 15)];
         }
 
-        private static void rectangle(Job job, Targets targets, int v, Direction direction, int slice, int u, int w, int width, int tall, Look look) {
-            int x, vy, z, sx, sy, sz;
-            switch (direction.getAxis()) {
-                case Y -> { x = u; vy = slice; z = w; sx = width; sy = 1; sz = tall; }
-                case Z -> { x = u; vy = w; z = slice; sx = width; sy = tall; sz = 1; }
-                default -> { x = slice; vy = w; z = u; sx = 1; sy = tall; sz = width; }
+        /** A face's look id plus its light, which faces must share to merge. */
+        private long look(BlockState state, Holder<Biome> biome, Direction direction, int sky) {
+            int id = job.looks.id(job.faces, state, direction, biome, job.textured, job.shaderIds);
+            return (long) id << 8 | sky;
+        }
+
+        private WaterLook waterLook(BlockState state, Holder<Biome> biome, Direction direction) {
+            return new WaterLook(state, colour(state, biome, direction), direction);
+        }
+
+        /** Merges each voxel column's side pieces upward, then matching runs along the row, and packs them. */
+        private void emitSides(IntArrayList[] groups) {
+            for (int index = 0; index < 4; index++) {
+                Direction direction = DIRECTIONS[index + 2];
+                boolean alongX = direction.getAxis() == Direction.Axis.Z;
+                List<Piece>[] cells = pieces[index];
+                for (List<Piece> list : cells) if (list != null && list.size() > 1) stack(list);
+                for (int plane = 0; plane < 16; plane++) {
+                    for (int u = 0; u < 16; u++) {
+                        List<Piece> list = cells[alongX ? plane * 16 + u : u * 16 + plane];
+                        if (list == null) continue;
+                        for (Piece piece : list) {
+                            if (piece.used) continue;
+                            int width = 1;
+                            while (u + width < 16) {
+                                Piece next = match(cells[alongX ? plane * 16 + u + width : (u + width) * 16 + plane], piece);
+                                if (next == null) break;
+                                next.used = true;
+                                width++;
+                            }
+                            int x = alongX ? u : plane + (direction == Direction.EAST ? 1 : 0);
+                            int z = alongX ? plane + (direction == Direction.SOUTH ? 1 : 0) : u;
+                            int from = Math.floorDiv(piece.from + 8, 16), to = Math.floorDiv(piece.to + 8, 16);
+                            if (to > from) pack(groups[piece.group], x, z, direction, width, piece.from, to - from, piece.look);
+                        }
+                    }
+                }
             }
-            BufferBuilder builder = targets.builder(look.target);
-            BlockState state = look.state;
-            ShaderBlocks.begin(builder, job.shaderIds, state, !state.getFluidState().isEmpty(), x, vy & 15, z);
-            face(builder, job, state, look.argb, direction, x * v, vy * v, z * v, sx * v, sy * v, sz * v, look.light, false);
+        }
+
+        /** Packs one face: y in 1/256 blocks, extent in 1/16 blocks for side faces or depth - 1 for up and down faces. */
+        private void pack(IntArrayList out, int x, int z, Direction direction, int width, int y256, int extent, long look) {
+            int slot = job.slot, light = (int) (look & 0xFF);
+            out.add(x | z << 5 | direction.get3DDataValue() << 10 | (width - 1) << 13 | light << 17 | (slot & 0x7F) << 25);
+            out.add(Math.floorDiv(y256 + 8, 16));
+            out.add(Math.min(extent, 0xFFFFF) | (slot >>> 7) << 20);
+            out.add((int) (look >>> 8));
+        }
+
+        /** One water face drawn on its own, from {@code y} up by {@code height} (both in 1/256 blocks); up and down faces take no height. */
+        private void waterFace(BlockState state, Holder<Biome> biome, Direction direction, int x, int z, int y, int height) {
+            float unit = 1.0F / UNIT;
+            BufferBuilder builder = water();
+            ShaderBlocks.begin(builder, job.shaderIds, state, true, x, 0, z);
+            face(builder, state, colour(state, biome, direction), direction, x * v, y * unit, z * v, v, height * unit, v,
+                    LightTexture.FULL_SKY, job.textured);
             ShaderBlocks.end(builder, job.shaderIds);
         }
+
+        BufferBuilder water() {
+            if (water == null) {
+                waterMemory = new ByteBufferBuilder(8192);
+                water = new BufferBuilder(waterMemory, VertexFormat.Mode.QUADS, DefaultVertexFormat.BLOCK);
+            }
+            return water;
+        }
+
+        /** A water face's vertex colour: its biome tint, times its average colour when flat, shaded for its side. */
+        int colour(BlockState state, Holder<Biome> biome, Direction direction) {
+            FarFaces.Face face = job.faces.face(state, direction);
+            int tint = job.faces.tint(state, biome, face);
+            int rgb = job.textured ? tint : multiply(face.rgb(), tint);
+            // Flat faces have no texture to carry water's see-through alpha, so the vertices do.
+            int alpha = job.textured ? 255 : face.rgb() >>> 24;
+            return alpha << 24 | shade(rgb, job.shade[direction.get3DDataValue()]);
+        }
+
+        /** One side of a box of blocks, in blocks from the column's base. */
+        void face(BufferBuilder builder, BlockState state, int argb, Direction direction,
+                  float x, float y, float z, float sx, float sy, float sz, int light, boolean textured) {
+            FarFaces.Face face = textured ? job.faces.face(state, direction) : null;
+            float u0 = face != null ? face.u0() : job.white[0], u1 = face != null ? face.u1() : job.white[2];
+            float v0 = face != null ? face.v0() : job.white[1], v1 = face != null ? face.v1() : job.white[3];
+            float x1 = x + sx, y1 = y + sy, z1 = z + sz;
+            float nx = direction.getStepX(), ny = direction.getStepY(), nz = direction.getStepZ();
+            switch (direction) {
+                case UP -> quad(builder, argb, light, nx, ny, nz, u0, v0, u1, v1, x, y, z, x, y, z1, x1, y, z1, x1, y, z);
+                case DOWN -> quad(builder, argb, light, nx, ny, nz, u0, v0, u1, v1, x, y, z1, x, y, z, x1, y, z, x1, y, z1);
+                case NORTH -> quad(builder, argb, light, nx, ny, nz, u0, v0, u1, v1, x1, y1, z, x1, y, z, x, y, z, x, y1, z);
+                case SOUTH -> quad(builder, argb, light, nx, ny, nz, u0, v0, u1, v1, x, y1, z1, x, y, z1, x1, y, z1, x1, y1, z1);
+                case WEST -> quad(builder, argb, light, nx, ny, nz, u0, v0, u1, v1, x, y1, z, x, y, z, x, y, z1, x, y1, z1);
+                case EAST -> quad(builder, argb, light, nx, ny, nz, u0, v0, u1, v1, x1, y1, z1, x1, y, z1, x1, y, z, x1, y1, z);
+            }
+        }
+    }
+
+    /** A visible part of a voxel's side, from and to in 1/256 blocks above the column's base. */
+    private static final class Piece {
+        int from, to;
+        final long look;
+        final int group;
+        boolean used;
+
+        Piece(int from, int to, long look, int group) { this.from = from; this.to = to; this.look = look; this.group = group; }
+    }
+
+    /** Joins a voxel column's pieces that touch and look the same into one tall piece. */
+    private static void stack(List<Piece> list) {
+        list.sort((a, b) -> Integer.compare(a.from, b.from));
+        List<Piece> merged = new ArrayList<>(list.size());
+        for (Piece piece : list) {
+            Piece last = merged.isEmpty() ? null : merged.getLast();
+            if (last != null && last.to == piece.from && last.look == piece.look && last.group == piece.group) last.to = piece.to;
+            else merged.add(piece);
+        }
+        list.clear();
+        list.addAll(merged);
+    }
+
+    @Nullable private static Piece match(@Nullable List<Piece> list, Piece piece) {
+        if (list == null) return null;
+        for (Piece other : list) {
+            if (!other.used && other != piece && other.from == piece.from && other.to == piece.to && other.look == piece.look
+                    && other.group == piece.group) return other;
+        }
+        return null;
+    }
+
+    private record WaterLook(BlockState state, int argb, Direction direction) {}
+
+    /**
+     * Collects a column's up and down faces per voxel row and merges each row's matching faces
+     * into rectangles, so flat ground and lakes cost a few faces instead of one per voxel.
+     */
+    private static final class Flat {
+        /** Per direction (down, up) and voxel row, a 16 x 16 grid of merge ids, 0 for none. */
+        private final Map<Integer, int[]>[] rows = newRows();
+        private final List<Object> looks = new ArrayList<>();
+        private final List<Integer> heights = new ArrayList<>();
+        private final Map<Object, Integer> ids = new HashMap<>();
+
+        @SuppressWarnings("unchecked") private static Map<Integer, int[]>[] newRows() { return new Map[] {new HashMap<>(), new HashMap<>()}; }
+
+        void add(Direction direction, int x, int vy, int z, int height, Object look) {
+            int[] grid = rows[direction.get3DDataValue()].computeIfAbsent(vy, unused -> new int[256]);
+            List<Object> key = List.of(look, height);
+            Integer id = ids.get(key);
+            if (id == null) { id = looks.size() + 1; looks.add(look); heights.add(height); ids.put(key, id); }
+            grid[z * 16 + x] = id;
+        }
+
+        /** Greedy rectangles: each run along x grows along z while the next rows match. */
+        private void merge(Rectangle out) {
+            for (int d = 0; d < 2; d++) {
+                for (int[] grid : rows[d].values()) {
+                    for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+                        int id = grid[z * 16 + x];
+                        if (id == 0) continue;
+                        int width = 1;
+                        while (x + width < 16 && grid[z * 16 + x + width] == id) width++;
+                        int depth = 1;
+                        rows:
+                        while (z + depth < 16) {
+                            for (int k = 0; k < width; k++) if (grid[(z + depth) * 16 + x + k] != id) break rows;
+                            depth++;
+                        }
+                        for (int t = 0; t < depth; t++) for (int k = 0; k < width; k++) grid[(z + t) * 16 + x + k] = 0;
+                        out.accept(DIRECTIONS[d], x, z, width, depth, heights.get(id - 1), looks.get(id - 1));
+                    }
+                }
+            }
+        }
+
+        void emitQuads(Builder builder, IntArrayList[] groups) {
+            merge((direction, x, z, width, depth, height, look) ->
+                    builder.pack(groups[direction.get3DDataValue()], x, z, direction, width, height, depth - 1, (Long) look));
+        }
+
+        void emitWater(Builder builder) {
+            float unit = 1.0F / UNIT;
+            int v = builder.v;
+            merge((direction, x, z, width, depth, height, look) -> {
+                WaterLook water = (WaterLook) look;
+                BufferBuilder out = builder.water();
+                ShaderBlocks.begin(out, builder.job.shaderIds, water.state, true, x, 0, z);
+                // Only flat-coloured water merges; textured levels draw each water face on its own.
+                builder.face(out, water.state, water.argb, direction, x * v, height * unit, z * v, width * v, 0, depth * v,
+                        LightTexture.FULL_SKY, false);
+                ShaderBlocks.end(out, builder.job.shaderIds);
+            });
+        }
+    }
+
+    private interface Rectangle {
+        void accept(Direction direction, int x, int z, int width, int depth, int height, Object look);
     }
 
     /** The highest voxel row holding anything in each voxel column, or -1 where all is air. */
     private static int[] tops(LevelChunkSection[] sections) {
         int[] tops = new int[256];
-        java.util.Arrays.fill(tops, -1);
         for (int i = 0; i < 256; i++) tops[i] = top(sections, i & 15, i >> 4, false);
         return tops;
     }
@@ -262,7 +431,7 @@ final class FarMesher {
         return -1;
     }
 
-    /** Height of the water's surface above the column's base in each block column, or below zero where there is none. */
+    /** Height of the water's surface above the column's base in each voxel column, in blocks, or below zero where there is none. */
     private static float[] surface(Job job, int v) {
         float[] surface = new float[256];
         java.util.Arrays.fill(surface, -1.0F);
@@ -272,7 +441,10 @@ final class FarMesher {
             if (section == null || section.hasOnlyAir()) continue;
             for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
                 BlockState state = section.getBlockState(x, y, z);
-                if (seeThrough(state)) surface[z * 16 + x] = Math.max(surface[z * 16 + x], (si * 16 + y + Far.fill(state)) * v);
+                if (!seeThrough(state)) continue;
+                int cell = z * 16 + x;
+                float top = (si * 16 + y + Far.fill(state)) * v - job.drops[cell] / (float) UNIT;
+                surface[cell] = Math.max(surface[cell], top);
             }
         }
         return surface;
@@ -281,12 +453,6 @@ final class FarMesher {
     /** Water, which is drawn see-through after the opaque terrain; lava and the rest are opaque. */
     private static boolean seeThrough(BlockState state) {
         return state.getFluidState().is(FluidTags.WATER);
-    }
-
-    @Nullable private static Part part(BufferBuilder builder, ByteBufferBuilder memory) {
-        MeshData mesh = builder.build();
-        if (mesh == null) { memory.close(); return null; }
-        return new Part(mesh, memory);
     }
 
     /** Which neighbouring column a voxel position outside this one lies in (north, south, west, east), or -1 inside. */
@@ -330,35 +496,6 @@ final class FarMesher {
         for (int cy = by >> 4; cy < (by >> 4) + cubes; cy++) for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
             for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++) if (!drawn.contains(CubeKey.pack(cx, cy, cz))) return false;
         return true;
-    }
-
-    /** A face's vertex colour: its biome tint, times its average colour when flat, shaded for its side. */
-    private static int colour(Job job, BlockState state, Holder<Biome> biome, Direction direction, boolean seeThrough, boolean textured) {
-        FarFaces.Face face = job.faces.face(state, direction);
-        int tint = job.faces.tint(state, biome, face);
-        int rgb = textured ? tint : multiply(face.rgb(), tint);
-        // Flat faces have no texture to carry water's see-through alpha, so the vertices do.
-        int alpha = seeThrough && !textured ? face.rgb() >>> 24 : 255;
-        return alpha << 24 | shade(rgb, job.shade[direction.get3DDataValue()]);
-    }
-
-    /** One side of a box of blocks; a part-filled top voxel lowers the box's top by what it lacks. */
-    private static void face(BufferBuilder builder, Job job, BlockState state, int argb, Direction direction,
-                             float x, float y, float z, float sx, float sy, float sz, int light, boolean textured) {
-        FarFaces.Face face = textured ? job.faces.face(state, direction) : null;
-        float u0 = face != null ? face.u0() : job.white[0], u1 = face != null ? face.u1() : job.white[2];
-        float v0 = face != null ? face.v0() : job.white[1], v1 = face != null ? face.v1() : job.white[3];
-        float voxel = 1 << job.level;
-        float x1 = x + sx, y1 = y + sy - voxel * (1.0F - Far.fill(state)), z1 = z + sz;
-        float nx = direction.getStepX(), ny = direction.getStepY(), nz = direction.getStepZ();
-        switch (direction) {
-            case UP -> quad(builder, argb, light, nx, ny, nz, u0, v0, u1, v1, x, y1, z, x, y1, z1, x1, y1, z1, x1, y1, z);
-            case DOWN -> quad(builder, argb, light, nx, ny, nz, u0, v0, u1, v1, x, y, z1, x, y, z, x1, y, z, x1, y, z1);
-            case NORTH -> quad(builder, argb, light, nx, ny, nz, u0, v0, u1, v1, x1, y1, z, x1, y, z, x, y, z, x, y1, z);
-            case SOUTH -> quad(builder, argb, light, nx, ny, nz, u0, v0, u1, v1, x, y1, z1, x, y, z1, x1, y, z1, x1, y1, z1);
-            case WEST -> quad(builder, argb, light, nx, ny, nz, u0, v0, u1, v1, x, y1, z, x, y, z, x, y, z1, x, y1, z1);
-            case EAST -> quad(builder, argb, light, nx, ny, nz, u0, v0, u1, v1, x1, y1, z1, x1, y, z1, x1, y, z, x1, y1, z);
-        }
     }
 
     /** Corners in order top-left, bottom-left, bottom-right, top-right as seen from outside. */

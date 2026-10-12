@@ -13,12 +13,18 @@ import net.neoforged.fml.ModList;
  * Does nothing without Iris or with no pack in use.
  */
 final class ShaderBlocks {
-    private static final boolean IRIS = ModList.get() != null && ModList.get().isLoaded("iris");
+    static final boolean IRIS = ModList.get() != null && ModList.get().isLoaded("iris");
 
     private ShaderBlocks() {}
 
     /** The pack's block ids, or null when no pack is in use. Taken once per mesh, on the client thread. */
     @Nullable static Object2IntMap<BlockState> ids() { return IRIS ? IrisIds.ids() : null; }
+
+    /** True while a shader pack is in use. */
+    static boolean packInUse() { return IRIS && net.irisshaders.iris.Iris.isPackInUseQuick(); }
+
+    /** The pack's Voxy fragment code for the current dimension, or null when it has none (see {@link FarPackPatch}). */
+    @Nullable static String voxyPatch() { return IRIS ? FarPackPatch.current() : null; }
 
     /** True while a shader pack draws its shadow map, when only shadow casters are wanted. */
     static boolean shadowPass() {

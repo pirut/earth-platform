@@ -42,9 +42,11 @@ import org.joml.Matrix4f;
 
 /**
  * Draws the voxel pyramid beyond the streamed cubes, the way Voxy does: columns of voxel
- * sections from the server, meshed on workers with the blocks' own textures and drawn with the
- * vanilla solid terrain shader, so shader packs light them like any other terrain. Voxels whose
- * cubes the client already draws are left out.
+ * sections from the server, meshed on workers into 16-byte faces and drawn by the far terrain's
+ * own shader, a multi-draw per buffer of faces (see {@link FarGpu}). With a shader pack the faces
+ * go through the pack's Voxy fragment code, so the pack lights them as it lights Voxy's terrain.
+ * Voxels whose cubes the client already draws are left out. Water keeps the block format and the
+ * pack's own water shader.
  */
 public final class FarRenderer {
     /** Distance to the nearest edge of the coarsest level's square. */
@@ -52,10 +54,10 @@ public final class FarRenderer {
     /** Fog fades far terrain out before the coarsest square's nearest edge; the depth range covers its corners. */
     public static final float FOG_START = 0.25F * REACH, FOG_END = 0.95F * REACH, DEPTH_FAR = 2.0F * REACH;
     /**
-     * Levels drawn with block textures; coarser ones use each face's average colour, as real terrain
-     * blurs at that distance, which lets matching faces merge into far fewer quads.
+     * Levels drawn with block textures; coarser ones use each face's average colour, which is what
+     * a texture blurs to at that distance anyway and stays steady when the camera moves.
      */
-    private static final int TEXTURED_LEVELS = Integer.getInteger("earthplatform.far.textured", 1);
+    private static final int TEXTURED_LEVELS = Integer.getInteger("earthplatform.far.textured", 2);
     private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "block/far_white");
     private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
             SETTLE_TICKS = 3, UPLOADS_PER_FRAME = 8;
@@ -71,6 +73,9 @@ public final class FarRenderer {
     private final ClientCubeWorld world;
     private final Registry<Biome> biomes;
     private final FarFaces faces = new FarFaces();
+    private final FarLooks looks = new FarLooks();
+    @Nullable private FarGpu gpu;
+    private boolean unsupported;
     private final Long2ObjectOpenHashMap<Column> columns = new Long2ObjectOpenHashMap<>();
     private final Long2IntOpenHashMap requested = new Long2IntOpenHashMap();
     private final ConcurrentLinkedQueue<FarMesher.Built> built = new ConcurrentLinkedQueue<>();
@@ -86,26 +91,28 @@ public final class FarRenderer {
         final long key;
         final int level, x0, z0, bottom;
         final LevelChunkSection[] sections;
+        final short[] drops;
         final AABB box;
         @Nullable LongOpenHashSet drawnCubes;
-        int lastWanted, version, due = -1;
+        int lastWanted, version, due = -1, slot = -1;
         boolean building, stale, meshed;
-        VertexBuffer buffer;
-        /** Faces hidden by the next column north, south, west and east, for when that column is not drawn. */
-        final VertexBuffer[] walls = new VertexBuffer[4];
-        VertexBuffer water;
-        /** Vertex bytes uploaded for this column, for the debug screen. */
+        @Nullable FarGpu.Allocation faces;
+        @Nullable VertexBuffer water;
+        /** Face and water bytes uploaded for this column, for the debug screen. */
         long bytes;
         double distance;
 
-        Column(long key, int bottom, LevelChunkSection[] sections) {
+        Column(long key, int bottom, LevelChunkSection[] sections, short[] drops) {
             this.key = key;
             this.level = Far.level(key);
             this.bottom = bottom;
             this.sections = sections;
+            this.drops = drops;
             int width = Far.width(level);
             x0 = Far.x(key) * width; z0 = Far.z(key) * width;
-            box = new AABB(x0, (double) bottom * width, z0, x0 + width, (double) (bottom + Math.max(1, sections.length)) * width, z0 + width);
+            // Drops lower a column by up to a voxel.
+            box = new AABB(x0, (double) bottom * width - Far.voxel(level), z0, x0 + width,
+                    (double) (bottom + Math.max(1, sections.length)) * width, z0 + width);
         }
 
         int baseY() { return bottom * Far.width(level); }
@@ -120,10 +127,14 @@ public final class FarRenderer {
             };
         }
 
-        void close() {
-            if (buffer != null) { buffer.close(); buffer = null; }
+        void close(@Nullable FarGpu gpu) {
             if (water != null) { water.close(); water = null; }
-            for (int side = 0; side < 4; side++) if (walls[side] != null) { walls[side].close(); walls[side] = null; }
+            if (gpu != null) {
+                gpu.free(faces);
+                if (slot >= 0) gpu.freeSlot(slot);
+            }
+            faces = null;
+            slot = -1;
         }
     }
 
@@ -134,11 +145,25 @@ public final class FarRenderer {
     }
 
     public int columnCount() { return columns.size(); }
-    /** Vertex memory of every uploaded column, in bytes. */
+    /** GPU memory of every uploaded column's faces and water, in bytes. */
     public long vertexBytes() {
         long total = 0;
         for (Column column : columns.values()) total += column.bytes;
         return total;
+    }
+
+    /** The far terrain's GPU side, made on first use on the render thread; null where GL is too old. */
+    @Nullable private FarGpu gpu() {
+        if (gpu == null && !unsupported) {
+            if (!FarGpu.supported()) {
+                unsupported = true;
+                EarthPlatformMod.LOGGER.warn("Far terrain needs OpenGL 3.3; it is off");
+                return null;
+            }
+            gpu = new FarGpu();
+            gpu.looks(looks);
+        }
+        return gpu;
     }
     public int drawnCount() { return drawn.size(); }
 
@@ -152,10 +177,10 @@ public final class FarRenderer {
             byte[] bytes = payload.sections().get(i);
             if (bytes.length > 0) sections[i] = CubeCodec.readSection(bytes, biomes);
         }
-        Column column = new Column(payload.key(), payload.bottom(), sections);
+        Column column = new Column(payload.key(), payload.bottom(), sections, payload.drops());
         column.lastWanted = ticks;
         Column old = columns.put(column.key, column);
-        if (old != null) { column.drawnCubes = old.drawnCubes; old.close(); }
+        if (old != null) { column.drawnCubes = old.drawnCubes; old.close(gpu); }
         schedule(column);
         int level = column.level, x = Far.x(column.key), z = Far.z(column.key);
         for (Direction direction : Direction.Plane.HORIZONTAL) {
@@ -205,7 +230,7 @@ public final class FarRenderer {
         for (Column column : old) {
             if (excess <= 0 && ticks - column.lastWanted <= KEEP_TICKS) break;
             columns.remove(column.key);
-            column.close();
+            column.close(gpu);
             excess--;
         }
     }
@@ -239,31 +264,34 @@ public final class FarRenderer {
 
     private void submit(Column column) {
         column.due = -1;
+        FarGpu gpu = gpu();
+        if (gpu == null) return;
         if (column.building) { column.stale = true; return; }
         column.building = true;
         column.stale = false;
+        if (column.slot < 0) column.slot = gpu.slot(column.x0, column.baseY(), column.z0, column.level);
         FarMesher.Side[] sides = new FarMesher.Side[4];
         for (int i = 0; i < 4; i++) {
             Column side = columns.get(column.neighbour(i));
-            if (side != null) sides[i] = new FarMesher.Side(side.sections, side.bottom);
+            if (side != null) sides[i] = new FarMesher.Side(side.sections, side.bottom, side.drops);
         }
         var level = world.client();
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = level.getShade(direction, true);
-        FarMesher.Job job = new FarMesher.Job(column.key, ++column.version, column.level, column.x0, column.z0, column.bottom,
-                column.sections, sides, column.drawnCubes, shade, column.level <= TEXTURED_LEVELS,
-                white(), faces, ShaderBlocks.ids());
+        FarMesher.Job job = new FarMesher.Job(column.key, ++column.version, column.level, column.slot, column.x0, column.z0, column.bottom,
+                column.sections, column.drops, sides, column.drawnCubes, column.level <= TEXTURED_LEVELS, looks, faces,
+                ShaderBlocks.ids(), shade, white());
         MESHER.execute(() -> {
             try { built.add(FarMesher.build(job)); }
             catch (Throwable failure) {
                 EarthPlatformMod.LOGGER.error("Far column mesh failed", failure);
-                built.add(new FarMesher.Built(job.key(), -job.version(), null, null, null));
+                built.add(new FarMesher.Built(job.key(), -job.version(), new int[0], new int[FarMesher.GROUPS], null));
             }
         });
     }
 
     /** Uploads finished meshes: a few every frame, and more while the frame's small time budget lasts. */
-    private void upload() {
+    private void upload(FarGpu gpu) {
         long deadline = System.nanoTime() + UPLOAD_NANOS;
         for (int n = 0; n < UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
             FarMesher.Built result = built.poll();
@@ -274,10 +302,8 @@ public final class FarRenderer {
             if (result.version() > 0) {
                 column.meshed = true;
                 column.bytes = result.bytes();
-                column.buffer = upload(column.buffer, result.main());
-                for (int side = 0; side < 4; side++) {
-                    column.walls[side] = upload(column.walls[side], result.walls() == null ? null : result.walls()[side]);
-                }
+                gpu.free(column.faces);
+                column.faces = gpu.upload(result.quads(), result.counts());
                 column.water = upload(column.water, result.water());
             }
             if (column.stale) schedule(column);
@@ -285,7 +311,7 @@ public final class FarRenderer {
     }
 
     /**
-     * The middle two texels of the plain white sprite (u0, v0, u1, v1) for untextured faces. The
+     * The middle two texels of the plain white sprite (u0, v0, u1, v1) for untextured water. The
      * span is kept, not collapsed to a point, as shader packs derive surface tangents from it.
      */
     private static float[] white() {
@@ -295,7 +321,7 @@ public final class FarRenderer {
         return new float[] {u - du, v - dv, u + du, v + dv};
     }
 
-    /** Puts a built part into a buffer, making or freeing the buffer as needed. */
+    /** Puts a built water mesh into a buffer, making or freeing the buffer as needed. */
     @Nullable private static VertexBuffer upload(@Nullable VertexBuffer buffer, @Nullable FarMesher.Part part) {
         if (part == null) {
             if (buffer != null) buffer.close();
@@ -315,8 +341,9 @@ public final class FarRenderer {
 
     /** Draws the columns for the camera's squares, using a finer level only once all four of its columns are ready. */
     public void draw(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
-        if (closed) return;
-        if (uploadedFrame != frame) { uploadedFrame = frame; upload(); }
+        FarGpu gpu = closed ? null : gpu();
+        if (gpu == null) return;
+        if (uploadedFrame != frame) { uploadedFrame = frame; upload(gpu); }
         Vec3 position = camera.getPosition();
         int bx = (int) Math.floor(position.x), bz = (int) Math.floor(position.z);
         drawn.clear();
@@ -328,7 +355,7 @@ public final class FarRenderer {
         for (Column column : drawn) drawnKeys.add(column.key);
         List<Column> visible = new ArrayList<>(drawn.size());
         for (Column column : drawn) {
-            if (column.buffer == null && column.water == null && !hasWalls(column) || !frustum.isVisible(column.box)) continue;
+            if (column.faces == null && column.water == null || !frustum.isVisible(column.box)) continue;
             double dx = column.box.getCenter().x - position.x, dz = column.box.getCenter().z - position.z;
             column.distance = dx * dx + dz * dz;
             visible.add(column);
@@ -336,26 +363,41 @@ public final class FarRenderer {
         visible.sort(Comparator.comparingDouble(column -> column.distance));
         this.visible = visible;
         if (visible.isEmpty()) return;
+        boolean pack = ShaderBlocks.packInUse();
         RenderType type = RenderType.solid();
         type.setupRenderState();
         ShaderInstance shader = RenderSystem.getShader();
+        // Applying the terrain shader binds a shader pack's terrain buffers, which the far terrain draws into too.
         shader.setDefaultUniforms(VertexFormat.Mode.QUADS, modelView, projection, Minecraft.getInstance().getWindow());
         shader.apply();
-        Uniform offset = shader.CHUNK_OFFSET;
-        for (Column column : visible) {
-            if (offset != null) {
-                offset.set((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
-                offset.upload();
+        float[] shade = new float[6];
+        for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = world.client().getShade(direction, true);
+        if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, projection, position, shade)) {
+            for (Column column : visible) {
+                FarGpu.Allocation faces = column.faces;
+                if (faces == null) continue;
+                AABB box = column.box;
+                // Only face groups turned toward the camera can show.
+                if (position.y < box.maxY) gpu.add(faces, 0);
+                if (position.y > box.minY) gpu.add(faces, 1);
+                if (position.z < box.maxZ) gpu.add(faces, 2);
+                if (position.z > box.minZ) gpu.add(faces, 3);
+                if (position.x < box.maxX) gpu.add(faces, 4);
+                if (position.x > box.minX) gpu.add(faces, 5);
+                for (int side = 0; side < 4; side++) {
+                    if (drawnKeys.contains(column.neighbour(side))) continue;
+                    boolean facing = switch (side) {
+                        case 0 -> position.z < box.minZ + 1;
+                        case 1 -> position.z > box.maxZ - 1;
+                        case 2 -> position.x < box.minX + 1;
+                        default -> position.x > box.maxX - 1;
+                    };
+                    if (facing) gpu.add(faces, FarMesher.FIRST_WALL + side);
+                }
             }
-            if (column.buffer != null) { column.buffer.bind(); column.buffer.draw(); }
-            for (int side = 0; side < 4; side++) {
-                VertexBuffer wall = column.walls[side];
-                if (wall != null && !drawnKeys.contains(column.neighbour(side))) { wall.bind(); wall.draw(); }
-            }
+            gpu.end();
         }
-        if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
         shader.clear();
-        VertexBuffer.unbind();
         type.clearRenderState();
     }
 
@@ -389,11 +431,6 @@ public final class FarRenderer {
         type.clearRenderState();
     }
 
-    private static boolean hasWalls(Column column) {
-        for (VertexBuffer wall : column.walls) if (wall != null) return true;
-        return false;
-    }
-
     private void visit(int level, int x, int z, int bx, int bz) {
         if (Far.refined(level, x, z, bx, bz) && childrenReady(level, x, z, bx, bz)) {
             for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) visit(level - 1, 2 * x + dx, 2 * z + dz, bx, bz);
@@ -418,9 +455,10 @@ public final class FarRenderer {
 
     void close() {
         closed = true;
-        for (Column column : columns.values()) column.close();
+        for (Column column : columns.values()) column.close(gpu);
         columns.clear();
         FarMesher.Built result;
         while ((result = built.poll()) != null) result.free();
+        if (gpu != null) { gpu.close(); gpu = null; }
     }
 }

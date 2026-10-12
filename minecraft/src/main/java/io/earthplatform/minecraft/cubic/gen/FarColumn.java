@@ -13,4 +13,10 @@ public final class FarColumn {
     public int bottom;
     /** Sections from the bottom upward; null for one that is all air. Everything above is air. */
     public final List<LevelChunkSection> sections = new ArrayList<>();
+    /**
+     * For each voxel column (x + 16 z), how far its whole stack is lowered, in 1/{@link
+     * io.earthplatform.minecraft.cubic.far.Far#DROP_UNIT} blocks, so its top meets the real ground
+     * or water height; from 0 up to one voxel.
+     */
+    public final short[] drops = new short[256];
 }
