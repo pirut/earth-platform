@@ -45,7 +45,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
  * remade and pushed again when a player's edits are saved, so builds show from afar.
  */
 public final class FarServer {
-    private static final int SEND_PER_TICK = 32, CACHE = 4096;
+    private static final int SEND_PER_TICK = 48, CACHE = 4096;
     private static final AtomicInteger THREADS = new AtomicInteger();
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 

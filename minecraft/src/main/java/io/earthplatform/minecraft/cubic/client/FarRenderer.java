@@ -47,12 +47,17 @@ import org.joml.Matrix4f;
  * cubes the client already draws are left out.
  */
 public final class FarRenderer {
+    /** Distance to the nearest edge of the coarsest level's square. */
+    private static final float REACH = Far.OUTER * (float) Far.width(Far.MAX_LEVEL);
     /** Fog fades far terrain out before the coarsest square's nearest edge; the depth range covers its corners. */
-    public static final float FOG_START = 1500.0F, FOG_END = 7000.0F, DEPTH_FAR = 16384.0F;
-    /** Levels drawn with block textures; coarser ones use each face's average colour, as real terrain blurs at that distance. */
-    private static final int TEXTURED_LEVELS = Integer.getInteger("earthplatform.far.textured", 3);
+    public static final float FOG_START = 0.25F * REACH, FOG_END = 0.95F * REACH, DEPTH_FAR = 2.0F * REACH;
+    /**
+     * Levels drawn with block textures; coarser ones use each face's average colour, as real terrain
+     * blurs at that distance, which lets matching faces merge into far fewer quads.
+     */
+    private static final int TEXTURED_LEVELS = Integer.getInteger("earthplatform.far.textured", 1);
     private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "block/far_white");
-    private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 2400,
+    private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
             SETTLE_TICKS = 3, UPLOADS_PER_FRAME = 8;
     private static final AtomicInteger THREADS = new AtomicInteger();
     private static final ExecutorService MESHER = Executors.newFixedThreadPool(2, runnable -> {
@@ -88,6 +93,8 @@ public final class FarRenderer {
         /** Faces hidden by the next column north, south, west and east, for when that column is not drawn. */
         final VertexBuffer[] walls = new VertexBuffer[4];
         VertexBuffer water;
+        /** Vertex bytes uploaded for this column, for the debug screen. */
+        long bytes;
         double distance;
 
         Column(long key, int bottom, LevelChunkSection[] sections) {
@@ -126,6 +133,12 @@ public final class FarRenderer {
     }
 
     public int columnCount() { return columns.size(); }
+    /** Vertex memory of every uploaded column, in bytes. */
+    public long vertexBytes() {
+        long total = 0;
+        for (Column column : columns.values()) total += column.bytes;
+        return total;
+    }
     public int drawnCount() { return drawn.size(); }
 
     // Columns ------------------------------------------------------------------------------------
@@ -257,6 +270,7 @@ public final class FarRenderer {
             column.building = false;
             if (result.version() > 0) {
                 column.meshed = true;
+                column.bytes = result.bytes();
                 column.buffer = upload(column.buffer, result.main());
                 for (int side = 0; side < 4; side++) {
                     column.walls[side] = upload(column.walls[side], result.walls() == null ? null : result.walls()[side]);

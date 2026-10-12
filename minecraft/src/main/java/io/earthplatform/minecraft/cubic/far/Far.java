@@ -8,8 +8,9 @@ import net.minecraft.world.level.block.state.BlockState;
 /**
  * Far terrain as a voxel pyramid, the way Voxy draws distance: level L holds 16^3-voxel sections
  * whose voxels are 2^L blocks, stacked in columns. Every level keeps a square of columns around
- * the player and the next finer level replaces its middle, so voxels grow with distance and the
- * coarsest level (64-block voxels) reaches at least 7 km.
+ * the player and the next finer level replaces its middle, so voxels grow with distance: each
+ * level reaches about 120 of its voxels from the player before the next coarser one takes over,
+ * and the coarsest level (64-block voxels) reaches at least 15 km.
  *
  * <p>A water voxel's level property says how full it is: level k above 0 fills the bottom
  * (16 - k) / 16 of the voxel, so the water surface sits at its real height on every level.
@@ -17,7 +18,7 @@ import net.minecraft.world.level.block.state.BlockState;
 public final class Far {
     public static final int MIN_LEVEL = 1, MAX_LEVEL = 6, SIZE = 16;
     /** Half-width, in columns, of the middle of each level that the next finer level takes over. */
-    public static final int HOLE = 3;
+    public static final int HOLE = 7;
     /** Half-width of the coarsest level's square. */
     public static final int OUTER = 2 * HOLE + 1;
     /** How far a request may stray from the player, in columns of its level, before the server ignores it. */

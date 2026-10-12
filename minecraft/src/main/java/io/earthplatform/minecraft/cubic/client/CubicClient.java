@@ -79,7 +79,8 @@ public final class CubicClient {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null) return;
         event.getLeft().add("Cubic: " + world.loadedCubes() + " cubes, " + world.renderer().meshCount() + " meshes, "
-                + world.renderer().pendingCount() + " to compile, " + world.far().drawnCount() + "/" + world.far().columnCount() + " far columns");
+                + world.renderer().pendingCount() + " to compile, " + world.far().drawnCount() + "/" + world.far().columnCount() + " far columns, "
+                + world.far().vertexBytes() / (1 << 20) + " MB");
     }
 
     /** Pushes terrain fog out to the far terrain's reach; effect and fluid fog stay as they are. */
