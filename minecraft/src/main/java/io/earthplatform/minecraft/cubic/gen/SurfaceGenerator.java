@@ -32,7 +32,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             GRASS = Blocks.GRASS_BLOCK.defaultBlockState(), SAND = Blocks.SAND.defaultBlockState(),
             GRAVEL = Blocks.GRAVEL.defaultBlockState(), WATER = Blocks.WATER.defaultBlockState(),
             SNOW_BLOCK = Blocks.SNOW_BLOCK.defaultBlockState(), SNOW = Blocks.SNOW.defaultBlockState().setValue(SnowLayerBlock.LAYERS, 1),
-            LAVA = Blocks.LAVA.defaultBlockState();
+            LAVA = Blocks.LAVA.defaultBlockState(), MUD = Blocks.MUD.defaultBlockState();
 
     /** Tree shapes. */
     public enum Tree { OAK, BIRCH, SPRUCE }
@@ -72,6 +72,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** The cover of a column, from its ground, water and slope (summed block steps across it). */
     protected abstract Surface surface(int x, int z, int ground, int water, int slope);
+
+    /** The same for a far level's voxel centre; levels with big voxels may use coarser, cheaper data. */
+    protected Surface farSurface(int level, int x, int z, int ground, int water, int slope) { return surface(x, z, ground, water, slope); }
 
     /** Columns at most two above this level keep caves well under the ground, so seabeds and shores hold their water. */
     protected abstract int shoreLevel();
@@ -146,7 +149,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             int g = (cz + 1) * 18 + cx + 1, h = ground[g], cell = cz * 16 + cx;
             int wx = x0 + cx * v + half, wz = z0 + cz * v + half;
             int slope = (Math.abs(ground[g + 1] - ground[g - 1]) + Math.abs(ground[g + 18] - ground[g - 18])) / v;
-            Surface surface = surface(wx, wz, h, water[g], slope);
+            Surface surface = farSurface(level, wx, wz, h, water[g], slope);
             biome[cell] = surface.biome();
             top[cell] = surface.top();
             under[cell] = v > 2 ? STONE : surface.under();
@@ -257,7 +260,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
      * many blocks wide cannot follow individual trees.
      */
     private BlockState canopy(Surface surface, int wx, int wz, int v) {
-        if (surface.top() != GRASS || surface.trees() <= 0) return null;
+        if (surface.top() != GRASS && surface.top() != MUD || surface.trees() <= 0) return null;
         long r = mix(wx, v, wz);
         // Crowns cover a bit over half of each tree's cell.
         if (Math.floorMod(r, 1000) >= surface.trees() * 6) return null;

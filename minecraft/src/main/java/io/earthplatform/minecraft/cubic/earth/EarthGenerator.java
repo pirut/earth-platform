@@ -4,11 +4,13 @@ import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.globe.GlobalElevation;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.TerrariumTileSource;
+import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import javax.annotation.Nullable;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
 import net.minecraft.util.Mth;
@@ -25,24 +27,35 @@ import net.minecraft.world.level.levelgen.synth.SimplexNoise;
  * home latitude (the Web Mercator grid keeps shapes true everywhere, with sizes growing toward the
  * poles). Sea level is Y 63: the sea's top water block is Y 62, so ground at 0 m is level with
  * it. Elevation streams from AWS Terrain Tiles; small relief that the source is too coarse to hold
- * is added by noise, more on steep ground, none on beaches. Without land cover data yet, climate
- * comes from latitude and height and wetness from broad noise.
+ * is added by noise, more on steep ground, none on beaches. Climate comes from latitude and height.
+ *
+ * <p>Worlds made with land cover read ESA WorldCover (10 m classes) for what covers the ground:
+ * forests, shrubs, grass, bare rock and sand, snow and ice, wetlands and mangroves, and lakes and
+ * rivers, whose water sits at the surveyed surface with a bed that deepens away from the shore. The
+ * world is wild land only: towns take the cover their climate gives and farm fields are grassland.
+ * The 10 m pixel edges are broken up by a small warp so borders look natural. Worlds
+ * made before land cover keep broad noise for wetness and have no inland water.
  */
 public final class EarthGenerator extends SurfaceGenerator {
     public static final String ID = "earth-v1";
     /** Top water block of the sea. */
     public static final int SEA = 62;
     private static final BlockState COARSE_DIRT = Blocks.COARSE_DIRT.defaultBlockState(),
-            SANDSTONE = Blocks.SANDSTONE.defaultBlockState();
+            SANDSTONE = Blocks.SANDSTONE.defaultBlockState(), PACKED_ICE = Blocks.PACKED_ICE.defaultBlockState(),
+            CLAY = Blocks.CLAY.defaultBlockState(), MOSS = Blocks.MOSS_BLOCK.defaultBlockState(), PODZOL = Blocks.PODZOL.defaultBlockState(),
+            ANDESITE = Blocks.ANDESITE.defaultBlockState(), RED_SAND = Blocks.RED_SAND.defaultBlockState(),
+            TERRACOTTA = Blocks.TERRACOTTA.defaultBlockState();
 
     private final EarthSettings settings;
     private final MercatorGrid grid;
     private final TerrariumTileSource tiles;
     private final GlobalElevation[] elevation = new GlobalElevation[TerrariumTileSource.MAX_ZOOM + 1];
-    private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth;
+    @Nullable private final WorldCoverSource cover;
+    private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth, warpX, warpZ, patches;
     private final Holder<Biome> ocean, deepOcean, coldOcean, deepColdOcean, frozenOcean, lukewarmOcean, warmOcean,
             beach, snowyBeach, stonyShore, snowySlopes, frozenPeaks, stonyPeaks, meadow, taiga, oldTaiga, forest,
-            plains, jungle, desert, savanna;
+            plains, jungle, desert, savanna, river, frozenRiver, swamp, mangroveSwamp, snowyPlains, birchForest,
+            badlands, sparseJungle, windsweptSavanna, snowyTaiga, grove;
 
     private record Noises(RandomSource random, SimplexNoise[] noise) {
         static Noises of(long seed) {
@@ -53,15 +66,21 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
     }
 
-    public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles) {
-        this(seed, biomes, settings, tiles, Noises.of(seed));
+    /** @param cover land cover, or null for a world made before land cover, which keeps noise for wetness */
+    public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles, @Nullable WorldCoverSource cover) {
+        this(seed, biomes, settings, tiles, cover, Noises.of(seed));
     }
 
-    private EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles, Noises noises) {
+    private EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
+                           @Nullable WorldCoverSource cover, Noises noises) {
         super(seed, biomes, noises.random);
         this.settings = settings;
         this.grid = new MercatorGrid(settings.metresPerBlock());
         this.tiles = tiles;
+        this.cover = cover;
+        // Drawn from their own random, after the shared one, so caves stay as they were.
+        RandomSource own = new LegacyRandomSource(seed ^ 0x434F564552L);
+        warpX = new SimplexNoise(own); warpZ = new SimplexNoise(own); patches = new SimplexNoise(own);
         for (int zoom = FAR_ZOOM; zoom <= TerrariumTileSource.MAX_ZOOM; zoom++) elevation[zoom] = new GlobalElevation(grid, tiles, zoom);
         SimplexNoise[] n = noises.noise;
         relief = n[0]; crags = n[1]; wetBroad = n[2]; wetLocal = n[3]; warmth = n[4];
@@ -73,6 +92,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         meadow = holder(biomes, Biomes.MEADOW); taiga = holder(biomes, Biomes.TAIGA); oldTaiga = holder(biomes, Biomes.OLD_GROWTH_SPRUCE_TAIGA);
         forest = holder(biomes, Biomes.FOREST); plains = holder(biomes, Biomes.PLAINS); jungle = holder(biomes, Biomes.JUNGLE);
         desert = holder(biomes, Biomes.DESERT); savanna = holder(biomes, Biomes.SAVANNA);
+        river = holder(biomes, Biomes.RIVER); frozenRiver = holder(biomes, Biomes.FROZEN_RIVER); swamp = holder(biomes, Biomes.SWAMP);
+        mangroveSwamp = holder(biomes, Biomes.MANGROVE_SWAMP); snowyPlains = holder(biomes, Biomes.SNOWY_PLAINS);
+        birchForest = holder(biomes, Biomes.BIRCH_FOREST); badlands = holder(biomes, Biomes.BADLANDS);
+        sparseJungle = holder(biomes, Biomes.SPARSE_JUNGLE); windsweptSavanna = holder(biomes, Biomes.WINDSWEPT_SAVANNA);
+        snowyTaiga = holder(biomes, Biomes.SNOWY_TAIGA); grove = holder(biomes, Biomes.GROVE);
     }
 
     @Override public String id() { return ID; }
@@ -99,7 +123,10 @@ public final class EarthGenerator extends SurfaceGenerator {
         return String.format(Locale.ROOT, "%.5f, %.5f", point.latitude(), point.longitude());
     }
 
-    @Override public String credits() { return "Elevation: AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, ETOPO1 and others)"; }
+    @Override public String credits() {
+        return "Elevation: AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, ETOPO1 and others)"
+                + (cover == null ? "" : ". Land cover: " + WorldCoverSource.ATTRIBUTION);
+    }
 
     // Height -------------------------------------------------------------------------------------
 
@@ -108,19 +135,33 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Source zoom for a far level: about one source pixel per voxel. */
     private static int zoom(int level) { return level <= 2 ? TerrariumTileSource.MAX_ZOOM : Math.max(FAR_ZOOM, 17 - level); }
 
-    @Override protected void ground(int x, int z, int[] out) { farGround(1, x, z, out); }
+    @Override protected void ground(int x, int z, int[] out) { farGround(0, x, z, out); }
 
+    /** Level 0 stands for cubes: one-block voxels, read like far level 1. */
     @Override protected void farGround(int level, int x, int z, int[] out) {
         double[] sample = new double[3];
-        double metres = elevation[zoom(level)].sample(x + 0.5, z + 0.5, sample);
-        place(x, z, metres, sample, 1 << level, out);
+        GlobalElevation dem = elevation[zoom(Math.max(1, level))];
+        double metres = dem.sample(x + 0.5, z + 0.5, sample);
+        place(dem, x, z, metres, sample, 1 << level, out);
     }
 
-    /** Ground and water of a column from its elevation, slope and sea share. */
-    private void place(int x, int z, double metres, double[] sample, int voxel, int[] out) {
+    /** Ground and water of a column from its elevation, slope, sea share and land cover. */
+    private void place(GlobalElevation dem, int x, int z, double metres, double[] sample, int voxel, int[] out) {
         if (sample[2] > 0.5) {
             out[0] = Math.min(SEA - 1, Mth.floor(SEA + 0.5 + metres));
             out[1] = SEA;
+            return;
+        }
+        if (cover != null && cover(x, z, voxel) == WorldCoverSource.WATER) {
+            int surface = lakeSurface(dem, x, z, voxel);
+            if (sample[2] > 0.02 && surface <= SEA) {
+                // Water by the coast is the sea.
+                out[0] = Math.min(SEA - 1, Mth.floor(SEA + 0.5 + metres));
+                out[1] = SEA;
+                return;
+            }
+            out[0] = surface - lakeDepth(x, z, voxel);
+            out[1] = surface;
             return;
         }
         double steep = Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1]));
@@ -130,8 +171,120 @@ public final class EarthGenerator extends SurfaceGenerator {
         int y = Mth.floor(SEA + 0.5 + metres + detail);
         // Ground beside the sea never dips under its level, so the sea stays where it is.
         if (sample[2] > 0.02 && y < SEA) y = SEA;
+        // Nor does ground beside a lake or river, unless it lies well below it, as under a dam.
+        if (cover != null) {
+            int shore = shore(dem, x, z, voxel);
+            if (shore != DRY && y < shore && y >= shore - 4) y = shore;
+        }
         out[0] = y;
         out[1] = DRY;
+    }
+
+    // Land cover ----------------------------------------------------------------------------------
+
+    /** Ground metres of a WorldCover pixel north to south. */
+    private static final double PIXEL_METRES = 2 * Math.PI * 6_371_008.8 / 360 / WorldCoverSource.PIXELS_PER_DEGREE;
+    /** Unit steps toward eight directions. */
+    private static final double[] RING_X = {1, 0.7071, 0, -0.7071, -1, -0.7071, 0, 0.7071}, RING_Z = {0, 0.7071, 1, 0.7071, 0, -0.7071, -1, -0.7071};
+
+    /**
+     * The WorldCover class of a column, read at an overview whose pixels are no bigger than a
+     * voxel. Up close the read point wanders by about half a pixel, so class borders curve.
+     */
+    private int cover(double x, double z, int voxel) {
+        double metresPerBlock = grid.groundMetresPerBlock(z);
+        if (voxel <= 8) {
+            double amplitude = 0.55 * PIXEL_METRES / metresPerBlock;
+            double nx = x / 13.0, nz = z / 13.0;
+            x += (warpX.getValue(nx, nz) + 0.5 * warpX.getValue(nx * 2.7, nz * 2.7)) * amplitude;
+            z += (warpZ.getValue(nx, nz) + 0.5 * warpZ.getValue(nx * 2.7, nz * 2.7)) * amplitude;
+        }
+        int overview = Mth.clamp(Mth.floor(Math.log(voxel * metresPerBlock / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
+        GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
+        return cover.code(point.latitude(), point.longitude(), overview);
+    }
+
+    /** Ring radii in blocks for {@link #wild}, each three times the last. */
+    private static final int[] WILD_RINGS = {300, 900, 2700, 8100};
+
+    /**
+     * The wild cover around built-up ground, so a town's site looks like the land about it: the
+     * class most of eight points on the nearest ring with any wild land agree on, or no data for
+     * the climate to decide when every ring is town or water. Bare ground only counts on a ring
+     * with nothing else, as a town's own lots and yards map as bare.
+     */
+    private int wild(double x, double z, int voxel) {
+        int[] votes = new int[8];
+        for (int radius : WILD_RINGS) {
+            int found = 0, best = WorldCoverSource.NO_DATA, most = 0;
+            boolean bare = false;
+            for (int i = 0; i < 8; i++) {
+                int code = cover(x + RING_X[i] * radius, z + RING_Z[i] * radius, Math.max(voxel, radius / 16));
+                if (code == WorldCoverSource.BARE) bare = true;
+                if (code == WorldCoverSource.BUILT_UP || code == WorldCoverSource.WATER || code == WorldCoverSource.NO_DATA
+                        || code == WorldCoverSource.BARE) continue;
+                int same = 1;
+                for (int j = 0; j < found; j++) if (votes[j] == code) same++;
+                votes[found++] = code;
+                if (same > most) { most = same; best = code; }
+            }
+            if (found > 0) return best;
+            if (bare) return WorldCoverSource.BARE;
+        }
+        return WorldCoverSource.NO_DATA;
+    }
+
+    /** Whether bare ground lies among buildings, where it is a lot or yard rather than wild rock or sand. */
+    private boolean inTown(double x, double z, int voxel) {
+        int reach = Math.max(40, voxel * 2), built = 0;
+        for (int i = 0; i < 8; i += 2) if (cover(x + RING_X[i] * reach, z + RING_Z[i] * reach, voxel) == WorldCoverSource.BUILT_UP) built++;
+        return built >= 2;
+    }
+
+    /**
+     * Top water block of a lake or river at a column: the lowest surveyed height around it, so a
+     * lake is level and its water never stands above its shore.
+     */
+    private int lakeSurface(GlobalElevation dem, double x, double z, int voxel) {
+        double r = Math.max(8, voxel);
+        double lowest = dem.metres(x + 0.5, z + 0.5);
+        lowest = Math.min(lowest, Math.min(dem.metres(x + 0.5 + r, z + 0.5), dem.metres(x + 0.5 - r, z + 0.5)));
+        lowest = Math.min(lowest, Math.min(dem.metres(x + 0.5, z + 0.5 + r), dem.metres(x + 0.5, z + 0.5 - r)));
+        return Mth.floor(SEA + 0.5 + lowest);
+    }
+
+    /** Ring radii, in blocks, for judging how far a lake column is from its shore. */
+    private static final int[] RINGS = {5, 14, 36, 90};
+
+    /** Water depth: shallow by the shore, deepening by about one block in six away from it. */
+    private int lakeDepth(int x, int z, int voxel) {
+        double scale = Math.max(1, voxel / 6.0), inner = 0, distance = -1;
+        for (int radius : RINGS) {
+            double r = radius * scale;
+            int land = 0;
+            for (int k = 0; k < 8; k++) if (cover(x + RING_X[k] * r, z + RING_Z[k] * r, voxel) != WorldCoverSource.WATER) land++;
+            if (land > 0) { distance = inner + (r - inner) * (1 - land / 8.0); break; }
+            inner = r;
+        }
+        if (distance < 0) distance = inner * 1.4;
+        double depth = 1.2 + distance / 6.0 + patches.getValue(x / 23.0, z / 23.0) * Math.min(3, distance / 8.0);
+        return Mth.clamp((int) Math.round(depth), 1, 40);
+    }
+
+    /**
+     * The highest lake or river surface just beside a land column, or {@link #DRY} when there is
+     * none, so the shore can be kept from dipping under it.
+     */
+    private int shore(GlobalElevation dem, int x, int z, int voxel) {
+        int best = DRY;
+        double near = Math.max(3, voxel), far = Math.max(8, 2.5 * voxel);
+        for (int k = 0; k < 8; k += 2) {
+            for (double r : new double[]{near, far}) {
+                double px = x + RING_X[k] * r, pz = z + RING_Z[k] * r;
+                if (cover(px, pz, voxel) == WorldCoverSource.WATER) best = Math.max(best, lakeSurface(dem, px, pz, voxel));
+            }
+        }
+        return best;
     }
 
     private static double fbm(SimplexNoise noise, double x, double z, int octaves) {
@@ -158,8 +311,15 @@ public final class EarthGenerator extends SurfaceGenerator {
         return waterY(x + 4, z) == SEA || waterY(x - 4, z) == SEA || waterY(x, z + 4) == SEA || waterY(x, z - 4) == SEA;
     }
 
-    @Override protected Surface surface(int x, int z, int y, int water, int slope) {
+    @Override protected Surface surface(int x, int z, int y, int water, int slope) { return surface(x, z, y, water, slope, 1); }
+
+    @Override protected Surface farSurface(int level, int x, int z, int ground, int water, int slope) {
+        return surface(x, z, ground, water, slope, 1 << level);
+    }
+
+    private Surface surface(int x, int z, int y, int water, int slope, int voxel) {
         double t = temperature(x, z, y);
+        if (water != DRY && water != SEA && cover != null) return lake(x, z, y, water, t);
         if (water != DRY) {
             int depth = water - y;
             Holder<Biome> b = t < -2 ? frozenOcean : t < 6 ? (depth > 40 ? deepColdOcean : coldOcean)
@@ -174,6 +334,12 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (y <= SEA + 2 && nearSea(x, z)) {
             if (steep > 1) return new Surface(stonyShore, STONE, STONE, 0, 0, 0, 0, 0, false);
             return new Surface(t < 0 ? snowyBeach : beach, SAND, SAND, 0, 0, 0, 0, 0, false);
+        }
+        int code = cover == null ? WorldCoverSource.NO_DATA : cover(x, z, voxel);
+        if (code == WorldCoverSource.BUILT_UP || code == WorldCoverSource.BARE && inTown(x, z, voxel)) code = wild(x, z, voxel);
+        if (code != WorldCoverSource.NO_DATA) {
+            Surface covered = covered(code, x, z, y, t, steep, roll, slope);
+            if (covered != null) return covered;
         }
         if (t < -8) {
             BlockState top = steep > 1.4 ? STONE : SNOW_BLOCK;
@@ -209,6 +375,82 @@ public final class EarthGenerator extends SurfaceGenerator {
         return new Surface(b, top, top == GRASS || top == COARSE_DIRT ? DIRT : STONE, trees, spruce, birch, grass, flowers, ferns);
     }
 
+    /** A lake or river bed: sand by the shore, then gravel, clay or mud further out. */
+    private Surface lake(int x, int z, int y, int water, double t) {
+        int depth = water - y;
+        long r = mix(x, 11, z);
+        BlockState floor = depth <= 2 ? (t < 4 ? GRAVEL : SAND) : switch ((int) Math.floorMod(r, 5)) {
+            case 0 -> CLAY; case 1 -> SAND; default -> GRAVEL; };
+        if (depth > 8 && patches.getValue(x / 19.0, z / 19.0) > 0.2) floor = MUD;
+        return new Surface(t < -2 ? frozenRiver : river, floor, floor, 0, 0, 0, 0, 0, false);
+    }
+
+    /**
+     * What a WorldCover class puts on dry ground in this climate, or null to fall back to the
+     * climate alone, as built-up ground does. Steep ground stays bare rock whatever is mapped on it.
+     */
+    @Nullable private Surface covered(int code, int x, int z, int y, double t, double steep, int roll, int slope) {
+        boolean cliff = steep > 1.25;
+        BlockState rocky = steep > 0.8 && roll < 60 ? STONE : null;
+        // Patches tens of metres across: clearings, rock and scree that the 10 m map averages away.
+        double patch = patches.getValue(x / 31.0, z / 31.0);
+        switch (code) {
+            case WorldCoverSource.TREE_COVER -> {
+                if (cliff) return new Surface(t < 3 ? grove : stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false);
+                Surface s;
+                if (t < -3) s = new Surface(snowyTaiga, GRASS, DIRT, 70, 10, 0, 90, 100, true);
+                else if (t < 4) s = new Surface(patch > 0.45 ? oldTaiga : taiga, patch > 0.45 ? PODZOL : GRASS, DIRT, 82, 10, 0, 110, 120, true);
+                else if (t < 11) s = new Surface(forest, GRASS, DIRT, 82, 6, 2, 90, 120, true);
+                else if (t < 17) s = new Surface(patch > 0.35 ? birchForest : forest, GRASS, DIRT, 85, 0, patch > 0.35 ? 8 : 2, 90, 130, false);
+                else if (t < 22) s = new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false);
+                else s = new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true);
+                if (rocky != null || slope > 6) return new Surface(s.biome(), rocky != null ? rocky : COARSE_DIRT, STONE, 0, 0, 0, 0, 0, false);
+                return s;
+            }
+            case WorldCoverSource.SHRUBLAND -> {
+                if (cliff) return new Surface(stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false);
+                BlockState top = rocky != null ? rocky : patch > 0.4 || roll < 20 ? COARSE_DIRT : GRASS;
+                if (t > 20) return new Surface(patch > 0.5 ? windsweptSavanna : savanna, top, DIRT, slope > 6 ? 0 : 7, 0, 0, 320, 330, false);
+                if (t < -2) return new Surface(snowyPlains, top, DIRT, slope > 6 ? 0 : 3, 10, 0, 200, 210, false);
+                return new Surface(plains, top, DIRT, slope > 6 ? 0 : 9, t < 6 ? 6 : 0, 1, 330, 350, false);
+            }
+            case WorldCoverSource.GRASSLAND, WorldCoverSource.CROPLAND -> {
+                if (cliff) return new Surface(stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false);
+                BlockState top = rocky != null ? rocky : GRASS;
+                if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
+                if (t < 3 || y > SEA + 1500) return new Surface(meadow, top, DIRT, 1, 10, 0, 300, 360, false);
+                if (t > 21) return new Surface(savanna, top, DIRT, 2, 0, 0, 380, 390, false);
+                return new Surface(plains, top, DIRT, 1, 0, 1, 330, 380, false);
+            }
+            case WorldCoverSource.BARE -> {
+                if (t > 14) {
+                    if (cliff || steep > 0.9) return new Surface(badlands, roll < 50 ? TERRACOTTA : SANDSTONE, SANDSTONE, 0, 0, 0, 0, 0, false);
+                    BlockState sand = patch > 0.45 && t > 18 ? RED_SAND : SAND;
+                    return new Surface(desert, sand, SANDSTONE, 0, 0, 0, 0, 0, false);
+                }
+                BlockState top = cliff || steep > 0.7 ? STONE : patch > 0.3 ? GRAVEL : patch < -0.3 ? ANDESITE : roll < 70 ? STONE : COARSE_DIRT;
+                return new Surface(t < 0 ? frozenPeaks : stonyPeaks, top, STONE, 0, 0, 0, 0, 0, false);
+            }
+            case WorldCoverSource.SNOW_AND_ICE -> {
+                BlockState top = steep > 1.4 ? STONE : SNOW_BLOCK;
+                return new Surface(steep > 0.9 ? frozenPeaks : snowySlopes, top, steep < 0.6 ? PACKED_ICE : STONE, 0, 0, 0, 0, 0, false);
+            }
+            case WorldCoverSource.WETLAND -> {
+                BlockState top = patch > 0.25 ? MUD : GRASS;
+                if (t < 0) return new Surface(snowyPlains, top == MUD ? MOSS : GRASS, DIRT, 2, 10, 0, 300, 310, true);
+                return new Surface(swamp, top, DIRT, 10, 0, 0, 300, 320, true);
+            }
+            case WorldCoverSource.MANGROVES -> {
+                return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false);
+            }
+            case WorldCoverSource.MOSS_AND_LICHEN -> {
+                BlockState top = rocky != null ? rocky : patch > 0.2 ? MOSS : roll < 30 ? GRAVEL : GRASS;
+                return new Surface(t < -2 ? snowyPlains : meadow, top, DIRT, 0, 0, 0, top == GRASS ? 200 : 0, top == GRASS ? 230 : 0, false);
+            }
+            default -> { return null; }
+        }
+    }
+
     // Data ---------------------------------------------------------------------------------------
 
     /**
@@ -232,5 +474,14 @@ public final class EarthGenerator extends SurfaceGenerator {
             try { tiles.tile(tile.zoom, tile.x, tile.y); }
             catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch elevation tile {}/{}/{}: {}", tile.zoom, tile.x, tile.y, failure.getMessage()); }
         });
+        if (cover == null) return;
+        // Land cover: full detail near by, overviews further out, as the far levels read them.
+        double[] reaches = {3500, 7000, 24000};
+        for (int overview = 0; overview < reaches.length; overview++) {
+            double reach = reaches[overview];
+            GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
+            try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), overview); }
+            catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch land cover: {}", failure.getMessage()); }
+        }
     }
 }

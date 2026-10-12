@@ -23,7 +23,8 @@ public final class GlobeTest {
         codec();
         kernel();
         streaming();
-        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) live();
+        worldCover();
+        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); }
         else System.out.println("GlobeTest: live AWS tile checks skipped (set EARTH_LIVE_TILES=1)");
         System.out.println("GlobeTest: " + checks + " checks passed");
     }
@@ -175,6 +176,138 @@ public final class GlobeTest {
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    /**
+     * A synthetic WorldCover file laid out as the real ones are: 36000-pixel image with six
+     * overviews, 1024-pixel deflated blocks, served with range requests. Only full-resolution
+     * block (row 2, column 3) and the coarsest overview's block hold data; the rest are empty.
+     */
+    static byte[] syntheticCover() throws Exception {
+        int levels = 7, blocks = 0;
+        int[] widths = new int[levels];
+        for (int k = 0; k < levels; k++) widths[k] = 36000 >> k;
+        byte[] detailed = new byte[1024 * 1024], coarse = new byte[1024 * 1024];
+        for (int y = 0; y < 1024; y++) for (int x = 0; x < 1024; x++) {
+            detailed[y * 1024 + x] = (byte) (x < 512 ? WorldCoverSource.TREE_COVER : WorldCoverSource.WATER);
+            coarse[y * 1024 + x] = (byte) WorldCoverSource.GRASSLAND;
+        }
+        byte[] detailedZ = deflate(detailed), coarseZ = deflate(coarse);
+        var out = new java.io.ByteArrayOutputStream();
+        int[] counts = new int[levels];
+        for (int k = 0; k < levels; k++) { int across = Math.ceilDiv(widths[k], 1024); counts[k] = across * across; blocks += counts[k]; }
+        // Header: magic, then each IFD (11 entries) followed by its two arrays; data after all of them.
+        int ifdSize = 2 + 11 * 12 + 4;
+        int[] ifdAt = new int[levels];
+        int at = 8;
+        for (int k = 0; k < levels; k++) { ifdAt[k] = at; at += ifdSize + counts[k] * 8; }
+        int detailedAt = at, coarseAt = at + detailedZ.length;
+        var header = java.nio.ByteBuffer.allocate(at).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        header.put((byte) 'I').put((byte) 'I').putShort((short) 42).putInt(ifdAt[0]);
+        for (int k = 0; k < levels; k++) {
+            int arrays = ifdAt[k] + ifdSize, n = counts[k];
+            header.position(ifdAt[k]);
+            header.putShort((short) 11);
+            int[][] entries = {{256, 4, 1, widths[k]}, {257, 4, 1, widths[k]}, {258, 3, 1, 8}, {259, 3, 1, 8}, {262, 3, 1, 3},
+                    {277, 3, 1, 1}, {284, 3, 1, 1}, {322, 3, 1, 1024}, {323, 3, 1, 1024}, {324, 4, n, n == 1 ? -1 : arrays}, {325, 4, n, n == 1 ? -2 : arrays + n * 4}};
+            for (int[] e : entries) {
+                header.putShort((short) e[0]).putShort((short) e[1]).putInt(e[2]);
+                if (e[1] == 3) header.putShort((short) e[3]).putShort((short) 0);
+                else if (e[3] == -1) header.putInt(k == 6 ? coarseAt : 0);
+                else if (e[3] == -2) header.putInt(k == 6 ? coarseZ.length : 0);
+                else header.putInt(e[3]);
+            }
+            header.putInt(k + 1 < levels ? ifdAt[k + 1] : 0);
+            if (n > 1) {
+                for (int i = 0; i < n; i++) header.putInt(k == 0 && i == 2 * 36 + 3 ? detailedAt : 0);
+                for (int i = 0; i < n; i++) header.putInt(k == 0 && i == 2 * 36 + 3 ? detailedZ.length : 0);
+            }
+        }
+        out.write(header.array());
+        out.write(detailedZ);
+        out.write(coarseZ);
+        check(blocks > 1296, "synthetic cover has every level");
+        return out.toByteArray();
+    }
+
+    private static byte[] deflate(byte[] data) {
+        var deflater = new java.util.zip.Deflater();
+        deflater.setInput(data);
+        deflater.finish();
+        var out = new java.io.ByteArrayOutputStream();
+        byte[] buffer = new byte[65536];
+        while (!deflater.finished()) out.write(buffer, 0, deflater.deflate(buffer));
+        deflater.end();
+        return out.toByteArray();
+    }
+
+    private static void worldCover() throws Exception {
+        byte[] file = syntheticCover();
+        String name = WorldCoverSource.name(36, -120);
+        equal("ESA_WorldCover_10m_2021_v200_N36W120_Map.tif", name, "WorldCover file name");
+        equal("ESA_WorldCover_10m_2021_v200_S03E006_Map.tif", WorldCoverSource.name(-3, 6), "southern and eastern file name");
+        Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/cover/", exchange -> {
+            String path = exchange.getRequestURI().getPath().substring("/cover/".length());
+            String range = exchange.getRequestHeaders().getFirst("Range");
+            hits.computeIfAbsent(path + " " + range, k -> new AtomicInteger()).incrementAndGet();
+            if (!path.equals(name) || range == null) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
+            String[] span = range.substring("bytes=".length()).split("-");
+            int from = Integer.parseInt(span[0]), to = Math.min(file.length - 1, Integer.parseInt(span[1]));
+            byte[] body = Arrays.copyOfRange(file, from, to + 1);
+            exchange.sendResponseHeaders(206, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        Path cache = Files.createTempDirectory("worldcover-test");
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cover/");
+        // Block (row 2, column 3) spans these degrees: west half tree cover, east half water.
+        double north = 39 - 2 * 1024 / 12000.0, west = -120 + 3 * 1024 / 12000.0;
+        double treeLat = north - 100.5 / 12000, treeLon = west + 10.5 / 12000, waterLon = west + 900.5 / 12000;
+        try {
+            try (var cover = new WorldCoverSource(base, cache, true, 4, 2, Duration.ofSeconds(5))) {
+                var pool = Executors.newFixedThreadPool(8);
+                List<Future<Integer>> futures = new ArrayList<>();
+                for (int i = 0; i < 16; i++) futures.add(pool.submit(() -> cover.code(treeLat, treeLon, 0)));
+                for (var f : futures) equal(WorldCoverSource.TREE_COVER, f.get(), "tree cover pixel");
+                pool.shutdown();
+                equal(WorldCoverSource.WATER, cover.code(treeLat, waterLon, 0), "water pixel");
+                equal(WorldCoverSource.NO_DATA, cover.code(37.5, -119.5, 0), "empty block is no data");
+                equal(WorldCoverSource.GRASSLAND, cover.code(37.5, -119.5, 6), "coarsest overview");
+                equal(WorldCoverSource.GRASSLAND, cover.code(36.00001, -117.00001, 6), "last overview pixel folds in");
+                equal(WorldCoverSource.NO_DATA, cover.code(10.5, -40.5, 0), "missing file (open ocean) is no data");
+                equal(WorldCoverSource.NO_DATA, cover.code(37.5, -119.5 + 360, 0), "longitude wraps");
+                long headerReads = hits.entrySet().stream().filter(e -> e.getKey().startsWith(name + " bytes=0-")).mapToLong(e -> e.getValue().get()).sum();
+                equal(1L, headerReads, "header read once");
+                long blockReads = hits.entrySet().stream().filter(e -> e.getKey().startsWith(name) && !e.getKey().contains("bytes=0-")).mapToLong(e -> e.getValue().get()).sum();
+                equal(2L, blockReads, "one read per block with data");
+                fail(() -> cover.code(37.5, -119.5, 7), IllegalArgumentException.class, "overview beyond the file rejected");
+            }
+            try (var offline = new WorldCoverSource(base, cache, false, 4, 1, Duration.ofSeconds(5))) {
+                int before = hits.values().stream().mapToInt(AtomicInteger::get).sum();
+                equal(WorldCoverSource.WATER, offline.code(treeLat, waterLon, 0), "disk cache offline");
+                equal(WorldCoverSource.NO_DATA, offline.code(10.5, -40.5, 0), "missing file remembered offline");
+                equal(before, hits.values().stream().mapToInt(AtomicInteger::get).sum(), "no transfer when cached");
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    /** Known places in the real WorldCover map. */
+    private static void liveCover() throws Exception {
+        try (var cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, null, true, 16, 4, Duration.ofSeconds(30))) {
+            equal(WorldCoverSource.WATER, cover.code(39.09, -120.04, 0), "Lake Tahoe is water");
+            equal(WorldCoverSource.BUILT_UP, cover.code(37.7897, -122.4000, 0), "downtown San Francisco is built up");
+            equal(WorldCoverSource.SNOW_AND_ICE, cover.code(72.58, -38.46, 0), "Greenland summit is ice");
+            equal(WorldCoverSource.NO_DATA, cover.code(30.0, -40.0, 0), "mid-Atlantic has no file");
+            equal(WorldCoverSource.WATER, cover.code(39.09, -120.04, 5), "Lake Tahoe in an overview");
+            System.out.printf("GlobeTest live cover: %s%n", cover.stats());
         }
     }
 

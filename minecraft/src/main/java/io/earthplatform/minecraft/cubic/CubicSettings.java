@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic;
 
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.TerrariumTileSource;
+import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
@@ -30,6 +31,7 @@ import net.neoforged.fml.loading.FMLPaths;
 public final class CubicSettings {
     private static final String FILE = "generator.properties";
     private static TerrariumTileSource tiles;
+    private static WorldCoverSource cover;
 
     private CubicSettings() {}
 
@@ -49,6 +51,7 @@ public final class CubicSettings {
                     properties.setProperty("earth.metresPerBlock", Double.toString(earth.metresPerBlock()));
                     properties.setProperty("earth.projection", earth.projection());
                     properties.setProperty("earth.elevation", TerrariumTileSource.DATASET_ID);
+                    properties.setProperty("earth.cover", WorldCoverSource.DATASET_ID);
                 }
                 Files.createDirectories(folder);
                 Path temp = folder.resolve(FILE + ".tmp");
@@ -68,7 +71,11 @@ public final class CubicSettings {
                     throw new IllegalStateException("Unsupported Earth projection in " + file);
                 EarthSettings settings = new EarthSettings(number(properties, "earth.latitude"), number(properties, "earth.longitude"),
                         number(properties, "earth.metresPerBlock"));
-                yield new EarthGenerator(seed, biomes, settings, tiles());
+                // Worlds made before land cover keep generating as they did.
+                String coverId = properties.getProperty("earth.cover", "");
+                if (!coverId.isEmpty() && !WorldCoverSource.DATASET_ID.equals(coverId))
+                    throw new IllegalStateException("Unsupported land cover '" + coverId + "' in " + file);
+                yield new EarthGenerator(seed, biomes, settings, tiles(), coverId.isEmpty() ? null : cover());
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
         };
@@ -100,5 +107,19 @@ public final class CubicSettings {
             }
         }
         return tiles;
+    }
+
+    /** Land cover shared by every Earth world in this game, cached on disk beside the elevation tiles. */
+    public static synchronized WorldCoverSource cover() {
+        if (cover == null) {
+            Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(WorldCoverSource.DATASET_ID);
+            try {
+                cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        48, 4, Duration.ofSeconds(30));
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the land cover cache at " + cache, failure);
+            }
+        }
+        return cover;
     }
 }
