@@ -24,17 +24,26 @@ public final class DhOfficialRuntime {
     private final Path jar;
     private static DhOfficialRuntime processRuntime;
     private static Throwable initializationFailure;
+    // Upstream builders are thread-local and not reentrant. One monitor also safely
+    // publishes its lazily initialized static packing fields across adapter callers.
+    private boolean building;
 
     /** Upstream's pool recycler ignores interruption. Keep exactly one bounded runtime per game process. */
     public static synchronized DhOfficialRuntime open() throws IOException,ReflectiveOperationException {
+        requireDiagnosticTest();
         return open(configuredJar());
     }
     public static synchronized DhOfficialRuntime open(Path jar) throws IOException,ReflectiveOperationException {
+        requireDiagnosticTest();
         if(initializationFailure!=null)throw new IllegalStateException("Isolated DH initialization previously failed; restart required before retry",initializationFailure);
         if(processRuntime==null)try{processRuntime=new DhOfficialRuntime(jar);}
             catch(IOException|ReflectiveOperationException|RuntimeException|Error failure){initializationFailure=failure;throw failure;}
         else if(!processRuntime.jar.equals(jar.toAbsolutePath().normalize()))throw new IllegalArgumentException("Isolated runtime artifact path cannot change within a game process");
         return processRuntime;
+    }
+    private static void requireDiagnosticTest(){
+        if(!Boolean.getBoolean("earthplatform.test.isolatedDhRuntime")||Boolean.getBoolean("earthplatform.experimental.installedDhBackend")||io.earthplatform.compat.PlayableProfile.selection().selected())
+            throw new IllegalStateException("Isolated DH runtime is a headless-test-only helper; install DH separately for the live adapter");
     }
     private DhOfficialRuntime(Path jar) throws IOException,ReflectiveOperationException {
         this.jar=jar.toAbsolutePath().normalize();
@@ -70,9 +79,9 @@ public final class DhOfficialRuntime {
     }
     /** Each requested face is authored from known snapshot voxels; all returned bytes come from official LodQuadBuilder. */
     @SuppressWarnings({"unchecked","rawtypes"})
-    public byte[] build(List<Face> faces) {
+    public synchronized byte[] build(List<Face> faces) {
         if(faces.isEmpty()||faces.size()>4096)throw new IllegalArgumentException("DH fixture face budget exceeded or empty");
-        Object builder=null,checkout=null;
+        enterBuild();Object builder=null,checkout=null;Throwable primary=null;
         try {
             builder=factory.invoke(null,false,null);checkout=checkoutMethod.invoke(pool,1);
             for(Face f:faces) {
@@ -88,15 +97,11 @@ public final class DhOfficialRuntime {
             byte[] result=new byte[total];int offset=0;
             for(var b:buffers){int count=b.remaining();b.get(result,offset,count);offset+=count;}
             return result;
-        } catch(ReflectiveOperationException failure) {
-            Throwable cause=failure instanceof InvocationTargetException wrapped?wrapped.getCause():failure;
-            throw new IllegalStateException("Isolated actual DH quad builder failed",cause);
-        } finally {
-            RuntimeException failure=null;
-            for(Object resource:new Object[]{checkout,builder})if(resource!=null)try{((AutoCloseable)resource).close();}
-                catch(Exception error){if(failure==null)failure=new IllegalStateException("DH pool checkout cleanup failed",error);else failure.addSuppressed(error);}
-            if(failure!=null)throw failure;
-        }
+        } catch(ReflectiveOperationException error) {
+            Throwable cause=error instanceof InvocationTargetException wrapped?wrapped.getCause():error;
+            var failure=new IllegalStateException("Isolated actual DH quad builder failed",cause);primary=failure;throw failure;
+        } catch(RuntimeException|Error failure){primary=failure;throw failure;}
+        finally {finishBuild(checkout,builder,primary);}
     }
     public String shader(boolean vertex) throws IOException {
         String path="assets/distanthorizons/shaders/terrain/gl/"+(vertex?"vert.vert":"frag.frag");
@@ -108,32 +113,55 @@ public final class DhOfficialRuntime {
             return new String(bytes,java.nio.charset.StandardCharsets.UTF_8);
         }
     }
-    /** Bounded page-local geographic rectangles; official addQuadAdj supports rectangular UP faces at this pin. */
-    @SuppressWarnings({"unchecked","rawtypes"})
+    /** Bounded page-local rectangles. Only copied bytes leave the compiling thread. */
     public byte[] buildRectangles(List<DhTerrainGeometry.PageFace> faces) {
+        return buildRectangles(faces,()->{});
+    }
+    /**
+     * Serializes the pinned upstream helper, never GL. Cancellation is checked after
+     * monitor acquisition and between bounded phases; a waiting caller remains charged.
+     * The supplied check must not recursively invoke a builder on this same runtime.
+     */
+    @SuppressWarnings({"unchecked","rawtypes"})
+    public synchronized byte[] buildRectangles(List<DhTerrainGeometry.PageFace> faces,Runnable cancellationCheck) {
+        java.util.Objects.requireNonNull(cancellationCheck,"cancellationCheck");
         if(faces.isEmpty()||faces.size()>4096)throw new IllegalArgumentException("DH rectangular face budget exceeded or empty");
-        Object builder=null,checkout=null;
+        enterBuild();Object builder=null,checkout=null;Throwable primary=null;
         try {
+            cancellationCheck.run();
             builder=factory.invoke(null,false,null);checkout=checkoutMethod.invoke(pool,1);
             for(var f:faces) {
+                cancellationCheck.run();
                 if((f.argb()>>>24)!=255)throw new IllegalArgumentException("Opaque geographic DH rectangles only");
                 if(f.direction()==DhTerrainGeometry.Direction.DOWN) {
                     if(f.width()!=f.height())throw new IllegalArgumentException("Only square DOWN faces are supported by this official builder path");
-                    addDown.invoke(builder,(short)f.x(),(short)f.y(),(short)f.z(),(short)f.width(),f.argb(),(short)0,(byte)0,(byte)15,(byte)0);
+                    addDown.invoke(builder,(short)f.x(),(short)f.y(),(short)f.z(),(short)f.width(),f.argb(),(short)0,(byte)f.material(),(byte)15,(byte)0);
                 } else addSide.invoke(builder,Enum.valueOf((Class)directionClass,f.direction().name()),(short)f.x(),(short)f.y(),(short)f.z(),
-                        (short)f.width(),(short)f.height(),f.argb(),(short)0,(byte)0,(byte)15,(byte)0);
+                        (short)f.width(),(short)f.height(),f.argb(),(short)0,(byte)f.material(),(byte)15,(byte)0);
             }
+            cancellationCheck.run();
             var buffers=(ArrayList<ByteBuffer>)opaque.invoke(builder,checkout);
-            int total=0;for(var b:buffers)total=Math.addExact(total,b.remaining());
+            cancellationCheck.run();int total=0;for(var b:buffers)total=Math.addExact(total,b.remaining());
             if(total<=0||total>4096*64||total%64!=0)throw new IllegalStateException("Actual DH rectangle vertex output exceeded budget");
-            byte[] result=new byte[total];int offset=0;for(var b:buffers){int n=b.remaining();b.get(result,offset,n);offset+=n;}return result;
-        }catch(ReflectiveOperationException failure){throw new IllegalStateException("Actual DH rectangle builder failed",failure instanceof InvocationTargetException wrapped?wrapped.getCause():failure);}
-        finally {
-            RuntimeException failure=null;
+            byte[] result=new byte[total];int offset=0;
+            for(var b:buffers){cancellationCheck.run();int n=b.remaining();b.get(result,offset,n);offset+=n;}
+            cancellationCheck.run();return result;
+        }catch(ReflectiveOperationException error){
+            var failure=new IllegalStateException("Actual DH rectangle builder failed",error instanceof InvocationTargetException wrapped?wrapped.getCause():error);primary=failure;throw failure;
+        }catch(RuntimeException|Error failure){primary=failure;throw failure;}
+        finally {finishBuild(checkout,builder,primary);}
+    }
+    private void enterBuild(){if(building)throw new IllegalStateException("Official DH thread-local builder is not reentrant");building=true;}
+    /** Return each checkout on its acquiring thread, and never hide a primary cancellation/failure. */
+    private void finishBuild(Object checkout,Object builder,Throwable primary){
+        Throwable cleanup=null;
+        try{
             for(Object resource:new Object[]{checkout,builder})if(resource!=null)try{((AutoCloseable)resource).close();}
-                catch(Exception error){if(failure==null)failure=new IllegalStateException("DH rectangle pool cleanup failed",error);else failure.addSuppressed(error);}
-            if(failure!=null)throw failure;
-        }
+                catch(Exception|Error failure){if(cleanup==null)cleanup=failure;else if(cleanup!=failure)cleanup.addSuppressed(failure);}
+        }finally{building=false;}
+        if(cleanup!=null){if(primary!=null){if(primary!=cleanup)primary.addSuppressed(cleanup);}
+            else if(cleanup instanceof Error error)throw error;
+            else throw new IllegalStateException("DH pool checkout cleanup failed",cleanup);}
     }
     private static Path configuredJar() {
         String value=System.getProperty("earthplatform.lodProbeJar",System.getenv("EARTH_DH_PROBE_JAR"));

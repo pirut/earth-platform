@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.source.MarinNativeCubeSourceTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:56.070Z" hostname="4d821b23054b" time="0.115">
+  <properties/>
+  <testcase name="bundledSourceReplaysExactPinnedIdentityAndDoesNotRewriteExistingFiles()" classname="io.earthplatform.minecraft.survival.source.MarinNativeCubeSourceTest" time="0.038"/>
+  <testcase name="changedOrSymlinkedSourceIsRefusedWithoutOverwrite()" classname="io.earthplatform.minecraft.survival.source.MarinNativeCubeSourceTest" time="0.017"/>
+  <testcase name="registryResolutionNeverDefaultsUnknownPropertiesOrUnknownBlocksToAir()" classname="io.earthplatform.minecraft.survival.source.MarinNativeCubeSourceTest" time="0.001"/>
+  <testcase name="everyCellOfActualTreeAndAdjacentCubesMatchesExactRegistryDescriptor()" classname="io.earthplatform.minecraft.survival.source.MarinNativeCubeSourceTest" time="0.037"/>
+  <testcase name="mutableSourceRefusesOutsideAuthorizedPatchInsteadOfSupplyingAir()" classname="io.earthplatform.minecraft.survival.source.MarinNativeCubeSourceTest" time="0.019"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

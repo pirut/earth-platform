@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeItemPickupResultTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:47.832Z" hostname="4d821b23054b" time="0.133">
+  <properties/>
+  <testcase name="acceptedNativeTickCodecBindsFullSourceAndCannotOverflowNativeTickCount()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeItemPickupResultTest" time="0.012"/>
+  <testcase name="pickupCodecRejectsTruncationTrailingBytesAndForeignIdentity()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeItemPickupResultTest" time="0.109"/>
+  <testcase name="missingOrIncorrectRemaindersFailBeforeDelivery()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeItemPickupResultTest" time="0.002"/>
+  <testcase name="ownerAndThrowerCriteriaRefuseUntilCaptured()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeItemPickupResultTest" time="0.002"/>
+  <testcase name="nativePartialTransferWithoutTakePreservesZeroNotificationMetadata()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeItemPickupResultTest" time="0.003"/>
+  <testcase name="fullAndPartialPickupsConserveExactNativeQuantityAndComponents()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeItemPickupResultTest" time="0.002"/>
+  <testcase name="unrelatedNativeFieldAndComponentChangesAreRefused()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeItemPickupResultTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

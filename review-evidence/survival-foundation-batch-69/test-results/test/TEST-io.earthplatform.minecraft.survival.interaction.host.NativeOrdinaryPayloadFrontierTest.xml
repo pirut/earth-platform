@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" tests="17" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:48.788Z" hostname="4d821b23054b" time="0.006">
+  <properties/>
+  <testcase name="returnedFutureAndSourceDoNotSettleMissingCallback()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.001"/>
+  <testcase name="callbackFailureSurvivesRecoveredFuture()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="failureDoesNotPreventExistingCallbackBookkeeping()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.001"/>
+  <testcase name="duplicateCallbackPoisonsWithoutGivingSecondScope()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="canceledFutureCannotStandInForCallback()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="collectedPayloadNeverBecomesAnEmptyFrontier()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="overlappingSameTripleIsRefused()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="completedHistoryDoesNotRecycleCapacity()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="callbackCanFinishBeforeAsyncEnqueueReturns()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="freshContextCreatesDistinctAdmission()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.001"/>
+  <testcase name="realWorkerBlockedCallbackRemainsPendingAfterEnqueueAndSourceReturn()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="duplicateEnqueueAndSourceReturnFailClosed()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="wrongContextAndForeignTicketDoNotMutateCurrentTicket()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="enqueueThenThrowRemainsFailedAfterCallback()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="inlineCallbackStillNeedsEnqueueAndSourceReturn()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="completedTripleCannotCreateAStaleCallbackAba()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <testcase name="sourceFailureBeforeEnqueueRemainsIncomplete()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryPayloadFrontierTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

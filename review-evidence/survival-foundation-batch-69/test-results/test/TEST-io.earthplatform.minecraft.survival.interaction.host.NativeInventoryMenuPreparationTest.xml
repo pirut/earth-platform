@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeInventoryMenuPreparationTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:47.783Z" hostname="4d821b23054b" time="0.01">
+  <properties/>
+  <testcase name="everyRetainedSnapshotMustFitTheSameCumulativeBudget()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeInventoryMenuPreparationTest" time="0.001"/>
+  <testcase name="clickAndMetadataAndSnapshotLimitsAreExplicit()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeInventoryMenuPreparationTest" time="0.0"/>
+  <testcase name="repeatedAcyclicCompoundChildrenStillConsumeExpandedCallbackVisits()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeInventoryMenuPreparationTest" time="0.002"/>
+  <testcase name="unsupportedClickModesButtonsAndOutsideSlotsRefuseBeforeNativeWork()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeInventoryMenuPreparationTest" time="0.002"/>
+  <testcase name="allThirteenActualNativeItemsHaveTheAuditedCraftingCallbacks()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeInventoryMenuPreparationTest" time="0.001"/>
+  <testcase name="otherCustomIngredientTypesAreRefusedBeforeExecutingAnyCallback()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeInventoryMenuPreparationTest" time="0.0"/>
+  <testcase name="differenceFilterChargesLeafAlternativesAndCheckedCrossProductBeforeResolution()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeInventoryMenuPreparationTest" time="0.001"/>
+  <testcase name="exactNativePickupSlotsAdmitBothNativeMouseButtons()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeInventoryMenuPreparationTest" time="0.0"/>
+  <testcase name="customCompoundCollectionsAreRefusedWithoutCallingTheirMethods()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeInventoryMenuPreparationTest" time="0.001"/>
+  <testcase name="exactNativeDifferenceAdmitsOrderedChildrenAndRetainsNativeSemantics()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeInventoryMenuPreparationTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

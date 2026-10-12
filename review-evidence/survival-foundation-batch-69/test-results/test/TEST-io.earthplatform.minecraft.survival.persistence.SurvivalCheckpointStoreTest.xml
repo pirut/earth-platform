@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:49.934Z" hostname="4d821b23054b" time="0.027">
+  <properties/>
+  <testcase name="everyInjectedInterruptionKeepsOneCompleteGenerationAndIdenticalRetryWorks()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.008"/>
+  <testcase name="limitsAndNamesAreCheckedBeforePayloadCopies()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.001"/>
+  <testcase name="writerLockSymlinkAndBrokenAuthoritySymlinkRefuse()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.002"/>
+  <testcase name="foreignWorldAndCorruptReferencedPayloadRefuse()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.003"/>
+  <testcase name="inputAndOutputArraysAreDefensivelyOwned()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.001"/>
+  <testcase name="immutableGenerationOrphansAreRetainedButNeverChosenByScanning()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.001"/>
+  <testcase name="unreferencedSymlinkDoesNotBecomeARetrySyncTarget()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.001"/>
+  <testcase name="missingAuthorityNeverBecomesNewWorld()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.001"/>
+  <testcase name="singleWriterAndClosedOwnerRefuse()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.001"/>
+  <testcase name="firstGenerationInterruptedBeforePublicationCanRetryAgainstExplicitZeroAuthority()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.001"/>
+  <testcase name="completeGenerationAndAllGameplayPayloadsRestartTogether()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.001"/>
+  <testcase name="staleDifferentRetryAndSkippedGenerationRefuse()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.002"/>
+  <testcase name="growingOrInfiniteInputConsumesAtMostTheBoundPlusOne()" classname="io.earthplatform.minecraft.survival.persistence.SurvivalCheckpointStoreTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.compat.dh.shader.DeletedTextureAliasActualGlTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:36:02.058Z" hostname="4d821b23054b" time="0.279">
+  <properties/>
+  <testcase name="aDeletedNameReallyProducesTheObservedDirectStateAccessError()" classname="io.earthplatform.compat.dh.shader.DeletedTextureAliasActualGlTest" time="0.208"/>
+  <testcase name="realArrayDeletionClearsBothNamesWithoutMutatingTheDeletionArgument()" classname="io.earthplatform.compat.dh.shader.DeletedTextureAliasActualGlTest" time="0.022"/>
+  <testcase name="exactPreDeleteAliasClearingPreventsErrorAndPreservesLiveNamesAndBindings()" classname="io.earthplatform.compat.dh.shader.DeletedTextureAliasActualGlTest" time="0.025"/>
+  <testcase name="completionCannotRevisitNamesOrClearLaterLiveTextureAssignments()" classname="io.earthplatform.compat.dh.shader.DeletedTextureAliasActualGlTest" time="0.023"/>
+  <system-out><![CDATA[ACTUAL_GL_CONTEXT version=4.5 (Core Profile) Mesa 25.0.7-2+deb13u1 renderer=llvmpipe (LLVM 19.1.7, 256 bits) isolated=true callbackInstalled=false
+ACTUAL_GL_NEGATIVE_CONTROL deletedName=1 firstError=1282 exactPhase=actualGl.negative.deletedNameBind
+ACTUAL_GL_CONTEXT version=4.5 (Core Profile) Mesa 25.0.7-2+deb13u1 renderer=llvmpipe (LLVM 19.1.7, 256 bits) isolated=true callbackInstalled=false
+ACTUAL_GL_CONTEXT version=4.5 (Core Profile) Mesa 25.0.7-2+deb13u1 renderer=llvmpipe (LLVM 19.1.7, 256 bits) isolated=true callbackInstalled=false
+ACTUAL_GL_PREVENTION exactAliases=7 logicalSlots=128 highSlots=31,32,63,64,127 unmatchedLive=2 error=0
+ACTUAL_GL_CONTEXT version=4.5 (Core Profile) Mesa 25.0.7-2+deb13u1 renderer=llvmpipe (LLVM 19.1.7, 256 bits) isolated=true callbackInstalled=false
+ACTUAL_GL_REPLACEMENT old=1 new=1 numericReuseObserved=true completionLeftNewAssignment=true
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

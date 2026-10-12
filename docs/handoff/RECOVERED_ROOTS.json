@@ -1,0 +1,1218 @@
+[
+  {
+    "id": "integrated039",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/native-survival-039",
+    "destination": ".",
+    "files": 11635,
+    "bytes": 277761896,
+    "state": "integrated"
+  },
+  {
+    "id": "exploration037",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-recovery-037/source",
+    "destination": "historical/exploration-037",
+    "files": 2096,
+    "bytes": 26948504,
+    "state": "historical separate snapshot"
+  },
+  {
+    "id": "probe:dh-producer-client-039-001",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/dh-producer-client-039-001",
+    "destination": "unfinished/probes/dh-producer-client-039-001",
+    "files": 112,
+    "bytes": 14289628,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "probe:dh-producer-client-039-002",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/dh-producer-client-039-002",
+    "destination": "unfinished/probes/dh-producer-client-039-002",
+    "files": 118,
+    "bytes": 16178199,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "probe:evidence",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/evidence",
+    "destination": "unfinished/probes/evidence",
+    "files": 186,
+    "bytes": 1058046,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "probe:installed-session-probe-039-001",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/installed-session-probe-039-001",
+    "destination": "unfinished/probes/installed-session-probe-039-001",
+    "files": 3,
+    "bytes": 1384352,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "probe:installed-session-probe-039-002",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/installed-session-probe-039-002",
+    "destination": "unfinished/probes/installed-session-probe-039-002",
+    "files": 103,
+    "bytes": 12522942,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "probe:installed-session-probe-039-003",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/installed-session-probe-039-003",
+    "destination": "unfinished/probes/installed-session-probe-039-003",
+    "files": 86,
+    "bytes": 6232742,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "probe:installed-session-probe-039-004",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/installed-session-probe-039-004",
+    "destination": "unfinished/probes/installed-session-probe-039-004",
+    "files": 228,
+    "bytes": 17955806,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "probe:installed-session-probe-039-005",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/installed-session-probe-039-005",
+    "destination": "unfinished/probes/installed-session-probe-039-005",
+    "files": 226,
+    "bytes": 13016481,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "probe:installed-session-probe-039-006",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/installed-session-probe-039-006",
+    "destination": "unfinished/probes/installed-session-probe-039-006",
+    "files": 175,
+    "bytes": 12752239,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "probe:renderer-probe-039",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/renderer-probe-039",
+    "destination": "unfinished/probes/renderer-probe-039",
+    "files": 130,
+    "bytes": 8126307,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "probe:renderer-probe-039-bulkfix",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/renderer-probe-039-bulkfix",
+    "destination": "unfinished/probes/renderer-probe-039-bulkfix",
+    "files": 116,
+    "bytes": 13050618,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "probe:renderer-probe-039-statefix",
+    "original_path": "/workspace/scratch/67f3a8ccac99/earth-platform/renderer-probe-039-statefix",
+    "destination": "unfinished/probes/renderer-probe-039-statefix",
+    "files": 115,
+    "bytes": 17729250,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "staging:parity-client-staging",
+    "original_path": "/workspace/scratch/67f3a8ccac99/parity-client-staging",
+    "destination": "unfinished/staging/parity-client-staging",
+    "files": 4,
+    "bytes": 54276,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "staging:survival-page-compiler-staging",
+    "original_path": "/workspace/scratch/67f3a8ccac99/survival-page-compiler-staging",
+    "destination": "unfinished/staging/survival-page-compiler-staging",
+    "files": 7,
+    "bytes": 60330,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "staging:survival-page-parity-staging",
+    "original_path": "/workspace/scratch/67f3a8ccac99/survival-page-parity-staging",
+    "destination": "unfinished/staging/survival-page-parity-staging",
+    "files": 5,
+    "bytes": 53145,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:PinnedNativeEventAdmission.next.java",
+    "original_path": "/workspace/shared/PinnedNativeEventAdmission.next.java",
+    "destination": "unfinished/workers/PinnedNativeEventAdmission.next.java",
+    "files": 1,
+    "bytes": 12781,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:PinnedNativeEventAdmissionTest.batch10-reconstructed.java",
+    "original_path": "/workspace/shared/PinnedNativeEventAdmissionTest.batch10-reconstructed.java",
+    "destination": "unfinished/workers/PinnedNativeEventAdmissionTest.batch10-reconstructed.java",
+    "files": 1,
+    "bytes": 8714,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:PinnedNativeEventAdmissionTest.next.java",
+    "original_path": "/workspace/shared/PinnedNativeEventAdmissionTest.next.java",
+    "destination": "unfinished/workers/PinnedNativeEventAdmissionTest.next.java",
+    "files": 1,
+    "bytes": 8697,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:bind-dh-witness-002-archive2329.py",
+    "original_path": "/workspace/shared/bind-dh-witness-002-archive2329.py",
+    "destination": "unfinished/workers/bind-dh-witness-002-archive2329.py",
+    "files": 1,
+    "bytes": 3460,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:carrier-fixture-storage-fix36",
+    "original_path": "/workspace/shared/carrier-fixture-storage-fix36",
+    "destination": "unfinished/workers/carrier-fixture-storage-fix36",
+    "files": 3,
+    "bytes": 48178,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:check-dh-witness-002-prestage.py",
+    "original_path": "/workspace/shared/check-dh-witness-002-prestage.py",
+    "destination": "unfinished/workers/check-dh-witness-002-prestage.py",
+    "files": 1,
+    "bytes": 4324,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:dh-gpu-key-fixture-fix38",
+    "original_path": "/workspace/shared/dh-gpu-key-fixture-fix38",
+    "destination": "unfinished/workers/dh-gpu-key-fixture-fix38",
+    "files": 3,
+    "bytes": 12585,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:freeze-dh-witness-002-candidate49.py",
+    "original_path": "/workspace/shared/freeze-dh-witness-002-candidate49.py",
+    "destination": "unfinished/workers/freeze-dh-witness-002-candidate49.py",
+    "files": 1,
+    "bytes": 4751,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:installed-observation-abi-fix57",
+    "original_path": "/workspace/shared/installed-observation-abi-fix57",
+    "destination": "unfinished/workers/installed-observation-abi-fix57",
+    "files": 7,
+    "bytes": 94164,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:installed-observation-capacity-draft",
+    "original_path": "/workspace/shared/installed-observation-capacity-draft",
+    "destination": "unfinished/workers/installed-observation-capacity-draft",
+    "files": 27,
+    "bytes": 255165,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:installed-survival-entry-plan",
+    "original_path": "/workspace/shared/installed-survival-entry-plan",
+    "destination": "unfinished/workers/installed-survival-entry-plan",
+    "files": 1,
+    "bytes": 22102,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:modify_dh_client_launcher.py",
+    "original_path": "/workspace/shared/modify_dh_client_launcher.py",
+    "destination": "unfinished/workers/modify_dh_client_launcher.py",
+    "files": 1,
+    "bytes": 7594,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-active-checkpoint-draft",
+    "original_path": "/workspace/shared/native-active-checkpoint-draft",
+    "destination": "unfinished/workers/native-active-checkpoint-draft",
+    "files": 11,
+    "bytes": 490719,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-active-save-clock-fix51",
+    "original_path": "/workspace/shared/native-active-save-clock-fix51",
+    "destination": "unfinished/workers/native-active-save-clock-fix51",
+    "files": 34,
+    "bytes": 870924,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-active-save-host-draft",
+    "original_path": "/workspace/shared/native-active-save-host-draft",
+    "destination": "unfinished/workers/native-active-save-host-draft",
+    "files": 19,
+    "bytes": 524320,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-block-action-draft",
+    "original_path": "/workspace/shared/native-block-action-draft",
+    "destination": "unfinished/workers/native-block-action-draft",
+    "files": 32,
+    "bytes": 607430,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-block-boundary-addendum",
+    "original_path": "/workspace/shared/native-block-boundary-addendum",
+    "destination": "unfinished/workers/native-block-boundary-addendum",
+    "files": 6,
+    "bytes": 161291,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-block-fix44",
+    "original_path": "/workspace/shared/native-block-fix44",
+    "destination": "unfinished/workers/native-block-fix44",
+    "files": 13,
+    "bytes": 126705,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-block-fix45",
+    "original_path": "/workspace/shared/native-block-fix45",
+    "destination": "unfinished/workers/native-block-fix45",
+    "files": 8,
+    "bytes": 26198,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-block-parent-merge",
+    "original_path": "/workspace/shared/native-block-parent-merge",
+    "destination": "unfinished/workers/native-block-parent-merge",
+    "files": 18,
+    "bytes": 648341,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-io-next-frontier",
+    "original_path": "/workspace/shared/native-carrier-io-next-frontier",
+    "destination": "unfinished/workers/native-carrier-io-next-frontier",
+    "files": 1,
+    "bytes": 4775,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-io-production-draft",
+    "original_path": "/workspace/shared/native-carrier-io-production-draft",
+    "destination": "unfinished/workers/native-carrier-io-production-draft",
+    "files": 34,
+    "bytes": 305566,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-io-production-v2",
+    "original_path": "/workspace/shared/native-carrier-io-production-v2",
+    "destination": "unfinished/workers/native-carrier-io-production-v2",
+    "files": 36,
+    "bytes": 329556,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-io-result-replay",
+    "original_path": "/workspace/shared/native-carrier-io-result-replay",
+    "destination": "unfinished/workers/native-carrier-io-result-replay",
+    "files": 1,
+    "bytes": 4454,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-menu-descriptor-fix-v1",
+    "original_path": "/workspace/shared/native-carrier-menu-descriptor-fix-v1",
+    "destination": "unfinished/workers/native-carrier-menu-descriptor-fix-v1",
+    "files": 4,
+    "bytes": 3194,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-read-continuation-v1",
+    "original_path": "/workspace/shared/native-carrier-read-continuation-v1",
+    "destination": "unfinished/workers/native-carrier-read-continuation-v1",
+    "files": 40,
+    "bytes": 258193,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-read-continuation-v2",
+    "original_path": "/workspace/shared/native-carrier-read-continuation-v2",
+    "destination": "unfinished/workers/native-carrier-read-continuation-v2",
+    "files": 43,
+    "bytes": 297769,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-read-continuation-v3-evidence",
+    "original_path": "/workspace/shared/native-carrier-read-continuation-v3-evidence",
+    "destination": "unfinished/workers/native-carrier-read-continuation-v3-evidence",
+    "files": 46,
+    "bytes": 320625,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-read-continuation-v4",
+    "original_path": "/workspace/shared/native-carrier-read-continuation-v4",
+    "destination": "unfinished/workers/native-carrier-read-continuation-v4",
+    "files": 56,
+    "bytes": 604866,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-read-continuation-v5",
+    "original_path": "/workspace/shared/native-carrier-read-continuation-v5",
+    "destination": "unfinished/workers/native-carrier-read-continuation-v5",
+    "files": 58,
+    "bytes": 661897,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-read-continuation-v6",
+    "original_path": "/workspace/shared/native-carrier-read-continuation-v6",
+    "destination": "unfinished/workers/native-carrier-read-continuation-v6",
+    "files": 61,
+    "bytes": 741073,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-read-late-stage-research",
+    "original_path": "/workspace/shared/native-carrier-read-late-stage-research",
+    "destination": "unfinished/workers/native-carrier-read-late-stage-research",
+    "files": 2,
+    "bytes": 76427,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-read-v4-checker-evidence",
+    "original_path": "/workspace/shared/native-carrier-read-v4-checker-evidence",
+    "destination": "unfinished/workers/native-carrier-read-v4-checker-evidence",
+    "files": 2,
+    "bytes": 7750,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-read-v5-checker-evidence",
+    "original_path": "/workspace/shared/native-carrier-read-v5-checker-evidence",
+    "destination": "unfinished/workers/native-carrier-read-v5-checker-evidence",
+    "files": 2,
+    "bytes": 9401,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-serialization-draft",
+    "original_path": "/workspace/shared/native-carrier-serialization-draft",
+    "destination": "unfinished/workers/native-carrier-serialization-draft",
+    "files": 24,
+    "bytes": 208384,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-carrier-shutdown-draft",
+    "original_path": "/workspace/shared/native-carrier-shutdown-draft",
+    "destination": "unfinished/workers/native-carrier-shutdown-draft",
+    "files": 74,
+    "bytes": 768311,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-client-collision-scene-join",
+    "original_path": "/workspace/shared/native-client-collision-scene-join",
+    "destination": "unfinished/workers/native-client-collision-scene-join",
+    "files": 15,
+    "bytes": 269997,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-close-boundary-handoff-20261012",
+    "original_path": "/workspace/shared/native-close-boundary-handoff-20261012",
+    "destination": "unfinished/workers/native-close-boundary-handoff-20261012",
+    "files": 5,
+    "bytes": 14448,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-crafting-table-design",
+    "original_path": "/workspace/shared/native-crafting-table-design",
+    "destination": "unfinished/workers/native-crafting-table-design",
+    "files": 1,
+    "bytes": 3320,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-crafting-table-draft",
+    "original_path": "/workspace/shared/native-crafting-table-draft",
+    "destination": "unfinished/workers/native-crafting-table-draft",
+    "files": 26,
+    "bytes": 371931,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-crafting-table-fix1",
+    "original_path": "/workspace/shared/native-crafting-table-fix1",
+    "destination": "unfinished/workers/native-crafting-table-fix1",
+    "files": 4,
+    "bytes": 52691,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-crafting-table-fix2",
+    "original_path": "/workspace/shared/native-crafting-table-fix2",
+    "destination": "unfinished/workers/native-crafting-table-fix2",
+    "files": 4,
+    "bytes": 55825,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-crafting-table-fix3",
+    "original_path": "/workspace/shared/native-crafting-table-fix3",
+    "destination": "unfinished/workers/native-crafting-table-fix3",
+    "files": 5,
+    "bytes": 117857,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-dh-client-unit-fix47",
+    "original_path": "/workspace/shared/native-dh-client-unit-fix47",
+    "destination": "unfinished/workers/native-dh-client-unit-fix47",
+    "files": 2,
+    "bytes": 8654,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-dh-integrated-client-draft",
+    "original_path": "/workspace/shared/native-dh-integrated-client-draft",
+    "destination": "unfinished/workers/native-dh-integrated-client-draft",
+    "files": 9,
+    "bytes": 40120,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-dh-iris-witness-fix49",
+    "original_path": "/workspace/shared/native-dh-iris-witness-fix49",
+    "destination": "unfinished/workers/native-dh-iris-witness-fix49",
+    "files": 12,
+    "bytes": 96778,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-dh-source-charge-fix48",
+    "original_path": "/workspace/shared/native-dh-source-charge-fix48",
+    "destination": "unfinished/workers/native-dh-source-charge-fix48",
+    "files": 8,
+    "bytes": 47758,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-dry-mutation-stage",
+    "original_path": "/workspace/shared/native-dry-mutation-stage",
+    "destination": "unfinished/workers/native-dry-mutation-stage",
+    "files": 1,
+    "bytes": 2277,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-effect-draft",
+    "original_path": "/workspace/shared/native-effect-draft",
+    "destination": "unfinished/workers/native-effect-draft",
+    "files": 5,
+    "bytes": 57174,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-first-loop-metadata-draft",
+    "original_path": "/workspace/shared/native-first-loop-metadata-draft",
+    "destination": "unfinished/workers/native-first-loop-metadata-draft",
+    "files": 3,
+    "bytes": 39066,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-installed-callback-audit",
+    "original_path": "/workspace/shared/native-installed-callback-audit",
+    "destination": "unfinished/workers/native-installed-callback-audit",
+    "files": 46,
+    "bytes": 646304,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-installed-callback-witness-draft",
+    "original_path": "/workspace/shared/native-installed-callback-witness-draft",
+    "destination": "unfinished/workers/native-installed-callback-witness-draft",
+    "files": 651,
+    "bytes": 47972998,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-installed-session-draft",
+    "original_path": "/workspace/shared/native-installed-session-draft",
+    "destination": "unfinished/workers/native-installed-session-draft",
+    "files": 169,
+    "bytes": 2733514,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-inventory-menu-difference-draft",
+    "original_path": "/workspace/shared/native-inventory-menu-difference-draft",
+    "destination": "unfinished/workers/native-inventory-menu-difference-draft",
+    "files": 6,
+    "bytes": 40897,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-inventory-menu-draft",
+    "original_path": "/workspace/shared/native-inventory-menu-draft",
+    "destination": "unfinished/workers/native-inventory-menu-draft",
+    "files": 13,
+    "bytes": 112180,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-io-close-boundary-v1",
+    "original_path": "/workspace/shared/native-io-close-boundary-v1",
+    "destination": "unfinished/workers/native-io-close-boundary-v1",
+    "files": 24,
+    "bytes": 149500,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-io-close-boundary-v2",
+    "original_path": "/workspace/shared/native-io-close-boundary-v2",
+    "destination": "unfinished/workers/native-io-close-boundary-v2",
+    "files": 21,
+    "bytes": 129242,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-io-close-boundary-v3",
+    "original_path": "/workspace/shared/native-io-close-boundary-v3",
+    "destination": "unfinished/workers/native-io-close-boundary-v3",
+    "files": 4,
+    "bytes": 3755,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-io-close-result-replay",
+    "original_path": "/workspace/shared/native-io-close-result-replay",
+    "destination": "unfinished/workers/native-io-close-result-replay",
+    "files": 1,
+    "bytes": 1267,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-loot-closure-fix50",
+    "original_path": "/workspace/shared/native-loot-closure-fix50",
+    "destination": "unfinished/workers/native-loot-closure-fix50",
+    "files": 8,
+    "bytes": 52872,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-menu-effect-draft",
+    "original_path": "/workspace/shared/native-menu-effect-draft",
+    "destination": "unfinished/workers/native-menu-effect-draft",
+    "files": 14,
+    "bytes": 284608,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-menu-fix2",
+    "original_path": "/workspace/shared/native-menu-fix2",
+    "destination": "unfinished/workers/native-menu-fix2",
+    "files": 9,
+    "bytes": 126381,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-menu-fix4",
+    "original_path": "/workspace/shared/native-menu-fix4",
+    "destination": "unfinished/workers/native-menu-fix4",
+    "files": 2,
+    "bytes": 33386,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-menu-fix5",
+    "original_path": "/workspace/shared/native-menu-fix5",
+    "destination": "unfinished/workers/native-menu-fix5",
+    "files": 7,
+    "bytes": 51633,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-menu-fix6",
+    "original_path": "/workspace/shared/native-menu-fix6",
+    "destination": "unfinished/workers/native-menu-fix6",
+    "files": 3,
+    "bytes": 68774,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-menu-parent-gate",
+    "original_path": "/workspace/shared/native-menu-parent-gate",
+    "destination": "unfinished/workers/native-menu-parent-gate",
+    "files": 3,
+    "bytes": 14389,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-menu-session-draft",
+    "original_path": "/workspace/shared/native-menu-session-draft",
+    "destination": "unfinished/workers/native-menu-session-draft",
+    "files": 34,
+    "bytes": 493978,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-menu-session-draft.tar.gz",
+    "original_path": "/workspace/shared/native-menu-session-draft.tar.gz",
+    "destination": "unfinished/workers/native-menu-session-draft.tar.gz",
+    "files": 0,
+    "bytes": 0,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-mining-codec-fix53",
+    "original_path": "/workspace/shared/native-mining-codec-fix53",
+    "destination": "unfinished/workers/native-mining-codec-fix53",
+    "files": 6,
+    "bytes": 23244,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-mining-commit-draft",
+    "original_path": "/workspace/shared/native-mining-commit-draft",
+    "destination": "unfinished/workers/native-mining-commit-draft",
+    "files": 53,
+    "bytes": 1397092,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-mining-control-draft",
+    "original_path": "/workspace/shared/native-mining-control-draft",
+    "destination": "unfinished/workers/native-mining-control-draft",
+    "files": 37,
+    "bytes": 317268,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-mining-transport-followon-draft",
+    "original_path": "/workspace/shared/native-mining-transport-followon-draft",
+    "destination": "unfinished/workers/native-mining-transport-followon-draft",
+    "files": 14,
+    "bytes": 487649,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-network-flush-owner-draft",
+    "original_path": "/workspace/shared/native-network-flush-owner-draft",
+    "destination": "unfinished/workers/native-network-flush-owner-draft",
+    "files": 408,
+    "bytes": 8588781,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-pickup-draft",
+    "original_path": "/workspace/shared/native-pickup-draft",
+    "destination": "unfinished/workers/native-pickup-draft",
+    "files": 14,
+    "bytes": 152487,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-placement-effects-draft",
+    "original_path": "/workspace/shared/native-placement-effects-draft",
+    "destination": "unfinished/workers/native-placement-effects-draft",
+    "files": 10,
+    "bytes": 432629,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-player-environment-draft",
+    "original_path": "/workspace/shared/native-player-environment-draft",
+    "destination": "unfinished/workers/native-player-environment-draft",
+    "files": 13,
+    "bytes": 230041,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-player-step-draft",
+    "original_path": "/workspace/shared/native-player-step-draft",
+    "destination": "unfinished/workers/native-player-step-draft",
+    "files": 17,
+    "bytes": 75972,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-player-step-integration",
+    "original_path": "/workspace/shared/native-player-step-integration",
+    "destination": "unfinished/workers/native-player-step-integration",
+    "files": 69,
+    "bytes": 1013138,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-player-step-parent-merge",
+    "original_path": "/workspace/shared/native-player-step-parent-merge",
+    "destination": "unfinished/workers/native-player-step-parent-merge",
+    "files": 32,
+    "bytes": 493555,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-player-tick-draft",
+    "original_path": "/workspace/shared/native-player-tick-draft",
+    "destination": "unfinished/workers/native-player-tick-draft",
+    "files": 16,
+    "bytes": 82251,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-reference-poll-fix4",
+    "original_path": "/workspace/shared/native-reference-poll-fix4",
+    "destination": "unfinished/workers/native-reference-poll-fix4",
+    "files": 4,
+    "bytes": 122382,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-registered-clock-probe53",
+    "original_path": "/workspace/shared/native-registered-clock-probe53",
+    "destination": "unfinished/workers/native-registered-clock-probe53",
+    "files": 16,
+    "bytes": 67281,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-registered-excavation-active-save-seal",
+    "original_path": "/workspace/shared/native-registered-excavation-active-save-seal",
+    "destination": "unfinished/workers/native-registered-excavation-active-save-seal",
+    "files": 19,
+    "bytes": 105291,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-registered-excavation-draft",
+    "original_path": "/workspace/shared/native-registered-excavation-draft",
+    "destination": "unfinished/workers/native-registered-excavation-draft",
+    "files": 40,
+    "bytes": 244613,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-registered-session-fixture-draft",
+    "original_path": "/workspace/shared/native-registered-session-fixture-draft",
+    "destination": "unfinished/workers/native-registered-session-fixture-draft",
+    "files": 40,
+    "bytes": 199527,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-repeatable-save-draft",
+    "original_path": "/workspace/shared/native-repeatable-save-draft",
+    "destination": "unfinished/workers/native-repeatable-save-draft",
+    "files": 109,
+    "bytes": 3214559,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-resolved-menu-draft",
+    "original_path": "/workspace/shared/native-resolved-menu-draft",
+    "destination": "unfinished/workers/native-resolved-menu-draft",
+    "files": 12,
+    "bytes": 281799,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-resolved-menu-fix1",
+    "original_path": "/workspace/shared/native-resolved-menu-fix1",
+    "destination": "unfinished/workers/native-resolved-menu-fix1",
+    "files": 2,
+    "bytes": 89796,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-resolved-menu-fix2",
+    "original_path": "/workspace/shared/native-resolved-menu-fix2",
+    "destination": "unfinished/workers/native-resolved-menu-fix2",
+    "files": 3,
+    "bytes": 123928,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-resolved-menu-fix3",
+    "original_path": "/workspace/shared/native-resolved-menu-fix3",
+    "destination": "unfinished/workers/native-resolved-menu-fix3",
+    "files": 4,
+    "bytes": 137791,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-retirement-draft",
+    "original_path": "/workspace/shared/native-retirement-draft",
+    "destination": "unfinished/workers/native-retirement-draft",
+    "files": 3,
+    "bytes": 91732,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-save-observer-draft",
+    "original_path": "/workspace/shared/native-save-observer-draft",
+    "destination": "unfinished/workers/native-save-observer-draft",
+    "files": 17,
+    "bytes": 103418,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-session-bridge-draft",
+    "original_path": "/workspace/shared/native-session-bridge-draft",
+    "destination": "unfinished/workers/native-session-bridge-draft",
+    "files": 48,
+    "bytes": 772898,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-stone-census",
+    "original_path": "/workspace/shared/native-stone-census",
+    "destination": "unfinished/workers/native-stone-census",
+    "files": 4,
+    "bytes": 5633,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-stone-contract-draft.md",
+    "original_path": "/workspace/shared/native-stone-contract-draft.md",
+    "destination": "unfinished/workers/native-stone-contract-draft.md",
+    "files": 1,
+    "bytes": 7228,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-survival-gametest-stage",
+    "original_path": "/workspace/shared/native-survival-gametest-stage",
+    "destination": "unfinished/workers/native-survival-gametest-stage",
+    "files": 7,
+    "bytes": 232498,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-survival-scene-scheduler-draft",
+    "original_path": "/workspace/shared/native-survival-scene-scheduler-draft",
+    "destination": "unfinished/workers/native-survival-scene-scheduler-draft",
+    "files": 29,
+    "bytes": 446487,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-survival-scene-scheduler-draft.tar.gz",
+    "original_path": "/workspace/shared/native-survival-scene-scheduler-draft.tar.gz",
+    "destination": "unfinished/workers/native-survival-scene-scheduler-draft.tar.gz",
+    "files": 0,
+    "bytes": 0,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:native-transport-measurement",
+    "original_path": "/workspace/shared/native-transport-measurement",
+    "destination": "unfinished/workers/native-transport-measurement",
+    "files": 178,
+    "bytes": 1653195,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:observation-split-archive-draft",
+    "original_path": "/workspace/shared/observation-split-archive-draft",
+    "destination": "unfinished/workers/observation-split-archive-draft",
+    "files": 47,
+    "bytes": 393305,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:parent-session-mining-union55",
+    "original_path": "/workspace/shared/parent-session-mining-union55",
+    "destination": "unfinished/workers/parent-session-mining-union55",
+    "files": 44,
+    "bytes": 897883,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:registered-save-negative-report54",
+    "original_path": "/workspace/shared/registered-save-negative-report54",
+    "destination": "unfinished/workers/registered-save-negative-report54",
+    "files": 2,
+    "bytes": 1444,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:registered-transport-profile54",
+    "original_path": "/workspace/shared/registered-transport-profile54",
+    "destination": "unfinished/workers/registered-transport-profile54",
+    "files": 2,
+    "bytes": 9894,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:reusable-save-fix59",
+    "original_path": "/workspace/shared/reusable-save-fix59",
+    "destination": "unfinished/workers/reusable-save-fix59",
+    "files": 6,
+    "bytes": 573649,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:seal-dh-witness-002.py",
+    "original_path": "/workspace/shared/seal-dh-witness-002.py",
+    "destination": "unfinished/workers/seal-dh-witness-002.py",
+    "files": 1,
+    "bytes": 5466,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:stage-dh-witness-002.py",
+    "original_path": "/workspace/shared/stage-dh-witness-002.py",
+    "destination": "unfinished/workers/stage-dh-witness-002.py",
+    "files": 1,
+    "bytes": 8877,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:stage_dh_client_probe.py",
+    "original_path": "/workspace/shared/stage_dh_client_probe.py",
+    "destination": "unfinished/workers/stage_dh_client_probe.py",
+    "files": 1,
+    "bytes": 6455,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-binding-tick-draft",
+    "original_path": "/workspace/shared/survival-binding-tick-draft",
+    "destination": "unfinished/workers/survival-binding-tick-draft",
+    "files": 3,
+    "bytes": 40285,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-dh-complement-draft",
+    "original_path": "/workspace/shared/survival-dh-complement-draft",
+    "destination": "unfinished/workers/survival-dh-complement-draft",
+    "files": 18,
+    "bytes": 224512,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-dh-owner-draft",
+    "original_path": "/workspace/shared/survival-dh-owner-draft",
+    "destination": "unfinished/workers/survival-dh-owner-draft",
+    "files": 14,
+    "bytes": 169200,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-dh-packing-draft",
+    "original_path": "/workspace/shared/survival-dh-packing-draft",
+    "destination": "unfinished/workers/survival-dh-packing-draft",
+    "files": 13,
+    "bytes": 137302,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-dh-producer-harness",
+    "original_path": "/workspace/shared/survival-dh-producer-harness",
+    "destination": "unfinished/workers/survival-dh-producer-harness",
+    "files": 36,
+    "bytes": 650524,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-dh-producer-integration",
+    "original_path": "/workspace/shared/survival-dh-producer-integration",
+    "destination": "unfinished/workers/survival-dh-producer-integration",
+    "files": 20,
+    "bytes": 276054,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-frame-join-draft",
+    "original_path": "/workspace/shared/survival-frame-join-draft",
+    "destination": "unfinished/workers/survival-frame-join-draft",
+    "files": 83,
+    "bytes": 916206,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-gpu-page-draft",
+    "original_path": "/workspace/shared/survival-gpu-page-draft",
+    "destination": "unfinished/workers/survival-gpu-page-draft",
+    "files": 20,
+    "bytes": 264992,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-overlay-authority-draft",
+    "original_path": "/workspace/shared/survival-overlay-authority-draft",
+    "destination": "unfinished/workers/survival-overlay-authority-draft",
+    "files": 11,
+    "bytes": 248858,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-pose-draft",
+    "original_path": "/workspace/shared/survival-pose-draft",
+    "destination": "unfinished/workers/survival-pose-draft",
+    "files": 9,
+    "bytes": 130162,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-publication-join-draft",
+    "original_path": "/workspace/shared/survival-publication-join-draft",
+    "destination": "unfinished/workers/survival-publication-join-draft",
+    "files": 38,
+    "bytes": 530275,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-session-transition-draft",
+    "original_path": "/workspace/shared/survival-session-transition-draft",
+    "destination": "unfinished/workers/survival-session-transition-draft",
+    "files": 5,
+    "bytes": 70920,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:survival-session-transition-reference",
+    "original_path": "/workspace/shared/survival-session-transition-reference",
+    "destination": "unfinished/workers/survival-session-transition-reference",
+    "files": 0,
+    "bytes": 0,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "worker:wildlands-reviewer-recovery-20261012",
+    "original_path": "/workspace/shared/wildlands-reviewer-recovery-20261012",
+    "destination": "unfinished/workers/wildlands-reviewer-recovery-20261012",
+    "files": 1,
+    "bytes": 14292,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:finalize_survival_focus.py",
+    "original_path": "/tmp/finalize_survival_focus.py",
+    "destination": "unfinished/recovery-helpers/finalize_survival_focus.py",
+    "files": 1,
+    "bytes": 2059,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:finalize_survival_focus18.py",
+    "original_path": "/tmp/finalize_survival_focus18.py",
+    "destination": "unfinished/recovery-helpers/finalize_survival_focus18.py",
+    "files": 1,
+    "bytes": 2111,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:finalize_survival_focus20.py",
+    "original_path": "/tmp/finalize_survival_focus20.py",
+    "destination": "unfinished/recovery-helpers/finalize_survival_focus20.py",
+    "files": 1,
+    "bytes": 2192,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:finalize_survival_focus21.py",
+    "original_path": "/tmp/finalize_survival_focus21.py",
+    "destination": "unfinished/recovery-helpers/finalize_survival_focus21.py",
+    "files": 1,
+    "bytes": 2147,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:finalize_survival_focus22.py",
+    "original_path": "/tmp/finalize_survival_focus22.py",
+    "destination": "unfinished/recovery-helpers/finalize_survival_focus22.py",
+    "files": 1,
+    "bytes": 2178,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:finalize_survival_focus25.py",
+    "original_path": "/tmp/finalize_survival_focus25.py",
+    "destination": "unfinished/recovery-helpers/finalize_survival_focus25.py",
+    "files": 1,
+    "bytes": 2290,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:finalize_survival_focus_generic.py",
+    "original_path": "/tmp/finalize_survival_focus_generic.py",
+    "destination": "unfinished/recovery-helpers/finalize_survival_focus_generic.py",
+    "files": 1,
+    "bytes": 2127,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:integrate_survival30.py",
+    "original_path": "/tmp/integrate_survival30.py",
+    "destination": "unfinished/recovery-helpers/integrate_survival30.py",
+    "files": 1,
+    "bytes": 3202,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:integrate_survival_batch21.py",
+    "original_path": "/tmp/integrate_survival_batch21.py",
+    "destination": "unfinished/recovery-helpers/integrate_survival_batch21.py",
+    "files": 1,
+    "bytes": 4669,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:integrate_survival_support19.py",
+    "original_path": "/tmp/integrate_survival_support19.py",
+    "destination": "unfinished/recovery-helpers/integrate_survival_support19.py",
+    "files": 1,
+    "bytes": 2913,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:pack_survival_dh_faces.py",
+    "original_path": "/tmp/pack_survival_dh_faces.py",
+    "destination": "unfinished/recovery-helpers/pack_survival_dh_faces.py",
+    "files": 1,
+    "bytes": 5201,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:preserve_survival_native.py",
+    "original_path": "/tmp/preserve_survival_native.py",
+    "destination": "unfinished/recovery-helpers/preserve_survival_native.py",
+    "files": 1,
+    "bytes": 2527,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:preserve_survival_native_v2.py",
+    "original_path": "/tmp/preserve_survival_native_v2.py",
+    "destination": "unfinished/recovery-helpers/preserve_survival_native_v2.py",
+    "files": 1,
+    "bytes": 3231,
+    "state": "not automatically merged or qualified"
+  },
+  {
+    "id": "recovery-helper:preserve_survival_native_v3.py",
+    "original_path": "/tmp/preserve_survival_native_v3.py",
+    "destination": "unfinished/recovery-helpers/preserve_survival_native_v3.py",
+    "files": 1,
+    "bytes": 3522,
+    "state": "not automatically merged or qualified"
+  }
+]

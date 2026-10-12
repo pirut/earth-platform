@@ -1,0 +1,5 @@
+SOURCE_PEAK_SIGHTLINE distance=2142.514193220467 minimumClearance=-76.61052531791665 atRange=467.0 final40mExcluded=true; real intervening ridge hides summit; no shelf/terrain adjustment
+EarthAlpineDefinitionTest PASS checks=15064 gridPoints=1296 gridChangedColumns=489 maxAbsProceduralDelta=1.8859284675180834 sampledSourceMin=5542.459244151078 sampledSourceMax=8734.43456273624 materials={STONE=447, ANDESITE=56, TUFF=81, SNOW_BLOCK=712}
+ANCHOR Anchor[x=9678074, z=-3114278, surfaceY=7314, feetY=7315.0, yaw=133.03987, pitch=-33.55703, digTarget=Block[x=9678074, y=7314, z=-3114276], placementTarget=Block[x=9678075, y=7315, z=-3114276]]
+ENVELOPE Envelope[minCenterX=604863, maxCenterXExclusive=604895, minCenterZ=-194659, maxCenterZExclusive=-194627, minCenterY=-686, maxCenterYExclusive=552, minColumnX=9675776, maxColumnXExclusive=9680384, minColumnZ=-3116544, maxColumnZExclusive=-3111936]
+IDENTITY 5c180d8b046dee2ef5e41536efd4d8b65f72d197bb36295b5e04eb05a0b05444

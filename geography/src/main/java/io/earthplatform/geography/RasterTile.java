@@ -31,6 +31,24 @@ public final class RasterTile {
         }
         return sum;
     }
+    /**
+     * Conservative continuous bilinear support proof for an axis-aligned geographic rectangle.
+     * Every raster node in its inclusive interpolation stencil must be finite, including nodes
+     * with zero endpoint weight. An interior no-data hole therefore cannot be hidden by finite
+     * corners. Wrapped/reversed, out-of-domain or unusually large rectangles fail closed.
+     */
+    public boolean hasFiniteRectangleSupport(GeoPoint northWest, GeoPoint southEast) {
+        double x0=spec.sampleX(northWest),x1=spec.sampleX(southEast);
+        double y0=spec.sampleY(northWest),y1=spec.sampleY(southEast);
+        if(!Double.isFinite(x0)||!Double.isFinite(x1)||!Double.isFinite(y0)||!Double.isFinite(y1)
+                ||x0<0||y0<0||x1<x0||y1<y0||x1>spec.width()-1||y1>spec.height()-1)return false;
+        int left=(int)StrictMath.floor(x0),right=(int)StrictMath.ceil(x1);
+        int top=(int)StrictMath.floor(y0),bottom=(int)StrictMath.ceil(y1);
+        if((long)(right-left+1)*(bottom-top+1)>65536)return false;
+        for(int y=top;y<=bottom;y++)for(int x=left;x<=right;x++)
+            if(!Float.isFinite(heights[y*spec.width()+x]))return false;
+        return true;
+    }
     public byte[] encode() throws IOException {
         var bytes = new ByteArrayOutputStream();
         try (var out = new DataOutputStream(bytes)) {

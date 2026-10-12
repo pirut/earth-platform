@@ -1,0 +1,1060 @@
+--- /dev/null
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/mixin/NativeLocalMainPayloadObservationMixin.java
+@@ -0,0 +1,42 @@
++package io.earthplatform.minecraft.mixin;
++
++import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import io.earthplatform.minecraft.survival.interaction.host.NativeLocalPayloadObservation;
++import java.util.concurrent.CompletableFuture;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.neoforged.neoforge.network.handling.IPayloadContext;
++import net.neoforged.neoforge.network.handling.MainThreadPayloadHandler;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++/** Observe the unmodified original MAIN-payload Runnable admission and callback body. */
++@Mixin(MainThreadPayloadHandler.class)
++abstract class NativeLocalMainPayloadObservationMixin {
++    @WrapMethod(method="handle(Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload;Lnet/neoforged/neoforge/network/handling/IPayloadContext;)V")
++    private void earthplatform$payloadSource(CustomPacketPayload payload,IPayloadContext context,Operation<Void> original){
++        NativeLocalPayloadObservation.Scope scope=null;
++        try{scope=NativeLocalPayloadObservation.sourceEntered(this,payload,context);}catch(Throwable failure){try{NativeLocalPayloadObservation.observerFailed();}catch(Throwable ignored){}}
++        boolean failed=true;
++        try{original.call(payload,context);failed=false;}
++        finally{try{NativeLocalPayloadObservation.sourceReturned(scope,failed);}catch(Throwable failure){try{NativeLocalPayloadObservation.observerFailed();}catch(Throwable ignored){}}}
++    }
++    @WrapOperation(method="handle(Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload;Lnet/neoforged/neoforge/network/handling/IPayloadContext;)V",
++            at=@At(value="INVOKE",target="Lnet/neoforged/neoforge/network/handling/IPayloadContext;enqueueWork(Ljava/lang/Runnable;)Ljava/util/concurrent/CompletableFuture;"),require=1,allow=1)
++    private CompletableFuture<Void> earthplatform$payloadEnqueue(IPayloadContext context,Runnable task,Operation<CompletableFuture<Void>> original){
++        NativeLocalPayloadObservation.Scope scope=null;
++        try{scope=NativeLocalPayloadObservation.beforeEnqueue(context,task);}catch(Throwable failure){try{NativeLocalPayloadObservation.observerFailed();}catch(Throwable ignored){}}
++        CompletableFuture<Void> returned=null;boolean failed=true;
++        try{returned=original.call(context,task);failed=false;return returned;}
++        finally{try{NativeLocalPayloadObservation.enqueueReturned(scope,returned,failed);}catch(Throwable failure){try{NativeLocalPayloadObservation.observerFailed();}catch(Throwable ignored){}}}
++    }
++    @WrapMethod(method="lambda$handle$0(Lnet/minecraft/network/protocol/common/custom/CustomPacketPayload;Lnet/neoforged/neoforge/network/handling/IPayloadContext;)V")
++    private void earthplatform$payloadCallback(CustomPacketPayload payload,IPayloadContext context,Operation<Void> original){
++        NativeLocalPayloadObservation.Scope scope=null;
++        try{scope=NativeLocalPayloadObservation.callbackEntered(this,payload,context);}catch(Throwable failure){try{NativeLocalPayloadObservation.observerFailed();}catch(Throwable ignored){}}
++        boolean failed=true;
++        try{original.call(payload,context);failed=false;}
++        finally{try{NativeLocalPayloadObservation.callbackReturned(scope,failed);}catch(Throwable failure){try{NativeLocalPayloadObservation.observerFailed();}catch(Throwable ignored){}}}
++    }
++}
+--- a/minecraft/src/main/java/io/earthplatform/minecraft/mixin/NativeLocalObservationMixinPlugin.java
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/mixin/NativeLocalObservationMixinPlugin.java
+@@ -14,6 +14,8 @@
+     public void onLoad(String name){}
+     public String getRefMapperConfig(){return null;}
+     public boolean shouldApplyMixin(String target,String mixin){
++        if(mixin.endsWith(".NativeLocalMainPayloadObservationMixin"))
++            return enabled()&&Boolean.getBoolean("earthplatform.nativeLocalPayloadObservation");
+         if(mixin.endsWith(".NativeLocalConnectionRootsMixin")||mixin.endsWith(".NativeLocalInboundConfigurationRootsMixin")||mixin.endsWith(".NativeLocalOutboundConfigurationRootsMixin"))
+             return enabled()&&Boolean.getBoolean("earthplatform.nativeLocalRootObservation");
+         return enabled();
+--- a/minecraft/src/main/java/io/earthplatform/minecraft/mixin/NativeOriginalPacketEncoderBoundaryMixin.java
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/mixin/NativeOriginalPacketEncoderBoundaryMixin.java
+@@ -22,8 +22,12 @@
+     }
+     @Override public void write(ChannelHandlerContext ctx,Object packet,ChannelPromise promise)throws Exception{
+         var owner=earthplatform$codecBoundary;if(owner==null){super.write(ctx,packet,promise);return;}
+-        try{owner.writeEnter(this,ctx,packet,promise);super.write(ctx,packet,promise);owner.writeExit(this,ctx);}
+-        catch(Exception|Error failure){owner.codecFailure(this,failure);throw failure;}
++        Object scope=null;
++        try{scope=owner.writeEnter(this,ctx,packet,promise);super.write(ctx,packet,promise);owner.writeExit(this,ctx,scope);}
++        catch(Exception|Error failure){
++            try{owner.writeFailure(this,ctx,scope,failure);}catch(Throwable bookkeeping){try{if(bookkeeping!=failure)failure.addSuppressed(bookkeeping);}catch(Throwable ignored){}}
++            throw failure;
++        }
+     }
+     @Override protected ByteBuf allocateBuffer(ChannelHandlerContext ctx,Object packet,boolean direct)throws Exception{
+         var owner=earthplatform$codecBoundary;if(owner==null)return super.allocateBuffer(ctx,packet,direct);
+--- a/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeCodecBoundaryGameTests.java
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeCodecBoundaryGameTests.java
+@@ -43,6 +43,7 @@
+             retained.encoder=new PacketEncoder<>(protocol);retained.decoder=new PacketDecoder<>(protocol);
+             if(!(retained.encoder instanceof NativeCodecBoundaryAccess)||!(retained.decoder instanceof NativeCodecBoundaryAccess))
+                 throw new IllegalStateException("Minecraft inherited codec transform marker missing");
++            if(!NativeOriginalPacketWriteShape.exactMatcher(retained.encoder))throw new IllegalStateException("Original PacketEncoder matcher operands changed");
+             retained.allocator=new UnpooledByteBufAllocator(false,true);
+             retained.heapAllocator=new PreferHeapByteBufAllocator(retained.allocator);
+             retained.owner=new Observer(retained);
+@@ -68,6 +69,7 @@
+         Attempt attempt=null;Throwable primary=null;
+         try{
+             attempt=open(helper);
++            requireOriginalPassThrough(attempt);
+             for(int i=0;i<16;i++)round(attempt,i);
+             attempt.owner.check(attempt.owner.writes==16&&attempt.owner.allocations==16&&attempt.owner.reads==16,"All original codec boundaries must run once per packet");
+             requireOriginalDecoderFailure(attempt);
+@@ -80,6 +82,18 @@
+             if(exact!=null)try{exact.finish();}catch(RuntimeException|Error cleanup){exact.fail(cleanup);if(primary!=null)primary.addSuppressed(cleanup);else throw cleanup;}
+         }
+         helper.succeed();
++    }
++    private static void requireOriginalPassThrough(Attempt attempt){
++        Observer owner=attempt.owner;owner.passThrough=new Object();
++        owner.check(!NativeOriginalPacketWriteShape.accepts(owner.passThrough),"Exact Packet matcher accepted a plain control object");
++        ChannelFuture actual=attempt.channel.writeAndFlush(owner.passThrough);
++        owner.check(actual==owner.promise&&actual.isDone()&&actual.isSuccess(),"Original pass-through promise changed");
++        attempt.lastObserved=attempt.channel.readOutbound();
++        owner.check(attempt.lastObserved==owner.passThrough&&owner.passReturns==1&&owner.writeDepth==0
++                &&owner.buffer==null&&owner.allocations==0&&owner.writes==0&&owner.reads==0,
++                "Original non-Packet pass-through allocated or encoded a byte flight");
++        owner.check(attempt.channel.readOutbound()==null&&attempt.channel.readInbound()==null,"Unexpected pass-through output");
++        owner.passThrough=null;owner.promise=null;attempt.lastObserved=null;
+     }
+     private static void round(Attempt attempt,int sequence){
+         Observer owner=attempt.owner;owner.check(owner.packet==null&&owner.buffer==null,"Previous codec round has unresolved aliases");
+@@ -153,14 +167,25 @@
+     }
+     private static final class Observer extends NativeCodecBoundaryOwner {
+         private final Attempt attempt;private final Thread thread=Thread.currentThread();private final Field cumulation;
+-        private ServerboundHelloPacket packet;private ChannelPromise promise;private ByteBuf buffer;
++        private ServerboundHelloPacket packet;private ChannelPromise promise;private ByteBuf buffer;private Object passThrough;private int passReturns;
+         private int writeDepth,readDepth,writes,allocations,reads,writeEntries;
+         Observer(Attempt attempt)throws Exception{super(attempt.encoder,attempt.decoder);this.attempt=attempt;cumulation=ByteToMessageDecoder.class.getDeclaredField("cumulation");cumulation.setAccessible(true);}
+         private Object cumulative(){try{return cumulation.get(attempt.decoder);}catch(ReflectiveOperationException failure){attempt.fail(failure);throw new IllegalStateException(failure);}}
+         void check(boolean value,String message){if(!value){var failure=new IllegalStateException(message);attempt.fail(failure);throw failure;}}
+         private void context(ChannelHandlerContext ctx){requireInactiveProfiler();check(Thread.currentThread()==thread&&ctx.channel()==attempt.channel&&ctx.executor()==attempt.channel.eventLoop()&&ctx.alloc()==attempt.heapAllocator,"Exact confined codec channel/executor/allocator changed");}
+-        protected void beforeWrite(ChannelHandlerContext ctx,Object value,ChannelPromise exact){writeEntries++;context(ctx);check(writeDepth==0&&readDepth==0&&value==packet&&packet!=null&&buffer==null&&promise==null,"Encoder write was reentered or foreign");promise=exact;writeDepth=1;}
+-        protected void afterWrite(ChannelHandlerContext ctx){context(ctx);check(writeDepth==1&&buffer!=null&&!promise.isDone(),"Original inherited encoder write boundary changed");writeDepth=0;writes++;}
++        protected Object beforeWrite(ChannelHandlerContext ctx,Object value,ChannelPromise exact){
++            writeEntries++;context(ctx);
++            check(writeDepth==0&&readDepth==0&&buffer==null&&promise==null,"Encoder write was reentered or foreign");
++            if(NativeOriginalPacketWriteShape.accepts(value))check(value==packet&&packet!=null&&passThrough==null,"Foreign encoded packet");
++            else check(value==passThrough&&passThrough!=null&&packet==null,"Foreign pass-through object");
++            promise=exact;writeDepth=1;return value;
++        }
++        protected void afterWrite(ChannelHandlerContext ctx,Object scope){
++            context(ctx);check(writeDepth==1&&!promise.isDone(),"Original inherited encoder write boundary changed");
++            if(passThrough!=null){check(scope==passThrough&&buffer==null,"Pass-through was encoded or scope changed");passReturns++;}
++            else {check(scope==packet&&buffer!=null,"Accepted Packet skipped native encoding");writes++;}
++            writeDepth=0;
++        }
+         protected void beforeAllocation(ChannelHandlerContext ctx,Object value,boolean direct){context(ctx);check(writeDepth==1&&value==packet&&buffer==null&&direct,"Original initial allocator request differs");}
+         protected void afterAllocation(ChannelHandlerContext ctx,ByteBuf exact){buffer=exact;context(ctx);check(exact.refCnt()==1&&!exact.isDirect()&&exact.capacity()==256&&exact.readableBytes()==0,"Original heap allocation differs");allocations++;}
+         protected void beforeRead(ChannelHandlerContext ctx,Object value){context(ctx);check(readDepth==0&&writeDepth==0&&value==buffer&&cumulative()==null&&buffer.refCnt()==1,"Decoder has a foreign input or prior cumulation");readDepth=1;}
+--- a/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeCodecBoundaryOwner.java
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeCodecBoundaryOwner.java
+@@ -32,8 +32,14 @@
+                 &&chain.get(2).getDeclaringClass()==target&&chain.get(2).getMethodName().equals(method);}))
+             {var failure=new IllegalStateException("Original codec boundary invocation required");if(observationalOnly())diagnosticFailure(failure);else failed(failure);throw failure;}
+     }
+-    public final void writeEnter(Object codec,ChannelHandlerContext ctx,Object packet,ChannelPromise promise){try{nativeOrigin(codec,true,"write","writeEnter");beforeWrite(ctx,packet,promise);}catch(RuntimeException|Error failure){if(!observationalOnly())throw failure;diagnosticFailure(failure);}}
+-    public final void writeExit(Object codec,ChannelHandlerContext ctx){try{nativeOrigin(codec,true,"write","writeExit");afterWrite(ctx);}catch(RuntimeException|Error failure){if(!observationalOnly())throw failure;diagnosticFailure(failure);}}
++    public final Object writeEnter(Object codec,ChannelHandlerContext ctx,Object packet,ChannelPromise promise){try{nativeOrigin(codec,true,"write","writeEnter");return beforeWrite(ctx,packet,promise);}catch(RuntimeException|Error failure){if(!observationalOnly())throw failure;diagnosticFailure(failure);return null;}}
++    public final void writeExit(Object codec,ChannelHandlerContext ctx,Object scope){try{nativeOrigin(codec,true,"write","writeExit");afterWrite(ctx,scope);}catch(RuntimeException|Error failure){if(!observationalOnly())throw failure;diagnosticFailure(failure);}}
++    /** The original inherited write has unwound; failure was already latched at an inner codec hook if present. */
++    public final void writeFailure(Object codec,ChannelHandlerContext ctx,Object scope,Throwable original){
++        try{nativeOrigin(codec,true,"write","writeFailure");afterFailedWrite(ctx,scope,original);}
++        catch(RuntimeException|Error bookkeeping){if(!observationalOnly())throw bookkeeping;diagnosticFailure(bookkeeping);}
++    }
++    protected void afterFailedWrite(ChannelHandlerContext ctx,Object scope,Throwable original){failed(original);}
+     public final void allocationEnter(Object codec,ChannelHandlerContext ctx,Object packet,boolean direct){try{nativeOrigin(codec,true,"allocateBuffer","allocationEnter");beforeAllocation(ctx,packet,direct);}catch(RuntimeException|Error failure){if(!observationalOnly())throw failure;diagnosticFailure(failure);}}
+     public final void allocated(Object codec,ChannelHandlerContext ctx,ByteBuf buffer){try{nativeOrigin(codec,true,"allocateBuffer","allocated");afterAllocation(ctx,buffer);}catch(RuntimeException|Error failure){if(!observationalOnly())throw failure;diagnosticFailure(failure);}}
+     public final void readEnter(Object codec,ChannelHandlerContext ctx,Object message){try{nativeOrigin(codec,false,"channelRead","readEnter");beforeRead(ctx,message);}catch(RuntimeException|Error failure){if(!observationalOnly())throw failure;diagnosticFailure(failure);}}
+@@ -56,8 +62,8 @@
+         }catch(RuntimeException|Error failure){if(!observationalOnly())throw failure;diagnosticFailure(failure);}
+     }
+     protected void afterDecode(ByteBuf buffer){}
+-    protected abstract void beforeWrite(ChannelHandlerContext ctx,Object packet,ChannelPromise promise);
+-    protected abstract void afterWrite(ChannelHandlerContext ctx);
++    protected abstract Object beforeWrite(ChannelHandlerContext ctx,Object packet,ChannelPromise promise);
++    protected abstract void afterWrite(ChannelHandlerContext ctx,Object scope);
+     protected abstract void beforeAllocation(ChannelHandlerContext ctx,Object packet,boolean direct);
+     protected abstract void afterAllocation(ChannelHandlerContext ctx,ByteBuf buffer);
+     protected abstract void beforeRead(ChannelHandlerContext ctx,Object message);
+--- a/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalByteObservation.java
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalByteObservation.java
+@@ -19,7 +19,8 @@
+     private final Codec[] codecs=new Codec[MAX_CODECS];
+     private final Flight[] flights=new Flight[CAPACITY];
+     private int codecCount, flightCount, failure;
+-    private long promiseCompleted, decoded, released, bundleCalls;
++    private long promiseCompleted, decoded, released, bundleCalls, passThroughs, passThroughReturns;
++    private int activeWrites;
+     private final boolean[] partialBundle=new boolean[2];
+     private static final class Flight {
+         final int side;
+@@ -35,11 +36,17 @@
+         final WeakReference<Object> protocol;
+         final boolean outbound;
+         Flight current;
++        WriteScope writes;
+         boolean cleanInput;
+         int side=-1;
+         String[] observedProfile;
+         boolean profileAttempted;
+         Codec(Object codec,Object protocol,boolean outbound){this.identity=new WeakReference<>(codec);this.protocol=new WeakReference<>(protocol);this.outbound=outbound;}
++    }
++    private static final class WriteScope extends NativeOrdinaryInvocationScope {
++        final Flight flight;
++        final Object configurationTicket; // Weak/scalar original root metadata, never the native task.
++        WriteScope(WriteScope previous,Flight flight,Object configurationTicket){super(previous);this.flight=flight;this.configurationTicket=configurationTicket;}
+     }
+     private static final class Completion implements io.netty.channel.ChannelFutureListener {
+         private final NativeLocalByteObservation index;
+@@ -62,40 +69,62 @@
+         Owner(Object exact,Codec record){super(exact,record.outbound);this.record=record;}
+         @Override protected boolean observationalOnly(){return true;}
+         @Override protected boolean observesDecodeReturn(){return true;}
+-        @Override protected void beforeWrite(ChannelHandlerContext context,Object packet,ChannelPromise promise){
+-            final Flight flight;
+-            if(!NativeLocalInstalledPins.contextClass(context.getClass())){fail(23);return;}
++        @Override protected Object beforeWrite(ChannelHandlerContext context,Object packet,ChannelPromise promise){
++            if(!NativeLocalInstalledPins.contextClass(context.getClass())){fail(23);return null;}
+             int side=NativeLocalCausalObservation.sideOf(context.channel());
+             observeProfile(record,context,side);
++            final Flight flight;final WriteScope scope;
+             synchronized(NativeLocalByteObservation.this){
+-                if(side<0){fail(1);return;}
++                if(side<0){fail(1);return null;}
+                 record.side=side;
+-                if(record.current!=null||flightCount==CAPACITY||promise.getClass()!=DefaultChannelPromise.class){fail(2);return;}
++                if(!NativeOrdinaryInvocationScope.canEnter(record.writes)){fail(28);return null;}
++                if(!NativeOriginalPacketWriteShape.accepts(packet)){
++                    Object root=NativeLocalRootObservation.configurationPassThrough(context.channel(),packet);
++                    if(root==null){fail(29);return null;}
++                    scope=new WriteScope(record.writes,null,root);record.writes=scope;activeWrites++;passThroughs++;
++                    return scope;
++                }
++                if(record.current!=null||flightCount==CAPACITY||promise.getClass()!=DefaultChannelPromise.class){fail(2);return null;}
+                 flight=new Flight(side,promise);flights[flightCount++]=flight;record.current=flight;
+-            }
+-            // No index monitor spans this callback-capable operation. The slot/Completion/possible
+-            // native notification task are already charged, including immediate completion.
++                scope=new WriteScope(record.writes,flight,null);record.writes=scope;activeWrites++;
++            }
+             boolean succeeded=false;
+             try{
+-                // DefaultPromise uses this same monitor for its listener field. At this original
+-                // fresh-promise site only our fixed scalar callback can run during this addition.
+                 synchronized(promise){
+-                    if(!freshPromise(promise,context)){fail(25);return;}
++                    if(!freshPromise(promise,context)){fail(25);return scope;}
+                     promise.addListener(new Completion(NativeLocalByteObservation.this,flight));succeeded=true;
+                 }
+             }
+             finally{synchronized(NativeLocalByteObservation.this){if(!succeeded)fail(24);flight.completion.registrationReturned(succeeded);}}
+-        }
+-        @Override protected void afterWrite(ChannelHandlerContext context){synchronized(NativeLocalByteObservation.this){
+-            if(record.current==null){fail(6);return;}record.current.writeReturned=true;record.current=null;
++            return scope;
++        }
++        @Override protected void afterWrite(ChannelHandlerContext context,Object opaque){finishWrite(opaque,false);}
++        @Override protected void afterFailedWrite(ChannelHandlerContext context,Object opaque,Throwable original){
++            fail(18);finishWrite(opaque,true);
++        }
++        private void finishWrite(Object opaque,boolean failed){synchronized(NativeLocalByteObservation.this){
++            if(!(opaque instanceof WriteScope scope)||!scope.returnedFrom(record.writes)){fail(30);return;}
++            if(scope.flight==null){
++                if(scope.configurationTicket==null){fail(29);return;}
++                if(!failed)passThroughReturns++;
++            }else{
++                if(record.current!=scope.flight){fail(6);return;}
++                // No allocation on an accepted Packet is a classifier/native matcher disagreement.
++                if(!failed&&scope.flight.buffer==null)fail(31);
++                if(!failed)scope.flight.writeReturned=true;
++                record.current=null; // Flight remains indexed and charged on every failure.
++            }
++            record.writes=(WriteScope)scope.previous;activeWrites--;
+         }}
+         @Override protected void beforeAllocation(ChannelHandlerContext context,Object packet,boolean direct){
+-            synchronized(NativeLocalByteObservation.this){if(record.current==null)fail(7);}
++            synchronized(NativeLocalByteObservation.this){
++                if(record.writes==null||record.writes.flight==null||record.current!=record.writes.flight
++                        ||!NativeOriginalPacketWriteShape.accepts(packet))fail(7);
++            }
+         }
+         @Override protected void afterAllocation(ChannelHandlerContext context,ByteBuf buffer){synchronized(NativeLocalByteObservation.this){
+-            if(record.current==null||record.current.buffer!=null){fail(8);return;}
++            if(record.writes==null||record.writes.flight==null||record.current!=record.writes.flight||record.current.buffer!=null){fail(8);return;}
+             record.current.buffer=new WeakReference<>(buffer);
+-            // No allocator or ByteBuf methods are dispatched here. Backing-pool bound is a separate gate.
+         }}
+         @Override protected void beforeRead(ChannelHandlerContext context,Object message){synchronized(NativeLocalByteObservation.this){
+             if(!NativeLocalInstalledPins.contextClass(context.getClass())){fail(23);return;}
+@@ -134,6 +163,7 @@
+     synchronized void constructor(Object exact,Object protocol,boolean outbound){
+         if(codecCount==MAX_CODECS||exact.getClass()!=(outbound?PacketEncoder.class:PacketDecoder.class)
+                 ||!(exact instanceof NativeCodecBoundaryAccess access)){fail(19);return;}
++        if(outbound&&!NativeOriginalPacketWriteShape.exactMatcher(exact)){fail(32);return;}
+         Codec record=new Codec(exact,protocol,outbound);codecs[codecCount++]=record;
+         Owner owner=new Owner(exact,record);access.earthplatform$bindCodecBoundary(exact,owner);
+     }
+@@ -168,6 +198,7 @@
+         int unresolved=0;for(int i=0;i<flightCount;i++){Flight f=flights[i];if(!f.completion.observedSettled()||!f.writeReturned||!f.decodeReturned||!f.outerReturned)unresolved++;}
+         return "LOCAL_BYTES codecs="+codecCount+" flights="+flightCount+" senderCompletions="+promiseCompleted+" decodeReturns="+decoded
+                 +" outerReleaseReturns="+released+" pending="+unresolved+" bundleCalls="+bundleCalls
++                +" passThroughs="+passThroughs+" passThroughReturns="+passThroughReturns+" activeWriteScopes="+activeWrites
+                 +" clientPartialBundle="+partialBundle[0]+" serverPartialBundle="+partialBundle[1]+" failure="+failure;
+     }
+ }
+--- a/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalCausalObservation.java
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalCausalObservation.java
+@@ -36,6 +36,8 @@
+         final Origin[] origins=new Origin[4];
+         final ReadScope[] reads=new ReadScope[4];
+         String failedSite, failedHelperFrame, failedOriginalFrame;
++        String firstNestedOuter,firstNestedInner,firstNestedFrames;
++        int maximumReadDepth;long nestedReads;
+         int threadCount;
+         private int threadIndex(){Thread current=Thread.currentThread();for(int i=0;i<threadCount;i++)if(threads[i].get()==current)return i;return -1;}
+         synchronized Origin currentOrigin(){int i=threadIndex();return i<0?null:origins[i];}
+@@ -81,13 +83,11 @@
+             this.endpoint = endpoint; this.frontier = frontier; this.ticket = frontier.reserveBeforeFactory(executor); this.previous = previous; this.depth=previous==null?1:previous.depth+1;
+         }
+     }
+-    public static final class ReadScope {
++    public static final class ReadScope extends NativeOrdinaryInvocationScope {
+         private final Endpoint endpoint;
+-        private final ReadScope previous;
+-        private final WeakReference<Thread> owner = new WeakReference<>(Thread.currentThread());
+         private WeakReference<Packet<?>> packet;
+         private ReadScope(Endpoint endpoint, Packet<?> packet, ReadScope previous) {
+-            this.endpoint = endpoint; this.packet = new WeakReference<>(packet); this.previous = previous;
++            super(previous);this.endpoint = endpoint; this.packet = new WeakReference<>(packet);
+         }
+     }
+ 
+@@ -178,7 +178,10 @@
+             walker = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
+             if (!NativeLocalInstalledPins.check()) retained.fail(24);
+             if (!site("net.minecraft.network.Connection", "earthplatform$observeLocalConnect")) retained.fail(1);
+-            else if (NativeLocalInstalledPins.qualified() && Boolean.getBoolean("earthplatform.nativeLocalRootObservation")) NativeLocalRootObservation.seed();
++            else if (NativeLocalInstalledPins.qualified()) {
++                if(Boolean.getBoolean("earthplatform.nativeLocalRootObservation")) NativeLocalRootObservation.seed();
++                if(Boolean.getBoolean("earthplatform.nativeLocalPayloadObservation")) NativeLocalPayloadObservation.seed();
++            }
+         } catch (RuntimeException failure) { prechargeFailure = 1; if (retained != null) retained.fail(3); }
+     }
+     public static synchronized void clientConstructed(Connection connection, PacketFlow flow) {
+@@ -186,6 +189,7 @@
+         if (flow != PacketFlow.CLIENTBOUND || connection.getClass() != Connection.class || retained.client.connection != null) { retained.fail(4); return; }
+         retained.client.connection = new WeakReference<>(connection); retained.constructors++;
+         if(Boolean.getBoolean("earthplatform.nativeLocalRootObservation")) NativeLocalRootObservation.bind(0,connection);
++        if(Boolean.getBoolean("earthplatform.nativeLocalPayloadObservation")) NativeLocalPayloadObservation.bind(0,connection);
+     }
+     public static synchronized void serverConstructed(Connection connection, Channel channel, PacketFlow flow) {
+         if (retained == null || !site("net.minecraft.server.network.ServerConnectionListener$2", "earthplatform$observeAcceptedConstructor")) return;
+@@ -194,6 +198,7 @@
+         if (flow != PacketFlow.SERVERBOUND || connection.getClass() != Connection.class || retained.server.connection != null) { retained.fail(5); return; }
+         retained.server.connection = new WeakReference<>(connection); retained.server.channel = new WeakReference<>(channel); retained.constructors++;
+         if(Boolean.getBoolean("earthplatform.nativeLocalRootObservation")) NativeLocalRootObservation.bind(1,connection);
++        if(Boolean.getBoolean("earthplatform.nativeLocalPayloadObservation")) NativeLocalPayloadObservation.bind(1,connection);
+     }
+     public static synchronized void serverRegistered(Connection connection, boolean accepted) {
+         if (retained == null || !site("net.minecraft.server.network.ServerConnectionListener$2", "earthplatform$observeRosterAdd")) return;
+@@ -290,14 +295,32 @@
+     public static ReadScope readEntered(Connection connection, Packet<?> packet) {
+         if (retained == null || !site("net.minecraft.network.Connection", "earthplatform$observeReadOrigin")) return null;
+         Endpoint endpoint = endpoint(connection); if (endpoint == null || !NativeLocalInstalledPins.qualified()) return null;
+-        ReadScope previous = retained.currentRead(); if (previous != null) { endpoint.attempt.fail(18); return null; }
++        ReadScope previous = retained.currentRead();
++        if(!NativeOrdinaryInvocationScope.canEnter(previous)){endpoint.attempt.fail(18);return null;}
+         ReadScope scope = new ReadScope(endpoint, packet, previous); retained.currentRead(scope);
++        synchronized(endpoint.attempt){
++            endpoint.attempt.maximumReadDepth=Math.max(endpoint.attempt.maximumReadDepth,scope.depth);
++            if(previous!=null){
++                endpoint.attempt.nestedReads++;
++                if(endpoint.attempt.firstNestedFrames==null){
++                    Packet<?> outer=previous.packet==null?null:previous.packet.get();
++                    endpoint.attempt.firstNestedOuter=outer==null?"MISSING":boundedName(outer);
++                    endpoint.attempt.firstNestedInner=boundedName(packet);
++                    // Bounded diagnostic evidence only. This stack does not authenticate a producer.
++                    endpoint.attempt.firstNestedFrames=walker.walk(frames->{
++                        var chain=frames.limit(64).toList();StringBuilder result=new StringBuilder(16000);
++                        for(int i=0;i<chain.size();i++){if(i>0)result.append(';');result.append(frameName(chain,i));}
++                        return result.toString();
++                    });
++                }
++            }
++        }
+         synchronized (endpoint) { endpoint.readEntered++; } return scope;
+     }
+     public static void readReturned(ReadScope scope, boolean failed) {
+         if (scope == null || !site("net.minecraft.network.Connection", "earthplatform$observeReadOrigin")) return;
+-        if (scope.owner.get() != Thread.currentThread() || retained.currentRead() != scope) { scope.endpoint.attempt.fail(19); return; }
+-        scope.packet = null; retained.currentRead(scope.previous);
++        if (!scope.returnedFrom(retained.currentRead())) { scope.endpoint.attempt.fail(19); return; }
++        scope.packet = null; retained.currentRead((ReadScope)scope.previous);
+         synchronized (scope.endpoint) { scope.endpoint.readReturned++; if (failed) scope.endpoint.directFailures++; }
+         if (failed) scope.endpoint.attempt.fail(20);
+     }
+@@ -374,12 +397,17 @@
+         lines.add("LOCAL_FRONTIER constructors="+attempt.constructors+" registered="+attempt.registrations+" connectReturns="+attempt.connectReturns
+                 +" activeReturns="+attempt.activeReturns+" exactPeerPair="+pair+" failure="+attempt.failure+" chargedBytes="+BYTES);
+         synchronized(attempt){if(attempt.failedSite!=null)lines.add("LOCAL_SITE_FAILURE site="+attempt.failedSite+" helper="+attempt.failedHelperFrame+" original="+attempt.failedOriginalFrame);}
++        synchronized(attempt){
++            lines.add("LOCAL_READ_SCOPES nested="+attempt.nestedReads+" maximumDepth="+attempt.maximumReadDepth+" limit="+NativeOrdinaryInvocationScope.LIMIT);
++            if(attempt.firstNestedFrames!=null)lines.add("LOCAL_FIRST_NESTED_READ outer="+attempt.firstNestedOuter+" inner="+attempt.firstNestedInner+" frames="+attempt.firstNestedFrames);
++        }
+         lines.add(NativeLocalInstalledPins.failureSummary());
+         append(lines, attempt.client); append(lines, attempt.server);
+         lines.add(attempt.bytes.summary());
+         attempt.bytes.appendProfiles(lines);
+         if(Boolean.getBoolean("earthplatform.nativeLocalRootObservation")) NativeLocalRootObservation.append(lines);
+-        lines.add("LOCAL_CUT admissible=false missing=pipeline_callback_closure,allocator_backing_bound,pending_configuration_and_consumer_roots,client_light_engine_and_render_continuations,private_adoption_binding");
++        if(Boolean.getBoolean("earthplatform.nativeLocalPayloadObservation")) NativeLocalPayloadObservation.append(lines);
++        lines.add("LOCAL_CUT admissible=false missing=main_payload_dispatch_aliases,generic_packet_splitter_roots,pipeline_callback_closure,allocator_backing_bound,pending_configuration_and_consumer_roots,client_light_engine_and_render_continuations,private_adoption_binding");
+         lines.add("LOCAL_FRONTIER_DIAGNOSTIC_ONLY ordinaryExecutionPreserved=true hostOrEntryAuthority=false");
+         return List.copyOf(lines);
+     }
+--- a/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalInstalledPins.java
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalInstalledPins.java
+@@ -37,6 +37,7 @@
+         {"net/minecraft/util/thread/BlockableEventLoop.class","fbaad002561c030a73293a53102d972336d7034f1fad6400cd174ead87866f64"},
+         {"net/minecraft/server/TickTask.class","5bbf61f5a108df9ba6c59de6a22ce1cca750de5383daad7f56a522db95bb257e"},
+         {"io/netty/channel/local/LocalChannel.class","e1e0cf6f8ad36c79ac246f66a4805b12854592ddc37bb34ac9b429321195fbb5"},
++        {"io/netty/handler/flow/FlowControlHandler.class","d2d4564d54c420cb31d621bb17530d0fa139526df35928e25e2a9272026eb017"},
+         {"io/netty/channel/DefaultChannelConfig.class","2d491c24f0dd13479aa021d1245a03231fc5ebd2756c9df18cf749d5b53fd1db"},
+         {"io/netty/channel/DefaultEventLoop.class","312eea7005813b7ac3da6ed0309875c17296fdc7b8d66486fb8f8e9cbf11a939"},
+         {"io/netty/channel/DefaultEventLoopGroup.class","44c6498c762e92b4e64c9c8594bc2c0b91240fb935dd6b480b8fc2789c249516"},
+@@ -54,6 +55,8 @@
+         {"io/netty/channel/DefaultChannelPipeline$TailContext.class","667ec0493a10830aca9d2db73f108d66f9a75e3164ba1114e24c47636bdf5511"},
+         {"io/netty/channel/WriteBufferWaterMark.class","00358476d8405b4303bcecb963a8b15776632c2f9419d347af7531329286f34f"},
+         {"io/netty/handler/codec/ByteToMessageDecoder.class","0a9004cd0765389d36e1f24bf51d65c5e8e2cb80632ebc7c8429159697c7a7ca"},
++        {"io/netty/util/internal/TypeParameterMatcher.class","5b5e22dd9d052a4e082990a6cbd1b63992b212857788ebcf4b3b6347607a01ac"},
++        {"io/netty/util/internal/TypeParameterMatcher$ReflectiveMatcher.class","a64101d8ab850a18a3f0d8f0eca4e483d5db68caacbfccc19e06f08cff7c7e49"},
+         {"io/netty/handler/codec/MessageToByteEncoder.class","ed33a27d7c6d12c9dd0bfcf0e113ab540340a02400ab74ee3243cdb48c38c606"},
+         {"io/netty/handler/codec/MessageToMessageEncoder.class","f0a6d201a9e0fe12be8ad1ac8c72efaba71f28b14f3e1d7e692b35a3647a296a"},
+         {"io/netty/handler/codec/MessageToMessageDecoder.class","ed95405fac922777198532f0d4c08d509e19eba29578b4dda6e4cda7e70a0bd4"},
+--- /dev/null
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalPayloadObservation.java
+@@ -0,0 +1,145 @@
++package io.earthplatform.minecraft.survival.interaction.host;
++
++import io.earthplatform.minecraft.visual.NativeDistanceCpuBudget;
++import java.lang.ref.WeakReference;
++import java.util.List;
++import net.minecraft.network.Connection;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.neoforged.neoforge.network.handling.ClientPayloadContext;
++import net.neoforged.neoforge.network.handling.IPayloadContext;
++import net.neoforged.neoforge.network.handling.MainThreadPayloadHandler;
++
++/** Weak/scalar baseline observer of the original MAIN payload source and private callback bodies.
++ * It never replaces the native Runnable, future, executor, callback or exception.
++ */
++public final class NativeLocalPayloadObservation {
++    public static final String FLAG="earthplatform.nativeLocalPayloadObservation";
++    static final long BYTES=5_308_416L;
++    private static NativeDistanceCpuBudget.Reservation charge;
++    private static volatile Owner retained;
++    private static volatile int seedFailure;
++    private NativeLocalPayloadObservation(){}
++    private static final class Owner {
++        final NativeOrdinaryPayloadFrontier frontier=new NativeOrdinaryPayloadFrontier(8192);
++        final WeakReference<?>[] endpoints=new WeakReference<?>[2],threads=new WeakReference<?>[4];
++        final Scope[] sources=new Scope[4],callbacks=new Scope[4];
++        final StackWalker walker=StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
++        int threadCount;volatile int failure;
++        String failedSite,failedHelper,failedOriginal;
++        synchronized void fail(int code){if(failure==0)failure=code;}
++        synchronized int thread(boolean admit){
++            Thread current=Thread.currentThread();for(int i=0;i<threadCount;i++)if(threads[i].get()==current)return i;
++            if(!admit||threadCount==threads.length){fail(1);return -1;}
++            threads[threadCount]=new WeakReference<>(current);return threadCount++;
++        }
++        synchronized Scope current(boolean callback){int i=thread(false);return i<0?null:(callback?callbacks:sources)[i];}
++        synchronized void current(boolean callback,Scope scope){int i=thread(false);if(i>=0)(callback?callbacks:sources)[i]=scope;}
++        synchronized boolean bound(ClientPayloadContext context){
++            Object listener=context.listener(); // Exact final record accessor, after class admission.
++            for(var reference:endpoints)if(reference!=null){Object c=reference.get();
++                if(c!=null&&((Connection)c).getPacketListener()==listener)return true; // Pinned volatile getter only.
++            }
++            return false;
++        }
++    }
++    public static final class Scope {
++        private final Owner owner;
++        private final NativeOrdinaryPayloadFrontier.Ticket ticket;
++        private final Scope previous;
++        private final WeakReference<Thread> thread=new WeakReference<>(Thread.currentThread());
++        private final boolean callback;
++        private final int depth;
++        private Scope(Owner owner,NativeOrdinaryPayloadFrontier.Ticket ticket,Scope previous,boolean callback){
++            this.owner=owner;this.ticket=ticket;this.previous=previous;this.callback=callback;depth=previous==null?1:previous.depth+1;
++        }
++    }
++    /** Only called by the authenticated, already charged genuine-connect source before native factories. */
++    static synchronized void seed(){
++        if(charge!=null||retained!=null){if(retained!=null)retained.fail(2);return;}
++        try{
++            charge=NativeDistanceCpuBudget.global().reserve(NativeDistanceCpuBudget.Pool.OWNER_METADATA,BYTES);
++            retained=new Owner();charge.claimRetainedOwner(retained);
++            if(!NativeLocalPayloadPins.check())retained.fail(3);
++        }catch(Throwable failure){seedFailure=1;if(retained!=null)retained.fail(4);}
++    }
++    /** Immutable weak lineage supplied only by the existing exact original constructor capture. */
++    static synchronized void bind(int side,Connection connection){
++        Owner owner=retained;if(owner==null)return;
++        synchronized(owner){
++            if(side<0||side>1||connection==null||connection.getClass()!=Connection.class||owner.endpoints[side]!=null){owner.fail(5);return;}
++            owner.endpoints[side]=new WeakReference<>(connection);
++        }
++    }
++    private static String frame(List<StackWalker.StackFrame> frames,int index){
++        if(index>=frames.size())return "MISSING";var f=frames.get(index);String c=f.getClassName(),m=f.getMethodName();
++        return c.substring(0,Math.min(120,c.length()))+"#"+m.substring(0,Math.min(120,m.length()));
++    }
++    private static boolean originalName(String name,String expected){
++        if(name.equals(expected))return true;String prefix=expected+"$mixinextras$wrapped";
++        if(!name.startsWith(prefix))return false;String rest=name.substring(prefix.length());if(rest.isEmpty())return true;
++        if(rest.length()<2||rest.length()>6||rest.charAt(0)!='$')return false;
++        for(int i=1;i<rest.length();i++)if(rest.charAt(i)<'0'||rest.charAt(i)>'9')return false;return true;
++    }
++    static boolean matchesFrames(List<StackWalker.StackFrame> frames,String helper,String original){
++        return frames.size()==4&&frames.get(0).getDeclaringClass()==NativeLocalPayloadObservation.class
++                &&frames.get(1).getDeclaringClass()==NativeLocalPayloadObservation.class
++                &&frames.get(2).getDeclaringClass()==MainThreadPayloadHandler.class&&frames.get(2).getMethodName().endsWith(helper)
++                &&frames.get(3).getDeclaringClass()==MainThreadPayloadHandler.class&&originalName(frames.get(3).getMethodName(),original);
++    }
++    private static boolean site(String helper,String original){
++        Owner owner=retained;if(owner==null||!NativeLocalInstalledPins.qualified()||!NativeLocalPayloadPins.qualified()||owner.thread(true)<0)return false;
++        return owner.walker.walk(stream->{var frames=stream.limit(4).toList();boolean ok=matchesFrames(frames,helper,original);
++            if(!ok)synchronized(owner){if(owner.failedSite==null){owner.failedSite=helper;owner.failedHelper=frame(frames,2);owner.failedOriginal=frame(frames,3);}owner.fail(6);}return ok;});
++    }
++    public static Scope sourceEntered(Object wrapper,CustomPacketPayload payload,IPayloadContext context){
++        Owner owner=retained;if(owner==null||!NativeLocalInstalledPins.qualified()||!NativeLocalPayloadPins.qualified())return null;
++        // Global native handler also serves unrelated/server contexts. They grant no client observation.
++        if(context==null||context.getClass()!=ClientPayloadContext.class||!owner.bound((ClientPayloadContext)context))return null;
++        if(!site("earthplatform$payloadSource","handle"))return null;
++        if(wrapper==null||wrapper.getClass()!=MainThreadPayloadHandler.class){owner.fail(7);return null;}
++        Scope previous=owner.current(false);if(previous!=null&&previous.depth>=16){owner.fail(9);return null;}
++        var ticket=owner.frontier.beforeSource(wrapper,payload,context);if(ticket==null)return null;
++        Scope scope=new Scope(owner,ticket,previous,false);owner.current(false,scope);return scope;
++    }
++    public static Scope beforeEnqueue(IPayloadContext context,Runnable task){
++        Owner owner=retained;if(owner==null||!NativeLocalInstalledPins.qualified()||!NativeLocalPayloadPins.qualified()||context==null||context.getClass()!=ClientPayloadContext.class)return null;
++        if(!owner.bound((ClientPayloadContext)context))return null;
++        if(!site("earthplatform$payloadEnqueue","handle"))return null;
++        Scope scope=owner.current(false);if(scope==null){owner.fail(10);return null;}
++        scope.owner.frontier.beforeEnqueue(scope.ticket,context,task);return scope;
++    }
++    public static void enqueueReturned(Scope scope,Object future,boolean failed){
++        if(scope==null||!site("earthplatform$payloadEnqueue","handle"))return;
++        if(scope.thread.get()!=Thread.currentThread()||scope.owner.current(false)!=scope){scope.owner.fail(11);return;}
++        scope.owner.frontier.enqueueReturned(scope.ticket,future,failed);
++    }
++    public static void sourceReturned(Scope scope,boolean failed){
++        if(scope==null||!site("earthplatform$payloadSource","handle"))return;
++        if(scope.callback||scope.thread.get()!=Thread.currentThread()||scope.owner.current(false)!=scope){scope.owner.fail(11);return;}
++        scope.owner.current(false,scope.previous);scope.owner.frontier.sourceReturned(scope.ticket,failed);
++    }
++    public static Scope callbackEntered(Object wrapper,CustomPacketPayload payload,IPayloadContext context){
++        Owner owner=retained;if(owner==null||!NativeLocalInstalledPins.qualified()||!NativeLocalPayloadPins.qualified()||context==null||context.getClass()!=ClientPayloadContext.class)return null;
++        if(!owner.frontier.hasTriple(wrapper,payload,context)&&!owner.bound((ClientPayloadContext)context))return null;
++        if(!site("earthplatform$payloadCallback","lambda$handle$0"))return null;
++        if(wrapper==null||wrapper.getClass()!=MainThreadPayloadHandler.class){owner.fail(7);return null;}
++        Scope previous=owner.current(true);if(previous!=null&&previous.depth>=16){owner.fail(9);return null;}
++        var ticket=owner.frontier.callbackEntered(wrapper,payload,context);if(ticket==null)return null;
++        Scope scope=new Scope(owner,ticket,previous,true);owner.current(true,scope);return scope;
++    }
++    public static void callbackReturned(Scope scope,boolean failed){
++        if(scope==null||!site("earthplatform$payloadCallback","lambda$handle$0"))return;
++        if(!scope.callback||scope.thread.get()!=Thread.currentThread()||scope.owner.current(true)!=scope){scope.owner.fail(11);return;}
++        scope.owner.current(true,scope.previous);scope.owner.frontier.callbackReturned(scope.ticket,failed);
++    }
++    public static void observerFailed(){Owner owner=retained;if(owner!=null)owner.fail(12);}
++    static void append(List<String> lines){
++        Owner owner=retained;
++        if(owner==null){lines.add("LOCAL_PAYLOAD absent seedFailure="+seedFailure);return;}
++        lines.add("LOCAL_PAYLOAD lineage="+owner.frontier.lineage()+" pending="+owner.frontier.pending()
++                +" originalBodiesReturned="+(owner.failure==0&&owner.frontier.originalBodiesReturned())+" failure="+owner.failure
++                +" callbackFailure="+owner.frontier.failure()+" chargedBytes="+BYTES+" executorAliasJoin=false handlerAdmission=false serverPayloadCoverage=false splitterCallbackCoverage=false");
++        lines.add(NativeLocalPayloadPins.failureSummary());
++        synchronized(owner){if(owner.failedSite!=null)lines.add("LOCAL_PAYLOAD_SITE_FAILURE site="+owner.failedSite+" helper="+owner.failedHelper+" original="+owner.failedOriginal);}
++    }
++}
+--- /dev/null
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalPayloadPins.java
+@@ -0,0 +1,42 @@
++package io.earthplatform.minecraft.survival.interaction.host;
++
++import java.security.MessageDigest;
++import java.util.HexFormat;
++
++/** Additional installed originals for MAIN-payload observation; never accepts development aliases. */
++final class NativeLocalPayloadPins {
++    private static volatile boolean checked;
++    private static volatile int failed=-1;
++    private static volatile String code="UNCHECKED",observed="NONE";
++    private static final String[][] PINS={
++        {"net/neoforged/neoforge/network/handling/MainThreadPayloadHandler.class","3a7313538c0834ab98ea0e14db431c062a158e598c850224f934f0b173d0a60e"},
++        {"net/neoforged/neoforge/network/handling/ClientPayloadContext.class","7f6c5bfdb89bc1f139fdc1088c6c83eab21f7fa5407903473aa8528152de24b9"},
++        {"net/neoforged/neoforge/network/handling/IPayloadContext.class","8812a7faba3bd2a66159d2b388054a7628868415f9227061603cee8f56494a59"},
++        {"net/neoforged/neoforge/network/registration/NetworkRegistry.class","68d5cf8a94f4d15812e3bc2ec8a547a66b717eebb3ae0490b791eab2dedbdbb8"},
++        {"net/minecraft/util/thread/ReentrantBlockableEventLoop.class","dd13ce106a52044e947e479a1c921a68ccc52aac9b2c75d955767e91c926fa1a"}
++    };
++    private NativeLocalPayloadPins(){}
++    static boolean qualified(){return checked;}
++    static boolean check(){
++        try{
++            byte[] scratch=new byte[4096];
++            for(int i=0;i<PINS.length;i++){
++                failed=i;observed="NONE";code="CHECKING";String[] pin=PINS[i];
++                ClassLoader loader=pin[0].startsWith("net/minecraft/")?net.minecraft.network.Connection.class.getClassLoader()
++                        :net.neoforged.neoforge.network.handling.MainThreadPayloadHandler.class.getClassLoader();
++                try(var input=loader.getResourceAsStream(pin[0])){
++                    if(input==null){code="MISSING";return false;}
++                    MessageDigest digest=MessageDigest.getInstance("SHA-256");int total=0;
++                    for(int n;(n=input.read(scratch))>=0;){total=Math.addExact(total,n);if(total>1_048_576){code="OVERSIZE";return false;}digest.update(scratch,0,n);}
++                    observed=HexFormat.of().formatHex(digest.digest());if(!pin[1].equals(observed)){code="HASH";return false;}
++                }
++            }
++            checked=true;failed=-1;return true;
++        }catch(Exception failure){code="EXCEPTION";return false;}
++    }
++    static String failureSummary(){
++        if(checked)return "LOCAL_PAYLOAD_PINS checked=true";
++        if(failed<0||failed>=PINS.length)return "LOCAL_PAYLOAD_PINS checked=false code="+code;
++        return "LOCAL_PAYLOAD_PINS checked=false index="+failed+" resource="+PINS[failed][0]+" expected="+PINS[failed][1]+" observed="+observed+" code="+code;
++    }
++}
+--- a/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalRootObservation.java
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalRootObservation.java
+@@ -194,6 +194,14 @@
+         Owner owner=retained;if(owner==null||!site(handlerClass(outbound),"earthplatform$rootsConfigSuccess","write"))return;
+         HandlerScope scope=owner.handler();if(scope!=null)scope.ticket.owner.promiseReturned(scope.ticket,promise,returned,listenersObserved,threw);
+     }
++    /** Same-package codec observer correlates an unchanged non-Packet object before inherited write.
++     * The original config task/promise/handler/source owner remains authoritative for its milestones. */
++    static Object configurationPassThrough(Channel channel,Object task){
++        Owner owner=retained;
++        if(owner==null||!(task instanceof UnconfiguredPipelineHandler.InboundConfigurationTask
++                ||task instanceof UnconfiguredPipelineHandler.OutboundConfigurationTask))return null;
++        return owner.configurations.findConfiguration(channel,task);
++    }
+     public static void observerFailed(){Owner owner=retained;if(owner!=null)owner.fail(16);}
+     static synchronized void append(List<String> lines){
+         Owner owner=retained;if(owner==null){lines.add("LOCAL_ROOTS absent seedFailure="+seedFailure);return;}
+--- /dev/null
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeOrdinaryInvocationScope.java
+@@ -0,0 +1,24 @@
++package io.earthplatform.minecraft.survival.interaction.host;
++
++import java.lang.ref.WeakReference;
++
++/** Bounded observer metadata only. Native invocation locals retain their own scopes until finally.
++ * No payload, endpoint or executable capability is retained by this common scope state. */
++class NativeOrdinaryInvocationScope {
++    static final int LIMIT=16;
++    final NativeOrdinaryInvocationScope previous;
++    final int depth;
++    private final WeakReference<Thread> thread=new WeakReference<>(Thread.currentThread());
++    private boolean returned;
++    NativeOrdinaryInvocationScope(NativeOrdinaryInvocationScope previous){
++        if(!canEnter(previous))throw new IllegalStateException("Observer invocation nesting is incomplete");
++        this.previous=previous;this.depth=previous==null?1:previous.depth+1;
++    }
++    static boolean canEnter(NativeOrdinaryInvocationScope previous){
++        return previous==null||!previous.returned&&previous.depth<LIMIT&&previous.thread.get()==Thread.currentThread();
++    }
++    final boolean returnedFrom(NativeOrdinaryInvocationScope current){
++        if(current!=this||returned||thread.get()!=Thread.currentThread())return false;
++        returned=true;return true;
++    }
++}
+--- /dev/null
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeOrdinaryPayloadFrontier.java
+@@ -0,0 +1,102 @@
++package io.earthplatform.minecraft.survival.interaction.host;
++
++import java.lang.ref.WeakReference;
++
++/** Finite weak/scalar observation of original MAIN-payload callbacks, never a physical output owner.
++ * No native callback, future, listener, payload, endpoint or Throwable is retained strongly.
++ * Exact source adapters preserve every original invocation, including after this observer fails.
++ */
++final class NativeOrdinaryPayloadFrontier {
++    enum Failure { NONE, CAPACITY, IDENTITY, REUSED_TRIPLE, DUPLICATE, MISSING, ENQUEUE, CALLBACK, SOURCE }
++    private final Ticket[] tickets;
++    private int count;
++    private volatile Failure first=Failure.NONE;
++    NativeOrdinaryPayloadFrontier(int capacity){
++        if(capacity<1||capacity>8192)throw new IllegalArgumentException("Finite payload inventory required");
++        tickets=new Ticket[capacity];
++    }
++    static final class Ticket {
++        final NativeOrdinaryPayloadFrontier owner;
++        final int sequence;
++        final WeakReference<Object> wrapper,payload,context;
++        WeakReference<Object> runnable,future;
++        boolean enqueueEntered,enqueueReturned,callbackEntered,callbackReturned,sourceReturned;
++        Ticket(NativeOrdinaryPayloadFrontier owner,int sequence,Object wrapper,Object payload,Object context){
++            this.owner=owner;this.sequence=sequence;this.wrapper=new WeakReference<>(wrapper);
++            this.payload=new WeakReference<>(payload);this.context=new WeakReference<>(context);
++        }
++    }
++    synchronized Ticket beforeSource(Object wrapper,Object payload,Object context){
++        if(first!=Failure.NONE)return null;
++        if(wrapper==null||payload==null||context==null){fail(Failure.IDENTITY);return null;}
++        for(int i=0;i<count;i++){
++            Ticket t=tickets[i];
++            if(matches(t,wrapper,payload,context)){
++                // Private original lambda captures only this triple. No stale invocation can be
++                // distinguished from a new admission if an identical historical triple is reused.
++                fail(Failure.REUSED_TRIPLE);return null;
++            }
++            if(!complete(t)&&missing(t)){fail(Failure.MISSING);return null;}
++        }
++        if(count==tickets.length){fail(Failure.CAPACITY);return null;}
++        Ticket t=new Ticket(this,count+1,wrapper,payload,context);tickets[count++]=t;return t;
++    }
++    synchronized void beforeEnqueue(Ticket t,Object context,Object runnable){
++        if(!valid(t))return;
++        if(context==null||t.context.get()!=context||runnable==null||t.enqueueEntered||t.sourceReturned){fail(Failure.IDENTITY);return;}
++        t.runnable=new WeakReference<>(runnable);t.enqueueEntered=true;
++    }
++    synchronized void enqueueReturned(Ticket t,Object future,boolean threw){
++        if(!valid(t))return;
++        if(!t.enqueueEntered||t.enqueueReturned){fail(Failure.IDENTITY);return;}
++        t.enqueueReturned=true;
++        if(threw||future==null){fail(Failure.ENQUEUE);return;}
++        t.future=new WeakReference<>(future); // Identity only: no virtual future polling/listener.
++    }
++    synchronized boolean hasTriple(Object wrapper,Object payload,Object context){
++        for(int i=0;i<count;i++)if(matches(tickets[i],wrapper,payload,context))return true;return false;
++    }
++    synchronized Ticket callbackEntered(Object wrapper,Object payload,Object context){
++        if(wrapper==null||payload==null||context==null){fail(Failure.IDENTITY);return null;}
++        Ticket found=null;
++        for(int i=0;i<count;i++){
++            Ticket t=tickets[i];
++            if(matches(t,wrapper,payload,context)){
++                if(found!=null){fail(Failure.REUSED_TRIPLE);return null;}found=t;
++            }else if(!complete(t)&&missing(t))fail(Failure.MISSING);
++        }
++        if(found==null){fail(Failure.MISSING);return null;}
++        if(found.callbackEntered){fail(Failure.DUPLICATE);return null;}
++        if(!found.enqueueEntered){fail(Failure.IDENTITY);return null;}
++        found.callbackEntered=true;return found;
++    }
++    synchronized void callbackReturned(Ticket t,boolean threw){
++        if(!valid(t))return;
++        if(!t.callbackEntered||t.callbackReturned){fail(Failure.IDENTITY);return;}
++        t.callbackReturned=true;if(threw)fail(Failure.CALLBACK);
++    }
++    synchronized void sourceReturned(Ticket t,boolean threw){
++        if(!valid(t))return;
++        if(t.sourceReturned){fail(Failure.DUPLICATE);return;}
++        t.sourceReturned=true;if(threw)fail(Failure.SOURCE);
++    }
++    synchronized void fail(Failure reason){if(first==Failure.NONE)first=reason;}
++    synchronized boolean originalBodiesReturned(){
++        if(first!=Failure.NONE)return false;
++        for(int i=0;i<count;i++)if(!complete(tickets[i]))return false;
++        return true;
++    }
++    synchronized int pending(){int n=0;for(int i=0;i<count;i++)if(!complete(tickets[i]))n++;return n;}
++    synchronized long lineage(){return count;}
++    Failure failure(){return first;}
++    private boolean valid(Ticket t){
++        if(t==null)return false;
++        if(t.owner!=this||t.sequence<1||t.sequence>count||tickets[t.sequence-1]!=t){fail(Failure.IDENTITY);return false;}
++        return true;
++    }
++    private static boolean matches(Ticket t,Object wrapper,Object payload,Object context){
++        return t.wrapper.get()==wrapper&&t.payload.get()==payload&&t.context.get()==context;
++    }
++    private static boolean missing(Ticket t){return t.wrapper.get()==null||t.payload.get()==null||t.context.get()==null;}
++    private static boolean complete(Ticket t){return t.sourceReturned&&t.enqueueReturned&&t.callbackReturned;}
++}
+--- a/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeOriginalCodecPins.java
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeOriginalCodecPins.java
+@@ -30,6 +30,8 @@
+         {"io/netty/channel/embedded/EmbeddedEventLoop.class","642baf7c0ab32ce0daa2e20cf5d7c4db35fcf44604a9d3a4799bb62250ef528e"},
+         {"io/netty/channel/PreferHeapByteBufAllocator.class","094373201a6dd1e31de22ed51dfa8082b19396ba65b3b37f853ec65810804254"},
+         {"io/netty/channel/DefaultChannelPromise.class","69ee9d9904956efc023dcc2911e1fe3ef40b79d165176f23e2eb30eb309713f8"},
++        {"io/netty/util/internal/TypeParameterMatcher.class","5b5e22dd9d052a4e082990a6cbd1b63992b212857788ebcf4b3b6347607a01ac"},
++        {"io/netty/util/internal/TypeParameterMatcher$ReflectiveMatcher.class","a64101d8ab850a18a3f0d8f0eca4e483d5db68caacbfccc19e06f08cff7c7e49"},
+         {"io/netty/handler/codec/MessageToByteEncoder.class","ed33a27d7c6d12c9dd0bfcf0e113ab540340a02400ab74ee3243cdb48c38c606"},
+         {"io/netty/handler/codec/ByteToMessageDecoder.class","0a9004cd0765389d36e1f24bf51d65c5e8e2cb80632ebc7c8429159697c7a7ca"},
+         {"io/netty/handler/codec/ByteToMessageDecoder$1.class","e859cc0dfdc812d92b506b177842e9f7ad86bbe4ee0d72d01b90cebce1bf92d8"},
+--- /dev/null
++++ b/minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeOriginalPacketWriteShape.java
+@@ -0,0 +1,23 @@
++package io.earthplatform.minecraft.survival.interaction.host;
++
++import net.minecraft.network.protocol.Packet;
++
++/** Exact original PacketEncoder generic matcher, source-pinned through TypeParameterMatcher.
++ * This predicate adds no virtual/native callback and is used only after exact codec admission. */
++final class NativeOriginalPacketWriteShape {
++    private NativeOriginalPacketWriteShape(){}
++    static boolean accepts(Object message){return message instanceof Packet<?>;}
++    /** Read only final matcher operands after the exact original PacketEncoder constructor returns. */
++    static boolean exactMatcher(Object encoder){
++        if(encoder==null||encoder.getClass()!=net.minecraft.network.PacketEncoder.class)return false;
++        try{
++            var field=io.netty.handler.codec.MessageToByteEncoder.class.getDeclaredField("matcher");field.setAccessible(true);
++            Object matcher=field.get(encoder);if(matcher==null)return false;
++            Class<?> type=matcher.getClass();
++            if(type.getClassLoader()!=io.netty.util.internal.TypeParameterMatcher.class.getClassLoader()
++                    ||!type.getName().equals("io.netty.util.internal.TypeParameterMatcher$ReflectiveMatcher"))return false;
++            var operand=type.getDeclaredField("type");operand.setAccessible(true);
++            return operand.get(matcher)==Packet.class;
++        }catch(ReflectiveOperationException|RuntimeException failure){return false;}
++    }
++}
+--- a/minecraft/src/main/resources/earthplatform.native-local-observation.mixins.json
++++ b/minecraft/src/main/resources/earthplatform.native-local-observation.mixins.json
+@@ -16,7 +16,8 @@
+     "NativeLocalOutboundConfigurationRootsMixin"
+   ],
+   "client": [
+-    "NativeLocalLightTaskObservationMixin"
++    "NativeLocalLightTaskObservationMixin",
++    "NativeLocalMainPayloadObservationMixin"
+   ],
+   "injectors": {
+     "defaultRequire": 1
+--- a/minecraft/src/test/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalObservationGateTest.java
++++ b/minecraft/src/test/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalObservationGateTest.java
+@@ -6,7 +6,7 @@
+ import java.util.Map;
+ import org.junit.jupiter.api.Test;
+ class NativeLocalObservationGateTest {
+-    private static final String[] FLAGS={"earthplatform.nativeLocalFrontierObservation","earthplatform.installedSessionProbe","earthplatform.installedMarinSession","earthplatform.nativeSessionBridge","neoforge.gameTestServer","earthplatform.nativeCodecBoundaryProbe","earthplatform.nativeLocalRootObservation"};
++    private static final String[] FLAGS={"earthplatform.nativeLocalFrontierObservation","earthplatform.installedSessionProbe","earthplatform.installedMarinSession","earthplatform.nativeSessionBridge","neoforge.gameTestServer","earthplatform.nativeCodecBoundaryProbe","earthplatform.nativeLocalRootObservation","earthplatform.nativeLocalPayloadObservation"};
+     private static void scoped(Runnable test){Map<String,String> old=new HashMap<>();for(String flag:FLAGS){old.put(flag,System.getProperty(flag));System.clearProperty(flag);}try{test.run();}finally{for(String flag:FLAGS){if(old.get(flag)==null)System.clearProperty(flag);else System.setProperty(flag,old.get(flag));}}}
+     @Test void defaultIsInert(){scoped(()->{assertFalse(NativeLocalObservationMixinPlugin.enabled());assertFalse(new SurvivalSessionBridgeMixinPlugin().shouldApplyMixin("net.minecraft.network.PacketEncoder","io.earthplatform.minecraft.mixin.NativeOriginalPacketEncoderBoundaryMixin"));});}
+     @Test void onlyExplicitOrdinaryObservationOpensBothHooks(){scoped(()->{
+@@ -25,4 +25,11 @@
+         System.setProperty(FLAGS[6],"true");assertTrue(plugin.shouldApplyMixin("net.minecraft.network.Connection",mixin));
+         System.setProperty(FLAGS[2],"true");assertFalse(plugin.shouldApplyMixin("net.minecraft.network.Connection",mixin));
+     });}
++    @Test void mainPayloadNeedsSeparateExplicitObservationFlag(){scoped(()->{
++        System.setProperty(FLAGS[0],"true");System.setProperty(FLAGS[1],"true");var plugin=new NativeLocalObservationMixinPlugin();
++        String mixin="io.earthplatform.minecraft.mixin.NativeLocalMainPayloadObservationMixin";
++        assertFalse(plugin.shouldApplyMixin("net.neoforged.neoforge.network.handling.MainThreadPayloadHandler",mixin));
++        System.setProperty(FLAGS[7],"true");assertTrue(plugin.shouldApplyMixin("net.neoforged.neoforge.network.handling.MainThreadPayloadHandler",mixin));
++        System.setProperty(FLAGS[2],"true");assertFalse(plugin.shouldApplyMixin("net.neoforged.neoforge.network.handling.MainThreadPayloadHandler",mixin));
++    });}
+ }
+--- /dev/null
++++ b/minecraft/src/test/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalPayloadOriginTest.java
+@@ -0,0 +1,48 @@
++package io.earthplatform.minecraft.survival.interaction.host;
++
++import static org.junit.jupiter.api.Assertions.*;
++import java.lang.invoke.MethodType;
++import java.util.List;
++import net.neoforged.neoforge.network.handling.MainThreadPayloadHandler;
++import org.junit.jupiter.api.Test;
++
++/** Pure exact-adjacent shape checks; no native invocation authority. */
++class NativeLocalPayloadOriginTest {
++    private static final String HOOK="earthplatform$payloadCallback";
++    private record Frame(Class<?> owner,String method) implements StackWalker.StackFrame {
++        @Override public String getClassName(){return owner.getName();}
++        @Override public String getMethodName(){return method;}
++        @Override public Class<?> getDeclaringClass(){return owner;}
++        @Override public int getByteCodeIndex(){return 0;}
++        @Override public String getFileName(){return "model";}
++        @Override public int getLineNumber(){return 1;}
++        @Override public boolean isNativeMethod(){return false;}
++        @Override public StackTraceElement toStackTraceElement(){return new StackTraceElement(getClassName(),method,"model",1);}
++        @Override public String getDescriptor(){return "()V";}
++        @Override public MethodType getMethodType(){return MethodType.methodType(void.class);}
++    }
++    private static List<StackWalker.StackFrame> chain(String helper,String original){
++        return List.of(new Frame(NativeLocalPayloadObservation.class,"site"),new Frame(NativeLocalPayloadObservation.class,"callbackEntered"),
++                new Frame(MainThreadPayloadHandler.class,helper),new Frame(MainThreadPayloadHandler.class,original));
++    }
++    private static boolean matches(List<StackWalker.StackFrame> frames){return NativeLocalPayloadObservation.matchesFrames(frames,HOOK,"lambda$handle$0");}
++    @Test void originalCallbackShape(){assertTrue(matches(chain("wrapMethod$abc000$"+HOOK,"lambda$handle$0")));}
++    @Test void boundedWrappedOriginalShape(){assertTrue(matches(chain("wrapMethod$abc000$"+HOOK,"lambda$handle$0$mixinextras$wrapped$3")));}
++    @Test void wrongOriginalAndHistoricalAncestorFail(){
++        assertFalse(matches(chain("wrapMethod$abc000$"+HOOK,"nestedCallback")));
++        var frames=new java.util.ArrayList<>(chain("wrapMethod$abc000$"+HOOK,"nestedCallback"));
++        frames.add(new Frame(MainThreadPayloadHandler.class,"lambda$handle$0"));assertFalse(matches(frames));
++    }
++    @Test void helperSuffixMustBeExact(){assertFalse(matches(chain("wrapMethod$abc000$"+HOOK+"$different","lambda$handle$0")));}
++    @Test void foreignClassAndDirectCallFail(){
++        var frames=new java.util.ArrayList<>(chain("wrapMethod$abc000$"+HOOK,"lambda$handle$0"));
++        frames.set(2,new Frame(NativeLocalPayloadOriginTest.class,"wrapMethod$abc000$"+HOOK));assertFalse(matches(frames));
++        assertFalse(matches(frames.subList(0,3)));
++    }
++    @Test void extraBridgeAndMalformedWrappedSuffixFail(){
++        assertFalse(matches(chain("wrapMethod$abc000$"+HOOK,HOOK+"$mixinextras$bridge$4")));
++        for(String suffix:List.of("$","$-1","$word","$123456")){
++            assertFalse(matches(chain("wrapMethod$abc000$"+HOOK,"lambda$handle$0$mixinextras$wrapped"+suffix)));
++        }
++    }
++}
+--- /dev/null
++++ b/minecraft/src/test/java/io/earthplatform/minecraft/survival/interaction/host/NativeOrdinaryInvocationScopeTest.java
+@@ -0,0 +1,31 @@
++package io.earthplatform.minecraft.survival.interaction.host;
++
++import static org.junit.jupiter.api.Assertions.*;
++import java.util.concurrent.atomic.AtomicReference;
++import org.junit.jupiter.api.Test;
++
++final class NativeOrdinaryInvocationScopeTest {
++    @Test void originalScopeReturnsOnce(){var a=new NativeOrdinaryInvocationScope(null);assertTrue(a.returnedFrom(a));assertFalse(a.returnedFrom(a));}
++    @Test void nestedReturnRestoresExactOuter(){var a=new NativeOrdinaryInvocationScope(null);var b=new NativeOrdinaryInvocationScope(a);assertEquals(2,b.depth);assertSame(a,b.previous);assertTrue(b.returnedFrom(b));assertTrue(a.returnedFrom(b.previous));}
++    @Test void outerCannotReturnThroughLiveInner(){var a=new NativeOrdinaryInvocationScope(null);var b=new NativeOrdinaryInvocationScope(a);assertFalse(a.returnedFrom(b));assertTrue(b.returnedFrom(b));assertTrue(a.returnedFrom(a));}
++    @Test void depthIsBoundedBeforeConstruction(){NativeOrdinaryInvocationScope a=null;for(int i=0;i<16;i++)a=new NativeOrdinaryInvocationScope(a);var top=a;assertFalse(NativeOrdinaryInvocationScope.canEnter(top));assertThrows(IllegalStateException.class,()->new NativeOrdinaryInvocationScope(top));assertEquals(16,top.depth);}
++    @Test void returnedParentCannotBeReentered(){var a=new NativeOrdinaryInvocationScope(null);assertTrue(a.returnedFrom(a));assertFalse(NativeOrdinaryInvocationScope.canEnter(a));assertThrows(IllegalStateException.class,()->new NativeOrdinaryInvocationScope(a));}
++    @Test void staleScopeCannotRetireNewInvocation(){var a=new NativeOrdinaryInvocationScope(null);assertTrue(a.returnedFrom(a));var b=new NativeOrdinaryInvocationScope(null);assertFalse(a.returnedFrom(b));assertTrue(b.returnedFrom(b));}
++    @Test void failureFinallyStillRestoresOuter(){var a=new NativeOrdinaryInvocationScope(null);var b=new NativeOrdinaryInvocationScope(a);RuntimeException original=new RuntimeException("original");try{throw original;}catch(RuntimeException observed){assertSame(original,observed);}finally{assertTrue(b.returnedFrom(b));}assertTrue(a.returnedFrom(b.previous));}
++    @Test void overflowDoesNotMutateAdmittedStack(){NativeOrdinaryInvocationScope a=null;for(int i=0;i<16;i++)a=new NativeOrdinaryInvocationScope(a);assertFalse(NativeOrdinaryInvocationScope.canEnter(a));int returns=0;while(a!=null){assertTrue(a.returnedFrom(a));a=a.previous;returns++;}assertEquals(16,returns);}
++    @Test void unrelatedCurrentDoesNotMutateScope(){var a=new NativeOrdinaryInvocationScope(null);var b=new NativeOrdinaryInvocationScope(null);assertFalse(a.returnedFrom(b));assertTrue(a.returnedFrom(a));assertTrue(b.returnedFrom(b));}
++    @Test void nullCurrentCannotRetireScope(){var a=new NativeOrdinaryInvocationScope(null);assertFalse(a.returnedFrom(null));assertTrue(a.returnedFrom(a));}
++    @Test void crossThreadCannotEnterOrReturn() throws Throwable {
++        var scope=new NativeOrdinaryInvocationScope(null);var failure=new AtomicReference<Throwable>();
++        Thread worker=new Thread(()->{try{assertFalse(NativeOrdinaryInvocationScope.canEnter(scope));assertFalse(scope.returnedFrom(scope));}catch(Throwable caught){failure.set(caught);}},"scope-observation-model");
++        worker.setDaemon(true);Throwable primary=null;boolean started=false,interrupted=false;
++        try{worker.start();started=true;worker.join(2000);assertFalse(worker.isAlive(),"Bounded scope worker did not return");if(failure.get()!=null)throw failure.get();}
++        catch(Throwable caught){primary=caught;throw caught;}
++        finally{
++            if(started){long deadline=System.nanoTime()+2_000_000_000L;while(worker.isAlive()&&System.nanoTime()<deadline){try{worker.join(20);}catch(InterruptedException ignored){interrupted=true;}}}
++            try{if(worker.isAlive()){var cleanup=new AssertionError("Scope worker remained alive");if(primary!=null)primary.addSuppressed(cleanup);else throw cleanup;}}
++            finally{if(interrupted||primary instanceof InterruptedException)Thread.currentThread().interrupt();}
++        }
++        assertTrue(scope.returnedFrom(scope));
++    }
++}
+--- /dev/null
++++ b/minecraft/src/test/java/io/earthplatform/minecraft/survival/interaction/host/NativeOrdinaryPayloadFrontierTest.java
+@@ -0,0 +1,119 @@
++package io.earthplatform.minecraft.survival.interaction.host;
++
++import static org.junit.jupiter.api.Assertions.*;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.TimeUnit;
++import org.junit.jupiter.api.Test;
++
++class NativeOrdinaryPayloadFrontierTest {
++    private final Object wrapper=new Object(),payload=new Object(),context=new Object();
++    private final Runnable runnable=()->{};
++    private final CompletableFuture<Void> future=new CompletableFuture<>();
++    private NativeOrdinaryPayloadFrontier ledger(){return new NativeOrdinaryPayloadFrontier(8);}
++    private NativeOrdinaryPayloadFrontier.Ticket source(NativeOrdinaryPayloadFrontier l){return l.beforeSource(wrapper,payload,context);}
++    private void enqueue(NativeOrdinaryPayloadFrontier l,NativeOrdinaryPayloadFrontier.Ticket t){l.beforeEnqueue(t,context,runnable);}
++    private void callback(NativeOrdinaryPayloadFrontier l,NativeOrdinaryPayloadFrontier.Ticket t){assertSame(t,l.callbackEntered(wrapper,payload,context));l.callbackReturned(t,false);}
++    private void returns(NativeOrdinaryPayloadFrontier l,NativeOrdinaryPayloadFrontier.Ticket t){l.enqueueReturned(t,future,false);l.sourceReturned(t,false);}
++
++    @Test void inlineCallbackStillNeedsEnqueueAndSourceReturn(){
++        var l=ledger();var t=source(l);enqueue(l,t);callback(l,t);assertFalse(l.originalBodiesReturned());
++        l.enqueueReturned(t,future,false);assertFalse(l.originalBodiesReturned());l.sourceReturned(t,false);assertTrue(l.originalBodiesReturned());
++        assertFalse(future.isDone()); // Body milestones never require or assert future completion.
++    }
++    @Test void returnedFutureAndSourceDoNotSettleMissingCallback(){
++        var l=ledger();var t=source(l);enqueue(l,t);returns(l,t);assertFalse(l.originalBodiesReturned());assertEquals(1,l.pending());
++    }
++    @Test void canceledFutureCannotStandInForCallback(){
++        var l=ledger();var t=source(l);enqueue(l,t);future.cancel(false);returns(l,t);assertFalse(l.originalBodiesReturned());
++    }
++    @Test void callbackCanFinishBeforeAsyncEnqueueReturns(){
++        var l=ledger();var t=source(l);enqueue(l,t);l.sourceReturned(t,false);callback(l,t);assertFalse(l.originalBodiesReturned());
++        l.enqueueReturned(t,future,false);assertTrue(l.originalBodiesReturned());
++    }
++    @Test void enqueueThenThrowRemainsFailedAfterCallback(){
++        var l=ledger();var t=source(l);enqueue(l,t);callback(l,t);l.enqueueReturned(t,null,true);l.sourceReturned(t,true);
++        assertEquals(NativeOrdinaryPayloadFrontier.Failure.ENQUEUE,l.failure());assertFalse(l.originalBodiesReturned());
++    }
++    @Test void callbackFailureSurvivesRecoveredFuture(){
++        var l=ledger();var t=source(l);enqueue(l,t);assertSame(t,l.callbackEntered(wrapper,payload,context));l.callbackReturned(t,true);
++        future.completeExceptionally(new IllegalStateException("model native callback failure"));
++        var recovered=future.exceptionally(failure->null);l.enqueueReturned(t,recovered,false);l.sourceReturned(t,false);
++        assertNull(recovered.join());assertEquals(NativeOrdinaryPayloadFrontier.Failure.CALLBACK,l.failure());assertFalse(l.originalBodiesReturned());
++    }
++    @Test void sourceFailureBeforeEnqueueRemainsIncomplete(){
++        var l=ledger();var t=source(l);l.sourceReturned(t,true);assertEquals(NativeOrdinaryPayloadFrontier.Failure.SOURCE,l.failure());assertEquals(1,l.pending());
++    }
++    @Test void overlappingSameTripleIsRefused(){
++        var l=ledger();assertNotNull(source(l));assertNull(source(l));assertEquals(1,l.lineage());assertEquals(NativeOrdinaryPayloadFrontier.Failure.REUSED_TRIPLE,l.failure());
++    }
++    @Test void completedTripleCannotCreateAStaleCallbackAba(){
++        var l=ledger();var old=source(l);enqueue(l,old);callback(l,old);returns(l,old);assertTrue(l.originalBodiesReturned());
++        assertNull(source(l));assertEquals(1,l.lineage());assertEquals(NativeOrdinaryPayloadFrontier.Failure.REUSED_TRIPLE,l.failure());
++        assertNull(l.callbackEntered(wrapper,payload,context));assertFalse(l.originalBodiesReturned());
++    }
++    @Test void freshContextCreatesDistinctAdmission(){
++        var l=ledger();var first=source(l);enqueue(l,first);callback(l,first);returns(l,first);Object freshContext=new Object();
++        var second=l.beforeSource(wrapper,payload,freshContext);assertNotSame(first,second);l.beforeEnqueue(second,freshContext,runnable);
++        assertSame(second,l.callbackEntered(wrapper,payload,freshContext));l.callbackReturned(second,false);l.enqueueReturned(second,future,false);l.sourceReturned(second,false);
++        assertTrue(l.originalBodiesReturned());assertEquals(2,l.lineage());
++    }
++    @Test void duplicateCallbackPoisonsWithoutGivingSecondScope(){
++        var l=ledger();var t=source(l);enqueue(l,t);assertSame(t,l.callbackEntered(wrapper,payload,context));
++        assertNull(l.callbackEntered(wrapper,payload,context));l.callbackReturned(t,false);returns(l,t);
++        assertEquals(NativeOrdinaryPayloadFrontier.Failure.DUPLICATE,l.failure());assertFalse(l.originalBodiesReturned());
++    }
++    @Test void collectedPayloadNeverBecomesAnEmptyFrontier(){
++        var l=ledger();var t=source(l);enqueue(l,t);returns(l,t);t.payload.clear();
++        assertNull(l.callbackEntered(wrapper,payload,context));assertEquals(NativeOrdinaryPayloadFrontier.Failure.MISSING,l.failure());assertEquals(1,l.pending());
++    }
++    @Test void wrongContextAndForeignTicketDoNotMutateCurrentTicket(){
++        var l=ledger();var t=source(l);l.beforeEnqueue(t,new Object(),runnable);assertFalse(t.enqueueEntered);
++        var other=ledger();other.sourceReturned(t,false);assertFalse(t.sourceReturned);assertEquals(NativeOrdinaryPayloadFrontier.Failure.IDENTITY,other.failure());
++    }
++    @Test void completedHistoryDoesNotRecycleCapacity(){
++        var l=new NativeOrdinaryPayloadFrontier(1);var t=source(l);enqueue(l,t);callback(l,t);returns(l,t);
++        assertNull(l.beforeSource(wrapper,payload,new Object()));assertEquals(NativeOrdinaryPayloadFrontier.Failure.CAPACITY,l.failure());assertEquals(1,l.lineage());
++    }
++    @Test void failureDoesNotPreventExistingCallbackBookkeeping(){
++        var l=ledger();var t=source(l);enqueue(l,t);l.fail(NativeOrdinaryPayloadFrontier.Failure.SOURCE);callback(l,t);returns(l,t);
++        assertTrue(t.callbackReturned);assertEquals(NativeOrdinaryPayloadFrontier.Failure.SOURCE,l.failure());assertFalse(l.originalBodiesReturned());
++    }
++    @Test void duplicateEnqueueAndSourceReturnFailClosed(){
++        var l=ledger();var t=source(l);enqueue(l,t);l.enqueueReturned(t,future,false);l.enqueueReturned(t,future,false);
++        assertEquals(NativeOrdinaryPayloadFrontier.Failure.IDENTITY,l.failure());l.sourceReturned(t,false);l.sourceReturned(t,false);assertFalse(l.originalBodiesReturned());
++    }
++    @Test void realWorkerBlockedCallbackRemainsPendingAfterEnqueueAndSourceReturn() throws Throwable {
++        var l=ledger();var t=source(l);enqueue(l,t);var entered=new CountDownLatch(1);var release=new CountDownLatch(1);
++        var workerFailure=new java.util.concurrent.atomic.AtomicReference<Throwable>();
++        Thread worker=new Thread(()->{
++            boolean failed=true;
++            try{
++                if(l.callbackEntered(wrapper,payload,context)!=t)throw new AssertionError("exact callback ticket missing");
++                entered.countDown();if(!release.await(5,TimeUnit.SECONDS))throw new AssertionError("bounded worker timeout");failed=false;
++            }catch(Throwable failure){workerFailure.set(failure);if(failure instanceof InterruptedException)Thread.currentThread().interrupt();}
++            finally{l.callbackReturned(t,failed);}
++        },"payload-frontier-model");
++        worker.setDaemon(true);
++        Throwable primary=null;boolean restoreInterrupt=false;
++        try{
++            worker.start();assertTrue(entered.await(5,TimeUnit.SECONDS));returns(l,t);assertFalse(l.originalBodiesReturned());
++        }catch(Throwable failure){primary=failure;restoreInterrupt=failure instanceof InterruptedException;throw failure;}
++        finally{
++            release.countDown();Throwable cleanup=null;restoreInterrupt|=Thread.interrupted();
++            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
++            while(worker.isAlive()){
++                long remaining=deadline-System.nanoTime();if(remaining<=0)break;
++                try{worker.join(Math.max(1,TimeUnit.NANOSECONDS.toMillis(remaining)));}
++                catch(InterruptedException failure){restoreInterrupt=true;if(cleanup==null)cleanup=failure;}
++            }
++            if(worker.isAlive()){
++                var notJoined=new AssertionError("worker did not return within bounded fixture join");
++                if(cleanup==null)cleanup=notJoined;else cleanup.addSuppressed(notJoined);
++            }
++            if(restoreInterrupt)Thread.currentThread().interrupt();
++            if(cleanup!=null){if(primary!=null)primary.addSuppressed(cleanup);else throw cleanup;}
++        }
++        assertNull(workerFailure.get());assertFalse(worker.isAlive());assertTrue(l.originalBodiesReturned());
++    }
++}
+--- /dev/null
++++ b/minecraft/src/test/java/io/earthplatform/minecraft/survival/interaction/host/NativeOriginalPacketWriteShapeTest.java
+@@ -0,0 +1,12 @@
++package io.earthplatform.minecraft.survival.interaction.host;
++
++import static org.junit.jupiter.api.Assertions.*;
++import org.junit.jupiter.api.Test;
++import net.minecraft.network.protocol.login.ServerboundHelloPacket;
++
++final class NativeOriginalPacketWriteShapeTest {
++    @Test void realScalarPacketIsAccepted(){assertTrue(NativeOriginalPacketWriteShape.accepts(new ServerboundHelloPacket("shape",new java.util.UUID(0,1))));}
++    @Test void plainControlIsPassThrough(){assertFalse(NativeOriginalPacketWriteShape.accepts(new Object()));}
++    @Test void nullIsNeverAnEncodedPacket(){assertFalse(NativeOriginalPacketWriteShape.accepts(null));}
++    @Test void arbitraryEncoderCannotClaimMatcher(){assertFalse(NativeOriginalPacketWriteShape.exactMatcher(new Object()));assertFalse(NativeOriginalPacketWriteShape.exactMatcher(null));}
++}

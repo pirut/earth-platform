@@ -1,0 +1,14 @@
+{
+  "scope": "Exact prior read3 reviewed hook/route logic; only version4/v6 path identities change. Original JavaExec doFirst snapshot; build/archive remain overlay.",
+  "before": {
+    "run.sh": "e9a750391b4a98125a452d62a5f8931e9ccf8c60493ed3290f93f04784256c2f",
+    "pre-java-receipt.init.gradle": "b17d092031006299965dc11df85ae5ee114272c3b850022f09f26501a291c1e0",
+    "preserve.py": "813236819f4fbf114560c82f92e2b79dcf523c00d40b6d33d8d4eebd84c87538"
+  },
+  "after": {
+    "run.sh": "203eb7edced9d1cbcc6ccc50f74c611c6baa474d0c7a8c677ebf4e813d279d00",
+    "pre-java-receipt.init.gradle": "222ada7a8e46e064ef82bb6c5c85a1fb140fbdda4621d2dd09710224ab3df3c2",
+    "preserve.py": "55cb8bcec896ff6e8ab543a89170526509ac5595006d47a2b80d7f6d89d543ea"
+  },
+  "generatedFixtureResource": "Original processRegisteredSessionFixtureResources creates one config after compile; require exact source-bound complete set on terminal replay."
+}

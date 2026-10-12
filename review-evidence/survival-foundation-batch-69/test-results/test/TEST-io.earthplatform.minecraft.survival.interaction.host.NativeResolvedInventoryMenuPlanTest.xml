@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedInventoryMenuPlanTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:49.035Z" hostname="4d821b23054b" time="0.004">
+  <properties/>
+  <testcase name="unresolvedGridResultCursorOrSuppressedRemoteAlwaysRefuses()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedInventoryMenuPlanTest" time="0.001"/>
+  <testcase name="changedLastSlotsAloneDoNotSendRemotePackets()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedInventoryMenuPlanTest" time="0.001"/>
+  <testcase name="unchangedResolvedBroadcastDoesNotInventPacketsOrStateTransitions()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedInventoryMenuPlanTest" time="0.001"/>
+  <testcase name="finalBroadcastUsesOldRemoteCachesAndWrapsNativeStateId()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedInventoryMenuPlanTest" time="0.0"/>
+  <testcase name="deliveryPayloadChargeRefusesOverflowAndNeverUndercharges()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedInventoryMenuPlanTest" time="0.001"/>
+  <testcase name="exactNativeMenuToInventoryIndicesIncludeArmorHotbarAndOffhand()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedInventoryMenuPlanTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

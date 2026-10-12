@@ -5,8 +5,8 @@ import io.earthplatform.minecraft.network.EnginePaletteContext;
 
 final class CoreGateFixture {
     static final String FULL_HEIGHT_OPT_IN="earthplatform.experimental.fullHeightPlayerGate";
-    static boolean fullHeight(){return Boolean.getBoolean(FULL_HEIGHT_OPT_IN);}
-    static boolean collision() { return Boolean.getBoolean(CoreCollisionBinding.OPT_IN); }
+    static boolean fullHeight(){return Boolean.getBoolean(FULL_HEIGHT_OPT_IN)||io.earthplatform.compat.dh.EarlyPlayableAdmission.enabled();}
+    static boolean collision() { return Boolean.getBoolean(CoreCollisionBinding.OPT_IN)||io.earthplatform.compat.dh.EarlyPlayableAdmission.enabled(); }
     static AnalyticNativeCubeProvider provider(EnginePaletteContext palette) {return provider(palette,CoreGateProfile.BASE);}
     static AnalyticNativeCubeProvider provider(EnginePaletteContext palette,CoreGateProfile profile) {
         if(fullHeight()){if(!collision())throw new IllegalStateException("Full-height gate requires explicit collision gate");return profile.provider(palette);}

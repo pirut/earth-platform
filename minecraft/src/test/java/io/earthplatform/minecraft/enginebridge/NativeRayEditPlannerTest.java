@@ -328,4 +328,28 @@ class NativeRayEditPlannerTest {
         var outside = rejected(plan(map, new Vec3(5.5, -11009.5, 5.5), new Vec3(0, 1, 0), REMOVE, EDITABLE), UNKNOWN_DATA);
         assertEquals(OUTSIDE_DOMAIN, outside.unknown().reason());
     }
+
+    @Test void explicitArenaRayPolicyTargetsEveryCubeWithoutExpandingLegacyPermission() {
+        for (CubePos p : ArenaDefinition.FIXED.positions()) {
+            int x=(int)p.minBlockX()+5,y=(int)p.minBlockY()+5,z=(int)p.minBlockZ()+5;
+            var map=halo(cell(x,y,z,Blocks.STONE.defaultBlockState()));
+            var planned=accepted(NativeRayEditPlanner.planArena(world,EPOCH,palette,map,new Vec3(x+.5,y+3.5,z+.5),new Vec3(0,-1,0),8,REMOVE,ArenaDefinition.FIXED,null));
+            target(planned,x,y,z,Blocks.AIR.defaultBlockState());assertTrue(planned.isCurrent(map));
+            if(!p.equals(EDITABLE))rejected(plan(map,new Vec3(x+.5,y+3.5,z+.5),new Vec3(0,-1,0),REMOVE,EDITABLE),OUTSIDE_EDITABLE_CUBE);
+        }
+    }
+    @Test void arenaPlacementCrossesAllTwelveInternalCubeAdjacenciesButRejectsOuterBoundary() {
+        for(int axis=0;axis<3;axis++)for(int first=0;first<2;first++)for(int second=0;second<2;second++){
+            int[] cube={0,8,0};int a=(axis+1)%3,b=(axis+2)%3;cube[a]+=first;cube[b]+=second;
+            int[] block={cube[0]*16+8,cube[1]*16+8,cube[2]*16+8};block[axis]=cube[axis]*16+15;
+            var solid=cell(block[0],block[1],block[2],Blocks.STONE.defaultBlockState());int[] next=block.clone();next[axis]++;
+            var map=halo(solid,snapshot(CubePos.fromBlock(next[0],next[1],next[2]),new EngineCubeSection(palette)));
+            double[] eye={block[0]+.5,block[1]+.5,block[2]+.5};eye[axis]+=3;
+            double[] look={0,0,0};look[axis]=-1;
+            var planned=accepted(NativeRayEditPlanner.planArena(world,EPOCH,palette,map,new Vec3(eye[0],eye[1],eye[2]),new Vec3(look[0],look[1],look[2]),8,PLACE_DIORITE,ArenaDefinition.FIXED,null));
+            target(planned,next[0],next[1],next[2],Blocks.DIORITE.defaultBlockState());assertTrue(planned.isCurrent(map));
+        }
+        var map=halo(cell(31,145,8,Blocks.STONE.defaultBlockState()));
+        rejected(NativeRayEditPlanner.planArena(world,EPOCH,palette,map,new Vec3(34.5,145.5,8.5),new Vec3(-1,0,0),8,PLACE_DIORITE,ArenaDefinition.FIXED,null),OUTSIDE_EDITABLE_CUBE);
+    }
 }

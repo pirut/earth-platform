@@ -1,0 +1,62 @@
+// Opt-in launch-only fixture. The ordinary build, all three JUnit partitions and release JAR are untouched.
+allprojects { p ->
+    p.plugins.withId('net.neoforged.moddev') {
+        if (p.providers.gradleProperty('earthDhProducerFixture').getOrElse('false') != 'true') return
+        def requested = p.providers.gradleProperty('earthDhProducerGameDir')
+        if (!requested.isPresent()) throw new GradleException('Explicit fresh earthDhProducerGameDir required')
+        def run = p.file(requested.get()).canonicalFile
+        if (!run.isDirectory()) throw new GradleException('Parent must stage the disposable GameTest directory first')
+        if (new File(run, 'eula.txt').exists()) throw new GradleException('Unexpected acceptance file; stop without modifying it')
+        if (new File(run, 'world').exists() || new File(run, 'dh-producer-ownership').exists())
+            throw new GradleException('A fresh producer fixture directory is required for each attempt')
+        def official = new File(run, 'mods/DistantHorizons-3.3.3-1.21.1-fabric-neoforge.jar')
+        def expectedHash = '864e70def5b0d54d619b940b66bb2784e91d3f3fc253064fdc1b3fc5786cbfab'
+        if (!official.isFile() || official.length() != 28289212L)
+            throw new GradleException('Parent must independently install the exact official DH artifact in this disposable mods directory')
+        def digest = { f -> java.security.MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString() }
+        if (digest(official) != expectedHash) throw new GradleException('Installed fixture DH SHA-256 mismatch')
+        def installed = official.parentFile.listFiles()
+        if (installed == null || installed.length != 1 || installed[0].canonicalFile != official.canonicalFile)
+            throw new GradleException('This narrow helper fixture permits exactly the pinned DH artifact in mods')
+
+        def source = p.file('src/dhProducerGameTest/java')
+        def support = p.file('src/test/java/io/earthplatform/minecraft/survival/render/SurvivalDhTestSupport.java')
+        if (!source.isDirectory() || !support.isFile()) throw new GradleException('Missing producer fixture source')
+        def fixture = p.sourceSets.create('dhProducerGameTest') {
+            java.setSrcDirs([source, p.file('src/test/java')])
+            java.include('io/earthplatform/compat/dh/InstalledSurvivalDhProducerGameTests.java',
+                    'io/earthplatform/minecraft/lod/SurvivalDhProducerGpuFixture.java',
+                    'io/earthplatform/minecraft/survival/dhfixture/DhProducerFixtureAssertions.java',
+                    'io/earthplatform/minecraft/survival/render/SurvivalDhTestSupport.java')
+            resources.setSrcDirs([])
+            compileClasspath += p.sourceSets.main.output + p.sourceSets.main.compileClasspath
+            runtimeClasspath += p.sourceSets.main.runtimeClasspath
+        }
+        p.tasks.named(fixture.compileJavaTaskName).configure {
+            dependsOn('verifyOfficialDhInput', 'verifyOfficialShaderInputs')
+            doFirst {
+                if (fixture.java.files.size() != 4 || fixture.java.files.any { it.text.contains('org.junit') })
+                    throw new GradleException('Producer fixture must compile exactly four no-JUnit sources')
+                def testOutputs = p.sourceSets.test.output.files.collect { it.canonicalFile }
+                if (fixture.runtimeClasspath.files.any { testOutputs.contains(it.canonicalFile) })
+                    throw new GradleException('JUnit test output must not enter the official GameTest runtime')
+            }
+        }
+        p.tasks.named(fixture.processResourcesTaskName).configure {
+            from(p.file('src/main/resources/data/earthplatform/structure/native_survival_empty.nbt')) {
+                into('data/earthplatform_dh_producer_fixture/structure')
+            }
+        }
+        def neo = p.extensions.getByName('neoForge')
+        neo.mods.configureEach { mod -> if (mod.name == 'earthplatform') mod.sourceSet(fixture) }
+        neo.runs.create('survivalDhProducerGameTest') {
+            server()
+            gameDirectory = run
+            jvmArgument '-Xmx3G'
+            systemProperty 'earthplatform.dhProducerFixture', 'true'
+            systemProperty 'neoforge.gameTestServer', 'true'
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'earthplatform_dh_producer_fixture'
+            programArguments.addAll('--nogui', '--universe', '.', '--world', 'world')
+        }
+    }
+}

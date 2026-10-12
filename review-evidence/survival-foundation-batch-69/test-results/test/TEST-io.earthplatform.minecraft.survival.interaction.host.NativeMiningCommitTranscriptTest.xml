@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeMiningCommitTranscriptTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:48.060Z" hostname="4d821b23054b" time="0.63">
+  <properties/>
+  <testcase name="enumeratedMaximumTranscriptFitsRetainedLineageCharge()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningCommitTranscriptTest" time="0.051"/>
+  <testcase name="journalCannotRetainCallerMutableNoticeListOrUnboundedNoticeCount()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningCommitTranscriptTest" time="0.109"/>
+  <testcase name="evidenceCannotInventCatchupOrPacketTicks()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningCommitTranscriptTest" time="0.105"/>
+  <testcase name="checkpointReadinessPreservesNativeDelayedAbortAndPendingAck()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningCommitTranscriptTest" time="0.002"/>
+  <testcase name="inputSeparatesOriginalPacketFromSchedulerAndPreservesPackedRange()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningCommitTranscriptTest" time="0.0"/>
+  <testcase name="repeatedZeroSequenceAbortRemainsRepresentableAndDoesNotClearDelayedState()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningCommitTranscriptTest" time="0.084"/>
+  <testcase name="genuinePulseEvidenceRetainsNativeIntegerWrapAndRawStage()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningCommitTranscriptTest" time="0.039"/>
+  <testcase name="orderedOutputCannotHideAnOutOfRangeOrUnpairedDestroyIndex()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningCommitTranscriptTest" time="0.119"/>
+  <testcase name="acceptedEvidenceRoundTripsFullNativeStateAndOrderedDestroyBoundary()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningCommitTranscriptTest" time="0.114"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

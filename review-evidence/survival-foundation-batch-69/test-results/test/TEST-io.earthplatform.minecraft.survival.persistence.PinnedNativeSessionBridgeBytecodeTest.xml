@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.persistence.PinnedNativeSessionBridgeBytecodeTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:49.622Z" hostname="4d821b23054b" time="0.01">
+  <properties/>
+  <testcase name="outerSchedulerMutatesBeforePlayerTickSoInnerTickHoldAloneIsInsufficient()" classname="io.earthplatform.minecraft.survival.persistence.PinnedNativeSessionBridgeBytecodeTest" time="0.002"/>
+  <testcase name="ordinaryNettySchedulingDelegationIsOutsideFailureCatch()" classname="io.earthplatform.minecraft.survival.persistence.PinnedNativeSessionBridgeBytecodeTest" time="0.001"/>
+  <testcase name="nativeCrossDimensionEntryHasOriginalChangeDimensionCall()" classname="io.earthplatform.minecraft.survival.persistence.PinnedNativeSessionBridgeBytecodeTest" time="0.001"/>
+  <testcase name="noPublicGateCanQualifyNativeEarthTicks()" classname="io.earthplatform.minecraft.survival.persistence.PinnedNativeSessionBridgeBytecodeTest" time="0.001"/>
+  <testcase name="allSixteenKinematicRootsExist()" classname="io.earthplatform.minecraft.survival.persistence.PinnedNativeSessionBridgeBytecodeTest" time="0.003"/>
+  <testcase name="retainedFailedOrDisconnectedPlayerCannotVetoSuppressionBookkeeping()" classname="io.earthplatform.minecraft.survival.persistence.PinnedNativeSessionBridgeBytecodeTest" time="0.0"/>
+  <testcase name="ackThreadHandoffAndTwoExitSitesAreExactlyPinned()" classname="io.earthplatform.minecraft.survival.persistence.PinnedNativeSessionBridgeBytecodeTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

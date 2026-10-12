@@ -1,0 +1,44 @@
+{
+  "reviewedAt": "2026-10-12T06:48:49.498317+00:00",
+  "status": "PASS_INDEPENDENT_ACTUAL_CODEC3_AND_PRESERVATION_REPLAY",
+  "terminalSha256": "f9618041b09ce280ec03bfeca766bc10b86fd56bf9a494e7268f1e722cf989a5",
+  "nativeSoleTest": "1/1",
+  "authorInputs": 1232,
+  "parentInputs": 3218,
+  "preparedArtifactSetExact": 67,
+  "fmlModFolderCompleteSets": {
+    "/tmp/earthplatform-foundation69-build/classes/java/main": 1760,
+    "/tmp/earthplatform-foundation69-build/resources/main": 55
+  },
+  "mainClasses": 1760,
+  "retainedJarSha256": "0bbceeeb725d4ff1e1952f0147ff2f97ec0b401c8b02aa8a1feebf144e64638d",
+  "preservedFiles": 36,
+  "preservedDirectories": 22,
+  "archiveSha256": "4736ffe8708abcfed7a9320e3e2ab00364d8e2c206e741ed145cdeb3af691c9d",
+  "archiveBytes": 695556,
+  "argumentReceiptSha256": "274abcc57640924cbbe91304f1441ca1e45103ab597b6ec5d172c014e7aa18af",
+  "sourceBoundAssertions": {
+    "exactNativeMatcher": true,
+    "originalNonPacketPassThroughs": 1,
+    "samePromiseAndOutboundIdentity": true,
+    "passThroughAllocationEncodeDecodeCountsZero": true,
+    "acceptedRounds": 16,
+    "malformedInputRound": 17,
+    "originalRetainedCumulationAndOneCloseCleanup": true,
+    "counterfeitRefusal": true
+  },
+  "nativeThreeDimensionSaveAndExit": true,
+  "residualJava": false,
+  "qualifications": [
+    "Confined original Minecraft codec/EmbeddedChannel branch regression; no production Local adoption or reusable save authority.",
+    "Actual006 five unresolved rows lacked per-flight type identities; this pass does not retrospectively identify those rows.",
+    "All charges remain retained to process exit.",
+    "Original JavaExec doFirst snapshot is separate from native log evidence; actual module/legacy/task paths and FML directory sets were fully reparsed and joined.",
+    "Two pretest environmental errors are preserved."
+  ],
+  "startupErrors": [
+    "Initial server.properties absent",
+    "Authlib public-key request UnknownHostException"
+  ],
+  "reviewerRanJvm": false
+}

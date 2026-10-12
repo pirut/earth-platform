@@ -1,0 +1,29 @@
+{
+  "reviewedAt": "2026-10-12T06:44:32.113289+00:00",
+  "status": "CLEARED_SEPARATE_SERVER_MAIN_SOURCE_COMPONENT_GATE",
+  "manifestSha256": "db276f3bab4116b764d7812a7c0c7d31fe5d72f72bcbe5f65737692050e49f31",
+  "patchSha256": "21cb13e6d1bb70b031905d4c3cb10ae975d2269d9555a36239c99549e5bbaa65",
+  "exactPaths": 3,
+  "exactOriginalClass": "324a53f7eb51c9ae097f2421fdee9614b27b10d2fcaa88d70d7daf54faaf7ed8",
+  "exactOriginalMethods": 5,
+  "unchangedSharedLimits": {
+    "tickets": 8192,
+    "threads": 4,
+    "nestedDepth": 16,
+    "chargedBytes": 5308416
+  },
+  "review": [
+    "Exact Client/Server final-record class test precedes either listener accessor; foreign interface methods are not invoked.",
+    "Client context matches endpoint 0 and server context endpoint 1; constructor-bound endpoint getter remains source-pinned and volatile.",
+    "Historical admitted weak triples preserve callback attribution after listener replacement; reuse stays poisoned by the unchanged frontier.",
+    "Original same-thread run or asynchronous submit/guard behavior is unchanged; callback-body failure is observed before outer future recovery.",
+    "Two fixed scalar arrays and one scope int fit the existing fixed 64 KiB allowance; no per-ticket native graph retention added."
+  ],
+  "requiredRuntimeEvidence": "Actual installed MainThreadPayloadHandler transformation, source and return counts for each exercised side, no frontier failures/overflow and exact pair lineage. The serverPayloadCoverage field names available observation scope, not proof that a server callback executed.",
+  "limits": [
+    "Handler-internal caught failures remain outside this observer.",
+    "No handler registration admission, whole-executor alias join, splitter reassembly proof, physical payload debit or production readiness.",
+    "Queued or decoded split payloads still require separate byte/task frontier closure even if receive-entry counters are zero."
+  ],
+  "jvmRunByReviewer": false
+}

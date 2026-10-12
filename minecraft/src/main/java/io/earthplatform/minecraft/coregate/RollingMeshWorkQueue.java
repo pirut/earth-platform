@@ -9,8 +9,9 @@ import java.util.function.LongSupplier;
 
 /**
  * Owner-thread, frame-sliced native mesh work with a fixed, bounded ownership journal.
- * One pump performs only begin, one callback slice, or finish/upload. Finish never runs on
- * the frame which reports the last callback. Published results must be consumed explicitly.
+ * The production owner slice packs legal phases while measured time remains. Each phase
+ * keeps its current-generation fence and fixed ownership slot; pump() remains a one-operation
+ * seam for compatibility and exact outcome comparison. No operation is preemptible.
  *
  * <p>The 2 ms default is a soft slice budget, not a frame deadline: a single model callback,
  * begin, finish/upload, publication or cleanup can exceed it. No native work is asynchronous.
@@ -20,6 +21,7 @@ public final class RollingMeshWorkQueue<B, M> implements AutoCloseable {
     public static final int MAX_TARGETS = 28;
     public static final int MAX_CALLBACKS = 4096;
     public static final long SOFT_SLICE_NANOS = 2_000_000L;
+    public static final int MAX_OPERATIONS_PER_SLICE = 128;
 
     /**
      * All methods run synchronously on the constructing thread. begin must expose no owned
@@ -41,7 +43,13 @@ public final class RollingMeshWorkQueue<B, M> implements AutoCloseable {
     public record StepStats(int blocks, int completedBlocks, int totalBlocks, long elapsedNanos,
                             long budgetNanos, long overshootNanos, long maxBlockNanos, boolean complete) {}
 
-    public enum Phase { IDLE, BEGIN, STEP, FINISH, WAITING_PUBLICATION }
+    public enum Phase { IDLE, BEGIN, STEP, FINISH, BUILD_CLOSE, PUBLICATION, WAITING_PUBLICATION }
+    public enum StopReason { DRAINED, TIME_BUDGET, CALLBACK_LIMIT, OPERATION_LIMIT }
+    public record SliceStats(Phase lastPhase, int operations, int callbacks, long elapsedNanos,
+                             long budgetNanos, long overshootNanos, StopReason stopReason) {}
+    public record OwnerSliceMetrics(Timing timing, int maxOperations, int maxCallbacks,
+                                    long maxSoftOvershootNanos, long timeBudgetYields,
+                                    long callbackLimitYields, long operationLimitYields) {}
 
     /** All timings are cumulative measured values; durations and counters saturate at Long.MAX_VALUE. */
     public record Timing(long calls, long totalNanos, long maxNanos) {}
@@ -55,16 +63,19 @@ public final class RollingMeshWorkQueue<B, M> implements AutoCloseable {
                           long reportedCallbacks, int maxCallbacksPerSlice, long maxCallbackNanos,
                           long maxSoftOvershootNanos, int peakQueuedTargets, int peakActiveBuilds,
                           int peakCompletedMeshes, Timing begin, Timing slice, Timing finishUpload,
-                          Timing publication, Timing buildClose, Timing meshClose) {}
+                          Timing publication, Timing buildClose, Timing meshClose, OwnerSliceMetrics ownerSlice) {}
 
     private final Thread owner = Thread.currentThread();
     private final Driver<B, M> driver;
     private final CubePos[] targets;
-    private final int maxCallbacks;
+    private final int maxCallbacks, maxOperations;
     private final long softNanos;
     private final LongSupplier clock;
     private final Timer beginTime = new Timer(), sliceTime = new Timer(), finishTime = new Timer();
     private final Timer publishTime = new Timer(), buildCloseTime = new Timer(), meshCloseTime = new Timer();
+    private final Timer ownerSliceTime = new Timer();
+    private int operationCallbacks, maxOwnerSliceOperations, maxOwnerSliceCallbacks;
+    private long maxOwnerSliceOvershoot, timeBudgetYields, callbackLimitYields, operationLimitYields;
     private int head, tail;
     private CubePos activePosition, completedPosition;
     private B activeBuild;
@@ -84,10 +95,18 @@ public final class RollingMeshWorkQueue<B, M> implements AutoCloseable {
     /** Smaller limits and a deterministic clock permit pure failure-injection tests. */
     public RollingMeshWorkQueue(Driver<B, M> driver, int targetLimit, int maxCallbacks,
                                 long softNanos, LongSupplier clock) {
+        this(driver, targetLimit, maxCallbacks, softNanos, MAX_OPERATIONS_PER_SLICE, clock);
+    }
+
+    public RollingMeshWorkQueue(Driver<B, M> driver, int targetLimit, int maxCallbacks,
+                                long softNanos, int maxOperations, LongSupplier clock) {
         if (targetLimit < 1 || targetLimit > MAX_TARGETS)
             throw new IllegalArgumentException("Target limit must be between 1 and 28");
         if (maxCallbacks < 1 || maxCallbacks > MAX_CALLBACKS || softNanos < 1)
             throw new IllegalArgumentException("Invalid callback or soft-time limit");
+        if (maxOperations < 1 || maxOperations > MAX_OPERATIONS_PER_SLICE)
+            throw new IllegalArgumentException("Invalid owner-slice operation limit");
+        this.maxOperations = maxOperations;
         this.driver = Objects.requireNonNull(driver);
         this.targets = new CubePos[targetLimit];
         this.maxCallbacks = maxCallbacks;
@@ -136,56 +155,133 @@ public final class RollingMeshWorkQueue<B, M> implements AutoCloseable {
         finally { operating = false; }
     }
 
-    /** Call at most once per render frame. Never loops into the next phase or next cube. */
+    /** Performs one legacy operation; finish includes build cleanup. Does not consume a mesh. */
     public Phase pump() {
         checkNormal();
         operating = true;
         try {
-            if (drained()) return Phase.IDLE;
-            requireCurrent();
-            if (completedMesh != null) return Phase.WAITING_PUBLICATION;
-            if (activeBuild == null) {
-                CubePos next = targets[head];
-                long start = clock.getAsLong();
-                try {
-                    // Retain before any fallible post-check, clock read or metrics work.
-                    activeBuild = Objects.requireNonNull(driver.begin(next), "Driver returned no build owner");
-                    activePosition = next;
-                    targets[head++] = null;
-                    peakActiveBuilds = 1;
-                    activeComplete = false;
-                    completedCallbacks = 0;
-                    totalCallbacks = -1;
-                } finally { beginTime.record(start); }
+            if (!drained()) requireCurrent();
+            return advance(maxCallbacks, softNanos, false);
+        }
+        catch (RuntimeException | Error failure) { poisoned = true; throw failure; }
+        finally { operating = false; }
+    }
+
+    /**
+     * Call at most once per authoritative render frame. Every additional begin, callback step,
+     * finish/upload, successful-build cleanup and publication gets a fresh elapsed-time check.
+     * Callback steps receive only the remaining time and aggregate callback allowance. A finish
+     * that exhausts the budget retains BOTH owners until cleanup can run in a later slice.
+     * Indivisible operations may overshoot: timings include those overshoots, also on failure.
+     */
+    public SliceStats pumpSlice(BiConsumer<CubePos, M> consumer) {
+        checkNormal();
+        Objects.requireNonNull(consumer);
+        long start = clock.getAsLong();
+        operating = true;
+        int operations = 0, callbacks = 0;
+        Phase last = Phase.IDLE;
+        StopReason stop = StopReason.DRAINED;
+        long elapsed = 0;
+        Throwable sliceFailure = null;
+        try {
+            while (!drained()) {
                 requireCurrent();
-                return Phase.BEGIN;
-            }
-            if (!activeComplete) {
-                long start = clock.getAsLong();
-                StepStats stats;
-                try { stats = driver.step(activeBuild, maxCallbacks, softNanos); }
-                finally {
-                    long elapsed = sliceTime.record(start);
-                    maxSoftOvershootNanos = Math.max(maxSoftOvershootNanos, overshoot(elapsed, softNanos));
+                long remaining = softNanos - elapsedSince(start);
+                if (remaining <= 0) { stop = StopReason.TIME_BUDGET; break; }
+                if (operations >= maxOperations) { stop = StopReason.OPERATION_LIMIT; break; }
+                // Finishing, retiring and publishing a completed build require no model callbacks.
+                if (callbacks >= maxCallbacks && completedMesh == null && !activeComplete) {
+                    stop = StopReason.CALLBACK_LIMIT; break;
                 }
-                requireCurrent();
-                acceptStats(Objects.requireNonNull(stats, "Driver returned no step statistics"));
-                return Phase.STEP;
+                operations++;
+                if (completedMesh != null && activeBuild == null) {
+                    publishOwned(consumer, false);
+                    last = Phase.PUBLICATION;
+                } else {
+                    last = advance(maxCallbacks - callbacks, remaining, true);
+                    callbacks += operationCallbacks;
+                }
             }
-            long start = clock.getAsLong();
+        } catch (RuntimeException | Error failure) { poisoned = true; sliceFailure = failure; throw failure; }
+        finally {
             try {
-                // finish transfers GPU ownership at return: retain its result immediately.
-                completedMesh = Objects.requireNonNull(driver.finish(activeBuild), "Driver returned no mesh owner");
-                completedPosition = activePosition;
-                completedMeshes = increment(completedMeshes);
-                peakCompletedMeshes = 1;
-            } finally { finishTime.record(start); }
-            requireCurrent();
+                elapsed = ownerSliceTime.record(start);
+                maxOwnerSliceOperations = Math.max(maxOwnerSliceOperations, operations);
+                maxOwnerSliceCallbacks = Math.max(maxOwnerSliceCallbacks, callbacks);
+                maxOwnerSliceOvershoot = Math.max(maxOwnerSliceOvershoot, overshoot(elapsed, softNanos));
+            } catch (RuntimeException | Error failure) {
+                poisoned = true;
+                if (sliceFailure == null) throw failure;
+                append(sliceFailure, failure);
+            } finally { operating = false; }
+        }
+        switch (stop) {
+            case TIME_BUDGET -> timeBudgetYields = increment(timeBudgetYields);
+            case CALLBACK_LIMIT -> callbackLimitYields = increment(callbackLimitYields);
+            case OPERATION_LIMIT -> operationLimitYields = increment(operationLimitYields);
+            default -> { }
+        }
+        return new SliceStats(last, operations, callbacks, elapsed, softNanos, overshoot(elapsed, softNanos), stop);
+    }
+
+    private Phase advance(int callbackLimit, long budgetNanos, boolean deferredCleanup) {
+        operationCallbacks = 0;
+        if (drained()) return Phase.IDLE;
+        if (completedMesh != null) {
+            if (activeBuild == null) return Phase.WAITING_PUBLICATION;
             closeActiveBuild();
             requireCurrent();
-            return Phase.FINISH;
-        } catch (RuntimeException | Error failure) { poisoned = true; throw failure; }
-        finally { operating = false; }
+            return Phase.BUILD_CLOSE;
+        }
+        if (activeBuild == null) {
+            CubePos next = targets[head];
+            long start = clock.getAsLong();
+            Throwable failure = null;
+            try {
+                // Retain before any fallible post-check, clock read or metrics work.
+                activeBuild = Objects.requireNonNull(driver.begin(next), "Driver returned no build owner");
+                activePosition = next;
+                targets[head++] = null;
+                peakActiveBuilds = 1;
+                activeComplete = false;
+                completedCallbacks = 0;
+                totalCallbacks = -1;
+            } catch (RuntimeException | Error error) { failure = error; throw error; }
+            finally { recordPhase(beginTime, start, failure); }
+            requireCurrent();
+            return Phase.BEGIN;
+        }
+        if (!activeComplete) {
+            long start = clock.getAsLong();
+            StepStats stats;
+            Throwable failure = null;
+            try { stats = driver.step(activeBuild, callbackLimit, budgetNanos); }
+            catch (RuntimeException | Error error) { failure = error; throw error; }
+            finally {
+                long elapsed = recordPhase(sliceTime, start, failure);
+                maxSoftOvershootNanos = Math.max(maxSoftOvershootNanos, overshoot(elapsed, budgetNanos));
+            }
+            requireCurrent();
+            acceptStats(Objects.requireNonNull(stats, "Driver returned no step statistics"), callbackLimit, budgetNanos);
+            return Phase.STEP;
+        }
+        long start = clock.getAsLong();
+        Throwable failure = null;
+        try {
+            // finish transfers GPU ownership at return: retain its result immediately.
+            completedMesh = Objects.requireNonNull(driver.finish(activeBuild), "Driver returned no mesh owner");
+            completedPosition = activePosition;
+            completedMeshes = increment(completedMeshes);
+            peakCompletedMeshes = 1;
+        } catch (RuntimeException | Error error) { failure = error; throw error; }
+        finally { recordPhase(finishTime, start, failure); }
+        requireCurrent();
+        if (!deferredCleanup) {
+            closeActiveBuild();
+            requireCurrent();
+        }
+        return Phase.FINISH;
     }
 
     /**
@@ -198,32 +294,39 @@ public final class RollingMeshWorkQueue<B, M> implements AutoCloseable {
         checkNormal();
         Objects.requireNonNull(consumer);
         operating = true;
-        try {
-            if (completedMesh == null) return false;
-            requireCurrent();
-            long start = clock.getAsLong();
-            try { consumer.accept(completedPosition, completedMesh); }
-            finally { publishTime.record(start); }
-            requireCurrent();
-            completedMesh = null;
-            completedPosition = null;
-            publishedMeshes = increment(publishedMeshes);
-            return true;
-        } catch (RuntimeException | Error failure) { poisoned = true; throw failure; }
+        try { return publishOwned(consumer, true); }
+        catch (RuntimeException | Error failure) { poisoned = true; throw failure; }
         finally { operating = false; }
     }
 
-    private void acceptStats(StepStats value) {
-        if (value.blocks() < 0 || value.blocks() > maxCallbacks || value.completedBlocks() < 0
+    private boolean publishOwned(BiConsumer<CubePos, M> consumer, boolean checkCurrent) {
+        // Adaptive finish can defer build retirement; do not transfer its mesh prematurely.
+        if (completedMesh == null || activeBuild != null) return false;
+        if (checkCurrent) requireCurrent();
+        long start = clock.getAsLong();
+        Throwable failure = null;
+        try { consumer.accept(completedPosition, completedMesh); }
+        catch (RuntimeException | Error error) { failure = error; throw error; }
+        finally { recordPhase(publishTime, start, failure); }
+        requireCurrent();
+        completedMesh = null;
+        completedPosition = null;
+        publishedMeshes = increment(publishedMeshes);
+        return true;
+    }
+
+    private void acceptStats(StepStats value, int callbackLimit, long budgetNanos) {
+        if (value.blocks() < 0 || value.blocks() > callbackLimit || value.completedBlocks() < 0
                 || value.totalBlocks() < 0 || value.completedBlocks() > value.totalBlocks()
                 || value.completedBlocks() - completedCallbacks != value.blocks()
                 || totalCallbacks != -1 && value.totalBlocks() != totalCallbacks
                 || value.complete() != (value.completedBlocks() == value.totalBlocks())
                 || value.blocks() == 0 && !value.complete()
-                || value.elapsedNanos() < 0 || value.budgetNanos() != softNanos
+                || value.elapsedNanos() < 0 || value.budgetNanos() != budgetNanos
                 || value.overshootNanos() != overshoot(value.elapsedNanos(), value.budgetNanos())
                 || value.maxBlockNanos() < 0 || value.maxBlockNanos() > value.elapsedNanos())
             throw new IllegalStateException("Driver violated its bounded callback/statistics contract");
+        operationCallbacks = value.blocks();
         completedCallbacks = value.completedBlocks();
         totalCallbacks = value.totalBlocks();
         activeComplete = value.complete();
@@ -269,12 +372,14 @@ public final class RollingMeshWorkQueue<B, M> implements AutoCloseable {
     private void closeActiveBuild() {
         if (activeBuild == null) return;
         long start = clock.getAsLong();
+        Throwable failure = null;
         try {
             driver.closeBuild(activeBuild);
             activeBuild = null;
             activePosition = null;
             activeComplete = false;
-        } finally { buildCloseTime.record(start); }
+        } catch (RuntimeException | Error error) { failure = error; throw error; }
+        finally { recordPhase(buildCloseTime, start, failure); }
     }
 
     private void requireCurrent() {
@@ -306,13 +411,26 @@ public final class RollingMeshWorkQueue<B, M> implements AutoCloseable {
         return new Metrics(batches, completedMeshes, publishedMeshes, reportedCallbacks,
                 maxCallbacksPerSlice, maxCallbackNanos, maxSoftOvershootNanos, peakQueuedTargets,
                 peakActiveBuilds, peakCompletedMeshes, beginTime.snapshot(), sliceTime.snapshot(),
-                finishTime.snapshot(), publishTime.snapshot(), buildCloseTime.snapshot(), meshCloseTime.snapshot());
+                finishTime.snapshot(), publishTime.snapshot(), buildCloseTime.snapshot(), meshCloseTime.snapshot(),
+                new OwnerSliceMetrics(ownerSliceTime.snapshot(), maxOwnerSliceOperations, maxOwnerSliceCallbacks,
+                        maxOwnerSliceOvershoot, timeBudgetYields, callbackLimitYields, operationLimitYields));
     }
+
+    private long recordPhase(Timer timer, long start, Throwable prior) {
+        try { return timer.record(start); }
+        catch (RuntimeException | Error error) {
+            if (prior == null) throw error;
+            append(prior, error);
+            return 0; // No elapsed measurement is available; the failed timer records no sample.
+        }
+    }
+
+    private long elapsedSince(long start) { return Math.max(0, clock.getAsLong() - start); }
 
     private final class Timer {
         long calls, total, max;
         long record(long start) {
-            long elapsed = Math.max(0, clock.getAsLong() - start);
+            long elapsed = elapsedSince(start);
             calls = increment(calls);
             total = add(total, elapsed);
             max = Math.max(max, elapsed);

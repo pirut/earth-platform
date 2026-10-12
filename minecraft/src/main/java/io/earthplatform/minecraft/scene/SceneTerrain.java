@@ -25,9 +25,11 @@ public final class SceneTerrain implements SceneSurfaceSampler {
     private final boolean naturalRelief;
     private final String identity;
     private final Map<Long,Column> cache=new LinkedHashMap<>(256,0.75f,true);
-    public SceneTerrain() {
+    public SceneTerrain() { this(Boolean.getBoolean(NATURAL_RELIEF_OPT_IN)); }
+    /** Explicit immutable policy for asynchronous provider preparation; no ambient property reads. */
+    public SceneTerrain(boolean naturalRelief) {
         terrain=ProofTerrain.get(ProofTerrain.COPERNICUS);surface=new NaturalWindowSurface(terrain,projection,AlpineSurfaceRelief.RIDGE_PREVIEW);
-        naturalRelief=Boolean.getBoolean(NATURAL_RELIEF_OPT_IN);
+        this.naturalRelief=naturalRelief;
         identity=WorldManifest.sha256(("sparse-scene-v1\n"+terrain.manifest().fingerprint()+"\n"
                 +ProofTerrain.GLOBAL_PROJECTION+"\n"+surface.identity()+"\nnaturalRelief="+naturalRelief+"\n"+PALETTE)
                 .getBytes(StandardCharsets.UTF_8));
@@ -49,6 +51,18 @@ public final class SceneTerrain implements SceneSurfaceSampler {
         Column column=new Column(used,height,top,subsurface,color(top));cache.put(key,column);
         if(cache.size()>MAX_CACHED_COLUMNS)cache.remove(cache.keySet().iterator().next());
         return column;
+    }
+    @Override public boolean supportsFootprintCoverage(){return true;}
+    @Override public boolean knownFootprint(long minX,long minZ,long maxXExclusive,long maxZExclusive){
+        long width=Math.subtractExact(maxXExclusive,minX),depth=Math.subtractExact(maxZExclusive,minZ);
+        if(width<=0||depth<=0||width>16||depth>16)throw new IllegalArgumentException("Bounded summary footprint required");
+        if(minX<Integer.MIN_VALUE||minZ<Integer.MIN_VALUE||maxXExclusive>(long)Integer.MAX_VALUE+1||maxZExclusive>(long)Integer.MAX_VALUE+1)return false;
+        // NaturalWindowSurface samples the source at ±8 projected metres for both slope and
+        // shelter, even in the legacy relief mode. The entire continuous leaf plus that halo
+        // must have finite bilinear support; a successful centre sample alone proves nothing.
+        var northWest=projection.toGeographic(Math.subtractExact(minX,8),Math.subtractExact(minZ,8));
+        var southEast=projection.toGeographic(Math.addExact(maxXExclusive,8),Math.addExact(maxZExclusive,8));
+        return terrain.hasFiniteRectangleSupport(northWest,southEast);
     }
     @Override public long surfaceY(long x,long z){return sample(x,z).surfaceY();}
     @Override public int argb(long x,long z,long expectedY) {

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.scene.SceneNativePhaseWiringTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:43.123Z" hostname="4d821b23054b" time="0.035">
+  <properties/>
+  <testcase name="precomputedLabelsRemainBoundedEvenAtSignedCoordinateExtremes()" classname="io.earthplatform.minecraft.scene.SceneNativePhaseWiringTest" time="0.017"/>
+  <testcase name="ownerLabelsAreOnlyBuiltDuringMeshAndPassConstruction()" classname="io.earthplatform.minecraft.scene.SceneNativePhaseWiringTest" time="0.003"/>
+  <testcase name="currentAndHistoricalGuardsRemainDistinctAndBothBodiesReachSharedImplementation()" classname="io.earthplatform.minecraft.scene.SceneNativePhaseWiringTest" time="0.002"/>
+  <testcase name="oldApiOverloadsDelegateToOptionalProbeWithoutRemovingPresentationRoute()" classname="io.earthplatform.minecraft.scene.SceneNativePhaseWiringTest" time="0.001"/>
+  <testcase name="instrumentationDoesNotAddGlCallsToTheSharedRestorationImplementations()" classname="io.earthplatform.minecraft.scene.SceneNativePhaseWiringTest" time="0.001"/>
+  <testcase name="nativeTimingUsesNumericOverloadAndPrecomputedIdentityRatherThanParsingLabels()" classname="io.earthplatform.minecraft.scene.SceneNativePhaseWiringTest" time="0.001"/>
+  <testcase name="everyLeafFamilyIsExplicitAndNativeSubmissionIsNotReplacedWithRawGl()" classname="io.earthplatform.minecraft.scene.SceneNativePhaseWiringTest" time="0.009"/>
+  <testcase name="shaderSetupAndBindAreSeparateAndCleanupUsesIndependentActions()" classname="io.earthplatform.minecraft.scene.SceneNativePhaseWiringTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

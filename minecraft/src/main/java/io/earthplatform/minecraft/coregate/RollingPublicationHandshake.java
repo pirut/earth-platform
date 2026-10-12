@@ -32,6 +32,19 @@ final class RollingPublicationHandshake {
         state = State.READY;
     }
 
+    /** A declined optional replacement never reuses the old publication permit. */
+    long retryReady(long epoch, long oldPublication, long resources, String oldDigest, String replacementDigest) {
+        if (state != State.READY || !matches(epoch, oldPublication, oldDigest) || resources <= 0
+                || resourceGeneration != 0 && resources != resourceGeneration
+                || replacementDigest == null || !replacementDigest.matches("[0-9a-f]{64}")
+                || replacementDigest.equals(oldDigest))
+            throw new IllegalStateException("Only the exact unprepared replacement may fall back");
+        resourceGeneration = resources;
+        publication = Math.incrementExact(publication);
+        digest = replacementDigest;
+        return publication;
+    }
+
     boolean prepared(long epoch, long publication, long resources, String digest) {
         if (state != State.READY || !matches(epoch, publication, digest) || resources <= 0
                 || resourceGeneration != 0 && resources != resourceGeneration) return false;

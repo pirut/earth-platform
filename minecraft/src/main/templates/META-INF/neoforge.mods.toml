@@ -53,6 +53,15 @@ Experimental Earth-platform engine adapter. Current playable slice uses explicit
 [[mixins]]
 config="${mod_id}.mixins.json"
 
+[[mixins]]
+config="${mod_id}.shaders.mixins.json"
+
+[[mixins]]
+config="${mod_id}.far-shaders.mixins.json"
+
+[[mixins]]
+config="${mod_id}.temp-files.mixins.json"
+
 # The [[accessTransformers]] block allows you to declare where your AT file is.
 # If this block is omitted, a fallback attempt will be made to load an AT from META-INF/accesstransformer.cfg
 #[[accessTransformers]]
@@ -91,3 +100,44 @@ config="${mod_id}.mixins.json"
 # stop your mod loading on the server for example.
 #[features.${mod_id}]
 #openGLVersion="[3.2,)"
+
+# Optional for ordinary worlds. The cubic installed-DH backend separately requires
+# this exact supported version/API/artifact and refuses unsupported configurations.
+# Players install official DH themselves; this metadata never downloads or bundles it.
+[[dependencies.${mod_id}]]
+    modId="distanthorizons"
+    type="optional"
+    reason="The opt-in cubic terrain compatibility backend requires separately installed official Distant Horizons 3.3.3 (API 7.2.0)."
+    versionRange="[3.3.3]"
+    ordering="AFTER"
+    side="CLIENT"
+
+# These remain separately installed optional inputs. Runtime admission pins actual bytes.
+[[dependencies.${mod_id}]]
+    modId="iris"
+    type="optional"
+    versionRange="[1.8.14-beta.1+mc1.21.1]"
+    ordering="AFTER"
+    side="CLIENT"
+[[dependencies.${mod_id}]]
+    modId="sodium"
+    type="optional"
+    versionRange="[0.8.12-beta.1+mc1.21.1]"
+    ordering="AFTER"
+    side="CLIENT"
+
+# Both explicit native-player diagnostic and GameTest-server flags are required by its plugin.
+[[mixins]]
+config="earthplatform.native-player-tick-diagnostic.mixins.json"
+
+# Held native-session fixture only; both explicit bridge and GameTest-server flags required.
+[[mixins]]
+config="earthplatform.native-session-bridge.mixins.json"
+
+# Observation-only existing probe flag; no session authority.
+[[mixins]]
+config="earthplatform.installed-callback-observation.mixins.json"
+
+# Explicit ordinary LocalChannel observation; production flags must remain closed.
+[[mixins]]
+config="earthplatform.native-local-observation.mixins.json"

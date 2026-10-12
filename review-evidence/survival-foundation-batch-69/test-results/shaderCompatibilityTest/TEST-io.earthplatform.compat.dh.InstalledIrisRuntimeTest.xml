@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:36:00.476Z" hostname="4d821b23054b" time="0.027">
+  <properties/>
+  <testcase name="skylightChangeOnSameOptionsObjectRevokesObservedAndHookedAbaWithoutBorrowingPass()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.003"/>
+  <testcase name="generationRacesDuringAdmissionAndPassNeverReturnBorrowedObjects()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.001"/>
+  <testcase name="missingOrWrongOptionsAndRenderDistanceFailWithoutHashingOrMutation()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.003"/>
+  <testcase name="everyIdentityChangeRevokesOldLeasePermanentlyIncludingObservedAba()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.001"/>
+  <testcase name="currentAndRepeatedLeaseReadNeverHashOrCloseOrModifyBorrowedResources()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.004"/>
+  <testcase name="changedEffectiveOptionRevokesEvenWhenOptionObjectIdentityDoesNotChange()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.001"/>
+  <testcase name="failingPackAttestationIsCachedUntilLifecycleChanges()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.002"/>
+  <testcase name="releaseOldLeaseCannotClearNewerLeaseAndRetirementNeverClosesUpstream()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.0"/>
+  <testcase name="shadowPassMissingProgramAndWrongThreadFailClosed()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.002"/>
+  <testcase name="namedModuleLocationIsAuthoritativeAndForeignOriginsAreRejected()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.002"/>
+  <testcase name="absentAndWrongVersionFailBeforeClassLoadingOrInitialization()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.003"/>
+  <testcase name="hashesAndAllClassOriginsAreVerifiedBeforeRuntimeFactory()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.001"/>
+  <testcase name="lifecycleHookRevokesUnobservedAbaAndSameObjectReload()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.0"/>
+  <testcase name="unsupportedSkylightOrMissingOptionRefusesAdmissionWithoutChangingNativeShadowOrFade()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.001"/>
+  <testcase name="unsupportedRendererAndMissingAuthoritativeModuleAreRejected()" classname="io.earthplatform.compat.dh.InstalledIrisRuntimeTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeScheduledTickQueueTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:49.125Z" hostname="4d821b23054b" time="0.008">
+  <properties/>
+  <testcase name="preparationIsReadOnlyThenExactReceiptAppliesOnce()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeScheduledTickQueueTest" time="0.004"/>
+  <testcase name="nativeFirstScheduleWinsWithinAndAcrossActions()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeScheduledTickQueueTest" time="0.001"/>
+  <testcase name="nativeDrainOrderPreservesPriorityAndSubtickOrder()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeScheduledTickQueueTest" time="0.001"/>
+  <testcase name="nextAvailableOrderIsReadOnlyAndRefusesExhaustion()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeScheduledTickQueueTest" time="0.0"/>
+  <testcase name="capacityFailureLeavesExistingQueueUntouched()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeScheduledTickQueueTest" time="0.001"/>
+  <testcase name="duplicateAndExhaustedOrdersRefuseBeforeCommit()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeScheduledTickQueueTest" time="0.001"/>
+  <testcase name="unsupportedTickAndForeignReceiptFailClosed()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeScheduledTickQueueTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

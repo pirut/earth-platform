@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativePlayerMoveSnapshotAdmissionTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:48.909Z" hostname="4d821b23054b" time="0.015">
+  <properties/>
+  <testcase name="auxiliaryAdvancementMapsRefuseForeignCallbacksBeforeLookup()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePlayerMoveSnapshotAdmissionTest" time="0.004"/>
+  <testcase name="foreignComponentPatchRefusesBeforeItsCollectionCallback()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePlayerMoveSnapshotAdmissionTest" time="0.005"/>
+  <testcase name="removedOrExtraComponentRefusesBeforeCodec()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePlayerMoveSnapshotAdmissionTest" time="0.001"/>
+  <testcase name="firstLoopPrototypeCensusAndDamagePatchStayBounded()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePlayerMoveSnapshotAdmissionTest" time="0.002"/>
+  <testcase name="absentPairingOriginCannotAuthorizeSameClassSet()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePlayerMoveSnapshotAdmissionTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

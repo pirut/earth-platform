@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.render.SurvivalDistancePagePlanTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:53.020Z" hostname="4d821b23054b" time="0.433">
+  <properties/>
+  <testcase name="negativePageBitsAndExactSparseDependencyUnionRemainBounded()" classname="io.earthplatform.minecraft.survival.render.SurvivalDistancePagePlanTest" time="0.002"/>
+  <testcase name="finiteTwelveTwentyFourAndThirtyTwoCensusUsesVerifiedSourceAndExactHaloCounts()" classname="io.earthplatform.minecraft.survival.render.SurvivalDistancePagePlanTest" time="0.323"/>
+  <testcase name="editExposureAndMeshingHaloRequireTwoCubesOfVerifiedVerticalSupport()" classname="io.earthplatform.minecraft.survival.render.SurvivalDistancePagePlanTest" time="0.004"/>
+  <testcase name="everyDistanceTwoThroughThirtyTwoKeepsExactSixteenMetreEdgesAndLegitimateCaps()" classname="io.earthplatform.minecraft.survival.render.SurvivalDistancePagePlanTest" time="0.044"/>
+  <testcase name="everyExplicitBudgetRejectsRatherThanClampingOrReturningPartialPlans()" classname="io.earthplatform.minecraft.survival.render.SurvivalDistancePagePlanTest" time="0.013"/>
+  <testcase name="groundAndCliffMembersAreCompleteAndTreesNeverRemoveGroundMembers()" classname="io.earthplatform.minecraft.survival.render.SurvivalDistancePagePlanTest" time="0.019"/>
+  <testcase name="arbitrarySignedEditCubesAndSixFaceNeighborsArePreservedWithoutExtrusion()" classname="io.earthplatform.minecraft.survival.render.SurvivalDistancePagePlanTest" time="0.008"/>
+  <testcase name="semanticDigestBindsCompleteContentAndIndexButNotCounterOnlyChanges()" classname="io.earthplatform.minecraft.survival.render.SurvivalDistancePagePlanTest" time="0.016"/>
+  <system-out><![CDATA[SURVIVAL_DISTANCE_SOURCE_CENSUS distance=12 source=a507445676af9e6cf4f6f4fe3a0f817ba1f3df77748dd8ae738ee09fc208977c plan=3115e9b5fb7061761b33d975ef31e979d9ac6a6a48b5bcbe44010183ca159b6a Census[selectedColumns=160000, sampledColumns=161604, horizontalCubes=625, pages=59, members=900, groundMembers=777, treeMembers=549, editExceptionMembers=0, dependencyReferences=5991, haloReferences=5091, exteriorHaloReferences=3736, completeEditedCubes=0, treeQueries=49, featureRootVisits=628, metadataBytes=759568]
+SURVIVAL_DISTANCE_SOURCE_CENSUS distance=24 source=a507445676af9e6cf4f6f4fe3a0f817ba1f3df77748dd8ae738ee09fc208977c plan=40d3746d8920b281849fd148ec2d32de8533c21571420129967a49391bb72f59 Census[selectedColumns=614656, sampledColumns=617796, horizontalCubes=2401, pages=224, members=3469, groundMembers=2943, treeMembers=2341, editExceptionMembers=0, dependencyReferences=23004, haloReferences=19535, exteriorHaloReferences=14856, completeEditedCubes=0, treeQueries=169, featureRootVisits=2593, metadataBytes=2711056]
+SURVIVAL_DISTANCE_SOURCE_CENSUS distance=32 source=a507445676af9e6cf4f6f4fe3a0f817ba1f3df77748dd8ae738ee09fc208977c plan=54dcc203bd7e84483f678aaeecce6a96a8fc2a00888dd722ec38ecae660a4ceb Census[selectedColumns=1081600, sampledColumns=1085764, horizontalCubes=4225, pages=370, members=5947, groundMembers=5094, treeMembers=4012, editExceptionMembers=0, dependencyReferences=39009, haloReferences=33062, exteriorHaloReferences=24864, completeEditedCubes=0, treeQueries=289, featureRootVisits=4586, metadataBytes=4695056]
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,39 @@
+{
+  "reviewedAt": "2026-10-12T06:42:48.439906+00:00",
+  "status": "PASS_FRESH69_COMPONENT_AND_COMPLETE_ARTIFACT_REPLAY",
+  "terminalSha256": "23c231a76b023cbfefcf0c871da20a776d23ef4eaac94b0cbfe73773596232d1",
+  "partitions": {
+    "test": {
+      "tests": 949,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suites": 132
+    },
+    "installedDhTest": {
+      "tests": 52,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suites": 7
+    },
+    "shaderCompatibilityTest": {
+      "tests": 189,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suites": 26
+    }
+  },
+  "freshTasks": 15,
+  "inputsExact": 1225,
+  "retainedJarSha256": "0bbceeeb725d4ff1e1952f0147ff2f97ec0b401c8b02aa8a1feebf144e64638d",
+  "retainedJarBytes": 10698096,
+  "freshClasses": 1760,
+  "freshResources": 55,
+  "completeJarEntries": 1816,
+  "sharedArtifactsExact": 108,
+  "staleListStateAbsent": true,
+  "scope": "Reviewed nested Local read/write scopes, Packet classifier, and MAIN source/enqueue/body models pass. Actual corrected Local and MAIN behavior, production adoption, repeated saves and scene composition remain runtime gates.",
+  "nativeRuntimeCredit": false
+}

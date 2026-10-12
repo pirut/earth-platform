@@ -1,0 +1,26 @@
+package io.earthplatform.minecraft.survival.host;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import static org.junit.jupiter.api.Assertions.*;
+class SurvivalInstalledModIdentityTest {
+    @TempDir Path temporary;
+    private static Map<String,String> inventory(){return new HashMap<>(Map.of("minecraft","1.21.1","neoforge","21.1.256","earthplatform","0.1.0-engine-prototype","distanthorizons","3.3.3","iris","1.8.14-beta.1+mc1.21.1","sodium","0.8.12-beta.1+mc1.21.1"));}
+    @Test void exactVersionInventoryRequiredWithoutSilentlyIgnoringAdditionalMods()throws Exception{
+        var good=inventory();SurvivalInstalledModIdentity.requireVersions(good);
+        good.put("extra-gameplay","1");assertThrows(IOException.class,()->SurvivalInstalledModIdentity.requireVersions(good));
+        good.remove("extra-gameplay");good.put("iris","different");assertThrows(IOException.class,()->SurvivalInstalledModIdentity.requireVersions(good));
+        good.remove("iris");assertThrows(IOException.class,()->SurvivalInstalledModIdentity.requireVersions(good));
+    }
+    @Test void artifactHashUsesCompleteBytesAndRejectsSymlinksDirectoriesAndEmptyFiles()throws Exception{
+        Path p=temporary.resolve("a.jar");Files.writeString(p,"abc");assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",SurvivalInstalledModIdentity.hashInstalledJar(p));
+        Files.writeString(p,"abcd");assertNotEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",SurvivalInstalledModIdentity.hashInstalledJar(p));
+        Path link=temporary.resolve("link.jar");Files.createSymbolicLink(link,p);assertThrows(IOException.class,()->SurvivalInstalledModIdentity.hashInstalledJar(link));
+        assertThrows(IOException.class,()->SurvivalInstalledModIdentity.hashInstalledJar(temporary));
+        Files.write(p,new byte[0]);assertThrows(IOException.class,()->SurvivalInstalledModIdentity.hashInstalledJar(p));
+    }
+}

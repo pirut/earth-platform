@@ -1,0 +1,142 @@
+{
+  "base": "active68 production paths; parent read-continuation lane has no overlap",
+  "integration_order": [
+    "scope-v1",
+    "MAIN-followon",
+    "scope-v2 mandatory failure-suppression guard"
+  ],
+  "sources": [
+    {
+      "path": "/workspace/shared/native-network-flush-owner-draft/local-scope-correction-v1/local-scope-correction.patch",
+      "sha256": "c9a572870e8e779824edf9610a59695007d2fbc91a0353c1d2ff7959be210ac4"
+    },
+    {
+      "path": "/workspace/shared/native-network-flush-owner-draft/local-scope-correction-v1/MANIFEST.json",
+      "sha256": "1400aa083d1bc482b1e1c21f380deb1140dd642f36f9b0142b4afac45747a922"
+    },
+    {
+      "path": "/workspace/shared/native-network-flush-owner-draft/local-scope-correction-v2/write-failure-primary.patch",
+      "sha256": "0d571fc693741ca21f4cd9bd10550a407e69ed0ae143cb4c8aafb131d13b1d95"
+    },
+    {
+      "path": "/workspace/shared/native-network-flush-owner-draft/local-scope-correction-v2/MANIFEST.json",
+      "sha256": "66b514f696c6b5ea077a7de60fe95e0d460cc995891cc2742af6641c18ab37bd"
+    },
+    {
+      "path": "/workspace/shared/native-network-flush-owner-draft/local-payload-followon/local-payload-observation.patch",
+      "sha256": "fc830b29bb20f5a276b4a29264ccbc2e8e7320614b128a64a330496fd055949d"
+    },
+    {
+      "path": "/workspace/shared/native-network-flush-owner-draft/local-payload-followon/MANIFEST.json",
+      "sha256": "080318aad63145694fe649dbb861c8dd555c445358317cec2fb4a2169ac9f7cc"
+    }
+  ],
+  "changes": [
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/mixin/NativeLocalMainPayloadObservationMixin.java",
+      "before": null,
+      "after": "0fa07a2fdd64b19bbf5119928684ccd08442b7ce975d970469bc2b0710bbc372"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/mixin/NativeLocalObservationMixinPlugin.java",
+      "before": "7080b383f44913a60cf5ee1e333cc3a41e84b3c37e9270381b0c47ebcd95999b",
+      "after": "97b69e89f7ff93eb12b0a79022f7f084f2ec90f9e0e9c0bb015b09b761bee0f1"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/mixin/NativeOriginalPacketEncoderBoundaryMixin.java",
+      "before": "12f7f6006873246042d45fc304af22f224fa8547844e40b0ff29f61cf8040f8b",
+      "after": "96010a718c498861d9ad256331ee27ffed6b8dd30d0b9a6beae3b4c78a3ce018"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeCodecBoundaryGameTests.java",
+      "before": "2fa238ac272db884d60694e3386227b75bbe952a7f2d2b8e3f5d5fd95f0b93ff",
+      "after": "e5f86fdb33211660cd22a50bb53488d7486757cc276207d676f3018a311c26e4"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeCodecBoundaryOwner.java",
+      "before": "e9475d0a73ce1db6f66abed2766d419578c126ea0e58d1e0c36cf3f4fb9cf7f5",
+      "after": "a2ce5375d153f57687e685f1d47312b60f0ff8f8490eaea2534d60c5a209b6d6"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalByteObservation.java",
+      "before": "914882b6cac642770393f78ba368cd48597934292461c5d187586c12053e2e85",
+      "after": "c5298af571b649a70f0c2c01540814d0e184dd8c2b483c1f08f8c159b2b7cae8"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalCausalObservation.java",
+      "before": "11ebebbd3ba24cee28108b93af9ee4d8eff5fb07fe6f05a3efb10b5fe1c54687",
+      "after": "a7fa33ba2422c4446a75f194813e8a65840f6865d865235d28fc5a5f9de9c590"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalInstalledPins.java",
+      "before": "97aa3d1b0dd0414d146d8f1baea0e39ef68253fbc0f696221f230975f4fb7efe",
+      "after": "dcd0ceae7db46041ada90299e26d7616271f60b6046b063170a52686b0093709"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalPayloadObservation.java",
+      "before": null,
+      "after": "39b394afc18daa4717b10a4f69307e2a0b03e2ff561ce1f61900da8eb2bbb115"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalPayloadPins.java",
+      "before": null,
+      "after": "5d35f76d5f69bccf146d633b862ca5851a92f76d118c003d55383f3cf8a59349"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalRootObservation.java",
+      "before": "ee6d2aa3a41f2f90d183b929ec5a1d5eae5263c17ba0de443e7f7538505cb615",
+      "after": "e7c4419499722a229ce0ff3747a47af03a1cac1fbd5ccee4390ff4d1952e5283"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeOrdinaryInvocationScope.java",
+      "before": null,
+      "after": "e98aeeedcbc21a7173164e4852e5db2aba5f12d043a858e668bd838c1d514ca2"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeOrdinaryPayloadFrontier.java",
+      "before": null,
+      "after": "497274e7be426b1c548bac6148d6a9bfa535a847e2bfcc17b747ff50f37afa7d"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeOriginalCodecPins.java",
+      "before": "cbf0016f6fc44179e755ce957b5703e73b720f6dd6aeeade10b66defa8d7f286",
+      "after": "2bf3115a28613487c69372013872ab7e89c62548fe75bf11ba05d06569cd6755"
+    },
+    {
+      "path": "minecraft/src/main/java/io/earthplatform/minecraft/survival/interaction/host/NativeOriginalPacketWriteShape.java",
+      "before": null,
+      "after": "bc1944072316bcead28a0fa109ce8bda18fdace9beb73c528d369a7c21e24814"
+    },
+    {
+      "path": "minecraft/src/main/resources/earthplatform.native-local-observation.mixins.json",
+      "before": "fd205f308e204a8bdf6de393ca79a8bdd1cbf77b41a9ad456235b54303954018",
+      "after": "81cc0235eceb0927294ca5e0f78323d3698851c1013bdb6400f553e5e0a4f7f4"
+    },
+    {
+      "path": "minecraft/src/test/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalObservationGateTest.java",
+      "before": "aa9aef379225f9abf180cf036df05ce2bdb95b6b7d21f06ad256006cbd8f02c1",
+      "after": "c53fe80df7251d4fee500cd25e5b8d104f1a6339fd9ad7db649e330583b7b794"
+    },
+    {
+      "path": "minecraft/src/test/java/io/earthplatform/minecraft/survival/interaction/host/NativeLocalPayloadOriginTest.java",
+      "before": null,
+      "after": "760991adae068af7b86119b019586dffd09a1191f3c61fc0ce0e5416b9bc6c7d"
+    },
+    {
+      "path": "minecraft/src/test/java/io/earthplatform/minecraft/survival/interaction/host/NativeOrdinaryInvocationScopeTest.java",
+      "before": null,
+      "after": "f0503b31499b9652cb9c11d8a5b60a263be76795afd64522d75b1b2b8045ea4b"
+    },
+    {
+      "path": "minecraft/src/test/java/io/earthplatform/minecraft/survival/interaction/host/NativeOrdinaryPayloadFrontierTest.java",
+      "before": null,
+      "after": "6f2f03b347f2fc023f8c87305f7ee4e13c595b52be0f38ac4e8b613a94075ae1"
+    },
+    {
+      "path": "minecraft/src/test/java/io/earthplatform/minecraft/survival/interaction/host/NativeOriginalPacketWriteShapeTest.java",
+      "before": null,
+      "after": "c7940d24af1d18fedfe70245da492f2d4b32fe6c225f45bd8cd264f8895b7478"
+    }
+  ],
+  "patch_sha256": "b6d7fc57b6a8d46a709c1d1b936d45d9b8128944dd3df34003316a87cd16b23b"
+}

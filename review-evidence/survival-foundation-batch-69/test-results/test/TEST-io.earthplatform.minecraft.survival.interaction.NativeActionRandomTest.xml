@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.NativeActionRandomTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:46.361Z" hostname="4d821b23054b" time="0.053">
+  <properties/>
+  <testcase name="exactIdentityProducesOneReproducibleExplicitlySeededNativeStream()" classname="io.earthplatform.minecraft.survival.interaction.NativeActionRandomTest" time="0.05"/>
+  <testcase name="compiledFactoryHasNoLevelGlobalClockOrUnseededRandomEntrypoint()" classname="io.earthplatform.minecraft.survival.interaction.NativeActionRandomTest" time="0.001"/>
+  <testcase name="everyWorldFieldAndFullOwnerActorSequenceChangesTheBoundSeed()" classname="io.earthplatform.minecraft.survival.interaction.NativeActionRandomTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

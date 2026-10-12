@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryInvocationScopeTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:48.783Z" hostname="4d821b23054b" time="0.004">
+  <properties/>
+  <testcase name="unrelatedCurrentDoesNotMutateScope()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryInvocationScopeTest" time="0.0"/>
+  <testcase name="crossThreadCannotEnterOrReturn()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryInvocationScopeTest" time="0.0"/>
+  <testcase name="nullCurrentCannotRetireScope()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryInvocationScopeTest" time="0.0"/>
+  <testcase name="originalScopeReturnsOnce()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryInvocationScopeTest" time="0.0"/>
+  <testcase name="depthIsBoundedBeforeConstruction()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryInvocationScopeTest" time="0.0"/>
+  <testcase name="overflowDoesNotMutateAdmittedStack()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryInvocationScopeTest" time="0.001"/>
+  <testcase name="returnedParentCannotBeReentered()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryInvocationScopeTest" time="0.0"/>
+  <testcase name="failureFinallyStillRestoresOuter()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryInvocationScopeTest" time="0.0"/>
+  <testcase name="nestedReturnRestoresExactOuter()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryInvocationScopeTest" time="0.001"/>
+  <testcase name="outerCannotReturnThroughLiveInner()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryInvocationScopeTest" time="0.0"/>
+  <testcase name="staleScopeCannotRetireNewInvocation()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryInvocationScopeTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,25 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "io.earthplatform.minecraft.mixin",
+  "plugin": "io.earthplatform.minecraft.mixin.NativeLocalObservationMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "NativeLocalConnectionObservationMixin",
+    "NativeLocalAcceptedObservationMixin",
+    "NativeLocalPacketTaskObservationMixin",
+    "NativeLocalEncoderConstructorMixin",
+    "NativeLocalDecoderConstructorMixin",
+    "NativeLocalBundleObservationMixin",
+    "NativeLocalConnectionRootsMixin",
+    "NativeLocalInboundConfigurationRootsMixin",
+    "NativeLocalOutboundConfigurationRootsMixin"
+  ],
+  "client": [
+    "NativeLocalLightTaskObservationMixin",
+    "NativeLocalMainPayloadObservationMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

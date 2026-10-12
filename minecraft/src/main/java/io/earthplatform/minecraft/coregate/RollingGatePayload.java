@@ -12,7 +12,7 @@ import net.minecraft.resources.ResourceLocation;
 /** Integrated diagnostic stream: one bounded envelope and one frame per event. */
 public final class RollingGatePayload implements CustomPacketPayload {
     public static final int MAX_BYTES=40_000;
-    public static final int METADATA=1,SNAPSHOT=2,READY=3,ALLOW=4,COMMITTED=5,EDIT_BEGIN=6,EDIT_ACK=7,STOP=8,REJECT=9;
+    public static final int METADATA=1,SNAPSHOT=2,READY=3,ALLOW=4,COMMITTED=5,EDIT_BEGIN=6,EDIT_ACK=7,STOP=8,REJECT=9,REPLACEMENT_FALLBACK=10,SCENARIO_CHECKPOINT=11,EARTH_BOOTSTRAP_SNAPSHOT=12;
     public static final Type<RollingGatePayload> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath("earthplatform","rolling_gate"));
     public static final StreamCodec<RegistryFriendlyByteBuf,RollingGatePayload> CODEC=new StreamCodec<>() {
         public RollingGatePayload decode(RegistryFriendlyByteBuf b){return new RollingGatePayload(b.readByteArray(MAX_BYTES));}

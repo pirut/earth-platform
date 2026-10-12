@@ -25,6 +25,14 @@ public final class OfflineTerrain {
         return new OfflineTerrain(manifest,tiles);
     }
     public WorldManifest manifest() { return manifest; }
+    /**
+     * Optional conservative support capability for a single pinned raster. Multi-tile stitching
+     * and overlap precedence are deliberately unproven here and return false, never fallback.
+     * This reads immutable preloaded nodes, performs no I/O and allocates no per-node storage.
+     */
+    public boolean hasFiniteRectangleSupport(GeoPoint northWest, GeoPoint southEast) {
+        return tiles.size()==1&&tiles.values().iterator().next().hasFiniteRectangleSupport(northWest,southEast);
+    }
     public double elevationMetres(GeoPoint point) { return tiles.get(RasterElevationProvider.select(manifest,point)).sample(point); }
     public double elevationMetres(long x,long z) { return elevationMetres(manifest.projection().blockCentre(x,z)); }
     public long surfaceBlockY(long x,long z) { return GeographyCubeProvider.surfaceY(elevationMetres(x,z)); }

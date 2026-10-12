@@ -1,0 +1,6 @@
+minecraft/src/main/java/io/earthplatform/compat/dh/InstalledDhEvents.java
+minecraft/src/main/java/io/earthplatform/compat/dh/InstalledDhStockRenderPolicy.java
+minecraft/src/test/java/io/earthplatform/compat/dh/InstalledDhCarrierPolicyTest.java
+minecraft/src/test/java/io/earthplatform/compat/dh/InstalledDhIndependentDispatcherTest.java
+minecraft/src/test/java/io/earthplatform/compat/dh/InstalledDhStockPolicyFixture.java
+minecraft/src/test/java/io/earthplatform/compat/dh/InstalledDhStockPolicyIndependentReviewTest.java

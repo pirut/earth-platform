@@ -1,0 +1,18 @@
+{
+  "modulePathFlags": 1,
+  "canonicalRegularJarCount": 67,
+  "allPreparedArtifactRowsExactlyEqual": true,
+  "allPhysicalKeysEqualAfterExit": true,
+  "directorySets": {
+    "/workspace/scratch/67f3a8ccac99/earth-platform/native-test-builds/native-carrier-read-build-004/resources/registeredSessionFixture": 1,
+    "/workspace/scratch/67f3a8ccac99/earth-platform/native-test-builds/native-carrier-read-build-004/classes/java/registeredSessionFixture": 35,
+    "/workspace/scratch/67f3a8ccac99/earth-platform/native-test-builds/native-carrier-read-build-004/resources/main": 55,
+    "/workspace/scratch/67f3a8ccac99/earth-platform/native-test-builds/native-carrier-read-build-004/classes/java/main": 1760
+  },
+  "fmlModFolders": [
+    "-Dfml.modFolders=earthplatform%%/workspace/scratch/67f3a8ccac99/earth-platform/native-test-builds/native-carrier-read-build-004/classes/java/registeredSessionFixture:earthplatform%%/workspace/scratch/67f3a8ccac99/earth-platform/native-test-builds/native-carrier-read-build-004/resources/registeredSessionFixture:earthplatform%%/workspace/scratch/67f3a8ccac99/earth-platform/native-test-builds/native-carrier-read-build-004/classes/java/main:earthplatform%%/workspace/scratch/67f3a8ccac99/earth-platform/native-test-builds/native-carrier-read-build-004/resources/main"
+  ],
+  "receiptSha256": "9d146aacaded64a60e66f37cd0c0d884bb1042dbfdcacb2c44ee4e45ec543792",
+  "generatedFixtureResource": "The one resource was created by original processRegisteredSessionFixtureResources after compile; its exact complete set/hash joins to the locked v5 source and preserved build archive.",
+  "qualification": "Original JavaExec doFirst snapshot and selected artifacts; independent reparse with complete FML directory sets, no independent OS full-argv claim."
+}

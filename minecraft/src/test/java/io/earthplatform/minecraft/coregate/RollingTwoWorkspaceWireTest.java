@@ -1,0 +1,21 @@
+package io.earthplatform.minecraft.coregate;
+import io.earthplatform.core.*;
+import io.earthplatform.minecraft.enginebridge.*;
+import io.netty.buffer.Unpooled;
+import java.util.*;
+import net.minecraft.network.FriendlyByteBuf;
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
+class RollingTwoWorkspaceWireTest {
+ static final WorldIdentity W=new WorldIdentity(0,"test","1","source","palette");
+ static final CubePos A=new CubePos(0,8,0),B=A.offset(4,0,0);
+ static final String STORE="12345678-1234-1234-1234-123456789abc";
+ record Inputs(ReplacementSetCertificate set,List<NativeReplacementCapture> captures){}
+ static Inputs input(long generation){var captures=List.of(new NativeReplacementCapture(A,new byte[8000]),new NativeReplacementCapture(B,new byte[8000]));var regions=new ArrayList<ReplacementSetCertificate.Region>();long lease=1;for(var capture:captures){var deps=new ArrayList<RollingCubeActor.CubeVersion>();for(var p:CubeTickets.box(capture.position(),1,1,27).stream().sorted().toList())deps.add(new RollingCubeActor.CubeVersion(p,lease++,0));regions.add(new ReplacementSetCertificate.Region(capture.position(),deps,capture.contentIdentity()));}return new Inputs(new ReplacementSetCertificate(W,1,1,STORE,"a".repeat(64),"provider","b".repeat(64),"material","detail",generation,regions),captures);}
+ static RollingCubeActor.StageReady ready(CubePos focus){var inputs=input(1);long lease=55;var versions=new ArrayList<RollingCubeActor.CubeVersion>();for(var p:RollingCubePlan.stationary(A,A,true).committedOwners())versions.add(new RollingCubeActor.CubeVersion(p,lease++,0));return new RollingCubeActor.StageReady(W,1,1,A,versions,null,true,focus,inputs.set(),inputs.captures());}
+ @Test void completeTwoCapturesAnd54CertificatesFitExistingPacketCap(){var value=ready(A);var b=new FriendlyByteBuf(Unpooled.buffer());try{RollingGateWire.writeReady(b,value);assertTrue(b.readableBytes()+9<RollingGatePayload.MAX_BYTES);b.writeLong(982);var decoded=RollingGateWire.readReady(b,W,1);assertEquals(value.replacementSet(),decoded.replacementSet());assertEquals(A,decoded.activeFocus());assertEquals(value.replacementCaptures().stream().map(NativeReplacementCapture::contentIdentity).toList(),decoded.replacementCaptures().stream().map(NativeReplacementCapture::contentIdentity).toList());assertEquals(RollingGateWire.manifestDigest(value),RollingGateWire.manifestDigest(decoded));assertEquals(982,b.readLong());}finally{b.release();}}
+ @Test void focusAndSetGenerationArePartOfExactNativeManifest(){var a=ready(A);var b=ready(B);assertNotEquals(RollingGateWire.manifestDigest(a),RollingGateWire.manifestDigest(b));var next=input(2);var changed=new RollingCubeActor.StageReady(W,1,1,A,a.versions(),null,true,A,next.set(),next.captures());assertNotEquals(RollingGateWire.manifestDigest(a),RollingGateWire.manifestDigest(changed));}
+ @Test void changedCompactBytesRejectBeforeAnyAdmission(){var value=ready(A);var b=new FriendlyByteBuf(Unpooled.buffer());try{RollingGateWire.writeReady(b,value);b.setByte(b.writerIndex()-1,1);assertThrows(IllegalArgumentException.class,()->RollingGateWire.readReady(b,W,1));}finally{b.release();}}
+ @Test void singleSameCenterFocusHandoffCarriesBothFocusValues(){CubePos center=new CubePos(3,8,0);var plan=RollingCubePlan.create(B,center,center,false,true);long lease=55;var leases=new ArrayList<RollingCubeActor.CubeLease>();for(var p:plan.committedOwners())leases.add(new RollingCubeActor.CubeLease(p,lease++));assertEquals(plan.committedOwners(),plan.nextCommittedOwners());var m=new RollingCubeActor.StageMetadata(W,1,2,false,B,center,center,leases,leases,List.of(),List.of(),plan.candidateTargets(),false,true,A);var b=new FriendlyByteBuf(Unpooled.buffer());try{RollingGateWire.writeMetadata(b,m);var decoded=RollingGateWire.readMetadata(b,W,1);assertEquals(m,decoded);assertEquals(A,decoded.currentFocus());assertEquals(B,decoded.candidateFocus());}finally{b.release();}}
+ @Test void truncatedFixedHeaderIsTypedRefusal(){var b=new FriendlyByteBuf(Unpooled.buffer());try{b.writeVarInt(RollingGateWire.WIRE_VERSION);b.writeZero(58);assertThrows(IllegalArgumentException.class,()->RollingGateWire.readMetadata(b,W,1));}finally{b.release();}}
+}

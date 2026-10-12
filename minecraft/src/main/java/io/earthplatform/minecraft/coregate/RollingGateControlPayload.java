@@ -8,11 +8,11 @@ import net.minecraft.resources.ResourceLocation;
 
 /** Exact pair acknowledgement. Generation is the publication id, not the actor plan generation. */
 public record RollingGateControlPayload(long epoch,long generation,long resourceGeneration,int kind,String digest,boolean place) implements CustomPacketPayload {
-    public static final int PREPARED=1,PAIR_READY=2,FENCED=3,MOUSE=4;
+    public static final int PREPARED=1,PAIR_READY=2,FENCED=3,MOUSE=4,REPLACEMENT_DECLINED=5;
     public RollingGateControlPayload {
         Objects.requireNonNull(digest);
-        if(epoch<=0||generation<0||resourceGeneration<=0||kind<PREPARED||kind>MOUSE)throw new IllegalArgumentException("Invalid rolling control identity");
-        if(kind==PREPARED||kind==PAIR_READY){if(generation<=0||!digest.matches("[0-9a-f]{64}"))throw new IllegalArgumentException("Exact rolling manifest digest required");}
+        if(epoch<=0||generation<0||resourceGeneration<=0||kind<PREPARED||kind>REPLACEMENT_DECLINED)throw new IllegalArgumentException("Invalid rolling control identity");
+        if(kind==PREPARED||kind==PAIR_READY||kind==REPLACEMENT_DECLINED){if(generation<=0||!digest.matches("[0-9a-f]{64}"))throw new IllegalArgumentException("Exact rolling manifest digest required");}
         else if(!digest.isEmpty())throw new IllegalArgumentException("Unexpected rolling control digest");
         if(kind!=MOUSE&&place)throw new IllegalArgumentException("Unexpected edit action");
     }

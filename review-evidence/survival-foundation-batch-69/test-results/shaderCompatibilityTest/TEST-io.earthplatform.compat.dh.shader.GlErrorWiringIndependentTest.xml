@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.compat.dh.shader.GlErrorWiringIndependentTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:36:02.454Z" hostname="4d821b23054b" time="0.023">
+  <properties/>
+  <testcase name="realAdapterPassesAllThreeCurrentOwnerIdsIntoTheStrictNumericBoundary()" classname="io.earthplatform.compat.dh.shader.GlErrorWiringIndependentTest" time="0.004"/>
+  <testcase name="nativeRestorationIsRetainedUntilSuccessAndRetriedBeforeGpuDeletion()" classname="io.earthplatform.compat.dh.shader.GlErrorWiringIndependentTest" time="0.001"/>
+  <testcase name="nativeUploadEntryCaptureAllocationBindingAndDataAreAllSeparatelyAttributed()" classname="io.earthplatform.compat.dh.shader.GlErrorWiringIndependentTest" time="0.003"/>
+  <testcase name="realFarUploadChecksEntryBeforeNativeAllocationAndUsesTheTestedHelperExactlyOnce()" classname="io.earthplatform.compat.dh.shader.GlErrorWiringIndependentTest" time="0.003"/>
+  <testcase name="hostChecksAreInsideTheOncePerActualFrameGuardAndBracketPreparation()" classname="io.earthplatform.compat.dh.shader.GlErrorWiringIndependentTest" time="0.006"/>
+  <testcase name="allFarResourceNamesRemainOwnedUntilDeletionAndReadbackBothCrossStrictChecks()" classname="io.earthplatform.compat.dh.shader.GlErrorWiringIndependentTest" time="0.003"/>
+  <testcase name="farBindingOwnerIsReleasedOnlyAfterTheActualTestedRestorerReturnsSuccessfully()" classname="io.earthplatform.compat.dh.shader.GlErrorWiringIndependentTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

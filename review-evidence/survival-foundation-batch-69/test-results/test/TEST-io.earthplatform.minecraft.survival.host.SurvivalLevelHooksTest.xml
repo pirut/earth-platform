@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" tests="30" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:46.096Z" hostname="4d821b23054b" time="0.229">
+  <properties/>
+  <testcase name="currentReadyReplacementAndSameChunkNewFutureCannotBorrowLineage()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.096"/>
+  <testcase name="admittedEmptyCarrierCanSerializeDuringClosingAndAfterDetachUntilReleased()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.011"/>
+  <testcase name="exactPinnedWrapperAndFullChunkWorkButNewWrapperCannotBorrowAdmission()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.055"/>
+  <testcase name="retainedCollisionViewRevokesDuringUnpermittedApplyingAndRestoresAfterSuccess()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.01"/>
+  <testcase name="retainedCollisionViewRevokesAtBeginCloseAndAfterPhysicalDetach()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="terrainSectionHeightBiomeLightAndTickConsumersCannotReadCarrierAsTerrain()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.005"/>
+  <testcase name="nativeUnloadCanUseRetainedExactHolderAfterMapRemoval()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.003"/>
+  <testcase name="unknownAndRetiredCellsRefuseBeforeAirFluidAndNullBlockEntityFallbacks()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.002"/>
+  <testcase name="writesRefuseBeforeVanillaNotificationsDropsOrForeignTransactions()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.002"/>
+  <testcase name="realLevelAndBothChunkClassesPreserveTrueYAndGlobalCoordinates()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="malformedProtoPayloadNeverSerializes()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.011"/>
+  <testcase name="pendingExceptionalAndPromotedLineagesFailClosed()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.002"/>
+  <testcase name="exactActionRouterSeesReadYourWritesAndOnlyStagesEffects()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.002"/>
+  <testcase name="nonzeroWrapperOwnedHeightmapIsRefusedBeforeNativeWrite()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="levelBindingEnforcesIdentityThreadAndPermanentDetachFence()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="exactEmptyCarrierPacketSerializationWorksWithoutTerrainGetterEscape()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="outOfHaloAndConflictingPhysicalHolderViewsAreRefusedBeforeAdmission()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="closingRetainsDirtyCheckpointPinAndEffectOwners()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.003"/>
+  <testcase name="holderReplacementAndAttemptedAbaRemainFenced()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="evenAnEmptyPendingCheckpointAndActiveScopePreventUnbind()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="samePositionForeignRawLevelCannotPassPhysicalPreAdmission()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.0"/>
+  <testcase name="loadedDefaultsCheckEveryCubicCellRangeRatherThanOnlyXZ()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="actualProtoSerializerPreservesNativeStatusLightAndEmptyPayloadThroughTombstone()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.005"/>
+  <testcase name="vanillaCarrierTerrainTickRequiresAnExplicitPolicyBeforeSectionScan()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="serializationBudgetAndPhysicalCensusAreIndependentOfCubicOwnership()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="retainedCollisionViewCannotEscapeFailedDeliveryOrLaterClosing()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="serializerScopeCannotBecomeForeignLevelReceiverOrPacketAuthority()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.002"/>
+  <testcase name="ordinaryLevelCannotBorrowBoundChunkAndOrdinarySerializerStaysNative()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <testcase name="auxiliaryLightAndPendingPostLoadCannotAcquireSaveAuthority()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.002"/>
+  <testcase name="serializerHeadRefusesUnknownSamePositionBeforeNativeWriteAccess()" classname="io.earthplatform.minecraft.survival.host.SurvivalLevelHooksTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

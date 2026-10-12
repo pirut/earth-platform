@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:54.209Z" hostname="4d821b23054b" time="0.042">
+  <properties/>
+  <testcase name="admissionFailureRetainsNoUnchargedLeaseOrFrame()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.004"/>
+  <testcase name="directMapCallbacksObservePreparationAndCannotMintAuthority()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.004"/>
+  <testcase name="authorityRequiresExactPlanObjectAndAuthenticOwner()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.003"/>
+  <testcase name="failedOpeningUnwindsWithoutConsumingActionOrRevivingLease()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.002"/>
+  <testcase name="terrainAbaAndRecoveredOwnerCannotReviveAuthority()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.005"/>
+  <testcase name="membershipResidencyAndIncarnationChangesRevokeBeforeReuse()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.004"/>
+  <testcase name="everyOpeningInventoryCallbackSeesRevocationAndCannotMint()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.003"/>
+  <testcase name="retirementFromOtherThreadRevokesQueuedAndDuplicateLeases()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.002"/>
+  <testcase name="closedHandlesRefuseAndLastHistoricalAliasDrainsReservations()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.002"/>
+  <testcase name="prevalidationApplyingAndFailedDeliveryRemainFenced()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.004"/>
+  <testcase name="unloadedAirTombstonesAreInTheExactAuthorizedPlan()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.003"/>
+  <testcase name="serverMutationNeverWaitsForRetainedHistoricalFrame()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.003"/>
+  <testcase name="effectsAbortNoopAndAcknowledgementRebindWithoutChangingGeometry()" classname="io.earthplatform.minecraft.survival.render.SurvivalPublicationJoinTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

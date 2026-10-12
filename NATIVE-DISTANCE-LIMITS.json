@@ -1,0 +1,100 @@
+{
+  "candidate": "037",
+  "policy": "earth-native-setting-distance-031-v1",
+  "status": "fresh headless aggregate passed; actual packaged-client acceptance pending",
+  "settings": {
+    "selectedChunkMinimum": 2,
+    "selectedChunkMaximum": 32,
+    "step": 1,
+    "guiValidationCases": [
+      12,
+      24
+    ],
+    "effectiveMustEqualSelectedForSingleplayerAdmission": true,
+    "silentDistanceReduction": false
+  },
+  "nativeGpu": {
+    "maximumBytes": 1073741824,
+    "maximumPhysicalPieces": 1536,
+    "allocationQuantumBytes": 65536,
+    "perPhysicalOwnerAllowanceBytes": 4096,
+    "physicalPageMetres": 64,
+    "drawMembershipMetres": 16,
+    "scope": "current, prefetched, candidate, retiring, legacy body-mesh and failed-cleanup owners; lazy allocation"
+  },
+  "farGpu": {
+    "maximumBytes": 33554432,
+    "maximumCurrentPieces": 256,
+    "maximumPhysicalPieces": 512,
+    "allocationQuantumBytes": 65536,
+    "perPhysicalOwnerAllowanceBytes": 4096,
+    "scope": "all staging, current, retiring and failed-cleanup owners"
+  },
+  "farGeometry": {
+    "maximumCells": 65536,
+    "maximumFaces": 131072,
+    "maximumBaseFaces": 122880,
+    "maximumReplacementFaces": 8192,
+    "maximumBaseOwners": 254,
+    "replacementOwnerReserve": 2,
+    "maximumFacesPerPiece": 4096,
+    "maximumResultBytes": 20971520,
+    "maximumPhysicallyRetainedResults": 2,
+    "completedResultCacheItems": 0
+  },
+  "accountedCpu": {
+    "maximumBytes": 402653184,
+    "poolsBytes": {
+      "SOURCE": 100663296,
+      "COVERAGE": 67108864,
+      "CAPSULE": 16777216,
+      "PLAN": 16777216,
+      "WORKER_UPLOAD": 16777216,
+      "DH_RESULTS": 41943040,
+      "SOURCE_ASSETS": 67108864,
+      "OWNER_METADATA": 75497472
+    },
+    "scope": "global across live, canceled and cleanup-failed generations; acquired before allocation",
+    "sourceAssetsLifetime": "one checksum-pinned process singleton; its reservation remains after session cleanup while the source remains cached"
+  },
+  "nativeSource": {
+    "maximumColumns": 3200000,
+    "maximumPlanColumns": 1500000,
+    "maximumPlanPages": 1536,
+    "maximumPlanPieces": 1536,
+    "maximumPlanQuads": 7743000,
+    "maximumCoverageBytes": 33554432,
+    "maximumLiveCoverages": 2,
+    "cpuWorkers": 1,
+    "outputMailboxPieces": 2,
+    "prefetchPageRows": 1,
+    "prefetchGrantsDrawAuthority": false
+  },
+  "failurePolicy": "Refuse or hold before allocation/publication. Never truncate, silently reduce the setting, discard durable edits, or release charged ownership before physical drain.",
+  "measurementQualification": "These are allocation-admission ceilings, not whole-process RSS, JVM heap, driver memory or performance guarantees. The actual cloud process and first 12/24-chunk runs must be measured separately.",
+  "transitionSafety": {
+    "profile": "pause-aware-useful-progress-035-v1",
+    "usefulWorkIdleUnpausedSeconds": 120,
+    "peerLivenessUnpausedSeconds": 120,
+    "totalEpisodeUnpausedSeconds": 1800,
+    "resetOnSettingsOrPause": false,
+    "disconnect": "immediate existing cleanup",
+    "progressProvidesReadiness": false,
+    "performanceClaim": false
+  },
+  "bodyAuthority": {
+    "profile": "distance-only complete125 snapshot equality; legacy rendered SceneMesh profiles retained",
+    "snapshotCubes": 125,
+    "targetBodyCubes": 27,
+    "maximumColdComparisons": 512000,
+    "softSliceNanoseconds": 2000000,
+    "clockCheckCellInterval": 64,
+    "maximumComparisonsPerSlice": 262144,
+    "maximumMetadataBytes": 1048576,
+    "chargedWithin": "existing per-session OWNER_METADATA reservation, including current/candidate/history/failed-cleanup leases",
+    "reuse": "exact immutable retained proof inputs only; fresh authority for every request",
+    "progressLane": "BODY_EQUALITY_COMPARISONS",
+    "progressProvidesReadiness": false,
+    "sliceBudgetQualification": "Soft elapsed target with bounded comparison count; indivisible work, scheduling and clock overhead may overshoot. Actual runtime overshoot must be recorded."
+  }
+}

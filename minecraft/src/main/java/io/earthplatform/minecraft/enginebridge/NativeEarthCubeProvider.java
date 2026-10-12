@@ -45,10 +45,15 @@ public final class NativeEarthCubeProvider implements CubeProvider {
      * No caller-owned SceneTerrain is accepted, so its mutable cache cannot escape the guard.
      */
     public static NativeEarthCubeProvider prepare(EnginePaletteContext palette) {
+        return prepare(palette, Boolean.getBoolean(SceneTerrain.NATURAL_RELIEF_OPT_IN));
+    }
+
+    /** Uses the descriptor's explicit policy without ambient property reads during preparation. */
+    public static NativeEarthCubeProvider prepare(EnginePaletteContext palette, boolean naturalRelief) {
         Objects.requireNonNull(palette, "palette");
         if (!palette.fingerprint().equals(EnginePaletteContext.create(palette.biomes()).fingerprint()))
             throw new IllegalArgumentException("Palette fingerprint does not describe current native registries");
-        return new NativeEarthCubeProvider(new SceneTerrain(), palette);
+        return new NativeEarthCubeProvider(new SceneTerrain(naturalRelief), palette);
     }
 
     private NativeEarthCubeProvider(SceneTerrain source, EnginePaletteContext palette) {
@@ -68,11 +73,22 @@ public final class NativeEarthCubeProvider implements CubeProvider {
                     throw new IllegalArgumentException("Far sampler changed its pinned surface");
                 return column.argb();
             }
+            @Override public boolean supportsFootprintCoverage(){return true;}
+            @Override public boolean knownFootprint(long minX,long minZ,long maxXExclusive,long maxZExclusive){
+                synchronized(sourceLock){return source.knownFootprint(minX,minZ,maxXExclusive,maxZExclusive);}
+            }
             @Override public String identity() { return identity.datasetVersion(); }
+            // Every source/cache access above enters sourceLock. Returned columns and this
+            // identity are immutable, including across eviction and caller policy changes.
+            @Override public boolean supportsConcurrentReads() { return true; }
         };
     }
 
     public WorldIdentity identity() { return identity; }
+    /** Immutable provenance of the pinned prepared source; never queries live properties or I/O. */
+    public String sourceUrl() { synchronized (sourceLock) { return source.sourceUrl(); } }
+    public String verticalDatum() { synchronized (sourceLock) { return source.datum(); } }
+    public boolean naturalRelief() { synchronized (sourceLock) { return source.naturalRelief(); } }
 
     /**
      * Optional, separate capability for the current heightfield DH summaries. This view reports

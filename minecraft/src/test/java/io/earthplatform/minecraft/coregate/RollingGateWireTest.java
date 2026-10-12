@@ -58,13 +58,13 @@ class RollingGateWireTest {
     @Test void oversizedNegativeAndTruncatedCountsRejectBeforeListPopulation() {
         for (int count : new int[]{-1, 153, Integer.MAX_VALUE, 125}) {
             var b = buffer(); try {
-                b.writeVarInt(1); b.writeLong(1); CoreGatePayload.position(b, CENTER); b.writeVarInt(count);
+                b.writeVarInt(RollingGateWire.WIRE_VERSION); b.writeLong(1); CoreGatePayload.position(b, CENTER); b.writeVarInt(count);
                 var input = b;
                 assertThrows(IllegalArgumentException.class, () -> RollingGateWire.readReady(input, WORLD, 4));
             } finally { b.release(); }
             b = buffer(); try {
-                b.writeVarInt(1); b.writeLong(1); b.writeBoolean(true);
-                for (int i = 0; i < 3; i++) CoreGatePayload.position(b, CENTER);
+                b.writeVarInt(RollingGateWire.WIRE_VERSION); b.writeLong(1); b.writeBoolean(true); b.writeBoolean(true); b.writeBoolean(true);
+                for (int i = 0; i < 4; i++) CoreGatePayload.position(b, CENTER);
                 b.writeVarInt(count); var input = b;
                 assertThrows(IllegalArgumentException.class, () -> RollingGateWire.readMetadata(input, WORLD, 4));
             } finally { b.release(); }
@@ -74,7 +74,7 @@ class RollingGateWireTest {
     @Test void invalidVersionsAndNoncanonicalBooleanFailClosed() {
         var b = buffer(); try {
             b.writeVarInt(99); assertThrows(IllegalArgumentException.class, () -> RollingGateWire.readMetadata(b, WORLD, 4));
-            b.clear(); b.writeVarInt(1); b.writeLong(1); b.writeByte(2);
+            b.clear(); b.writeVarInt(RollingGateWire.WIRE_VERSION); b.writeLong(1); b.writeByte(2);
             assertThrows(IllegalArgumentException.class, () -> RollingGateWire.readMetadata(b, WORLD, 4));
         } finally { b.release(); }
     }
