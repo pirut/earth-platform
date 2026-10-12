@@ -54,10 +54,49 @@ public final class GlobalElevation {
     /** Elevation at the centre of an integer block column. */
     public double metres(long blockX, long blockZ) { return metres(blockX + 0.5, blockZ + 0.5); }
 
+    /**
+     * Elevation in metres at a block-space position, with the same interpolation as
+     * {@link #metres(double, double)}. Also writes the slope in metres per block along X and Z
+     * to {@code out[0]} and {@code out[1]}, and to {@code out[2]} the interpolation weight of
+     * source pixels that are open sea (about 1 offshore, 0 inland, 0.5 on the coastline). Only
+     * zooms above {@link #BATHYMETRY_ZOOM} mark open sea; below that {@code out[2]} is 0.
+     */
+    public double sample(double blockX, double blockZ, double[] out) {
+        double px = grid.pixelX(blockX, zoom) - 0.5, py = grid.pixelY(blockZ, zoom) - 0.5;
+        long ix = (long) Math.floor(px), iy = (long) Math.floor(py);
+        double fx = px - ix, fy = py - iy;
+        double value = 0, dx = 0, dy = 0, sea = 0;
+        for (int j = -1; j <= 2; j++) {
+            double wy = weight(j - fy), dwy = -slope(j - fy);
+            for (int i = -1; i <= 2; i++) {
+                double wx = weight(i - fx), dwx = -slope(i - fx);
+                float raw = rawPixel(ix + i, iy + j);
+                double p = raw;
+                if (raw == 0f && bathymetry != null) {
+                    p = fill(ix + i, iy + j);
+                    sea += wx * wy;
+                }
+                value += p * wx * wy;
+                dx += p * dwx * wy;
+                dy += p * wx * dwy;
+            }
+        }
+        double pixelsPerBlock = 1.0 / grid.blocksPerPixel(zoom);
+        out[0] = dx * pixelsPerBlock;
+        out[1] = dy * pixelsPerBlock;
+        out[2] = sea;
+        return value;
+    }
+
     /** Source pixel with open-sea zeros replaced by coarser bathymetry. */
     double pixel(long gx, long gy) {
         float raw = rawPixel(gx, gy);
         if (raw != 0f || bathymetry == null) return raw;
+        return fill(gx, gy);
+    }
+
+    /** Depth for an open-sea pixel from the bathymetry zoom; never above sea level. */
+    private double fill(long gx, long gy) {
         long size = (long) tilesAcross * TerrariumTileSource.TILE_SIZE;
         double scale = (double) (1L << BATHYMETRY_ZOOM) / tilesAcross;
         double bx = (Math.floorMod(gx, size) + 0.5) * scale - 0.5, by = (Math.max(0, Math.min(size - 1, gy)) + 0.5) * scale - 0.5;
@@ -96,6 +135,14 @@ public final class GlobalElevation {
         t = Math.abs(t);
         if (t < 1) return 1.5 * t * t * t - 2.5 * t * t + 1;
         if (t < 2) return -0.5 * t * t * t + 2.5 * t * t - 4 * t + 2;
+        return 0;
+    }
+
+    /** Derivative of {@link #weight} with respect to t. */
+    static double slope(double t) {
+        double a = Math.abs(t), sign = Math.signum(t);
+        if (a < 1) return sign * (4.5 * a * a - 5 * a);
+        if (a < 2) return sign * (-1.5 * a * a + 5 * a - 4);
         return 0;
     }
 }

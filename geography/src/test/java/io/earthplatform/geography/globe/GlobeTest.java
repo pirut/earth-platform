@@ -132,6 +132,18 @@ public final class GlobeTest {
                 near(Math.min(0, (lowPx * 0.75 - lowPy * 0.5) / 256 + 10), detailed.metres(bx, bz), 0.05, "zero-sea pixels take bathymetry");
                 check(detailed.metres(bx, bz) < -100, "bathymetry fixture is below sea level");
 
+                // sample() agrees with metres(), its slope with finite differences, and it flags open sea.
+                double[] out = new double[3];
+                for (double fx : new double[]{0.24, 0.2501, 0.4999, 0.51}) {
+                    double x = (fx - 0.5) * width, z = (0.6 - 0.5) * width;
+                    near(field.metres(x, z), field.sample(x, z, out), 1e-9, "sample matches metres at " + fx);
+                    near((field.metres(x + 0.5, z) - field.metres(x - 0.5, z)), out[0], 1e-3, "X slope at " + fx);
+                    near((field.metres(x, z + 0.5) - field.metres(x, z - 0.5)), out[1], 1e-3, "Z slope at " + fx);
+                    near(0, out[2], 1e-12, "land has no sea weight at " + fx);
+                }
+                near(detailed.metres(bx, bz), detailed.sample(bx, bz, out), 1e-9, "sample matches metres at sea");
+                near(1, out[2], 1e-9, "open sea has full sea weight");
+
                 // Transient server errors are retried.
                 source.tile(zoom, 3, 3);
                 equal(3, hits.get("2/3/3.png").get(), "two retries then success");

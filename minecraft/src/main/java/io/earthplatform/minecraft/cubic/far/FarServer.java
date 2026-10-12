@@ -61,6 +61,10 @@ public final class FarServer {
     });
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> cache = new ConcurrentHashMap<>();
     private final ConcurrentLinkedQueue<Made> made = new ConcurrentLinkedQueue<>();
+    /** Columns that could not be made; players may ask for them again. */
+    private final ConcurrentLinkedQueue<Long> failed = new ConcurrentLinkedQueue<>();
+    private final AtomicInteger failures = new AtomicInteger();
+    private volatile long lastFailureLog;
     private final Map<UUID, Session> sessions = new HashMap<>();
     /** Columns whose saved cubes changed and that players hold, to remake and push again. */
     private final LongOpenHashSet stale = new LongOpenHashSet();
@@ -100,7 +104,15 @@ public final class FarServer {
     private void submit(@Nullable UUID player, long key) {
         workers.execute(() -> {
             try { made.add(new Made(player, make(key, player != null))); }
-            catch (RuntimeException | IOException failure) { EarthPlatformMod.LOGGER.error("Could not make far column {}", key, failure); }
+            catch (RuntimeException | IOException failure) {
+                failed.add(key);
+                failures.incrementAndGet();
+                long now = System.currentTimeMillis();
+                if (now - lastFailureLog > 10_000) {
+                    lastFailureLog = now;
+                    EarthPlatformMod.LOGGER.warn("Could not make far column {} ({} failures so far)", key, failures.get(), failure);
+                }
+            }
         });
     }
 
@@ -207,6 +219,7 @@ public final class FarServer {
     /** Sends finished columns, a few per player per tick, remakes edited ones and forgets players who left. */
     public void tick(Iterable<ServerPlayer> players) {
         ticks++;
+        for (Long key; (key = failed.poll()) != null; ) for (Session session : sessions.values()) session.queued.remove(key.longValue());
         for (Made done; (done = made.poll()) != null; ) {
             if (done.player != null) {
                 Session session = sessions.get(done.player);

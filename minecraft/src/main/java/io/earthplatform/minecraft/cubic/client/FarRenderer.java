@@ -59,6 +59,7 @@ public final class FarRenderer {
     private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "block/far_white");
     private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
             SETTLE_TICKS = 3, UPLOADS_PER_FRAME = 8;
+    private static final long UPLOAD_NANOS = 3_000_000L;
     private static final AtomicInteger THREADS = new AtomicInteger();
     private static final ExecutorService MESHER = Executors.newFixedThreadPool(2, runnable -> {
         Thread thread = new Thread(runnable, "Earth far mesher " + THREADS.incrementAndGet());
@@ -261,8 +262,10 @@ public final class FarRenderer {
         });
     }
 
+    /** Uploads finished meshes: a few every frame, and more while the frame's small time budget lasts. */
     private void upload() {
-        for (int n = 0; n < UPLOADS_PER_FRAME; n++) {
+        long deadline = System.nanoTime() + UPLOAD_NANOS;
+        for (int n = 0; n < UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
             FarMesher.Built result = built.poll();
             if (result == null) return;
             Column column = columns.get(result.key());

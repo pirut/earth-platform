@@ -60,6 +60,9 @@ public final class ServerCubeWorld extends CubeWorld {
     private final ExecutorService workers;
     private final FarServer far;
     private final LongOpenHashSet pending = new LongOpenHashSet();
+    /** Cubes whose generation failed (say, terrain data was unreachable), with the tick to try again. */
+    private final Long2IntOpenHashMap retryAt = new Long2IntOpenHashMap();
+    private int failures, lastFailureLog = Integer.MIN_VALUE / 2;
     private final ConcurrentLinkedQueue<Ready> ready = new ConcurrentLinkedQueue<>();
     private final Map<UUID, Watcher> watchers = new HashMap<>();
     private final Set<BlockPos> changed = new HashSet<>();
@@ -75,7 +78,9 @@ public final class ServerCubeWorld extends CubeWorld {
     private int ticks;
     private boolean closed;
 
-    private record Ready(long key, int x, int y, int z, LevelChunkSection section, List<CompoundTag> blockEntities, boolean saved) {}
+    /** A loaded or generated cube; a null section means generating it failed. {@code surface} marks fresh cubes holding the ground. */
+    private record Ready(long key, int x, int y, int z, @Nullable LevelChunkSection section, List<CompoundTag> blockEntities, boolean saved,
+                         boolean surface, @Nullable RuntimeException failure) {}
     private record Lit(long key, int stamp, @Nullable byte[] values) {}
 
     private static final class Watcher {
@@ -135,7 +140,12 @@ public final class ServerCubeWorld extends CubeWorld {
     // Loading ------------------------------------------------------------------------------------
 
     private void request(long key) {
-        if (closed || cubes.containsKey(key) || !pending.add(key)) return;
+        if (closed || cubes.containsKey(key) || pending.contains(key)) return;
+        if (retryAt.containsKey(key)) {
+            if (ticks < retryAt.get(key)) return;
+            retryAt.remove(key);
+        }
+        pending.add(key);
         int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
         workers.execute(() -> ready.add(produce(key, x, y, z)));
     }
@@ -145,16 +155,22 @@ public final class ServerCubeWorld extends CubeWorld {
             CompoundTag saved = storage.read(key);
             if (saved != null) {
                 CubeCodec.Decoded decoded = codec.read(saved);
-                return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), true);
+                return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), true, false, null);
             }
         } catch (IOException | RuntimeException failure) {
             EarthPlatformMod.LOGGER.error("Could not read saved cube {}; regenerating it", CubeKey.toString(key), failure);
         }
-        return new Ready(key, x, y, z, generator.generate(x, y, z), List.of(), false);
+        try {
+            LevelChunkSection section = generator.generate(x, y, z);
+            boolean surface = generator.surfaceY((x << 4) + 8, (z << 4) + 8) >> 4 == y;
+            return new Ready(key, x, y, z, section, List.of(), false, surface, null);
+        } catch (RuntimeException failure) {
+            return new Ready(key, x, y, z, null, List.of(), false, false, failure);
+        }
     }
 
     /** Synchronous load for places that must exist this tick, such as an arrival point. */
-    public Cube loadNow(int x, int y, int z) {
+    @Nullable public Cube loadNow(int x, int y, int z) {
         long key = CubeKey.pack(x, y, z);
         Cube cube = cubes.get(key);
         if (cube != null) return cube;
@@ -171,9 +187,20 @@ public final class ServerCubeWorld extends CubeWorld {
     private void adoptReady(Ready result) {
         pending.remove(result.key);
         if (cubes.containsKey(result.key)) return;
+        if (result.section == null) {
+            // Leave a gap and try again shortly rather than stall: the data may come back.
+            if (retryAt.size() > 8192) retryAt.clear();
+            retryAt.put(result.key, ticks + 100);
+            failures++;
+            if (ticks - lastFailureLog > 200) {
+                lastFailureLog = ticks;
+                EarthPlatformMod.LOGGER.warn("Could not generate cube {} ({} failures so far); retrying", CubeKey.toString(result.key), failures, result.failure);
+            }
+            return;
+        }
         Cube cube = new Cube(result.x, result.y, result.z, result.section);
         cube.modified = result.saved;
-        if (!result.saved && generator.surfaceY((result.x << 4) + 8, (result.z << 4) + 8) >> 4 == result.y) unpopulated.add(result.key);
+        if (result.surface) unpopulated.add(result.key);
         for (CompoundTag tag : result.blockEntities) {
             BlockPos pos = BlockEntity.getPosFromTag(tag);
             BlockEntity entity = BlockEntity.loadStatic(pos, cube.get(pos.getX(), pos.getY(), pos.getZ()), tag, server.registryAccess());
@@ -499,8 +526,8 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     public String describe() {
-        return cubes.size() + " cubes loaded, " + pending.size() + " pending, " + light.size() + " lit, " + watchers.size() + " watching, "
-                + far.cached() + " far columns cached";
+        return generator.id() + ", " + cubes.size() + " cubes loaded, " + pending.size() + " pending, " + light.size() + " lit, "
+                + watchers.size() + " watching, " + far.cached() + " far columns cached" + (failures > 0 ? ", " + failures + " generation failures" : "");
     }
 
     /** Iterates loaded cubes; exposed for diagnostics. */

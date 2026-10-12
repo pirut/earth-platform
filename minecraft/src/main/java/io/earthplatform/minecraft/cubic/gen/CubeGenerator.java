@@ -11,6 +11,8 @@ public interface CubeGenerator {
     LevelChunkSection generate(int cubeX, int cubeY, int cubeZ);
     /** Generated ground height (top solid block) for a column. */
     int surfaceY(int x, int z);
+    /** Top generated water block of a column, or {@link Integer#MIN_VALUE} where it is dry. */
+    default int waterY(int x, int z) { return Integer.MIN_VALUE; }
     /** Highest generated block that blocks skylight in a column, used as the initial sky top. */
     default int skyTopY(int x, int z) { return surfaceY(x, z); }
     /**
@@ -19,4 +21,17 @@ public interface CubeGenerator {
      * worker threads.
      */
     void farColumn(int level, int columnX, int columnZ, FarColumn out);
+
+    /** Top block of the sea: players arrive on ground above it. */
+    int seaLevel();
+    /** Ground too cold or high for a new arrival to start on. */
+    default boolean barren(int x, int z, int y) { return false; }
+    /** Block X and Z around which new players arrive. */
+    default int[] arrival() { return new int[]{0, 0}; }
+    /** Where a block column is in the generator's own terms (such as latitude and longitude), or empty. */
+    default String place(int x, int z) { return ""; }
+    /** Credits for the data the world is made from, shown to players entering it, or empty. */
+    default String credits() { return ""; }
+    /** Loads whatever generating near a point will need, so the server thread never waits on it. Blocks; call off-thread. */
+    default void prepare(int x, int z) {}
 }
