@@ -60,6 +60,8 @@ public final class CubeRenderer {
     private final Long2IntOpenHashMap dirtySince = new Long2IntOpenHashMap();
     private final Long2IntOpenHashMap versions = new Long2IntOpenHashMap();
     private final LongOpenHashSet building = new LongOpenHashSet();
+    /** Cubes whose current contents have a mesh (or need none), so far terrain can leave them out. */
+    private final LongOpenHashSet compiled = new LongOpenHashSet();
     private final ConcurrentLinkedQueue<CubeMesher.Built> built = new ConcurrentLinkedQueue<>();
     private final List<Mesh> visible = new ArrayList<>();
     private int ticks, drawnFrame = -1, translucentFrame = -1, frame;
@@ -83,6 +85,8 @@ public final class CubeRenderer {
 
     public int meshCount() { return meshes.size(); }
     public int pendingCount() { return dirty.size() + building.size(); }
+    /** Cubes whose current contents are drawn here; read only. */
+    LongOpenHashSet compiledCubes() { return compiled; }
 
     // Dirty tracking -----------------------------------------------------------------------------
 
@@ -99,6 +103,11 @@ public final class CubeRenderer {
         }
     }
 
+    /** Rebuilds every mesh, as when a shader pack comes or goes and changes the vertex format and block ids. */
+    void remeshAll() {
+        for (long key : meshes.keySet()) markDirty(key);
+    }
+
     void cubeArrived(long key) { markAround(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), false); }
 
     void drop(long key) {
@@ -106,6 +115,7 @@ public final class CubeRenderer {
         dirtySince.remove(key);
         versions.remove(key);
         light.remove(key);
+        compiled.remove(key);
         Mesh mesh = meshes.remove(key);
         if (mesh != null) mesh.close();
     }
@@ -187,6 +197,7 @@ public final class CubeRenderer {
             Mesh mesh = meshes.remove(key);
             if (mesh != null) mesh.close();
             light.remove(key);
+            compiled.add(key);
             return;
         }
         PalettedContainer<BlockState>[] states = new PalettedContainer[27];
@@ -205,7 +216,8 @@ public final class CubeRenderer {
         }
         int version = versions.get(key);
         CubeMesher.Snapshot snapshot = new CubeMesher.Snapshot(key, version, x, y, z, states, biomes, tops,
-                (float) camera.x, (float) camera.y, (float) camera.z, world.client().effects().constantAmbientLight());
+                (float) camera.x, (float) camera.y, (float) camera.z, world.client().effects().constantAmbientLight(),
+                ShaderBlocks.ids());
         building.add(key);
         POOL.execute(() -> {
             try { built.add(CubeMesher.build(snapshot)); }
@@ -223,6 +235,7 @@ public final class CubeRenderer {
             building.remove(result.key());
             if (closed || world.cube(result.key()) == null || result.version() < 0) { result.free(); continue; }
             if (result.light() != null) light.put(result.key(), result.light());
+            compiled.add(result.key());
             Mesh mesh = meshes.get(result.key());
             if (mesh == null) { mesh = new Mesh(result.key()); meshes.put(result.key(), mesh); }
             boolean[] present = new boolean[mesh.buffers.length];
@@ -282,7 +295,25 @@ public final class CubeRenderer {
 
     public boolean drewOpaqueThisFrame() { return drawnFrame == frame; }
 
+    /**
+     * Draws every mesh's opaque layers into a shader pack's shadow map, so near terrain casts
+     * shadows; not limited to the view, since what lies outside it still shades what is in it.
+     */
+    public void drawShadow(Camera camera, Matrix4f modelView, Matrix4f projection) {
+        upload();
+        List<Mesh> all = new java.util.ArrayList<>(meshes.values());
+        for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {
+            RenderType type = CubeMesher.LAYERS.get(i);
+            if (type == RenderType.translucent() || type == RenderType.tripwire()) continue;
+            draw(i, all, camera.getPosition(), modelView, projection, false);
+        }
+    }
+
     private void draw(int layer, Vec3 camera, Matrix4f modelView, Matrix4f projection, boolean backToFront) {
+        draw(layer, visible, camera, modelView, projection, backToFront);
+    }
+
+    private void draw(int layer, List<Mesh> visible, Vec3 camera, Matrix4f modelView, Matrix4f projection, boolean backToFront) {
         RenderType type = CubeMesher.LAYERS.get(layer);
         boolean any = false;
         for (Mesh mesh : visible) if (mesh.buffers[layer] != null) { any = true; break; }
@@ -337,6 +368,7 @@ public final class CubeRenderer {
         for (Mesh mesh : meshes.values()) mesh.close();
         meshes.clear();
         light.clear();
+        compiled.clear();
         dirty.clear();
         CubeMesher.Built result;
         while ((result = built.poll()) != null) result.free();

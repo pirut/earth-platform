@@ -4,6 +4,8 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.FogRenderer;
+import net.minecraft.world.level.material.FogType;
 import net.minecraft.network.chat.Component;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -14,6 +16,7 @@ import net.neoforged.neoforge.client.event.CustomizeGuiOverlayEvent;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.ViewportEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 
 /** Client hooks: attach the cube store, compile on ticks and draw at the vanilla terrain stages. */
@@ -40,12 +43,12 @@ public final class CubicClient {
 
     @SubscribeEvent public static void tick(ClientTickEvent.Post event) {
         ClientCubeWorld world = ClientCubeWorld.current();
-        if (world != null) world.renderer().tick();
+        if (world != null) { world.checkShaders(); world.renderer().tick(); world.far().tick(); }
     }
 
     @SubscribeEvent public static void frame(RenderFrameEvent.Pre event) {
         ClientCubeWorld world = ClientCubeWorld.current();
-        if (world != null) world.renderer().beginFrame();
+        if (world != null) { world.renderer().beginFrame(); world.far().beginFrame(); }
     }
 
     @SubscribeEvent public static void render(RenderLevelStageEvent event) {
@@ -53,13 +56,21 @@ public final class CubicClient {
         if (world == null) return;
         CubeRenderer renderer = world.renderer();
         var stage = event.getStage();
+        if (ShaderBlocks.shadowPass()) {
+            // A shader pack's shadow map: near terrain casts shadows; far terrain lies past the shadow distance.
+            if (stage == RenderLevelStageEvent.Stage.AFTER_CUTOUT_BLOCKS)
+                renderer.drawShadow(event.getCamera(), event.getModelViewMatrix(), event.getProjectionMatrix());
+            return;
+        }
         if (stage == RenderLevelStageEvent.Stage.AFTER_CUTOUT_BLOCKS
                 || (stage == RenderLevelStageEvent.Stage.AFTER_ENTITIES && !renderer.drewOpaqueThisFrame())) {
             renderer.drawOpaque(event.getCamera(), event.getFrustum(), event.getModelViewMatrix(), event.getProjectionMatrix());
+            world.far().draw(event.getCamera(), event.getFrustum(), event.getModelViewMatrix(), event.getProjectionMatrix());
         } else if (stage == RenderLevelStageEvent.Stage.AFTER_BLOCK_ENTITIES) {
             renderer.drawBlockEntities(event.getCamera(), event.getFrustum(), event.getPoseStack(),
                     event.getPartialTick().getGameTimeDeltaPartialTick(false));
         } else if (stage == RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS || stage == RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+            world.far().drawWater(event.getCamera(), event.getModelViewMatrix(), event.getProjectionMatrix());
             renderer.drawTranslucent(event.getCamera(), event.getFrustum(), event.getModelViewMatrix(), event.getProjectionMatrix());
         }
     }
@@ -68,7 +79,16 @@ public final class CubicClient {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null) return;
         event.getLeft().add("Cubic: " + world.loadedCubes() + " cubes, " + world.renderer().meshCount() + " meshes, "
-                + world.renderer().pendingCount() + " to compile");
+                + world.renderer().pendingCount() + " to compile, " + world.far().drawnCount() + "/" + world.far().columnCount() + " far columns");
+    }
+
+    /** Pushes terrain fog out to the far terrain's reach; effect and fluid fog stay as they are. */
+    @SubscribeEvent public static void fog(ViewportEvent.RenderFog event) {
+        if (ClientCubeWorld.current() == null || event.getMode() != FogRenderer.FogMode.FOG_TERRAIN || event.getType() != FogType.NONE) return;
+        if (event.getFarPlaneDistance() < Minecraft.getInstance().gameRenderer.getRenderDistance() - 1.0F) return;
+        event.setNearPlaneDistance(FarRenderer.FOG_START);
+        event.setFarPlaneDistance(FarRenderer.FOG_END);
+        event.setCanceled(true);
     }
 
     @SubscribeEvent public static void waiting(RenderGuiEvent.Post event) {

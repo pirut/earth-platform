@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.gen;
 
+import io.earthplatform.minecraft.cubic.far.Far;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
@@ -8,6 +9,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SnowLayerBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -88,19 +90,133 @@ public final class HighlandsGenerator implements CubeGenerator {
             int i = (dz + 1) * 18 + dx + 1, y = h[i];
             min = Math.min(min, y); max = Math.max(max, y);
             int slope = Math.abs(h[i + 1] - h[i - 1]) + Math.abs(h[i + 18] - h[i - 18]);
-            int wx = x0 + dx, wz = z0 + dz;
-            double wet = wetness(wx, wz);
-            Holder<Biome> b; BlockState top;
-            if (y <= SEA + 1) { b = y < SEA - 2 ? plains : beach; top = y < SEA - 3 ? GRAVEL : SAND; }
-            else if (y >= snowline(wx, wz)) { b = slope > 9 ? peaks : snowy; top = slope > 12 ? STONE : SNOW_BLOCK; }
-            else if (y > TREELINE) { b = wet > 0.1 ? taiga : meadow; top = slope > 7 ? STONE : GRASS; }
-            else { b = wet > 0.25 ? birch : wet > -0.25 ? forest : plains; top = slope > 8 ? STONE : GRASS; }
-            biome[dz * 16 + dx] = b; surface[dz * 16 + dx] = top;
+            classify(y, slope, x0 + dx, z0 + dz, biome, surface, dz * 16 + dx);
         }
         Column made = new Column(h, biome, surface, min, max);
         if (columns.size() > 8192) columns.clear();
         columns.putIfAbsent(key, made);
         return made;
+    }
+
+    /** Biome and top block for a column from its height and slope (summed block steps across it). */
+    private void classify(int y, int slope, int wx, int wz, Holder<Biome>[] biome, BlockState[] surface, int i) {
+        double wet = wetness(wx, wz);
+        Holder<Biome> b; BlockState top;
+        if (y <= SEA + 1) { b = y < SEA - 2 ? plains : beach; top = y < SEA - 3 ? GRAVEL : SAND; }
+        else if (y >= snowline(wx, wz)) { b = slope > 9 ? peaks : snowy; top = slope > 12 ? STONE : SNOW_BLOCK; }
+        else if (y > TREELINE) { b = wet > 0.1 ? taiga : meadow; top = slope > 7 ? STONE : GRASS; }
+        else { b = wet > 0.25 ? birch : wet > -0.25 ? forest : plains; top = slope > 8 ? STONE : GRASS; }
+        biome[i] = b; surface[i] = top;
+    }
+
+    // Far terrain: voxel columns sampled from the same height, biome and tree rules -------------
+
+    @Override public void farColumn(int level, int columnX, int columnZ, FarColumn out) {
+        int v = 1 << level, width = 16 * v, x0 = columnX * width, z0 = columnZ * width, half = v >> 1;
+        int[] ground = new int[18 * 18];
+        for (int j = 0; j < 18; j++) for (int i = 0; i < 18; i++) ground[j * 18 + i] = surfaceY(x0 + (i - 1) * v + half, z0 + (j - 1) * v + half);
+        @SuppressWarnings("unchecked") Holder<Biome>[] biome = new Holder[256];
+        BlockState[] top = new BlockState[256], under = new BlockState[256];
+        int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
+        for (int cz = 0; cz < 16; cz++) for (int cx = 0; cx < 16; cx++) {
+            int g = (cz + 1) * 18 + cx + 1, h = ground[g], cell = cz * 16 + cx;
+            int wx = x0 + cx * v + half, wz = z0 + cz * v + half;
+            int slope = (Math.abs(ground[g + 1] - ground[g - 1]) + Math.abs(ground[g + 18] - ground[g - 18])) / v;
+            classify(h, slope, wx, wz, biome, top, cell);
+            under[cell] = v > 2 ? STONE : top[cell] == SAND || top[cell] == GRAVEL ? top[cell] : top[cell] == STONE ? STONE : DIRT;
+            // Voxels wider than a tree: forests show as leaves on the ground voxel, as a downsampled forest does.
+            if (v >= 8) { BlockState leaves = canopy(h, slope, top[cell], wx, wz, v); if (leaves != null) top[cell] = leaves; }
+            min = Math.min(min, h);
+            max = Math.max(max, Math.max(h, SEA));
+        }
+        if (v <= 4) max += 13;
+        int bottom = (min - v) >> (level + 4), sections = Math.min(Far.MAX_SECTIONS, (max >> (level + 4)) - bottom + 1);
+        out.bottom = bottom;
+        LevelChunkSection[] stack = new LevelChunkSection[sections];
+        for (int si = 0; si < sections; si++) {
+            LevelChunkSection section = new LevelChunkSection(
+                    new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, AIR, PalettedContainer.Strategy.SECTION_STATES), farBiomes(biome));
+            int sectionY = (bottom + si) * width;
+            for (int vy = 0; vy < 16; vy++) {
+                int y0 = sectionY + vy * v;
+                for (int cz = 0; cz < 16; cz++) for (int cx = 0; cx < 16; cx++) {
+                    BlockState state = voxel(ground[(cz + 1) * 18 + cx + 1], y0, v, top[cz * 16 + cx], under[cz * 16 + cx]);
+                    if (state != AIR) section.setBlockState(cx, vy, cz, state, false);
+                }
+            }
+            stack[si] = section;
+        }
+        if (v <= 4) farTrees(level, x0, z0, bottom, stack);
+        for (LevelChunkSection section : stack) {
+            section.recalcBlockCounts();
+            out.sections.add(section.hasOnlyAir() ? null : section);
+        }
+    }
+
+    /**
+     * The block a voxel of {@code v} blocks starting at y0 stands for: solid once a quarter of it
+     * is ground, its top block if the voxel above is not, else water filled to the sea's height.
+     */
+    private static BlockState voxel(int h, int y0, int v, BlockState top, BlockState under) {
+        if ((h - y0 + 1) * 4 >= v) {
+            if ((h - y0 - v + 1) * 4 < v) return top;
+            return (h - y0 - 2 * v + 1) * 4 < v ? under : STONE;
+        }
+        // The top water block's surface sits a little under its top, as near water is drawn.
+        BlockState water = Far.water(SEA - y0 + Far.WATER_SURFACE, v);
+        return water == null ? AIR : water;
+    }
+
+    private PalettedContainer<Holder<Biome>> farBiomes(Holder<Biome>[] biome) {
+        PalettedContainer<Holder<Biome>> container = new PalettedContainer<>(biomeIds, biome[8 * 16 + 8], PalettedContainer.Strategy.SECTION_BIOMES);
+        for (int qz = 0; qz < 4; qz++) for (int qx = 0; qx < 4; qx++) {
+            Holder<Biome> b = biome[(qz * 4 + 1) * 16 + qx * 4 + 1];
+            for (int qy = 0; qy < 4; qy++) container.set(qx, qy, qz, b);
+        }
+        return container;
+    }
+
+    /** Rasterises the real trees into voxels of 2 or 4 blocks: a voxel turns to leaves or log once a quarter of it is. */
+    private void farTrees(int level, int x0, int z0, int bottom, LevelChunkSection[] stack) {
+        int v = 1 << level, width = 16 * v, height = stack.length * 16, baseY = bottom * width;
+        int[] leafCount = new int[16 * 16 * height], logCount = new int[leafCount.length];
+        BlockState[] leafKind = new BlockState[leafCount.length], logKind = new BlockState[leafCount.length];
+        int minCellX = Math.floorDiv(x0 - 3, CELL), maxCellX = Math.floorDiv(x0 + width + 3, CELL);
+        int minCellZ = Math.floorDiv(z0 - 3, CELL), maxCellZ = Math.floorDiv(z0 + width + 3, CELL);
+        TreeSink sink = (x, y, z, state, force) -> {
+            int vx = (x - x0) >> level, vz = (z - z0) >> level, vy = (y - baseY) >> level;
+            if (vx < 0 || vz < 0 || vx > 15 || vz > 15 || vy < 0 || vy >= height || state == DIRT) return;
+            int i = (vy * 16 + vz) * 16 + vx;
+            if (state.getBlock() instanceof net.minecraft.world.level.block.LeavesBlock) { leafCount[i]++; leafKind[i] = state; }
+            else { logCount[i]++; logKind[i] = state; }
+        };
+        for (int gz = minCellZ; gz <= maxCellZ; gz++) for (int gx = minCellX; gx <= maxCellX; gx++) tree(gx, gz, baseY, baseY + height * v - 1, sink);
+        int quarter = Math.max(1, v * v * v / 4);
+        for (int i = 0; i < leafCount.length; i++) {
+            if (leafCount[i] < quarter && logCount[i] < quarter) continue;
+            int vx = i & 15, vz = i >> 4 & 15, vy = i >> 8;
+            LevelChunkSection section = stack[vy >> 4];
+            if (!section.getBlockState(vx, vy & 15, vz).isAir()) continue;
+            BlockState state = logCount[i] >= quarter && logCount[i] * 2 >= leafCount[i] ? logKind[i] : leafKind[i];
+            if (state != null) section.setBlockState(vx, vy & 15, vz, state, false);
+        }
+    }
+
+    /**
+     * Leaves for a far cell that trees cover, or null. Uses tree()'s placement rules as odds, since a
+     * voxel many blocks wide cannot follow individual trees.
+     */
+    private BlockState canopy(int h, int slope, BlockState top, int wx, int wz, int v) {
+        if (top != GRASS || h <= SEA + 1 || h > TREELINE + 60 || slope > 6) return null;
+        double wet = wetness(wx, wz);
+        boolean high = h > TREELINE;
+        int chance = high ? 55 : wet > 0.25 ? 85 : wet > -0.25 ? 80 : 12;
+        long r = mix(wx, v, wz);
+        // Crowns cover a bit over half of each tree's cell.
+        if (Math.floorMod(r, 1000) >= chance * 6) return null;
+        Block kind = high || (wet > 0.1 && h > TREELINE - 80) ? Blocks.SPRUCE_LEAVES
+                : Math.floorMod(r >>> 24, 10) < (wet > 0.25 ? 7 : 2) ? Blocks.BIRCH_LEAVES : Blocks.OAK_LEAVES;
+        return kind.defaultBlockState();
     }
 
     @Override public LevelChunkSection generate(int cx, int cy, int cz) {
@@ -199,10 +315,15 @@ public final class HighlandsGenerator implements CubeGenerator {
         // Trees from every cell whose crown can reach this cube.
         int minCellX = Math.floorDiv(x0 - 3, CELL), maxCellX = Math.floorDiv(x0 + 18, CELL);
         int minCellZ = Math.floorDiv(z0 - 3, CELL), maxCellZ = Math.floorDiv(z0 + 18, CELL);
-        for (int gz = minCellZ; gz <= maxCellZ; gz++) for (int gx = minCellX; gx <= maxCellX; gx++) tree(section, x0, y0, z0, gx, gz);
+        TreeSink sink = (x, y, z, state, force) -> put(section, x0, y0, z0, x, y, z, state, force);
+        for (int gz = minCellZ; gz <= maxCellZ; gz++) for (int gx = minCellX; gx <= maxCellX; gx++) tree(gx, gz, y0, y0 + 15, sink);
     }
 
-    private void tree(LevelChunkSection section, int x0, int y0, int z0, int gx, int gz) {
+    /** Receives a tree's blocks; {@code force} marks trunk blocks that replace whatever is there. */
+    private interface TreeSink { void put(int x, int y, int z, BlockState state, boolean force); }
+
+    /** The tree of one placement cell, if it has one reaching heights minY..maxY. */
+    private void tree(int gx, int gz, int minY, int maxY, TreeSink sink) {
         long r = mix(gx * 7919, 31, gz * 104729);
         int tx = gx * CELL + (int) Math.floorMod(r, CELL - 1), tz = gz * CELL + (int) Math.floorMod(r >>> 8, CELL - 1);
         int h = surfaceY(tx, tz);
@@ -213,7 +334,7 @@ public final class HighlandsGenerator implements CubeGenerator {
         boolean high = h > TREELINE;
         int chance = high ? 55 : wet > 0.25 ? 85 : wet > -0.25 ? 80 : 12; // percent of cells with a tree
         if (Math.floorMod(r >>> 16, 100) >= chance) return;
-        if (h + 12 < y0 || h - 1 > y0 + 15) return;
+        if (h + 12 < minY || h - 1 > maxY) return;
         int kind = high || (wet > 0.1 && h > TREELINE - 80) ? 2 : wet > 0.25 ? (Math.floorMod(r >>> 24, 10) < 7 ? 1 : 0) : (Math.floorMod(r >>> 24, 10) < 2 ? 1 : 0);
         int trunk = kind == 2 ? 7 + (int) Math.floorMod(r >>> 30, 4) : 4 + (int) Math.floorMod(r >>> 30, 3);
         BlockState log = switch (kind) { case 1 -> Blocks.BIRCH_LOG.defaultBlockState(); case 2 -> Blocks.SPRUCE_LOG.defaultBlockState(); default -> Blocks.OAK_LOG.defaultBlockState(); };
@@ -226,7 +347,7 @@ public final class HighlandsGenerator implements CubeGenerator {
                 int radius = fromTop == 0 ? 0 : Math.min(3, 1 + (fromTop + ((y & 1) == 0 ? 1 : 0)) / 2);
                 for (int dz = -radius; dz <= radius; dz++) for (int dx = -radius; dx <= radius; dx++) {
                     if (Math.abs(dx) + Math.abs(dz) > radius + 1 || (radius > 0 && Math.abs(dx) == radius && Math.abs(dz) == radius)) continue;
-                    put(section, x0, y0, z0, tx + dx, y, tz + dz, leaves, false);
+                    sink.put(tx + dx, y, tz + dz, leaves, false);
                 }
             }
         } else {
@@ -235,12 +356,12 @@ public final class HighlandsGenerator implements CubeGenerator {
                 for (int dz = -radius; dz <= radius; dz++) for (int dx = -radius; dx <= radius; dx++) {
                     if (radius == 2 && Math.abs(dx) == 2 && Math.abs(dz) == 2 && Math.floorMod(mix(tx + dx, y, tz + dz), 2) == 0) continue;
                     if (y == top + 1 && Math.abs(dx) == 1 && Math.abs(dz) == 1) continue;
-                    put(section, x0, y0, z0, tx + dx, y, tz + dz, leaves, false);
+                    sink.put(tx + dx, y, tz + dz, leaves, false);
                 }
             }
         }
-        for (int y = h + 1; y <= top; y++) put(section, x0, y0, z0, tx, y, tz, log, true);
-        put(section, x0, y0, z0, tx, h, tz, DIRT, true);
+        for (int y = h + 1; y <= top; y++) sink.put(tx, y, tz, log, true);
+        sink.put(tx, h, tz, DIRT, true);
     }
     private static void put(LevelChunkSection section, int x0, int y0, int z0, int x, int y, int z, BlockState state, boolean force) {
         int lx = x - x0, ly = y - y0, lz = z - z0;

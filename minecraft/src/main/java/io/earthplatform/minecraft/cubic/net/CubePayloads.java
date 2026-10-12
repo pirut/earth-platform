@@ -1,6 +1,9 @@
 package io.earthplatform.minecraft.cubic.net;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.CubicLevel;
+import io.earthplatform.minecraft.cubic.ServerCubeWorld;
+import io.earthplatform.minecraft.cubic.far.Far;
 import java.util.ArrayList;
 import java.util.List;
 import javax.annotation.Nullable;
@@ -9,6 +12,7 @@ import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 
@@ -80,11 +84,45 @@ public final class CubePayloads {
         @Override public Type<ColumnTops> type() { return TYPE; }
     }
 
+    /** Far-terrain columns the client is missing, by {@link Far} key. */
+    public record FarRequest(long[] keys) implements CustomPacketPayload {
+        public static final int MAX_KEYS = 512;
+        public static final Type<FarRequest> TYPE = new Type<>(id("far_request"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, FarRequest> CODEC = StreamCodec.of(
+                (buf, p) -> buf.writeLongArray(p.keys), buf -> new FarRequest(buf.readLongArray(null, MAX_KEYS)));
+        @Override public Type<FarRequest> type() { return TYPE; }
+    }
+
+    /**
+     * One far-terrain column: its lowest section's Y in level units, then each section's vanilla
+     * section bytes (voxels as blocks, plus biomes) from the bottom up; empty for an all-air section.
+     */
+    public record FarColumnData(long key, int bottom, List<byte[]> sections) implements CustomPacketPayload {
+        public static final Type<FarColumnData> TYPE = new Type<>(id("far_column"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, FarColumnData> CODEC = StreamCodec.of((buf, p) -> {
+            buf.writeLong(p.key);
+            buf.writeInt(p.bottom);
+            buf.writeVarInt(p.sections.size());
+            for (byte[] section : p.sections) buf.writeByteArray(section);
+        }, buf -> {
+            long key = buf.readLong();
+            int bottom = buf.readInt(), count = Math.min(buf.readVarInt(), Far.MAX_SECTIONS);
+            List<byte[]> sections = new ArrayList<>(count);
+            for (int i = 0; i < count; i++) sections.add(buf.readByteArray(1 << 20));
+            return new FarColumnData(key, bottom, sections);
+        });
+        @Override public Type<FarColumnData> type() { return TYPE; }
+    }
+
     public static void register(RegisterPayloadHandlersEvent event) {
         var registrar = event.registrar("cubic-1");
         registrar.playToClient(CubeData.TYPE, CubeData.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.cube(p); });
         registrar.playToClient(CubeUnload.TYPE, CubeUnload.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.unload(p); });
         registrar.playToClient(BlockChanges.TYPE, BlockChanges.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.changes(p); });
         registrar.playToClient(ColumnTops.TYPE, ColumnTops.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.tops(p); });
+        registrar.playToClient(FarColumnData.TYPE, FarColumnData.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.far(p); });
+        registrar.playToServer(FarRequest.TYPE, FarRequest.CODEC, (p, c) -> {
+            if (c.player() instanceof ServerPlayer player && CubicLevel.of(player.serverLevel()) instanceof ServerCubeWorld world) world.far().request(player, p.keys());
+        });
     }
 }

@@ -25,12 +25,15 @@ public final class ClientCubeWorld extends CubeWorld {
     private final ClientLevel client;
     private final Registry<Biome> biomes;
     final CubeRenderer renderer;
+    private final FarRenderer far;
+    @Nullable private Object shaderIds;
 
     public ClientCubeWorld(ClientLevel level) {
         super(level);
         this.client = level;
         this.biomes = level.registryAccess().registryOrThrow(Registries.BIOME);
         this.renderer = new CubeRenderer(this);
+        this.far = new FarRenderer(this);
     }
 
     /** The store for the level the player is in, created on first use. */
@@ -47,6 +50,7 @@ public final class ClientCubeWorld extends CubeWorld {
 
     public ClientLevel client() { return client; }
     public CubeRenderer renderer() { return renderer; }
+    public FarRenderer far() { return far; }
 
     /** Unknown columns count as open sky until the server sends their tops. */
     @Override protected int baselineTop(int x, int z) { return MIN_Y - 1; }
@@ -100,6 +104,15 @@ public final class ClientCubeWorld extends CubeWorld {
         renderer.topsChanged(payload.cubeX(), payload.cubeZ(), old, payload.tops());
     }
 
+    /** Remeshes everything when a shader pack comes, goes or remaps its blocks, since meshes carry its format and ids. */
+    public void checkShaders() {
+        Object ids = ShaderBlocks.ids();
+        if (ids == shaderIds) return;
+        shaderIds = ids;
+        renderer.remeshAll();
+        far.remeshAll();
+    }
+
     /** Drops every cube; the server streams them again, for example after a respawn. */
     public void reset() {
         for (Cube cube : new java.util.ArrayList<>(cubes.values())) {
@@ -111,6 +124,7 @@ public final class ClientCubeWorld extends CubeWorld {
 
     public void close() {
         renderer.close();
+        far.close();
         for (Cube cube : new java.util.ArrayList<>(cubes.values())) forget(cube);
     }
 }

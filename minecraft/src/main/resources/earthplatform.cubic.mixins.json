@@ -18,7 +18,9 @@
   ],
   "client": [
     "CubicPredictionMixin",
-    "CubicDestroyProgressMixin"
+    "CubicDestroyProgressMixin",
+    "CubicFarPlaneMixin",
+    "CubicShaderFarMixin"
   ],
   "injectors": {
     "defaultRequire": 1

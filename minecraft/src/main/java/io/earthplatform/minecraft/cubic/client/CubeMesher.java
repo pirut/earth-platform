@@ -9,6 +9,7 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexSorting;
 import io.earthplatform.minecraft.cubic.CubeLight;
 import io.earthplatform.minecraft.cubic.CubeWorld;
+import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import java.util.List;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
@@ -20,6 +21,7 @@ import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
+import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.BlockAndTintGetter;
 import net.minecraft.world.level.ColorResolver;
@@ -47,7 +49,8 @@ final class CubeMesher {
     /** Copied on the client thread; the worker only reads it. */
     record Snapshot(long key, int version, int cx, int cy, int cz,
                     @Nullable PalettedContainer<BlockState>[] states, @Nullable PalettedContainerRO<Holder<Biome>>[] biomes,
-                    @Nullable int[][] tops, float camX, float camY, float camZ, boolean constantAmbient) {}
+                    @Nullable int[][] tops, float camX, float camY, float camZ, boolean constantAmbient,
+                    @Nullable Object2IntMap<BlockState> shaderIds) {}
 
     record Layer(int index, MeshData mesh, ByteBufferBuilder memory) {}
     record Built(long key, int version, List<Layer> layers, byte[] light) {
@@ -86,8 +89,10 @@ final class CubeMesher {
                 pos.set(x0 + x, y0 + y, z0 + z);
                 FluidState fluid = state.getFluidState();
                 if (!fluid.isEmpty()) {
-                    int layer = LAYERS.indexOf(ItemBlockRenderTypes.getRenderLayer(fluid));
-                    blocks.renderLiquid(pos, view, builder(builders, memory, layer), state, fluid);
+                    BufferBuilder builder = builder(builders, memory, LAYERS.indexOf(ItemBlockRenderTypes.getRenderLayer(fluid)));
+                    ShaderBlocks.begin(builder, s.shaderIds, fluid.createLegacyBlock(), true, x, y, z);
+                    blocks.renderLiquid(pos, view, builder, state, fluid);
+                    ShaderBlocks.end(builder, s.shaderIds);
                 }
                 if (state.getRenderShape() != RenderShape.MODEL) continue;
                 BakedModel model = blocks.getBlockModel(state);
@@ -96,9 +101,12 @@ final class CubeMesher {
                 for (RenderType type : model.getRenderTypes(state, random, data)) {
                     int layer = LAYERS.indexOf(type);
                     if (layer < 0) continue;
+                    BufferBuilder builder = builder(builders, memory, layer);
                     pose.pushPose();
                     pose.translate(x, y, z);
-                    blocks.renderBatched(state, pos, view, pose, builder(builders, memory, layer), true, random, data, type);
+                    ShaderBlocks.begin(builder, s.shaderIds, state, false, x, y, z);
+                    blocks.renderBatched(state, pos, view, pose, builder, true, random, data, type);
+                    ShaderBlocks.end(builder, s.shaderIds);
                     pose.popPose();
                 }
             }
@@ -142,7 +150,16 @@ final class CubeMesher {
             return x < 0 || y < 0 || z < 0 || x >= SIZE || y >= SIZE || z >= SIZE ? -1 : CubeLight.index(x, y, z);
         }
 
-        @Override public BlockState getBlockState(BlockPos pos) { int i = at(pos); return i < 0 ? AIR : field.states[i]; }
+        @Override public BlockState getBlockState(BlockPos pos) {
+            int i = at(pos);
+            if (i < 0) return AIR;
+            int rx = pos.getX() - baseX, ry = pos.getY() - baseY, rz = pos.getZ() - baseZ;
+            if (ry >> 4 != 1 || s.states[(ry >> 4) * 9 + (rz >> 4) * 3 + (rx >> 4)] != null) return field.states[i];
+            // Beside a cube not loaded yet (the edge of the streamed area), water carries on as it
+            // does in the far terrain past it, instead of ending in a wall.
+            BlockState edge = field.states[CubeLight.index(Mth.clamp(rx, 16, 31), ry, Mth.clamp(rz, 16, 31))];
+            return edge.getFluidState().isEmpty() ? AIR : edge;
+        }
         @Override public FluidState getFluidState(BlockPos pos) { return getBlockState(pos).getFluidState(); }
         @Override @Nullable public BlockEntity getBlockEntity(BlockPos pos) { return null; }
         @Override public int getHeight() { return CubeWorld.MAX_Y - CubeWorld.MIN_Y + 1; }

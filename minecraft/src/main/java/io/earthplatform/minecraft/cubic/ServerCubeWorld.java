@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.far.FarServer;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
@@ -57,6 +58,7 @@ public final class ServerCubeWorld extends CubeWorld {
     private final CubeStorage storage;
     private final CubeCodec codec;
     private final ExecutorService workers;
+    private final FarServer far;
     private final LongOpenHashSet pending = new LongOpenHashSet();
     private final ConcurrentLinkedQueue<Ready> ready = new ConcurrentLinkedQueue<>();
     private final Map<UUID, Watcher> watchers = new HashMap<>();
@@ -91,6 +93,7 @@ public final class ServerCubeWorld extends CubeWorld {
         this.codec = new CubeCodec(level.registryAccess().registryOrThrow(Registries.BIOME));
         this.storage = new CubeStorage(DimensionType.getStorageFolder(level.dimension(),
                 level.getServer().getWorldPath(LevelResource.ROOT)).resolve("cubes"));
+        this.far = new FarServer(generator, storage, codec, level.registryAccess().registryOrThrow(Registries.BIOME));
         int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 2));
         this.workers = Executors.newFixedThreadPool(threads, runnable -> {
             Thread thread = new Thread(runnable, "Earth cube worker " + THREADS.incrementAndGet());
@@ -101,6 +104,7 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     public CubeGenerator generator() { return generator; }
+    public FarServer far() { return far; }
 
     @Override protected int baselineTop(int x, int z) { return generator.skyTopY(x, z); }
 
@@ -204,6 +208,7 @@ public final class ServerCubeWorld extends CubeWorld {
             if (ticks % 10 == 0) unsend(watcher, h + 1, v + 1, cx, cy, cz);
         }
         flushChanges();
+        far.tick(server.players());
         lightCubes();
         if (ticks % 20 == 0) populate();
         if (ticks % 40 == 0) unloadUnwatched(h + 2, v + 2);
@@ -468,6 +473,7 @@ public final class ServerCubeWorld extends CubeWorld {
         try {
             storage.put(cube.key, codec.write(cube, server.registryAccess()));
             cube.dirty = false;
+            far.edited(cube.x, cube.z);
         } catch (IOException | RuntimeException failure) {
             EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(cube.key), failure);
         }
@@ -488,11 +494,13 @@ public final class ServerCubeWorld extends CubeWorld {
         save();
         closed = true;
         workers.shutdownNow();
+        far.close();
         for (Cube cube : new ArrayList<>(cubes.values())) forget(cube);
     }
 
     public String describe() {
-        return cubes.size() + " cubes loaded, " + pending.size() + " pending, " + light.size() + " lit, " + watchers.size() + " watching";
+        return cubes.size() + " cubes loaded, " + pending.size() + " pending, " + light.size() + " lit, " + watchers.size() + " watching, "
+                + far.cached() + " far columns cached";
     }
 
     /** Iterates loaded cubes; exposed for diagnostics. */
