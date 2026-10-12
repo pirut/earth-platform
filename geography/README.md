@@ -12,6 +12,19 @@ Dependency-free Java 21 geography pipeline, separate from Minecraft integration.
 - `OfflineTerrain`: preload and verify a small local pack (maximum 64 MiB) at initialization, then synchronously query/generate with no disk or network I/O. This supports game world-generation APIs that need immediate heights.
 - Four actual NOAA ETOPO2022 rasters covering three bounded regions: San Francisco coast, Everest and Challenger Deep. NOAA importer, pinned original TIFFs, reconstruction scripts and attribution are in `tools/` and `data/noaa-etopo2022-proof/`.
 
+## Whole-planet surface layer (`globe` package)
+
+Streams real elevation for any place on Earth, for the playable world type described in `../docs/ROADMAP.md` (milestone A1). It is separate from the pinned EGP1 packs above.
+
+- `MercatorGrid` (`web-mercator-v1`): X east, Z south, origin at 0°/0°, `metresPerBlock` projected metres per block (1 m at the equator by default). Conformal; block coordinates are linear in slippy-map pixels. Beyond ±85.05° fails explicitly.
+- `TerrariumTileSource` (`terrarium-v1`): AWS Terrain Tiles PNGs, single-flight per tile, bounded concurrent transfers with retry, bounded decoded-tile LRU, atomic disk cache under `z/x/y.png`, offline mode. 403/404 and undecodable tiles throw `MissingTerrainException`; corrupt cache files are deleted and refetched. Callers block, so use it from world-generation workers, never a tick thread.
+- `GlobalElevation`: Catmull-Rom bicubic through pixel centres across tile seams and the antimeridian. Above zoom 10 open sea is stored as 0 m, so those pixels take zoom-10 bathymetry.
+- `VerticalScale` (`vertical-log-v1`): near 1:1 at sea level, logarithmic compression for high land (after the capped Mercator scale factor) and hard compression for ocean depth. Defaults fit Y −64..2031 with sea level 63.
+- `EarthSurface`: combines the above and exposes `surfaceY(x, z)` plus an `identity()` string that a world must pin.
+- `GlobeProbe LAT LON SIZE PIXELS OUT.png [ZOOM] [CACHE]`: shaded top-down preview of the mapped surface from live tiles.
+
+`GlobeTest` serves synthetic tiles from a local HTTP server (single flight, retries, 404, offline disk cache, corrupt-cache repair, seamless bicubic, antimeridian wrap, bathymetry fill). `EARTH_LIVE_TILES=1` adds checks against the real dataset at Everest, the Challenger Deep, the Dead Sea and Denver.
+
 ## Coordinate contract: equirectangular-v1
 
 1. Input is WGS84 geographic longitude/latitude in degrees. Longitude canonicalizes to [-180,180); +180 and -180 identify the same meridian.

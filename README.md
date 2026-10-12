@@ -1,5 +1,7 @@
 # Earth Cubic Platform
 
+**Roadmap:** see [docs/ROADMAP.md](docs/ROADMAP.md) for the plan to a playable, go-anywhere Earth (vanilla-chunk host first, cubic engine for true 1:1 height) and the status of each milestone.
+
 Private development of a general-purpose cubic-world platform for Minecraft Java 1.21.1 / NeoForge 21.1.256. The priority is the cubic core and engine integration. Earth geography is an optional test provider and a later plugin.
 
 ## Current checkpoint: bounded rolling native player 002

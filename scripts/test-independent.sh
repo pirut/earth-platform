@@ -24,6 +24,7 @@ fi
 if [[ -f geography/src/test/java/io/earthplatform/geography/variety/TerrainVarietyTest.java ]]; then
   "$JAVA_HOME/bin/java" -ea -cp "$classes" io.earthplatform.geography.variety.TerrainVarietyTest geography
 fi
+"$JAVA_HOME/bin/java" -ea -cp "$classes" io.earthplatform.geography.globe.GlobeTest
 ./streaming/test.sh
 bash geography/tools/test_landcover.sh
 printf '\nIndependent core, geography, composition, variety, streaming and land cover tests passed. This does not establish Minecraft gameplay.\n' 
