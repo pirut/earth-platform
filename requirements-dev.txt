@@ -1,3 +1,0 @@
-# Versions used for the verified Python importer tests; not runtime game dependencies.
-numpy==2.3.5
-Pillow==12.3.0

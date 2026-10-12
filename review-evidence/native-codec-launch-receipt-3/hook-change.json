@@ -1,0 +1,7 @@
+{
+  "beforePath": "/workspace/scratch/67f3a8ccac99/earth-platform/native-survival-039/review-evidence/native-codec-launch-receipt-2/pre-java-receipt.init.gradle",
+  "beforeSha256": "db5e21eadbebfd4274a43fdeacef35ba44af4821569112e5052b619414255375",
+  "afterSha256": "4a72f34fe2328b4890ef2eecca2728d8c0e6f1691c8c3cae28d66123f46ffed1",
+  "patchSha256": "021c456dfa765e9580dac6af1b8a55b9d1125099fd3ca64c01123b265693f4bb",
+  "scope": "Fresh original JavaExec doFirst snapshots and bounded actual prepared artifact hashes, with exact regular-file before/after identity/size/time and pre-read512MiB limit; no invocation mutation"
+}

@@ -1,5 +1,3 @@
-Historical design note for the initial terrain-view001 gate. Current checkpoint status and separate experiment links are in README.md. Initial fixed-center details below are not claims about newer terrain branches.
-
 # Native-camera near/far engine fixture
 
 Status: source and headless verification in progress; actual client gate is not yet recorded here. This gate uses the measured terrain provider as an engine stress fixture. Cubic residency, generation and distant rendering are the foundation; the Earth generator remains a provider layered above it.
@@ -26,7 +24,7 @@ The controller retains the session before initialization, and the session retain
 
 ## Gate to run
 
-The initial protocol freezes a separate `native-terrain-view-001` profile after the full suite passes, then launches the actual client and records:
+The native worker freezes a separate `native-terrain-view-001` profile after the full suite passes. Root launches it in the cloud desktop and records:
 
 1. Actual spectator camera above the terrain, near native Y around 5,000 or higher, in an empty stock-height carrier.
 2. The initial far terrain and the completed native near batch, with matching source identities and actual ready coverage.

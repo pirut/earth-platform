@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeEffectDeliveryHostBoundsTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:47.758Z" hostname="4d821b23054b" time="0.004">
+  <properties/>
+  <testcase name="gameEventMetadataRejectsMultiEventUnionBeforeNativeAllocation()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeEffectDeliveryHostBoundsTest" time="0.001"/>
+  <testcase name="menuNoticesAndBroadcastClosureShareExistingMetadataCountCap()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeEffectDeliveryHostBoundsTest" time="0.0"/>
+  <testcase name="nativeTrackingPositionPreservesNegativeAndHighYWithoutWrapping()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeEffectDeliveryHostBoundsTest" time="0.0"/>
+  <testcase name="statsRefuseOverflowInsteadOfSaturatingAwayConservedAmount()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeEffectDeliveryHostBoundsTest" time="0.0"/>
+  <testcase name="soundPacketsRefuseCoordinateOverflow()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeEffectDeliveryHostBoundsTest" time="0.0"/>
+  <testcase name="menuJournalAndNativeDeliveryShareOneWholeActionByteBudget()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeEffectDeliveryHostBoundsTest" time="0.001"/>
+  <testcase name="capacitiesCountPendingAndRetainedWithoutIntegerOverflow()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeEffectDeliveryHostBoundsTest" time="0.001"/>
+  <testcase name="nativeAllowanceReservesExactEscrowBeforeEveryAction()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeEffectDeliveryHostBoundsTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

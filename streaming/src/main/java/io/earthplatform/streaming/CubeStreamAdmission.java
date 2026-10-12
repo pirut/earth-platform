@@ -112,6 +112,18 @@ public final class CubeStreamAdmission {
         this(world, connectionEpoch, maxLeases, 0);
     }
 
+    /**
+     * Constructs a fresh stream after a separately verified bounded bootstrap consumed retired
+     * lease identities. This cannot rebase any live gate; the caller must bind the exact floor to
+     * its authenticated initial protocol. No snapshots or ownership are imported.
+     */
+    public static CubeStreamAdmission afterVerifiedBootstrap(WorldIdentity world, long connectionEpoch,
+            int maxLeases, long lastBootstrapGeneration) {
+        if(lastBootstrapGeneration<=0||lastBootstrapGeneration>MAX_LEASES)
+            throw new IllegalArgumentException("Bounded positive bootstrap lease floor required");
+        return new CubeStreamAdmission(world,connectionEpoch,maxLeases,lastBootstrapGeneration);
+    }
+
     // Package-private exhaustion test seam; never exposes a way to rewind a live gate.
     CubeStreamAdmission(WorldIdentity world, long connectionEpoch, int maxLeases, long lastGeneration) {
         this.world = Objects.requireNonNull(world, "world");
@@ -133,6 +145,19 @@ public final class CubeStreamAdmission {
         Entry entry = entries.get(header.position());
         return entry != null && entry.applied >= 0 && entry.lease.generation() == header.leaseGeneration()
                 && entry.applied == header.revision();
+    }
+
+    /**
+     * Allocation-free identity/liveness check for an explicitly retained immutable presentation.
+     * A newer committed revision is allowed, but never a requested-only, retired, or re-entered lease.
+     * This is not a current-revision, render-readiness, collision, or edit admission check.
+     */
+    public synchronized boolean isCurrentLoadedLease(Header header) {
+        Objects.requireNonNull(header, "header");
+        if (state != State.OPEN || !world.equals(header.world()) || connectionEpoch != header.connectionEpoch()) return false;
+        Entry entry = entries.get(header.position());
+        return entry != null && entry.applied >= header.revision()
+                && entry.lease.generation() == header.leaseGeneration();
     }
 
     /**

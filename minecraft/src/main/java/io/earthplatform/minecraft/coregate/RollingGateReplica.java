@@ -31,7 +31,8 @@ public final class RollingGateReplica implements AutoCloseable {
     private final WorldIdentity world;
     private final long epoch;
     private final EnginePaletteContext palette;
-    private final CubePos pinCenter;
+    private CubePos pinCenter, barrierTarget;
+    private final RollingSessionDescriptor descriptor;
     private final CubeStreamAdmission admission;
     private final Map<CubePos, SceneCube> cubes = new LinkedHashMap<>();
     private final Map<CubePos, SceneCube> cubeView = Collections.unmodifiableMap(cubes);
@@ -40,23 +41,40 @@ public final class RollingGateReplica implements AutoCloseable {
     private long committedGeneration, lastLease, barrierBase = -1, ackRevision = -1;
     private StageMetadata staged;
     private StageReady ready, currentReady;
+    private boolean currentPinned=true;
     private boolean paused, replacementAccepted, awaitingCommittedReady, durabilityFailed, closed;
 
     public RollingGateReplica(WorldIdentity world, long epoch, EnginePaletteContext palette, CoreGateProfile profile) {
+        this(world,epoch,palette,Objects.requireNonNull(profile).center(),null);
+    }
+    public RollingGateReplica(WorldIdentity world,long epoch,EnginePaletteContext palette,RollingSessionDescriptor descriptor){
+        this(world,epoch,palette,Objects.requireNonNull(descriptor).center(),descriptor);
+        descriptor.requirePreparedWorld(world);
+    }
+    private RollingGateReplica(WorldIdentity world,long epoch,EnginePaletteContext palette,CubePos pin,RollingSessionDescriptor descriptor){
         this.world = Objects.requireNonNull(world); this.palette = Objects.requireNonNull(palette);
         if (epoch < 0) throw new IllegalArgumentException("Nonnegative replica epoch required");
-        this.epoch = epoch; pinCenter = Objects.requireNonNull(profile).center(); currentCenter = pinCenter;
-        admission = new CubeStreamAdmission(world, epoch, RollingCubePlan.MAX_STAGED_OWNERS);
+        this.epoch = epoch; pinCenter = pin; currentCenter = descriptor==null?pinCenter:descriptor.initialCenter();this.descriptor=descriptor;currentPinned=descriptor==null||descriptor.initialPinned();
+        if(descriptor!=null&&descriptor.arenaMode()){lastLease=64;admission=CubeStreamAdmission.afterVerifiedBootstrap(world,epoch,RollingCubePlan.MAX_STAGED_OWNERS,lastLease);}
+        else if(descriptor!=null&&descriptor.earthResumeBootstrap()){
+            lastLease=27;admission=CubeStreamAdmission.afterVerifiedBootstrap(world,epoch,RollingCubePlan.MAX_STAGED_OWNERS,lastLease);
+        }else if(descriptor!=null&&descriptor.twoWorkspaces()){
+            // The actor serially captures A leases1..27 and B28..54 before first native interest.
+            lastLease=54;admission=CubeStreamAdmission.afterVerifiedBootstrap(world,epoch,RollingCubePlan.MAX_STAGED_OWNERS,lastLease);
+        }else admission = new CubeStreamAdmission(world, epoch, RollingCubePlan.MAX_STAGED_OWNERS);
     }
 
     public void acceptMetadata(StageMetadata metadata) {
         check(); Objects.requireNonNull(metadata); RollingGateWire.validateMetadata(metadata);
+        if(descriptor!=null){descriptor.requireAllowedWindow(metadata.currentCenter());descriptor.requireAllowedWindow(metadata.candidateCenter());}
         if (paused || awaitingCommittedReady || staged != null) throw new IllegalStateException("One stage or edit barrier at a time");
-        if (!world.equals(metadata.world()) || epoch != metadata.epoch() || !pinCenter.equals(metadata.pinCenter())
+        if (!world.equals(metadata.world()) || epoch != metadata.epoch() || !pinCenter.equals(metadata.currentFocus())
+                || !(descriptor!=null&&descriptor.twoWorkspaces()?descriptor.workspaces().contains(metadata.pinCenter()):pinCenter.equals(metadata.pinCenter()))
                 || metadata.generation() != Math.incrementExact(committedGeneration)
                 || metadata.initial() != (committedGeneration == 0) || !currentCenter.equals(metadata.currentCenter())
-                || !metadata.currentLeases().equals(currentLeases))
+                || metadata.currentPinned()!=currentPinned || !metadata.currentLeases().equals(currentLeases))
             throw new IllegalArgumentException("Stale or mismatched rolling metadata");
+        RollingFocusTransition.requireAllowed(descriptor,metadata,currentReady);
         TreeSet<CubePos> union = new TreeSet<>();
         for (CubeLease lease : currentLeases) union.add(lease.position());
         for (CubeLease lease : metadata.candidateLeases()) union.add(lease.position());
@@ -85,7 +103,7 @@ public final class RollingGateReplica implements AutoCloseable {
                 throw new IllegalArgumentException("Snapshot does not belong to new coordinates of this open stage");
             if (cubes.containsKey(snapshot.position())) throw new IllegalArgumentException("Duplicate staged snapshot");
         } else {
-            if (!paused || generation != committedGeneration || !snapshot.position().equals(pinCenter)
+            if (!paused || generation != committedGeneration || !snapshot.position().equals(barrierTarget)
                     || replacementAccepted || snapshot.revision() != Math.incrementExact(barrierBase))
                 throw new IllegalArgumentException("Snapshot lacks its exact durable single-edit barrier");
         }
@@ -95,7 +113,7 @@ public final class RollingGateReplica implements AutoCloseable {
         try {
             // Rolling windows use the approved full-height dependency padding even for BASE.
             cube = new SceneCube(snapshot, palette, SceneRenderEnvelope.PLAYER_DIAGNOSTIC_PADDING);
-            if (paused) verifyImmutableShell(cubes.get(pinCenter), cube);
+            if (paused) verifyImmutableShell(cubes.get(barrierTarget), cube);
         } catch (RuntimeException failure) { admission.cancel(accepted.token()); throw failure; }
         if (admission.commit(accepted.token(), () -> cubes.put(snapshot.position(), cube)) != CubeStreamAdmission.Rejection.NONE)
             throw new IllegalStateException("Rolling cube commit rejected");
@@ -105,13 +123,31 @@ public final class RollingGateReplica implements AutoCloseable {
     /** A post-edit committed ready is accepted once, only after its recoverable edit ACK. */
     public void acceptReady(StageReady supplied) {
         check(); Objects.requireNonNull(supplied); RollingGateWire.validateReady(supplied);
+        if(descriptor!=null){descriptor.requireAllowedWindow(supplied.candidateCenter());if(descriptor.twoWorkspaces())RollingIndexedQueryGuard.require(descriptor,supplied.replacementSet(),supplied.candidateCenter());}
         if (paused) throw new IllegalStateException("Durability acknowledgement must precede ready");
+        if(descriptor!=null&&descriptor.arenaMode()){
+            RollingArenaQueryGuard.require(descriptor,supplied.arenaCertificate());supplied.arenaCertificate().verifyCapture(supplied.arenaCapture());
+            if(supplied.pinned()||supplied.activeFocus()!=null)throw new IllegalArgumentException("Arena cannot acquire a native pin/focus");
+            if(staged!=null&&staged.initial()){long expected=1;for(var v:supplied.arenaCertificate().dependencies())if(v.leaseGeneration()!=expected++)throw new IllegalArgumentException("Noncanonical arena64 bootstrap lease floor");}
+        }else if(supplied.arenaCertificate()!=null||supplied.arenaCapture()!=null)throw new IllegalArgumentException("Unadmitted arena capability");
+        if(descriptor!=null&&descriptor.twoWorkspaces()){
+            CubePos focus=staged==null?pinCenter:staged.pinCenter();
+            if(supplied.replacementSet()==null||!focus.equals(supplied.activeFocus())||!descriptor.workspaces().equals(supplied.replacementSet().workspaces()))
+                throw new IllegalArgumentException("Complete declared workspace set and active focus required");
+            if(staged!=null&&staged.initial()){
+                long expected=1;for(var region:supplied.replacementSet().regions())for(var dependency:region.dependencies())
+                    if(dependency.leaseGeneration()!=expected++)throw new IllegalArgumentException("Noncanonical serial bootstrap capture lease floor");
+                if(expected!=55)throw new IllegalArgumentException("Incomplete bootstrap capture manifest");
+            }
+        }else if(supplied.replacementSet()!=null)throw new IllegalArgumentException("Unadmitted replacement-set capability");
         if (staged != null) {
             if (ready != null) throw new IllegalArgumentException("Replayed stage readiness");
+            if(supplied.pinned()!=staged.candidatePinned())throw new IllegalArgumentException("Ready pin policy mismatch");
             verifyManifest(supplied, staged.generation(), staged.candidateCenter(), staged.candidateLeases());
             ready = supplied;
         } else {
             if (!awaitingCommittedReady) throw new IllegalStateException("No committed edit is awaiting readiness");
+            if(supplied.pinned()!=currentPinned)throw new IllegalArgumentException("Committed ready pin policy mismatch");
             verifyManifest(supplied, committedGeneration, currentCenter, currentLeases);
             currentReady = supplied; awaitingCommittedReady = false;
         }
@@ -131,14 +167,17 @@ public final class RollingGateReplica implements AutoCloseable {
         if (!retired.requested().isEmpty()) throw new IllegalStateException("Commit cannot allocate new leases");
         for (var lease : retired.retired()) cubes.remove(lease.lease().position());
         currentLeases = staged.candidateLeases(); currentCenter = staged.candidateCenter(); committedGeneration = generation;
-        currentReady = ready; staged = null; ready = null;
+        currentPinned=staged.candidatePinned();pinCenter=staged.pinCenter(); currentReady = ready; staged = null; ready = null;
     }
 
-    public void beginEdit() {
+    public void beginEdit() { beginEdit(pinCenter); }
+    public void beginEdit(CubePos target) {
         check();
-        if (paused || staged != null || awaitingCommittedReady || committedGeneration == 0 || cubes.size() != currentLeases.size())
+        if(descriptor!=null&&descriptor.arenaMode()){if(!descriptor.arenaDefinition().contains(target)||!descriptor.arenaDefinition().insideWindow(currentCenter))throw new IllegalArgumentException("Arena edit requires complete existing64 halo");}
+        else if(!pinCenter.equals(target))throw new IllegalArgumentException("Wrong legacy edit focus");
+        if (!(currentPinned||descriptor!=null&&descriptor.arenaMode()) || paused || staged != null || awaitingCommittedReady || committedGeneration == 0 || cubes.size() != currentLeases.size())
             throw new IllegalStateException("Edit requires complete committed data without a stage");
-        barrierBase = revision();
+        barrierTarget=target;barrierBase = revision(target);
         if (barrierBase < 0) throw new IllegalStateException("Original editable cube is unknown");
         replacementAccepted = false; paused = true; currentReady = null;
     }
@@ -152,7 +191,7 @@ public final class RollingGateReplica implements AutoCloseable {
             throw new IllegalStateException("Failed durability leaves replica fenced");
         }
         if (result == EditStatus.APPLIED) {
-            if (!replacementAccepted || revision != Math.incrementExact(barrierBase) || revision() != revision)
+            if (!replacementAccepted || revision != Math.incrementExact(barrierBase) || revision(barrierTarget) != revision)
                 throw new IllegalStateException("Durable acknowledgement precedes its exact replacement snapshot");
             ackRevision = revision;
         } else if (replacementAccepted) throw new IllegalStateException("Replacement snapshot lacks successful durability acknowledgement");
@@ -173,14 +212,15 @@ public final class RollingGateReplica implements AutoCloseable {
         }
     }
 
-    private static void verifyImmutableShell(SceneCube old, SceneCube replacement) {
+    private void verifyImmutableShell(SceneCube old, SceneCube replacement) {
         if (old == null) throw new IllegalStateException("Editable cube is unknown");
         int changes = 0;
         for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
             if (old.state(x, y, z) == replacement.state(x, y, z)) continue;
-            if (x == 0 || y == 0 || z == 0 || x == 15 || y == 15 || z == 15)
+            if ((descriptor == null || descriptor.editPolicy() == io.earthplatform.minecraft.enginebridge.RollingEditPolicy.INTERIOR_V1)
+                    && (x == 0 || y == 0 || z == 0 || x == 15 || y == 15 || z == 15))
                 throw new IllegalArgumentException("Original editable cube boundary shell is immutable");
-            if (++changes > 1) throw new IllegalArgumentException("Only one interior block may change per edit barrier");
+            if (++changes > 1) throw new IllegalArgumentException("Only one original-cube block may change per edit barrier");
         }
     }
 
@@ -197,7 +237,21 @@ public final class RollingGateReplica implements AutoCloseable {
     public boolean paused() { check(); return paused; }
     public boolean awaitingCommittedReady() { check(); return awaitingCommittedReady; }
     public long acknowledgedRevision() { check(); return ackRevision; }
-    public long revision() { check(); var cube = cubes.get(pinCenter); return cube == null ? -1 : cube.snapshot().revision(); }
+    public long revision() { return revision(pinCenter); }
+    public long revision(CubePos position) { check(); var cube = cubes.get(position); if(cube!=null)return cube.snapshot().revision();
+        var arena=currentReady==null?null:currentReady.arenaCertificate();if(arena!=null)return arena.revision(position);
+        var set=currentReady==null?null:currentReady.replacementSet();if(set!=null)return set.region(position).revision();
+        var cert=currentReady==null?null:currentReady.replacementCertificate();return cert==null?-1:cert.dependencies().stream().filter(v->v.position().equals(position)).findFirst().orElseThrow().revision(); }
+    public CubePos activeFocus(){check();return pinCenter;}
+    public CubePos candidateFocus(){check();return staged==null?pinCenter:staged.pinCenter();}
+    public boolean currentPinned(){check();return currentPinned;}
+    public boolean candidatePinned(){check();return staged==null?currentPinned:staged.candidatePinned();}
+    public StageReady candidateReady(){check();return staged==null?currentReady:ready;}
+    public void replaceReadyCertificate(StageReady replacement){check();var prior=candidateReady();
+        if(prior==null||prior.arenaCertificate()!=null||replacement.arenaCertificate()!=null||prior.replacementSet()!=null||replacement.replacementSet()!=null||replacement.replacementCertificate()!=null||!prior.versions().equals(replacement.versions())||prior.pinned()!=replacement.pinned()
+            ||!prior.world().equals(replacement.world())||prior.epoch()!=replacement.epoch()||prior.generation()!=replacement.generation()||!prior.candidateCenter().equals(replacement.candidateCenter()))throw new IllegalArgumentException("Fallback may only remove optional certificate");
+        if(staged==null)currentReady=replacement;else ready=replacement;
+    }
     public List<CubePos> currentPositions125() { check(); return currentPlan().currentOwners(); }
     public List<CubePos> currentTargets() { check(); return currentPlan().committedTargets(); }
     public List<CubePos> candidatePositions125() { check(); return staged == null ? currentPositions125() : candidatePlan().currentOwners(); }
@@ -208,8 +262,8 @@ public final class RollingGateReplica implements AutoCloseable {
         if (manifest == null) throw new IllegalStateException("No exact ready manifest");
         return RollingGateWire.manifestDigest(manifest);
     }
-    private RollingCubePlan currentPlan() { return RollingCubePlan.stationary(pinCenter, currentCenter); }
-    private RollingCubePlan candidatePlan() { return RollingCubePlan.stationary(pinCenter, staged.candidateCenter()); }
+    private RollingCubePlan currentPlan() { return RollingCubePlan.stationary(pinCenter, currentCenter,currentPinned); }
+    private RollingCubePlan candidatePlan() { return RollingCubePlan.stationary(staged.pinCenter(), staged.candidateCenter(),staged.candidatePinned()); }
     private void check() {
         if (Thread.currentThread() != owner) throw new IllegalStateException("Rolling replica owner thread required");
         if (closed) throw new IllegalStateException("Rolling replica closed");

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedCraftingTablePlanTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:48.986Z" hostname="4d821b23054b" time="0.007">
+  <properties/>
+  <testcase name="nativeContainerCounterWrapIsBounded()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedCraftingTablePlanTest" time="0.002"/>
+  <testcase name="tableIndicesNeverAliasInventoryMenuArmorOrOffhand()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedCraftingTablePlanTest" time="0.001"/>
+  <testcase name="closeTransfersOnlyMatchingNativeInventoryContainerSlots()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedCraftingTablePlanTest" time="0.001"/>
+  <testcase name="unresolvedTableOwnershipCannotCrossCompositeBoundary()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedCraftingTablePlanTest" time="0.0"/>
+  <testcase name="allTableGridAndPlayerSlotsAllowOnlyInitialPickupMode()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedCraftingTablePlanTest" time="0.001"/>
+  <testcase name="broadcastWrapsOnlyNativeChangedTableRemoteSlots()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedCraftingTablePlanTest" time="0.0"/>
+  <testcase name="unchangedTableBroadcastPreservesInitializedStateId()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedCraftingTablePlanTest" time="0.001"/>
+  <testcase name="nineGridSlotsAndPositiveContainerAreDistinctFromInventoryMenuImage()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeResolvedCraftingTablePlanTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

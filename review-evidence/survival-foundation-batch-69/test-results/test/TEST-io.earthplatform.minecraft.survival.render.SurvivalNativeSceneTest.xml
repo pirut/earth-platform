@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:53.584Z" hostname="4d821b23054b" time="0.457">
+  <properties/>
+  <testcase name="resourceGenerationAndImmediateReloadRequestBothFenceOldWorkBeforeCallback()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.044"/>
+  <testcase name="exportOrderingRejectsReplayAndWrongStreamOrOwnerWithoutMutatingCurrentScene()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.036"/>
+  <testcase name="rawEngineSnapshotsCannotCrossSceneLifetimesEvenWhenOwnerWorldAndLeaseNumbersRepeat()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.074"/>
+  <testcase name="unsupportedFallingBlocksEntitiesAndWaterloggedLeavesRemainRefused()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.001"/>
+  <testcase name="crossBoundaryEditInvalidatesOldDependencyJobsButKeepsUnchangedMemberSnapshot()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.051"/>
+  <testcase name="immutableExportIsUsableOnAnotherClientThreadWithoutLiveServerReads()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.057"/>
+  <testcase name="activeTransactionAndOffOwnerExportCannotBypassTheSimulationReadSet()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.003"/>
+  <testcase name="applyingAndAppliedButUnclosedWholeActionsCannotPublishCommittedCubes()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.002"/>
+  <testcase name="snapshotPinsCompleteResidentHaloFullEpochAndCommitAndIsImmutable()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.001"/>
+  <testcase name="unknownAndRetiredDependenciesRefuseBeforeExportWithoutAirFallback()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.0"/>
+  <testcase name="dependencyUnionIsBoundedBeforePayloadOrResidencyAndFullPageFitsExistingGuards()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.065"/>
+  <testcase name="sceneThreadOwnershipCloseAndOutdoorLightingRemainExplicit()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.034"/>
+  <testcase name="failedNativeDeliveryPermanentlyRefusesExporterAfterActionCloseAndMismatchedOwnerRefuses()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.002"/>
+  <testcase name="signedMarinPageHas64MembersAnd216TotalDependenciesWithoutOriginRemapping()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.001"/>
+  <testcase name="reincarnationAtSameCommitAndSimulationRevisionGetsANewLease()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.045"/>
+  <testcase name="exactNativeAxisLeafPropertiesAndAllNineBlockFamiliesSurviveTheAdapter()" classname="io.earthplatform.minecraft.survival.render.SurvivalNativeSceneTest" time="0.037"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

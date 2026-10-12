@@ -8,7 +8,8 @@ import java.util.Objects;
 import java.util.TreeSet;
 
 /**
- * Immutable geometry for one rolling 5 x 5 x 5 window and one fixed 3 x 3 x 3 pin.
+ * Immutable geometry for one rolling 5 x 5 x 5 window and one optional fixed 3 x 3 x 3 pin.
+ * Legacy factories keep both pin modes enabled; explicit modes require external replacement authority.
  * A candidate is at most one cube away on each axis; a distant desired goal is coalesced by
  * the caller and approached using {@link #nextStep}. No heightfield/provider is consulted.
  * All lists are duplicate-free, immutable, and ordered by {@link CubePos#compareTo}.
@@ -37,6 +38,8 @@ public final class RollingCubePlan {
     public static final int PIN_TARGETS = 1;
     public static final int MAX_COMMITTED_OWNERS = 152;
     public static final int MAX_ADDED_OR_RETIRED_OWNERS = 61;
+    /** A pin-mode change may additionally add or retire the original 27 dependencies. */
+    public static final int MAX_PIN_TRANSITION_DELTA = 88;
     /** 125 + 125 - 4^3 + 27; this bound is attainable with a disjoint pin. */
     public static final int MAX_STAGED_OWNERS = 213;
     public static final int MAX_COMMITTED_TARGETS = 28;
@@ -58,6 +61,7 @@ public final class RollingCubePlan {
     public static final int MAX_WINDOW_CENTER_Y = RENDER_MAX_Y_EXCLUSIVE / CubePos.SIZE - OWNER_RADIUS - 1;
 
     private final CubePos pinCenter;
+    private final boolean currentPinned, candidatePinned;
     private final CubePos currentCenter;
     private final CubePos candidateCenter;
     private final List<CubePos> currentOwners;
@@ -74,7 +78,11 @@ public final class RollingCubePlan {
     private final List<CubePos> committedTargets;
     private final List<CubePos> stagedTargets;
 
-    private RollingCubePlan(CubePos pinCenter, CubePos currentCenter, CubePos candidateCenter) {
+    private RollingCubePlan(CubePos pinCenter, CubePos currentCenter, CubePos candidateCenter,
+                            boolean currentPinned, boolean candidatePinned) {
+        if (candidateCenter == null && currentPinned != candidatePinned)
+            throw new IllegalArgumentException("A pin-mode change requires an explicit candidate");
+        this.currentPinned = currentPinned; this.candidatePinned = candidatePinned;
         this.pinCenter = Objects.requireNonNull(pinCenter, "pinCenter");
         this.currentCenter = Objects.requireNonNull(currentCenter, "currentCenter");
         this.candidateCenter = candidateCenter;
@@ -87,23 +95,35 @@ public final class RollingCubePlan {
         }
         currentOwners = box(currentCenter, OWNER_RADIUS, WINDOW_OWNERS);
         candidateOwners = candidateCenter == null ? List.of() : box(candidateCenter, OWNER_RADIUS, WINDOW_OWNERS);
-        pinnedOwners = box(pinCenter, PIN_RADIUS, PIN_OWNERS);
-        committedOwners = union(currentOwners, pinnedOwners);
-        stagedOwners = union(committedOwners, candidateOwners);
-        nextCommittedOwners = candidateCenter == null ? committedOwners : union(candidateOwners, pinnedOwners);
+        List<CubePos> pin = box(pinCenter, PIN_RADIUS, PIN_OWNERS);
+        pinnedOwners = currentPinned || candidatePinned ? pin : List.of();
+        committedOwners = union(currentOwners, currentPinned ? pin : List.of());
+        nextCommittedOwners = candidateCenter == null ? committedOwners
+                : union(candidateOwners, candidatePinned ? pin : List.of());
+        stagedOwners = union(committedOwners, nextCommittedOwners);
         addedOwners = difference(nextCommittedOwners, committedOwners);
         retiredOwners = difference(committedOwners, nextCommittedOwners);
         currentTargets = box(currentCenter, TARGET_RADIUS, WINDOW_TARGETS);
         candidateTargets = candidateCenter == null ? List.of() : box(candidateCenter, TARGET_RADIUS, WINDOW_TARGETS);
-        pinnedTargets = List.of(pinCenter);
-        committedTargets = union(currentTargets, pinnedTargets);
-        stagedTargets = union(committedTargets, candidateTargets);
+        pinnedTargets = currentPinned || candidatePinned ? List.of(pinCenter) : List.of();
+        committedTargets = union(currentTargets, currentPinned ? List.of(pinCenter) : List.of());
+        stagedTargets = union(union(committedTargets, candidateTargets),
+                candidateCenter != null && candidatePinned ? List.of(pinCenter) : List.of());
         validate();
     }
 
     /** A null candidate means that no transition is admitted; an equal center is a safe no-op. */
     public static RollingCubePlan create(CubePos pinCenter, CubePos currentCenter, CubePos candidateCenter) {
-        return new RollingCubePlan(pinCenter, currentCenter, candidateCenter);
+        return create(pinCenter, currentCenter, candidateCenter, true, true);
+    }
+
+    public static RollingCubePlan create(CubePos pinCenter, CubePos currentCenter, CubePos candidateCenter,
+                                         boolean currentPinned, boolean candidatePinned) {
+        return new RollingCubePlan(pinCenter, currentCenter, candidateCenter, currentPinned, candidatePinned);
+    }
+
+    public static RollingCubePlan stationary(CubePos pinCenter, CubePos currentCenter, boolean pinned) {
+        return create(pinCenter, currentCenter, null, pinned, pinned);
     }
 
     public static RollingCubePlan stationary(CubePos pinCenter, CubePos currentCenter) {
@@ -180,13 +200,14 @@ public final class RollingCubePlan {
 
     /** Recheck the immutable snapshot's accounting invariants without consulting mutable state. */
     public void validate() {
-        if (currentOwners.size() != WINDOW_OWNERS || pinnedOwners.size() != PIN_OWNERS
-                || currentTargets.size() != WINDOW_TARGETS || pinnedTargets.size() != PIN_TARGETS
+        if (currentOwners.size() != WINDOW_OWNERS || pinnedOwners.size() != (currentPinned || candidatePinned ? PIN_OWNERS : 0)
+                || currentTargets.size() != WINDOW_TARGETS || pinnedTargets.size() != (currentPinned || candidatePinned ? PIN_TARGETS : 0)
                 || candidateOwners.size() != (candidateCenter == null ? 0 : WINDOW_OWNERS)
                 || candidateTargets.size() != (candidateCenter == null ? 0 : WINDOW_TARGETS)
                 || committedOwners.size() > MAX_COMMITTED_OWNERS || stagedOwners.size() > MAX_STAGED_OWNERS
                 || nextCommittedOwners.size() > MAX_COMMITTED_OWNERS
-                || addedOwners.size() > MAX_ADDED_OR_RETIRED_OWNERS || retiredOwners.size() > MAX_ADDED_OR_RETIRED_OWNERS
+                || addedOwners.size() > (currentPinned == candidatePinned ? MAX_ADDED_OR_RETIRED_OWNERS : MAX_PIN_TRANSITION_DELTA)
+                || retiredOwners.size() > (currentPinned == candidatePinned ? MAX_ADDED_OR_RETIRED_OWNERS : MAX_PIN_TRANSITION_DELTA)
                 || committedTargets.size() > MAX_COMMITTED_TARGETS || stagedTargets.size() > MAX_STAGED_TARGETS
                 || !stagedOwners.containsAll(stagedTargets))
             throw new IllegalStateException("Invalid rolling owner/target accounting");
@@ -217,15 +238,18 @@ public final class RollingCubePlan {
     }
 
     public CubePos pinCenter() { return pinCenter; }
+    public boolean currentPinned() { return currentPinned; }
+    public boolean candidatePinned() { return candidatePinned; }
     public CubePos currentCenter() { return currentCenter; }
     public CubePos candidateCenter() { return candidateCenter; }
     public boolean hasCandidate() { return candidateCenter != null; }
     public List<CubePos> currentOwners() { return currentOwners; }
     public List<CubePos> candidateOwners() { return candidateOwners; }
+    /** Pin dependencies held by either side of this transition. */
     public List<CubePos> pinnedOwners() { return pinnedOwners; }
     public List<CubePos> stagedOwners() { return stagedOwners; }
     public List<CubePos> committedOwners() { return committedOwners; }
-    /** Candidate plus fixed pin after commit, or committedOwners when there is no candidate. */
+    /** Candidate plus its explicitly enabled pin after commit, or committedOwners with no candidate. */
     public List<CubePos> nextCommittedOwners() { return nextCommittedOwners; }
     /** New leases required by this transition; initial startup must separately admit all owners. */
     public List<CubePos> addedOwners() { return addedOwners; }

@@ -1,0 +1,173 @@
+{
+  "nativeReadContinuationCountersQualified": true,
+  "problems": [],
+  "snapshots": {
+    "constructed-before-preload": {
+      "capacity": 2048,
+      "admitted": 0,
+      "factoryReturns": 0,
+      "dispatches": 0,
+      "dispatchReturns": 0,
+      "taskRuns": 0,
+      "taskReturns": 0,
+      "callbacks": 0,
+      "callbackSuccesses": 0,
+      "callbackFailures": 0,
+      "physicallyRetired": 0,
+      "unresolved": 0,
+      "firstFailureCode": 0,
+      "retainedEnvelopeBytes": 2097152,
+      "sourcePayloadAuthority": false,
+      "closeAuthority": false
+    },
+    "after-native-prebind-save": {
+      "capacity": 2048,
+      "admitted": 841,
+      "factoryReturns": 841,
+      "dispatches": 841,
+      "dispatchReturns": 841,
+      "taskRuns": 841,
+      "taskReturns": 841,
+      "callbacks": 841,
+      "callbackSuccesses": 841,
+      "callbackFailures": 0,
+      "physicallyRetired": 841,
+      "unresolved": 0,
+      "firstFailureCode": 0,
+      "retainedEnvelopeBytes": 2097152,
+      "sourcePayloadAuthority": false,
+      "closeAuthority": false
+    },
+    "original-server-stopped-observed": {
+      "capacity": 2048,
+      "admitted": 841,
+      "factoryReturns": 841,
+      "dispatches": 841,
+      "dispatchReturns": 841,
+      "taskRuns": 841,
+      "taskReturns": 841,
+      "callbacks": 841,
+      "callbackSuccesses": 841,
+      "callbackFailures": 0,
+      "physicallyRetired": 841,
+      "unresolved": 0,
+      "firstFailureCode": 0,
+      "retainedEnvelopeBytes": 2097152,
+      "sourcePayloadAuthority": false,
+      "closeAuthority": false
+    }
+  },
+  "inputBindings": {
+    "review-evidence/native-carrier-read-continuation-batch-4/terminal.json": {
+      "bytes": 3859,
+      "sha256": "5f4f274f4c149a2ee6f6b2a5a77bb5f1a8d67fb98280860eeddeac2d61d213d5"
+    },
+    "review-evidence/native-carrier-read-continuation-batch-4/post-jvm-census.json": {
+      "bytes": 71,
+      "sha256": "00659b9e71b2c28262d3251d083dbad9828aed2f7ed2979f317d22afcd5a9398"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/world/native-excavation-session-evidence/carrier-read-contracts.json": {
+      "bytes": 308,
+      "sha256": "e59e304aad8156209e7b4107f9ac06fe7a6917ea4255daa83e961ce4c562e15d"
+    },
+    "review-evidence/native-carrier-read-continuation-batch-4/run.log": {
+      "bytes": 204313,
+      "sha256": "83dd519104ca0faa0db2eed1917ce9f49d4ee7cace3674ee52efefa59813a650"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/world/native-excavation-session-evidence/carrier-read-continuations-constructed-before-preload.json": {
+      "bytes": 380,
+      "sha256": "7cbdeb26bafc9ca29b8f362bf15282d6e7e39d9cd035d2ebcd209892aba5d2a2"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/world/native-excavation-session-evidence/carrier-io-constructed-before-preload.json": {
+      "bytes": 349,
+      "sha256": "972cf49d0471a24874eca919948da823934f65be47070b1f13fe2fbc6e793667"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/world/native-excavation-session-evidence/carrier-read-continuations-after-native-prebind-save.json": {
+      "bytes": 398,
+      "sha256": "0c2aeba659cff9499048d473a0ba00c89c8ed4bd2c640ed34d0ac23f4fb5ec5d"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/world/native-excavation-session-evidence/carrier-io-after-native-prebind-save.json": {
+      "bytes": 357,
+      "sha256": "7563092fce78bf5c1d4f3cd56ac58e90f6057672209116e3408909e5b4061d32"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/world/native-excavation-session-evidence/carrier-read-continuations-original-server-stopped-observed.json": {
+      "bytes": 398,
+      "sha256": "0c2aeba659cff9499048d473a0ba00c89c8ed4bd2c640ed34d0ac23f4fb5ec5d"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/world/native-excavation-session-evidence/carrier-io-original-server-stopped-observed.json": {
+      "bytes": 358,
+      "sha256": "f6e529f3e867afb1d21c346ed2b012723632c1930c31eac0481848e69d7582a4"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-io-intermediate-transform-evidence/net_minecraft_Util.class": {
+      "bytes": 54602,
+      "sha256": "3771b96706345e06a9f54b163e787bb09a2208cb2660f55cc976af5a7ce1ddd4"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-io-intermediate-transform-evidence/net_minecraft_server_MinecraftServer.class": {
+      "bytes": 106865,
+      "sha256": "d1b1fa441d4fb0cc6ff7d5af3ce7b11f27873447c239e6ac32bcd988b7d5a809"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-io-intermediate-transform-evidence/net_minecraft_server_level_ChunkMap.class": {
+      "bytes": 77983,
+      "sha256": "eb65588201a3464a0b088f992b4c8834b566b23818ad94b01316ffc731fc1554"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-io-intermediate-transform-evidence/net_minecraft_server_level_ServerChunkCache.class": {
+      "bytes": 34671,
+      "sha256": "4d3f0de6d3e687f813aba53e6ddb6e8e2562061356b02d9435195c1a32793c3d"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-io-intermediate-transform-evidence/net_minecraft_server_level_ServerLevel.class": {
+      "bytes": 107491,
+      "sha256": "3df45c8883795bad2f40482fa9da42715d361fd6c9b1dc99d5b63843a0e39cc8"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-io-intermediate-transform-evidence/net_minecraft_util_thread_ProcessorMailbox.class": {
+      "bytes": 8865,
+      "sha256": "0d9f828eba1fb3746e87f9f573428b6d77aa9fc964b9caf81ad9afb8a1cdb6ae"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-io-intermediate-transform-evidence/net_minecraft_world_level_Level.class": {
+      "bytes": 68246,
+      "sha256": "a9e7b5871832034f02ebcb41ece42c23291587cfda9699603fa656e67b1215b6"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-io-intermediate-transform-evidence/net_minecraft_world_level_chunk_storage_ChunkStorage.class": {
+      "bytes": 11953,
+      "sha256": "8095c43ffd0dce5fada2e40c96ee01ee3de591c012e1ffd08a74f56f38c3939b"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-io-intermediate-transform-evidence/net_minecraft_world_level_chunk_storage_IOWorker.class": {
+      "bytes": 25758,
+      "sha256": "b5cb0a4c308eaa3c3d7a8131a2e513418371ef563dc5767ad1fbd9dbfa14366e"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-read-late-transform-evidence/net_minecraft_server_level_ChunkMap.class": {
+      "bytes": 79329,
+      "sha256": "57e55fbde7d76d99acccce61d440025ef3383537454299b820a37903773d9795"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-read-late-transform-evidence/extension-stage.txt": {
+      "bytes": 682,
+      "sha256": "8db5167e5434b57b2d43c115efa638611c4308c8903d38cc871bcdb7d1366765"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-read-late-transform-evidence/preflight-active-roster.txt": {
+      "bytes": 635,
+      "sha256": "1a0a82cabd7270cdc046fe662cefecffab751bec97b1b83aa0be168cc84bb833"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-read-late-transform-evidence/preflight-configured-roster.txt": {
+      "bytes": 776,
+      "sha256": "22599c755d38c6c78787a63ea8cab95fdeea2e30d053fe0929ffc3e0df8618b9"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-read-late-transform-evidence/installation-roster.txt": {
+      "bytes": 682,
+      "sha256": "87b0c2673b52f436a52fcb180943f14a24f50d149914e3444166168eb41c0e89"
+    },
+    "minecraft/run-native-carrier-read-continuation-004/carrier-read-late-transform-evidence/late-callback-roster.txt": {
+      "bytes": 683,
+      "sha256": "2a8d86644743939fc61dab13e938088555e0b8d076f07fe16b39bec7ab5b775e"
+    }
+  },
+  "originalProcessExit": 1,
+  "originalFirstFailure": [
+    "phase=native-held-transition",
+    "io.earthplatform.minecraft.survival.world.SurvivalRefusal: Earth survival: Resolve the native menu and accepted work before ACTIVE save"
+  ],
+  "requiresIndependentSourceArgumentsAndTransformReplay": true,
+  "actualNbtUpgradeWorkProven": false,
+  "sourcePayloadAuthority": false,
+  "closeAuthority": false,
+  "wholeServerCallbackTerminationProven": false,
+  "overallLifecyclePassInferred": false
+}

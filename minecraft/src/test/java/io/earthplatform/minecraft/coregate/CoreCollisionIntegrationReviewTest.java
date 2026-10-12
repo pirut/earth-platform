@@ -155,14 +155,15 @@ class CoreCollisionIntegrationReviewTest {
                 if (method.visibleAnnotations == null) continue;
                 for (var annotation : method.visibleAnnotations) {
                     if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/Inject;")) continue;
-                    assertEquals(Boolean.TRUE, value(annotation, "cancellable"));
+                    var injectionAt=(AnnotationNode)((List<?>)value(annotation,"at")).getFirst();
+                    if(!"RETURN".equals(value(injectionAt,"value")))assertEquals(Boolean.TRUE,value(annotation,"cancellable"));
                     for (Object raw : (List<?>) value(annotation, "method")) {
                         assertEquals(1, target.methods.stream().filter(m -> (m.name + m.desc).equals(raw)).count());
                         count++;
                     }
                 }
             }
-            assertEquals(1, count);
+            assertEquals(entry.getKey().equals("CoreCollisionMotionMixin")?6:1, count);
         }
         try (var input = getClass().getResourceAsStream("/earthplatform.mixins.json")) {
             assertNotNull(input);

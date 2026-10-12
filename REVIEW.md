@@ -1,7 +1,5 @@
-# Rolling002 review boundary
+# Earth002 review index
 
-The production overlay is limited to RollingMeshWorkQueue and RollingGateClient. Independent pure fault-injection tests cover callback phase separation, soft budgets, owner/thread/generation fences, returned-owner retention, cancellation and retry cleanup. Separate bytecode integration tests pin the real client adapter's use of the queue, drained readiness, retained cleanup, and non-overwriting screenshot evidence. The final native aggregate passed 626 tests with no failures, errors or skips.
+The current increment is documented in NATIVE_READ_REUSE_REVIEW.md and README.md. Independent native review, focused XML and source hashes are in review-evidence/native-reuse; the same-geometry DH review is in review-evidence/same-geometry-dh. Earlier retained review documents describe the verified baseline increments and are historical provenance.
 
-The review checks the exact PREPARED → server movement fence → native/DH pair publication → COMMITTED → replica/collision retirement ordering. The213-coordinate proof, actor/store durability, canonical leases, immutable edit shell, full-height safety and body-containment hold remain the verified rolling001 implementation. The55 native-generation reservation includes private candidates and a partial build; aliases after ownership transfer are not counted as new allocations.
-
-Timing is deliberately qualified: a2ms callback slice cannot interrupt one callback, and finish/upload, DH replacement and cold initialization remain synchronous. Tests do not certify renderer frame pacing or all possible vanilla event orderings. The actual native-client protocol and pre-cleanup interruption evidence subsequently passed at the scope recorded in docs/evidence/rolling-player-002.json.
+The final test-summary.json and source-files.sha256 identify the exact aggregate-tested artifact. Actual root-owned GUI evidence is required before treating this candidate as runtime accepted. Earth001 remains the current accepted baseline until that gate passes.

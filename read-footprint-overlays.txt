@@ -1,0 +1,15 @@
+README.md
+REVIEW.md
+minecraft/src/main/java/io/earthplatform/minecraft/coregate/RollingGateClient.java
+minecraft/src/main/java/io/earthplatform/minecraft/lod/DhPreparedLodView.java
+minecraft/src/main/java/io/earthplatform/minecraft/renderprobe/RenderPublicationGuard.java
+minecraft/src/main/java/io/earthplatform/minecraft/scene/SceneMesh.java
+minecraft/src/main/java/io/earthplatform/minecraft/scene/SceneNeighborhood.java
+minecraft/src/main/java/io/earthplatform/minecraft/scene/SceneReadFootprint.java
+minecraft/src/test/java/io/earthplatform/minecraft/RenderReuseGuardReviewTest.java
+minecraft/src/test/java/io/earthplatform/minecraft/coregate/RollingNativeReuseContractTest.java
+minecraft/src/test/java/io/earthplatform/minecraft/coregate/RollingNativeSnapshotBoundReviewTest.java
+minecraft/src/test/java/io/earthplatform/minecraft/lod/DhPreparedLodViewTest.java
+minecraft/src/test/java/io/earthplatform/minecraft/lod/DhPreparedSameGeometryReviewTest.java
+minecraft/src/test/java/io/earthplatform/minecraft/scene/SceneNeighborhoodReadFootprintTest.java
+minecraft/src/test/java/io/earthplatform/minecraft/scene/SceneReadFootprintTest.java

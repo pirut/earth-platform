@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "minVersion": "0.8.7",
+  "package": "io.earthplatform.minecraft.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "plugin": "io.earthplatform.minecraft.startupfixture.SavedDataScanTestPlugin",
+  "mixins": [
+    "NeoForgeTempFileMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "priority": 900
+}

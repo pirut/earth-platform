@@ -1,0 +1,13 @@
+{
+  "utc": "2026-10-12T07:28:09.942985+00:00",
+  "status": "COMPILE_ONLY_PASS",
+  "exit": 0,
+  "tasksFresh": 7,
+  "lockedInputs": 1290,
+  "mainClassesMatching69": 1760,
+  "fixtureClasses": 35,
+  "isolatedBuildFiles": 1860,
+  "isolatedBuildManifestSha256": "a48255ff9d3419e7080fa0930f36622efec4cca1df518eae44eecd2bd0702e94",
+  "nativeRun": false,
+  "scope": "Exact69 plus source-cleared v6 selected-stage binding; actual rosters/direct site/contracts/read retirement unrun"
+}

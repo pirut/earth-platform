@@ -5,6 +5,7 @@ import io.earthplatform.minecraft.network.EngineCubeSnapshot;
 import io.earthplatform.minecraft.network.EnginePaletteContext;
 import io.earthplatform.minecraft.residency.SparseFacadeException;
 import java.util.Objects;
+import java.util.function.Predicate;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -16,7 +17,14 @@ public final class SceneCube {
     public SceneCube(EngineCubeSnapshot snapshot, EnginePaletteContext palette) { this(snapshot,palette,SceneRenderEnvelope.NATIVE); }
 
     public SceneCube(EngineCubeSnapshot snapshot, EnginePaletteContext palette, SceneRenderEnvelope envelope) {
+        this(snapshot, palette, envelope, SceneCube::supported);
+    }
+
+    /** Explicit capability admission; old constructors retain the historical Earth whitelist. */
+    public SceneCube(EngineCubeSnapshot snapshot, EnginePaletteContext palette, SceneRenderEnvelope envelope,
+                     Predicate<BlockState> admissionPolicy) {
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
+        Objects.requireNonNull(admissionPolicy, "admissionPolicy");
         Objects.requireNonNull(palette, "palette");
         CubePos position = snapshot.position();
         if (!Objects.requireNonNull(envelope,"envelope").contains(position)) {
@@ -31,7 +39,7 @@ public final class SceneCube {
         BlockState[] materialized = new BlockState[CubePos.VOLUME];
         for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
             BlockState state = section.get(x, y, z);
-            if (!supported(state) || !state.getFluidState().isEmpty() || state.hasBlockEntity()) {
+            if (!admissionPolicy.test(state) || !state.getFluidState().isEmpty() || state.hasBlockEntity()) {
                 throw new SparseFacadeException("unsupported native scene state " + state + " at "
                         + position + " local " + x + "," + y + "," + z);
             }

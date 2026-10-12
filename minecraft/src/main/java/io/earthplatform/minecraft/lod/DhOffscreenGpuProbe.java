@@ -208,7 +208,7 @@ public final class DhOffscreenGpuProbe {
 
     private static void initializeResources(Resources r) {
         glDisable(GL_BLEND); glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LESS); glDepthMask(true);
-        for (int cap : new int[]{GL_CULL_FACE, GL_SCISSOR_TEST, GL_STENCIL_TEST, GL_FRAMEBUFFER_SRGB, GL_MULTISAMPLE}) glDisable(cap);
+        for (int cap : new int[]{GL_CULL_FACE, GL_SCISSOR_TEST, GL_STENCIL_TEST, GL_FRAMEBUFFER_SRGB, GL_MULTISAMPLE, GL_DEPTH_CLAMP}) glDisable(cap);
         glColorMask(true, true, true, true); glPixelStorei(GL_PACK_ALIGNMENT, 1); glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glPixelStorei(GL_PACK_ROW_LENGTH, 0); glPixelStorei(GL_PACK_SKIP_PIXELS, 0); glPixelStorei(GL_PACK_SKIP_ROWS, 0);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0); glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0); glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
@@ -316,14 +316,15 @@ public final class DhOffscreenGpuProbe {
         final int depthFunction = glGetInteger(GL_DEPTH_FUNC);
         final boolean depthMask = glGetBoolean(GL_DEPTH_WRITEMASK);
         final float clearDepth = glGetFloat(GL_DEPTH_CLEAR_VALUE);
+        final double[] depthRange=new double[2];
         final int[] viewport = new int[4]; final float[] clearColor = new float[4]; final boolean[] colorMask = new boolean[4];
-        final int[] caps = {GL_BLEND, GL_DEPTH_TEST, GL_CULL_FACE, GL_SCISSOR_TEST, GL_STENCIL_TEST, GL_FRAMEBUFFER_SRGB, GL_MULTISAMPLE};
+        final int[] caps = {GL_BLEND, GL_DEPTH_TEST, GL_CULL_FACE, GL_SCISSOR_TEST, GL_STENCIL_TEST, GL_FRAMEBUFFER_SRGB, GL_MULTISAMPLE, GL_DEPTH_CLAMP};
         final boolean[] enabled = new boolean[caps.length];
         final int[] pixelNames = {GL_PACK_ALIGNMENT, GL_UNPACK_ALIGNMENT, GL_PACK_ROW_LENGTH, GL_PACK_SKIP_PIXELS,
                 GL_PACK_SKIP_ROWS, GL_UNPACK_ROW_LENGTH, GL_UNPACK_SKIP_PIXELS, GL_UNPACK_SKIP_ROWS};
         final int[] pixels = new int[pixelNames.length]; final int[] textures = new int[2];
         State() {
-            glGetIntegerv(GL_VIEWPORT, viewport); glGetFloatv(GL_COLOR_CLEAR_VALUE, clearColor);
+            glGetDoublev(GL_DEPTH_RANGE,depthRange);glGetIntegerv(GL_VIEWPORT, viewport); glGetFloatv(GL_COLOR_CLEAR_VALUE, clearColor);
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 ByteBuffer mask = stack.malloc(4); glGetBooleanv(GL_COLOR_WRITEMASK, mask);
                 for (int i = 0; i < 4; i++) colorMask[i] = mask.get(i) != 0;
@@ -338,7 +339,7 @@ public final class DhOffscreenGpuProbe {
             glViewport(viewport[0], viewport[1], viewport[2], viewport[3]); glUseProgram(program); glBindVertexArray(vao);
             glBindBuffer(GL_ARRAY_BUFFER, arrayBuffer); glBindBuffer(GL_PIXEL_PACK_BUFFER, packBuffer); glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackBuffer);
             for (int i = 0; i < 2; i++) { glActiveTexture(GL_TEXTURE0 + i); glBindTexture(GL_TEXTURE_2D, textures[i]); }
-            glActiveTexture(activeTexture); glDepthFunc(depthFunction); glDepthMask(depthMask); glClearDepth(clearDepth);
+            glActiveTexture(activeTexture);glDepthRange(depthRange[0],depthRange[1]); glDepthFunc(depthFunction); glDepthMask(depthMask); glClearDepth(clearDepth);
             glClearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
             glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
             for (int i = 0; i < caps.length; i++) { if (enabled[i]) glEnable(caps[i]); else glDisable(caps[i]); }
@@ -349,7 +350,7 @@ public final class DhOffscreenGpuProbe {
             return drawFbo == after.drawFbo && readFbo == after.readFbo && program == after.program && vao == after.vao
                     && arrayBuffer == after.arrayBuffer && packBuffer == after.packBuffer && unpackBuffer == after.unpackBuffer
                     && activeTexture == after.activeTexture && depthFunction == after.depthFunction && depthMask == after.depthMask
-                    && clearDepth == after.clearDepth && Arrays.equals(viewport, after.viewport) && Arrays.equals(clearColor, after.clearColor)
+                    && clearDepth == after.clearDepth && Arrays.equals(depthRange,after.depthRange) && Arrays.equals(viewport, after.viewport) && Arrays.equals(clearColor, after.clearColor)
                     && Arrays.equals(colorMask, after.colorMask) && Arrays.equals(enabled, after.enabled)
                     && Arrays.equals(pixels, after.pixels) && Arrays.equals(textures, after.textures);
         }

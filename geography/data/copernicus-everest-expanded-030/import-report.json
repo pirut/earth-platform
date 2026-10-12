@@ -1,0 +1,89 @@
+{
+  "attribution": "produced using Copernicus WorldDEM-30 \u00a9 DLR e.V. 2010-2014 and \u00a9 Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
+  "disclaimer": "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30",
+  "expandedEgpBytes": 2162732,
+  "expandedEgpSha256": "597f435d639ea71f35d7b716b6a5f6b846e7dd22a8b8b13e7b12482e90927bca",
+  "height": 1024,
+  "maxSourceMetres": 8737.7880859375,
+  "minSourceMetres": 4356.13427734375,
+  "networkRequests": 0,
+  "originalCropBitExactlyPreserved": true,
+  "originalXmlMaximumAgrees": true,
+  "sampleCentreBounds": {
+    "east": 86.99972222222223,
+    "north": 28.0,
+    "south": 27.715833333333332,
+    "west": 86.85333333333334
+  },
+  "schema": "earth-retained-copernicus-expansion-030-v1",
+  "sourceHorizontalCrs": "EPSG:4326",
+  "sourceLockSha256": "952484dcb3b06245397d207d5618d356c78c4bbda9dc1dd4fde00fc2b84b598e",
+  "sourceOriginalColumnsInclusive": [
+    3072,
+    3599
+  ],
+  "sourceOriginalRowsInclusive": [
+    0,
+    1023
+  ],
+  "sourcePixelIsPoint": true,
+  "sourcePostCount": 540672,
+  "sourceProvenanceDirectory": "../copernicus-everest-proof",
+  "sourceVerticalCrs": "EPSG:3855",
+  "twoIndependentDecodersAgreeBitExactly": true,
+  "verifiedOriginalArtifacts": [
+    {
+      "bytes": 16384,
+      "path": "source-header.bin",
+      "range": [
+        0,
+        16383
+      ],
+      "sha256": "0d76d7f76ce86f91ab7ba9edfc5433e25e897223dd6ca76bc69455a8bc865a4c",
+      "url": "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N27_00_E086_00_DEM/Copernicus_DSM_COG_10_N27_00_E086_00_DEM.tif"
+    },
+    {
+      "bytes": 1260299,
+      "path": "source-block-3.bin",
+      "range": [
+        18639350,
+        19899648
+      ],
+      "sha256": "3ae196de8c0c4f9e2977815e20ca140d4c8fdfceff5a6985f3b8c473e10484af",
+      "url": "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N27_00_E086_00_DEM/Copernicus_DSM_COG_10_N27_00_E086_00_DEM.tif"
+    },
+    {
+      "bytes": 8536,
+      "path": "provenance/aws-readme.html",
+      "sha256": "922461d55070e3c7e0cf2903ec54190d69e3773da2dc9e776a3f03566cfd56d2",
+      "url": "https://copernicus-dem-30m.s3.amazonaws.com/readme.html"
+    },
+    {
+      "bytes": 9202,
+      "path": "provenance/aws-registry.html",
+      "sha256": "c9215f2e18745ffcb33a2ed16c3f2ef5fab4dce70babace9132afe402c149320",
+      "url": "https://registry.opendata.aws/copernicus-dem/"
+    },
+    {
+      "bytes": 44698,
+      "path": "provenance/source-metadata.xml",
+      "sha256": "dde5f33704d412bc5a8e0e06e211024c097f9e5dbf3585040a29cf13f6475b2a",
+      "url": "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N27_00_E086_00_DEM/Copernicus_DSM_10_N27_00_E086_00.xml"
+    },
+    {
+      "bytes": 117522,
+      "path": "provenance/source-eula.pdf",
+      "sha256": "32049914c37f14e7d53b48d13d74a49e77c030236e2acc7a0df426f9344feba2",
+      "url": "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N27_00_E086_00_DEM/INFO/eula_F.pdf"
+    },
+    {
+      "bytes": 113786,
+      "path": "provenance/License-COPDEM-30.pdf",
+      "sha256": "9cd37d37ea654bbcaf0a2e059e6a3a5b5f76072824d8dd860ccf274ada8951bd",
+      "url": "https://documentation.dataspace.copernicus.eu/APIs/SentinelHub/Data/DEM/resources/license/License-COPDEM-30.pdf"
+    }
+  ],
+  "verticalOffsetMetres": 0,
+  "verticalScale": 1,
+  "width": 528
+}

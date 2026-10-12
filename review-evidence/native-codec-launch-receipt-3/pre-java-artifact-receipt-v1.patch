@@ -1,0 +1,57 @@
+--- a/pre-java-receipt.init.gradle
++++ b/pre-java-receipt.init.gradle
+@@ -8,7 +8,7 @@
+   p.tasks.named('runSurvivalGameTest').configure { task ->
+    doFirst {
+     if (!(task instanceof JavaExec)) throw new GradleException('Expected original JavaExec run task')
+-    def evidence = p.file('../review-evidence/native-codec-boundary-batch-2/pre-java-inputs')
++    def evidence = p.file('../review-evidence/native-codec-boundary-batch-3/pre-java-inputs')
+     if (!evidence.mkdir()) throw new GradleException('Fresh pre-Java input receipt required')
+     def sha = { byte[] bytes -> HexFormat.of().formatHex(MessageDigest.getInstance('SHA-256').digest(bytes)) }
+     def names = ['survivalGameTestRunVmArgs.txt','survivalGameTestRunProgramArgs.txt','survivalGameTestLegacyClasspath.txt','survivalGameTestLog4j2.xml']
+@@ -20,10 +20,44 @@
+      Files.write(new File(evidence,name).toPath(),bytes,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE)
+      files.add([source:source.canonicalPath,copy:name,bytes:bytes.length,sha256:sha(bytes)])
+     }
++    // Bind artifacts selected by these exact newly prepared argument files.
++    def artifactPaths = new TreeSet<String>()
++    def addArtifact = { String value ->
++     if (value.length() > 4096 || !new File(value).isAbsolute()) throw new GradleException('Unexpected prepared artifact path')
++     def file = new File(value).canonicalFile
++     if (!file.isFile() || file.length() > 512L * 1024 * 1024) throw new GradleException('Missing or oversized prepared artifact')
++     if (!artifactPaths.contains(file.path) && artifactPaths.size() >= 256) throw new GradleException('Prepared artifact count exceeded')
++     artifactPaths.add(file.path)
++    }
++    def vmLines = new File(evidence,'survivalGameTestRunVmArgs.txt').readLines('UTF-8')
++    def cpLines = new File(evidence,'survivalGameTestLegacyClasspath.txt').readLines('UTF-8')
++    if (vmLines.size() > 4096 || cpLines.size() > 4096) throw new GradleException('Prepared argument line count exceeded')
++    for (int i=0;i<vmLines.size();i++) {
++     if (vmLines[i] == '-p' || vmLines[i] == '--module-path') {
++      if (++i >= vmLines.size()) throw new GradleException('Missing module-path value')
++      for (String value : vmLines[i].split(java.io.File.pathSeparator)) addArtifact(value)
++     }
++    }
++    for (String value : cpLines) if (value.endsWith('.jar')) addArtifact(value)
++    for (File file : task.classpath.files) if (file.name.endsWith('.jar')) addArtifact(file.canonicalPath)
++    def artifactRows=[]
++    byte[] buffer=new byte[65536]
++    for (String path : artifactPaths) {
++     def file=new File(path);long bytes=0;def digest=MessageDigest.getInstance('SHA-256')
++     file.withInputStream { input ->
++      int count
++      while ((count=input.read(buffer)) != -1) {
++       bytes+=count;if (bytes > 512L*1024*1024) throw new GradleException('Prepared artifact grew past bound')
++       digest.update(buffer,0,count)
++      }
++     }
++     if (bytes != file.length()) throw new GradleException('Prepared artifact changed size')
++     artifactRows.add([path:path,bytes:bytes,sha256:HexFormat.of().formatHex(digest.digest())])
++    }
+     def receipt = [scope:'Original codec JavaExec task snapshot after preparation; no task/flag/runtime mutation',taskPath:task.path,
+      mainClass:task.mainClass.get(),executable:task.executable,workingDirectory:task.workingDir.canonicalPath,
+      jvmArgs:task.jvmArgs.collect { it.toString() },allJvmArgs:task.allJvmArgs.collect { it.toString() },
+-     programArgs:task.args.collect { it.toString() },classPath:task.classpath.files.collect { it.canonicalPath },files:files]
++     programArgs:task.args.collect { it.toString() },classPath:task.classpath.files.collect { it.canonicalPath },files:files,preparedArtifacts:artifactRows]
+     byte[] out = (JsonOutput.prettyPrint(JsonOutput.toJson(receipt))+'\n').getBytes('UTF-8')
+     if (out.length > 2 * 1024 * 1024) throw new GradleException('Prepared task receipt exceeds fixed bound')
+     Files.write(new File(evidence,'receipt.json').toPath(),out,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE)

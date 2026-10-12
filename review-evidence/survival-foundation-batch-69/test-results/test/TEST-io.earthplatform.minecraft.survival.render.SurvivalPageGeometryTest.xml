@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.render.SurvivalPageGeometryTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:54.048Z" hostname="4d821b23054b" time="0.003">
+  <properties/>
+  <testcase name="pageRangesHaveExactIndexOffsetsAndAllowAMemberToContinueInAnotherPiece()" classname="io.earthplatform.minecraft.survival.render.SurvivalPageGeometryTest" time="0.0"/>
+  <testcase name="signedPageMembershipUsesXThenZThenYAndNeverWraps()" classname="io.earthplatform.minecraft.survival.render.SurvivalPageGeometryTest" time="0.001"/>
+  <testcase name="relocationHonorsBufferSliceAndLeavesCallerPositionLimitAndOutsideBytesAlone()" classname="io.earthplatform.minecraft.survival.render.SurvivalPageGeometryTest" time="0.0"/>
+  <testcase name="gapsOverlapDuplicateOrReorderedMembersAndPartialQuadsAreRefused()" classname="io.earthplatform.minecraft.survival.render.SurvivalPageGeometryTest" time="0.001"/>
+  <testcase name="malformedRelocationFailsBeforeMutatingAnyPosition()" classname="io.earthplatform.minecraft.survival.render.SurvivalPageGeometryTest" time="0.0"/>
+  <testcase name="relocatingIrisBytesPreservesEveryMaterialTangentLightUvAndPaddingByte()" classname="io.earthplatform.minecraft.survival.render.SurvivalPageGeometryTest" time="0.001"/>
+  <testcase name="defaultAndIrisPiecesEndOnWholeQuadsWithinUnchangedOneMibPayload()" classname="io.earthplatform.minecraft.survival.render.SurvivalPageGeometryTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,214 @@
+{
+  ".": {
+    "mode": 493,
+    "empty": false
+  },
+  "carrier-io-intermediate-transform-evidence": {
+    "mode": 493,
+    "empty": false
+  },
+  "carrier-read-late-transform-evidence": {
+    "mode": 493,
+    "empty": false
+  },
+  "config": {
+    "mode": 493,
+    "empty": false
+  },
+  "defaultconfigs": {
+    "mode": 493,
+    "empty": true
+  },
+  "earthplatform-copernicus-proof-data": {
+    "mode": 493,
+    "empty": false
+  },
+  "earthplatform-proof-data": {
+    "mode": 493,
+    "empty": false
+  },
+  "earthplatform-proof-data/regions": {
+    "mode": 493,
+    "empty": false
+  },
+  "earthplatform-proof-data/regions/challenger-deep": {
+    "mode": 493,
+    "empty": false
+  },
+  "earthplatform-proof-data/regions/everest": {
+    "mode": 493,
+    "empty": false
+  },
+  "earthplatform-proof-data/regions/san-francisco": {
+    "mode": 493,
+    "empty": false
+  },
+  "logs": {
+    "mode": 493,
+    "empty": false
+  },
+  "mods": {
+    "mode": 493,
+    "empty": true
+  },
+  "world": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/DIM-1": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/DIM-1/data": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/DIM1": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/DIM1/data": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/advancements": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/data": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/datapacks": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/datapacks/earth-native-held-session": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/datapacks/earth-native-held-session/data": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/datapacks/earth-native-held-session/data/earthplatform_session_fixture": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/datapacks/earth-native-held-session/data/earthplatform_session_fixture/structure": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/datapacks/earth-native-held-session/data/minecraft": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/datapacks/earth-native-held-session/data/minecraft/worldgen": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/datapacks/earth-native-held-session/data/minecraft/worldgen/world_preset": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/dimensions": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/dimensions/earthplatform": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/dimensions/earthplatform/survival_carrier": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/dimensions/earthplatform/survival_carrier/data": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/dimensions/earthplatform/survival_carrier/entities": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/dimensions/earthplatform/survival_carrier/region": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/entities": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence/checkpoint": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence/checkpoint/generation-1-d963177a-0288-4894-a026-4e60a5c9590d": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence/checkpoint/generation-2-c7162648-547d-44b7-a25d-65280b3bdaa4": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence/marin-source": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence/marin-source/cover": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence/marin-source/cover/everest": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence/marin-source/cover/marin-headlands": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence/marin-source/terrain": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence/marin-source/terrain/regions": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence/marin-source/terrain/regions/challenger-deep": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence/marin-source/terrain/regions/everest": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/native-excavation-session-evidence/marin-source/terrain/regions/san-francisco": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/playerdata": {
+    "mode": 493,
+    "empty": true
+  },
+  "world/poi": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/region": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/serverconfig": {
+    "mode": 493,
+    "empty": false
+  },
+  "world/stats": {
+    "mode": 493,
+    "empty": false
+  }
+}

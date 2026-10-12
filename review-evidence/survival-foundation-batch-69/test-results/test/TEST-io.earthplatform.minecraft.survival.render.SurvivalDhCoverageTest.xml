@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.render.SurvivalDhCoverageTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:52.962Z" hostname="4d821b23054b" time="0.036">
+  <properties/>
+  <testcase name="bit63IsARealSignedMemberAndAirDoesNotEraseItsOwnership()" classname="io.earthplatform.minecraft.survival.render.SurvivalDhCoverageTest" time="0.007"/>
+  <testcase name="oneMissingSignedMemberPreventsFullColumnOmission()" classname="io.earthplatform.minecraft.survival.render.SurvivalDhCoverageTest" time="0.002"/>
+  <testcase name="emptyCoverageSuppressesNothingAndIsNotFull()" classname="io.earthplatform.minecraft.survival.render.SurvivalDhCoverageTest" time="0.001"/>
+  <testcase name="completeMasksCoverOnlyExactSelectedRectangle()" classname="io.earthplatform.minecraft.survival.render.SurvivalDhCoverageTest" time="0.002"/>
+  <testcase name="invalidMasksRefuseWithoutLeakingAndClosedAliasesCannotRead()" classname="io.earthplatform.minecraft.survival.render.SurvivalDhCoverageTest" time="0.002"/>
+  <testcase name="sourceGroundIsNotFullFromOnlyTreeReasonMasks()" classname="io.earthplatform.minecraft.survival.render.SurvivalDhCoverageTest" time="0.021"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class RollingMeshWorkQueueTest {
     private static final CubePos A = new CubePos(0, 0, 0), B = new CubePos(1, 0, 0);
 
-    @Test void beginSlicesFinishAndNextCubeOccupySeparatePumpFrames() {
+    @Test void legacyPumpKeepsBeginSlicesFinishAndNextCubeSeparate() {
         var fixture = new Fixture(5, 2, 100);
         fixture.start(A, B);
         assertEquals(BEGIN, fixture.queue.pump());
@@ -320,7 +320,8 @@ class RollingMeshWorkQueueTest {
         var f = new Fixture(1, 1, 10);
         List<Runnable> operations = List.of(
                 () -> f.queue.start(List.of(A), 1, 1, () -> true), f.queue::pump,
-                () -> f.queue.publishCompleted((position, mesh) -> {}), f.queue::close,
+                () -> f.queue.publishCompleted((position, mesh) -> {}),
+                () -> f.queue.pumpSlice((position, mesh) -> {}), f.queue::close,
                 f.queue::isDrained, f.queue::isPoisoned, f.queue::queuedTargets, f.queue::activeBuilds,
                 f.queue::completedSlots, f.queue::publication, f.queue::resourceGeneration, f.queue::metrics);
         for (var operation : operations) {
@@ -392,7 +393,7 @@ class RollingMeshWorkQueueTest {
         f.queue.close();
     }
 
-    @Test void zeroCallbackEmptyMeshStillHasSeparateStepFinishAndPublicationFences() {
+    @Test void legacyZeroCallbackEmptyMeshKeepsSeparateStepFinishAndPublicationFences() {
         var f = new Fixture(0, 1, 10);
         f.start(A);
         assertEquals(BEGIN, f.queue.pump());
@@ -640,6 +641,39 @@ class RollingMeshWorkQueueTest {
         assertEquals(0, f.queue.activeBuilds());
         assertEquals(0, f.queue.completedSlots());
         f.queue.close();
+    }
+
+    @Test void adaptiveSliceRetainsOwnerBeforeAFailingPostBeginClockAndMeasuresTheFailedSlice() {
+        var f = new Fixture(1, 10, 100);
+        f.driver.after.put(Event.BEGIN, () -> f.clock.failNext = true);
+        f.start(A);
+        assertThrows(IllegalStateException.class, () -> f.queue.pumpSlice((position, mesh) -> fail("No transfer")));
+        assertEquals(1, f.queue.activeBuilds());
+        assertEquals(1, f.queue.metrics().ownerSlice().timing().calls());
+        assertEquals(3, f.queue.metrics().ownerSlice().timing().maxNanos());
+        assertTrue(f.queue.isPoisoned());
+        f.queue.close();
+        assertTrue(f.queue.isDrained());
+    }
+
+    @Test void adaptiveSlicePreservesCompletedSlotWhenPostCloseClockThrows() {
+        var f = new Fixture(1, 10, 100);
+        f.driver.after.put(Event.BUILD_CLOSE, () -> f.clock.failNext = true);
+        f.start(A);
+        assertThrows(IllegalStateException.class, () -> f.queue.pumpSlice((position, mesh) -> fail("No transfer")));
+        assertEquals(0, f.queue.activeBuilds(), "Successfully released build cannot be closed twice");
+        assertEquals(1, f.queue.completedSlots());
+        assertEquals(1, f.driver.builds.getFirst().closeAttempts);
+        f.queue.close();
+        assertEquals(1, f.driver.builds.getFirst().closeAttempts);
+        assertEquals(1, f.driver.meshes.getFirst().closeAttempts);
+    }
+
+    @Test void adaptiveConstructorRejectsExpandedOrMissingOperationBound() {
+        var driver = new FakeDriver(new Clock(), 1);
+        for (int cap : new int[]{Integer.MIN_VALUE, -1, 0, 129, Integer.MAX_VALUE})
+            assertThrows(IllegalArgumentException.class,
+                    () -> new RollingMeshWorkQueue<>(driver, 1, 1, 100, cap, () -> 0));
     }
 
     private static Throwable failure(boolean error, String text) {

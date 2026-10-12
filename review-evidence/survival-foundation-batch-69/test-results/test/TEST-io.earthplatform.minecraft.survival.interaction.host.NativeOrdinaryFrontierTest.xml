@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:48.774Z" hostname="4d821b23054b" time="0.009">
+  <properties/>
+  <testcase name="immediatePromiseCompletionWaitsForRegistrationReturn()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.0"/>
+  <testcase name="neverRunTaskNeverSettles()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.001"/>
+  <testcase name="duplicatePromiseCompletionPoisons()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.001"/>
+  <testcase name="duplicateNeverReplays()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.0"/>
+  <testcase name="boundedWorkerBlockedCallbackAndConcurrentDuplicate()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.001"/>
+  <testcase name="unexpectedOriginalFailurePoisonsNoSubmission()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.001"/>
+  <testcase name="exactFailurePropagatesWithoutRetainingCallback()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.001"/>
+  <testcase name="enqueueThenThrowPreservesAcceptedCallback()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.0"/>
+  <testcase name="acceptedSecondTaskRunsAfterEarlierFailure()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.001"/>
+  <testcase name="specializedTaskIsPreservedAndRefused()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.0"/>
+  <testcase name="promiseHelperReturnIsRequired()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.0"/>
+  <testcase name="capacityFailureDoesNotReplaceOrdinaryTask()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.001"/>
+  <testcase name="registrationEnqueueThenThrowStaysFailedAfterCompletion()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.0"/>
+  <testcase name="callbackReturnBeforeSubmissionDoesNotSettle()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.0"/>
+  <testcase name="authenticatedNoSubmissionBranchCanSettle()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeOrdinaryFrontierTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

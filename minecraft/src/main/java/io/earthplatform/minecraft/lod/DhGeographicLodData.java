@@ -11,7 +11,23 @@ import java.util.Map;
 /** Source-bounded direct geographic summaries. No distant vanilla chunks or one-metre far pre-generation. */
 public final class DhGeographicLodData {
     public static final int CELL_SIZE=16,CELLS=64,RADIUS=512,TILE_SIZE=256,MAX_FACES=32768,MAX_TILES=64;
-    public record TileKey(long originX,long originZ,int pageY) { }
+    /** Replacement pieces never alias base tiles, even at the same signed origin/page. */
+    public record TileKey(long originX,long originZ,int pageY,String replacementIdentity,int piece) {
+        public TileKey(long originX,long originZ,int pageY) { this(originX,originZ,pageY,"",0); }
+        public TileKey {
+            java.util.Objects.requireNonNull(replacementIdentity,"replacementIdentity");
+            if (replacementIdentity.isEmpty()) {
+                if (piece != 0) throw new IllegalArgumentException("Base tiles cannot have replacement pieces");
+            } else if (!replacementIdentity.matches("[0-9a-f]{64}") || piece < 0 || piece >= MAX_FACES / 4096) {
+                throw new IllegalArgumentException("Bounded canonical replacement identity and piece required");
+            }
+        }
+        /** Preserve frozen base batch/cache serialization byte-for-byte. */
+        @Override public String toString() {
+            String base="TileKey[originX="+originX+", originZ="+originZ+", pageY="+pageY;
+            return replacementIdentity.isEmpty() ? base+"]" : base+", replacementIdentity="+replacementIdentity+", piece="+piece+"]";
+        }
+    }
     public record Batch(Map<TileKey,List<DhTerrainGeometry.PageFace>> tiles,int faces,int clippedSourceFaces) {
         public Batch {var copy=new LinkedHashMap<TileKey,List<DhTerrainGeometry.PageFace>>();tiles.forEach((k,v)->copy.put(k,List.copyOf(v)));tiles=java.util.Collections.unmodifiableMap(copy);}
     }

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.runtime.InstalledConsumerOriginsTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:55.956Z" hostname="4d821b23054b" time="0.01">
+  <properties/>
+  <testcase name="duplicateRetainsFirstTwoOperandsAndFurtherOverflowCannotReplaceThem()" classname="io.earthplatform.minecraft.survival.runtime.InstalledConsumerOriginsTest" time="0.006"/>
+  <testcase name="lateAndUnknownCallsPoisonWithinFixedSlots()" classname="io.earthplatform.minecraft.survival.runtime.InstalledConsumerOriginsTest" time="0.0"/>
+  <testcase name="operandsAreRetainedBeforeWrongHostRefusalWithoutCallingForeignMethods()" classname="io.earthplatform.minecraft.survival.runtime.InstalledConsumerOriginsTest" time="0.001"/>
+  <testcase name="parallelDifferentSitesKeepTheirOwnIdentitiesButCannotForgeOrigin()" classname="io.earthplatform.minecraft.survival.runtime.InstalledConsumerOriginsTest" time="0.002"/>
+  <testcase name="nativeFailureClassIsRetainedAndPartialReturnNeverBecomesQualified()" classname="io.earthplatform.minecraft.survival.runtime.InstalledConsumerOriginsTest" time="0.001"/>
+  <testcase name="missingPreseedCannotRetainOrQualifyOrigin()" classname="io.earthplatform.minecraft.survival.runtime.InstalledConsumerOriginsTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

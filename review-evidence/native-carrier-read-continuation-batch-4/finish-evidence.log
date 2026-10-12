@@ -1,0 +1,75 @@
+{
+  "utc": "2026-10-12T07:31:57.258751+00:00",
+  "status": "ACTUAL_NATIVE_READ_ROOT_PREFIX_WITH_LIFECYCLE_FAILURE",
+  "processExit": 1,
+  "timeout": false,
+  "lockedInputs": 3324,
+  "allInputsUnchanged": true,
+  "firstFailure": [
+    "phase=native-held-transition",
+    "io.earthplatform.minecraft.survival.world.SurvivalRefusal: Earth survival: Resolve the native menu and accepted work before ACTIVE save"
+  ],
+  "expectedSoleTest": "nativeregisteredsessiongametests.actual_registered_carrier_read_continuation_v1",
+  "nativeTests": 1,
+  "nativeFailures": 1,
+  "readContractCasesExecuted": 7,
+  "nativeReadCounts": {
+    "capacity": 2048,
+    "admitted": 841,
+    "factoryReturns": 841,
+    "dispatches": 841,
+    "dispatchReturns": 841,
+    "taskRuns": 841,
+    "taskReturns": 841,
+    "callbacks": 841,
+    "callbackSuccesses": 841,
+    "callbackFailures": 0,
+    "physicallyRetired": 841,
+    "unresolved": 0,
+    "firstFailureCode": 0,
+    "retainedEnvelopeBytes": 2097152,
+    "sourcePayloadAuthority": false,
+    "closeAuthority": false
+  },
+  "intermediateSnapshots": 9,
+  "lateSnapshots": 1,
+  "strictPhysicalCloseQualified": false,
+  "preparedArtifacts": 67,
+  "preparedDirectorySets": {
+    "/workspace/scratch/67f3a8ccac99/earth-platform/native-test-builds/native-carrier-read-build-004/resources/registeredSessionFixture": 1,
+    "/workspace/scratch/67f3a8ccac99/earth-platform/native-test-builds/native-carrier-read-build-004/classes/java/registeredSessionFixture": 35,
+    "/workspace/scratch/67f3a8ccac99/earth-platform/native-test-builds/native-carrier-read-build-004/resources/main": 55,
+    "/workspace/scratch/67f3a8ccac99/earth-platform/native-test-builds/native-carrier-read-build-004/classes/java/main": 1760
+  },
+  "argumentReceiptSha256": "9d146aacaded64a60e66f37cd0c0d884bb1042dbfdcacb2c44ee4e45ec543792",
+  "archives": {
+    "game": {
+      "path": "/workspace/scratch/67f3a8ccac99/earth-platform/native-survival-039/review-evidence/native-carrier-read-continuation-batch-4/complete-game.tar.gz",
+      "bytes": 1172387,
+      "sha256": "137a0e0bcfaf6b5b77c6fecf58f372bc381f036b030e37e861d5e0e2f9eddd28",
+      "files": 98,
+      "directories": 53,
+      "manifestSha256": "b4d8f3ae5b6001849311b12144a35b05381355c47ad61fe9221ec30e2c28d892",
+      "directoryManifestSha256": "987947381c141a55b2bccaf4dc5e33e6a89baa1a1dd9032ecaf7c299c4011ca3"
+    },
+    "isolated-build": {
+      "path": "/workspace/scratch/67f3a8ccac99/earth-platform/native-survival-039/review-evidence/native-carrier-read-continuation-batch-4/isolated-build-archive/complete-isolated-build.tar.gz",
+      "bytes": 74111671,
+      "sha256": "c284edd7a5e2a03ece8e3ae318c417888a1e02fac887c55865ddd31e93b34640",
+      "files": 1867,
+      "directories": 111,
+      "manifestSha256": "a3d2e7a661ee5aec4885fceba3e28379cb9dd709fa9e12a704512e1a477e8cec",
+      "directoryManifestSha256": "074efd850e516522c24b7bffab28725c733cd11b60bce0ab85eb91825abddb72"
+    }
+  },
+  "logSha256": "83dd519104ca0faa0db2eed1917ce9f49d4ee7cace3674ee52efefa59813a650",
+  "qualifications": [
+    "Actual background read factory/dispatch/task/function retirement is the scoped prefix; exact checker and independent source/transform replay remain distinct.",
+    "Original ACTIVE-save readiness refusal and physical-close assertion remain failed; no native save/return/restart or whole-session lifecycle pass.",
+    "Active69 source leaves saveOutput unbound in this fixture, so output readiness is a known prerequisite; the thrown readiness message does not report an individual predicate trace.",
+    "After-late ClassNode snapshots remain intermediate stage evidence, not final loaded bytecode.",
+    "Source payload, clean close and whole-server callback termination authority remain false; all charges retained.",
+    "All raw outputs remain preserved; build archive is on overlay."
+  ]
+}
+

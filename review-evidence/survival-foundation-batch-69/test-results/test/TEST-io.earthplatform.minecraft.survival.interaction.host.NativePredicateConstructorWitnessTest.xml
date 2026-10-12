@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativePredicateConstructorWitnessTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:48.925Z" hostname="4d821b23054b" time="0.012">
+  <properties/>
+  <testcase name="arbitraryEqualsOrHashCodeCannotRunInIdentityBook()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePredicateConstructorWitnessTest" time="0.002"/>
+  <testcase name="witnessesPinExactOwnerTermsChildrenAndCacheIdentity()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePredicateConstructorWitnessTest" time="0.0"/>
+  <testcase name="disabledBookNeverMintsAuthority()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePredicateConstructorWitnessTest" time="0.0"/>
+  <testcase name="sameNamedForeignLoaderImmutableListCannotMintAWitness()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePredicateConstructorWitnessTest" time="0.005"/>
+  <testcase name="referenceQueueRetirementReleasesOnlyItsExactChargedOwner()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePredicateConstructorWitnessTest" time="0.0"/>
+  <testcase name="weakWitnessValuesDoNotRetainOwnerOrItsChildrenStrongly()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePredicateConstructorWitnessTest" time="0.001"/>
+  <testcase name="mutableAndCustomCollectionsAreNotInspectedOrWitnessed()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePredicateConstructorWitnessTest" time="0.0"/>
+  <testcase name="duplicateRegistrationNeverReplacesConstructorAuthority()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePredicateConstructorWitnessTest" time="0.0"/>
+  <testcase name="constructorStackCannotBeForgedByADirectCaller()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePredicateConstructorWitnessTest" time="0.001"/>
+  <testcase name="ownerEdgeAndByteOverflowStayStickyWithoutThrowingFromCapture()" classname="io.earthplatform.minecraft.survival.interaction.host.NativePredicateConstructorWitnessTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

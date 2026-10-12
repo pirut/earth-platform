@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.scene.SurvivalSceneSchedulerContractTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:45.765Z" hostname="4d821b23054b" time="0.015">
+  <properties/>
+  <testcase name="authenticatedStartHasNoPublicHistoricalLatchInputAndRetainsBeforeTryingCas()" classname="io.earthplatform.minecraft.scene.SurvivalSceneSchedulerContractTest" time="0.002"/>
+  <testcase name="onlyCompletePhysicalRosterCanReachTypedAttachment()" classname="io.earthplatform.minecraft.scene.SurvivalSceneSchedulerContractTest" time="0.001"/>
+  <testcase name="retainedJoinShellNeverAttemptsCleanupInItsConstructorOrInitializerCatch()" classname="io.earthplatform.minecraft.scene.SurvivalSceneSchedulerContractTest" time="0.001"/>
+  <testcase name="rebindAndFrameIngressRefusePendingCleanupAndCloseValidationBeforeSwap()" classname="io.earthplatform.minecraft.scene.SurvivalSceneSchedulerContractTest" time="0.0"/>
+  <testcase name="frameProposalIsRetainedBeforeValidationAndJoinOnlyClosesAfterAliasDrain()" classname="io.earthplatform.minecraft.scene.SurvivalSceneSchedulerContractTest" time="0.001"/>
+  <testcase name="contentPendingIsPrivateExactCasOutcomeAndNoExceptionIsRelabeledPending()" classname="io.earthplatform.minecraft.scene.SurvivalSceneSchedulerContractTest" time="0.002"/>
+  <testcase name="schedulerStoresEveryFallibleOwnerBeforeItsStartAndJoinInitialization()" classname="io.earthplatform.minecraft.scene.SurvivalSceneSchedulerContractTest" time="0.001"/>
+  <testcase name="bothCarrierPathsCheckActualPendingWitnessBeforeNativeOrDhDraw()" classname="io.earthplatform.minecraft.scene.SurvivalSceneSchedulerContractTest" time="0.002"/>
+  <testcase name="completeAdvanceTimingIncludesFinallyAndRegistryCodecIsPrecharged()" classname="io.earthplatform.minecraft.scene.SurvivalSceneSchedulerContractTest" time="0.001"/>
+  <testcase name="sourceAssetsAndCallerDependencyMapsAreReservedBeforeAllocation()" classname="io.earthplatform.minecraft.scene.SurvivalSceneSchedulerContractTest" time="0.002"/>
+  <testcase name="schedulerCleanupIsReentrancyGuardedAndRestoresCarrierBeforePhysicalDrain()" classname="io.earthplatform.minecraft.scene.SurvivalSceneSchedulerContractTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

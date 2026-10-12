@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.scene.SurvivalNativePageParitySchemaTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:45.725Z" hostname="4d821b23054b" time="0.007">
+  <properties/>
+  <testcase name="irisGenericAndKnownEmptyReservationsRemainValidWithoutInventingBulkCalls()" classname="io.earthplatform.minecraft.scene.SurvivalNativePageParitySchemaTest" time="0.001"/>
+  <testcase name="groupedBytesAreNeverTranslatedAgainAndOnlyActualPaddingIsNormalized()" classname="io.earthplatform.minecraft.scene.SurvivalNativePageParitySchemaTest" time="0.003"/>
+  <testcase name="paddingIsExactlyNativeElementComplementAndCannotHideOneSemanticByte()" classname="io.earthplatform.minecraft.scene.SurvivalNativePageParitySchemaTest" time="0.001"/>
+  <testcase name="defaultParityCannotPassWithoutObservedWholeQuadReservationsInBothCompilers()" classname="io.earthplatform.minecraft.scene.SurvivalNativePageParitySchemaTest" time="0.0"/>
+  <testcase name="normalizationPreservesEveryDeclaredAttributeExceptAuthorizedPositionTranslation()" classname="io.earthplatform.minecraft.scene.SurvivalNativePageParitySchemaTest" time="0.001"/>
+  <testcase name="reservationEvidenceCannotHideWrongBytesPartialQuadsOrFabricatedCounters()" classname="io.earthplatform.minecraft.scene.SurvivalNativePageParitySchemaTest" time="0.0"/>
+  <testcase name="malformedAndOverlappingSchemasRefuseWithoutUnboundedLoops()" classname="io.earthplatform.minecraft.scene.SurvivalNativePageParitySchemaTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

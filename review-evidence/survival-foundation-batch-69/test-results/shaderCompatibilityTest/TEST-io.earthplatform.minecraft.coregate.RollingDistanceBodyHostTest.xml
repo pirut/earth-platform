@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.coregate.RollingDistanceBodyHostTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:36:06.402Z" hostname="4d821b23054b" time="3.649">
+  <properties/>
+  <testcase name="pairInstallationAdvancesActualNativeAndFarBeforeReadyAndCollisionWaitsForCommitted()" classname="io.earthplatform.minecraft.coregate.RollingDistanceBodyHostTest" time="0.915"/>
+  <testcase name="completeProofStillNeedsFreshPublicationAndActualNativeJoin()" classname="io.earthplatform.minecraft.coregate.RollingDistanceBodyHostTest" time="0.31"/>
+  <testcase name="editHistoryNeverRegainsCurrentReadinessEvenWithTheOldVisualStillAlive()" classname="io.earthplatform.minecraft.coregate.RollingDistanceBodyHostTest" time="0.292"/>
+  <testcase name="capsuleCallbackCannotChangeTheRegistryAfterTheOnlyPaletteCheck()" classname="io.earthplatform.minecraft.coregate.RollingDistanceBodyHostTest" time="0.194"/>
+  <testcase name="snapshotSwapImmediatelyAfterRetirementCannotReachCollisionAndBrokenControlDoes()" classname="io.earthplatform.minecraft.coregate.RollingDistanceBodyHostTest" time="0.451"/>
+  <testcase name="failedFarCommitCannotExposeMixedNativeOrSendPairReady()" classname="io.earthplatform.minecraft.coregate.RollingDistanceBodyHostTest" time="0.263"/>
+  <testcase name="refusedOrNoOpEditStillMintsFreshVisualRequestForSameCapture()" classname="io.earthplatform.minecraft.coregate.RollingDistanceBodyHostTest" time="0.155"/>
+  <testcase name="failedBodyAliasCleanupStaysReachableUntilSuccessfulRetry()" classname="io.earthplatform.minecraft.coregate.RollingDistanceBodyHostTest" time="0.182"/>
+  <testcase name="privateVisualWorkStartsBeforeFullEqualityButFarWaitsForBoth()" classname="io.earthplatform.minecraft.coregate.RollingDistanceBodyHostTest" time="0.147"/>
+  <testcase name="absentQualificationCaptureSourceOrExactPlanCannotStartBodyProof()" classname="io.earthplatform.minecraft.coregate.RollingDistanceBodyHostTest" time="0.586"/>
+  <testcase name="livePaletteChecksRejectMappingChangeAndRemainStickyAfterAba()" classname="io.earthplatform.minecraft.coregate.RollingDistanceBodyHostTest" time="0.146"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

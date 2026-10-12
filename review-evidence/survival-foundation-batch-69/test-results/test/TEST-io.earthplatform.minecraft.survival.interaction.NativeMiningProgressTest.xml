@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.NativeMiningProgressTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:46.629Z" hostname="4d821b23054b" time="0.005">
+  <properties/>
+  <testcase name="repeatedPacketsCannotAccumulateExtraProgress()" classname="io.earthplatform.minecraft.survival.interaction.NativeMiningProgressTest" time="0.003"/>
+  <testcase name="signedTargetsSeparatedByPackedYPeriodCannotCompleteEachOther()" classname="io.earthplatform.minecraft.survival.interaction.NativeMiningProgressTest" time="0.001"/>
+  <testcase name="heldProgressUsesElapsedServerTicksAndNativeStopTolerance()" classname="io.earthplatform.minecraft.survival.interaction.NativeMiningProgressTest" time="0.0"/>
+  <testcase name="earlyStopFinishesOnceAtNativeDelayedThreshold()" classname="io.earthplatform.minecraft.survival.interaction.NativeMiningProgressTest" time="0.0"/>
+  <testcase name="abortAndReachOrRevisionInvalidationCannotLaterBreak()" classname="io.earthplatform.minecraft.survival.interaction.NativeMiningProgressTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

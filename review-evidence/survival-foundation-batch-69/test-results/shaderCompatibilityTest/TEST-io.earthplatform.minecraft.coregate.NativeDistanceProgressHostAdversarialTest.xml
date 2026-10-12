@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:36:02.644Z" hostname="4d821b23054b" time="0.284">
+  <properties/>
+  <testcase name="connectionLossDetectedByActualPumpClosesImmediately()" classname="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" time="0.164"/>
+  <testcase name="actualServerHandlerAcceptsExactWorkBeforeDeadlineAndRejectsDifferentActor()" classname="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" time="0.013"/>
+  <testcase name="repeatedDhCandidateOrOversizedUploadNeverBecomesUsefulWork()" classname="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" time="0.014"/>
+  <testcase name="actualPumpRejectsStaleActorAndResourcesBeforeAnyCompletedCounter()" classname="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" time="0.008"/>
+  <testcase name="actualHandlerIgnoresWrongOriginAndStaleSerialWithoutGrantingPeerCredit()" classname="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" time="0.001"/>
+  <testcase name="actualPacketHandlerExpiresBeforeAcceptingLateAuthoritativeReceipt()" classname="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" time="0.002"/>
+  <testcase name="actualPumpCreditsSourcePlanHaloAndScansBeforeFirstUploadButNeverReadiness()" classname="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" time="0.008"/>
+  <testcase name="ordinaryWorldReturnClearsEpisodeOnlyAfterPhysicalSessionHasGone()" classname="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" time="0.063"/>
+  <testcase name="explicitLogoutSnapshotsAndStartsCleanupImmediatelyWithoutWaitingForDeadline()" classname="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" time="0.002"/>
+  <testcase name="actualServerHandlerExpiresCurrentTickBeforeAcceptingQueuedClientCompletion()" classname="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" time="0.001"/>
+  <testcase name="actualPauseEventChargesPreviousStateAndLongPauseDoesNotBecomeIdle()" classname="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" time="0.002"/>
+  <testcase name="actualPumpExpiresBeforeSamplingLateWorkerOrTouchingPublication()" classname="io.earthplatform.minecraft.coregate.NativeDistanceProgressHostAdversarialTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

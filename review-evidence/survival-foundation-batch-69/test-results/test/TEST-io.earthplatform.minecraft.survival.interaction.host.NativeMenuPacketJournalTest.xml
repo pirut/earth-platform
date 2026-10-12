@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeMenuPacketJournalTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:48.027Z" hostname="4d821b23054b" time="0.019">
+  <properties/>
+  <testcase name="exactIntermediateHoePreviewDoesNotAdmitOwnedOrTakenItem()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMenuPacketJournalTest" time="0.007"/>
+  <testcase name="predictionPreviewNeverBecomesAuthoritativeInventory()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMenuPacketJournalTest" time="0.003"/>
+  <testcase name="unresolvedMenusAreNeverDurableBoundaries()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMenuPacketJournalTest" time="0.001"/>
+  <testcase name="syncCannotChangeAuthoritativeCursorOrInventory()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMenuPacketJournalTest" time="0.001"/>
+  <testcase name="duplicatePredictionsAndInvalidSlotsRefuse()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMenuPacketJournalTest" time="0.0"/>
+  <testcase name="scratchHeadroomIsReservedOnceWithinParentCeiling()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMenuPacketJournalTest" time="0.001"/>
+  <testcase name="oversizedTrustedPrototypeRefusesBeforeComponentLookup()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMenuPacketJournalTest" time="0.002"/>
+  <testcase name="completeCanonicalPacketJournalRoundTrips()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMenuPacketJournalTest" time="0.004"/>
+  <testcase name="corruptPredictionCountRefusesBeforeAllocation()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMenuPacketJournalTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

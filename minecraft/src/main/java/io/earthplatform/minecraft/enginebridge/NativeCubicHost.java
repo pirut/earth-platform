@@ -83,6 +83,9 @@ public final class NativeCubicHost {
     private final CubicWorld world;
     private final ThreadPoolExecutor generation;
     private final BlockState[] pinnedStates;
+    private final String replacementStoreIdentity;
+    private final ReplacementRevisionLedger replacementLedger;
+    private final ArenaRevisionLedger arenaLedger;
     private final Map<CubePos, Resident> residents = new HashMap<>();
     private final CompletableFuture<Void> closed = new CompletableFuture<>();
     private CompletableFuture<Void> storeClose;
@@ -91,10 +94,11 @@ public final class NativeCubicHost {
 
     private NativeCubicHost(Thread owner, Path directory, DirectoryOwnership directoryOwnership, Limits limits,
                             NativeCubeCodec codec, CubicWorld world, ThreadPoolExecutor generation,
-                            BlockState[] pinnedStates) {
+                            BlockState[] pinnedStates, String replacementStoreIdentity, ReplacementRevisionLedger replacementLedger, ArenaRevisionLedger arenaLedger) {
         this.owner = owner; this.directory = directory; this.directoryOwnership = directoryOwnership;
         this.limits = limits; this.codec = codec; this.world = world; this.generation = generation;
-        this.pinnedStates = pinnedStates;
+        this.pinnedStates = pinnedStates; this.replacementStoreIdentity = replacementStoreIdentity;
+        this.replacementLedger = replacementLedger; this.arenaLedger = arenaLedger;
     }
 
     /**
@@ -108,6 +112,38 @@ public final class NativeCubicHost {
      */
     public static CompletableFuture<NativeCubicHost> openAsync(Path directory, WorldIdentity identity,
             CubeProvider provider, EnginePaletteContext palette, Limits limits, ThreadPoolExecutor bootstrap) {
+        return openAsync(directory, identity, provider, palette, limits, bootstrap, null);
+    }
+
+    /** Optional bounded original-region index is initialized on the same locked bootstrap worker. */
+    public static CompletableFuture<NativeCubicHost> openAsync(Path directory, WorldIdentity identity,
+            CubeProvider provider, EnginePaletteContext palette, Limits limits, ThreadPoolExecutor bootstrap,
+            CubePos replacementOriginal) {
+        return openAsync(directory, identity, provider, palette, limits, bootstrap, replacementOriginal, null);
+    }
+
+    static CompletableFuture<NativeCubicHost> openAsync(Path directory, WorldIdentity identity,
+            CubeProvider provider, EnginePaletteContext palette, Limits limits, ThreadPoolExecutor bootstrap,
+            CubePos replacementOriginal, ReplacementWorkspaces replacementWorkspaces) {
+        return openAsync(directory, identity, provider, palette, limits, bootstrap, replacementOriginal, replacementWorkspaces, null);
+    }
+
+    static CompletableFuture<NativeCubicHost> openAsync(Path directory, WorldIdentity identity,
+            CubeProvider provider, EnginePaletteContext palette, Limits limits, ThreadPoolExecutor bootstrap,
+            CubePos replacementOriginal, ReplacementWorkspaces replacementWorkspaces, String indexedScope) {
+        return openAsync(directory, identity, provider, palette, limits, bootstrap, replacementOriginal, replacementWorkspaces, indexedScope, null, null, null);
+    }
+
+    static CompletableFuture<NativeCubicHost> openAsync(Path directory, WorldIdentity identity,
+            CubeProvider provider, EnginePaletteContext palette, Limits limits, ThreadPoolExecutor bootstrap,
+            CubePos replacementOriginal, ReplacementWorkspaces replacementWorkspaces, String indexedScope,
+            ArenaDefinition arena, String arenaScope, String arenaLayout) {
+        if (arena != null && (replacementOriginal != null || replacementWorkspaces != null || indexedScope != null || arenaScope == null || arenaLayout == null))
+            throw new IllegalArgumentException("Arena requires its separate versioned store capability");
+        if (indexedScope != null && (replacementWorkspaces == null || !replacementWorkspaces.isAdjacent() || replacementOriginal != null))
+            throw new IllegalArgumentException("Indexed store requires explicit adjacent replacement mode");
+        if (replacementOriginal != null && replacementWorkspaces != null)
+            throw new IllegalArgumentException("Choose legacy original-region or explicit two-workspace store");
         Objects.requireNonNull(directory); Objects.requireNonNull(provider); Objects.requireNonNull(limits);
         Objects.requireNonNull(bootstrap);
         if (bootstrap.getMaximumPoolSize() == Integer.MAX_VALUE
@@ -140,8 +176,19 @@ public final class NativeCubicHost {
                                     + " reached; active, closing, and failed-close hosts retain their slots");
                         OWNED_DIRECTORIES.put(canonical, ownership);
                     }
+                    if (arena == null) try (var files = Files.newDirectoryStream(canonical)) {
+                        for (Path file : files) if (file.getFileName().toString().startsWith("arena-paged-v1")
+                                || file.getFileName().toString().startsWith(".arena-paged-v1"))
+                            throw new java.io.IOException("Arena stores require the explicit arena capability; no legacy adoption");
+                    }
                     store = new FileEditStore(canonical, identity);
                     ownership.store = store;
+                    ReplacementRevisionLedger ledger = replacementWorkspaces == null ? null
+                            : indexedScope == null ? ReplacementRevisionLedger.open(canonical, replacementWorkspaces)
+                            : ReplacementRevisionLedger.openIndexed(canonical, replacementWorkspaces, indexedScope);
+                    ArenaRevisionLedger arenaLedger = arena == null ? null : ArenaRevisionLedger.open(canonical, arena, arenaScope, arenaLayout);
+                    String replacementStore = arenaLedger != null ? arenaLedger.storeIdentity() : ledger != null ? ledger.identity().storeIdentity()
+                            : replacementOriginal == null ? null : ReplacementStoreIdentity.open(canonical, replacementOriginal);
                     generation = new ThreadPoolExecutor(limits.generationWorkers(), limits.generationWorkers(),
                             0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(limits.residentCubes()), task -> {
                                 Thread worker = new Thread(task, "earth-native-cube-generation");
@@ -150,7 +197,7 @@ public final class NativeCubicHost {
                     CubicWorld world = new CubicWorld(identity, provider, store, generation,
                             limits.residentCubes(), limits.tickets(), limits.generationWorkers(), limits.pendingEdits());
                     NativeCubicHost host = new NativeCubicHost(owner, canonical, ownership, limits, codec,
-                            world, generation, states);
+                            world, generation, states, replacementStore, ledger, arenaLedger);
                     ownership.host = host;
                     result.publish(host);
                 } catch (Throwable failure) {
@@ -172,6 +219,10 @@ public final class NativeCubicHost {
 
     public WorldIdentity identity() { checkOwner(); return codec.world(); }
     public Path directory() { checkOwner(); return directory; }
+    public String replacementStoreIdentity() { checkOwner(); return replacementStoreIdentity; }
+    ReplacementRevisionLedger replacementLedger() { checkOwner(); return replacementLedger; }
+    ArenaRevisionLedger arenaLedger() { checkOwner(); return arenaLedger; }
+    int encodedSnapshotCacheCount() { checkOwner(); int count=0;for(var resident:residents.values())if(resident.snapshot!=null)count++;return count; }
     public Limits limits() { checkOwner(); return limits; }
     public Lifecycle lifecycle() { checkOwner(); return lifecycle; }
     public CubicWorld.Stats stats() { checkOwner(); return world.stats(); }
@@ -254,6 +305,15 @@ public final class NativeCubicHost {
         ensureOpen(); validateStateId(stateId);
         requireResident(CubePos.fromBlock(x, y, z));
         return world.setBlock(x, y, z, stateId);
+    }
+
+    /** Owner-only scalar read for bounded common capture; no snapshot, view or callback escapes. */
+    int blockStateId(long x, long y, long z) {
+        ensureOpen(); CubePos position = CubePos.fromBlock(x, y, z); requireResident(position);
+        var view = world.view(position).orElseThrow(() -> new IllegalStateException("Replacement dependency is not READY"));
+        int id = view.get(CubePos.index((int) Math.floorMod(x, CubePos.SIZE), (int) Math.floorMod(y, CubePos.SIZE),
+                (int) Math.floorMod(z, CubePos.SIZE)));
+        validateStateId(id); return id;
     }
 
     private void validateStateId(int id) {

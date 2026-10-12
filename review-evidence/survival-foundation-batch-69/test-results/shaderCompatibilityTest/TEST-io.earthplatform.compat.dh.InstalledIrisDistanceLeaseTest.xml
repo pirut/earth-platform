@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:36:00.325Z" hostname="4d821b23054b" time="0.104">
+  <properties/>
+  <testcase name="snapshotCannotSpoofActualCatalogueDistancesOrSingleplayerState()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.033"/>
+  <testcase name="nonclampingServerLimitChangesStillRevokeLeasePermanently()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.001"/>
+  <testcase name="legacyLeaseStillRequiresExactlyEffectiveTwoAndMustNotReturnDistanceModeLease()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.004"/>
+  <testcase name="selectedOnlyEffectiveOnlyServerOnlyAndServerModeChangesRevokeBeforeBorrowing()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.004"/>
+  <testcase name="pinnedMinecraftEffectiveDistanceAbiStillUsesPositiveServerMinimum()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.017"/>
+  <testcase name="selectedTwelveToTwentyFourToEightToTwelveNeverResurrectsOldLease()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.001"/>
+  <testcase name="catalogueChangesDuringSnapshotOrPackAttestationRefuseAdmission()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.002"/>
+  <testcase name="singleplayerLargerSelectionIsVisiblyPendingUntilEffectiveCatchesUp()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.004"/>
+  <testcase name="observedAndMutationHookAbaArePermanentForEverySupportedSelection()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.005"/>
+  <testcase name="everySelectedDistanceTwoThroughThirtyTwoIsAdmittedWithoutCallerRadiusOrSettingWrites()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.003"/>
+  <testcase name="catalogueChangesDuringPassLookupNeverReturnBorrowedPass()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.001"/>
+  <testcase name="unchangedPackOptionsArtifactAndRenderThreadRequirementsStillFailClosed()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.002"/>
+  <testcase name="compiledInstalledCatalogueReadsActualOptionsAndNeverWritesSettings()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.007"/>
+  <testcase name="allPinnedServerClampCombinationsAreValidatedAndPreserved()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.011"/>
+  <testcase name="wrongServerClampAndOutOfRangeSelectionRefuseWithoutAttestationOrMutation()" classname="io.earthplatform.compat.dh.InstalledIrisDistanceLeaseTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

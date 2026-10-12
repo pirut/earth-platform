@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:47.763Z" hostname="4d821b23054b" time="0.02">
+  <properties/>
+  <testcase name="xpZeroAdmissionRejectsEveryNormalizationOrLevelPath()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.002"/>
+  <testcase name="nativePlayerPredicatesRefuseWithoutRunningThem()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.009"/>
+  <testcase name="conservativeMatchingCriterionTreatsPreexistingProgressAsPotentiallyComplete()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.003"/>
+  <testcase name="recursiveRecipeOnlyUnlocksReachFixedPointAndPermitMetadataCycles()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.001"/>
+  <testcase name="exactTwoByTwoAndThreeByThreePickupShapesRemainDistinct()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.0"/>
+  <testcase name="nativeComponentPredicatesRefuseEvenOutsideReachableRewards()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.001"/>
+  <testcase name="bothActualNativeLeafLootItemsBelongToTheClosedUniverse()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.0"/>
+  <testcase name="duplicateAndExplicitCapacityBoundsRefuse()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.001"/>
+  <testcase name="nativeCraftedCriterionUsesOnlyTheFiveDirectCrafts()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.001"/>
+  <testcase name="wildcardAndMultiItemPredicatesConservativelyBroadenReachability()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.001"/>
+  <testcase name="recursiveUnlockCannotHideConservedRewards()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.0"/>
+  <testcase name="everyConservedRewardKindRefusesBeforeAnyCallback()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.0"/>
+  <testcase name="unachievableNetheriteRewardIsNotMistakenForReachable()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeFirstLoopMetadataTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

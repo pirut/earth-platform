@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.scene.SurvivalAuthenticatedCompletionTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:43.592Z" hostname="4d821b23054b" time="1.682">
+  <properties/>
+  <testcase name="diagnosticCompletionNeverGainsContentAuthentication()" classname="io.earthplatform.minecraft.scene.SurvivalAuthenticatedCompletionTest" time="0.391"/>
+  <testcase name="physicalCompletionRetainsPrivateProofAfterCpuDrainAndCloseRevokesIt()" classname="io.earthplatform.minecraft.scene.SurvivalAuthenticatedCompletionTest" time="0.34"/>
+  <testcase name="admissionFailureKeepsTransferredProofAndNumericPageEqualityCannotSubstitute()" classname="io.earthplatform.minecraft.scene.SurvivalAuthenticatedCompletionTest" time="0.306"/>
+  <testcase name="failedCpuDrainRetainsProofChargeAndRefusesCompletionUntilCleanup()" classname="io.earthplatform.minecraft.scene.SurvivalAuthenticatedCompletionTest" time="0.2"/>
+  <testcase name="exactResourceObjectAndIrreversibleResourceRetirementRemainSeparateFromContent()" classname="io.earthplatform.minecraft.scene.SurvivalAuthenticatedCompletionTest" time="0.245"/>
+  <testcase name="failedGpuDeletionRetainsIndependentProofAfterCpuAlreadyDrained()" classname="io.earthplatform.minecraft.scene.SurvivalAuthenticatedCompletionTest" time="0.194"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

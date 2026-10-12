@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="io.earthplatform.minecraft.survival.interaction.host.NativeMiningControlJournalTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:48.692Z" hostname="4d821b23054b" time="0.069">
+  <properties/>
+  <testcase name="nativeCracksRetainOrderAndOutOfRangeClearStage()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningControlJournalTest" time="0.004"/>
+  <testcase name="unrecognizedPacketsNeverBecomeOutputEvidence()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningControlJournalTest" time="0.014"/>
+  <testcase name="firstTransportExplicitlyRefusesPackedPositionAliases()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningControlJournalTest" time="0.001"/>
+  <testcase name="nativeBlockResyncUsesExactGlobalStateCodecAndPackedPosition()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningControlJournalTest" time="0.048"/>
+  <testcase name="noticesCannotExceedFixedReservation()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningControlJournalTest" time="0.001"/>
+  <testcase name="realNativeCrackCodecPreservesUnsignedByteNarrowing()" classname="io.earthplatform.minecraft.survival.interaction.host.NativeMiningControlJournalTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -87,8 +87,19 @@ public final class NativeRayEditPlanner {
     public static Result plan(WorldIdentity world, long epoch, EnginePaletteContext palette,
                               Map<CubePos, EngineCubeSnapshot> snapshots, Vec3 eye, Vec3 look,
                               double reach, Action action, CubePos editableCube, AABB playerBody) {
+        return planInternal(world,epoch,palette,snapshots,eye,look,reach,action,editableCube == null ? null : editableCube::equals,playerBody);
+    }
+    /** Pure fixed-arena ray policy. The actor independently checks full64 residency and durable revisions. */
+    public static Result planArena(WorldIdentity world,long epoch,EnginePaletteContext palette,
+            Map<CubePos,EngineCubeSnapshot> snapshots,Vec3 eye,Vec3 look,double reach,Action action,
+            ArenaDefinition arena,AABB playerBody) {
+        return planInternal(world,epoch,palette,snapshots,eye,look,reach,action,arena == null ? null : arena::contains,playerBody);
+    }
+    private static Result planInternal(WorldIdentity world,long epoch,EnginePaletteContext palette,
+            Map<CubePos,EngineCubeSnapshot> snapshots,Vec3 eye,Vec3 look,double reach,Action action,
+            java.util.function.Predicate<CubePos> permitted,AABB playerBody) {
         if (world == null || epoch < 0 || palette == null || snapshots == null
-                || action == null || editableCube == null || !addressable(eye)) return reject(RejectionReason.INVALID_INPUT);
+                || action == null || permitted == null || !addressable(eye)) return reject(RejectionReason.INVALID_INPUT);
         if (!Double.isFinite(reach) || reach <= 0 || reach > NativeKnownCubeQueries.MAX_REACH)
             return reject(RejectionReason.INVALID_REACH);
         if (!finite(look)) return reject(RejectionReason.INVALID_LOOK);
@@ -117,7 +128,7 @@ public final class NativeRayEditPlanner {
         BlockHitResult hit = ray.hit();
         BlockPos target = action == Action.REMOVE ? hit.getBlockPos() : hit.getBlockPos().relative(hit.getDirection());
         CubePos targetCube = CubePos.fromBlock(target.getX(), target.getY(), target.getZ());
-        if (!targetCube.equals(editableCube)) return reject(RejectionReason.OUTSIDE_EDITABLE_CUBE);
+        if (!permitted.test(targetCube)) return reject(RejectionReason.OUTSIDE_EDITABLE_CUBE);
 
         NativeKnownCubeQueries.Dependencies dependencies = ray.dependencies();
         if (action == Action.PLACE_DIORITE) {

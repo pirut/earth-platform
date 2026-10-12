@@ -133,6 +133,8 @@ class NativeEarthCubeProviderTest {
         var accepted = withRelief(false, SceneTerrain::new);
         assertFalse(SceneSurfaceSampler.class.isAssignableFrom(NativeEarthCubeProvider.class));
         assertFalse(sampler instanceof SceneTerrain, "Never expose the unguarded source cache");
+        assertTrue(sampler.supportsConcurrentReads(), "Only the provider-owned guarded view advertises concurrency");
+        assertFalse(accepted.supportsConcurrentReads(), "The mutable raw SceneTerrain cache remains owner-confined");
         assertEquals(accepted.identity(), sampler.identity());
         long x = SceneCommands.START_X, z = SceneCommands.START_Z;
         long y = sampler.surfaceY(x, z);
@@ -292,6 +294,77 @@ class NativeEarthCubeProviderTest {
                             || frame.getMethod().getType().getName().startsWith(NativeEarthCubeProvider.class.getName() + "$")));
             assertFalse(providerIo, () -> "Unexpected sampling I/O: " + event);
         }
+    }
+
+    @Test void explicitDescriptorPolicyIgnoresAmbientPropertiesWhileLegacyDefaultsRemainIdentical() {
+        var explicitRelief = withRelief(false, () -> NativeEarthCubeProvider.prepare(palette, true));
+        var explicitRaw = withRelief(true, () -> NativeEarthCubeProvider.prepare(palette, false));
+        assertEquals(provider(true).identity(), explicitRelief.identity());
+        assertEquals(provider(false).identity(), explicitRaw.identity());
+        assertNotEquals(explicitRaw.identity(), explicitRelief.identity());
+        var reliefSource = withRelief(false, () -> new SceneTerrain(true));
+        var rawSource = withRelief(true, () -> new SceneTerrain(false));
+        assertTrue(reliefSource.naturalRelief()); assertFalse(rawSource.naturalRelief());
+        assertTrue(explicitRelief.naturalRelief()); assertFalse(explicitRaw.naturalRelief());
+        assertEquals(reliefSource.sourceUrl(),explicitRelief.sourceUrl());
+        assertEquals(reliefSource.datum(),explicitRelief.verticalDatum());
+        assertEquals(rawSource.sourceUrl(),explicitRaw.sourceUrl());
+        assertEquals(rawSource.datum(),explicitRaw.verticalDatum());
+        assertTrue(withRelief(false,explicitRelief::naturalRelief));
+        assertFalse(withRelief(true,explicitRaw::naturalRelief));
+        assertEquals(reliefSource.identity(), explicitRelief.surfaceSampler().identity());
+        assertEquals(rawSource.identity(), explicitRaw.surfaceSampler().identity());
+        assertFalse(reliefSource.supportsConcurrentReads()); assertFalse(rawSource.supportsConcurrentReads());
+        long x=SceneCommands.START_X, z=SceneCommands.START_Z;
+        CubePos cube=CubePos.fromBlock(x, explicitRelief.surfaceSampler().surfaceY(x,z), z);
+        var pinned=load(explicitRelief,cube);
+        assertEquals(pinned,withRelief(false,()->load(explicitRelief,cube)));
+        assertEquals(pinned,withRelief(true,()->load(explicitRelief,cube)));
+    }
+
+    @Test void advertisedSummaryCapabilityReallySharesTheGenerationSourceLock() throws Exception {
+        var earth=NativeEarthCubeProvider.prepare(palette,true);
+        var field=NativeEarthCubeProvider.class.getDeclaredField("sourceLock");field.setAccessible(true);
+        Object lock=field.get(earth);var entered=new CountDownLatch(1);var thread=new AtomicReference<Thread>();
+        var workers=java.util.concurrent.Executors.newSingleThreadExecutor();
+        java.util.concurrent.Future<Long> result;
+        try {
+            synchronized(lock) {
+                result=workers.submit(()->{thread.set(Thread.currentThread());entered.countDown();return earth.surfaceSampler().surfaceY(SceneCommands.START_X,SceneCommands.START_Z);});
+                assertTrue(entered.await(5,TimeUnit.SECONDS));
+                long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
+                while(thread.get().getState()!=Thread.State.BLOCKED&&System.nanoTime()<deadline)Thread.onSpinWait();
+                assertEquals(Thread.State.BLOCKED,thread.get().getState());assertFalse(result.isDone());
+                assertEquals(0,privateSource(earth).cachedColumns());
+            }
+            assertEquals(new SceneTerrain(true).surfaceY(SceneCommands.START_X,SceneCommands.START_Z),result.get(5,TimeUnit.SECONDS));
+        } finally {workers.shutdownNow();assertTrue(workers.awaitTermination(5,TimeUnit.SECONDS));}
+    }
+
+    @Test void explicitNaturalSourceSupportsTwoGeneratorsAndIndependentSummaryThroughEviction() throws Exception {
+        var baseline=NativeEarthCubeProvider.prepare(palette,true);var earth=NativeEarthCubeProvider.prepare(palette,true);
+        CubePos center=CubePos.fromBlock(SceneCommands.START_X,baseline.surfaceSampler().surfaceY(SceneCommands.START_X,SceneCommands.START_Z),SceneCommands.START_Z);
+        var positions=new ArrayList<CubePos>();var expected=new HashMap<CubePos,ImmutableCube>();
+        for(int z=-4;z<4;z++)for(int x=-5;x<5;x++){var pos=center.offset(x,Math.floorMod(x+z,3)-1,z);positions.add(pos);expected.put(pos,load(baseline,pos));}
+        var workers=java.util.concurrent.Executors.newFixedThreadPool(3);var started=new CountDownLatch(3);var go=new CountDownLatch(1);
+        var results=new ArrayList<java.util.concurrent.Future<?>>();
+        try {
+            for(int side=0;side<2;side++){final int parity=side;results.add(workers.submit(()->{started.countDown();awaitSourceGate(go);for(int i=parity;i<positions.size();i+=2){var pos=positions.get(i);assertEquals(expected.get(pos),load(earth,pos));}}));}
+            results.add(workers.submit(()->{started.countDown();awaitSourceGate(go);var actual=earth.surfaceSampler();var wanted=baseline.surfaceSampler();
+                for(var pos:positions)for(int z=0;z<16;z++)for(int x=0;x<16;x++){
+                    long ax=pos.minBlockX()+x,az=pos.minBlockZ()+z,y=actual.surfaceY(ax,az);
+                    assertEquals(wanted.surfaceY(ax,az),y);assertEquals(wanted.argb(ax,az,y),actual.argb(ax,az,y));
+                }
+            }));
+            assertTrue(started.await(5,TimeUnit.SECONDS));go.countDown();for(var result:results)result.get(20,TimeUnit.SECONDS);
+        } finally {go.countDown();workers.shutdownNow();assertTrue(workers.awaitTermination(5,TimeUnit.SECONDS));}
+        assertTrue(positions.size()*256>SceneTerrain.MAX_CACHED_COLUMNS);
+        assertTrue(privateSource(earth).cachedColumns()<=SceneTerrain.MAX_CACHED_COLUMNS);
+        assertEquals(baseline.identity(),earth.identity());assertTrue(earth.surfaceSampler().supportsConcurrentReads());
+    }
+    private static void awaitSourceGate(CountDownLatch gate) {
+        try {if(!gate.await(5,TimeUnit.SECONDS))throw new AssertionError("Source start gate timed out");}
+        catch(InterruptedException failure){Thread.currentThread().interrupt();throw new AssertionError(failure);}
     }
 
     private static SceneTerrain privateSource(NativeEarthCubeProvider provider) throws Exception {

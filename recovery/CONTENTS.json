@@ -1,0 +1,286 @@
+{
+  "archive": "earth-source-recovery-20261012.tar.gz",
+  "sha256": "cdcd17e6dd9a19610a10dafabd9dfd20f74fc02c16da08fdf0efc3da17790878",
+  "bytes": 57130212,
+  "files": 18755,
+  "distinct_contents": 11843,
+  "unpacked_bytes": 542869718,
+  "unique_bytes": 320856251,
+  "parts": [
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part000",
+      "bytes": 1048576,
+      "sha256": "9fff9bac8b029d0543e303b1d6d2ff4b71aa15be85c4b796a06bc4cf17880dac"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part001",
+      "bytes": 1048576,
+      "sha256": "180ac5f2918d61ea5013b98cd7f888ae2e9ab76b127e7a38052df84de3ef3456"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part002",
+      "bytes": 1048576,
+      "sha256": "1d785fe365c10bda3f95f41b1fb01acf7308c49dfdc321f376a0b4dd344a6e47"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part003",
+      "bytes": 1048576,
+      "sha256": "635aa18d4b4b1e869fc266c059816fc820cc6223d80bbb7b360660ad5d54f29f"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part004",
+      "bytes": 1048576,
+      "sha256": "90bf02c604e61986e944011005540f7cf2bd7d55f832149a3ecd5a332dc3f8a7"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part005",
+      "bytes": 1048576,
+      "sha256": "a76ef42c4dda1703b16cddf487c4ba08b9239336ed99de1ea7f01fa59d8c611e"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part006",
+      "bytes": 1048576,
+      "sha256": "66853aa8ae94ebfbfde1ea96454d1e4f0b8d3d4eda49272e389e984e8e457e5d"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part007",
+      "bytes": 1048576,
+      "sha256": "ef3882da2a6f3889879728dbbd3c3567322a78b7c8bb33d5f16e662d6d5e4099"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part008",
+      "bytes": 1048576,
+      "sha256": "8f5e0f57091add24278c017507d26d97166504b240ac3f59991e42e4fc1a563d"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part009",
+      "bytes": 1048576,
+      "sha256": "a38ad9437a516e695caaef0c94ed178072b70206163242f9f40066a8ae491a86"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part010",
+      "bytes": 1048576,
+      "sha256": "7c5d44e586370a957705d034ab331477c4fce5576d15d62863274046bf5be665"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part011",
+      "bytes": 1048576,
+      "sha256": "3adb3a953a83c96450f3c7423c2316fd3eaa09060b2d2ad246aa46a4d794288d"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part012",
+      "bytes": 1048576,
+      "sha256": "3ddbeff922e2f4cb8066b25bab59620fea7e36edf57edc7fb05a281c44a4e289"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part013",
+      "bytes": 1048576,
+      "sha256": "47fb3a81d5592632080e865bcdf9355faa24d0765a616ee951ee2735a0da4377"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part014",
+      "bytes": 1048576,
+      "sha256": "4e18b4ac8a62e60c9fdb220b1d2700599fc7b5d80d6fed60d80f66d02bb3ae28"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part015",
+      "bytes": 1048576,
+      "sha256": "eb95bd37e85d78b442a11c0df89784c960a603e2f973aa7c09509cd3c1287035"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part016",
+      "bytes": 1048576,
+      "sha256": "f1e1a4f396661c91490e456e2e89b05994bf51e4b96622333bbf2ca7cce5335e"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part017",
+      "bytes": 1048576,
+      "sha256": "89d3acfe7465120087441131031ca583dd5ff5510fb1dd59045527b3e93f889b"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part018",
+      "bytes": 1048576,
+      "sha256": "1294bd5735db22217813df54552d0c38ac82282d7159c2f32cd5e1e79b652dd0"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part019",
+      "bytes": 1048576,
+      "sha256": "0e6897eda6114bcdcf3f22ce2101a845fc3fdc3070eaf8f2031000e980060da8"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part020",
+      "bytes": 1048576,
+      "sha256": "7cdae97181f607182cd293fc7f3b63790e70f66c9286babd0d1c0e3b14a470f9"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part021",
+      "bytes": 1048576,
+      "sha256": "7ba10f75bfbe9c1d04b830d4c8a5fddf27992e548f2fc50428db9685f12dc003"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part022",
+      "bytes": 1048576,
+      "sha256": "823ee2615e2260da1061d19b3dad949efb89b29bf115b6489676747623fe9f09"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part023",
+      "bytes": 1048576,
+      "sha256": "62e61fdb0b511969b2c2d5f43173104426019e142f5ccc881071c906f7d8d94d"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part024",
+      "bytes": 1048576,
+      "sha256": "7374ad1f4070ed2280db11cb8f6304c21057a627975575b1381e8da2bd76d0de"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part025",
+      "bytes": 1048576,
+      "sha256": "523d72901fdb709790f79db6d6c4983a8569d40472b0c00e8cd5e8919a550b96"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part026",
+      "bytes": 1048576,
+      "sha256": "c7117c4e7bc4bada3a9f4a12e81a24b5114d0f3a1920e4c34b16c6c34942fe66"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part027",
+      "bytes": 1048576,
+      "sha256": "1b4578510c5d40dd1274087a2c7f29f26cb6d1870e6d8ff93aa3d33db84dec46"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part028",
+      "bytes": 1048576,
+      "sha256": "8fce0d12a5db29cccbcfa8d565a85b01d70750722649b58ac7aca124d42af897"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part029",
+      "bytes": 1048576,
+      "sha256": "a085a43c6d5f296499b52913ef6c1d5eb991dfa9e3215377b945b4e4e41d5875"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part030",
+      "bytes": 1048576,
+      "sha256": "bc8f4df2d9896bd569f2cc90e56f2f7cab21509171850c5117771911e65cade4"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part031",
+      "bytes": 1048576,
+      "sha256": "fcb7bc54ae0aa72a93f2792d30fce6674b66190152b2e984c1f5e487c2db51c0"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part032",
+      "bytes": 1048576,
+      "sha256": "71debc184da0a9c2155abb00bfa8e29ca86d230411b20343ecb2d4ac0500d917"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part033",
+      "bytes": 1048576,
+      "sha256": "d592ba9946c94f3d4fb4635b4daf9432138fb28b05f2b5c4720b2634e44840d7"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part034",
+      "bytes": 1048576,
+      "sha256": "81b8e473927c1f23946947998f7096a4f64d738fd2c85cab9efa5d7994b2a9a5"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part035",
+      "bytes": 1048576,
+      "sha256": "1aadfb73710c1655c48a1ab25c74856e5170b31ec6cb10fafefc190bcf3505ac"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part036",
+      "bytes": 1048576,
+      "sha256": "26e9d65cc6065fe0c8881ad25036f7cf27c0fc569a724fb3137f5150b6e3d956"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part037",
+      "bytes": 1048576,
+      "sha256": "4711b4b6c52050febe75391964080aa0afe4e78b440b6f1141542a81950d7201"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part038",
+      "bytes": 1048576,
+      "sha256": "0c71b6b48a9b658aadc49c98a8a30cb6aaed78ed4799e00e8c25b8d3adae8e00"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part039",
+      "bytes": 1048576,
+      "sha256": "68ba1fbac7f177e6ad7b07ed84a2c9ad8e1b1344fe6702ee6fa0111c1df0bba5"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part040",
+      "bytes": 1048576,
+      "sha256": "14b02b2555741e7f1060b875a29ce1c8012b9d771c64973fbd0dd9fec7c0b5be"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part041",
+      "bytes": 1048576,
+      "sha256": "49c5f083e04e987eed9fed4020166fa01eafdbea96c35f5ec94efebae9fcb497"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part042",
+      "bytes": 1048576,
+      "sha256": "2238eb387f59967d49720a48a6f1f4f402d7fcfc9f04560fa462751471229f54"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part043",
+      "bytes": 1048576,
+      "sha256": "eee46c2374455c16a3d2295176c0eca9a599e3dd20fd9ed35e1025d2857155e5"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part044",
+      "bytes": 1048576,
+      "sha256": "9883224a9bcf9b1cab77044ee884cfa21856a690576d074325809e4a5939e8a2"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part045",
+      "bytes": 1048576,
+      "sha256": "605ee4ad9f6a50d9bf1a565507c972dda687785e230737d55ac6a1790ab824e2"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part046",
+      "bytes": 1048576,
+      "sha256": "5953d09f138304976536c3f32559bbfc344c8e657321c8fac147470aa149445b"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part047",
+      "bytes": 1048576,
+      "sha256": "07ad08ca7f0ca2c45fe7b841aac60f1598db6ec4a25b350f31116491d3bc1e6a"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part048",
+      "bytes": 1048576,
+      "sha256": "3d5bb0d4525360422b29e06775f881dd65068b0595c125bbcba42e8c382fbe21"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part049",
+      "bytes": 1048576,
+      "sha256": "0c33bf7744c3c1a71703550d78a7540f8bed6b69e689fb90488c6a4b27be7794"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part050",
+      "bytes": 1048576,
+      "sha256": "dc64e7e1120b2eeb7cf57c28570ee17e5755157084a18a89c0103102942f9aaa"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part051",
+      "bytes": 1048576,
+      "sha256": "3448353f148a30bdae005635c42603e8e894cea98c20a8d3d2c08ad8cf8a3571"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part052",
+      "bytes": 1048576,
+      "sha256": "002c251505d52c13b9804fbd6c5bf58a1f07c69ceec9bd96ca60375fd14c71c7"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part053",
+      "bytes": 1048576,
+      "sha256": "94a42cc02c956f35b2d1f4e8cb889203f15cd4e7d049f6e070ba81862c5019c1"
+    },
+    {
+      "name": "earth-source-recovery-20261012.tar.gz.part054",
+      "bytes": 507108,
+      "sha256": "5c76ffb0b4c9610c9218afa0d9414b8da85dfb3030c0f249074ccbdc4433252f"
+    }
+  ]
+}

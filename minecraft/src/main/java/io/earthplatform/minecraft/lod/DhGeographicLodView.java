@@ -1,6 +1,10 @@
 package io.earthplatform.minecraft.lod;
 
 import com.google.gson.JsonObject;
+import io.earthplatform.compat.dh.InstalledDhResolver;
+import io.earthplatform.compat.dh.InstalledDhTerrainRuntime;
+import io.earthplatform.compat.dh.NeoForgeDhCatalogue;
+import io.earthplatform.compat.dh.shader.IrisShaderFarBackend;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.earthplatform.core.CubePos;
 import io.earthplatform.core.WorldIdentity;
@@ -19,15 +23,21 @@ import static org.lwjgl.opengl.GL33C.*;
 
 /** Bounded source-provider far view. Readiness is attested by the caller's actual native mesh batch.
  * This class fences CPU command submission, not GPU completion. */
-public final class DhGeographicLodView implements AutoCloseable {
-    interface Mesh { int quads(); int bytes(); void close(); boolean deleted(); }
+public final class DhGeographicLodView implements SceneLodRenderer {
+    interface Mesh { int quads(); int bytes(); void close(); boolean deleted(); default long totalBytes(){return bytes()+quads()*24L;} }
     interface State { void restore(); }
+    interface CpuCompiler { DhPreparedVertices compile(List<DhTerrainGeometry.PageFace> faces,Runnable cancellationCheck); }
     interface Driver {
         void checkRenderThread(); String renderer(); State captureState(); void initialize();
         Mesh upload(DhGeographicLodData.TileKey key,List<DhTerrainGeometry.PageFace> faces);
         DrawStats draw(Map<DhGeographicLodData.TileKey,Mesh> meshes,Matrix4f matrix,double x,double y,double z);
         void close(); boolean deleted();
         default int pendingOwners(){return 0;}
+        default long pendingBytes(){return 0;}
+        default boolean installedRuntimeResolved(){return false;}
+        default void setCpuProfiler(RenderCpuProfiler profiler){}
+        default CpuCompiler cpuCompiler(){throw new UnsupportedOperationException("Explicit off-thread compiler required");}
+        default Mesh uploadPrepared(DhGeographicLodData.TileKey key,List<DhTerrainGeometry.PageFace> faces,DhPreparedVertices vertices){throw new UnsupportedOperationException("Prepared-only upload required");}
     }
     record DrawStats(long drawCalls,long vertices,long submissionNanos) {}
     private final Thread owner=Thread.currentThread();
@@ -61,6 +71,7 @@ public final class DhGeographicLodView implements AutoCloseable {
         source=new DhAdaptiveTerrainData(sampler,centerX,centerZ);
         require(world.datasetVersion().equals(source.identity()),"Near world identity must pin the exact shared source/appearance sampler");
     }
+    public void setCpuProfiler(RenderCpuProfiler profiler){checkOwner();require(!initializationStarted&&!closed,"Install profiler before initialization");driver.setCpuProfiler(java.util.Objects.requireNonNull(profiler));}
     /** Caller must retain this owner before initialization, so failed cleanup can be retried. */
     public void initialize() {
         checkOwner();driver.checkRenderThread();require(!closed&&!initializationStarted,"Far initialization state");initializationStarted=true;
@@ -71,7 +82,7 @@ public final class DhGeographicLodView implements AutoCloseable {
             if(failure!=null)throw propagate(failure);
             require(replaceCoverage(0,List.of()),"Initial bounded far geometry publication failed: "+lastFailure);
             initialized=true;
-        }catch(RuntimeException|Error failure){try{close();}catch(RuntimeException|Error cleanup){failure.addSuppressed(cleanup);}throw failure;}
+        }catch(RuntimeException|Error failure){try{close();}catch(RuntimeException|Error cleanup){if(failure!=cleanup)failure.addSuppressed(cleanup);}throw failure;}
     }
     /** A successful whole-batch handshake precedes exposing or retiring native meshes on the same owner thread. */
     public boolean replaceCoverage(long generation,List<SceneReadyCube> proposed) {
@@ -128,6 +139,7 @@ public final class DhGeographicLodView implements AutoCloseable {
             return true;
         }
     }
+    public boolean hasPublishedGeometry(){checkOwner();synchronized(fence){return coverageGeneration>=0&&!closed&&!invalidated;}}
     public boolean coverageReady(long generation){checkOwner();synchronized(fence){return initialized&&!closed&&!invalidated&&coverageGeneration==generation&&source.identity().equals(sampler.identity());}}
     public void draw(Matrix4f matrix,double x,double y,double z,long resourceGeneration) {
         checkOwner();driver.checkRenderThread();
@@ -156,7 +168,7 @@ public final class DhGeographicLodView implements AutoCloseable {
             out.addProperty("coverageChanges",coverageChanges);out.addProperty("rejectedCoverageChanges",rejectedCoverageChanges);out.addProperty("lastFailure",lastFailure);
             out.addProperty("drawCalls",drawCalls);out.addProperty("submittedVertices",submittedVertices);out.addProperty("uploadedVertexBytes",uploadedVertexBytes);
             out.addProperty("currentVertexBytes",meshes.values().stream().mapToLong(Mesh::bytes).sum());out.addProperty("lastCpuSubmissionNanos",drawSubmissionNanos);
-            out.addProperty("hardwareGpuPerformanceClaim",false);out.addProperty("renderer",renderer);out.addProperty("stockDhModLoaded",false);
+            out.addProperty("hardwareGpuPerformanceClaim",false);out.addProperty("renderer",renderer);out.addProperty("installedDhRuntimeResolved",driver.installedRuntimeResolved());
             out.addProperty("closed",closed);out.addProperty("invalidated",invalidated);out.addProperty("ownedGlObjectsDeleted",objectsDeleted);return out;}
     }
     private static String profileIdentity(List<CubePos> profile) {
@@ -191,33 +203,81 @@ public final class DhGeographicLodView implements AutoCloseable {
     }}
 
     /** Production driver uses the exact verified official quad builder and unchanged shaders. */
-    private static final class OpenGlDriver implements Driver {
-        private DhOfficialRuntime runtime;
+    static final class OpenGlDriver implements Driver {
+        private final double horizontalOriginLimit,verticalOriginLimit;
+        private final boolean roundedDistanceStorage;
+        OpenGlDriver(){this(8192,8192);}
+        OpenGlDriver(double horizontalOriginLimit,double verticalOriginLimit){this(horizontalOriginLimit,verticalOriginLimit,null);}
+        OpenGlDriver(double horizontalOriginLimit,double verticalOriginLimit,InstalledDhResolver.Runtime installedRuntime){this(horizontalOriginLimit,verticalOriginLimit,installedRuntime,null);}
+        OpenGlDriver(double horizontalOriginLimit,double verticalOriginLimit,InstalledDhResolver.Runtime installedRuntime,IrisShaderFarBackend shaderBackend){
+            this(horizontalOriginLimit,verticalOriginLimit,installedRuntime,shaderBackend,false);
+        }
+        OpenGlDriver(double horizontalOriginLimit,double verticalOriginLimit,InstalledDhResolver.Runtime installedRuntime,IrisShaderFarBackend shaderBackend,boolean roundedDistanceStorage){
+            this.roundedDistanceStorage=roundedDistanceStorage;
+            this.installedRuntime=installedRuntime;this.shaderBackend=shaderBackend;
+            if(!Double.isFinite(horizontalOriginLimit)||!Double.isFinite(verticalOriginLimit)||horizontalOriginLimit<8192||verticalOriginLimit<8192||horizontalOriginLimit>32768||verticalOriginLimit>32768)
+                throw new IllegalArgumentException("Bounded native draw envelope required");
+            this.horizontalOriginLimit=horizontalOriginLimit;this.verticalOriginLimit=verticalOriginLimit;
+        }
+        private static final InstalledDhResolver INSTALLED_RESOLVER=new InstalledDhResolver(new NeoForgeDhCatalogue());
+        private final InstalledDhResolver.Runtime installedRuntime;
+        private final IrisShaderFarBackend shaderBackend;
+        private InstalledDhTerrainRuntime runtime;
+        private RenderCpuProfiler profiler=new RenderCpuProfiler(false);
+        public void setCpuProfiler(RenderCpuProfiler profiler){checkRenderThread();this.profiler=java.util.Objects.requireNonNull(profiler);}
         private int program,light,atlas;
         private final java.util.Set<Integer> shaders=new java.util.LinkedHashSet<>();
         private final List<GlMesh> incomplete=new ArrayList<>();
         public void checkRenderThread(){RenderSystem.assertOnRenderThread();}
         public String renderer(){checkRenderThread();return glGetString(GL_RENDERER);}
-        public State captureState(){var state=new DhOffscreenGpuProbe.State();return()->{state.restore();require(state.matches(),"Geographic DH GL state restoration");};}
+        public State captureState(){
+            if(shaderBackend!=null){Runnable restore=shaderBackend.captureBindings();return restore::run;}
+            long started=profiler.start();final DhOffscreenGpuProbe.State state;
+            try{state=new DhOffscreenGpuProbe.State();}finally{profiler.finish(RenderCpuProfiler.Stage.GL_STATE_CAPTURE,started);}
+            return()->{long restoring=profiler.start();try{state.restore();require(state.matches(),"Geographic DH GL state restoration");}finally{profiler.finish(RenderCpuProfiler.Stage.GL_STATE_RESTORE,restoring);}};
+        }
+        /** Capture only the borrowed installed CPU runtime; no GL driver state is read by the returned worker. */
+        public CpuCompiler cpuCompiler(){
+            checkRenderThread();final InstalledDhTerrainRuntime pinned=java.util.Objects.requireNonNull(runtime,"Initialize before compiler capture");
+            final byte material=shaderBackend==null?(byte)0:(byte)2;
+            return (faces,cancel)->new DhPreparedVertices(pinned.buildRectangles(faces,material,cancel));
+        }
+        /** Legacy synchronous path retained for the separate control/diagnostic views. */
         public Mesh upload(DhGeographicLodData.TileKey key,List<DhTerrainGeometry.PageFace> faces) {
-            require(incomplete.isEmpty(),"Earlier partial upload cleanup is pending; close before reuse");
-            final byte[] bytes;
-            try{bytes=runtime.buildRectangles(faces);}catch(Exception error){throw new IllegalStateException("Official DH geometry build",error);}
-            GlMesh mesh=new GlMesh(bytes.length/64,bytes.length);
-            // Retain ownership until the upload boundary successfully transfers the mesh.
+            final DhPreparedVertices vertices;long built=profiler.start();
+            try{vertices=new DhPreparedVertices(runtime.buildRectangles(faces,shaderBackend==null?(byte)0:(byte)2,()->{}));}
+            catch(Exception error){throw new IllegalStateException("Official DH geometry build",error);}
+            finally{profiler.finish(RenderCpuProfiler.Stage.OFFICIAL_DH_BUILDER,built);}
+            return uploadPrepared(key,faces,vertices);
+        }
+        /** Owner-thread GL allocation only; official CPU packing is already complete. */
+        public Mesh uploadPrepared(DhGeographicLodData.TileKey key,List<DhTerrainGeometry.PageFace> faces,DhPreparedVertices vertices) {
+            checkRenderThread();require(incomplete.isEmpty(),"Earlier partial upload cleanup is pending; close before reuse");
+            java.util.Objects.requireNonNull(vertices);require(!faces.isEmpty()&&faces.size()<=4096&&vertices.quads()<=faces.size(),"Prepared official quad budget");
+            GlMesh mesh=new GlMesh(vertices.quads(),vertices.byteCount(),profiler,roundedDistanceStorage);
             incomplete.add(mesh);
-            try{uploadBuffer(mesh,bytes);incomplete.remove(mesh);return mesh;}
-            catch(RuntimeException|Error failure){try{mesh.close();if(mesh.deleted())incomplete.remove(mesh);}catch(RuntimeException|Error cleanup){failure.addSuppressed(cleanup);}throw failure;}
+            try{long uploaded=profiler.start();try{uploadBuffer(mesh,vertices);}finally{profiler.finish(RenderCpuProfiler.Stage.GL_BUFFER_UPLOAD,uploaded);}incomplete.remove(mesh);return mesh;}
+            catch(RuntimeException|Error failure){try{mesh.close();if(mesh.deleted())incomplete.remove(mesh);}catch(RuntimeException|Error cleanup){if(failure!=cleanup)failure.addSuppressed(cleanup);}throw failure;}
         }
         public DrawStats draw(Map<DhGeographicLodData.TileKey,Mesh> meshes,Matrix4f viewProjection,double cameraX,double cameraY,double cameraZ) {
             long started=System.nanoTime(),calls=0,vertices=0;
+            if(shaderBackend!=null){
+                shaderBackend.requirePass(cameraX,cameraY,cameraZ);
+                for(var entry:meshes.entrySet()){var key=entry.getKey();var mesh=(GlMesh)entry.getValue();
+                    double dx=key.originX()-cameraX,dy=(long)key.pageY()*2048-cameraY,dz=key.originZ()-cameraZ;
+                    if(Math.abs(dx)>horizontalOriginLimit||Math.abs(dy)>verticalOriginLimit||Math.abs(dz)>horizontalOriginLimit)continue;
+                    shaderBackend.page(key.originX(),(long)key.pageY()*2048,key.originZ());
+                    glBindVertexArray(mesh.vao);glDrawElements(GL_TRIANGLES,mesh.quads*6,GL_UNSIGNED_INT,0L);calls++;vertices+=mesh.quads*4L;
+                }
+                io.earthplatform.compat.dh.shader.StrictGlErrors.check("far.borrowed.draw.complete");return new DrawStats(calls,vertices,System.nanoTime()-started);
+            }
             glUseProgram(program);glDisable(GL_BLEND);glDisable(GL_CULL_FACE);glEnable(GL_DEPTH_TEST);glDepthFunc(GL_LEQUAL);glDepthMask(true);
             glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,light);glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,atlas);
             try(var stack=MemoryStack.stackPush()){var matrix=stack.mallocFloat(16);viewProjection.get(matrix);glUniformMatrix4fv(glGetUniformLocation(program,"uCombinedMatrix"),false,matrix);}
             for(var entry:meshes.entrySet()) {
                 var key=entry.getKey();var mesh=(GlMesh)entry.getValue();
                 double dx=key.originX()-cameraX,dy=(long)key.pageY()*2048-cameraY,dz=key.originZ()-cameraZ;
-                if(Math.abs(dx)>8192||Math.abs(dy)>8192||Math.abs(dz)>8192)continue;
+                if(Math.abs(dx)>horizontalOriginLimit||Math.abs(dy)>verticalOriginLimit||Math.abs(dz)>horizontalOriginLimit)continue;
                 glUniform3f(glGetUniformLocation(program,"uModelOffset"),(float)dx,(float)dy,(float)dz);
                 glUniform1f(glGetUniformLocation(program,"uWorldYOffset"),key.pageY()*2048.0f);
                 glBindVertexArray(mesh.vao);glDrawElements(GL_TRIANGLES,mesh.quads*6,GL_UNSIGNED_INT,0L);calls++;vertices+=mesh.quads*4L;
@@ -226,6 +286,7 @@ public final class DhGeographicLodView implements AutoCloseable {
         }
         public void close() {
             Throwable failure=null;
+            if(shaderBackend!=null)try{shaderBackend.close();}catch(RuntimeException|Error error){failure=error;}
             for(var it=incomplete.iterator();it.hasNext();){GlMesh mesh=it.next();try{mesh.close();require(mesh.deleted(),"Partial far upload cleanup");it.remove();}catch(RuntimeException|Error e){failure=append(failure,e);}}
             try{if(program!=0){if(glGetInteger(GL_CURRENT_PROGRAM)==program)glUseProgram(0);glDeleteProgram(program);require(!glIsProgram(program),"Far program cleanup");program=0;}}catch(RuntimeException|Error e){failure=append(failure,e);}
             failure=append(failure,drainShaders());
@@ -233,34 +294,56 @@ public final class DhGeographicLodView implements AutoCloseable {
             try{if(atlas!=0){glDeleteTextures(atlas);require(!glIsTexture(atlas),"Far atlas texture cleanup");atlas=0;}}catch(RuntimeException|Error e){failure=append(failure,e);}
             if(failure!=null)throw propagate(failure);
         }
-        public boolean deleted(){return incomplete.isEmpty()&&shaders.isEmpty()&&program==0&&light==0&&atlas==0;}
+        public boolean deleted(){return incomplete.isEmpty()&&shaders.isEmpty()&&program==0&&light==0&&atlas==0&&(shaderBackend==null||!shaderBackend.restorationPending());}
         public int pendingOwners(){return incomplete.size();}
-        private static final class GlMesh implements Mesh {
-            final int quads,bytes;int vao,vbo,ibo;
-            GlMesh(int quads,int bytes){this.quads=quads;this.bytes=bytes;}
+        public long pendingBytes(){return incomplete.stream().mapToLong(GlMesh::totalBytes).sum();}
+        public boolean installedRuntimeResolved(){return runtime!=null;}
+        private static final class GlMesh implements Mesh, DhGlUpload.Owner {
+            final int quads,bytes;final RenderCpuProfiler profiler;final boolean rounded;int vao,vbo,ibo;
+            GlMesh(int quads,int bytes,RenderCpuProfiler profiler,boolean rounded){this.quads=quads;this.bytes=bytes;this.profiler=profiler;this.rounded=rounded;}
+            public long totalBytes(){return rounded?DhNativeDistanceBudget.storage(quads).chargedBytes():bytes+quads*24L;}
             public int quads(){return quads;}public int bytes(){return bytes;}
+            public int vao(){return vao;}public int vbo(){return vbo;}public int ibo(){return ibo;}
+            public void vao(int id){vao=id;}public void vbo(int id){vbo=id;}public void ibo(int id){ibo=id;}
             public boolean deleted(){return vao==0&&vbo==0&&ibo==0;}
-            public void close(){Throwable failure=null;
-                try{if(vao!=0){glDeleteVertexArrays(vao);require(!glIsVertexArray(vao),"Far VAO cleanup");vao=0;}}catch(RuntimeException|Error e){failure=append(failure,e);}
-                try{if(vbo!=0){glDeleteBuffers(vbo);require(!glIsBuffer(vbo),"Far VBO cleanup");vbo=0;}}catch(RuntimeException|Error e){failure=append(failure,e);}
-                try{if(ibo!=0){glDeleteBuffers(ibo);require(!glIsBuffer(ibo),"Far IBO cleanup");ibo=0;}}catch(RuntimeException|Error e){failure=append(failure,e);}
+            public void close(){long retired=profiler.start();try{Throwable failure=null;
+                try{if(vao!=0){io.earthplatform.compat.dh.shader.StrictGlErrors.check("far.retire.vao.entry",vao,vbo,ibo);glDeleteVertexArrays(vao);io.earthplatform.compat.dh.shader.StrictGlErrors.check("far.retire.vao.delete",vao,vbo,ibo);boolean deleted=!glIsVertexArray(vao);io.earthplatform.compat.dh.shader.StrictGlErrors.check("far.retire.vao.verify",vao,vbo,ibo);require(deleted,"Far VAO cleanup");vao=0;}}catch(RuntimeException|Error e){failure=append(failure,e);}
+                try{if(vbo!=0){io.earthplatform.compat.dh.shader.StrictGlErrors.check("far.retire.vbo.entry",vao,vbo,ibo);glDeleteBuffers(vbo);io.earthplatform.compat.dh.shader.StrictGlErrors.check("far.retire.vbo.delete",vao,vbo,ibo);boolean deleted=!glIsBuffer(vbo);io.earthplatform.compat.dh.shader.StrictGlErrors.check("far.retire.vbo.verify",vao,vbo,ibo);require(deleted,"Far VBO cleanup");vbo=0;}}catch(RuntimeException|Error e){failure=append(failure,e);}
+                try{if(ibo!=0){io.earthplatform.compat.dh.shader.StrictGlErrors.check("far.retire.ibo.entry",vao,vbo,ibo);glDeleteBuffers(ibo);io.earthplatform.compat.dh.shader.StrictGlErrors.check("far.retire.ibo.delete",vao,vbo,ibo);boolean deleted=!glIsBuffer(ibo);io.earthplatform.compat.dh.shader.StrictGlErrors.check("far.retire.ibo.verify",vao,vbo,ibo);require(deleted,"Far IBO cleanup");ibo=0;}}catch(RuntimeException|Error e){failure=append(failure,e);}
                 if(failure!=null)throw propagate(failure);
-            }
+            }finally{profiler.finish(RenderCpuProfiler.Stage.GL_RETIREMENT,retired);}}
         }
-    private static void uploadBuffer(GlMesh mesh,byte[] bytes) {
-        mesh.vao=glGenVertexArrays();glBindVertexArray(mesh.vao);mesh.vbo=glGenBuffers();glBindBuffer(GL_ARRAY_BUFFER,mesh.vbo);
-        ByteBuffer data=MemoryUtil.memAlloc(bytes.length);java.nio.IntBuffer indexes=null;
-        try{indexes=MemoryUtil.memAllocInt(mesh.quads*6);data.put(bytes).flip();glBufferData(GL_ARRAY_BUFFER,data,GL_STATIC_DRAW);
+    private static final DhGlUpload.Gl UPLOAD_GL=new DhGlUpload.Gl(){
+        public int genVertexArray(){return glGenVertexArrays();}public int genBuffer(){return glGenBuffers();}
+        public void bindVertexArray(int id){glBindVertexArray(id);}public void bindBuffer(int target,int id){glBindBuffer(target,id);}
+        public void vertexData(ByteBuffer data){glBufferData(GL_ARRAY_BUFFER,data,GL_STATIC_DRAW);}
+        public void indexData(java.nio.IntBuffer data){glBufferData(GL_ELEMENT_ARRAY_BUFFER,data,GL_STATIC_DRAW);}
+        public void allocateVertexBytes(int bytes){glBufferData(GL_ARRAY_BUFFER,bytes,GL_STATIC_DRAW);}
+        public void writeVertexData(ByteBuffer data){glBufferSubData(GL_ARRAY_BUFFER,0,data);}
+        public void allocateIndexBytes(int bytes){glBufferData(GL_ELEMENT_ARRAY_BUFFER,bytes,GL_STATIC_DRAW);}
+        public void writeIndexData(java.nio.IntBuffer data){glBufferSubData(GL_ELEMENT_ARRAY_BUFFER,0,data);}
+        public int bufferSize(int target){return glGetBufferParameteri(target,GL_BUFFER_SIZE);}
+        public void enableAttribute(int index){glEnableVertexAttribArray(index);}
+        public void integerAttribute(int index,int count,int type,int stride,long offset){glVertexAttribIPointer(index,count,type,stride,offset);}
+        public void attribute(int index,int count,int type,boolean normalized,int stride,long offset){glVertexAttribPointer(index,count,type,normalized,stride,offset);}
+        public void check(String phase,DhGlUpload.Owner owner){io.earthplatform.compat.dh.shader.StrictGlErrors.check(phase,owner.vao(),owner.vbo(),owner.ibo());}
+    };
+    private static void uploadBuffer(GlMesh mesh,DhPreparedVertices vertices) {
+        // Reject inherited GL state before either native buffer allocation or GPU allocation.
+        UPLOAD_GL.check("far.upload.buffer.entry",mesh);
+        ByteBuffer data=MemoryUtil.memAlloc(vertices.byteCount());java.nio.IntBuffer indexes=null;
+        try{indexes=MemoryUtil.memAllocInt(mesh.quads*6);vertices.writeTo(data);data.flip();
             for(int q=0;q<mesh.quads;q++){int b=q*4;indexes.put(b).put(b+1).put(b+2).put(b+2).put(b+3).put(b);}indexes.flip();
-            mesh.ibo=glGenBuffers();glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,mesh.ibo);glBufferData(GL_ELEMENT_ARRAY_BUFFER,indexes,GL_STATIC_DRAW);
+            if(mesh.rounded)DhGlUpload.uploadRounded(UPLOAD_GL,mesh,data,indexes);else DhGlUpload.upload(UPLOAD_GL,mesh,data,indexes);
         }finally{MemoryUtil.memFree(data);if(indexes!=null)MemoryUtil.memFree(indexes);}
-        glEnableVertexAttribArray(0);glVertexAttribIPointer(0,4,GL_UNSIGNED_SHORT,16,0L);
-        glEnableVertexAttribArray(1);glVertexAttribPointer(1,4,GL_UNSIGNED_BYTE,true,16,8L);
-        glEnableVertexAttribArray(2);glVertexAttribIPointer(2,4,GL_UNSIGNED_BYTE,16,12L);
-        require(glGetError()==GL_NO_ERROR,"DH geographic upload GL error");
     }
     public void initialize() {
-        try{runtime=DhOfficialRuntime.open();}catch(Exception error){throw new IllegalStateException("Official DH scene runtime unavailable",error);}
+        try{
+            var installed=installedRuntime;
+            if(installed==null){var resolved=INSTALLED_RESOLVER.resolve();if(resolved.status()!=InstalledDhResolver.Status.READY)throw new IllegalStateException(resolved.explanation());installed=resolved.runtime();}
+            runtime=InstalledDhTerrainRuntime.open(installed);
+        }catch(Exception error){throw new IllegalStateException("Installed DH scene runtime unavailable; no isolated fallback",error);}
+        if(shaderBackend!=null)return; // Borrow only the active Iris pass; allocate no private shaders/light textures.
         int vertex=0,fragment=0;Throwable failure=null;
         try {
             vertex=compile(GL_VERTEX_SHADER,runtime.shader(true));fragment=compile(GL_FRAGMENT_SHADER,runtime.shader(false));
