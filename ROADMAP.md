@@ -1,6 +1,19 @@
 # Earth Cubic Platform roadmap
 
-Status: paused for handoff on October 12, 2026. This is a proposed continuation order, not permission to resume or a promise that milestones are complete.
+Status: resumed on October 12, 2026 on the "one cubic core" route (see below). This is the continuation order; a milestone counts as done only when its acceptance was met in the installed client.
+
+## One cubic core (current route)
+
+The project owner chose to rebuild survival on a single working cubic engine instead of continuing the locked 039 survival layer. The engine lives in `minecraft/src/main/java/io/earthplatform/minecraft/cubic`:
+
+- Cubes are vanilla `LevelChunkSection`s plus block entities, keyed by true cube coordinates from Y -16384 to 16383. A small carrier dimension (`earthplatform:cubic`) supplies chunk tickets, entity sections and ticking; Level mixins route every block, block-entity, light, biome and height query to the cube store, so vanilla gameplay code runs unchanged at any Y.
+- The server generates or loads cubes on worker threads, streams them nearest-first to each player, random-ticks them, lights them for gameplay, spawns mobs in the loaded band around players, and saves edited cubes in region files under `dimensions/earthplatform/cubic/cubes`.
+- The client meshes and lights cubes off-thread with the vanilla block and fluid renderers and draws them at the vanilla terrain stages. Block positions above Y 2047 keep their true Y on the wire.
+- `HighlandsGenerator` is a stand-in procedural generator (terrain around Y 2400 with caves, ores and trees) until the Earth generator plugs into the same `CubeGenerator` interface.
+
+Met in the installed client (NeoForge 21.1.256 with Sodium, Iris and Distant Horizons installed, shaders off): milestone 1's save, act, save, quit, restart and continue loop, and milestone 2's loop of hand-mining wood, crafting at a real table, a wooden pickaxe, mining stone and placing blocks at Y 2408 to 2414. From milestone 4: night-time monsters and first-visit animals spawn, torches and shade count for spawning and crops, and death respawns at a bed or at the cubic world's arrival point.
+
+Not yet done on this route: shader packs over cube meshes, Distant Horizons or Voxy far terrain for cubes, the Earth generator feeding cubes, and the Nether and End.
 
 ## Product requirements
 

@@ -94,8 +94,9 @@ class NativeShaderMixinConfigTest {
         String template=Files.readString(Path.of(project,"src/main/templates/META-INF/neoforge.mods.toml"));
         var matcher=Pattern.compile("(?m)^config\\s*=\\s*\"([^\"]+)\"\\s*$").matcher(template);
         var values=new ArrayList<String>();while(matcher.find())values.add(matcher.group(1).replace("${mod_id}","earthplatform"));
-        assertEquals(8,values.size());assertEquals(Set.of("earthplatform.mixins.json",NATIVE,FAR,"earthplatform.temp-files.mixins.json",
+        assertEquals(9,values.size());assertEquals(Set.of("earthplatform.mixins.json",NATIVE,FAR,"earthplatform.temp-files.mixins.json",
                 "earthplatform.native-player-tick-diagnostic.mixins.json","earthplatform.native-session-bridge.mixins.json",
-                "earthplatform.installed-callback-observation.mixins.json","earthplatform.native-local-observation.mixins.json"),new HashSet<>(values));
+                "earthplatform.installed-callback-observation.mixins.json","earthplatform.native-local-observation.mixins.json",
+                "earthplatform.cubic.mixins.json"),new HashSet<>(values));
     }
 }

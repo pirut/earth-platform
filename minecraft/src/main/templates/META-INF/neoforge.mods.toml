@@ -62,6 +62,10 @@ config="${mod_id}.far-shaders.mixins.json"
 [[mixins]]
 config="${mod_id}.temp-files.mixins.json"
 
+# One cubic core: true-height cube storage behind the vanilla Level API.
+[[mixins]]
+config="${mod_id}.cubic.mixins.json"
+
 # The [[accessTransformers]] block allows you to declare where your AT file is.
 # If this block is omitted, a fallback attempt will be made to load an AT from META-INF/accesstransformer.cfg
 #[[accessTransformers]]
