@@ -53,7 +53,8 @@ class CubicBench {
             new Place("Yosemite Valley", 37.7240, -119.6365),
             new Place("Lake Tahoe", 38.9520, -120.1080),
             new Place("Amazon", -3.4653, -62.2159),
-            new Place("Tokyo", 35.6812, 139.7671));
+            new Place("Tokyo", 35.6812, 139.7671),
+            new Place("Mato Grosso", -11.8243, -55.5029));
 
     @Test
     @EnabledIfEnvironmentVariable(named = "EARTH_BENCH", matches = ".+")
