@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic;
 
 import com.mojang.serialization.Lifecycle;
+import io.earthplatform.geography.globe.BareEarth;
 import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
@@ -64,6 +65,8 @@ class CubicBench {
         int farPerLevel = Integer.parseInt(System.getenv().getOrDefault("EARTH_BENCH_FAR", "150"));
         String only = System.getenv().getOrDefault("EARTH_BENCH_PLACE", "").toLowerCase(Locale.ROOT);
         boolean bare = "1".equals(System.getenv("EARTH_BENCH_BARE"));
+        // EARTH_BENCH_BARE_CACHE=0 works out every bare-earth field afresh, as a first visit does.
+        boolean bareCache = !"0".equals(System.getenv("EARTH_BENCH_BARE_CACHE"));
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
         HolderLookup.Provider lookup = VanillaRegistries.createLookup();
@@ -83,18 +86,19 @@ class CubicBench {
                 true, 256, 6, Duration.ofSeconds(20));
         WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, 4, Duration.ofSeconds(30));
         ClimateSource climate = new ClimateSource(ClimateSource.CHELSA, cache.resolve(ClimateSource.DATASET_ID), true, 320, 8, Duration.ofSeconds(30));
+        BareEarth bareEarth = bare ? new BareEarth(tiles, cover, bareCache ? cache.resolve(BareEarth.ID) : null) : null;
         MessageDigest all = MessageDigest.getInstance("SHA-256");
         for (Place place : PLACES) {
             if (!only.isEmpty() && !place.name.toLowerCase(Locale.ROOT).startsWith(only)) continue;
             EarthSettings settings = EarthSettings.at(place.latitude, place.longitude);
-            EarthGenerator warm = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, null, bare);
+            EarthGenerator warm = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, null, bareEarth);
             int[] home = warm.arrival();
             long t0 = System.nanoTime();
             warm.prepare(home[0], home[1]);
             System.out.printf(Locale.ROOT, "%n== %s (block %d, %d)%nprepare (data fetch): %.0f ms%n", place.name, home[0], home[1], ms(t0));
 
             // Cubes around a player standing on the ground, as the server loads them.
-            EarthGenerator gen = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, null, bare);
+            EarthGenerator gen = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, null, bareEarth);
             int ground = gen.surfaceY(home[0], home[1]);
             int cx = home[0] >> 4, cy = (ground + 2) >> 4, cz = home[1] >> 4;
             CubeOffsets offsets = CubeOffsets.of(Cubic.MAX_HORIZONTAL_RADIUS, Cubic.VERTICAL_RADIUS);

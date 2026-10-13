@@ -103,6 +103,42 @@ public final class WorldCoverSource implements AutoCloseable {
         return block[(int) ((py & 1023) << 10 | (px & 1023))] & 0xFF;
     }
 
+    /**
+     * The full-resolution classes over a grid of latitudes and longitudes, row by row into
+     * {@code out}, as {@link #code} at overview 0 gives each: each row's pixel row and each column's
+     * pixel column are worked out once, and a block is looked up only where the grid crosses into it.
+     */
+    public void codes(double[] latitudes, double[] longitudes, byte[] out) {
+        long full = (long) SQUARE * PIXELS_PER_DEGREE;
+        int[] wests = new int[longitudes.length], columns = new int[longitudes.length];
+        for (int i = 0; i < longitudes.length; i++) {
+            if (!Double.isFinite(longitudes[i])) throw new IllegalArgumentException("Invalid longitude " + longitudes[i]);
+            double longitude = wrap(longitudes[i]);
+            int west = Math.floorDiv((int) Math.floor(longitude), SQUARE) * SQUARE;
+            wests[i] = west;
+            columns[i] = (int) Math.min(full - 1, (long) ((longitude - west) * PIXELS_PER_DEGREE));
+        }
+        for (int j = 0; j < latitudes.length; j++) {
+            double latitude = latitudes[j];
+            if (!(Math.abs(latitude) <= 90)) throw new IllegalArgumentException("Invalid latitude " + latitude);
+            int south = Math.floorDiv((int) Math.floor(latitude), SQUARE) * SQUARE;
+            if (south >= 90) south = 90 - SQUARE;
+            int row = (int) Math.min(full - 1, Math.max(0, (long) ((south + SQUARE - latitude) * PIXELS_PER_DEGREE)));
+            int base = (row & 1023) << 10, at = j * longitudes.length;
+            byte[] block = null;
+            int blockWest = Integer.MIN_VALUE, blockColumn = -1;
+            for (int i = 0; i < longitudes.length; i++) {
+                int column = columns[i];
+                if (wests[i] != blockWest || column >> 10 != blockColumn) {
+                    blockWest = wests[i];
+                    blockColumn = column >> 10;
+                    block = block(square(south, blockWest), 0, row >> 10, blockColumn);
+                }
+                out[at + i] = block.length == 0 ? (byte) NO_DATA : block[base | column & 1023];
+            }
+        }
+    }
+
     /** Loads every block an area needs at an overview, several at a time, so later reads never wait. */
     public void prefetch(double south, double west, double north, double east, int overview) {
         double step = 1024.0 * (1 << overview) / PIXELS_PER_DEGREE;
