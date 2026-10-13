@@ -1,5 +1,7 @@
 # Private sparse engine fixture: source and data notices
 
+For the player-facing credits of the current Earth mod, see [CREDITS.md](CREDITS.md); the licence audit is in [docs/release/LICENSING-AUDIT.md](docs/release/LICENSING-AUDIT.md). The sections below also keep the older engine's notices.
+
 Original engine source is a development prototype, with no new public redistribution or stable addon compatibility claim.
 
 ## Distant Horizons
@@ -26,3 +28,15 @@ Regional relief and surface appearance are explicitly procedural heuristics laye
 ## Separately installed shader inputs
 
 The shader candidate additionally requires player-supplied Iris1.8.14-beta.1, Sodium0.8.12-beta.1 and Photonv1.3b. Their unchanged external artifacts, shaders, nested payloads and licenses are not part of our shim distribution. Exact input hashes and the three-classpath/no-copied-payload verification are recorded in review-evidence/shader-packaging015 and shader-aggregate. Users obtain each project from its official distribution and keep the terms accompanying that separate artifact. This candidate’s original code only adapts the pinned installed lifecycle, native format/material context and pass-owned renderer resources. No broader version or pack compatibility is implied.
+
+## Earth data streamed at runtime (never bundled)
+
+CHELSA V2.1 climatologies 1981-2010 (streamed by `geography/.../globe/ClimateSource` from https://os.zhdk.cloud.switch.ch/chelsav2/GLOBAL/): Karger, D.N. et al. (2017) Climatologies at high resolution for the earth's land surface areas. Scientific Data 4:170122; Karger, D.N. et al. (2021) EnviDat, https://doi.org/10.16904/envidat.228. CC0 1.0.
+
+ESA WorldCover 10 m 2021 v200 (streamed by `WorldCoverSource` from its public cloud-optimised GeoTIFFs): attribution as for the fixture above, CC BY 4.0; classes are mapped to Minecraft biomes and blocks and built-up classes are replaced by surrounding land cover.
+
+Sentinel-2 cloudless 2016 (streamed by `ImagerySource` from https://tiles.maps.eox.at, used only to choose ground blocks): Sentinel-2 cloudless - https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Terms for public use through EOX's tile service are unconfirmed; see the licensing audit.
+
+## Photon adjusted for macOS
+
+A Photon v1.3b copy adjusted for Apple OpenGL was made for testing. It is a derivative of Photon (© 2021-2025 Benjamin Stott "SixthSurge", Photon Shaders License Agreement), keeps that licence file, and is not part of any Earth Platform distribution. Its licence forbids redistribution on platforms that pay creators (such as Modrinth and CurseForge) without the author's written permission.

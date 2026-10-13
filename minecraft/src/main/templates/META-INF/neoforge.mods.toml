@@ -36,17 +36,25 @@ displayName="${mod_name}" #mandatory
 #displayURL="https://change.me.to.your.mods.homepage.example.invalid/" #optional
 
 # A file name (in the root of the mod JAR) containing a logo for display
-#logoFile="examplemod.png" #optional
+logoFile="earthplatform_logo.png" #optional
+logoBlur=false
 
 # A text field displayed in the mod UI
-#credits="" #optional
+credits='''Earth data, downloaded while you play and kept on your computer:
+Elevation: AWS Terrain Tiles (Mapzen/Tilezen terrain on the Registry of Open Data on AWS). Sources and credits: ArcticDEM (DigitalGlobe imagery, NSF awards 1043681, 1559691, 1542736); Australia © Commonwealth of Australia (Geoscience Australia) 2017; Austria © offene Daten Österreichs, Digitales Geländemodell (DGM) Österreich; Canada, contains information licensed under the Open Government Licence – Canada; Europe, produced using Copernicus data and information funded by the European Union, EU-DEM layers; global ETOPO1, U.S. National Oceanic and Atmospheric Administration; Mexico, INEGI Continental relief 2016; New Zealand, Copyright 2011 Crown copyright (c) Land Information New Zealand and the New Zealand Government (All rights reserved); Norway © Kartverket; United Kingdom © Environment Agency copyright and/or database right 2015, all rights reserved; United States 3DEP (formerly NED) and global GMTED2010 and SRTM, courtesy of the U.S. Geological Survey.
+Land cover: © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium. Zanaga, D. et al. (2022), ESA WorldCover 10 m 2021 v200, doi:10.5281/zenodo.7254221. CC BY 4.0.
+Climate: CHELSA V2.1 climatologies 1981-2010. Karger, D.N. et al. (2017) Climatologies at high resolution for the earth's land surface areas, Scientific Data 4:170122; Karger et al. (2021) EnviDat, doi:10.16904/envidat.228. CC0 1.0.
+Ground colours: Sentinel-2 cloudless 2016 - https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016).
+Built-in test areas (bundled): Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA; NOAA ETOPO 2022 (CC0).
+Earth Platform changes these data (resampling, block choices, procedural detail); it is not a survey and not for navigation. Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.''' #optional
 
 # The authors of the mod, displayed in the mod UI (optional)
-#authors=""
+authors="pirut"
 
 # The description text for the mod (multi line!) (#mandatory)
 description='''
-Experimental Earth-platform engine adapter. Current playable slice uses explicitly bounded vertical windows backed by independent 16-cubed data. Synthetic calibration fixtures; true seamless cubic engine integration remains incomplete.
+The real Earth in Minecraft at true scale: every mountain at its real height, real climate and biomes, and terrain all the way to the horizon.
+Choose the Earth world type in Create World and pick where to start. Travel anywhere with /earth visit <place> or /earth goto <latitude> <longitude>.
 '''
 
 # The [[mixins]] block allows you to declare your mixin config to FML so that it gets loaded.
