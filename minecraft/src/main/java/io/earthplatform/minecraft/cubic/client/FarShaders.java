@@ -183,7 +183,10 @@ final class FarShaders {
                 vec3 slope = earth_slope();
                 if (slope == vec3(0.0)) return earth_Shade[earth_face];
                 vec3 weight = slope * slope;
-                return weight.x * earth_Shade[4] + weight.y * earth_Shade[1] + weight.z * earth_Shade[2];
+                // Near by, smooth lighting darkens every stair corner of a stepped slope; flat ground
+                // and sheer walls have none, so the far slope darkens most at 45 degrees to match.
+                float corners = 1.0 - 0.9 * slope.y * (1.0 - slope.y);
+                return (weight.x * earth_Shade[4] + weight.y * earth_Shade[1] + weight.z * earth_Shade[2]) * corners;
             }
             """;
 
