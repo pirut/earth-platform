@@ -310,7 +310,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return section;
     }
 
-    @Override public @Nullable net.minecraft.core.BlockPos locate(net.minecraft.resources.ResourceLocation structure, int x, int z, int radius) {
+    @Override public @Nullable net.minecraft.core.BlockPos locate(java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> structure, int x, int z, int radius) {
         VanillaStructures structures = vanilla;
         return structures == null ? null : structures.locate(structure, x, z, radius);
     }

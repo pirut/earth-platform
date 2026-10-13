@@ -14,7 +14,10 @@
     "CubicEntityMixin",
     "CubicTravelMixin",
     "CubicRespawnMixin",
-    "CubicSpawnerMixin"
+    "CubicSpawnerMixin",
+    "CubicPoiStorageMixin",
+    "CubicPoiQueryMixin",
+    "CubicMapStructureMixin"
   ],
   "client": [
     "CubicPredictionMixin",

@@ -177,7 +177,9 @@ public final class CubicEvents {
         if (!(CubicLevel.of(player.level()) instanceof ServerCubeWorld cubes)) { source.sendFailure(Component.literal("Not in the cubic world.")); return 0; }
         var from = player.blockPosition();
         source.sendSuccess(() -> Component.literal("Looking for " + structure + "...").withStyle(ChatFormatting.GRAY), false);
-        java.util.concurrent.CompletableFuture.supplyAsync(() -> cubes.generator().locate(structure, from.getX(), from.getZ(), 100), net.minecraft.Util.backgroundExecutor())
+        var wanted = source.getServer().registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.STRUCTURE).get(structure);
+        if (wanted == null) { source.sendFailure(Component.literal("No structure " + structure)); return 0; }
+        java.util.concurrent.CompletableFuture.supplyAsync(() -> cubes.generator().locate(s -> s == wanted, from.getX(), from.getZ(), 100), net.minecraft.Util.backgroundExecutor())
                 .thenAcceptAsync(found -> {
                     if (found == null) source.sendFailure(Component.literal("No " + structure + " within 1600 blocks."));
                     else source.sendSuccess(() -> Component.literal(structure + " at " + found.toShortString() + ", "
