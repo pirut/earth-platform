@@ -9,8 +9,10 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.IdMap;
 import net.minecraft.core.Registry;
 import net.minecraft.core.SectionPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.util.RandomSource;
@@ -21,6 +23,7 @@ import net.minecraft.world.level.block.HugeMushroomBlock;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.RotatedPillarBlock;
 import net.minecraft.world.level.block.SnowLayerBlock;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
@@ -359,7 +362,22 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             structures.place(section, cx, cy, cz, blockEntities, entities);
             section.recalcBlockCounts();
         }
+        dropStrayBlockEntities(section, cx, cy, cz, blockEntities);
         return section;
+    }
+
+    /**
+     * Drops block entity tags whose block a later step replaced, such as a dungeon chest carved
+     * out by a neighbouring dungeon's room, so a cube's block entities always match its blocks.
+     */
+    private static void dropStrayBlockEntities(LevelChunkSection section, int cx, int cy, int cz, List<CompoundTag> blockEntities) {
+        blockEntities.removeIf(tag -> {
+            if (tag.getInt("x") >> 4 != cx || tag.getInt("y") >> 4 != cy || tag.getInt("z") >> 4 != cz) return false; // another cube's
+            ResourceLocation id = ResourceLocation.tryParse(tag.getString("id"));
+            BlockEntityType<?> type = id == null ? null : BuiltInRegistries.BLOCK_ENTITY_TYPE.get(id);
+            BlockState state = section.getBlockState(tag.getInt("x") & 15, tag.getInt("y") & 15, tag.getInt("z") & 15);
+            return type == null || !type.isValid(state);
+        });
     }
 
     @Override public @Nullable net.minecraft.core.BlockPos locate(java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> structure, int x, int z, int radius) {
