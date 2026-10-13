@@ -11,6 +11,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | Public name ("Minecraft Earth") | Resolved | JR chose Earth Platform (2026-10-13); PR #8's offline hint now says Earth Platform (179686a) |
 | Mod licence | Decided | JR chose LGPL-3.0-only (2026-10-13); LICENSE, COPYING and the jar notice are in place |
 | AWS Terrain Tiles | OK | Credited in game and in CREDITS.md |
+| REMA for Antarctica (PR #24) | OK | CC BY 4.0 (AWS Open Data registry); credited with PGC's required NSF acknowledgement and the dataset citation. EGM96 geoid grid bundled, public domain |
 | ESA WorldCover | OK | Credited, changes noted (CC BY 4.0) |
 | CHELSA climate | OK (licence) / courtesy | CC0; ask CHELSA about public traffic or mirror the four bands |
 | RESOLVE Ecoregions 2017 (PR #14) | OK | CC BY 4.0; credited with the citation, and the derived raster noted |
@@ -37,6 +38,13 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 - Code: `ClimateSource`, HTTP range reads from `https://os.zhdk.cloud.switch.ch/chelsav2/GLOBAL/...`.
 - Terms: [CC0 1.0](https://www.chelsa-climate.org/datasets/chelsa_climatologies) per the CHELSA site and EnviDat. No attribution required; citation requested, and we give it.
 - Courtesy, not licence: every player reads ranges from an academic object store. Before a big launch, either tell the CHELSA team (chelsa-climate.org) or mirror the five files we read (kg2, bio1, bio10, bio12 and the DEM) to our own storage, which CC0 allows.
+
+### REMA v2.0 (Antarctica, PR #24)
+- What: `RemaSource` reads REMA v2.0 mosaic tiles from the Polar Geospatial Center's `pgc-opendata-dems` bucket on the Registry of Open Data on AWS, only for Antarctic tiles a player visits, and caches them on disk. `RemaElevation` moves the heights from the WGS 84 ellipsoid to EGM96 and lays them over the composite. Off with `-Dearthplatform.earth.rema=false`. ArcticDEM is not used.
+- Terms: the registry entry gives the licence as CC BY 4.0 and points to [PGC's acknowledgement policy](https://www.pgc.umn.edu/guides/user-services/acknowledgement-policy/), checked 2026-10-13. That policy asks users to cite PGC and the dataset and to acknowledge NSF: "DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685." REMA is made from Maxar imagery, but PGC states an exception to the EOCL contract keeps REMA data publicly available, and the open-data release is what we use. OK.
+- Credit: the elevation thread's line plus the NSF acknowledgement, in the mods list, CREDITS.md and THIRD_PARTY_NOTICES.md. The Cryosphere 2019 paper is cited in CREDITS.md too.
+- Bundled: `egm96-south.bin` (116,640 bytes), EGM96 geoid heights every half degree south of 50° S, sampled from NGA's EGM96 15' grid as PROJ distributes it. EGM96 is a U.S. government work in the public domain. Credited anyway.
+- Service: an AWS-sponsored open-data bucket meant for public access. No courtesy email needed.
 
 ### EOX Sentinel-2 cloudless 2016 (ground colours) — mitigated
 - Code (PR #4): `ImagerySource`, tiles from `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/`, cached under `earthplatform/cache/s2cloudless-2016-v1`.
