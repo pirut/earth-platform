@@ -1,5 +1,7 @@
 package io.earthplatform.minecraft.cubic.gen;
 
+import java.util.List;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 
 /**
@@ -9,6 +11,14 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 public interface CubeGenerator {
     String id();
     LevelChunkSection generate(int cubeX, int cubeY, int cubeZ);
+    /**
+     * The same cube, adding what it starts with beyond blocks: block entity tags (spawners, loot
+     * chests) to {@code blockEntities} and entity tags (chest minecarts) to {@code entities}, both
+     * at absolute positions inside the cube.
+     */
+    default LevelChunkSection generate(int cubeX, int cubeY, int cubeZ, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
+        return generate(cubeX, cubeY, cubeZ);
+    }
     /** Generated ground height (top solid block) for a column. */
     int surfaceY(int x, int z);
     /** Top generated water block of a column, or {@link Integer#MIN_VALUE} where it is dry. */
