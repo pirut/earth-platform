@@ -31,7 +31,10 @@ import org.lwjgl.system.MemoryStack;
  * <p>Far water still goes through the pack's own water shader and the game's depth buffer. So
  * that far hills hide the water behind them, {@link #beginWater} gives that draw a scratch depth
  * buffer holding the nearer of the game's depth and the far terrain's (in the game's projection),
- * and {@link #endWater} copies into the game's depth only the pixels the water drew. Packs judge
+ * and {@link #endWater} draws the water's surfaces once more into the game's depth, where far
+ * terrain's own depth shows them. (In the game's depth a far lake's surface and its bed fall on the
+ * same value, so telling where the water drew by comparing the two missed every other row, and
+ * Photon then left clouds over far water out on those rows.) Packs judge
  * how deep water is from far terrain's depth, so {@link #beginDeepen} first gives far water a
  * floor at least {@link #WATER_DEPTH} blocks below its surface there.
  *
@@ -49,9 +52,11 @@ public final class FarLod {
 
     private static int width, height;
     private static int depth, framebuffer;
-    private static int faces, scratch, before, waterFramebuffer, restoreFramebuffer, vao;
+    private static int faces, scratch, waterFramebuffer, restoreFramebuffer, vao;
     private static int shadows, shadowFramebuffer;
-    @Nullable private static Program merge, restore, smooth, deepen, sun;
+    @Nullable private static Program merge, surface, smooth, deepen, sun;
+    /** The water depth pass under way, which {@link #offset} sets the next column's place on. */
+    @Nullable private static Program drawing;
     private static boolean failed;
     private static int drawnFrom, gameDepth, waterFrom, waterDepth, previousActive;
     private static final State saved = new State();
@@ -315,7 +320,7 @@ public final class FarLod {
      * view. Far river beds lie about a block under the water, and a pack measures water's depth
      * from this buffer: at the game's coarse depth far rivers read deep by chance, and at this
      * fine one they turned clear and showed only their sand. The caller draws the water, setting
-     * {@link #deepenOffset} per column, then calls {@link #endDeepen}.
+     * {@link #offset} per column, then calls {@link #endDeepen}.
      */
     static boolean beginDeepen(Matrix4fc modelView) {
         if (!programs()) return false;
@@ -329,6 +334,7 @@ public final class FarLod {
         bind(VANILLA_UNIT, gameDepth);
         bind(SCRATCH_UNIT, faces);
         GL20C.glUseProgram(deepen.id);
+        drawing = deepen;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer matrix = stack.mallocFloat(16);
             GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(deepen.id, "earth_ModelView"), false, modelView.get(matrix));
@@ -339,9 +345,9 @@ public final class FarLod {
         return true;
     }
 
-    /** Where the next column's water sits relative to the camera. */
-    static void deepenOffset(float x, float y, float z) {
-        GL20C.glUniform3f(GL20C.glGetUniformLocation(deepen.id, "earth_Offset"), x, y, z);
+    /** Where the next column's water sits relative to the camera, for the water depth pass under way. */
+    static void offset(float x, float y, float z) {
+        GL20C.glUniform3f(GL20C.glGetUniformLocation(drawing.id, "earth_Offset"), x, y, z);
     }
 
     static void endDeepen() {
@@ -391,37 +397,38 @@ public final class FarLod {
         return true;
     }
 
-    /** After far water: gives the pack its depth buffer back, with the water's depth where it drew. */
-    static void endWater() {
+    /**
+     * After far water: gives the pack its depth buffer back, then has {@code water} draw the far
+     * water once more (setting {@link #offset} per column) into it where far terrain shows it, so
+     * the pack finds the water's surface in front of what lies behind it.
+     */
+    static void endWater(Matrix4fc modelView, Runnable water) {
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, waterFrom);
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, waterDepth, 0);
-        int program = GL11C.glGetInteger(GL20C.GL_CURRENT_PROGRAM);
-        previousActive = GlStateManager._getActiveTexture();
-        boolean depthTest = GL11C.glIsEnabled(GL11C.GL_DEPTH_TEST);
-        int depthFunc = GL11C.glGetInteger(GL11C.GL_DEPTH_FUNC);
-        boolean depthMask = GL11C.glGetBoolean(GL11C.GL_DEPTH_WRITEMASK);
+        saved.save();
         boolean[] colourMask = colourMask();
 
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, restoreFramebuffer);
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, waterDepth, 0);
         GL11C.glEnable(GL11C.GL_DEPTH_TEST);
-        GL11C.glDepthFunc(GL11C.GL_ALWAYS);
+        GL11C.glDepthFunc(GL11C.GL_LESS);
         GL11C.glDepthMask(true);
+        GL11C.glDisable(GL11C.GL_CULL_FACE);
         GL11C.glColorMask(false, false, false, false);
-        bind(VANILLA_UNIT, before);
-        bind(SCRATCH_UNIT, scratch);
-        GL20C.glUseProgram(restore.id);
-        fullScreen();
+        bind(SCRATCH_UNIT, depth);
+        GL20C.glUseProgram(surface.id);
+        drawing = surface;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            FloatBuffer matrix = stack.mallocFloat(16);
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(surface.id, "earth_ModelView"), false, modelView.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(surface.id, "earth_Projection"), false, vanilla.get(matrix));
+        }
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(surface.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
+        water.run();
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, 0, 0);
 
-        GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, waterFrom);
-        GL20C.glUseProgram(program);
         unbind(SCRATCH_UNIT);
-        unbind(VANILLA_UNIT);
-        GlStateManager._activeTexture(previousActive);
-        if (depthTest) GL11C.glEnable(GL11C.GL_DEPTH_TEST); else GL11C.glDisable(GL11C.GL_DEPTH_TEST);
-        GL11C.glDepthFunc(depthFunc);
-        GL11C.glDepthMask(depthMask);
+        saved.restore();
         GL11C.glColorMask(colourMask[0], colourMask[1], colourMask[2], colourMask[3]);
     }
 
@@ -455,12 +462,10 @@ public final class FarLod {
         int bound2d = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
         if (depth == 0) depth = GL11C.glGenTextures();
         if (scratch == 0) scratch = GL11C.glGenTextures();
-        if (before == 0) before = GL11C.glGenTextures();
         if (faces == 0) faces = GL11C.glGenTextures();
         if (shadows == 0) shadows = GL11C.glGenTextures();
         storage(depth, GL30C.GL_DEPTH_COMPONENT32F, GL11C.GL_DEPTH_COMPONENT);
         storage(scratch, GL30C.GL_DEPTH_COMPONENT32F, GL11C.GL_DEPTH_COMPONENT);
-        storage(before, GL30C.GL_R32F, GL30C.GL_RED);
         storage(faces, GL30C.GL_R32F, GL30C.GL_RED);
         storage(shadows, GL30C.GL_RG8, GL30C.GL_RG);
         GL11C.glTexParameteri(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MIN_FILTER, GL11C.GL_LINEAR);
@@ -482,9 +487,8 @@ public final class FarLod {
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT1, GL11C.GL_TEXTURE_2D, faces, 0);
         clear();
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, waterFramebuffer);
-        GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, before, 0);
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, scratch, 0);
-        GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
+        GL20C.glDrawBuffers(GL11C.GL_NONE);
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, restoreFramebuffer);
         GL20C.glDrawBuffers(GL11C.GL_NONE);
         int read = GL11C.glGetInteger(GL30C.GL_READ_FRAMEBUFFER_BINDING);
@@ -517,7 +521,7 @@ public final class FarLod {
         if (failed) return false;
         try {
             merge = Program.link(FULL_SCREEN, MERGE, "far water depth");
-            restore = Program.link(FULL_SCREEN, RESTORE, "far water depth copy");
+            surface = Program.link(DEEPEN_VERTEX, SURFACE, "far water surface depth");
             smooth = Program.link(FULL_SCREEN, SMOOTH, "far terrain depth smoothing");
             deepen = Program.link(DEEPEN_VERTEX, DEEPEN, "far water depth floor");
             sun = Program.link(FULL_SCREEN, SUN, "far terrain sun shadows");
@@ -551,7 +555,6 @@ public final class FarLod {
             uniform mat4 earth_FarInverse;
             uniform mat4 earth_GameProjection;
             in vec2 earth_uv;
-            out float earth_before;
             void main() {
                 ivec2 texel = ivec2(gl_FragCoord.xy);
                 float game = texelFetch(earth_Game, texel, 0).r;
@@ -563,22 +566,20 @@ public final class FarLod {
                     merged = min(game, clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0));
                 }
                 gl_FragDepth = merged;
-                earth_before = merged;
             }
             """;
 
-    /** Where far water drew (its depth is nearer than before it drew), that depth into the game's buffer. */
-    private static final String RESTORE = """
+    /** Far water's surface, in the game's depth, unless far terrain stands in front of it. */
+    private static final String SURFACE = """
             #version 330 core
-            uniform sampler2D earth_Game;
             uniform sampler2D earth_Far;
-            in vec2 earth_uv;
+            uniform vec2 earth_NearFar;
+            in vec3 earth_view;
             void main() {
-                ivec2 texel = ivec2(gl_FragCoord.xy);
-                float before = texelFetch(earth_Game, texel, 0).r;
-                float water = texelFetch(earth_Far, texel, 0).r;
-                if (!(water < before)) discard;
-                gl_FragDepth = water;
+                float far = texelFetch(earth_Far, ivec2(gl_FragCoord.xy), 0).r;
+                float n = earth_NearFar.x, f = earth_NearFar.y;
+                float front = 2.0 * n * f / (f + n - (far * 2.0 - 1.0) * (f - n));
+                if (far < 1.0 && -earth_view.z > front + 2.0) discard;
             }
             """;
 

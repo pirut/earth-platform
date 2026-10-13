@@ -79,6 +79,7 @@ public final class CubicClient {
         hold();
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world != null) { world.checkShaders(); world.renderer().tick(); world.far().tick(); }
+        PhotonCloudsHook.tick();
         if (world != null && Timings.LOG && ++perfTicks % 100 == 0) {
             Runtime runtime = Runtime.getRuntime();
             EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes, {} to compile, far {}/{} columns {} MB, {} sent again; {}",

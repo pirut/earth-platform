@@ -76,6 +76,7 @@
     "CubicRainRenderMixin",
     "CubicWaterTintMixin",
     "CubicIrisPhotonCompatMixin",
+    "CubicIrisCloudsMixin",
     "CubicIrisVoxyMixin",
     "CubicIrisLodSamplersMixin",
     "CubicIrisLodUniformsMixin",
