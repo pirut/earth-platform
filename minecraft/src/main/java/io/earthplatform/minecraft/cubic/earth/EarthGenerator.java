@@ -508,7 +508,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         lowest = Math.min(lowest, Math.min(dem.metres(x + 0.5 + r, z + 0.5), dem.metres(x + 0.5 - r, z + 0.5)));
         lowest = Math.min(lowest, Math.min(dem.metres(x + 0.5, z + 0.5 + r), dem.metres(x + 0.5, z + 0.5 - r)));
         int local = Mth.floor(SEA + 0.5 + lowest);
-        double fx = x / WATER_CELL - 0.5, fz = z / WATER_CELL - 0.5;
+        // Levels are read a little to one side or the other, so where water steps down its edge wanders, rather
+        // than running in straight lines along the cells and samples.
+        double wx = x + (warpX.getValue(x / 70.0, z / 70.0) + 0.5 * warpX.getValue(x / 23.0, z / 23.0)) * WANDER,
+                wz = z + (warpZ.getValue(x / 70.0, z / 70.0) + 0.5 * warpZ.getValue(x / 23.0, z / 23.0)) * WANDER;
+        double fx = wx / WATER_CELL - 0.5, fz = wz / WATER_CELL - 0.5;
         int ix = Mth.floor(fx), iz = Mth.floor(fz);
         double tx = fx - ix, tz = fz - iz, sum = 0, weight = 0, relief = 0, top = Double.NEGATIVE_INFINITY;
         // Each cell offers its lowest reach that lies no more than a drop below the ground here, or else its
@@ -550,7 +554,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Near surveyed water, the column takes the reach of the nearest sample, blended with the samples close by
         // of reaches within a drop of it: a falls' lip lies between the samples above and below it, wherever the
         // ground under them reads, as over Victoria Falls' chasm, which the finest tiles fill.
-        double spacing = (double) WATER_CELL / WATER_SAMPLES, sx = x / spacing - 0.5, sz = z / spacing - 0.5;
+        double spacing = (double) WATER_CELL / WATER_SAMPLES, sx = wx / spacing - 0.5, sz = wz / spacing - 0.5;
         int bx = Mth.floor(sx), bz = Mth.floor(sz), found = 0;
         double nearest = NEAR * NEAR, near = Double.NaN;
         double[] heights = new double[16], distances = new double[16];
@@ -641,6 +645,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private static final int REACH_SAMPLES = 3;
     /** How far, in samples, a column takes its level from the surveyed water samples near it. */
     private static final double NEAR = 1.5;
+    /** How far, in blocks, the edges where water steps down wander either way. */
+    private static final double WANDER = 14;
 
     /**
      * The water levels of a cell's reaches, in metres, lowest first: for each reach, the lowest

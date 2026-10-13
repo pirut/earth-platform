@@ -38,6 +38,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             DEEPSLATE = Blocks.DEEPSLATE.defaultBlockState(), DIRT = Blocks.DIRT.defaultBlockState(),
             GRASS = Blocks.GRASS_BLOCK.defaultBlockState(), SAND = Blocks.SAND.defaultBlockState(),
             GRAVEL = Blocks.GRAVEL.defaultBlockState(), WATER = Blocks.WATER.defaultBlockState(),
+            FALLING_WATER = Blocks.WATER.defaultBlockState().setValue(net.minecraft.world.level.block.LiquidBlock.LEVEL, 8),
             SNOW_BLOCK = Blocks.SNOW_BLOCK.defaultBlockState(), SNOW = Blocks.SNOW.defaultBlockState().setValue(SnowLayerBlock.LAYERS, 1),
             LAVA = Blocks.LAVA.defaultBlockState(), MUD = Blocks.MUD.defaultBlockState();
 
@@ -111,6 +112,15 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     protected boolean iced(Surface surface, int x, int z) { return surface.biome().value().getBaseTemperature() < 0.15f; }
     /** The rock layers a column shows in its cliff faces, or null for plain stone. */
     protected Strata.Layers layers(int x, int z) { return null; }
+
+    /**
+     * Whether open air at height {@code y} of column {@code i} of an 18-wide grid lies beside higher
+     * water, where water steps down: there it pours over the edge as falling water, rather than
+     * standing as a still wall at the edge.
+     */
+    private static boolean falls(int[] water, int i, int y) {
+        return water[i - 1] >= y || water[i + 1] >= y || water[i - 18] >= y || water[i + 18] >= y;
+    }
 
     /**
      * Whether a column's under block is the country rock itself, as sandstone and terracotta are,
@@ -460,7 +470,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                 int ci = lz * 16 + lx, gi = (lz + 1) * 18 + lx + 1, h = col.height[gi];
                 Surface surface = col.surface[ci];
                 BlockState state;
-                if (y > h) state = y <= col.water[gi] ? WATER : AIR;
+                if (y > h) state = y <= col.water[gi] ? WATER : falls(col.water, gi, y) ? FALLING_WATER : AIR;
                 else {
                     int depth = h - y;
                     if (depth == 0) state = surface.top();
