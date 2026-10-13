@@ -7,6 +7,7 @@ import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.gen.Strata;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
 import java.util.ArrayList;
 import java.util.List;
@@ -62,6 +63,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final GlobalElevation[] elevation = new GlobalElevation[TerrariumTileSource.MAX_ZOOM + 1];
     /** The coarse bathymetry the detail tiles' open sea is filled from. */
     private final GlobalElevation bathymetry;
+    /** Rock layers of layered sedimentary country, such as the Grand Canyon's. */
+    private final Strata strata;
     @Nullable private final WorldCoverSource cover;
     @Nullable private final ClimateSource climate;
     private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth, warpX, warpZ, patches;
@@ -119,7 +122,14 @@ public final class EarthGenerator extends SurfaceGenerator {
         darkForest = holder(biomes, Biomes.DARK_FOREST); flowerForest = holder(biomes, Biomes.FLOWER_FOREST);
         cherryGrove = holder(biomes, Biomes.CHERRY_GROVE); bambooJungle = holder(biomes, Biomes.BAMBOO_JUNGLE);
         sunflowerPlains = holder(biomes, Biomes.SUNFLOWER_PLAINS);
+        strata = new Strata(seed, new Strata.Globe() {
+            @Override public double metres(double x, double z) { return elevation[FAR_ZOOM].metres(x, z); }
+            @Override public GeoPoint geographic(double x, double z) { return grid.geographic(x, z); }
+            @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
+        }, badlands);
     }
+
+    @Override protected Strata.Layers layers(int x, int z) { return strata.layers(x, z, SEA + 0.5); }
 
     @Override public String id() { return ID; }
     @Override public int seaLevel() { return SEA; }
@@ -206,6 +216,9 @@ public final class EarthGenerator extends SurfaceGenerator {
         double amplitude = Mth.clamp((metres - 0.5) / 4, 0, 1) * (0.6 + 1.8 * steep), detail = 0;
         if (voxel <= 8) detail += fbm(relief, x / 27.0, z / 27.0, 3) * amplitude;
         if (voxel <= 2) detail += (0.5 - Math.abs(crags.getValue(x / 9.0, z / 9.0))) * amplitude * 0.6 * Math.min(1, steep);
+        // Layered rock steps into ledges and cliffs, with little noise to break its level beds.
+        Strata.Layers rock = strata.layers(x, z, SEA + 0.5);
+        if (rock != null) { detail *= rock.calm(metres); metres = rock.terrace(metres); }
         int y = Mth.floor(SEA + 0.5 + metres + detail);
         // Ground beside the sea never dips under its level, so the sea stays where it is.
         if (sample[2] > 0.02 && y < SEA) y = SEA;
@@ -786,7 +799,9 @@ public final class EarthGenerator extends SurfaceGenerator {
             int code = cover(x, z, voxel);
             if (code == WorldCoverSource.BUILT_UP || code == WorldCoverSource.BARE && inTown(x, z, voxel)) code = wild(x, z, voxel);
             Surface covered = code == WorldCoverSource.NO_DATA ? null : covered(code, x, z, y, local, steep, roll, slope);
-            return covered != null ? covered : covered(typical(local.zone()), x, z, y, local, steep, roll, slope);
+            if (covered == null) covered = covered(typical(local.zone()), x, z, y, local, steep, roll, slope);
+            Strata.Layers rock = strata.layers(x, z, SEA + 0.5);
+            return rock == null ? covered : rock.dress(covered, y, steep);
         }
         if (t < -8) {
             BlockState top = steep > 1.4 ? STONE : SNOW_BLOCK;
