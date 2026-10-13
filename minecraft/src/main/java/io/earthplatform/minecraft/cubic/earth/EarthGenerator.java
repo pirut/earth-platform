@@ -1853,37 +1853,43 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Whether water lies close to the open sea, as a lagoon inside a reef or a barrier island does. */
     private boolean lagoon(int x, int z, int water, int voxel) {
-        // A lagoon is wide water: ponds and fish farms on a delta are not. Far voxels read the ground at their
-        // own level: at the finest, every warm river voxel of a far column read tiles kilometres apart.
-        int level = Integer.numberOfTrailingZeros(voxel), wide = 0;
+        // The sea test first: it is judged per cell and cached, and away from coasts, as along every river of the
+        // Amazon, it alone answers; reading the ring for every warm river voxel of a far column thrashed the tiles.
+        if (!seaAround(x, z, Integer.numberOfTrailingZeros(voxel))) return false;
+        // A lagoon is wide water: ponds and fish farms on a delta are not. Judged in full detail, as near by.
+        int level = voxel == 1 ? water : waterY(x, z), wide = 0;
         int[] at = new int[2];
         for (int k = 0; k < 8; k++) {
-            farGround(level, x + (int) (RING_X[k] * 150), z + (int) (RING_Z[k] * 150), at);
-            if (at[1] == water && at[0] < water) wide++;
+            ground(x + (int) (RING_X[k] * 150), z + (int) (RING_Z[k] * 150), at);
+            if (at[1] == level && at[0] < level) wide++;
         }
-        return wide >= 5 && nearSea(x, z, level);
+        return wide >= 5;
     }
 
-    /** Cells of {@link #nearSea}'s answers, by level and cell; the rings are kilometres wide, so a cell's centre stands for it. */
-    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> nearSea = new java.util.concurrent.ConcurrentHashMap<>();
-    private static final int NEAR_SEA_CELL = 6;
+    /** Cells of {@link #seaAround}'s answers, by the level read and the cell; the rings are kilometres wide, so a cell's centre stands for it. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> seaAround = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Cells of 64 blocks; far levels from 7 up, whose voxels are wider still, read their own level per voxel. */
+    private static final int SEA_AROUND_CELL = 6, SEA_COARSE_LEVEL = 7;
 
-    /** Whether the sea lies 1.5 to 3 km off, in at least two directions; judged once per 64-block cell, or per voxel where wider. */
-    private boolean nearSea(int x, int z, int level) {
-        int shift = Math.max(NEAR_SEA_CELL, level), cx = x >> shift, cz = z >> shift;
-        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) level << 56 | ((long) cx & 0xFFFFFFFL) << 28 | (long) cz & 0xFFFFFFFL);
-        Boolean known = nearSea.get(key);
+    /**
+     * Whether the sea lies 1.5 to 3 km off, in at least two directions; judged in full detail once per
+     * 64-block cell, as cubes see it, and at the widest far levels once per voxel at the voxel's own level.
+     */
+    private boolean seaAround(int x, int z, int level) {
+        int read = level >= SEA_COARSE_LEVEL ? level : 0, shift = Math.max(SEA_AROUND_CELL, read), cx = x >> shift, cz = z >> shift;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) read << 56 | ((long) cx & 0xFFFFFFFL) << 28 | (long) cz & 0xFFFFFFFL);
+        Boolean known = seaAround.get(key);
         if (known != null) return known;
         int mx = (cx << shift) + (1 << shift - 1), mz = (cz << shift) + (1 << shift - 1), sea = 0;
         boolean near = false;
         int[] at = new int[2];
         for (int radius = 1500; radius <= 3000 && !near; radius += 1500)
             for (int k = 0; k < 8 && !near; k++) {
-                farGround(level, mx + (int) (RING_X[k] * radius), mz + (int) (RING_Z[k] * radius), at);
+                farGround(read, mx + (int) (RING_X[k] * radius), mz + (int) (RING_Z[k] * radius), at);
                 near = at[1] == SEA && ++sea >= 2;
             }
-        if (nearSea.size() > 1 << 16) nearSea.clear();
-        nearSea.put(key, near);
+        if (seaAround.size() > 1 << 16) seaAround.clear();
+        seaAround.put(key, near);
         return near;
     }
 
