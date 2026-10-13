@@ -26,6 +26,9 @@ public final class EarthSetupScreen extends Screen {
     private CycleButton<Boolean> imagery;
     /** True while fields are filled from the list, so typing in them can tell the two apart. */
     private boolean filling;
+    /** What was on screen when the globe opened, so coming back keeps it. */
+    private double[] kept;
+    private Boolean keptImagery;
 
     EarthSetupScreen(Screen parent) {
         super(Component.translatable("earthplatform.setup.title"));
@@ -38,9 +41,12 @@ public final class EarthSetupScreen extends Screen {
         list.setX(width / 2 - list.getWidth() / 2);
         addRenderableWidget(list);
 
-        imagery = addRenderableWidget(CycleButton.onOffBuilder(EarthConfig.imagery())
+        addRenderableWidget(Button.builder(Component.translatable("earthplatform.setup.globe"), button -> openGlobe())
+                .tooltip(Tooltip.create(Component.translatable("earthplatform.setup.globe.tooltip")))
+                .bounds(width / 2 - 155, height - 100, 150, 20).build());
+        imagery = addRenderableWidget(CycleButton.onOffBuilder(keptImagery != null ? keptImagery : EarthConfig.imagery())
                 .withTooltip(on -> Tooltip.create(Component.translatable("earthplatform.setup.imagery.tooltip")))
-                .create(width / 2 - 155, height - 100, 310, 20, Component.translatable("earthplatform.setup.imagery")));
+                .create(width / 2 + 5, height - 100, 150, 20, Component.translatable("earthplatform.setup.imagery")));
 
         int y = height - 74;
         latitude = new EditBox(font, width / 2 - 155, y, 100, 20, Component.translatable("earthplatform.setup.latitude"));
@@ -60,11 +66,21 @@ public final class EarthSetupScreen extends Screen {
         addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), button -> onClose()).bounds(width / 2 + 5, height - 28, 150, 20).build());
 
         EarthWorlds.Choice chosen = EarthWorlds.chosen();
-        if (chosen == null) select(EarthPlaces.YOSEMITE);
+        if (kept != null) {
+            fill(kept[0], kept[1]);
+            EarthPlaces.near(kept[0], kept[1]).ifPresent(this::select);
+        } else if (chosen == null) select(EarthPlaces.YOSEMITE);
         else {
             fill(chosen.settings().latitude(), chosen.settings().longitude());
             EarthPlaces.near(chosen.settings().latitude(), chosen.settings().longitude()).ifPresent(this::select);
         }
+    }
+
+    private void openGlobe() {
+        double[] at = point().orElse(new double[]{EarthPlaces.YOSEMITE.latitude(), EarthPlaces.YOSEMITE.longitude()});
+        kept = at;
+        keptImagery = imagery.getValue();
+        minecraft.setScreen(new EarthGlobeScreen(this, at[0], at[1], (lat, lon) -> kept = new double[]{lat, lon}));
     }
 
     private void select(EarthPlaces.Place place) {

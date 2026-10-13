@@ -4,7 +4,7 @@
 
 1. Install the mod (NeoForge 21.1 for Minecraft 1.21.1).
 2. Singleplayer → Create New World. The **World Type** is already **Earth** (World tab).
-3. Press **Customize** to choose where you start: a famous place from the list, **Surprise me**, or any latitude and longitude. Without a choice you start in Yosemite Valley.
+3. Press **Customize** to choose where you start: a famous place from the list, **Surprise me**, any latitude and longitude, or **Choose on a globe...**: spin and zoom a globe of the real Earth (drag, scroll, arrow keys) and click where you want to begin. Close up it loads the real terrain and land cover; offline it shows the built-in NASA Blue Marble map. Without a choice you start in Yosemite Valley.
 4. Create the world. The first visit to a place downloads its terrain, land cover and climate; a "Preparing your Earth" screen shows while that happens. It is kept on disk, so later visits are instant and work offline.
 
 ## Travel

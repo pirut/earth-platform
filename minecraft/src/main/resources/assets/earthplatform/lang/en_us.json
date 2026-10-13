@@ -1,18 +1,18 @@
 {
   "generator.earthplatform.earth": "Earth",
   "generator.earthplatform.earth.info": "The real Earth at true scale and height",
-
   "earthplatform.setup.title": "Where on Earth do you want to start?",
-  "earthplatform.setup.hint": "Pick a famous place, or type any latitude and longitude. You can travel anywhere later with /earth.",
+  "earthplatform.setup.hint": "Pick a famous place, choose a spot on the globe, or type any latitude and longitude. You can travel anywhere later with /earth.",
   "earthplatform.setup.latitude": "Latitude",
   "earthplatform.setup.longitude": "Longitude",
   "earthplatform.setup.random": "Surprise me",
+  "earthplatform.setup.globe": "Choose on a globe...",
+  "earthplatform.setup.globe.tooltip": "Spin and zoom a globe of the real Earth, then click where you want to begin.",
   "earthplatform.setup.imagery": "Satellite imagery",
   "earthplatform.setup.imagery.tooltip": "Colour the ground from satellite photos (EOX Sentinel-2 cloudless imagery, downloaded like the terrain). Applies to new worlds and is saved in the Earth settings.",
   "earthplatform.setup.invalid": "Latitude must be between -80 and 80, longitude between -180 and 180.",
   "earthplatform.setup.startAt": "You'll start at %s",
   "earthplatform.setup.startAtPoint": "You'll start at %s, %s",
-
   "earthplatform.arrival.title": "Preparing your Earth",
   "earthplatform.arrival.downloading": "Downloading terrain, land cover and climate%s",
   "earthplatform.arrival.firstVisit": "This only happens the first time you visit a place. Everything is kept on your computer afterwards.",
@@ -23,11 +23,9 @@
   "earthplatform.arrival.offlineMode.hint": "Turn off offline mode in Mods > Earth Platform > Config, then restart the game, so this place can be downloaded.",
   "earthplatform.arrival.waited": "Waiting %s s",
   "earthplatform.arrival.leave": "Leave world",
-
   "earthplatform.status.downloading": "Downloading Earth data%s",
   "earthplatform.status.unreachable": "Can't reach the Earth data servers",
   "earthplatform.status.unreachable.hint": "Places you've visited still work. New ground fills in when you're back online.",
-
   "earthplatform.configuration.title": "Earth Settings",
   "earthplatform.configuration.section.earthplatform.client.toml": "Graphics and interface",
   "earthplatform.configuration.section.earthplatform.client.toml.title": "Graphics and interface",
@@ -56,5 +54,14 @@
   "earthplatform.configuration.satelliteImagery": "Satellite imagery for new worlds",
   "earthplatform.configuration.satelliteImagery.tooltip": "Colour the ground of new Earth worlds from satellite photos (EOX Sentinel-2 cloudless imagery, downloaded like the terrain). Existing worlds keep what they were made with.",
   "earthplatform.configuration.anyoneCanTravel": "Everyone can use /earth visit and goto",
-  "earthplatform.configuration.anyoneCanTravel.tooltip": "When off, only operators can travel with commands. The singleplayer owner always can."
+  "earthplatform.configuration.anyoneCanTravel.tooltip": "When off, only operators can travel with commands. The singleplayer owner always can.",
+  "earthplatform.globe.title": "Choose where your Earth begins",
+  "earthplatform.globe.choose": "Start here",
+  "earthplatform.globe.hint": "Click the globe to choose a spot.",
+  "earthplatform.globe.startAt": "You'll start at %s",
+  "earthplatform.globe.polar": "Worlds can start between 80°S and 80°N. Pick somewhere a little closer to the equator.",
+  "earthplatform.globe.credit": "NASA Blue Marble, AWS Terrain Tiles, ESA WorldCover",
+  "earthplatform.globe.offline": "Offline: showing the built-in map only",
+  "earthplatform.globe.loading": "Loading terrain%s",
+  "earthplatform.globe.controls": "Drag to spin, scroll to zoom, click to place the pin"
 }
