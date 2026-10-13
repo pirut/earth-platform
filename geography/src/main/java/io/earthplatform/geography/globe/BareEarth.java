@@ -182,7 +182,16 @@ public final class BareEarth implements GlobalElevation.Tiles {
             if (hit != null) return hit;
         }
         float[] source = tiles.tile(zoom, x, y);
-        float[] out = apply(source, zoom, x, y);
+        float[] out;
+        try {
+            out = apply(source, zoom, x, y);
+        } catch (MissingTerrainException missing) {
+            throw missing;
+        } catch (RuntimeException broken) {
+            // A bug here must not leave a hole in the world: the tile goes on with its roofs.
+            TerrariumTileSource.warnOnce(ID, "Bare earth failed on tile " + zoom + "/" + x + "/" + y + "; using the tile as it is", broken);
+            out = source;
+        }
         // Kept whether or not it changed, so a tile beside a town is looked over only once.
         synchronized (changed) {
             changed.put(key, out);
@@ -414,6 +423,8 @@ public final class BareEarth implements GlobalElevation.Tiles {
 
     /** Pixels across the half-detail grid the smooth fields are worked out on. */
     private static final int HALF = SPAN / 2;
+    /** Most half pixels the clearing steps are worked out round a field, so their square stays inside the window. */
+    static final int MAX_PAD = Math.min((MARGIN - 1) / 2, HALF - (MARGIN - 1) / 2 - (GRID + 2));
 
     /**
      * A field from a window's metres and land cover classes, {@code metres} a pixel across. The
@@ -444,7 +455,9 @@ public final class BareEarth implements GlobalElevation.Tiles {
             }
             // Field point i lies at half pixel 63.25 + i; the steps are worked out that far round the field and their fade's reach.
             double coarse = 2 * metres;
-            int pad = Math.min((MARGIN - 1) / 2, (int) Math.round(5 * ClearingEdges.DECAY_METRES / coarse));
+            // The square may reach no further than the half-detail window on either side: from 53 degrees
+            // north or south, where pixels are small enough for the fade to want more, it is cut there.
+            int pad = Math.min(MAX_PAD, (int) Math.round(5 * ClearingEdges.DECAY_METRES / coarse));
             int from = (MARGIN - 1) / 2 - pad, side = GRID + 2 + 2 * pad;
             ClearingEdges.Steps steps = ClearingEdges.find(half, land, wet, HALF, coarse, from, side);
             if (steps != null) {

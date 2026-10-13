@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.imageio.ImageIO;
@@ -119,7 +120,7 @@ public final class TerrariumTileSource implements AutoCloseable {
         if (shared == null) {
             try {
                 float[] values = read(zoom, x, y);
-                for (ElevationLayer layer : layers) layer.refine(zoom, x, y, values);
+                for (ElevationLayer layer : layers) refine(layer, zoom, x, y, values);
                 if (zoom >= SPIKE_ZOOM) despike(values);
                 synchronized (memory) {
                     memory.put(key, values);
@@ -661,6 +662,30 @@ public final class TerrariumTileSource implements AutoCloseable {
     }
 
     private static long key(int zoom, int x, int y) { return ((long) zoom << 58) | ((long) x << 29) | y; }
+
+    /**
+     * Lays one layer over a tile. A layer that can't have its data fails the tile, as the composite's own
+     * missing tiles do, so it is tried again later; one that breaks any other way is a bug in it, and the
+     * tile goes on as the layers before it left it rather than leaving a hole in the world.
+     */
+    static void refine(ElevationLayer layer, int zoom, int x, int y, float[] values) {
+        float[] before = values.clone();
+        try {
+            layer.refine(zoom, x, y, values);
+        } catch (MissingTerrainException missing) {
+            throw missing;
+        } catch (RuntimeException broken) {
+            System.arraycopy(before, 0, values, 0, values.length);
+            warnOnce(layer.id(), "Elevation layer " + layer.id() + " failed on tile " + zoom + "/" + x + "/" + y + "; using the tile without it", broken);
+        }
+    }
+
+    private static final Set<String> WARNED = ConcurrentHashMap.newKeySet();
+
+    /** Logs a broken source once per game, not once per tile. */
+    static void warnOnce(String source, String message, Throwable failure) {
+        if (WARNED.add(source)) System.getLogger("earthplatform").log(System.Logger.Level.WARNING, message, failure);
+    }
 
     /** The layers laid over the composite, in order. */
     public java.util.List<ElevationLayer> layers() { return layers; }

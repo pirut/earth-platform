@@ -236,6 +236,29 @@ public final class GlobeTest {
         float[] hillside = steep.tile(12, 3000, 2000);
         BareEarth steepBare = new BareEarth((zoom, x, y) -> zoom == 12 && x == 3000 && y == 2000 ? hillside : steep.tile(zoom, x, y), cover, 8, 8);
         check(steepBare.tile(12, 3000, 2000) == hillside, "steps on steep land stay");
+        // Far north, where pixels are small, the steps' square is cut to the window (it once ran past it at
+        // 53 degrees and up, failing every tile there): the same block, 1024 tiles north at 68 degrees.
+        int north = 1024;
+        GlobalElevation.Tiles northern = (zoom, x, y) -> flat.tile(zoom, x, y + (zoom >= 12 ? north << (zoom - 12) : north >> (12 - zoom)));
+        BareEarth.Cover northernCover = (latitude, longitude) -> {
+            double r = Math.toRadians(latitude), gy = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * size + north * 256L;
+            double back = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * gy / size))));
+            return cover.code(back, longitude);
+        };
+        BareEarth far = new BareEarth(northern, northernCover, 8, 8);
+        for (int zoom = 11; zoom <= 15; zoom++) {
+            int y = (2000 - north) << (zoom - 11) >> 1, x = 3000 << (zoom - 11) >> 1;
+            float[] northTile = far.tile(zoom, x, y);
+            equal(65536, northTile.length, "a tile at 68 degrees north comes back at zoom " + zoom);
+        }
+        float[] northTile = far.tile(12, 3000, 2000 - north);
+        double northEdge = 0;
+        for (int dy = -30; dy <= 30; dy += 10)
+            for (int dx = -80; dx < -60; dx++) northEdge = Math.max(northEdge, Math.abs(northTile[at.applyAsInt(dx + 1, dy)] - northTile[at.applyAsInt(dx, dy)]));
+        check(northEdge < 2, "far north, a forest block's edge still eases: " + northEdge);
+        // A bug in working out the ground leaves the tile as it is rather than failing it.
+        BareEarth.Cover breaks = (latitude, longitude) -> { throw new IllegalStateException("broken cover"); };
+        check(Arrays.equals(new BareEarth(flat, breaks, 8, 8).tile(12, 3000, 2000), raw), "a broken bare-earth pass gives the tile as it is");
         // Fields kept on disk read back as they were worked out, and are worked out again over changed data.
         try {
             java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("bare-earth");
@@ -378,6 +401,25 @@ public final class GlobeTest {
                 check(layered.tile(zoom, 1, 2) == tile, "layered tile kept in memory");
                 equal(List.of("plus 2/1/2", "pin"), seen, "each layer runs once, in order");
                 equal(List.of(plus, pin), layered.layers(), "layers listed in order");
+            }
+            // A layer that breaks leaves the tile as the layers before it left it, half-written pixels and all
+            // put back; one whose data can't be had fails the tile, to be tried again.
+            ElevationLayer broken = new ElevationLayer() {
+                public String id() { return "broken"; }
+                public void refine(int z, int x, int y, float[] values) { values[2] = -999; values[values.length] = 1; }
+            };
+            ElevationLayer away = new ElevationLayer() {
+                public String id() { return "away"; }
+                public void refine(int z, int x, int y, float[] values) { throw new MissingTerrainException("layer data not cached"); }
+            };
+            try (var layered = new TerrariumTileSource(base, cache, false, 4, 1, Duration.ofSeconds(5), List.of(plus, broken, pin))) {
+                float[] tile = layered.tile(zoom, 1, 2);
+                near(planeAt(zoom, 256, 512) + 100, tile[0], 1 / 256.0, "layer before a broken one kept");
+                near(planeAt(zoom, 256 + 2, 512), tile[2], 1 / 256.0, "a broken layer's writes are undone");
+                equal(42f, tile[1], "layers after a broken one still run");
+            }
+            try (var layered = new TerrariumTileSource(base, cache, false, 4, 1, Duration.ofSeconds(5), List.of(away))) {
+                fail(() -> layered.tile(zoom, 1, 2), MissingTerrainException.class, "a layer's missing data fails the tile");
             }
             try (var stream = Files.list(cache.resolve("2/1"))) {
                 check(stream.noneMatch(p -> p.toString().endsWith(".part")), "no partial cache files left");
