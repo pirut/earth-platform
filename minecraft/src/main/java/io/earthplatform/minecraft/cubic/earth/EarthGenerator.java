@@ -451,10 +451,10 @@ public final class EarthGenerator extends SurfaceGenerator {
                 BlockState top = rocky != null ? rocky : patch > 0.4 || roll < 20 ? COARSE_DIRT : GRASS;
                 int trees = slope > 6 || top != GRASS ? 0 : 1;
                 return switch (zone) {
-                    case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 15 * trees, 0, 0, 320, 340, true);
-                    case TROPICAL_DRY, HOT_STEPPE -> new Surface(patch > 0.5 ? windsweptSavanna : savanna, top, DIRT, 7 * trees, 0, 0, 320, 330, false);
-                    // Desert scrub: bare sand and gravel with dead bushes.
-                    case HOT_DESERT -> new Surface(desert, rocky != null ? rocky : patch > 0.2 ? COARSE_DIRT : SAND, SANDSTONE, 0, 0, 0, 25, 25, false);
+                    case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 15 * trees, 0, 0, 320, 340, true, Tree.JUNGLE);
+                    case TROPICAL_DRY, HOT_STEPPE -> new Surface(patch > 0.5 ? windsweptSavanna : savanna, top, DIRT, 7 * trees, 0, 0, 320, 330, false, Tree.ACACIA);
+                    // Desert scrub: bare sand and gravel with dead bushes, and cacti where they grow wild, in the Americas.
+                    case HOT_DESERT -> new Surface(desert, rocky != null ? rocky : patch > 0.2 ? COARSE_DIRT : SAND, SANDSTONE, 0, 0, 0, 25, americas(x, z) ? 31 : 25, false);
                     case COLD_DESERT, COLD_STEPPE -> t < -3 ? new Surface(snowyPlains, top, DIRT, 0, 0, 0, 200, 210, false)
                             : new Surface(savanna, top, DIRT, 2 * trees, 3, 0, 260, 270, false);
                     // Chaparral and maquis: dry where summers are hot.
@@ -470,7 +470,9 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
                 return switch (zone) {
                     // Savanna and steppe grass, dry for much of the year.
-                    case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE, COLD_DESERT, COLD_STEPPE -> new Surface(savanna, top, DIRT, 2, 0, 0, 380, 390, false);
+                    case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> new Surface(savanna, top, DIRT, 2, 0, 0, 380, 390, false, Tree.ACACIA);
+                    // Junipers on the cold steppes.
+                    case COLD_DESERT, COLD_STEPPE -> new Surface(savanna, top, DIRT, 2, 10, 0, 380, 390, false);
                     case MEDITERRANEAN -> new Surface(local.warmest() >= 21 ? savanna : plains, top, DIRT, 1, 0, 0, 360, 380, false);
                     // Alpine and arctic meadows.
                     case TUNDRA, ICE -> new Surface(meadow, top, DIRT, 0, 0, 0, 300, 360, false);
@@ -503,7 +505,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 return new Surface(swamp, top, DIRT, 10, 0, 0, 300, 320, true);
             }
             case WorldCoverSource.MANGROVES -> {
-                return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false);
+                return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false, Tree.MANGROVE);
             }
             case WorldCoverSource.MOSS_AND_LICHEN -> {
                 BlockState top = rocky != null ? rocky : patch > 0.2 ? MOSS : roll < 30 ? GRAVEL : GRASS;
@@ -513,21 +515,27 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
     }
 
+    /** Whether a column is in the Americas, the only place cacti grow wild. */
+    private boolean americas(int x, int z) {
+        double longitude = grid.geographic(x, z).longitude();
+        return longitude < -30 && longitude > -170;
+    }
+
     /** The forest of a climate: rainforest, dry tropical woodland, pine, oak, birch or taiga. */
     private Surface forest(Local local, double patch) {
         double t = local.temperature();
         return switch (local.zone()) {
-            case RAINFOREST -> new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true);
-            case TROPICAL_DRY -> local.rain() > 1000 ? new Surface(sparseJungle, GRASS, DIRT, 70, 0, 0, 150, 160, true)
-                    : new Surface(savanna, GRASS, DIRT, 35, 0, 0, 300, 310, false);
-            case HOT_DESERT, HOT_STEPPE -> new Surface(savanna, GRASS, DIRT, 30, 0, 0, 260, 270, false);
+            case RAINFOREST -> new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true, Tree.JUNGLE);
+            case TROPICAL_DRY -> local.rain() > 1000 ? new Surface(sparseJungle, GRASS, DIRT, 70, 0, 0, 150, 160, true, Tree.JUNGLE)
+                    : new Surface(savanna, GRASS, DIRT, 35, 0, 0, 300, 310, false, Tree.ACACIA);
+            case HOT_DESERT, HOT_STEPPE -> new Surface(savanna, GRASS, DIRT, 30, 0, 0, 260, 270, false, Tree.ACACIA);
             // Pinyon, juniper and pine on dry uplands.
             case COLD_DESERT, COLD_STEPPE -> t < 6 ? new Surface(taiga, GRASS, DIRT, 45, 10, 0, 200, 210, false)
                     : new Surface(savanna, GRASS, DIRT, 30, 4, 0, 260, 270, false);
             // Conifers on cooler, wetter Mediterranean mountains (the Sierra, the Cascades), oak below.
             case MEDITERRANEAN -> t < 12 ? new Surface(local.rain() > 900 ? oldTaiga : taiga, local.rain() > 900 && patch > 0.3 ? PODZOL : GRASS, DIRT, 80, 8, 0, 110, 120, true)
                     : new Surface(forest, GRASS, DIRT, 70, 1, 0, 140, 170, false);
-            case SUBTROPICAL -> t > 20 ? new Surface(sparseJungle, GRASS, DIRT, 80, 0, 0, 140, 160, true)
+            case SUBTROPICAL -> t > 20 ? new Surface(sparseJungle, GRASS, DIRT, 80, 0, 0, 140, 160, true, Tree.JUNGLE)
                     : new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false);
             case OCEANIC -> patch > 0.35 ? new Surface(birchForest, GRASS, DIRT, 82, 0, 8, 90, 130, false)
                     : new Surface(forest, GRASS, DIRT, 82, t < 8 ? 3 : 0, 2, 90, 130, true);
