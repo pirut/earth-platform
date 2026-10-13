@@ -18,6 +18,7 @@ import net.minecraft.client.Minecraft;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL20C;
+import org.lwjgl.opengl.GL43C;
 import org.lwjgl.opengl.GLCapabilities;
 import org.slf4j.Logger;
 
@@ -44,7 +45,7 @@ public final class PhotonCompat {
     /** The pack root Iris should read: {@code root} itself, or the adapted copy when this driver needs one. */
     public static Path adapt(Path root) {
         try {
-            if (!isPhoton(root) || !needed()) return root;
+            if (!isPhoton(root) || !needed(root)) return root;
             Path copy = Minecraft.getInstance().gameDirectory.toPath()
                     .resolve("earthplatform").resolve("photon-compat").resolve(fingerprint(root)).resolve("shaders");
             if (!Files.isRegularFile(copy.resolve(DONE))) build(root, copy);
@@ -60,12 +61,44 @@ public final class PhotonCompat {
         return Files.isRegularFile(root.resolve("world0/deferred4_a.csh")) && Files.isRegularFile(root.resolve("program/d4_deferred_shading.fsh"));
     }
 
-    private static boolean needed() {
+    private static boolean needed(Path root) throws IOException {
         if (MODE.equals("on")) return true;
         if (MODE.equals("off")) return false;
         GLCapabilities caps = GL.getCapabilities();
         boolean compute = caps.OpenGL43 || caps.GL_ARB_compute_shader;
-        return !compute || GL11C.glGetInteger(GL20C.GL_MAX_TEXTURE_IMAGE_UNITS) < 17;
+        return !compute || GL11C.glGetInteger(GL20C.GL_MAX_TEXTURE_IMAGE_UNITS) < 17
+                || sharedMemory(root) > GL11C.glGetInteger(GL43C.GL_MAX_COMPUTE_SHARED_MEMORY_SIZE);
+    }
+
+    private static final Pattern SHARED = Pattern.compile("(?m)^[ \\t]*shared[ \\t]+(\\w+)[ \\t]+\\w+((?:[ \\t]*\\[[ \\t]*\\d+[ \\t]*\\])*)[ \\t]*;");
+    private static final Pattern LENGTH = Pattern.compile("\\d+");
+
+    /**
+     * The most compute shared memory any of the pack's compute shaders declares, in bytes, counting
+     * a three-component vector as four components as some drivers lay it out.
+     */
+    static long sharedMemory(Path root) throws IOException {
+        long most = 0;
+        for (Path file : files(root)) {
+            if (!file.getFileName().toString().endsWith(".csh")) continue;
+            Matcher declaration = SHARED.matcher(Files.readString(file));
+            long bytes = 0;
+            while (declaration.find()) {
+                long size = switch (declaration.group(1)) {
+                    case "float", "int", "uint", "bool" -> 4;
+                    case "vec2", "ivec2", "uvec2" -> 8;
+                    case "mat2" -> 16;
+                    case "mat3" -> 48;
+                    case "mat4" -> 64;
+                    default -> 16;
+                };
+                Matcher length = LENGTH.matcher(declaration.group(2));
+                while (length.find()) size *= Long.parseLong(length.group());
+                bytes += size;
+            }
+            most = Math.max(most, bytes);
+        }
+        return most;
     }
 
     private static final String DONE = ".earthplatform-compat";

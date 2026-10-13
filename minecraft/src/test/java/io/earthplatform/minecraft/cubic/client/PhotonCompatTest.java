@@ -25,6 +25,8 @@ class PhotonCompatTest {
         String zip = System.getenv("EARTH_PHOTON_ZIP");
         assumeTrue(zip != null && Files.isRegularFile(Path.of(zip)));
         try (FileSystem pack = FileSystems.newFileSystem(URI.create("jar:" + Path.of(zip).toUri()), Map.of())) {
+            // The sky light pass alone shares 256 x 9 three-component vectors: more than llvmpipe's 32 KB.
+            assertTrue(PhotonCompat.sharedMemory(pack.getPath("shaders")) > 32768);
             Path copy = out.resolve("shaders");
             PhotonCompat.build(pack.getPath("shaders"), copy);
             String settings = Files.readString(copy.resolve("settings.glsl"));
