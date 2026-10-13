@@ -40,7 +40,7 @@ public final class GroundPalette {
     /** Bare rock anywhere. */
     public static final Ground[] ROCK = {Ground.STONE, Ground.ANDESITE, Ground.DIORITE, Ground.GRANITE, Ground.TUFF, Ground.CALCITE,
             Ground.DEEPSLATE, Ground.SMOOTH_BASALT};
-    /** Bare rock in hot dry lands, where layered sandstone and badlands colours are found. */
+    /** Bare rock in dry lands, hot or cold, where layered sandstone and badlands colours are found. */
     public static final Ground[] DESERT_ROCK = {Ground.STONE, Ground.ANDESITE, Ground.DIORITE, Ground.GRANITE, Ground.TUFF,
             Ground.DEEPSLATE, Ground.SMOOTH_BASALT, Ground.SANDSTONE, Ground.RED_SANDSTONE, Ground.TERRACOTTA,
             Ground.WHITE_TERRACOTTA, Ground.LIGHT_GRAY_TERRACOTTA, Ground.ORANGE_TERRACOTTA, Ground.YELLOW_TERRACOTTA,
@@ -48,7 +48,7 @@ public final class GroundPalette {
     /** Bare gentle ground: rock pavement, gravel, sand and soils. */
     public static final Ground[] LOOSE = {Ground.STONE, Ground.ANDESITE, Ground.DIORITE, Ground.TUFF, Ground.GRAVEL, Ground.SAND,
             Ground.COARSE_DIRT, Ground.DIRT};
-    /** Bare gentle ground in hot dry lands: dunes, sand sheets and stony plains. */
+    /** Bare gentle ground in dry lands: dunes, sand sheets and stony plains. */
     public static final Ground[] DESERT_LOOSE = {Ground.SAND, Ground.RED_SAND, Ground.GRAVEL, Ground.COARSE_DIRT};
     /** Soil showing through thin, dry plant cover. */
     public static final Ground[] SOIL = {Ground.COARSE_DIRT, Ground.DIRT, Ground.PACKED_MUD, Ground.SAND, Ground.RED_SAND, Ground.GRAVEL};
@@ -57,6 +57,8 @@ public final class GroundPalette {
     static final double LIGHTNESS_WEIGHT = 0.45;
     /** The mosaic's warm cast, taken off a and b before matching. */
     static final double CAST_A = 2, CAST_B = 10;
+    /** How much further than the nearest the second nearest block may be and still be mixed in. */
+    static final double MIX_RATIO = 1.3;
     /** Lightness under which a pixel is shadow or water and says nothing. */
     static final double SHADOW = 25;
 
@@ -87,8 +89,9 @@ public final class GroundPalette {
 
     /**
      * The candidate closest in colour to a reading. With {@code roll} in [0, 1) the nearest two
-     * are mixed, each in proportion to how near it is, so ground between two block colours shows
-     * both, as real ground grades between them; a roll of 0 always gives the nearest.
+     * are mixed when the second is nearly as close, half and half when both are as near, so ground
+     * between two block colours shows both, as real ground grades between them; a roll of 0
+     * always gives the nearest.
      */
     public static Ground match(Reading reading, Ground[] candidates, double roll) {
         Ground best = null, second = null;
@@ -98,9 +101,9 @@ public final class GroundPalette {
             if (d < bestDistance) { second = best; secondDistance = bestDistance; best = ground; bestDistance = d; }
             else if (d < secondDistance) { second = ground; secondDistance = d; }
         }
-        if (second == null) return best;
-        // Share of the second: 0 when the best matches exactly, a half when both are as near.
-        double share = bestDistance / (bestDistance + secondDistance);
+        if (second == null || bestDistance <= 0) return best;
+        // Share of the second: a half when both are as near, none once it is a third as far again.
+        double share = Math.clamp((MIX_RATIO - secondDistance / bestDistance) / (MIX_RATIO - 1) * 0.5, 0, 0.5);
         return roll < 1 - share ? best : second;
     }
 

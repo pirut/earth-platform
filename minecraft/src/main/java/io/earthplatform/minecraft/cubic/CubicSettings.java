@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic;
 
 import io.earthplatform.geography.globe.ClimateSource;
+import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
@@ -34,6 +35,7 @@ public final class CubicSettings {
     private static TerrariumTileSource tiles;
     private static WorldCoverSource cover;
     private static ClimateSource climate;
+    private static ImagerySource imagery;
 
     private CubicSettings() {}
 
@@ -55,6 +57,7 @@ public final class CubicSettings {
                     properties.setProperty("earth.elevation", TerrariumTileSource.DATASET_ID);
                     properties.setProperty("earth.cover", WorldCoverSource.DATASET_ID);
                     properties.setProperty("earth.climate", ClimateSource.DATASET_ID);
+                    properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
                 }
                 Files.createDirectories(folder);
                 Path temp = folder.resolve(FILE + ".tmp");
@@ -82,7 +85,12 @@ public final class CubicSettings {
                 String climateId = properties.getProperty("earth.climate", "");
                 if (!climateId.isEmpty() && !ClimateSource.DATASET_ID.equals(climateId))
                     throw new IllegalStateException("Unsupported climate '" + climateId + "' in " + file);
-                yield new EarthGenerator(seed, biomes, settings, tiles(), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate());
+                // Worlds made before imagery keep their ground as it was.
+                String imageryId = properties.getProperty("earth.imagery", "");
+                if (!imageryId.isEmpty() && !ImagerySource.DATASET_ID.equals(imageryId))
+                    throw new IllegalStateException("Unsupported imagery '" + imageryId + "' in " + file);
+                yield new EarthGenerator(seed, biomes, settings, tiles(), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
+                        coverId.isEmpty() || imageryId.isEmpty() ? null : imagery());
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
         };
@@ -143,5 +151,20 @@ public final class CubicSettings {
             }
         }
         return climate;
+    }
+
+    /** Satellite imagery shared by every Earth world in this game, cached on disk beside the elevation tiles. */
+    public static synchronized ImagerySource imagery() {
+        if (imagery == null) {
+            Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(ImagerySource.DATASET_ID);
+            try {
+                // Tiles are 256 KiB decoded; a 3 km square at full detail needs about 25 of them.
+                imagery = new ImagerySource(ImagerySource.EOX_S2_CLOUDLESS_2016, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        192, 6, Duration.ofSeconds(30));
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the imagery cache at " + cache, failure);
+            }
+        }
+        return imagery;
     }
 }

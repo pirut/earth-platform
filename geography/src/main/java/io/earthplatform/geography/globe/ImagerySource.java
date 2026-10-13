@@ -119,6 +119,25 @@ public final class ImagerySource implements AutoCloseable {
         return true;
     }
 
+    /**
+     * The colour at a continuous pixel position, in linear RGB 0..1 written to {@code out}, blended
+     * bilinearly between the four nearest pixel centres so it changes smoothly across pixel edges;
+     * false with {@code out} untouched when any of them has no imagery.
+     */
+    public boolean bilinear(double px, double py, int zoom, double[] out) {
+        double fx = px - 0.5, fy = py - 0.5;
+        long x0 = (long) Math.floor(fx), y0 = (long) Math.floor(fy);
+        double tx = fx - x0, ty = fy - y0, r = 0, g = 0, b = 0;
+        for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
+            int rgb = pixel(x0 + i, y0 + j, zoom);
+            if (rgb == NO_DATA) return false;
+            double w = (i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - ty : ty);
+            r += LINEAR[rgb >> 16 & 255] * w; g += LINEAR[rgb >> 8 & 255] * w; b += LINEAR[rgb & 255] * w;
+        }
+        out[0] = r; out[1] = g; out[2] = b;
+        return true;
+    }
+
     /** sRGB byte to linear light. */
     static final double[] LINEAR = new double[256];
     static {

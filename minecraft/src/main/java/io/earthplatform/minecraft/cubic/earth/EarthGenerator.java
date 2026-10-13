@@ -3,6 +3,7 @@ package io.earthplatform.minecraft.cubic.earth;
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.GlobalElevation;
+import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
@@ -62,6 +63,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final GlobalElevation[] elevation = new GlobalElevation[TerrariumTileSource.MAX_ZOOM + 1];
     @Nullable private final WorldCoverSource cover;
     @Nullable private final ClimateSource climate;
+    @Nullable private final ImagerySource imagery;
+    @Nullable private final ImageryGround imageryGround;
     private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth, warpX, warpZ, patches;
     private final Holder<Biome> ocean, deepOcean, coldOcean, deepColdOcean, frozenOcean, lukewarmOcean, warmOcean,
             beach, snowyBeach, stonyShore, snowySlopes, frozenPeaks, stonyPeaks, meadow, taiga, oldTaiga, forest,
@@ -80,20 +83,23 @@ public final class EarthGenerator extends SurfaceGenerator {
     /**
      * @param cover   land cover, or null for a world made before land cover, which keeps noise for wetness
      * @param climate real climate, used with land cover; without it the climate comes from latitude and height
+     * @param imagery satellite imagery, used with land cover to match bare ground and plant cover to the place, or null
      */
     public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
-                          @Nullable WorldCoverSource cover, @Nullable ClimateSource climate) {
-        this(seed, biomes, settings, tiles, cover, climate, Noises.of(seed));
+                          @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery) {
+        this(seed, biomes, settings, tiles, cover, climate, imagery, Noises.of(seed));
     }
 
     private EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
-                           @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, Noises noises) {
+                           @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery, Noises noises) {
         super(seed, biomes, noises.random);
         this.settings = settings;
         this.grid = new MercatorGrid(settings.metresPerBlock());
         this.tiles = tiles;
         this.cover = cover;
         this.climate = climate;
+        this.imagery = cover == null ? null : imagery;
+        this.imageryGround = this.imagery == null ? null : new ImageryGround(this.imagery, grid, seed);
         // Drawn from their own random, after the shared one, so caves stay as they were.
         RandomSource own = new LegacyRandomSource(seed ^ 0x434F564552L);
         warpX = new SimplexNoise(own); warpZ = new SimplexNoise(own); patches = new SimplexNoise(own);
@@ -145,7 +151,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Override public String credits() {
         return "Elevation: AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, ETOPO1 and others)"
                 + (cover == null ? "" : ". Land cover: " + WorldCoverSource.ATTRIBUTION)
-                + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION);
+                + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION)
+                + (imagery == null ? "" : ". Imagery: " + ImagerySource.ATTRIBUTION);
     }
 
     // Height -------------------------------------------------------------------------------------
@@ -379,7 +386,13 @@ public final class EarthGenerator extends SurfaceGenerator {
             int code = cover(x, z, voxel);
             if (code == WorldCoverSource.BUILT_UP || code == WorldCoverSource.BARE && inTown(x, z, voxel)) code = wild(x, z, voxel);
             Surface covered = code == WorldCoverSource.NO_DATA ? null : covered(code, x, z, y, local, steep, roll, slope);
-            return covered != null ? covered : covered(typical(local.zone()), x, z, y, local, steep, roll, slope);
+            if (covered == null) {
+                code = typical(local.zone());
+                covered = covered(code, x, z, y, local, steep, roll, slope);
+            }
+            // Imagery has the last word on bare ground and how thick plants grow.
+            return imageryGround == null ? covered
+                    : imageryGround.apply(covered, code, x, z, local.zone(), steep, voxel, (mix(x, 0x494D47L, z) >>> 11) * 0x1.0p-53);
         }
         if (t < -8) {
             BlockState top = steep > 1.4 ? STONE : SNOW_BLOCK;
@@ -630,6 +643,15 @@ public final class EarthGenerator extends SurfaceGenerator {
             GeoPoint a = grid.geographic(x - 24000, z + 24000), b = grid.geographic(x + 24000, z - 24000);
             try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
             catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch climate: {}", failure.getMessage()); }
+        }
+        if (imagery != null) {
+            // Imagery: full detail near by, coarser zooms further out, as the far levels read them.
+            double[] reaches = {3500, 7000, 14000, 24000};
+            for (int k = 0; k < reaches.length; k++) {
+                double reach = reaches[k];
+                try { imagery.prefetch(grid, x - reach, z - reach, x + reach, z + reach, ImagerySource.MAX_ZOOM - k); }
+                catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch imagery: {}", failure.getMessage()); }
+            }
         }
         if (cover == null) return;
         // Land cover: full detail near by, overviews further out, as the far levels read them.
