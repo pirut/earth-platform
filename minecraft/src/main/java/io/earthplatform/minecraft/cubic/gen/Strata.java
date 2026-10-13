@@ -251,6 +251,10 @@ public final class Strata {
          */
         public Surface dress(Surface surface, int y, double steep) {
             if (below(y - sea) <= 0) return surface;
+            // Woods hold their ground: where the land cover grows trees, as the ponderosa forest on the Kaibab and
+            // Coconino plateaus at the Grand Canyon's rims, gentle ground keeps it. Only open scrub and bare ground
+            // give way to the rock, and cliffs show it whatever grows on them.
+            if (surface.trees() > 0 && steep <= FLAT) return surface;
             BlockState top = surface.top();
             Block ground = built.sequence.ground();
             // Where the sequence has its own loose ground, as Monument Valley's red sand, its flats are all of it.
