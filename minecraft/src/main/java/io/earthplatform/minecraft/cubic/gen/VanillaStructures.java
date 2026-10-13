@@ -315,6 +315,7 @@ final class VanillaStructures {
             }
         }
         if (!made.isValid()) return null;
+        if (made.getStructure() instanceof OceanMonumentStructure && !monumentFloor(made.getBoundingBox())) return null;
         BoundingBox box = made.getBoundingBox().moved(0, frame.shift, 0);
         if (made.getStructure().terrainAdaptation() != TerrainAdjustment.NONE) box = box.inflatedBy(ADAPT, ADAPT_HEIGHT, ADAPT);
         else box = box.inflatedBy(4, 4, 4); // features in pieces (trees) reach a little past them
@@ -330,6 +331,22 @@ final class VanillaStructures {
         }
         return new Start(kind.index, chunkX, chunkZ, made, frame, box);
     }
+
+    /**
+     * Whether the seabed under a monument lies about as deep as vanilla's deep oceans, so it stands
+     * on its legs. Earth's open oceans are kilometres deep, so monuments keep to the shelves.
+     */
+    private boolean monumentFloor(BoundingBox box) {
+        int surface = host.seaLevel() - 1;
+        for (int x : new int[]{box.minX(), box.getCenter().getX(), box.maxX()})
+            for (int z : new int[]{box.minZ(), box.getCenter().getZ(), box.maxZ()}) {
+                int depth = surface - host.ground(x, z);
+                if (depth < MONUMENT_DEPTH_MIN || depth > MONUMENT_DEPTH_MAX) return false;
+            }
+        return true;
+    }
+
+    private static final int MONUMENT_DEPTH_MIN = 25, MONUMENT_DEPTH_MAX = 75;
 
     private static final Object STARTS = new Object();
 
