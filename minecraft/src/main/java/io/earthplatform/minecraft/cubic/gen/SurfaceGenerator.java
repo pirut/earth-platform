@@ -400,6 +400,33 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return structures == null ? "" : structures.describe(x, y, z);
     }
 
+    @Override public @Nullable com.mojang.datafixers.util.Pair<net.minecraft.core.BlockPos, Holder<Biome>> findBiome(
+            java.util.function.Predicate<Holder<Biome>> biomes, net.minecraft.core.BlockPos from, int radius, int step) {
+        int[] sample = new int[2];
+        // Searching the caves costs the most; skip it when the biome sought is none of theirs.
+        boolean caves = false;
+        for (Underground.Kind kind : Underground.Kind.values()) {
+            Holder<Biome> cave = below.biome(kind);
+            caves |= cave != null && biomes.test(cave);
+        }
+        for (net.minecraft.core.BlockPos.MutableBlockPos at : net.minecraft.core.BlockPos.spiralAround(net.minecraft.core.BlockPos.ZERO,
+                Math.floorDiv(radius, step), net.minecraft.core.Direction.EAST, net.minecraft.core.Direction.SOUTH)) {
+            int x = from.getX() + at.getX() * step, z = from.getZ() + at.getZ() * step;
+            ground(x, z, sample);
+            int ground = sample[0], water = sample[1];
+            Holder<Biome> top = coverAt(x, z, ground, water).biome();
+            if (biomes.test(top)) return com.mojang.datafixers.util.Pair.of(new net.minecraft.core.BlockPos(x, Math.max(ground, water) + 1, z), top);
+            // Lush and dripstone caves and the deep dark, every 32 blocks down to vanilla's Y -64 under the local floor.
+            if (!caves) continue;
+            int floor = below.floor(x, z);
+            for (int y = ground - 32; y >= floor - 128; y -= 32) {
+                Holder<Biome> cave = below.biome(below.kind(x >> 4, y >> 4, z >> 4));
+                if (cave != null && biomes.test(cave)) return com.mojang.datafixers.util.Pair.of(new net.minecraft.core.BlockPos(x, y, z), cave);
+            }
+        }
+        return null;
+    }
+
     /** The biome vanilla code sees at a block: the cave biome deep under the ground, else the column's. */
     Holder<Biome> biomeAt(int x, int y, int z) {
         Column col = column(x >> 4, z >> 4);
