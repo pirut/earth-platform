@@ -85,6 +85,9 @@ public final class EarthClouds {
         int height = EarthConfig.CLOUD_HEIGHT.get();
         if (height <= 0) return false;
         if (IRIS && net.irisshaders.iris.Iris.isPackInUseQuick()) return false;
+        // This deck isn't fogged, so from under water, lava or powder snow it would show through
+        // as a white speckled sheet far overhead; nothing that high can be seen from there anyway.
+        if (Minecraft.getInstance().gameRenderer.getMainCamera().getFluidInCamera() != FogType.NONE) return true;
 
         double deck = Math.max(SEA + height, followGround(level, camY) + ABOVE_GROUND);
         double y = deck - camY;
