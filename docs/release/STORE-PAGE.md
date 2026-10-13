@@ -12,7 +12,7 @@ Not published. Fill the gaps marked TODO once the licence blockers in [LICENSING
 - **Licence:** TODO (currently All Rights Reserved).
 - **Links:** Source, Issues, Wiki → TODO once the repository is public. Discord: none yet.
 - **Icon:** [docs/images/icon.png](../images/icon.png)
-- **Dependencies:** none required. Optional: Sodium 0.8.12-beta.1, Iris 1.8.14-beta.1 (exact versions). Incompatible in practice: Distant Horizons.
+- **Dependencies:** none required. Optional: Sodium 0.8.12-beta.1, Iris 1.8.14-beta.1 (exact versions). Not needed: Distant Horizons (it pauses itself in Earth worlds).
 - **Monetisation:** creator rewards are fine with imagery off by default; if they are turned on, players who opt into imagery use EOX data in a mod that earns money, so get EOX's OK first (see the audit).
 
 ## Gallery
@@ -58,7 +58,7 @@ One block is one metre. Every mountain stands at its real height, every lake and
 
 **See for kilometres.** Distant terrain is drawn as textured voxels out to about 23 km, so you see the far side of the valley instead of fog.
 
-**Ordinary survival.** Mining, crafting, mobs, caves, ores, villages, strongholds, the Nether and the End all work as usual.
+**Ordinary survival.** Mining, crafting, mobs, trading villagers, sleeping, caves, ores, villages, strongholds, the Nether and the End all work as usual.
 
 **Go anywhere.** Pick a famous place or any latitude and longitude when you create the world. Travel later with `/earth visit everest` or `/earth goto 46.59 7.91`.
 
@@ -78,7 +78,9 @@ The first visit to a place downloads its terrain, so you need an internet connec
 
 **Shaders:** Sodium 0.8.12-beta.1 and Iris 1.8.14-beta.1 (these exact versions) with Photon v1.3b. Macs use the same stock Photon at its defaults; the mod adapts it for Apple's OpenGL automatically.
 
-**Don't** install Distant Horizons alongside it: Earth Platform has its own far terrain.
+You don't need Distant Horizons: Earth Platform has its own far terrain, and Distant Horizons pauses itself in Earth worlds.
+
+**Works with** Xaero's Minimap and World Map, JourneyMap, Create, JEI, EMI, Jade and many more.
 
 Install guide, FAQ and troubleshooting: TODO link to docs/INSTALL.md and docs/FAQ.md.
 
@@ -98,4 +100,4 @@ The world is built from these data but changed to make Minecraft terrain, with p
 
 - CurseForge's description editor takes the same Markdown in its "Markdown" mode.
 - Main file: the jar, release type Alpha, game version 1.21.1, NeoForge.
-- Relations: Sodium and Iris as "Optional dependency"; Distant Horizons as "Incompatible".
+- Relations: Sodium and Iris as "Optional dependency". Leave Distant Horizons unlisted (it pauses itself).

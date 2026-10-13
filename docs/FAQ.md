@@ -60,7 +60,18 @@ No. Use the official Photon zip at its defaults. Earth Platform adapts it for Ap
 Harmless; it comes from Photon itself.
 
 **Should I use Distant Horizons?**
-No. Earth Platform has its own far terrain, and Distant Horizons draws over it.
+There's no need. Earth Platform has its own far terrain. If Distant Horizons is installed, it pauses itself while you're in an Earth world (a note in chat says so) and works as usual in other worlds.
+
+## Other mods
+
+**Which other mods work?**
+Most do. Tested in the Earth world: Xaero's Minimap and World Map, JourneyMap, Create (contraptions assemble as usual), JEI, EMI, Jade, AppleSkin, Farmer's Delight, Waystones, Sophisticated Backpacks, Supplementaries, YUNG's structures, and Open Parties and Claims. Terralith and other biome mods have no effect on the Earth, since the real climate picks the biomes. Sodium and Iris need the exact versions in the [install guide](INSTALL.md#shaders-optional).
+
+**A mod acts as if blocks aren't there, or as if I'm outside the world.**
+Some mods check the world's height limits themselves and don't know the Earth world is 32,768 blocks tall. Please report it with the mod's name and version; Create had this and is fixed.
+
+**Mobs stand still or villagers won't trade.**
+That was a bug in early test builds and is fixed. Update to the latest version.
 
 ## Servers
 

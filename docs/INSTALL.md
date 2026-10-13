@@ -49,7 +49,9 @@ The JVM argument `-Dearthplatform.earth.imagery=true` (or `=false`) also works a
 
 ## Distant Horizons
 
-Leave Distant Horizons out. Earth Platform draws its own far terrain, and Distant Horizons draws over it and changes the fog.
+You don't need Distant Horizons: Earth Platform draws its own far terrain. If it's installed anyway, it pauses itself while you're in an Earth world, with a one-time note in chat, and works as usual in other worlds.
+
+For other mods, see [Which other mods work?](FAQ.md#which-other-mods-work) in the FAQ.
 
 ## Dedicated servers
 
