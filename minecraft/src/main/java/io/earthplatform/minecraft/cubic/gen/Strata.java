@@ -389,7 +389,7 @@ public final class Strata {
 
     /** The datum at a cell corner: the highest of the cells around less the fall over the distance to them. */
     private float corner(long i, long j) {
-        long key = i << 32 ^ (j & 0xFFFFFFFFL);
+        long key = it.unimi.dsi.fastutil.HashCommon.mix(i << 32 ^ (j & 0xFFFFFFFFL));
         Float known = datum.get(key);
         if (known != null) return known;
         double metresPerBlock = globe.metresPerBlock(j * (double) CELL);
@@ -410,7 +410,7 @@ public final class Strata {
 
     /** The highest of a few coarse elevation samples across a cell. */
     private float highest(long i, long j) {
-        long key = i << 32 ^ (j & 0xFFFFFFFFL);
+        long key = it.unimi.dsi.fastutil.HashCommon.mix(i << 32 ^ (j & 0xFFFFFFFFL));
         Float known = highest.get(key);
         if (known != null) return known;
         double best = -Double.MAX_VALUE;
