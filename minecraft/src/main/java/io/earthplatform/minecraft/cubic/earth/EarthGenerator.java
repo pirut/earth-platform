@@ -996,10 +996,10 @@ public final class EarthGenerator extends SurfaceGenerator {
             int code = cover(x, z, voxel);
             boolean built = code == WorldCoverSource.BUILT_UP || code == WorldCoverSource.BARE && inTown(x, z, voxel);
             if (built) code = wild(x, z, voxel);
-            Surface covered = code == WorldCoverSource.NO_DATA ? null : covered(code, x, z, y, local, steep, roll, slope);
+            Surface covered = code == WorldCoverSource.NO_DATA ? null : covered(code, x, z, y, local, steep, roll, slope, voxel);
             if (covered == null) {
                 code = typical(local.zone());
-                covered = covered(code, x, z, y, local, steep, roll, slope);
+                covered = covered(code, x, z, y, local, steep, roll, slope, voxel);
             }
             // Imagery has the last word on bare ground and how thick plants grow, except where towns and
             // roads were taken out: there it shows buildings and asphalt, not the wild land put in their place.
@@ -1083,13 +1083,26 @@ public final class EarthGenerator extends SurfaceGenerator {
         return glacierFed(x, z);
     }
 
-    /** Whether glaciers or snowfields lie within about eight kilometres, judged for 128-block cells. */
+    /**
+     * Whether glaciers or snowfields lie within about eight kilometres, judged for 128-block cells blended into their
+     * neighbours along a wandering line, so the answer's edge is never a grid of squares in the rock or a lake.
+     */
     private boolean glacierFed(int x, int z) {
         if (cover == null) return false;
-        long key = (long) (x >> 7) << 32 | (z >> 7) & 0xFFFFFFFFL;
+        double fx = x / 128.0 - 0.5 + warpX.getValue(x / 83.0 + 7.1, z / 83.0) * 0.45, fz = z / 128.0 - 0.5 + warpZ.getValue(x / 83.0 + 7.1, z / 83.0) * 0.45;
+        int ix = Mth.floor(fx), iz = Mth.floor(fz);
+        double tx = fx - ix, tz = fz - iz, share = 0;
+        for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++)
+            if (glacierCell(ix + i, iz + j)) share += (i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - tz : tz);
+        return share > 0.5;
+    }
+
+    /** Whether glaciers or snowfields lie within about eight kilometres of a 128-block cell's middle. */
+    private boolean glacierCell(int gx, int gz) {
+        long key = (long) gx << 32 | gz & 0xFFFFFFFFL;
         Boolean known = glacierFed.get(key);
         if (known != null) return known;
-        int cx = (x & ~127) + 64, cz = (z & ~127) + 64;
+        int cx = gx * 128 + 64, cz = gz * 128 + 64;
         boolean fed = false;
         for (int radius = 2000; radius <= 8000 && !fed; radius *= 2)
             for (int k = 0; k < 8 && !fed; k++)
@@ -1142,7 +1155,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * What a WorldCover class puts on dry ground in this climate, or null for classes that are not
      * ground cover. Steep ground stays bare rock whatever is mapped on it, and sheds its snow.
      */
-    @Nullable private Surface covered(int code, int x, int z, int y, Local local, double steep, int roll, int slope) {
+    @Nullable private Surface covered(int code, int x, int z, int y, Local local, double steep, int roll, int slope, int voxel) {
         double t = local.temperature();
         ClimateZone zone = local.zone();
         boolean cliff = steep > 1.25;
@@ -1167,9 +1180,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         if (code == WorldCoverSource.BARE && volcanic(x, z)) {
             // Fresh flows, as on Hawaii, are black; Iceland's older lava and ash deserts are grey and brown.
+            // Cinders, ash and flows each lie in clumps and streaks, never diced block by block.
+            double kind = rockKind(x, z);
             BlockState top = weathered(x, z, t)
-                    ? patch < -0.3 ? TUFF : roll < 12 ? BLACKSTONE : roll < 60 ? BASALT : roll < 80 ? TUFF : COARSE_DIRT
-                    : patch < -0.55 && roll < 60 ? TUFF : roll < 55 ? BLACKSTONE : BASALT;
+                    ? patch < -0.3 ? TUFF : kind < -0.55 ? BLACKSTONE : kind < 0.1 ? BASALT : kind < 0.45 ? TUFF : COARSE_DIRT
+                    : patch < -0.55 ? TUFF : kind < 0 ? BLACKSTONE : BASALT;
             return new Surface(stonyPeaks, top, BASALT, 0, 0, 0, 0, 0, false);
         }
         // Australia's red centre: red sand under the spinifex and saltbush, and red rock wherever it stands bare, as Uluru does.
@@ -1197,7 +1212,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 || code == WorldCoverSource.WETLAND || code == PARKLAND;
         if (eco != 0 && ground && !cliff && steep < 0.4 && t >= 10) {
             int biome = Ecoregions.get().biome(eco);
-            if (biome == Ecoregions.MANGROVE && y <= SEA + 4) return covered(WorldCoverSource.MANGROVES, x, z, y, local, steep, roll, slope);
+            if (biome == Ecoregions.MANGROVE && y <= SEA + 4) return covered(WorldCoverSource.MANGROVES, x, z, y, local, steep, roll, slope, voxel);
             if (biome == Ecoregions.FLOODED_GRASSLAND) {
                 // A frost-free marsh coast, as the Everglades' Florida Bay and Ten Thousand Islands: mangrove islands among the creeks.
                 if (mangroveClimate(local) && y <= SEA + 1 && patch > 0.4 && lagoon(x, z))
@@ -1301,7 +1316,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 boolean arid = hot || dry;
                 // Bare ground in wet lowlands is cleared land (quarries, airfields, building sites): it goes back to grass.
                 if (!arid && !cliff && steep < 0.7 && local.rain() > 700 && y < SEA + 300 && t > 0)
-                    return covered(WorldCoverSource.GRASSLAND, x, z, y, local, steep, roll, slope);
+                    return covered(WorldCoverSource.GRASSLAND, x, z, y, local, steep, roll, slope, voxel);
                 if (arid && (cliff || steep > 0.9)) return new Surface(badlands, band(y), TERRACOTTA, 0, 0, 0, 0, 0, false);
                 // The Colorado Plateau's red rock: slickrock and red sand on the flats, as in Monument Valley.
                 if (arid && redRock(x, z)) {
@@ -1333,9 +1348,11 @@ public final class EarthGenerator extends SurfaceGenerator {
                 // Only far above the snow line do gentle slopes keep snow between the rocks.
                 if (local.warmest() < -6 && steep < 0.5 && patch > 0.1) return new Surface(snowySlopes, SNOW_BLOCK, STONE, 0, 0, 0, 0, 0, false);
                 boolean scree = local.rain() < 600 || t < 0;
-                BlockState top = cliff || steep > 0.7 ? STONE : patch > 0.55 ? (scree ? GRAVEL : CALCITE) : patch > 0.3 ? GRAVEL
-                        : patch < -0.3 ? ANDESITE : roll < (scree ? 50 : 70) ? STONE : roll < 85 ? COARSE_DIRT : GRAVEL;
-                if (top == STONE && paleRock(x, z)) top = roll < 55 ? DIORITE : ANDESITE;
+                // Scree fans, moraine and outcrops in patches, and within them rock and grit in clumps a few blocks across.
+                double kind = rockKind(x, z);
+                BlockState top = cliff || steep > 0.7 ? STONE : patch > 0.3 ? GRAVEL : patch < -0.3 ? ANDESITE
+                        : kind < (scree ? 0 : 0.3) ? STONE : kind < 0.6 ? GRAVEL : COARSE_DIRT;
+                if (top == STONE && paleRock(x, z)) top = kind < -0.1 ? DIORITE : ANDESITE;
                 return new Surface(stonyPeaks, top, STONE, 0, 0, 0, 0, 0, false);
             }
             case WorldCoverSource.SNOW_AND_ICE -> {
@@ -1348,6 +1365,9 @@ public final class EarthGenerator extends SurfaceGenerator {
                     if (y < SEA + 600) return new Surface(frozenPeaks, BLUE_ICE, PACKED_ICE, 0, 0, 0, 0, 0, false);
                     return rock(x, z, roll);
                 }
+                // A snowfield's edge is ragged, melting back into the rock around it in tongues and patches rather than
+                // following the map's 10 m pixels.
+                if (patch < 0.1 && snowEdge(x, z, voxel, 6) || patch < -0.3 && snowEdge(x, z, voxel, 16)) return covered(WorldCoverSource.BARE, x, z, y, local, steep, roll, slope, voxel);
                 BlockState top = steep < 0.5 && patch > 0.5 ? POWDER_SNOW : SNOW_BLOCK;
                 return new Surface(steep > 0.75 ? frozenPeaks : snowySlopes, top, PACKED_ICE, 0, 0, 0, 0, 0, false);
             }
@@ -1364,7 +1384,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 // Mangroves grow only on tidal coasts; inland swamps mapped as mangrove, as in the Okavango, are freshwater marsh.
                 // Nor north or south of the mangroves' range, as on the Mississippi delta, unless the ecoregion is mangrove.
                 if (y > SEA + 12 || !mangroveClimate(local) && !mangroveEcoregion(x, z))
-                    return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope);
+                    return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope, voxel);
                 return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false, Tree.MANGROVE);
             }
             case WorldCoverSource.MOSS_AND_LICHEN -> {
@@ -1391,6 +1411,14 @@ public final class EarthGenerator extends SurfaceGenerator {
         return humid && local.warmest() >= ClimateZone.TUNDRA_WARMEST && local.warmest() < 14 && local.temperature() < 6 && (y < 0 || y > SEA + 1000);
     }
 
+    /** Whether a snow and ice column lies within some metres of ground the map does not show as snow and ice. */
+    private boolean snowEdge(int x, int z, int voxel, int metres) {
+        int reach = Math.max(metres, 2 * voxel);
+        for (int k = 0; k < 8; k += 2)
+            if (cover(x + (int) RING_X[k] * reach, z + (int) RING_Z[k] * reach, voxel) != WorldCoverSource.SNOW_AND_ICE) return true;
+        return false;
+    }
+
     /** Bare rock in a biome where snow does not lie, for faces too steep to hold it. */
     private Surface rock() { return new Surface(stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false); }
 
@@ -1403,7 +1431,16 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Bare rock, pale granite where the mountains are granite. */
     private Surface rock(int x, int z, int roll) {
-        return paleRock(x, z) ? new Surface(stonyPeaks, roll < 55 ? DIORITE : ANDESITE, STONE, 0, 0, 0, 0, 0, false) : rock();
+        return paleRock(x, z) ? new Surface(stonyPeaks, rockKind(x, z) < 0.1 ? DIORITE : ANDESITE, STONE, 0, 0, 0, 0, 0, false) : rock();
+    }
+
+    /**
+     * Which of a bare ground's rocks lies at a column, about -1 to 1: clumps and streaks a few blocks across, with only a
+     * slight jitter at their edges, so rock, scree and cinders mottle the ground rather than speckling it block by block.
+     */
+    private double rockKind(int x, int z) {
+        return 0.7 * patches.getValue(x / 9.0 + 71.3, z / 9.0 - 33.1) + 0.3 * patches.getValue(x / 3.5 - 8.8, z / 3.5 + 14.2)
+                + ((mix(x, 0x4B494E44L, z) & 1023) / 511.5 - 1) * 0.06;
     }
 
     /** Open grass in a climate: savanna, steppe, meadow, prairie or moor. */
@@ -1607,10 +1644,24 @@ public final class EarthGenerator extends SurfaceGenerator {
      * the Matterhorn, Everest and Mont Blanc, have high neighbours and ridges that rise again, and fail the test.
      */
     private boolean cone(int x, int z) {
-        long key = (long) (x >> 10) << 32 | (z >> 10) & 0xFFFFFFFFL;
+        // Each cell finds its own summit, so a cone is looked for from the cells round about too: its edge then follows its
+        // own ring and height, not the cells' square borders. The ring wanders a little, so it is no perfect circle either.
+        double wx = x + warpX.getValue(x / 700.0, z / 700.0) * 600, wz = z + warpZ.getValue(x / 700.0, z / 700.0) * 600;
+        for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+            double[] c = coneOf((x >> 10) + i, (z >> 10) + j);
+            if (c.length == 0) continue;
+            double dx = wx - c[0], dz = wz - c[1];
+            if (dx * dx + dz * dz < 5000.0 * 5000.0 && elevation[FAR_ZOOM].metres(x, z) > c[2]) return true;
+        }
+        return false;
+    }
+
+    /** The volcanic cone a 1024-block cell's search finds: its summit's x and z and the mean height of the ring round it, or none. */
+    private double[] coneOf(int gx, int gz) {
+        long key = (long) gx << 32 | gz & 0xFFFFFFFFL;
         double[] c = cones.get(key);
         if (c == null) {
-            double cx = (x & ~1023) + 512, cz = (z & ~1023) + 512, px = cx, pz = cz, top = -1e9;
+            double cx = gx * 1024.0 + 512, cz = gz * 1024.0 + 512, px = cx, pz = cz, top = -1e9;
             for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
                 double m = elevation[FAR_ZOOM].metres(cx + i * 2000, cz + j * 2000);
                 if (m > top) { top = m; px = cx + i * 2000; pz = cz + j * 2000; }
@@ -1628,9 +1679,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (cones.size() > 1 << 14) cones.clear();
             cones.putIfAbsent(key, c);
         }
-        if (c.length == 0) return false;
-        double dx = x - c[0], dz = z - c[1];
-        return dx * dx + dz * dz < 5000.0 * 5000.0 && elevation[FAR_ZOOM].metres(x, z) > c[2];
+        return c;
     }
 
     /** The ecoregion at a column, or 0 off the real Earth or where the map has none. */
