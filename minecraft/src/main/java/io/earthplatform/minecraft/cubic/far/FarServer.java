@@ -189,7 +189,11 @@ public final class FarServer {
             for (int y = 0; y < perCube; y++) for (int z = 0; z < perCube; z++) for (int x = 0; x < perCube; x++) {
                 BlockState state = downsample(cube, x << level, y << level, z << level, 1 << level);
                 BlockState here = target.getBlockState(baseX + x, baseY + y, baseZ + z);
-                if (here != state) target.setBlockState(baseX + x, baseY + y, baseZ + z, state, false);
+                // The generated voxels are lowered by their column's drop so the water meets its real
+                // height, and a cube's own rows are not: swapping water and air between the two raised
+                // the water over every saved cube into a lighter patch with a stepped outline. Edits that
+                // matter from afar are to solid ground, so water and air keep the generated shape.
+                if (here != state && !(waterOrAir(here) && waterOrAir(state))) target.setBlockState(baseX + x, baseY + y, baseZ + z, state, false);
             }
         }
         for (int i = 0; i < column.sections.size(); i++) {
@@ -199,6 +203,8 @@ public final class FarServer {
             if (section.hasOnlyAir()) column.sections.set(i, null);
         }
     }
+
+    private static boolean waterOrAir(BlockState state) { return state.isAir() || state.getBlock() == Blocks.WATER; }
 
     private LevelChunkSection section(FarColumn column, int index) {
         while (column.sections.size() <= index) column.sections.add(null);
