@@ -334,6 +334,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     @Override public LevelChunkSection generate(int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
         LevelChunkSection section = terrain(cx, cy, cz, blockEntities, entities);
+        Vegetation.bees(section, cx << 4, cy << 4, cz << 4, blockEntities);
         VanillaStructures structures = vanilla;
         if (structures != null) {
             structures.place(section, cx, cy, cz, blockEntities, entities);
