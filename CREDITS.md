@@ -20,6 +20,12 @@ Mapzen/Tilezen terrain tiles on the [Registry of Open Data on AWS](https://regis
 - United Kingdom terrain data © Environment Agency copyright and/or database right 2015. All rights reserved.
 - United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey.
 
+## Detailed elevation: national terrain models via Mapterhorn
+
+National terrain models via Mapterhorn (https://mapterhorn.com/attribution), including swisstopo swissALTI3D, BEV and the Austrian states, the German states (GeoBasis-DE), IGN France, Kartverket, Lantmäteriet, National Land Survey of Finland, Klimadatastyrelsen, CNIG Spain, DGT Portugal, TINITALY/INGV and the Italian regions and provinces, Environment Agency, Scottish and Welsh Governments, USGS 3DEP, Natural Resources Canada, Geoscience Australia, LINZ, GSI Japan, Natural Science Institute of Iceland, and others, under their open licences.
+Where a fine national model exists, the mod downloads it from [Mapterhorn](https://mapterhorn.com) while you play and blends it into the elevation above; nothing is bundled. Every source, with its producer and licence, is listed in [docs/ELEVATION-SOURCES.md](docs/ELEVATION-SOURCES.md), together with the notices some of them require: 出典：国土地理院 (Source: Geospatial Information Authority of Japan), digital elevation model, processed; Copernicus WorldDEM-30 (the liability sentence under Built-in test areas applies); UK Open Government Licence v3.0; Datenlizenz Deutschland 2.0; Licence Ouverte 2.0; Open Government Licence – Canada. Turn it off with `-Dearthplatform.earth.national=false`.
+Mapterhorn's own code (BSD-3-Clause) is not used; the mod reads its tiles with its own decoder.
+
 ## Land cover: ESA WorldCover
 
 © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium.

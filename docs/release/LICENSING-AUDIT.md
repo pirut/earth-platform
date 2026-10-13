@@ -11,6 +11,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | Public name ("Minecraft Earth") | Resolved | JR chose Earth Platform (2026-10-13); PR #8's offline hint now says Earth Platform (179686a) |
 | Mod licence | Decided | JR chose LGPL-3.0-only (2026-10-13); LICENSE, COPYING and the jar notice are in place |
 | AWS Terrain Tiles | OK | Credited in game and in CREDITS.md |
+| National terrain models via Mapterhorn (PR #24) | OK (licences) / courtesy | 151 open-licence sources, credited with a full list in docs/ELEVATION-SOURCES.md. Mapterhorn's tile server is a volunteer project with no stated terms for apps: JR emails the maintainer before release (RELEASE-DAY step 8a) |
 | ESA WorldCover | OK | Credited, changes noted (CC BY 4.0) |
 | CHELSA climate | OK (licence) / courtesy | CC0; ask CHELSA about public traffic or mirror the four bands |
 | RESOLVE Ecoregions 2017 (PR #14) | OK | CC BY 4.0; credited with the citation, and the derived raster noted |
@@ -37,6 +38,17 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 - Code: `ClimateSource`, HTTP range reads from `https://os.zhdk.cloud.switch.ch/chelsav2/GLOBAL/...`.
 - Terms: [CC0 1.0](https://www.chelsa-climate.org/datasets/chelsa_climatologies) per the CHELSA site and EnviDat. No attribution required; citation requested, and we give it.
 - Courtesy, not licence: every player reads ranges from an academic object store. Before a big launch, either tell the CHELSA team (chelsa-climate.org) or mirror the five files we read (kg2, bio1, bio10, bio12 and the DEM) to our own storage, which CC0 allows.
+
+### National terrain models via Mapterhorn (PR #24, detailed elevation)
+- What: `NationalElevation` streams 512-pixel lossless WebP Terrarium tiles from tiles.mapterhorn.com (and regional archives from download.mapterhorn.com) at zoom 8 and finer, and blends them over the AWS composite only where a national model exists. Nothing is bundled. Players can turn it off with `-Dearthplatform.earth.national=false`.
+- Data licences, checked against Mapterhorn's [attribution.json](https://download.mapterhorn.com/attribution.json) on 2026-10-13 (151 sources): 58 CC BY 4.0 (various spellings), 34 US public domain (USGS 3DEP), 21 Licence Ouverte 2.0 (IGN France), 9 Datenlizenz Deutschland BY 2.0 and 3 Zero 2.0, 4 CC0, 6 GSI Japan terms, 3 UK OGL v3.0, 1 OGL Canada, 4 open government data (swisstopo OGD, Faroe Islands, Poland Art. 40a Geodetic Law), CC BY 3.0 (Tasmania), CC BY 2.5 (Trentino), Taiwan OGDL 1.0, Romania OGL-ROU 1.0, Estonia Land Board open data licence 2025, Flanders model licence for free reuse, ASTER GDEM (public domain) and Copernicus GLO-30. All allow reuse, adaptation and redistribution, including commercial, with attribution at most. None is non-commercial or share-alike, so none conflicts with the LGPL or creator rewards. OK.
+- Attribution: the coordinator's summary line goes in the mods list, CREDITS.md and THIRD_PARTY_NOTICES.md, and they point to [docs/ELEVATION-SOURCES.md](../ELEVATION-SOURCES.md), generated from attribution.json, with every source, producer, licence link and access year. A summary credit plus a full linked list is a reasonable manner of attribution under CC BY 4.0 for data used at runtime. Regenerate the list if Mapterhorn adds sources before release.
+- Sources with specific wording, all carried in ELEVATION-SOURCES.md:
+  - GSI Japan: cite 「出典：国土地理院」 and say the data was processed. Mapterhorn holds a Survey Act approval (R 8JHs 131) for its own use. Turning the heights into game terrain is not surveying, so we need no approval of our own. This is my reading, not GSI's word.
+  - Copernicus GLO-30: the liability sentence and no endorsement.
+  - UK OGL v3.0, Canada OGL, Datenlizenz Deutschland 2.0 and Licence Ouverte 2.0: their standard attribution statements.
+- Code: Mapterhorn's code is BSD-3-Clause and none of it is used. `WebpLossless` is our own decoder. Spot-checked in the PR #24 diff, where the only Mapterhorn references are URLs and the credit string.
+- Service, the open item: tiles.mapterhorn.com runs on donated bandwidth and publishes no terms for applications. Every player would fetch from it. This is not a licence problem, but it is a courtesy and continuity risk, like CHELSA. Before release, JR emails the maintainer, and we keep the opt-out flag and a fallback to the AWS tiles if the server refuses (the layer only refines, so failures leave the global elevation in place).
 
 ### EOX Sentinel-2 cloudless 2016 (ground colours) — mitigated
 - Code (PR #4): `ImagerySource`, tiles from `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/`, cached under `earthplatform/cache/s2cloudless-2016-v1`.
