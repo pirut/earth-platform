@@ -37,6 +37,7 @@ public final class EarthConfig {
     public static final ModConfigSpec COMMON_SPEC;
     public static final ModConfigSpec.ConfigValue<String> DEFAULT_HOME;
     public static final ModConfigSpec.BooleanValue OFFLINE;
+    public static final ModConfigSpec.BooleanValue SATELLITE_IMAGERY;
     public static final ModConfigSpec.IntValue CACHE_LIMIT_GB;
     public static final ModConfigSpec.BooleanValue ANYONE_CAN_TRAVEL;
 
@@ -62,6 +63,9 @@ public final class EarthConfig {
         CACHE_LIMIT_GB = common.comment("Largest size of the downloaded Earth data cache, in gigabytes; the least recently used files go first",
                         "when the game starts. 0 keeps everything.")
                 .translation(key("cacheLimit")).defineInRange("cacheLimitGb", 8, 0, 1024);
+        SATELLITE_IMAGERY = common.comment("Colour the ground of new Earth worlds from satellite photos (EOX Sentinel-2 cloudless imagery,",
+                        "downloaded like the terrain). Off by default; existing worlds keep what they were made with.")
+                .translation(key("satelliteImagery")).define("satelliteImagery", false);
         ANYONE_CAN_TRAVEL = common.comment("Let every player use /earth goto. When false, only operators can (singleplayer always can).")
                 .translation(key("anyoneCanTravel")).define("anyoneCanTravel", false);
         COMMON_SPEC = common.build();
@@ -95,13 +99,24 @@ public final class EarthConfig {
             property("earthplatform.far.textured", Integer.toString(FAR_TEXTURED_LEVELS.get()));
         } else if (config.getSpec() == COMMON_SPEC) {
             property("earthplatform.earth.offline", Boolean.toString(OFFLINE.get()));
+            property("earthplatform.earth.imagery", Boolean.toString(SATELLITE_IMAGERY.get()));
         }
     }
 
     /** Engine properties given on the command line, which the file never overrides. */
     private static final java.util.Set<String> FROM_COMMAND_LINE = java.util.stream.Stream.of(
-            "earthplatform.far.detail", "earthplatform.far.textured", "earthplatform.earth.offline")
+            "earthplatform.far.detail", "earthplatform.far.textured", "earthplatform.earth.offline", "earthplatform.earth.imagery")
             .filter(key -> System.getProperty(key) != null).collect(java.util.stream.Collectors.toUnmodifiableSet());
+
+    /** Sets satellite imagery from the Create World screen: saved to the file and in effect for the next new world. */
+    public static void setImagery(boolean on) {
+        SATELLITE_IMAGERY.set(on);
+        COMMON_SPEC.save();
+        property("earthplatform.earth.imagery", Boolean.toString(on));
+    }
+
+    /** Whether new worlds get satellite imagery, counting a command-line setting. */
+    public static boolean imagery() { return Boolean.getBoolean("earthplatform.earth.imagery"); }
 
     private static void property(String key, String value) {
         if (!FROM_COMMAND_LINE.contains(key)) System.setProperty(key, value);

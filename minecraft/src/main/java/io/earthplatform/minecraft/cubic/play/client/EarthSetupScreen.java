@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic.play.client;
 
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
+import io.earthplatform.minecraft.cubic.play.EarthConfig;
 import io.earthplatform.minecraft.cubic.play.EarthPlaces;
 import io.earthplatform.minecraft.cubic.play.EarthWorlds;
 import java.util.Locale;
@@ -8,7 +9,9 @@ import java.util.Optional;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -20,6 +23,7 @@ public final class EarthSetupScreen extends Screen {
     private PlaceList list;
     private EditBox latitude, longitude;
     private Button done;
+    private CycleButton<Boolean> imagery;
     /** True while fields are filled from the list, so typing in them can tell the two apart. */
     private boolean filling;
 
@@ -29,10 +33,14 @@ public final class EarthSetupScreen extends Screen {
     }
 
     @Override protected void init() {
-        int listTop = 26 + 10 * font.split(Component.translatable("earthplatform.setup.hint"), width - 40).size() + 4, listBottom = height - 84;
+        int listTop = 26 + 10 * font.split(Component.translatable("earthplatform.setup.hint"), width - 40).size() + 4, listBottom = height - 108;
         list = new PlaceList(minecraft, Math.min(340, width - 20), listBottom - listTop, listTop);
         list.setX(width / 2 - list.getWidth() / 2);
         addRenderableWidget(list);
+
+        imagery = addRenderableWidget(CycleButton.onOffBuilder(EarthConfig.imagery())
+                .withTooltip(on -> Tooltip.create(Component.translatable("earthplatform.setup.imagery.tooltip")))
+                .create(width / 2 - 155, height - 100, 310, 20, Component.translatable("earthplatform.setup.imagery")));
 
         int y = height - 74;
         latitude = new EditBox(font, width / 2 - 155, y, 100, 20, Component.translatable("earthplatform.setup.latitude"));
@@ -99,6 +107,7 @@ public final class EarthSetupScreen extends Screen {
             var selected = list.getSelected();
             String name = selected != null ? selected.place.label() : EarthPlaces.near(point[0], point[1]).map(EarthPlaces.Place::label).orElse("");
             EarthWorlds.choose(new EarthWorlds.Choice(EarthSettings.at(point[0], point[1]), name));
+            if (imagery.getValue() != EarthConfig.imagery()) EarthConfig.setImagery(imagery.getValue());
             onClose();
         });
     }

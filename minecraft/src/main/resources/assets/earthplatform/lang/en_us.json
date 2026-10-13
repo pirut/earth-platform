@@ -7,6 +7,8 @@
   "earthplatform.setup.latitude": "Latitude",
   "earthplatform.setup.longitude": "Longitude",
   "earthplatform.setup.random": "Surprise me",
+  "earthplatform.setup.imagery": "Satellite imagery",
+  "earthplatform.setup.imagery.tooltip": "Colour the ground from satellite photos (EOX Sentinel-2 cloudless imagery, downloaded like the terrain). Applies to new worlds and is saved in the Earth settings.",
   "earthplatform.setup.invalid": "Latitude must be between -80 and 80, longitude between -180 and 180.",
   "earthplatform.setup.startAt": "You'll start at %s",
   "earthplatform.setup.startAtPoint": "You'll start at %s, %s",
@@ -51,6 +53,8 @@
   "earthplatform.configuration.offline.tooltip": "Never download Earth data; only places already downloaded generate.",
   "earthplatform.configuration.cacheLimit": "Cache size limit (GB)",
   "earthplatform.configuration.cacheLimit.tooltip": "Largest size of the downloaded Earth data. The least recently used files are removed when the game starts. 0 keeps everything.",
+  "earthplatform.configuration.satelliteImagery": "Satellite imagery for new worlds",
+  "earthplatform.configuration.satelliteImagery.tooltip": "Colour the ground of new Earth worlds from satellite photos (EOX Sentinel-2 cloudless imagery, downloaded like the terrain). Existing worlds keep what they were made with.",
   "earthplatform.configuration.anyoneCanTravel": "Everyone can use /earth visit and goto",
   "earthplatform.configuration.anyoneCanTravel.tooltip": "When off, only operators can travel with commands. The singleplayer owner always can."
 }

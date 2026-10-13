@@ -24,9 +24,9 @@ In singleplayer you can always travel. On servers only operators can, unless `an
 Mods → Earth Platform → Config, or the files in `config/`:
 
 - `earthplatform-client.toml`: far terrain detail and textured levels (restart to apply), the download note, and whether Create World starts on Earth.
-- `earthplatform-common.toml`: the default starting place for new worlds, offline mode, the cache size limit (GB, oldest files removed at start) and who may travel.
+- `earthplatform-common.toml`: the default starting place for new worlds, satellite imagery for new worlds (EOX Sentinel-2, off by default; also a toggle on the Customize screen), offline mode, the cache size limit (GB, oldest files removed at start) and who may travel.
 
-Command-line `-Dearthplatform.far.detail`, `-Dearthplatform.far.textured` and `-Dearthplatform.earth.offline` still win over the files.
+Command-line `-Dearthplatform.far.detail`, `-Dearthplatform.far.textured`, `-Dearthplatform.earth.offline` and `-Dearthplatform.earth.imagery` still win over the files.
 
 ## Servers
 
