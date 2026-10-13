@@ -162,6 +162,8 @@ public final class EarthWorlds {
         final Set<UUID> waiting = new LinkedHashSet<>();
         final EarthStatus status = new EarthStatus();
         CompletableFuture<Void> preparing;
+        /** Where the start's landing search found to stand, found off the server thread with the data. */
+        @Nullable volatile int[] landing;
         boolean ready;
         long retryAt, lastSample, firstWait;
 
@@ -245,6 +247,8 @@ public final class EarthWorlds {
                     generator.prepare(home[0], home[1]);
                     // Throws when the home's terrain is still missing.
                     generator.surfaceY(home[0], home[1]);
+                    // The search reads ground kilometres out, from the network where it is new: never on the server thread.
+                    landing = CubicEvents.landing(cubes, view(cubes));
                 }, Util.ioPool());
             } else if (preparing.isDone()) {
                 if (preparing.isCompletedExceptionally()) {
@@ -269,7 +273,8 @@ public final class EarthWorlds {
 
         private void arrive(ServerPlayer player, ServerCubeWorld cubes) {
             int[] view = view(cubes);
-            Vec3 spot = CubicEvents.arrival(cubes, view);
+            int[] found = landing;
+            Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found) : CubicEvents.arrival(cubes, view);
             ServerLevel level = server.getLevel(Cubic.LEVEL);
             player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
             player.resetFallDistance();
@@ -369,7 +374,9 @@ public final class EarthWorlds {
             return 0;
         }
         int[] view = Session.view(cubes);
-        Vec3 spot = CubicEvents.arrival(cubes, view);
+        Session running = session;
+        int[] found = running != null ? running.landing : null;
+        Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found) : CubicEvents.arrival(cubes, view);
         player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
         return CubicEvents.where(source);
     }

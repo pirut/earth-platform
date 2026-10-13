@@ -117,7 +117,9 @@ class CubicBench {
             int[] home = warm.arrival();
             var fetched = io.earthplatform.geography.globe.Downloads.totals();
             long t0 = System.nanoTime();
-            warm.prepare(home[0], home[1]);
+            // As /cubes goto does: the data about the landing, then the rest while the cubes are made.
+            boolean near = System.getenv("EARTH_BENCH_NEAR") != null;
+            if (near) warm.prepareNear(home[0], home[1]); else warm.prepare(home[0], home[1]);
             System.out.printf(Locale.ROOT, "%n== %s (block %d, %d)%nprepare (data fetch): %.0f ms, %s%n", place.name, home[0], home[1], ms(t0),
                     io.earthplatform.geography.globe.Downloads.since(fetched));
             fetched = io.earthplatform.geography.globe.Downloads.totals();
@@ -127,6 +129,14 @@ class CubicBench {
             t0 = System.nanoTime();
             int[] spot = (int[]) landing.invoke(null, warm, home, 2048, true);
             System.out.printf(Locale.ROOT, "landing spot (%d, %d): %.0f ms, %s%n", spot[0], spot[1], ms(t0), io.earthplatform.geography.globe.Downloads.since(fetched));
+            if (near) {
+                long landed = System.nanoTime();
+                var before = io.earthplatform.geography.globe.Downloads.totals();
+                Thread.ofVirtual().start(() -> {
+                    warm.prepare(home[0], home[1]);
+                    System.out.printf(Locale.ROOT, "far data: %.0f ms after landing, %s%n", ms(landed), io.earthplatform.geography.globe.Downloads.since(before));
+                });
+            }
 
             // Cubes around a player standing on the ground, as the server loads them.
             EarthGenerator gen = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, rivers, bareEarth);

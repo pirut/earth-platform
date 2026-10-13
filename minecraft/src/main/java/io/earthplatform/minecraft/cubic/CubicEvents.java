@@ -171,7 +171,17 @@ public final class CubicEvents {
 
     /** The arrival point, drawn within sight of {@code view} (a landmark column) when the start is too far off to see it. */
     public static Vec3 arrival(ServerCubeWorld cubes, @Nullable int[] view) {
-        int[] spot = scatter(cubes, landing(cubes.generator(), withinSight(cubes.generator().arrival(), view), 4096, true));
+        return arrivalAt(cubes, landing(cubes, view));
+    }
+
+    /** The start's landing spot, before scattering; slow where the data is new, so best found off the server thread. */
+    public static int[] landing(ServerCubeWorld cubes, @Nullable int[] view) {
+        return landing(cubes.generator(), withinSight(cubes.generator().arrival(), view), 4096, true);
+    }
+
+    /** The arrival point about a landing spot found before, scattered as {@link #arrival} does. */
+    public static Vec3 arrivalAt(ServerCubeWorld cubes, int[] landing) {
+        int[] spot = scatter(cubes, landing);
         return standOn(cubes, spot[0], spot[1]);
     }
 
@@ -376,7 +386,8 @@ public final class CubicEvents {
             // How long each part takes and what it downloads, so a slow first visit shows whether the network is why.
             Map<String, long[]> before = Downloads.totals();
             long start = System.nanoTime();
-            earth.prepare(target[0], target[1]);
+            // Only the data about the landing first; the far levels' data comes in after the player arrives.
+            earth.prepareNear(target[0], target[1]);
             long prepared = System.nanoTime();
             String fetched = Downloads.since(before);
             before = Downloads.totals();
@@ -385,6 +396,12 @@ public final class CubicEvents {
             long landed = System.nanoTime();
             EarthPlatformMod.LOGGER.info("Travel to {}, {}: data {} ms ({}); landing {} ms ({})", latitude, longitude,
                     (prepared - start) / 1_000_000, fetched, (landed - prepared) / 1_000_000, Downloads.since(before));
+            Map<String, long[]> far = Downloads.totals();
+            Util.ioPool().execute(() -> {
+                earth.prepare(target[0], target[1]);
+                EarthPlatformMod.LOGGER.info("Travel to {}, {}: far data {} ms after landing ({})", latitude, longitude,
+                        (System.nanoTime() - landed) / 1_000_000, Downloads.since(far));
+            });
             return spot;
         }, Util.ioPool()).whenComplete((spot, failure) -> source.getServer().execute(() -> {
             if (failure != null) {
