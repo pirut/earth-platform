@@ -579,7 +579,7 @@ public final class FarRenderer {
         shader.apply();
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = world.client().getShade(direction, true);
-        if (own) FarLod.beginDraw();
+        if (own) FarLod.beginDraw(modelView, position.x, position.y, position.z);
         if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade)) {
             for (Column column : visible) {
                 FarGpu.Allocation faces = column.faces;
