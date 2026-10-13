@@ -649,6 +649,14 @@ public final class FarRenderer {
     }
 
     /** Draws the visible columns' water see-through, farthest first, before the near cubes' own water. */
+    /**
+     * How much nearer far water is drawn per block away, as a share of its distance: two steps of
+     * a 24-bit depth buffer behind vanilla's 0.05-block near plane, which grow with distance squared.
+     */
+    private static final double WATER_LIFT = 2.0 / (0.05 * (1 << 24));
+
+    private static double square(double value) { return value * value; }
+
     public void drawWater(Camera camera, Matrix4f modelView, Matrix4f projection) {
         if (closed || waterFrame == frame || camera.getFluidInCamera() != net.minecraft.world.level.material.FogType.NONE) return;
         waterFrame = frame;
@@ -663,7 +671,8 @@ public final class FarRenderer {
         shader.apply();
         // With far terrain in its own depth, far hills hide the water behind them this way instead.
         boolean own = ShaderBlocks.packInUse() && FarLod.active() && FarLod.beginWater();
-        Uniform offset = shader.CHUNK_OFFSET;
+        Uniform offset = shader.CHUNK_OFFSET, view = own ? null : shader.MODEL_VIEW_MATRIX;
+        Matrix4f nearer = new Matrix4f();
         for (int pass = 0; pass < 2; pass++) {
             // Water walls go last: where the next level's water stands as high, its surface is
             // already in the depth buffer and hides them, so they only show across a step.
@@ -673,6 +682,15 @@ public final class FarRenderer {
                 if (offset != null) {
                     offset.set((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                     offset.upload();
+                }
+                if (view != null) {
+                    // In the shared depth buffer a step of depth spans hundreds of blocks kilometres
+                    // off, and a lake's bed a few blocks under its water showed through it in dark
+                    // stripes. Drawn shrunk toward the camera the water covers the same pixels, at a
+                    // depth nearer by a couple of those steps.
+                    double distance = Math.sqrt(column.distance + square(column.box.getCenter().y - position.y));
+                    view.set(nearer.set(modelView).scale((float) Math.max(0.8, 1.0 - distance * WATER_LIFT)));
+                    view.upload();
                 }
                 if (pass == 0) {
                     column.water.bind();
@@ -688,6 +706,7 @@ public final class FarRenderer {
             }
         }
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
+        if (view != null) view.set(modelView);
         if (own) FarLod.endWater();
         shader.clear();
         VertexBuffer.unbind();
