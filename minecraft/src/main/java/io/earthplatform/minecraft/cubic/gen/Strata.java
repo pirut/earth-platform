@@ -240,15 +240,16 @@ public final class Strata {
             if (below(y - sea) <= 0) return surface;
             BlockState top = surface.top();
             Block ground = built.region.ground();
-            boolean grass = top.is(Blocks.GRASS_BLOCK) && ground != null, soil = grass;
+            // Where the region has its own loose ground, as Monument Valley's red sand, its flats are all of it.
+            boolean loose = ground != null && (top.is(Blocks.GRASS_BLOCK) || steep <= 0.45), soil = loose;
             for (Block b : SOIL) if (top.is(b)) { soil = true; break; }
             if (!soil || steep > 0.75) {
                 BlockState rock = at(y);
                 return new Surface(badlands, rock, rock, 0, 0, 0, 0, 0, false);
             }
-            if (ground != null && (grass || top.is(Blocks.SAND))) {
-                BlockState loose = ground.defaultBlockState();
-                return new Surface(surface.biome(), loose, loose, surface.trees(), surface.spruce(), surface.birch(),
+            if (loose || ground != null && top.is(Blocks.SAND)) {
+                BlockState sand = ground.defaultBlockState();
+                return new Surface(surface.biome(), sand, sand, surface.trees(), surface.spruce(), surface.birch(),
                         surface.grass(), surface.flowers(), surface.ferns(), surface.broadleaf());
             }
             return surface;
