@@ -2,6 +2,9 @@ package io.earthplatform.minecraft.cubic;
 
 import com.mojang.serialization.Lifecycle;
 import io.earthplatform.geography.globe.ClimateSource;
+import io.earthplatform.geography.globe.CopernicusSource;
+import io.earthplatform.geography.globe.RiverMap;
+import io.earthplatform.geography.globe.SurfaceWaterSource;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
@@ -43,7 +46,8 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  * <p>Off unless asked for: {@code EARTH_BENCH=<cache dir> ./gradlew test --tests '*CubicBench'}, with
  * optional {@code EARTH_BENCH_THREADS} (default 2, as the server's cube workers on four cores),
  * {@code EARTH_BENCH_FAR} (far columns timed per level, default 150) and {@code EARTH_BENCH_PLACE}
- * (a place name prefix) and {@code EARTH_BENCH_BARE=1} (towns on bare-earth ground). The cache dir has the game's {@code earthplatform/cache} layout; the first
+ * (a place name prefix), {@code EARTH_BENCH_AT} ({@code name,latitude,longitude} for a place of one's own) and
+ * {@code EARTH_BENCH_BARE=1} (towns on bare-earth ground). The cache dir has the game's {@code earthplatform/cache} layout; the first
  * run downloads what it needs. Results go to standard output.
  */
 class CubicBench {
@@ -69,22 +73,39 @@ class CubicBench {
         MappedRegistry<Biome> biomes = new MappedRegistry<>(Registries.BIOME, Lifecycle.stable());
         lookup.lookupOrThrow(Registries.BIOME).listElements().forEach(holder ->
                 biomes.register(holder.key(), holder.value(), RegistrationInfo.BUILT_IN));
+        // The mod's own biome, as a copy of the river it is drawn like here.
+        Biome river = lookup.lookupOrThrow(Registries.BIOME).getOrThrow(net.minecraft.world.level.biome.Biomes.RIVER).value();
+        Biome glacialLake = new Biome.BiomeBuilder().hasPrecipitation(true).temperature(river.getBaseTemperature()).downfall(0.5F)
+                .specialEffects(river.getSpecialEffects()).mobSpawnSettings(net.minecraft.world.level.biome.MobSpawnSettings.EMPTY)
+                .generationSettings(net.minecraft.world.level.biome.BiomeGenerationSettings.EMPTY).build();
+        biomes.register(net.minecraft.resources.ResourceKey.create(Registries.BIOME,
+                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("earthplatform", "glacial_lake")), glacialLake, RegistrationInfo.BUILT_IN);
+        // The same sources as a new world in the game: Copernicus fill and traced rivers too.
+        CopernicusSource copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache.resolve(CopernicusSource.DATASET_ID), true, 12, 4, Duration.ofSeconds(30));
         TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve(TerrariumTileSource.DATASET_ID),
-                true, 256, 6, Duration.ofSeconds(20));
+                true, 256, 6, Duration.ofSeconds(20), copernicus);
+        RiverMap rivers = new RiverMap(new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache.resolve(SurfaceWaterSource.DATASET_ID), true,
+                96, 4, Duration.ofSeconds(30)), 256);
         WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, 4, Duration.ofSeconds(30));
         ClimateSource climate = new ClimateSource(ClimateSource.CHELSA, cache.resolve(ClimateSource.DATASET_ID), true, 320, 8, Duration.ofSeconds(30));
         MessageDigest all = MessageDigest.getInstance("SHA-256");
-        for (Place place : PLACES) {
+        List<Place> places = PLACES;
+        String at = System.getenv("EARTH_BENCH_AT");
+        if (at != null) {
+            String[] parts = at.split(",");
+            places = List.of(new Place(parts[0], Double.parseDouble(parts[1]), Double.parseDouble(parts[2])));
+        }
+        for (Place place : places) {
             if (!only.isEmpty() && !place.name.toLowerCase(Locale.ROOT).startsWith(only)) continue;
             EarthSettings settings = EarthSettings.at(place.latitude, place.longitude);
-            EarthGenerator warm = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, null, bare);
+            EarthGenerator warm = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, rivers, bare);
             int[] home = warm.arrival();
             long t0 = System.nanoTime();
             warm.prepare(home[0], home[1]);
             System.out.printf(Locale.ROOT, "%n== %s (block %d, %d)%nprepare (data fetch): %.0f ms%n", place.name, home[0], home[1], ms(t0));
 
             // Cubes around a player standing on the ground, as the server loads them.
-            EarthGenerator gen = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, null, bare);
+            EarthGenerator gen = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, rivers, bare);
             int ground = gen.surfaceY(home[0], home[1]);
             int cx = home[0] >> 4, cy = (ground + 2) >> 4, cz = home[1] >> 4;
             CubeOffsets offsets = CubeOffsets.of(Cubic.MAX_HORIZONTAL_RADIUS, Cubic.VERTICAL_RADIUS);
