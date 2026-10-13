@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import javax.annotation.Nullable;
 import java.util.concurrent.CompletableFuture;
+import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
 import net.minecraft.ChatFormatting;
 import net.minecraft.Util;
 import net.minecraft.core.BlockPos;
@@ -109,9 +110,12 @@ public final class CubicEvents {
         return (float) Math.toDegrees(Math.atan2(-dx, dz));
     }
 
+    /** How far ahead, in blocks, a look-out checks for a clear view, and the run that keeps the way a place faces (within the cubes loaded around an arrival). */
+    private static final int LOOK_REACH = 16, LOOK_CLEAR = 12;
+
     /**
      * Turns away from a tree trunk or wall right in front of an arriving player: keeps {@code yaw}
-     * when the view that way runs clear for a few blocks at eye height, else the clearest of
+     * when the view that way runs clear for {@link #LOOK_CLEAR} blocks at eye height, else the clearest of
      * sixteen directions, nearest to it on a tie.
      */
     public static float lookOut(ServerCubeWorld cubes, Vec3 stand, float yaw) {
@@ -123,18 +127,41 @@ public final class CubicEvents {
             float candidate = yaw + step * 22.5F;
             int clear = clearAhead(cubes, stand, candidate);
             if (clear > bestClear) { bestClear = clear; best = candidate; }
-            if (turn == 0 && clear >= 6) return yaw;
+            if (turn == 0 && clear >= LOOK_CLEAR) return yaw;
         }
         return best;
     }
 
     private static int clearAhead(ServerCubeWorld cubes, Vec3 stand, float yaw) {
         double dx = -Math.sin(Math.toRadians(yaw)), dz = Math.cos(Math.toRadians(yaw));
-        for (int i = 1; i <= 8; i++) {
+        for (int i = 1; i <= LOOK_REACH; i++) {
             BlockPos eye = BlockPos.containing(stand.x + dx * i, stand.y + 1.6, stand.z + dz * i);
             if (!cubes.getBlockState(eye).isAir() && !cubes.getBlockState(eye).canBeReplaced()) return i - 1;
         }
-        return 8;
+        return LOOK_REACH;
+    }
+
+    /** Vanilla's default spawn radius, in blocks. */
+    private static final int DEFAULT_SPAWN_RADIUS = 10;
+
+    /**
+     * Spreads arrivals over the spawn radius, as vanilla does around its world spawn, so players
+     * joining a server don't all land on one block inside each other: a random dry column within
+     * the {@code spawnRadius} game rule (vanilla's 10 when it is 0) that is not much higher or lower than the spot itself.
+     */
+    private static int[] scatter(ServerCubeWorld cubes, int[] spot) {
+        if (!(cubes.level() instanceof ServerLevel level)) return spot;
+        // An Earth world sets the rule to 0 so vanilla never searches the stand-in overworld for a
+        // spawn; the Earth then scatters over vanilla's default instead.
+        int rule = level.getServer().getSpawnRadius(level), radius = rule > 0 ? rule : DEFAULT_SPAWN_RADIUS;
+        CubeGenerator generator = cubes.generator();
+        int ground = generator.surfaceY(spot[0], spot[1]);
+        for (int attempt = 0; attempt < 16; attempt++) {
+            int x = spot[0] + level.random.nextInt(radius * 2 + 1) - radius, z = spot[1] + level.random.nextInt(radius * 2 + 1) - radius;
+            int y = generator.surfaceY(x, z);
+            if (generator.waterY(x, z) < y && Math.abs(y - ground) <= Math.max(2, radius / 2)) return new int[]{x, z};
+        }
+        return spot;
     }
 
     /** The world's arrival point, with its cubes loaded so the player lands on solid ground. */
@@ -142,7 +169,7 @@ public final class CubicEvents {
 
     /** The arrival point, drawn within sight of {@code view} (a landmark column) when the start is too far off to see it. */
     public static Vec3 arrival(ServerCubeWorld cubes, @Nullable int[] view) {
-        int[] spot = landing(cubes.generator(), withinSight(cubes.generator().arrival(), view), 4096, true);
+        int[] spot = scatter(cubes, landing(cubes.generator(), withinSight(cubes.generator().arrival(), view), 4096, true));
         return standOn(cubes, spot[0], spot[1]);
     }
 
@@ -156,23 +183,25 @@ public final class CubicEvents {
         CubeGenerator generator = cubes.generator();
         int ground = Math.max(generator.surfaceY(x, z), generator.waterY(x, z));
         cubes.loadAround(new BlockPos(x, ground, z));
-        // First somewhere roomy, so nobody arrives in a one-block pit facing a wall; then anywhere with headroom.
-        for (boolean roomy : new boolean[]{true, false})
+        // First somewhere dry and roomy, so nobody arrives in a one-block pit facing a wall, then dry
+        // with headroom; swimming only where there is no dry ground (a start on a sea stack or islet).
+        for (int pass = 0; pass < 4; pass++)
             for (int radius = 0; radius <= 15; radius++) for (int dz = -radius; dz <= radius; dz++) for (int dx = -radius; dx <= radius; dx++) {
                 if (Math.max(Math.abs(dx), Math.abs(dz)) != radius) continue;
+                boolean roomy = pass % 2 == 0, dry = generator.waterY(x + dx, z + dz) < generator.surfaceY(x + dx, z + dz);
+                if (pass < 2 && !dry) continue;
                 int y = Math.max(generator.surfaceY(x + dx, z + dz), generator.waterY(x + dx, z + dz)) + 1;
                 if (open(cubes, x + dx, y, z + dz) && open(cubes, x + dx, y + 1, z + dz)
                         && !cubes.getBlockState(new BlockPos(x + dx, y - 1, z + dz)).is(net.minecraft.world.level.block.Blocks.POWDER_SNOW)
-                        && (!roomy || roomy(cubes, x + dx, y, z + dz)))
+                        && (!roomy || roomy(cubes, x + dx, y, z + dz))) {
+                    if (!roomy) clearLeaves(cubes, x + dx, y, z + dz);
                     return new Vec3(x + dx + 0.5, y, z + dz + 0.5);
+                }
             }
         int y = ground + 1;
         // Under a closed canopy, clear the leaves where the player stands rather than land on the treetops.
         if (cubes.getBlockState(new BlockPos(x, y - 1, z)).isSolid() && leafy(cubes, x, y, z) && leafy(cubes, x, y + 1, z)) {
-            for (int dy = 0; dy <= 1; dy++) {
-                BlockPos at = new BlockPos(x, y + dy, z);
-                if (!open(cubes, x, y + dy, z)) cubes.level().setBlockAndUpdate(at, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
-            }
+            clearLeaves(cubes, x, y, z);
             return new Vec3(x + 0.5, y, z + 0.5);
         }
         while (y < ground + 48 && !(open(cubes, x, y, z) && open(cubes, x, y + 1, z))) y++;
@@ -196,6 +225,15 @@ public final class CubicEvents {
             room++;
         }
         return room >= 6;
+    }
+
+    /** Clears leaves (never logs) beside and above a cramped spot, a small clearing to look out of. */
+    private static void clearLeaves(ServerCubeWorld cubes, int x, int y, int z) {
+        for (int dy = 0; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
+            BlockPos at = new BlockPos(x + dx, y + dy, z + dz);
+            if (cubes.getBlockState(at).is(net.minecraft.tags.BlockTags.LEAVES))
+                cubes.level().setBlockAndUpdate(at, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+        }
     }
 
     /** Whether a block is open or only leaves, which can be cleared for a player to stand in. */
@@ -391,6 +429,8 @@ public final class CubicEvents {
     private static final int BEACH = 12;
     /** ...and as low ground by a coast, the next choice. */
     private static final int LOW_GROUND = 40;
+    /** How far a start may move, in blocks, to stand in the open rather than under trees. */
+    private static final int OPEN_REACH = 512;
 
     /**
      * Spirals out from a point to the first dry, gentle spot within a radius, skipping ground too
@@ -416,16 +456,28 @@ public final class CubicEvents {
     }
 
     private static int[] landing(CubeGenerator generator, int[] centre, int maxRadius, boolean welcoming) {
+        // Open ground (a beach, a meadow, a clearing) beats a start inside a forest with no view.
+        SurfaceGenerator unwooded = welcoming && generator instanceof SurfaceGenerator surface ? surface : null;
         if (nearSea(generator, centre))
-            for (int highest : new int[]{BEACH, LOW_GROUND}) {
-                int[] low = search(generator, centre, Math.min(maxRadius, COAST_REACH), welcoming, generator.seaLevel() + highest);
-                if (low != null) return low;
-            }
-        int[] spot = search(generator, centre, maxRadius, welcoming, Integer.MAX_VALUE);
+            for (SurfaceGenerator open : unwooded != null ? new SurfaceGenerator[]{unwooded, null} : new SurfaceGenerator[]{null})
+                for (int highest : new int[]{BEACH, LOW_GROUND}) {
+                    int[] low = search(generator, centre, Math.min(maxRadius, COAST_REACH), welcoming, generator.seaLevel() + highest, open);
+                    if (low != null) return low;
+                }
+        if (unwooded != null) {
+            int[] open = search(generator, centre, Math.min(maxRadius, OPEN_REACH), true, Integer.MAX_VALUE, unwooded);
+            if (open != null) return open;
+        }
+        int[] spot = search(generator, centre, maxRadius, welcoming, Integer.MAX_VALUE, null);
         return spot != null ? spot : centre;
     }
 
     private static int[] search(CubeGenerator generator, int[] centre, int maxRadius, boolean welcoming, int highest) {
+        return search(generator, centre, maxRadius, welcoming, highest, null);
+    }
+
+    /** The spiral search; with {@code unwooded}, only columns that generator grows no trees on. */
+    private static int[] search(CubeGenerator generator, int[] centre, int maxRadius, boolean welcoming, int highest, @Nullable SurfaceGenerator unwooded) {
         for (int radius = 0; radius < maxRadius; radius += 16) {
             for (int step = 0; step < Math.max(1, radius / 4); step++) {
                 double angle = step * Math.PI * 2 / Math.max(1, radius / 4);
@@ -434,7 +486,7 @@ public final class CubicEvents {
                 if (y <= generator.seaLevel() + 2 || y > highest || generator.waterY(x, z) >= y) continue;
                 int slope = Math.abs(generator.surfaceY(x + 2, z) - generator.surfaceY(x - 2, z))
                         + Math.abs(generator.surfaceY(x, z + 2) - generator.surfaceY(x, z - 2));
-                if (slope <= 3 && !(welcoming && generator.barren(x, z, y))) return new int[]{x, z};
+                if (slope <= 3 && !(welcoming && generator.barren(x, z, y)) && (unwooded == null || !unwooded.wooded(x, z))) return new int[]{x, z};
             }
         }
         return null;
