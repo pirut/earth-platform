@@ -90,7 +90,7 @@ public final class CubicSettings {
                 if (!imageryId.isEmpty() && !ImagerySource.DATASET_ID.equals(imageryId))
                     throw new IllegalStateException("Unsupported imagery '" + imageryId + "' in " + file);
                 yield new EarthGenerator(seed, biomes, settings, tiles(), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
-                        coverId.isEmpty() || imageryId.isEmpty() || !imageryEnabled() ? null : imagery());
+                        coverId.isEmpty() || imageryId.isEmpty() ? null : imagery());
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
         };
@@ -154,10 +154,9 @@ public final class CubicSettings {
     }
 
     /**
-     * Whether Earth worlds may use satellite imagery: off unless the game runs with
+     * Whether new Earth worlds are made with satellite imagery: off unless the game runs with
      * {@code -Dearthplatform.earth.imagery=true}, as EOX's tile service is not cleared for public
-     * use. Off, new worlds are made without it and every world generates its ground from land cover
-     * alone, with no imagery downloads.
+     * use. A world keeps what it was made with, so its ground never changes partway.
      */
     public static boolean imageryEnabled() {
         return Boolean.getBoolean("earthplatform.earth.imagery");
