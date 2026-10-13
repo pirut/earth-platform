@@ -17,8 +17,10 @@ public final class JetStream {
     public static final int FLOOR = 9200, FULL_DEPTH = 800;
     /** Gliders can't climb above the top of the wind. */
     public static final int CEILING = 12000;
-    /** Cruise speed in blocks per tick at full strength: 1,320 blocks a second, so 1,120 flying west. */
-    public static final double CRUISE = 66.0;
+    /** Weather fades out over this many blocks below {@link #CLEAR_SKY}. */
+    private static final int WEATHER_FADE = 1000;
+    /** Cruise speed in blocks per tick at full strength: 1,440 blocks a second, 1,650 flying east and 1,220 west, so San Francisco to New York (4.3 million blocks) takes 43 minutes east and 58 west. */
+    public static final double CRUISE = 72.0;
     /** How much the westerly wind adds flying east and takes away flying west. */
     public static final double TAILWIND = 0.15;
     /** Fraction of the gap to the target velocity closed each tick, about five seconds to cruise. */
@@ -72,6 +74,12 @@ public final class JetStream {
         double speed = ROCKET + (ROCKET_CLIMB - ROCKET) * t * t * (3 - 2 * t);
         return velocity.add(look.x * 0.1 + (look.x * speed - velocity.x) * 0.5, look.y * 0.1 + (look.y * speed - velocity.y) * 0.5,
                 look.z * 0.1 + (look.z * speed - velocity.z) * 0.5);
+    }
+
+    /** How much of the weather reaches a height: all of it below the clouds' top, none from the clear sky up. */
+    public static float weather(double y) {
+        double t = Mth.clamp((y - (CLEAR_SKY - WEATHER_FADE)) / WEATHER_FADE, 0.0, 1.0);
+        return (float) (1.0 - t * t * (3 - 2 * t));
     }
 
     /** Below the wind, thicker air bleeds off jet speed over several kilometres so terrain has time to load. */

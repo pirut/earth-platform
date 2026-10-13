@@ -33,7 +33,8 @@
     "CubicFarPlaneMixin",
     "CubicShaderFarMixin",
     "CubicIrisSourceNamesMixin",
-    "CubicIrisProgramSetMixin"
+    "CubicIrisProgramSetMixin",
+    "CubicJetWeatherMixin"
   ],
   "injectors": {
     "defaultRequire": 1
