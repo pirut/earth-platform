@@ -1923,7 +1923,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     Surface surface(int x, int z, int y, int water, int slope, int voxel, @Nullable ImageryGround imageryGround) {
         Local local = cover == null ? null : local(x, z, y);
         double t = local == null ? temperature(x, z, y) : local.temperature();
-        if (water != DRY && water != SEA && cover != null) return lake(x, z, y, water, t);
+        if (water != DRY && water != SEA && cover != null) return lake(x, z, y, water, t, voxel);
         if (water != DRY) {
             int depth = water - y;
             // Warm seas are turquoise only over reefs and shallows; deeper water is dark blue, as from above.
@@ -2024,7 +2024,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** A lake or river bed: sand by the shore, then gravel, clay or mud further out. */
-    private Surface lake(int x, int z, int y, int water, double t) {
+    private Surface lake(int x, int z, int y, int water, double t, int voxel) {
         int depth = water - y;
         long r = mix(x, 11, z);
         // Shallow tropical ponds, such as the Mekong delta's, are mostly muddy rather than rimmed with bright sand.
@@ -2032,7 +2032,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             case 0 -> CLAY; case 1 -> SAND; default -> GRAVEL; };
         if (depth > 8 && patches.getValue(x / 19.0, z / 19.0) > 0.2) floor = MUD;
         // Tropical lagoons behind a reef, as at Bora Bora, are clear turquoise sea over sand, not river water.
-        if (t > 20 && water <= SEA + 24 && lagoon(x, z)) return new Surface(warmOcean, SAND, SAND, 0, 0, 0, 0, 0, false);
+        if (t > 20 && water <= SEA + 24 && lagoon(x, z, water, voxel)) return new Surface(warmOcean, SAND, SAND, 0, 0, 0, 0, 0, false);
         if (t < -2) return new Surface(frozenRiver, floor, floor, 0, 0, 0, 0, 0, false);
         return new Surface(glacial(x, z, water, t) ? glacialLake : river, floor, floor, 0, 0, 0, 0, 0, false);
     }
@@ -2081,19 +2081,39 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** Whether water lies close to the open sea, as a lagoon inside a reef or a barrier island does. */
-    private boolean lagoon(int x, int z) {
-        // A lagoon is wide water: ponds and fish farms on a delta are not.
-        int level = waterY(x, z), wide = 0;
+    private boolean lagoon(int x, int z, int water, int voxel) {
+        // A lagoon is wide water: ponds and fish farms on a delta are not. Far voxels read the ground at their
+        // own level: at the finest, every warm river voxel of a far column read tiles kilometres apart.
+        int level = Integer.numberOfTrailingZeros(voxel), wide = 0;
         int[] at = new int[2];
         for (int k = 0; k < 8; k++) {
-            ground(x + (int) (RING_X[k] * 150), z + (int) (RING_Z[k] * 150), at);
-            if (at[1] == level && at[0] < level) wide++;
+            farGround(level, x + (int) (RING_X[k] * 150), z + (int) (RING_Z[k] * 150), at);
+            if (at[1] == water && at[0] < water) wide++;
         }
-        if (wide < 5) return false;
-        int sea = 0;
-        for (int radius = 1500; radius <= 3000; radius += 1500)
-            for (int k = 0; k < 8; k++) if (waterY(x + (int) (RING_X[k] * radius), z + (int) (RING_Z[k] * radius)) == SEA && ++sea >= 2) return true;
-        return false;
+        return wide >= 5 && nearSea(x, z, level);
+    }
+
+    /** Cells of {@link #nearSea}'s answers, by level and cell; the rings are kilometres wide, so a cell's centre stands for it. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> nearSea = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int NEAR_SEA_CELL = 6;
+
+    /** Whether the sea lies 1.5 to 3 km off, in at least two directions; judged once per 64-block cell, or per voxel where wider. */
+    private boolean nearSea(int x, int z, int level) {
+        int shift = Math.max(NEAR_SEA_CELL, level), cx = x >> shift, cz = z >> shift;
+        long key = (long) level << 56 | ((long) cx & 0xFFFFFFFL) << 28 | (long) cz & 0xFFFFFFFL;
+        Boolean known = nearSea.get(key);
+        if (known != null) return known;
+        int mx = (cx << shift) + (1 << shift - 1), mz = (cz << shift) + (1 << shift - 1), sea = 0;
+        boolean near = false;
+        int[] at = new int[2];
+        for (int radius = 1500; radius <= 3000 && !near; radius += 1500)
+            for (int k = 0; k < 8 && !near; k++) {
+                farGround(level, mx + (int) (RING_X[k] * radius), mz + (int) (RING_Z[k] * radius), at);
+                near = at[1] == SEA && ++sea >= 2;
+            }
+        if (nearSea.size() > 1 << 16) nearSea.clear();
+        nearSea.put(key, near);
+        return near;
     }
 
     /** A column's land cover class, climate zone and ecoregion biome, for tuning reports; null without land cover. */
@@ -2183,7 +2203,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (biome == Ecoregions.MANGROVE && y <= SEA + 4) return covered(WorldCoverSource.MANGROVES, x, z, y, local, steep, roll, slope, voxel);
             if (biome == Ecoregions.FLOODED_GRASSLAND) {
                 // A frost-free marsh coast, as the Everglades' Florida Bay and Ten Thousand Islands: mangrove islands among the creeks.
-                if (mangroveClimate(local) && y <= SEA + 1 && patch > 0.4 && lagoon(x, z))
+                if (mangroveClimate(local) && y <= SEA + 1 && patch > 0.4 && lagoon(x, z, waterY(x, z), 1))
                     return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false, Tree.MANGROVE);
                 // Sloughs and ponds: standing water among the sawgrass, the more of it the wetter the climate, so that the
                 // Everglades are a river of grass and water, the Pantanal less so, and the Okavango's dry edges little.
