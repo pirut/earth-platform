@@ -16,7 +16,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | RESOLVE Ecoregions 2017 (PR #14) | OK | CC BY 4.0; credited with the citation, and the derived raster noted |
 | Copernicus GLO-30 for filling elevation holes (coming) | OK | Same licence as the bundled crop; credit and liability line drafted below |
 | River channels (PR #19) | **OK: JRC Global Surface Water v1.4** | JRC GSW is free without restriction of use, with a citation. HydroRIVERS' licence forbids open redistribution of its data, so it can't ship in an LGPL mod (details below) |
-| Hand-traced falls water (PR #16 `KnownWater`) | **Check source** | Fine if traced from EOX s2cloudless 2016 (CC BY 4.0, credit) or OSM (ODbL, credit); not if from Google/Bing/Esri imagery or EOX 2018+ (CC BY-NC-SA). Asked the Grand Canyon thread |
+| Hand-traced falls water (PR #16 `KnownWater`) | **Resolved: removed** | Deleted in 3e297c3; falls now come from general rules on Terrarium elevation and WorldCover, so no traced or OSM data ships |
 | Bundled test data (Copernicus GLO-30, NOAA ETOPO, WorldCover) | OK | Credited; could be dropped from the release jar |
 | Iris, Sodium, Photon, Distant Horizons | OK | Not bundled; compile-only. Exact version pins hurt players (see below) |
 | Third-party code in the jar | OK | None. Only `io/earthplatform` classes and our own data |
@@ -77,6 +77,7 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
 - PR #19 streams the v1.4 occurrence layer at runtime (`SurfaceWaterSource`, Google Cloud Storage); nothing is bundled. Credit added to CREDITS.md, THIRD_PARTY_NOTICES.md and the mods list with the Copernicus no-liability sentence, which the Copernicus data policy asks for on any Copernicus product.
 
 ### Hand-traced water at famous falls (PR #16, `KnownWater`)
+- **Resolved 2026-10-13: removed.** PR #16 first re-derived the points from OpenStreetMap (e95ba96), then deleted `KnownWater` entirely (3e297c3): the falls now come from general rules over Terrarium elevation and ESA WorldCover. Nothing traced from imagery and no OSM data ships, so no OSM credit is needed. History below.
 - What: about 70 latitude/longitude points with widths, for Victoria Falls' gorges, the Niagara gorge and the river above the Horseshoe Falls, the Welland River and Skógafoss, "traced from satellite imagery". Water levels come from our elevation tiles.
 - Risk depends on the imagery:
   - EOX `s2cloudless_3857` (the 2016 mosaic, what our imagery client uses): released CC BY 4.0. OK with an EOX credit that is not marked optional.
