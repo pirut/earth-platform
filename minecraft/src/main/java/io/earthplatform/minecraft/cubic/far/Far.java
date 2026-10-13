@@ -81,8 +81,11 @@ public final class Far {
     }
 
     /** Every column kept around a block position, coarsest first, including the middles finer levels replace. */
-    public static void around(int bx, int bz, LongConsumer out) {
-        for (int level = MAX_LEVEL; level >= MIN_LEVEL; level--) {
+    public static void around(int bx, int bz, LongConsumer out) { around(bx, bz, MIN_LEVEL, out); }
+
+    /** The same down to level {@code finest} only, as for a player too high or fast for the finer ones to matter or keep up. */
+    public static void around(int bx, int bz, int finest, LongConsumer out) {
+        for (int level = MAX_LEVEL; level >= finest; level--) {
             int minX, minZ, maxX, maxZ;
             if (level == MAX_LEVEL) {
                 int px = column(bx, level), pz = column(bz, level);
@@ -96,8 +99,11 @@ public final class Far {
     }
 
     /** True for the middle columns of a level around a position, which the next finer level draws instead. */
-    public static boolean refined(int level, int x, int z, int bx, int bz) {
-        return level > MIN_LEVEL && Math.abs(x - column(bx, level)) <= HOLE && Math.abs(z - column(bz, level)) <= HOLE;
+    public static boolean refined(int level, int x, int z, int bx, int bz) { return refined(level, x, z, bx, bz, MIN_LEVEL); }
+
+    /** The same when level {@code finest} is the finest one drawn. */
+    public static boolean refined(int level, int x, int z, int bx, int bz, int finest) {
+        return level > finest && Math.abs(x - column(bx, level)) <= HOLE && Math.abs(z - column(bz, level)) <= HOLE;
     }
 
     /** True when a column is close enough to a position to be worth making for it. */

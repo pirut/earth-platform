@@ -78,7 +78,10 @@ final class Vegetation {
             int gi = (lz + 1) * 18 + lx + 1, h = height[gi];
             Surface s = surface[lz * 16 + lx];
             if (water[gi] != DRY) {
-                if (h + 1 <= y0 + 15 && water[gi] + 1 >= y0) underwater(section, x0 + lx, y0, z0 + lz, h, water[gi], s);
+                // Frozen water is iced over, however deep: its bed may lie cubes below.
+                if (water[gi] > h && gen.iced(s, x0 + lx, z0 + lz)) {
+                    if (water[gi] >= y0 && water[gi] <= y0 + 15) replaceWater(section, lx, water[gi] - y0, lz, ICE);
+                } else if (h + 1 <= y0 + 15 && water[gi] + 1 >= y0) underwater(section, x0 + lx, y0, z0 + lz, h, water[gi], s);
             } else if (h + 1 + TALLEST_PLANT >= y0 && h <= y0 + 15) ground(section, x0 + lx, y0, z0 + lz, gi, height, water, s);
         }
         trees.place(x0, y0, z0, x0 + 15, y0 + 15, z0 + 15, false, (x, y, z, state, kind) -> put(section, x - x0, y - y0, z - z0, state, kind));
@@ -143,6 +146,11 @@ final class Vegetation {
                 stalk = CACTUS;
                 stalkHeight = 1 + (int) Math.floorMod(r >>> 20, 3);
             }
+        } else if ((top == COARSE_DIRT || top.is(Blocks.LIGHT_GRAY_TERRACOTTA)) && (biome.is(Biomes.SAVANNA) || biome.is(Biomes.WINDSWEPT_SAVANNA)
+                || biome.is(Biomes.DESERT) || biome.is(Biomes.BADLANDS))) {
+            // Dry scrub on bare dirt: sagebrush and saltbush stand-ins, with a few tufts of grass.
+            if (roll < s.grass() / 5) plant = state(Blocks.DEAD_BUSH);
+            else if (roll < s.grass() / 3 && top == COARSE_DIRT) plant = state(Blocks.SHORT_GRASS);
         } else if (top == MUD) {
             if (biome.is(Biomes.MANGROVE_SWAMP) && roll < 120) plant = state(Blocks.MOSS_CARPET);
         } else if (soil) {
@@ -220,8 +228,6 @@ final class Vegetation {
         Holder<Biome> b = s.biome();
         long r = gen.mix(x, water, z);
         int roll = (int) Math.floorMod(r, 1000);
-        // Frozen water is iced over.
-        if (b.value().getBaseTemperature() < 0.15f) { replaceWater(section, lx, water - y0, lz, ICE); return; }
         boolean swampy = b.is(Biomes.SWAMP) || b.is(Biomes.MANGROVE_SWAMP), river = b.is(Biomes.RIVER);
         if (swampy && depth <= 3 && roll < 70 || river && depth <= 2 && roll < 12) plant(section, lx, water + 1 - y0, lz, state(Blocks.LILY_PAD));
         boolean warm = b.is(Biomes.WARM_OCEAN), lukewarm = b.is(Biomes.LUKEWARM_OCEAN) || b.is(Biomes.DEEP_LUKEWARM_OCEAN);
@@ -237,6 +243,8 @@ final class Vegetation {
             // Kelp up to just under the surface.
             int length = Math.min(depth - 1, 2 + (int) Math.floorMod(r >>> 20, depth - 2));
             for (int k = 0; k < length; k++) replaceWater(section, lx, y + k, lz, k == length - 1 ? KELP : KELP_PLANT);
+        } else if (depth > 60) {
+            // No light reaches the deep sea floor: bare sediment, no seagrass.
         } else if ((sea || river || swampy) && depth >= 2 && roll < 360) {
             if (depth >= 3 && roll % 5 == 0) {
                 BlockState tall = state(Blocks.TALL_SEAGRASS);

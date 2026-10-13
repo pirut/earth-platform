@@ -6,6 +6,7 @@ import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.CubeWorld;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
+import io.earthplatform.minecraft.cubic.compat.CubicMaps;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
@@ -74,6 +75,7 @@ public final class ClientCubeWorld extends CubeWorld {
             if (entity != null) entity.handleUpdateTag(tag, client.registryAccess());
         }
         renderer.cubeArrived(cube.key);
+        CubicMaps.columnChanged(client, cube.x, cube.z);
     }
 
     public void unload(long[] keys) {
@@ -91,6 +93,7 @@ public final class ClientCubeWorld extends CubeWorld {
                     pos, Block.stateById(change.state()), cube(CubeKey.ofBlock(pos)) != null);
             if (cube(CubeKey.ofBlock(pos)) == null) continue;
             client.setServerVerifiedBlockState(pos, Block.stateById(change.state()), 19);
+            CubicMaps.columnChanged(client, pos.getX() >> 4, pos.getZ() >> 4);
             if (change.blockEntity() != null) {
                 BlockEntity entity = getBlockEntity(pos, true);
                 if (entity != null) entity.handleUpdateTag(change.blockEntity(), client.registryAccess());
@@ -102,6 +105,7 @@ public final class ClientCubeWorld extends CubeWorld {
         long column = CubeKey.column(payload.cubeX(), payload.cubeZ());
         int[] old = tops.put(column, payload.tops());
         renderer.topsChanged(payload.cubeX(), payload.cubeZ(), old, payload.tops());
+        CubicMaps.columnChanged(client, payload.cubeX(), payload.cubeZ());
     }
 
     /** Remeshes everything when a shader pack comes, goes or remaps its blocks, since meshes carry its format and ids. */
