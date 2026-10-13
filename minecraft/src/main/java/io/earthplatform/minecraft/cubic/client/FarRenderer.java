@@ -374,9 +374,20 @@ public final class FarRenderer {
     }
 
     /**
+     * Levels whose middles stand in while the finer levels inside them load. The two coarsest
+     * levels' columns cost four to thirteen times as much to make as the rest (at Yosemite, 33
+     * and 97 ms against 4 to 15), and their middles only ever stand in for the 23 to 94 km the
+     * next finer square already covers, so making them first spent the first minute after
+     * arriving on ground nobody sees.
+     */
+    private static final int STAND_IN_LEVELS = 6;
+    /** How much later the two coarsest levels' own rings come, past the haze, where only mountains show. */
+    private static final double LEVEL_7_LATER = 1.5, LEVEL_8_LATER = 2.0;
+
+    /**
      * The order to ask for a column in: by how far it is from a position in its own widths, so the
      * columns right around the player come first instead of last, when coarse voxels stood in
-     * for them close up after every move.
+     * for them close up after every move. Columns out of view, and the two coarsest levels, wait.
      */
     private long priority(long key, int bx, int bz) {
         int level = Far.level(key), width = Far.width(level);
@@ -393,11 +404,13 @@ public final class FarRenderer {
         double cx = x0 + width / 2.0 - bx, cz = z0 + width / 2.0 - bz, length = Math.sqrt(cx * cx + cz * cz);
         double facing = length < width ? 1.0 : (cx * lookX + cz * lookZ) / length;
         double behind = facing >= 0.5 ? 1.0 : 1.5 - facing;
-        long order = (long) (Math.max(dx, dz) * 100 * behind) / width * 8 + level;
+        double later = level == 7 ? LEVEL_7_LATER : level == 8 ? LEVEL_8_LATER : 1.0;
+        long order = (long) (Math.max(dx, dz) * 100 * behind * later) / width * 8 + level;
         int x = Far.x(key), z = Far.z(key);
         if (!Far.refined(level, x, z, bx, bz, finest)) return order;
         int rings = Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level)));
-        return rings >= Far.HOLE - 1 || !childrenReady(level, x, z, bx, bz) ? order : order + (1L << 32);
+        if (rings >= Far.HOLE - 1) return order;
+        return level <= STAND_IN_LEVELS && !childrenReady(level, x, z, bx, bz) ? order : order + (1L << 32);
     }
 
     /**
