@@ -10,12 +10,12 @@ import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.Timings;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
-import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -174,23 +174,36 @@ public final class CubeRenderer {
 
     private void schedule(Vec3 camera) {
         int limit = inFlight();
-        if (dirty.isEmpty() || building.size() >= limit) return;
+        if (dirty.isEmpty()) return;
         int cx = (int) Math.floor(camera.x) >> 4, cy = (int) Math.floor(camera.y) >> 4, cz = (int) Math.floor(camera.z) >> 4;
-        LongArrayList ready = new LongArrayList();
-        Long2LongOpenHashMap scores = new Long2LongOpenHashMap();
+        LongArrayList ready = new LongArrayList(), order = new LongArrayList();
         for (LongIterator it = dirty.iterator(); it.hasNext(); ) {
             long key = it.nextLong();
             if (building.contains(key)) continue;
-            if (world.cube(key) == null) { it.remove(); dirtySince.remove(key); continue; }
+            Cube cube = world.cube(key);
+            if (cube == null) { it.remove(); dirtySince.remove(key); continue; }
+            // Air needs no worker, so it never waits its turn: high in the sky every cube is air,
+            // and a per-frame cap on them all held back the ground cubes behind thousands of them.
+            if (cube.isEmpty()) { it.remove(); dirtySince.remove(key); compileEmpty(key); continue; }
             if (!neighboursReady(key) && ticks - dirtySince.get(key) < NEIGHBOUR_WAIT_TICKS) continue;
             long dx = CubeKey.x(key) - cx, dy = CubeKey.y(key) - cy, dz = CubeKey.z(key) - cz;
+            // Distance in the high bits and the index below, so one primitive sort orders them.
+            order.add(Math.min(dx * dx + dy * dy * 2 + dz * dz, 1L << 40) << 22 | ready.size());
             ready.add(key);
-            scores.put(key, dx * dx + dy * dy * 2 + dz * dz);
         }
         int count = Math.min(ready.size(), limit - building.size());
-        // Nearest first; a full sort is cheap next to meshing, and the picks can be hundreds.
-        if (count < ready.size()) ready.unstableSort((a, b) -> Long.compare(scores.get(a), scores.get(b)));
-        for (int i = 0; i < count; i++) submit(ready.getLong(i), camera);
+        if (count <= 0) return;
+        // Nearest first; the picks can be hundreds.
+        long[] sorted = order.toLongArray();
+        if (count < sorted.length) Arrays.sort(sorted);
+        for (int i = 0; i < count; i++) submit(ready.getLong((int) (sorted[i] & ((1 << 22) - 1))), camera);
+    }
+
+    private void compileEmpty(long key) {
+        Mesh mesh = meshes.remove(key);
+        if (mesh != null) mesh.close();
+        light.remove(key);
+        compiled.add(key);
     }
 
     @SuppressWarnings("unchecked")
@@ -200,13 +213,7 @@ public final class CubeRenderer {
         dirtySince.remove(key);
         if (center == null) return;
         int x = center.x, y = center.y, z = center.z;
-        if (center.isEmpty()) {
-            Mesh mesh = meshes.remove(key);
-            if (mesh != null) mesh.close();
-            light.remove(key);
-            compiled.add(key);
-            return;
-        }
+        if (center.isEmpty()) { compileEmpty(key); return; }
         PalettedContainer<BlockState>[] states = new PalettedContainer[27];
         PalettedContainerRO<Holder<Biome>>[] biomes = new PalettedContainerRO[27];
         for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
