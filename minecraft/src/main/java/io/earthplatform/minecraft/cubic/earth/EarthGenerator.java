@@ -678,6 +678,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                 BlockState top = rocky != null ? rocky : patch > 0.4 || roll < 20 ? COARSE_DIRT : GRASS;
                 int trees = slope > 6 || top != GRASS ? 0 : 1;
                 if (moor) return moor(patch, roll, rocky);
+                // Krummholz and dwarf pine below the treeline of temperate mountains, as in the Japanese Alps.
+                if (subalpine(y, local)) return new Surface(taiga, top, DIRT, 40 * trees, 10, 0, 250, 270, true);
                 return switch (zone) {
                     case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 15 * trees, 0, 0, 320, 340, true, Tree.JUNGLE);
                     case TROPICAL_DRY, HOT_STEPPE -> new Surface(patch > 0.5 ? windsweptSavanna : savanna, top, DIRT, 7 * trees, 0, 0, 320, 330, false, Tree.ACACIA);
@@ -687,7 +689,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                     case COLD_DESERT, COLD_STEPPE -> t < -3 ? new Surface(snowyPlains, top, DIRT, 0, 0, 0, 200, 210, false)
                             : sagebrush(rocky != null ? rocky : patch > 0.3 || roll < 55 ? scrubGround(x, z) : GRASS, trees);
                     // Chaparral and maquis: dry where summers are hot.
-                    case MEDITERRANEAN -> new Surface(local.warmest() >= 21 ? savanna : plains, top, DIRT, 9 * trees, t < 10 ? 5 : 0, 0, 330, 350, false);
+                    // Maquis and garrigue: oaks and pines among the scrub, never acacias.
+                    case MEDITERRANEAN -> new Surface(plains, top, DIRT, 9 * trees, t < 10 ? 5 : 0, 0, 330, 350, false);
                     case SUBPOLAR_OCEANIC -> new Surface(t < -3 ? snowyPlains : plains, top, DIRT, 6 * trees, 4, 5, 250, 260, false);
                     // Boreal scrub and bog: dark taiga ground, moss and podzol, stunted spruce.
                     case SUBARCTIC -> t < -3 ? new Surface(snowyPlains, top, DIRT, 0, 0, 0, 250, 260, false) : boreal(top, patch, trees);
@@ -713,7 +716,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                 BlockState top = rocky != null ? rocky : GRASS;
                 if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
                 // Thin steppe on the driest cold plains, such as the Great Basin, with bare ground between the tufts.
-                if (dry && local.rain() < 300 && top == GRASS && (patch > 0.35 || roll < 35)) return sagebrush(scrubGround(x, z), 0);
+                // Cold steppe, as in Mongolia and the Great Basin: tufts of grass on bare ground, about a third grass.
+                if (dry && top == GRASS && (patch > 0.35 || roll < 60)) return sagebrush(scrubGround(x, z), 0);
                 return grassland(top, x, z, local, patch, moor, roll, rocky);
             }
             case WorldCoverSource.BARE -> {
@@ -750,12 +754,12 @@ public final class EarthGenerator extends SurfaceGenerator {
                 return new Surface(stonyPeaks, top, STONE, 0, 0, 0, 0, 0, false);
             }
             case WorldCoverSource.SNOW_AND_ICE -> {
-                // Faces too steep to hold snow show their rock; drifts of powder snow lie on the gentler slopes. Below the
-                // snow line, where summers are warm, the map's snow is spring snow on rock (Patagonia): only the gentlest
-                // ground keeps it, and none where summers are warmer still.
+                // The map's snow and ice is snow: only faces too steep to hold it show their rock, and, where summers are
+                // warm (Patagonia's walls above warm valleys), steep slopes too, whose mapped snow is a spring cover.
+                // Drifts of powder snow lie on the gentler slopes.
                 double summer = local.warmest();
-                if (steep > 0.95 || summer > 9 || summer > 5 && steep > 0.4 + (9 - summer) * 0.1) return rock();
-                BlockState top = steep > 0.75 && roll < 35 ? STONE : steep < 0.5 && patch > 0.5 ? POWDER_SNOW : SNOW_BLOCK;
+                if (steep > 1.0 || summer > 7 && steep > 0.5) return rock();
+                BlockState top = steep < 0.5 && patch > 0.5 ? POWDER_SNOW : SNOW_BLOCK;
                 return new Surface(steep > 0.75 ? frozenPeaks : snowySlopes, top, steep < 0.6 ? PACKED_ICE : STONE, 0, 0, 0, 0, 0, false);
             }
             case WorldCoverSource.WETLAND -> {
@@ -781,18 +785,34 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
     }
 
+    /**
+     * Whether open ground is in a temperate mountain's subalpine belt, where conifers grow up to the
+     * treeline: cool summers but warm enough for trees, in a climate that is not dry. A height of -1
+     * skips the height test.
+     */
+    private boolean subalpine(int y, Local local) {
+        ClimateZone zone = local.zone();
+        boolean humid = zone == ClimateZone.SUBTROPICAL || zone == ClimateZone.OCEANIC || zone == ClimateZone.CONTINENTAL
+                || zone == ClimateZone.MEDITERRANEAN || zone == ClimateZone.RAINFOREST;
+        return humid && local.warmest() >= ClimateZone.TUNDRA_WARMEST && local.warmest() < 14 && local.temperature() < 6 && (y < 0 || y > SEA + 1000);
+    }
+
     /** Bare rock in a biome where snow does not lie, for faces too steep to hold it. */
     private Surface rock() { return new Surface(stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false); }
 
     /** Open grass in a climate: savanna, steppe, meadow, prairie or moor. */
     private Surface grassland(BlockState top, int x, int z, Local local, double patch, boolean moor, int roll, @Nullable BlockState rocky) {
         if (moor) return moor(patch, roll, rocky);
+        // Subalpine meadows among conifers.
+        if (subalpine(-1, local) && top == GRASS) return new Surface(taiga, top, DIRT, 12, 10, 0, 300, 340, true);
         return switch (local.zone()) {
             // Savanna and steppe grass, dry for much of the year.
             case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> new Surface(savanna, top, DIRT, 2, 0, 0, 380, 390, false, Tree.ACACIA);
             // Junipers on the cold steppes.
             case COLD_DESERT, COLD_STEPPE -> new Surface(savanna, top, DIRT, 2, 10, 0, 380, 390, false);
-            case MEDITERRANEAN -> new Surface(local.warmest() >= 21 ? savanna : plains, top, DIRT, 1, 0, 0, 360, 380, false);
+            case MEDITERRANEAN -> new Surface(plains, top, DIRT, 1, 0, 0, 300, 320, false);
+            // Rainforest clearings and floodplain meadows: jungle ground among scattered trees, not open prairie.
+            case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 5, 0, 0, 380, 400, true, Tree.JUNGLE);
             // Alpine and arctic meadows.
             case TUNDRA, ICE -> new Surface(meadow, top, DIRT, 0, 0, 0, 300, 360, false);
             case SUBPOLAR_OCEANIC -> new Surface(plains, top, DIRT, 1, 10, 0, 330, 350, false);
