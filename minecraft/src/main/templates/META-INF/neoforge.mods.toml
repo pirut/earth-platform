@@ -13,6 +13,12 @@ loaderVersion="${loader_version_range}" #mandatory
 # The mod's licence as an SPDX id, from mod_license in gradle.properties (LGPL-3.0-only).
 license="${mod_license}"
 
+# Lithium speeds these up by reading LevelChunk sections directly. In the Earth world those carrier
+# chunks are 16 blocks tall and empty (blocks live in cubes), so players and mobs fell through the
+# ground, and rays, explosions, redstone, hoppers and block patterns would miss blocks. Lithium reads
+# this from every installed mod and turns these features off; everything else in Lithium stays on.
+"lithium:options" = { "mixin.entity.collisions.movement" = false, "mixin.entity.collisions.intersection" = false, "mixin.world.raycast" = false, "mixin.world.explosions.block_raycast" = false, "mixin.world.inline_block_access" = false, "mixin.block.redstone_wire" = false, "mixin.block_pattern_matching" = false, "mixin.ai.non_poi_block_search" = false, "mixin.ai.poi.fast_portals" = false, "mixin.entity.inactive_navigations" = false, "mixin.util.block_entity_retrieval" = false }
+
 # A URL to refer people to when problems occur with this mod
 #issueTrackerURL="https://change.me.to.your.issue.tracker.example.invalid/" #optional
 
@@ -125,17 +131,18 @@ config="${mod_id}.cubic.mixins.json"
     ordering="AFTER"
     side="CLIENT"
 
-# These remain separately installed optional inputs. Runtime admission pins actual bytes.
+# These remain separately installed optional inputs. Players update Sodium and Iris on their own
+# (Sodium Extra needs Sodium 0.8.13), so any 0.8.x Sodium and 1.8.x Iris from the tested ones up loads.
 [[dependencies.${mod_id}]]
     modId="iris"
     type="optional"
-    versionRange="[1.8.14-beta.1+mc1.21.1]"
+    versionRange="[1.8.14-beta.1+mc1.21.1,1.9)"
     ordering="AFTER"
     side="CLIENT"
 [[dependencies.${mod_id}]]
     modId="sodium"
     type="optional"
-    versionRange="[0.8.12-beta.1+mc1.21.1]"
+    versionRange="[0.8.12-beta.1+mc1.21.1,0.9)"
     ordering="AFTER"
     side="CLIENT"
 
