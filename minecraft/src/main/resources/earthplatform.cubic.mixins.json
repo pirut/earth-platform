@@ -22,7 +22,8 @@
     "CubicFarPlaneMixin",
     "CubicShaderFarMixin",
     "CubicIrisSourceNamesMixin",
-    "CubicIrisProgramSetMixin"
+    "CubicIrisProgramSetMixin",
+    "EarthCreateWorldMixin"
   ],
   "injectors": {
     "defaultRequire": 1

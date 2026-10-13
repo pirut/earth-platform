@@ -46,7 +46,8 @@ public final class CubicEvents {
         ((CubicLevel) level).earthplatform$setCubes(new ServerCubeWorld(level, generator));
         // Fetch the data around the arrival point now, so the first visit does not wait on it.
         int[] home = generator.arrival();
-        Util.backgroundExecutor().execute(() -> generator.prepare(home[0], home[1]));
+        // On the IO pool: downloads wait on the network, which must not hold up world generation workers.
+        Util.ioPool().execute(() -> generator.prepare(home[0], home[1]));
     }
 
     @SubscribeEvent public static void save(LevelEvent.Save event) {
@@ -75,7 +76,7 @@ public final class CubicEvents {
     }
 
     /** The world's arrival point, with its cubes loaded so the player lands on solid ground. */
-    private static Vec3 arrival(ServerCubeWorld cubes) {
+    public static Vec3 arrival(ServerCubeWorld cubes) {
         int[] spot = landing(cubes.generator(), cubes.generator().arrival(), 4096, true);
         return standOn(cubes, spot[0], spot[1]);
     }
@@ -161,7 +162,7 @@ public final class CubicEvents {
         source.sendSuccess(() -> Component.literal(text), false);
     }
 
-    private static int where(CommandSourceStack source) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+    public static int where(CommandSourceStack source) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
         if (!(CubicLevel.of(player.level()) instanceof ServerCubeWorld cubes)) { source.sendFailure(Component.literal("Not in the cubic world.")); return 0; }
         tellPlace(source, cubes, player.blockPosition());
@@ -173,7 +174,7 @@ public final class CubicEvents {
      * thread, then the player lands on the nearest gentle dry spot, or on the water when there is
      * none close by.
      */
-    private static int travel(CommandSourceStack source, double latitude, double longitude) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+    public static int travel(CommandSourceStack source, double latitude, double longitude) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
         ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
         if (level == null || !(CubicLevel.of(level) instanceof ServerCubeWorld cubes) || !(cubes.generator() instanceof EarthGenerator earth)) {
@@ -185,7 +186,7 @@ public final class CubicEvents {
         CompletableFuture.supplyAsync(() -> {
             earth.prepare(target[0], target[1]);
             return landing(earth, target, 256, false);
-        }, Util.backgroundExecutor()).whenComplete((spot, failure) -> source.getServer().execute(() -> {
+        }, Util.ioPool()).whenComplete((spot, failure) -> source.getServer().execute(() -> {
             if (failure != null) {
                 source.sendFailure(Component.literal("Could not load terrain there: " + failure.getMessage()));
                 return;

@@ -46,7 +46,8 @@ displayName="${mod_name}" #mandatory
 
 # The description text for the mod (multi line!) (#mandatory)
 description='''
-Experimental Earth-platform engine adapter. Current playable slice uses explicitly bounded vertical windows backed by independent 16-cubed data. Synthetic calibration fixtures; true seamless cubic engine integration remains incomplete.
+The real Earth in Minecraft at true scale: every mountain at its real height, real climate and biomes, and terrain all the way to the horizon.
+Choose the Earth world type in Create World and pick where to start. Travel anywhere with /earth visit <place> or /earth goto <latitude> <longitude>.
 '''
 
 # The [[mixins]] block allows you to declare your mixin config to FML so that it gets loaded.
