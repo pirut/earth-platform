@@ -5,9 +5,12 @@ import io.earthplatform.geography.globe.BareEarth;
 import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
+import io.earthplatform.geography.globe.RemaElevation;
+import io.earthplatform.geography.globe.RemaSource;
 import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.SurfaceWaterSource;
 import io.earthplatform.geography.globe.TerrariumTileSource;
+import io.earthplatform.geography.globe.UsgsElevation;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
@@ -87,11 +90,13 @@ class CubicBench {
                         biome, RegistrationInfo.BUILT_IN);
             }
         }
-        // The same sources as a new world in the game: Copernicus fill and traced rivers too.
+        // The same sources as a new world in the game: the Copernicus fill, 3DEP, REMA and traced rivers too.
         CopernicusSource copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache.resolve(CopernicusSource.DATASET_ID), true, 12, 4, Duration.ofSeconds(30));
         TerrariumTileSource[] source = new TerrariumTileSource[1];
         TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve(TerrariumTileSource.DATASET_ID),
-                true, 256, 6, Duration.ofSeconds(20), List.of(new CopernicusFill(copernicus, (z, x, y) -> source[0].cleaned(z, x, y), 512)));
+                true, 256, 6, Duration.ofSeconds(20), List.of(new CopernicusFill(copernicus, (z, x, y) -> source[0].cleaned(z, x, y), 512),
+                        new UsgsElevation(UsgsElevation.AWS_3DEP, cache.resolve(UsgsElevation.DATASET_ID), true, 48, 6, Duration.ofSeconds(30)),
+                        new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache.resolve(RemaSource.DATASET_ID), true, 48, 6, Duration.ofSeconds(30)))));
         source[0] = tiles;
         RiverMap rivers = new RiverMap(new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache.resolve(SurfaceWaterSource.DATASET_ID), true,
                 96, 4, Duration.ofSeconds(30)), 256);

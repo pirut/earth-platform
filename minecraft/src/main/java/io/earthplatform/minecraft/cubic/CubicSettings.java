@@ -206,8 +206,13 @@ public final class CubicSettings {
         }
         Path cache = cacheFolder().resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
         try {
+            // Far terrain over a new area reads several hundred tiles at several zooms; with fewer kept than
+            // that, a first visit cleaned the same tiles five or six times over. Each is 256 KiB: up to a
+            // sixteenth of the heap, from 256 to 1,024 of them. Fetching them is mostly a wait on the round
+            // trip, so many go at once.
+            int kept = (int) Math.clamp(Runtime.getRuntime().maxMemory() / 16 / (256 << 10), 256, 1024);
             known = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                    256, 6, Duration.ofSeconds(20), layers);
+                    kept, 16, Duration.ofSeconds(20), layers);
         } catch (IOException failure) {
             throw new UncheckedIOException("Could not open the elevation tile cache at " + cache, failure);
         }
@@ -226,7 +231,7 @@ public final class CubicSettings {
             Path cache = cacheFolder().resolve(CopernicusSource.DATASET_ID);
             try {
                 copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        12, 4, Duration.ofSeconds(30));
+                        12, 8, Duration.ofSeconds(30));
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the Copernicus elevation cache at " + cache, failure);
             }

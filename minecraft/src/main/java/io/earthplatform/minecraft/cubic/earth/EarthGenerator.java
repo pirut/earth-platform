@@ -2539,7 +2539,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Whether the ground two kilometres round a cell's middle lies within a few metres of it on every side. */
     private boolean levelCell(int cx, int cz) {
-        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         Boolean known = levelCells.get(key);
         if (known != null) return known;
         GlobalElevation dem = elevation[FAR_ZOOM];
