@@ -1080,7 +1080,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private boolean glacial(int x, int z, int water, double t) {
         if (t > 9) return false;
         if (water > SEA + 3500 && t < 3) return true;
-        return glacierFed(x, z);
+        // One answer for each 1024-block water cell, not the blended one rock takes, so a lake is never two colours.
+        return glacierCell(x >> 10, z >> 10, 1024);
     }
 
     /**
@@ -1093,16 +1094,16 @@ public final class EarthGenerator extends SurfaceGenerator {
         int ix = Mth.floor(fx), iz = Mth.floor(fz);
         double tx = fx - ix, tz = fz - iz, share = 0;
         for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++)
-            if (glacierCell(ix + i, iz + j)) share += (i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - tz : tz);
+            if (glacierCell(ix + i, iz + j, 128)) share += (i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - tz : tz);
         return share > 0.5;
     }
 
-    /** Whether glaciers or snowfields lie within about eight kilometres of a 128-block cell's middle. */
-    private boolean glacierCell(int gx, int gz) {
-        long key = (long) gx << 32 | gz & 0xFFFFFFFFL;
+    /** Whether glaciers or snowfields lie within about eight kilometres of a cell's middle, for cells of 128 or 1024 blocks. */
+    private boolean glacierCell(int gx, int gz, int size) {
+        long key = (long) gx << 32 | gz & 0xFFFFFFFFL ^ (size == 128 ? 0 : 1L << 62);
         Boolean known = glacierFed.get(key);
         if (known != null) return known;
-        int cx = gx * 128 + 64, cz = gz * 128 + 64;
+        int cx = gx * size + size / 2, cz = gz * size + size / 2;
         boolean fed = false;
         for (int radius = 2000; radius <= 8000 && !fed; radius *= 2)
             for (int k = 0; k < 8 && !fed; k++)
