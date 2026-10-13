@@ -408,31 +408,73 @@ public final class EarthGenerator extends SurfaceGenerator {
         int ix = Mth.floor(fx), iz = Mth.floor(fz);
         double tx = fx - ix, tz = fz - iz, sum = 0, weight = 0, relief = 0, top = Double.NEGATIVE_INFINITY;
         // Each cell offers its lowest reach that lies no more than a drop below the ground here, or else its
-        // highest; the column takes the highest reach on offer, blended with the cells offering it within a drop
-        // of it. So a river above a falls keeps its level beside the gorge below it in the same cell, and the
+        // highest; the column takes the highest reach on offer that the ground leaves room for, blended with the
+        // cells offering it within a drop of it. So a river above a falls keeps its level beside the gorge below it in the same cell, and the
         // gorge keeps its own, while a creek's mouth still meets the river it joins at the river's level.
+        // The ground is taken from the survey's own zoom too, which still holds narrow chasms, as Victoria Falls'
+        // first gorge, that cleaning the finest tiles filled; and a little wider, so a gorge's narrow water keeps
+        // its level to its walls.
+        GlobalElevation survey = elevation[WATER_ZOOM];
+        double r2 = Math.max(24, voxel), floor = Math.min(lowest, survey.metres(x + 0.5, z + 0.5));
+        floor = Math.min(floor, Math.min(survey.metres(x + 0.5 + r2, z + 0.5), survey.metres(x + 0.5 - r2, z + 0.5)));
+        floor = Math.min(floor, Math.min(survey.metres(x + 0.5, z + 0.5 + r2), survey.metres(x + 0.5, z + 0.5 - r2)));
         double[] offered = new double[4];
         for (int c = 0; c < 4; c++) {
             offered[c] = Double.NaN;
             WaterCell cell = waterCell(ix + (c & 1), iz + (c >> 1));
             if (cell.samples == 0) continue;
             relief = Math.max(relief, cell.relief);
-            double[] levels = reachLevels(ix + (c & 1), iz + (c >> 1));
+            double[] levels = reachLevels(ix + (c & 1), iz + (c >> 1)).levels;
             double level = levels[levels.length - 1];
-            for (double l : levels) if (l >= lowest - DROP) { level = l; break; }
+            for (double l : levels) if (l >= floor - DROP) { level = l; break; }
             offered[c] = level;
-            top = Math.max(top, level);
         }
+        // Offers the ground here leaves no room for give way to any that it does, so a chasm's water is not lifted
+        // to the river above it by a cell that holds no water down in it.
+        boolean room = false;
+        for (double level : offered) room |= level <= floor + BANK;
+        for (double level : offered) if (!Double.isNaN(level) && (!room || level <= floor + BANK)) top = Math.max(top, level);
         for (int c = 0; c < 4; c++) {
-            if (Double.isNaN(offered[c]) || offered[c] < top - DROP) continue;
+            if (Double.isNaN(offered[c]) || offered[c] < top - DROP || offered[c] > top) continue;
             int i = c & 1, j = c >> 1;
             WaterCell cell = waterCell(ix + i, iz + j);
             double w = ((i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - tz : tz) + 1e-6) * cell.samples;
             sum += offered[c] * w;
             weight += w;
         }
-        if (weight == 0) return local;
-        int surface = Mth.floor(SEA + 0.5 + sum / weight);
+        double level = weight == 0 ? Double.NaN : sum / weight;
+        // Near surveyed water, the column takes the reach of the nearest sample, blended with the samples close by
+        // of reaches within a drop of it: a falls' lip lies between the samples above and below it, wherever the
+        // ground under them reads, as over Victoria Falls' chasm, which the finest tiles fill.
+        double spacing = (double) WATER_CELL / WATER_SAMPLES, sx = x / spacing - 0.5, sz = z / spacing - 0.5;
+        int bx = Mth.floor(sx), bz = Mth.floor(sz), found = 0;
+        double nearest = NEAR * NEAR, near = Double.NaN;
+        double[] heights = new double[16], distances = new double[16];
+        for (int dj = -1; dj <= 2; dj++) for (int di = -1; di <= 2; di++) {
+            int si = bx + di, sj = bz + dj;
+            float height = reachLevels(Math.floorDiv(si, WATER_SAMPLES), Math.floorDiv(sj, WATER_SAMPLES))
+                    .samples[Math.floorMod(sj, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(si, WATER_SAMPLES)];
+            double d2 = (sx - si) * (sx - si) + (sz - sj) * (sz - sj);
+            if (Float.isNaN(height) || d2 >= NEAR * NEAR) continue;
+            heights[found] = height;
+            distances[found++] = d2;
+            if (d2 < nearest) { nearest = d2; near = height; }
+        }
+        if (found > 0) {
+            // The cells' level joins in a little, so the water meets it smoothly where the samples run out.
+            sum = 0;
+            weight = 0;
+            if (!Double.isNaN(level) && Math.abs(level - near) <= DROP) { sum = level * 0.05; weight = 0.05; }
+            for (int k = 0; k < found; k++) {
+                if (Math.abs(heights[k] - near) > DROP) continue;
+                double w = (NEAR * NEAR - distances[k]) * (NEAR * NEAR - distances[k]);
+                sum += heights[k] * w;
+                weight += w;
+            }
+            level = sum / weight;
+        }
+        if (Double.isNaN(level)) return local;
+        int surface = Mth.floor(SEA + 0.5 + level);
         if (relief > MOUNTAINS) surface = Math.max(surface, local - DIP);
         return Math.min(surface, local + BANK);
     }
@@ -488,9 +530,13 @@ public final class EarthGenerator extends SurfaceGenerator {
     private static final int REACH = 3;
     private static final double DROP = 8;
     /** Reach levels as far as they have been found. */
-    private final java.util.concurrent.ConcurrentHashMap<Long, double[]> reaches = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, Reaches> reaches = new java.util.concurrent.ConcurrentHashMap<>();
+    /** A cell's reach levels, lowest first, and the level of the reach each of its own samples belongs to, or NaN. */
+    private record Reaches(double[] levels, float[] samples) {}
     /** Fewest of a cell's own samples a reach needs to keep its own level there, rather than count as a stray reading. */
     private static final int REACH_SAMPLES = 3;
+    /** How far, in samples, a column takes its level from the surveyed water samples near it. */
+    private static final double NEAR = 1.5;
 
     /**
      * The water levels of a cell's reaches, in metres, lowest first: for each reach, the lowest
@@ -505,9 +551,9 @@ public final class EarthGenerator extends SurfaceGenerator {
      * it, takes the river's level; but not across such a drop, so a cell holding a river above
      * and below its falls, as at Victoria Falls, has a level for each.
      */
-    private double[] reachLevels(int cx, int cz) {
+    private Reaches reachLevels(int cx, int cz) {
         long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
-        double[] known = reaches.get(key);
+        Reaches known = reaches.get(key);
         if (known != null) return known;
         int span = (2 * REACH + 1) * WATER_SAMPLES, first = REACH * WATER_SAMPLES, last = first + WATER_SAMPLES;
         float[] water = new float[span * span];
@@ -524,6 +570,9 @@ public final class EarthGenerator extends SurfaceGenerator {
         boolean[] reached = new boolean[span * span];
         double[] heights = new double[span * span];
         it.unimi.dsi.fastutil.doubles.DoubleArrayList levels = new it.unimi.dsi.fastutil.doubles.DoubleArrayList();
+        float[] samples = new float[WATER_SAMPLES * WATER_SAMPLES];
+        java.util.Arrays.fill(samples, Float.NaN);
+        it.unimi.dsi.fastutil.ints.IntArrayList members = new it.unimi.dsi.fastutil.ints.IntArrayList();
         for (int sj = first; sj < last; sj++) for (int si = first; si < last; si++) {
             int start = sj * span + si;
             if (reached[start] || Float.isNaN(water[start])) continue;
@@ -532,11 +581,12 @@ public final class EarthGenerator extends SurfaceGenerator {
             joined[start] = true;
             queue.enqueue(start);
             int count = 0, own = 0;
+            members.clear();
             while (!queue.isEmpty()) {
                 int at = queue.dequeueInt(), i = at % span, j = at / span;
                 heights[count++] = water[at];
                 boolean inside = i >= first && i < last && j >= first && j < last;
-                if (inside && !reached[at]) { reached[at] = true; own++; }
+                if (inside && !reached[at]) { reached[at] = true; own++; members.add((j - first) * WATER_SAMPLES + i - first); }
                 if (!inside && !wideWater(water, span, i, j)) continue;
                 for (int d = 0; d < 8; d += 2) {
                     int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d], n = nj * span + ni;
@@ -549,9 +599,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (own < REACH_SAMPLES || count < 4) continue;
             java.util.Arrays.sort(heights, 0, count);
             levels.add(heights[count / 4]);
+            for (int m = 0; m < members.size(); m++) samples[members.getInt(m)] = (float) heights[count / 4];
         }
-        double[] found = levels.isEmpty() ? new double[]{waterCell(cx, cz).level} : levels.toDoubleArray();
-        java.util.Arrays.sort(found);
+        double[] sorted = levels.isEmpty() ? new double[]{waterCell(cx, cz).level} : levels.toDoubleArray();
+        java.util.Arrays.sort(sorted);
+        Reaches found = new Reaches(sorted, samples);
         if (reaches.size() > 1 << 20) reaches.clear();
         reaches.putIfAbsent(key, found);
         return found;
