@@ -29,6 +29,10 @@ Regional relief and surface appearance are explicitly procedural heuristics laye
 
 Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm, BioScience 67(6):534-545, CC BY 4.0; derived 0.05 degree raster. Bundled as `minecraft/src/main/resources/earthplatform/ecoregions.png` (derived raster) and `ecoregions.tsv` (ecoregion names). https://doi.org/10.1093/biosci/bix014 . Changes: polygons rasterised to 0.05 degree cells.
 
+## OpenStreetMap water lines at famous falls
+
+`minecraft/.../cubic/earth/KnownWater.java` holds a few dozen points taken from OpenStreetMap ways (ids in its source comments) for Victoria Falls, Niagara, Iguazu and Skógafoss. Map data © OpenStreetMap contributors, ODbL (https://www.openstreetmap.org/copyright). Insubstantial extract under the Open Database License 1.0.
+
 ## Separately installed shader inputs
 
 The shader candidate additionally requires player-supplied Iris1.8.14-beta.1, Sodium0.8.12-beta.1 and Photonv1.3b. Their unchanged external artifacts, shaders, nested payloads and licenses are not part of our shim distribution. Exact input hashes and the three-classpath/no-copied-payload verification are recorded in review-evidence/shader-packaging015 and shader-aggregate. Users obtain each project from its official distribution and keep the terms accompanying that separate artifact. This candidate’s original code only adapts the pinned installed lifecycle, native format/material context and pass-owned renderer resources. No broader version or pack compatibility is implied.

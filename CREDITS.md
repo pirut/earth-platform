@@ -49,6 +49,11 @@ Licence: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: the
 
 EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Off by default; used only when a player turns satellite imagery on, and then only to choose between ground blocks. No imagery is shown in game.
 
+## Water at famous falls: OpenStreetMap (bundled)
+
+Map data © OpenStreetMap contributors, ODbL (https://www.openstreetmap.org/copyright).
+Licence: [Open Database License 1.0](https://opendatacommons.org/licenses/odbl/1-0/). Changes: a few dozen points along the Zambezi gorges at Victoria Falls, the Niagara River and gorge, the Río Iguazú and the Skógá are taken from OpenStreetMap ways (ids named in `KnownWater`), given widths, and levelled from the elevation tiles so the falls cut into the terrain. This is an insubstantial extract; the OSM data stays under the ODbL.
+
 ## Spawn picker globe (bundled)
 
 The globe on the Customize screen shows NASA's Blue Marble: NASA Earth Observatory, Reto Stöckli, *Blue Marble Next Generation* (July 2004, topography and bathymetry), https://visibleearth.nasa.gov/collection/1484/blue-marble. Public domain in the United States; credited as NASA asks. Close up, the globe also shows the elevation and land cover data credited above.
