@@ -17,13 +17,11 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.dimension.DimensionType;
-import net.minecraft.world.level.portal.DimensionTransition;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
-import net.neoforged.neoforge.event.entity.player.PlayerRespawnPositionEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
@@ -64,18 +62,8 @@ public final class CubicEvents {
         if (event.getLevel() instanceof ServerLevel level && CubicLevel.of(level) instanceof ServerCubeWorld cubes) cubes.tick();
     }
 
-    /** Dying in the cubic world without a bed brings the player back to its arrival point, not the overworld. */
-    @SubscribeEvent public static void respawn(PlayerRespawnPositionEvent event) {
-        if (!(event.getEntity() instanceof ServerPlayer player) || !(CubicLevel.of(player.level()) instanceof ServerCubeWorld cubes)) return;
-        DimensionTransition target = event.getDimensionTransition();
-        if (Cubic.isCubic(target.newLevel().dimension())) return;
-        if (player.getRespawnPosition() != null && !target.missingRespawnBlock()) return;
-        event.setDimensionTransition(new DimensionTransition(player.serverLevel(), arrival(cubes), Vec3.ZERO,
-                target.yRot(), 0.0F, target.missingRespawnBlock(), target.postDimensionTransition()));
-    }
-
     /** The world's arrival point, with its cubes loaded so the player lands on solid ground. */
-    private static Vec3 arrival(ServerCubeWorld cubes) {
+    public static Vec3 arrival(ServerCubeWorld cubes) {
         int[] spot = landing(cubes.generator(), cubes.generator().arrival(), 4096, true);
         return standOn(cubes, spot[0], spot[1]);
     }

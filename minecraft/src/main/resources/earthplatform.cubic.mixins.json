@@ -14,7 +14,12 @@
     "CubicEntityMixin",
     "CubicTravelMixin",
     "CubicRespawnMixin",
-    "CubicSpawnerMixin"
+    "CubicSpawnerMixin",
+    "CubicPortalFireMixin",
+    "CubicPortalMixin",
+    "CubicPortalPoiMixin",
+    "CubicEndExitMixin",
+    "NetherPortalAccess"
   ],
   "client": [
     "CubicPredictionMixin",
