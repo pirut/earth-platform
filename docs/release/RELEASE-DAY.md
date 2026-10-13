@@ -11,7 +11,7 @@ Nothing here has been published. In order:
 
 1. ~~Settle the blockers in [LICENSING-AUDIT.md](LICENSING-AUDIT.md)~~ Done: no licence blockers remain, and the name is Earth Platform.
 2. ~~Pick the mod licence~~ Done: LGPL-3.0-only (see above). Before publishing, add a short header to source files if wanted (optional under the LGPL).
-3. **Merge the feature PRs** (#3 to #8) and build the combined jar from the merged branch.
+3. **Freeze after build 30** (JR, 2026-10-13): no new features after combined build 30, only fixes. JR plays 30 in a fresh world and approves merging the cubic Earth build (PR #2) into main; the release jar is built from main.
 4. **Set the version.** `mod_version` is `0.1.0-engine-prototype`; for the release use `0.1.0-alpha.1`. The old engine pins that string in three places that must change with it: `compat/dh/InstalledPlayableInventory.java`, `survival/runtime/InstalledCallbackStartupSourcePins.java` and `survival/host/SurvivalInstalledModIdentity.java`, plus their tests `InstalledPlayableInventoryIndependentTest` and `SurvivalInstalledModIdentityTest`.
 5. **Check the jar:** Mods → Earth Platform shows the logo, description and credits; the arrival message shows the data credits; no file outside `io/earthplatform`, our data and resources is inside.
 6. **Smoke test** a fresh install from the [install guide](../INSTALL.md) on Windows and on the Mac (stock Photon at defaults on the Mac): new Earth world, spawn picker, travel, survival basics, Nether portal, shaders on and off, a dedicated server with two players.

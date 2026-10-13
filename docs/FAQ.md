@@ -43,7 +43,7 @@ The starting place has not finished downloading. Check your connection; the scre
 - Give the game at least 4 GB of memory (6 GB if you raise far terrain detail).
 - Lower **far terrain detail** in Mods → Earth Platform → Config → Graphics (restart to apply). The default is 11; 6 to 8 helps weaker GPUs.
 - Flying fast over new ground downloads and builds terrain as you go; it settles once the area is cached.
-- Sodium helps frame rate. Use the exact version from the [install guide](INSTALL.md#shaders-optional).
+- Sodium helps frame rate. Use 0.8.12 or a later 0.8 release, as in the [install guide](INSTALL.md#shaders-optional).
 
 **Far terrain pops in or looks blocky.**
 Distant terrain is built in levels that get coarser with distance and refine as you approach. Higher far terrain detail keeps finer levels further out at the cost of memory.
@@ -54,7 +54,7 @@ Distant terrain is built in levels that get coarser with distance and refine as 
 Photon v1.3b is tested. Packs that include Voxy support light the far terrain like nearby blocks. Other packs work for nearby blocks, but far terrain may look flat.
 
 **The game won't start after adding Iris or Sodium.**
-Earth Platform needs the exact versions in the [install guide](INSTALL.md#shaders-optional). Newer or older Iris or Sodium builds are refused at start-up so they can't break the far terrain.
+Earth Platform needs Iris 1.8.14 or a later 1.8 release and Sodium 0.8.12 or a later 0.8 release (see the [install guide](INSTALL.md#shaders-optional)). Older builds, and Iris 1.9 or Sodium 0.9, are refused at start-up so they can't break the far terrain.
 
 **Do I need special Photon settings on a Mac?**
 No. Use the official Photon zip at its defaults. Earth Platform adapts it for Apple's OpenGL on your own computer (in `earthplatform/photon-compat/`), leaving your zip untouched. Colored Lights, Colored Shadows and Cloud Shadows are unavailable on a Mac. See [On a Mac](INSTALL.md#on-a-mac).
@@ -68,7 +68,7 @@ There's no need. Earth Platform has its own far terrain. If Distant Horizons is 
 ## Other mods
 
 **Which other mods work?**
-Most do. Tested in the Earth world: Xaero's Minimap and World Map, JourneyMap, Create (contraptions, mechanical arms, pulleys, scaffolding and elevators), Waystones, Mekanism (including the Digital Miner and multiblocks), Immersive Engineering, the Twilight Forest, JEI, EMI, Jade, AppleSkin, Ars Nouveau, Applied Energistics 2 networks, Refined Storage 2, Iron's Spells, FTB Quests and Teams, Farmer's Delight, Sophisticated Backpacks, Supplementaries, YUNG's structures, and Open Parties and Claims. Tinkers' Construct and Botania have no NeoForge 1.21.1 release yet. Terralith and other biome mods have no effect on the Earth, since the real climate picks the biomes. Sodium and Iris need the exact versions in the [install guide](INSTALL.md#shaders-optional).
+Most do. Tested in the Earth world: Xaero's Minimap and World Map, JourneyMap, Create (contraptions, mechanical arms, pulleys, scaffolding and elevators), Waystones, Mekanism (including the Digital Miner and multiblocks), Immersive Engineering, the Twilight Forest, JEI, EMI, Jade, AppleSkin, Ars Nouveau, Applied Energistics 2 networks, Refined Storage 2, Iron's Spells, FTB Quests and Teams, Farmer's Delight, Sophisticated Backpacks, Supplementaries, YUNG's structures, and Open Parties and Claims. Tinkers' Construct and Botania have no NeoForge 1.21.1 release yet. Terralith and other biome mods have no effect on the Earth, since the real climate picks the biomes. Cobblemon, the Aether, Quark, Handcrafted, Nature's Compass and Lithium work too, and so do Create Aeronautics ships and AE2 spatial storage. Sodium and Iris need the versions in the [install guide](INSTALL.md#shaders-optional).
 
 **A mod acts as if blocks aren't there, or as if I'm outside the world.**
 Some mods check the world's height limits themselves and don't know the Earth world is 32,768 blocks tall. Please report it with the mod's name and version; Create, Waystones and Mekanism had this and are fixed.
@@ -81,10 +81,14 @@ That was a bug in early test builds and is fixed. Update to the latest version.
 - **Ships in the jet stream:** a Create Aeronautics ship with players aboard rides the jet stream at 40 blocks a second; only an empty ship reaches elytra speed.
 - **AE2's meteorite compass** finds meteorites in the Earth world by map column only, and doesn't notice blocks changed after the meteorite generated. Everything else in AE2, spatial storage included, works normally.
 - **Gliding into builds above Y 9,000:** the jet stream layer streams no blocks around a gliding player, so you fly through anything built up there. Land before you reach it.
-- **Iris and Sodium** must be the exact versions in the [install guide](INSTALL.md#shaders-optional).
+- **Iris and Sodium** must be Iris 1.8.14 or later 1.8, and Sodium 0.8.12 or later 0.8 (see the [install guide](INSTALL.md#shaders-optional)).
+- **Servers:** every new player arrives on the same block for now. Spread out with `/earth goto` or `/earth visit`.
+- **First visits are slow:** a place nobody has visited loads slowly the first time while its elevation is cleaned up. Later visits are quick, and work offline.
+- **Amazon:** dark slabs can flash in the distance for about 20 seconds after you arrive.
+- **Lake Okeechobee's** bed is too deep.
 - **On a Mac**, Photon's Colored Lights, Colored Shadows and Cloud Shadows are unavailable.
 - **Distant Horizons** pauses itself in the Earth world.
-- **Accuracy:** heights come from a surface model, so dense forests sit a little high, and some big waterfalls (Niagara, Iguazu) don't fall yet. Tell us about any place that looks wrong, with `/earth where`.
+- **Accuracy:** heights come from a surface model, so dense forests sit a little high, and some waterfalls may not fall where they should. Tell us about any place that looks wrong, with `/earth where`.
 
 ## Servers
 

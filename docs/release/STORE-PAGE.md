@@ -12,7 +12,7 @@ Not published. The licence blockers in [LICENSING-AUDIT.md](LICENSING-AUDIT.md) 
 - **Licence:** LGPL-3.0-only (Modrinth: "GNU Lesser General Public License v3.0 only"; CurseForge: "GNU Lesser General Public License version 3 (LGPLv3)").
 - **Links:** Source, Issues, Wiki → TODO once the repository is public. Discord: none yet.
 - **Icon:** [docs/images/icon.png](../images/icon.png)
-- **Dependencies:** none required. Optional: Sodium 0.8.12-beta.1, Iris 1.8.14-beta.1 (exact versions). Not needed: Distant Horizons (it pauses itself in Earth worlds).
+- **Dependencies:** none required. Optional: Sodium 0.8.12 or later 0.8, Iris 1.8.14 or later 1.8. Not needed: Distant Horizons (it pauses itself in Earth worlds).
 - **Monetisation:** creator rewards are fine with imagery off by default; if they are turned on, players who opt into imagery use EOX data in a mod that earns money, so get EOX's OK first (see the audit).
 
 ## Gallery
@@ -56,7 +56,7 @@ One block is one metre. Every mountain stands at its real height, every lake and
 
 **Minecraft's own world, placed by the real climate.** The Amazon grows vanilla jungle, the Serengeti acacia savanna, Siberia snowy taiga, Japan cherry groves and bamboo. Giant sequoias stand at their real height in the Sierra Nevada.
 
-**See for kilometres.** Distant terrain is drawn as textured voxels out to about 23 km, so you see the far side of the valley instead of fog.
+**See for kilometres.** Distant terrain is drawn as textured voxels out to about 94 km, so you see the far side of the valley and the ranges beyond it instead of fog.
 
 **Ordinary survival.** Mining, crafting, mobs, trading villagers, sleeping, caves, ores, villages, strongholds, the Nether and the End all work as usual.
 
@@ -78,7 +78,7 @@ No cities: built-up land becomes the wild land around it, so the world is yours 
 
 The first visit to a place downloads its terrain, so you need an internet connection. Places you've been work offline afterwards.
 
-**Shaders:** Sodium 0.8.12-beta.1 and Iris 1.8.14-beta.1 (these exact versions) with Photon v1.3b. Macs use the same stock Photon at its defaults; the mod adapts it for Apple's OpenGL automatically.
+**Shaders:** Sodium 0.8.12 and Iris 1.8.14 or later in the same series, with Photon v1.3b. Macs use the same stock Photon at its defaults; the mod adapts it for Apple's OpenGL automatically.
 
 You don't need Distant Horizons: Earth Platform has its own far terrain, and Distant Horizons pauses itself in Earth worlds.
 
