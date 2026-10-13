@@ -4,6 +4,7 @@ import com.mojang.blaze3d.shaders.Uniform;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexBuffer;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
@@ -54,9 +55,18 @@ import org.joml.Matrix4f;
  */
 public final class FarRenderer {
     /** Distance to the nearest edge of the coarsest level's square. */
-    private static final float REACH = Far.OUTER * (float) Far.width(Far.MAX_LEVEL);
-    /** Fog fades far terrain out before the coarsest square's nearest edge; the depth range covers its corners. */
-    public static final float FOG_START = 0.25F * REACH, FOG_END = 0.95F * REACH, DEPTH_FAR = 2.0F * REACH;
+    private static final float REACH = Far.reach();
+    /**
+     * Where the haze over low ground starts and ends: where it did when the coarsest level was
+     * level 6, 23 km of blocks out. The levels beyond show only what rises above the haze (see
+     * {@link FarShaders}), so the plains look as they did and distant mountains stand clear.
+     */
+    private static final float HAZE = Far.OUTER * (float) Far.width(6);
+    /**
+     * Haze distances in blocks where a block is a metre, as at an Earth world's home latitude; see
+     * {@link #hazeScale}. The depth range covers the coarsest square's corners.
+     */
+    public static final float FOG_START = 0.25F * HAZE, FOG_END = 0.95F * HAZE, DEPTH_FAR = 2.0F * REACH;
     /**
      * Levels drawn with block textures; coarser ones use each face's average colour, which is what
      * a texture blurs to at that distance anyway and stays steady when the camera moves.
@@ -67,6 +77,8 @@ public final class FarRenderer {
             SETTLE_TICKS = 3, HIDDEN_SETTLE_TICKS = 40, UPLOADS_PER_FRAME = 8, MESHES_IN_FLIGHT = 128;
     /** Speeds only elytra and the jet stream reach, in blocks a second. */
     private static final double FAST_BLOCKS_PER_SECOND = 200, JET_BLOCKS_PER_SECOND = 800;
+    /** The finest level at jet stream speed: 64-block voxels, as before the far levels reached farther. */
+    private static final int JET_LEVEL = 6;
     private static final long UPLOAD_NANOS = 3_000_000L;
     private static final AtomicInteger THREADS = new AtomicInteger();
     private static final ExecutorService MESHER = Executors.newFixedThreadPool(2, runnable -> {
@@ -76,6 +88,8 @@ public final class FarRenderer {
         return thread;
     });
 
+    /** An Earth world's metres per block at the equator, or 0 until the server says. */
+    private volatile double metresPerBlock;
     private final ClientCubeWorld world;
     private final Registry<Biome> biomes;
     private final FarFaces faces = new FarFaces();
@@ -346,7 +360,7 @@ public final class FarRenderer {
         int finest = Far.MIN_LEVEL;
         while (finest < Far.MAX_LEVEL && Far.HOLE * Far.width(finest) * (finest < current ? 0.8 : 1.0) <= height) finest++;
         double slack = current > finest ? 0.5 : 1.0;
-        if (blocksPerSecond >= JET_BLOCKS_PER_SECOND * slack) finest = Math.max(finest, Far.MAX_LEVEL);
+        if (blocksPerSecond >= JET_BLOCKS_PER_SECOND * slack) finest = Math.max(finest, JET_LEVEL);
         else if (blocksPerSecond >= FAST_BLOCKS_PER_SECOND * slack) finest = Math.max(finest, 3);
         return finest;
     }
@@ -609,7 +623,7 @@ public final class FarRenderer {
         if (own && FarLod.beginDeepen(modelView)) {
             for (Column column : visible) {
                 if (column.water == null) continue;
-                FarLod.deepenOffset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
+                FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 column.water.bind();
                 column.water.draw();
             }
@@ -618,6 +632,20 @@ public final class FarRenderer {
         }
         shader.clear();
         type.clearRenderState();
+    }
+
+    /** Sets an Earth world's metres per block at the equator, from the server. */
+    public void scale(double metresPerBlock) { this.metresPerBlock = metresPerBlock; }
+
+    /**
+     * Blocks per ground metre at a block Z, relative to the world's home latitude, where a block
+     * is a metre: the map stretches toward the poles, so haze that is 22 km deep at home spans
+     * more blocks farther north. 1 outside Earth worlds.
+     */
+    public float hazeScale(double z) {
+        // A world's scale makes a block a metre at home: metres per block there is sec(home latitude).
+        double scale = metresPerBlock;
+        return scale > 0 ? (float) (Math.cosh(z * scale / MercatorGrid.RADIUS) / scale) : 1.0F;
     }
 
     /** Draws the visible columns' water see-through, farthest first, before the near cubes' own water. */
@@ -660,7 +688,22 @@ public final class FarRenderer {
             }
         }
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
-        if (own) FarLod.endWater();
+        if (own) FarLod.endWater(modelView, () -> {
+            for (Column column : visible) {
+                if (column.water == null && !column.hasWaterWalls()) continue;
+                FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
+                if (column.water != null) {
+                    column.water.bind();
+                    column.water.draw();
+                }
+                for (int side = 0; side < 4; side++) {
+                    VertexBuffer wall = column.waterWalls[side];
+                    if (wall == null || drawnKeys.contains(column.neighbour(side))) continue;
+                    wall.bind();
+                    wall.draw();
+                }
+            }
+        });
         shader.clear();
         VertexBuffer.unbind();
         type.clearRenderState();

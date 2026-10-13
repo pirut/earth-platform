@@ -73,6 +73,9 @@ class CubicBench {
         MappedRegistry<Biome> biomes = new MappedRegistry<>(Registries.BIOME, Lifecycle.stable());
         lookup.lookupOrThrow(Registries.BIOME).listElements().forEach(holder ->
                 biomes.register(holder.key(), holder.value(), RegistrationInfo.BUILT_IN));
+        // The mod's own biome comes from its data pack, which the bench doesn't load; any biome stands in for it.
+        biomes.register(net.minecraft.resources.ResourceKey.create(Registries.BIOME, net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("earthplatform", "glacial_lake")),
+                standIn(lookup.lookupOrThrow(Registries.BIOME).getOrThrow(net.minecraft.world.level.biome.Biomes.FROZEN_RIVER).value()), RegistrationInfo.BUILT_IN);
         TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve(TerrariumTileSource.DATASET_ID),
                 true, 256, 6, Duration.ofSeconds(20));
         WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, 4, Duration.ofSeconds(30));
@@ -159,20 +162,28 @@ class CubicBench {
                     }));
                 }
                 long farBytes = 0, sections = 0;
+                MessageDigest levelDigest = MessageDigest.getInstance("SHA-256");
                 for (Future<FarColumn> future : made) {
                     FarColumn column = future.get();
-                    farDigest.update(java.nio.ByteBuffer.allocate(4).putInt(column.bottom).array());
-                    for (short drop : column.drops) farDigest.update((byte) drop);
+                    for (MessageDigest each : new MessageDigest[] {farDigest, levelDigest}) {
+                        each.update(java.nio.ByteBuffer.allocate(4).putInt(column.bottom).array());
+                        for (short drop : column.drops) each.update((byte) drop);
+                    }
                     for (LevelChunkSection section : column.sections) {
-                        if (section != null) { fingerprint(farDigest, section); farBytes += CubeCodec.sectionBytes(section).length; }
+                        if (section != null) {
+                            fingerprint(farDigest, section);
+                            fingerprint(levelDigest, section);
+                            farBytes += CubeCodec.sectionBytes(section).length;
+                        }
                         sections++;
                     }
                 }
                 double levelWall = ms(t0);
                 farTotal += levelWall / n * keys.size() * threads;
                 farCount += keys.size();
-                System.out.printf(Locale.ROOT, "far level %d: %d of %d columns, %.2f ms per column per thread, %.1f sections and %.0f bytes per column%n",
-                        level, n, keys.size(), levelWall * threads / n, sections / (double) n, farBytes / (double) n);
+                System.out.printf(Locale.ROOT, "far level %d: %d of %d columns, %.2f ms per column per thread, %.1f sections and %.0f bytes per column; fingerprint %s%n",
+                        level, n, keys.size(), levelWall * threads / n, sections / (double) n, farBytes / (double) n,
+                        HexFormat.of().formatHex(levelDigest.digest(), 0, 8));
             }
             byte[] farHash = farDigest.digest();
             all.update(farHash);
@@ -185,6 +196,11 @@ class CubicBench {
     }
 
     /** Blocks by registry id and biomes by name, so the print is the same in every run. */
+    private static Biome standIn(Biome like) {
+        return new Biome.BiomeBuilder().hasPrecipitation(true).temperature(0).downfall(0.5f).specialEffects(like.getSpecialEffects())
+                .mobSpawnSettings(like.getMobSettings()).generationSettings(like.getGenerationSettings()).build();
+    }
+
     private static void fingerprint(MessageDigest digest, LevelChunkSection section) {
         byte[] ids = new byte[4096 * 2];
         for (int i = 0; i < 4096; i++) {

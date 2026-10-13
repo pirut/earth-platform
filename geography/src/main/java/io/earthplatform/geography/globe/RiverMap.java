@@ -76,6 +76,11 @@ public final class RiverMap {
         return sum / 255.0;
     }
 
+    /** How often, 0 to 100 percent, the surface water record saw water at a latitude and longitude. */
+    public int occurrence(double latitude, double longitude) {
+        return source.occurrence(latitude, longitude);
+    }
+
     /**
      * The greatest strength, 0 to 1, of any pixel within about {@value #CELL} pixels (half a
      * kilometre) of a latitude and longitude: zero means no river near.

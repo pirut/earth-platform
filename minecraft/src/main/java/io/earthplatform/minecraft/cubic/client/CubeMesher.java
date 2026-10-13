@@ -11,6 +11,7 @@ import io.earthplatform.minecraft.cubic.CubeLight;
 import io.earthplatform.minecraft.cubic.CubeWorld;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import java.util.List;
+import java.util.Map;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.ItemBlockRenderTypes;
@@ -50,7 +51,8 @@ final class CubeMesher {
     record Snapshot(long key, int version, int cx, int cy, int cz,
                     @Nullable PalettedContainer<BlockState>[] states, @Nullable PalettedContainerRO<Holder<Biome>>[] biomes,
                     @Nullable int[][] tops, float camX, float camY, float camZ, boolean constantAmbient,
-                    @Nullable Object2IntMap<BlockState> shaderIds) {}
+                    @Nullable Object2IntMap<BlockState> shaderIds, Map<BlockPos, ModelData> modelData,
+                    Map<BlockPos, BlockEntity> blockEntities) {}
 
     record Layer(int index, MeshData mesh, ByteBufferBuilder memory) {}
     record Built(long key, int version, List<Layer> layers, byte[] light) {
@@ -96,7 +98,7 @@ final class CubeMesher {
                 }
                 if (state.getRenderShape() != RenderShape.MODEL) continue;
                 BakedModel model = blocks.getBlockModel(state);
-                ModelData data = model.getModelData(view, pos, state, ModelData.EMPTY);
+                ModelData data = model.getModelData(view, pos, state, s.modelData.getOrDefault(pos, ModelData.EMPTY));
                 random.setSeed(state.getSeed(pos));
                 for (RenderType type : model.getRenderTypes(state, random, data)) {
                     int layer = LAYERS.indexOf(type);
@@ -161,7 +163,7 @@ final class CubeMesher {
             return edge.getFluidState().isEmpty() ? AIR : edge;
         }
         @Override public FluidState getFluidState(BlockPos pos) { return getBlockState(pos).getFluidState(); }
-        @Override @Nullable public BlockEntity getBlockEntity(BlockPos pos) { return null; }
+        @Override @Nullable public BlockEntity getBlockEntity(BlockPos pos) { return s.blockEntities.get(pos); }
         @Override public int getHeight() { return CubeWorld.MAX_Y - CubeWorld.MIN_Y + 1; }
         @Override public int getMinBuildHeight() { return CubeWorld.MIN_Y; }
 

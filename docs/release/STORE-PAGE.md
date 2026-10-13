@@ -60,6 +60,8 @@ One block is one metre. Every mountain stands at its real height, every lake and
 
 **Ordinary survival.** Mining, crafting, mobs, trading villagers, sleeping, caves, ores, villages, strongholds, the Nether and the End all work as usual.
 
+**Ride the jet stream.** Glide an elytra above Y 9,200 and the wind carries you across a continent in under an hour.
+
 **Go anywhere.** Pick a famous place or any latitude and longitude when you create the world. Travel later with `/earth visit everest` or `/earth goto 46.59 7.91`.
 
 **Shaders.** Works with Iris and Photon, which light near blocks and far terrain alike.
@@ -80,7 +82,7 @@ The first visit to a place downloads its terrain, so you need an internet connec
 
 You don't need Distant Horizons: Earth Platform has its own far terrain, and Distant Horizons pauses itself in Earth worlds.
 
-**Works with** Xaero's Minimap and World Map, JourneyMap, Create, JEI, EMI, Jade and many more.
+**Works with** Xaero's Minimap and World Map, JourneyMap, Create, Mekanism, Waystones, the Twilight Forest, JEI, EMI, Jade and many more. Not yet: Create Aeronautics ships and AE2 spatial storage in the Earth world.
 
 Install guide, FAQ and troubleshooting: TODO link to docs/INSTALL.md and docs/FAQ.md.
 
