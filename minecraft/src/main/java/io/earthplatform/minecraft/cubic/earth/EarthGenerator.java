@@ -74,6 +74,13 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** The tiles every height is read from: with {@link BareEarth}, the ground under towns in place of their roofs. */
     private final GlobalElevation.Tiles ground;
     private final GlobalElevation[] elevation = new GlobalElevation[TerrariumTileSource.MAX_ZOOM + 1];
+    /**
+     * The tiles as they are, for far voxels of {@value #PLAIN_VOXEL} blocks or more. A town's roofs
+     * or a clearing's canopy step are a voxel or less there, and working out the ground under them
+     * for every tile the far terrain reaches cost more than all the rest of its work.
+     */
+    private final GlobalElevation[] plain = new GlobalElevation[TerrariumTileSource.MAX_ZOOM + 1];
+    private static final int PLAIN_VOXEL = 16;
     /** The coarse bathymetry the detail tiles' open sea is filled from. */
     private final GlobalElevation bathymetry;
     /** Rock layers of layered sedimentary country, such as the Grand Canyon's. */
@@ -114,24 +121,27 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** @param rivers narrow rivers, used with land cover to carve the channels it misses, or null for a world made before them */
     public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
                           @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery, @Nullable RiverMap rivers) {
-        this(seed, biomes, settings, tiles, cover, climate, imagery, rivers, false);
+        this(seed, biomes, settings, tiles, cover, climate, imagery, rivers, null);
     }
 
-    /** @param bareEarth whether towns' ground is brought down to the land under their roofs ({@link BareEarth}); needs land cover */
+    /**
+     * @param bareEarth the tiles with towns' ground brought down to the land under their roofs, read from the same
+     *                  tiles and land cover, or null to read the tiles as they are
+     */
     public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
                           @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery, @Nullable RiverMap rivers,
-                          boolean bareEarth) {
+                          @Nullable BareEarth bareEarth) {
         this(seed, biomes, settings, tiles, cover, climate, imagery, rivers, bareEarth, Noises.of(seed));
     }
 
     private EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
                            @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery,
-                           @Nullable RiverMap rivers, boolean bareEarth, Noises noises) {
+                           @Nullable RiverMap rivers, @Nullable BareEarth bareEarth, Noises noises) {
         super(seed, biomes, noises.random);
         this.settings = settings;
         this.grid = new MercatorGrid(settings.metresPerBlock());
         this.tiles = tiles;
-        this.ground = bareEarth && cover != null ? new BareEarth(tiles, cover) : tiles::tile;
+        this.ground = bareEarth != null && cover != null ? bareEarth : tiles::tile;
         this.cover = cover;
         this.climate = climate;
         this.imagery = cover == null ? null : imagery;
@@ -140,7 +150,10 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Drawn from their own random, after the shared one, so caves stay as they were.
         RandomSource own = new LegacyRandomSource(seed ^ 0x434F564552L);
         warpX = new SimplexNoise(own); warpZ = new SimplexNoise(own); patches = new SimplexNoise(own);
-        for (int zoom = FAR_ZOOM; zoom <= TerrariumTileSource.MAX_ZOOM; zoom++) elevation[zoom] = new GlobalElevation(grid, ground, zoom);
+        for (int zoom = FAR_ZOOM; zoom <= TerrariumTileSource.MAX_ZOOM; zoom++) {
+            elevation[zoom] = new GlobalElevation(grid, ground, zoom);
+            plain[zoom] = ground instanceof BareEarth ? new GlobalElevation(grid, tiles::tile, zoom) : elevation[zoom];
+        }
         bathymetry = new GlobalElevation(grid, ground, GlobalElevation.BATHYMETRY_ZOOM);
         SimplexNoise[] n = noises.noise;
         relief = n[0]; crags = n[1]; wetBroad = n[2]; wetLocal = n[3]; warmth = n[4];
@@ -220,10 +233,13 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     @Override protected void ground(int x, int z, int[] out) { farGround(0, x, z, out); }
 
+    /** The elevation at a zoom for voxels of a size: the bare ground, or the tiles as they are for coarse voxels. */
+    private GlobalElevation elevation(int zoom, int voxel) { return voxel >= PLAIN_VOXEL ? plain[zoom] : elevation[zoom]; }
+
     /** Level 0 stands for cubes: one-block voxels, read like far level 1. */
     @Override protected void farGround(int level, int x, int z, int[] out) {
         double[] sample = new double[3];
-        GlobalElevation dem = elevation[zoom(Math.max(1, level))];
+        GlobalElevation dem = elevation(zoom(Math.max(1, level)), 1 << level);
         double metres = dem.sample(x + 0.5, z + 0.5, sample);
         place(dem, x, z, metres, sample, 1 << level, out);
     }
@@ -834,7 +850,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         // The ground is taken from the survey's own zoom too, which still holds narrow chasms, as Victoria Falls'
         // first gorge, that cleaning the finest tiles filled; and a little wider, so a gorge's narrow water keeps
         // its level to its walls.
-        GlobalElevation survey = elevation[WATER_ZOOM];
+        GlobalElevation survey = elevation(WATER_ZOOM, voxel);
         double r2 = Math.max(24, voxel), floor = Math.min(lowest, survey.metres(x + 0.5, z + 0.5));
         floor = Math.min(floor, Math.min(survey.metres(x + 0.5 + r2, z + 0.5), survey.metres(x + 0.5 - r2, z + 0.5)));
         floor = Math.min(floor, Math.min(survey.metres(x + 0.5, z + 0.5 + r2), survey.metres(x + 0.5, z + 0.5 - r2)));
@@ -1052,7 +1068,10 @@ public final class EarthGenerator extends SurfaceGenerator {
         long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
         Survey known = surveys.get(key);
         if (known != null) return known;
-        GlobalElevation dem = elevation[WATER_ZOOM];
+        // The tiles as they are: cubes and every far level share a survey, and far water reaches kilometres of
+        // them, where working out the ground under towns cost more than the rest of the far terrain. Wide water
+        // reads the same either way; each column's own ground still caps the level.
+        GlobalElevation dem = plain[WATER_ZOOM];
         float[] metres = new float[WATER_SAMPLES * WATER_SAMPLES];
         double[] ground = new double[metres.length];
         byte[] kind = new byte[metres.length];
@@ -1704,8 +1723,9 @@ public final class EarthGenerator extends SurfaceGenerator {
         Boolean known = saltPans.get(key);
         if (known != null) return known;
         // The far terrain's own survey, whose tiles are loaded anyway: a finer one would fetch tiles kilometres around
-        // every far desert cell and hold up the far terrain while they download.
-        GlobalElevation dem = elevation[FAR_ZOOM];
+        // every far desert cell and hold up the far terrain while they download. The tiles as they are: a pan has
+        // no towns or forest on it, and the ground under them would cost far more than the pan's own reading.
+        GlobalElevation dem = plain[FAR_ZOOM];
         double px = (cx + 0.5) * SALT_CELL, pz = (cz + 0.5) * SALT_CELL;
         // The survey is speckled a few metres up and down even on a dead flat pan, so flatness is judged by the spread.
         double sum = dem.metres(px, pz), squares = sum * sum;

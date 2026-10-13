@@ -228,6 +228,21 @@ public final class GlobeTest {
         float[] hillside = steep.tile(12, 3000, 2000);
         BareEarth steepBare = new BareEarth((zoom, x, y) -> zoom == 12 && x == 3000 && y == 2000 ? hillside : steep.tile(zoom, x, y), cover, 8, 8);
         check(steepBare.tile(12, 3000, 2000) == hillside, "steps on steep land stay");
+        // Fields kept on disk read back as they were worked out, and are worked out again over changed data.
+        try {
+            java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("bare-earth");
+            float[] first = new BareEarth(flat, cover, 8, 8, dir).tile(12, 3000, 2000);
+            check(java.nio.file.Files.isRegularFile(dir.resolve("12/3000/2000.field")), "a field is kept on disk");
+            float[] again = new BareEarth(flat, cover, 8, 8, dir).tile(12, 3000, 2000);
+            check(java.util.Arrays.equals(first, tile) && java.util.Arrays.equals(again, tile), "a kept field reads back as worked out");
+            float[] changed = new BareEarth(steep, cover, 8, 8, dir).tile(12, 3000, 2000);
+            check(java.util.Arrays.equals(changed, steepBare.tile(12, 3000, 2000)), "a kept field isn't read over other tiles");
+            try (var files = java.nio.file.Files.walk(dir)) {
+                files.sorted(java.util.Comparator.reverseOrder()).forEach(f -> f.toFile().delete());
+            }
+        } catch (java.io.IOException failure) {
+            throw new java.io.UncheckedIOException(failure);
+        }
     }
 
     private static void kernel() {

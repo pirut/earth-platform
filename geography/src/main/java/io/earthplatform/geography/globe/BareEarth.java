@@ -2,11 +2,24 @@ package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.zip.DeflaterOutputStream;
+import java.util.zip.InflaterInputStream;
 
 /**
  * Elevation tiles with the ground under towns brought down to the land it stands on, and the
@@ -114,6 +127,12 @@ public final class BareEarth implements GlobalElevation.Tiles {
     @FunctionalInterface
     public interface Cover {
         int code(double latitude, double longitude);
+
+        /** The classes over a grid of latitudes and longitudes, row by row. */
+        default void codes(double[] latitudes, double[] longitudes, byte[] out) {
+            for (int j = 0; j < latitudes.length; j++)
+                for (int i = 0; i < longitudes.length; i++) out[j * longitudes.length + i] = (byte) code(latitudes[j], longitudes[i]);
+        }
     }
 
     /**
@@ -129,19 +148,28 @@ public final class BareEarth implements GlobalElevation.Tiles {
 
     private final GlobalElevation.Tiles tiles;
     private final Cover cover;
+    /** Where worked-out fields are kept on disk, or null to keep them in memory only. */
+    private final Path cacheRoot;
     private final int maxFields, maxTiles;
     private final LinkedHashMap<Long, Field> fields = new LinkedHashMap<>(64, 0.75f, true);
     private final Map<Long, CompletableFuture<Field>> fieldsInFlight = new ConcurrentHashMap<>();
     /** Recently read tiles at the zooms changed; those left as they were are the source's own arrays. */
     private final LinkedHashMap<Long, float[]> changed = new LinkedHashMap<>(64, 0.75f, true);
 
-    public BareEarth(TerrariumTileSource tiles, WorldCoverSource cover) {
-        this(tiles::tile, (latitude, longitude) -> cover.code(latitude, longitude, 0), 160, 256);
+    /** @param cacheRoot optional disk cache directory for the worked-out fields, or null for memory only */
+    public BareEarth(TerrariumTileSource tiles, WorldCoverSource cover, Path cacheRoot) {
+        this(tiles::tile, new Cover() {
+            @Override public int code(double latitude, double longitude) { return cover.code(latitude, longitude, 0); }
+            @Override public void codes(double[] latitudes, double[] longitudes, byte[] out) { cover.codes(latitudes, longitudes, out); }
+        }, 160, 256, cacheRoot);
     }
 
-    BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles) {
+    BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles) { this(tiles, cover, maxFields, maxTiles, null); }
+
+    BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles, Path cacheRoot) {
         this.tiles = tiles;
         this.cover = cover;
+        this.cacheRoot = cacheRoot;
         this.maxFields = maxFields;
         this.maxTiles = maxTiles;
     }
@@ -294,20 +322,94 @@ public final class BareEarth implements GlobalElevation.Tiles {
         int n = SPAN * SPAN;
         float[] dem = new float[n];
         byte[] code = new byte[n];
-        float[] tile = null;
-        long tileKey = -1;
+        cover.codes(latitude, longitude, code);
+        // The window spans at most four tiles each way; each row is copied from them in runs.
         for (int j = 0; j < SPAN; j++) {
             long gy = Math.max(0, Math.min(size - 1, gy0 + j));
-            for (int i = 0; i < SPAN; i++) {
+            for (int i = 0; i < SPAN; ) {
                 long gx = Math.floorMod(gx0 + i, size);
-                long key = (gx >> 8) << 32 | gy >> 8;
-                if (key != tileKey) { tile = tiles.tile(ZOOM, (int) (gx >> 8), (int) (gy >> 8)); tileKey = key; }
-                dem[j * SPAN + i] = tile[(int) ((gy & 255) * SIZE + (gx & 255))];
-                code[j * SPAN + i] = (byte) cover.code(latitude[j], longitude[i]);
+                int run = (int) Math.min(SPAN - i, SIZE - (gx & 255));
+                float[] tile = tiles.tile(ZOOM, (int) (gx >> 8), (int) (gy >> 8));
+                System.arraycopy(tile, (int) ((gy & 255) * SIZE + (gx & 255)), dem, j * SPAN + i, run);
+                i += run;
             }
         }
         double metres = 2 * Math.PI * EARTH_RADIUS * Math.cos(Math.toRadians(latitude[SPAN / 2])) / size;
-        return compute(dem, code, metres, towns, clearings);
+        if (cacheRoot == null) return compute(dem, code, metres, towns, clearings);
+        // Kept with a digest of what it was worked out from, so a field is never read back over changed tiles or cover.
+        long digest = digest(dem, code);
+        Path cached = cacheRoot.resolve(ZOOM + "/" + tileX + "/" + tileY + ".field");
+        Field field = read(cached, digest);
+        if (field != null) return field;
+        field = compute(dem, code, metres, towns, clearings);
+        try {
+            RangeFiles.write(cached, write(field, digest));
+        } catch (IOException failure) {
+            // The cache only saves work; the field is good without it.
+        }
+        return field;
+    }
+
+    // Disk cache ------------------------------------------------------------------------------------
+
+    /** Version of the fields' bytes and of the rules they are worked out by; a field kept under another is worked out again. */
+    static final int FORMAT = 1;
+
+    /** A 64-bit digest of a window's metres and classes. */
+    static long digest(float[] dem, byte[] code) {
+        long h = 0x9E3779B97F4A7C15L ^ dem.length;
+        for (float m : dem) h = (h ^ Float.floatToRawIntBits(m)) * 0x100000001B3L;
+        for (int k = 0; k < code.length; k += 8) {
+            long word = 0;
+            for (int b = 0; b < 8 && k + b < code.length; b++) word |= (code[k + b] & 0xFFL) << 8 * b;
+            h = (h ^ word) * 0x100000001B3L;
+        }
+        return h ^ h >>> 29;
+    }
+
+    /** A field's bytes, compressed. */
+    static byte[] write(Field field, long digest) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new DeflaterOutputStream(bytes), 1 << 16))) {
+            out.writeInt(FORMAT);
+            out.writeLong(digest);
+            out.writeBoolean(field.ground != null);
+            if (field.ground != null) { floats(out, field.ground); out.write(field.weight); out.write(field.water); }
+            out.writeBoolean(field.delta != null);
+            if (field.delta != null) { floats(out, field.delta); floats(out, field.smooth); out.write(field.band); }
+        }
+        return bytes.toByteArray();
+    }
+
+    /** The field kept at a path for a window with this digest, or null where there's none or it's for other data. */
+    static Field read(Path path, long digest) {
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) return null;
+        try (InputStream file = Files.newInputStream(path); DataInputStream in = new DataInputStream(new BufferedInputStream(new InflaterInputStream(file), 1 << 16))) {
+            if (in.readInt() != FORMAT || in.readLong() != digest) return null;
+            float[] ground = null, delta = null, smooth = null;
+            byte[] weight = null, water = null, band = null;
+            if (in.readBoolean()) { ground = floats(in); weight = bytes(in); water = bytes(in); }
+            if (in.readBoolean()) { delta = floats(in); smooth = floats(in); band = bytes(in); }
+            return ground == null && delta == null ? NONE : new Field(ground, weight, water, delta, smooth, band);
+        } catch (IOException | UncheckedIOException corrupt) {
+            return null;
+        }
+    }
+
+    private static void floats(DataOutputStream out, float[] values) throws IOException {
+        for (float v : values) out.writeInt(Float.floatToRawIntBits(v));
+    }
+
+    private static float[] floats(DataInputStream in) throws IOException {
+        float[] values = new float[GRID * GRID];
+        for (int k = 0; k < values.length; k++) values[k] = Float.intBitsToFloat(in.readInt());
+        return values;
+    }
+
+    private static byte[] bytes(DataInputStream in) throws IOException {
+        byte[] values = new byte[GRID * GRID];
+        in.readFully(values);
+        return values;
     }
 
     /** Pixels across the half-detail grid the smooth fields are worked out on. */

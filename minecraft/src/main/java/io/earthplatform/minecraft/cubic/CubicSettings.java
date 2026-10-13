@@ -37,6 +37,7 @@ public final class CubicSettings {
     private static final String FILE = "generator.properties";
     private static TerrariumTileSource tiles;
     private static WorldCoverSource cover;
+    private static BareEarth bareEarth;
     private static ClimateSource climate;
     private static RiverMap rivers;
     private static ImagerySource imagery;
@@ -87,7 +88,7 @@ public final class CubicSettings {
                     throw new IllegalStateException("Unsupported ground '" + groundId + "' in " + file);
                 yield new EarthGenerator(seed, biomes, settings, tiles(), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
                         coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : rivers(),
-                        !groundId.isEmpty());
+                        coverId.isEmpty() || groundId.isEmpty() ? null : bareEarth());
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
         };
@@ -165,6 +166,13 @@ public final class CubicSettings {
             }
         }
         return tiles;
+    }
+
+    /** Bare-earth ground shared by every Earth world in this game, its worked-out fields cached on disk beside the elevation tiles. */
+    public static synchronized BareEarth bareEarth() {
+        if (bareEarth == null)
+            bareEarth = new BareEarth(tiles(), cover(), FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(BareEarth.ID));
+        return bareEarth;
     }
 
     /** Land cover shared by every Earth world in this game, cached on disk beside the elevation tiles. */
