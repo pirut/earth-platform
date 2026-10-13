@@ -73,18 +73,9 @@ final class FarIrisUniforms {
     @Nullable private static String glsl(Type type) {
         UniformType uniform = Type.convert(type);
         if (uniform == null) return null;
-        return switch (uniform) {
-            case INT -> "int";
-            case FLOAT -> "float";
-            case MAT3 -> "mat3";
-            case MAT4 -> "mat4";
-            case VEC2 -> "vec2";
-            case VEC2I -> "ivec2";
-            case VEC3 -> "vec3";
-            case VEC3I -> "ivec3";
-            case VEC4 -> "vec4";
-            case VEC4I -> "ivec4";
-        };
+        // Iris names its types as GLSL does, in capitals, with integer vectors marked by a trailing I.
+        String name = uniform.name().toLowerCase(java.util.Locale.ROOT);
+        return name.endsWith("i") && name.startsWith("vec") ? "i" + name.substring(0, name.length() - 1) : name;
     }
 
     @Nullable private static CustomUniforms custom() {
