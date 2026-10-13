@@ -1025,7 +1025,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Drops of more than {@link #DROP} between wide water samples a reach must cross to count as drowned ground. */
     private static final int DROWNED_CROSSINGS = 3;
     /** Fewest samples of water joined within {@link #DROP} that stand as a reach either side of a falls; most samples of pockets between. */
-    private static final int POOL = 8, FACE = 64;
+    private static final int FALL_POOL = 8, FACE = 64;
     /** Least drop, in metres, between the reaches either side of a falls' face. */
     private static final double FALL = 20;
 
@@ -1100,7 +1100,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * height between the reach above and the pool below, a few samples each, as at Iguazu's Devil's
      * Throat or Gullfoss; taken as they read, they stood in a staircase of ledges down the falls.
      * Water is level but where it falls, so each pocket of such water, joined to fewer than
-     * {@value #POOL} samples within {@value #DROP} metres, lying between reaches at least
+     * {@value #FALL_POOL} samples within {@value #DROP} metres, lying between reaches at least
      * {@value #FALL} metres apart, takes the level of whichever of them reads nearest its own: the
      * falls drops once, from the reach above to the pool below. Pockets of more than
      * {@value #FACE} samples are a river's own course down its valley, and keep their heights.
@@ -1140,7 +1140,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         boolean[] seen = new boolean[count];
         it.unimi.dsi.fastutil.floats.FloatArrayList beside = new it.unimi.dsi.fastutil.floats.FloatArrayList();
         for (int start = 0; start < count; start++) {
-            if (seen[start] || piece[start] < 0 || sizes.getInt(piece[start]) >= POOL) continue;
+            if (seen[start] || piece[start] < 0 || sizes.getInt(piece[start]) >= FALL_POOL) continue;
             seen[start] = true;
             queue.enqueue(start);
             members.clear();
@@ -1151,7 +1151,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
                     int ni = i + di, nj = j + dj, n = nj * span + ni;
                     if (ni < 0 || nj < 0 || ni >= span || nj >= span || piece[n] < 0) continue;
-                    if (sizes.getInt(piece[n]) >= POOL) {
+                    if (sizes.getInt(piece[n]) >= FALL_POOL) {
                         if (!beside.contains(levels.getFloat(piece[n]))) beside.add(levels.getFloat(piece[n]));
                     } else if (!seen[n]) {
                         seen[n] = true;
