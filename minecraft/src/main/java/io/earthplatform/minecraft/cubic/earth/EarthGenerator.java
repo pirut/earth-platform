@@ -1068,7 +1068,11 @@ public final class EarthGenerator extends SurfaceGenerator {
     private boolean lagoon(int x, int z) {
         // A lagoon is wide water: ponds and fish farms on a delta are not.
         int level = waterY(x, z), wide = 0;
-        for (int k = 0; k < 8; k++) if (waterY(x + (int) (RING_X[k] * 150), z + (int) (RING_Z[k] * 150)) == level) wide++;
+        int[] at = new int[2];
+        for (int k = 0; k < 8; k++) {
+            ground(x + (int) (RING_X[k] * 150), z + (int) (RING_Z[k] * 150), at);
+            if (at[1] == level && at[0] < level) wide++;
+        }
         if (wide < 5) return false;
         int sea = 0;
         for (int radius = 1500; radius <= 3000; radius += 1500)
@@ -1103,7 +1107,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         double crag = patches.getValue(x / 11.0 + 3.3, z / 11.0 - 9.1);
         BlockState rocky = steep > 0.8 && crag < (steep - 0.8) * 1.6 - 0.2 ? STONE : null;
         // Patches tens of metres across: clearings, rock and scree that the 10 m map averages away.
-        double patch = patches.getValue(x / 31.0, z / 31.0);
+        // Warped, with a finer layer and a grain-by-grain jitter, so the patches are ragged and their edges break up,
+        // rather than one smooth noise whose contours read as a maze of hard-edged blobs from above.
+        double wx = x / 31.0 + 0.7 * patches.getValue(x / 70.0 + 41.3, z / 70.0 - 7.7), wz = z / 31.0 + 0.7 * patches.getValue(x / 70.0 - 13.9, z / 70.0 + 28.1);
+        double patch = 0.8 * patches.getValue(wx, wz) + 0.25 * patches.getValue(x / 7.0 + 5.5, z / 7.0 - 2.2)
+                + ((mix(x, 0x50415443L, z) & 1023) / 511.5 - 1) * 0.18;
         boolean dry = zone == ClimateZone.COLD_DESERT || zone == ClimateZone.COLD_STEPPE;
         // Heather moorland where summers are cool and the rain never stops, as in Scotland, Ireland and Norway's coast.
         boolean moor = (zone == ClimateZone.OCEANIC || zone == ClimateZone.SUBPOLAR_OCEANIC) && local.warmest() < 14 && local.rain() > 800;
@@ -1262,7 +1270,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                     // Cold deserts and steppe beaches: gravel plains and dunes.
                     // Stretches of sand, gravel and dust a few hundred metres across, mixed grain by grain where they meet,
                     // so the desert reads as soft-edged washes rather than a maze of blobs.
-                    double wash = patches.getValue(x / 380.0 + 7.7, z / 380.0 - 19.3) + patches.getValue(x / 60.0 - 3.9, z / 60.0 + 4.4) * 0.2;
+                    double ux = x / 380.0 + 0.8 * patches.getValue(x / 900.0 - 2.1, z / 900.0 + 6.6), uz = z / 380.0 + 0.8 * patches.getValue(x / 900.0 + 9.4, z / 900.0 - 3.8);
+                    double wash = 0.8 * patches.getValue(ux + 7.7, uz - 19.3) + patches.getValue(x / 60.0 - 3.9, z / 60.0 + 4.4) * 0.3;
                     int grain = (int) Math.floorMod(mix(x, 0x57415348L, z), 100);
                     BlockState top = grain < Mth.clamp(50 + wash * 120, 0, 100) ? SAND : grain < Mth.clamp(80 + wash * 60, 0, 100) ? GRAVEL : COARSE_DIRT;
                     return new Surface(t < -3 && local.warmest() < 5 ? snowyPlains : desert, top, top == SAND ? SANDSTONE : STONE, 0, 0, 0, 0, 0, false);

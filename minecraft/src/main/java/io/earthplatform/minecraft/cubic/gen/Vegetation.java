@@ -277,7 +277,8 @@ final class Vegetation {
             int same = 0;
             for (int k = 0; k < 8; k++) {
                 double a = k * Math.PI / 4;
-                if (gen.waterY(cx + (int) Math.round(Math.cos(a) * radius), cz + (int) Math.round(Math.sin(a) * radius)) == water) same++;
+                int px = cx + (int) Math.round(Math.cos(a) * radius), pz = cz + (int) Math.round(Math.sin(a) * radius);
+                if (gen.waterY(px, pz) == water && gen.surfaceY(px, pz) < water) same++;
             }
             open = same >= 6;
         }
