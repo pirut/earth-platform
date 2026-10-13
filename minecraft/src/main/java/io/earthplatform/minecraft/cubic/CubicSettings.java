@@ -5,6 +5,8 @@ import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
+import io.earthplatform.geography.globe.RiverMap;
+import io.earthplatform.geography.globe.SurfaceWaterSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
@@ -35,6 +37,7 @@ public final class CubicSettings {
     private static TerrariumTileSource tiles;
     private static WorldCoverSource cover;
     private static ClimateSource climate;
+    private static RiverMap rivers;
     private static ImagerySource imagery;
 
     private CubicSettings() {}
@@ -73,8 +76,12 @@ public final class CubicSettings {
                 String imageryId = properties.getProperty("earth.imagery", "");
                 if (!imageryId.isEmpty() && !ImagerySource.DATASET_ID.equals(imageryId))
                     throw new IllegalStateException("Unsupported imagery '" + imageryId + "' in " + file);
+                // Worlds made before narrow rivers keep their land as it was.
+                String riversId = properties.getProperty("earth.rivers", "");
+                if (!riversId.isEmpty() && !SurfaceWaterSource.DATASET_ID.equals(riversId))
+                    throw new IllegalStateException("Unsupported rivers '" + riversId + "' in " + file);
                 yield new EarthGenerator(seed, biomes, settings, tiles(), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
-                        coverId.isEmpty() || imageryId.isEmpty() ? null : imagery());
+                        coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : rivers());
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
         };
@@ -111,6 +118,7 @@ public final class CubicSettings {
         properties.setProperty("earth.elevation", TerrariumTileSource.DATASET_ID);
         properties.setProperty("earth.cover", WorldCoverSource.DATASET_ID);
         properties.setProperty("earth.climate", ClimateSource.DATASET_ID);
+        properties.setProperty("earth.rivers", SurfaceWaterSource.DATASET_ID);
         if (imageryEnabled()) properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
         if (!name.isEmpty()) properties.setProperty("earth.homeName", name);
     }
@@ -164,6 +172,21 @@ public final class CubicSettings {
             }
         }
         return cover;
+    }
+
+    /** Narrow rivers shared by every Earth world in this game, their surface water cached on disk beside the elevation tiles. */
+    public static synchronized RiverMap rivers() {
+        if (rivers == null) {
+            Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(SurfaceWaterSource.DATASET_ID);
+            try {
+                // Blocks are 64 KiB decoded and cover 7 km; each traced square keeps 64 KiB.
+                rivers = new RiverMap(new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        96, 4, Duration.ofSeconds(30)), 256);
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the surface water cache at " + cache, failure);
+            }
+        }
+        return rivers;
     }
 
     /** Climate shared by every Earth world in this game, cached on disk beside the elevation tiles. */

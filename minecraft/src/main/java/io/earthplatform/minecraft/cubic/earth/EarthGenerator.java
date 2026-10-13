@@ -5,6 +5,7 @@ import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.GlobalElevation;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MercatorGrid;
+import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
@@ -76,6 +77,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Nullable private final ClimateSource climate;
     @Nullable private final ImagerySource imagery;
     @Nullable private final ImageryGround imageryGround;
+    /** Narrow rivers the land cover misses, or null in worlds made before them. */
+    @Nullable private final RiverMap rivers;
     private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth, warpX, warpZ, patches;
     private final Holder<Biome> ocean, deepOcean, coldOcean, deepColdOcean, frozenOcean, lukewarmOcean, deepLukewarmOcean, warmOcean,
             beach, snowyBeach, stonyShore, snowySlopes, frozenPeaks, stonyPeaks, meadow, taiga, oldTaiga, forest,
@@ -98,11 +101,18 @@ public final class EarthGenerator extends SurfaceGenerator {
      */
     public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
                           @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery) {
-        this(seed, biomes, settings, tiles, cover, climate, imagery, Noises.of(seed));
+        this(seed, biomes, settings, tiles, cover, climate, imagery, null);
+    }
+
+    /** @param rivers narrow rivers, used with land cover to carve the channels it misses, or null for a world made before them */
+    public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
+                          @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery, @Nullable RiverMap rivers) {
+        this(seed, biomes, settings, tiles, cover, climate, imagery, rivers, Noises.of(seed));
     }
 
     private EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
-                           @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery, Noises noises) {
+                           @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery,
+                           @Nullable RiverMap rivers, Noises noises) {
         super(seed, biomes, noises.random);
         this.settings = settings;
         this.grid = new MercatorGrid(settings.metresPerBlock());
@@ -111,6 +121,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         this.climate = climate;
         this.imagery = cover == null ? null : imagery;
         this.imageryGround = this.imagery == null ? null : new ImageryGround(this.imagery, grid, seed);
+        this.rivers = cover == null ? null : rivers;
         // Drawn from their own random, after the shared one, so caves stay as they were.
         RandomSource own = new LegacyRandomSource(seed ^ 0x434F564552L);
         warpX = new SimplexNoise(own); warpZ = new SimplexNoise(own); patches = new SimplexNoise(own);
@@ -174,6 +185,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION)
                 + (imagery == null ? "" : ". Imagery: " + ImagerySource.ATTRIBUTION)
                 + (cover == null ? "" : ". " + Ecoregions.ATTRIBUTION)
+                + (rivers == null ? "" : ". Rivers: " + io.earthplatform.geography.globe.SurfaceWaterSource.ATTRIBUTION)
                 + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION);
     }
 
@@ -212,7 +224,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 out[1] = SEA;
                 return;
             }
-            int surface = lakeSurface(dem, x, z, voxel);
+            int surface = rivers != null && rawCover(memo, x, z, voxel) == RIVER ? riverSurface(x, z) : lakeSurface(dem, x, z, voxel);
             // Shadowed cliffs can map as water; water never lies on a steep slope well above its own level. Only
             // mountains cast such shadows: in flat country a steep rise under water is a seam between surveys, and
             // keeping it as land stood thin stone walls in rivers.
@@ -273,6 +285,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (cell.relief > MOUNTAINS) return y;
         // The lowest water a bank here could lead down to: the sea, or this cell's lakes and rivers.
         int lowest = y <= SEA + HIGH_BANK ? SEA : cell.samples > 0 ? Mth.floor(SEA + 0.5 + cell.level) - BANK : DRY;
+        if (lowest == DRY) lowest = riverBank(x, z, voxel);
         if (lowest == DRY || y - lowest >= HIGH_BANK) return y;
         for (int r : BANK_RINGS) {
             double radius = (double) r * voxel;
@@ -283,7 +296,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 int px = x + (int) Math.round(RING_X[k] * radius), pz = z + (int) Math.round(RING_Z[k] * radius);
                 int code = cover(px, pz, voxel);
                 if (code != WorldCoverSource.NO_DATA && code != WorldCoverSource.WATER) continue;
-                int water = code == WorldCoverSource.NO_DATA || seaWater(px, pz) ? SEA : lakeSurface(dem, px, pz, voxel);
+                int water = code == WorldCoverSource.NO_DATA || seaWater(px, pz) ? SEA : waterSurface(dem, px, pz, voxel);
                 if (water > SEA && water <= SEA + 2 && joinsOpenSea(px, pz)) water = SEA;
                 if (water < y) level = water;
             }
@@ -338,6 +351,95 @@ public final class EarthGenerator extends SurfaceGenerator {
         return metres < 0 ? bed : Math.max(bed, SEA - Math.min(LAGOON_DEPTH, lakeDepth(x, z, voxel)));
     }
 
+    // Rivers ---------------------------------------------------------------------------------------
+
+    /**
+     * Cover code of a column only the river map has water at. Land cover loses rivers narrower than
+     * a few of its pixels, and those under forest, and the elevation, a surface model, holds no
+     * channel for them either: the Amazon's tributaries were scattered ponds in the forest. The
+     * river map ({@link RiverMap}) traces them from thirty-eight years of satellite water sightings,
+     * joining the stretches the trees hide, and they are carved here as channels.
+     */
+    private static final int RIVER = 1000;
+    /** Largest voxel, in blocks, that shows narrow rivers; past it a river is narrower than a voxel or two. */
+    private static final int RIVER_VOXEL = 8;
+    /**
+     * Spacing, in blocks, of the points a river's level is read at; the radii each looks round for
+     * the lowest ground near by and along the river; and how far below the lowest ground near by a
+     * river may lie for its level to stay that of the river along it.
+     */
+    private static final int RIVER_NODE = 32, RIVER_REACH = 40, RIVER_RUN = 128, RIVER_SINK = 3;
+    /** River levels at their points, in metres, as far as they have been read. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Float> riverNodes = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Top water block of the lake, river or narrow river at a water column. */
+    private int waterSurface(GlobalElevation dem, double x, double z, int voxel) {
+        return rivers != null && rawCover(x, z, voxel) == RIVER ? riverSurface(x, z) : lakeSurface(dem, x, z, voxel);
+    }
+
+    /**
+     * Top water block of a narrow river. Each point of a {@value #RIVER_NODE}-block lattice takes the
+     * lowest ground within {@value #RIVER_REACH} blocks of it, which by a river is the river. The
+     * elevation over forest is the canopy's, a few metres up or down from one spot to the next, so
+     * a river taken that way stepped every hundred blocks across flat country: where the lowest
+     * ground within {@value #RIVER_RUN} blocks lies no more than {@value #RIVER_SINK} below it,
+     * the river takes that, which holds level for long stretches. Surveyed water close by, if
+     * lower, sets it too, so a stream meets its river or lake at the river's level. Columns blend
+     * the four points round them. So the water never stands above the ground beside it, lies level
+     * along flat stretches, and steps down along wavering lines where the land falls, the same in
+     * cubes and every far level.
+     */
+    private int riverSurface(double x, double z) {
+        double fx = x / RIVER_NODE, fz = z / RIVER_NODE;
+        int ix = Mth.floor(fx), iz = Mth.floor(fz);
+        double tx = fx - ix, tz = fz - iz;
+        double level = Mth.lerp(tz, Mth.lerp(tx, riverNode(ix, iz), riverNode(ix + 1, iz)), Mth.lerp(tx, riverNode(ix, iz + 1), riverNode(ix + 1, iz + 1)));
+        // Blended levels cross whole blocks along straight lines; a slow wobble, only ever
+        // downward so the water stays below its banks, makes those steps wander.
+        double wobble = 0.25 * (1 + patches.getValue(x / 23.0 + 311.7, z / 23.0 - 97.3));
+        return Mth.floor(SEA + 0.5 + level - wobble);
+    }
+
+    private float riverNode(int i, int j) {
+        long key = (long) i << 32 | j & 0xFFFFFFFFL;
+        Float known = riverNodes.get(key);
+        if (known != null) return known;
+        GlobalElevation dem = elevation[TerrariumTileSource.MAX_ZOOM];
+        double cx = (double) i * RIVER_NODE, cz = (double) j * RIVER_NODE, near = Double.MAX_VALUE, run = Double.MAX_VALUE;
+        for (int dz = -RIVER_RUN; dz <= RIVER_RUN; dz += 8) for (int dx = -RIVER_RUN; dx <= RIVER_RUN; dx += 8) {
+            int d2 = dx * dx + dz * dz;
+            if (d2 > RIVER_RUN * RIVER_RUN) continue;
+            double metres = dem.metres(cx + dx, cz + dz);
+            run = Math.min(run, metres);
+            if (d2 <= RIVER_REACH * RIVER_REACH) near = Math.min(near, metres);
+        }
+        double lowest = Math.max(run, near - RIVER_SINK);
+        // Surveyed water nearby: its level, where it is lower.
+        double spacing = (double) WATER_CELL / WATER_SAMPLES, sx = cx / spacing - 0.5, sz = cz / spacing - 0.5;
+        int bx = Mth.floor(sx), bz = Mth.floor(sz);
+        for (int dj = 0; dj <= 1; dj++) for (int di = 0; di <= 1; di++) {
+            int si = bx + di, sj = bz + dj;
+            float height = reachLevels(Math.floorDiv(si, WATER_SAMPLES), Math.floorDiv(sj, WATER_SAMPLES))
+                    .samples[Math.floorMod(sj, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(si, WATER_SAMPLES)];
+            if (!Float.isNaN(height)) lowest = Math.min(lowest, height);
+        }
+        float level = (float) lowest;
+        if (riverNodes.size() > 1 << 20) riverNodes.clear();
+        riverNodes.putIfAbsent(key, level);
+        return level;
+    }
+
+    /**
+     * The lowest water a bank by a narrow river could lead down to, as {@link #bank} takes it from a
+     * cell's lakes and rivers, or {@link #DRY} with no narrow river near.
+     */
+    private int riverBank(int x, int z, int voxel) {
+        if (rivers == null || voxel > RIVER_VOXEL) return DRY;
+        GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
+        if (rivers.near(point.latitude(), point.longitude()) < RiverMap.EDGE) return DRY;
+        return riverSurface(x, z) - BANK;
+    }
+
     // Land cover ----------------------------------------------------------------------------------
 
     /** Ground metres of a WorldCover pixel north to south. */
@@ -350,16 +452,24 @@ public final class EarthGenerator extends SurfaceGenerator {
      * voxel. Up close the read point wanders by about half a pixel, so class borders curve. Water
      * on a glacier with only snow and ice round it is more of the ice ({@link #iceWater}).
      */
-    private int cover(double x, double z, int voxel) {
+    private int cover(double x, double z, int voxel) { return water(rawCover(x, z, voxel)); }
+
+    /** The cover of a column, or {@link #RIVER} where only the river map has water. */
+    private int rawCover(double x, double z, int voxel) {
         int ix = (int) x, iz = (int) z;
-        return ix == x && iz == z ? cover(coverMemo.get(), ix, iz, voxel) : coverAt(x, z, voxel);
+        return ix == x && iz == z ? rawCover(coverMemo.get(), ix, iz, voxel) : coverAt(x, z, voxel);
     }
+
+    /** A cover code as the land cover's: a river is water. */
+    private static int water(int code) { return code == RIVER ? WorldCoverSource.WATER : code; }
 
     /**
      * Neighbouring columns probe the same points around them for shores and lakes, each about
      * five times, and every probe costs a map projection: this remembers recent answers.
      */
-    private int cover(CoverMemo memo, int ix, int iz, int voxel) {
+    private int cover(CoverMemo memo, int ix, int iz, int voxel) { return water(rawCover(memo, ix, iz, voxel)); }
+
+    private int rawCover(CoverMemo memo, int ix, int iz, int voxel) {
         long key = (long) (ix & 0x7FFFFFF) << 31 | (long) (iz & 0x7FFFFFF) << 4 | Integer.numberOfTrailingZeros(voxel) & 15;
         int slot = (int) (key * 0x9E3779B97F4A7C15L >>> 52);
         if (memo.keys[slot] == key) return memo.codes[slot];
@@ -388,7 +498,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         int overview = Mth.clamp(Mth.floor(Math.log(voxel * metresPerBlock / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
         GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
         int code = cover.code(point.latitude(), point.longitude(), overview);
-        return code == WorldCoverSource.WATER && iceWater(x, z, overview, metresPerBlock) ? WorldCoverSource.SNOW_AND_ICE : code;
+        if (code == WorldCoverSource.WATER) return iceWater(x, z, overview, metresPerBlock) ? WorldCoverSource.SNOW_AND_ICE : code;
+        // Narrow rivers the land cover lost, read at the same wandering point so their banks curve too.
+        if (rivers != null && voxel <= RIVER_VOXEL && code != WorldCoverSource.NO_DATA && code != WorldCoverSource.SNOW_AND_ICE
+                && rivers.strength(point.latitude(), point.longitude()) >= RiverMap.EDGE) return RIVER;
+        return code;
     }
 
     /** Rings round water, in metres, that {@link #iceWater} looks along, out past a pond's far shore; none nearer than a pixel. */
@@ -951,7 +1065,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         for (int k = 0; k < 8; k += 2) {
             for (double r : new double[]{near, far}) {
                 double px = x + RING_X[k] * r, pz = z + RING_Z[k] * r;
-                if (cover(memo, (int) px, (int) pz, voxel) == WorldCoverSource.WATER && !seaWater(px, pz)) best = Math.max(best, lakeSurface(dem, px, pz, voxel));
+                if (cover(memo, (int) px, (int) pz, voxel) == WorldCoverSource.WATER && !seaWater(px, pz)) best = Math.max(best, waterSurface(dem, px, pz, voxel));
             }
         }
         return best;
@@ -1646,6 +1760,13 @@ public final class EarthGenerator extends SurfaceGenerator {
             loads.add(() -> {
                 try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
                 catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch climate: {}", failure.getMessage()); }
+            });
+        }
+        if (rivers != null) {
+            GeoPoint a = grid.geographic(x - 3500, z + 3500), b = grid.geographic(x + 3500, z - 3500);
+            loads.add(() -> {
+                try { rivers.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
+                catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch rivers: {}", failure.getMessage()); }
             });
         }
         if (imagery != null) {
