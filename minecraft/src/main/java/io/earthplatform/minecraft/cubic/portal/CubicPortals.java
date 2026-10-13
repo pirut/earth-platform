@@ -37,6 +37,13 @@ public final class CubicPortals {
     public static final String HOME_TAG = "earthplatform.cubic_home";
     /** Vanilla's overworld search radius for a portal arriving from the Nether. */
     private static final int SEARCH = 128;
+    /**
+     * A wider search before building a new portal. The Nether side of a portal can stand up to 16
+     * Nether blocks (128 here) from where the Earth portal maps to, so the way back may land just
+     * past {@link #SEARCH}; building a second portal there would strand the first one on real
+     * terrain, often far up or down a slope.
+     */
+    private static final int LINK_SEARCH = SEARCH + 16 * 8;
     /** How far from the target a new portal may move to find level ground. */
     private static final int BUILD_SEARCH = 16;
 
@@ -61,7 +68,8 @@ public final class CubicPortals {
         double scale = DimensionType.getTeleportationScale(nether.dimensionType(), cubic.dimensionType());
         BlockPos target = cubic.getWorldBorder().clampToBounds(entity.getX() * scale, entity.getY(), entity.getZ() * scale);
         Registry registry = Registry.of(cubic);
-        BlockPos found = nearest(cubes, registry, target);
+        BlockPos found = nearest(cubes, registry, target, SEARCH);
+        if (found == null) found = nearest(cubes, registry, target, LINK_SEARCH);
         boolean home = entity instanceof ServerPlayer player && player.getTags().contains(HOME_TAG);
         if (found == null && !home) return null;
 
@@ -78,14 +86,14 @@ public final class CubicPortals {
                 net.minecraft.world.level.portal.DimensionTransition.PLAY_PORTAL_SOUND);
     }
 
-    /** The registered portal block closest to a target column, checked against the real block. */
-    @Nullable private static BlockPos nearest(ServerCubeWorld cubes, Registry registry, BlockPos target) {
+    /** The registered portal block closest to a target column within a square, checked against the real block. */
+    @Nullable private static BlockPos nearest(ServerCubeWorld cubes, Registry registry, BlockPos target, int search) {
         while (true) {
             BlockPos best = null;
             long bestDistance = Long.MAX_VALUE;
             for (BlockPos pos : registry.portals) {
                 long dx = pos.getX() - target.getX(), dz = pos.getZ() - target.getZ();
-                if (Math.abs(dx) > SEARCH || Math.abs(dz) > SEARCH) continue;
+                if (Math.abs(dx) > search || Math.abs(dz) > search) continue;
                 // Prefer the nearest column, then the lowest block, so the rectangle grows from its bottom.
                 long distance = (dx * dx + dz * dz) * 65536L + (pos.getY() - (long) CubeWorld.MIN_Y);
                 if (distance < bestDistance) { bestDistance = distance; best = pos; }
