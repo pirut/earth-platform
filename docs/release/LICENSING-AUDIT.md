@@ -79,7 +79,7 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
 - What: about 70 latitude/longitude points with widths, for Victoria Falls' gorges, the Niagara gorge and the river above the Horseshoe Falls, the Welland River and Skógafoss, "traced from satellite imagery". Water levels come from our elevation tiles.
 - Risk depends on the imagery:
   - EOX `s2cloudless_3857` (the 2016 mosaic, what our imagery client uses): released CC BY 4.0. OK with an EOX credit that is not marked optional.
-  - EOX s2cloudless 2018 and later: CC BY-NC-SA 4.0. Not OK for a mod on monetised platforms or under the LGPL's terms.
+  - EOX s2cloudless 2018 and later: CC BY-NC-SA 4.0. Not OK: the non-commercial clause conflicts with Modrinth and CurseForge rewards and with letting anyone reuse the mod.
   - Google, Bing, Esri, Mapbox and similar basemaps: their terms forbid tracing features. Not OK; re-trace.
 - A few dozen points describing where a river runs are close to bare facts, so the legal risk is small, but a clean, credited source removes it. Clean sources, in order:
   1. OpenStreetMap waterway lines and water outlines: ODbL. A few dozen points is an insubstantial extract; credit "© OpenStreetMap contributors, ODbL" in CREDITS.md and the mods list. A large extract would make the derived data ODbL too, which is fine for data but must be stated.
