@@ -110,6 +110,13 @@ public final class Towers {
         return metres;
     }
 
+    /** Whether a block position lies in one of the {@link #REGIONS}, where small steep islands are real towers. */
+    public boolean covers(int x, int z) {
+        GeoPoint p = globe.geographic(x + 0.5, z + 0.5);
+        for (Region region : REGIONS) if (region.inside(p.latitude(), p.longitude()) > 0) return true;
+        return false;
+    }
+
     /**
      * A hill made a tower: height above the low ground round it, as a share of its top's, keeps a
      * gentle foot up to the region's wall, climbs nearly all the rest in a sheer face, and over

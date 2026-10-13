@@ -252,12 +252,19 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     private void surveyed(GlobalElevation dem, int x, int z, double metres, double[] sample, int voxel, int[] out) {
         if (sample[2] > 0.5 || offshore(x, z, metres, voxel)) {
-            out[0] = seabed(x, z, metres, voxel);
+            // Water the land cover maps behind the coast, and the detail tiles as land, is a lagoon or bay however
+            // the detail reads its surface, a little over sea level or a little under: read either way, half of Lake
+            // Worth Lagoon was eight blocks deep and half over twenty, parted by a hard edge.
+            boolean lagoon = sample[2] <= 0.5 && cover(x, z, voxel) == WorldCoverSource.WATER;
+            out[0] = lagoon ? lagoonBed(x, z, metres, voxel) : seabed(x, z, metres, voxel);
             out[1] = SEA;
             return;
         }
         double steep = Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1]));
         CoverMemo memo = cover == null ? null : coverMemo.get();
+        // Land by sea the survey reads well above sea level lies as much lower, so it meets the sea as it meets its own;
+        // its lakes and rivers lie as much lower with it, or they stood as pillars of water over the lowered ground.
+        double lowered = cover == null ? 0 : metres - Math.max(metres - lift(x, z), Math.min(metres, 2 * SEA_METRES));
         if (cover != null && cover(memo, x, z, voxel) == WorldCoverSource.WATER) {
             // Water joined through water to the open sea at sea level is the sea, though the survey under it reads far
             // above it, as where a coarse ocean grid fills a lagoon with its island's slopes; but water mapped on a
@@ -267,14 +274,15 @@ public final class EarthGenerator extends SurfaceGenerator {
                 out[1] = SEA;
                 return;
             }
-            int surface = rivers != null && rawCover(memo, x, z, voxel) == RIVER ? riverSurface(x, z) : lakeSurface(dem, x, z, voxel);
+            int surface = (rivers != null && rawCover(memo, x, z, voxel) == RIVER ? riverSurface(x, z) : lakeSurface(dem, x, z, voxel)) - (int) Math.round(lowered);
+            metres -= lowered;
             // Shadowed cliffs can map as water; water never lies on a steep slope well above its own level. Only
             // mountains cast such shadows: in flat country a steep rise under water is a seam between surveys, and
             // keeping it as land stood thin stone walls in rivers.
             boolean shadow = steep > 0.7 && SEA + 0.5 + metres - surface > 4 && relief(x, z) > MOUNTAINS;
             // Water by the coast is the sea, and so is water at sea level that joins it, as estuaries and lagoons do,
             // which otherwise stood a block above the sea around it wherever the survey read a little over 0 m.
-            if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && joinsOpenSea(x, z))) {
+            if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && (lowered > 0 || joinsOpenSea(x, z)))) {
                 out[0] = lagoonBed(x, z, metres, voxel);
                 out[1] = SEA;
                 return;
@@ -286,7 +294,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 out[1] = surface;
                 return;
             }
-        }
+        } else metres -= lowered;
         metres = towers.shape(x, z, metres, voxel);
         double amplitude = Mth.clamp((metres - 0.5) / 4, 0, 1) * (0.6 + 1.8 * steep), detail = 0;
         if (voxel <= 8) detail += fbm(relief, x / 27.0, z / 27.0, 3) * amplitude;
@@ -303,8 +311,9 @@ public final class EarthGenerator extends SurfaceGenerator {
             // In layered rock, terraces and the rock's noise may cut further below it, as along the Colorado.
             if (shore != DRY && y < shore && y >= shore - (rock != null ? 12 : 4)) y = shore;
             // A speck of land in a lagoon filled with coarse blocks, as a pier or a boat, takes the fill's height, tens
-            // of metres up, and stood as a stone pillar out of the sea: it lies just above the water instead.
-            if (y > SEA + 1 && speck(dem, x, z, metres, voxel)) y = SEA + 1;
+            // of metres up, and stood as a stone pillar out of the sea: it lies just above the water instead. Karst
+            // towers out of the sea, as in Ha Long Bay, are real pillars and stay.
+            if (y > SEA + 1 && !towers.covers(x, z) && speck(dem, x, z, metres, voxel)) y = SEA + 1;
             // Low ground slopes down to the water beside it rather than standing over it in a wall.
             if (y > SEA) y = bank(dem, x, z, y, voxel);
         }
@@ -376,11 +385,14 @@ public final class EarthGenerator extends SurfaceGenerator {
      * and deeps a few survey pixels across. The bed takes the deeper of the detail and the coarse
      * bathymetry, which is smooth, never above 0 m, and close to the detail wherever the detail
      * holds real depths, as in the North Sea. Where both are shallow, as in estuaries the coarse
-     * bathymetry counts as land, it shelves down from the shore as a lake's bed does.
+     * bathymetry counts as land, it shelves down from the shore as a lake's bed does, to at most
+     * {@value #LAGOON_DEPTH} blocks.
      */
     private int seabed(int x, int z, double metres, int voxel) {
         int bed = Math.min(SEA - 1, Mth.floor(SEA + 0.5 + Math.min(metres, Math.min(0, bathymetry.metres(x + 0.5, z + 0.5)))));
-        if (bed > SEA - 8 && cover != null) bed = Math.min(bed, SEA - lakeDepth(x, z, voxel));
+        // It shelves no deeper than a lagoon: shelving on toward a lake's forty blocks, lagoon water the detail marks
+        // as open sea lay three times as deep as the rest of the lagoon, behind a hard edge.
+        if (bed > SEA - LAGOON_DEPTH && cover != null) bed = Math.min(bed, SEA - Math.min(LAGOON_DEPTH, lakeDepth(x, z, voxel)));
         return bed;
     }
 
@@ -388,14 +400,16 @@ public final class EarthGenerator extends SurfaceGenerator {
     private static final int LAGOON_DEPTH = 8;
 
     /**
-     * Bed of sea water the detail tiles map at or above sea level, as a lagoon or estuary behind the
-     * coast. The coarse bathymetry there reads the sea outside, or bad pixels, and put Lake Worth
-     * Lagoon a dozen blocks deep where it is two or three metres; the bed shelves from the shore as
-     * a lake's does, never deeper than {@value #LAGOON_DEPTH} blocks or the bathymetry.
+     * Bed of sea water the land cover maps behind the coast, as a lagoon or estuary, where the
+     * detail tiles read its surface near sea level rather than a depth. The coarse bathymetry
+     * there reads the sea outside, or bad pixels, and put Lake Worth Lagoon a dozen blocks deep
+     * where it is two or three metres; the bed shelves from the shore as a lake's does, never
+     * deeper than {@value #LAGOON_DEPTH} blocks or the bathymetry.
      */
     private int lagoonBed(int x, int z, double metres, int voxel) {
         int bed = seabed(x, z, metres, voxel);
-        return metres < 0 ? bed : Math.max(bed, SEA - Math.min(LAGOON_DEPTH, lakeDepth(x, z, voxel)));
+        // Where the detail holds real depths deeper than a lagoon lies, as in the North Sea, they stand.
+        return metres < -LAGOON_DEPTH ? bed : Math.max(bed, SEA - Math.min(LAGOON_DEPTH, lakeDepth(x, z, voxel)));
     }
 
     // Rivers ---------------------------------------------------------------------------------------
@@ -1385,6 +1399,85 @@ public final class EarthGenerator extends SurfaceGenerator {
         return any ? sea : NO_SEA;
     }
 
+    /** How far, in blocks, land feels the height the survey reads over the sea beside it. */
+    private static final double LIFT_REACH = 256;
+    /** Lifts of the sea's samples by water cell, as far as they have been found. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, float[]> lifts = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Metres to take off a land column's surveyed height for the sea beside it reading above sea
+     * level. In places the survey has no sea at all but a fill or another datum: Iceland's Westfjords
+     * read one smooth 86 m over Ísafjörður's water and its slopes alike, the Galápagos bays a level
+     * 12 m, Lake Worth Lagoon two or three metres. The sea lies at sea level whatever the survey says,
+     * so the land beside it stood over it in walls as high as the reading, fifty blocks in the fjords.
+     * Land takes off the reading of the sea near it, in full at the water and less with distance, to
+     * nothing {@value #LIFT_REACH} blocks off. Only samples with sea all round count, a sample's
+     * spacing from any shore: by a cliff, the survey blurs the land out over the water, and that is
+     * no offset of the sea's.
+     */
+    private double lift(int x, int z) {
+        double spacing = (double) WATER_CELL / WATER_SAMPLES;
+        int reach = (int) Math.ceil(LIFT_REACH / spacing);
+        int ix = Mth.floor(x / spacing - 0.5), iz = Mth.floor(z / spacing - 0.5);
+        // The readings near by, weighted to the nearest, in full as close as the nearest of them and fading with distance.
+        double sum = 0, weight = 0, near = 0;
+        float[] lifts = null;
+        long held = Long.MIN_VALUE;
+        for (int sz = iz - reach + 1; sz <= iz + reach; sz++) for (int sx = ix - reach + 1; sx <= ix + reach; sx++) {
+            int cx = Math.floorDiv(sx, WATER_SAMPLES), cz = Math.floorDiv(sz, WATER_SAMPLES);
+            long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+            if (key != held) { lifts = lifts(cx, cz); held = key; }
+            if (lifts == NO_LIFT) continue;
+            float lifted = lifts[Math.floorMod(sz, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(sx, WATER_SAMPLES)];
+            if (lifted <= 0) continue;
+            double close = 1 - Math.hypot((sx + 0.5) * spacing - x - 0.5, (sz + 0.5) * spacing - z - 0.5) / LIFT_REACH;
+            if (close <= 0) continue;
+            sum += lifted * close * close;
+            weight += close * close;
+            near = Math.max(near, close);
+        }
+        return weight == 0 ? 0 : sum / weight * near;
+    }
+
+    /** No sample of a cell is sea lifted above sea level. */
+    private static final float[] NO_LIFT = new float[0];
+
+    /** Each of a cell's samples' surveyed metres where it is sea with sea all round and reads above sea level, else 0. */
+    private float[] lifts(int cx, int cz) {
+        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        float[] known = lifts.get(key);
+        if (known != null) return known;
+        Survey centre = survey(cx, cz);
+        boolean raised = false;
+        for (int k = 0; k < centre.metres.length && !raised; k++) raised = centre.kind[k] != DRY_LAND && centre.metres[k] > SEA_METRES;
+        float[] out = NO_LIFT;
+        if (raised) {
+            int span = WATER_SAMPLES + 2;
+            double spacing = (double) WATER_CELL / WATER_SAMPLES;
+            boolean[] sea = new boolean[span * span];
+            for (int j = 0; j < span; j++) for (int i = 0; i < span; i++) {
+                int sx = cx * WATER_SAMPLES + i - 1, sz = cz * WATER_SAMPLES + j - 1;
+                int ncx = Math.floorDiv(sx, WATER_SAMPLES), ncz = Math.floorDiv(sz, WATER_SAMPLES);
+                int k = Math.floorMod(sz, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(sx, WATER_SAMPLES);
+                Survey survey = ncx == cx && ncz == cz ? centre : survey(ncx, ncz);
+                sea[j * span + i] = survey.kind[k] == OPEN || survey.kind[k] != DRY_LAND
+                        && joinsOpenSea(Mth.floor((sx + 0.5) * spacing), Mth.floor((sz + 0.5) * spacing));
+            }
+            float[] lifted = new float[centre.metres.length];
+            boolean any = false;
+            for (int j = 0; j < WATER_SAMPLES; j++) for (int i = 0; i < WATER_SAMPLES; i++) {
+                boolean open = true;
+                for (int dj = 0; dj <= 2 && open; dj++) for (int di = 0; di <= 2 && open; di++) open = sea[(j + dj) * span + i + di];
+                int k = j * WATER_SAMPLES + i;
+                if (open && centre.metres[k] > SEA_METRES) { lifted[k] = centre.metres[k]; any = true; }
+            }
+            if (any) out = lifted;
+        }
+        if (lifts.size() > 1 << 16) lifts.clear();
+        lifts.putIfAbsent(key, out);
+        return out;
+    }
+
     /** Whether a sample's water spans all eight samples around it, so it is no river or creek. */
     private static boolean wide(byte[] kinds, int span, int i, int j) {
         if (i == 0 || j == 0 || i == span - 1 || j == span - 1) return false;
@@ -1518,6 +1611,16 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     private double wetness(int x, int z) { return fbm(wetBroad, x / 9000.0, z / 9000.0, 2) * 0.7 + wetLocal.getValue(x / 1400.0, z / 1400.0) * 0.3; }
 
+    /** Blocks above the sea and in from it that bare ground counts as beach. */
+    private static final int BEACH_RISE = 8, BEACH_REACH = 64;
+
+    /** Whether sea water lies within {@code r} blocks of a column, looking out at half and full reach. */
+    private boolean seaWithin(int x, int z, int r) {
+        for (int d = r / 2; d <= r; d += r / 2)
+            for (int k = 0; k < 8; k++) if (waterY(x + (int) (RING_X[k] * d), z + (int) (RING_Z[k] * d)) == SEA) return true;
+        return false;
+    }
+
     private boolean nearSea(int x, int z) {
         return waterY(x + 4, z) == SEA || waterY(x - 4, z) == SEA || waterY(x, z + 4) == SEA || waterY(x, z - 4) == SEA;
     }
@@ -1556,10 +1659,13 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (water != DRY) {
             int depth = water - y;
             // Warm seas are turquoise only over reefs and shallows; deeper water is dark blue, as from above.
+            // The depths that part them wander by several blocks, and warm shallows turn lukewarm before they
+            // turn deep: cut at one depth, the bed's steps drew hard-edged navy boxes in turquoise lagoons.
             // No polar bears in the south: the Southern Ocean is cold ocean, iced over by iced() as frozen ocean is.
-            Holder<Biome> b = t < -2 && latitude(z) > -50 ? frozenOcean : t < 6 ? (depth > 40 ? deepColdOcean : coldOcean)
-                    : t > 15 ? (depth > (t > 21 ? 15 : 40) ? deepLukewarmOcean : t > 21 ? warmOcean : lukewarmOcean)
-                    : depth > 40 ? deepOcean : ocean;
+            double deep = depth + seaWobble(x, z);
+            Holder<Biome> b = t < -2 && latitude(z) > -50 ? frozenOcean : t < 6 ? (deep > 40 ? deepColdOcean : coldOcean)
+                    : t > 15 ? (deep > (t > 21 ? 2 * SHALLOWS : 40) ? deepLukewarmOcean : t > 21 && deep <= SHALLOWS ? warmOcean : lukewarmOcean)
+                    : deep > 40 ? deepOcean : ocean;
             BlockState floor = depth < 30 ? SAND : GRAVEL;
             return new Surface(b, floor, floor, 0, 0, 0, 0, 0, false);
         }
@@ -1638,6 +1744,14 @@ public final class EarthGenerator extends SurfaceGenerator {
         double share = Mth.clamp((-t - 1) / 10, 0, 1);
         double floes = patches.getValue(x / 53.0 + 91.3, z / 53.0 - 17.7) * 0.75 + patches.getValue(x / 13.0 - 40.1, z / 13.0 + 8.3) * 0.25;
         return floes < share * 2 - 1;
+    }
+
+    /** Depth of warm sea, in blocks, to which it is reef and shallows, before it turns lukewarm and then, at twice this, deep. */
+    private static final int SHALLOWS = 13;
+
+    /** Blocks added to a sea column's depth before its biome is picked, so depth bands wander rather than follow the bed's steps. */
+    private double seaWobble(int x, int z) {
+        return (warpX.getValue(x / 97.0, z / 97.0) + 0.4 * warpZ.getValue(x / 41.0, z / 41.0)) * 4;
     }
 
     /** A lake or river bed: sand by the shore, then gravel, clay or mud further out. */
@@ -1864,6 +1978,10 @@ public final class EarthGenerator extends SurfaceGenerator {
                 return grassland(top, x, z, local, patch, moor, roll, rocky);
             }
             case WorldCoverSource.BARE -> {
+                // Bare ground low by the sea is beach and dune, as Whitehaven's silica sand, not rock: the beach rule
+                // above reaches only two blocks up and four in from the water.
+                if (!cliff && steep < 0.6 && y <= SEA + BEACH_RISE && !volcanic(x, z) && seaWithin(x, z, BEACH_REACH))
+                    return new Surface(t < 0 ? snowyBeach : beach, SAND, SAND, 0, 0, 0, 0, 0, false);
                 boolean hot = zone == ClimateZone.HOT_DESERT || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.TROPICAL_DRY;
                 // Dry lands' cliffs show their rock in coloured bands, as the Colorado Plateau's and the Sahara's do.
                 boolean arid = hot || dry;
