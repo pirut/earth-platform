@@ -126,8 +126,16 @@ public final class Strata {
     private static final int CELL = 512;
     /** Metres under the datum before the ground's own cover gives way to rock and ledges; plateau tops keep theirs. */
     static final double RIM = 12;
+    /** Metres under the highest ground around that a column still counts among the tops, where woods keep their ground. */
+    static final double TOPS = 60;
     /** The steepest ground that keeps its soil: two block steps across a column, as a single step's corner. */
     private static final double FLAT = 0.9;
+    /**
+     * The steepest far voxel that keeps its soil. A far voxel's ground is the average over many blocks of benches
+     * and risers, so a terraced canyon side reads gentle there though up close it is mostly rock; only ground
+     * near level keeps its soil, as up close.
+     */
+    static final double FAR_FLAT = 0.3;
 
     private final Globe globe;
     private final Holder<Biome> badlands;
@@ -184,9 +192,11 @@ public final class Strata {
     /** A column's strata: its sequence and its datum, in metres and as the block the datum's metre falls in. */
     public final class Layers {
         private final Built built;
-        private final double datum, sea;
+        private final double datum, sea, x, z;
 
-        private Layers(Built built, double datum, double sea) { this.built = built; this.datum = datum; this.sea = sea; }
+        private Layers(Built built, double datum, double sea, double x, double z) {
+            this.built = built; this.datum = datum; this.sea = sea; this.x = x; this.z = z;
+        }
 
         /** The rock at block height {@code y}. */
         public BlockState at(int y) {
@@ -249,20 +259,22 @@ public final class Strata {
          * A column's cover with the rock showing: on cliffs and wherever the cover is only rock or
          * loose stone, under the plateau tops. Flats keep their soil, or the sequence's own loose ground.
          */
-        public Surface dress(Surface surface, int y, double steep) {
+        public Surface dress(Surface surface, int y, double steep, int voxel) {
             if (below(y - sea) <= 0) return surface;
-            // Woods hold their ground: where the land cover grows trees, as the ponderosa forest on the Kaibab and
-            // Coconino plateaus at the Grand Canyon's rims, gentle ground keeps it. Only open scrub and bare ground
-            // give way to the rock, and cliffs show it whatever grows on them.
-            if (surface.trees() > 0 && steep <= FLAT) return surface;
+            double flat = voxel > 1 ? FAR_FLAT : FLAT;
+            // Woods hold their ground on the tops: where the land cover grows trees, as the ponderosa forest on the
+            // Kaibab and Coconino plateaus at the Grand Canyon's rims, gentle ground at the height of the country around
+            // keeps it, though the datum stands far above it. Down in the canyons the benches and slopes show their
+            // beds whatever grows on them, as do cliffs everywhere.
+            if (surface.trees() > 0 && steep <= flat && y - sea >= top(x, z) - TOPS) return surface;
             BlockState top = surface.top();
             Block ground = built.sequence.ground();
             // Where the sequence has its own loose ground, as Monument Valley's red sand, its flats are all of it.
             // A flat here is anything short of three block steps across the column, so the corner of a single
             // step, where it turns diagonally, keeps the sand rather than lining every gentle contour with rock.
-            boolean loose = ground != null && (top.is(Blocks.GRASS_BLOCK) || steep <= FLAT), soil = loose;
+            boolean loose = ground != null && (top.is(Blocks.GRASS_BLOCK) || steep <= flat), soil = loose;
             for (Block b : SOIL) if (top.is(b)) { soil = true; break; }
-            if (!soil || steep > FLAT) {
+            if (!soil || steep > flat) {
                 BlockState rock = at(y);
                 return new Surface(badlands, rock, rock, 0, 0, 0, 0, 0, false);
             }
@@ -291,29 +303,38 @@ public final class Strata {
         Zone near = zone(Math.round(gx + 0.4 * wiggle.getValue(z / 2300.0, x / 2300.0 + 17)),
                 Math.round(gz + 0.4 * wiggle.getValue(x / 2300.0 + 53, z / 2300.0)));
         double datum = datum(x, z) + 3 * wiggle.getValue(x / 700.0, z / 700.0);
-        return new Layers(built[sequence(near)], datum, sea);
+        return new Layers(built[sequence(near)], datum, sea, x, z);
     }
 
     /** Least fraction of the high ground within reach whose tops stand at the datum, for broad level tops: tablelands. */
     static final double TABLELAND = 0.08;
     /** Least depth, in metres, that canyons cut the country within reach under its datum. */
     static final double INCISED = 250;
+    /**
+     * Least rise, in metres, across a datum cell for it to hold a wall: a cliff or a canyon's side, steeper on
+     * average than one in three across the cell; and the least share of the cells within reach that hold one. Canyon country
+     * has walls all through it, as do the lone buttes of Monument Valley; rolling steppe and plains, however
+     * dry and level their tops, have none, and their gentle slopes would show the beds as broad stripes.
+     */
+    static final double WALL = 150, WALLS = 0.01;
     /** Metres a cell's top may stand under the datum, carried back over its distance at the dip, and still count among the tops. */
     private static final double TOP = 80;
 
     /**
      * The country around a datum cell corner, within {@link #REACH}: its datum, its lowest ground,
-     * the fractions of its high cells and of all its cells whose tops reach the datum, and whether it is dry.
+     * the fractions of its high cells and of all its cells whose tops reach the datum, whether it is
+     * dry, and the fraction of its cells that hold a wall ({@link #WALL}).
      */
-    record Zone(float datum, float floor, float tops, float share, boolean arid) {
-        /** How surely the country is layered: dry, of broad level tops, and cut deep. */
+    record Zone(float datum, float floor, float tops, float share, boolean arid, float walls) {
+        /** How surely the country is layered: dry, of broad level tops, cut deep, and walled. */
         double layered() {
             if (!arid) return 0;
-            return Math.min(Mth.clamp((tops - TABLELAND) / 0.1 + 0.5, 0, 1), Mth.clamp((datum - floor - INCISED) / 100 + 0.5, 0, 1));
+            return Math.min(Math.min(Mth.clamp((tops - TABLELAND) / 0.1 + 0.5, 0, 1), Mth.clamp((datum - floor - INCISED) / 100 + 0.5, 0, 1)),
+                    Mth.clamp((walls - WALLS) / WALLS + 0.5, 0, 1));
         }
     }
 
-    private static final Zone WET = new Zone(0, 0, 0, 0, false);
+    private static final Zone WET = new Zone(0, 0, 0, 0, false, 0);
 
     /**
      * Which sequence a country takes: the Grand Canyon's where it is cut deepest, through the most
@@ -362,21 +383,30 @@ public final class Strata {
             // Of the cells that rise above halfway down the cut, how many reach the datum: nearly all on a tableland, whose
             // rims stand level, but few among mountains, whose peaks and ridges stand at every height.
             double half = (datum + floor) / 2;
-            int high = 0, tops = 0, cells = 0;
+            int high = 0, tops = 0, cells = 0, walls = 0;
             for (int dj = -reach; dj < reach; dj++) for (int di = -reach; di < reach; di++) {
                 double distance = distance(di, dj, cellMetres);
                 if (distance > REACH) continue;
                 cells++;
                 float top = highest(i + di, j + dj);
+                if (top - lowest(i + di, j + dj) >= WALL) walls++;
                 if (top < half) continue;
                 high++;
                 if (top + DIP * distance >= datum - TOP) tops++;
             }
-            zone = new Zone(datum, floor, high == 0 ? 0 : tops / (float) high, tops / (float) Math.max(1, cells), true);
+            zone = new Zone(datum, floor, high == 0 ? 0 : tops / (float) high, tops / (float) Math.max(1, cells), true, walls / (float) Math.max(1, cells));
         }
         if (zones.size() > 262_144) zones.clear();
         zones.put(key, zone);
         return zone;
+    }
+
+    /** The highest ground, in metres, of the datum cell holding a block position and the eight around it. */
+    private double top(double x, double z) {
+        long i = (long) Math.floor(x / CELL), j = (long) Math.floor(z / CELL);
+        float best = -Float.MAX_VALUE;
+        for (long dj = -1; dj <= 1; dj++) for (long di = -1; di <= 1; di++) best = Math.max(best, highest(i + di, j + dj));
+        return best;
     }
 
     /** The datum at a block position: bilinear between the cell corners'. */

@@ -1973,7 +1973,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             Surface ground = imageryGround == null || built ? covered
                     : imageryGround.apply(covered, code, x, z, local.zone(), steep, voxel, (mix(x, 0x494D47L, z) >>> 11) * 0x1.0p-53);
             Strata.Layers rock = strata.layers(x, z, SEA + 0.5);
-            return rock == null ? ground : rock.dress(ground, y, steep);
+            return rock == null ? ground : rock.dress(ground, y, steep, voxel);
         }
         if (t < -8) {
             BlockState top = steep > 1.4 ? STONE : SNOW_BLOCK;
