@@ -70,6 +70,8 @@ public final class ServerCubeWorld extends CubeWorld {
     /** Players' cube positions and the reach around them, for workers deciding whether a request is still wanted. */
     private volatile int[] wantedAround = new int[0];
     private volatile int wantedH, wantedV;
+    /** Requests workers dropped as no longer wanted, to take off {@code pending} on the server thread. */
+    private final java.util.concurrent.ConcurrentLinkedQueue<Long> droppedKeys = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private final java.util.concurrent.atomic.LongAdder generated = new java.util.concurrent.atomic.LongAdder(), dropped = new java.util.concurrent.atomic.LongAdder();
     private final Set<BlockPos> changed = new HashSet<>();
     private final LongOpenHashSet changedColumns = new LongOpenHashSet();
@@ -160,7 +162,7 @@ public final class ServerCubeWorld extends CubeWorld {
         int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
         workers.execute(() -> {
             if (always || wanted(x, y, z)) { ready.add(produce(key, x, y, z)); generated.increment(); }
-            else { ready.add(skipped(key, x, y, z)); dropped.increment(); }
+            else { droppedKeys.add(key); dropped.increment(); }
         });
         return true;
     }
@@ -172,9 +174,6 @@ public final class ServerCubeWorld extends CubeWorld {
         for (int i = 0; i + 2 < at.length; i += 3) if (CubeOffsets.within(x - at[i], y - at[i + 1], z - at[i + 2], h, v)) return true;
         return false;
     }
-
-    /** A request a worker dropped: no section and no failure. */
-    private static Ready skipped(long key, int x, int y, int z) { return new Ready(key, x, y, z, null, List.of(), false, false, null); }
 
     private Ready produce(long key, int x, int y, int z) {
         try {
@@ -227,7 +226,6 @@ public final class ServerCubeWorld extends CubeWorld {
         pending.remove(result.key);
         if (cubes.containsKey(result.key)) return;
         if (result.section == null) {
-            if (result.failure == null) return;
             // Leave a gap and try again shortly rather than stall: the data may come back.
             if (retryAt.size() > 8192) retryAt.clear();
             retryAt.put(result.key, ticks + 100);
@@ -271,6 +269,7 @@ public final class ServerCubeWorld extends CubeWorld {
             if (result == null) break;
             adoptReady(result);
         }
+        for (Long key; (key = droppedKeys.poll()) != null; ) pending.remove(key.longValue());
         int h = horizontalRadius(), v = Cubic.VERTICAL_RADIUS;
         CubeOffsets offsets = CubeOffsets.of(h, v);
         syncWatchers();
