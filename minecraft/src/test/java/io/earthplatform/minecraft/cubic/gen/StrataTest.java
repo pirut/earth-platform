@@ -37,11 +37,11 @@ class StrataTest {
 
     @Test void rockFollowsTheSequenceDownToTheBasement() {
         Strata.Layers rock = canyon().layers(0, 20_000, 62.5);
-        // Kaibab Limestone at the rim: pale terracotta; Vishnu Schist and the basement in the inner gorge.
+        // Kaibab Limestone at the rim: pale terracotta; Vishnu Schist (deepslate, tuff, granite) and the basement in the inner gorge.
         var rim = rock.at(62 + 1995);
         assertTrue(rim.is(Blocks.WHITE_TERRACOTTA) || rim.is(Blocks.LIGHT_GRAY_TERRACOTTA), rim.toString());
         var gorge = rock.at(62 + 2000 - 1400);
-        assertTrue(gorge.is(Blocks.DEEPSLATE) || gorge.is(Blocks.GRANITE), gorge.toString());
+        assertTrue(gorge.is(Blocks.DEEPSLATE) || gorge.is(Blocks.GRANITE) || gorge.is(Blocks.TUFF), gorge.toString());
         assertTrue(rock.at(62 - 2000).is(Blocks.DEEPSLATE));
     }
 
