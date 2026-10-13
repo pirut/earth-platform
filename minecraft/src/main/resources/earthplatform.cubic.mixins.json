@@ -16,7 +16,22 @@
     "CubicRespawnMixin",
     "CubicSpawnerMixin",
     "CubicWeatherMixin",
-    "CubicServerWeatherMixin"
+    "CubicServerWeatherMixin",
+    "CubicPistonMixin",
+    "CubicFallingBlockMixin",
+    "CubicFallingEntityMixin",
+    "CubicScaffoldingMixin",
+    "CubicTreeGrowthMixin",
+    "CubicMushroomGrowthMixin",
+    "CubicVineMixin",
+    "CubicChorusFlowerMixin",
+    "CubicChorusFruitMixin",
+    "CubicTeleportMixin",
+    "CubicItemFrameMixin",
+    "CubicBeaconMixin",
+    "CubicWitherSkullMixin",
+    "CubicDripleafMixin",
+    "CubicDripstoneMixin"
   ],
   "client": [
     "CubicPredictionMixin",
