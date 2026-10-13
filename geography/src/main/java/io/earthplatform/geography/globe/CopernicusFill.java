@@ -20,17 +20,27 @@ import java.util.concurrent.*;
  *       there ends in a cliff.</li>
  * </ul>
  *
- * <p>Each degree square is checked once: Terrarium at zoom {@value #CHECK_ZOOM} against Copernicus
- * at overview {@value #CHECK_OVERVIEW} (about 120 m), at Copernicus's pixels. Their difference,
- * averaged over the {@code 2 * SMOOTH + 1} pixels square round each, gives a weight from 0 where
- * they agree within {@value #AGREE} m to 1 beyond {@value #DISAGREE} m. Survey noise, forests and
- * the two datasets' different pixels average out; a fill or a datum offset does not. Open sea in
- * Terrarium counts as agreeing when Copernicus has sea too, and is never weighed against
- * Copernicus land, so no land is made out of sea. A tile then moves each pixel that far toward
- * Copernicus, read at the overview nearest its own pixel size. The weights are one smooth field
- * whatever the zoom, so near and far terrain agree, and where they are 0, nearly everywhere, the
- * tiles are left exactly as they were. Copernicus's sea, exactly 0 m, becomes the tiles' open sea
- * where the weight is whole.
+ * <p>Each degree square is checked once, a sixteenth at a time: Terrarium at zoom {@value #CHECK_ZOOM}, as it was, against
+ * Copernicus at overview {@value #CHECK_OVERVIEW} (about 120 m), at Copernicus's pixels. Two
+ * averages of how far Terrarium stands above Copernicus give a weight from 0, where the tiles
+ * stand, to 1, where Copernicus does:
+ *
+ * <ul>
+ *   <li>over {@code 2 * WIDE + 1} pixels square (about 5 km), from {@value #OFFSET_AGREE} m to
+ *       {@value #OFFSET_DISAGREE} m: an offset of the whole ground;</li>
+ *   <li>over {@code 2 * SMOOTH + 1} pixels square (about 600 m), from {@value #AGREE} m to
+ *       {@value #DISAGREE} m plus a quarter of Copernicus's relief there: a fill. The relief keeps
+ *       steep ground, where the two datasets' pixels differ most, as it is.</li>
+ * </ul>
+ *
+ * <p>Only Terrarium standing above counts. Where it lies below, it is mostly bare-earth lidar
+ * under forest, which Copernicus, a surface model, tops with the canopy; pits are {@code
+ * repair}'s. Open sea in Terrarium counts as agreeing where Copernicus has sea too, and is never
+ * weighed against Copernicus land, so no land is made out of sea. A tile then moves each pixel
+ * that far toward Copernicus, read at the overview nearest its own pixel size. The weights are one
+ * smooth field whatever the zoom, so near and far terrain agree, and where they are 0, nearly
+ * everywhere, the tiles are left exactly as they were. Copernicus's sea, exactly 0 m, becomes the
+ * tiles' open sea where the weight is whole.
  */
 final class CopernicusFill {
     /** Coarsest zoom filled. Coarser zooms carry the bathymetry and stay as they are. */
@@ -41,16 +51,16 @@ final class CopernicusFill {
      */
     static final int CHECK_ZOOM = 11;
     static final int CHECK_OVERVIEW = 2;
-    /** Check pixels either side whose difference is averaged. */
+    /** Check pixels either side whose difference is averaged for a fill. */
     static final int SMOOTH = 2;
-    /** Average difference in metres up to which the tiles stand, and from which Copernicus does. */
-    static double AGREE = 10, DISAGREE = 25;
+    /** Average height in metres above Copernicus, beside its relief, up to which the tiles stand, and from which Copernicus does. */
+    static final double AGREE = 10, DISAGREE = 25;
     /** Share of Copernicus's relief in the narrow window added to both. */
-    static double RELIEF_SHARE = 0.25;
+    static final double RELIEF_SHARE = 0.25;
     /** Check pixels either side whose difference is averaged for an offset of the whole ground. */
-    static int WIDE = 20;
-    /** Wide average difference in metres up to which the tiles stand, and from which Copernicus does. */
-    static double OFFSET_AGREE = 8, OFFSET_DISAGREE = 16;
+    static final int WIDE = 20;
+    /** Wide average height in metres above Copernicus up to which the tiles stand, and from which Copernicus does. */
+    static final double OFFSET_AGREE = 8, OFFSET_DISAGREE = 16;
     /** Full-resolution Copernicus pixel height in metres. */
     private static final double COPERNICUS_METRES = 40_007_863.0 / 360 / CopernicusSource.ROWS_PER_DEGREE;
     /** Copernicus metres this close to 0 are sea. */
@@ -59,21 +69,28 @@ final class CopernicusFill {
 
     interface Tiles { float[] tile(int zoom, int x, int y); }
 
-    /** A degree square's weights at the check overview, 0 to 255, row-major from the north; null where all are 0. */
-    record Weights(int width, int height, byte[] weights) {
-        static final Weights NONE = new Weights(0, 0, null);
+    /** Parts a degree square is checked in, along each side, so a place's first tiles wait on a sixteenth of it. */
+    static final int PARTS = 4;
+
+    /**
+     * One part of a degree square's weights at the check overview: rows {@code row0} on and
+     * columns {@code column0} on of a square {@code width} x {@code height} check pixels, 0 to
+     * 255, row-major from the north; null where all are 0.
+     */
+    record Part(int width, int height, int row0, int column0, int rows, int columns, byte[] weights) {
+        static final Part NONE = new Part(0, 0, 0, 0, 0, 0, null);
     }
 
     private final CopernicusSource dem;
     private final Tiles tiles;
-    private final int maxSquares;
-    private final LinkedHashMap<Integer, Weights> squares = new LinkedHashMap<>(32, 0.75f, true);
-    private final Map<Integer, CompletableFuture<Weights>> inFlight = new ConcurrentHashMap<>();
+    private final int maxParts;
+    private final LinkedHashMap<Long, Part> parts = new LinkedHashMap<>(64, 0.75f, true);
+    private final Map<Long, CompletableFuture<Part>> inFlight = new ConcurrentHashMap<>();
 
-    CopernicusFill(CopernicusSource dem, Tiles tiles, int maxSquares) {
+    CopernicusFill(CopernicusSource dem, Tiles tiles, int maxParts) {
         this.dem = dem;
         this.tiles = tiles;
-        this.maxSquares = maxSquares;
+        this.maxParts = maxParts;
     }
 
     /** Moves a tile's pixels toward Copernicus by the weight where they stand. */
@@ -82,13 +99,9 @@ final class CopernicusFill {
         long size = (long) TerrariumTileSource.TILE_SIZE << zoom;
         double north = latitude(tileY * 256L, size), south = latitude((tileY + 1) * 256L, size);
         double west = tileX * 360.0 / (1 << zoom) - 180, east = (tileX + 1) * 360.0 / (1 << zoom) - 180;
-        // Squares the tile and its weights' reach touch: a weight near a square's edge reads the next square.
+        // Parts the tile and its weights' reach touch: a weight near a part's edge reads the next part.
         double margin = 0.02;
-        boolean any = false;
-        for (int s = (int) Math.floor(Math.max(-90, south - margin)); s <= Math.min(89, (int) Math.floor(north + margin)); s++)
-            for (int w = (int) Math.floor(west - margin); w <= (int) Math.floor(east + margin); w++)
-                any |= weights(s, wrapWest(w)).weights != null;
-        if (!any) return;
+        if (!any(Math.max(-89.9999, south - margin), Math.min(89.9999, north + margin), west - margin, east + margin)) return;
         double mid = Math.toRadians((north + south) / 2);
         double pixel = EARTH_CIRCUMFERENCE * Math.cos(mid) / size;
         int overview = (int) Math.max(0, Math.min(CopernicusSource.MAX_OVERVIEW, Math.floor(Math.log(pixel / COPERNICUS_METRES) / Math.log(2))));
@@ -113,53 +126,94 @@ final class CopernicusFill {
         }
     }
 
+    /** Whether any weight in a box of latitudes and longitudes is above 0. */
+    private boolean any(double south, double north, double west, double east) {
+        for (int s = (int) Math.floor(south); s <= (int) Math.floor(north); s++)
+            for (int w = (int) Math.floor(west); w <= (int) Math.floor(east); w++) {
+                int square = wrapWest(w);
+                int[] dims = dem.size(s + 0.5, square + 0.5, CHECK_OVERVIEW);
+                if (dims == null) continue;
+                int width = dims[0], height = dims[1];
+                // Check rows and columns of this square the box covers.
+                int top = row(Math.min(s + 1, north), s, height), bottom = row(Math.max(s, south), s, height);
+                int left = column(Math.max(w, west), w, width), right = column(Math.min(w + 1, east), w, width);
+                for (int pr = part(top, height); pr <= part(bottom, height); pr++)
+                    for (int pc = part(left, width); pc <= part(right, width); pc++)
+                        if (part(s, square, width, height, pr, pc).weights != null) return true;
+            }
+        return false;
+    }
+
+    private static int row(double latitude, int south, int height) { return (int) Math.max(0, Math.min(height - 1, Math.floor((south + 1 - latitude) * height))); }
+    private static int column(double longitude, int west, int width) { return (int) Math.max(0, Math.min(width - 1, Math.floor((longitude - west) * width))); }
+
+    /** The part along a side of {@code n} check pixels holding pixel {@code i}: part p holds {@code p*n/PARTS} up to {@code (p+1)*n/PARTS}. */
+    private static int part(int i, int n) {
+        int p = Math.min(PARTS - 1, i * PARTS / n);
+        while (p > 0 && p * n / PARTS > i) p--;
+        while (p < PARTS - 1 && (p + 1) * n / PARTS <= i) p++;
+        return p;
+    }
+
     /** The weight at a point, bilinear between check pixels, reaching into the squares around at the edges. */
     double weight(double latitude, double longitude) {
         longitude = CopernicusSource.wrap(longitude);
         int south = Math.min(89, (int) Math.floor(latitude)), west = (int) Math.floor(longitude);
-        Weights here = weights(south, west);
-        if (here.width == 0) return 0;
-        double fy = (south + 1 - latitude) * here.height - 0.5, fx = (longitude - west) * here.width - 0.5;
+        int[] dims = dem.size(latitude, longitude, CHECK_OVERVIEW);
+        if (dims == null) return 0;
+        int width = dims[0], height = dims[1];
+        double fy = (south + 1 - latitude) * height - 0.5, fx = (longitude - west) * width - 0.5;
         int y0 = (int) Math.floor(fy), x0 = (int) Math.floor(fx);
         double ty = fy - y0, tx = fx - x0;
+        Part here = part(south, west, width, height, part(Math.max(0, y0), height), part(Math.max(0, x0), width));
         double v00 = at(here, south, west, y0, x0), v01 = at(here, south, west, y0, x0 + 1);
         double v10 = at(here, south, west, y0 + 1, x0), v11 = at(here, south, west, y0 + 1, x0 + 1);
         return ((v00 * (1 - tx) + v01 * tx) * (1 - ty) + (v10 * (1 - tx) + v11 * tx) * ty) / 255;
     }
 
-    /** A check pixel by row and column, either of which may lie past the square's edge: then the nearest pixel there. */
-    private double at(Weights here, int south, int west, int row, int column) {
-        if (row < 0 || column < 0 || row >= here.height || column >= here.width) {
-            double latitude = south + 1 - (row + 0.5) / here.height, longitude = CopernicusSource.wrap(west + (column + 0.5) / here.width);
+    /**
+     * A check pixel of a square by row and column, from the part given when it holds it, else the
+     * part that does; either may lie past the square's edge: then the nearest pixel there.
+     */
+    private double at(Part here, int south, int west, int row, int column) {
+        int width = here.width, height = here.height;
+        boolean moved = false;
+        if (row < 0 || column < 0 || row >= height || column >= width) {
+            double latitude = south + 1 - (row + 0.5) / height, longitude = CopernicusSource.wrap(west + (column + 0.5) / width);
             if (latitude >= 90 || latitude <= -90) {
-                row = Math.max(0, Math.min(here.height - 1, row));
-                column = Math.max(0, Math.min(here.width - 1, column));
+                row = Math.max(0, Math.min(height - 1, row));
+                column = Math.max(0, Math.min(width - 1, column));
             } else {
                 south = Math.min(89, (int) Math.floor(latitude));
                 west = (int) Math.floor(longitude);
-                here = weights(south, west);
-                if (here.width == 0) return 0;
-                row = (int) Math.max(0, Math.min(here.height - 1, Math.floor((south + 1 - latitude) * here.height)));
-                column = (int) Math.max(0, Math.min(here.width - 1, Math.floor((longitude - west) * here.width)));
+                int[] dims = dem.size(latitude, longitude, CHECK_OVERVIEW);
+                if (dims == null) return 0;
+                width = dims[0];
+                height = dims[1];
+                row = row(latitude, south, height);
+                column = column(longitude, west, width);
+                moved = true;
             }
         }
-        return here.weights == null ? 0 : here.weights[row * here.width + column] & 0xFF;
+        if (moved || row < here.row0 || column < here.column0 || row >= here.row0 + here.rows || column >= here.column0 + here.columns)
+            here = part(south, west, width, height, part(row, height), part(column, width));
+        return here.weights == null ? 0 : here.weights[(row - here.row0) * here.columns + column - here.column0] & 0xFF;
     }
 
-    Weights weights(int south, int west) {
-        int key = (south + 90) * 1000 + west + 180;
-        synchronized (squares) {
-            Weights hit = squares.get(key);
+    Part part(int south, int west, int width, int height, int partRow, int partColumn) {
+        long key = ((long) (south + 90) * 1000 + west + 180) * PARTS * PARTS + partRow * PARTS + partColumn;
+        synchronized (parts) {
+            Part hit = parts.get(key);
             if (hit != null) return hit;
         }
-        CompletableFuture<Weights> mine = new CompletableFuture<>(), shared = inFlight.putIfAbsent(key, mine);
+        CompletableFuture<Part> mine = new CompletableFuture<>(), shared = inFlight.putIfAbsent(key, mine);
         if (shared == null) {
             try {
-                Weights computed = check(south, west);
-                synchronized (squares) {
-                    squares.put(key, computed);
-                    var iterator = squares.entrySet().iterator();
-                    while (squares.size() > maxSquares && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+                Part computed = check(south, west, width, height, partRow, partColumn);
+                synchronized (parts) {
+                    parts.put(key, computed);
+                    var iterator = parts.entrySet().iterator();
+                    while (parts.size() > maxParts && iterator.hasNext()) { iterator.next(); iterator.remove(); }
                 }
                 mine.complete(computed);
             } catch (Throwable failure) {
@@ -180,21 +234,21 @@ final class CopernicusFill {
         }
     }
 
-    /** Checks one degree square: see the class notes. */
-    private Weights check(int south, int west) {
-        int[] dims = dem.size(south + 0.5, west + 0.5, CHECK_OVERVIEW);
-        if (dims == null) return Weights.NONE;
-        int width = dims[0], height = dims[1], m = WIDE, across = width + 2 * m, down = height + 2 * m;
-        // The difference and Copernicus over the square and a margin round it, NaN where unknown.
+    /** Checks one part of a degree square, {@code width} x {@code height} check pixels: see the class notes. */
+    private Part check(int south, int west, int width, int height, int partRow, int partColumn) {
+        int row0 = partRow * height / PARTS, column0 = partColumn * width / PARTS;
+        int rows = (partRow + 1) * height / PARTS - row0, columns = (partColumn + 1) * width / PARTS - column0;
+        int m = WIDE, across = columns + 2 * m, down = rows + 2 * m;
+        // The difference and Copernicus over the part and a margin round it, NaN where unknown.
         float[] difference = new float[across * down], copernicus = new float[across * down];
         Terrarium terrarium = new Terrarium();
         for (int r = 0; r < down; r++) {
-            double latitude = south + 1 - (r - m + 0.5) / height;
+            double latitude = south + 1 - (row0 + r - m + 0.5) / height;
             for (int c = 0; c < across; c++) {
                 int i = r * across + c;
                 difference[i] = copernicus[i] = Float.NaN;
                 if (Math.abs(latitude) >= 90) continue;
-                double longitude = west + (c - m + 0.5) / width;
+                double longitude = west + (column0 + c - m + 0.5) / width;
                 double cop = dem.metres(latitude, longitude, CHECK_OVERVIEW);
                 if (Double.isNaN(cop)) continue;
                 copernicus[i] = (float) cop;
@@ -203,15 +257,15 @@ final class CopernicusFill {
                 else if (cop < SEA_CRUMB) difference[i] = 0;
             }
         }
-        Window wide = new Window(difference, across, down), narrow = wide;
-        byte[] weights = new byte[width * height];
+        Window window = new Window(difference, across, down);
+        byte[] weights = new byte[rows * columns];
         boolean any = false;
-        for (int r = 0; r < height; r++) for (int c = 0; c < width; c++) {
+        for (int r = 0; r < rows; r++) for (int c = 0; c < columns; c++) {
             int pr = r + m, pc = c + m;
-            double offset = wide.mean(pr - WIDE, pc - WIDE, pr + WIDE, pc + WIDE);
+            double offset = window.mean(pr - WIDE, pc - WIDE, pr + WIDE, pc + WIDE);
             double weight = ramp(offset, OFFSET_AGREE, OFFSET_DISAGREE);
             if (weight < 1) {
-                double fill = narrow.mean(pr - SMOOTH, pc - SMOOTH, pr + SMOOTH, pc + SMOOTH);
+                double fill = window.mean(pr - SMOOTH, pc - SMOOTH, pr + SMOOTH, pc + SMOOTH);
                 if (fill > AGREE) {
                     float low = Float.MAX_VALUE, high = -Float.MAX_VALUE;
                     for (int j = pr - SMOOTH; j <= pr + SMOOTH; j++) for (int k = pc - SMOOTH; k <= pc + SMOOTH; k++) {
@@ -223,10 +277,10 @@ final class CopernicusFill {
                 }
             }
             int quantised = (int) Math.round(weight * 255);
-            weights[r * width + c] = (byte) quantised;
+            weights[r * columns + c] = (byte) quantised;
             any |= quantised > 0;
         }
-        return new Weights(width, height, any ? weights : null);
+        return new Part(width, height, row0, column0, rows, columns, any ? weights : null);
     }
 
     /** 0 up to {@code from}, 1 from {@code to}, smooth between. */

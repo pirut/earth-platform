@@ -90,7 +90,7 @@ public final class TerrariumTileSource implements AutoCloseable {
      */
     public TerrariumTileSource(URI base, Path cacheRoot, boolean allowNetwork, int maxTilesInMemory, int maxConcurrentTransfers, Duration timeout,
                                CopernicusSource copernicus) throws IOException {
-        this.fill = copernicus == null ? null : new CopernicusFill(copernicus, this::cleaned, 48);
+        this.fill = copernicus == null ? null : new CopernicusFill(copernicus, this::cleaned, 512);
         this.base = Objects.requireNonNull(base);
         if (!base.toString().endsWith("/")) throw new IllegalArgumentException("Tile base URI must end with /");
         if (maxTilesInMemory < 1 || maxConcurrentTransfers < 1 || timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("Invalid tile source budget");
