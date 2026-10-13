@@ -368,6 +368,21 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Imagery ground rules for this world's grid and seed, reading from any imagery source; for {@link ImageryCalibration}. */
     ImageryGround imageryGround(ImagerySource source) { return new ImageryGround(source, grid, seed); }
 
+    /**
+     * Blocks each way over which a slope must hold for bare rock. The 1-5 m elevation data carry
+     * roads' cuts and embankments: steep for a few blocks, then flat, so they drew straight lines
+     * of stone along every road. Cliffs and rocky mountainsides stay steep over this reach.
+     */
+    private static final int BROAD = 12;
+
+    /** The rise per run over {@link #BROAD} blocks each way, in the units of a column's steepness. */
+    private double broadSteep(int x, int z) {
+        GlobalElevation dem = elevation[zoom(1)];
+        double dx = dem.metres(x + 0.5 + BROAD, z + 0.5) - dem.metres(x + 0.5 - BROAD, z + 0.5);
+        double dz = dem.metres(x + 0.5, z + 0.5 + BROAD) - dem.metres(x + 0.5, z + 0.5 - BROAD);
+        return (Math.abs(dx) + Math.abs(dz)) / BROAD / 2.4;
+    }
+
     /** A column's surface with the given imagery, or none, having the last word; for {@link ImageryCalibration}. */
     Surface surface(int x, int z, int y, int water, int slope, int voxel, @Nullable ImageryGround imageryGround) {
         Local local = cover == null ? null : local(x, z, y);
@@ -382,6 +397,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         // Summed block steps over two blocks each way, as a rough rise per run.
         double steep = slope / 2.4;
+        if (steep > 0.6 && voxel < BROAD && broadSteep(x, z) < 0.55) {
+            // Steep only over a few blocks, as at a road cut, embankment or ditch: ground, not bare rock.
+            steep = 0.6;
+            slope = 1;
+        }
         long r = mix(x, 7, z);
         int roll = (int) Math.floorMod(r, 100);
         if (y <= SEA + 2 && nearSea(x, z)) {
