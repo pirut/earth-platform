@@ -174,7 +174,6 @@ public final class EarthGenerator extends SurfaceGenerator {
         }, badlands);
         towers = new Towers(seed, new Towers.Globe() {
             @Override public double metres(double x, double z) { return elevation[TOWER_ZOOM].metres(x, z); }
-            @Override public GeoPoint geographic(double x, double z) { return grid.geographic(x, z); }
             @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
         });
     }
@@ -219,7 +218,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Zoom of the elevation the far terrain's surveys (strata, salt pans) read. */
     private static final int FAR_ZOOM = 11;
-    /** Zoom the towers find tops and gorges in, near and far alike: pixels about 20 metres across. */
+    /** Zoom the towers find hills in, near and far alike: pixels about 20 metres across. */
     private static final int TOWER_ZOOM = 13;
     /** Zoom of the coarsest elevation the far levels read. */
     private static final int COARSEST_ZOOM = 9;

@@ -1,134 +1,108 @@
 package io.earthplatform.minecraft.cubic.gen;
 
-import io.earthplatform.geography.GeoPoint;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.Arrays;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
 import net.minecraft.world.level.levelgen.synth.SimplexNoise;
 
 /**
- * Tower karst and pillar forests, which the elevation tiles are too coarse to hold. Ha Long Bay's
- * limestone towers stand sheer-sided out of the sea, a hundred or two metres tall and about as
- * wide, where the tiles have them as rounded cones; Guilin's crowd so close that the tiles merge
- * each cluster into one broad hill; Zhangjiajie's sandstone pillars, thousands of them a few dozen
- * metres across, are not in them at all, only the gorges they stand in. Towers take a steep
- * profile between the ground round them and their own tops; clustered peaks rise from a low
- * pedestal of their hill, each on its own site; pillars rise from the slopes of their gorges
- * toward the rims.
+ * Hills that stand alone and sheer, which the elevation tiles are too coarse to hold: tower karst
+ * as in Ha Long Bay, Phang Nga, Guilin, Trang An and Viñales, sea stacks, granite domes such as
+ * the Sugarloaf, and desert buttes such as Monument Valley's. They rise a hundred or two metres from flat ground or the sea, about as wide as
+ * they are tall, where the tiles have them as rounded cones. Nothing marks where they are but
+ * their shape in the tiles: a hill at least {@value #TALL_RISE} m over the ground round it, narrow
+ * for its height, standing on ground that lies low all round it and over much of the land round
+ * it. Rolling hills, mountain ranges, volcanic cones, knolls among gullies and a range's edge
+ * beside a plain all fail one of those, and stay as they are.
+ * Such a hill takes a steep profile between the ground round it and its top.
+ *
+ * <p>Clusters the tiles merge into one broad hill, as many of Guilin's, and pillars the tiles do not
+ * hold at all, as Zhangjiajie's among their gorges, show no such shape, so they keep the tiles' form.
  */
 public final class Towers {
-    /** What the towers need from the world: an elevation model fine enough to see a tower, and the map projection. */
+    /** What the towers need from the world: an elevation model fine enough to see a tower, and the map projection's scale. */
     public interface Globe {
         /** Ground height in metres above the sea at a block position. */
         double metres(double x, double z);
-        GeoPoint geographic(double x, double z);
         double metresPerBlock(double z);
     }
 
-    enum Kind { TOWERS, PEAKS, PILLARS }
-
-    /**
-     * A region of tower karst, clustered peaks or pillars between latitudes and longitudes. Towers
-     * find their tops within {@code reach} metres and stand their walls {@code wall} of the way up
-     * from the low ground round them; the other kinds use neither.
-     */
-    record Region(String name, Kind kind, double wall, double reach, double south, double west, double north, double east) {
-        /** How far inside the region a point lies, from 0 at its edge to 1 a fade's width in, or less than 0 outside. */
-        double inside(double lat, double lon) {
-            double edge = Math.min(Math.min(lat - south, north - lat), Math.min(lon - west, east - lon));
-            return edge / FADE;
-        }
-    }
-
-    /** Degrees over which a region's shaping fades in from its edge. */
-    private static final double FADE = 0.02;
-
-    static final List<Region> REGIONS = List.of(
-            new Region("Wulingyuan, Zhangjiajie", Kind.PILLARS, 0, 0, 29.29, 110.37, 29.42, 110.58),
-            new Region("Ha Long, Bai Tu Long and Lan Ha Bays", Kind.TOWERS, 0.27, 90, 20.66, 106.93, 21.25, 107.78),
-            new Region("Guilin and Yangshuo", Kind.PEAKS, 0, 0, 24.64, 110.18, 25.36, 110.64),
-            new Region("Trang An and Tam Coc", Kind.PEAKS, 0, 0, 20.16, 105.80, 20.33, 106.00),
-            new Region("Phang Nga Bay and Krabi", Kind.TOWERS, 0.27, 90, 7.95, 98.45, 8.42, 98.92));
-
-    /** Blocks across a cell of the top and base envelopes. */
-    private static final int TOP_CELL = 16, BASE_CELL = 64;
-    /** Metres round a tower within which the low ground at its foot is sought. */
-    private static final double BASE_REACH = 260;
-    /** Metres round a pillar within which the rim of its gorge is sought. */
-    private static final double RIM_REACH = 320;
+    /** Blocks across a cell of the top and base envelopes, and of the survey for hilltops. */
+    private static final int TOP_CELL = 16, BASE_CELL = 64, HILL_CELL = 64;
+    /** Blocks across a cell of the field of how much the hills round a column are towers. */
+    private static final int FIELD_CELL = 16;
+    /** Hill cells across a block whose towers are listed together, so the field looks up a few blocks rather than every cell near it. */
+    private static final int BLOCK_CELLS = 4;
+    /** Metres round a column within which its top, and the low ground at its foot, are sought. */
+    private static final double TOP_REACH = 90, BASE_REACH = 260;
     /** Rise in metres from base to top under which hills stay as they are, and over which they are towers. */
     private static final double LOW_RISE = 25, TALL_RISE = 50;
-    /** Metres between pillar sites, and their footprints' radii. */
-    private static final double PILLAR_SPACING = 75, PILLAR_MIN_RADIUS = 6, PILLAR_MAX_RADIUS = 15;
-    /** Share of pillar sites with a pillar on them. */
-    private static final double PILLAR_SHARE = 0.7;
-    /** Metres a gorge must lie below its rim for pillars to stand in it. */
-    private static final double PILLAR_DEPTH = 40;
-    /** Metres between peak sites of clustered karst, and the share of them with a peak. */
-    private static final double PEAK_SPACING = 240, PEAK_SHARE = 0.85;
-    /** Share of a hill's rise above its foot that the ground between clustered peaks keeps. */
-    private static final double PEAK_SADDLE = 0.3;
+    /** Share of a tower's rise up to which its foot climbs gently before its walls. */
+    private static final double WALL = 0.27;
+    /**
+     * Metres round a hilltop surveyed for its shape: its base is the lowest ground within it, its
+     * width its area above half its rise, and the ground lies low round it where the circle at
+     * this distance lies within a fifth of its rise of the base.
+     */
+    private static final double HILL_REACH = 300;
+    /** Rays and steps along each that the survey of a hilltop samples. */
+    private static final int RAYS = 16, STEPS = 15;
+    /** Rise over the radius of its area above half its rise from which a hill is narrow enough for a tower, fully so a tenth over. */
+    private static final double NARROW = 0.4;
+    /** Share of the circle round a hill lying low from which it stands alone, fully so a tenth over. */
+    private static final double ALONE = 0.45;
+    /**
+     * Share of the ground from half to all of {@value #HILL_REACH} m round a hill lying low from which
+     * it stands on a plain or the sea, fully so a tenth over. A knoll among ridges and gullies, as in
+     * loess or on a volcano's flank, has the circle low only where gullies cross it.
+     */
+    private static final double PLAIN = 0.28;
+    /** Metres from its top within which a tower is shaped in full, and past which not at all. */
+    private static final double NEAR = 150, FAR = 300;
+    /** Far levels' voxel size past which towers keep the tiles' form: a few voxels across, the cones read the same. */
+    private static final int MAX_VOXEL = 32;
 
-    private final long seed;
     private final Globe globe;
     private final SimplexNoise outline;
     /** Lowest and highest ground of each envelope cell, by cell size. */
     private final ConcurrentHashMap<Long, float[]> topCells = new ConcurrentHashMap<>(), baseCells = new ConcurrentHashMap<>();
-    private final Envelope bases = new Envelope(BASE_CELL, BASE_REACH, false), rims = new Envelope(BASE_CELL, RIM_REACH, true);
-    private final Map<Region, Envelope> tops = new HashMap<>();
-    private final ConcurrentHashMap<Long, double[]> pillars = new ConcurrentHashMap<>(), peaks = new ConcurrentHashMap<>();
+    private final Envelope bases = new Envelope(BASE_CELL, BASE_REACH, false), tops = new Envelope(TOP_CELL, TOP_REACH, true);
+    /** The towers of each block of hill cells: each one's top, x and z, and how much it is a tower. */
+    private final ConcurrentHashMap<Long, double[][]> blocks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Float> field = new ConcurrentHashMap<>();
 
     public Towers(long seed, Globe globe) {
-        this.seed = seed;
         this.globe = globe;
         this.outline = new SimplexNoise(new LegacyRandomSource(seed ^ 0x544F57455253L));
-        for (Region region : REGIONS) if (region.kind == Kind.TOWERS) tops.put(region, new Envelope(TOP_CELL, region.reach, true));
     }
 
     /**
-     * Ground metres at a block position, {@code metres} as the elevation has them, shaped into
-     * towers, peaks or pillars where the column lies in one of the {@link #REGIONS}. Far levels
-     * {@code voxel} blocks across widen peaks and pillars by about a third of a voxel, so thin ones
-     * still show, and keep none past 64 and 32 blocks.
+     * Ground metres at a block position, {@code metres} as the elevation has them, shaped into a
+     * tower's profile as far as the hills round the column are towers ({@link #towerness}).
      */
     public double shape(int x, int z, double metres, int voxel) {
-        if (metres <= 0) return metres;
-        GeoPoint p = globe.geographic(x + 0.5, z + 0.5);
-        for (Region region : REGIONS) {
-            double weight = region.inside(p.latitude(), p.longitude());
-            if (weight <= 0) continue;
-            double shaped = switch (region.kind) {
-                case TOWERS -> tower(region, x, z, metres);
-                case PEAKS -> peak(x, z, metres, voxel);
-                case PILLARS -> pillar(x, z, metres, voxel);
-            };
-            return Mth.lerp(Math.min(1, weight), metres, shaped);
-        }
-        return metres;
+        if (metres <= 0 || voxel > MAX_VOXEL) return metres;
+        double weight = towerness(x + 0.5, z + 0.5);
+        if (weight <= 0) return metres;
+        return Mth.lerp(weight, metres, tower(x, z, metres));
     }
 
-    /** Whether a block position lies in one of the {@link #REGIONS}, where small steep islands are real towers. */
-    public boolean covers(int x, int z) {
-        GeoPoint p = globe.geographic(x + 0.5, z + 0.5);
-        for (Region region : REGIONS) if (region.inside(p.latitude(), p.longitude()) > 0) return true;
-        return false;
-    }
+    /** Whether a block position lies by a tower ({@link #towerness}), where small steep islands are real towers. */
+    public boolean covers(int x, int z) { return towerness(x + 0.5, z + 0.5) > 0; }
 
     /**
      * A hill made a tower: height above the low ground round it, as a share of its top's, keeps a
-     * gentle foot up to the region's wall, climbs nearly all the rest in a sheer face, and over
-     * that keeps the hill's own rounded crown. Where the wall stands wanders a little, so a
-     * tower's outline is not a contour of the hill's.
+     * gentle foot up to its wall, climbs nearly all the rest in a sheer face, and over that keeps
+     * the hill's own rounded crown. Where the wall stands wanders a little, so a tower's outline is
+     * not a contour of the hill's.
      */
-    private double tower(Region region, int x, int z, double metres) {
-        double top = tops.get(region).at(x, z), base = Math.max(0, bases.at(x, z));
+    private double tower(int x, int z, double metres) {
+        double top = tops.at(x, z), base = Math.max(0, bases.at(x, z));
         double rise = top - base;
         if (rise < LOW_RISE || metres >= top || metres <= base) return metres;
         double s = (metres - base) / rise;
-        double wall = region.wall + 0.07 * outline.getValue(x / 37.0, z / 37.0), a = wall - 0.08, b = wall + 0.08;
+        double wall = WALL + 0.07 * outline.getValue(x / 37.0, z / 37.0), a = wall - 0.08, b = wall + 0.08;
         double foot = 0.6 * a, crown = 0.9;
         double t = s < a ? s * foot / a : s < b ? foot + (crown - foot) * smooth((s - a) / (b - a)) : crown + (1 - crown) * (s - b) / (1 - b);
         double shaped = base + t * rise;
@@ -136,102 +110,112 @@ public final class Towers {
     }
 
     /**
-     * Ground of clustered karst, where the elevation holds a cluster of peaks only as one broad
-     * hill: the hill sinks to a low pedestal, and on it peak sites each hold a peak or not, as tall
-     * as the hill is at the peak's centre, sheer-sided under a rounded crown and ragged in outline.
-     * Far levels past 64 blocks keep the hill.
+     * How much the hills round a block position are towers, from 0 to 1: the most of any hilltop
+     * near it, in full within {@value #NEAR} m of the top and fading out by {@value #FAR} m.
+     * Bilinear between the corners of a coarse grid, each holding the most at that corner.
      */
-    private double peak(int x, int z, double metres, int voxel) {
-        if (voxel > 64) return metres;
-        double base = Math.max(0, bases.at(x, z));
-        if (metres <= base) return metres;
-        double spacing = Math.round(PEAK_SPACING / globe.metresPerBlock(z));
-        int ci = Mth.floor(x / spacing), cj = Mth.floor(z / spacing);
-        double ragged = 6 * outline.getValue(x / 23.0, z / 23.0) + 2.5 * outline.getValue(x / 7.0 + 40, z / 7.0);
-        double rise = metres - base, best = base + PEAK_SADDLE * rise;
-        for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
-            double[] site = peakSite(ci + di, cj + dj, spacing);
-            if (site == null) continue;
-            double dx = x + 0.5 - site[0], dz = z + 0.5 - site[1];
-            double q = (Math.sqrt(dx * dx + dz * dz) + ragged) / (site[2] + 0.35 * (voxel - 1));
-            if (q >= 1) continue;
-            // A rounded crown to seven tenths of the way out, then a sheer face.
-            double f = q < 0.7 ? 1 - 0.5 * q * q : 0.755 * smooth((1 - q) / 0.3);
-            best = Math.max(best, site[4] + (site[3] - site[4]) * f);
-        }
-        // Low hills stay as they are.
-        return Mth.lerp(Mth.clamp((rise - LOW_RISE) / (TALL_RISE - LOW_RISE), 0, 1), metres, best);
+    double towerness(double x, double z) {
+        double gx = x / FIELD_CELL, gz = z / FIELD_CELL;
+        long i = (long) Math.floor(gx), j = (long) Math.floor(gz);
+        double fx = gx - i, fz = gz - j;
+        // Far voxels' middles lie on corners.
+        if (fx == 0 && fz == 0) return fieldCorner(i, j);
+        return Mth.lerp(fz, Mth.lerp(fx, fieldCorner(i, j), fieldCorner(i + 1, j)), Mth.lerp(fx, fieldCorner(i, j + 1), fieldCorner(i + 1, j + 1)));
     }
 
-    /** A peak site's centre x and z, radius in blocks, top and foot in metres, or null where none stands. */
-    private double[] peakSite(int i, int j, double spacing) {
-        long key = (long) i << 32 | j & 0xFFFFFFFFL;
-        double[] known = peaks.get(key);
-        if (known != null) return known.length == 0 ? null : known;
-        double[] site = new double[0];
-        if (unit(i, j, 10) < PEAK_SHARE) {
-            double cx = (i + 0.2 + 0.6 * unit(i, j, 11)) * spacing, cz = (j + 0.2 + 0.6 * unit(i, j, 12)) * spacing;
-            double top = globe.metres(cx, cz), foot = Math.max(0, bases.at(cx, cz));
-            if (top - foot > TALL_RISE) {
-                double radius = spacing * (0.3 + 0.22 * unit(i, j, 13));
-                // Peaks stand a little above the hill, whose survey rounds their tops off.
-                site = new double[]{cx, cz, radius, top + 0.15 * (top - foot) * unit(i, j, 14), foot + PEAK_SADDLE * (top - foot)};
-            }
-        }
-        if (peaks.size() > 1 << 16) peaks.clear();
-        peaks.putIfAbsent(key, site);
-        return site.length == 0 ? null : site;
-    }
-
-    /**
-     * Ground under a pillar of a pillar forest: the pillar sites round the column each hold a
-     * pillar or not, and one standing in a gorge rises from the gorge's side toward its rim, to a
-     * height of its own, over a footprint with a ragged edge. Off the pillars the ground is the
-     * gorge's own.
-     */
-    private double pillar(int x, int z, double metres, int voxel) {
-        if (voxel > 32) return metres;
-        // Whole blocks, so every column in the region finds the same sites.
-        double spacing = Math.round(PILLAR_SPACING / globe.metresPerBlock(z));
-        int ci = Mth.floor(x / spacing), cj = Mth.floor(z / spacing);
-        double best = metres;
-        // Ragged edges: the distance to a pillar's centre wanders by a few blocks.
-        double ragged = 2.5 * outline.getValue(x / 5.0, z / 5.0) + 1.2 * outline.getValue(x / 2.3 + 40, z / 2.3);
-        for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
-            double[] site = site(ci + di, cj + dj, spacing);
-            if (site == null) continue;
-            double dx = x + 0.5 - site[0], dz = z + 0.5 - site[1];
-            double d = Math.sqrt(dx * dx + dz * dz) + ragged, r = site[2] + 0.35 * (voxel - 1);
-            if (d >= r) continue;
-            double q = d / r;
-            best = Math.max(best, site[3] - 3 * q * q);
-        }
+    private float fieldCorner(long i, long j) {
+        long key = i << 32 ^ (j & 0xFFFFFFFFL);
+        Float known = field.get(key);
+        if (known != null) return known;
+        double cx = i * (double) FIELD_CELL, cz = j * (double) FIELD_CELL, metresPerBlock = globe.metresPerBlock(cz);
+        double far = FAR / metresPerBlock, near = NEAR / metresPerBlock;
+        int span = HILL_CELL * BLOCK_CELLS;
+        float best = 0;
+        for (long bj = Math.floorDiv((long) Math.floor(cz - far), span); bj <= Math.floorDiv((long) Math.floor(cz + far), span); bj++)
+            for (long bi = Math.floorDiv((long) Math.floor(cx - far), span); bi <= Math.floorDiv((long) Math.floor(cx + far), span); bi++)
+                for (double[] hill : towers(bi, bj)) {
+                    if (hill[2] <= best) continue;
+                    double d = Math.hypot(hill[0] - cx, hill[1] - cz);
+                    if (d >= far) continue;
+                    best = (float) Math.max(best, hill[2] * (d <= near ? 1 : smooth((far - d) / (far - near))));
+                }
+        if (field.size() > 1 << 18) field.clear();
+        field.put(key, best);
         return best;
     }
 
-    /** A pillar site's centre x and z, radius in blocks and top in metres, or null where none stands. */
-    private double[] site(int i, int j, double spacing) {
-        long key = (long) i << 32 | j & 0xFFFFFFFFL;
-        double[] known = pillars.get(key);
-        if (known != null) return known.length == 0 ? null : known;
-        double[] site = new double[0];
-        double cx = (i + 0.15 + 0.7 * unit(i, j, 1)) * spacing, cz = (j + 0.15 + 0.7 * unit(i, j, 2)) * spacing;
-        // Pillars crowd some gorges and leave others to the forest.
-        double crowd = Mth.clamp(0.4 + 0.9 * outline.getValue(cx / 800.0 + 70, cz / 800.0), 0, 1);
-        if (unit(i, j, 0) < PILLAR_SHARE * crowd) {
-            double floor = globe.metres(cx, cz), rim = rims.at(cx, cz);
-            if (rim - floor > PILLAR_DEPTH) {
-                double metresPerBlock = globe.metresPerBlock(cz);
-                double radius = (PILLAR_MIN_RADIUS + (PILLAR_MAX_RADIUS - PILLAR_MIN_RADIUS) * unit(i, j, 3)) / metresPerBlock;
-                // Pillars come close to the rim, some all the way, and stand at least a third of the gorge's depth.
-                double top = floor + (rim - floor) * (0.55 + 0.45 * Math.sqrt(unit(i, j, 4)));
-                site = new double[]{cx, cz, radius, top};
+    /** The towers whose tops lie in a block of hill cells, each as {@link #survey} finds it. */
+    private double[][] towers(long bi, long bj) {
+        long key = bi << 32 ^ (bj & 0xFFFFFFFFL);
+        double[][] known = blocks.get(key);
+        if (known != null) return known;
+        double[][] found = new double[0][];
+        for (int dj = 0; dj < BLOCK_CELLS; dj++) for (int di = 0; di < BLOCK_CELLS; di++) {
+            double[] hill = survey(bi * BLOCK_CELLS + di, bj * BLOCK_CELLS + dj);
+            if (hill.length == 0) continue;
+            found = Arrays.copyOf(found, found.length + 1);
+            found[found.length - 1] = hill;
+        }
+        if (blocks.size() > 1 << 14) blocks.clear();
+        blocks.putIfAbsent(key, found);
+        return found;
+    }
+
+    private static final double[] NONE = new double[0];
+
+    /**
+     * A hill cell's top and how much its hill is a tower: its highest ground, where that is the
+     * highest of the cells round it, a hill {@value #TALL_RISE} m or more over the lowest ground
+     * within {@value #HILL_REACH} m, narrow for its rise ({@value #NARROW}) and with the ground low
+     * round most of it ({@value #ALONE}) and over much of the land round it ({@value #PLAIN}). Empty
+     * where the cell holds no such top.
+     */
+    private double[] survey(long i, long j) {
+        float[] own = cell(HILL_CELL, i, j);
+        // Most of the world has no hill a tower's height over the ground round it: the cell's samples and the low
+        // ground nearby, both kept for the envelopes, tell at once.
+        double x0 = i * (double) HILL_CELL, z0 = j * (double) HILL_CELL;
+        if (own[1] - Math.max(0, bases.at(x0 + HILL_CELL / 2.0, z0 + HILL_CELL / 2.0)) < LOW_RISE) return NONE;
+        for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) if ((di != 0 || dj != 0) && cell(HILL_CELL, i + di, j + dj)[1] > own[1]) return NONE;
+        // The top, to an eighth of the cell.
+        double tx = x0, tz = z0, top = -Double.MAX_VALUE;
+        for (int b = 0; b < 8; b++) for (int a = 0; a < 8; a++) {
+            double x = x0 + (a + 0.5) * HILL_CELL / 8, z = z0 + (b + 0.5) * HILL_CELL / 8, m = globe.metres(x, z);
+            if (m > top) { top = m; tx = x; tz = z; }
+        }
+        top = Math.max(0, top);
+        double metresPerBlock = globe.metresPerBlock(tz), step = HILL_REACH / STEPS / metresPerBlock;
+        double[] ground = new double[RAYS * STEPS];
+        double base = top;
+        for (int r = 0; r < RAYS; r++) {
+            double angle = 2 * Math.PI * r / RAYS, dx = Math.cos(angle) * step, dz = Math.sin(angle) * step;
+            for (int s = 0; s < STEPS; s++) {
+                double m = Math.max(0, globe.metres(tx + dx * (s + 1), tz + dz * (s + 1)));
+                ground[r * STEPS + s] = m;
+                base = Math.min(base, m);
             }
         }
-        if (pillars.size() > 1 << 16) pillars.clear();
-        pillars.putIfAbsent(key, site);
-        return site.length == 0 ? null : site;
+        double rise = top - base;
+        if (rise < TALL_RISE - 10) return NONE;
+        // Area above half the rise, each sample standing for its share of the ring it lies on; the share of the
+        // outermost ring lying low; and of the outer half of the circle.
+        double area = 0, low = 0, plain = 0, ringStep = HILL_REACH / STEPS;
+        for (int r = 0; r < RAYS; r++) {
+            for (int s = 0; s < STEPS; s++) {
+                double m = ground[r * STEPS + s];
+                if (m > base + rise / 2) area += 2 * Math.PI * (s + 1) * ringStep * ringStep / RAYS;
+                if (s >= STEPS / 2 && m <= base + 0.2 * rise) plain++;
+            }
+            if (ground[r * STEPS + STEPS - 1] <= base + 0.2 * rise) low++;
+        }
+        area += Math.PI * ringStep * ringStep / 4;
+        double narrow = rise / Math.sqrt(area / Math.PI), alone = low / RAYS;
+        plain /= RAYS * (STEPS - STEPS / 2);
+        double weight = ramp(rise, TALL_RISE - 10, TALL_RISE + 10) * ramp(narrow, NARROW, NARROW + 0.1) * ramp(alone, ALONE, ALONE + 0.1) * ramp(plain, PLAIN, PLAIN + 0.1);
+        return weight <= 0 ? NONE : new double[]{tx, tz, weight};
     }
+
+    private static double ramp(double v, double from, double to) { return Mth.clamp((v - from) / (to - from), 0, 1); }
 
     /**
      * The highest or lowest ground within {@code reach} metres of a block position, smoothed:
@@ -291,13 +275,4 @@ public final class Towers {
     }
 
     private static double smooth(double t) { return t * t * (3 - 2 * t); }
-
-    /** A number in [0, 1) for a pillar site and one of its properties. */
-    private double unit(int i, int j, int property) { return (mix(i, j, 0x50494C4C00L + property) >>> 11) * 0x1.0p-53; }
-
-    private long mix(long x, long y, long z) {
-        long h = seed ^ x * 0x9E3779B97F4A7C15L ^ y * 0xC2B2AE3D27D4EB4FL ^ z * 0x165667B19E3779F9L;
-        h ^= h >>> 33; h *= 0xFF51AFD7ED558CCDL; h ^= h >>> 33; h *= 0xC4CEB9FE1A85EC53L; h ^= h >>> 33;
-        return h;
-    }
 }
