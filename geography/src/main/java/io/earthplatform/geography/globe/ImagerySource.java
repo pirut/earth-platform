@@ -28,7 +28,7 @@ import javax.imageio.ImageIO;
 public final class ImagerySource implements AutoCloseable {
     public static final String DATASET_ID = "s2cloudless-2016-v1";
     public static final URI EOX_S2_CLOUDLESS_2016 = URI.create("https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/");
-    public static final String ATTRIBUTION = "Sentinel-2 cloudless - https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016) (CC BY 4.0)";
+    public static final String ATTRIBUTION = "EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016)";
     public static final int TILE_SIZE = 256, MAX_ZOOM = 14;
     /** A pixel with no imagery. */
     public static final int NO_DATA = -1;

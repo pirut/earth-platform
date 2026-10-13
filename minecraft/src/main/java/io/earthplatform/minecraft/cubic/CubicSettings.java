@@ -57,7 +57,7 @@ public final class CubicSettings {
                     properties.setProperty("earth.elevation", TerrariumTileSource.DATASET_ID);
                     properties.setProperty("earth.cover", WorldCoverSource.DATASET_ID);
                     properties.setProperty("earth.climate", ClimateSource.DATASET_ID);
-                    properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
+                    if (imageryEnabled()) properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
                 }
                 Files.createDirectories(folder);
                 Path temp = folder.resolve(FILE + ".tmp");
@@ -90,7 +90,7 @@ public final class CubicSettings {
                 if (!imageryId.isEmpty() && !ImagerySource.DATASET_ID.equals(imageryId))
                     throw new IllegalStateException("Unsupported imagery '" + imageryId + "' in " + file);
                 yield new EarthGenerator(seed, biomes, settings, tiles(), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
-                        coverId.isEmpty() || imageryId.isEmpty() ? null : imagery());
+                        coverId.isEmpty() || imageryId.isEmpty() || !imageryEnabled() ? null : imagery());
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
         };
@@ -151,6 +151,15 @@ public final class CubicSettings {
             }
         }
         return climate;
+    }
+
+    /**
+     * Whether Earth worlds may use satellite imagery, true unless the game runs with
+     * {@code -Dearthplatform.earth.imagery=false}. Off, new worlds are made without it and every
+     * world generates its ground from land cover alone, with no imagery downloads.
+     */
+    public static boolean imageryEnabled() {
+        return !"false".equalsIgnoreCase(System.getProperty("earthplatform.earth.imagery", "true"));
     }
 
     /** Satellite imagery shared by every Earth world in this game, cached on disk beside the elevation tiles. */
