@@ -18,7 +18,8 @@
     "compat.CreateContraptionMixin",
     "compat.CreateBuildHeightMixin",
     "compat.WaystonesPlacementMixin",
-    "compat.WaystonesTargetMixin"
+    "compat.WaystonesTargetMixin",
+    "compat.MekanismWorldUtilsMixin"
   ],
   "client": [
     "CubicPredictionMixin",
