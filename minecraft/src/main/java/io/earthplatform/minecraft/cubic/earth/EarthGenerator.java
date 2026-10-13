@@ -667,7 +667,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (steep > 1.7) return rock();
                 Surface s = forest(local, patch, x, z, y);
                 if (steep > 1.3 && crag < (steep - 1.3) * 2 - 0.3) return new Surface(s.biome(), STONE, STONE, 0, 0, 0, 0, 0, false);
-                if (steep > 0.8) return new Surface(s.biome(), patch > 0 ? PODZOL : COARSE_DIRT, DIRT, s.trees() * 3 / 4, s.spruce(), s.birch(),
+                // Duff in patches, grass between, so from afar the slope stays green rather than speckled brown.
+                if (steep > 0.8) return new Surface(s.biome(), patch > 0.35 ? PODZOL : GRASS, DIRT, s.trees() * 3 / 4, s.spruce(), s.birch(),
                         s.grass() / 2, s.flowers() / 2, s.ferns(), s.broadleaf());
                 return s;
             }
@@ -925,6 +926,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Whether a column is on the Colorado Plateau, whose bare ground is red rock and red sand. */
     private boolean redRock(int x, int z) {
         GeoPoint p = grid.geographic(x, z);
+        // The Grand Canyon and its rims keep the canyon strata's own colours.
+        if (p.latitude() > 35.8 && p.latitude() < 36.7 && p.longitude() < -111.5) return false;
         return p.latitude() > 35 && p.latitude() < 38.5 && p.longitude() > -113 && p.longitude() < -108;
     }
 
