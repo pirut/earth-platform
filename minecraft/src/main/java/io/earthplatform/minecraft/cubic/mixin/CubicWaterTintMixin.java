@@ -24,8 +24,10 @@ import org.spongepowered.asm.mixin.injection.At;
 @Mixin(BiomeColors.class)
 abstract class CubicWaterTintMixin {
     private static final Map<ResourceKey<Biome>, Integer> DARK = Map.of(
-            Biomes.OCEAN, 0x2E5499, Biomes.DEEP_OCEAN, 0x2A4A8C, Biomes.COLD_OCEAN, 0x2E5578,
-            Biomes.DEEP_COLD_OCEAN, 0x28496A, Biomes.DEEP_LUKEWARM_OCEAN, 0x2B5298,
+            // Halfway from the first tints toward the near-black navy satellites measure (#182B4C open sea, #1A2D37 fjord):
+            // darker still reads as ink from a player's eye height.
+            Biomes.OCEAN, 0x25467F, Biomes.DEEP_OCEAN, 0x213D72, Biomes.COLD_OCEAN, 0x24435F,
+            Biomes.DEEP_COLD_OCEAN, 0x1F3A55, Biomes.DEEP_LUKEWARM_OCEAN, 0x234478,
             // Lakes fed by glaciers are milky turquoise with rock flour, as Lake Louise and Moraine Lake are.
             ResourceKey.create(Registries.BIOME, ResourceLocation.fromNamespaceAndPath("earthplatform", "glacial_lake")), 0x52B8BE);
 
