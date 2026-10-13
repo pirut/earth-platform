@@ -11,6 +11,7 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.gen.Strata;
 import io.earthplatform.minecraft.cubic.gen.Towers;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -399,7 +400,138 @@ public final class EarthGenerator extends SurfaceGenerator {
         int overview = Mth.clamp(Mth.floor(Math.log(voxel * metresPerBlock / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
         GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
         int code = cover.code(point.latitude(), point.longitude(), overview);
-        return code == WorldCoverSource.WATER && iceWater(x, z, overview, metresPerBlock) ? WorldCoverSource.SNOW_AND_ICE : code;
+        if (code != WorldCoverSource.WATER) return code;
+        if (iceWater(x, z, overview, metresPerBlock)) return WorldCoverSource.SNOW_AND_ICE;
+        return voxel <= STRAY_VOXEL ? strayWater(x, z, point) : code;
+    }
+
+    /** Most WorldCover pixels a patch of water mapped on a slope ({@link #strayWater}) holds: about fifty hectares. */
+    private static final int STRAY_PIXELS = 5000;
+    /** Pixels round a water cell a patch may reach out to and still be judged whole there. */
+    private static final int STRAY_MARGIN = 40;
+    /**
+     * How far the ground under a stray patch rises across its middle half, in metres; how far across
+     * most of it, per metre of its width; and how far the ground falls away below it, in metres.
+     */
+    private static final double STRAY_RISE = 6, STRAY_GRADE = 0.1, STRAY_FALL = 15;
+    /** Rings round a patch's lowest pixel, in metres, along which {@link #strayCell} looks for the ground falling away. */
+    private static final double[] STRAY_RINGS = {30, 60, 100};
+    /** Widest voxel that looks for stray patches; wider ones read coarse overviews that blur them away. */
+    private static final int STRAY_VOXEL = 8;
+    /** Least range of a water cell's ground, in metres, for it to hold stray patches: flat country has no slopes to hang them on. */
+    private static final double STRAY_RELIEF = 30;
+    /** Water cells, keyed as {@link #waterCell}'s, as far as {@link #strayCell} has found their stray patches. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Long2IntOpenHashMap> strayCells =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * The cover of water mapped at a point: the land round it where the point lies in a small patch
+     * of water hanging on a slope, else water. The map reads dark rock as water: the basalt that
+     * poured over the Grand Canyon's walls at Lava Falls mapped as dozens of small patches all down
+     * the slopes, each stood as a pool cut into the hillside. Water lies level, and the elevation
+     * under a pond, a lake or a reach of river is level or nearly so, while under these it climbs
+     * the slope with the rock, which carries on falling away below them.
+     */
+    private int strayWater(double x, double z, GeoPoint point) {
+        int cx = Math.floorDiv(Mth.floor(x), WATER_CELL), cz = Math.floorDiv(Mth.floor(z), WATER_CELL);
+        if (waterCell(cx, cz).relief() < STRAY_RELIEF) return WorldCoverSource.WATER;
+        Long2IntOpenHashMap stray = strayCell(cx, cz);
+        if (stray.isEmpty()) return WorldCoverSource.WATER;
+        return stray.getOrDefault(pixelKey(row(point.latitude()), column(point.longitude())), WorldCoverSource.WATER);
+    }
+
+    private static long row(double latitude) { return (long) Math.floor((90 - latitude) * WorldCoverSource.PIXELS_PER_DEGREE); }
+    private static long column(double longitude) { return (long) Math.floor((longitude + 180) * WorldCoverSource.PIXELS_PER_DEGREE); }
+    private static long pixelKey(long row, long column) {
+        return row << 32 | Math.floorMod(column, 360L * WorldCoverSource.PIXELS_PER_DEGREE);
+    }
+
+    /**
+     * A water cell's stray patches, found once: every patch of full-resolution water pixels that
+     * lies wholly within the cell and a margin round it, holds no more than {@value #STRAY_PIXELS}
+     * pixels, and whose ground rises at least {@value #STRAY_RISE} m across its middle half and a
+     * tenth of its width across most of it, then falls more than {@value #STRAY_FALL} m below its
+     * lowest pixel within a hundred metres of it. Each of its pixels takes the class most of the
+     * land pixels touching the patch have. Larger water, as rivers and the sea, always stays; so do
+     * a creek's reach at a falls' lip, mostly level, and a river's below a falls, at the bottom.
+     */
+    private Long2IntOpenHashMap strayCell(int cx, int cz) {
+        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        Long2IntOpenHashMap known = strayCells.get(key);
+        if (known != null) return known;
+        GeoPoint a = grid.geographic(cx * (double) WATER_CELL, cz * (double) WATER_CELL);
+        GeoPoint b = grid.geographic((cx + 1) * (double) WATER_CELL, (cz + 1) * (double) WATER_CELL);
+        long rows = 180L * WorldCoverSource.PIXELS_PER_DEGREE;
+        long top = Math.max(0, row(Math.max(a.latitude(), b.latitude())) - STRAY_MARGIN), left = column(Math.min(a.longitude(), b.longitude())) - STRAY_MARGIN;
+        int height = (int) (Math.min(rows - 1, row(Math.min(a.latitude(), b.latitude())) + STRAY_MARGIN) - top + 1);
+        int width = (int) (column(Math.max(a.longitude(), b.longitude())) + STRAY_MARGIN - left + 1);
+        double ppd = WorldCoverSource.PIXELS_PER_DEGREE;
+        byte[] codes = new byte[width * height];
+        for (int j = 0; j < height; j++) for (int i = 0; i < width; i++)
+            codes[j * width + i] = (byte) cover.code(90 - (top + j + 0.5) / ppd, (left + i + 0.5) / ppd - 180, 0);
+        Long2IntOpenHashMap stray = new Long2IntOpenHashMap();
+        boolean[] seen = new boolean[codes.length];
+        int[] patch = new int[STRAY_PIXELS + 1];
+        int[] queue = new int[codes.length];
+        GlobalElevation dem = elevation[TOWER_ZOOM];
+        for (int start = 0; start < codes.length; start++) {
+            if (seen[start] || codes[start] != (byte) WorldCoverSource.WATER) continue;
+            // The patch through this pixel, joined at edges and corners.
+            int head = 0, tail = 0, size = 0;
+            boolean whole = true;
+            queue[tail++] = start;
+            seen[start] = true;
+            while (head < tail) {
+                int p = queue[head++], i = p % width, j = p / width;
+                if (size <= STRAY_PIXELS) patch[size] = p;
+                size++;
+                if (i == 0 || j == 0 || i == width - 1 || j == height - 1) whole = false;
+                for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
+                    int ni = i + di, nj = j + dj, n = nj * width + ni;
+                    if (ni < 0 || nj < 0 || ni >= width || nj >= height || seen[n] || codes[n] != (byte) WorldCoverSource.WATER) continue;
+                    seen[n] = true;
+                    queue[tail++] = n;
+                }
+            }
+            if (!whole || size > STRAY_PIXELS) continue;
+            double[] ground = new double[size];
+            int north = height, south = 0, west = width, east = 0;
+            double lowest = Double.MAX_VALUE, lowX = 0, lowZ = 0;
+            for (int k = 0; k < size; k++) {
+                int i = patch[k] % width, j = patch[k] / width;
+                GeoPoint p = new GeoPoint(90 - (top + j + 0.5) / ppd, (left + i + 0.5) / ppd - 180);
+                double bx = grid.blockX(p), bz = grid.blockZ(p);
+                ground[k] = dem.metres(bx, bz);
+                if (ground[k] < lowest) { lowest = ground[k]; lowX = bx; lowZ = bz; }
+                north = Math.min(north, j); south = Math.max(south, j); west = Math.min(west, i); east = Math.max(east, i);
+            }
+            Arrays.sort(ground);
+            double pixel = 1 / ppd * Math.PI / 180 * 6_371_008.8, latitude = 90 - (top + (north + south) / 2.0) / ppd;
+            double across = Math.hypot((south - north + 1) * pixel, (east - west + 1) * pixel * Math.cos(Math.toRadians(latitude)));
+            if (ground[size * 3 / 4] - ground[size / 4] < STRAY_RISE || ground[size * 9 / 10] - ground[size / 10] < STRAY_GRADE * across) continue;
+            double metresPerBlock = grid.groundMetresPerBlock(lowZ), below = lowest;
+            for (double ring : STRAY_RINGS) for (int d = 0; d < 8; d++)
+                below = Math.min(below, dem.metres(lowX + RING_X[d] * ring / metresPerBlock, lowZ + RING_Z[d] * ring / metresPerBlock));
+            if (below > lowest - STRAY_FALL) continue;
+            // The land round it decides what it is.
+            int[] votes = new int[256];
+            int best = WorldCoverSource.NO_DATA;
+            for (int k = 0; k < size; k++) {
+                int i = patch[k] % width, j = patch[k] / width;
+                for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
+                    int ni = i + di, nj = j + dj;
+                    if (ni < 0 || nj < 0 || ni >= width || nj >= height) continue;
+                    int c = codes[nj * width + ni] & 0xFF;
+                    if (c == WorldCoverSource.WATER || c == WorldCoverSource.NO_DATA) continue;
+                    if (++votes[c] > votes[best]) best = c;
+                }
+            }
+            if (best == WorldCoverSource.NO_DATA) continue;
+            for (int k = 0; k < size; k++) stray.put(pixelKey(top + patch[k] / width, left + patch[k] % width), best);
+        }
+        if (strayCells.size() > 1 << 14) strayCells.clear();
+        strayCells.putIfAbsent(key, stray);
+        return stray;
     }
 
     /** Rings round water, in metres, that {@link #iceWater} looks along, out past a pond's far shore; none nearer than a pixel. */
