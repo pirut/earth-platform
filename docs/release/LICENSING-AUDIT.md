@@ -16,7 +16,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | RESOLVE Ecoregions 2017 (PR #14) | OK | CC BY 4.0; credited with the citation, and the derived raster noted |
 | Copernicus GLO-30 for filling elevation holes (coming) | OK | Same licence as the bundled crop; credit and liability line drafted below |
 | River channels (PR #19) | **OK: JRC Global Surface Water v1.4** | JRC GSW is free without restriction of use, with a citation. HydroRIVERS' licence forbids open redistribution of its data, so it can't ship in an LGPL mod (details below) |
-| Falls water (PR #16 `KnownWater`) | **OK: OpenStreetMap** | Re-derived from OSM ways in e95ba96 (ODbL, credited); the first version, traced on EOX s2cloudless 2020 (CC BY-NC-SA), is gone |
+| Hand-traced falls water (PR #16 `KnownWater`) | **Check source** | Fine if traced from EOX s2cloudless 2016 (CC BY 4.0, credit) or OSM (ODbL, credit); not if from Google/Bing/Esri imagery or EOX 2018+ (CC BY-NC-SA). Asked the Grand Canyon thread |
 | Bundled test data (Copernicus GLO-30, NOAA ETOPO, WorldCover) | OK | Credited; could be dropped from the release jar |
 | Iris, Sodium, Photon, Distant Horizons | OK | Not bundled; compile-only. Exact version pins hurt players (see below) |
 | Third-party code in the jar | OK | None. Only `io/earthplatform` classes and our own data |
@@ -76,8 +76,7 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
   > Surface water: JRC Global Surface Water, Source: EC JRC/Google. Pekel, J.-F., Cottam, A., Gorelick, N., Belward, A.S. (2016). High-resolution mapping of global surface water and its long-term changes. Nature 540, 418-422, doi:10.1038/nature20584. Produced under the Copernicus Programme.
 - PR #19 streams the v1.4 occurrence layer at runtime (`SurfaceWaterSource`, Google Cloud Storage); nothing is bundled. Credit added to CREDITS.md, THIRD_PARTY_NOTICES.md and the mods list with the Copernicus no-liability sentence, which the Copernicus data policy asks for on any Copernicus product.
 
-### Water at famous falls (PR #16, `KnownWater`)
-- **Resolved 2026-10-13, e95ba96 on PR #16:** every coordinate traced from EOX s2cloudless 2020 was removed and the lines re-derived from the OpenStreetMap API. Each Course and Pool names its OSM ways, relations or nodes in a `// Source:` comment; the Welland River comes from ESA WorldCover. A few pool outlines are closed with round-number bounds chosen by hand, not traced. Credit "Map data © OpenStreetMap contributors, ODbL" added to CREDITS.md, THIRD_PARTY_NOTICES.md and the mods list. History below.
+### Hand-traced water at famous falls (PR #16, `KnownWater`)
 - What: about 70 latitude/longitude points with widths, for Victoria Falls' gorges, the Niagara gorge and the river above the Horseshoe Falls, the Welland River and Skógafoss, "traced from satellite imagery". Water levels come from our elevation tiles.
 - Risk depends on the imagery:
   - EOX `s2cloudless_3857` (the 2016 mosaic, what our imagery client uses): released CC BY 4.0. OK with an EOX credit that is not marked optional.
