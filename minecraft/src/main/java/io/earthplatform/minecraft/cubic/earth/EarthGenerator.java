@@ -185,8 +185,16 @@ public final class EarthGenerator extends SurfaceGenerator {
         glacialLake = holder(biomes, ResourceKey.create(Registries.BIOME, ResourceLocation.fromNamespaceAndPath("earthplatform", "glacial_lake")));
         strata = new Strata(seed, new Strata.Globe() {
             @Override public double metres(double x, double z) { return elevation[FAR_ZOOM].metres(x, z); }
-            @Override public GeoPoint geographic(double x, double z) { return grid.geographic(x, z); }
             @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
+            @Override public boolean arid(double x, double z) {
+                if (climate == null) return false;
+                GeoPoint p = grid.geographic(x, z);
+                if (!(Math.abs(p.latitude()) <= 90)) return false;
+                ClimateSource.Climate c = climate.at(p.latitude(), p.longitude(), 0);
+                if (c == null) return false;
+                ClimateZone zone = ClimateZone.of(c.koppen(), c.meanTemperature(), c.warmestQuarter());
+                return zone == ClimateZone.HOT_DESERT || zone == ClimateZone.COLD_DESERT || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.COLD_STEPPE;
+            }
         }, badlands);
         towers = new Towers(seed, new Towers.Globe() {
             @Override public double metres(double x, double z) { return elevation[TOWER_ZOOM].metres(x, z); }
