@@ -1134,7 +1134,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (biome == Ecoregions.MANGROVE && y <= SEA + 4) return covered(WorldCoverSource.MANGROVES, x, z, y, local, steep, roll, slope);
             if (biome == Ecoregions.FLOODED_GRASSLAND) {
                 // The Everglades' coast: mangrove islands among the creeks of Florida Bay and the Ten Thousand Islands.
-                if (eco == Ecoregions.EVERGLADES && y <= SEA + 2 && patch > 0.3)
+                if (eco == Ecoregions.EVERGLADES && y <= SEA + 1 && patch > 0.4 && lagoon(x, z))
                     return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false, Tree.MANGROVE);
                 // Sloughs and ponds: standing water among the sawgrass, most of all in the Everglades.
                 double wet = patches.getValue(x / 90.0 + 41.7, z / 90.0 - 8.3) + patches.getValue(x / 23.0 - 5.1, z / 23.0 + 17.9) * 0.3;
