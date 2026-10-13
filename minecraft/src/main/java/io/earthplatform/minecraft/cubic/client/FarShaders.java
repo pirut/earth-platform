@@ -55,6 +55,7 @@ final class FarShaders {
             flat out uint earth_face;
             flat out uint earth_light;
             flat out uint earth_look;
+            flat out uint earth_normal;
 
             // Corners (along the face's width, along its height) per direction, counter-clockwise from outside.
             const ivec2 CORNERS[24] = ivec2[](
@@ -100,7 +101,8 @@ final class FarShaders {
                 else if (face == 4u) earth_tile = vec2(local.z, -local.y);
                 else earth_tile = vec2(-local.z, -local.y);
 
-                uint look = q.w;
+                uint look = q.w & 0xFFFFFu;
+                earth_normal = q.w >> 20;
                 uvec4 a = texelFetch(earth_Looks, int(look) * 2);
                 uvec4 b = texelFetch(earth_Looks, int(look) * 2 + 1);
                 earth_sprite = uintBitsToFloat(a);
@@ -169,7 +171,10 @@ final class FarShaders {
             }
             """;
 
-    /** Declarations a Voxy fragment patch is written against, as Voxy declares them. */
+    /**
+     * Declarations a Voxy fragment patch is written against, as Voxy declares them, and the ground
+     * slope's normal that {@link #packFragment} has the patch use in place of its face's.
+     */
     static final String VOXY_PARAMETERS = """
             struct VoxyFragmentParameters {
                 vec4 sampledColour;
@@ -181,7 +186,22 @@ final class FarShaders {
                 vec4 tinting;
                 uint customId;
             };
+
+            flat in uint earth_normal;
+
+            // A far voxel's face lit mostly as the slope its stack of voxels stands for, so hillsides
+            // don't show as stripes of lit tops and dark risers; foliage keeps its face's normal.
+            vec3 earth_packNormal(vec3 face) {
+                if (earth_normal == 0u) return face;
+                vec2 xz = (vec2(float(earth_normal & 63u), float(earth_normal >> 6)) - 32.0) / 31.0;
+                vec3 slope = vec3(xz.x, sqrt(max(0.0, 1.0 - dot(xz, xz))), xz.y);
+                return normalize(mix(face, slope, 0.85));
+            }
             """;
+
+    /** Where a Voxy patch works out its normal from the face, as Voxy's own example does. */
+    private static final Pattern FACE_NORMAL =
+            Pattern.compile("(vec3\\s+(\\w+)\\s*=\\s*vec3\\(\\s*uint\\(\\(\\s*parameters\\.face[^;]*;)");
 
     /** Calls the pack's Voxy fragment code, which is placed before this. */
     static final String PACK_MAIN = SAMPLE + """
@@ -217,7 +237,11 @@ final class FarShaders {
         return jitter == null ? version + VERTEX : version + "#define EARTH_JITTER\n" + jitter + VERTEX;
     }
 
-    /** The pack's fragment shader: its Voxy patch, with any #extension lines moved up, between our declarations and main. */
+    /**
+     * The pack's fragment shader: its Voxy patch, with any #extension lines moved up, between our
+     * declarations and main. Where the patch works out its normal from the face, the ground slope's
+     * normal takes over.
+     */
     static String packFragment(String version, String patch) {
         StringBuilder extensions = new StringBuilder(), body = new StringBuilder();
         for (String line : patch.split("\n", -1)) {
@@ -225,6 +249,7 @@ final class FarShaders {
             if (trimmed.startsWith("#extension")) extensions.append(trimmed).append('\n');
             else if (!trimmed.startsWith("#version")) body.append(line).append('\n');
         }
-        return version + extensions + VOXY_PARAMETERS + body + PACK_MAIN;
+        String patched = FACE_NORMAL.matcher(body).replaceFirst("$1\n    $2 = earth_packNormal($2);");
+        return version + extensions + VOXY_PARAMETERS + patched + PACK_MAIN;
     }
 }

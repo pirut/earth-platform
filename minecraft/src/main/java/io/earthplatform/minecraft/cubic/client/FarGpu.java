@@ -37,7 +37,8 @@ import org.lwjgl.system.MemoryUtil;
  *   <li>its bottom (sides) or height (tops and bottoms) above the column's base, in 1/16 blocks;</li>
  *   <li>its height in 1/16 blocks (sides) or depth in voxels less one (tops and bottoms; 20 bits),
  *       and the rest of the column slot;</li>
- *   <li>its look in {@link FarLooks}.</li>
+ *   <li>its look in {@link FarLooks} (20 bits) and, under a shader pack, its ground slope's normal
+ *       (12 bits, see {@link FarMesher#normalCode}).</li>
  * </ol>
  * A column slot holds the column's origin and level. Everything here runs on the render thread.
  */
