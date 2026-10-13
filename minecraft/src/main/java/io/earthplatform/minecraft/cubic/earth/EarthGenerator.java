@@ -167,7 +167,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Ground and water of a column from its elevation, slope, sea share and land cover. */
     private void place(GlobalElevation dem, int x, int z, double metres, double[] sample, int voxel, int[] out) {
-        if (sample[2] > 0.5) {
+        if (sample[2] > 0.5 || offshore(x, z, metres, voxel)) {
             out[0] = Math.min(SEA - 1, Mth.floor(SEA + 0.5 + metres));
             out[1] = SEA;
             return;
@@ -263,6 +263,69 @@ public final class EarthGenerator extends SurfaceGenerator {
         int reach = Math.max(40, voxel * 2), built = 0;
         for (int i = 0; i < 8; i += 2) if (cover(x + RING_X[i] * reach, z + RING_Z[i] * reach, voxel) == WorldCoverSource.BUILT_UP) built++;
         return built >= 2;
+    }
+
+    /** Cells, in blocks, for finding whether water joins the open sea, and how many cells out a search may go. */
+    private static final int SEA_CELL = 256, SEA_REACH = 512;
+    /** Whether each cell's water joins the open sea, as far as searches have found. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> openSea = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Whether a column under 0 m is sea though the elevation tiles mark no open sea there, as where
+     * they carry real depths (the North Sea, the Baltic). WorldCover leaves the open sea without
+     * data and marks coastal water, tidal flats and marsh beside it; those are sea when they join
+     * the open sea. Water that never reaches it, such as the Dead Sea or the Caspian, stays a lake
+     * at its own level, and other land under 0 m, such as a polder or Death Valley, stays dry.
+     */
+    private boolean offshore(int x, int z, double metres, int voxel) {
+        if (cover == null || metres >= 0) return false;
+        int code = cover(x, z, voxel);
+        if (code == WorldCoverSource.NO_DATA) return true;
+        boolean wet = code == WorldCoverSource.WATER
+                || metres < -1 && (code == WorldCoverSource.WETLAND || code == WorldCoverSource.BARE || code == WorldCoverSource.MANGROVES);
+        return wet && joinsOpenSea(x, z);
+    }
+
+    /**
+     * Whether the cell holding a column is water that joins the open sea through cells of water,
+     * within {@value #SEA_REACH} cells. A search that ends at the open sea answers for every water
+     * cell it crossed; one that runs out of water answers for all of them too, as a closed lake or
+     * sea such as the Caspian; one that reaches its limit answers only for the cells within half
+     * its reach, as open sea may lie just past the rest.
+     */
+    private boolean joinsOpenSea(int x, int z) {
+        long start = (long) Math.floorDiv(x, SEA_CELL) << 32 | Math.floorDiv(z, SEA_CELL) & 0xFFFFFFFFL;
+        Boolean known = openSea.get(start);
+        if (known != null) return known;
+        it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue queue = new it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue();
+        it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap steps = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+        it.unimi.dsi.fastutil.longs.LongArrayList crossed = new it.unimi.dsi.fastutil.longs.LongArrayList();
+        queue.enqueue(start);
+        steps.put(start, 0);
+        boolean found = false, cut = false;
+        while (!queue.isEmpty() && !found) {
+            long cell = queue.dequeueLong();
+            int cx = (int) (cell >> 32), cz = (int) cell, step = steps.get(cell);
+            int code = cover((double) cx * SEA_CELL + SEA_CELL / 2.0, (double) cz * SEA_CELL + SEA_CELL / 2.0, SEA_CELL);
+            if (code != WorldCoverSource.WATER && code != WorldCoverSource.NO_DATA) continue;
+            crossed.add(cell);
+            if (code == WorldCoverSource.NO_DATA) { found = true; break; }
+            if (step >= SEA_REACH) { cut = true; continue; }
+            for (int k = 0; k < 8 && !found; k += 2) {
+                long next = (long) (cx + (int) RING_X[k]) << 32 | (cz + (int) RING_Z[k]) & 0xFFFFFFFFL;
+                if (steps.containsKey(next)) continue;
+                Boolean result = openSea.get(next);
+                if (result != null && result) found = true;
+                else { steps.put(next, step + 1); queue.enqueue(next); }
+            }
+        }
+        if (openSea.size() > 1 << 20) openSea.clear();
+        if (crossed.isEmpty()) openSea.put(start, false);
+        for (int i = 0; i < crossed.size(); i++) {
+            long cell = crossed.getLong(i);
+            if (found || !cut || steps.get(cell) <= SEA_REACH / 2) openSea.put(cell, found);
+        }
+        return found && !crossed.isEmpty();
     }
 
     /**
