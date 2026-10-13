@@ -18,10 +18,14 @@ import net.minecraft.nbt.NbtIo;
 
 /**
  * Edited cubes only, grouped into 8x8x8-cube region files. Untouched cubes are regenerated from
- * the seed, so a world's save size follows what players changed, not what they visited.
+ * the seed, so a world's save size follows what players changed, not what they visited. Asking for
+ * a cube in a region with no file costs nothing, and regions read a while ago are let go once
+ * saved, so memory stays flat however far players travel.
  */
 public final class CubeStorage {
     private static final int REGION_SHIFT = 3;
+    /** How long a saved region stays in memory after it was last used. */
+    private static final long KEEP_NANOS = 60_000_000_000L;
     private final Path directory;
     private final Map<Long, Region> regions = new ConcurrentHashMap<>();
     /** Region keys with saved cubes, from the directory listing plus regions written since. */
@@ -40,7 +44,11 @@ public final class CubeStorage {
     }
 
     /** Any thread. */
-    @Nullable public CompoundTag read(long cubeKey) throws IOException { return region(cubeKey).get(cubeKey); }
+    @Nullable public CompoundTag read(long cubeKey) throws IOException {
+        listRegions();
+        if (!known.contains(regionKey(cubeKey))) return null;
+        return region(cubeKey).get(cubeKey);
+    }
 
     /** Owner thread: replaces the stored form of one cube; written by the next {@link #flush}. */
     public void put(long cubeKey, CompoundTag tag) throws IOException {
@@ -82,19 +90,27 @@ public final class CubeStorage {
         }
     }
 
+    /** Owner thread: writes changed regions, then lets go of ones nobody has used for a while. */
     public void flush() throws IOException {
         Files.createDirectories(directory);
         for (Region region : regions.values()) region.flush();
+        long now = System.nanoTime();
+        regions.values().removeIf(region -> region.idle(now));
     }
+
+    /** Regions held in memory, for diagnostics. */
+    public int loadedRegions() { return regions.size(); }
 
     private static final class Region {
         private final Path file;
         private Map<Long, CompoundTag> cubes;
         private boolean dirty;
+        private long used = System.nanoTime();
 
         Region(Path file) { this.file = file; }
 
         private Map<Long, CompoundTag> load() throws IOException {
+            used = System.nanoTime();
             if (cubes != null) return cubes;
             Map<Long, CompoundTag> loaded = new HashMap<>();
             if (Files.exists(file)) {
@@ -115,6 +131,8 @@ public final class CubeStorage {
         }
 
         synchronized void put(long key, CompoundTag tag) throws IOException { load().put(key, tag); dirty = true; }
+
+        synchronized boolean idle(long now) { return !dirty && now - used > KEEP_NANOS; }
 
         synchronized void flush() throws IOException {
             if (!dirty) return;

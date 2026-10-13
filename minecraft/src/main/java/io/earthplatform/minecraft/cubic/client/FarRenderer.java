@@ -7,6 +7,7 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
+import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
@@ -282,7 +283,11 @@ public final class FarRenderer {
                 column.sections, column.drops, sides, column.drawnCubes, column.level <= TEXTURED_LEVELS, looks, faces,
                 ShaderBlocks.ids(), shade, white());
         MESHER.execute(() -> {
-            try { built.add(FarMesher.build(job)); }
+            long start = System.nanoTime();
+            try {
+                built.add(FarMesher.build(job));
+                Timings.FAR_MESH.since(start);
+            }
             catch (Throwable failure) {
                 EarthPlatformMod.LOGGER.error("Far column mesh failed", failure);
                 built.add(new FarMesher.Built(job.key(), -job.version(), new int[0], new int[FarMesher.GROUPS], null));
@@ -343,7 +348,18 @@ public final class FarRenderer {
     public void draw(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
         FarGpu gpu = closed ? null : gpu();
         if (gpu == null) return;
-        if (uploadedFrame != frame) { uploadedFrame = frame; upload(gpu); }
+        if (uploadedFrame != frame) {
+            uploadedFrame = frame;
+            long start = System.nanoTime();
+            upload(gpu);
+            Timings.FAR_UPLOAD.since(start);
+        }
+        long start = System.nanoTime();
+        try { drawColumns(gpu, camera, frustum, modelView, projection); }
+        finally { Timings.FAR_DRAW.since(start); }
+    }
+
+    private void drawColumns(FarGpu gpu, Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
         Vec3 position = camera.getPosition();
         int bx = (int) Math.floor(position.x), bz = (int) Math.floor(position.z);
         drawn.clear();

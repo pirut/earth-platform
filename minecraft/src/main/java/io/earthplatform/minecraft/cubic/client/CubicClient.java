@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.client;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubicLevel;
+import io.earthplatform.minecraft.cubic.Timings;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.FogRenderer;
@@ -24,6 +25,9 @@ import net.neoforged.neoforge.event.level.LevelEvent;
 public final class CubicClient {
     private CubicClient() {}
 
+    private static long lastFrame;
+    private static int perfTicks;
+
     @SubscribeEvent public static void load(LevelEvent.Load event) {
         if (event.getLevel() instanceof ClientLevel level) ClientCubeWorld.attach(level);
     }
@@ -44,11 +48,27 @@ public final class CubicClient {
     @SubscribeEvent public static void tick(ClientTickEvent.Post event) {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world != null) { world.checkShaders(); world.renderer().tick(); world.far().tick(); }
+        if (world != null && Timings.LOG && ++perfTicks % 100 == 0) {
+            Runtime runtime = Runtime.getRuntime();
+            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes, {} to compile, far {}/{} columns {} MB; {}",
+                    Minecraft.getInstance().getFps(), (runtime.totalMemory() - runtime.freeMemory()) >> 20, world.loadedCubes(),
+                    world.renderer().meshCount(), world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
+                    world.far().vertexBytes() >> 20, timings(Timings.LOGGER));
+        }
+    }
+
+    private static String timings(int reader) {
+        return String.join(", ", Timings.FRAME.read(reader), Timings.CUBE_DRAW.read(reader), Timings.FAR_DRAW.read(reader),
+                Timings.CUBE_UPLOAD.read(reader), Timings.FAR_UPLOAD.read(reader), Timings.CUBE_MESH.read(reader),
+                Timings.FAR_MESH.read(reader), Timings.FAR_MAKE.read(reader));
     }
 
     @SubscribeEvent public static void frame(RenderFrameEvent.Pre event) {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world != null) { world.renderer().beginFrame(); world.far().beginFrame(); }
+        long now = System.nanoTime();
+        if (world != null && lastFrame != 0) Timings.FRAME.add(now - lastFrame);
+        lastFrame = now;
     }
 
     @SubscribeEvent public static void render(RenderLevelStageEvent event) {
@@ -75,6 +95,9 @@ public final class CubicClient {
         }
     }
 
+    private static long timingsAt;
+    private static String[] timingLines = new String[0];
+
     @SubscribeEvent public static void debugText(CustomizeGuiOverlayEvent.DebugText event) {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null) return;
@@ -84,6 +107,12 @@ public final class CubicClient {
                 + world.renderer().pendingCount() + " to compile");
         event.getLeft().add(at + 1, "Far: " + world.far().drawnCount() + "/" + world.far().columnCount() + " columns, "
                 + world.far().vertexBytes() / (1 << 20) + " MB");
+        // The debug screen redraws every frame; read the timings about twice a second so they can be read.
+        long now = System.nanoTime();
+        if (now - timingsAt > 500_000_000L) { timingsAt = now; timingLines = timings(Timings.SCREEN).split(", "); }
+        for (int i = 0; i < timingLines.length; i += 2) {
+            event.getLeft().add(at + 2 + i / 2, i + 1 < timingLines.length ? timingLines[i] + ", " + timingLines[i + 1] : timingLines[i]);
+        }
     }
 
     /** Pushes terrain fog out to the far terrain's reach; effect and fluid fog stay as they are. */

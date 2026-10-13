@@ -8,6 +8,7 @@ import java.nio.ByteOrder;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -124,22 +125,78 @@ public final class ClimateSource implements AutoCloseable {
         return new Climate(koppen, mean / weights - LAPSE_RATE * metres, warm / weights - LAPSE_RATE * metres, rain / weights);
     }
 
-    /** Loads every row and elevation chunk an area needs, several at a time, so later reads never wait. */
+    /**
+     * Loads every row and elevation chunk an area needs, several at a time, so later reads never
+     * wait. Rows of a variable that lie one after another in its file come in one request.
+     */
     public void prefetch(double south, double west, double north, double east) {
         int top = Math.clamp((int) Math.floor((NORTH - Math.min(90, north)) * PIXELS_PER_DEGREE) - 1, 0, HEIGHT - 1);
         int bottom = Math.clamp((int) Math.floor((NORTH - Math.max(-90, south)) * PIXELS_PER_DEGREE) + 1, 0, HEIGHT - 1);
         double span = Math.min(360, east - west);
         int first = (int) Math.floor((wrap(west) - WEST) * PIXELS_PER_DEGREE) - 1, columns = (int) Math.ceil(span * PIXELS_PER_DEGREE) + 3;
         List<Runnable> loads = new ArrayList<>();
+        for (Layer layer : Layer.values()) loads.add(() -> rows(layer, top, bottom));
         for (int row = top; row <= bottom; row++) {
             int r = row;
-            for (Layer layer : Layer.values()) loads.add(() -> row(layer, r));
             java.util.Set<Integer> chunks = new java.util.TreeSet<>();
             for (int c = 0; c < columns; c += DEM_CHUNK / 2) chunks.add(Math.floorMod(first + c, WIDTH) / DEM_CHUNK);
             chunks.add(Math.floorMod(first + columns - 1, WIDTH) / DEM_CHUNK);
             for (int chunk : chunks) loads.add(() -> demChunk(r, chunk));
         }
-        loads.parallelStream().forEach(Runnable::run);
+        RangeFiles.all(loads);
+    }
+
+    /** Most bytes one request for several rows may ask for, and the most unwanted bytes it may read between two rows. */
+    private static final int MAX_RUN_BYTES = 8 << 20, MAX_GAP_BYTES = 256 << 10;
+
+    /**
+     * Loads rows top to bottom of a variable. Rows not cached yet are read with as few requests as
+     * their places in the file allow: their strips are sorted by offset (the files keep them in no
+     * particular order) and strips close together come in one request.
+     */
+    private void rows(Layer layer, int top, int bottom) {
+        Header header = header(layer);
+        List<Integer> missing = new ArrayList<>();
+        for (int row = top; row <= bottom; row++) {
+            long count = header.counts[row];
+            if (!allowNetwork || cacheRoot == null || count <= 0 || count > MAX_ROW_BYTES || present(layer, row)) row(layer, row);
+            else missing.add(row);
+        }
+        missing.sort((a, b) -> Long.compare(header.offsets[a], header.offsets[b]));
+        for (int i = 0; i < missing.size(); ) {
+            int first = i;
+            long start = header.offsets[missing.get(i)], end = start + header.counts[missing.get(i)];
+            while (++i < missing.size()) {
+                long offset = header.offsets[missing.get(i)], next = Math.max(end, offset + header.counts[missing.get(i)]);
+                if (offset - end > MAX_GAP_BYTES || next - start > MAX_RUN_BYTES) break;
+                end = next;
+            }
+            if (i - first == 1) { row(layer, missing.get(first)); continue; }
+            byte[] run;
+            try { run = files.fetch(base.resolve(layer.file), start, (int) (end - start)); }
+            catch (IOException failure) { throw new MissingTerrainException("Climate rows of " + layer.stem() + " failed: " + failure); }
+            catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new MissingTerrainException("Interrupted reading climate rows of " + layer.stem());
+            }
+            if (run == null || run.length != end - start) throw new MissingTerrainException("Climate rows of " + layer.stem() + " are missing");
+            for (int k = first; k < i; k++) {
+                int row = missing.get(k), from = (int) (header.offsets[row] - start);
+                byte[] raw = Arrays.copyOfRange(run, from, from + (int) header.counts[row]);
+                cached(key(layer.ordinal(), row, 0), () -> {
+                    short[] decoded = decode(raw, header);
+                    RangeFiles.write(cacheRoot.resolve(layer.stem() + "/" + row + ".z"), raw);
+                    return decoded;
+                }, "climate row");
+            }
+        }
+    }
+
+    /** Whether a row is in memory or on disk already. */
+    private boolean present(Layer layer, int row) {
+        long key = key(layer.ordinal(), row, 0);
+        synchronized (memory) { if (memory.containsKey(key)) return true; }
+        return Files.isRegularFile(cacheRoot.resolve(layer.stem() + "/" + row + ".z"), LinkOption.NOFOLLOW_LINKS);
     }
 
     private static double kelvin(int value) { return value * 0.1 - 273.15; }

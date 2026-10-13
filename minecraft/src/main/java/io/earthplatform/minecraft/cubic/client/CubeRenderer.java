@@ -8,6 +8,7 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeKey;
+import io.earthplatform.minecraft.cubic.Timings;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongIterator;
@@ -220,7 +221,11 @@ public final class CubeRenderer {
                 ShaderBlocks.ids());
         building.add(key);
         POOL.execute(() -> {
-            try { built.add(CubeMesher.build(snapshot)); }
+            long start = System.nanoTime();
+            try {
+                built.add(CubeMesher.build(snapshot));
+                Timings.CUBE_MESH.since(start);
+            }
             catch (Throwable failure) {
                 EarthPlatformMod.LOGGER.error("Cube mesh build failed for {}", CubeKey.toString(key), failure);
                 built.add(new CubeMesher.Built(key, -1, List.of(), null));
@@ -262,7 +267,9 @@ public final class CubeRenderer {
         if (drawnFrame == frame) return;
         drawnFrame = frame;
         Vec3 position = camera.getPosition();
+        long start = System.nanoTime();
         upload();
+        Timings.CUBE_UPLOAD.since(start);
         schedule(position);
         visible.clear();
         for (Mesh mesh : meshes.values()) {
@@ -278,11 +285,13 @@ public final class CubeRenderer {
 
     public void drawOpaque(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
         prepare(camera, frustum);
+        long start = System.nanoTime();
         for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {
             RenderType type = CubeMesher.LAYERS.get(i);
             if (type == RenderType.translucent() || type == RenderType.tripwire()) continue;
             draw(i, camera.getPosition(), modelView, projection, false);
         }
+        Timings.CUBE_DRAW.since(start);
     }
 
     public void drawTranslucent(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {

@@ -4,6 +4,7 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.CubeStorage;
+import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.FarColumn;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
@@ -61,9 +62,9 @@ public final class FarServer {
     });
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> cache = new ConcurrentHashMap<>();
     private final ConcurrentLinkedQueue<Made> made = new ConcurrentLinkedQueue<>();
-    /** Columns that could not be made; players may ask for them again. */
+    /** Columns that could not be made, or were skipped as their player had moved away; players may ask for them again. */
     private final ConcurrentLinkedQueue<Long> failed = new ConcurrentLinkedQueue<>();
-    private final AtomicInteger failures = new AtomicInteger();
+    private final AtomicInteger failures = new AtomicInteger(), skipped = new AtomicInteger();
     private volatile long lastFailureLog;
     private final Map<UUID, Session> sessions = new HashMap<>();
     /** Columns whose saved cubes changed and that players hold, to remake and push again. */
@@ -78,6 +79,8 @@ public final class FarServer {
         final LongOpenHashSet queued = new LongOpenHashSet();
         final LongOpenHashSet sent = new LongOpenHashSet();
         final ArrayDeque<CubePayloads.FarColumnData> outgoing = new ArrayDeque<>();
+        /** Where the player stands, so workers can skip columns asked for before the player moved far away. */
+        volatile int bx, bz;
     }
 
     public FarServer(CubeGenerator generator, CubeStorage storage, CubeCodec codec, Registry<Biome> biomes) {
@@ -93,17 +96,29 @@ public final class FarServer {
         UUID id = player.getUUID();
         Session session = sessions.computeIfAbsent(id, unused -> new Session());
         int bx = player.getBlockX(), bz = player.getBlockZ();
+        session.bx = bx;
+        session.bz = bz;
         for (long key : keys) {
             if (!Far.valid(key) || !Far.near(key, bx, bz) || !session.queued.add(key)) continue;
             CubePayloads.FarColumnData cached = cache.get(key);
             if (cached != null) session.outgoing.add(cached);
-            else submit(id, key);
+            else submit(id, session, key);
         }
     }
 
-    private void submit(@Nullable UUID player, long key) {
+    private void submit(@Nullable UUID player, @Nullable Session session, long key) {
         workers.execute(() -> {
-            try { made.add(new Made(player, make(key, player != null))); }
+            // After a teleport the old place's columns can be thousands deep in the queue: skip them.
+            if (session != null && !Far.near(key, session.bx, session.bz)) {
+                skipped.incrementAndGet();
+                failed.add(key);
+                return;
+            }
+            long start = System.nanoTime();
+            try {
+                made.add(new Made(player, make(key, player != null)));
+                Timings.FAR_MAKE.since(start);
+            }
             catch (RuntimeException | IOException failure) {
                 failed.add(key);
                 failures.incrementAndGet();
@@ -233,7 +248,7 @@ public final class FarServer {
                 long key = it.nextLong();
                 boolean held = false;
                 for (Session session : sessions.values()) held |= session.sent.contains(key);
-                if (held) submit(null, key);
+                if (held) submit(null, null, key);
             }
             stale.clear();
         }
@@ -242,6 +257,8 @@ public final class FarServer {
             present.add(player.getUUID());
             Session session = sessions.get(player.getUUID());
             if (session == null) continue;
+            session.bx = player.getBlockX();
+            session.bz = player.getBlockZ();
             for (int n = 0; n < SEND_PER_TICK && !session.outgoing.isEmpty(); n++) {
                 CubePayloads.FarColumnData column = session.outgoing.poll();
                 session.queued.remove(column.key());
@@ -257,6 +274,8 @@ public final class FarServer {
     }
 
     public int cached() { return cache.size(); }
+    /** Columns skipped because their player had moved far away before their turn came. */
+    public int skipped() { return skipped.get(); }
 
     public void close() {
         closed = true;
