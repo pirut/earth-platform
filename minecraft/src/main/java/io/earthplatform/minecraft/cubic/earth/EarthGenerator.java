@@ -392,7 +392,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * banks blurred into the water put it metres up or down from one spot to the next, and each
      * zoom differently. Taken spot by spot, water stepped up and down in terraces and stood at
      * another height in every far level, leaving dark slits where the levels met. So the height
-     * comes from one place for cubes and every far level alike: the {@link #reachLevel} levels of
+     * comes from one place for cubes and every far level alike: the {@link #reachLevels} levels of
      * the four cells around, blended by distance and by how much water each holds. It never stands
      * more than {@value #BANK} blocks above the lowest surveyed height close by, which the shore
      * climbs to meet, and in steep country, where one cell holds lakes and streams at many heights,
@@ -406,14 +406,30 @@ public final class EarthGenerator extends SurfaceGenerator {
         int local = Mth.floor(SEA + 0.5 + lowest);
         double fx = x / WATER_CELL - 0.5, fz = z / WATER_CELL - 0.5;
         int ix = Mth.floor(fx), iz = Mth.floor(fz);
-        double tx = fx - ix, tz = fz - iz, sum = 0, weight = 0, relief = 0;
-        for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
-            WaterCell cell = waterCell(ix + i, iz + j);
+        double tx = fx - ix, tz = fz - iz, sum = 0, weight = 0, relief = 0, top = Double.NEGATIVE_INFINITY;
+        // Each cell offers its lowest reach that lies no more than a drop below the ground here, or else its
+        // highest; the column takes the highest reach on offer, blended with the cells offering it within a drop
+        // of it. So a river above a falls keeps its level beside the gorge below it in the same cell, and the
+        // gorge keeps its own, while a creek's mouth still meets the river it joins at the river's level.
+        double[] offered = new double[4];
+        for (int c = 0; c < 4; c++) {
+            offered[c] = Double.NaN;
+            WaterCell cell = waterCell(ix + (c & 1), iz + (c >> 1));
             if (cell.samples == 0) continue;
-            double w = ((i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - tz : tz) + 1e-6) * cell.samples;
-            sum += reachLevel(ix + i, iz + j) * w;
-            weight += w;
             relief = Math.max(relief, cell.relief);
+            double[] levels = reachLevels(ix + (c & 1), iz + (c >> 1));
+            double level = levels[levels.length - 1];
+            for (double l : levels) if (l >= lowest - DROP) { level = l; break; }
+            offered[c] = level;
+            top = Math.max(top, level);
+        }
+        for (int c = 0; c < 4; c++) {
+            if (Double.isNaN(offered[c]) || offered[c] < top - DROP) continue;
+            int i = c & 1, j = c >> 1;
+            WaterCell cell = waterCell(ix + i, iz + j);
+            double w = ((i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - tz : tz) + 1e-6) * cell.samples;
+            sum += offered[c] * w;
+            weight += w;
         }
         if (weight == 0) return local;
         int surface = Mth.floor(SEA + 0.5 + sum / weight);
@@ -472,27 +488,29 @@ public final class EarthGenerator extends SurfaceGenerator {
     private static final int REACH = 3;
     private static final double DROP = 8;
     /** Reach levels as far as they have been found. */
-    private final java.util.concurrent.ConcurrentHashMap<Long, Double> reaches = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, double[]> reaches = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Fewest of a cell's own samples a reach needs to keep its own level there, rather than count as a stray reading. */
+    private static final int REACH_SAMPLES = 3;
 
     /**
-     * The water level of a cell's reach, in metres: the lowest quarter of the surveyed heights of
-     * the water joined to the cell's own through wide water, within {@value #REACH} cells. A big
-     * river's or lake's survey wanders metres up and down from one cell to the next, as over the
-     * Rio Negro; taken cell by cell, its level climbed and fell a block every few hundred blocks,
-     * in rings of steps across the water. Over the reach it is one level. Water joined only
-     * through narrow water, as a creek or a canal, keeps its own level, and so does water past a
-     * drop of more than {@value #DROP} metres between neighbouring samples, as at a dam or falls.
-     * A cell's own samples join the water next to them however narrow they are, so a sliver of a
-     * river at a cell's edge, which reads the banks blurred into it, takes the river's level.
+     * The water levels of a cell's reaches, in metres, lowest first: for each reach, the lowest
+     * quarter of the surveyed heights of the water joined to it through wide water, within
+     * {@value #REACH} cells. A big river's or lake's survey wanders metres up and down from one
+     * cell to the next, as over the Rio Negro; taken cell by cell, its level climbed and fell a
+     * block every few hundred blocks, in rings of steps across the water. Over the reach it is one
+     * level. Water joined only through narrow water, as a creek or a canal, keeps its own level,
+     * and so does water past a drop of more than {@value #DROP} metres between neighbouring
+     * samples, as at a dam or falls. A cell's own samples join the water next to them however
+     * narrow they are, so a sliver of a river at a cell's edge, which reads the banks blurred into
+     * it, takes the river's level; but not across such a drop, so a cell holding a river above
+     * and below its falls, as at Victoria Falls, has a level for each.
      */
-    private double reachLevel(int cx, int cz) {
+    private double[] reachLevels(int cx, int cz) {
         long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
-        Double known = reaches.get(key);
+        double[] known = reaches.get(key);
         if (known != null) return known;
-        int span = (2 * REACH + 1) * WATER_SAMPLES;
+        int span = (2 * REACH + 1) * WATER_SAMPLES, first = REACH * WATER_SAMPLES, last = first + WATER_SAMPLES;
         float[] water = new float[span * span];
-        it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue = new it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue();
-        boolean[] joined = new boolean[span * span];
         for (int wj = 0; wj <= 2 * REACH; wj++) for (int wi = 0; wi <= 2 * REACH; wi++) {
             Survey survey = survey(cx - REACH + wi, cz - REACH + wj);
             long[] sea = waterCell(cx - REACH + wi, cz - REACH + wj).sea;
@@ -500,34 +518,43 @@ public final class EarthGenerator extends SurfaceGenerator {
                 boolean raisedSea = (sea[k >> 6] >>> (k & 63) & 1) != 0 && survey.metres[k] > SEA_METRES;
                 int at = (wj * WATER_SAMPLES + k / WATER_SAMPLES) * span + wi * WATER_SAMPLES + k % WATER_SAMPLES;
                 water[at] = (survey.kind[k] == WET || survey.kind[k] == FLAT) && !raisedSea ? survey.metres[k] : Float.NaN;
-                if (wi == REACH && wj == REACH && !Float.isNaN(water[at])) {
-                    joined[at] = true;
-                    queue.enqueue(at);
+            }
+        }
+        it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue = new it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue();
+        boolean[] reached = new boolean[span * span];
+        double[] heights = new double[span * span];
+        it.unimi.dsi.fastutil.doubles.DoubleArrayList levels = new it.unimi.dsi.fastutil.doubles.DoubleArrayList();
+        for (int sj = first; sj < last; sj++) for (int si = first; si < last; si++) {
+            int start = sj * span + si;
+            if (reached[start] || Float.isNaN(water[start])) continue;
+            // Each reach floods from a sample of the cell's own that no other reach has reached.
+            boolean[] joined = new boolean[span * span];
+            joined[start] = true;
+            queue.enqueue(start);
+            int count = 0, own = 0;
+            while (!queue.isEmpty()) {
+                int at = queue.dequeueInt(), i = at % span, j = at / span;
+                heights[count++] = water[at];
+                boolean inside = i >= first && i < last && j >= first && j < last;
+                if (inside && !reached[at]) { reached[at] = true; own++; }
+                if (!inside && !wideWater(water, span, i, j)) continue;
+                for (int d = 0; d < 8; d += 2) {
+                    int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d], n = nj * span + ni;
+                    if (ni < 0 || nj < 0 || ni >= span || nj >= span || joined[n] || Float.isNaN(water[n])) continue;
+                    if (Math.abs(water[n] - water[at]) > DROP) continue;
+                    joined[n] = true;
+                    queue.enqueue(n);
                 }
             }
-        }
-        double[] heights = new double[span * span];
-        int count = 0, own = queue.size();
-        while (!queue.isEmpty()) {
-            int at = queue.dequeueInt(), i = at % span, j = at / span;
-            heights[count++] = water[at];
-            if (count > own && !wideWater(water, span, i, j)) continue;
-            for (int d = 0; d < 8; d += 2) {
-                int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d], n = nj * span + ni;
-                if (ni < 0 || nj < 0 || ni >= span || nj >= span || joined[n] || Float.isNaN(water[n])) continue;
-                if (Math.abs(water[n] - water[at]) > DROP) continue;
-                joined[n] = true;
-                queue.enqueue(n);
-            }
-        }
-        double level = waterCell(cx, cz).level;
-        if (count >= 4) {
+            if (own < REACH_SAMPLES || count < 4) continue;
             java.util.Arrays.sort(heights, 0, count);
-            level = heights[count / 4];
+            levels.add(heights[count / 4]);
         }
+        double[] found = levels.isEmpty() ? new double[]{waterCell(cx, cz).level} : levels.toDoubleArray();
+        java.util.Arrays.sort(found);
         if (reaches.size() > 1 << 20) reaches.clear();
-        reaches.putIfAbsent(key, level);
-        return level;
+        reaches.putIfAbsent(key, found);
+        return found;
     }
 
     /** Whether a water sample has water all round it, so it is no river's or creek's narrow water. */
