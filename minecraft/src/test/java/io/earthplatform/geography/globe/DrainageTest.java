@@ -21,7 +21,7 @@ class DrainageTest {
         int[] down = new int[height.length];
         int[] order = Drainage.flood(height, down);
         assertEquals(height.length, order.length);
-        double[] area = new double[height.length];
+        float[] area = new float[height.length];
         java.util.Arrays.fill(area, 1);
         for (int k = order.length - 1; k >= 0; k--) if (down[order[k]] >= 0) area[down[order[k]]] += area[order[k]];
         int floor = 40 * SIDE + SIDE / 2;
@@ -34,7 +34,7 @@ class DrainageTest {
         float[] height = valley();
         int[] down = new int[height.length];
         int[] order = Drainage.flood(height, down);
-        double[] area = new double[height.length];
+        float[] area = new float[height.length];
         java.util.Arrays.fill(area, 1);
         for (int k = order.length - 1; k >= 0; k--) if (down[order[k]] >= 0) area[down[order[k]]] += area[order[k]];
         boolean[] kept = Drainage.keep(height, down, order, area);
@@ -44,7 +44,7 @@ class DrainageTest {
         java.util.Arrays.fill(flat, 3);
         int[] flatDown = new int[flat.length];
         int[] flatOrder = Drainage.flood(flat, flatDown);
-        double[] flatArea = new double[flat.length];
+        float[] flatArea = new float[flat.length];
         java.util.Arrays.fill(flatArea, 1);
         for (int k = flatOrder.length - 1; k >= 0; k--) if (flatDown[flatOrder[k]] >= 0) flatArea[flatDown[flatOrder[k]]] += flatArea[flatOrder[k]];
         boolean[] flatKept = Drainage.keep(flat, flatDown, flatOrder, flatArea);

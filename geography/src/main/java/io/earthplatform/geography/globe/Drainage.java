@@ -175,7 +175,7 @@ public final class Drainage {
         }
         RangeFiles.all(loads);
         long originX = (long) (tx - SPREAD) * TILE, originY = (long) (ty - SPREAD) * TILE;
-        double[] weight = new double[SIDE * SIDE];
+        float[] area = new float[SIDE * SIDE];
         double[] row = new double[SIDE];
         for (int y = 0; y < SIDE; y++) {
             double metres = 2 * Math.PI * MercatorGrid.RADIUS / ((long) TILE << ZOOM) * Math.cos(Math.toRadians(latitude(originY + y + 0.5, ZOOM)));
@@ -188,10 +188,9 @@ public final class Drainage {
             double u = (x - i * RAIN_STEP) / (double) RAIN_STEP, v = (y - j * RAIN_STEP) / (double) RAIN_STEP;
             double share = (wet[j * points + i] * (1 - u) + wet[j * points + i + 1] * u) * (1 - v)
                     + (wet[(j + 1) * points + i] * (1 - u) + wet[(j + 1) * points + i + 1] * u) * v;
-            weight[y * SIDE + x] = row[y] * share;
+            area[y * SIDE + x] = (float) (row[y] * share);
         }
         int[] down = new int[SIDE * SIDE], order = flood(height, down);
-        double[] area = weight;
         for (int k = order.length - 1; k >= 0; k--) {
             int at = order[k], to = down[at];
             if (to >= 0) area[to] += area[at];
@@ -206,7 +205,7 @@ public final class Drainage {
             if (!kept[at] || down[at] < 0) continue;
             int dx = down[at] % SIDE - at % SIDE, dy = down[at] / SIDE - at / SIDE;
             for (int d = 0; d < 8; d++) if (NX[d] == dx && NY[d] == dy) step[out] = (byte) d;
-            gathered[out] = (float) area[at];
+            gathered[out] = area[at];
         }
         return new Region(step, gathered);
     }
@@ -232,13 +231,14 @@ public final class Drainage {
         int n = height.length, side = (int) Math.round(Math.sqrt(n));
         boolean[] reached = new boolean[n];
         int[] order = new int[n], byTicket = new int[n];
-        long[] heap = new long[n];
+        long[] heap = new long[4 * side];
         int size = 0, ticket = 0, popped = 0;
         for (int at = 0; at < n; at++) {
             int x = at % side, y = at / side;
             if (x == 0 || y == 0 || x == side - 1 || y == side - 1) {
                 reached[at] = true; down[at] = -1;
                 byTicket[ticket] = at;
+                if (size == heap.length) heap = java.util.Arrays.copyOf(heap, size * 2);
                 size = push(heap, size, key(height[at], ticket++));
             }
         }
@@ -257,6 +257,7 @@ public final class Drainage {
                 reached[next] = true;
                 down[next] = at;
                 byTicket[ticket] = next;
+                if (size == heap.length) heap = java.util.Arrays.copyOf(heap, size * 2);
                 size = push(heap, size, key(Math.max(level, height[next]), ticket++));
             }
         }
@@ -302,7 +303,7 @@ public final class Drainage {
     }
 
     /** Stream pixels in valleys, with short gaps between them filled and short pieces dropped. */
-    static boolean[] keep(float[] height, int[] down, int[] order, double[] area) {
+    static boolean[] keep(float[] height, int[] down, int[] order, float[] area) {
         int n = height.length, side = (int) Math.round(Math.sqrt(n));
         boolean[] stream = new boolean[n], valley = new boolean[n];
         float[] ring = new float[16];
@@ -340,7 +341,8 @@ public final class Drainage {
         boolean[] kept = new boolean[n];
         for (int at = 0; at < n; at++) kept[at] = stream[at] && (valley[at] || up[at] + ahead[at] <= GAP);
         // Pieces: kept pixels in a row upstream (the longest branch) and downstream.
-        int[] above = new int[n], below = new int[n];
+        int[] above = up, below = ahead;
+        java.util.Arrays.fill(above, 0);
         for (int k = n - 1; k >= 0; k--) {
             int at = order[k];
             if (!kept[at]) continue;
