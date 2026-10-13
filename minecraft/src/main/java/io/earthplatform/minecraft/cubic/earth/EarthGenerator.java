@@ -172,19 +172,23 @@ public final class EarthGenerator extends SurfaceGenerator {
             out[1] = SEA;
             return;
         }
+        double steep = Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1]));
         if (cover != null && cover(x, z, voxel) == WorldCoverSource.WATER) {
             int surface = lakeSurface(dem, x, z, voxel);
-            if (sample[2] > 0.02 && surface <= SEA) {
+            // Shadowed cliffs can map as water; water never lies on a steep slope well above its own level.
+            boolean shadow = steep > 0.7 && SEA + 0.5 + metres - surface > 4;
+            if (!shadow && sample[2] > 0.02 && surface <= SEA) {
                 // Water by the coast is the sea.
                 out[0] = Math.min(SEA - 1, Mth.floor(SEA + 0.5 + metres));
                 out[1] = SEA;
                 return;
             }
-            out[0] = surface - lakeDepth(x, z, voxel);
-            out[1] = surface;
-            return;
+            if (!shadow) {
+                out[0] = surface - lakeDepth(x, z, voxel);
+                out[1] = surface;
+                return;
+            }
         }
-        double steep = Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1]));
         double amplitude = Mth.clamp((metres - 0.5) / 4, 0, 1) * (0.6 + 1.8 * steep), detail = 0;
         if (voxel <= 8) detail += fbm(relief, x / 27.0, z / 27.0, 3) * amplitude;
         if (voxel <= 2) detail += (0.5 - Math.abs(crags.getValue(x / 9.0, z / 9.0))) * amplitude * 0.6 * Math.min(1, steep);

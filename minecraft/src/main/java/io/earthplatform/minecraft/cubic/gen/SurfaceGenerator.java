@@ -150,7 +150,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             water[j * 18 + i] = sample[1];
         }
         @SuppressWarnings("unchecked") Holder<Biome>[] biome = new Holder[256];
-        BlockState[] top = new BlockState[256], under = new BlockState[256];
+        BlockState[] top = new BlockState[256], under = new BlockState[256], crown = new BlockState[256];
         int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
         for (int cz = 0; cz < 16; cz++) for (int cx = 0; cx < 16; cx++) {
             int g = (cz + 1) * 18 + cx + 1, h = ground[g], cell = cz * 16 + cx;
@@ -160,12 +160,18 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             biome[cell] = surface.biome();
             top[cell] = surface.top();
             under[cell] = v > 2 ? STONE : surface.under();
-            // Voxels wider than a tree: forests show as leaves on the ground voxel, as a downsampled forest does.
-            if (v >= 8) { BlockState leaves = canopy(surface, wx, wz, v); if (leaves != null) top[cell] = leaves; }
+            // Voxels wider than a tree show forests as leaves: at 8 blocks a voxel above the ground, about a tree's
+            // height, so they meet the rasterised trees nearer; wider voxels would stand too tall, so leaves lie on the ground voxel.
+            if (v >= 8) {
+                BlockState leaves = water[g] > h ? null : canopy(surface, wx, wz, v);
+                if (leaves != null && v == 8) crown[cell] = leaves;
+                else if (leaves != null) top[cell] = leaves;
+            }
             min = Math.min(min, h);
             max = Math.max(max, Math.max(h, water[g]));
         }
         if (v <= 4) max += Vegetation.TALLEST + 1;
+        else if (v == 8) max += v;
         int bottom = (min - v) >> (level + 4), highest = max >> (level + 4);
         // Columns taller than the section budget keep their top, where the view is.
         bottom = Math.max(bottom, highest - Far.MAX_SECTIONS + 1);
@@ -185,6 +191,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                 for (int cz = 0; cz < 16; cz++) for (int cx = 0; cx < 16; cx++) {
                     int g = (cz + 1) * 18 + cx + 1;
                     BlockState state = voxel(ground[g], water[g], y0, v, top[cz * 16 + cx], under[cz * 16 + cx]);
+                    if (state == AIR && crown[cz * 16 + cx] != null && ground[g] < y0 && ground[g] >= y0 - v) state = crown[cz * 16 + cx];
                     if (state != AIR) section.setBlockState(cx, vy, cz, state, false);
                 }
             }
