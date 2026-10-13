@@ -1,0 +1,96 @@
+{
+  "dimension": "earthplatform:cubic",
+  "base_pressure": 1.0,
+  "pressure_function": [
+    {
+      "altitude": -12000,
+      "value": 4.20415,
+      "slope": -0.000500494
+    },
+    {
+      "altitude": -6000,
+      "value": 2.05811,
+      "slope": -0.000245013
+    },
+    {
+      "altitude": -2000,
+      "value": 1.27838,
+      "slope": -0.000152188
+    },
+    {
+      "altitude": 63,
+      "value": 1.0,
+      "slope": -0.000119048
+    },
+    {
+      "altitude": 1000,
+      "value": 0.89445,
+      "slope": -0.000106482
+    },
+    {
+      "altitude": 2000,
+      "value": 0.79406,
+      "slope": -9.4531e-05
+    },
+    {
+      "altitude": 3000,
+      "value": 0.70494,
+      "slope": -8.3921e-05
+    },
+    {
+      "altitude": 4000,
+      "value": 0.62582,
+      "slope": -7.4503e-05
+    },
+    {
+      "altitude": 5000,
+      "value": 0.55558,
+      "slope": -6.6141e-05
+    },
+    {
+      "altitude": 6000,
+      "value": 0.49323,
+      "slope": -5.8718e-05
+    },
+    {
+      "altitude": 7000,
+      "value": 0.43787,
+      "slope": -5.2127e-05
+    },
+    {
+      "altitude": 8000,
+      "value": 0.38873,
+      "slope": -4.6277e-05
+    },
+    {
+      "altitude": 9000,
+      "value": 0.3451,
+      "slope": -4.1083e-05
+    },
+    {
+      "altitude": 10000,
+      "value": 0.30637,
+      "slope": -3.6472e-05
+    },
+    {
+      "altitude": 12000,
+      "value": 0.24146,
+      "slope": -2.8745e-05
+    },
+    {
+      "altitude": 14000,
+      "value": 0.1903,
+      "slope": -2.2654e-05
+    },
+    {
+      "altitude": 16000,
+      "value": 0.14998,
+      "slope": -1.7855e-05
+    },
+    {
+      "altitude": 16384,
+      "value": 0.0,
+      "slope": 0.0
+    }
+  ]
+}
