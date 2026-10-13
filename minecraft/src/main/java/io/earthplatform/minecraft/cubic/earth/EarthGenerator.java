@@ -682,7 +682,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (biome == Ecoregions.FLOODED_GRASSLAND) {
                 // Open marsh with tree islands where the map has trees.
                 if (code == WorldCoverSource.TREE_COVER) return new Surface(swamp, patch > 0.45 ? MUD : GRASS, DIRT, 12, 0, 0, 400, 420, false);
-                return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope);
+                if (code != WorldCoverSource.WETLAND) return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope);
             }
             if (code == WorldCoverSource.TREE_COVER) {
                 // Cypress and tupelo swamps on the Mississippi's floodplain and the South's lowest flats.
