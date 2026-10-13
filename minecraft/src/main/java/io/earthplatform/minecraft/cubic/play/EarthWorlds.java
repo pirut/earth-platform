@@ -14,6 +14,7 @@ import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -148,7 +149,9 @@ public final class EarthWorlds {
     }
 
     @SubscribeEvent public static void loggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
-        if (session != null) session.forget(event.getEntity().getUUID());
+        if (session == null) return;
+        if (event.getEntity() instanceof ServerPlayer player) session.release(player);
+        session.forget(event.getEntity().getUUID());
     }
 
     @SubscribeEvent public static void tick(ServerTickEvent.Post event) {
@@ -160,6 +163,8 @@ public final class EarthWorlds {
         final MinecraftServer server;
         final String homeName;
         final Set<UUID> waiting = new LinkedHashSet<>();
+        /** Waiting players allowed to fly so a dedicated server does not kick them for floating. */
+        final Set<UUID> floating = new HashSet<>();
         final EarthStatus status = new EarthStatus();
         CompletableFuture<Void> preparing;
         boolean ready;
@@ -222,7 +227,11 @@ public final class EarthWorlds {
             if (waiting.isEmpty()) return;
             for (UUID id : List.copyOf(waiting)) {
                 ServerPlayer player = server.getPlayerList().getPlayer(id);
-                if (player == null || player.level().dimension() != Level.OVERWORLD) { waiting.remove(id); continue; }
+                if (player == null || player.level().dimension() != Level.OVERWORLD) {
+                    waiting.remove(id);
+                    if (player != null) release(player);
+                    continue;
+                }
                 if (ready) {
                     waiting.remove(id);
                     arrive(player, cubes);
@@ -261,13 +270,31 @@ public final class EarthWorlds {
             }
         }
 
+        /**
+         * Keeps a waiting player in the air above the stand-in overworld. Its client may hold still
+         * there for as long as the Earth takes to get ready, which a dedicated server without
+         * allow-flight would kick as floating, so the player may fly until it arrives.
+         */
         private void hold(ServerPlayer player) {
+            if (!player.getAbilities().mayfly) {
+                player.getAbilities().mayfly = true;
+                player.onUpdateAbilities();
+                floating.add(player.getUUID());
+            }
             if (player.position().distanceToSqr(HOLD) > 4) player.teleportTo(player.serverLevel(), HOLD.x, HOLD.y, HOLD.z, player.getYRot(), player.getXRot());
             player.setDeltaMovement(Vec3.ZERO);
             player.resetFallDistance();
         }
 
+        /** Takes back the flight a waiting player was lent, leaving what its game mode allows. */
+        void release(ServerPlayer player) {
+            if (!floating.remove(player.getUUID())) return;
+            player.gameMode.getGameModeForPlayer().updatePlayerAbilities(player.getAbilities());
+            player.onUpdateAbilities();
+        }
+
         private void arrive(ServerPlayer player, ServerCubeWorld cubes) {
+            release(player);
             int[] view = view(cubes);
             Vec3 spot = CubicEvents.arrival(cubes, view);
             ServerLevel level = server.getLevel(Cubic.LEVEL);
