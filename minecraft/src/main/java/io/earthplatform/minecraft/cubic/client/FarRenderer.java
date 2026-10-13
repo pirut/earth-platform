@@ -62,8 +62,8 @@ public final class FarRenderer {
     private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "block/far_white");
     private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
             SETTLE_TICKS = 3, HIDDEN_SETTLE_TICKS = 40, UPLOADS_PER_FRAME = 8, MESHES_IN_FLIGHT = 128;
-    /** Above Everest (Y 8,912), where the jet stream layer starts, and a speed only elytra and fast travel reach. */
-    private static final double JET_Y = 9_200, FAST_BLOCKS_PER_SECOND = 200;
+    /** Speeds only elytra and the jet stream reach, in blocks a second. */
+    private static final double FAST_BLOCKS_PER_SECOND = 200, JET_BLOCKS_PER_SECOND = 800;
     private static final long UPLOAD_NANOS = 3_000_000L;
     private static final AtomicInteger THREADS = new AtomicInteger();
     private static final ExecutorService MESHER = Executors.newFixedThreadPool(2, runnable -> {
@@ -258,7 +258,8 @@ public final class FarRenderer {
         ticks++;
         var player = Minecraft.getInstance().player;
         if (closed || player == null) return;
-        finest = finest(player.getY(), player.getDeltaMovement().horizontalDistance() * 20.0, finest);
+        finest = finest(player.getY() - ground(player.getBlockX(), player.getBlockZ(), player.getY()),
+                player.getDeltaMovement().horizontalDistance() * 20.0, finest);
         if (ticks % MASK_TICKS == 0) mask();
         for (Column column : drawn) if (column.maskStale) column.due = Math.min(column.due, ticks + SETTLE_TICKS);
         submitDue(player.getBlockX(), player.getBlockZ());
@@ -301,16 +302,38 @@ public final class FarRenderer {
     }
 
     /**
-     * The finest level worth asking for. Each level is a ring 47 columns across, so crossing one
-     * column width brings in 47 new ones: at the jet stream's 1,200 blocks a second the finest two
-     * levels alone would need about 2,600 columns a second, several times what the server makes,
-     * while from 9 km up they only cover the ground straight below. The thresholds differ going
-     * up and coming down so the levels do not flicker at the edge.
+     * The finest level worth asking for. A level's hole is no wider than the player's height above
+     * the ground is worth nothing more, as it only covers the ground straight below. Speed counts
+     * too: each level is a ring 47 columns across, so crossing one column width brings in 47 new
+     * ones, and at the jet stream's 1,500 blocks a second level 4 alone needs about 480 columns a
+     * second, more than the server keeps up with. Coming back down needs a fifth less height and
+     * half the speed, so the levels do not flicker at the edge.
      */
-    static int finest(double y, double blocksPerSecond, int current) {
-        boolean jet = y >= (current >= 4 ? JET_Y - 400 : JET_Y);
-        boolean fast = blocksPerSecond >= (current >= 3 ? FAST_BLOCKS_PER_SECOND / 2 : FAST_BLOCKS_PER_SECOND);
-        return jet ? 4 : fast ? 3 : Far.MIN_LEVEL;
+    static int finest(double height, double blocksPerSecond, int current) {
+        int finest = Far.MIN_LEVEL;
+        while (finest < Far.MAX_LEVEL && Far.HOLE * Far.width(finest) * (finest < current ? 0.8 : 1.0) <= height) finest++;
+        double slack = current > finest ? 0.5 : 1.0;
+        if (blocksPerSecond >= JET_BLOCKS_PER_SECOND * slack) finest = Math.max(finest, Far.MAX_LEVEL);
+        else if (blocksPerSecond >= FAST_BLOCKS_PER_SECOND * slack) finest = Math.max(finest, 3);
+        return finest;
+    }
+
+    /** The ground's height under a block position from the finest column held there, or {@code fallback} when none is. */
+    private double ground(int bx, int bz, double fallback) {
+        for (int level = Far.MIN_LEVEL; level <= Far.MAX_LEVEL; level++) {
+            Column column = columns.get(Far.key(level, Far.column(bx, level), Far.column(bz, level)));
+            if (column == null) continue;
+            int x = (bx - column.x0) >> level, z = (bz - column.z0) >> level;
+            for (int si = column.sections.length - 1; si >= 0; si--) {
+                LevelChunkSection section = column.sections[si];
+                if (section == null || section.hasOnlyAir()) continue;
+                for (int y = 15; y >= 0; y--) {
+                    if (!section.getBlockState(x, y, z).isAir()) return column.baseY() + (si * 16 + y + 1) * (double) Far.voxel(level);
+                }
+            }
+            return column.baseY();
+        }
+        return fallback;
     }
 
     private void evict() {
