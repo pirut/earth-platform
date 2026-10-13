@@ -17,16 +17,40 @@
 | `/earth where` | Your latitude, longitude and real height |
 | `/earth home` | Back to the world's starting point |
 
+### The jet stream
+
+For survival travel, climb high and glide. With an elytra, the wind above about Y 9,200 carries you along your heading at over 1,000 blocks a second, a little faster eastward and a little slower westward, so a continent takes under an hour. Fireworks pointed steeply up climb fast (about 30 take you from the ground into the wind); in the wind they add nothing, and your elytra doesn't wear. Tip your nose down to leave the wind; you slow over a few kilometres before landing. The terrain below stays drawn as far terrain the whole way.
+
+### Commands
+
 In singleplayer you can always travel. On servers only operators can, unless `anyoneCanTravel` is on. Operators and the server console can send someone else: `/earth goto <latitude> <longitude> <player>`.
 
 ## Settings
 
-Mods → Earth Platform → Config, or the files in `config/`:
+Mods → Earth Platform → Config, or the files in `config/`.
 
-- `earthplatform-client.toml`: far terrain detail and textured levels (restart to apply), the download note, and whether Create World starts on Earth.
-- `earthplatform-common.toml`: the default starting place for new worlds, satellite imagery for new worlds (EOX Sentinel-2, off by default; also a toggle on the Customize screen), offline mode, the cache size limit (GB, oldest files removed at start) and who may travel.
+| Setting | File | Default | What it does |
+| --- | --- | --- | --- |
+| `detail` | client | 11 (4 to 24) | How far fine far terrain reaches. Lower helps weaker GPUs; higher needs more memory. Restart to apply |
+| `texturedLevels` | client | 2 (0 to 6) | How many far levels use block textures; further ones use flat colours. Restart to apply |
+| `showDownloadStatus` | client | on | The small note while Earth data downloads or can't be reached |
+| `preselectEarth` | client | on | Create World starts with the Earth world type |
+| `cloudHeight` | client | 2500 | Cloud height in metres; 0 gives vanilla clouds |
+| `defaultHome` | common | Yosemite Valley | Where new worlds start when nobody picks: a place id from `/earth places`, or `latitude,longitude` |
+| `satelliteImagery` | common | off | Ground colours from EOX satellite imagery for new worlds (also a toggle on the Customize screen) |
+| `offline` | common | off | Never download; only places already cached generate. Restart to apply |
+| `cacheLimitGb` | common | 8 | Size limit for downloaded data; the least recently used files go first, when the game starts |
+| `anyoneCanTravel` | common | off | Let every player use `/earth goto` on servers |
 
 Command-line `-Dearthplatform.far.detail`, `-Dearthplatform.far.textured`, `-Dearthplatform.earth.offline` and `-Dearthplatform.earth.imagery` still win over the files.
+
+## The Nether, the End and other dimensions
+
+Nether portals work as usual: a portal built on the Earth leads to the Nether, and coming back puts you at the portal you built. Strongholds generate underground (eyes of ender find them), and leaving the End brings you home to the Earth. Dying in the Nether or the End respawns you at your bed or the Earth's start. The Twilight Forest portal works too, and its return trip brings you back to where you left.
+
+## Other mods
+
+See [Which other mods work?](FAQ.md#which-other-mods-work) and [Known limitations](FAQ.md#known-limitations) in the FAQ.
 
 ## Servers
 

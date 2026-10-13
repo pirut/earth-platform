@@ -14,6 +14,9 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | ESA WorldCover | OK | Credited, changes noted (CC BY 4.0) |
 | CHELSA climate | OK (licence) / courtesy | CC0; ask CHELSA about public traffic or mirror the four bands |
 | RESOLVE Ecoregions 2017 (PR #14) | OK | CC BY 4.0; credited with the citation, and the derived raster noted |
+| Copernicus GLO-30 for filling elevation holes (coming) | OK | Same licence as the bundled crop; credit and liability line drafted below |
+| River channels (PR #19) | **OK: JRC Global Surface Water v1.4** | JRC GSW is free without restriction of use, with a citation. HydroRIVERS' licence forbids open redistribution of its data, so it can't ship in an LGPL mod (details below) |
+| Hand-traced falls water (PR #16 `KnownWater`) | **Resolved: removed** | Deleted in 3e297c3; falls now come from general rules on Terrarium elevation and WorldCover, so no traced or OSM data ships |
 | Bundled test data (Copernicus GLO-30, NOAA ETOPO, WorldCover) | OK | Credited; could be dropped from the release jar |
 | Iris, Sodium, Photon, Distant Horizons | OK | Not bundled; compile-only. Exact version pins hurt players (see below) |
 | Third-party code in the jar | OK | None. Only `io/earthplatform` classes and our own data |
@@ -55,6 +58,41 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 - The proof data above are test fixtures for the older engine; Earth worlds don't read them. Dropping them from the release jar saves about 2.5 MB and three notices. Engineering item, not a licence problem.
 - No third-party libraries: Iris, Sodium and Distant Horizons are `compileOnly`; nothing is shaded or jar-in-jar.
 - The logo (`earthplatform_logo.png`) is original pixel art.
+
+## Coming data sources (checked 2026-10-13, credits drafted)
+
+Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `neoforge.mods.toml` when its PR lands. All three are data, separate from the LGPL-3.0 code licence: the code licence doesn't change their terms, and their terms don't restrict the code.
+
+### Copernicus DEM GLO-30 ("Filling elevation holes")
+- Terms: the [Copernicus WorldDEM-30 licence](../../geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf) (Art. 4) allows reproduction, distribution, communication to the public, and adaptation and combination with other data, free of charge and for any purpose. Same licence as the Everest crop already in the jar. OK, whether tiles are streamed at runtime or a derived fill is bundled.
+- Obligations (Art. 6): give the "produced using" notice for adapted data; add the liability sentence in a notice covering the distribution; don't suggest Copernicus endorses the mod; and bind anyone we let redistribute to the same duties, which the notice in the jar and CREDITS.md does. The bundled crop's credit now carries the liability sentence too (it was missing).
+- GLO-30 Public leaves out a few tiles (Armenia and Azerbaijan); those areas keep the other elevation sources.
+- Credit line:
+  > Elevation fill: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.
+
+### JRC Global Surface Water ("Real river channels", PR #19), credited
+- Terms ([data access page](https://global-surface-water.appspot.com/download)): produced under the Copernicus Programme and "provided free of charge, without restriction of use". Products that use it must acknowledge it and cite the dataset and the Nature paper; maps showing it should say "Source: EC JRC/Google". Redistributing a derived river mask inside the jar and under an open licence is fine. OK.
+- Credit line:
+  > Surface water: JRC Global Surface Water, Source: EC JRC/Google. Pekel, J.-F., Cottam, A., Gorelick, N., Belward, A.S. (2016). High-resolution mapping of global surface water and its long-term changes. Nature 540, 418-422, doi:10.1038/nature20584. Produced under the Copernicus Programme.
+- PR #19 streams the v1.4 occurrence layer at runtime (`SurfaceWaterSource`, Google Cloud Storage); nothing is bundled. Credit added to CREDITS.md, THIRD_PARTY_NOTICES.md and the mods list with the Copernicus no-liability sentence, which the Copernicus data policy asks for on any Copernicus product.
+
+### Hand-traced water at famous falls (PR #16, `KnownWater`)
+- **Resolved 2026-10-13: removed.** PR #16 first re-derived the points from OpenStreetMap (e95ba96), then deleted `KnownWater` entirely (3e297c3): the falls now come from general rules over Terrarium elevation and ESA WorldCover. Nothing traced from imagery and no OSM data ships, so no OSM credit is needed. History below.
+- What: about 70 latitude/longitude points with widths, for Victoria Falls' gorges, the Niagara gorge and the river above the Horseshoe Falls, the Welland River and Skógafoss, "traced from satellite imagery". Water levels come from our elevation tiles.
+- Risk depends on the imagery:
+  - EOX `s2cloudless_3857` (the 2016 mosaic, what our imagery client uses): released CC BY 4.0. OK with an EOX credit that is not marked optional.
+  - EOX s2cloudless 2018 and later: CC BY-NC-SA 4.0. Not OK: the non-commercial clause conflicts with Modrinth and CurseForge rewards and with letting anyone reuse the mod.
+  - Google, Bing, Esri, Mapbox and similar basemaps: their terms forbid tracing features. Not OK; re-trace.
+- A few dozen points describing where a river runs are close to bare facts, so the legal risk is small, but a clean, credited source removes it. Clean sources, in order:
+  1. OpenStreetMap waterway lines and water outlines: ODbL. A few dozen points is an insubstantial extract; credit "© OpenStreetMap contributors, ODbL" in CREDITS.md and the mods list. A large extract would make the derived data ODbL too, which is fine for data but must be stated.
+  2. JRC Global Surface Water: free without restriction, but 30 m pixels may not show 60 m gorges.
+- Ask: each Course and Pool carries a one-line source comment (an OSM way id or "EOX s2cloudless 2016"). Asked the Grand Canyon thread 2026-10-13.
+
+### HydroRIVERS (HydroSHEDS), not recommended
+- Terms: "freely available for scientific, educational and commercial use", but under the HydroSHEDS v1 License Agreement ([technical documentation, Appendix A](https://data.hydrosheds.org/file/technical-documentation/HydroSHEDS_TechDoc_v1_4.pdf)). That agreement lets us distribute the data only built into a derivative product, to end users bound by a written end-user licence "at least as protective" as WWF's, never as a stand-alone dataset. It also forbids reverse engineering, obliges us to protect the data against unauthorised copying, and asks us to indemnify WWF.
+- That doesn't fit Earth Platform: the mod and its source are open under the LGPL, anyone may copy and redistribute the jar, and Modrinth and CurseForge offer no end-user licence step. A river mask derived from HydroRIVERS would still contain the licensed data. Downloading it at runtime doesn't help either: the global file is 618 MB and each player would have to accept WWF's licence.
+- Recommendation: build river channels from JRC Global Surface Water. If HydroRIVERS is ever needed, use it only offline as a check during development, with nothing derived from it shipped, or ask WWF (hydrosheds.org) for written permission first.
+- Required wording if it were used (Exhibit B): "This product Earth Platform incorporates data from the HydroSHEDS version 1 database which is © World Wildlife Fund, Inc. (2006-2022) and has been used herein under license. WWF has not evaluated the data as altered and incorporated within Earth Platform, and therefore gives no warranty regarding its accuracy, completeness, currency or suitability for any particular purpose. Portions of the HydroSHEDS v1 database incorporate data which are the intellectual property rights of © USGS (2006-2008), NASA (2000-2005), ESRI (1992-1998), CIAT (2004-2006), UNEP-WCMC (1993), WWF (2004), Commonwealth of Australia (2007), and Her Royal Majesty and the British Crown and are used under license. The HydroSHEDS v1 database and more information are available at https://www.hydrosheds.org." Citation: Lehner, B., Grill, G. (2013), Hydrological Processes 27(15): 2171-2186.
 
 ## Shader pack
 
