@@ -1321,6 +1321,10 @@ public final class GlobeTest {
                 check(Arrays.equals(online, values), "3DEP disk cache offline");
                 equal(transfers, hits.get(path).get(), "3DEP cached blocks need no transfer");
             }
+            try (var light = new UsgsElevation(base, cache, false, 16, 1, Duration.ofSeconds(5), true)) {
+                equal(UsgsElevation.COARSE_ID, light.id(), "3DEP read lighter pins its own id");
+                equal(UsgsElevation.DATASET_ID, new UsgsElevation(base, cache, false, 16, 1, Duration.ofSeconds(5)).id(), "3DEP keeps its first id");
+            }
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();

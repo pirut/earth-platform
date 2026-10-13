@@ -49,7 +49,8 @@ public final class CubicSettings {
     private static final Map<String, TerrariumTileSource> tiles = new HashMap<>();
     private static CopernicusSource copernicus;
     private static RemaElevation rema;
-    private static UsgsElevation usgs;
+    /** 3DEP read as {@link UsgsElevation#DATASET_ID} and as {@link UsgsElevation#COARSE_ID}. */
+    private static final UsgsElevation[] usgs = new UsgsElevation[2];
     private static WorldCoverSource cover;
     private static BareEarth bareEarth;
     private static ClimateSource climate;
@@ -176,7 +177,7 @@ public final class CubicSettings {
     public static String elevation() {
         String pin = TerrariumTileSource.DATASET_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.copernicus"))) pin += "+" + CopernicusFill.DATASET_ID;
-        if (!"false".equals(System.getProperty("earthplatform.earth.3dep"))) pin += "+" + UsgsElevation.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.3dep"))) pin += "+" + UsgsElevation.COARSE_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.rema"))) pin += "+" + RemaElevation.DATASET_ID;
         return pin;
     }
@@ -200,7 +201,8 @@ public final class CubicSettings {
         TerrariumTileSource[] made = new TerrariumTileSource[1];
         for (int i = 1; i < ids.length; i++) {
             if (CopernicusFill.DATASET_ID.equals(ids[i])) layers.add(new CopernicusFill(copernicus(), (zoom, x, y) -> made[0].cleaned(zoom, x, y), 512));
-            else if (UsgsElevation.DATASET_ID.equals(ids[i])) layers.add(usgs());
+            else if (UsgsElevation.DATASET_ID.equals(ids[i])) layers.add(usgs(false));
+            else if (UsgsElevation.COARSE_ID.equals(ids[i])) layers.add(usgs(true));
             else if (RemaElevation.DATASET_ID.equals(ids[i])) layers.add(rema());
             else throw new IllegalStateException("Unsupported elevation layer '" + ids[i] + "' in '" + pin + "'");
         }
@@ -239,19 +241,20 @@ public final class CubicSettings {
         return copernicus;
     }
 
-    /** The United States from 3DEP, cached on disk beside the elevation tiles. */
-    public static synchronized UsgsElevation usgs() {
-        if (usgs == null) {
+    /** The United States from 3DEP, cached on disk beside the elevation tiles; both ways of reading it share the cache. */
+    public static synchronized UsgsElevation usgs(boolean coarse) {
+        int at = coarse ? 1 : 0;
+        if (usgs[at] == null) {
             Path cache = cacheFolder().resolve(UsgsElevation.DATASET_ID);
             try {
                 // Blocks are up to 1 MiB decoded; a zoom-15 tile needs one to four.
-                usgs = new UsgsElevation(UsgsElevation.AWS_3DEP, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        48, 6, Duration.ofSeconds(30));
+                usgs[at] = new UsgsElevation(UsgsElevation.AWS_3DEP, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        48, 6, Duration.ofSeconds(30), coarse);
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the 3DEP elevation cache at " + cache, failure);
             }
         }
-        return usgs;
+        return usgs[at];
     }
 
     /** Antarctica from REMA, cached on disk beside the elevation tiles. */

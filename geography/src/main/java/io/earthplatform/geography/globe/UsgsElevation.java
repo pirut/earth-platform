@@ -30,6 +30,14 @@ import java.util.Map;
  */
 public final class UsgsElevation implements ElevationLayer, AutoCloseable {
     public static final String DATASET_ID = "3dep-13-v1";
+    /**
+     * The same data read lighter, pinned by worlds made since: tiles of {@link #COARSE_ZOOM} and
+     * coarser read 3DEP no finer than its {@link #COARSE_OVERVIEW} overview (about 40 m), as wide
+     * water and bare-earth surveys read those tiles far out and the finer overview was most of a
+     * first visit's download. Worlds pinned to {@link #DATASET_ID} keep reading as before.
+     */
+    public static final String COARSE_ID = "3dep-13-v2";
+    static final int COARSE_ZOOM = 12, COARSE_OVERVIEW = 2;
     public static final String ATTRIBUTION = "United States: USGS 3D Elevation Program 1/3 arc-second DEM (public domain)";
     public static final URI AWS_3DEP = URI.create("https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/historical/");
     /** Coarser tiles cover so much ground that they are left to the composite. */
@@ -41,6 +49,7 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
     private static final Map<Integer, String> RELEASES = releases();
 
     private final FloatCogs files;
+    private final boolean coarse;
 
     /**
      * @param base              URI prefix the dated cells are named under
@@ -49,11 +58,18 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
      * @param maxBlocksInMemory decoded blocks kept (up to 1 MiB each)
      */
     public UsgsElevation(URI base, Path cacheRoot, boolean allowNetwork, int maxBlocksInMemory, int maxConcurrentTransfers, Duration timeout) throws IOException {
+        this(base, cacheRoot, allowNetwork, maxBlocksInMemory, maxConcurrentTransfers, timeout, false);
+    }
+
+    /** @param coarse read as {@link #COARSE_ID} rather than {@link #DATASET_ID} */
+    public UsgsElevation(URI base, Path cacheRoot, boolean allowNetwork, int maxBlocksInMemory, int maxConcurrentTransfers, Duration timeout,
+                         boolean coarse) throws IOException {
+        this.coarse = coarse;
         files = new FloatCogs("USGS 3DEP elevation", DATASET_ID, "earth-3dep-io", base, UsgsElevation::name, -999999f,
                 cacheRoot, allowNetwork, maxBlocksInMemory, maxConcurrentTransfers, timeout);
     }
 
-    @Override public String id() { return DATASET_ID; }
+    @Override public String id() { return coarse ? COARSE_ID : DATASET_ID; }
 
     @Override public void refine(int zoom, int x, int y, float[] values) {
         if (zoom < MIN_ZOOM) return;
@@ -67,6 +83,7 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
         double centre = latitude(world, (y + 0.5) * size);
         double pixel = 360 / world * Math.cos(Math.toRadians(centre));
         int overview = Math.max(0, Math.min(MAX_OVERVIEW, (int) Math.floor(Math.log(pixel / PIXEL) / Math.log(2))));
+        if (coarse && zoom <= COARSE_ZOOM) overview = Math.max(overview, COARSE_OVERVIEW);
         int edge = Math.min(MAX_OVERVIEW, overview + 2);
         // Reads go in three passes, each first loading together the 3DEP pieces it needs, so a tile
         // first seen waits about as long as its slowest download rather than all of them in turn:
