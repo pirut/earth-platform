@@ -25,6 +25,7 @@ public final class GlobeTest {
         seams();
         repair();
         despike();
+        bareEarth();
         kernel();
         streaming();
         worldCover();
@@ -95,6 +96,77 @@ public final class GlobeTest {
             face[y * 256 + x] = (float) (1550 + 550 / (1 + Math.exp(at * 1.5)) + 70 * Math.exp(-(at + 1) * (at + 1)) + 25 * Math.sin(y * 1.7) * Math.exp(-at * at));
         }
         check(TerrariumTileSource.mend(face, zoom, tileY) == face, "a sheer face keeps its lip and ledges");
+    }
+
+    /** A synthetic town west of zoom 12 pixel (X0 + 20, Y0): buildings on 3 m ground, a hill, a river and shadow pits; fields east. */
+    private static final int BARE_X0 = 3638 * 256 + 128, BARE_Y0 = 1612 * 256 + 128;
+
+    private static boolean bareTown(double gx) { return gx < BARE_X0 + 20; }
+    private static boolean bareRiver(double gy) { return Math.abs(gy - (BARE_Y0 + 40)) < 4; }
+    private static boolean barePit(double gx, double gy) { return Math.floorMod((long) Math.floor(gx), 23) == 0 && Math.floorMod((long) Math.floor(gy), 29) == 0 && !bareRiver(gy); }
+
+    /** Bare ground of the synthetic town at a zoom 12 pixel position. */
+    private static double bareGround(double gx, double gy) {
+        double d2 = (gx - BARE_X0 + 20) * (gx - BARE_X0 + 20) + (gy - BARE_Y0 + 70) * (gy - BARE_Y0 + 70);
+        return 3 + 40 * Math.exp(-d2 / (2 * 30.0 * 30.0));
+    }
+
+    private static float bareSurface(double gx, double gy) {
+        if (bareRiver(gy)) return 0.5f;
+        double ground = bareGround(gx, gy);
+        if (!bareTown(gx)) return (float) ground;
+        if (barePit(gx, gy)) return (float) (ground - 11);
+        long block = Math.floorDiv((long) Math.floor(gx), 3) * 92821 ^ Math.floorDiv((long) Math.floor(gy), 3) * 68917;
+        return (float) (ground + (Math.floorMod(block * 0x9E3779B97F4A7C15L >>> 40, 10) < 7 ? 25 : 2));
+    }
+
+    private static void bareEarth() {
+        long size = 256L << 12;
+        GlobalElevation.Tiles source = (zoom, x, y) -> {
+            float[] tile = new float[256 * 256];
+            double scale = Math.scalb(1.0, 12 - zoom);
+            for (int py = 0; py < 256; py++) for (int px = 0; px < 256; px++)
+                tile[py * 256 + px] = bareSurface(((double) x * 256 + px + 0.5) * scale - 0.5, ((double) y * 256 + py + 0.5) * scale - 0.5);
+            return tile;
+        };
+        BareEarth.Cover cover = (latitude, longitude) -> {
+            double gx = (longitude + 180) / 360 * size, r = Math.toRadians(latitude);
+            double gy = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * size;
+            gx -= 0.5; gy -= 0.5;
+            if (bareRiver(gy) || bareTown(gx) && barePit(gx, gy)) return WorldCoverSource.WATER;
+            return bareTown(gx) ? WorldCoverSource.BUILT_UP : WorldCoverSource.GRASSLAND;
+        };
+        BareEarth bare = new BareEarth(source, cover, 8, 8);
+        float[] raw = source.tile(12, 3638, 1612), tile = bare.tile(12, 3638, 1612);
+        // Tile pixel (i, j) is zoom 12 pixel (X0 - 128 + i, Y0 - 128 + j).
+        java.util.function.IntBinaryOperator at = (dx, dy) -> (128 + dy) * 256 + 128 + dx;
+        double built = 0, rooftops = 0;
+        int n = 0;
+        for (int dy = 60; dy <= 100; dy++) for (int dx = -110; dx <= -60; dx++) { built += tile[at.applyAsInt(dx, dy)]; rooftops += raw[at.applyAsInt(dx, dy)]; n++; }
+        near(3, built / n, 3, "ground under buildings comes down to the land (" + rooftops / n + " m on the roofs)");
+        double spread = 0;
+        for (int dy = 60; dy <= 100; dy++) for (int dx = -110; dx <= -60; dx++) spread = Math.max(spread, Math.abs(tile[at.applyAsInt(dx, dy)] - built / n));
+        check(spread < 7, "no 25 m building lumps or street grooves left: " + spread);
+        near(43, tile[at.applyAsInt(-20, -70)], 7, "a hill under the town keeps its height");
+        near(0.5, tile[at.applyAsInt(-60, 40)], 0.75, "a river keeps its level");
+        int pitX = (int) (Math.ceil((BARE_X0 - 100) / 23.0) * 23) - BARE_X0, pitY = (int) (Math.ceil((BARE_Y0 - 100) / 29.0) * 29) - BARE_Y0;
+        check(barePit(BARE_X0 + pitX, BARE_Y0 + pitY), "the test finds a shadow pit");
+        near(bareGround(BARE_X0 + pitX, BARE_Y0 + pitY), tile[at.applyAsInt(pitX, pitY)], 3.5, "a shadow pit lies at the ground's level");
+        near(raw[at.applyAsInt(127, 0)], tile[at.applyAsInt(127, 0)], 0, "fields well past the town are untouched");
+        // Every zoom reads the same ground: zoom 15 over the town agrees with zoom 12.
+        float[] fine = bare.tile(15, 3638 * 8 + 3, 1612 * 8 + 3);
+        double fineMean = 0;
+        for (int i = 0; i < fine.length; i++) fineMean += fine[i];
+        fineMean /= fine.length;
+        double coarseMean = 0;
+        for (int dy = -32; dy < 0; dy++) for (int dx = -32; dx < 0; dx++) coarseMean += tile[at.applyAsInt(dx, dy)];
+        coarseMean /= 1024;
+        near(coarseMean, fineMean, 1, "zoom 15 ground matches zoom 12 ground");
+        // A tile with no town near it is the source's own tile.
+        float[] plain = new float[256 * 256];
+        BareEarth plainCountry = new BareEarth((zoom, x, y) -> plain, (latitude, longitude) -> WorldCoverSource.TREE_COVER, 8, 8);
+        check(plainCountry.tile(14, 100, 100) == plain, "tiles away from towns come back unchanged");
+        check(Arrays.equals(source.tile(10, 909, 403), bare.tile(10, 909, 403)), "coarse zooms pass through");
     }
 
     private static void kernel() {

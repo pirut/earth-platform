@@ -43,7 +43,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  * <p>Off unless asked for: {@code EARTH_BENCH=<cache dir> ./gradlew test --tests '*CubicBench'}, with
  * optional {@code EARTH_BENCH_THREADS} (default 2, as the server's cube workers on four cores),
  * {@code EARTH_BENCH_FAR} (far columns timed per level, default 150) and {@code EARTH_BENCH_PLACE}
- * (a place name prefix). The cache dir has the game's {@code earthplatform/cache} layout; the first
+ * (a place name prefix) and {@code EARTH_BENCH_BARE=1} (towns on bare-earth ground). The cache dir has the game's {@code earthplatform/cache} layout; the first
  * run downloads what it needs. Results go to standard output.
  */
 class CubicBench {
@@ -52,7 +52,8 @@ class CubicBench {
     private static final List<Place> PLACES = List.of(
             new Place("Yosemite Valley", 37.7240, -119.6365),
             new Place("Lake Tahoe", 38.9520, -120.1080),
-            new Place("Amazon", -3.4653, -62.2159));
+            new Place("Amazon", -3.4653, -62.2159),
+            new Place("Tokyo", 35.6812, 139.7671));
 
     @Test
     @EnabledIfEnvironmentVariable(named = "EARTH_BENCH", matches = ".+")
@@ -61,6 +62,7 @@ class CubicBench {
         int threads = Integer.parseInt(System.getenv().getOrDefault("EARTH_BENCH_THREADS", "2"));
         int farPerLevel = Integer.parseInt(System.getenv().getOrDefault("EARTH_BENCH_FAR", "150"));
         String only = System.getenv().getOrDefault("EARTH_BENCH_PLACE", "").toLowerCase(Locale.ROOT);
+        boolean bare = "1".equals(System.getenv("EARTH_BENCH_BARE"));
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
         HolderLookup.Provider lookup = VanillaRegistries.createLookup();
@@ -75,14 +77,14 @@ class CubicBench {
         for (Place place : PLACES) {
             if (!only.isEmpty() && !place.name.toLowerCase(Locale.ROOT).startsWith(only)) continue;
             EarthSettings settings = EarthSettings.at(place.latitude, place.longitude);
-            EarthGenerator warm = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null);
+            EarthGenerator warm = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, null, bare);
             int[] home = warm.arrival();
             long t0 = System.nanoTime();
             warm.prepare(home[0], home[1]);
             System.out.printf(Locale.ROOT, "%n== %s (block %d, %d)%nprepare (data fetch): %.0f ms%n", place.name, home[0], home[1], ms(t0));
 
             // Cubes around a player standing on the ground, as the server loads them.
-            EarthGenerator gen = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null);
+            EarthGenerator gen = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, null, bare);
             int ground = gen.surfaceY(home[0], home[1]);
             int cx = home[0] >> 4, cy = (ground + 2) >> 4, cz = home[1] >> 4;
             CubeOffsets offsets = CubeOffsets.of(Cubic.MAX_HORIZONTAL_RADIUS, Cubic.VERTICAL_RADIUS);
