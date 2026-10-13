@@ -151,7 +151,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Override public String credits() {
         return "Elevation: AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, ETOPO1 and others)"
                 + (cover == null ? "" : ". Land cover: " + WorldCoverSource.ATTRIBUTION)
-                + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION);
+                + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION)
+                + (cover == null ? "" : ". " + Ecoregions.ATTRIBUTION);
     }
 
     // Height -------------------------------------------------------------------------------------
@@ -670,6 +671,28 @@ public final class EarthGenerator extends SurfaceGenerator {
                 return new Surface(desert, RED_SAND, RED_SANDSTONE, 0, 0, 0, 40, 40, false);
             if (code == WorldCoverSource.GRASSLAND && (patch > 0.1 || roll < 40)) return new Surface(savanna, RED_SAND, RED_SANDSTONE, 0, 0, 0, 60, 60, false);
         }
+        // The ecoregion, where it knows more than climate and land cover: flooded grasslands such as the Everglades and the
+        // Pantanal, mangrove coasts, and the American South's bayous and pine flatwoods.
+        int eco = ecoregion(x, z);
+        boolean ground = code == WorldCoverSource.TREE_COVER || code == WorldCoverSource.GRASSLAND || code == WorldCoverSource.SHRUBLAND
+                || code == WorldCoverSource.WETLAND || code == PARKLAND;
+        if (eco != 0 && ground && !cliff && steep < 0.4 && t >= 10) {
+            int biome = Ecoregions.get().biome(eco);
+            if (biome == Ecoregions.MANGROVE && y <= SEA + 4) return covered(WorldCoverSource.MANGROVES, x, z, y, local, steep, roll, slope);
+            if (biome == Ecoregions.FLOODED_GRASSLAND) {
+                // Open marsh with tree islands where the map has trees.
+                if (code == WorldCoverSource.TREE_COVER) return new Surface(swamp, patch > 0.45 ? MUD : GRASS, DIRT, 12, 0, 0, 400, 420, false);
+                return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope);
+            }
+            if (code == WorldCoverSource.TREE_COVER) {
+                // Cypress and tupelo swamps on the Mississippi's floodplain and the South's lowest flats.
+                if (eco == Ecoregions.MISSISSIPPI_LOWLAND_FORESTS && y < SEA + 25
+                        || eco == Ecoregions.SOUTHEAST_CONIFER_SAVANNAS && y < SEA + 40 && patch > 0)
+                    return new Surface(swamp, patch > 0.5 ? MUD : GRASS, DIRT, 45, 0, 0, 260, 280, false);
+                // Longleaf pine flatwoods: tall pines standing apart over grass.
+                if (eco == Ecoregions.SOUTHEAST_CONIFER_SAVANNAS) return new Surface(plains, GRASS, DIRT, 30, 10, 0, 300, 320, false);
+            }
+        }
         switch (code) {
             case WorldCoverSource.TREE_COVER -> {
                 // Forest climbs steep slopes, rooted in duff and stony soil; only the steepest faces are bare.
@@ -677,9 +700,6 @@ public final class EarthGenerator extends SurfaceGenerator {
                 Surface s = forest(local, patch, x, z, y);
                 if (steep > 1.3 && crag < (steep - 1.3) * 2 - 0.3) return new Surface(s.biome(), STONE, STONE, 0, 0, 0, 0, 0, false);
                 // Duff in patches, grass between, so from afar the slope stays green rather than speckled brown.
-                // The low, flat coastal plain of the American South is swamp forest: cypress bayous, Okefenokee, Big Cypress.
-                if (steep < 0.15 && y < SEA + 40 && local.temperature() > 15 && gulfCoast(x, z))
-                    return new Surface(swamp, patch > 0.5 ? MUD : GRASS, DIRT, 45, 0, 0, 260, 280, false);
                 if (steep > 0.8) return new Surface(s.biome(), patch > 0.35 ? PODZOL : GRASS, DIRT, s.trees() * 3 / 4, s.spruce(), s.birch(),
                         s.grass() / 2, s.flowers() / 2, s.ferns(), s.broadleaf());
                 return s;
@@ -922,10 +942,20 @@ public final class EarthGenerator extends SurfaceGenerator {
         return false;
     }
 
-    /** Whether a column is on the Gulf and southern Atlantic coastal plain of the United States, Florida included. */
-    private boolean gulfCoast(int x, int z) {
+    /** The ecoregion at a column, or 0 off the real Earth or where the map has none. */
+    private int ecoregion(int x, int z) {
+        Ecoregions map = cover == null ? null : Ecoregions.get();
+        if (map == null) return 0;
         GeoPoint p = grid.geographic(x, z);
-        return p.latitude() > 24 && p.latitude() < 33.5 && p.longitude() > -98 && p.longitude() < -75;
+        return map.ecoregion(p.latitude(), p.longitude());
+    }
+
+    /** Whether a column's ecoregion is tropical forest, or unknown. */
+    private boolean tropicalForest(int x, int z) {
+        int eco = ecoregion(x, z);
+        if (eco == 0) return true;
+        int biome = Ecoregions.get().biome(eco);
+        return biome == Ecoregions.TROPICAL_MOIST || biome == Ecoregions.TROPICAL_DRY || biome == Ecoregions.MANGROVE;
     }
 
     /** Whether a volcanic column's lava is old and weathered, as in Iceland, rather than fresh. */
@@ -1067,9 +1097,9 @@ public final class EarthGenerator extends SurfaceGenerator {
             case MEDITERRANEAN -> t < 12 ? new Surface(local.rain() > 900 ? oldTaiga : taiga, local.rain() > 900 && patch > 0.3 ? PODZOL : GRASS, DIRT, 80, 8, 0, 110, 120, true)
                     : new Surface(forest, GRASS, DIRT, 70, 1, 0, 140, 170, false);
             case SUBTROPICAL -> patch < -0.62 && bamboo(x, z) ? bambooForest(patch)
-                    // Florida's uplands are pine and oak woods, not jungle.
-                    : t > 20 && !gulfCoast(x, z) ? new Surface(sparseJungle, GRASS, DIRT, 80, 0, 0, 140, 160, true, Tree.JUNGLE)
-                    : gulfCoast(x, z) ? new Surface(forest, GRASS, DIRT, 70, 4, 0, 180, 200, false)
+                    // Jungle only where the ecoregion is tropical forest, as in south China; Florida's warm woods are oak and pine.
+                    : t > 20 && tropicalForest(x, z) ? new Surface(sparseJungle, GRASS, DIRT, 80, 0, 0, 140, 160, true, Tree.JUNGLE)
+                    : t > 20 ? new Surface(forest, GRASS, DIRT, 70, 4, 0, 180, 200, false)
                     : groves(patch, x, z, new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false));
             case OCEANIC -> groves(patch, x, z, new Surface(forest, GRASS, DIRT, 82, t < 8 ? 3 : 0, 2, 90, 130, true));
             case SUBPOLAR_OCEANIC -> new Surface(taiga, GRASS, DIRT, 70, 10, 0, 110, 120, true);
