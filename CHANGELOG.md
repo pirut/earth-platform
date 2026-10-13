@@ -69,5 +69,4 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - In the Earth world, AE2's meteorite compass finds meteorites by map column only and doesn't notice blocks changed later.
 - Other mods that check build height or read chunks themselves may misbehave in the Earth world; please report them.
 - Blocks you place above Y 9,000 have no collision for a player gliding in the jet stream.
-- Lake Okeechobee's bed is too deep.
 - A place nobody has visited loads slowly the first time while its elevation is cleaned up; later visits are fast.
