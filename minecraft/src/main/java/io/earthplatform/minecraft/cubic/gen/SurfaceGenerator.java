@@ -1,12 +1,18 @@
 package io.earthplatform.minecraft.cubic.gen;
 
 import io.earthplatform.minecraft.cubic.far.Far;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import javax.annotation.Nullable;
 import net.minecraft.core.Holder;
 import net.minecraft.core.IdMap;
 import net.minecraft.core.Registry;
+import net.minecraft.core.SectionPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.util.Mth;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BiomeTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Block;
@@ -18,8 +24,6 @@ import net.minecraft.world.level.block.SnowLayerBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
-import net.minecraft.world.level.levelgen.LegacyRandomSource;
-import net.minecraft.world.level.levelgen.synth.ImprovedNoise;
 
 /**
  * A world made from a height and water level per block column: subclasses say how high the ground
@@ -60,7 +64,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     protected final long seed;
     protected final IdMap<Holder<Biome>> biomeIds;
-    private final ImprovedNoise tunnelA, tunnelB, cavern, lavaNoise;
+    private final Registry<Biome> biomeRegistry;
+    private final Underground below;
+    /** Vanilla's structures, once a server level is attached; until then cubes are terrain only. */
+    @Nullable private volatile VanillaStructures vanilla;
+    /** Base cubes (before vanilla structures) that structure layout reads, by section key. */
+    private final ConcurrentHashMap<Long, LevelChunkSection> bases = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Column> columns = new ConcurrentHashMap<>();
     private final Vegetation vegetation = new Vegetation(this);
 
@@ -68,9 +77,10 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     protected SurfaceGenerator(long seed, Registry<Biome> biomes, RandomSource random) {
         this.seed = seed;
         this.biomeIds = biomes.asHolderIdMap();
-        tunnelA = new ImprovedNoise(random); tunnelB = new ImprovedNoise(random); cavern = new ImprovedNoise(random);
-        lavaNoise = new ImprovedNoise(random);
+        this.biomeRegistry = biomes;
+        below = new Underground(this, seed, biomes, random);
     }
+    Underground underground() { return below; }
     protected static Holder<Biome> holder(Registry<Biome> registry, ResourceKey<Biome> key) { return registry.getHolderOrThrow(key); }
 
     // What subclasses provide -------------------------------------------------------------------
@@ -324,18 +334,100 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     // Cubes --------------------------------------------------------------------------------------
 
-    @Override public LevelChunkSection generate(int cx, int cy, int cz) {
+    @Override public LevelChunkSection generate(int cx, int cy, int cz) { return generate(cx, cy, cz, new ArrayList<>(), new ArrayList<>()); }
+
+    @Override public void attach(ServerLevel level) { vanilla = new VanillaStructures(level, new StructureHost(), seed); }
+
+    @Override public LevelChunkSection generate(int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
+        LevelChunkSection section = terrain(cx, cy, cz, blockEntities, entities);
+        Vegetation.bees(section, cx << 4, cy << 4, cz << 4, blockEntities);
+        VanillaStructures structures = vanilla;
+        if (structures != null) {
+            structures.place(section, cx, cy, cz, blockEntities, entities);
+            section.recalcBlockCounts();
+        }
+        return section;
+    }
+
+    @Override public @Nullable net.minecraft.core.BlockPos locate(java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> structure, int x, int z, int radius) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? null : structures.locate(structure, x, z, radius);
+    }
+
+    @Override public List<net.minecraft.world.level.levelgen.structure.StructureStart> structureStarts(int chunkX, int chunkZ) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? List.of() : structures.startsAt(chunkX, chunkZ);
+    }
+
+    @Override public @Nullable net.minecraft.world.level.levelgen.structure.StructureStart structureStart(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? null : structures.startOf(structure, chunkX, chunkZ);
+    }
+
+    @Override public String structuresAt(int x, int y, int z) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? "" : structures.describe(x, y, z);
+    }
+
+    /** The biome vanilla code sees at a block: the cave biome deep under the ground, else the column's. */
+    Holder<Biome> biomeAt(int x, int y, int z) {
+        Column col = column(x >> 4, z >> 4);
+        int cy = y >> 4;
+        if ((cy << 4) + 15 < col.min - 6) {
+            Holder<Biome> cave = below.biome(below.kind(x >> 4, cy, z >> 4));
+            if (cave != null) return cave;
+        }
+        return col.surface[(z & 15) * 16 + (x & 15)].biome();
+    }
+
+    /** What vanilla structure code reads of this world: the terrain before structures. */
+    private final class StructureHost implements VanillaStructures.Host {
+        @Override public int ground(int x, int z) { return surfaceY(x, z); }
+        @Override public int water(int x, int z) { return waterY(x, z); }
+        @Override public Holder<Biome> biome(int x, int y, int z) { return biomeAt(x, y, z); }
+        @Override public int floor(int x, int z) { return below.floor(x, z); }
+        @Override public int seaLevel() { return SurfaceGenerator.this.seaLevel() + 1; }
+        @Override public java.util.stream.Stream<Holder<Biome>> possibleBiomes() {
+            return biomeRegistry.holders().filter(h -> h.is(BiomeTags.IS_OVERWORLD)).map(h -> (Holder<Biome>) h);
+        }
+        @Override public BlockState fill(int x, int y, int z, int depth) {
+            Surface surface = column(x >> 4, z >> 4).surface[(z & 15) * 16 + (x & 15)];
+            return depth <= 0 ? surface.top() : depth < 4 ? surface.under() : below.rock(x, y, z, below.floor(x, z));
+        }
+        @Nullable @Override public LevelChunkSection cube(int cx, int cy, int cz) {
+            Column col = column(cx, cz);
+            if (cy << 4 > Math.max(col.max + 16, col.maxWater)) return null;
+            long key = SectionPos.asLong(cx, cy, cz);
+            LevelChunkSection cached = bases.get(key);
+            if (cached != null) return cached;
+            LevelChunkSection made = terrain(cx, cy, cz, new ArrayList<>(), new ArrayList<>());
+            if (bases.size() > 4096) bases.clear();
+            bases.putIfAbsent(key, made);
+            return made;
+        }
+    }
+
+    /** A cube as generated before vanilla structures: terrain, caves, ores, plants and this generator's own structures. */
+    private LevelChunkSection terrain(int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
         Column col = column(cx, cz);
         Holder<Biome> fallback = col.surface[8 * 16 + 8].biome();
+        int y0 = cy << 4, x0 = cx << 4, z0 = cz << 4;
+        boolean underground = y0 + 15 < col.min - 6;
+        Underground.Kind caves = underground ? below.kind(cx, cy, cz) : null;
+        Holder<Biome> caveBiome = caves == null ? null : below.biome(caves);
         LevelChunkSection section = new LevelChunkSection(
                 new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, AIR, PalettedContainer.Strategy.SECTION_STATES),
-                biomes(col, fallback));
-        int y0 = cy << 4, x0 = cx << 4, z0 = cz << 4;
+                caveBiome != null ? new PalettedContainer<>(biomeIds, caveBiome, PalettedContainer.Strategy.SECTION_BIOMES) : biomes(col, fallback));
         // Empty sky cubes: nothing generated, not even trees, above the tallest possible tree.
         if (y0 > Math.max(col.max + vegetation.tallest(cx, cz), col.maxWater)) { section.recalcBlockCounts(); return section; }
-        boolean underground = y0 + 15 < col.min - 6;
-        double[] caves = caveField(x0, y0, z0, col);
-        int shore = shoreLevel() + 2;
+        double[] caveField = y0 > col.max ? null : below.caveField(x0, y0, z0);
+        int[] floor = new int[256], roof = new int[256];
+        for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
+            int ci = lz * 16 + lx, gi = (lz + 1) * 18 + lx + 1, h = col.height[gi];
+            floor[ci] = below.floor(x0 + lx, z0 + lz, h);
+            int slope = Math.abs(col.height[gi + 1] - col.height[gi - 1]) + Math.abs(col.height[gi + 18] - col.height[gi - 18]);
+            roof[ci] = below.caveRoof(x0 + lx, z0 + lz, h, col.water[gi], slope);
+        }
         for (int ly = 0; ly < 16; ly++) {
             int y = y0 + ly;
             for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
@@ -347,17 +439,16 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                     int depth = h - y;
                     if (depth == 0) state = surface.top();
                     else if (depth < 4) state = surface.under();
-                    else state = depth > 160 + ((x0 + lx) * 31 + (z0 + lz) * 17 + y * 7 & 7) ? DEEPSLATE : STONE;
-                    boolean nearWater = h <= shore || col.water[gi] != DRY;
-                    if (depth > (nearWater ? 14 : 5) && cave(caves, lx, ly, lz)) {
-                        state = depth > 420 && lavaNoise.noise((x0 + lx) / 40.0, y / 12.0, (z0 + lz) / 40.0) > 0.35 && ly < 4 ? LAVA : AIR;
-                    }
+                    else state = below.rock(x0 + lx, y, z0 + lz, floor[ci]);
+                    // Cave mouths open the top blocks only where nothing grows on them.
+                    boolean open = depth >= roof[ci] && (depth > 1 || surface.trees() == 0 && (Underground.rock(surface.top()) || surface.top() == GRAVEL));
+                    if (open && state != Underground.BEDROCK && Underground.cave(caveField, lx, ly, lz)) state = Underground.cavity(y, floor[ci]);
                 }
                 if (state != AIR) section.setBlockState(lx, ly, lz, state, false);
             }
         }
         if (!underground) vegetation.decorate(section, x0, y0, z0, col.height, col.water, col.surface);
-        ores(section, cx, cy, cz, col);
+        if (y0 <= col.max) below.finish(section, cx, cy, cz, caves, blockEntities, entities);
         section.recalcBlockCounts();
         return section;
     }
@@ -369,63 +460,6 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             for (int qy = 0; qy < 4; qy++) container.set(qx, qy, qz, b);
         }
         return container;
-    }
-
-    /** Trilinear cave field sampled every 4 blocks: tunnels plus occasional caverns. */
-    private double[] caveField(int x0, int y0, int z0, Column col) {
-        double[] field = new double[5 * 5 * 5];
-        if (y0 > col.max) return field;
-        for (int iy = 0; iy < 5; iy++) for (int iz = 0; iz < 5; iz++) for (int ix = 0; ix < 5; ix++) {
-            double x = x0 + ix * 4, y = y0 + iy * 4, z = z0 + iz * 4;
-            double a = tunnelA.noise(x / 56.0, y / 34.0, z / 56.0), b = tunnelB.noise(x / 56.0, y / 34.0, z / 56.0);
-            double tunnel = 0.018 - (a * a + b * b);
-            double big = cavern.noise(x / 110.0, y / 60.0, z / 110.0) - 0.42;
-            field[(iy * 5 + iz) * 5 + ix] = Math.max(tunnel * 12, big);
-        }
-        return field;
-    }
-    private static boolean cave(double[] f, int lx, int ly, int lz) {
-        int ix = lx >> 2, iy = ly >> 2, iz = lz >> 2;
-        double tx = (lx & 3) / 4.0, ty = (ly & 3) / 4.0, tz = (lz & 3) / 4.0;
-        double c000 = f[(iy * 5 + iz) * 5 + ix], c100 = f[(iy * 5 + iz) * 5 + ix + 1];
-        double c010 = f[((iy + 1) * 5 + iz) * 5 + ix], c110 = f[((iy + 1) * 5 + iz) * 5 + ix + 1];
-        double c001 = f[(iy * 5 + iz + 1) * 5 + ix], c101 = f[(iy * 5 + iz + 1) * 5 + ix + 1];
-        double c011 = f[((iy + 1) * 5 + iz + 1) * 5 + ix], c111 = f[((iy + 1) * 5 + iz + 1) * 5 + ix + 1];
-        double v = Mth.lerp3(tx, ty, tz, c000, c100, c010, c110, c001, c101, c011, c111);
-        return v > 0;
-    }
-
-    // Ores: blobs placed per cube from its own seeded random, by depth below the ground ---------
-
-    private void ores(LevelChunkSection section, int cx, int cy, int cz, Column col) {
-        int depth = col.height[8 * 18 + 9] - ((cy << 4) + 8);
-        if (depth < 4) return;
-        RandomSource random = new LegacyRandomSource(seed ^ mix(cx, cy, cz));
-        vein(section, random, depth, 0, 200, 9, 14, Blocks.COAL_ORE, Blocks.DEEPSLATE_COAL_ORE);
-        vein(section, random, depth, 6, 400, 5, 8, Blocks.IRON_ORE, Blocks.DEEPSLATE_IRON_ORE);
-        vein(section, random, depth, 0, 140, 4, 9, Blocks.COPPER_ORE, Blocks.DEEPSLATE_COPPER_ORE);
-        vein(section, random, depth, 90, 600, 1, 7, Blocks.GOLD_ORE, Blocks.DEEPSLATE_GOLD_ORE);
-        vein(section, random, depth, 150, 900, 2, 7, Blocks.REDSTONE_ORE, Blocks.DEEPSLATE_REDSTONE_ORE);
-        vein(section, random, depth, 120, 700, 1, 6, Blocks.LAPIS_ORE, Blocks.DEEPSLATE_LAPIS_ORE);
-        vein(section, random, depth, 220, 100000, 1, 5, Blocks.DIAMOND_ORE, Blocks.DEEPSLATE_DIAMOND_ORE);
-        if (emeralds(col.max)) vein(section, random, depth, 4, 300, 1, 1, Blocks.EMERALD_ORE, Blocks.DEEPSLATE_EMERALD_ORE);
-    }
-    private static void vein(LevelChunkSection section, RandomSource random, int depth, int minDepth, int maxDepth,
-                             int tries, int size, Block ore, Block deep) {
-        if (depth < minDepth || depth > maxDepth) { random.nextInt(); return; }
-        for (int t = 0; t < tries; t++) {
-            int x = random.nextInt(16), y = random.nextInt(16), z = random.nextInt(16);
-            for (int i = 0; i < size; i++) {
-                BlockState here = section.getBlockState(x, y, z);
-                if (here == STONE) section.setBlockState(x, y, z, ore.defaultBlockState(), false);
-                else if (here == DEEPSLATE) section.setBlockState(x, y, z, deep.defaultBlockState(), false);
-                switch (random.nextInt(6)) {
-                    case 0 -> x = Math.min(15, x + 1); case 1 -> x = Math.max(0, x - 1);
-                    case 2 -> y = Math.min(15, y + 1); case 3 -> y = Math.max(0, y - 1);
-                    case 4 -> z = Math.min(15, z + 1); default -> z = Math.max(0, z - 1);
-                }
-            }
-        }
     }
 
     protected final long mix(long x, long y, long z) {

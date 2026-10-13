@@ -42,7 +42,12 @@
     "CubicBeaconMixin",
     "CubicWitherSkullMixin",
     "CubicDripleafMixin",
-    "CubicDripstoneMixin"
+    "CubicDripstoneMixin",
+    "CubicPoiStorageMixin",
+    "CubicPoiQueryMixin",
+    "CubicMapStructureMixin",
+    "CubicStructureManagerMixin",
+    "CubicLocateMixin"
   ],
   "client": [
     "CubicPredictionMixin",
