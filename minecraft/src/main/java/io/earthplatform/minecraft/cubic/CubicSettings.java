@@ -154,12 +154,13 @@ public final class CubicSettings {
     }
 
     /**
-     * Whether Earth worlds may use satellite imagery, true unless the game runs with
-     * {@code -Dearthplatform.earth.imagery=false}. Off, new worlds are made without it and every
-     * world generates its ground from land cover alone, with no imagery downloads.
+     * Whether Earth worlds may use satellite imagery: off unless the game runs with
+     * {@code -Dearthplatform.earth.imagery=true}, as EOX's tile service is not cleared for public
+     * use. Off, new worlds are made without it and every world generates its ground from land cover
+     * alone, with no imagery downloads.
      */
     public static boolean imageryEnabled() {
-        return !"false".equalsIgnoreCase(System.getProperty("earthplatform.earth.imagery", "true"));
+        return Boolean.getBoolean("earthplatform.earth.imagery");
     }
 
     /** Satellite imagery shared by every Earth world in this game, cached on disk beside the elevation tiles. */
