@@ -347,7 +347,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /**
      * The WorldCover class of a column, read at an overview whose pixels are no bigger than a
-     * voxel. Up close the read point wanders by about half a pixel, so class borders curve.
+     * voxel. Up close the read point wanders by about half a pixel, so class borders curve. Water
+     * on a glacier with only snow and ice round it is more of the ice ({@link #iceWater}).
      */
     private int cover(double x, double z, int voxel) {
         int ix = (int) x, iz = (int) z;
@@ -386,7 +387,53 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         int overview = Mth.clamp(Mth.floor(Math.log(voxel * metresPerBlock / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
         GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
-        return cover.code(point.latitude(), point.longitude(), overview);
+        int code = cover.code(point.latitude(), point.longitude(), overview);
+        return code == WorldCoverSource.WATER && iceWater(x, z, overview, metresPerBlock) ? WorldCoverSource.SNOW_AND_ICE : code;
+    }
+
+    /** Rings round water, in metres, that {@link #iceWater} looks along, out past a pond's far shore; none nearer than a pixel. */
+    private static final double[] ICE_RINGS = {15, 30, 60, 120};
+    /** Water cells, keyed as {@link #waterCell}'s, as far as {@link #icyCell} has found whether they hold snow or ice. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> icyCells = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Whether water mapped on a glacier or snowfield is more of the ice. The map reads melt streaks,
+     * shadowed crevasses, slush and ponds on glaciers as water, where the elevation, older than the
+     * map, still has the ice's sloping surface: they stood as dark blue pools all over ones such as
+     * the Khumbu, and up close as stairs of ice down the slope. It is when rings round it, out past
+     * a pond's far shore, find snow and ice, and three times more of it than of any land. A lake
+     * beside a glacier has moraine or rock along most of its other shores, and a big one has water
+     * all round, so they stay.
+     */
+    private boolean iceWater(double x, double z, int overview, double metresPerBlock) {
+        if (!icyCell(Math.floorDiv(Mth.floor(x), WATER_CELL), Math.floorDiv(Mth.floor(z), WATER_CELL))) return false;
+        int snow = 0, other = 0;
+        for (double ring : ICE_RINGS) {
+            double r = Math.max(ring, PIXEL_METRES * (1 << overview)) / metresPerBlock;
+            for (int i = 0; i < 8; i++) {
+                GeoPoint point = grid.geographic(x + 0.5 + RING_X[i] * r, z + 0.5 + RING_Z[i] * r);
+                int code = cover.code(point.latitude(), point.longitude(), overview);
+                if (code == WorldCoverSource.SNOW_AND_ICE) snow++;
+                else if (code != WorldCoverSource.WATER) other++;
+            }
+        }
+        return snow >= 4 && snow >= 3 * other;
+    }
+
+    /** Whether a water cell holds any snow or ice, read on a coarse grid at the water survey's overview. */
+    private boolean icyCell(int cx, int cz) {
+        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        Boolean known = icyCells.get(key);
+        if (known != null) return known;
+        boolean icy = false;
+        double spacing = WATER_CELL / 8.0;
+        for (int k = 0; k < 64 && !icy; k++) {
+            GeoPoint point = grid.geographic(cx * (double) WATER_CELL + (k % 8 + 0.5) * spacing, cz * (double) WATER_CELL + (k / 8 + 0.5) * spacing);
+            icy = cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW) == WorldCoverSource.SNOW_AND_ICE;
+        }
+        if (icyCells.size() > 1 << 16) icyCells.clear();
+        icyCells.putIfAbsent(key, icy);
+        return icy;
     }
 
     /** Ring radii in blocks for {@link #wild}, each three times the last. */
