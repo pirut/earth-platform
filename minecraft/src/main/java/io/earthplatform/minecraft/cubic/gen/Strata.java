@@ -130,6 +130,12 @@ public final class Strata {
     static final double TOPS = 60;
     /** The steepest ground that keeps its soil: two block steps across a column, as a single step's corner. */
     private static final double FLAT = 0.9;
+    /**
+     * The steepest far voxel that keeps its soil. A far voxel's ground is the average over many blocks of benches
+     * and risers, so a terraced canyon side reads gentle there though up close it is mostly rock; only ground
+     * near level keeps its soil, as up close.
+     */
+    static final double FAR_FLAT = 0.3;
 
     private final Globe globe;
     private final Holder<Biome> badlands;
@@ -253,21 +259,22 @@ public final class Strata {
          * A column's cover with the rock showing: on cliffs and wherever the cover is only rock or
          * loose stone, under the plateau tops. Flats keep their soil, or the sequence's own loose ground.
          */
-        public Surface dress(Surface surface, int y, double steep) {
+        public Surface dress(Surface surface, int y, double steep, int voxel) {
             if (below(y - sea) <= 0) return surface;
+            double flat = voxel > 1 ? FAR_FLAT : FLAT;
             // Woods hold their ground on the tops: where the land cover grows trees, as the ponderosa forest on the
             // Kaibab and Coconino plateaus at the Grand Canyon's rims, gentle ground at the height of the country around
             // keeps it, though the datum stands far above it. Down in the canyons the benches and slopes show their
             // beds whatever grows on them, as do cliffs everywhere.
-            if (surface.trees() > 0 && steep <= FLAT && y - sea >= top(x, z) - TOPS) return surface;
+            if (surface.trees() > 0 && steep <= flat && y - sea >= top(x, z) - TOPS) return surface;
             BlockState top = surface.top();
             Block ground = built.sequence.ground();
             // Where the sequence has its own loose ground, as Monument Valley's red sand, its flats are all of it.
             // A flat here is anything short of three block steps across the column, so the corner of a single
             // step, where it turns diagonally, keeps the sand rather than lining every gentle contour with rock.
-            boolean loose = ground != null && (top.is(Blocks.GRASS_BLOCK) || steep <= FLAT), soil = loose;
+            boolean loose = ground != null && (top.is(Blocks.GRASS_BLOCK) || steep <= flat), soil = loose;
             for (Block b : SOIL) if (top.is(b)) { soil = true; break; }
-            if (!soil || steep > FLAT) {
+            if (!soil || steep > flat) {
                 BlockState rock = at(y);
                 return new Surface(badlands, rock, rock, 0, 0, 0, 0, 0, false);
             }
