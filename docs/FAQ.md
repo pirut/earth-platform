@@ -78,8 +78,8 @@ That was a bug in early test builds and is fixed. Update to the latest version.
 
 ## Known limitations
 
-- **Create Aeronautics** ships (and the Sable library behind them) can't be assembled in the Earth world yet. They work in other dimensions.
-- **AE2 spatial storage** can't capture or place a region in the Earth world. AE2 networks, channels and storage work normally.
+- **Ships in the jet stream:** a Create Aeronautics ship with players aboard rides the jet stream at 40 blocks a second; only an empty ship reaches elytra speed.
+- **AE2's meteorite compass** finds meteorites in the Earth world by map column only, and doesn't notice blocks changed after the meteorite generated. Everything else in AE2, spatial storage included, works normally.
 - **Gliding into builds above Y 9,000:** the jet stream layer streams no blocks around a gliding player, so you fly through anything built up there. Land before you reach it.
 - **Iris and Sodium** must be the exact versions in the [install guide](INSTALL.md#shaders-optional).
 - **On a Mac**, Photon's Colored Lights, Colored Shadows and Cloud Shadows are unavailable.
