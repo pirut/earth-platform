@@ -605,7 +605,16 @@ public final class EarthGenerator extends SurfaceGenerator {
         BlockState floor = depth <= 2 ? (t < 4 ? GRAVEL : SAND) : switch ((int) Math.floorMod(r, 5)) {
             case 0 -> CLAY; case 1 -> SAND; default -> GRAVEL; };
         if (depth > 8 && patches.getValue(x / 19.0, z / 19.0) > 0.2) floor = MUD;
+        // Tropical lagoons behind a reef, as at Bora Bora, are clear turquoise sea over sand, not river water.
+        if (t > 20 && water <= SEA + 16 && lagoon(x, z)) return new Surface(warmOcean, SAND, SAND, 0, 0, 0, 0, 0, false);
         return new Surface(t < -2 ? frozenRiver : river, floor, floor, 0, 0, 0, 0, 0, false);
+    }
+
+    /** Whether water lies close to the open sea, as a lagoon inside a reef or a barrier island does. */
+    private boolean lagoon(int x, int z) {
+        int sea = 0;
+        for (int k = 0; k < 8; k++) if (waterY(x + (int) (RING_X[k] * 1500), z + (int) (RING_Z[k] * 1500)) == SEA && ++sea >= 2) return true;
+        return false;
     }
 
     /** The cover a zone has where the map has none: forest wherever forest grows, else its open land. */
