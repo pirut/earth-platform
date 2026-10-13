@@ -19,4 +19,11 @@ public interface ElevationLayer {
      * the layer covers the tile but its data can't be had.
      */
     void refine(int zoom, int x, int y, float[] values);
+
+    /**
+     * Starts loading what {@link #refine} will read for a tile, before the tile's own pixels are had,
+     * so a first visit's downloads run at once rather than one after another. May block; a failure
+     * here is left for refine to meet.
+     */
+    default void prefetch(int zoom, int x, int y) {}
 }

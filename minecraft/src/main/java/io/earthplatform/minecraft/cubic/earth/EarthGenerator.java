@@ -2917,6 +2917,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         Map<Integer, Double> zooms = new TreeMap<>();
         for (int level = 1; level <= 6; level++) zooms.merge(zoom(level), 275.0 * (1 << level), Math::max);
         zooms.merge(WATER_ZOOM, 8800.0, Math::max);
+        // Open sea in the detail tiles reads the bathymetry's coarser zoom, which towers and the shore ask for at once.
+        zooms.merge(GlobalElevation.BATHYMETRY_ZOOM, 8800.0, Math::max);
         for (Map.Entry<Integer, Double> entry : zooms.entrySet()) {
             int zoom = entry.getKey();
             double reach = entry.getValue();
@@ -2960,8 +2962,9 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
         }
         if (cover != null) {
-            // Land cover: full detail near by, overviews further out, as the far levels read them.
-            double[] reaches = {3500, 7000, 24000};
+            // Land cover: full detail near by, overviews further out, as the far levels read them; the water survey's
+            // overview as far as the sea checks by a coast look for ice.
+            double[] reaches = {3500, 7000, 48000};
             for (int overview = 0; overview < reaches.length; overview++) {
                 double reach = reaches[overview];
                 int level = overview;
@@ -2971,6 +2974,13 @@ public final class EarthGenerator extends SurfaceGenerator {
                     catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch land cover: {}", failure.getMessage()); }
                 });
             }
+            // And the overview joinsOpenSea() reads its sea cells at, which a landing by the coast asks first.
+            int seaOverview = Mth.clamp(Mth.floor(Math.log(SEA_CELL * grid.groundMetresPerBlock(z) / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
+            GeoPoint a = grid.geographic(x - 24000, z + 24000), b = grid.geographic(x + 24000, z - 24000);
+            loads.add(() -> {
+                try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), seaOverview); }
+                catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch land cover: {}", failure.getMessage()); }
+            });
         }
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             for (Runnable load : loads) pool.execute(load);

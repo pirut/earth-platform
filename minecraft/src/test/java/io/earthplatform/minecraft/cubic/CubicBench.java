@@ -91,16 +91,16 @@ class CubicBench {
             }
         }
         // The same sources as a new world in the game: the Copernicus fill, 3DEP, REMA and traced rivers too.
-        CopernicusSource copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache.resolve(CopernicusSource.DATASET_ID), true, 12, 4, Duration.ofSeconds(30));
+        CopernicusSource copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache.resolve(CopernicusSource.DATASET_ID), true, 12, 8, Duration.ofSeconds(30));
         TerrariumTileSource[] source = new TerrariumTileSource[1];
         TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve(TerrariumTileSource.DATASET_ID),
-                true, 256, 6, Duration.ofSeconds(20), List.of(new CopernicusFill(copernicus, (z, x, y) -> source[0].cleaned(z, x, y), 512),
+                true, 256, 16, Duration.ofSeconds(20), List.of(new CopernicusFill(copernicus, (z, x, y) -> source[0].cleaned(z, x, y), 512),
                         new UsgsElevation(UsgsElevation.AWS_3DEP, cache.resolve(UsgsElevation.DATASET_ID), true, 48, 6, Duration.ofSeconds(30)),
                         new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache.resolve(RemaSource.DATASET_ID), true, 48, 6, Duration.ofSeconds(30)))));
         source[0] = tiles;
         RiverMap rivers = new RiverMap(new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache.resolve(SurfaceWaterSource.DATASET_ID), true,
                 96, 4, Duration.ofSeconds(30)), 256);
-        WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, 4, Duration.ofSeconds(30));
+        WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, 8, Duration.ofSeconds(30));
         ClimateSource climate = new ClimateSource(ClimateSource.CHELSA, cache.resolve(ClimateSource.DATASET_ID), true, 320, 8, Duration.ofSeconds(30));
         BareEarth bareEarth = bare ? new BareEarth(tiles, cover, bareCache ? cache.resolve(BareEarth.ID) : null) : null;
         MessageDigest all = MessageDigest.getInstance("SHA-256");
@@ -115,9 +115,18 @@ class CubicBench {
             EarthSettings settings = EarthSettings.at(place.latitude, place.longitude);
             EarthGenerator warm = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, rivers, bareEarth);
             int[] home = warm.arrival();
+            var fetched = io.earthplatform.geography.globe.Downloads.totals();
             long t0 = System.nanoTime();
             warm.prepare(home[0], home[1]);
-            System.out.printf(Locale.ROOT, "%n== %s (block %d, %d)%nprepare (data fetch): %.0f ms%n", place.name, home[0], home[1], ms(t0));
+            System.out.printf(Locale.ROOT, "%n== %s (block %d, %d)%nprepare (data fetch): %.0f ms, %s%n", place.name, home[0], home[1], ms(t0),
+                    io.earthplatform.geography.globe.Downloads.since(fetched));
+            fetched = io.earthplatform.geography.globe.Downloads.totals();
+            // The rest of a /cubes goto's wait: the search for a landing spot, as for a famous place.
+            var landing = CubicEvents.class.getDeclaredMethod("landing", io.earthplatform.minecraft.cubic.gen.CubeGenerator.class, int[].class, int.class, boolean.class);
+            landing.setAccessible(true);
+            t0 = System.nanoTime();
+            int[] spot = (int[]) landing.invoke(null, warm, home, 2048, true);
+            System.out.printf(Locale.ROOT, "landing spot (%d, %d): %.0f ms, %s%n", spot[0], spot[1], ms(t0), io.earthplatform.geography.globe.Downloads.since(fetched));
 
             // Cubes around a player standing on the ground, as the server loads them.
             EarthGenerator gen = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, rivers, bareEarth);

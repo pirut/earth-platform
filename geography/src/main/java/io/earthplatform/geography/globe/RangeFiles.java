@@ -53,11 +53,13 @@ final class RangeFiles implements AutoCloseable {
             if (attempt > 0) Thread.sleep(250L << attempt);
             transfers.acquire();
             try {
+                long start = System.nanoTime();
                 HttpResponse<byte[]> response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
                 int status = response.statusCode();
                 if (status == 206 || status == 200) {
                     downloads.incrementAndGet();
                     byte[] body = response.body();
+                    Downloads.count(what, body.length, System.nanoTime() - start);
                     if (status == 200 && (offset != 0 || body.length > length)) body = Arrays.copyOfRange(body, (int) offset, (int) Math.min(body.length, offset + length));
                     return body;
                 }
