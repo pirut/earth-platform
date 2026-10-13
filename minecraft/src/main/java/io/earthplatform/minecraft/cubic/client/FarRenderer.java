@@ -61,7 +61,7 @@ public final class FarRenderer {
     private static final int TEXTURED_LEVELS = Integer.getInteger("earthplatform.far.textured", 2);
     private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "block/far_white");
     private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
-            SETTLE_TICKS = 3, HIDDEN_SETTLE_TICKS = 40, UPLOADS_PER_FRAME = 8;
+            SETTLE_TICKS = 3, HIDDEN_SETTLE_TICKS = 40, UPLOADS_PER_FRAME = 8, MESHES_IN_FLIGHT = 128;
     private static final long UPLOAD_NANOS = 3_000_000L;
     private static final AtomicInteger THREADS = new AtomicInteger();
     private static final ExecutorService MESHER = Executors.newFixedThreadPool(2, runnable -> {
@@ -86,6 +86,10 @@ public final class FarRenderer {
     private List<Column> visible = List.of();
     private int waterFrame = -1;
     private int ticks, frame, uploadedFrame = -1, replaced;
+    /** Meshes handed to the workers and not yet taken back, so the nearest due columns go first. */
+    private int meshing;
+    /** How long the last frame took, so uploads keep pace however low the frame rate goes. */
+    private long frameStart = System.nanoTime(), frameNanos = 16_000_000L;
     private boolean closed;
 
     private static final class Column {
@@ -243,7 +247,7 @@ public final class FarRenderer {
         if (closed || player == null) return;
         if (ticks % MASK_TICKS == 0) mask();
         for (Column column : drawn) if (column.maskStale) column.due = Math.min(column.due, ticks + SETTLE_TICKS);
-        for (Column column : columns.values()) if (column.due >= 0 && column.due <= ticks) submit(column);
+        submitDue(player.getBlockX(), player.getBlockZ());
         if (ticks % PLAN_TICKS != 0) return;
         LongArrayList missing = new LongArrayList();
         int bx = player.getBlockX(), bz = player.getBlockZ();
@@ -325,6 +329,26 @@ public final class FarRenderer {
         }
     }
 
+    /**
+     * Starts due meshes, the drawn columns nearest the player first, keeping only a short queue at
+     * the workers: with every due column queued at once, in no order, a backlog (after a teleport
+     * or a shader reload) left coarse stand-ins near the player until it had all drained.
+     */
+    private void submitDue(int bx, int bz) {
+        List<Column> due = new ArrayList<>();
+        for (Column column : columns.values()) {
+            if (column.due < 0 || column.due > ticks) continue;
+            if (column.building) submit(column);
+            else due.add(column);
+        }
+        if (due.isEmpty()) return;
+        due.sort(Comparator.comparingLong(column -> (drawnKeys.contains(column.key) ? 0 : 1L << 40) + priority(column.key, bx, bz)));
+        for (Column column : due) {
+            if (meshing >= MESHES_IN_FLIGHT) break;
+            submit(column);
+        }
+    }
+
     private void submit(Column column) {
         column.due = -1;
         column.maskStale = false;
@@ -345,6 +369,7 @@ public final class FarRenderer {
         FarMesher.Job job = new FarMesher.Job(column.key, ++column.version, column.level, column.slot, column.x0, column.z0, column.bottom,
                 column.sections, column.drops, sides, column.drawnCubes, column.level <= TEXTURED_LEVELS, looks, faces,
                 ShaderBlocks.ids(), shade, white());
+        meshing++;
         MESHER.execute(() -> {
             long start = System.nanoTime();
             try {
@@ -358,12 +383,13 @@ public final class FarRenderer {
         });
     }
 
-    /** Uploads finished meshes: a few every frame, and more while the frame's small time budget lasts. */
+    /** Uploads finished meshes: a few every frame, and more while a small part of the last frame's time lasts. */
     private void upload(FarGpu gpu) {
-        long deadline = System.nanoTime() + UPLOAD_NANOS;
+        long deadline = System.nanoTime() + Math.max(UPLOAD_NANOS, frameNanos / 8);
         for (int n = 0; n < UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
             FarMesher.Built result = built.poll();
             if (result == null) return;
+            meshing--;
             Column column = columns.get(result.key());
             if (closed || column == null || Math.abs(result.version()) != column.version) { result.free(); continue; }
             column.building = false;
@@ -406,7 +432,12 @@ public final class FarRenderer {
 
     // Drawing ------------------------------------------------------------------------------------
 
-    public void beginFrame() { frame++; }
+    public void beginFrame() {
+        frame++;
+        long now = System.nanoTime();
+        frameNanos = Math.min(now - frameStart, 1_000_000_000L);
+        frameStart = now;
+    }
 
     /** Draws the columns for the camera's squares, using a finer level only once all four of its columns are ready. */
     public void draw(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {

@@ -10,7 +10,9 @@ import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.Timings;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
@@ -45,14 +47,16 @@ import org.joml.Matrix4f;
  */
 public final class CubeRenderer {
     private static final AtomicInteger THREADS = new AtomicInteger();
-    private static final ExecutorService POOL = Executors.newFixedThreadPool(
-            Math.max(1, Math.min(3, Runtime.getRuntime().availableProcessors() / 2)), runnable -> {
+    private static final int THREAD_COUNT = Math.max(1, Math.min(3, Runtime.getRuntime().availableProcessors() / 2));
+    private static final ExecutorService POOL = Executors.newFixedThreadPool(THREAD_COUNT, runnable -> {
                 Thread thread = new Thread(runnable, "Earth cube mesher " + THREADS.incrementAndGet());
                 thread.setDaemon(true);
                 thread.setPriority(Thread.NORM_PRIORITY - 1);
                 return thread;
             });
-    private static final int MAX_IN_FLIGHT = 48, MAX_UPLOADS_PER_FRAME = 48, NEIGHBOUR_WAIT_TICKS = 20;
+    private static final int MIN_IN_FLIGHT = 48, MAX_IN_FLIGHT = 512, MIN_UPLOADS_PER_FRAME = 48, NEIGHBOUR_WAIT_TICKS = 20;
+    /** About how long one mesh takes a worker, to keep the workers busy for a whole frame. */
+    private static final long MESH_NANOS = 5_000_000L;
 
     private final ClientCubeWorld world;
     private final Long2ObjectOpenHashMap<Mesh> meshes = new Long2ObjectOpenHashMap<>();
@@ -66,6 +70,8 @@ public final class CubeRenderer {
     private final ConcurrentLinkedQueue<CubeMesher.Built> built = new ConcurrentLinkedQueue<>();
     private final List<Mesh> visible = new ArrayList<>();
     private int ticks, drawnFrame = -1, translucentFrame = -1, frame;
+    /** How long the last frame took, so meshing and uploads keep pace however low the frame rate goes. */
+    private long frameStart = System.nanoTime(), frameNanos = 16_000_000L;
     private boolean closed;
 
     private static final class Mesh {
@@ -167,24 +173,24 @@ public final class CubeRenderer {
     }
 
     private void schedule(Vec3 camera) {
-        if (dirty.isEmpty() || building.size() >= MAX_IN_FLIGHT) return;
+        int limit = inFlight();
+        if (dirty.isEmpty() || building.size() >= limit) return;
         int cx = (int) Math.floor(camera.x) >> 4, cy = (int) Math.floor(camera.y) >> 4, cz = (int) Math.floor(camera.z) >> 4;
-        long[] picks = new long[MAX_IN_FLIGHT - building.size()];
-        long[] scores = new long[picks.length];
-        int count = 0;
+        LongArrayList ready = new LongArrayList();
+        Long2LongOpenHashMap scores = new Long2LongOpenHashMap();
         for (LongIterator it = dirty.iterator(); it.hasNext(); ) {
             long key = it.nextLong();
             if (building.contains(key)) continue;
             if (world.cube(key) == null) { it.remove(); dirtySince.remove(key); continue; }
             if (!neighboursReady(key) && ticks - dirtySince.get(key) < NEIGHBOUR_WAIT_TICKS) continue;
             long dx = CubeKey.x(key) - cx, dy = CubeKey.y(key) - cy, dz = CubeKey.z(key) - cz;
-            long score = dx * dx + dy * dy * 2 + dz * dz;
-            if (count < picks.length) { picks[count] = key; scores[count++] = score; continue; }
-            int worst = 0;
-            for (int i = 1; i < count; i++) if (scores[i] > scores[worst]) worst = i;
-            if (score < scores[worst]) { picks[worst] = key; scores[worst] = score; }
+            ready.add(key);
+            scores.put(key, dx * dx + dy * dy * 2 + dz * dz);
         }
-        for (int i = 0; i < count; i++) submit(picks[i], camera);
+        int count = Math.min(ready.size(), limit - building.size());
+        // Nearest first; a full sort is cheap next to meshing, and the picks can be hundreds.
+        if (count < ready.size()) ready.unstableSort((a, b) -> Long.compare(scores.get(a), scores.get(b)));
+        for (int i = 0; i < count; i++) submit(ready.getLong(i), camera);
     }
 
     @SuppressWarnings("unchecked")
@@ -233,8 +239,10 @@ public final class CubeRenderer {
         });
     }
 
+    /** Uploads finished meshes: a few every frame, and more while an eighth of the last frame's time lasts. */
     private void upload() {
-        for (int n = 0; n < MAX_UPLOADS_PER_FRAME; n++) {
+        long deadline = System.nanoTime() + frameNanos / 8;
+        for (int n = 0; n < MIN_UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
             CubeMesher.Built result = built.poll();
             if (result == null) return;
             building.remove(result.key());
@@ -281,7 +289,21 @@ public final class CubeRenderer {
         visible.sort(Comparator.comparingDouble(mesh -> mesh.distance));
     }
 
-    public void beginFrame() { frame++; }
+    public void beginFrame() {
+        frame++;
+        long now = System.nanoTime();
+        frameNanos = Math.min(now - frameStart, 1_000_000_000L);
+        frameStart = now;
+    }
+
+    /**
+     * Meshes started per frame: enough to keep the workers busy until the next frame. A fixed 12
+     * (then 48) meant a frame rate of 1 under a shader pack built 12 cubes a second.
+     */
+    private int inFlight() {
+        long perFrame = frameNanos * THREAD_COUNT / MESH_NANOS;
+        return (int) Math.clamp(perFrame, MIN_IN_FLIGHT, MAX_IN_FLIGHT);
+    }
 
     public void drawOpaque(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
         prepare(camera, frustum);
