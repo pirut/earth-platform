@@ -454,7 +454,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         switch (code) {
             case WorldCoverSource.TREE_COVER -> {
                 if (cliff) return new Surface(t < 3 ? grove : stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false);
-                Surface s = forest(local, patch, x, z);
+                Surface s = forest(local, patch, x, z, y);
                 if (rocky != null || slope > 6) return new Surface(s.biome(), rocky != null ? rocky : COARSE_DIRT, STONE, 0, 0, 0, 0, 0, false);
                 return s;
             }
@@ -576,8 +576,51 @@ public final class EarthGenerator extends SurfaceGenerator {
         return longitude < -30 && longitude > -170;
     }
 
+    /**
+     * Giant sequoia groves: the larger real groves on the Sierra Nevada's western slope, as
+     * latitude, longitude and radius in metres (centres and sizes approximate).
+     */
+    private static final double[][] GROVES = {
+            {38.2777, -120.3080, 500},   // Calaveras North Grove
+            {38.2460, -120.2480, 1200},  // Calaveras South Grove
+            {37.7590, -119.8060, 400},   // Tuolumne Grove
+            {37.7480, -119.8410, 400},   // Merced Grove
+            {37.5110, -119.6000, 1100},  // Mariposa Grove
+            {37.4300, -119.5850, 900},   // Nelder Grove
+            {37.0230, -119.1080, 400},   // McKinley Grove
+            {36.8150, -118.9550, 1500},  // Converse Basin
+            {36.7470, -118.9720, 700},   // Grant Grove
+            {36.6950, -118.9200, 1900},  // Redwood Mountain Grove
+            {36.6380, -118.8170, 500},   // Muir Grove
+            {36.5700, -118.7600, 2000},  // Giant Forest
+            {36.4650, -118.6750, 1300},  // Atwell Grove
+            {36.2400, -118.6750, 2000},  // Mountain Home Grove
+            {36.1350, -118.5150, 1500},  // Freeman Creek Grove
+    };
+
+    /** The Sierra Nevada's sequoia belt, round all the groves. */
+    @Override protected boolean giants(int x, int z) {
+        GeoPoint p = grid.geographic(x, z);
+        return p.latitude() > 36.05 && p.latitude() < 38.33 && p.longitude() > -120.36 && p.longitude() < -118.45;
+    }
+
+    /** Whether a forest column is in a giant sequoia grove: inside a real grove, between 1,200 and 2,600 m up. */
+    private boolean sequoias(int x, int z, int y) {
+        int metres = y - SEA;
+        if (metres < 1200 || metres > 2600 || !giants(x, z)) return false;
+        GeoPoint p = grid.geographic(x, z);
+        double east = 111320 * Math.cos(Math.toRadians(p.latitude()));
+        for (double[] grove : GROVES) {
+            double dx = (p.longitude() - grove[1]) * east, dz = (p.latitude() - grove[0]) * 110540;
+            if (dx * dx + dz * dz < grove[2] * grove[2]) return true;
+        }
+        return false;
+    }
+
     /** The forest of a climate: rainforest, bamboo, dry tropical woodland, pine, oak, birch, dark oak, cherry or taiga. */
-    private Surface forest(Local local, double patch, int x, int z) {
+    private Surface forest(Local local, double patch, int x, int z, int y) {
+        // Giant sequoias among old conifers, on duff, in the real groves.
+        if (sequoias(x, z, y)) return new Surface(oldTaiga, patch > -0.2 ? PODZOL : GRASS, DIRT, 70, 7, 0, 90, 100, true, Tree.SEQUOIA);
         double t = local.temperature();
         return switch (local.zone()) {
             case RAINFOREST -> patch < -0.4 && bamboo(x, z) ? bambooForest(patch) : new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true, Tree.JUNGLE);
