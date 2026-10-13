@@ -4,11 +4,13 @@ import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import java.nio.FloatBuffer;
+import java.util.function.ToIntFunction;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
 import net.neoforged.fml.loading.LoadingModList;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
+import org.joml.Vector3f;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL13C;
 import org.lwjgl.opengl.GL14C;
@@ -48,7 +50,8 @@ public final class FarLod {
     private static int width, height;
     private static int depth, framebuffer;
     private static int faces, scratch, before, waterFramebuffer, restoreFramebuffer, vao;
-    @Nullable private static Program merge, restore, smooth, deepen;
+    private static int shadows, shadowFramebuffer;
+    @Nullable private static Program merge, restore, smooth, deepen, sun;
     private static boolean failed;
     private static int drawnFrom, gameDepth, waterFrom, waterDepth, previousActive;
     private static final State saved = new State();
@@ -58,6 +61,18 @@ public final class FarLod {
 
     private static final Matrix4f projection = new Matrix4f(), inverse = new Matrix4f(), previous = new Matrix4f(), vanilla = new Matrix4f();
     private static boolean projected, started;
+
+    /** How much light far terrain in its own hills' shadow keeps, as a share of its colour. */
+    private static final float SHADE = 0.65F;
+    /** How much of the sky's light far terrain loses where its own hills close in all round. */
+    private static final float OCCLUSION = 0.8F;
+    /** How much sky light far terrain loses for the block-scale nooks it is too far off to show (see FarShaders). */
+    private static final float DETAIL = 0.5F;
+    private static final Matrix4f modelView = new Matrix4f(), shadowFrame = new Matrix4f(), lastView = new Matrix4f();
+    private static final Vector3f sunView = new Vector3f(), sunWorld = new Vector3f(), upView = new Vector3f();
+    private static double cameraX, cameraY, cameraZ, lastX, lastY, lastZ;
+    /** Whether {@link #shadows} holds last frame's far shadows, which this frame's far terrain reads. */
+    private static boolean shadowsReady, sunUp;
 
     private FarLod() {}
 
@@ -163,7 +178,7 @@ public final class FarLod {
      * after the pack's terrain program has bound its buffers. The game's depth is bound on a unit
      * the far shader reads, so far terrain stays behind whatever the game drew.
      */
-    static void beginDraw() {
+    static void beginDraw(Matrix4fc view, double x, double y, double z) {
         var target = Minecraft.getInstance().getMainRenderTarget();
         if (depth == 0 || target.width != width || target.height != height) resize(target.width, target.height);
         drawnFrom = GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
@@ -174,17 +189,91 @@ public final class FarLod {
         GL20C.glDrawBuffers(new int[] {GL30C.GL_COLOR_ATTACHMENT0, GL30C.GL_COLOR_ATTACHMENT1});
         previousActive = GlStateManager._getActiveTexture();
         bind(VANILLA_UNIT, gameDepth);
+        bind(SCRATCH_UNIT, shadows);
         GlStateManager._activeTexture(previousActive);
+        // Last frame's shadows are looked up from where this frame's camera now stands.
+        shadowFrame.set(previous).mul(lastView).translate((float) (x - lastX), (float) (y - lastY), (float) (z - lastZ));
+        modelView.set(view);
+        cameraX = x;
+        cameraY = y;
+        cameraZ = z;
+        sun();
+    }
+
+    /** The far terrain shader's uniforms for its sun shadows; {@code location} finds one in the bound program. */
+    static void shadowUniforms(ToIntFunction<String> location) {
+        GL20C.glUniform1i(location.applyAsInt("earth_SunShadows"), SCRATCH_UNIT);
+        GL20C.glUniform1f(location.applyAsInt("earth_ShadowShade"), shadowsReady && sunUp ? 1.0F - SHADE : 0.0F);
+        GL20C.glUniform1f(location.applyAsInt("earth_Occlusion"), shadowsReady ? OCCLUSION : 0.0F);
+        GL20C.glUniform1f(location.applyAsInt("earth_Detail"), DETAIL);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            GL20C.glUniformMatrix4fv(location.applyAsInt("earth_ShadowFrame"), false, shadowFrame.get(stack.mallocFloat(16)));
+        }
+    }
+
+    /** The sun's direction this frame, as the pack places it (its sun path tilt included). */
+    private static void sun() {
+        var level = Minecraft.getInstance().level;
+        if (level == null) { sunUp = false; return; }
+        float day = level.getTimeOfDay(Minecraft.getInstance().getTimer().getGameTimeDeltaPartialTick(false));
+        float tilt = ShaderBlocks.IRIS ? FarLodIris.sunPathRotation() : 0.0F;
+        // The sky turns about the east-west axis; a pack can tilt that path about the north-south one.
+        sunWorld.set(0.0F, 1.0F, 0.0F).rotateX((float) Math.toRadians(day * 360.0F))
+                .rotateZ((float) Math.toRadians(tilt)).rotateY((float) Math.toRadians(-90.0F));
+        sunUp = sunWorld.y > 0.02F;
+        modelView.transformDirection(sunWorld, sunView).normalize();
+        modelView.transformDirection(upView.set(0.0F, 1.0F, 0.0F)).normalize();
     }
 
     static int vanillaUnit() { return VANILLA_UNIT; }
 
     static void endDraw() {
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, 0, 0);
+        unbind(SCRATCH_UNIT);
         unbind(VANILLA_UNIT);
         smooth();
+        shadows();
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, drawnFrom);
         GlStateManager._activeTexture(previousActive);
+    }
+
+    /**
+     * Far terrain's shadows from its own hills, for the next frame's far terrain to darken by: from
+     * each far pixel, steps towards the sun through far terrain's depth, out to kilometres. Packs'
+     * own screen-space shadows only look a few blocks deep, which at the game's coarse depth caught
+     * far walls by chance (as stripes) and at this fine one catches almost nothing.
+     */
+    private static void shadows() {
+        lastView.set(modelView);
+        lastX = cameraX;
+        lastY = cameraY;
+        lastZ = cameraZ;
+        if (!programs()) { shadowsReady = false; return; }
+        saved.save();
+        boolean[] mask = colourMask();
+        GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, shadowFramebuffer);
+        GL11C.glDisable(GL11C.GL_DEPTH_TEST);
+        GL11C.glDepthMask(false);
+        GL11C.glColorMask(true, true, true, true);
+        boolean blend = GL11C.glIsEnabled(GL11C.GL_BLEND);
+        GL11C.glDisable(GL11C.GL_BLEND);
+        bind(VANILLA_UNIT, depth);
+        GL20C.glUseProgram(sun.id);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            FloatBuffer matrix = stack.mallocFloat(16);
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(sun.id, "earth_Projection"), false, projection.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(sun.id, "earth_FarInverse"), false, inverse.get(matrix));
+        }
+        GL20C.glUniform3f(GL20C.glGetUniformLocation(sun.id, "earth_Sun"), sunView.x, sunView.y, sunView.z);
+        GL20C.glUniform1i(GL20C.glGetUniformLocation(sun.id, "earth_SunUp"), sunUp ? 1 : 0);
+        GL20C.glUniform3f(GL20C.glGetUniformLocation(sun.id, "earth_Up"), upView.x, upView.y, upView.z);
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(sun.id, "earth_Focal"), projection.m00() * 0.5F * width, projection.m11() * 0.5F * height);
+        fullScreen();
+        unbind(VANILLA_UNIT);
+        if (blend) GL11C.glEnable(GL11C.GL_BLEND);
+        GL11C.glColorMask(mask[0], mask[1], mask[2], mask[3]);
+        saved.restore();
+        shadowsReady = true;
     }
 
     /**
@@ -368,10 +457,15 @@ public final class FarLod {
         if (scratch == 0) scratch = GL11C.glGenTextures();
         if (before == 0) before = GL11C.glGenTextures();
         if (faces == 0) faces = GL11C.glGenTextures();
+        if (shadows == 0) shadows = GL11C.glGenTextures();
         storage(depth, GL30C.GL_DEPTH_COMPONENT32F, GL11C.GL_DEPTH_COMPONENT);
         storage(scratch, GL30C.GL_DEPTH_COMPONENT32F, GL11C.GL_DEPTH_COMPONENT);
         storage(before, GL30C.GL_R32F, GL30C.GL_RED);
         storage(faces, GL30C.GL_R32F, GL30C.GL_RED);
+        storage(shadows, GL30C.GL_RG8, GL30C.GL_RG);
+        GL11C.glTexParameteri(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MIN_FILTER, GL11C.GL_LINEAR);
+        GL11C.glTexParameteri(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MAG_FILTER, GL11C.GL_LINEAR);
+        shadowsReady = false;
         GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, bound2d);
         GlStateManager._activeTexture(active);
 
@@ -379,6 +473,10 @@ public final class FarLod {
         if (framebuffer == 0) framebuffer = GL30C.glGenFramebuffers();
         if (waterFramebuffer == 0) waterFramebuffer = GL30C.glGenFramebuffers();
         if (restoreFramebuffer == 0) restoreFramebuffer = GL30C.glGenFramebuffers();
+        if (shadowFramebuffer == 0) shadowFramebuffer = GL30C.glGenFramebuffers();
+        GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, shadowFramebuffer);
+        GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, shadows, 0);
+        GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, framebuffer);
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, depth, 0);
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT1, GL11C.GL_TEXTURE_2D, faces, 0);
@@ -422,6 +520,7 @@ public final class FarLod {
             restore = Program.link(FULL_SCREEN, RESTORE, "far water depth copy");
             smooth = Program.link(FULL_SCREEN, SMOOTH, "far terrain depth smoothing");
             deepen = Program.link(DEEPEN_VERTEX, DEEPEN, "far water depth floor");
+            sun = Program.link(FULL_SCREEN, SUN, "far terrain sun shadows");
             return true;
         } catch (IllegalStateException failure) {
             failed = true;
@@ -560,6 +659,77 @@ public final class FarLod {
                 float distance = length(earth_view);
                 vec4 clip = earth_Projection * vec4(earth_view * ((distance + earth_Least) / distance), 1.0);
                 gl_FragDepth = max(clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0), bed);
+            }
+            """;
+
+    /**
+     * One step of {@link #shadows}: red is 1 where a far hill stands between the pixel and the sun,
+     * green how far the ground around closes in above the pixel (walls and floors of valleys).
+     */
+    private static final String SUN = """
+            #version 330 core
+            uniform sampler2D earth_Game;
+            uniform mat4 earth_Projection;
+            uniform mat4 earth_FarInverse;
+            uniform vec3 earth_Sun;
+            uniform bool earth_SunUp;
+            uniform vec3 earth_Up;
+            uniform vec2 earth_Focal;
+            in vec2 earth_uv;
+            out vec2 earth_shadow;
+
+            vec3 earth_view(vec2 uv, float depth) {
+                vec4 view = earth_FarInverse * vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
+                return view.xyz / view.w;
+            }
+
+            float earth_sun(vec3 start, float distance, float noise) {
+                if (!earth_SunUp) return 0.0;
+                start += earth_Sun * (1.0 + 0.004 * distance);
+                float t = (2.0 + 0.002 * distance) * (1.0 + noise);
+                for (int i = 0; i < 32; i++, t *= 1.3) {
+                    vec3 at = start + earth_Sun * t;
+                    vec4 clip = earth_Projection * vec4(at, 1.0);
+                    if (clip.w <= 0.0) break;
+                    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+                    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) break;
+                    float other = texture(earth_Game, uv).r;
+                    if (other >= 1.0) continue;
+                    float behind = -at.z, front = -earth_view(uv, other).z;
+                    // Behind far terrain, but not so far behind it that the step passed beyond a ridge.
+                    if (front < behind - 0.5 - 0.001 * behind && behind - front < 30.0 + 0.3 * t) return 1.0;
+                }
+                return 0.0;
+            }
+
+            // How far the terrain round the pixel rises above it, out to a share of its distance: the
+            // ambient light a valley floor or a wall at the foot of a cliff doesn't get.
+            float earth_occlusion(vec3 centre, float distance, float noise) {
+                float radius = 24.0 + 0.02 * distance, total = 0.0;
+                vec2 pixels = earth_Focal * radius / distance;
+                for (int i = 0; i < 12; i++) {
+                    float angle = (float(i) + noise) * 2.39996323;
+                    float reach = sqrt((float(i) + 0.5) / 12.0);
+                    vec2 uv = earth_uv + vec2(cos(angle), sin(angle)) * reach * pixels / vec2(textureSize(earth_Game, 0));
+                    float other = texture(earth_Game, uv).r;
+                    if (other >= 1.0) continue;
+                    vec3 step = earth_view(uv, other) - centre;
+                    float span = length(step);
+                    if (span < 1.0 || span > 2.0 * radius) continue;
+                    total += clamp(dot(step, earth_Up) / span - 0.1, 0.0, 1.0);
+                }
+                return total / 12.0;
+            }
+
+            void main() {
+                float depth = texelFetch(earth_Game, ivec2(gl_FragCoord.xy), 0).r;
+                earth_shadow = vec2(0.0);
+                if (depth >= 1.0) return;
+                vec3 start = earth_view(earth_uv, depth);
+                float distance = length(start);
+                // Interleaved noise spreads the steps between neighbouring pixels.
+                float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+                earth_shadow = vec2(earth_sun(start, distance, noise), earth_occlusion(start, distance, noise));
             }
             """;
 

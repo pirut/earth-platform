@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.sampler.SamplerHolder;
 import net.irisshaders.iris.gl.texture.TextureType;
@@ -33,5 +34,11 @@ public final class FarLodIris {
 
     static void unbindSampler(int unit) {
         IrisRenderSystem.bindSamplerToUnit(unit, 0);
+    }
+
+    /** The pack's tilt of the sun's path, in degrees. */
+    static float sunPathRotation() {
+        var pipeline = Iris.getPipelineManager().getPipelineNullable();
+        return pipeline == null ? 0.0F : pipeline.getSunPathRotation();
     }
 }
