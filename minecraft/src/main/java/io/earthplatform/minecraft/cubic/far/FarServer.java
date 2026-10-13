@@ -57,7 +57,14 @@ public final class FarServer {
     private final CubeStorage storage;
     private final CubeCodec codec;
     private final IdMap<Holder<Biome>> biomeIds;
-    private final ExecutorService workers = Executors.newFixedThreadPool(2, runnable -> {
+    /**
+     * Far workers: two on four cores, and more on bigger machines, where two left most cores idle
+     * while the far terrain took minutes to refine. They run at low priority behind the cube
+     * workers. Set with {@code -Dearthplatform.far.threads}.
+     */
+    static final int WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.threads",
+            (Runtime.getRuntime().availableProcessors() - 4) / 2), 2, 8);
+    private final ExecutorService workers = Executors.newFixedThreadPool(WORKERS, runnable -> {
         Thread thread = new Thread(runnable, "Earth far terrain " + THREADS.incrementAndGet());
         thread.setDaemon(true);
         thread.setPriority(Thread.MIN_PRIORITY);

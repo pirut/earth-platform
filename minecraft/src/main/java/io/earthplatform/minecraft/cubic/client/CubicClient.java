@@ -82,10 +82,10 @@ public final class CubicClient {
         PhotonCloudsHook.tick();
         if (world != null && Timings.LOG && ++perfTicks % 100 == 0) {
             Runtime runtime = Runtime.getRuntime();
-            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes, {} to compile, far {}/{} columns {} MB, {} sent again; {}",
+            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes, {} to compile, far {}/{} columns {}% settled {} MB, {} sent again; {}",
                     Minecraft.getInstance().getFps(), (runtime.totalMemory() - runtime.freeMemory()) >> 20, world.loadedCubes(),
                     world.renderer().meshCount(), world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
-                    world.far().vertexBytes() >> 20, world.far().replacedCount(), timings(Timings.LOGGER));
+                    world.far().settledPercent(), world.far().vertexBytes() >> 20, world.far().replacedCount(), timings(Timings.LOGGER));
         }
     }
 
@@ -140,6 +140,7 @@ public final class CubicClient {
         event.getLeft().add(at, "Cubic: " + world.loadedCubes() + " cubes, " + world.renderer().meshCount() + " meshes, "
                 + world.renderer().pendingCount() + " to compile");
         event.getLeft().add(at + 1, "Far: " + world.far().drawnCount() + "/" + world.far().columnCount() + " columns, "
+                + world.far().settledPercent() + "% settled, "
                 + world.far().vertexBytes() / (1 << 20) + " MB");
         // The debug screen redraws every frame; read the timings about twice a second so they can be read.
         long now = System.nanoTime();
