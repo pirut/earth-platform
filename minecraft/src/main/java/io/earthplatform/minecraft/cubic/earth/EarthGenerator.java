@@ -879,7 +879,9 @@ public final class EarthGenerator extends SurfaceGenerator {
         long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
         Boolean known = saltPans.get(key);
         if (known != null) return known;
-        GlobalElevation dem = elevation[WATER_ZOOM];
+        // The far terrain's own survey, whose tiles are loaded anyway: a finer one would fetch tiles kilometres around
+        // every far desert cell and hold up the far terrain while they download.
+        GlobalElevation dem = elevation[FAR_ZOOM];
         double px = (cx + 0.5) * SALT_CELL, pz = (cz + 0.5) * SALT_CELL;
         // The survey is speckled a few metres up and down even on a dead flat pan, so flatness is judged by the spread.
         double sum = dem.metres(px, pz), squares = sum * sum;
