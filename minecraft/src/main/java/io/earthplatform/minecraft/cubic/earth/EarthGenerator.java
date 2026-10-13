@@ -217,6 +217,9 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         double steep = Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1]));
         CoverMemo memo = cover == null ? null : coverMemo.get();
+        // Land by sea the survey reads well above sea level lies as much lower, so it meets the sea as it meets its own;
+        // its lakes and rivers lie as much lower with it, or they stood as pillars of water over the lowered ground.
+        double lowered = cover == null ? 0 : metres - Math.max(metres - lift(x, z), Math.min(metres, 2 * SEA_METRES));
         if (cover != null && cover(memo, x, z, voxel) == WorldCoverSource.WATER) {
             // Water joined through water to the open sea at sea level is the sea, though the survey under it reads far
             // above it, as where a coarse ocean grid fills a lagoon with its island's slopes; but water mapped on a
@@ -226,14 +229,15 @@ public final class EarthGenerator extends SurfaceGenerator {
                 out[1] = SEA;
                 return;
             }
-            int surface = lakeSurface(dem, x, z, voxel);
+            int surface = lakeSurface(dem, x, z, voxel) - (int) Math.round(lowered);
+            metres -= lowered;
             // Shadowed cliffs can map as water; water never lies on a steep slope well above its own level. Only
             // mountains cast such shadows: in flat country a steep rise under water is a seam between surveys, and
             // keeping it as land stood thin stone walls in rivers.
             boolean shadow = steep > 0.7 && SEA + 0.5 + metres - surface > 4 && relief(x, z) > MOUNTAINS;
             // Water by the coast is the sea, and so is water at sea level that joins it, as estuaries and lagoons do,
             // which otherwise stood a block above the sea around it wherever the survey read a little over 0 m.
-            if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && joinsOpenSea(x, z))) {
+            if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && (lowered > 0 || joinsOpenSea(x, z)))) {
                 out[0] = lagoonBed(x, z, metres, voxel);
                 out[1] = SEA;
                 return;
@@ -243,9 +247,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 out[1] = surface;
                 return;
             }
-        }
-        // Land by sea the survey reads well above sea level lies as much lower, so it meets the sea as it meets its own.
-        if (cover != null) metres = Math.max(metres - lift(x, z), Math.min(metres, 2 * SEA_METRES));
+        } else metres -= lowered;
         metres = towers.shape(x, z, metres, voxel);
         double amplitude = Mth.clamp((metres - 0.5) / 4, 0, 1) * (0.6 + 1.8 * steep), detail = 0;
         if (voxel <= 8) detail += fbm(relief, x / 27.0, z / 27.0, 3) * amplitude;
@@ -1099,7 +1101,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     private double wetness(int x, int z) { return fbm(wetBroad, x / 9000.0, z / 9000.0, 2) * 0.7 + wetLocal.getValue(x / 1400.0, z / 1400.0) * 0.3; }
 
     /** Blocks above the sea and in from it that bare ground counts as beach. */
-    private static final int BEACH_RISE = 6, BEACH_REACH = 40;
+    private static final int BEACH_RISE = 8, BEACH_REACH = 64;
 
     /** Whether sea water lies within {@code r} blocks of a column, looking out at half and full reach. */
     private boolean seaWithin(int x, int z, int r) {
