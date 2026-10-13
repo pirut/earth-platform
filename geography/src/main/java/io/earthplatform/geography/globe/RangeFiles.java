@@ -74,6 +74,29 @@ final class RangeFiles implements AutoCloseable {
         throw new MissingTerrainException(what + " download failed after retries: " + uri + " (" + last + ")");
     }
 
+    /**
+     * Runs loads all at once, each on its own virtual thread, so as many transfers run together as
+     * the transfer limit allows (a parallel stream would stop at the processor count). Waits for
+     * all of them, then rethrows the first failure.
+     */
+    static void all(java.util.List<Runnable> loads) {
+        RuntimeException first = null;
+        try (ExecutorService threads = Executors.newVirtualThreadPerTaskExecutor()) {
+            java.util.List<Future<?>> running = new java.util.ArrayList<>(loads.size());
+            for (Runnable load : loads) running.add(threads.submit(load));
+            for (Future<?> load : running) {
+                try { load.get(); }
+                catch (ExecutionException failed) {
+                    if (first == null) first = failed.getCause() instanceof RuntimeException runtime ? runtime : new MissingTerrainException(String.valueOf(failed.getCause()));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new MissingTerrainException("Interrupted while prefetching");
+                }
+            }
+        }
+        if (first != null) throw first;
+    }
+
     static void write(Path path, byte[] bytes) throws IOException {
         Files.createDirectories(path.getParent());
         Path temp = Files.createTempFile(path.getParent(), "part", ".part");

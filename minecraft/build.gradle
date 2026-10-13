@@ -84,6 +84,8 @@ neoForge {
             jvmArgument '-Xmx4G'
             // Comma-separated list of namespaces to load gametests from. Empty = all namespaces.
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            // Dev worlds keep the prototype calibration windows and carriers; players never get them.
+            systemProperty 'earthplatform.prototypes', 'true'
         }
 
         // Explicit disposable native-server integration gate; never a public server.
@@ -93,6 +95,7 @@ neoForge {
             jvmArgument '-Xmx3G'
             systemProperty 'neoforge.gameTestServer', 'true'
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            systemProperty 'earthplatform.prototypes', 'true'
             programArgument '--nogui'
         }
 

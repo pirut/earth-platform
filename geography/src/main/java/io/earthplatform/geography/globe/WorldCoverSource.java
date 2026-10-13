@@ -7,7 +7,9 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.*;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -51,8 +53,10 @@ public final class WorldCoverSource implements AutoCloseable {
     private final Map<Integer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
     private final LinkedHashMap<Long, byte[]> memory = new LinkedHashMap<>(64, 0.75f, true);
     private final Map<Long, CompletableFuture<byte[]>> inFlight = new ConcurrentHashMap<>();
-    private final ThreadLocal<long[]> lastKey = ThreadLocal.withInitial(() -> new long[]{-1});
-    private final ThreadLocal<byte[][]> lastBlock = ThreadLocal.withInitial(() -> new byte[1][]);
+    /** Each thread's last block, so reads that stay in one block skip the shared cache. */
+    private final ThreadLocal<Last> recent = ThreadLocal.withInitial(Last::new);
+
+    private static final class Last { long key = -1; byte[] block; }
 
     /**
      * @param base              URI prefix the files are named under
@@ -89,13 +93,12 @@ public final class WorldCoverSource implements AutoCloseable {
         long last = (full >> overview) - 1;
         long px = Math.min(last, Math.min(full - 1, (long) fx) >> overview), py = Math.min(last, Math.min(full - 1, Math.max(0, (long) fy)) >> overview);
         long key = blockKey(square, overview, (int) (py >> 10), (int) (px >> 10));
-        long[] previous = lastKey.get();
-        byte[][] cached = lastBlock.get();
-        if (previous[0] != key) {
-            cached[0] = block(square, overview, (int) (py >> 10), (int) (px >> 10));
-            previous[0] = key;
+        Last cached = recent.get();
+        if (cached.key != key) {
+            cached.block = block(square, overview, (int) (py >> 10), (int) (px >> 10));
+            cached.key = key;
         }
-        byte[] block = cached[0];
+        byte[] block = cached.block;
         if (block.length == 0) return NO_DATA;
         return block[(int) ((py & 1023) << 10 | (px & 1023))] & 0xFF;
     }
@@ -103,10 +106,12 @@ public final class WorldCoverSource implements AutoCloseable {
     /** Loads every block an area needs at an overview, several at a time, so later reads never wait. */
     public void prefetch(double south, double west, double north, double east, int overview) {
         double step = 1024.0 * (1 << overview) / PIXELS_PER_DEGREE;
-        java.util.List<double[]> points = new java.util.ArrayList<>();
+        List<double[]> points = new ArrayList<>();
         for (double lat = Math.max(-89.99, south); lat <= Math.min(89.99, north) + step; lat += step)
             for (double lon = west; lon <= east + step; lon += step) points.add(new double[]{Math.min(lat, Math.min(89.99, north)), Math.min(lon, east)});
-        points.parallelStream().forEach(p -> code(p[0], p[1], overview));
+        List<Runnable> loads = new ArrayList<>(points.size());
+        for (double[] p : points) loads.add(() -> code(p[0], p[1], overview));
+        RangeFiles.all(loads);
     }
 
     // Files and blocks -----------------------------------------------------------------------------
