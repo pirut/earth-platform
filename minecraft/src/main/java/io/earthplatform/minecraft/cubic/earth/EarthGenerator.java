@@ -627,8 +627,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (iceWater(x, z, overview, metresPerBlock)) return WorldCoverSource.SNOW_AND_ICE;
             return voxel <= STRAY_VOXEL ? strayWater(x, z, point) : code;
         }
-        // Narrow rivers the land cover lost, read at the same wandering point so their banks curve too.
+        // Narrow rivers the land cover lost, read at the same wandering point so their banks curve too. Not in marsh:
+        // herbaceous wetland, as the Everglades' sawgrass, the Pantanal's or the Sudd's, stands in water for part of
+        // the year, and the river map traced its sheet flood as a mesh of channels that joined the sea and drowned it.
         if (rivers != null && voxel <= RIVER_VOXEL && code != WorldCoverSource.NO_DATA && code != WorldCoverSource.SNOW_AND_ICE
+                && code != WorldCoverSource.WETLAND
                 && rivers.strength(point.latitude(), point.longitude()) >= RiverMap.EDGE) return RIVER;
         return code;
     }
