@@ -70,7 +70,8 @@ public final class TerrariumTileSource implements AutoCloseable {
     private final ExecutorService executor;
     private final LinkedHashMap<Long, float[]> memory = new LinkedHashMap<>(64, 0.75f, true);
     private final Map<Long, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
-    private final CopernicusFill fill;
+    /** Better sources laid over the composite, in order; see {@link ElevationLayer}. */
+    private final java.util.List<ElevationLayer> layers;
     private final AtomicLong downloads = new AtomicLong(), diskHits = new AtomicLong(), memoryHits = new AtomicLong(), failures = new AtomicLong();
 
     /**
@@ -81,16 +82,13 @@ public final class TerrariumTileSource implements AutoCloseable {
      * @param maxConcurrentTransfers simultaneous HTTP requests
      */
     public TerrariumTileSource(URI base, Path cacheRoot, boolean allowNetwork, int maxTilesInMemory, int maxConcurrentTransfers, Duration timeout) throws IOException {
-        this(base, cacheRoot, allowNetwork, maxTilesInMemory, maxConcurrentTransfers, timeout, null);
+        this(base, cacheRoot, allowNetwork, maxTilesInMemory, maxConcurrentTransfers, timeout, java.util.List.of());
     }
 
-    /**
-     * As above, with tiles from zoom {@value CopernicusFill#MIN_ZOOM} filled from {@code copernicus}
-     * where they are wrong over a wide area ({@link CopernicusFill}), or as they are when it is null.
-     */
+    /** @param layers better sources laid over each tile after its cleaning, in order (later ones win) */
     public TerrariumTileSource(URI base, Path cacheRoot, boolean allowNetwork, int maxTilesInMemory, int maxConcurrentTransfers, Duration timeout,
-                               CopernicusSource copernicus) throws IOException {
-        this.fill = copernicus == null ? null : new CopernicusFill(copernicus, this::cleaned, 512);
+                               java.util.List<ElevationLayer> layers) throws IOException {
+        this.layers = java.util.List.copyOf(layers);
         this.base = Objects.requireNonNull(base);
         if (!base.toString().endsWith("/")) throw new IllegalArgumentException("Tile base URI must end with /");
         if (maxTilesInMemory < 1 || maxConcurrentTransfers < 1 || timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("Invalid tile source budget");
@@ -121,6 +119,7 @@ public final class TerrariumTileSource implements AutoCloseable {
         if (shared == null) {
             try {
                 float[] values = read(zoom, x, y);
+                for (ElevationLayer layer : layers) layer.refine(zoom, x, y, values);
                 synchronized (memory) {
                     memory.put(key, values);
                     var iterator = memory.entrySet().iterator();
@@ -221,27 +220,22 @@ public final class TerrariumTileSource implements AutoCloseable {
      * A tile's values with the composite's bad pixels made good, in one pass for each kind: lines along whole
      * degrees where its SRTM tiles meet ({@link #seams}), lone pixels and small clusters ({@link #mend}), and in
      * tiles finer than zoom 12, runs far off the zoom 11 surface ({@link #repair}). Each leaves cliffs, gorges
-     * and peaks as they are. Then, where a second source is given, water filled in as land and heights off the
-     * sea's datum, over wide areas, take that source ({@link CopernicusFill}).
+     * and peaks as they are.
      */
     private float[] read(int zoom, int x, int y) throws IOException, InterruptedException {
-        float[] values = clean(zoom, x, y);
-        if (fill != null) fill.apply(values, zoom, x, y);
-        return values;
-    }
-
-    /** A tile's values made good as {@link #read} does, but not filled. */
-    private float[] clean(int zoom, int x, int y) throws IOException, InterruptedException {
         float[] values = mend(seams(raw(zoom, x, y), zoom, x, y, this::neighbour), zoom, y);
         if (zoom > REFERENCE_ZOOM + 1) repair(values, zoom, x, y);
         return values;
     }
 
-    /** {@link #clean} for {@link CopernicusFill}'s check, which must see the tiles as they were; not kept in memory. */
-    private float[] cleaned(int zoom, int x, int y) {
+    /**
+     * A tile cleaned as {@link #read} leaves it, before any {@link ElevationLayer}, for a layer that must
+     * compare against the composite as it was. Read afresh each time; not kept in memory.
+     */
+    public float[] cleaned(int zoom, int x, int y) {
         checkTile(zoom, x, y);
         try {
-            return clean(zoom, x, y);
+            return read(zoom, x, y);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new MissingTerrainException("Interrupted reading elevation tile " + zoom + "/" + x + "/" + y);
@@ -618,6 +612,9 @@ public final class TerrariumTileSource implements AutoCloseable {
     }
 
     private static long key(int zoom, int x, int y) { return ((long) zoom << 58) | ((long) x << 29) | y; }
+
+    /** The layers laid over the composite, in order. */
+    public java.util.List<ElevationLayer> layers() { return layers; }
 
     public Stats stats() {
         int resident;

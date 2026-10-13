@@ -234,7 +234,7 @@ final class Vegetation {
         boolean sea = warm || lukewarm || b.is(Biomes.OCEAN) || b.is(Biomes.DEEP_OCEAN) || b.is(Biomes.COLD_OCEAN) || b.is(Biomes.DEEP_COLD_OCEAN);
         int y = h + 1 - y0;
         // Coral reefs in patches on shallow warm sea beds.
-        if (warm && depth >= 3 && depth <= 24 && Math.floorMod(gen.mix(x >> 2, 0x52454546L, z >> 2), 100) < 40) {
+        if (warm && depth >= 3 && depth <= 24 && Math.floorMod(gen.mix(x >> 2, 0x52454546L, z >> 2), 100) < 40 && openWater(x, z, water)) {
             int color = (int) Math.floorMod(gen.mix(x >> 3, 0x434F52L, z >> 3), 5);
             int blocks = Math.min(depth - 2, 1 + (int) Math.floorMod(r >>> 12, 3));
             for (int k = 0; k < blocks; k++) replaceWater(section, lx, y + k, lz, CORAL_BLOCKS[color]);
@@ -254,6 +254,28 @@ final class Vegetation {
         } else if ((warm || lukewarm) && depth >= 2 && roll < 380) {
             replaceWater(section, lx, y, lz, state(Blocks.SEA_PICKLE).setValue(SeaPickleBlock.PICKLES, 1 + (int) (r >>> 20 & 3)));
         }
+    }
+
+    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> openWater = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Whether water is open sea or a wide lagoon rather than a pool among rocks, judged for a 4 by 4 patch by
+     * whether the same water reaches out a hundred blocks in nearly every direction. Reefs grow only there:
+     * enclosed pools, such as Ha Long Bay's karst lagoons, are too brackish and still for coral.
+     */
+    private boolean openWater(int x, int z, int water) {
+        long key = (long) (x >> 2) << 32 | (z >> 2) & 0xFFFFFFFFL;
+        Boolean known = openWater.get(key);
+        if (known != null) return known;
+        int cx = (x & ~3) + 2, cz = (z & ~3) + 2, same = 0;
+        for (int k = 0; k < 8; k++) {
+            double a = k * Math.PI / 4;
+            if (gen.waterY(cx + (int) Math.round(Math.cos(a) * 100), cz + (int) Math.round(Math.sin(a) * 100)) == water) same++;
+        }
+        boolean open = same >= 6;
+        if (openWater.size() > 1 << 16) openWater.clear();
+        openWater.putIfAbsent(key, open);
+        return open;
     }
 
     // Trees ----------------------------------------------------------------------------------------

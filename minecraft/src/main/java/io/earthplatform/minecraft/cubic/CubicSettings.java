@@ -1,9 +1,12 @@
 package io.earthplatform.minecraft.cubic;
 
 import io.earthplatform.geography.globe.ClimateSource;
+import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
 import io.earthplatform.geography.globe.ImagerySource;
+import io.earthplatform.geography.globe.ElevationLayer;
 import io.earthplatform.geography.globe.MercatorGrid;
+import io.earthplatform.geography.globe.NationalElevation;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
@@ -19,7 +22,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
 import java.util.stream.Stream;
 import net.minecraft.core.Registry;
@@ -33,7 +40,10 @@ import net.neoforged.fml.loading.FMLPaths;
  */
 public final class CubicSettings {
     private static final String FILE = "generator.properties";
-    private static TerrariumTileSource tiles;
+    /** Elevation sources by a world's {@code earth.elevation} pin, so worlds made with different sources never share tiles. */
+    private static final Map<String, TerrariumTileSource> tiles = new HashMap<>();
+    private static NationalElevation national;
+    private static CopernicusSource copernicus;
     private static WorldCoverSource cover;
     private static ClimateSource climate;
     private static ImagerySource imagery;
@@ -74,7 +84,9 @@ public final class CubicSettings {
                 String imageryId = properties.getProperty("earth.imagery", "");
                 if (!imageryId.isEmpty() && !ImagerySource.DATASET_ID.equals(imageryId))
                     throw new IllegalStateException("Unsupported imagery '" + imageryId + "' in " + file);
-                yield new EarthGenerator(seed, biomes, settings, tiles(), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
+                // Worlds made before elevation layers read the composite alone.
+                String elevationId = properties.getProperty("earth.elevation", TerrariumTileSource.DATASET_ID);
+                yield new EarthGenerator(seed, biomes, settings, tiles(elevationId), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
                         coverId.isEmpty() || imageryId.isEmpty() ? null : imagery());
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
@@ -109,7 +121,7 @@ public final class CubicSettings {
         properties.setProperty("earth.longitude", Double.toString(earth.longitude()));
         properties.setProperty("earth.metresPerBlock", Double.toString(earth.metresPerBlock()));
         properties.setProperty("earth.projection", earth.projection());
-        properties.setProperty("earth.elevation", TerrariumTileSource.DATASET_ID);
+        properties.setProperty("earth.elevation", elevation());
         properties.setProperty("earth.cover", WorldCoverSource.DATASET_ID);
         properties.setProperty("earth.climate", ClimateSource.DATASET_ID);
         if (imageryEnabled()) properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
@@ -137,27 +149,86 @@ public final class CubicSettings {
     }
 
     /**
-     * Elevation tiles shared by every Earth world in this game, cached on disk under the game
-     * folder. {@code -Dearthplatform.earth.offline=true} reads only that cache.
+     * The elevation pin for new worlds: the Terrarium composite, then the layers laid over it, joined
+     * by '+'. The Copernicus fill and national elevation are on unless the game runs with
+     * {@code -Dearthplatform.earth.copernicus=false} or {@code -Dearthplatform.earth.national=false}.
+     * National elevation comes last, so it wins where both cover a place.
      */
-    public static synchronized TerrariumTileSource tiles() {
-        if (tiles == null) {
-            Path caches = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache");
-            Path cache = caches.resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
-            boolean network = !Boolean.getBoolean("earthplatform.earth.offline");
+    public static String elevation() {
+        String pin = TerrariumTileSource.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.copernicus"))) pin += "+" + CopernicusFill.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.national"))) pin += "+" + NationalElevation.DATASET_ID;
+        return pin;
+    }
+
+    /** Elevation as new worlds read it. */
+    public static synchronized TerrariumTileSource tiles() { return tiles(elevation()); }
+
+    /**
+     * Elevation tiles for an {@code earth.elevation} pin, shared by every Earth world in this game made
+     * with the same sources, cached on disk under the game folder.
+     * {@code -Dearthplatform.earth.offline=true} reads only that cache.
+     */
+    public static synchronized TerrariumTileSource tiles(String pin) {
+        TerrariumTileSource known = tiles.get(pin);
+        if (known != null) return known;
+        String[] ids = pin.split("\\+");
+        if (!TerrariumTileSource.DATASET_ID.equals(ids[0])) throw new IllegalStateException("Unsupported elevation '" + pin + "'");
+        List<ElevationLayer> layers = new ArrayList<>();
+        // The Copernicus fill checks the tiles as they were before any layer, so it reads them back
+        // from the source made here.
+        TerrariumTileSource[] made = new TerrariumTileSource[1];
+        for (int i = 1; i < ids.length; i++) {
+            if (CopernicusFill.DATASET_ID.equals(ids[i])) layers.add(new CopernicusFill(copernicus(), (zoom, x, y) -> made[0].cleaned(zoom, x, y), 512));
+            else if (NationalElevation.DATASET_ID.equals(ids[i])) layers.add(national());
+            else throw new IllegalStateException("Unsupported elevation layer '" + ids[i] + "' in '" + pin + "'");
+        }
+        Path cache = cacheFolder().resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
+        try {
+            known = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                    256, 6, Duration.ofSeconds(20), layers);
+        } catch (IOException failure) {
+            throw new UncheckedIOException("Could not open the elevation tile cache at " + cache, failure);
+        }
+        made[0] = known;
+        tiles.put(pin, known);
+        return known;
+    }
+
+    /**
+     * Copernicus GLO-30, for the fill of places where the elevation tiles are wrong over a wide area:
+     * fjords filled in as land, and heights off the sea's datum north of SRTM. Cached on disk beside
+     * the elevation tiles; its blocks are up to 4 MiB decoded.
+     */
+    public static synchronized CopernicusSource copernicus() {
+        if (copernicus == null) {
+            Path cache = cacheFolder().resolve(CopernicusSource.DATASET_ID);
             try {
-                // Copernicus fills the tiles where they are wrong over a wide area: fjords filled in as
-                // land, and heights off the sea's datum north of SRTM. Its blocks are up to 4 MiB decoded.
-                // -Dearthplatform.earth.copernicus=false leaves the tiles as they are, to compare.
-                CopernicusSource copernicus = "false".equals(System.getProperty("earthplatform.earth.copernicus")) ? null
-                        : new CopernicusSource(CopernicusSource.AWS_COPERNICUS, caches.resolve(CopernicusSource.DATASET_ID), network, 12, 4, Duration.ofSeconds(30));
-                tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, network, 256, 6, Duration.ofSeconds(20), copernicus);
+                copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        12, 4, Duration.ofSeconds(30));
             } catch (IOException failure) {
-                throw new UncheckedIOException("Could not open the elevation tile cache at " + cache, failure);
+                throw new UncheckedIOException("Could not open the Copernicus elevation cache at " + cache, failure);
             }
         }
-        return tiles;
+        return copernicus;
     }
+
+    /** High-resolution national elevation, cached on disk beside the elevation tiles. */
+    public static synchronized NationalElevation national() {
+        if (national == null) {
+            Path cache = cacheFolder().resolve(NationalElevation.DATASET_ID);
+            try {
+                // Source tiles are 1 MiB decoded and each serves four elevation tiles.
+                national = new NationalElevation(NationalElevation.MAPTERHORN_TILES, NationalElevation.MAPTERHORN_DOWNLOADS, cache,
+                        !Boolean.getBoolean("earthplatform.earth.offline"), 48, 6, Duration.ofSeconds(30));
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the national elevation cache at " + cache, failure);
+            }
+        }
+        return national;
+    }
+
+    private static Path cacheFolder() { return FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache"); }
 
     /** Land cover shared by every Earth world in this game, cached on disk beside the elevation tiles. */
     public static synchronized WorldCoverSource cover() {
