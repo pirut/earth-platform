@@ -22,7 +22,14 @@
     "CubicFarPlaneMixin",
     "CubicShaderFarMixin",
     "CubicIrisSourceNamesMixin",
-    "CubicIrisProgramSetMixin"
+    "CubicIrisProgramSetMixin",
+    "compat.XaeroMinimapWriterMixin",
+    "compat.XaeroWorldMapWriterMixin",
+    "compat.XaeroWorldMapDimensionMixin",
+    "compat.XaeroWorldMapSlopeMixin",
+    "compat.JourneyMapDataCacheMixin",
+    "compat.JourneyMapSnapshotMixin",
+    "compat.JourneyMapChunkMixin"
   ],
   "injectors": {
     "defaultRequire": 1
