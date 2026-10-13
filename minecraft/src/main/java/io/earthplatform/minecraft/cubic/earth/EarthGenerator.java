@@ -1114,6 +1114,15 @@ public final class EarthGenerator extends SurfaceGenerator {
         return false;
     }
 
+    /** A column's land cover class, climate zone and ecoregion biome, for tuning reports; null without land cover. */
+    @Nullable String diagnose(int x, int z) {
+        if (cover == null) return null;
+        Local local = local(x, z, surfaceY(x, z));
+        int eco = ecoregion(x, z);
+        return String.format(Locale.ROOT, "cover %d %s eco %d", cover(x, z, 1), local.zone(), eco == 0 ? 0 : Ecoregions.get().biome(eco))
+                + String.format(Locale.ROOT, "|t %.0f warmest %.0f rain %.0f", local.temperature(), local.warmest(), Math.floor(local.rain() / 100) * 100);
+    }
+
     /** The cover a zone has where the map has none: forest wherever forest grows, else its open land. */
     private static int typical(ClimateZone zone) {
         return switch (zone) {
