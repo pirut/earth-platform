@@ -17,7 +17,8 @@
     "CubicSpawnerMixin",
     "CubicPoiStorageMixin",
     "CubicPoiQueryMixin",
-    "CubicMapStructureMixin"
+    "CubicMapStructureMixin",
+    "CubicLocateMixin"
   ],
   "client": [
     "CubicPredictionMixin",

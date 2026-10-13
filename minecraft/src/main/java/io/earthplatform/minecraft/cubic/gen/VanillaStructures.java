@@ -176,8 +176,8 @@ final class VanillaStructures {
      */
     @Nullable BlockPos locate(java.util.function.Predicate<Structure> wanted, int x, int z, int radius) {
         int cx = x >> 4, cz = z >> 4;
-        BlockPos best = null;
-        long bestDistance = Long.MAX_VALUE;
+        // Nearest candidate first, so only the few closest starts are laid out (eyes of ender ask on the server thread)
+        List<long[]> candidates = new ArrayList<>();
         for (Kind kind : kinds) {
             if (kind.set.value().structures().stream().noneMatch(e -> wanted.test(e.structure().value()))) continue;
             int spacing = kind.placement.spacing();
@@ -185,15 +185,18 @@ final class VanillaStructures {
                 for (int rx = Math.floorDiv(cx - radius, spacing); rx <= Math.floorDiv(cx + radius, spacing); rx++) {
                     ChunkPos chunk = kind.placement.getPotentialStructureChunk(seed, rx * spacing, rz * spacing);
                     long d = (long) (chunk.x - cx) * (chunk.x - cx) + (long) (chunk.z - cz) * (chunk.z - cz);
-                    if (d >= bestDistance || !kind.placement.isStructureChunk(state, chunk.x, chunk.z)) continue;
-                    Start start = start(kind, chunk.x, chunk.z);
-                    if (start == null || !wanted.test(start.start.getStructure())) continue;
-                    BlockPos centre = start.start.getBoundingBox().getCenter();
-                    best = centre.above(start.frame.shift);
-                    bestDistance = d;
+                    if (d <= (long) radius * radius) candidates.add(new long[]{d, kind.index, chunk.x, chunk.z});
                 }
         }
-        return best;
+        candidates.sort(java.util.Comparator.comparingLong(c -> c[0]));
+        for (long[] c : candidates) {
+            Kind kind = kinds.get((int) c[1]);
+            if (!kind.placement.isStructureChunk(state, (int) c[2], (int) c[3])) continue;
+            Start start = start(kind, (int) c[2], (int) c[3]);
+            if (start == null || !wanted.test(start.start.getStructure())) continue;
+            return start.start.getBoundingBox().getCenter().above(start.frame.shift);
+        }
+        return null;
     }
 
     /** The structures reaching a block column, with how many blocks each lays and how many in the cube at y. For checking. */
@@ -213,6 +216,22 @@ final class VanillaStructures {
                 Patch p = overlay.get(SectionPos.asLong(x >> 4, cy, z >> 4));
                 if (p != null) text.append(' ').append(cy).append('=').append(p.at.length);
             }
+            int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, minY = minX, maxY = maxX, minZ = minX, maxZ = maxX;
+            for (long key : overlay.keySet()) {
+                minX = Math.min(minX, SectionPos.x(key)); maxX = Math.max(maxX, SectionPos.x(key));
+                minY = Math.min(minY, SectionPos.y(key)); maxY = Math.max(maxY, SectionPos.y(key));
+                minZ = Math.min(minZ, SectionPos.z(key)); maxZ = Math.max(maxZ, SectionPos.z(key));
+            }
+            text.append(" cubes x ").append(minX).append("..").append(maxX).append(" y ").append(minY).append("..").append(maxY)
+                    .append(" z ").append(minZ).append("..").append(maxZ).append(", ").append(start.start.getPieces().size()).append(" pieces: ");
+            java.util.TreeMap<Integer, Integer> byY = new java.util.TreeMap<>();
+            java.util.TreeMap<String, Integer> lowest = new java.util.TreeMap<>();
+            final int bottom = minY;
+            overlay.forEach((key, patch) -> {
+                byY.merge(SectionPos.y(key), patch.at.length, Integer::sum);
+                if (SectionPos.y(key) == bottom) for (BlockState state : patch.states) lowest.merge(state.getBlock().getDescriptionId(), 1, Integer::sum);
+            });
+            text.append(" by cube y ").append(byY).append(" lowest ").append(lowest).append(' ');
             text.append("; ");
         }
         return text.length() == 0 ? "No structures here." : text.toString();
@@ -297,10 +316,15 @@ final class VanillaStructures {
         return new Start(kind.index, chunkX, chunkZ, made, frame, box);
     }
 
+    private static final Object STARTS = new Object();
+
     private StructureStart generate(StructureSet.StructureSelectionEntry entry, Frame frame, ChunkPos chunk) {
         Structure structure = entry.structure().value();
-        return structure.generate(level.registryAccess(), frame, frame.getBiomeSource(), randomState, level.getStructureManager(),
-                seed, chunk, 0, frame.heights, structure.biomes()::contains);
+        // Vanilla lays starts out on one thread; some piece builders (strongholds) keep static state
+        synchronized (STARTS) {
+            return structure.generate(level.registryAccess(), frame, frame.getBiomeSource(), randomState, level.getStructureManager(),
+                    seed, chunk, 0, frame.heights, structure.biomes()::contains);
+        }
     }
 
     // Layout: a structure's blocks, once -------------------------------------------------------
@@ -328,7 +352,7 @@ final class VanillaStructures {
 
     private Long2ObjectOpenHashMap<Patch> build(Start start) {
         Frame frame = start.frame;
-        StructureLevel world = new StructureLevel(level, new Reader(), frame.shift, frame.minY, frame.height, frame.sea, seed,
+        StructureLevel world = new StructureLevel(level, new Reader(), frame.shift, frame.minY, frame.height, frame.sea, (start.reach.minY() + start.reach.maxY()) >> 1, seed,
                 RandomSource.create(startKey(start.kind, start.chunkX, start.chunkZ) ^ seed));
         adapt(world, start);
         BoundingBox box = start.start.getBoundingBox();
@@ -353,7 +377,8 @@ final class VanillaStructures {
         Long2ObjectOpenHashMap<List<CompoundTag>> blockEntities = new Long2ObjectOpenHashMap<>(), entities = new Long2ObjectOpenHashMap<>();
         for (var entry : world.blocks.long2ObjectEntrySet()) {
             long pos = entry.getLongKey();
-            int x = BlockPos.getX(pos), y = BlockPos.getY(pos), z = BlockPos.getZ(pos);
+            BlockPos real = world.at(pos);
+            int x = real.getX(), y = real.getY(), z = real.getZ();
             if (!CubeWorld.inRange(y)) continue;
             long cube = SectionPos.asLong(x >> 4, y >> 4, z >> 4);
             at.computeIfAbsent(cube, k -> new ShortArrayList()).add((short) ((y & 15) << 8 | (z & 15) << 4 | x & 15));

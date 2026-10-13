@@ -82,9 +82,12 @@ final class StructureLevel implements WorldGenLevel {
     private final Long2ObjectOpenHashMap<BlockEntity> blockEntities = new Long2ObjectOpenHashMap<>();
     final List<CompoundTag> entities = new ArrayList<>();
     final LongOpenHashSet postProcess = new LongOpenHashSet();
+    /** Keys pack y relative to this, since a packed BlockPos only holds y -2048..2047 and structures sit far higher. */
+    private final int anchor;
 
-    StructureLevel(ServerLevel level, Terrain terrain, int shift, int minY, int height, int seaLevel, long seed, RandomSource random) {
+    StructureLevel(ServerLevel level, Terrain terrain, int shift, int minY, int height, int seaLevel, int anchor, long seed, RandomSource random) {
         this.level = level;
+        this.anchor = anchor;
         this.terrain = terrain;
         this.shift = shift; this.minY = minY; this.height = height; this.seaLevel = seaLevel;
         this.seed = seed;
@@ -92,13 +95,18 @@ final class StructureLevel implements WorldGenLevel {
         this.biomes = new BiomeManager(this, BiomeManager.obfuscateSeed(seed));
         var biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME);
         this.scratch = new ProtoChunk(ChunkPos.ZERO, UpgradeData.EMPTY, net.minecraft.world.level.LevelHeightAccessor.create(0, 16), biomeRegistry, null) {
-            @Override public void markPosForPostprocessing(BlockPos pos) { postProcess.add(real(pos).asLong()); }
+            @Override public void markPosForPostprocessing(BlockPos pos) { postProcess.add(key(real(pos))); }
         };
         this.light = new LevelLightEngine(new net.minecraft.world.level.chunk.LightChunkGetter() {
             @Override public net.minecraft.world.level.chunk.LightChunk getChunkForLighting(int x, int z) { return null; }
             @Override public net.minecraft.world.level.BlockGetter getLevel() { return StructureLevel.this; }
         }, false, false);
     }
+
+    long key(int x, int y, int z) { return BlockPos.asLong(x, y - anchor, z); }
+    long key(BlockPos pos) { return key(pos.getX(), pos.getY(), pos.getZ()); }
+    /** The real position a key stands for. */
+    BlockPos at(long key) { return BlockPos.of(key).above(anchor); }
 
     BlockPos real(BlockPos pos) { return shift == 0 ? pos : pos.above(shift); }
 
@@ -118,17 +126,17 @@ final class StructureLevel implements WorldGenLevel {
 
     /** The block at a real position, written or as generated. */
     BlockState realState(int x, int y, int z) {
-        BlockState written = blocks.get(BlockPos.asLong(x, y, z));
+        BlockState written = blocks.get(key(x, y, z));
         return written != null ? written : terrain.block(x, y, z);
     }
 
     /** Writes a plain block (no block entity) at a real position. */
-    void putReal(int x, int y, int z, BlockState state) { blocks.put(BlockPos.asLong(x, y, z), state); }
+    void putReal(int x, int y, int z, BlockState state) { blocks.put(key(x, y, z), state); }
 
     /** Settles the shapes of blocks marked for it (fences, stairs, panes) against their neighbours, as a chunk does on loading. */
     void postProcessAll() {
         for (long at : postProcess.toLongArray()) {
-            BlockPos pos = BlockPos.of(at).below(shift);
+            BlockPos pos = at(at).below(shift);
             BlockState state = getBlockState(pos), settled = net.minecraft.world.level.block.Block.updateFromNeighbourShapes(state, this, pos);
             if (settled != state) blocks.put(at, settled);
         }
@@ -136,14 +144,14 @@ final class StructureLevel implements WorldGenLevel {
 
     @Override public BlockState getBlockState(BlockPos pos) {
         BlockPos r = real(pos);
-        BlockState written = blocks.get(r.asLong());
+        BlockState written = blocks.get(key(r));
         return written != null ? written : terrain.block(r.getX(), r.getY(), r.getZ());
     }
     @Override public FluidState getFluidState(BlockPos pos) { return getBlockState(pos).getFluidState(); }
 
     @Override public boolean setBlock(BlockPos pos, BlockState state, int flags, int recursionLeft) {
         BlockPos r = real(pos);
-        long key = r.asLong();
+        long key = key(r);
         BlockState old = blocks.get(key);
         if (old == null) old = terrain.block(r.getX(), r.getY(), r.getZ());
         blocks.put(key, state);
@@ -166,7 +174,7 @@ final class StructureLevel implements WorldGenLevel {
 
     @Nullable @Override public BlockEntity getBlockEntity(BlockPos pos) {
         BlockPos r = real(pos);
-        long key = r.asLong();
+        long key = key(r);
         BlockEntity entity = blockEntities.get(key);
         if (entity != null) return entity;
         BlockState state = blocks.get(key);
