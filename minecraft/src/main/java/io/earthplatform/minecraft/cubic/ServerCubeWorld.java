@@ -232,6 +232,12 @@ public final class ServerCubeWorld extends CubeWorld {
 
     public void tick() {
         if (closed) return;
+        long start = System.nanoTime();
+        try { tickCubes(); }
+        finally { Timings.SERVER_TICK.since(start); }
+    }
+
+    private void tickCubes() {
         ticks++;
         for (int i = 0; i < MAX_ADOPT_PER_TICK; i++) {
             Ready result = ready.poll();
@@ -370,6 +376,12 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     private void unloadUnwatched(int h, int v) {
+        long start = System.nanoTime();
+        try { unload(h, v); }
+        finally { Timings.CUBE_UNLOAD.since(start); }
+    }
+
+    private void unload(int h, int v) {
         List<Cube> drop = new ArrayList<>();
         for (Cube cube : cubes.values()) if (!watched(cube.key, h, v)) drop.add(cube);
         if (drop.isEmpty()) return;
@@ -379,7 +391,9 @@ public final class ServerCubeWorld extends CubeWorld {
         }
         // Keep sky tops near players only; far columns are rebuilt from the generator and cubes.
         tops.long2ObjectEntrySet().removeIf(entry -> !columnWatched(entry.getLongKey(), h * 3));
-        flushStorage();
+        long start = System.nanoTime();
+        storage.flushLater();
+        Timings.CUBE_FLUSH.since(start);
     }
 
     private void randomTicks(int v) {
@@ -535,7 +549,9 @@ public final class ServerCubeWorld extends CubeWorld {
 
     public void close() {
         if (closed) return;
-        save();
+        for (Cube cube : cubes.values()) store(cube);
+        try { storage.close(); }
+        catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not write cube regions", failure); }
         closed = true;
         workers.shutdownNow();
         far.close();
