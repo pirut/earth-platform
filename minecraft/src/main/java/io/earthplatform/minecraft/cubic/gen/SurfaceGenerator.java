@@ -106,10 +106,13 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     /** Whether giant sequoia groves may be near a column; their trees stand far taller than any other. */
     protected boolean giants(int x, int z) { return false; }
 
+    /** The rock layers a column shows in its cliff faces, or null for plain stone. */
+    protected Strata.Layers layers(int x, int z) { return null; }
+
     // Columns ------------------------------------------------------------------------------------
 
     /** Heights and water for a cube column with a one-block border, plus per-column cover. */
-    private record Column(int[] height, int[] water, Surface[] surface, int min, int max, int maxWater) {}
+    private record Column(int[] height, int[] water, Surface[] surface, Strata.Layers[] layers, int min, int max, int maxWater) {}
 
     private static long columnKey(int cx, int cz) { return ((long) cx << 32) | (cz & 0xFFFFFFFFL); }
 
@@ -125,14 +128,16 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             w[(dz + 1) * 18 + dx + 1] = sample[1];
         }
         Surface[] surface = new Surface[256];
+        Strata.Layers[] layers = new Strata.Layers[256];
         int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE, maxWater = DRY;
         for (int dz = 0; dz < 16; dz++) for (int dx = 0; dx < 16; dx++) {
             int i = (dz + 1) * 18 + dx + 1, y = h[i];
             min = Math.min(min, y); max = Math.max(max, y); maxWater = Math.max(maxWater, w[i]);
             int slope = Math.abs(h[i + 1] - h[i - 1]) + Math.abs(h[i + 18] - h[i - 18]);
             surface[dz * 16 + dx] = surface(x0 + dx, z0 + dz, y, w[i], slope);
+            layers[dz * 16 + dx] = layers(x0 + dx, z0 + dz);
         }
-        Column made = new Column(h, w, surface, min, max, maxWater);
+        Column made = new Column(h, w, surface, layers, min, max, maxWater);
         if (columns.size() > 8192) columns.clear();
         columns.putIfAbsent(key, made);
         return made;
@@ -176,6 +181,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         }
         @SuppressWarnings("unchecked") Holder<Biome>[] biome = new Holder[256];
         BlockState[] top = new BlockState[256], under = new BlockState[256], crown = new BlockState[256];
+        Strata.Layers[] rock = new Strata.Layers[256];
         int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
         for (int cz = 0; cz < 16; cz++) for (int cx = 0; cx < 16; cx++) {
             int g = (cz + 1) * 18 + cx + 1, h = ground[g], cell = cz * 16 + cx;
@@ -188,6 +194,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             if (water[g] <= h && Trees.snowy(surface) && !top[cell].is(Blocks.ICE) && !top[cell].is(Blocks.PACKED_ICE)
                     && !top[cell].is(Blocks.POWDER_SNOW)) top[cell] = SNOW_BLOCK;
             under[cell] = v > 2 ? STONE : surface.under();
+            rock[cell] = layers(wx, wz);
             // Voxels wider than a tree show forests as leaves: at 8 blocks a voxel above the ground, about a tree's
             // height, so they meet the rasterised trees nearer; wider voxels would stand too tall, so leaves lie on the ground voxel.
             if (v >= 8) {
@@ -222,6 +229,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                 for (int cz = 0; cz < 16; cz++) for (int cx = 0; cx < 16; cx++) {
                     int g = (cz + 1) * 18 + cx + 1;
                     BlockState state = voxel(ground[g], water[g], y0, v, top[cz * 16 + cx], under[cz * 16 + cx]);
+                    if (rock[cz * 16 + cx] != null && ground[g] >= y0 + v && state != WATER) state = rock[cz * 16 + cx].at(y0 + (v >> 1));
                     if (state == AIR && crown[cz * 16 + cx] != null && ground[g] < y0 && ground[g] >= y0 - v) state = crown[cz * 16 + cx];
                     if (state != AIR) section.setBlockState(cx, vy, cz, state, false);
                 }
@@ -440,6 +448,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                     if (depth == 0) state = surface.top();
                     else if (depth < 4) state = surface.under();
                     else state = below.rock(x0 + lx, y, z0 + lz, floor[ci]);
+                    Strata.Layers rock = col.layers[ci];
+                    if (rock != null && rock.shows(depth, col.height, gi)) state = rock.at(y);
                     // Cave mouths open the top blocks only where nothing grows on them.
                     boolean open = depth >= roof[ci] && (depth > 1 || surface.trees() == 0 && (Underground.rock(surface.top()) || surface.top() == GRAVEL));
                     if (open && state != Underground.BEDROCK && Underground.cave(caveField, lx, ly, lz)) state = Underground.cavity(y, floor[ci]);
