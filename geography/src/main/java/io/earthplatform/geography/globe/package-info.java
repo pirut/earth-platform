@@ -12,6 +12,10 @@
  *       block, so use it from generation workers, never a tick thread.</li>
  *   <li>{@link io.earthplatform.geography.globe.ElevationLayer}: a better source laid over each
  *       cleaned tile, in order, pinned per world in {@code earth.elevation}.</li>
+ *   <li>{@link io.earthplatform.geography.globe.UsgsElevation} ({@code 3dep-13-v1}): the United
+ *       States from the USGS 3DEP 1/3 arc-second DEM, each 1° cell pinned to a dated release.</li>
+ *   <li>{@link io.earthplatform.geography.globe.FloatCogs}: range reads of float cloud-optimised
+ *       GeoTIFFs (LZW, classic or BigTIFF) with a disk cache, shared by the layers below.</li>
  *   <li>{@link io.earthplatform.geography.globe.RemaElevation} ({@code rema-v2.0}): Antarctica from
  *       the Reference Elevation Model of Antarctica, read block by block from
  *       {@link io.earthplatform.geography.globe.RemaSource} and brought to the EGM96 geoid.</li>

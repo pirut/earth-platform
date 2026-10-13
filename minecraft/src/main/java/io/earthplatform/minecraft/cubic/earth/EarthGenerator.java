@@ -7,6 +7,7 @@ import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
 import io.earthplatform.geography.globe.GlobalElevation;
 import io.earthplatform.geography.globe.RemaElevation;
+import io.earthplatform.geography.globe.UsgsElevation;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.RiverMap;
@@ -231,6 +232,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Override public String credits() {
         return "Elevation: AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, ETOPO1 and others)"
                 + (tiles.layers().stream().anyMatch(layer -> layer instanceof CopernicusFill) ? ", partly " + CopernicusSource.ATTRIBUTION : "")
+                + (tiles.layers().stream().anyMatch(layer -> layer instanceof UsgsElevation) ? ". " + UsgsElevation.ATTRIBUTION : "")
                 + (tiles.layers().stream().anyMatch(layer -> layer instanceof RemaElevation) ? ". " + RemaElevation.ATTRIBUTION : "")
                 + (cover == null ? "" : ". Land cover: " + WorldCoverSource.ATTRIBUTION)
                 + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION)
