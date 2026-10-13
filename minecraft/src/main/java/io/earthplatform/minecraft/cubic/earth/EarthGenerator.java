@@ -9,6 +9,7 @@ import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import javax.annotation.Nullable;
@@ -173,7 +174,8 @@ public final class EarthGenerator extends SurfaceGenerator {
             return;
         }
         double steep = Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1]));
-        if (cover != null && cover(x, z, voxel) == WorldCoverSource.WATER) {
+        CoverMemo memo = cover == null ? null : coverMemo.get();
+        if (cover != null && cover(memo, x, z, voxel) == WorldCoverSource.WATER) {
             int surface = lakeSurface(dem, x, z, voxel);
             // Shadowed cliffs can map as water; water never lies on a steep slope well above its own level.
             boolean shadow = steep > 0.7 && SEA + 0.5 + metres - surface > 4;
@@ -197,7 +199,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (sample[2] > 0.02 && y < SEA) y = SEA;
         // Nor does ground beside a lake or river, unless it lies well below it, as under a dam.
         if (cover != null) {
-            int shore = shore(dem, x, z, voxel);
+            int shore = shore(dem, memo, x, z, voxel);
             if (shore != DRY && y < shore && y >= shore - 4) y = shore;
         }
         out[0] = y;
@@ -216,6 +218,33 @@ public final class EarthGenerator extends SurfaceGenerator {
      * voxel. Up close the read point wanders by about half a pixel, so class borders curve.
      */
     private int cover(double x, double z, int voxel) {
+        int ix = (int) x, iz = (int) z;
+        return ix == x && iz == z ? cover(coverMemo.get(), ix, iz, voxel) : coverAt(x, z, voxel);
+    }
+
+    /**
+     * Neighbouring columns probe the same points around them for shores and lakes, each about
+     * five times, and every probe costs a map projection: this remembers recent answers.
+     */
+    private int cover(CoverMemo memo, int ix, int iz, int voxel) {
+        long key = (long) (ix & 0x7FFFFFF) << 31 | (long) (iz & 0x7FFFFFF) << 4 | Integer.numberOfTrailingZeros(voxel) & 15;
+        int slot = (int) (key * 0x9E3779B97F4A7C15L >>> 52);
+        if (memo.keys[slot] == key) return memo.codes[slot];
+        int code = coverAt(ix, iz, voxel);
+        memo.keys[slot] = key;
+        memo.codes[slot] = code;
+        return code;
+    }
+
+    /** Recent land cover answers on one thread, by column and voxel size. */
+    private static final class CoverMemo {
+        final long[] keys = new long[4096];
+        final int[] codes = new int[4096];
+        CoverMemo() { Arrays.fill(keys, -1L); }
+    }
+    private final ThreadLocal<CoverMemo> coverMemo = ThreadLocal.withInitial(CoverMemo::new);
+
+    private int coverAt(double x, double z, int voxel) {
         double metresPerBlock = grid.groundMetresPerBlock(z);
         if (voxel <= 8) {
             double amplitude = 0.55 * PIXEL_METRES / metresPerBlock;
@@ -299,13 +328,13 @@ public final class EarthGenerator extends SurfaceGenerator {
      * The highest lake or river surface just beside a land column, or {@link #DRY} when there is
      * none, so the shore can be kept from dipping under it.
      */
-    private int shore(GlobalElevation dem, int x, int z, int voxel) {
+    private int shore(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel) {
         int best = DRY;
         double near = Math.max(3, voxel), far = Math.max(8, 2.5 * voxel);
         for (int k = 0; k < 8; k += 2) {
             for (double r : new double[]{near, far}) {
                 double px = x + RING_X[k] * r, pz = z + RING_Z[k] * r;
-                if (cover(px, pz, voxel) == WorldCoverSource.WATER) best = Math.max(best, lakeSurface(dem, px, pz, voxel));
+                if (cover(memo, (int) px, (int) pz, voxel) == WorldCoverSource.WATER) best = Math.max(best, lakeSurface(dem, px, pz, voxel));
             }
         }
         return best;
