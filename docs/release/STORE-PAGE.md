@@ -73,7 +73,7 @@ No cities: built-up land becomes the wild land around it, so the world is yours 
 ## Getting started
 
 1. Install NeoForge 21.1.256 for Minecraft 1.21.1 and put this mod in `mods`.
-2. Give the game at least 4 GB of memory.
+2. Give the game at least 4 GB of memory, or at least 6 GB with shaders such as Photon.
 3. Create New World: the world type is already **Earth**. Press **Customize** to choose where you start.
 
 The first visit to a place downloads its terrain, so you need an internet connection. Places you've been work offline afterwards.
