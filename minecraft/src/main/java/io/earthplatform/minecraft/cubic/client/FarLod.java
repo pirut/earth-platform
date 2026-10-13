@@ -96,7 +96,7 @@ public final class FarLod {
     /** Far terrain's reach in chunks, which packs fade it out by. */
     static int renderDistance() {
         if (ClientCubeWorld.current() == null) return Minecraft.getInstance().options.getEffectiveRenderDistance();
-        return (int) Math.ceil(0.8F * FarRenderer.FOG_END / 16.0F);
+        return (int) Math.ceil(FarRenderer.FOG_END / 16.0F);
     }
 
     // Each frame ---------------------------------------------------------------------------------
