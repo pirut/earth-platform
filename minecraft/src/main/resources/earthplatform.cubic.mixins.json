@@ -41,7 +41,11 @@
     "CubicIrisSourceNamesMixin",
     "CubicIrisProgramSetMixin",
     "CubicRainRenderMixin",
-    "CubicWaterTintMixin"
+    "CubicWaterTintMixin",
+    "CubicIrisPhotonCompatMixin",
+    "CubicIrisVoxyMixin",
+    "CubicIrisLodSamplersMixin",
+    "CubicIrisLodUniformsMixin"
   ],
   "injectors": {
     "defaultRequire": 1

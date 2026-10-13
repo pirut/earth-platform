@@ -364,6 +364,9 @@ public final class FarRenderer {
         this.visible = visible;
         if (visible.isEmpty()) return;
         boolean pack = ShaderBlocks.packInUse();
+        // Under a pack with Voxy support far terrain keeps its own, finer depth (see FarLod).
+        boolean own = pack && FarLod.active();
+        Matrix4f farProjection = own ? FarLod.project(projection) : projection;
         RenderType type = RenderType.solid();
         type.setupRenderState();
         ShaderInstance shader = RenderSystem.getShader();
@@ -372,7 +375,8 @@ public final class FarRenderer {
         shader.apply();
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = world.client().getShade(direction, true);
-        if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, projection, position, shade)) {
+        if (own) FarLod.beginDraw();
+        if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade)) {
             for (Column column : visible) {
                 FarGpu.Allocation faces = column.faces;
                 if (faces == null) continue;
@@ -397,6 +401,17 @@ public final class FarRenderer {
             }
             gpu.end();
         }
+        if (own) FarLod.endDraw();
+        if (own && FarLod.beginDeepen(modelView)) {
+            for (Column column : visible) {
+                if (column.water == null) continue;
+                FarLod.deepenOffset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
+                column.water.bind();
+                column.water.draw();
+            }
+            VertexBuffer.unbind();
+            FarLod.endDeepen();
+        }
         shader.clear();
         type.clearRenderState();
     }
@@ -414,6 +429,8 @@ public final class FarRenderer {
         ShaderInstance shader = RenderSystem.getShader();
         shader.setDefaultUniforms(VertexFormat.Mode.QUADS, modelView, projection, Minecraft.getInstance().getWindow());
         shader.apply();
+        // With far terrain in its own depth, far hills hide the water behind them this way instead.
+        boolean own = ShaderBlocks.packInUse() && FarLod.active() && FarLod.beginWater();
         Uniform offset = shader.CHUNK_OFFSET;
         for (int i = visible.size() - 1; i >= 0; i--) {
             Column column = visible.get(i);
@@ -426,6 +443,7 @@ public final class FarRenderer {
             column.water.draw();
         }
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
+        if (own) FarLod.endWater();
         shader.clear();
         VertexBuffer.unbind();
         type.clearRenderState();
