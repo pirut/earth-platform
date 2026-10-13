@@ -151,6 +151,9 @@ final class Vegetation {
             // Dry scrub on bare dirt: sagebrush and saltbush stand-ins, with a few tufts of grass.
             if (roll < s.grass() / 5) plant = state(Blocks.DEAD_BUSH);
             else if (roll < s.grass() / 3 && top == COARSE_DIRT) plant = state(Blocks.SHORT_GRASS);
+        } else if (top.is(Blocks.WATER)) {
+            // Marsh pools level with the ground: lily pads.
+            if (roll < 90) plant = state(Blocks.LILY_PAD);
         } else if (top == MUD) {
             if (biome.is(Biomes.MANGROVE_SWAMP) && roll < 120) plant = state(Blocks.MOSS_CARPET);
         } else if (soil) {

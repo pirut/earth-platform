@@ -52,7 +52,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             TERRACOTTA = Blocks.TERRACOTTA.defaultBlockState(), RED_SANDSTONE = Blocks.RED_SANDSTONE.defaultBlockState(),
             CALCITE = Blocks.CALCITE.defaultBlockState(), POWDER_SNOW = Blocks.POWDER_SNOW.defaultBlockState(),
             ORANGE_TERRACOTTA = Blocks.ORANGE_TERRACOTTA.defaultBlockState(), DIORITE = Blocks.DIORITE.defaultBlockState(),
-            BASALT = Blocks.SMOOTH_BASALT.defaultBlockState(), BLACKSTONE = Blocks.BLACKSTONE.defaultBlockState(), TUFF = Blocks.TUFF.defaultBlockState(),
+            POOL = Blocks.WATER.defaultBlockState(), BASALT = Blocks.SMOOTH_BASALT.defaultBlockState(), BLACKSTONE = Blocks.BLACKSTONE.defaultBlockState(), TUFF = Blocks.TUFF.defaultBlockState(),
             RED_TERRACOTTA = Blocks.RED_TERRACOTTA.defaultBlockState(), LIGHT_GRAY_TERRACOTTA = Blocks.LIGHT_GRAY_TERRACOTTA.defaultBlockState();
     /** Badlands rock colours, plain and orange the most common. */
     private static final BlockState[] BANDS = {TERRACOTTA, Blocks.ORANGE_TERRACOTTA.defaultBlockState(), Blocks.YELLOW_TERRACOTTA.defaultBlockState(),
@@ -681,6 +681,13 @@ public final class EarthGenerator extends SurfaceGenerator {
             int biome = Ecoregions.get().biome(eco);
             if (biome == Ecoregions.MANGROVE && y <= SEA + 4) return covered(WorldCoverSource.MANGROVES, x, z, y, local, steep, roll, slope);
             if (biome == Ecoregions.FLOODED_GRASSLAND) {
+                // The Everglades' coast: mangrove islands among the creeks of Florida Bay and the Ten Thousand Islands.
+                if (eco == Ecoregions.EVERGLADES && y <= SEA + 2 && patch > 0.3)
+                    return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false, Tree.MANGROVE);
+                // Sloughs and ponds: standing water among the sawgrass, most of all in the Everglades.
+                double wet = patches.getValue(x / 90.0 + 41.7, z / 90.0 - 8.3) + patches.getValue(x / 23.0 - 5.1, z / 23.0 + 17.9) * 0.3;
+                if (steep < 0.25 && wet > (eco == Ecoregions.EVERGLADES ? 0.05 : 0.3))
+                    return new Surface(swamp, POOL, MUD, 0, 0, 0, 0, 0, false);
                 // Open marsh with tree islands where the map has trees.
                 if (code == WorldCoverSource.TREE_COVER) return new Surface(swamp, patch > 0.45 ? MUD : GRASS, DIRT, 12, 0, 0, 400, 420, false);
                 if (code != WorldCoverSource.WETLAND) return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope);
