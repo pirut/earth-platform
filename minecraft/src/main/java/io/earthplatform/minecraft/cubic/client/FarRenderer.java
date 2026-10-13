@@ -11,13 +11,16 @@ import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -272,7 +275,9 @@ public final class FarRenderer {
             else if (ticks - requested.get(key) > RETRY_TICKS) missing.add(key);
         });
         // Ask for what a player would see change most first: the server makes columns in this order.
-        missing.unstableSort((a, b) -> Long.compare(priority(a, bx, bz), priority(b, bx, bz)));
+        Long2LongOpenHashMap order = new Long2LongOpenHashMap(missing.size());
+        for (int i = 0; i < missing.size(); i++) order.put(missing.getLong(i), priority(missing.getLong(i), bx, bz));
+        missing.unstableSort((a, b) -> Long.compare(order.get(a), order.get(b)));
         for (int i = 0; i < missing.size(); i += CubePayloads.FarRequest.MAX_KEYS) {
             long[] keys = missing.subList(i, Math.min(missing.size(), i + CubePayloads.FarRequest.MAX_KEYS)).toLongArray();
             for (long key : keys) requested.put(key, ticks);
@@ -292,13 +297,17 @@ public final class FarRenderer {
         long x0 = (long) Far.x(key) * width, z0 = (long) Far.z(key) * width;
         long dx = Math.max(0, Math.max(x0 - bx, bx - (x0 + width))), dz = Math.max(0, Math.max(z0 - bz, bz - (z0 + width)));
         // Hundredths of a width, and finer levels first among equals. Columns a finer level draws
-        // over only stand in while it loads, so they come after every drawn one, except the
-        // outermost two rows: the finer level's outer edge under them comes in last of its ring,
-        // after this level's ring just outside, and without them a band of sky showed there.
+        // over only stand in while it loads, so once their finer columns are all there they come
+        // after every drawn one. Until then they are the only thing that can fill the view: after
+        // a long teleport nothing is held, and putting them last left sky between the finer
+        // columns as they arrived. The outermost two rows always keep their place: the finer
+        // level's outer edge under them comes in last of its ring, and without them a band of
+        // sky showed there.
         long order = Math.max(dx, dz) * 100 / width * 8 + level;
-        if (!Far.refined(level, Far.x(key), Far.z(key), bx, bz, finest)) return order;
-        int rings = Math.max(Math.abs(Far.x(key) - Far.column(bx, level)), Math.abs(Far.z(key) - Far.column(bz, level)));
-        return rings >= Far.HOLE - 1 ? order : order + (1L << 32);
+        int x = Far.x(key), z = Far.z(key);
+        if (!Far.refined(level, x, z, bx, bz, finest)) return order;
+        int rings = Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level)));
+        return rings >= Far.HOLE - 1 || !childrenReady(level, x, z, bx, bz) ? order : order + (1L << 32);
     }
 
     /**
@@ -396,7 +405,9 @@ public final class FarRenderer {
             else due.add(column);
         }
         if (due.isEmpty()) return;
-        due.sort(Comparator.comparingLong(column -> (drawnKeys.contains(column.key) ? 0 : 1L << 40) + priority(column.key, bx, bz)));
+        Map<Column, Long> order = new HashMap<>(due.size() * 2);
+        for (Column column : due) order.put(column, (drawnKeys.contains(column.key) ? 0 : 1L << 40) + priority(column.key, bx, bz));
+        due.sort(Comparator.comparingLong(order::get));
         for (Column column : due) {
             if (meshing >= MESHES_IN_FLIGHT) break;
             submit(column);
