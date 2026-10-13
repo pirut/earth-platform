@@ -62,6 +62,8 @@ public final class FarRenderer {
     private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "block/far_white");
     private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
             SETTLE_TICKS = 3, HIDDEN_SETTLE_TICKS = 40, UPLOADS_PER_FRAME = 8, MESHES_IN_FLIGHT = 128;
+    /** Above Everest (Y 8,912), where the jet stream layer starts, and a speed only elytra and fast travel reach. */
+    private static final double JET_Y = 9_200, FAST_BLOCKS_PER_SECOND = 200;
     private static final long UPLOAD_NANOS = 3_000_000L;
     private static final AtomicInteger THREADS = new AtomicInteger();
     private static final ExecutorService MESHER = Executors.newFixedThreadPool(2, runnable -> {
@@ -86,6 +88,8 @@ public final class FarRenderer {
     private List<Column> visible = List.of();
     private int waterFrame = -1;
     private int ticks, frame, uploadedFrame = -1, replaced;
+    /** The finest level asked for and drawn; coarser while the player is high up or fast (see {@link #finest}). */
+    private int finest = Far.MIN_LEVEL;
     /** Meshes handed to the workers and not yet taken back, so the nearest due columns go first. */
     private int meshing;
     /** How long the last frame took, so uploads keep pace however low the frame rate goes. */
@@ -245,13 +249,14 @@ public final class FarRenderer {
         ticks++;
         var player = Minecraft.getInstance().player;
         if (closed || player == null) return;
+        finest = finest(player.getY(), player.getDeltaMovement().horizontalDistance() * 20.0, finest);
         if (ticks % MASK_TICKS == 0) mask();
         for (Column column : drawn) if (column.maskStale) column.due = Math.min(column.due, ticks + SETTLE_TICKS);
         submitDue(player.getBlockX(), player.getBlockZ());
         if (ticks % PLAN_TICKS != 0) return;
         LongArrayList missing = new LongArrayList();
         int bx = player.getBlockX(), bz = player.getBlockZ();
-        Far.around(bx, bz, key -> {
+        Far.around(bx, bz, finest, key -> {
             Column column = columns.get(key);
             if (column != null) column.lastWanted = ticks;
             else if (ticks - requested.get(key) > RETRY_TICKS) missing.add(key);
@@ -272,14 +277,27 @@ public final class FarRenderer {
      * columns right around the player come first instead of last, when coarse voxels stood in
      * for them close up after every move.
      */
-    private static long priority(long key, int bx, int bz) {
+    private long priority(long key, int bx, int bz) {
         int level = Far.level(key), width = Far.width(level);
         long x0 = (long) Far.x(key) * width, z0 = (long) Far.z(key) * width;
         long dx = Math.max(0, Math.max(x0 - bx, bx - (x0 + width))), dz = Math.max(0, Math.max(z0 - bz, bz - (z0 + width)));
         // Hundredths of a width, and finer levels first among equals. Columns a finer level draws
         // over only stand in while it loads, so they come after every drawn one.
         long order = Math.max(dx, dz) * 100 / width * 8 + level;
-        return Far.refined(level, Far.x(key), Far.z(key), bx, bz) ? order + (1L << 32) : order;
+        return Far.refined(level, Far.x(key), Far.z(key), bx, bz, finest) ? order + (1L << 32) : order;
+    }
+
+    /**
+     * The finest level worth asking for. Each level is a ring 47 columns across, so crossing one
+     * column width brings in 47 new ones: at the jet stream's 1,200 blocks a second the finest two
+     * levels alone would need about 2,600 columns a second, several times what the server makes,
+     * while from 9 km up they only cover the ground straight below. The thresholds differ going
+     * up and coming down so the levels do not flicker at the edge.
+     */
+    static int finest(double y, double blocksPerSecond, int current) {
+        boolean jet = y >= (current >= 4 ? JET_Y - 400 : JET_Y);
+        boolean fast = blocksPerSecond >= (current >= 3 ? FAST_BLOCKS_PER_SECOND / 2 : FAST_BLOCKS_PER_SECOND);
+        return jet ? 4 : fast ? 3 : Far.MIN_LEVEL;
     }
 
     private void evict() {
@@ -551,7 +569,10 @@ public final class FarRenderer {
     private void visit(int level, int x, int z, int bx, int bz) {
         Column column = columns.get(Far.key(level, x, z));
         boolean meshed = column != null && column.meshed;
-        if (Far.refined(level, x, z, bx, bz) && (!meshed || childrenReady(level, x, z, bx, bz))) {
+        // Rising into the jet stream layer makes a coarser level the finest: until its columns
+        // arrive, the finer ones already here keep standing in for them.
+        boolean refined = Far.refined(level, x, z, bx, bz, finest) || !meshed && Far.refined(level, x, z, bx, bz);
+        if (refined && (!meshed || childrenReady(level, x, z, bx, bz))) {
             for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) visit(level - 1, 2 * x + dx, 2 * z + dz, bx, bz);
             return;
         }
@@ -561,7 +582,7 @@ public final class FarRenderer {
     private boolean ready(int level, int x, int z, int bx, int bz) {
         Column column = columns.get(Far.key(level, x, z));
         if (column != null && column.meshed) return true;
-        return Far.refined(level, x, z, bx, bz) && childrenReady(level, x, z, bx, bz);
+        return Far.refined(level, x, z, bx, bz, finest) && childrenReady(level, x, z, bx, bz);
     }
 
     private boolean childrenReady(int level, int x, int z, int bx, int bz) {
