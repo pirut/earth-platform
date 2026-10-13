@@ -27,11 +27,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.LightLayer;
@@ -83,12 +86,14 @@ public final class ServerCubeWorld extends CubeWorld {
     private final ConcurrentLinkedQueue<Lit> lit = new ConcurrentLinkedQueue<>();
     /** Freshly generated surface cubes still owed their first animals. */
     private final LongOpenHashSet unpopulated = new LongOpenHashSet();
+    /** Entities that freshly generated cubes start with (chest minecarts), placed once their chunk ticks entities. */
+    private final Long2ObjectOpenHashMap<List<CompoundTag>> unplacedEntities = new Long2ObjectOpenHashMap<>();
     private int ticks;
     private boolean closed;
 
     /** A loaded or generated cube; a null section means generating it failed. {@code surface} marks fresh cubes holding the ground. */
-    private record Ready(long key, int x, int y, int z, @Nullable LevelChunkSection section, List<CompoundTag> blockEntities, boolean saved,
-                         boolean surface, @Nullable RuntimeException failure) {}
+    private record Ready(long key, int x, int y, int z, @Nullable LevelChunkSection section, List<CompoundTag> blockEntities,
+                         List<CompoundTag> entities, boolean saved, boolean surface, @Nullable RuntimeException failure) {}
     private record Lit(long key, int stamp, @Nullable byte[] values) {}
 
     private static final class Watcher {
@@ -103,6 +108,7 @@ public final class ServerCubeWorld extends CubeWorld {
         super(level);
         this.server = level;
         this.generator = generator;
+        generator.attach(level);
         this.codec = new CubeCodec(level.registryAccess().registryOrThrow(Registries.BIOME));
         this.storage = new CubeStorage(DimensionType.getStorageFolder(level.dimension(),
                 level.getServer().getWorldPath(LevelResource.ROOT)).resolve("cubes"));
@@ -180,17 +186,18 @@ public final class ServerCubeWorld extends CubeWorld {
             CompoundTag saved = storage.read(key);
             if (saved != null) {
                 CubeCodec.Decoded decoded = codec.read(saved);
-                return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), true, false, null);
+                return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), List.of(), true, false, null);
             }
         } catch (IOException | RuntimeException failure) {
             EarthPlatformMod.LOGGER.error("Could not read saved cube {}; regenerating it", CubeKey.toString(key), failure);
         }
         try {
-            LevelChunkSection section = generator.generate(x, y, z);
+            List<CompoundTag> blockEntities = new ArrayList<>(), entities = new ArrayList<>();
+            LevelChunkSection section = generator.generate(x, y, z, blockEntities, entities);
             boolean surface = generator.surfaceY((x << 4) + 8, (z << 4) + 8) >> 4 == y;
-            return new Ready(key, x, y, z, section, List.of(), false, surface, null);
+            return new Ready(key, x, y, z, section, blockEntities, entities, false, surface, null);
         } catch (RuntimeException failure) {
-            return new Ready(key, x, y, z, null, List.of(), false, false, failure);
+            return new Ready(key, x, y, z, null, List.of(), List.of(), false, false, failure);
         }
     }
 
@@ -239,12 +246,16 @@ public final class ServerCubeWorld extends CubeWorld {
         Cube cube = new Cube(result.x, result.y, result.z, result.section);
         cube.modified = result.saved;
         if (result.surface) unpopulated.add(result.key);
+        if (!result.entities.isEmpty()) unplacedEntities.put(result.key, result.entities);
         for (CompoundTag tag : result.blockEntities) {
             BlockPos pos = BlockEntity.getPosFromTag(tag);
             BlockEntity entity = BlockEntity.loadStatic(pos, cube.get(pos.getX(), pos.getY(), pos.getZ()), tag, server.registryAccess());
             if (entity != null) cube.blockEntities.put(pos, entity);
         }
         adopt(cube);
+        // Points of interest at cubic heights live only in memory: rebuild them from the blocks.
+        server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
+        CubicPoiClaims.reclaim(server, SectionPos.of(cube.x, cube.y, cube.z));
         refreshTops(cube);
         staleLightAround(cube.x, cube.y, cube.z);
     }
@@ -296,6 +307,15 @@ public final class ServerCubeWorld extends CubeWorld {
         if (ticks % 20 == 0) populate();
         if (ticks % 40 == 0) unloadUnwatched(h + 2, v + 2);
         randomTicks(v);
+    }
+
+    /**
+     * Whether the cube holding this block has been sent to the player. Clients hold still until the
+     * cubes they stand in and on arrive, so a player waiting on one is not flying.
+     */
+    public boolean sentTo(ServerPlayer player, int x, int y, int z) {
+        Watcher watcher = watchers.get(player.getUUID());
+        return watcher != null && watcher.player == player && watcher.sent.contains(CubeKey.pack(x >> 4, y >> 4, z >> 4));
     }
 
     private void syncWatchers() {
@@ -361,7 +381,9 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     private CompoundTag updateTag(BlockEntity entity) {
-        if (entity.isRemoved() || entity.getUpdatePacket() == null) return null;
+        // Every block entity goes, as in vanilla chunk packets: chests, barrels and furnaces have no
+        // update packet, and without their tag the client has no entity to draw them with.
+        if (entity.isRemoved()) return null;
         CompoundTag tag = entity.getUpdateTag(server.registryAccess());
         BlockPos pos = entity.getBlockPos();
         tag.putInt("x", pos.getX()); tag.putInt("y", pos.getY()); tag.putInt("z", pos.getZ());
@@ -443,6 +465,7 @@ public final class ServerCubeWorld extends CubeWorld {
         for (Cube cube : drop) {
             store(cube);
             forget(cube);
+            ((io.earthplatform.minecraft.cubic.CubicPoiStore) server.getPoiManager()).earthplatform$forget(SectionPos.asLong(cube.x, cube.y, cube.z));
         }
         // Keep sky tops near players only; far columns are rebuilt from the generator and cubes.
         tops.long2ObjectEntrySet().removeIf(entry -> !columnWatched(entry.getLongKey(), h * 3));
@@ -503,6 +526,7 @@ public final class ServerCubeWorld extends CubeWorld {
 
     /** Gives fresh surface cubes their first animals once the cube above them has loaded, as vanilla does at generation. */
     private void populate() {
+        placeEntities();
         if (unpopulated.isEmpty()) return;
         for (LongIterator it = unpopulated.iterator(); it.hasNext(); ) {
             Cube cube = cubes.get(it.nextLong());
@@ -513,6 +537,21 @@ public final class ServerCubeWorld extends CubeWorld {
             int x = chunk.getMiddleBlockX(), z = chunk.getMiddleBlockZ();
             NaturalSpawner.spawnMobsForChunkGeneration(server, server.getBiome(new BlockPos(x, skyTop(x, z) + 1, z)), chunk, server.getRandom());
             // Saved from now on, so a later visit does not populate it again.
+            cube.markModified();
+        }
+    }
+
+    /** Adds the entities fresh cubes start with, once their chunk ticks entities, and keeps those cubes saved from then on. */
+    private void placeEntities() {
+        if (unplacedEntities.isEmpty()) return;
+        for (long key : unplacedEntities.keySet().toLongArray()) {
+            Cube cube = cubes.get(key);
+            if (cube == null) { unplacedEntities.remove(key); continue; }
+            if (!server.isNaturalSpawningAllowed(new ChunkPos(cube.x, cube.z))) continue;
+            for (CompoundTag tag : unplacedEntities.remove(key)) {
+                Entity entity = EntityType.loadEntityRecursive(tag, server, e -> e);
+                if (entity != null) server.addFreshEntity(entity);
+            }
             cube.markModified();
         }
     }

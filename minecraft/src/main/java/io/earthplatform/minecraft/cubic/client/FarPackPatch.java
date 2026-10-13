@@ -13,14 +13,15 @@ import net.irisshaders.iris.shaderpack.programs.ProgramSet;
 
 /**
  * A shader pack's Voxy fragment code ({@code voxy_opaque.glsl}), which tells Voxy how the pack
- * wants far terrain written into its buffers. Iris itself ignores the file; mixins have it load
- * the file with the pack's settings applied, and keep it here per program set (one per dimension
- * folder) for the far terrain's shader. Only loaded with Iris.
+ * wants far terrain written into its buffers, and the temporal anti-aliasing jitter its
+ * {@code voxy.json} asks for. Iris itself ignores both files; mixins have it load them with the
+ * pack's settings applied, and keep them here per program set (one per dimension folder) for the
+ * far terrain's shader. Only loaded with Iris.
  */
 public final class FarPackPatch {
     /** Files Iris should read from each dimension folder along with its own. */
     public static final String[] FILES = {"voxy.json", "voxy_opaque.glsl"};
-    private static final Map<ProgramSet, String> PATCHES = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<ProgramSet, FarShaders.PackPatch> PATCHES = Collections.synchronizedMap(new WeakHashMap<>());
 
     private FarPackPatch() {}
 
@@ -29,16 +30,17 @@ public final class FarPackPatch {
         try {
             String patch = sources.apply(directory.resolve("voxy_opaque.glsl"));
             if (patch == null || patch.isBlank()) return;
-            PATCHES.put(programs, patch);
-            EarthPlatformMod.LOGGER.info("Shader pack folder {} has Voxy fragment code ({} characters) for far terrain",
-                    directory.getPathString(), patch.length());
+            String jitter = FarShaders.taaOffset(sources.apply(directory.resolve("voxy.json")));
+            PATCHES.put(programs, new FarShaders.PackPatch(patch, jitter));
+            EarthPlatformMod.LOGGER.info("Shader pack folder {} has Voxy fragment code ({} characters) for far terrain{}",
+                    directory.getPathString(), patch.length(), jitter == null ? "" : ", with its TAA jitter");
         } catch (RuntimeException failure) {
             EarthPlatformMod.LOGGER.warn("Could not read the shader pack's Voxy fragment code in {}", directory.getPathString(), failure);
         }
     }
 
-    /** The active pack's Voxy fragment code for the current dimension, or null when it has none. */
-    @Nullable static String current() {
+    /** The active pack's Voxy code for the current dimension, or null when it has none. */
+    @Nullable static FarShaders.PackPatch current() {
         ShaderPack pack = Iris.getCurrentPack().orElse(null);
         if (pack == null) return null;
         ProgramSet programs = pack.getProgramSet(Iris.getCurrentDimension());

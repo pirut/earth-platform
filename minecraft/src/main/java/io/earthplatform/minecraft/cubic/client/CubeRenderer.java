@@ -334,12 +334,17 @@ public final class CubeRenderer {
     public boolean drewOpaqueThisFrame() { return drawnFrame == frame; }
 
     /**
-     * Draws every mesh's opaque layers into a shader pack's shadow map, so near terrain casts
-     * shadows; not limited to the view, since what lies outside it still shades what is in it.
+     * Draws the opaque layers of every mesh inside a shader pack's shadow map into it, so near
+     * terrain casts shadows; not limited to the view, since what lies outside it still shades what
+     * is in it.
      */
     public void drawShadow(Camera camera, Matrix4f modelView, Matrix4f projection) {
         upload();
-        List<Mesh> all = new java.util.ArrayList<>(meshes.values());
+        Vec3 position = camera.getPosition();
+        Frustum shadow = new Frustum(modelView, projection);
+        shadow.prepare(position.x, position.y, position.z);
+        List<Mesh> all = new ArrayList<>(meshes.size());
+        for (Mesh mesh : meshes.values()) if (shadow.isVisible(mesh.box)) all.add(mesh);
         for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {
             RenderType type = CubeMesher.LAYERS.get(i);
             if (type == RenderType.translucent() || type == RenderType.tripwire()) continue;
