@@ -59,7 +59,7 @@ From **Voxy** we took the shape of the whole thing:
 - far terrain as a pyramid of 3D voxel sections, each level twice as coarse as the one inside it, so trees, cliffs, overhangs and player builds keep their shape in the distance;
 - choosing detail by how big a voxel looks on screen, so distant terrain stays sharp without wasting memory;
 - packing faces into a few bytes each in large GPU buffers, drawn by the renderer's own shader with one multi-draw per buffer, and one shared table of block looks;
-- the shader-pack interface Voxy created (`voxy.json`, `voxy_opaque.glsl`, `VoxyFragmentParameters` and `voxy_emitFragment`). Earth Platform speaks this interface so packs that support Voxy, such as Photon, light our far terrain the way they light Voxy's. Thanks to Voxy and to the shader authors who adopted it.
+- the shader-pack interface Voxy created (`voxy.json`, `voxy_opaque.glsl`, `VoxyFragmentParameters` and `voxy_emitFragment`, plus the far depth and projection names packs read, `vxDepthTexOpaque`, `vxDepthTexTrans`, `vxProj`, `vxProjInv`, `vxProjPrev` and `vxRenderDistance`). Earth Platform speaks this interface so packs that support Voxy, such as Photon, light our far terrain the way they light Voxy's. Thanks to Voxy and to the shader authors who adopted it.
 
 From **Distant Horizons** we took:
 - exact heights in the distance: each far column is lowered so its ground or water sits at the real height instead of snapping to a voxel boundary;
