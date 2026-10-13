@@ -15,7 +15,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | CHELSA climate | OK (licence) / courtesy | CC0; ask CHELSA about public traffic or mirror the four bands |
 | RESOLVE Ecoregions 2017 (PR #14) | OK | CC BY 4.0; credited with the citation, and the derived raster noted |
 | Copernicus GLO-30 for filling elevation holes (coming) | OK | Same licence as the bundled crop; credit and liability line drafted below |
-| River channels (coming) | **Use JRC Global Surface Water** | JRC GSW is free without restriction of use, with a citation. HydroRIVERS' licence forbids open redistribution of its data, so it can't ship in an LGPL mod (details below) |
+| River channels (PR #19) | **OK: JRC Global Surface Water v1.4** | JRC GSW is free without restriction of use, with a citation. HydroRIVERS' licence forbids open redistribution of its data, so it can't ship in an LGPL mod (details below) |
 | Hand-traced falls water (PR #16 `KnownWater`) | **Check source** | Fine if traced from EOX s2cloudless 2016 (CC BY 4.0, credit) or OSM (ODbL, credit); not if from Google/Bing/Esri imagery or EOX 2018+ (CC BY-NC-SA). Asked the Grand Canyon thread |
 | Bundled test data (Copernicus GLO-30, NOAA ETOPO, WorldCover) | OK | Credited; could be dropped from the release jar |
 | Iris, Sodium, Photon, Distant Horizons | OK | Not bundled; compile-only. Exact version pins hurt players (see below) |
@@ -70,10 +70,11 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
 - Credit line:
   > Elevation fill: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.
 
-### JRC Global Surface Water ("Real river channels"), recommended
+### JRC Global Surface Water ("Real river channels", PR #19), credited
 - Terms ([data access page](https://global-surface-water.appspot.com/download)): produced under the Copernicus Programme and "provided free of charge, without restriction of use". Products that use it must acknowledge it and cite the dataset and the Nature paper; maps showing it should say "Source: EC JRC/Google". Redistributing a derived river mask inside the jar and under an open licence is fine. OK.
 - Credit line:
   > Surface water: JRC Global Surface Water, Source: EC JRC/Google. Pekel, J.-F., Cottam, A., Gorelick, N., Belward, A.S. (2016). High-resolution mapping of global surface water and its long-term changes. Nature 540, 418-422, doi:10.1038/nature20584. Produced under the Copernicus Programme.
+- PR #19 streams the v1.4 occurrence layer at runtime (`SurfaceWaterSource`, Google Cloud Storage); nothing is bundled. Credit added to CREDITS.md, THIRD_PARTY_NOTICES.md and the mods list with the Copernicus no-liability sentence, which the Copernicus data policy asks for on any Copernicus product.
 
 ### Hand-traced water at famous falls (PR #16, `KnownWater`)
 - What: about 70 latitude/longitude points with widths, for Victoria Falls' gorges, the Niagara gorge and the river above the Horseshoe Falls, the Welland River and Skógafoss, "traced from satellite imagery". Water levels come from our elevation tiles.

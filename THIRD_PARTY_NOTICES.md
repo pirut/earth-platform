@@ -39,6 +39,8 @@ CHELSA V2.1 climatologies 1981-2010 (streamed by `geography/.../globe/ClimateSou
 
 ESA WorldCover 10 m 2021 v200 (streamed by `WorldCoverSource` from its public cloud-optimised GeoTIFFs): attribution as for the fixture above, CC BY 4.0; classes are mapped to Minecraft biomes and blocks and built-up classes are replaced by surrounding land cover.
 
+JRC Global Surface Water v1.4 occurrence (streamed by `geography/.../globe/SurfaceWaterSource` from https://storage.googleapis.com/global-surface-water/; used to carve river channels): JRC Global Surface Water v1.4 (Source: EC JRC/Google; Pekel et al. 2016, Nature 540, 418-422), Copernicus Programme; Pekel, J.-F. et al. (2016), doi:10.1038/nature20584. Free of charge, without restriction of use. The European Union and the organisations in charge of the Copernicus programme do not incur any liability for any use of these data.
+
 Sentinel-2 cloudless 2016 (streamed by `ImagerySource` from https://tiles.maps.eox.at only when a player turns imagery on; off by default; used only to choose ground blocks): EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). See the licensing audit.
 
 ## Photon adjusted for macOS

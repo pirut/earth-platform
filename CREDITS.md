@@ -33,6 +33,12 @@ Karger, D.N., Conrad, O., Böhner, J., Kawohl, T., Kreft, H., Soria-Auza, R.W., 
 Karger, D.N. et al. (2021). Climatologies at high resolution for the earth's land surface areas. EnviDat. https://doi.org/10.16904/envidat.228
 Licence: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
 
+## Rivers: JRC Global Surface Water
+
+JRC Global Surface Water v1.4 (Source: EC JRC/Google; Pekel et al. 2016, Nature 540, 418-422), Copernicus Programme.
+Pekel, J.-F., Cottam, A., Gorelick, N. & Belward, A.S. (2016). High-resolution mapping of global surface water and its long-term changes. *Nature* 540, 418-422. https://doi.org/10.1038/nature20584
+Terms: produced under the Copernicus Programme and provided free of charge, without restriction of use ([data access page](https://global-surface-water.appspot.com/download)). The European Union and the organisations in charge of the Copernicus programme do not incur any liability for any use of these data. Changes: the water occurrence layer is read where you play and turned into river channels in the terrain.
+
 ## Ecoregions: RESOLVE Ecoregions 2017 (bundled)
 
 Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm, BioScience 67(6):534-545, CC BY 4.0; derived 0.05 degree raster.
