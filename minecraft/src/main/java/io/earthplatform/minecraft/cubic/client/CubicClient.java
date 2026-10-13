@@ -50,10 +50,10 @@ public final class CubicClient {
         if (world != null) { world.checkShaders(); world.renderer().tick(); world.far().tick(); }
         if (world != null && Timings.LOG && ++perfTicks % 100 == 0) {
             Runtime runtime = Runtime.getRuntime();
-            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes, {} to compile, far {}/{} columns {} MB; {}",
+            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes, {} to compile, far {}/{} columns {} MB, {} sent again; {}",
                     Minecraft.getInstance().getFps(), (runtime.totalMemory() - runtime.freeMemory()) >> 20, world.loadedCubes(),
                     world.renderer().meshCount(), world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
-                    world.far().vertexBytes() >> 20, timings(Timings.LOGGER));
+                    world.far().vertexBytes() >> 20, world.far().replacedCount(), timings(Timings.LOGGER));
         }
     }
 

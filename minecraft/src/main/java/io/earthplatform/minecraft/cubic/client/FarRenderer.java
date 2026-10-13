@@ -85,7 +85,7 @@ public final class FarRenderer {
     /** This frame's drawn columns in view, nearest first, for the water pass. */
     private List<Column> visible = List.of();
     private int waterFrame = -1;
-    private int ticks, frame, uploadedFrame = -1;
+    private int ticks, frame, uploadedFrame = -1, replaced;
     private boolean closed;
 
     private static final class Column {
@@ -96,6 +96,8 @@ public final class FarRenderer {
         final AABB box;
         @Nullable LongOpenHashSet drawnCubes;
         int lastWanted, version, due = -1, slot = -1;
+        /** The slot of a replaced column's faces still drawn here, freed once this column's own faces are up. */
+        int oldSlot = -1;
         boolean building, stale, meshed;
         @Nullable FarGpu.Allocation faces;
         @Nullable VertexBuffer water;
@@ -118,6 +120,26 @@ public final class FarRenderer {
 
         int baseY() { return bottom * Far.width(level); }
 
+        /**
+         * Keeps drawing the faces of the column this one replaces until its own are built, so a
+         * column the server sends again (after an edit, or a repeated request) never leaves a gap
+         * that a coarser level fills for a moment.
+         */
+        void takeOver(Column old, @Nullable FarGpu gpu) {
+            drawnCubes = old.drawnCubes;
+            faces = old.faces;
+            water = old.water;
+            bytes = old.bytes;
+            meshed = true;
+            // Meshes of the old column still in flight no longer match.
+            version = old.version + 1;
+            // The old faces use the old column's slot, or the one it kept from the column before it.
+            oldSlot = old.oldSlot;
+            if (old.bottom == bottom) slot = old.slot;
+            else if (oldSlot < 0) oldSlot = old.slot;
+            else if (old.slot >= 0 && gpu != null) gpu.freeSlot(old.slot);
+        }
+
         long neighbour(int side) {
             int x = Far.x(key), z = Far.z(key);
             return switch (side) {
@@ -133,9 +155,15 @@ public final class FarRenderer {
             if (gpu != null) {
                 gpu.free(faces);
                 if (slot >= 0) gpu.freeSlot(slot);
+                freeOldSlots(gpu);
             }
             faces = null;
             slot = -1;
+        }
+
+        void freeOldSlots(FarGpu gpu) {
+            if (oldSlot >= 0) gpu.freeSlot(oldSlot);
+            oldSlot = -1;
         }
     }
 
@@ -167,6 +195,8 @@ public final class FarRenderer {
         return gpu;
     }
     public int drawnCount() { return drawn.size(); }
+    /** Columns received again while already held, as when the server pushes an edit. */
+    public int replacedCount() { return replaced; }
 
     // Columns ------------------------------------------------------------------------------------
 
@@ -181,7 +211,11 @@ public final class FarRenderer {
         Column column = new Column(payload.key(), payload.bottom(), sections, payload.drops());
         column.lastWanted = ticks;
         Column old = columns.put(column.key, column);
-        if (old != null) { column.drawnCubes = old.drawnCubes; old.close(gpu); }
+        if (old != null) {
+            replaced++;
+            if (old.meshed) column.takeOver(old, gpu);
+            else { column.drawnCubes = old.drawnCubes; old.close(gpu); }
+        }
         schedule(column);
         int level = column.level, x = Far.x(column.key), z = Far.z(column.key);
         for (Direction direction : Direction.Plane.HORIZONTAL) {
@@ -209,11 +243,14 @@ public final class FarRenderer {
         for (Column column : columns.values()) if (column.due >= 0 && column.due <= ticks) submit(column);
         if (ticks % PLAN_TICKS != 0) return;
         LongArrayList missing = new LongArrayList();
-        Far.around(player.getBlockX(), player.getBlockZ(), key -> {
+        int bx = player.getBlockX(), bz = player.getBlockZ();
+        Far.around(bx, bz, key -> {
             Column column = columns.get(key);
             if (column != null) column.lastWanted = ticks;
             else if (ticks - requested.get(key) > RETRY_TICKS) missing.add(key);
         });
+        // Ask for what a player would see change most first: the server makes columns in this order.
+        missing.unstableSort((a, b) -> Long.compare(priority(a, bx, bz), priority(b, bx, bz)));
         for (int i = 0; i < missing.size(); i += CubePayloads.FarRequest.MAX_KEYS) {
             long[] keys = missing.subList(i, Math.min(missing.size(), i + CubePayloads.FarRequest.MAX_KEYS)).toLongArray();
             for (long key : keys) requested.put(key, ticks);
@@ -221,6 +258,21 @@ public final class FarRenderer {
         }
         requested.long2IntEntrySet().removeIf(entry -> ticks - entry.getIntValue() > RETRY_TICKS * 4);
         evict();
+    }
+
+    /**
+     * The order to ask for a column in: by how far it is from a position in its own widths, so the
+     * columns right around the player come first instead of last, when coarse voxels stood in
+     * for them close up after every move.
+     */
+    private static long priority(long key, int bx, int bz) {
+        int level = Far.level(key), width = Far.width(level);
+        long x0 = (long) Far.x(key) * width, z0 = (long) Far.z(key) * width;
+        long dx = Math.max(0, Math.max(x0 - bx, bx - (x0 + width))), dz = Math.max(0, Math.max(z0 - bz, bz - (z0 + width)));
+        // Hundredths of a width, and finer levels first among equals. Columns a finer level draws
+        // over only stand in while it loads, so they come after every drawn one.
+        long order = Math.max(dx, dz) * 100 / width * 8 + level;
+        return Far.refined(level, Far.x(key), Far.z(key), bx, bz) ? order + (1L << 32) : order;
     }
 
     private void evict() {
@@ -310,6 +362,7 @@ public final class FarRenderer {
                 gpu.free(column.faces);
                 column.faces = gpu.upload(result.quads(), result.counts());
                 column.water = upload(column.water, result.water());
+                column.freeOldSlots(gpu);
             }
             if (column.stale) schedule(column);
         }

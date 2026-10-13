@@ -500,7 +500,11 @@ public final class ServerCubeWorld extends CubeWorld {
         try {
             storage.put(cube.key, codec.write(cube, server.registryAccess()));
             cube.dirty = false;
-            far.edited(cube.x, cube.z);
+            // Saves that only record block entities or spawning leave far terrain as it was.
+            if (cube.reshaped) {
+                cube.reshaped = false;
+                far.edited(cube.x, cube.z);
+            }
         } catch (IOException | RuntimeException failure) {
             EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(cube.key), failure);
         }

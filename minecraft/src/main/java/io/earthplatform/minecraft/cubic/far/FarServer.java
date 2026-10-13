@@ -13,6 +13,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -61,10 +62,12 @@ public final class FarServer {
         return thread;
     });
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> cache = new ConcurrentHashMap<>();
+    /** What edited columns looked like before, so a remade one that came out the same is not sent again. */
+    private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> before = new ConcurrentHashMap<>();
     private final ConcurrentLinkedQueue<Made> made = new ConcurrentLinkedQueue<>();
     /** Columns that could not be made, or were skipped as their player had moved away; players may ask for them again. */
     private final ConcurrentLinkedQueue<Long> failed = new ConcurrentLinkedQueue<>();
-    private final AtomicInteger failures = new AtomicInteger(), skipped = new AtomicInteger();
+    private final AtomicInteger failures = new AtomicInteger(), skipped = new AtomicInteger(), unchanged = new AtomicInteger();
     private volatile long lastFailureLog;
     private final Map<UUID, Session> sessions = new HashMap<>();
     /** Columns whose saved cubes changed and that players hold, to remake and push again. */
@@ -116,7 +119,11 @@ public final class FarServer {
             }
             long start = System.nanoTime();
             try {
-                made.add(new Made(player, make(key, player != null)));
+                CubePayloads.FarColumnData column = make(key, player != null);
+                CubePayloads.FarColumnData old = player == null ? before.remove(key) : null;
+                // Most saved edits (grass spreading, a placed torch) change nothing at a voxel's size.
+                if (old == null || !same(old, column)) made.add(new Made(player, column));
+                else unchanged.incrementAndGet();
                 Timings.FAR_MAKE.since(start);
             }
             catch (RuntimeException | IOException failure) {
@@ -135,9 +142,16 @@ public final class FarServer {
     public void edited(int cubeX, int cubeZ) {
         for (int level = Far.MIN_LEVEL; level <= Far.EDIT_LEVELS; level++) {
             long key = Far.key(level, cubeX >> level, cubeZ >> level);
-            cache.remove(key);
+            CubePayloads.FarColumnData old = cache.remove(key);
+            if (old != null && before.size() < CACHE) before.putIfAbsent(key, old);
             stale.add(key);
         }
+    }
+
+    private static boolean same(CubePayloads.FarColumnData a, CubePayloads.FarColumnData b) {
+        if (a.bottom() != b.bottom() || !Arrays.equals(a.drops(), b.drops()) || a.sections().size() != b.sections().size()) return false;
+        for (int i = 0; i < a.sections().size(); i++) if (!Arrays.equals(a.sections().get(i), b.sections().get(i))) return false;
+        return true;
     }
 
     private CubePayloads.FarColumnData make(long key, boolean useCache) throws IOException {
@@ -249,6 +263,7 @@ public final class FarServer {
                 boolean held = false;
                 for (Session session : sessions.values()) held |= session.sent.contains(key);
                 if (held) submit(null, null, key);
+                else before.remove(key);
             }
             stale.clear();
         }
@@ -276,6 +291,8 @@ public final class FarServer {
     public int cached() { return cache.size(); }
     /** Columns skipped because their player had moved far away before their turn came. */
     public int skipped() { return skipped.get(); }
+    /** Edited columns remade the same as before, so not sent again. */
+    public int unchanged() { return unchanged.get(); }
 
     public void close() {
         closed = true;

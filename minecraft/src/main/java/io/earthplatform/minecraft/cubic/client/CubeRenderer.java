@@ -52,7 +52,7 @@ public final class CubeRenderer {
                 thread.setPriority(Thread.NORM_PRIORITY - 1);
                 return thread;
             });
-    private static final int MAX_IN_FLIGHT = 12, MAX_UPLOADS_PER_FRAME = 48, NEIGHBOUR_WAIT_TICKS = 20;
+    private static final int MAX_IN_FLIGHT = 48, MAX_UPLOADS_PER_FRAME = 48, NEIGHBOUR_WAIT_TICKS = 20;
 
     private final ClientCubeWorld world;
     private final Long2ObjectOpenHashMap<Mesh> meshes = new Long2ObjectOpenHashMap<>();
