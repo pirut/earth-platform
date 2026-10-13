@@ -25,6 +25,7 @@ public final class GlobeTest {
         seams();
         repair();
         bareEarth();
+        clearings();
         kernel();
         streaming();
         worldCover();
@@ -166,6 +167,67 @@ public final class GlobeTest {
         BareEarth plainCountry = new BareEarth((zoom, x, y) -> plain, (latitude, longitude) -> WorldCoverSource.TREE_COVER, 8, 8);
         check(plainCountry.tile(14, 100, 100) == plain, "tiles away from towns come back unchanged");
         check(Arrays.equals(source.tile(10, 909, 403), bare.tile(10, 909, 403)), "coarse zooms pass through");
+    }
+
+    private static final int CLEAR_X0 = 3000 * 256 + 128, CLEAR_Y0 = 2000 * 256 + 128;
+
+    /** Gently sloping land with a round hill, a forest block standing 15 m on it, and a 10 m bank over a river. */
+    private static float clearingSurface(double gx, double gy, double tilt) {
+        double x = Math.floor(gx) - CLEAR_X0, y = Math.floor(gy) - CLEAR_Y0;
+        double hillX = gx - CLEAR_X0 - 60, hillY = gy - CLEAR_Y0 + 60;
+        double ground = 100 + tilt * (gx - CLEAR_X0) + 25 * Math.exp(-(hillX * hillX + hillY * hillY) / (2 * 12 * 12));
+        if (y >= 80) ground -= 10;
+        return (float) (ground + (clearingBlock(x, y) ? 15 : 0));
+    }
+
+    private static boolean clearingBlock(double x, double y) { return x >= -70 && x < -20 && y >= -40 && y < 40; }
+
+    private static void clearings() {
+        long size = 256L << 12;
+        java.util.function.DoubleFunction<GlobalElevation.Tiles> source = tilt -> (zoom, x, y) -> {
+            float[] tile = new float[256 * 256];
+            double scale = Math.scalb(1.0, 12 - zoom);
+            for (int py = 0; py < 256; py++) for (int px = 0; px < 256; px++)
+                tile[py * 256 + px] = clearingSurface(((double) x * 256 + px + 0.5) * scale - 0.5, ((double) y * 256 + py + 0.5) * scale - 0.5, tilt);
+            return tile;
+        };
+        BareEarth.Cover cover = (latitude, longitude) -> {
+            double gx = (longitude + 180) / 360 * size, r = Math.toRadians(latitude);
+            double gy = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * size;
+            double x = Math.floor(gx) - CLEAR_X0, y = Math.floor(gy) - CLEAR_Y0;
+            if (y >= 90) return WorldCoverSource.WATER;
+            return clearingBlock(x, y) ? WorldCoverSource.TREE_COVER : WorldCoverSource.GRASSLAND;
+        };
+        GlobalElevation.Tiles flat = source.apply(0.1);
+        BareEarth bare = new BareEarth(flat, cover, 8, 8);
+        float[] raw = flat.tile(12, 3000, 2000), tile = bare.tile(12, 3000, 2000);
+        java.util.function.IntBinaryOperator at = (dx, dy) -> (128 + dy) * 256 + 128 + dx;
+        for (int edge : new int[] {-70, -20}) {
+            double steepest = 0;
+            for (int dy = -30; dy <= 30; dy += 10)
+                for (int dx = edge - 10; dx < edge + 10; dx++) steepest = Math.max(steepest, Math.abs(tile[at.applyAsInt(dx + 1, dy)] - tile[at.applyAsInt(dx, dy)]));
+            check(steepest < 2, "a forest block's 15 m edge eases into a slope: " + steepest + " m a pixel at x " + edge);
+        }
+        double topEdge = 0;
+        for (int dx = -60; dx <= -30; dx += 10)
+            for (int dy = -50; dy < -30; dy++) topEdge = Math.max(topEdge, Math.abs(tile[at.applyAsInt(dx, dy + 1)] - tile[at.applyAsInt(dx, dy)]));
+        check(topEdge < 2, "its edge across the slope eases too: " + topEdge);
+        near(raw[at.applyAsInt(60, -60)], tile[at.applyAsInt(60, -60)], 1.5, "a round hill keeps its height");
+        check(tile[at.applyAsInt(40, 81)] < tile[at.applyAsInt(40, 78)] - 9, "a river bank keeps its step: "
+                + tile[at.applyAsInt(40, 78)] + " over " + tile[at.applyAsInt(40, 81)]);
+        near(raw[at.applyAsInt(127, -127)], tile[at.applyAsInt(127, -127)], 0.2, "land well away from the block is untouched");
+        // Finer zooms read the same correction, with no ledge left where the edge was.
+        int fineX = (CLEAR_X0 - 70) * 8, fineY = CLEAR_Y0 * 8;
+        float[] fine = bare.tile(15, fineX >> 8, fineY >> 8);
+        double ledge = 0;
+        int row = (fineY & 255) * 256;
+        for (int i = 0; i < 255; i++) ledge = Math.max(ledge, Math.abs(fine[row + i + 1] - fine[row + i]));
+        check(ledge < 0.6, "zoom 15 has no ledge at the old edge: " + ledge);
+        // On a hillside the same block is left alone: a step there may well be the land's own.
+        GlobalElevation.Tiles steep = source.apply(6);
+        float[] hillside = steep.tile(12, 3000, 2000);
+        BareEarth steepBare = new BareEarth((zoom, x, y) -> zoom == 12 && x == 3000 && y == 2000 ? hillside : steep.tile(zoom, x, y), cover, 8, 8);
+        check(steepBare.tile(12, 3000, 2000) == hillside, "steps on steep land stay");
     }
 
     private static void kernel() {
