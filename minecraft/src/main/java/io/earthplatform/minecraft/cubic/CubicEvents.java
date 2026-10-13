@@ -82,22 +82,33 @@ public final class CubicEvents {
 
     /**
      * A place to stand near a column, on the ground or swimming on water, with the cubes there
-     * loaded: the nearest spot within a few blocks with room above the ground, else on top of
-     * whatever stands there, such as a tree.
+     * loaded: the nearest spot within a few blocks with room above the ground (grass and a dusting
+     * of snow leave room) and not on powder snow, which a player sinks into and freezes in; else on
+     * top of whatever stands there, such as a tree, with a drift underfoot packed firm.
      */
     private static Vec3 standOn(ServerCubeWorld cubes, int x, int z) {
         CubeGenerator generator = cubes.generator();
         int ground = Math.max(generator.surfaceY(x, z), generator.waterY(x, z));
         cubes.loadAround(new BlockPos(x, ground, z));
-        for (int radius = 0; radius <= 6; radius++) for (int dz = -radius; dz <= radius; dz++) for (int dx = -radius; dx <= radius; dx++) {
+        for (int radius = 0; radius <= 15; radius++) for (int dz = -radius; dz <= radius; dz++) for (int dx = -radius; dx <= radius; dx++) {
             if (Math.max(Math.abs(dx), Math.abs(dz)) != radius) continue;
             int y = Math.max(generator.surfaceY(x + dx, z + dz), generator.waterY(x + dx, z + dz)) + 1;
-            if (cubes.getBlockState(new BlockPos(x + dx, y, z + dz)).isAir() && cubes.getBlockState(new BlockPos(x + dx, y + 1, z + dz)).isAir())
+            if (open(cubes, x + dx, y, z + dz) && open(cubes, x + dx, y + 1, z + dz)
+                    && !cubes.getBlockState(new BlockPos(x + dx, y - 1, z + dz)).is(net.minecraft.world.level.block.Blocks.POWDER_SNOW))
                 return new Vec3(x + dx + 0.5, y, z + dz + 0.5);
         }
         int y = ground + 1;
-        while (y < ground + 48 && !(cubes.getBlockState(new BlockPos(x, y, z)).isAir() && cubes.getBlockState(new BlockPos(x, y + 1, z)).isAir())) y++;
+        while (y < ground + 48 && !(open(cubes, x, y, z) && open(cubes, x, y + 1, z))) y++;
+        BlockPos under = new BlockPos(x, y - 1, z);
+        if (cubes.getBlockState(under).is(net.minecraft.world.level.block.Blocks.POWDER_SNOW))
+            cubes.level().setBlockAndUpdate(under, net.minecraft.world.level.block.Blocks.SNOW_BLOCK.defaultBlockState());
         return new Vec3(x + 0.5, y, z + 0.5);
+    }
+
+    /** Whether a player fits in a block: air, or a dry one they walk through, such as grass or a thin layer of snow. */
+    private static boolean open(ServerCubeWorld cubes, int x, int y, int z) {
+        var state = cubes.getBlockState(new BlockPos(x, y, z));
+        return state.isAir() || state.canBeReplaced() && state.getFluidState().isEmpty();
     }
 
     @SubscribeEvent public static void commands(RegisterCommandsEvent event) {

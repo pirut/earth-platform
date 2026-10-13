@@ -21,6 +21,7 @@ public final class GlobeTest {
     public static void main(String[] args) throws Exception {
         projection();
         codec();
+        mend();
         repair();
         kernel();
         streaming();
@@ -63,6 +64,26 @@ public final class GlobeTest {
         float[] back = TerrariumTileSource.decode(TerrariumTileSource.encode(metres));
         for (int i = 0; i < metres.length; i++) near(metres[i], back[i], 1 / 256.0, "Terrarium codec");
         fail(() -> TerrariumTileSource.decode(new byte[]{1, 2, 3}), java.io.IOException.class, "non-image rejected");
+    }
+
+    /** Lone bad pixels are mended; steep real ground and open-sea zeros are left alone. */
+    private static void mend() {
+        int zoom = 15, tileY = 1 << 14;
+        float[] metres = new float[256 * 256];
+        // A cliff falling 100 m a pixel along a slanted line (steeper than Half Dome's face), sea on the left.
+        for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) metres[y * 256 + x] = x < 20 ? 0 : (float) (500 + 100 * x + 50 * y);
+        float[] clean = metres.clone();
+        metres[128 * 256 + 128] = -450;           // a pit, as the Rio Negro's
+        metres[60 * 256 + 60] -= 640; metres[61 * 256 + 60] -= 170;  // a pair
+        metres[0 * 256 + 200] += 1100;            // a spire on the tile's edge
+        metres[10 * 256 + 21] = 9000;             // a spire beside the sea
+        float[] mended = TerrariumTileSource.mend(metres, zoom, tileY);
+        Set<Integer> bad = Set.of(128 * 256 + 128, 60 * 256 + 60, 61 * 256 + 60, 200, 10 * 256 + 21);
+        for (int i : bad) near(clean[i], mended[i], 60, "bad pixel " + (i % 256) + "," + (i / 256) + " mended to within a pixel's slope");
+        int changed = 0;
+        for (int i = 0; i < clean.length; i++) if (!bad.contains(i) && mended[i] != clean[i]) changed++;
+        equal(0, changed, "good pixels never change");
+        check(TerrariumTileSource.mend(clean, zoom, tileY) == clean, "clean tile returned as it is");
     }
 
     private static void kernel() {

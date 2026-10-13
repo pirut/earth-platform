@@ -86,10 +86,10 @@ final class Trees {
     }
     private static final int MOST = 24;
 
-    /** A tree standing at (x, y, z), its origin the block above the ground, turned {@code turn} quarters. */
-    private record Planted(int x, int y, int z, TreeShape shape, int turn, long seed) {
+    /** A tree standing at (x, y, z), its origin the block above the ground, turned {@code turn} quarters, snowed on where it is cold. */
+    private record Planted(int x, int y, int z, TreeShape shape, int turn, long seed, boolean snow) {
         void place(int x0, int y0, int z0, int x1, int y1, int z1, IntBinaryOperator ground, TreeShape.Sink sink) {
-            shape.place(x, y, z, turn, seed, x0, y0, z0, x1, y1, z1, ground, sink);
+            shape.place(x, y, z, turn, seed, snow, x0, y0, z0, x1, y1, z1, ground, sink);
         }
     }
 
@@ -157,13 +157,16 @@ final class Trees {
             if (feature == null) continue;
             TreeShape[] grown = shapes(feature);
             if (grown.length == 0) continue;
-            trees.add(new Planted(x, h + 1, z, grown[(int) Math.floorMod(r >>> 24, grown.length)], (int) (r >>> 34 & 3), r));
+            trees.add(new Planted(x, h + 1, z, grown[(int) Math.floorMod(r >>> 24, grown.length)], (int) (r >>> 34 & 3), r, snowy(surface)));
         }
         Planted[] made = trees.isEmpty() ? NONE : trees.toArray(Planted[]::new);
         if (chunks.size() > 32768) chunks.clear();
         chunks.putIfAbsent(key, made);
         return made;
     }
+
+    /** Whether snow falls where a tree stands, as on the ground around it. */
+    static boolean snowy(Surface surface) { return surface.biome().value().getBaseTemperature() < 0.15f; }
 
     /**
      * Whether a tree of this kind can stand on a column: on soil, out of water but for mangroves
@@ -203,7 +206,7 @@ final class Trees {
                 }
                 if (h - foot > 6) continue;
                 TreeShape[] grown = Sequoia.shapes();
-                trees.add(new Planted(x, foot + 1, z, grown[(int) Math.floorMod(r >>> 32, grown.length)], (int) (r >>> 50 & 3), r));
+                trees.add(new Planted(x, foot + 1, z, grown[(int) Math.floorMod(r >>> 32, grown.length)], (int) (r >>> 50 & 3), r, snowy(surface)));
             }
         Planted[] made = trees.isEmpty() ? NONE : trees.toArray(Planted[]::new);
         if (giants.size() > 32768) giants.clear();
