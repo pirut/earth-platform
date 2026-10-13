@@ -15,7 +15,7 @@ package io.earthplatform.geography.globe;
 public final class GlobalElevation {
     public static final int BATHYMETRY_ZOOM = 10;
     private final MercatorGrid grid;
-    private final TerrariumTileSource tiles;
+    private final Tiles tiles;
     private final int zoom;
     private final int tilesAcross;
     private final GlobalElevation bathymetry;
@@ -28,11 +28,23 @@ public final class GlobalElevation {
         final float[] kernel = new float[16];
     }
 
+    /** Decoded Terrarium tiles by zoom and tile, as {@link TerrariumTileSource#tile} serves them. */
+    @FunctionalInterface
+    public interface Tiles {
+        /** Metres, row-major north to south, 256x256; shared and never modified. */
+        float[] tile(int zoom, int x, int y);
+    }
+
     public GlobalElevation(MercatorGrid grid, TerrariumTileSource tiles, int zoom) {
+        this(grid, (Tiles) tiles::tile, zoom);
+    }
+
+    /** Elevation read from {@code tiles}, such as {@link BareEarth}'s ground in place of the tiles' own. */
+    public GlobalElevation(MercatorGrid grid, Tiles tiles, int zoom) {
         this(grid, tiles, zoom, zoom > BATHYMETRY_ZOOM);
     }
 
-    private GlobalElevation(MercatorGrid grid, TerrariumTileSource tiles, int zoom, boolean fillBathymetry) {
+    private GlobalElevation(MercatorGrid grid, Tiles tiles, int zoom, boolean fillBathymetry) {
         if (zoom < 0 || zoom > TerrariumTileSource.MAX_ZOOM) throw new IllegalArgumentException("Unsupported zoom " + zoom);
         this.grid = grid;
         this.tiles = tiles;

@@ -33,6 +33,18 @@ Karger, D.N., Conrad, O., Böhner, J., Kawohl, T., Kreft, H., Soria-Auza, R.W., 
 Karger, D.N. et al. (2021). Climatologies at high resolution for the earth's land surface areas. EnviDat. https://doi.org/10.16904/envidat.228
 Licence: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
 
+## Rivers: JRC Global Surface Water
+
+JRC Global Surface Water v1.4 (Source: EC JRC/Google; Pekel et al. 2016, Nature 540, 418-422), Copernicus Programme.
+Pekel, J.-F., Cottam, A., Gorelick, N. & Belward, A.S. (2016). High-resolution mapping of global surface water and its long-term changes. *Nature* 540, 418-422. https://doi.org/10.1038/nature20584
+Terms: produced under the Copernicus Programme and provided free of charge, without restriction of use ([data access page](https://global-surface-water.appspot.com/download)). The European Union and the organisations in charge of the Copernicus programme do not incur any liability for any use of these data. Changes: the water occurrence layer is read where you play and turned into river channels in the terrain.
+
+## Ecoregions: RESOLVE Ecoregions 2017 (bundled)
+
+Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm, BioScience 67(6):534-545, CC BY 4.0; derived 0.05 degree raster.
+Dinerstein, E., Olson, D., Joshi, A., et al. (2017). An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm. *BioScience* 67(6), 534-545. https://doi.org/10.1093/biosci/bix014
+Licence: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: the ecoregion polygons are rasterised to a 0.05 degree grid (`earthplatform/ecoregions.png`, with ecoregion names in `ecoregions.tsv`) and used to tune biomes and ground cover.
+
 ## Ground colours (optional): Sentinel-2 cloudless
 
 EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Off by default; used only when a player turns satellite imagery on, and then only to choose between ground blocks. No imagery is shown in game.
@@ -43,7 +55,7 @@ The globe on the Customize screen shows NASA's Blue Marble: NASA Earth Observato
 
 ## Built-in test areas (bundled)
 
-- Copernicus WorldDEM-30 (Everest area): produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. Licence text included in the jar under `earthplatform/copernicus_proof_data/provenance/`.
+- Copernicus WorldDEM-30 (Everest area): produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. Licence text included in the jar under `earthplatform/copernicus_proof_data/provenance/`. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30. Earth Platform is not endorsed by the Copernicus programme.
 - NOAA National Centers for Environmental Information (2022). ETOPO 2022 15 Arc-Second Global Relief Model. https://doi.org/10.25921/fd45-gt74 (CC0 1.0).
 - ESA WorldCover extracts, credited as above.
 

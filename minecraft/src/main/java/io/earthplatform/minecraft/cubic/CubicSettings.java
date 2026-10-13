@@ -1,10 +1,14 @@
 package io.earthplatform.minecraft.cubic;
 
+import io.earthplatform.geography.globe.BareEarth;
 import io.earthplatform.geography.globe.ClimateSource;
+import io.earthplatform.geography.globe.CopernicusSource;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
+import io.earthplatform.geography.globe.RiverMap;
+import io.earthplatform.geography.globe.SurfaceWaterSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
@@ -35,6 +39,7 @@ public final class CubicSettings {
     private static TerrariumTileSource tiles;
     private static WorldCoverSource cover;
     private static ClimateSource climate;
+    private static RiverMap rivers;
     private static ImagerySource imagery;
 
     private CubicSettings() {}
@@ -73,8 +78,17 @@ public final class CubicSettings {
                 String imageryId = properties.getProperty("earth.imagery", "");
                 if (!imageryId.isEmpty() && !ImagerySource.DATASET_ID.equals(imageryId))
                     throw new IllegalStateException("Unsupported imagery '" + imageryId + "' in " + file);
+                // Worlds made before narrow rivers keep their land as it was.
+                String riversId = properties.getProperty("earth.rivers", "");
+                if (!riversId.isEmpty() && !SurfaceWaterSource.DATASET_ID.equals(riversId))
+                    throw new IllegalStateException("Unsupported rivers '" + riversId + "' in " + file);
+                // Worlds made before bare-earth ground keep their towns' roofs as ground.
+                String groundId = properties.getProperty("earth.ground", "");
+                if (!groundId.isEmpty() && !BareEarth.ID.equals(groundId))
+                    throw new IllegalStateException("Unsupported ground '" + groundId + "' in " + file);
                 yield new EarthGenerator(seed, biomes, settings, tiles(), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
-                        coverId.isEmpty() || imageryId.isEmpty() ? null : imagery());
+                        coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : rivers(),
+                        !groundId.isEmpty());
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
         };
@@ -111,6 +125,8 @@ public final class CubicSettings {
         properties.setProperty("earth.elevation", TerrariumTileSource.DATASET_ID);
         properties.setProperty("earth.cover", WorldCoverSource.DATASET_ID);
         properties.setProperty("earth.climate", ClimateSource.DATASET_ID);
+        properties.setProperty("earth.rivers", SurfaceWaterSource.DATASET_ID);
+        properties.setProperty("earth.ground", BareEarth.ID);
         if (imageryEnabled()) properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
         if (!name.isEmpty()) properties.setProperty("earth.homeName", name);
     }
@@ -141,10 +157,16 @@ public final class CubicSettings {
      */
     public static synchronized TerrariumTileSource tiles() {
         if (tiles == null) {
-            Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
+            Path caches = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache");
+            Path cache = caches.resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
+            boolean network = !Boolean.getBoolean("earthplatform.earth.offline");
             try {
-                tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        256, 6, Duration.ofSeconds(20));
+                // Copernicus fills the tiles where they are wrong over a wide area: fjords filled in as
+                // land, and heights off the sea's datum north of SRTM. Its blocks are up to 4 MiB decoded.
+                // -Dearthplatform.earth.copernicus=false leaves the tiles as they are, to compare.
+                CopernicusSource copernicus = "false".equals(System.getProperty("earthplatform.earth.copernicus")) ? null
+                        : new CopernicusSource(CopernicusSource.AWS_COPERNICUS, caches.resolve(CopernicusSource.DATASET_ID), network, 12, 4, Duration.ofSeconds(30));
+                tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, network, 256, 6, Duration.ofSeconds(20), copernicus);
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the elevation tile cache at " + cache, failure);
             }
@@ -164,6 +186,21 @@ public final class CubicSettings {
             }
         }
         return cover;
+    }
+
+    /** Narrow rivers shared by every Earth world in this game, their surface water cached on disk beside the elevation tiles. */
+    public static synchronized RiverMap rivers() {
+        if (rivers == null) {
+            Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(SurfaceWaterSource.DATASET_ID);
+            try {
+                // Blocks are 64 KiB decoded and cover 7 km; each traced square keeps 64 KiB.
+                rivers = new RiverMap(new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        96, 4, Duration.ofSeconds(30)), 256);
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the surface water cache at " + cache, failure);
+            }
+        }
+        return rivers;
     }
 
     /** Climate shared by every Earth world in this game, cached on disk beside the elevation tiles. */

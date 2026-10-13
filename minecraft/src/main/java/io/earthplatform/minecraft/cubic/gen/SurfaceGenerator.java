@@ -9,10 +9,13 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.IdMap;
 import net.minecraft.core.Registry;
 import net.minecraft.core.SectionPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Block;
@@ -21,6 +24,7 @@ import net.minecraft.world.level.block.HugeMushroomBlock;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.RotatedPillarBlock;
 import net.minecraft.world.level.block.SnowLayerBlock;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
@@ -37,6 +41,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             DEEPSLATE = Blocks.DEEPSLATE.defaultBlockState(), DIRT = Blocks.DIRT.defaultBlockState(),
             GRASS = Blocks.GRASS_BLOCK.defaultBlockState(), SAND = Blocks.SAND.defaultBlockState(),
             GRAVEL = Blocks.GRAVEL.defaultBlockState(), WATER = Blocks.WATER.defaultBlockState(),
+            FALLING_WATER = Blocks.WATER.defaultBlockState().setValue(net.minecraft.world.level.block.LiquidBlock.LEVEL, 8),
             SNOW_BLOCK = Blocks.SNOW_BLOCK.defaultBlockState(), SNOW = Blocks.SNOW.defaultBlockState().setValue(SnowLayerBlock.LAYERS, 1),
             LAVA = Blocks.LAVA.defaultBlockState(), MUD = Blocks.MUD.defaultBlockState();
 
@@ -111,6 +116,24 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     /** The rock layers a column shows in its cliff faces, or null for plain stone. */
     protected Strata.Layers layers(int x, int z) { return null; }
 
+    /**
+     * Whether open air at height {@code y} of column {@code i} of an 18-wide grid lies beside higher
+     * water, where water steps down: there it pours over the edge as falling water, rather than
+     * standing as a still wall at the edge.
+     */
+    private static boolean falls(int[] water, int i, int y) {
+        return water[i - 1] >= y || water[i + 1] >= y || water[i - 18] >= y || water[i + 18] >= y;
+    }
+
+    /**
+     * Whether a column's under block is the country rock itself, as sandstone and terracotta are,
+     * so its cliff faces show it rather than plain stone: desert cliffs and monoliths such as Uluru
+     * otherwise stood as grey stone walls under a few blocks of red.
+     */
+    private static boolean bedrock(BlockState under) {
+        return under.is(Blocks.SANDSTONE) || under.is(Blocks.RED_SANDSTONE) || under.is(BlockTags.TERRACOTTA);
+    }
+
     // Columns ------------------------------------------------------------------------------------
 
     /** Heights and water for a cube column with a one-block border, plus per-column cover. */
@@ -161,6 +184,14 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return surface(x, z, ground, water, slope);
     }
 
+    /** Whether trees grow in a column (the same rule tree placement uses), for callers outside generation. */
+    public final boolean wooded(int x, int z) {
+        int ground = surfaceY(x, z), water = waterY(x, z);
+        if (water >= ground) return false;
+        Surface surface = coverAt(x, z, ground, water);
+        return surface.trees() > 0 && (surface.top() == GRASS || surface.top() == MUD || surface.top().is(Blocks.PODZOL));
+    }
+
     @Override public final int waterY(int x, int z) {
         Column cached = columns.get(columnKey(x >> 4, z >> 4));
         if (cached != null) return cached.water[((z & 15) + 1) * 18 + (x & 15) + 1];
@@ -197,7 +228,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             // Cold dry ground under the snow Vegetation lays on it nearer.
             if (water[g] <= h && Trees.snowy(surface) && !top[cell].is(Blocks.ICE) && !top[cell].is(Blocks.PACKED_ICE)
                     && !top[cell].is(Blocks.POWDER_SNOW)) top[cell] = SNOW_BLOCK;
-            under[cell] = v > 2 ? STONE : surface.under();
+            under[cell] = v > 2 && !bedrock(surface.under()) ? STONE : surface.under();
             rock[cell] = layers(wx, wz);
             // Voxels wider than a tree show forests as leaves: at 8 blocks a voxel above the ground, about a tree's
             // height, so they meet the rasterised trees nearer; wider voxels would stand too tall, so leaves lie on the ground voxel.
@@ -234,7 +265,10 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                     int g = (cz + 1) * 18 + cx + 1;
                     BlockState state = voxel(ground[g], water[g], y0, v, top[cz * 16 + cx], under[cz * 16 + cx]);
                     if (state == WATER && ice[cz * 16 + cx] && y0 + v > water[g]) state = Blocks.ICE.defaultBlockState();
-                    if (rock[cz * 16 + cx] != null && ground[g] >= y0 + v && state != WATER) state = rock[cz * 16 + cx].at(y0 + (v >> 1));
+                    if (ground[g] >= y0 + v && state != WATER) {
+                        if (rock[cz * 16 + cx] != null) state = rock[cz * 16 + cx].at(y0 + (v >> 1));
+                        else if (state == STONE && bedrock(under[cz * 16 + cx])) state = under[cz * 16 + cx];
+                    }
                     if (state == AIR && crown[cz * 16 + cx] != null && ground[g] < y0 && ground[g] >= y0 - v) state = crown[cz * 16 + cx];
                     if (state != AIR) section.setBlockState(cx, vy, cz, state, false);
                 }
@@ -359,7 +393,22 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             structures.place(section, cx, cy, cz, blockEntities, entities);
             section.recalcBlockCounts();
         }
+        dropStrayBlockEntities(section, cx, cy, cz, blockEntities);
         return section;
+    }
+
+    /**
+     * Drops block entity tags whose block a later step replaced, such as a dungeon chest carved
+     * out by a neighbouring dungeon's room, so a cube's block entities always match its blocks.
+     */
+    private static void dropStrayBlockEntities(LevelChunkSection section, int cx, int cy, int cz, List<CompoundTag> blockEntities) {
+        blockEntities.removeIf(tag -> {
+            if (tag.getInt("x") >> 4 != cx || tag.getInt("y") >> 4 != cy || tag.getInt("z") >> 4 != cz) return false; // another cube's
+            ResourceLocation id = ResourceLocation.tryParse(tag.getString("id"));
+            BlockEntityType<?> type = id == null ? null : BuiltInRegistries.BLOCK_ENTITY_TYPE.get(id);
+            BlockState state = section.getBlockState(tag.getInt("x") & 15, tag.getInt("y") & 15, tag.getInt("z") & 15);
+            return type == null || !type.isValid(state);
+        });
     }
 
     @Override public @Nullable net.minecraft.core.BlockPos locate(java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> structure, int x, int z, int radius) {
@@ -380,6 +429,33 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     @Override public String structuresAt(int x, int y, int z) {
         VanillaStructures structures = vanilla;
         return structures == null ? "" : structures.describe(x, y, z);
+    }
+
+    @Override public @Nullable com.mojang.datafixers.util.Pair<net.minecraft.core.BlockPos, Holder<Biome>> findBiome(
+            java.util.function.Predicate<Holder<Biome>> biomes, net.minecraft.core.BlockPos from, int radius, int step) {
+        int[] sample = new int[2];
+        // Searching the caves costs the most; skip it when the biome sought is none of theirs.
+        boolean caves = false;
+        for (Underground.Kind kind : Underground.Kind.values()) {
+            Holder<Biome> cave = below.biome(kind);
+            caves |= cave != null && biomes.test(cave);
+        }
+        for (net.minecraft.core.BlockPos.MutableBlockPos at : net.minecraft.core.BlockPos.spiralAround(net.minecraft.core.BlockPos.ZERO,
+                Math.floorDiv(radius, step), net.minecraft.core.Direction.EAST, net.minecraft.core.Direction.SOUTH)) {
+            int x = from.getX() + at.getX() * step, z = from.getZ() + at.getZ() * step;
+            ground(x, z, sample);
+            int ground = sample[0], water = sample[1];
+            Holder<Biome> top = coverAt(x, z, ground, water).biome();
+            if (biomes.test(top)) return com.mojang.datafixers.util.Pair.of(new net.minecraft.core.BlockPos(x, Math.max(ground, water) + 1, z), top);
+            // Lush and dripstone caves and the deep dark, every 32 blocks down to vanilla's Y -64 under the local floor.
+            if (!caves) continue;
+            int floor = below.floor(x, z);
+            for (int y = ground - 32; y >= floor - 128; y -= 32) {
+                Holder<Biome> cave = below.biome(below.kind(x >> 4, y >> 4, z >> 4));
+                if (cave != null && biomes.test(cave)) return com.mojang.datafixers.util.Pair.of(new net.minecraft.core.BlockPos(x, y, z), cave);
+            }
+        }
+        return null;
     }
 
     /** The biome vanilla code sees at a block: the cave biome deep under the ground, else the column's. */
@@ -427,6 +503,11 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         int y0 = cy << 4, x0 = cx << 4, z0 = cz << 4;
         boolean underground = y0 + 15 < col.min - 6;
         Underground.Kind caves = underground ? below.kind(cx, cy, cz) : null;
+        VanillaStructures structures = vanilla;
+        if (caves != null && structures != null) {
+            Holder<Biome> sole = structures.soleBiome(cx, cy, cz);
+            for (Underground.Kind kind : Underground.Kind.values()) if (sole != null && sole.equals(below.biome(kind))) caves = kind;
+        }
         Holder<Biome> caveBiome = caves == null ? null : below.biome(caves);
         LevelChunkSection section = new LevelChunkSection(
                 new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, AIR, PalettedContainer.Strategy.SECTION_STATES),
@@ -447,7 +528,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                 int ci = lz * 16 + lx, gi = (lz + 1) * 18 + lx + 1, h = col.height[gi];
                 Surface surface = col.surface[ci];
                 BlockState state;
-                if (y > h) state = y <= col.water[gi] ? WATER : AIR;
+                if (y > h) state = y <= col.water[gi] ? WATER : falls(col.water, gi, y) ? FALLING_WATER : AIR;
                 else {
                     int depth = h - y;
                     if (depth == 0) state = surface.top();
@@ -455,6 +536,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                     else state = below.rock(x0 + lx, y, z0 + lz, floor[ci]);
                     Strata.Layers rock = col.layers[ci];
                     if (rock != null && rock.shows(depth, col.height, gi)) state = rock.at(y);
+                    else if (rock == null && depth >= 4 && bedrock(surface.under()) && Strata.Layers.face(depth, col.height, gi)) state = surface.under();
                     // Cave mouths open the top blocks only where nothing grows on them.
                     boolean open = depth >= roof[ci] && (depth > 1 || surface.trees() == 0 && (Underground.rock(surface.top()) || surface.top() == GRAVEL));
                     if (open && state != Underground.BEDROCK && Underground.cave(caveField, lx, ly, lz)) state = Underground.cavity(y, floor[ci]);

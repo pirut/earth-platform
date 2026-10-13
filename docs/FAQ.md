@@ -17,6 +17,9 @@ Mountains, valleys, coasts and lakes come from measured elevation (about 30 m ap
 **Can I play survival?**
 Yes. Mining, crafting, mobs, beds, death and respawn, the Nether and the End all work as usual. Nether portals built on the Earth link to the Nether and back.
 
+**How do I travel long distances in survival?**
+Ride the jet stream: fly an elytra up above about Y 9,200 and the wind carries you at over 1,000 blocks a second. See [The jet stream](PLAYING.md#the-jet-stream).
+
 **What does the satellite imagery option do?**
 When turned on with the **Satellite imagery** toggle on the Customize screen or `satelliteImagery = true` in `config/earthplatform-common.toml` (see [the install guide](INSTALL.md#satellite-ground-colours-optional)), Sentinel-2 cloudless imagery nudges the choice of ground blocks, such as sand, gravel, stone and dry soil, and how dense trees are, to match each place's real colours. Biomes and tree kinds don't change. It's off by default.
 
@@ -65,13 +68,23 @@ There's no need. Earth Platform has its own far terrain. If Distant Horizons is 
 ## Other mods
 
 **Which other mods work?**
-Most do. Tested in the Earth world: Xaero's Minimap and World Map, JourneyMap, Create (contraptions assemble as usual), JEI, EMI, Jade, AppleSkin, Farmer's Delight, Waystones, Sophisticated Backpacks, Supplementaries, YUNG's structures, and Open Parties and Claims. Terralith and other biome mods have no effect on the Earth, since the real climate picks the biomes. Sodium and Iris need the exact versions in the [install guide](INSTALL.md#shaders-optional).
+Most do. Tested in the Earth world: Xaero's Minimap and World Map, JourneyMap, Create (contraptions, mechanical arms, pulleys, scaffolding and elevators), Waystones, Mekanism (including the Digital Miner and multiblocks), Immersive Engineering, the Twilight Forest, JEI, EMI, Jade, AppleSkin, Ars Nouveau, Applied Energistics 2 networks, Refined Storage 2, Iron's Spells, FTB Quests and Teams, Farmer's Delight, Sophisticated Backpacks, Supplementaries, YUNG's structures, and Open Parties and Claims. Tinkers' Construct and Botania have no NeoForge 1.21.1 release yet. Terralith and other biome mods have no effect on the Earth, since the real climate picks the biomes. Sodium and Iris need the exact versions in the [install guide](INSTALL.md#shaders-optional).
 
 **A mod acts as if blocks aren't there, or as if I'm outside the world.**
-Some mods check the world's height limits themselves and don't know the Earth world is 32,768 blocks tall. Please report it with the mod's name and version; Create had this and is fixed.
+Some mods check the world's height limits themselves and don't know the Earth world is 32,768 blocks tall. Please report it with the mod's name and version; Create, Waystones and Mekanism had this and are fixed.
 
 **Mobs stand still or villagers won't trade.**
 That was a bug in early test builds and is fixed. Update to the latest version.
+
+## Known limitations
+
+- **Create Aeronautics** ships (and the Sable library behind them) can't be assembled in the Earth world yet. They work in other dimensions.
+- **AE2 spatial storage** can't capture or place a region in the Earth world. AE2 networks, channels and storage work normally.
+- **Gliding into builds above Y 9,000:** the jet stream layer streams no blocks around a gliding player, so you fly through anything built up there. Land before you reach it.
+- **Iris and Sodium** must be the exact versions in the [install guide](INSTALL.md#shaders-optional).
+- **On a Mac**, Photon's Colored Lights, Colored Shadows and Cloud Shadows are unavailable.
+- **Distant Horizons** pauses itself in the Earth world.
+- **Accuracy:** heights come from a surface model, so dense forests sit a little high, and some big waterfalls (Niagara, Iguazu) don't fall yet. Tell us about any place that looks wrong, with `/earth where`.
 
 ## Servers
 

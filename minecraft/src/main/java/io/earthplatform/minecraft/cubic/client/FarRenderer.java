@@ -633,7 +633,7 @@ public final class FarRenderer {
         shader.apply();
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = world.client().getShade(direction, true);
-        if (own) FarLod.beginDraw();
+        if (own) FarLod.beginDraw(modelView, position.x, position.y, position.z);
         if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade)) {
             for (Column column : visible) {
                 FarGpu.Allocation faces = column.faces;
@@ -663,7 +663,7 @@ public final class FarRenderer {
         if (own && FarLod.beginDeepen(modelView)) {
             for (Column column : visible) {
                 if (column.water == null) continue;
-                FarLod.deepenOffset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
+                FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 column.water.bind();
                 column.water.draw();
             }
@@ -757,7 +757,22 @@ public final class FarRenderer {
         }
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
         if (view != null) view.set(modelView);
-        if (own) FarLod.endWater();
+        if (own) FarLod.endWater(modelView, () -> {
+            for (Column column : visible) {
+                if (column.water == null && !column.hasWaterWalls()) continue;
+                FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
+                if (column.water != null) {
+                    column.water.bind();
+                    column.water.draw();
+                }
+                for (int side = 0; side < 4; side++) {
+                    VertexBuffer wall = column.waterWalls[side];
+                    if (wall == null || drawnKeys.contains(column.neighbour(side))) continue;
+                    wall.bind();
+                    wall.draw();
+                }
+            }
+        });
         shader.clear();
         VertexBuffer.unbind();
         type.clearRenderState();

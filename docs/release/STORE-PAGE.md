@@ -60,6 +60,8 @@ One block is one metre. Every mountain stands at its real height, every lake and
 
 **Ordinary survival.** Mining, crafting, mobs, trading villagers, sleeping, caves, ores, villages, strongholds, the Nether and the End all work as usual.
 
+**Ride the jet stream.** Glide an elytra above Y 9,200 and the wind carries you across a continent in under an hour.
+
 **Go anywhere.** Pick a famous place or any latitude and longitude when you create the world. Travel later with `/earth visit everest` or `/earth goto 46.59 7.91`.
 
 **Shaders.** Works with Iris and Photon, which light near blocks and far terrain alike.
@@ -80,13 +82,13 @@ The first visit to a place downloads its terrain, so you need an internet connec
 
 You don't need Distant Horizons: Earth Platform has its own far terrain, and Distant Horizons pauses itself in Earth worlds.
 
-**Works with** Xaero's Minimap and World Map, JourneyMap, Create, JEI, EMI, Jade and many more.
+**Works with** Xaero's Minimap and World Map, JourneyMap, Create, Mekanism, Waystones, the Twilight Forest, JEI, EMI, Jade and many more. Not yet: Create Aeronautics ships and AE2 spatial storage in the Earth world.
 
 Install guide, FAQ and troubleshooting: TODO link to docs/INSTALL.md and docs/FAQ.md.
 
 ## Credits
 
-Elevation from AWS Terrain Tiles (USGS 3DEP, SRTM and GMTED2010, NOAA ETOPO1, Copernicus EU-DEM, ArcticDEM, and the national mapping agencies of Australia, Austria, Canada, Mexico, New Zealand, Norway and the United Kingdom). Land cover © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium (CC BY 4.0). Climate from CHELSA V2.1 (Karger et al. 2017, CC0). Optional ground colours (off by default) from EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Full credits in the mod (Mods → Earth Platform) and in CREDITS.md.
+Elevation from AWS Terrain Tiles (USGS 3DEP, SRTM and GMTED2010, NOAA ETOPO1, Copernicus EU-DEM, ArcticDEM, and the national mapping agencies of Australia, Austria, Canada, Mexico, New Zealand, Norway and the United Kingdom). Land cover © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium (CC BY 4.0). Climate from CHELSA V2.1 (Karger et al. 2017, CC0). Ecoregions from RESOLVE Ecoregions 2017 (Dinerstein et al. 2017, CC BY 4.0). Optional ground colours (off by default) from EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Full credits in the mod (Mods → Earth Platform) and in CREDITS.md.
 
 **Distant terrain** is built on ideas from Voxy (by Cortex) and Distant Horizons (by James Seibel and contributors). We'd have used them directly, but neither works with a cubic-chunks world, so Earth Platform draws its own far terrain, following their lead, with no code from either. Thank you to both.
 

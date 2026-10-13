@@ -151,6 +151,9 @@ final class Vegetation {
             // Dry scrub on bare dirt: sagebrush and saltbush stand-ins, with a few tufts of grass.
             if (roll < s.grass() / 5) plant = state(Blocks.DEAD_BUSH);
             else if (roll < s.grass() / 3 && top == COARSE_DIRT) plant = state(Blocks.SHORT_GRASS);
+        } else if (top.is(Blocks.WATER)) {
+            // Marsh pools level with the ground: lily pads.
+            if (roll < 90) plant = state(Blocks.LILY_PAD);
         } else if (top == MUD) {
             if (biome.is(Biomes.MANGROVE_SWAMP) && roll < 120) plant = state(Blocks.MOSS_CARPET);
         } else if (soil) {
@@ -234,7 +237,7 @@ final class Vegetation {
         boolean sea = warm || lukewarm || b.is(Biomes.OCEAN) || b.is(Biomes.DEEP_OCEAN) || b.is(Biomes.COLD_OCEAN) || b.is(Biomes.DEEP_COLD_OCEAN);
         int y = h + 1 - y0;
         // Coral reefs in patches on shallow warm sea beds.
-        if (warm && depth >= 3 && depth <= 24 && Math.floorMod(gen.mix(x >> 2, 0x52454546L, z >> 2), 100) < 40) {
+        if (warm && depth >= 3 && depth <= 24 && Math.floorMod(gen.mix(x >> 2, 0x52454546L, z >> 2), 100) < 40 && openWater(x, z, water)) {
             int color = (int) Math.floorMod(gen.mix(x >> 3, 0x434F52L, z >> 3), 5);
             int blocks = Math.min(depth - 2, 1 + (int) Math.floorMod(r >>> 12, 3));
             for (int k = 0; k < blocks; k++) replaceWater(section, lx, y + k, lz, CORAL_BLOCKS[color]);
@@ -254,6 +257,34 @@ final class Vegetation {
         } else if ((warm || lukewarm) && depth >= 2 && roll < 380) {
             replaceWater(section, lx, y, lz, state(Blocks.SEA_PICKLE).setValue(SeaPickleBlock.PICKLES, 1 + (int) (r >>> 20 & 3)));
         }
+    }
+
+    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> openWater = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Whether water is open sea or a wide lagoon rather than a pool among rocks, judged for a 4 by 4 patch by
+     * whether the same water reaches out a hundred and seven hundred blocks in nearly every direction. Reefs grow only there:
+     * enclosed pools, such as Ha Long Bay's karst lagoons, are too brackish and still for coral.
+     */
+    private boolean openWater(int x, int z, int water) {
+        long key = (long) (x >> 2) << 32 | (z >> 2) & 0xFFFFFFFFL;
+        Boolean known = openWater.get(key);
+        if (known != null) return known;
+        int cx = (x & ~3) + 2, cz = (z & ~3) + 2;
+        boolean open = true;
+        // Near and far: a lagoon behind barrier islands, such as Lake Worth Lagoon, is wide but has a sand and seagrass floor.
+        for (int radius = 100; radius <= 700 && open; radius += 600) {
+            int same = 0;
+            for (int k = 0; k < 8; k++) {
+                double a = k * Math.PI / 4;
+                int px = cx + (int) Math.round(Math.cos(a) * radius), pz = cz + (int) Math.round(Math.sin(a) * radius);
+                if (gen.waterY(px, pz) == water && gen.surfaceY(px, pz) < water) same++;
+            }
+            open = same >= 6;
+        }
+        if (openWater.size() > 1 << 16) openWater.clear();
+        openWater.putIfAbsent(key, open);
+        return open;
     }
 
     // Trees ----------------------------------------------------------------------------------------

@@ -25,9 +25,12 @@ public final class GlobeTest {
         seams();
         repair();
         despike();
+        bareEarth();
         kernel();
         streaming();
         worldCover();
+        copernicus();
+        copernicusFill();
         climate();
         imagery();
         palette();
@@ -95,6 +98,77 @@ public final class GlobeTest {
             face[y * 256 + x] = (float) (1550 + 550 / (1 + Math.exp(at * 1.5)) + 70 * Math.exp(-(at + 1) * (at + 1)) + 25 * Math.sin(y * 1.7) * Math.exp(-at * at));
         }
         check(TerrariumTileSource.mend(face, zoom, tileY) == face, "a sheer face keeps its lip and ledges");
+    }
+
+    /** A synthetic town west of zoom 12 pixel (X0 + 20, Y0): buildings on 3 m ground, a hill, a river and shadow pits; fields east. */
+    private static final int BARE_X0 = 3638 * 256 + 128, BARE_Y0 = 1612 * 256 + 128;
+
+    private static boolean bareTown(double gx) { return gx < BARE_X0 + 20; }
+    private static boolean bareRiver(double gy) { return Math.abs(gy - (BARE_Y0 + 40)) < 4; }
+    private static boolean barePit(double gx, double gy) { return Math.floorMod((long) Math.floor(gx), 23) == 0 && Math.floorMod((long) Math.floor(gy), 29) == 0 && !bareRiver(gy); }
+
+    /** Bare ground of the synthetic town at a zoom 12 pixel position. */
+    private static double bareGround(double gx, double gy) {
+        double d2 = (gx - BARE_X0 + 20) * (gx - BARE_X0 + 20) + (gy - BARE_Y0 + 70) * (gy - BARE_Y0 + 70);
+        return 3 + 40 * Math.exp(-d2 / (2 * 30.0 * 30.0));
+    }
+
+    private static float bareSurface(double gx, double gy) {
+        if (bareRiver(gy)) return 0.5f;
+        double ground = bareGround(gx, gy);
+        if (!bareTown(gx)) return (float) ground;
+        if (barePit(gx, gy)) return (float) (ground - 11);
+        long block = Math.floorDiv((long) Math.floor(gx), 3) * 92821 ^ Math.floorDiv((long) Math.floor(gy), 3) * 68917;
+        return (float) (ground + (Math.floorMod(block * 0x9E3779B97F4A7C15L >>> 40, 10) < 7 ? 25 : 2));
+    }
+
+    private static void bareEarth() {
+        long size = 256L << 12;
+        GlobalElevation.Tiles source = (zoom, x, y) -> {
+            float[] tile = new float[256 * 256];
+            double scale = Math.scalb(1.0, 12 - zoom);
+            for (int py = 0; py < 256; py++) for (int px = 0; px < 256; px++)
+                tile[py * 256 + px] = bareSurface(((double) x * 256 + px + 0.5) * scale - 0.5, ((double) y * 256 + py + 0.5) * scale - 0.5);
+            return tile;
+        };
+        BareEarth.Cover cover = (latitude, longitude) -> {
+            double gx = (longitude + 180) / 360 * size, r = Math.toRadians(latitude);
+            double gy = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * size;
+            gx -= 0.5; gy -= 0.5;
+            if (bareRiver(gy) || bareTown(gx) && barePit(gx, gy)) return WorldCoverSource.WATER;
+            return bareTown(gx) ? WorldCoverSource.BUILT_UP : WorldCoverSource.GRASSLAND;
+        };
+        BareEarth bare = new BareEarth(source, cover, 8, 8);
+        float[] raw = source.tile(12, 3638, 1612), tile = bare.tile(12, 3638, 1612);
+        // Tile pixel (i, j) is zoom 12 pixel (X0 - 128 + i, Y0 - 128 + j).
+        java.util.function.IntBinaryOperator at = (dx, dy) -> (128 + dy) * 256 + 128 + dx;
+        double built = 0, rooftops = 0;
+        int n = 0;
+        for (int dy = 60; dy <= 100; dy++) for (int dx = -110; dx <= -60; dx++) { built += tile[at.applyAsInt(dx, dy)]; rooftops += raw[at.applyAsInt(dx, dy)]; n++; }
+        near(3, built / n, 3, "ground under buildings comes down to the land (" + rooftops / n + " m on the roofs)");
+        double spread = 0;
+        for (int dy = 60; dy <= 100; dy++) for (int dx = -110; dx <= -60; dx++) spread = Math.max(spread, Math.abs(tile[at.applyAsInt(dx, dy)] - built / n));
+        check(spread < 7, "no 25 m building lumps or street grooves left: " + spread);
+        near(43, tile[at.applyAsInt(-20, -70)], 7, "a hill under the town keeps its height");
+        near(0.5, tile[at.applyAsInt(-60, 40)], 0.75, "a river keeps its level");
+        int pitX = (int) (Math.ceil((BARE_X0 - 100) / 23.0) * 23) - BARE_X0, pitY = (int) (Math.ceil((BARE_Y0 - 100) / 29.0) * 29) - BARE_Y0;
+        check(barePit(BARE_X0 + pitX, BARE_Y0 + pitY), "the test finds a shadow pit");
+        near(bareGround(BARE_X0 + pitX, BARE_Y0 + pitY), tile[at.applyAsInt(pitX, pitY)], 3.5, "a shadow pit lies at the ground's level");
+        near(raw[at.applyAsInt(127, 0)], tile[at.applyAsInt(127, 0)], 0, "fields well past the town are untouched");
+        // Every zoom reads the same ground: zoom 15 over the town agrees with zoom 12.
+        float[] fine = bare.tile(15, 3638 * 8 + 3, 1612 * 8 + 3);
+        double fineMean = 0;
+        for (int i = 0; i < fine.length; i++) fineMean += fine[i];
+        fineMean /= fine.length;
+        double coarseMean = 0;
+        for (int dy = -32; dy < 0; dy++) for (int dx = -32; dx < 0; dx++) coarseMean += tile[at.applyAsInt(dx, dy)];
+        coarseMean /= 1024;
+        near(coarseMean, fineMean, 1, "zoom 15 ground matches zoom 12 ground");
+        // A tile with no town near it is the source's own tile.
+        float[] plain = new float[256 * 256];
+        BareEarth plainCountry = new BareEarth((zoom, x, y) -> plain, (latitude, longitude) -> WorldCoverSource.TREE_COVER, 8, 8);
+        check(plainCountry.tile(14, 100, 100) == plain, "tiles away from towns come back unchanged");
+        check(Arrays.equals(source.tile(10, 909, 403), bare.tile(10, 909, 403)), "coarse zooms pass through");
     }
 
     private static void kernel() {
@@ -419,6 +493,213 @@ public final class GlobeTest {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();
         }
+    }
+
+    /** Synthetic Copernicus ground: 100 m plus a gentle swell, with sea (0 m) in a band of latitudes. */
+    private static float copernicusGround(double latitude, double longitude) {
+        double inSquare = latitude - Math.floor(latitude);
+        if (inSquare > 0.4 && inSquare < 0.6) return 0;
+        return (float) (100 + 20 * Math.sin(longitude * 7) + 10 * Math.cos(latitude * 5));
+    }
+
+    /**
+     * A Copernicus-style cloud-optimised GeoTIFF of one degree square at {@code size} pixels: 32-bit
+     * floats, deflated, floating-point predictor, {@code tile}-pixel blocks, three halving overviews.
+     */
+    private static byte[] syntheticCopernicus(int south, int west, int size, int tile) throws Exception {
+        int levels = 4;
+        List<byte[]> blocks = new ArrayList<>();
+        int[] firstBlock = new int[levels], width = new int[levels];
+        for (int level = 0; level < levels; level++) {
+            int w = size >> level;
+            width[level] = w;
+            firstBlock[level] = blocks.size();
+            int across = Math.ceilDiv(w, tile);
+            for (int br = 0; br < across; br++) for (int bc = 0; bc < across; bc++) {
+                byte[] raw = new byte[tile * tile * 4];
+                for (int y = 0; y < tile; y++) {
+                    int at = y * tile * 4;
+                    for (int x = 0; x < tile; x++) {
+                        int row = br * tile + y, column = bc * tile + x;
+                        float v = row < w && column < w ? copernicusGround(south + 1 - (row + 0.5) / w, west + (column + 0.5) / w) : 0;
+                        int bits = Float.floatToIntBits(v);
+                        for (int plane = 0; plane < 4; plane++) raw[at + plane * tile + x] = (byte) (bits >>> (24 - 8 * plane));
+                    }
+                    for (int i = tile * 4 - 1; i > 0; i--) raw[at + i] -= raw[at + i - 1];
+                }
+                var deflater = new java.util.zip.Deflater();
+                deflater.setInput(raw);
+                deflater.finish();
+                var out = new java.io.ByteArrayOutputStream();
+                byte[] buffer = new byte[65536];
+                while (!deflater.finished()) out.write(buffer, 0, deflater.deflate(buffer));
+                deflater.end();
+                blocks.add(out.toByteArray());
+            }
+        }
+        // Header: IFDs of 11 entries each, their offset and count arrays, then the blocks.
+        int entries = 11, ifdBytes = 2 + entries * 12 + 4;
+        int headerEnd = 8;
+        int[] ifdAt = new int[levels], arraysAt = new int[levels];
+        for (int level = 0; level < levels; level++) {
+            int n = Math.ceilDiv(width[level], tile) * Math.ceilDiv(width[level], tile);
+            ifdAt[level] = headerEnd;
+            arraysAt[level] = headerEnd + ifdBytes;
+            headerEnd += ifdBytes + n * 8;
+        }
+        int total = headerEnd;
+        for (byte[] b : blocks) total += b.length;
+        var file = java.nio.ByteBuffer.allocate(total).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        file.put((byte) 'I').put((byte) 'I').putShort((short) 42).putInt(ifdAt[0]);
+        int data = headerEnd;
+        int[] blockAt = new int[blocks.size()];
+        for (int i = 0; i < blocks.size(); i++) { blockAt[i] = data; data += blocks.get(i).length; }
+        for (int level = 0; level < levels; level++) {
+            int n = Math.ceilDiv(width[level], tile) * Math.ceilDiv(width[level], tile);
+            file.position(ifdAt[level]);
+            file.putShort((short) entries);
+            int[][] tags = {{256, 4, 1, width[level]}, {257, 4, 1, width[level]}, {258, 3, 1, 32}, {259, 3, 1, 8}, {277, 3, 1, 1},
+                    {317, 3, 1, 3}, {322, 3, 1, tile}, {323, 3, 1, tile}, {324, 4, n, n == 1 ? blockAt[firstBlock[level]] : arraysAt[level]},
+                    {325, 4, n, n == 1 ? blocks.get(firstBlock[level]).length : arraysAt[level] + 4 * n}, {339, 3, 1, 3}};
+            for (int[] t : tags) {
+                file.putShort((short) t[0]).putShort((short) t[1]).putInt(t[2]);
+                if (t[1] == 3) file.putShort((short) t[3]).putShort((short) 0); else file.putInt(t[3]);
+            }
+            file.putInt(level + 1 < levels ? ifdAt[level + 1] : 0);
+            file.position(arraysAt[level]);
+            for (int i = 0; i < n; i++) file.putInt(blockAt[firstBlock[level] + i]);
+            for (int i = 0; i < n; i++) file.putInt(blocks.get(firstBlock[level] + i).length);
+        }
+        file.position(headerEnd);
+        for (byte[] b : blocks) file.put(b);
+        return file.array();
+    }
+
+    /** Serves synthetic Copernicus files by name under /cop/, answering range requests and counting reads. */
+    private static HttpServer copernicusServer(Map<String, byte[]> files, AtomicInteger reads) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/cop/", exchange -> {
+            reads.incrementAndGet();
+            String path = exchange.getRequestURI().getPath().substring("/cop/".length());
+            byte[] file = files.get(path.substring(path.indexOf('/') + 1));
+            String range = exchange.getRequestHeaders().getFirst("Range");
+            if (file == null || range == null) { exchange.sendResponseHeaders(403, -1); exchange.close(); return; }
+            String[] span = range.substring("bytes=".length()).split("-");
+            int from = Integer.parseInt(span[0]), to = Math.min(file.length - 1, Integer.parseInt(span[1]));
+            byte[] body = Arrays.copyOfRange(file, from, to + 1);
+            exchange.sendResponseHeaders(206, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        return server;
+    }
+
+    private static void copernicus() throws Exception {
+        equal("Copernicus_DSM_COG_10_N66_00_W024_00_DEM", CopernicusSource.name(66, -24), "Copernicus file name");
+        equal("Copernicus_DSM_COG_10_S45_00_E167_00_DEM", CopernicusSource.name(-45, 167), "southern and eastern file name");
+        Map<String, byte[]> files = new HashMap<>();
+        files.put(CopernicusSource.name(10, 20) + ".tif", syntheticCopernicus(10, 20, 512, 128));
+        AtomicInteger reads = new AtomicInteger();
+        HttpServer server = copernicusServer(files, reads);
+        Path cache = Files.createTempDirectory("copernicus-test");
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try {
+            try (var dem = new CopernicusSource(base, cache, true, 4, 2, Duration.ofSeconds(5))) {
+                for (int overview = 0; overview <= 3; overview++) {
+                    double lat = 10.7 + 0.05 * overview, lon = 20.3;
+                    near(copernicusGround(lat, lon), dem.metres(lat, lon, overview), 0.5 * (1 << overview), "bilinear ground at overview " + overview);
+                }
+                // A pixel centre reads its own value exactly.
+                double centreLat = 11 - 100.5 / 512, centreLon = 20 + 300.5 / 512;
+                near(copernicusGround(centreLat, centreLon), dem.metres(centreLat, centreLon, 0), 1e-4, "pixel centre");
+                equal(0.0, dem.metres(10.5, 20.5, 0), "sea is 0 m");
+                check(Double.isNaN(dem.metres(30.5, 20.5, 0)), "no file is NaN");
+                check(!dem.covers(30.5, 20.5) && dem.covers(10.5, 20.5), "files cover their squares only");
+                // At the square's edge the pixel past it lies in a square with no file: open sea.
+                check(dem.metres(11 - 0.25 / 512, 20.3, 0) < copernicusGround(11 - 0.25 / 512, 20.3), "edge eases toward the sea beyond");
+                fail(() -> dem.metres(10.5, 20.5, 4), IllegalArgumentException.class, "overview beyond the file rejected");
+            }
+            try (var offline = new CopernicusSource(base, cache, false, 4, 1, Duration.ofSeconds(5))) {
+                int before = reads.get();
+                near(copernicusGround(10.7, 20.3), offline.metres(10.7, 20.3, 0), 0.5, "disk cache offline");
+                check(Double.isNaN(offline.metres(30.5, 20.5, 0)), "missing file remembered offline");
+                equal(before, reads.get(), "no transfer when cached");
+                fail(() -> offline.metres(-5.5, 20.5, 0), io.earthplatform.geography.MissingTerrainException.class, "uncached square offline fails");
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    /**
+     * The fill against synthetic Copernicus ground: Terrarium tiles that agree stay exactly as they
+     * are; tiles 65 m too high everywhere, and tiles with the sea band filled in at 240 m, take
+     * Copernicus, with its sea as open sea.
+     */
+    private static void copernicusFill() throws Exception {
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 9; s <= 11; s++) for (int w = 19; w <= 21; w++) files.put(CopernicusSource.name(s, w) + ".tif", syntheticCopernicus(s, w, 512, 128));
+        AtomicInteger reads = new AtomicInteger();
+        HttpServer server = copernicusServer(files, reads);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        int zoom = 13;
+        long size = 256L << zoom;
+        // The zoom 13 tile at 10.7 N 20.3 E, and one in the sea band.
+        int tx = (int) ((20.3 + 180) / 360 * (1 << zoom));
+        java.util.function.DoubleUnaryOperator row = lat -> (1 - Math.log(Math.tan(Math.toRadians(lat)) + 1 / Math.cos(Math.toRadians(lat))) / Math.PI) / 2 * (1 << zoom);
+        int landY = (int) row.applyAsDouble(10.7), seaY = (int) row.applyAsDouble(10.5);
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            for (String kind : List.of("agree", "offset", "filled")) {
+                // Terrarium as the check zoom sees it, made from the same ground with this kind of fault.
+                CopernicusFill.Tiles tiles = (z, x, y) -> {
+                    float[] t = new float[256 * 256];
+                    long s = 256L << z;
+                    for (int py = 0; py < 256; py++) {
+                        double lat = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (y * 256L + py + 0.5) / s))));
+                        for (int px = 0; px < 256; px++) t[py * 256 + px] = terrarium(kind, lat, (x * 256L + px + 0.5) * 360.0 / s - 180);
+                    }
+                    return t;
+                };
+                var fill = new CopernicusFill(dem, tiles, 16);
+                for (int ty : new int[]{landY, seaY}) {
+                    float[] before = tiles.tile(zoom, tx, ty), after = before.clone();
+                    fill.apply(after, zoom, tx, ty);
+                    double worst = 0;
+                    int sea = 0;
+                    for (int py = 0; py < 256; py++) {
+                        double lat = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (ty * 256L + py + 0.5) / size))));
+                        for (int px = 0; px < 256; px++) {
+                            double lon = (tx * 256L + px + 0.5) * 360.0 / size - 180;
+                            worst = Math.max(worst, Math.abs(after[py * 256 + px] - copernicusGround(lat, lon)));
+                            if (after[py * 256 + px] == 0f) sea++;
+                        }
+                    }
+                    String where = ty == landY ? "land" : "sea band";
+                    if (kind.equals("agree")) check(Arrays.equals(before, after), "agreeing tiles left exactly as they were (" + where + ")");
+                    else {
+                        check(worst < 1, kind + " tile takes Copernicus (" + where + "), worst " + worst + " m off");
+                        if (ty == seaY) check(sea > 256 * 128, kind + " sea band becomes open sea (" + sea + " pixels)");
+                    }
+                }
+                check(kind.equals("agree") ? fill.weight(10.7, 20.3) == 0 : fill.weight(10.7, 20.3) == 1, kind + " weight");
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    /** Synthetic Terrarium for {@link #copernicusFill}: the ground as it is, 65 m high, or with the sea filled in at 240 m. */
+    private static float terrarium(String kind, double lat, double lon) {
+        float ground = copernicusGround(lat, lon);
+        return switch (kind) {
+            case "offset" -> ground == 0 ? 0 : ground + 65;
+            case "filled" -> ground == 0 ? 240 : ground;
+            default -> ground == 0 ? 0 : ground;
+        };
     }
 
     private static void imagery() throws Exception {

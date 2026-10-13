@@ -26,6 +26,12 @@ public interface CubeGenerator {
     default List<net.minecraft.world.level.levelgen.structure.StructureStart> structureStarts(int chunkX, int chunkZ) { return List.of(); }
     /** One structure's start in a chunk at real heights, or null. */
     default @javax.annotation.Nullable net.minecraft.world.level.levelgen.structure.StructureStart structureStart(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) { return null; }
+    /**
+     * The nearest biome passing a test, searched as vanilla's /locate biome does: columns every {@code step} blocks
+     * spiralling out to {@code radius}, the ground's biome first, then the caves under it. Null where there is none.
+     */
+    default @javax.annotation.Nullable com.mojang.datafixers.util.Pair<net.minecraft.core.BlockPos, net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>> findBiome(
+            java.util.function.Predicate<net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>> biomes, net.minecraft.core.BlockPos from, int radius, int step) { return null; }
     /** What structures reach a block, for checking. */
     default String structuresAt(int x, int y, int z) { return ""; }
     /** Called once the server level the cubes are for exists, before any cube generates there. */
