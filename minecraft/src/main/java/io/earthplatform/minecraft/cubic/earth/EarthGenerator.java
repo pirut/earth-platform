@@ -65,7 +65,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Nullable private final WorldCoverSource cover;
     @Nullable private final ClimateSource climate;
     private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth, warpX, warpZ, patches;
-    private final Holder<Biome> ocean, deepOcean, coldOcean, deepColdOcean, frozenOcean, lukewarmOcean, warmOcean,
+    private final Holder<Biome> ocean, deepOcean, coldOcean, deepColdOcean, frozenOcean, lukewarmOcean, deepLukewarmOcean, warmOcean,
             beach, snowyBeach, stonyShore, snowySlopes, frozenPeaks, stonyPeaks, meadow, taiga, oldTaiga, forest,
             plains, jungle, desert, savanna, river, frozenRiver, swamp, mangroveSwamp, snowyPlains, birchForest,
             badlands, sparseJungle, windsweptSavanna, snowyTaiga, grove, darkForest, flowerForest, cherryGrove, bambooJungle, sunflowerPlains;
@@ -105,7 +105,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         relief = n[0]; crags = n[1]; wetBroad = n[2]; wetLocal = n[3]; warmth = n[4];
         ocean = holder(biomes, Biomes.OCEAN); deepOcean = holder(biomes, Biomes.DEEP_OCEAN); coldOcean = holder(biomes, Biomes.COLD_OCEAN);
         deepColdOcean = holder(biomes, Biomes.DEEP_COLD_OCEAN); frozenOcean = holder(biomes, Biomes.FROZEN_OCEAN);
-        lukewarmOcean = holder(biomes, Biomes.LUKEWARM_OCEAN); warmOcean = holder(biomes, Biomes.WARM_OCEAN);
+        lukewarmOcean = holder(biomes, Biomes.LUKEWARM_OCEAN); deepLukewarmOcean = holder(biomes, Biomes.DEEP_LUKEWARM_OCEAN);
+        warmOcean = holder(biomes, Biomes.WARM_OCEAN);
         beach = holder(biomes, Biomes.BEACH); snowyBeach = holder(biomes, Biomes.SNOWY_BEACH); stonyShore = holder(biomes, Biomes.STONY_SHORE);
         snowySlopes = holder(biomes, Biomes.SNOWY_SLOPES); frozenPeaks = holder(biomes, Biomes.FROZEN_PEAKS); stonyPeaks = holder(biomes, Biomes.STONY_PEAKS);
         meadow = holder(biomes, Biomes.MEADOW); taiga = holder(biomes, Biomes.TAIGA); oldTaiga = holder(biomes, Biomes.OLD_GROWTH_SPRUCE_TAIGA);
@@ -181,7 +182,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             // above it, as where a coarse ocean grid fills a lagoon with its island's slopes; but water mapped on a
             // steep slope of real ground, as a cliff's shadow, is not.
             if (seaWater(x, z) && (steep <= 0.7 || coarse(dem, x + 0.5, z + 0.5, metres, Math.max(24, 3.0 * voxel)))) {
-                out[0] = seabed(x, z, metres, voxel);
+                out[0] = lagoonBed(x, z, metres, voxel);
                 out[1] = SEA;
                 return;
             }
@@ -193,7 +194,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             // Water by the coast is the sea, and so is water at sea level that joins it, as estuaries and lagoons do,
             // which otherwise stood a block above the sea around it wherever the survey read a little over 0 m.
             if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && joinsOpenSea(x, z))) {
-                out[0] = seabed(x, z, metres, voxel);
+                out[0] = lagoonBed(x, z, metres, voxel);
                 out[1] = SEA;
                 return;
             }
@@ -216,9 +217,54 @@ public final class EarthGenerator extends SurfaceGenerator {
             // A speck of land in a lagoon filled with coarse blocks, as a pier or a boat, takes the fill's height, tens
             // of metres up, and stood as a stone pillar out of the sea: it lies just above the water instead.
             if (y > SEA + 1 && speck(dem, x, z, metres, voxel)) y = SEA + 1;
+            // Low ground slopes down to the water beside it rather than standing over it in a wall.
+            if (y > SEA) y = bank(dem, x, z, y, voxel);
         }
         out[0] = y;
         out[1] = DRY;
+    }
+
+    /** Ring radii, in voxels, for how far a low bank is from its water. */
+    private static final int[] BANK_RINGS = {1, 2, 3, 4, 6, 8, 11, 15};
+    /** Rise of a low bank per block across, and the heights over its water up to which ground eases fully, and at all. */
+    private static final double BANK_SLOPE = 0.5;
+    private static final int LOW_BANK = 6, HIGH_BANK = 14;
+
+    /**
+     * A land column's height eased down toward the water just beside it. The elevation tiles blur a
+     * low shore's few metres out to the water's edge, and the water is level, so low coasts, lagoons
+     * and river banks stood over their water in sheer walls of four to eight blocks, as all round
+     * Florida's Lake Worth Lagoon, where real shores are beaches and low banks. Ground up to
+     * {@value #LOW_BANK} blocks over the water nearest it now climbs from the water's edge by one
+     * block in two; higher ground eases less, and from {@value #HIGH_BANK} up, as a cliff, not at
+     * all. Mountain country, where water lies in steep valleys, keeps its shores as they are.
+     */
+    private int bank(GlobalElevation dem, int x, int z, int y, int voxel) {
+        WaterCell cell = waterCell(Math.floorDiv(x, WATER_CELL), Math.floorDiv(z, WATER_CELL));
+        if (cell.relief > MOUNTAINS) return y;
+        // The lowest water a bank here could lead down to: the sea, or this cell's lakes and rivers.
+        int lowest = y <= SEA + HIGH_BANK ? SEA : cell.samples > 0 ? Mth.floor(SEA + 0.5 + cell.level) - BANK : DRY;
+        if (lowest == DRY || y - lowest >= HIGH_BANK) return y;
+        for (int r : BANK_RINGS) {
+            double radius = (double) r * voxel;
+            if (lowest + radius * BANK_SLOPE >= y) return y;
+            // The first water found on the ring sets the level: reading every one's costs more than it changes.
+            int level = DRY;
+            for (int k = 0; k < 8 && level == DRY; k++) {
+                int px = x + (int) Math.round(RING_X[k] * radius), pz = z + (int) Math.round(RING_Z[k] * radius);
+                int code = cover(px, pz, voxel);
+                if (code != WorldCoverSource.NO_DATA && code != WorldCoverSource.WATER) continue;
+                int water = code == WorldCoverSource.NO_DATA || seaWater(px, pz) ? SEA : lakeSurface(dem, px, pz, voxel);
+                if (water > SEA && water <= SEA + 2 && joinsOpenSea(px, pz)) water = SEA;
+                if (water < y) level = water;
+            }
+            if (level == DRY) continue;
+            int rise = y - level;
+            double ease = Mth.clamp((double) (HIGH_BANK - rise) / (HIGH_BANK - LOW_BANK), 0, 1);
+            int cap = level + Mth.floor(radius * BANK_SLOPE);
+            return cap >= y ? y : y - (int) Math.round((y - cap) * ease);
+        }
+        return y;
     }
 
     /** Whether a dry column is a speck of land on {@link #coarse} ground with the sea on most sides. */
@@ -247,6 +293,20 @@ public final class EarthGenerator extends SurfaceGenerator {
         int bed = Math.min(SEA - 1, Mth.floor(SEA + 0.5 + Math.min(metres, Math.min(0, bathymetry.metres(x + 0.5, z + 0.5)))));
         if (bed > SEA - 8 && cover != null) bed = Math.min(bed, SEA - lakeDepth(x, z, voxel));
         return bed;
+    }
+
+    /** How deep sea water mapped at or above sea level may lie, as a lagoon or an estuary behind the coast. */
+    private static final int LAGOON_DEPTH = 8;
+
+    /**
+     * Bed of sea water the detail tiles map at or above sea level, as a lagoon or estuary behind the
+     * coast. The coarse bathymetry there reads the sea outside, or bad pixels, and put Lake Worth
+     * Lagoon a dozen blocks deep where it is two or three metres; the bed shelves from the shore as
+     * a lake's does, never deeper than {@value #LAGOON_DEPTH} blocks or the bathymetry.
+     */
+    private int lagoonBed(int x, int z, double metres, int voxel) {
+        int bed = seabed(x, z, metres, voxel);
+        return metres < 0 ? bed : Math.max(bed, SEA - Math.min(LAGOON_DEPTH, lakeDepth(x, z, voxel)));
     }
 
     // Land cover ----------------------------------------------------------------------------------
@@ -769,8 +829,10 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (water != DRY && water != SEA && cover != null) return lake(x, z, y, water, t);
         if (water != DRY) {
             int depth = water - y;
+            // Warm seas are turquoise only over reefs and shallows; deeper water is dark blue, as from above.
             Holder<Biome> b = t < -2 ? frozenOcean : t < 6 ? (depth > 40 ? deepColdOcean : coldOcean)
-                    : t > 21 ? warmOcean : t > 15 ? lukewarmOcean : depth > 40 ? deepOcean : ocean;
+                    : t > 15 ? (depth > (t > 21 ? 15 : 40) ? deepLukewarmOcean : t > 21 ? warmOcean : lukewarmOcean)
+                    : depth > 40 ? deepOcean : ocean;
             BlockState floor = depth < 30 ? SAND : GRAVEL;
             return new Surface(b, floor, floor, 0, 0, 0, 0, 0, false);
         }

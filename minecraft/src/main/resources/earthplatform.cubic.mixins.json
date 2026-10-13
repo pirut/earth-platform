@@ -40,7 +40,8 @@
     "CubicShaderFarMixin",
     "CubicIrisSourceNamesMixin",
     "CubicIrisProgramSetMixin",
-    "CubicRainRenderMixin"
+    "CubicRainRenderMixin",
+    "CubicWaterTintMixin"
   ],
   "injectors": {
     "defaultRequire": 1
