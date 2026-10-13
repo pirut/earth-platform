@@ -987,7 +987,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         double steep = slope / 2.4;
         long r = mix(x, 7, z);
         int roll = (int) Math.floorMod(r, 100);
-        if (y <= SEA + 2 && nearSea(x, z)) {
+        // Marsh and mangrove coasts, as on a delta, run down to the water as marsh, not a strip of beach sand.
+        if (y <= SEA + 2 && nearSea(x, z) && !(local != null && marshy(cover(x, z, voxel)))) {
             if (steep > 1) return new Surface(stonyShore, STONE, STONE, 0, 0, 0, 0, 0, false);
             return new Surface(t < 0 ? snowyBeach : beach, SAND, SAND, 0, 0, 0, 0, 0, false);
         }
@@ -1204,11 +1205,13 @@ public final class EarthGenerator extends SurfaceGenerator {
                 // Sloughs and ponds: standing water among the sawgrass, the more of it the wetter the climate, so that the
                 // Everglades are a river of grass and water, the Pantanal less so, and the Okavango's dry edges little.
                 double wet = patches.getValue(x / 90.0 + 41.7, z / 90.0 - 8.3) + patches.getValue(x / 23.0 - 5.1, z / 23.0 + 17.9) * 0.3;
-                if (steep < 0.25 && wet > Mth.clamp(0.3 - (local.rain() - 800) / 2400, 0.05, 0.4))
+                // About a fifth of the Everglades is open slough.
+                if (steep < 0.25 && wet > Mth.clamp(0.75 - (local.rain() - 800) / 2400, 0.5, 0.75))
                     return new Surface(swamp, POOL, MUD, 0, 0, 0, 0, 0, false);
                 // Open marsh with tree islands where the map has trees.
                 if (code == WorldCoverSource.TREE_COVER) return new Surface(swamp, patch > 0.45 ? MUD : GRASS, DIRT, 12, 0, 0, 400, 420, false);
-                if (code != WorldCoverSource.WETLAND) return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope);
+                // Sawgrass prairie: grey-brown sedge over marl and peat that lies bare much of the dry season, and no trees.
+                return new Surface(swamp, patch > 0.1 ? MUD : GRASS, DIRT, 0, 0, 0, 520, 540, false);
             }
             boolean temperate = biome == Ecoregions.TEMPERATE_BROADLEAF || biome == Ecoregions.TEMPERATE_GRASSLAND;
             if (code == WorldCoverSource.TREE_COVER && temperate && t >= 16 && local.rain() > 1100) {
@@ -1220,6 +1223,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (biome == Ecoregions.TEMPERATE_GRASSLAND) return new Surface(plains, GRASS, DIRT, 30, 10, 0, 300, 320, false);
             }
         }
+        // Boreal peatland, as the Hudson Bay Lowlands and the West Siberian mires: dark moss, peat and pools, a few small spruces.
+        if (!cliff && rocky == null && peatland(code, x, z, local)) return peat(code, x, z, patch);
         switch (code) {
             case WorldCoverSource.TREE_COVER -> {
                 // Forest climbs steep slopes, rooted in duff and stony soil; only the steepest faces are bare.
@@ -1254,7 +1259,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                             : sagebrush(rocky != null ? rocky : patch > 0.3 || roll < 55 ? scrubGround(x, z) : GRASS, trees);
                     // Chaparral and maquis: dry where summers are hot.
                     // Maquis and garrigue: oaks and pines among the scrub, never acacias.
-                    case MEDITERRANEAN -> new Surface(plains, top, DIRT, 9 * trees, t < 10 ? 5 : 0, 0, 330, 350, false);
+                    case MEDITERRANEAN -> parched(local) ? garrigue(x, z, local, patch, rocky, trees)
+                            : new Surface(plains, top, DIRT, 9 * trees, t < 10 ? 5 : 0, 0, 330, 350, false);
                     case SUBPOLAR_OCEANIC -> new Surface(t < -3 ? snowyPlains : plains, top, DIRT, 6 * trees, 4, 5, 250, 260, false);
                     // Boreal scrub and bog: dark taiga ground, moss and podzol, stunted spruce.
                     case SUBARCTIC -> t < -3 ? new Surface(snowyPlains, top, DIRT, 0, 0, 0, 250, 260, false) : boreal(top, patch, trees);
@@ -1272,7 +1278,9 @@ public final class EarthGenerator extends SurfaceGenerator {
                 double fallow = patches.getValue(x / 260.0 + 31.7, z / 260.0 - 12.3) + patches.getValue(x / 17.0 - 5.1, z / 17.0 + 77.9) * 0.2;
                 // On dry-farmed plains, such as Kansas, much of the land is stubble and bare soil; in wetter farmland little,
                 // and in monsoon rice country, such as the Mekong delta, none: the paddies are green or flooded.
-                double bare = local.rain() < 900 || zone == ClimateZone.MEDITERRANEAN ? -0.25 : local.rain() > 1500 && t > 18 ? 9 : 0.62;
+                // The drier the plains the more of it: about four fields in five in Kansas' wheat country.
+                double bare = local.rain() < 900 || zone == ClimateZone.MEDITERRANEAN ? -0.25 - Mth.clamp((900 - local.rain()) * 0.0015, 0, 0.6)
+                        : local.rain() > 1500 && t > 18 ? 9 : 0.62;
                 BlockState top = rocky != null ? rocky : fallow > bare ? COARSE_DIRT : GRASS;
                 if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
                 // Monsoon rice country is green, not savanna olive with acacias.
@@ -1345,9 +1353,12 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
             case WorldCoverSource.WETLAND -> {
                 if (t < 0) return new Surface(snowyPlains, patch > 0.25 ? MOSS : GRASS, DIRT, 2, 10, 0, 300, 310, true);
-                // Warm marshes, such as the Pantanal and the Mississippi delta, are open grass and reeds with a few trees.
-                if (t >= 18) return new Surface(swamp, patch > 0.45 ? MUD : GRASS, DIRT, 2, 0, 0, 450, 470, false);
-                return new Surface(swamp, patch > 0.25 ? MUD : GRASS, DIRT, 10, 0, 0, 300, 320, true);
+                // Marshes, such as the Pantanal, the Mississippi's and the Danube's deltas, are open reed beds and sedge with a few
+                // pools and bare mud: trees stand only where the map has them, and tidal marsh by the sea has none at all.
+                double pool = patches.getValue(x / 40.0 - 17.3, z / 40.0 + 5.9) + patches.getValue(x / 11.0 + 2.2, z / 11.0 - 9.4) * 0.25;
+                if (steep < 0.25 && pool > 0.62) return new Surface(swamp, POOL, MUD, 0, 0, 0, 0, 0, false);
+                int trees = y <= SEA + 3 ? 0 : t >= 18 ? 1 : 3;
+                return new Surface(swamp, patch > 0.4 ? MUD : GRASS, DIRT, trees, 0, 0, 520, 540, t < 18);
             }
             case WorldCoverSource.MANGROVES -> {
                 // Mangroves grow only on tidal coasts; inland swamps mapped as mangrove, as in the Okavango, are freshwater marsh.
@@ -1403,12 +1414,19 @@ public final class EarthGenerator extends SurfaceGenerator {
         return switch (local.zone()) {
             // Savanna and steppe grass, dry for much of the year.
             // Where the dry season is long, as on the Serengeti, the grass is grazed and burnt down to bare earth in patches.
-            case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> new Surface(savanna, top == GRASS && local.rain() < 1100 && patch > 0.15 ? COARSE_DIRT : top,
-                    DIRT, 2, 0, 0, 380, 390, false, Tree.ACACIA);
+            // The drier, the more bare earth and the fewer trees: the Serengeti's short-grass plains, under 900 mm, are open
+            // tan grass and dust with no trees, as acacias stand only in the wooded country the map shows as trees or shrubs.
+            case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> {
+                double dust = 0.15 - Mth.clamp((1100 - local.rain()) / 1200, 0, 0.5);
+                yield new Surface(savanna, top == GRASS && local.rain() < 1100 && patch > dust ? scrubGround(x, z) : top,
+                        DIRT, local.rain() < 900 ? 0 : 2, 0, 0, 380, 390, false, Tree.ACACIA);
+            }
             // Junipers on the cold steppes.
             case COLD_DESERT, COLD_STEPPE -> new Surface(savanna, top, DIRT, 2, 10, 0, 380, 390, false);
             // Mediterranean meadows are parched brown by summer: as much bare earth as grass.
-            case MEDITERRANEAN -> new Surface(plains, top == GRASS && patch > -0.1 ? COARSE_DIRT : top, DIRT, 1, 0, 0, 300, 320, false);
+            // Where summers are long and hot, as in Tuscany and Provence, the grass is straw and olive, never lawn green.
+            case MEDITERRANEAN -> new Surface(parched(local) ? savanna : plains, top == GRASS && patch > -0.1 ? COARSE_DIRT : top, DIRT,
+                    parched(local) ? 0 : 1, 0, 0, 300, 320, false);
             // Rainforest clearings and floodplain meadows: jungle ground among scattered trees, not open prairie.
             case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 5, 0, 0, 380, 400, true, Tree.JUNGLE);
             // Alpine and arctic meadows.
@@ -1426,6 +1444,81 @@ public final class EarthGenerator extends SurfaceGenerator {
     private Surface boreal(BlockState top, double patch, int trees) {
         BlockState ground = top != GRASS ? top : patch > 0.35 ? MOSS : patch < -0.4 ? PODZOL : GRASS;
         return new Surface(taiga, ground, DIRT, 8 * trees, 10, 1, 300, 320, true);
+    }
+
+    /** Whether a land cover class is marsh or mangrove, which meets the sea without a beach. */
+    private static boolean marshy(int code) { return code == WorldCoverSource.WETLAND || code == WorldCoverSource.MANGROVES; }
+
+    /**
+     * Whether a Mediterranean climate's summers are long, hot and dry, as on the coasts of Provence, Tuscany, Greece,
+     * Andalusia and California, where open ground is garrigue and straw-coloured grass rather than green meadow.
+     */
+    private static boolean parched(Local local) {
+        return local.zone() == ClimateZone.MEDITERRANEAN && local.warmest() >= 19 && local.temperature() >= 10 && local.rain() < 1100;
+    }
+
+    /**
+     * Garrigue and dry maquis: pale limestone, scree and dust with low scrub between, more of it bare the drier the place, and
+     * a few low oaks and azaleas. The bare share comes in patches tens of metres across, broken up grain by grain at their edges.
+     */
+    private Surface garrigue(int x, int z, Local local, double patch, @Nullable BlockState rocky, int trees) {
+        double bare = Mth.clamp((1100 - local.rain()) / 600, 0.35, 0.8);
+        // Each kind of rock and dust lies in clumps a few blocks across, so the ground is mottled rather than salt and pepper.
+        double kind = patches.getValue(x / 6.0 + 13.1, z / 6.0 - 7.7) + ((mix(x, 0x524F434BL, z) & 1023) / 511.5 - 1) * 0.25;
+        BlockState top = rocky != null ? rocky : patch < (0.5 - bare) * 0.9 ? GRASS
+                : kind < -0.45 ? DIORITE : kind < -0.15 ? GRAVEL : kind < 0.2 ? TUFF : kind < 0.45 ? COARSE_DIRT : ANDESITE;
+        return new Surface(savanna, top, top == GRASS || top == COARSE_DIRT ? DIRT : STONE, top == GRASS ? 5 * trees : 0, 0, 0, 260, 270, false,
+                patch < 0 ? Tree.AZALEA : Tree.OAK);
+    }
+
+    /** Peatland cells, in blocks, and whether each lies on broad, level ground. */
+    private static final int PEAT_CELL = 256;
+    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> levelCells = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Whether open boreal ground is peatland: the subarctic's broad, level plains, where water cannot drain away and moss
+     * and peat build up for thousands of years, as in the Hudson Bay Lowlands, the West Siberian Plain and Finland's
+     * aapa mires. Hills and valleys between them drain, and keep the taiga's usual open ground.
+     */
+    private boolean peatland(int code, int x, int z, Local local) {
+        if (local.zone() != ClimateZone.SUBARCTIC || code != WorldCoverSource.WETLAND && code != WorldCoverSource.MOSS_AND_LICHEN
+                && code != WorldCoverSource.SHRUBLAND && code != WorldCoverSource.GRASSLAND) return false;
+        // Cells blended into their neighbours along a wandering line, so a mire's edge is never a grid of squares.
+        double fx = x / (double) PEAT_CELL - 0.5 + warpX.getValue(x / 151.0, z / 151.0) * 0.45;
+        double fz = z / (double) PEAT_CELL - 0.5 + warpZ.getValue(x / 151.0, z / 151.0) * 0.45;
+        int ix = Mth.floor(fx), iz = Mth.floor(fz);
+        double tx = fx - ix, tz = fz - iz, share = 0;
+        for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++)
+            if (levelCell(ix + i, iz + j)) share += (i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - tz : tz);
+        return share > 0.5;
+    }
+
+    /** Whether the ground two kilometres round a cell's middle lies within a few metres of it on every side. */
+    private boolean levelCell(int cx, int cz) {
+        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        Boolean known = levelCells.get(key);
+        if (known != null) return known;
+        GlobalElevation dem = elevation[FAR_ZOOM];
+        double px = (cx + 0.5) * PEAT_CELL, pz = (cz + 0.5) * PEAT_CELL, here = dem.metres(px, pz);
+        boolean level = true;
+        for (int k = 0; k < 8 && level; k++) level = Math.abs(dem.metres(px + RING_X[k] * 2000, pz + RING_Z[k] * 2000) - here) <= 10;
+        if (levelCells.size() > 1 << 18) levelCells.clear();
+        levelCells.putIfAbsent(key, level);
+        return level;
+    }
+
+    /**
+     * Peat bog and fen: dark sphagnum and wet peat among sedge, with pools a few metres across, and a few small
+     * black spruces on the drier hummocks. The map's wetland has the most pools and the fewest trees.
+     */
+    private Surface peat(int code, int x, int z, double patch) {
+        boolean wet = code == WorldCoverSource.WETLAND;
+        double pool = patches.getValue(x / 37.0 + 61.3, z / 37.0 - 27.1) + patches.getValue(x / 13.0 - 4.4, z / 13.0 + 3.7) * 0.3;
+        if (pool > (wet ? 0.5 : 0.7)) return new Surface(swamp, POOL, MUD, 0, 0, 0, 0, 0, false);
+        // Seen from above a mire is nearly black: wet peat and dark sedge, with only flecks of bright sphagnum and rusty podzol.
+        int grain = (int) Math.floorMod(mix(x, 0x50454154L, z), 100);
+        BlockState top = patch > -0.05 ? MUD : patch < -0.55 ? MOSS : grain < 4 ? PODZOL : GRASS;
+        return new Surface(swamp, top, DIRT, top == GRASS ? (wet ? 3 : 7) : 0, 10, 0, 300, 310, true);
     }
 
     /** Heather moor: dark, brown ground of peat and podzol among the grass, with ferns, few flowers and fewer trees. */
@@ -1733,10 +1826,15 @@ public final class EarthGenerator extends SurfaceGenerator {
                     : new Surface(savanna, GRASS, DIRT, 30, 4, 0, 260, 270, false);
             // Conifers on cooler, wetter Mediterranean mountains (the Sierra, the Cascades), oak below.
             case MEDITERRANEAN -> t < 12 ? new Surface(local.rain() > 900 ? oldTaiga : taiga, local.rain() > 900 && patch > 0.3 ? PODZOL : GRASS, DIRT, 80, 8, 0, 110, 120, true)
+                    // Where summers are parched, holm oak and pine woods are open, with dry dust and leaf litter between.
+                    : parched(local) ? new Surface(forest, patch > 0.3 ? COARSE_DIRT : GRASS, DIRT, 55, 1, 0, 140, 170, false)
                     : new Surface(forest, GRASS, DIRT, 70, 1, 0, 140, 170, false);
             case SUBTROPICAL -> patch < -0.62 && bamboo(x, z) ? bambooForest(patch)
                     // Jungle only where the ecoregion is tropical forest, as in south China; Florida's warm woods are oak and pine.
-                    : t > 20 && tropicalForest(x, z) ? new Surface(sparseJungle, GRASS, DIRT, 80, 0, 0, 140, 160, true, Tree.JUNGLE)
+                    // Humid subtropical forest, where winters are cool, is evergreen broadleaf and laurel rather than jungle: dense,
+                    // dark groves among broadleaf woods, as on south China's hills.
+                    : t > 20 && tropicalForest(x, z) ? patch < 0 ? new Surface(darkForest, GRASS, DIRT, 90, 0, 0, 80, 100, false, Tree.DARK_OAK)
+                            : new Surface(forest, GRASS, DIRT, 88, 0, 0, 100, 130, true)
                     : t > 20 ? new Surface(forest, GRASS, DIRT, 70, 4, 0, 180, 200, false)
                     : groves(patch, x, z, new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false));
             case OCEANIC -> groves(patch, x, z, new Surface(forest, GRASS, DIRT, 82, t < 8 ? 3 : 0, 2, 90, 130, true));
