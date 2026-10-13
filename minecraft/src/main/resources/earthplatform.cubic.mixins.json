@@ -21,7 +21,8 @@
     "CubicWalkNodesMixin",
     "CubicRandomPosMixin",
     "CubicGoalLimitsMixin",
-    "CubicSpreadPlayersMixin"
+    "CubicSpreadPlayersMixin",
+    "CubicFloatingKickMixin"
   ],
   "client": [
     "CubicPredictionMixin",

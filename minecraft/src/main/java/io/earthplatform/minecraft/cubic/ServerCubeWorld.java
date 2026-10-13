@@ -242,6 +242,15 @@ public final class ServerCubeWorld extends CubeWorld {
         randomTicks(v);
     }
 
+    /**
+     * Whether the cube holding this block has been sent to the player. Clients hold still until the
+     * cubes they stand in and on arrive, so a player waiting on one is not flying.
+     */
+    public boolean sentTo(ServerPlayer player, int x, int y, int z) {
+        Watcher watcher = watchers.get(player.getUUID());
+        return watcher != null && watcher.player == player && watcher.sent.contains(CubeKey.pack(x >> 4, y >> 4, z >> 4));
+    }
+
     private void syncWatchers() {
         Set<UUID> present = new HashSet<>();
         for (ServerPlayer player : server.players()) {
