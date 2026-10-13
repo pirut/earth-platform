@@ -43,3 +43,7 @@ Not an official Minecraft product. Not approved by or associated with Mojang or 
 ## For developers
 
 The source tree also holds the engine's development history and handoff notes. Start with [the source handoff](docs/handoff/SOURCE-HANDOFF.md), [ROADMAP.md](ROADMAP.md) and the [build and test guide](docs/handoff/BUILD_AND_TEST.md).
+
+## Licence
+
+Earth Platform is free software under the [GNU Lesser General Public License v3.0](LICENSE) (LGPL-3.0-only; it builds on the [GNU GPL v3.0](COPYING)). Modpacks may include it, and forks and ports are welcome as long as changes to its code stay open under the same licence. The Earth data keeps its own terms, listed in [CREDITS.md](CREDITS.md).

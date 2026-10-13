@@ -78,6 +78,11 @@ That was a bug in early test builds and is fixed. Update to the latest version.
 **How do I run a server?**
 Set `level-type=earthplatform\:earth` in `server.properties` before the world is created. See [Dedicated servers](INSTALL.md#dedicated-servers). The server needs internet access; players need the mod but not the data.
 
+## Licence
+
+**Can I put it in a modpack, or change the code?**
+Yes. Earth Platform is free software under the GNU LGPL 3.0: include it in any modpack, and fork or port it as long as your changes to its code stay open under the same licence. The Earth data it downloads has its own terms and credits, listed in [CREDITS.md](../CREDITS.md).
+
 ## Reporting a problem
 
 Include your `logs/latest.log`, the place (`/earth where`), your mods list, and whether shaders were on.

@@ -8,8 +8,8 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | --- | --- | --- |
 | EOX Sentinel-2 cloudless (ground colours, PR #4) | Mitigated | Imagery is off by default (JR, 2026-10-13); players opt in. Emailing EOX is an optional follow-up |
 | Photon on Macs | Resolved | No modified pack is distributed (JR: stock Photon only). The mod adapts Photon on the player's machine, which the licence allows; since PR #3 5d8f139 the jar carries no Photon text |
-| Public name ("Minecraft Earth") | **Blocker** | Release as Earth Platform (or another name without "Minecraft"); fix one game string in PR #8 |
-| Mod licence (All Rights Reserved) | Decision | JR to choose: keep ARR or open the source |
+| Public name ("Minecraft Earth") | Resolved | JR chose Earth Platform (2026-10-13); PR #8's offline hint now says Earth Platform (179686a) |
+| Mod licence | Decided | JR chose LGPL-3.0-only (2026-10-13); LICENSE, COPYING and the jar notice are in place |
 | AWS Terrain Tiles | OK | Credited in game and in CREDITS.md |
 | ESA WorldCover | OK | Credited, changes noted (CC BY 4.0) |
 | CHELSA climate | OK (licence) / courtesy | CC0; ask CHELSA about public traffic or mirror the four bands |
@@ -73,15 +73,15 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 
 ## Name and trademarks
 
-- "Minecraft Earth" was Mojang's own augmented-reality game (2019-2021), and Mojang's usage guidelines don't allow "Minecraft" in a mod's name. The mod's metadata name is **Earth Platform**, which is fine. Use that or another name without "Minecraft" on Modrinth, CurseForge and GitHub.
-- PR #8's string `earthplatform.arrival.unreachable.hint` says "Minecraft Earth needs it the first time you visit a place"; change it to "Earth Platform needs it" or "The Earth needs it". Owned by PR #8.
+- "Minecraft Earth" was Mojang's own augmented-reality game (2019-2021), and Mojang's usage guidelines don't allow "Minecraft" in a mod's name. The public name is **Earth Platform** (JR, 2026-10-13), used on Modrinth, CurseForge and GitHub.
+- PR #8's offline hint (`earthplatform.arrival.unreachable.hint`) said "Minecraft Earth"; fixed in 179686a.
 - Check the chosen name against existing mods: Terra (PolyhedralDev) and Terra++ (Build the Earth) already exist.
 - Every page carries "Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft."
 - Screenshots of the game are fine to publish. Don't use the Minecraft logo or the end-poem screenshot on store pages.
 
 ## Mod licence
 
-`mod_license=All Rights Reserved`. Modrinth and CurseForge accept it, and the data credits don't depend on it. For a mod meant for everyone, an open licence (MIT, or LGPL-3.0 like Iris) invites contributions and modpack use; ARR keeps full control. Modpacks need permission under ARR unless the page grants it. JR's call.
+JR chose **LGPL-3.0-only** (2026-10-13). `mod_license=LGPL-3.0-only`; `LICENSE` is the LGPL-3.0 text and `COPYING` the GPL-3.0 text, and the jar carries both in `META-INF/earthplatform-LICENSE.txt` (LGPL section 4). It is compatible with everything the mod uses: no third-party code is bundled, Iris is LGPL-3.0 itself, and the data licences (CC BY 4.0, CC0, the Copernicus licence) are separate from the code licence and keep their own credits. Earlier engine notices that said All Rights Reserved (PLAYER-NOTICES.md) were updated.
 
 ## Originality check
 

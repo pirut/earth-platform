@@ -1,15 +1,15 @@
 # Modrinth and CurseForge page draft
 
-Not published. Fill the gaps marked TODO once the licence blockers in [LICENSING-AUDIT.md](LICENSING-AUDIT.md) are settled.
+Not published. The licence blockers in [LICENSING-AUDIT.md](LICENSING-AUDIT.md) are settled; fill the remaining TODOs (links) when the repository goes public.
 
 ## Basics
 
-- **Name:** Earth Platform (TODO: final name; no "Minecraft" in it)
+- **Name:** Earth Platform (JR, 2026-10-13)
 - **Slug:** `earth-platform`
 - **Summary (Modrinth, under 256 characters):** The real Earth in Minecraft at true scale. Every mountain at its real height, real climate and biomes, terrain to the horizon, and ordinary survival anywhere on the planet.
 - **Type:** Mod. **Loader:** NeoForge. **Game version:** 1.21.1. **Environment:** client and server (required on both).
 - **Categories:** Worldgen, Adventure, Technology. CurseForge: World Gen, Biomes, Adventure and RPG.
-- **Licence:** TODO (currently All Rights Reserved).
+- **Licence:** LGPL-3.0-only (Modrinth: "GNU Lesser General Public License v3.0 only"; CurseForge: "GNU Lesser General Public License version 3 (LGPLv3)").
 - **Links:** Source, Issues, Wiki → TODO once the repository is public. Discord: none yet.
 - **Icon:** [docs/images/icon.png](../images/icon.png)
 - **Dependencies:** none required. Optional: Sodium 0.8.12-beta.1, Iris 1.8.14-beta.1 (exact versions). Not needed: Distant Horizons (it pauses itself in Earth worlds).
@@ -91,6 +91,8 @@ Elevation from AWS Terrain Tiles (USGS 3DEP, SRTM and GMTED2010, NOAA ETOPO1, Co
 **Distant terrain** is built on ideas from Voxy (by Cortex) and Distant Horizons (by James Seibel and contributors). We'd have used them directly, but neither works with a cubic-chunks world, so Earth Platform draws its own far terrain, following their lead, with no code from either. Thank you to both.
 
 The world is built from these data but changed to make Minecraft terrain, with procedural detail. Not for navigation.
+
+Earth Platform is free software under the GNU LGPL 3.0; the Earth data keeps its own terms.
 
 *Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.*
 
