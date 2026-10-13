@@ -472,6 +472,11 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         int y0 = cy << 4, x0 = cx << 4, z0 = cz << 4;
         boolean underground = y0 + 15 < col.min - 6;
         Underground.Kind caves = underground ? below.kind(cx, cy, cz) : null;
+        VanillaStructures structures = vanilla;
+        if (caves != null && structures != null) {
+            Holder<Biome> sole = structures.soleBiome(cx, cy, cz);
+            for (Underground.Kind kind : Underground.Kind.values()) if (sole != null && sole.equals(below.biome(kind))) caves = kind;
+        }
         Holder<Biome> caveBiome = caves == null ? null : below.biome(caves);
         LevelChunkSection section = new LevelChunkSection(
                 new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, AIR, PalettedContainer.Strategy.SECTION_STATES),
