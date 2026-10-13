@@ -112,12 +112,12 @@ public final class GroundPalette {
         return Math.sqrt(dl * dl + da * da + db * db);
     }
 
-    static double srgb(double linear) {
+    public static double srgb(double linear) {
         return linear <= 0.0031308 ? 12.92 * linear : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
     }
 
     /** CIELAB (D65) of a linear RGB colour. */
-    static double[] lab(double r, double g, double b) { return Lab.of(r, g, b); }
+    public static double[] lab(double r, double g, double b) { return Lab.of(r, g, b); }
 
     /** Kept apart so the block colours can be made before this class's candidate sets, which hold them. */
     private static final class Lab {

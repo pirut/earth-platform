@@ -363,7 +363,13 @@ public final class EarthGenerator extends SurfaceGenerator {
         return surface(x, z, ground, water, slope, 1 << level);
     }
 
-    private Surface surface(int x, int z, int y, int water, int slope, int voxel) {
+    private Surface surface(int x, int z, int y, int water, int slope, int voxel) { return surface(x, z, y, water, slope, voxel, imageryGround); }
+
+    /** Imagery ground rules for this world's grid and seed, reading from any imagery source; for {@link ImageryCalibration}. */
+    ImageryGround imageryGround(ImagerySource source) { return new ImageryGround(source, grid, seed); }
+
+    /** A column's surface with the given imagery, or none, having the last word; for {@link ImageryCalibration}. */
+    Surface surface(int x, int z, int y, int water, int slope, int voxel, @Nullable ImageryGround imageryGround) {
         Local local = cover == null ? null : local(x, z, y);
         double t = local == null ? temperature(x, z, y) : local.temperature();
         if (water != DRY && water != SEA && cover != null) return lake(x, z, y, water, t);
