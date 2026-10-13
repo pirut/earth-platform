@@ -148,7 +148,30 @@ public final class CubicClient {
         }
     }
 
-    /** Pushes terrain fog out to the far terrain's reach; effect and fluid fog stay as they are. */
+    /** Metres of sea that stay the water's own colour, how fast the light fades below, and the darkest it gets. */
+    private static final double LIT_DEPTH = 100, FADE_DEPTH = 700, DARKEST = 0.15;
+
+    /**
+     * Deep under the sea the water's colour fades toward a dark navy, as sunlight does. Vanilla
+     * only darkens fog near the bottom of the world, and its underwater vision then brightens the
+     * fog back to full strength, so the trench floors were a bright sky blue 10 km down.
+     */
+    @SubscribeEvent public static void fogColour(ViewportEvent.ComputeFogColor event) {
+        if (ClientCubeWorld.current() == null || event.getCamera().getFluidInCamera() != FogType.WATER) return;
+        ClientLevel level = Minecraft.getInstance().level;
+        if (level == null) return;
+        double depth = level.getSeaLevel() - event.getCamera().getPosition().y;
+        if (depth <= LIT_DEPTH) return;
+        float light = (float) Math.max(DARKEST, Math.exp(-(depth - LIT_DEPTH) / FADE_DEPTH));
+        event.setRed(event.getRed() * light);
+        event.setGreen(event.getGreen() * light);
+        event.setBlue(event.getBlue() * light);
+    }
+
+    /**
+     * Pushes terrain fog out to the far terrain's reach, measured in ground metres; effect and
+     * fluid fog stay as they are.
+     */
     @SubscribeEvent public static void fog(ViewportEvent.RenderFog event) {
         if (ClientCubeWorld.current() == null || event.getMode() != FogRenderer.FogMode.FOG_TERRAIN || event.getType() != FogType.NONE) return;
         if (event.getFarPlaneDistance() < Minecraft.getInstance().gameRenderer.getRenderDistance() - 1.0F) return;
@@ -157,9 +180,10 @@ public final class CubicClient {
         var camera = event.getCamera().getPosition();
         ClientCubeWorld world = ClientCubeWorld.current();
         float height = (float) camera.y - world.skyTop(net.minecraft.util.Mth.floor(camera.x), net.minecraft.util.Mth.floor(camera.z));
-        float start = Math.min(Math.max(FarRenderer.FOG_START, height * 1.25F), 0.8F * FarRenderer.FOG_END);
+        float scale = world.far().hazeScale(camera.z), end = FarRenderer.FOG_END * scale;
+        float start = Math.min(Math.max(FarRenderer.FOG_START * scale, height * 1.25F), 0.8F * end);
         event.setNearPlaneDistance(start);
-        event.setFarPlaneDistance(FarRenderer.FOG_END);
+        event.setFarPlaneDistance(end);
         event.setCanceled(true);
     }
 
