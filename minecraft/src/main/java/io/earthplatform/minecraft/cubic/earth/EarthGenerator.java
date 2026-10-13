@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.earth;
 
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.globe.ClimateSource;
+import io.earthplatform.geography.globe.BareEarth;
 import io.earthplatform.geography.globe.GlobalElevation;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MercatorGrid;
@@ -68,6 +69,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final EarthSettings settings;
     private final MercatorGrid grid;
     private final TerrariumTileSource tiles;
+    /** The tiles every height is read from: with {@link BareEarth}, the ground under towns in place of their roofs. */
+    private final GlobalElevation.Tiles ground;
     private final GlobalElevation[] elevation = new GlobalElevation[TerrariumTileSource.MAX_ZOOM + 1];
     /** The coarse bathymetry the detail tiles' open sea is filled from. */
     private final GlobalElevation bathymetry;
@@ -107,16 +110,24 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** @param rivers narrow rivers, used with land cover to carve the channels it misses, or null for a world made before them */
     public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
                           @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery, @Nullable RiverMap rivers) {
-        this(seed, biomes, settings, tiles, cover, climate, imagery, rivers, Noises.of(seed));
+        this(seed, biomes, settings, tiles, cover, climate, imagery, rivers, false);
+    }
+
+    /** @param bareEarth whether towns' ground is brought down to the land under their roofs ({@link BareEarth}); needs land cover */
+    public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
+                          @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery, @Nullable RiverMap rivers,
+                          boolean bareEarth) {
+        this(seed, biomes, settings, tiles, cover, climate, imagery, rivers, bareEarth, Noises.of(seed));
     }
 
     private EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
                            @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery,
-                           @Nullable RiverMap rivers, Noises noises) {
+                           @Nullable RiverMap rivers, boolean bareEarth, Noises noises) {
         super(seed, biomes, noises.random);
         this.settings = settings;
         this.grid = new MercatorGrid(settings.metresPerBlock());
         this.tiles = tiles;
+        this.ground = bareEarth && cover != null ? new BareEarth(tiles, cover) : tiles::tile;
         this.cover = cover;
         this.climate = climate;
         this.imagery = cover == null ? null : imagery;
@@ -125,8 +136,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Drawn from their own random, after the shared one, so caves stay as they were.
         RandomSource own = new LegacyRandomSource(seed ^ 0x434F564552L);
         warpX = new SimplexNoise(own); warpZ = new SimplexNoise(own); patches = new SimplexNoise(own);
-        for (int zoom = FAR_ZOOM; zoom <= TerrariumTileSource.MAX_ZOOM; zoom++) elevation[zoom] = new GlobalElevation(grid, tiles, zoom);
-        bathymetry = new GlobalElevation(grid, tiles, GlobalElevation.BATHYMETRY_ZOOM);
+        for (int zoom = FAR_ZOOM; zoom <= TerrariumTileSource.MAX_ZOOM; zoom++) elevation[zoom] = new GlobalElevation(grid, ground, zoom);
+        bathymetry = new GlobalElevation(grid, ground, GlobalElevation.BATHYMETRY_ZOOM);
         SimplexNoise[] n = noises.noise;
         relief = n[0]; crags = n[1]; wetBroad = n[2]; wetLocal = n[3]; warmth = n[4];
         ocean = holder(biomes, Biomes.OCEAN); deepOcean = holder(biomes, Biomes.DEEP_OCEAN); coldOcean = holder(biomes, Biomes.COLD_OCEAN);
@@ -1749,7 +1760,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 for (int tx = x0; tx <= x1; tx++) {
                     Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
                     loads.add(() -> {
-                        try { tiles.tile(tile.zoom, tile.x, tile.y); }
+                        try { ground.tile(tile.zoom, tile.x, tile.y); }
                         catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch elevation tile {}/{}/{}: {}", tile.zoom, tile.x, tile.y, failure.getMessage()); }
                     });
                 }

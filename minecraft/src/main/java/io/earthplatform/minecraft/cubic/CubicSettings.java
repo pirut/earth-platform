@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic;
 
+import io.earthplatform.geography.globe.BareEarth;
 import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MercatorGrid;
@@ -80,8 +81,13 @@ public final class CubicSettings {
                 String riversId = properties.getProperty("earth.rivers", "");
                 if (!riversId.isEmpty() && !SurfaceWaterSource.DATASET_ID.equals(riversId))
                     throw new IllegalStateException("Unsupported rivers '" + riversId + "' in " + file);
+                // Worlds made before bare-earth ground keep their towns' roofs as ground.
+                String groundId = properties.getProperty("earth.ground", "");
+                if (!groundId.isEmpty() && !BareEarth.ID.equals(groundId))
+                    throw new IllegalStateException("Unsupported ground '" + groundId + "' in " + file);
                 yield new EarthGenerator(seed, biomes, settings, tiles(), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
-                        coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : rivers());
+                        coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : rivers(),
+                        !groundId.isEmpty());
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
         };
@@ -119,6 +125,7 @@ public final class CubicSettings {
         properties.setProperty("earth.cover", WorldCoverSource.DATASET_ID);
         properties.setProperty("earth.climate", ClimateSource.DATASET_ID);
         properties.setProperty("earth.rivers", SurfaceWaterSource.DATASET_ID);
+        properties.setProperty("earth.ground", BareEarth.ID);
         if (imageryEnabled()) properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
         if (!name.isEmpty()) properties.setProperty("earth.homeName", name);
     }
