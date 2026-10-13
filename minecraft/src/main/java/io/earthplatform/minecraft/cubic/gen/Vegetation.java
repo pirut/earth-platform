@@ -243,6 +243,8 @@ final class Vegetation {
             // Kelp up to just under the surface.
             int length = Math.min(depth - 1, 2 + (int) Math.floorMod(r >>> 20, depth - 2));
             for (int k = 0; k < length; k++) replaceWater(section, lx, y + k, lz, k == length - 1 ? KELP : KELP_PLANT);
+        } else if (depth > 60) {
+            // No light reaches the deep sea floor: bare sediment, no seagrass.
         } else if ((sea || river || swampy) && depth >= 2 && roll < 360) {
             if (depth >= 3 && roll % 5 == 0) {
                 BlockState tall = state(Blocks.TALL_SEAGRASS);
