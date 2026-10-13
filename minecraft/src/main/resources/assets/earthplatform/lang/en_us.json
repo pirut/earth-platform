@@ -16,7 +16,7 @@
   "earthplatform.arrival.firstVisit": "This only happens the first time you visit a place. Everything is kept on your computer afterwards.",
   "earthplatform.arrival.slow": "This is taking a while. The data servers may be slow; it will keep trying.",
   "earthplatform.arrival.unreachable": "Can't reach the Earth data servers",
-  "earthplatform.arrival.unreachable.hint": "Check your internet connection. Minecraft Earth needs it the first time you visit a place; we'll keep trying and you'll arrive as soon as it works.",
+  "earthplatform.arrival.unreachable.hint": "Check your internet connection. Earth Platform needs it the first time you visit a place; we'll keep trying and you'll arrive as soon as it works.",
   "earthplatform.arrival.offlineMode": "Offline mode is on, and this place isn't downloaded yet",
   "earthplatform.arrival.offlineMode.hint": "Turn off offline mode in Mods > Earth Platform > Config, then restart the game, so this place can be downloaded.",
   "earthplatform.arrival.waited": "Waiting %s s",
