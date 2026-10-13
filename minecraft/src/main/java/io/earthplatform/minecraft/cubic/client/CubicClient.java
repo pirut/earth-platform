@@ -45,7 +45,38 @@ public final class CubicClient {
         if (world != null) world.reset();
     }
 
+    /** Where a player waiting for the cubes around them is held, or null when they move freely. */
+    private static net.minecraft.world.phys.Vec3 held;
+
+    /** Whether the cubes at a player's feet and just below have not arrived yet. */
+    private static boolean waitingForCubes(ClientCubeWorld world, net.minecraft.world.entity.player.Player player) {
+        return world.cubeAtBlock(player.getBlockX(), player.getBlockY(), player.getBlockZ()) == null
+                || world.cubeAtBlock(player.getBlockX(), player.getBlockY() - 2, player.getBlockZ()) == null;
+    }
+
+    /**
+     * Holds a player in place until the cubes around them arrive, as vanilla does in an unloaded
+     * chunk, so a teleport into unloaded sky does not fall through it. A player gliding or in
+     * spectator mode keeps going: the jet stream outruns loading by design.
+     */
+    private static void hold() {
+        var player = Minecraft.getInstance().player;
+        ClientCubeWorld world = ClientCubeWorld.current();
+        if (world == null || player == null || player.isSpectator() || player.isFallFlying() || player.isPassenger()
+                || !waitingForCubes(world, player)) {
+            held = null;
+            return;
+        }
+        if (held == null || held.distanceToSqr(player.position()) > 4.0) held = player.position();
+        player.setPos(held);
+        player.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
+        player.resetFallDistance();
+    }
+
+    @SubscribeEvent public static void tickStart(ClientTickEvent.Pre event) { hold(); }
+
     @SubscribeEvent public static void tick(ClientTickEvent.Post event) {
+        hold();
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world != null) { world.checkShaders(); world.renderer().tick(); world.far().tick(); }
         if (world != null && Timings.LOG && ++perfTicks % 100 == 0) {
@@ -120,7 +151,13 @@ public final class CubicClient {
     @SubscribeEvent public static void fog(ViewportEvent.RenderFog event) {
         if (ClientCubeWorld.current() == null || event.getMode() != FogRenderer.FogMode.FOG_TERRAIN || event.getType() != FogType.NONE) return;
         if (event.getFarPlaneDistance() < Minecraft.getInstance().gameRenderer.getRenderDistance() - 1.0F) return;
-        event.setNearPlaneDistance(FarRenderer.FOG_START);
+        // High up, the ground below is as far away as the horizon is at ground level: start the fog
+        // beyond it, so terrain under a player in the jet stream is clear rather than a pale haze.
+        var camera = event.getCamera().getPosition();
+        ClientCubeWorld world = ClientCubeWorld.current();
+        float height = (float) camera.y - world.skyTop(net.minecraft.util.Mth.floor(camera.x), net.minecraft.util.Mth.floor(camera.z));
+        float start = Math.min(Math.max(FarRenderer.FOG_START, height * 1.25F), 0.8F * FarRenderer.FOG_END);
+        event.setNearPlaneDistance(start);
         event.setFarPlaneDistance(FarRenderer.FOG_END);
         event.setCanceled(true);
     }
@@ -130,8 +167,7 @@ public final class CubicClient {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null || minecraft.player == null) return;
         var player = minecraft.player;
-        if (world.cubeAtBlock(player.getBlockX(), player.getBlockY(), player.getBlockZ()) != null
-                && world.cubeAtBlock(player.getBlockX(), player.getBlockY() - 2, player.getBlockZ()) != null) return;
+        if (!waitingForCubes(world, player)) return;
         var gui = event.getGuiGraphics();
         Component text = Component.literal("Loading terrain at Y " + player.getBlockY() + "...");
         gui.drawCenteredString(minecraft.font, text, gui.guiWidth() / 2, gui.guiHeight() / 2 - 20, 0xFFFFFF);
