@@ -15,7 +15,10 @@
     "CubicTravelMixin",
     "CubicRespawnMixin",
     "CubicSpawnerMixin",
-    "compat.CreateContraptionMixin"
+    "compat.CreateContraptionMixin",
+    "compat.CreateBuildHeightMixin",
+    "compat.WaystonesPlacementMixin",
+    "compat.WaystonesTargetMixin"
   ],
   "client": [
     "CubicPredictionMixin",
