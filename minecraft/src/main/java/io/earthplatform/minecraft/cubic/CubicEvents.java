@@ -138,8 +138,11 @@ public final class CubicEvents {
     }
 
     /** The world's arrival point, with its cubes loaded so the player lands on solid ground. */
-    public static Vec3 arrival(ServerCubeWorld cubes) {
-        int[] spot = landing(cubes.generator(), cubes.generator().arrival(), 4096, true);
+    public static Vec3 arrival(ServerCubeWorld cubes) { return arrival(cubes, null); }
+
+    /** The arrival point, drawn within sight of {@code view} (a landmark column) when the start is too far off to see it. */
+    public static Vec3 arrival(ServerCubeWorld cubes, @Nullable int[] view) {
+        int[] spot = landing(cubes.generator(), withinSight(cubes.generator().arrival(), view), 4096, true);
         return standOn(cubes, spot[0], spot[1]);
     }
 
@@ -164,6 +167,14 @@ public final class CubicEvents {
                     return new Vec3(x + dx + 0.5, y, z + dz + 0.5);
             }
         int y = ground + 1;
+        // Under a closed canopy, clear the leaves where the player stands rather than land on the treetops.
+        if (cubes.getBlockState(new BlockPos(x, y - 1, z)).isSolid() && leafy(cubes, x, y, z) && leafy(cubes, x, y + 1, z)) {
+            for (int dy = 0; dy <= 1; dy++) {
+                BlockPos at = new BlockPos(x, y + dy, z);
+                if (!open(cubes, x, y + dy, z)) cubes.level().setBlockAndUpdate(at, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            }
+            return new Vec3(x + 0.5, y, z + 0.5);
+        }
         while (y < ground + 48 && !(open(cubes, x, y, z) && open(cubes, x, y + 1, z))) y++;
         BlockPos under = new BlockPos(x, y - 1, z);
         if (cubes.getBlockState(under).is(net.minecraft.world.level.block.Blocks.POWDER_SNOW))
@@ -185,6 +196,11 @@ public final class CubicEvents {
             room++;
         }
         return room >= 6;
+    }
+
+    /** Whether a block is open or only leaves, which can be cleared for a player to stand in. */
+    private static boolean leafy(ServerCubeWorld cubes, int x, int y, int z) {
+        return open(cubes, x, y, z) || cubes.getBlockState(new BlockPos(x, y, z)).is(net.minecraft.tags.BlockTags.LEAVES);
     }
 
     /** Whether a player fits in a block: air, or a dry one they walk through, such as grass or a thin layer of snow. */
@@ -314,11 +330,12 @@ public final class CubicEvents {
             return 0;
         }
         int[] target = earth.block(latitude, longitude);
+        int[] view = Double.isNaN(viewLatitude) ? null : earth.block(viewLatitude, viewLongitude);
         source.sendSuccess(() -> Component.literal("Fetching terrain around " + earth.place(target[0], target[1]) + "...").withStyle(ChatFormatting.GRAY), false);
         CompletableFuture.supplyAsync(() -> {
             earth.prepare(target[0], target[1]);
             boolean famous = !Double.isNaN(viewLatitude);
-            return landing(earth, target, famous ? 2048 : 256, famous);
+            return landing(earth, famous ? withinSight(target, view) : target, famous ? 2048 : 256, famous);
         }, Util.ioPool()).whenComplete((spot, failure) -> source.getServer().execute(() -> {
             if (failure != null) {
                 source.sendFailure(Component.literal("Could not load terrain there: " + failure.getMessage()));
@@ -326,7 +343,7 @@ public final class CubicEvents {
             }
             if (player.isRemoved()) return;
             ARRIVALS.removeIf(waiting -> waiting.player == player);
-            ARRIVALS.add(new Arrival(source, player, spot[0], spot[1], 0, Double.isNaN(viewLatitude) ? null : earth.block(viewLatitude, viewLongitude)));
+            ARRIVALS.add(new Arrival(source, player, spot[0], spot[1], 0, view));
         }));
         return 1;
     }
@@ -378,9 +395,26 @@ public final class CubicEvents {
     /**
      * Spirals out from a point to the first dry, gentle spot within a radius, skipping ground too
      * cold or high to start on when {@code welcoming}; the point itself when there is none. By a
-     * coast (an island such as Bora Bora, a shore town) the first choice is low ground near the
+     * island (such as Bora Bora) the first choice is low ground near the
      * water rather than a ledge on the mountain above it.
      */
+    /** Farthest a start may be from its landmark, in blocks, and still show it through the far terrain. */
+    private static final int SIGHT = 12_000;
+    /** Where a start too far from its landmark moves to: this far from it, on the same side. */
+    private static final int SIGHT_STANDOFF = 8_000;
+
+    /**
+     * A start brought within sight of its landmark: a place's coordinates can be the park or region
+     * the landmark is known by (Kilimanjaro's from Amboseli, 45 km off), so a start farther than
+     * {@link #SIGHT} moves toward the landmark until it is {@link #SIGHT_STANDOFF} away.
+     */
+    private static int[] withinSight(int[] start, @Nullable int[] view) {
+        if (view == null) return start;
+        double dx = start[0] - view[0], dz = start[1] - view[1], distance = Math.sqrt(dx * dx + dz * dz);
+        if (distance <= SIGHT) return start;
+        return new int[]{view[0] + (int) Math.round(dx / distance * SIGHT_STANDOFF), view[1] + (int) Math.round(dz / distance * SIGHT_STANDOFF)};
+    }
+
     private static int[] landing(CubeGenerator generator, int[] centre, int maxRadius, boolean welcoming) {
         if (nearSea(generator, centre))
             for (int highest : new int[]{BEACH, LOW_GROUND}) {
@@ -406,16 +440,21 @@ public final class CubicEvents {
         return null;
     }
 
-    /** Whether open sea (water at sea level over a seabed) lies within {@link #COAST_REACH} of a point. */
+    /**
+     * Whether a point is on an island: open sea (water at sea level over a seabed) within
+     * {@link #COAST_REACH} in at least three quarters of the directions around it. A mainland coast
+     * (a loch shore, a fjord) has sea on one side only and keeps its upland start.
+     */
     private static boolean nearSea(CubeGenerator generator, int[] centre) {
-        int sea = generator.seaLevel();
-        for (int radius = 128; radius <= COAST_REACH; radius += 128)
-            for (int step = 0; step < 24; step++) {
-                double angle = step * Math.PI * 2 / 24;
+        int sea = generator.seaLevel(), seaward = 0;
+        for (int step = 0; step < 24; step++) {
+            double angle = step * Math.PI * 2 / 24;
+            for (int radius = 128; radius <= COAST_REACH; radius += 128) {
                 int x = centre[0] + (int) Math.round(Math.cos(angle) * radius), z = centre[1] + (int) Math.round(Math.sin(angle) * radius);
-                if (generator.waterY(x, z) == sea && generator.surfaceY(x, z) < sea - 3) return true;
+                if (generator.waterY(x, z) == sea && generator.surfaceY(x, z) < sea - 3) { seaward++; break; }
             }
-        return false;
+        }
+        return seaward >= 18;
     }
 
     static boolean isCubic(Level level) { return CubicLevel.of(level) != null; }

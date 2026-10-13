@@ -42,7 +42,7 @@ public final class EarthPlaces {
             new Place("dolomites", "Tre Cime", "Dolomites, Italy", 46.6187, 12.3022),
             new Place("sahara", "Erg Chebbi Dunes", "Sahara, Morocco", 31.1450, -3.9800),
             new Place("serengeti", "Serengeti", "Tanzania", -2.3333, 34.8333),
-            new Place("kilimanjaro", "Kilimanjaro", "Tanzania", -3.0300, 37.2550, -3.0758, 37.3533),
+            new Place("kilimanjaro", "Kilimanjaro", "Tanzania", -2.6527, 37.2606, -3.0758, 37.3533),
             new Place("victoria_falls", "Victoria Falls", "Zambia and Zimbabwe", -17.9243, 25.8572),
             new Place("everest", "Mount Everest", "Nepal", 28.0026, 86.8528, 27.9881, 86.9250),
             new Place("sundarbans", "Sundarbans", "Bangladesh", 21.9497, 89.1833),

@@ -268,9 +268,10 @@ public final class EarthWorlds {
         }
 
         private void arrive(ServerPlayer player, ServerCubeWorld cubes) {
-            Vec3 spot = CubicEvents.arrival(cubes);
+            int[] view = view(cubes);
+            Vec3 spot = CubicEvents.arrival(cubes, view);
             ServerLevel level = server.getLevel(Cubic.LEVEL);
-            player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view(cubes), player.getYRot())), 0.0F);
+            player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
             player.resetFallDistance();
             status.send(player, status.payload(EarthStatus.PLAYING, EarthStatus.OK, 0, ""), Util.getMillis());
             if (player.getTags().contains(WELCOMED)) { EarthBasics.bonusChest(level, cubicFolder(server), spot, player); return; }
@@ -367,8 +368,9 @@ public final class EarthWorlds {
             source.sendFailure(Component.literal("This world has no Earth."));
             return 0;
         }
-        Vec3 spot = CubicEvents.arrival(cubes);
-        player.teleportTo(level, spot.x, spot.y, spot.z, player.getYRot(), player.getXRot());
+        int[] view = Session.view(cubes);
+        Vec3 spot = CubicEvents.arrival(cubes, view);
+        player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
         return CubicEvents.where(source);
     }
 
