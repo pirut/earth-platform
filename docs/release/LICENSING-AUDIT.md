@@ -1,6 +1,6 @@
 # Licensing and attribution audit
 
-Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic engine branch (PR #2) and the open feature branches (PRs #3 to #8). This is a practical checklist, not legal advice.
+First checked on 2026-10-13 against the cubic engine branch (PR #2) and the feature branches of the time. Re-checked in full before the build 33 playtest (PR #2 at 33470c6, jar `earthplatform-combined-31.jar`): every runtime dataset, every file in the jar, the build's libraries and the code's originality. This is a practical checklist, not legal advice.
 
 ## Summary
 
@@ -20,8 +20,35 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | River channels (PR #19) | **OK: JRC Global Surface Water v1.4** | JRC GSW is free without restriction of use, with a citation. HydroRIVERS' licence forbids open redistribution of its data, so it can't ship in an LGPL mod (details below) |
 | Hand-traced falls water (PR #16 `KnownWater`) | **Resolved: removed** | Deleted in 3e297c3; falls now come from general rules on Terrarium elevation and WorldCover, so no traced or OSM data ships |
 | Bundled test data (Copernicus GLO-30, NOAA ETOPO, WorldCover) | OK | Credited; could be dropped from the release jar |
-| Iris, Sodium, Photon, Distant Horizons | OK | Not bundled; compile-only. Exact version pins hurt players (see below) |
+| Iris, Sodium, Photon | OK | Not bundled; compile-only. Iris and Sodium now accept any later 1.8 and 0.8 release |
+| Distant Horizons | OK (licence) / **player issue** | Not bundled; the older engine's optional backend calls its public API. `neoforge.mods.toml` still declares exactly 3.3.3, so any other DH version stops the game from starting (see below) |
+| Provenance documents in the jar | Low risk | ESA's WorldCover user manual, copies of AWS registry and ESA web pages, Copernicus licence texts. Listed in THIRD_PARTY_NOTICES.md; drop them (with the test data) from the release jar |
+| NeoForged MDK template, Gradle wrapper | OK | MIT and Apache-2.0 build files in the repository only; noticed in THIRD_PARTY_NOTICES.md |
+| Older-engine archive in `recovery/` | Repository only | Holds 62 `javap` listings of Distant Horizons classes (LGPL-3.0) and old probe data; no Voxy material. Not in the jar. LGPL notice added; JR decides before the repository goes public |
 | Third-party code in the jar | OK | None. Only `io/earthplatform` classes and our own data |
+
+## Release check before the build 33 playtest (2026-10-13)
+
+What was checked, on PR #2 at 33470c6 and the combined-31 jar:
+
+- **Runtime data.** Every network address in the shipped code (`geography`, `core`, `minecraft` main sources) was listed. There are eight data hosts, all already covered below: AWS Terrain Tiles, Copernicus GLO-30, USGS 3DEP, REMA, ESA WorldCover, CHELSA, JRC GSW, and EOX (opt-in only). Each has its licence, required wording, change note and no-endorsement line in the mods list, CREDITS.md and THIRD_PARTY_NOTICES.md.
+- **Jar contents.** All 2,150 classes are under `io/earthplatform`; nothing is shaded or jar-in-jar. Every other file was listed and traced: the logo and `far_white.png` are our own; the Blue Marble globe, ecoregion raster, EGM96 grid, 3DEP cell list and test-area data are credited; the language file, data packs, biome and advancement JSON are ours. No sounds, no Minecraft textures and no shader files are bundled.
+- **Libraries.** None bundled. Iris, Sodium and Distant Horizons are `compileOnly` from player-supplied files; Photon is only a checked test input. Minecraft, NeoForge, Mixin, Gson and Guava come from the game itself.
+- **Code originality, re-scanned.** All 933 shipped source files (901 Java, 32 JSON, plus the GLSL held in Java text blocks) were compared with Voxy (534d58e), Distant Horizons core (534e3f2) and mod (4e373c1), Iris 1.21.1 (eb7afb9), Sodium (07b349c), Photon (15458c0), CubicChunks2 (d5b6f90) and Terra++ (b6b49d2), at 30 identical tokens and at 60 tokens with names and numbers replaced. The result is no copied code. The only hits are mixin-plugin method stubs, an NBT `putInt` pair, a direction enum shaped like vanilla's, getters and JSON property chains, and the 29-token `VoxyFragmentParameters` struct, which is Voxy's shader-pack interface and is credited as such. The code never names Voxy's packages. It uses Distant Horizons' (22 files) only for API calls and mixins into an optional, separately installed DH, and the jar task filters `com/seibel` classes out.
+- **In-game attribution.** The Mods screen credits cover every dataset; the arrival message's credit line adds each layer only when it is in use.
+
+Fixed in the docs in this pass:
+
+- THIRD_PARTY_NOTICES.md: replaced the older engine's heading and pinned-shader text with the current state; added the NeoForged MDK (MIT) and Gradle wrapper (Apache-2.0) build files; listed the provenance documents bundled with the test data.
+- This audit: Iris and Sodium ranges, the `FarIrisUniforms` rewrite, and the rows below.
+
+Needs a decision or a code change (sent to the coordinator, not changed here):
+
+1. **Distant Horizons version pin.** `neoforge.mods.toml` declares DH as optional with exactly `[3.3.3]`. NeoForge refuses to start the game when any other DH version is installed, but the install guide and FAQ tell players DH simply pauses in Earth worlds. Fix: change the range to accept any version, or mark DH `discouraged`, and update the test that pins the block. A related cleanup is retiring the older engine's DH backend (about 117 classes in the jar).
+2. **Test data in the release jar.** The Everest, Marin and Challenger Deep test areas (about 9 MB) are not read by Earth worlds but ship in the jar, together with third-party documents: ESA's WorldCover user manual and copies of AWS and ESA web pages. These carry no restrictive terms and are noted, but leaving them out of the release jar removes the question.
+3. **Duplicate climate credit.** `EarthGenerator.credits()` appends `Climate: CHELSA ...` twice (lines 241 and 245, from the river merge). It is cosmetic and over-credits, but it reads like a mistake on the arrival screen. Engine-owned one-line fix.
+4. **`recovery/` archive.** It holds 62 `javap` listings of Distant Horizons classes from the older engine's audits. DH is LGPL-3.0, so this is allowed with its licence, but the archive doesn't carry DH's licence text. DH's LGPL notice is now beside it (`recovery/DISTANT-HORIZONS-NOTICE.md`). Whether the archive stays when the repository goes public is JR's call (release-day step 8). The archive has no Voxy material. It doesn't affect the mod jar.
+5. **CHELSA courtesy (unchanged).** Not a licence issue: tell the CHELSA team before a big launch, or mirror the five files we read.
 
 ## Data downloaded at runtime
 
@@ -70,7 +97,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 - `earthplatform/worldcover_proof_data`: ESA WorldCover extracts, CC BY 4.0. Credited.
 - `assets/earthplatform/textures/globe/blue_marble.jpg` (PR #8): NASA Blue Marble Next Generation, downscaled. US government work, public domain; NASA asks for credit, which CREDITS.md, the notices and the mods list give. OK.
 - `earthplatform/ecoregions.png` (660 KB) and `ecoregions.tsv` (PR #14): a 0.05 degree raster derived from RESOLVE Ecoregions 2017 (Dinerstein et al. 2017, *BioScience* 67(6):534-545), with the ecoregion names. CC BY 4.0 allows redistribution and changes with attribution and a note of changes; CREDITS.md, the notices and the mods list give both. OK.
-- The proof data above are test fixtures for the older engine; Earth worlds don't read them. Dropping them from the release jar saves about 2.5 MB and three notices. Engineering item, not a licence problem.
+- The proof data above are test fixtures for the older engine; Earth worlds don't read them. Dropping them from the release jar saves about 9 MB and three notices. Engineering item, not a licence problem.
 - No third-party libraries: Iris, Sodium and Distant Horizons are `compileOnly`; nothing is shaded or jar-in-jar.
 - The logo (`earthplatform_logo.png`) is original pixel art.
 
@@ -124,7 +151,7 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
 ## Companion mods
 
 - Sodium 0.8.12-beta.1 (PolyForm Shield 1.0.0), Iris 1.8.14-beta.1 (LGPL-3.0), Distant Horizons 3.3.3 (LGPL-3.0): players install them; we only compile against them and mix into Iris at runtime. OK.
-- Player impact, not licensing: `neoforge.mods.toml` declares Iris and Sodium as optional but with exact beta versions, so the game refuses to start with any other version installed. Most players with shaders will have newer builds. Widening the ranges needs the shader thread to confirm which Iris internals the mixins rely on.
+- Iris and Sodium ranges were widened to `[1.8.14-beta.1+mc1.21.1,1.9)` and `[0.8.12-beta.1+mc1.21.1,0.9)`, so players can keep newer 1.8 and 0.8 builds.
 - Distant Horizons is declared optional with exact version 3.3.3 for the old engine's compatibility backend; the install guide tells players to leave it out. Consider declaring it `discouraged` once the old backend is retired (a test pins the current block).
 
 ## Name and trademarks
@@ -152,7 +179,7 @@ Two passes looked for shared runs: 30 identical tokens in a row (copied code), a
 - Matches that are not copying: Java and mixin-plugin boilerplate that every NeoForge mod has; Minecraft API calls and lists of vanilla block names; enum and switch layouts forced by Iris's own types.
 - Voxy's shader-pack interface (the `VoxyFragmentParameters` struct and the `voxy_emitFragment` call in `FarShaders`) is declared the way Voxy declares it, because shader packs are written against those exact names. This is an interface for compatibility, like a header file, and Voxy is credited for it.
 - PR #3 at 07da7f0 also hands far depth to packs through Voxy's hook (the `VOXY` define, samplers `vxDepthTexOpaque`/`vxDepthTexTrans`, uniforms `vxProj`, `vxProjInv`, `vxProjPrev`, `vxRenderDistance`). The names come from what Photon's shaders read. Re-scanned `FarLod`, `FarLodIris`, `FarShaders` and the three Iris mixins against Voxy, Iris and Sodium: the only shared runs are imports and the Iris method signature that any mixin into `IrisSamplers.addRenderTargetSamplers` must repeat. No copied code.
-- One small helper to change for peace of mind: in the shader thread's `FarIrisUniforms` (PR #3), the switch that turns Iris uniform types into GLSL type names reads the same as the matching Voxy helper. It is a ten-line mapping fixed by Iris's enum, but it's being rewritten in our own form so no Voxy text remains. Asked through the coordinator.
+- One small helper was changed for peace of mind: in `FarIrisUniforms` (PR #3), the switch that turned Iris uniform types into GLSL type names read the same as the matching Voxy helper. It is now a one-line string rule of our own (`FarIrisUniforms.java:76-78`), so no Voxy text remains.
 - The older 039 engine under `recovery/`, `unfinished/` and `historical/` was not scanned; it is not part of the mod. Its optional Distant Horizons backend only calls DH's public API (compile-only, not bundled).
 - Comments in the far terrain code already say where each idea came from ("the way Voxy keeps it", "as Distant Horizons keeps exact heights").
 
