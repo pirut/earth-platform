@@ -117,7 +117,7 @@ public final class FarRenderer {
         final long key;
         final int level, x0, z0, bottom;
         final LevelChunkSection[] sections;
-        final short[] drops;
+        final char[] drops;
         final AABB box;
         /** Block Y just above the column's highest voxel, or MIN_VALUE when it holds only air. */
         final int top;
@@ -136,7 +136,7 @@ public final class FarRenderer {
         long bytes;
         double distance;
 
-        Column(long key, int bottom, LevelChunkSection[] sections, short[] drops) {
+        Column(long key, int bottom, LevelChunkSection[] sections, char[] drops) {
             this.key = key;
             this.level = Far.level(key);
             this.bottom = bottom;
@@ -268,7 +268,7 @@ public final class FarRenderer {
             byte[] bytes = payload.sections().get(i);
             if (bytes.length > 0) sections[i] = CubeCodec.readSection(bytes, biomes);
         }
-        Column column = new Column(payload.key(), payload.bottom(), sections, payload.drops());
+        Column column = new Column(payload.key(), payload.bottom(), sections, unsigned(payload.drops()));
         column.lastWanted = ticks;
         Column old = columns.put(column.key, column);
         if (old != null) {
@@ -632,6 +632,16 @@ public final class FarRenderer {
         }
         shader.clear();
         type.clearRenderState();
+    }
+
+    /**
+     * Drops as sent, read unsigned: 256-block voxels drop up to 65,535 256ths of a block, past a
+     * short's range, and read signed the coarsest columns stood up to 128 blocks over the ground.
+     */
+    private static char[] unsigned(short[] drops) {
+        char[] out = new char[drops.length];
+        for (int i = 0; i < drops.length; i++) out[i] = (char) drops[i];
+        return out;
     }
 
     /** Sets an Earth world's metres per block at the equator, from the server. */
