@@ -217,6 +217,7 @@ public final class ServerCubeWorld extends CubeWorld {
         adopt(cube);
         // Points of interest at cubic heights live only in memory: rebuild them from the blocks.
         server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
+        CubicPoiClaims.reclaim(server, SectionPos.of(cube.x, cube.y, cube.z));
         refreshTops(cube);
         staleLightAround(cube.x, cube.y, cube.z);
     }
