@@ -1887,13 +1887,25 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     private double wetness(int x, int z) { return fbm(wetBroad, x / 9000.0, z / 9000.0, 2) * 0.7 + wetLocal.getValue(x / 1400.0, z / 1400.0) * 0.3; }
 
+    /**
+     * Voxels this wide or wider leave out the beach strip four blocks from the sea, a sliver of
+     * one, and find the sea for sandy bare ground in the land cover: the full-detail ground of
+     * every low column a hundred kilometres out was most of the farthest levels' time.
+     */
+    private static final int SHORE_VOXEL = 64;
+
     /** Blocks above the sea and in from it that bare ground counts as beach. */
     private static final int BEACH_RISE = 8, BEACH_REACH = 64;
 
     /** Whether sea water lies within {@code r} blocks of a column, looking out at half and full reach. */
-    private boolean seaWithin(int x, int z, int r) {
+    private boolean seaWithin(int x, int z, int r, int voxel) {
         for (int d = r / 2; d <= r; d += r / 2)
-            for (int k = 0; k < 8; k++) if (waterY(x + (int) (RING_X[k] * d), z + (int) (RING_Z[k] * d)) == SEA) return true;
+            for (int k = 0; k < 8; k++) {
+                int px = x + (int) (RING_X[k] * d), pz = z + (int) (RING_Z[k] * d);
+                // Wide voxels ask the land cover: the water's full-detail ground a hundred kilometres out costs far more than
+                // the voxel is worth, and so low and close, mapped water is nearly always the sea.
+                if (voxel >= SHORE_VOXEL ? cover(px, pz, voxel) == WorldCoverSource.WATER : waterY(px, pz) == SEA) return true;
+            }
         return false;
     }
 
@@ -1955,7 +1967,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         long r = mix(x, 7, z);
         int roll = (int) Math.floorMod(r, 100);
         // Marsh and mangrove coasts, as on a delta, run down to the water as marsh, not a strip of beach sand.
-        if (y <= SEA + 2 && nearSea(x, z) && !(local != null && marshy(cover(x, z, voxel)))) {
+        if (y <= SEA + 2 && voxel < SHORE_VOXEL && nearSea(x, z) && !(local != null && marshy(cover(x, z, voxel)))) {
             if (steep > 1) return new Surface(stonyShore, STONE, STONE, 0, 0, 0, 0, 0, false);
             return new Surface(t < 0 ? snowyBeach : beach, SAND, SAND, 0, 0, 0, 0, 0, false);
         }
@@ -2315,7 +2327,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             case WorldCoverSource.BARE -> {
                 // Bare ground low by the sea is beach and dune, as Whitehaven's silica sand, not rock: the beach rule
                 // above reaches only two blocks up and four in from the water.
-                if (!cliff && steep < 0.6 && y <= SEA + BEACH_RISE && !volcanic(x, z) && seaWithin(x, z, BEACH_REACH))
+                if (!cliff && steep < 0.6 && y <= SEA + BEACH_RISE && !volcanic(x, z) && seaWithin(x, z, BEACH_REACH, voxel))
                     return new Surface(t < 0 ? snowyBeach : beach, SAND, SAND, 0, 0, 0, 0, 0, false);
                 boolean hot = zone == ClimateZone.HOT_DESERT || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.TROPICAL_DRY;
                 // Dry lands' cliffs show their rock in coloured bands, as the Colorado Plateau's and the Sahara's do.
