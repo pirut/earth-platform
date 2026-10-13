@@ -165,8 +165,13 @@ public final class CubicSettings {
                 // land, and heights off the sea's datum north of SRTM. Its blocks are up to 4 MiB decoded.
                 // -Dearthplatform.earth.copernicus=false leaves the tiles as they are, to compare.
                 CopernicusSource copernicus = "false".equals(System.getProperty("earthplatform.earth.copernicus")) ? null
-                        : new CopernicusSource(CopernicusSource.AWS_COPERNICUS, caches.resolve(CopernicusSource.DATASET_ID), network, 12, 4, Duration.ofSeconds(30));
-                tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, network, 256, 6, Duration.ofSeconds(20), copernicus);
+                        : new CopernicusSource(CopernicusSource.AWS_COPERNICUS, caches.resolve(CopernicusSource.DATASET_ID), network, 12, 8, Duration.ofSeconds(30));
+                // Far terrain over a new area reads several hundred tiles at several zooms; with fewer kept than
+                // that, a first visit cleaned the same tiles five or six times over. Each is 256 KiB: up to a
+                // sixteenth of the heap, from 256 to 1,024 of them. Fetching them is mostly a wait on the round
+                // trip, so many go at once.
+                int kept = (int) Math.clamp(Runtime.getRuntime().maxMemory() / 16 / (256 << 10), 256, 1024);
+                tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, network, kept, 16, Duration.ofSeconds(20), copernicus);
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the elevation tile cache at " + cache, failure);
             }
