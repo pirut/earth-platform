@@ -113,10 +113,14 @@ public final class FarLod {
     static Matrix4fc projectionInverse() { return inverse; }
     static Matrix4fc previousProjection() { return previous; }
 
-    /** Far terrain's reach in chunks, which packs fade it out by. */
+    /**
+     * Far terrain's reach in chunks, which packs fade it out by: almost to the coarsest level's
+     * nearest edge (half the depth range). Not the haze over the lowlands, which a pack such as
+     * Photon draws itself, thinning with height, so distant ranges still stand clear of it.
+     */
     static int renderDistance() {
         if (ClientCubeWorld.current() == null) return Minecraft.getInstance().options.getEffectiveRenderDistance();
-        return (int) Math.ceil(FarRenderer.FOG_END / 16.0F);
+        return (int) Math.ceil(0.95F * 0.5F * FarRenderer.DEPTH_FAR / 16.0F);
     }
 
     // Each frame ---------------------------------------------------------------------------------
