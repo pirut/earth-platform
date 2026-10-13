@@ -72,6 +72,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final GlobalElevation bathymetry;
     /** Rock layers of layered sedimentary country, such as the Grand Canyon's. */
     private final Strata strata;
+    /** Water at famous falls the surveys cannot see. */
+    private final KnownWater knownWater;
     @Nullable private final WorldCoverSource cover;
     @Nullable private final ClimateSource climate;
     @Nullable private final ImagerySource imagery;
@@ -135,6 +137,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         darkForest = holder(biomes, Biomes.DARK_FOREST); flowerForest = holder(biomes, Biomes.FLOWER_FOREST);
         cherryGrove = holder(biomes, Biomes.CHERRY_GROVE); bambooJungle = holder(biomes, Biomes.BAMBOO_JUNGLE);
         sunflowerPlains = holder(biomes, Biomes.SUNFLOWER_PLAINS);
+        knownWater = new KnownWater(grid);
         strata = new Strata(seed, new Strata.Globe() {
             @Override public double metres(double x, double z) { return elevation[FAR_ZOOM].metres(x, z); }
             @Override public GeoPoint geographic(double x, double z) { return grid.geographic(x, z); }
@@ -194,8 +197,44 @@ public final class EarthGenerator extends SurfaceGenerator {
         place(dem, x, z, metres, sample, 1 << level, out);
     }
 
-    /** Ground and water of a column from its elevation, slope, sea share and land cover. */
+    /** Ground and water of a column from its elevation, slope, sea share and land cover, and the {@link KnownWater} at famous falls. */
     private void place(GlobalElevation dem, int x, int z, double metres, double[] sample, int voxel, int[] out) {
+        surveyed(dem, x, z, metres, sample, voxel, out);
+        if (cover == null || out[1] == SEA) return;
+        // Read a little to one side or the other, so the gorges' and rivers' edges wander rather than run straight.
+        double wx = x + 0.5 + (warpX.getValue(x / 40.0, z / 40.0) + 0.5 * warpX.getValue(x / 13.0, z / 13.0)) * KNOWN_WANDER,
+                wz = z + 0.5 + (warpZ.getValue(x / 40.0, z / 40.0) + 0.5 * warpZ.getValue(x / 13.0, z / 13.0)) * KNOWN_WANDER;
+        KnownWater.Water known = knownWater.at(wx, wz, voxel);
+        if (known == null) return;
+        int ground = Mth.floor(SEA + 0.5 + known.ground());
+        if (known.wetOnly() && cover(coverMemo.get(), x, z, voxel) != WorldCoverSource.WATER) {
+            // Dry ground along known water stands at least above it, where the tiles read it as low as their wrong water.
+            if (out[1] == DRY) out[0] = Math.max(out[0], Mth.floor(SEA + 0.5 + known.gorge()) + 1);
+            return;
+        }
+        if (Double.isNaN(known.level())) {
+            // Beside a gorge, dry ground falls away to it in steep walls, and water mapped below the river above its
+            // falls lies down in it.
+            if (out[1] == DRY) out[0] = Math.min(out[0], ground);
+            else if (Double.isNaN(known.above()) ? known.wetOnly() : out[1] < Mth.floor(SEA + 0.5 + known.above()) - 4) {
+                out[1] = Mth.floor(SEA + 0.5 + known.gorge());
+                out[0] = Math.min(out[0], out[1] - 4);
+            } else if (Double.isNaN(known.above()) && !known.wetOnly() && Math.abs(out[1] - Mth.floor(SEA + 0.5 + known.gorge())) > 3) {
+                // Beside a stream with no gorge, water mapped at another level is spray on the rocks.
+                out[0] = Math.min(ground, Math.max(out[0], out[1] - 1));
+                out[1] = DRY;
+            }
+            return;
+        }
+        out[1] = Mth.floor(SEA + 0.5 + known.level());
+        out[0] = known.fixed() ? ground : Math.min(out[0], ground);
+        out[0] = Math.min(out[0], out[1] - 1);
+    }
+
+    /** How far, in blocks, the edges of known gorges and rivers wander either way. */
+    private static final double KNOWN_WANDER = 7;
+
+    private void surveyed(GlobalElevation dem, int x, int z, double metres, double[] sample, int voxel, int[] out) {
         if (sample[2] > 0.5 || offshore(x, z, metres, voxel)) {
             out[0] = seabed(x, z, metres, voxel);
             out[1] = SEA;
