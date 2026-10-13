@@ -191,7 +191,10 @@ public final class Strata {
         }
 
         /** Whether a block {@code depth} under the ground of column {@code i} of an 18-wide height grid shows in a cliff face, or lies just under the ground. */
-        public boolean shows(int depth, int[] height, int i) {
+        public boolean shows(int depth, int[] height, int i) { return face(depth, height, i); }
+
+        /** Whether a block {@code depth} under the ground of column {@code i} of an 18-wide height grid shows in a cliff face, or lies just under the ground. */
+        public static boolean face(int depth, int[] height, int i) {
             int h = height[i];
             int low = Math.min(Math.min(height[i - 1], height[i + 1]), Math.min(height[i - 18], height[i + 18]));
             return depth > 0 && depth < Math.max(4, h - low + 2);

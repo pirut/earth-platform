@@ -13,6 +13,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Block;
@@ -111,6 +112,15 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     /** The rock layers a column shows in its cliff faces, or null for plain stone. */
     protected Strata.Layers layers(int x, int z) { return null; }
 
+    /**
+     * Whether a column's under block is the country rock itself, as sandstone and terracotta are,
+     * so its cliff faces show it rather than plain stone: desert cliffs and monoliths such as Uluru
+     * otherwise stood as grey stone walls under a few blocks of red.
+     */
+    private static boolean bedrock(BlockState under) {
+        return under.is(Blocks.SANDSTONE) || under.is(Blocks.RED_SANDSTONE) || under.is(BlockTags.TERRACOTTA);
+    }
+
     // Columns ------------------------------------------------------------------------------------
 
     /** Heights and water for a cube column with a one-block border, plus per-column cover. */
@@ -197,7 +207,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             // Cold dry ground under the snow Vegetation lays on it nearer.
             if (water[g] <= h && Trees.snowy(surface) && !top[cell].is(Blocks.ICE) && !top[cell].is(Blocks.PACKED_ICE)
                     && !top[cell].is(Blocks.POWDER_SNOW)) top[cell] = SNOW_BLOCK;
-            under[cell] = v > 2 ? STONE : surface.under();
+            under[cell] = v > 2 && !bedrock(surface.under()) ? STONE : surface.under();
             rock[cell] = layers(wx, wz);
             // Voxels wider than a tree show forests as leaves: at 8 blocks a voxel above the ground, about a tree's
             // height, so they meet the rasterised trees nearer; wider voxels would stand too tall, so leaves lie on the ground voxel.
@@ -234,7 +244,10 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                     int g = (cz + 1) * 18 + cx + 1;
                     BlockState state = voxel(ground[g], water[g], y0, v, top[cz * 16 + cx], under[cz * 16 + cx]);
                     if (state == WATER && ice[cz * 16 + cx] && y0 + v > water[g]) state = Blocks.ICE.defaultBlockState();
-                    if (rock[cz * 16 + cx] != null && ground[g] >= y0 + v && state != WATER) state = rock[cz * 16 + cx].at(y0 + (v >> 1));
+                    if (ground[g] >= y0 + v && state != WATER) {
+                        if (rock[cz * 16 + cx] != null) state = rock[cz * 16 + cx].at(y0 + (v >> 1));
+                        else if (state == STONE && bedrock(under[cz * 16 + cx])) state = under[cz * 16 + cx];
+                    }
                     if (state == AIR && crown[cz * 16 + cx] != null && ground[g] < y0 && ground[g] >= y0 - v) state = crown[cz * 16 + cx];
                     if (state != AIR) section.setBlockState(cx, vy, cz, state, false);
                 }
@@ -455,6 +468,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                     else state = below.rock(x0 + lx, y, z0 + lz, floor[ci]);
                     Strata.Layers rock = col.layers[ci];
                     if (rock != null && rock.shows(depth, col.height, gi)) state = rock.at(y);
+                    else if (rock == null && depth >= 4 && bedrock(surface.under()) && Strata.Layers.face(depth, col.height, gi)) state = surface.under();
                     // Cave mouths open the top blocks only where nothing grows on them.
                     boolean open = depth >= roof[ci] && (depth > 1 || surface.trees() == 0 && (Underground.rock(surface.top()) || surface.top() == GRAVEL));
                     if (open && state != Underground.BEDROCK && Underground.cave(caveField, lx, ly, lz)) state = Underground.cavity(y, floor[ci]);
