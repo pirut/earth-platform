@@ -70,6 +70,8 @@ public final class TerrariumTileSource implements AutoCloseable {
     private final ExecutorService executor;
     private final LinkedHashMap<Long, float[]> memory = new LinkedHashMap<>(64, 0.75f, true);
     private final Map<Long, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
+    /** Better sources laid over the composite, in order; see {@link ElevationLayer}. */
+    private final java.util.List<ElevationLayer> layers;
     private final AtomicLong downloads = new AtomicLong(), diskHits = new AtomicLong(), memoryHits = new AtomicLong(), failures = new AtomicLong();
 
     /**
@@ -80,6 +82,13 @@ public final class TerrariumTileSource implements AutoCloseable {
      * @param maxConcurrentTransfers simultaneous HTTP requests
      */
     public TerrariumTileSource(URI base, Path cacheRoot, boolean allowNetwork, int maxTilesInMemory, int maxConcurrentTransfers, Duration timeout) throws IOException {
+        this(base, cacheRoot, allowNetwork, maxTilesInMemory, maxConcurrentTransfers, timeout, java.util.List.of());
+    }
+
+    /** @param layers better sources laid over each tile after its cleaning, in order (later ones win) */
+    public TerrariumTileSource(URI base, Path cacheRoot, boolean allowNetwork, int maxTilesInMemory, int maxConcurrentTransfers, Duration timeout,
+                               java.util.List<ElevationLayer> layers) throws IOException {
+        this.layers = java.util.List.copyOf(layers);
         this.base = Objects.requireNonNull(base);
         if (!base.toString().endsWith("/")) throw new IllegalArgumentException("Tile base URI must end with /");
         if (maxTilesInMemory < 1 || maxConcurrentTransfers < 1 || timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("Invalid tile source budget");
@@ -110,6 +119,7 @@ public final class TerrariumTileSource implements AutoCloseable {
         if (shared == null) {
             try {
                 float[] values = read(zoom, x, y);
+                for (ElevationLayer layer : layers) layer.refine(zoom, x, y, values);
                 synchronized (memory) {
                     memory.put(key, values);
                     var iterator = memory.entrySet().iterator();
@@ -586,6 +596,9 @@ public final class TerrariumTileSource implements AutoCloseable {
     }
 
     private static long key(int zoom, int x, int y) { return ((long) zoom << 58) | ((long) x << 29) | y; }
+
+    /** The layers laid over the composite, in order. */
+    public java.util.List<ElevationLayer> layers() { return layers; }
 
     public Stats stats() {
         int resident;
