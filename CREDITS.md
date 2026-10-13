@@ -33,9 +33,9 @@ Karger, D.N., Conrad, O., Böhner, J., Kawohl, T., Kreft, H., Soria-Auza, R.W., 
 Karger, D.N. et al. (2021). Climatologies at high resolution for the earth's land surface areas. EnviDat. https://doi.org/10.16904/envidat.228
 Licence: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
 
-## Ground colours: Sentinel-2 cloudless
+## Ground colours (optional): Sentinel-2 cloudless
 
-Sentinel-2 cloudless 2016 - https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Used only to choose between ground blocks; no imagery is shown in game.
+EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Off by default; used only when a player turns satellite imagery on, and then only to choose between ground blocks. No imagery is shown in game.
 
 ## Built-in test areas (bundled)
 

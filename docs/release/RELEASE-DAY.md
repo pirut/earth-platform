@@ -2,7 +2,7 @@
 
 Nothing here has been published. In order:
 
-1. **Settle the blockers** in [LICENSING-AUDIT.md](LICENSING-AUDIT.md): EOX's answer (or imagery off by default), the public name, and the Mac Photon pack staying off Modrinth and CurseForge.
+1. **Settle the blockers** in [LICENSING-AUDIT.md](LICENSING-AUDIT.md): the public name, and the Mac Photon pack staying off Modrinth and CurseForge.
 2. **Pick the mod licence** and set `mod_license` in `minecraft/gradle.properties`. Add a matching `LICENSE` file at the repository root.
 3. **Merge the feature PRs** (#3 to #8) and build the combined jar from the merged branch.
 4. **Set the version.** `mod_version` is `0.1.0-engine-prototype`; for the release use `0.1.0-alpha.1`. The old engine pins that string in three places that must change with it: `compat/dh/InstalledPlayableInventory.java`, `survival/runtime/InstalledCallbackStartupSourcePins.java` and `survival/host/SurvivalInstalledModIdentity.java`, plus their tests `InstalledPlayableInventoryIndependentTest` and `SurvivalInstalledModIdentityTest`.

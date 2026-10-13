@@ -13,7 +13,7 @@ Not published. Fill the gaps marked TODO once the licence blockers in [LICENSING
 - **Links:** Source, Issues, Wiki → TODO once the repository is public. Discord: none yet.
 - **Icon:** [docs/images/icon.png](../images/icon.png)
 - **Dependencies:** none required. Optional: Sodium 0.8.12-beta.1, Iris 1.8.14-beta.1 (exact versions). Incompatible in practice: Distant Horizons.
-- **Monetisation:** keep creator rewards off until EOX has answered.
+- **Monetisation:** creator rewards are fine with imagery off by default; if they are turned on, players who opt into imagery use EOX data in a mod that earns money, so get EOX's OK first (see the audit).
 
 ## Gallery
 
@@ -84,7 +84,7 @@ Install guide, FAQ and troubleshooting: TODO link to docs/INSTALL.md and docs/FA
 
 ## Credits
 
-Elevation from AWS Terrain Tiles (USGS 3DEP, SRTM and GMTED2010, NOAA ETOPO1, Copernicus EU-DEM, ArcticDEM, and the national mapping agencies of Australia, Austria, Canada, Mexico, New Zealand, Norway and the United Kingdom). Land cover © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium (CC BY 4.0). Climate from CHELSA V2.1 (Karger et al. 2017, CC0). Ground colours from Sentinel-2 cloudless 2016 by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Full credits in the mod (Mods → Earth Platform) and in CREDITS.md.
+Elevation from AWS Terrain Tiles (USGS 3DEP, SRTM and GMTED2010, NOAA ETOPO1, Copernicus EU-DEM, ArcticDEM, and the national mapping agencies of Australia, Austria, Canada, Mexico, New Zealand, Norway and the United Kingdom). Land cover © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium (CC BY 4.0). Climate from CHELSA V2.1 (Karger et al. 2017, CC0). Optional ground colours (off by default) from EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Full credits in the mod (Mods → Earth Platform) and in CREDITS.md.
 
 The world is built from these data but changed to make Minecraft terrain, with procedural detail. Not for navigation.
 

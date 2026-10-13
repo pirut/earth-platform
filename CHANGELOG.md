@@ -11,7 +11,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - Biomes from the real climate (CHELSA, 1981-2010), corrected for each place's height, so mountains carry snow and conifers above warm valleys.
 - Every surface block vanilla grows, placed where it would grow on Earth: cacti in the Americas, cherry groves in East Asia, bamboo in South and East Asia, coral reefs in warm seas.
 - Minecraft's own trees chosen by biome, and giant sequoias at real size in the Sierra Nevada's groves.
-- Ground colours guided by Sentinel-2 cloudless satellite imagery.
+- Optional ground colours guided by Sentinel-2 cloudless satellite imagery (off by default).
 - No cities: built-up land becomes the wild land around it.
 
 ### Survival

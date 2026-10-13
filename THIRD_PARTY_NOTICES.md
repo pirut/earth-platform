@@ -35,7 +35,7 @@ CHELSA V2.1 climatologies 1981-2010 (streamed by `geography/.../globe/ClimateSou
 
 ESA WorldCover 10 m 2021 v200 (streamed by `WorldCoverSource` from its public cloud-optimised GeoTIFFs): attribution as for the fixture above, CC BY 4.0; classes are mapped to Minecraft biomes and blocks and built-up classes are replaced by surrounding land cover.
 
-Sentinel-2 cloudless 2016 (streamed by `ImagerySource` from https://tiles.maps.eox.at, used only to choose ground blocks): Sentinel-2 cloudless - https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Terms for public use through EOX's tile service are unconfirmed; see the licensing audit.
+Sentinel-2 cloudless 2016 (streamed by `ImagerySource` from https://tiles.maps.eox.at only when a player turns imagery on; off by default; used only to choose ground blocks): EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). See the licensing audit.
 
 ## Photon adjusted for macOS
 

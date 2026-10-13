@@ -17,6 +17,9 @@ Mountains, valleys, coasts and lakes come from measured elevation (about 30 m ap
 **Can I play survival?**
 Yes. Mining, crafting, mobs, beds, death and respawn, the Nether and the End all work as usual. Nether portals built on the Earth link to the Nether and back.
 
+**What does the satellite imagery option do?**
+When turned on (see [the install guide](INSTALL.md#satellite-ground-colours-optional)), Sentinel-2 cloudless imagery nudges the choice of ground blocks, such as sand, gravel, stone and dry soil, and how dense trees are, to match each place's real colours. Biomes and tree kinds don't change. It's off by default.
+
 **Can I use an old world?**
 New Earth worlds need the Earth world type when they are created. Worlds made with the Default type stay ordinary Minecraft worlds.
 
@@ -29,7 +32,7 @@ Only the first time you visit a place. The mod downloads that area's elevation, 
 It depends how much of the planet you explore. Downloaded data lives in `earthplatform/cache` inside your game folder. Set a size limit in Mods → Earth Platform → Config (or `config/earthplatform-common.toml`); the oldest files are removed when the game starts. Deleting the folder is safe: it downloads again when needed.
 
 **Stuck on "Preparing your Earth"?**
-The starting place has not finished downloading. Check your connection; the screen keeps retrying and enters the world as soon as the ground has arrived. Behind a firewall, allow `s3.amazonaws.com`, `esa-worldcover.s3.eu-central-1.amazonaws.com`, `os.zhdk.cloud.switch.ch` and `tiles.maps.eox.at`.
+The starting place has not finished downloading. Check your connection; the screen keeps retrying and enters the world as soon as the ground has arrived. Behind a firewall, allow `s3.amazonaws.com`, `esa-worldcover.s3.eu-central-1.amazonaws.com` and `os.zhdk.cloud.switch.ch` (plus `tiles.maps.eox.at` if you turned satellite imagery on).
 
 ## Performance
 

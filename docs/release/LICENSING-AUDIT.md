@@ -1,12 +1,12 @@
 # Licensing and attribution audit
 
-Checked on 2026-10-13 against the cubic engine branch (PR #2) and the open feature branches (PRs #3 to #8). This is a practical checklist, not legal advice.
+Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic engine branch (PR #2) and the open feature branches (PRs #3 to #8). This is a practical checklist, not legal advice.
 
 ## Summary
 
 | Item | Status | What's needed before a public release |
 | --- | --- | --- |
-| EOX Sentinel-2 cloudless (ground colours, PR #4) | **Blocker** | Written OK from EOX for use through their tile service in a free public mod, or ship with imagery off |
+| EOX Sentinel-2 cloudless (ground colours, PR #4) | Mitigated | Imagery is off by default (JR, 2026-10-13); players opt in. Emailing EOX is an optional follow-up |
 | Mac Photon pack | **Blocker for Modrinth/CurseForge** | Don't upload it there. Ask SixthSurge, upstream the fix, or host it on GitHub only |
 | Public name ("Minecraft Earth") | **Blocker** | Release as Earth Platform (or another name without "Minecraft"); fix one game string in PR #8 |
 | Mod licence (All Rights Reserved) | Decision | JR to choose: keep ARR or open the source |
@@ -34,16 +34,15 @@ Checked on 2026-10-13 against the cubic engine branch (PR #2) and the open featu
 - Terms: [CC0 1.0](https://www.chelsa-climate.org/datasets/chelsa_climatologies) per the CHELSA site and EnviDat. No attribution required; citation requested, and we give it.
 - Courtesy, not licence: every player reads ranges from an academic object store. Before a big launch, either tell the CHELSA team (chelsa-climate.org) or mirror the five files we read (kg2, bio1, bio10, bio12 and the DEM) to our own storage, which CC0 allows.
 
-### EOX Sentinel-2 cloudless 2016 (ground colours) — blocker
+### EOX Sentinel-2 cloudless 2016 (ground colours) — mitigated
 - Code (PR #4): `ImagerySource`, tiles from `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/`, cached under `earthplatform/cache/s2cloudless-2016-v1`.
 - What we know: EOX released the 2016 mosaic under CC BY 4.0 ("free to use for commercial and non-commercial purposes, as long as you provide proper attribution"); later years are CC BY-NC-SA 4.0. EOX's current licence pages describe one EOxCloudless licence for all years: non-commercial use unrestricted with attribution, commercial use only with a paid "EOX Commercial Attribution-RestrictedUse 1.2" licence, and no sub-licensing or redistribution. They no longer state the 2016 terms separately, and they publish no usage terms for the hosted tile service.
-- Why it matters: a public mod sends every player's tile requests to EOX's servers and caches tiles on their disks. If Modrinth or CurseForge creator rewards are switched on, EOX could see the use as commercial.
-- What to do (pick one):
-  1. Email EOX (cloudless.eox.at, contact or sales) describing the mod, the 2016 layer, the request volume and the caching, and ask for written OK. Recommended.
-  2. Until then, release with imagery off for new worlds (worlds pin `earth.imagery`, so this is a default, not a code removal). Ground then looks as it did before PR #4.
-  3. Make our own ground-colour layer from Copernicus Sentinel-2 data (free and open) instead of EOX's mosaic. Larger job.
-- Also: EOX now asks for the attribution "EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016)"; `ImagerySource.ATTRIBUTION` still says s2maps.eu, which now redirects. Owned by PR #4.
-- Keep creator rewards off on Modrinth and CurseForge until this is settled.
+- Decision (JR, 2026-10-13): imagery ships **off by default**. New worlds are made without it, so a normal install never contacts EOX. Players can opt in with `-Dearthplatform.earth.imagery=true`; worlds made that way pin `earth.imagery` and keep it. The install guide and FAQ describe the opt-in.
+- Attribution: PR #4 now uses EOX's current form, "EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016)", and so do the mods-list credits, CREDITS.md and the store draft.
+- Optional follow-ups:
+  1. Email EOX (cloudless.eox.at, contact or sales) describing the mod, the 2016 layer, the request volume and the caching, and ask for written OK. With it, imagery could be on by default.
+  2. Make our own ground-colour layer from Copernicus Sentinel-2 data (free and open) instead of EOX's mosaic. Larger job.
+- If Modrinth or CurseForge creator rewards are switched on, opted-in players use EOX data in a mod that earns money; get EOX's OK before that.
 
 ## Bundled in the jar
 

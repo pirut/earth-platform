@@ -45,6 +45,10 @@ Apple's OpenGL lets a shader use at most 16 textures and has no compute shaders,
 
 Photon's sky light uses a compute pass a Mac can't run, so the sky light on shaded cliffs is flatter than on Windows or Linux. We have an adjusted Photon for Macs that fixes this, but Photon's licence does not let us share a changed copy on Modrinth or CurseForge without its author's permission; we will link it here if that is granted.
 
+## Satellite ground colours (optional)
+
+Earth Platform can use Sentinel-2 cloudless satellite imagery by EOX to match bare ground and plant cover more closely to each place. It is off by default. To turn it on, add `-Dearthplatform.earth.imagery=true` to the JVM arguments (step 2 above) before creating the world; worlds made with it keep using it. Imagery adds downloads from `tiles.maps.eox.at`.
+
 ## Distant Horizons
 
 Leave Distant Horizons out. Earth Platform draws its own far terrain, and Distant Horizons draws over it and changes the fog.
