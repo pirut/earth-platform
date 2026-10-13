@@ -11,7 +11,9 @@ import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.gen.Strata;
+import io.earthplatform.minecraft.cubic.gen.Towers;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -76,6 +78,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final GlobalElevation bathymetry;
     /** Rock layers of layered sedimentary country, such as the Grand Canyon's. */
     private final Strata strata;
+    /** Tower karst and pillar forests, steeper than the elevation holds them. */
+    private final Towers towers;
     @Nullable private final WorldCoverSource cover;
     @Nullable private final ClimateSource climate;
     @Nullable private final ImagerySource imagery;
@@ -162,6 +166,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             @Override public GeoPoint geographic(double x, double z) { return grid.geographic(x, z); }
             @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
         }, badlands);
+        towers = new Towers(seed, new Towers.Globe() {
+            @Override public double metres(double x, double z) { return elevation[TOWER_ZOOM].metres(x, z); }
+            @Override public GeoPoint geographic(double x, double z) { return grid.geographic(x, z); }
+            @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
+        });
     }
 
     @Override protected Strata.Layers layers(int x, int z) { return strata.layers(x, z, SEA + 0.5); }
@@ -204,6 +213,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Zoom of the coarsest elevation the far levels read. */
     private static final int FAR_ZOOM = 11;
+    /** Zoom the towers find tops and gorges in, near and far alike: pixels about 20 metres across. */
+    private static final int TOWER_ZOOM = 13;
     /** Source zoom for a far level: about one source pixel per voxel. */
     private static int zoom(int level) { return level <= 2 ? TerrariumTileSource.MAX_ZOOM : Math.max(FAR_ZOOM, 17 - level); }
 
@@ -253,6 +264,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 return;
             }
         }
+        metres = towers.shape(x, z, metres, voxel);
         double amplitude = Mth.clamp((metres - 0.5) / 4, 0, 1) * (0.6 + 1.8 * steep), detail = 0;
         if (voxel <= 8) detail += fbm(relief, x / 27.0, z / 27.0, 3) * amplitude;
         if (voxel <= 2) detail += (0.5 - Math.abs(crags.getValue(x / 9.0, z / 9.0))) * amplitude * 0.6 * Math.min(1, steep);
@@ -509,11 +521,143 @@ public final class EarthGenerator extends SurfaceGenerator {
         int overview = Mth.clamp(Mth.floor(Math.log(voxel * metresPerBlock / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
         GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
         int code = cover.code(point.latitude(), point.longitude(), overview);
-        if (code == WorldCoverSource.WATER) return iceWater(x, z, overview, metresPerBlock) ? WorldCoverSource.SNOW_AND_ICE : code;
+        if (code == WorldCoverSource.WATER) {
+            if (iceWater(x, z, overview, metresPerBlock)) return WorldCoverSource.SNOW_AND_ICE;
+            return voxel <= STRAY_VOXEL ? strayWater(x, z, point) : code;
+        }
         // Narrow rivers the land cover lost, read at the same wandering point so their banks curve too.
         if (rivers != null && voxel <= RIVER_VOXEL && code != WorldCoverSource.NO_DATA && code != WorldCoverSource.SNOW_AND_ICE
                 && rivers.strength(point.latitude(), point.longitude()) >= RiverMap.EDGE) return RIVER;
         return code;
+    }
+
+    /** Most WorldCover pixels a patch of water mapped on a slope ({@link #strayWater}) holds: about fifty hectares. */
+    private static final int STRAY_PIXELS = 5000;
+    /** Pixels round a water cell a patch may reach out to and still be judged whole there. */
+    private static final int STRAY_MARGIN = 40;
+    /**
+     * How far the ground under a stray patch rises across its middle half, in metres; how far across
+     * most of it, per metre of its width; and how far the ground falls away below it, in metres.
+     */
+    private static final double STRAY_RISE = 6, STRAY_GRADE = 0.1, STRAY_FALL = 15;
+    /** Rings round a patch's lowest pixel, in metres, along which {@link #strayCell} looks for the ground falling away. */
+    private static final double[] STRAY_RINGS = {30, 60, 100};
+    /** Widest voxel that looks for stray patches; wider ones read coarse overviews that blur them away. */
+    private static final int STRAY_VOXEL = 8;
+    /** Least range of a water cell's ground, in metres, for it to hold stray patches: flat country has no slopes to hang them on. */
+    private static final double STRAY_RELIEF = 30;
+    /** Water cells, keyed as {@link #waterCell}'s, as far as {@link #strayCell} has found their stray patches. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Long2IntOpenHashMap> strayCells =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * The cover of water mapped at a point: the land round it where the point lies in a small patch
+     * of water hanging on a slope, else water. The map reads dark rock as water: the basalt that
+     * poured over the Grand Canyon's walls at Lava Falls mapped as dozens of small patches all down
+     * the slopes, each stood as a pool cut into the hillside. Water lies level, and the elevation
+     * under a pond, a lake or a reach of river is level or nearly so, while under these it climbs
+     * the slope with the rock, which carries on falling away below them.
+     */
+    private int strayWater(double x, double z, GeoPoint point) {
+        int cx = Math.floorDiv(Mth.floor(x), WATER_CELL), cz = Math.floorDiv(Mth.floor(z), WATER_CELL);
+        if (waterCell(cx, cz).relief() < STRAY_RELIEF) return WorldCoverSource.WATER;
+        Long2IntOpenHashMap stray = strayCell(cx, cz);
+        if (stray.isEmpty()) return WorldCoverSource.WATER;
+        return stray.getOrDefault(pixelKey(row(point.latitude()), column(point.longitude())), WorldCoverSource.WATER);
+    }
+
+    private static long row(double latitude) { return (long) Math.floor((90 - latitude) * WorldCoverSource.PIXELS_PER_DEGREE); }
+    private static long column(double longitude) { return (long) Math.floor((longitude + 180) * WorldCoverSource.PIXELS_PER_DEGREE); }
+    private static long pixelKey(long row, long column) {
+        return row << 32 | Math.floorMod(column, 360L * WorldCoverSource.PIXELS_PER_DEGREE);
+    }
+
+    /**
+     * A water cell's stray patches, found once: every patch of full-resolution water pixels that
+     * lies wholly within the cell and a margin round it, holds no more than {@value #STRAY_PIXELS}
+     * pixels, and whose ground rises at least {@value #STRAY_RISE} m across its middle half and a
+     * tenth of its width across most of it, then falls more than {@value #STRAY_FALL} m below its
+     * lowest pixel within a hundred metres of it. Each of its pixels takes the class most of the
+     * land pixels touching the patch have. Larger water, as rivers and the sea, always stays; so do
+     * a creek's reach at a falls' lip, mostly level, and a river's below a falls, at the bottom.
+     */
+    private Long2IntOpenHashMap strayCell(int cx, int cz) {
+        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        Long2IntOpenHashMap known = strayCells.get(key);
+        if (known != null) return known;
+        GeoPoint a = grid.geographic(cx * (double) WATER_CELL, cz * (double) WATER_CELL);
+        GeoPoint b = grid.geographic((cx + 1) * (double) WATER_CELL, (cz + 1) * (double) WATER_CELL);
+        long rows = 180L * WorldCoverSource.PIXELS_PER_DEGREE;
+        long top = Math.max(0, row(Math.max(a.latitude(), b.latitude())) - STRAY_MARGIN), left = column(Math.min(a.longitude(), b.longitude())) - STRAY_MARGIN;
+        int height = (int) (Math.min(rows - 1, row(Math.min(a.latitude(), b.latitude())) + STRAY_MARGIN) - top + 1);
+        int width = (int) (column(Math.max(a.longitude(), b.longitude())) + STRAY_MARGIN - left + 1);
+        double ppd = WorldCoverSource.PIXELS_PER_DEGREE;
+        byte[] codes = new byte[width * height];
+        for (int j = 0; j < height; j++) for (int i = 0; i < width; i++)
+            codes[j * width + i] = (byte) cover.code(90 - (top + j + 0.5) / ppd, (left + i + 0.5) / ppd - 180, 0);
+        Long2IntOpenHashMap stray = new Long2IntOpenHashMap();
+        boolean[] seen = new boolean[codes.length];
+        int[] patch = new int[STRAY_PIXELS + 1];
+        int[] queue = new int[codes.length];
+        GlobalElevation dem = elevation[TOWER_ZOOM];
+        for (int start = 0; start < codes.length; start++) {
+            if (seen[start] || codes[start] != (byte) WorldCoverSource.WATER) continue;
+            // The patch through this pixel, joined at edges and corners.
+            int head = 0, tail = 0, size = 0;
+            boolean whole = true;
+            queue[tail++] = start;
+            seen[start] = true;
+            while (head < tail) {
+                int p = queue[head++], i = p % width, j = p / width;
+                if (size <= STRAY_PIXELS) patch[size] = p;
+                size++;
+                if (i == 0 || j == 0 || i == width - 1 || j == height - 1) whole = false;
+                for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
+                    int ni = i + di, nj = j + dj, n = nj * width + ni;
+                    if (ni < 0 || nj < 0 || ni >= width || nj >= height || seen[n] || codes[n] != (byte) WorldCoverSource.WATER) continue;
+                    seen[n] = true;
+                    queue[tail++] = n;
+                }
+            }
+            if (!whole || size > STRAY_PIXELS) continue;
+            double[] ground = new double[size];
+            int north = height, south = 0, west = width, east = 0;
+            double lowest = Double.MAX_VALUE, lowX = 0, lowZ = 0;
+            for (int k = 0; k < size; k++) {
+                int i = patch[k] % width, j = patch[k] / width;
+                GeoPoint p = new GeoPoint(90 - (top + j + 0.5) / ppd, (left + i + 0.5) / ppd - 180);
+                double bx = grid.blockX(p), bz = grid.blockZ(p);
+                ground[k] = dem.metres(bx, bz);
+                if (ground[k] < lowest) { lowest = ground[k]; lowX = bx; lowZ = bz; }
+                north = Math.min(north, j); south = Math.max(south, j); west = Math.min(west, i); east = Math.max(east, i);
+            }
+            Arrays.sort(ground);
+            double pixel = 1 / ppd * Math.PI / 180 * 6_371_008.8, latitude = 90 - (top + (north + south) / 2.0) / ppd;
+            double across = Math.hypot((south - north + 1) * pixel, (east - west + 1) * pixel * Math.cos(Math.toRadians(latitude)));
+            if (ground[size * 3 / 4] - ground[size / 4] < STRAY_RISE || ground[size * 9 / 10] - ground[size / 10] < STRAY_GRADE * across) continue;
+            double metresPerBlock = grid.groundMetresPerBlock(lowZ), below = lowest;
+            for (double ring : STRAY_RINGS) for (int d = 0; d < 8; d++)
+                below = Math.min(below, dem.metres(lowX + RING_X[d] * ring / metresPerBlock, lowZ + RING_Z[d] * ring / metresPerBlock));
+            if (below > lowest - STRAY_FALL) continue;
+            // The land round it decides what it is.
+            int[] votes = new int[256];
+            int best = WorldCoverSource.NO_DATA;
+            for (int k = 0; k < size; k++) {
+                int i = patch[k] % width, j = patch[k] / width;
+                for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
+                    int ni = i + di, nj = j + dj;
+                    if (ni < 0 || nj < 0 || ni >= width || nj >= height) continue;
+                    int c = codes[nj * width + ni] & 0xFF;
+                    if (c == WorldCoverSource.WATER || c == WorldCoverSource.NO_DATA) continue;
+                    if (++votes[c] > votes[best]) best = c;
+                }
+            }
+            if (best == WorldCoverSource.NO_DATA) continue;
+            for (int k = 0; k < size; k++) stray.put(pixelKey(top + patch[k] / width, left + patch[k] % width), best);
+        }
+        if (strayCells.size() > 1 << 14) strayCells.clear();
+        strayCells.putIfAbsent(key, stray);
+        return stray;
     }
 
     /** Rings round water, in metres, that {@link #iceWater} looks along, out past a pond's far shore; none nearer than a pixel. */
@@ -1136,6 +1280,21 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Imagery ground rules for this world's grid and seed, reading from any imagery source; for {@link ImageryCalibration}. */
     ImageryGround imageryGround(ImagerySource source) { return new ImageryGround(source, grid, seed); }
 
+    /**
+     * Blocks each way over which a slope must hold for bare rock. The 1-5 m elevation data carry
+     * roads' cuts and embankments: steep for a few blocks, then flat, so they drew straight lines
+     * of stone along every road. Cliffs and rocky mountainsides stay steep over this reach.
+     */
+    private static final int BROAD = 12;
+
+    /** The rise per run over {@link #BROAD} blocks each way, in the units of a column's steepness. */
+    private double broadSteep(int x, int z) {
+        GlobalElevation dem = elevation[zoom(1)];
+        double dx = dem.metres(x + 0.5 + BROAD, z + 0.5) - dem.metres(x + 0.5 - BROAD, z + 0.5);
+        double dz = dem.metres(x + 0.5, z + 0.5 + BROAD) - dem.metres(x + 0.5, z + 0.5 - BROAD);
+        return (Math.abs(dx) + Math.abs(dz)) / BROAD / 2.4;
+    }
+
     /** A column's surface with the given imagery, or none, having the last word; for {@link ImageryCalibration}. */
     Surface surface(int x, int z, int y, int water, int slope, int voxel, @Nullable ImageryGround imageryGround) {
         Local local = cover == null ? null : local(x, z, y);
@@ -1153,6 +1312,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         // Summed block steps over two blocks each way, as a rough rise per run.
         double steep = slope / 2.4;
+        if (steep > 0.6 && voxel < BROAD && broadSteep(x, z) < 0.55) {
+            // Steep only over a few blocks, as at a road cut, embankment or ditch: ground, not bare rock.
+            steep = 0.6;
+            slope = 1;
+        }
         long r = mix(x, 7, z);
         int roll = (int) Math.floorMod(r, 100);
         if (y <= SEA + 2 && nearSea(x, z)) {
@@ -1231,14 +1395,15 @@ public final class EarthGenerator extends SurfaceGenerator {
             case 0 -> CLAY; case 1 -> SAND; default -> GRAVEL; };
         if (depth > 8 && patches.getValue(x / 19.0, z / 19.0) > 0.2) floor = MUD;
         // Tropical lagoons behind a reef, as at Bora Bora, are clear turquoise sea over sand, not river water.
-        if (t > 20 && water <= SEA + 16 && lagoon(x, z)) return new Surface(warmOcean, SAND, SAND, 0, 0, 0, 0, 0, false);
+        if (t > 20 && water <= SEA + 24 && lagoon(x, z)) return new Surface(warmOcean, SAND, SAND, 0, 0, 0, 0, 0, false);
         return new Surface(t < -2 ? frozenRiver : river, floor, floor, 0, 0, 0, 0, 0, false);
     }
 
     /** Whether water lies close to the open sea, as a lagoon inside a reef or a barrier island does. */
     private boolean lagoon(int x, int z) {
         int sea = 0;
-        for (int k = 0; k < 8; k++) if (waterY(x + (int) (RING_X[k] * 1500), z + (int) (RING_Z[k] * 1500)) == SEA && ++sea >= 2) return true;
+        for (int radius = 1500; radius <= 3000; radius += 1500)
+            for (int k = 0; k < 8; k++) if (waterY(x + (int) (RING_X[k] * radius), z + (int) (RING_Z[k] * radius)) == SEA && ++sea >= 2) return true;
         return false;
     }
 
@@ -1384,6 +1549,9 @@ public final class EarthGenerator extends SurfaceGenerator {
                 boolean hot = zone == ClimateZone.HOT_DESERT || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.TROPICAL_DRY;
                 // Dry lands' cliffs show their rock in coloured bands, as the Colorado Plateau's and the Sahara's do.
                 boolean arid = hot || dry;
+                // Bare ground in wet lowlands is cleared land (quarries, airfields, building sites): it goes back to grass.
+                if (!arid && !cliff && steep < 0.7 && local.rain() > 700 && y < SEA + 300 && t > 0)
+                    return covered(WorldCoverSource.GRASSLAND, x, z, y, local, steep, roll, slope);
                 if (arid && (cliff || steep > 0.9)) return new Surface(badlands, band(y), TERRACOTTA, 0, 0, 0, 0, 0, false);
                 // The Colorado Plateau's red rock: slickrock and red sand on the flats, as in Monument Valley.
                 if (arid && redRock(x, z)) {
@@ -1706,6 +1874,13 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Giant sequoias among old conifers, on duff, in the real groves.
         if (sequoias(x, z, y)) return new Surface(oldTaiga, patch > -0.2 ? PODZOL : GRASS, DIRT, 70, 7, 0, 90, 100, true, Tree.SEQUOIA);
         double t = local.temperature();
+        // A tropical climate over an ecoregion that is not tropical forest, as in south Florida: no jungle there.
+        if (local.zone() == ClimateZone.RAINFOREST || local.zone() == ClimateZone.TROPICAL_DRY) {
+            int eco = ecoregion(x, z), biome = eco == 0 ? Ecoregions.NONE : Ecoregions.get().biome(eco);
+            if (biome == Ecoregions.FLOODED_GRASSLAND) return new Surface(swamp, GRASS, DIRT, 40, 0, 0, 260, 280, false);
+            if (biome == Ecoregions.TEMPERATE_BROADLEAF || biome == Ecoregions.TEMPERATE_CONIFER || biome == Ecoregions.TEMPERATE_GRASSLAND)
+                return new Surface(forest, GRASS, DIRT, 70, 4, 0, 180, 200, false);
+        }
         return switch (local.zone()) {
             case RAINFOREST -> patch < -0.5 && bamboo(x, z) ? bambooForest(patch) : new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true, Tree.JUNGLE);
             // Monsoon forest where the wet season is long; open woodland with grass between the trees, as in the

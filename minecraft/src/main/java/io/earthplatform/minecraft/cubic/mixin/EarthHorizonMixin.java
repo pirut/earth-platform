@@ -13,6 +13,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 abstract class EarthHorizonMixin {
     @Inject(method = "getHorizonHeight", at = @At("HEAD"), cancellable = true)
     private void earthplatform$lowHorizon(LevelHeightAccessor level, CallbackInfoReturnable<Double> result) {
-        if (EarthClouds.earthSky(level)) result.setReturnValue(EarthClouds.HORIZON_Y);
+        if (EarthClouds.earthSky(level)) result.setReturnValue(EarthClouds.horizon());
     }
 }
