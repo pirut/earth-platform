@@ -15,6 +15,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
@@ -112,7 +113,7 @@ public final class CubicPortals {
         for (int radius = 0; radius <= BUILD_SEARCH && spot == null; radius++) {
             for (int dz = -radius; dz <= radius && spot == null; dz++) for (int dx = -radius; dx <= radius; dx++) {
                 if (Math.max(Math.abs(dx), Math.abs(dz)) != radius) continue;
-                BlockPos base = new BlockPos(x + dx, cubes.skyTop(x + dx, z + dz) + 1, z + dz);
+                BlockPos base = new BlockPos(x + dx, ground(cubes, x + dx, z + dz) + 1, z + dz);
                 if (fits(cubes, base, along, across)) { spot = base; break; }
             }
         }
@@ -130,6 +131,18 @@ public final class CubicPortals {
         BlockState portal = Blocks.NETHER_PORTAL.defaultBlockState().setValue(NetherPortalBlock.AXIS, axis);
         for (int i = 0; i <= 1; i++) for (int k = 0; k <= 2; k++) level.setBlock(spot.relative(along, i).above(k), portal, 18);
         return new BlockUtil.FoundRectangle(spot, 2, 3);
+    }
+
+    /** The top ground block of a column, below any tree canopy standing on it. */
+    private static int ground(ServerCubeWorld cubes, int x, int z) {
+        int y = cubes.skyTop(x, z), floor = y - 48;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(x, y, z);
+        while (y > floor) {
+            BlockState state = cubes.getBlockState(pos.setY(y));
+            if (!(state.is(BlockTags.LEAVES) || state.is(BlockTags.LOGS) || state.isAir() || state.canBeReplaced() && state.getFluidState().isEmpty())) break;
+            y--;
+        }
+        return y;
     }
 
     /** Solid ground under a 4 by 3 footprint, open air above it for the frame and to step out. */
