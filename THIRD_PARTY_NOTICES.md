@@ -1,5 +1,7 @@
 # Private sparse engine fixture: source and data notices
 
+For the player-facing credits of the current Earth mod, see [CREDITS.md](CREDITS.md); the licence audit is in [docs/release/LICENSING-AUDIT.md](docs/release/LICENSING-AUDIT.md). The sections below also keep the older engine's notices.
+
 Original engine source is a development prototype, with no new public redistribution or stable addon compatibility claim.
 
 ## Distant Horizons
@@ -21,8 +23,22 @@ NOAA ETOPO proof data remains as an existing independent fixture; it is not sile
 
 AWS Terrain Tiles (streamed at runtime by `geography/.../globe/TerrariumTileSource`, never bundled): https://registry.opendata.aws/terrain-tiles/ . Required attribution, from https://github.com/tilezen/joerd/blob/master/docs/attribution.md : ArcticDEM terrain data DEM(s) were created from DigitalGlobe, Inc., imagery and funded under National Science Foundation awards 1043681, 1559691, and 1542736; Australia terrain data © Commonwealth of Australia (Geoscience Australia) 2017; Austria terrain data © offene Daten Österreichs – Digitales Geländemodell (DGM) Österreich; Canada terrain data contains information licensed under the Open Government Licence – Canada; Europe terrain data produced using Copernicus data and information funded by the European Union - EU-DEM layers; Global ETOPO1 terrain data U.S. National Oceanic and Atmospheric Administration; Mexico terrain data source: INEGI, Continental relief, 2016; New Zealand terrain data Copyright 2011 Crown copyright (c) Land Information New Zealand and the New Zealand Government (All rights reserved); Norway terrain data © Kartverket; United Kingdom terrain data © Environment Agency copyright and/or database right 2015. All rights reserved; United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey. The same text is exposed as `TerrariumTileSource.ATTRIBUTION` for in-game display.
 
+NASA Blue Marble Next Generation (bundled as `minecraft/src/main/resources/assets/earthplatform/textures/globe/blue_marble.jpg`, the July 2004 topography and bathymetry image downscaled to 4096x2048 for the spawn picker globe): NASA Earth Observatory, Reto Stöckli, Blue Marble Next Generation, https://visibleearth.nasa.gov/collection/1484/blue-marble . NASA imagery is not subject to copyright in the United States; credited as NASA asks. The globe also draws AWS Terrain Tiles and ESA WorldCover at runtime, with the attributions above.
+
 Regional relief and surface appearance are explicitly procedural heuristics layered on pinned measurements. They are not additional measured elevation, climate, biome or geology data.
 
 ## Separately installed shader inputs
 
 The shader candidate additionally requires player-supplied Iris1.8.14-beta.1, Sodium0.8.12-beta.1 and Photonv1.3b. Their unchanged external artifacts, shaders, nested payloads and licenses are not part of our shim distribution. Exact input hashes and the three-classpath/no-copied-payload verification are recorded in review-evidence/shader-packaging015 and shader-aggregate. Users obtain each project from its official distribution and keep the terms accompanying that separate artifact. This candidate’s original code only adapts the pinned installed lifecycle, native format/material context and pass-owned renderer resources. No broader version or pack compatibility is implied.
+
+## Earth data streamed at runtime (never bundled)
+
+CHELSA V2.1 climatologies 1981-2010 (streamed by `geography/.../globe/ClimateSource` from https://os.zhdk.cloud.switch.ch/chelsav2/GLOBAL/): Karger, D.N. et al. (2017) Climatologies at high resolution for the earth's land surface areas. Scientific Data 4:170122; Karger, D.N. et al. (2021) EnviDat, https://doi.org/10.16904/envidat.228. CC0 1.0.
+
+ESA WorldCover 10 m 2021 v200 (streamed by `WorldCoverSource` from its public cloud-optimised GeoTIFFs): attribution as for the fixture above, CC BY 4.0; classes are mapped to Minecraft biomes and blocks and built-up classes are replaced by surrounding land cover.
+
+Sentinel-2 cloudless 2016 (streamed by `ImagerySource` from https://tiles.maps.eox.at only when a player turns imagery on; off by default; used only to choose ground blocks): EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). See the licensing audit.
+
+## Photon adjusted for macOS
+
+A Photon v1.3b copy adjusted for Apple OpenGL was made for testing. It was used for testing only and will not be distributed: the mod is required to work with stock Photon. It is a derivative of Photon (© 2021-2025 Benjamin Stott "SixthSurge", Photon Shaders License Agreement), keeps that licence file, and is not part of any Earth Platform distribution. Its licence forbids redistribution on platforms that pay creators (such as Modrinth and CurseForge) without the author's written permission.

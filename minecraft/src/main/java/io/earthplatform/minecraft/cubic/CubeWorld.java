@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -20,6 +21,7 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.entity.TickingBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.FluidState;
 
 /**
@@ -96,6 +98,22 @@ public abstract class CubeWorld {
         return column == null ? baselineTop(x, z) : column[(z & 15) << 4 | (x & 15)];
     }
 
+    /**
+     * Highest Y in this column that a vanilla heightmap of this type would hold: from the sky top
+     * down through loaded cubes, so MOTION_BLOCKING_NO_LEAVES finds the ground under a canopy.
+     * Stops at the sky top when the cubes below are unknown or the scan runs long (deep water).
+     */
+    public int heightTop(Heightmap.Types type, int x, int z) {
+        int top = skyTop(x, z);
+        Predicate<BlockState> counts = type.isOpaque();
+        for (int y = top, limit = top - 256; y > limit; y--) {
+            Cube cube = cubeAtBlock(x, y, z);
+            if (cube == null) return top;
+            if (counts.test(cube.get(x, y, z))) return y;
+        }
+        return top;
+    }
+
     public boolean blocksSky(BlockState state, BlockPos pos) {
         return !state.isAir() && !state.propagatesSkylightDown(level, pos);
     }
@@ -161,6 +179,7 @@ public abstract class CubeWorld {
         if (old == state) return null;
         Block block = state.getBlock();
         cube.markModified();
+        cube.reshaped = true;
         updateTop(pos, state);
         onStateStored(cube, pos, old, state);
         boolean hadEntity = old.hasBlockEntity();

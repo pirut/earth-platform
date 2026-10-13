@@ -4,14 +4,17 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.CubeStorage;
+import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.FarColumn;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
+import io.earthplatform.minecraft.cubic.net.Throttle;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -60,10 +63,12 @@ public final class FarServer {
         return thread;
     });
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> cache = new ConcurrentHashMap<>();
+    /** What edited columns looked like before, so a remade one that came out the same is not sent again. */
+    private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> before = new ConcurrentHashMap<>();
     private final ConcurrentLinkedQueue<Made> made = new ConcurrentLinkedQueue<>();
-    /** Columns that could not be made; players may ask for them again. */
+    /** Columns that could not be made, or were skipped as their player had moved away; players may ask for them again. */
     private final ConcurrentLinkedQueue<Long> failed = new ConcurrentLinkedQueue<>();
-    private final AtomicInteger failures = new AtomicInteger();
+    private final AtomicInteger failures = new AtomicInteger(), skipped = new AtomicInteger(), unchanged = new AtomicInteger();
     private volatile long lastFailureLog;
     private final Map<UUID, Session> sessions = new HashMap<>();
     /** Columns whose saved cubes changed and that players hold, to remake and push again. */
@@ -78,6 +83,8 @@ public final class FarServer {
         final LongOpenHashSet queued = new LongOpenHashSet();
         final LongOpenHashSet sent = new LongOpenHashSet();
         final ArrayDeque<CubePayloads.FarColumnData> outgoing = new ArrayDeque<>();
+        /** Where the player stands, so workers can skip columns asked for before the player moved far away. */
+        volatile int bx, bz;
     }
 
     public FarServer(CubeGenerator generator, CubeStorage storage, CubeCodec codec, Registry<Biome> biomes) {
@@ -93,17 +100,33 @@ public final class FarServer {
         UUID id = player.getUUID();
         Session session = sessions.computeIfAbsent(id, unused -> new Session());
         int bx = player.getBlockX(), bz = player.getBlockZ();
+        session.bx = bx;
+        session.bz = bz;
         for (long key : keys) {
             if (!Far.valid(key) || !Far.near(key, bx, bz) || !session.queued.add(key)) continue;
             CubePayloads.FarColumnData cached = cache.get(key);
             if (cached != null) session.outgoing.add(cached);
-            else submit(id, key);
+            else submit(id, session, key);
         }
     }
 
-    private void submit(@Nullable UUID player, long key) {
+    private void submit(@Nullable UUID player, @Nullable Session session, long key) {
         workers.execute(() -> {
-            try { made.add(new Made(player, make(key, player != null))); }
+            // After a teleport the old place's columns can be thousands deep in the queue: skip them.
+            if (session != null && !Far.near(key, session.bx, session.bz)) {
+                skipped.incrementAndGet();
+                failed.add(key);
+                return;
+            }
+            long start = System.nanoTime();
+            try {
+                CubePayloads.FarColumnData column = make(key, player != null);
+                CubePayloads.FarColumnData old = player == null ? before.remove(key) : null;
+                // Most saved edits (grass spreading, a placed torch) change nothing at a voxel's size.
+                if (old == null || !same(old, column)) made.add(new Made(player, column));
+                else unchanged.incrementAndGet();
+                Timings.FAR_MAKE.since(start);
+            }
             catch (RuntimeException | IOException failure) {
                 failed.add(key);
                 failures.incrementAndGet();
@@ -120,9 +143,16 @@ public final class FarServer {
     public void edited(int cubeX, int cubeZ) {
         for (int level = Far.MIN_LEVEL; level <= Far.EDIT_LEVELS; level++) {
             long key = Far.key(level, cubeX >> level, cubeZ >> level);
-            cache.remove(key);
+            CubePayloads.FarColumnData old = cache.remove(key);
+            if (old != null && before.size() < CACHE) before.putIfAbsent(key, old);
             stale.add(key);
         }
+    }
+
+    private static boolean same(CubePayloads.FarColumnData a, CubePayloads.FarColumnData b) {
+        if (a.bottom() != b.bottom() || !Arrays.equals(a.drops(), b.drops()) || a.sections().size() != b.sections().size()) return false;
+        for (int i = 0; i < a.sections().size(); i++) if (!Arrays.equals(a.sections().get(i), b.sections().get(i))) return false;
+        return true;
     }
 
     private CubePayloads.FarColumnData make(long key, boolean useCache) throws IOException {
@@ -160,7 +190,11 @@ public final class FarServer {
             for (int y = 0; y < perCube; y++) for (int z = 0; z < perCube; z++) for (int x = 0; x < perCube; x++) {
                 BlockState state = downsample(cube, x << level, y << level, z << level, 1 << level);
                 BlockState here = target.getBlockState(baseX + x, baseY + y, baseZ + z);
-                if (here != state) target.setBlockState(baseX + x, baseY + y, baseZ + z, state, false);
+                // The generated voxels are lowered by their column's drop so the water meets its real
+                // height, and a cube's own rows are not: swapping water and air between the two raised
+                // the water over every saved cube into a lighter patch with a stepped outline. Edits that
+                // matter from afar are to solid ground, so water and air keep the generated shape.
+                if (here != state && !(waterOrAir(here) && waterOrAir(state))) target.setBlockState(baseX + x, baseY + y, baseZ + z, state, false);
             }
         }
         for (int i = 0; i < column.sections.size(); i++) {
@@ -170,6 +204,8 @@ public final class FarServer {
             if (section.hasOnlyAir()) column.sections.set(i, null);
         }
     }
+
+    private static boolean waterOrAir(BlockState state) { return state.isAir() || state.getBlock() == Blocks.WATER; }
 
     private LevelChunkSection section(FarColumn column, int index) {
         while (column.sections.size() <= index) column.sections.add(null);
@@ -233,7 +269,8 @@ public final class FarServer {
                 long key = it.nextLong();
                 boolean held = false;
                 for (Session session : sessions.values()) held |= session.sent.contains(key);
-                if (held) submit(null, key);
+                if (held) submit(null, null, key);
+                else before.remove(key);
             }
             stale.clear();
         }
@@ -242,11 +279,15 @@ public final class FarServer {
             present.add(player.getUUID());
             Session session = sessions.get(player.getUUID());
             if (session == null) continue;
-            for (int n = 0; n < SEND_PER_TICK && !session.outgoing.isEmpty(); n++) {
+            session.bx = player.getBlockX();
+            session.bz = player.getBlockZ();
+            int bytes = Throttle.allowance(player);
+            for (int n = 0; n < SEND_PER_TICK && bytes > 0 && !session.outgoing.isEmpty(); n++) {
                 CubePayloads.FarColumnData column = session.outgoing.poll();
                 session.queued.remove(column.key());
                 session.sent.add(column.key());
                 PacketDistributor.sendToPlayer(player, column);
+                bytes -= column.size();
             }
             if (ticks % 200 == 0) {
                 int bx = player.getBlockX(), bz = player.getBlockZ();
@@ -257,6 +298,10 @@ public final class FarServer {
     }
 
     public int cached() { return cache.size(); }
+    /** Columns skipped because their player had moved far away before their turn came. */
+    public int skipped() { return skipped.get(); }
+    /** Edited columns remade the same as before, so not sent again. */
+    public int unchanged() { return unchanged.get(); }
 
     public void close() {
         closed = true;
