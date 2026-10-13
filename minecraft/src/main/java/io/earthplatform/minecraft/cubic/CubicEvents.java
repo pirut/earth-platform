@@ -112,19 +112,38 @@ public final class CubicEvents {
         CubeGenerator generator = cubes.generator();
         int ground = Math.max(generator.surfaceY(x, z), generator.waterY(x, z));
         cubes.loadAround(new BlockPos(x, ground, z));
-        for (int radius = 0; radius <= 15; radius++) for (int dz = -radius; dz <= radius; dz++) for (int dx = -radius; dx <= radius; dx++) {
-            if (Math.max(Math.abs(dx), Math.abs(dz)) != radius) continue;
-            int y = Math.max(generator.surfaceY(x + dx, z + dz), generator.waterY(x + dx, z + dz)) + 1;
-            if (open(cubes, x + dx, y, z + dz) && open(cubes, x + dx, y + 1, z + dz)
-                    && !cubes.getBlockState(new BlockPos(x + dx, y - 1, z + dz)).is(net.minecraft.world.level.block.Blocks.POWDER_SNOW))
-                return new Vec3(x + dx + 0.5, y, z + dz + 0.5);
-        }
+        // First somewhere roomy, so nobody arrives in a one-block pit facing a wall; then anywhere with headroom.
+        for (boolean roomy : new boolean[]{true, false})
+            for (int radius = 0; radius <= 15; radius++) for (int dz = -radius; dz <= radius; dz++) for (int dx = -radius; dx <= radius; dx++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) != radius) continue;
+                int y = Math.max(generator.surfaceY(x + dx, z + dz), generator.waterY(x + dx, z + dz)) + 1;
+                if (open(cubes, x + dx, y, z + dz) && open(cubes, x + dx, y + 1, z + dz)
+                        && !cubes.getBlockState(new BlockPos(x + dx, y - 1, z + dz)).is(net.minecraft.world.level.block.Blocks.POWDER_SNOW)
+                        && (!roomy || roomy(cubes, x + dx, y, z + dz)))
+                    return new Vec3(x + dx + 0.5, y, z + dz + 0.5);
+            }
         int y = ground + 1;
         while (y < ground + 48 && !(open(cubes, x, y, z) && open(cubes, x, y + 1, z))) y++;
         BlockPos under = new BlockPos(x, y - 1, z);
         if (cubes.getBlockState(under).is(net.minecraft.world.level.block.Blocks.POWDER_SNOW))
             cubes.level().setBlockAndUpdate(under, net.minecraft.world.level.block.Blocks.SNOW_BLOCK.defaultBlockState());
         return new Vec3(x + 0.5, y, z + 0.5);
+    }
+
+    /**
+     * Whether a spot has room around it: at least six of the eight blocks beside the player's feet
+     * and head are open, and none of those open neighbours is a sheer drop, so they can look around
+     * and walk off.
+     */
+    private static boolean roomy(ServerCubeWorld cubes, int x, int y, int z) {
+        int room = 0;
+        for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dz == 0) continue;
+            if (!open(cubes, x + dx, y, z + dz) || !open(cubes, x + dx, y + 1, z + dz)) continue;
+            if (open(cubes, x + dx, y - 1, z + dz) && open(cubes, x + dx, y - 2, z + dz) && open(cubes, x + dx, y - 3, z + dz)) continue;
+            room++;
+        }
+        return room >= 6;
     }
 
     /** Whether a player fits in a block: air, or a dry one they walk through, such as grass or a thin layer of snow. */
