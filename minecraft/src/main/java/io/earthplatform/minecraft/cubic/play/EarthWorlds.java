@@ -164,6 +164,7 @@ public final class EarthWorlds {
         CompletableFuture<Void> preparing;
         /** Where the start's landing search found to stand, found off the server thread with the data. */
         @Nullable volatile int[] landing;
+        static final int LANDING_PATIENCE = 200;
         boolean ready;
         long retryAt, lastSample, firstWait;
 
@@ -225,7 +226,7 @@ public final class EarthWorlds {
             for (UUID id : List.copyOf(waiting)) {
                 ServerPlayer player = server.getPlayerList().getPlayer(id);
                 if (player == null || player.level().dimension() != Level.OVERWORLD) { waiting.remove(id); continue; }
-                if (ready) {
+                if (ready && landingLoaded(cubes)) {
                     waiting.remove(id);
                     arrive(player, cubes);
                 } else {
@@ -235,6 +236,23 @@ public final class EarthWorlds {
                     status.send(player, status.payload(EarthStatus.PREPARING, problem, (int) ((now - firstWait) / 1000), place()), now);
                 }
             }
+        }
+
+        /** Ticks spent waiting for the cubes at the landing, which the workers make; after that they load on the spot. */
+        int landingTicks;
+
+        /**
+         * Whether the cubes about the start's landing spot are made: asked of the workers and waited
+         * for, rather than generated on the server thread when the first player arrives.
+         */
+        private boolean landingLoaded(ServerCubeWorld cubes) {
+            int[] spot = landing;
+            if (spot == null || landingTicks >= LANDING_PATIENCE) return true;
+            var generator = cubes.generator();
+            int ground = Math.max(generator.surfaceY(spot[0], spot[1]), generator.waterY(spot[0], spot[1]));
+            if (cubes.readyAround(new net.minecraft.core.BlockPos(spot[0], ground, spot[1]))) return true;
+            landingTicks++;
+            return false;
         }
 
         /** Fetches the data around the home off the server thread, and checks it is there; retries until it is. */
