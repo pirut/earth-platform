@@ -281,7 +281,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Nor does ground beside a lake or river, unless it lies well below it, as under a dam.
         if (cover != null) {
             int shore = shore(dem, memo, x, z, voxel);
-            if (shore != DRY && y < shore && y >= shore - 4) y = shore;
+            // In layered rock, terraces and the rock's noise may cut further below it, as along the Colorado.
+            if (shore != DRY && y < shore && y >= shore - (rock != null ? 12 : 4)) y = shore;
             // A speck of land in a lagoon filled with coarse blocks, as a pier or a boat, takes the fill's height, tens
             // of metres up, and stood as a stone pillar out of the sea: it lies just above the water instead.
             if (y > SEA + 1 && speck(dem, x, z, metres, voxel)) y = SEA + 1;

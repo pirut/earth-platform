@@ -229,8 +229,13 @@ public final class Strata {
                 double t = (d - cell) / length;
                 stepped = cell + length * Mth.lerp(0.75, t, t * t * t);
             }
-            return metres + w * (d - stepped);
+            // Thick cliff makers, as the Vishnu Schist's 600 m, would move the ground tens of metres, which cut the inner
+            // gorge's floor far below the Colorado and left the river standing in walls over its banks.
+            return metres + w * Mth.clamp(d - stepped, -MAX_STEP, MAX_STEP);
         }
+
+        /** The most, in metres, that terracing moves the ground up or down. */
+        private static final double MAX_STEP = 8;
 
         /** 0 on the plateau tops, rising to 1 a little under the datum. */
         private double below(double metres) { return Mth.clamp((datum - metres - RIM) / 20, 0, 1); }
