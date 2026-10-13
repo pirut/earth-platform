@@ -21,6 +21,7 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
@@ -33,6 +34,7 @@ abstract class CubicPoiStorageMixin<R> implements CubicPoiStore {
     @Shadow @Final protected LevelHeightAccessor levelHeightAccessor;
     @Shadow @Final private Long2ObjectMap<Optional<R>> storage;
     @Shadow @Final private Function<Runnable, R> factory;
+    @Shadow protected abstract void setDirty(long section);
 
     /** Cubic section Ys held per chunk column, for queries to visit. */
     @Unique private final Long2ObjectOpenHashMap<IntSet> earthplatform$columns = new Long2ObjectOpenHashMap<>();
@@ -55,10 +57,17 @@ abstract class CubicPoiStorageMixin<R> implements CubicPoiStore {
         Optional<R> held = storage.get(section);
         if (held != null && held.isPresent()) { result.setReturnValue(held.get()); return; }
         // Not saved: the section is rebuilt from its cube's blocks whenever the cube loads.
-        R made = factory.apply(() -> {});
+        // Changes still go through setDirty: the POI manager's override tracks how far each section is from a village.
+        R made = factory.apply(() -> setDirty(section));
         storage.put(section, Optional.of(made));
         earthplatform$columns.computeIfAbsent(ChunkPos.asLong(SectionPos.x(section), SectionPos.z(section)), k -> new IntOpenHashSet()).add(SectionPos.y(section));
         result.setReturnValue(made);
+    }
+
+    /** Cubic sections are never written to disk, so they never join the dirty queue (it could never drain them). */
+    @Inject(method = "setDirty", at = @At("HEAD"), cancellable = true)
+    private void earthplatform$cubicDirty(long section, CallbackInfo info) {
+        if (earthplatform$cubicOnly(section)) info.cancel();
     }
 
     @Override public Stream<R> earthplatform$cubicSections(long chunk) {
@@ -75,5 +84,6 @@ abstract class CubicPoiStorageMixin<R> implements CubicPoiStore {
         long chunk = ChunkPos.asLong(SectionPos.x(section), SectionPos.z(section));
         IntSet sections = earthplatform$columns.get(chunk);
         if (sections != null && sections.remove(SectionPos.y(section)) && sections.isEmpty()) earthplatform$columns.remove(chunk);
+        setDirty(section);
     }
 }
