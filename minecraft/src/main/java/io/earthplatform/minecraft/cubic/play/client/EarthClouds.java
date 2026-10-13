@@ -125,6 +125,12 @@ public final class EarthClouds {
 
         RenderSystem.backupProjectionMatrix();
         RenderSystem.setProjectionMatrix(projection, VertexSorting.DISTANCE_TO_ORIGIN);
+        // The vertices carry the camera's turn (view); the game's model-view already holds it during
+        // the level's render, and applying it twice tilted the deck by the camera's pitch.
+        var modelView = RenderSystem.getModelViewStack();
+        modelView.pushMatrix();
+        modelView.identity();
+        RenderSystem.applyModelViewMatrix();
         RenderSystem.setShader(GameRenderer::getPositionTexColorShader);
         ResourceLocation texture = soft();
         RenderSystem.setShaderTexture(0, texture);
@@ -161,6 +167,8 @@ public final class EarthClouds {
         RenderSystem.depthMask(true);
         RenderSystem.enableCull();
         RenderSystem.disableBlend();
+        modelView.popMatrix();
+        RenderSystem.applyModelViewMatrix();
         RenderSystem.restoreProjectionMatrix();
         return true;
     }
