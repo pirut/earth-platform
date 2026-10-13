@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic.earth;
 
 import io.earthplatform.geography.GeoPoint;
+import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.GlobalElevation;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.TerrariumTileSource;
@@ -27,14 +28,18 @@ import net.minecraft.world.level.levelgen.synth.SimplexNoise;
  * home latitude (the Web Mercator grid keeps shapes true everywhere, with sizes growing toward the
  * poles). Sea level is Y 63: the sea's top water block is Y 62, so ground at 0 m is level with
  * it. Elevation streams from AWS Terrain Tiles; small relief that the source is too coarse to hold
- * is added by noise, more on steep ground, none on beaches. Climate comes from latitude and height.
+ * is added by noise, more on steep ground, none on beaches.
  *
- * <p>Worlds made with land cover read ESA WorldCover (10 m classes) for what covers the ground:
+ * <p>Worlds made with land cover read ESA WorldCover (10 m classes) for what covers the ground and
+ * CHELSA (1 km climatologies) for the climate: its Köppen-Geiger zone, mean and warmest-season
+ * temperatures carried to each column's own height, and rainfall, which pick each class's biome,
+ * trees and plants, so a forest is rainforest, oak, pine or taiga where it is on Earth. Classes:
  * forests, shrubs, grass, bare rock and sand, snow and ice, wetlands and mangroves, and lakes and
  * rivers, whose water sits at the surveyed surface with a bed that deepens away from the shore. The
  * world is wild land only: towns take the cover their climate gives and farm fields are grassland.
  * The 10 m pixel edges are broken up by a small warp so borders look natural. Worlds
- * made before land cover keep broad noise for wetness and have no inland water.
+ * made before land cover keep a temperature from latitude and height, broad noise for wetness and
+ * no inland water.
  */
 public final class EarthGenerator extends SurfaceGenerator {
     public static final String ID = "earth-v1";
@@ -51,6 +56,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final TerrariumTileSource tiles;
     private final GlobalElevation[] elevation = new GlobalElevation[TerrariumTileSource.MAX_ZOOM + 1];
     @Nullable private final WorldCoverSource cover;
+    @Nullable private final ClimateSource climate;
     private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth, warpX, warpZ, patches;
     private final Holder<Biome> ocean, deepOcean, coldOcean, deepColdOcean, frozenOcean, lukewarmOcean, warmOcean,
             beach, snowyBeach, stonyShore, snowySlopes, frozenPeaks, stonyPeaks, meadow, taiga, oldTaiga, forest,
@@ -66,18 +72,23 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
     }
 
-    /** @param cover land cover, or null for a world made before land cover, which keeps noise for wetness */
-    public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles, @Nullable WorldCoverSource cover) {
-        this(seed, biomes, settings, tiles, cover, Noises.of(seed));
+    /**
+     * @param cover   land cover, or null for a world made before land cover, which keeps noise for wetness
+     * @param climate real climate, used with land cover; without it the climate comes from latitude and height
+     */
+    public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
+                          @Nullable WorldCoverSource cover, @Nullable ClimateSource climate) {
+        this(seed, biomes, settings, tiles, cover, climate, Noises.of(seed));
     }
 
     private EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
-                           @Nullable WorldCoverSource cover, Noises noises) {
+                           @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, Noises noises) {
         super(seed, biomes, noises.random);
         this.settings = settings;
         this.grid = new MercatorGrid(settings.metresPerBlock());
         this.tiles = tiles;
         this.cover = cover;
+        this.climate = climate;
         // Drawn from their own random, after the shared one, so caves stay as they were.
         RandomSource own = new LegacyRandomSource(seed ^ 0x434F564552L);
         warpX = new SimplexNoise(own); warpZ = new SimplexNoise(own); patches = new SimplexNoise(own);
@@ -103,7 +114,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Override public int seaLevel() { return SEA; }
     @Override protected int shoreLevel() { return SEA; }
     @Override protected boolean emeralds(int maxGround) { return maxGround > SEA + 1800; }
-    @Override public boolean barren(int x, int z, int y) { return temperature(x, z, y) < -3; }
+    @Override public boolean barren(int x, int z, int y) { return (cover == null ? temperature(x, z, y) : local(x, z, y).temperature()) < -3; }
     public EarthSettings settings() { return settings; }
     public MercatorGrid grid() { return grid; }
 
@@ -125,7 +136,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     @Override public String credits() {
         return "Elevation: AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, ETOPO1 and others)"
-                + (cover == null ? "" : ". Land cover: " + WorldCoverSource.ATTRIBUTION);
+                + (cover == null ? "" : ". Land cover: " + WorldCoverSource.ATTRIBUTION)
+                + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION);
     }
 
     // Height -------------------------------------------------------------------------------------
@@ -305,6 +317,25 @@ public final class EarthGenerator extends SurfaceGenerator {
         return 27 - 0.0074 * lat * lat - 0.0065 * Math.max(0, y - SEA) + warmth.getValue(x / 700.0, z / 700.0) * 1.5;
     }
 
+    /** A column's climate at height y: its zone, mean and warmest-quarter temperatures (°C) and rainfall (mm a year). */
+    private record Local(ClimateZone zone, double temperature, double warmest, double rain) {}
+
+    /** The real climate at a column and height, or one from latitude and height where there is none. */
+    private Local local(int x, int z, int y) {
+        int metres = Math.max(0, y - SEA);
+        if (climate != null) {
+            // Zone borders follow the 1 km grid; a gentle warp of a few hundred metres bends them.
+            double amplitude = 350 / grid.groundMetresPerBlock(z);
+            GeoPoint point = grid.geographic(x + 0.5 + warpX.getValue(x / 900.0, z / 900.0) * amplitude,
+                    z + 0.5 + warpZ.getValue(x / 900.0, z / 900.0) * amplitude);
+            ClimateSource.Climate c = climate.at(point.latitude(), point.longitude(), metres);
+            if (c != null) return new Local(ClimateZone.of(c.koppen(), c.meanTemperature(), c.warmestQuarter()),
+                    c.meanTemperature(), c.warmestQuarter(), c.precipitation());
+        }
+        double t = temperature(x, z, y);
+        return new Local(ClimateZone.of(ClimateSource.NO_DATA, t, t + 10), t, t + 10, 800);
+    }
+
     private double wetness(int x, int z) { return fbm(wetBroad, x / 9000.0, z / 9000.0, 2) * 0.7 + wetLocal.getValue(x / 1400.0, z / 1400.0) * 0.3; }
 
     private boolean nearSea(int x, int z) {
@@ -318,7 +349,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     private Surface surface(int x, int z, int y, int water, int slope, int voxel) {
-        double t = temperature(x, z, y);
+        Local local = cover == null ? null : local(x, z, y);
+        double t = local == null ? temperature(x, z, y) : local.temperature();
         if (water != DRY && water != SEA && cover != null) return lake(x, z, y, water, t);
         if (water != DRY) {
             int depth = water - y;
@@ -335,11 +367,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (steep > 1) return new Surface(stonyShore, STONE, STONE, 0, 0, 0, 0, 0, false);
             return new Surface(t < 0 ? snowyBeach : beach, SAND, SAND, 0, 0, 0, 0, 0, false);
         }
-        int code = cover == null ? WorldCoverSource.NO_DATA : cover(x, z, voxel);
-        if (code == WorldCoverSource.BUILT_UP || code == WorldCoverSource.BARE && inTown(x, z, voxel)) code = wild(x, z, voxel);
-        if (code != WorldCoverSource.NO_DATA) {
-            Surface covered = covered(code, x, z, y, t, steep, roll, slope);
-            if (covered != null) return covered;
+        if (local != null) {
+            int code = cover(x, z, voxel);
+            if (code == WorldCoverSource.BUILT_UP || code == WorldCoverSource.BARE && inTown(x, z, voxel)) code = wild(x, z, voxel);
+            Surface covered = code == WorldCoverSource.NO_DATA ? null : covered(code, x, z, local, steep, roll, slope);
+            return covered != null ? covered : covered(typical(local.zone()), x, z, local, steep, roll, slope);
         }
         if (t < -8) {
             BlockState top = steep > 1.4 ? STONE : SNOW_BLOCK;
@@ -385,11 +417,24 @@ public final class EarthGenerator extends SurfaceGenerator {
         return new Surface(t < -2 ? frozenRiver : river, floor, floor, 0, 0, 0, 0, 0, false);
     }
 
+    /** The cover a zone has where the map has none: forest wherever forest grows, else its open land. */
+    private static int typical(ClimateZone zone) {
+        return switch (zone) {
+            case HOT_DESERT, COLD_DESERT -> WorldCoverSource.BARE;
+            case TROPICAL_DRY, HOT_STEPPE, MEDITERRANEAN -> WorldCoverSource.SHRUBLAND;
+            case COLD_STEPPE, TUNDRA -> WorldCoverSource.GRASSLAND;
+            case ICE -> WorldCoverSource.SNOW_AND_ICE;
+            default -> WorldCoverSource.TREE_COVER;
+        };
+    }
+
     /**
-     * What a WorldCover class puts on dry ground in this climate, or null to fall back to the
-     * climate alone, as built-up ground does. Steep ground stays bare rock whatever is mapped on it.
+     * What a WorldCover class puts on dry ground in this climate, or null for classes that are not
+     * ground cover. Steep ground stays bare rock whatever is mapped on it.
      */
-    @Nullable private Surface covered(int code, int x, int z, int y, double t, double steep, int roll, int slope) {
+    @Nullable private Surface covered(int code, int x, int z, Local local, double steep, int roll, int slope) {
+        double t = local.temperature();
+        ClimateZone zone = local.zone();
         boolean cliff = steep > 1.25;
         BlockState rocky = steep > 0.8 && roll < 60 ? STONE : null;
         // Patches tens of metres across: clearings, rock and scree that the 10 m map averages away.
@@ -397,36 +442,55 @@ public final class EarthGenerator extends SurfaceGenerator {
         switch (code) {
             case WorldCoverSource.TREE_COVER -> {
                 if (cliff) return new Surface(t < 3 ? grove : stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false);
-                Surface s;
-                if (t < -3) s = new Surface(snowyTaiga, GRASS, DIRT, 70, 10, 0, 90, 100, true);
-                else if (t < 4) s = new Surface(patch > 0.45 ? oldTaiga : taiga, patch > 0.45 ? PODZOL : GRASS, DIRT, 82, 10, 0, 110, 120, true);
-                else if (t < 11) s = new Surface(forest, GRASS, DIRT, 82, 6, 2, 90, 120, true);
-                else if (t < 17) s = new Surface(patch > 0.35 ? birchForest : forest, GRASS, DIRT, 85, 0, patch > 0.35 ? 8 : 2, 90, 130, false);
-                else if (t < 22) s = new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false);
-                else s = new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true);
+                Surface s = forest(local, patch);
                 if (rocky != null || slope > 6) return new Surface(s.biome(), rocky != null ? rocky : COARSE_DIRT, STONE, 0, 0, 0, 0, 0, false);
                 return s;
             }
             case WorldCoverSource.SHRUBLAND -> {
                 if (cliff) return new Surface(stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false);
                 BlockState top = rocky != null ? rocky : patch > 0.4 || roll < 20 ? COARSE_DIRT : GRASS;
-                if (t > 20) return new Surface(patch > 0.5 ? windsweptSavanna : savanna, top, DIRT, slope > 6 ? 0 : 7, 0, 0, 320, 330, false);
-                if (t < -2) return new Surface(snowyPlains, top, DIRT, slope > 6 ? 0 : 3, 10, 0, 200, 210, false);
-                return new Surface(plains, top, DIRT, slope > 6 ? 0 : 9, t < 6 ? 6 : 0, 1, 330, 350, false);
+                int trees = slope > 6 || top != GRASS ? 0 : 1;
+                return switch (zone) {
+                    case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 15 * trees, 0, 0, 320, 340, true, Tree.JUNGLE);
+                    case TROPICAL_DRY, HOT_STEPPE -> new Surface(patch > 0.5 ? windsweptSavanna : savanna, top, DIRT, 7 * trees, 0, 0, 320, 330, false, Tree.ACACIA);
+                    // Desert scrub: bare sand and gravel with dead bushes, and cacti where they grow wild, in the Americas.
+                    case HOT_DESERT -> new Surface(desert, rocky != null ? rocky : patch > 0.2 ? COARSE_DIRT : SAND, SANDSTONE, 0, 0, 0, 25, americas(x, z) ? 31 : 25, false);
+                    case COLD_DESERT, COLD_STEPPE -> t < -3 ? new Surface(snowyPlains, top, DIRT, 0, 0, 0, 200, 210, false)
+                            : new Surface(savanna, top, DIRT, 2 * trees, 3, 0, 260, 270, false);
+                    // Chaparral and maquis: dry where summers are hot.
+                    case MEDITERRANEAN -> new Surface(local.warmest() >= 21 ? savanna : plains, top, DIRT, 9 * trees, t < 10 ? 5 : 0, 0, 330, 350, false);
+                    case SUBPOLAR_OCEANIC, SUBARCTIC -> new Surface(t < -3 ? snowyPlains : plains, top, DIRT, 6 * trees, 4, 5, 250, 260, false);
+                    case TUNDRA, ICE -> new Surface(t < -3 ? snowyPlains : meadow, top, DIRT, 0, 0, 0, 250, 300, false);
+                    default -> new Surface(plains, top, DIRT, 9 * trees, t < 6 ? 6 : 0, 1, 330, 350, false);
+                };
             }
             case WorldCoverSource.GRASSLAND, WorldCoverSource.CROPLAND -> {
                 if (cliff) return new Surface(stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false);
                 BlockState top = rocky != null ? rocky : GRASS;
                 if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
-                if (t < 3 || y > SEA + 1500) return new Surface(meadow, top, DIRT, 1, 10, 0, 300, 360, false);
-                if (t > 21) return new Surface(savanna, top, DIRT, 2, 0, 0, 380, 390, false);
-                return new Surface(plains, top, DIRT, 1, 0, 1, 330, 380, false);
+                return switch (zone) {
+                    // Savanna and steppe grass, dry for much of the year.
+                    case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> new Surface(savanna, top, DIRT, 2, 0, 0, 380, 390, false, Tree.ACACIA);
+                    // Junipers on the cold steppes.
+                    case COLD_DESERT, COLD_STEPPE -> new Surface(savanna, top, DIRT, 2, 10, 0, 380, 390, false);
+                    case MEDITERRANEAN -> new Surface(local.warmest() >= 21 ? savanna : plains, top, DIRT, 1, 0, 0, 360, 380, false);
+                    // Alpine and arctic meadows.
+                    case TUNDRA, ICE -> new Surface(meadow, top, DIRT, 0, 0, 0, 300, 360, false);
+                    case SUBARCTIC, SUBPOLAR_OCEANIC -> new Surface(plains, top, DIRT, 1, 10, 0, 330, 350, false);
+                    default -> new Surface(plains, top, DIRT, 1, 0, 1, 330, 380, false);
+                };
             }
             case WorldCoverSource.BARE -> {
-                if (t > 14) {
+                boolean hot = zone == ClimateZone.HOT_DESERT || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.TROPICAL_DRY;
+                if (hot) {
                     if (cliff || steep > 0.9) return new Surface(badlands, roll < 50 ? TERRACOTTA : SANDSTONE, SANDSTONE, 0, 0, 0, 0, 0, false);
                     BlockState sand = patch > 0.45 && t > 18 ? RED_SAND : SAND;
                     return new Surface(desert, sand, SANDSTONE, 0, 0, 0, 0, 0, false);
+                }
+                if (zone == ClimateZone.COLD_DESERT && !cliff && steep <= 0.7) {
+                    // Cold deserts: gravel plains and dunes.
+                    BlockState top = patch > 0.15 ? SAND : patch < -0.25 ? COARSE_DIRT : GRAVEL;
+                    return new Surface(t < -3 ? snowyPlains : desert, top, top == SAND ? SANDSTONE : STONE, 0, 0, 0, 0, 0, false);
                 }
                 BlockState top = cliff || steep > 0.7 ? STONE : patch > 0.3 ? GRAVEL : patch < -0.3 ? ANDESITE : roll < 70 ? STONE : COARSE_DIRT;
                 return new Surface(t < 0 ? frozenPeaks : stonyPeaks, top, STONE, 0, 0, 0, 0, 0, false);
@@ -441,7 +505,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 return new Surface(swamp, top, DIRT, 10, 0, 0, 300, 320, true);
             }
             case WorldCoverSource.MANGROVES -> {
-                return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false);
+                return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false, Tree.MANGROVE);
             }
             case WorldCoverSource.MOSS_AND_LICHEN -> {
                 BlockState top = rocky != null ? rocky : patch > 0.2 ? MOSS : roll < 30 ? GRAVEL : GRASS;
@@ -449,6 +513,43 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
             default -> { return null; }
         }
+    }
+
+    /** Whether a column is in the Americas, the only place cacti grow wild. */
+    private boolean americas(int x, int z) {
+        double longitude = grid.geographic(x, z).longitude();
+        return longitude < -30 && longitude > -170;
+    }
+
+    /** The forest of a climate: rainforest, dry tropical woodland, pine, oak, birch or taiga. */
+    private Surface forest(Local local, double patch) {
+        double t = local.temperature();
+        return switch (local.zone()) {
+            case RAINFOREST -> new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true, Tree.JUNGLE);
+            case TROPICAL_DRY -> local.rain() > 1000 ? new Surface(sparseJungle, GRASS, DIRT, 70, 0, 0, 150, 160, true, Tree.JUNGLE)
+                    : new Surface(savanna, GRASS, DIRT, 35, 0, 0, 300, 310, false, Tree.ACACIA);
+            case HOT_DESERT, HOT_STEPPE -> new Surface(savanna, GRASS, DIRT, 30, 0, 0, 260, 270, false, Tree.ACACIA);
+            // Pinyon, juniper and pine on dry uplands.
+            case COLD_DESERT, COLD_STEPPE -> t < 6 ? new Surface(taiga, GRASS, DIRT, 45, 10, 0, 200, 210, false)
+                    : new Surface(savanna, GRASS, DIRT, 30, 4, 0, 260, 270, false);
+            // Conifers on cooler, wetter Mediterranean mountains (the Sierra, the Cascades), oak below.
+            case MEDITERRANEAN -> t < 12 ? new Surface(local.rain() > 900 ? oldTaiga : taiga, local.rain() > 900 && patch > 0.3 ? PODZOL : GRASS, DIRT, 80, 8, 0, 110, 120, true)
+                    : new Surface(forest, GRASS, DIRT, 70, 1, 0, 140, 170, false);
+            case SUBTROPICAL -> t > 20 ? new Surface(sparseJungle, GRASS, DIRT, 80, 0, 0, 140, 160, true, Tree.JUNGLE)
+                    : new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false);
+            case OCEANIC -> patch > 0.35 ? new Surface(birchForest, GRASS, DIRT, 82, 0, 8, 90, 130, false)
+                    : new Surface(forest, GRASS, DIRT, 82, t < 8 ? 3 : 0, 2, 90, 130, true);
+            case SUBPOLAR_OCEANIC -> new Surface(taiga, GRASS, DIRT, 70, 10, 0, 110, 120, true);
+            // Broadleaf in the warmer continental interiors, mixed with birch and spruce further north.
+            case CONTINENTAL -> t > 7 ? new Surface(patch > 0.35 ? birchForest : forest, GRASS, DIRT, 85, 0, patch > 0.35 ? 8 : 2, 90, 130, false)
+                    : patch > 0.25 ? new Surface(birchForest, GRASS, DIRT, 82, 1, 8, 90, 130, false)
+                    : patch < -0.25 ? new Surface(taiga, GRASS, DIRT, 82, 10, 0, 110, 120, true)
+                    : new Surface(forest, GRASS, DIRT, 82, 5, 2, 90, 120, true);
+            case SUBARCTIC -> t < -5 ? new Surface(snowyTaiga, GRASS, DIRT, 65, 10, 0, 90, 100, true)
+                    : new Surface(patch > 0.45 && local.rain() > 500 ? oldTaiga : taiga, patch > 0.45 ? PODZOL : GRASS, DIRT, 75, 9, 1, 110, 120, true);
+            // Stunted trees at the treeline.
+            case TUNDRA, ICE -> new Surface(t < -5 ? snowyTaiga : grove, GRASS, DIRT, 30, 10, 0, 60, 70, false);
+        };
     }
 
     // Data ---------------------------------------------------------------------------------------
@@ -474,6 +575,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             try { tiles.tile(tile.zoom, tile.x, tile.y); }
             catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch elevation tile {}/{}/{}: {}", tile.zoom, tile.x, tile.y, failure.getMessage()); }
         });
+        if (climate != null) {
+            GeoPoint a = grid.geographic(x - 24000, z + 24000), b = grid.geographic(x + 24000, z - 24000);
+            try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
+            catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch climate: {}", failure.getMessage()); }
+        }
         if (cover == null) return;
         // Land cover: full detail near by, overviews further out, as the far levels read them.
         double[] reaches = {3500, 7000, 24000};
