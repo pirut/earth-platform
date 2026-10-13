@@ -70,6 +70,7 @@ public final class TerrariumTileSource implements AutoCloseable {
     private final ExecutorService executor;
     private final LinkedHashMap<Long, float[]> memory = new LinkedHashMap<>(64, 0.75f, true);
     private final Map<Long, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
+    private final CopernicusFill fill;
     private final AtomicLong downloads = new AtomicLong(), diskHits = new AtomicLong(), memoryHits = new AtomicLong(), failures = new AtomicLong();
 
     /**
@@ -80,6 +81,16 @@ public final class TerrariumTileSource implements AutoCloseable {
      * @param maxConcurrentTransfers simultaneous HTTP requests
      */
     public TerrariumTileSource(URI base, Path cacheRoot, boolean allowNetwork, int maxTilesInMemory, int maxConcurrentTransfers, Duration timeout) throws IOException {
+        this(base, cacheRoot, allowNetwork, maxTilesInMemory, maxConcurrentTransfers, timeout, null);
+    }
+
+    /**
+     * As above, with tiles from zoom {@value CopernicusFill#MIN_ZOOM} filled from {@code copernicus}
+     * where they are wrong over a wide area ({@link CopernicusFill}), or as they are when it is null.
+     */
+    public TerrariumTileSource(URI base, Path cacheRoot, boolean allowNetwork, int maxTilesInMemory, int maxConcurrentTransfers, Duration timeout,
+                               CopernicusSource copernicus) throws IOException {
+        this.fill = copernicus == null ? null : new CopernicusFill(copernicus, this::cleaned, 512);
         this.base = Objects.requireNonNull(base);
         if (!base.toString().endsWith("/")) throw new IllegalArgumentException("Tile base URI must end with /");
         if (maxTilesInMemory < 1 || maxConcurrentTransfers < 1 || timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("Invalid tile source budget");
@@ -256,14 +267,36 @@ public final class TerrariumTileSource implements AutoCloseable {
     /**
      * A tile's values with the composite's bad pixels made good, in one pass for each kind: lines along whole
      * degrees where its SRTM tiles meet ({@link #seams}), lone pixels and small clusters ({@link #mend}), and in
-     * tiles finer than zoom 12, runs far off the zoom 11 surface ({@link #repair}); then buildings in flat land
-     * ({@link #despike}). Each leaves cliffs, gorges and peaks as they are.
+     * tiles finer than zoom 12, runs far off the zoom 11 surface ({@link #repair}). Each leaves cliffs, gorges
+     * and peaks as they are. Then, where a second source is given, water filled in as land and heights off the
+     * sea's datum, over wide areas, take that source ({@link CopernicusFill}); then buildings in flat land
+     * ({@link #despike}).
      */
     private float[] read(int zoom, int x, int y) throws IOException, InterruptedException {
-        float[] values = mend(seams(raw(zoom, x, y), zoom, x, y, this::neighbour), zoom, y);
-        if (zoom > REFERENCE_ZOOM + 1) repair(values, zoom, x, y);
+        float[] values = clean(zoom, x, y);
+        if (fill != null) fill.apply(values, zoom, x, y);
         if (zoom >= SPIKE_ZOOM) despike(values);
         return values;
+    }
+
+    /** A tile's values made good as {@link #read} does, but not filled. */
+    private float[] clean(int zoom, int x, int y) throws IOException, InterruptedException {
+        float[] values = mend(seams(raw(zoom, x, y), zoom, x, y, this::neighbour), zoom, y);
+        if (zoom > REFERENCE_ZOOM + 1) repair(values, zoom, x, y);
+        return values;
+    }
+
+    /** {@link #clean} for {@link CopernicusFill}'s check, which must see the tiles as they were; not kept in memory. */
+    private float[] cleaned(int zoom, int x, int y) {
+        checkTile(zoom, x, y);
+        try {
+            return clean(zoom, x, y);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new MissingTerrainException("Interrupted reading elevation tile " + zoom + "/" + x + "/" + y);
+        } catch (IOException failure) {
+            throw new MissingTerrainException("Elevation tile " + zoom + "/" + x + "/" + y + " failed: " + failure);
+        }
     }
 
     /** A tile's values as the composite holds them, from the disk cache or else the network. */
