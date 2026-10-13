@@ -1204,7 +1204,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 // Fields lying fallow or ploughed, in broad patches a few hundred metres across with ragged edges, never in straight lines.
                 double fallow = patches.getValue(x / 260.0 + 31.7, z / 260.0 - 12.3) + patches.getValue(x / 17.0 - 5.1, z / 17.0 + 77.9) * 0.2;
                 // On dry-farmed plains, such as Kansas, much of the land is stubble and bare soil; in wetter farmland little.
-                BlockState top = rocky != null ? rocky : fallow > (local.rain() < 800 ? 0.15 : 0.62) ? COARSE_DIRT : GRASS;
+                BlockState top = rocky != null ? rocky : fallow > (local.rain() < 900 || zone == ClimateZone.MEDITERRANEAN ? -0.25 : 0.62) ? COARSE_DIRT : GRASS;
                 if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
                 return grassland(top, x, z, local, patch, moor, roll, rocky);
             }
@@ -1256,7 +1256,9 @@ public final class EarthGenerator extends SurfaceGenerator {
             case WorldCoverSource.SNOW_AND_ICE -> {
                 // The map's snow and ice is snow: only faces too steep to hold it show their rock.
                 // Drifts of powder snow lie on the gentler slopes.
-                if (steep > 1.5 || steep > 1.0 && patch > 0) return rock(x, z, roll);
+                // Judged on the survey's slope over a few blocks, not the block steps, which detail roughens.
+                double face = surveySlope(x, z);
+                if (face > 1.6 || face > 1.3 && patch > 0.3) return rock(x, z, roll);
                 BlockState top = steep < 0.5 && patch > 0.5 ? POWDER_SNOW : SNOW_BLOCK;
                 return new Surface(steep > 0.75 ? frozenPeaks : snowySlopes, top, steep < 0.6 ? PACKED_ICE : STONE, 0, 0, 0, 0, 0, false);
             }
@@ -1300,6 +1302,13 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Bare rock in a biome where snow does not lie, for faces too steep to hold it. */
     private Surface rock() { return new Surface(stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false); }
 
+    /** Rise per run of the elevation survey across eight blocks either way. */
+    private double surveySlope(int x, int z) {
+        GlobalElevation dem = elevation[WATER_ZOOM];
+        double dx = dem.metres(x + 8.5, z + 0.5) - dem.metres(x - 7.5, z + 0.5), dz = dem.metres(x + 0.5, z + 8.5) - dem.metres(x + 0.5, z - 7.5);
+        return Math.sqrt(dx * dx + dz * dz) / (16 * grid.groundMetresPerBlock(z));
+    }
+
     /** Bare rock, pale granite where the mountains are granite. */
     private Surface rock(int x, int z, int roll) {
         return paleRock(x, z) ? new Surface(stonyPeaks, roll < 55 ? DIORITE : ANDESITE, STONE, 0, 0, 0, 0, 0, false) : rock();
@@ -1317,7 +1326,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                     DIRT, 2, 0, 0, 380, 390, false, Tree.ACACIA);
             // Junipers on the cold steppes.
             case COLD_DESERT, COLD_STEPPE -> new Surface(savanna, top, DIRT, 2, 10, 0, 380, 390, false);
-            case MEDITERRANEAN -> new Surface(plains, top, DIRT, 1, 0, 0, 300, 320, false);
+            // Mediterranean meadows are parched brown by summer: as much bare earth as grass.
+            case MEDITERRANEAN -> new Surface(plains, top == GRASS && patch > -0.1 ? COARSE_DIRT : top, DIRT, 1, 0, 0, 300, 320, false);
             // Rainforest clearings and floodplain meadows: jungle ground among scattered trees, not open prairie.
             case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 5, 0, 0, 380, 400, true, Tree.JUNGLE);
             // Alpine and arctic meadows.
