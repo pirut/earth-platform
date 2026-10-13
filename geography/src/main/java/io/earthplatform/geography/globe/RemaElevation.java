@@ -20,7 +20,8 @@ import java.io.UncheckedIOException;
 public final class RemaElevation implements ElevationLayer, AutoCloseable {
     public static final String DATASET_ID = "rema-v2.0";
     public static final String ATTRIBUTION = "Antarctica: Reference Elevation Model of Antarctica (REMA) v2.0, Polar Geospatial Center, "
-            + "University of Minnesota (CC BY 4.0), with the EGM96 geoid (NGA)";
+            + "University of Minnesota (CC BY 4.0), with the EGM96 geoid (NGA); DEMs provided by the Byrd Polar and Climate Research Center "
+            + "and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685";
     /** Coarser tiles cover so much ground that they are left to the composite. */
     public static final int MIN_ZOOM = 8;
     private static final double EQUATOR = 40_075_016.685578488;
