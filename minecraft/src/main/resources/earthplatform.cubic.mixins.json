@@ -24,6 +24,8 @@
     "compat.MekanismMinerRegionCacheMixin",
     "compat.TwilightPortalCreationMixin",
     "compat.TwilightPortalReturnMixin",
+    "compat.AetherPortalCreationMixin",
+    "compat.AetherPortalReturnMixin",
     "CubicWeatherMixin",
     "CubicServerWeatherMixin"
   ],
