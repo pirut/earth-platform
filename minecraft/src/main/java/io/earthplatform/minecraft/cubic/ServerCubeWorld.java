@@ -230,6 +230,11 @@ public final class ServerCubeWorld extends CubeWorld {
         syncWatchers();
         for (Watcher watcher : watchers.values()) {
             int cx = watcher.player.getBlockX() >> 4, cy = watcher.player.getBlockY() >> 4, cz = watcher.player.getBlockZ() >> 4;
+            // A glider high above all terrain sees only far terrain and may be crossing a cube a tick: stream nothing.
+            if (io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(watcher.player)) {
+                if (ticks % 10 == 0) unsend(watcher, 1, 1, cx, cy, cz);
+                continue;
+            }
             requestAround(offsets, cx, cy, cz);
             send(watcher, offsets, cx, cy, cz);
             if (ticks % 10 == 0) unsend(watcher, h + 1, v + 1, cx, cy, cz);

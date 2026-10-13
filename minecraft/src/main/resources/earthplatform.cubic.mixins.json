@@ -19,7 +19,13 @@
     "CubicPortalMixin",
     "CubicPortalPoiMixin",
     "CubicEndExitMixin",
-    "NetherPortalAccess"
+    "NetherPortalAccess",
+    "CubicJetFlightMixin",
+    "CubicJetElytraMixin",
+    "CubicJetMoveCheckMixin",
+    "CubicJetChunkLoadMixin",
+    "CubicJetTicketMixin",
+    "CubicJetRocketMixin"
   ],
   "client": [
     "CubicPredictionMixin",

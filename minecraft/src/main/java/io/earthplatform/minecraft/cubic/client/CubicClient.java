@@ -100,6 +100,7 @@ public final class CubicClient {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null || minecraft.player == null) return;
         var player = minecraft.player;
+        if (io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(player)) return;
         if (world.cubeAtBlock(player.getBlockX(), player.getBlockY(), player.getBlockZ()) != null
                 && world.cubeAtBlock(player.getBlockX(), player.getBlockY() - 2, player.getBlockZ()) != null) return;
         var gui = event.getGuiGraphics();
