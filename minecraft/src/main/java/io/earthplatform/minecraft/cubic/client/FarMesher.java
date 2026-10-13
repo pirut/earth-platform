@@ -325,6 +325,13 @@ final class FarMesher {
             FarFaces.Face face = textured ? job.faces.face(state, direction) : null;
             float u0 = face != null ? face.u0() : job.white[0], u1 = face != null ? face.u1() : job.white[2];
             float v0 = face != null ? face.v0() : job.white[1], v1 = face != null ? face.v1() : job.white[3];
+            if (face != null) {
+                // Half a texel in from the sprite's edges: far off, a whole row of faces shares one
+                // edge on screen, and sampling exactly there read the next sprite in the atlas, a
+                // dark line across the sea.
+                float du = (u1 - u0) / 32.0F, dv = (v1 - v0) / 32.0F;
+                u0 += du; u1 -= du; v0 += dv; v1 -= dv;
+            }
             float x1 = x + sx, y1 = y + sy, z1 = z + sz;
             float nx = direction.getStepX(), ny = direction.getStepY(), nz = direction.getStepZ();
             switch (direction) {
