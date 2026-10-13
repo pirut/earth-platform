@@ -4,6 +4,7 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.far.FarServer;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
+import io.earthplatform.minecraft.cubic.net.Throttle;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -12,6 +13,7 @@ import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -139,15 +141,17 @@ public final class ServerCubeWorld extends CubeWorld {
 
     // Loading ------------------------------------------------------------------------------------
 
-    private void request(long key) {
-        if (closed || cubes.containsKey(key) || pending.contains(key)) return;
+    /** Queues a cube for loading or generation; false when it is loaded, queued or waiting to retry. */
+    private boolean request(long key) {
+        if (closed || cubes.containsKey(key) || pending.contains(key)) return false;
         if (retryAt.containsKey(key)) {
-            if (ticks < retryAt.get(key)) return;
+            if (ticks < retryAt.get(key)) return false;
             retryAt.remove(key);
         }
         pending.add(key);
         int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
         workers.execute(() -> ready.add(produce(key, x, y, z)));
+        return true;
     }
 
     private Ready produce(long key, int x, int y, int z) {
@@ -228,9 +232,14 @@ public final class ServerCubeWorld extends CubeWorld {
         int h = horizontalRadius(), v = Cubic.VERTICAL_RADIUS;
         CubeOffsets offsets = CubeOffsets.of(h, v);
         syncWatchers();
-        for (Watcher watcher : watchers.values()) {
+        // Each player gets an equal share of the free generation slots, starting with a different
+        // player each tick, so one player's backlog never starves another's.
+        List<Watcher> order = new ArrayList<>(watchers.values());
+        if (order.size() > 1) Collections.rotate(order, ticks % order.size());
+        int share = Math.max(8, (MAX_PENDING - pending.size()) / Math.max(1, order.size()));
+        for (Watcher watcher : order) {
             int cx = watcher.player.getBlockX() >> 4, cy = watcher.player.getBlockY() >> 4, cz = watcher.player.getBlockZ() >> 4;
-            requestAround(offsets, cx, cy, cz);
+            requestAround(offsets, cx, cy, cz, share);
             send(watcher, offsets, cx, cy, cz);
             if (ticks % 10 == 0) unsend(watcher, h + 1, v + 1, cx, cy, cz);
         }
@@ -252,16 +261,16 @@ public final class ServerCubeWorld extends CubeWorld {
         watchers.keySet().retainAll(present);
     }
 
-    private void requestAround(CubeOffsets offsets, int cx, int cy, int cz) {
-        for (int i = 0; i < offsets.size() && pending.size() < MAX_PENDING; i++) {
+    private void requestAround(CubeOffsets offsets, int cx, int cy, int cz, int limit) {
+        for (int i = 0; i < offsets.size() && limit > 0 && pending.size() < MAX_PENDING; i++) {
             long key = CubeKey.pack(cx + offsets.dx(i), cy + offsets.dy(i), cz + offsets.dz(i));
-            if (!cubes.containsKey(key)) request(key);
+            if (request(key)) limit--;
         }
     }
 
     private void send(Watcher watcher, CubeOffsets offsets, int cx, int cy, int cz) {
-        int budget = SEND_CUBES_PER_TICK;
-        for (int i = 0; i < offsets.size() && budget > 0; i++) {
+        int budget = SEND_CUBES_PER_TICK, bytes = Throttle.allowance(watcher.player);
+        for (int i = 0; i < offsets.size() && budget > 0 && bytes > 0; i++) {
             int x = cx + offsets.dx(i), y = cy + offsets.dy(i), z = cz + offsets.dz(i);
             long key = CubeKey.pack(x, y, z);
             if (watcher.sent.contains(key)) continue;
@@ -271,8 +280,10 @@ public final class ServerCubeWorld extends CubeWorld {
             if (watcher.columns.add(column)) {
                 PacketDistributor.sendToPlayer(watcher.player, new CubePayloads.ColumnTops(x, z, topsFor(x, z).clone()));
             }
-            PacketDistributor.sendToPlayer(watcher.player, data(cube));
+            CubePayloads.CubeData data = data(cube);
+            PacketDistributor.sendToPlayer(watcher.player, data);
             watcher.sent.add(key);
+            bytes -= data.size();
             budget--;
         }
     }
