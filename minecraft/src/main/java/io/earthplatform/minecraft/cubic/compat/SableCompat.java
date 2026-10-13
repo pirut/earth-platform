@@ -2,7 +2,6 @@ package io.earthplatform.minecraft.cubic.compat;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cube;
-import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.CubeWorld;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
@@ -13,11 +12,9 @@ import java.lang.invoke.MethodType;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
-import net.minecraft.core.registries.Registries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.neoforged.fml.loading.FMLLoader;
 
@@ -41,13 +38,13 @@ public final class SableCompat {
     public static final boolean LOADED = FMLLoader.getLoadingModList() != null && FMLLoader.getLoadingModList().getModFileById("sable") != null;
     /** The carrier's build range while Sable is installed: the Overworld's. */
     public static final int CARRIER_MIN_Y = -64, CARRIER_HEIGHT = 384;
-
-    /** Section indices handed to Sable in the cubic level count from the lowest cube, so every height has one. */
-    private static final int MIN_SECTION = CubeWorld.MIN_Y >> 4;
-    public static final int SECTION_COUNT = (CubeWorld.MAX_Y - CubeWorld.MIN_Y + 1) >> 4;
+    /** What the altitude sensor spans in Earth: sea level to 10 km up. */
+    public static final int SENSOR_MIN_Y = 63, SENSOR_MAX_Y = 10063;
 
     private static final int PLOT_ORIGIN = 10000;
-    private static LevelChunkSection empty;
+    /** SubLevelsBlockSkyMixinHelper.checkSkyWithSublevels; null until first use or if missing. */
+    private static MethodHandle shade;
+    private static boolean shadeTried;
     /** SubLevelContainer.getContainer, physicsSystem() and its handleBlockChange; null until first use or if missing. */
     private static MethodHandle container, physics, blockChange;
     private static boolean handlesTried;
@@ -77,32 +74,6 @@ public final class SableCompat {
         return level == null ? null : CubicLevel.at(level, blockX, blockZ);
     }
 
-    public static int sectionIndex(int sectionY) { return sectionY - MIN_SECTION; }
-
-    /**
-     * The section Sable asked for by a cubic index (see {@link #sectionIndex}): the cube's own storage
-     * for world columns, loading it on the server if needed, or the plot chunk's section.
-     */
-    public static LevelChunkSection section(LevelChunk chunk, int index) {
-        int sectionY = index + MIN_SECTION;
-        Level level = chunk.getLevel();
-        CubeWorld cubes = cubes(level, chunk.getPos().getMinBlockX(), chunk.getPos().getMinBlockZ());
-        if (cubes == null) {
-            int own = sectionY - chunk.getMinSection();
-            return own >= 0 && own < chunk.getSectionsCount() ? chunk.getSection(own) : empty(level);
-        }
-        int x = chunk.getPos().x, z = chunk.getPos().z;
-        Cube cube = cubes.cube(CubeKey.pack(x, sectionY, z));
-        if (cube == null && cubes instanceof ServerCubeWorld server && server.isOwnerThread()) cube = server.loadNow(x, sectionY, z);
-        return cube != null ? cube.section : empty(level);
-    }
-
-    private static LevelChunkSection empty(Level level) {
-        LevelChunkSection section = empty;
-        if (section == null) empty = section = new LevelChunkSection(level.registryAccess().registryOrThrow(Registries.BIOME));
-        return section;
-    }
-
     /** Writes a world block for Sable, loading its cube first so a ship never lands in a missing one. */
     @Nullable public static BlockState set(CubeWorld cubes, BlockPos pos, BlockState state, boolean moving) {
         if (cubes.cubeAtBlock(pos.getX(), pos.getY(), pos.getZ()) == null && cubes instanceof ServerCubeWorld server && server.isOwnerThread()) {
@@ -124,6 +95,32 @@ public final class SableCompat {
         } catch (Throwable failure) {
             EarthPlatformMod.LOGGER.warn("Sable physics did not take a block change at {}", pos, failure);
             blockChange = null;
+        }
+    }
+
+    /**
+     * Whether a ship overhead shades this spot of the cubic level above the carrier's build top, where
+     * Sable's own check stops. Below it, and in other levels, Sable answers.
+     */
+    public static boolean highShade(Level level, BlockPos pos) {
+        if (!LOADED || !Cubic.isCubic(level.dimension()) || pos.getY() < level.getMaxBuildHeight()) return false;
+        if (!shadeTried) {
+            shadeTried = true;
+            try {
+                shade = MethodHandles.publicLookup().findStatic(
+                        Class.forName("dev.ryanhcode.sable.mixinhelpers.entity.sublevels_block_sky.SubLevelsBlockSkyMixinHelper"),
+                        "checkSkyWithSublevels", MethodType.methodType(boolean.class, Level.class, BlockPos.class));
+            } catch (ReflectiveOperationException | LinkageError failure) {
+                EarthPlatformMod.LOGGER.warn("Sable ship shade check not found; ships won't shade mobs high up", failure);
+            }
+        }
+        if (shade == null) return false;
+        try {
+            return (boolean) shade.invokeExact(level, pos);
+        } catch (Throwable failure) {
+            EarthPlatformMod.LOGGER.warn("Sable ship shade check failed at {}", pos, failure);
+            shade = null;
+            return false;
         }
     }
 
