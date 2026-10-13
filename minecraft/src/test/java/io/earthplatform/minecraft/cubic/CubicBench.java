@@ -1,7 +1,9 @@
 package io.earthplatform.minecraft.cubic;
 
 import com.mojang.serialization.Lifecycle;
+import io.earthplatform.geography.globe.BareEarth;
 import io.earthplatform.geography.globe.ClimateSource;
+import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
 import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.SurfaceWaterSource;
@@ -57,7 +59,8 @@ class CubicBench {
             new Place("Yosemite Valley", 37.7240, -119.6365),
             new Place("Lake Tahoe", 38.9520, -120.1080),
             new Place("Amazon", -3.4653, -62.2159),
-            new Place("Tokyo", 35.6812, 139.7671));
+            new Place("Tokyo", 35.6812, 139.7671),
+            new Place("Mato Grosso", -11.8243, -55.5029));
 
     @Test
     @EnabledIfEnvironmentVariable(named = "EARTH_BENCH", matches = ".+")
@@ -67,27 +70,34 @@ class CubicBench {
         int farPerLevel = Integer.parseInt(System.getenv().getOrDefault("EARTH_BENCH_FAR", "150"));
         String only = System.getenv().getOrDefault("EARTH_BENCH_PLACE", "").toLowerCase(Locale.ROOT);
         boolean bare = "1".equals(System.getenv("EARTH_BENCH_BARE"));
+        // EARTH_BENCH_BARE_CACHE=0 works out every bare-earth field afresh, as a first visit does.
+        boolean bareCache = !"0".equals(System.getenv("EARTH_BENCH_BARE_CACHE"));
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
         HolderLookup.Provider lookup = VanillaRegistries.createLookup();
         MappedRegistry<Biome> biomes = new MappedRegistry<>(Registries.BIOME, Lifecycle.stable());
         lookup.lookupOrThrow(Registries.BIOME).listElements().forEach(holder ->
                 biomes.register(holder.key(), holder.value(), RegistrationInfo.BUILT_IN));
-        // The mod's own biome, as a copy of the river it is drawn like here.
-        Biome river = lookup.lookupOrThrow(Registries.BIOME).getOrThrow(net.minecraft.world.level.biome.Biomes.RIVER).value();
-        Biome glacialLake = new Biome.BiomeBuilder().hasPrecipitation(true).temperature(river.getBaseTemperature()).downfall(0.5F)
-                .specialEffects(river.getSpecialEffects()).mobSpawnSettings(net.minecraft.world.level.biome.MobSpawnSettings.EMPTY)
-                .generationSettings(net.minecraft.world.level.biome.BiomeGenerationSettings.EMPTY).build();
-        biomes.register(net.minecraft.resources.ResourceKey.create(Registries.BIOME,
-                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("earthplatform", "glacial_lake")), glacialLake, RegistrationInfo.BUILT_IN);
+        // The mod's own biomes, from its data pack.
+        for (String name : List.of("glacial_lake")) {
+            try (var in = CubicBench.class.getResourceAsStream("/data/earthplatform/worldgen/biome/" + name + ".json")) {
+                var json = com.google.gson.JsonParser.parseReader(new java.io.InputStreamReader(in));
+                Biome biome = Biome.DIRECT_CODEC.parse(net.minecraft.resources.RegistryOps.create(com.mojang.serialization.JsonOps.INSTANCE, lookup), json).getOrThrow();
+                biomes.register(net.minecraft.resources.ResourceKey.create(Registries.BIOME, net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("earthplatform", name)),
+                        biome, RegistrationInfo.BUILT_IN);
+            }
+        }
         // The same sources as a new world in the game: Copernicus fill and traced rivers too.
         CopernicusSource copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache.resolve(CopernicusSource.DATASET_ID), true, 12, 4, Duration.ofSeconds(30));
+        TerrariumTileSource[] source = new TerrariumTileSource[1];
         TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve(TerrariumTileSource.DATASET_ID),
-                true, 256, 6, Duration.ofSeconds(20), copernicus);
+                true, 256, 6, Duration.ofSeconds(20), List.of(new CopernicusFill(copernicus, (z, x, y) -> source[0].cleaned(z, x, y), 512)));
+        source[0] = tiles;
         RiverMap rivers = new RiverMap(new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache.resolve(SurfaceWaterSource.DATASET_ID), true,
                 96, 4, Duration.ofSeconds(30)), 256);
         WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, 4, Duration.ofSeconds(30));
         ClimateSource climate = new ClimateSource(ClimateSource.CHELSA, cache.resolve(ClimateSource.DATASET_ID), true, 320, 8, Duration.ofSeconds(30));
+        BareEarth bareEarth = bare ? new BareEarth(tiles, cover, bareCache ? cache.resolve(BareEarth.ID) : null) : null;
         MessageDigest all = MessageDigest.getInstance("SHA-256");
         List<Place> places = PLACES;
         String at = System.getenv("EARTH_BENCH_AT");
@@ -98,14 +108,14 @@ class CubicBench {
         for (Place place : places) {
             if (!only.isEmpty() && !place.name.toLowerCase(Locale.ROOT).startsWith(only)) continue;
             EarthSettings settings = EarthSettings.at(place.latitude, place.longitude);
-            EarthGenerator warm = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, rivers, bare);
+            EarthGenerator warm = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, rivers, bareEarth);
             int[] home = warm.arrival();
             long t0 = System.nanoTime();
             warm.prepare(home[0], home[1]);
             System.out.printf(Locale.ROOT, "%n== %s (block %d, %d)%nprepare (data fetch): %.0f ms%n", place.name, home[0], home[1], ms(t0));
 
             // Cubes around a player standing on the ground, as the server loads them.
-            EarthGenerator gen = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, rivers, bare);
+            EarthGenerator gen = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null, rivers, bareEarth);
             int ground = gen.surfaceY(home[0], home[1]);
             int cx = home[0] >> 4, cy = (ground + 2) >> 4, cz = home[1] >> 4;
             CubeOffsets offsets = CubeOffsets.of(Cubic.MAX_HORIZONTAL_RADIUS, Cubic.VERTICAL_RADIUS);

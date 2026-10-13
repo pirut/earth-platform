@@ -99,7 +99,11 @@ public final class ImageryCalibration {
 
     /** Renders and reports one square; returns a one-line summary. */
     static String run(EarthGenerator earth, int cx, int cz, int size) throws IOException {
-        ImagerySource imagery = CubicSettings.imagery();
+        return run(earth, CubicSettings.imagery(), FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("calibration"), null, cx, cz, size);
+    }
+
+    /** Renders and reports one square into a folder, named after its centre unless a name is given; also used without a game. */
+    static String run(EarthGenerator earth, ImagerySource imagery, Path folder, @javax.annotation.Nullable String named, int cx, int cz, int size) throws IOException {
         ImageryGround ground = earth.imageryGround(imagery);
         double step = (double) size / PIXELS;
         int voxel = Math.max(1, Integer.highestOneBit((int) Math.max(1, step)));
@@ -142,9 +146,8 @@ public final class ImageryCalibration {
         }
 
         GeoPoint centre = earth.grid().geographic(cx, cz);
-        Path folder = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("calibration");
         Files.createDirectories(folder);
-        String name = String.format(Locale.ROOT, "%.4f_%.4f_%d", centre.latitude(), centre.longitude(), size);
+        String name = named != null ? named : String.format(Locale.ROOT, "%.4f_%.4f_%d", centre.latitude(), centre.longitude(), size);
         ImageIO.write(image, "png", folder.resolve(name + ".png").toFile());
         double meanOff = land == 0 ? 0 : totalOff / land;
         Files.writeString(folder.resolve(name + ".txt"), report(centre, size, land, meanOff, changed, groups));
@@ -218,6 +221,8 @@ public final class ImageryCalibration {
         BlockState top = surface.top();
         int ground;
         Integer known = GROUND_RGB.get(top);
+        // Pools level with the ground, as in marshes and bogs, read as the water they are, as lakes do.
+        if (top.is(Blocks.WATER)) return 0x2B4F8C;
         if (known != null) ground = known;
         else if (top.is(Blocks.GRASS_BLOCK)) ground = tint(surface.biome().value().getGrassColor(x, z), 0.58);
         else ground = top.getMapColor(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).col;

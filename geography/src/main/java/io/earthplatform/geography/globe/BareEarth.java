@@ -2,14 +2,28 @@ package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.zip.DeflaterOutputStream;
+import java.util.zip.InflaterInputStream;
 
 /**
- * Elevation tiles with the ground under towns brought down to the land it stands on.
+ * Elevation tiles with the ground under towns brought down to the land it stands on, and the
+ * straight edges of forest clearings eased.
  *
  * <p>The composite's radar and stereo surveys outside the United States are surface models: they
  * read the tops of buildings and the trees among them, not the ground. In a city that raised the
@@ -27,7 +41,12 @@ import java.util.concurrent.ExecutionException;
  * comes from the share of built-up land around, reaching out past its parks and riverside fields,
  * and fades out over a few hundred metres at its edges, where the ground eases back to the
  * tiles'. Wide water keeps its own lower level, so rivers stay; ponds and the shadows mapped as
- * water lie at the ground's level. Away from towns tiles come back unchanged.
+ * water lie at the ground's level.
+ *
+ * <p>The same surveys read forest canopy as ground too. Inside a forest that is a smooth lift a
+ * canopy high, nothing to see; but where forest was cleared in blocks it leaves the land in
+ * straight-edged plateaus, so the same field also carries {@link ClearingEdges}' correction for
+ * them. Away from towns and clearings tiles come back unchanged.
  */
 public final class BareEarth implements GlobalElevation.Tiles {
     /** What a world pins to read its ground through this. */
@@ -71,6 +90,15 @@ public final class BareEarth implements GlobalElevation.Tiles {
      */
     static final double ROUGH_FROM = 0.45, ROUGH_FULL = 0.55;
     /**
+     * How much of the land's roughness lies at its finest scale, a pixel across, against the next one
+     * up, a few pixels across, where the tiles start to read rooftops and where they wholly do. Hills
+     * and valleys are rough too, but mostly broadly; rooftops are rough mostly finely. Built-up land
+     * has 0.6 to 0.95 of it in Tokyo, 0.45 to 0.85 in Sao Paulo, Rio and Manaus; 0.2 to 0.4 in
+     * London, Paris and the towns of the Black Forest, on surveys of the bare ground; Pennsylvania's
+     * valley towns 0.4 to 0.55.
+     */
+    static final double FINE_FROM = 0.38, FINE_FULL = 0.50;
+    /**
      * Slopes of the land's broad shape from which towns' ground keeps the tiles' own, wholly so at the
      * second: on steep ground, as Rio's and Hong Kong's hills, the buildings are a small part of the
      * height and the low share of the ground would cut into the hillside.
@@ -89,39 +117,59 @@ public final class BareEarth implements GlobalElevation.Tiles {
      * pixels, so this loses nothing and keeps a field to a quarter of the memory.
      */
     private static final int GRID = CORE / 2 + 1;
-    /** Sampling step, in pixels, of the first look for any built-up land. */
+    /** Sampling step, in pixels, of the first look for any built-up land, forest and open land. */
     private static final int SCOUT = 8;
+    /** Least share of the first look's samples that must be forest, and open land, for clearings' edges to be looked for. */
+    private static final double MIXED = 0.01;
     private static final double EARTH_RADIUS = 6_378_137;
 
     /** Land cover class at a point, as {@link WorldCoverSource#code} at full detail. */
     @FunctionalInterface
     public interface Cover {
         int code(double latitude, double longitude);
+
+        /** The classes over a grid of latitudes and longitudes, row by row. */
+        default void codes(double[] latitudes, double[] longitudes, byte[] out) {
+            for (int j = 0; j < latitudes.length; j++)
+                for (int i = 0; i < longitudes.length; i++) out[j * longitudes.length + i] = (byte) code(latitudes[j], longitudes[i]);
+        }
     }
 
     /**
      * The guessed ground over one zoom {@value #ZOOM} tile and a pixel round it, with how much
-     * the tiles give way to it (0 to 255) and how much water there keeps its own lower level.
+     * the tiles give way to it (0 to 255) and how much water there keeps its own lower level; and
+     * the correction taking out clearings' edges ({@link ClearingEdges}): metres to add, and near
+     * the edges how much (0 to 255) the land is the smoothed level instead. Either part is null
+     * where the tile has none.
      */
-    record Field(float[] ground, byte[] weight, byte[] water) {}
-    /** A tile with no town near it. */
-    static final Field NONE = new Field(null, null, null);
+    record Field(float[] ground, byte[] weight, byte[] water, float[] delta, float[] smooth, byte[] band) {}
+    /** A tile with no town or clearing near it. */
+    static final Field NONE = new Field(null, null, null, null, null, null);
 
     private final GlobalElevation.Tiles tiles;
     private final Cover cover;
+    /** Where worked-out fields are kept on disk, or null to keep them in memory only. */
+    private final Path cacheRoot;
     private final int maxFields, maxTiles;
     private final LinkedHashMap<Long, Field> fields = new LinkedHashMap<>(64, 0.75f, true);
     private final Map<Long, CompletableFuture<Field>> fieldsInFlight = new ConcurrentHashMap<>();
     /** Recently read tiles at the zooms changed; those left as they were are the source's own arrays. */
     private final LinkedHashMap<Long, float[]> changed = new LinkedHashMap<>(64, 0.75f, true);
 
-    public BareEarth(TerrariumTileSource tiles, WorldCoverSource cover) {
-        this(tiles::tile, (latitude, longitude) -> cover.code(latitude, longitude, 0), 160, 256);
+    /** @param cacheRoot optional disk cache directory for the worked-out fields, or null for memory only */
+    public BareEarth(TerrariumTileSource tiles, WorldCoverSource cover, Path cacheRoot) {
+        this(tiles::tile, new Cover() {
+            @Override public int code(double latitude, double longitude) { return cover.code(latitude, longitude, 0); }
+            @Override public void codes(double[] latitudes, double[] longitudes, byte[] out) { cover.codes(latitudes, longitudes, out); }
+        }, 160, 256, cacheRoot);
     }
 
-    BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles) {
+    BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles) { this(tiles, cover, maxFields, maxTiles, null); }
+
+    BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles, Path cacheRoot) {
         this.tiles = tiles;
         this.cover = cover;
+        this.cacheRoot = cacheRoot;
         this.maxFields = maxFields;
         this.maxTiles = maxTiles;
     }
@@ -179,11 +227,21 @@ public final class BareEarth implements GlobalElevation.Tiles {
                 int a = Math.min(GRID - 2, Math.max(0, (int) Math.floor(fu))), b = Math.min(GRID - 2, Math.max(0, (int) Math.floor(gv)));
                 double tx = Math.min(1, Math.max(0, fu - a)), ty = Math.min(1, Math.max(0, gv - b));
                 int at = b * GRID + a;
-                double w = lerp(field.weight, at, tx, ty) / 255.0;
-                if (w <= 0) continue;
-                double ground = lerp(field.ground, at, tx, ty), keep = lerp(field.water, at, tx, ty) / 255.0;
-                double target = keep * Math.min(metres, ground) + (1 - keep) * ground;
-                float value = (float) (metres + (target - metres) * w);
+                double land = metres;
+                if (field.delta != null) {
+                    double band = lerp(field.band, at, tx, ty) / 255.0;
+                    land = (metres + lerp(field.delta, at, tx, ty)) * (1 - band) + lerp(field.smooth, at, tx, ty) * band;
+                }
+                if (field.ground != null) {
+                    double w = lerp(field.weight, at, tx, ty) / 255.0;
+                    if (w > 0) {
+                        double ground = lerp(field.ground, at, tx, ty), keep = lerp(field.water, at, tx, ty) / 255.0;
+                        double target = keep * Math.min(land, ground) + (1 - keep) * ground;
+                        land += (target - land) * w;
+                    }
+                }
+                float value = (float) land;
+                if (value == metres) continue;
                 out[i] = value == 0f ? Math.ulp(0f) : value;
                 touched = true;
             }
@@ -247,30 +305,111 @@ public final class BareEarth implements GlobalElevation.Tiles {
             double column = Math.floorMod(gx0 + k, size) + 0.5;
             longitude[k] = column / size * 360 - 180;
         }
-        // A first, sparse look: most of the world has no town within reach.
-        int built = 0;
-        for (int j = SCOUT / 2; j < SPAN && built < 2; j += SCOUT)
-            for (int i = SCOUT / 2; i < SPAN && built < 2; i += SCOUT)
-                if (cover.code(latitude[j], longitude[i]) == WorldCoverSource.BUILT_UP) built++;
-        if (built < 2) return NONE;
+        // A first, sparse look: most of the world has no town within reach, and much no forest beside open land.
+        int built = 0, forest = 0, open = 0, samples = 0;
+        for (int j = SCOUT / 2; j < SPAN; j += SCOUT)
+            for (int i = SCOUT / 2; i < SPAN; i += SCOUT) {
+                int c = cover.code(latitude[j], longitude[i]);
+                samples++;
+                if (c == WorldCoverSource.BUILT_UP) built++;
+                else if (c == WorldCoverSource.TREE_COVER) forest++;
+                else if (c == WorldCoverSource.GRASSLAND || c == WorldCoverSource.CROPLAND || c == WorldCoverSource.SHRUBLAND
+                        || c == WorldCoverSource.BARE) open++;
+            }
+        boolean towns = built >= 2, clearings = forest >= MIXED * samples && open >= MIXED * samples;
+        if (!towns && !clearings) return NONE;
 
         int n = SPAN * SPAN;
         float[] dem = new float[n];
         byte[] code = new byte[n];
-        float[] tile = null;
-        long tileKey = -1;
+        cover.codes(latitude, longitude, code);
+        // The window spans at most four tiles each way; each row is copied from them in runs.
         for (int j = 0; j < SPAN; j++) {
             long gy = Math.max(0, Math.min(size - 1, gy0 + j));
-            for (int i = 0; i < SPAN; i++) {
+            for (int i = 0; i < SPAN; ) {
                 long gx = Math.floorMod(gx0 + i, size);
-                long key = (gx >> 8) << 32 | gy >> 8;
-                if (key != tileKey) { tile = tiles.tile(ZOOM, (int) (gx >> 8), (int) (gy >> 8)); tileKey = key; }
-                dem[j * SPAN + i] = tile[(int) ((gy & 255) * SIZE + (gx & 255))];
-                code[j * SPAN + i] = (byte) cover.code(latitude[j], longitude[i]);
+                int run = (int) Math.min(SPAN - i, SIZE - (gx & 255));
+                float[] tile = tiles.tile(ZOOM, (int) (gx >> 8), (int) (gy >> 8));
+                System.arraycopy(tile, (int) ((gy & 255) * SIZE + (gx & 255)), dem, j * SPAN + i, run);
+                i += run;
             }
         }
         double metres = 2 * Math.PI * EARTH_RADIUS * Math.cos(Math.toRadians(latitude[SPAN / 2])) / size;
-        return compute(dem, code, metres);
+        if (cacheRoot == null) return compute(dem, code, metres, towns, clearings);
+        // Kept with a digest of what it was worked out from, so a field is never read back over changed tiles or cover.
+        long digest = digest(dem, code);
+        Path cached = cacheRoot.resolve(ZOOM + "/" + tileX + "/" + tileY + ".field");
+        Field field = read(cached, digest);
+        if (field != null) return field;
+        field = compute(dem, code, metres, towns, clearings);
+        try {
+            RangeFiles.write(cached, write(field, digest));
+        } catch (IOException failure) {
+            // The cache only saves work; the field is good without it.
+        }
+        return field;
+    }
+
+    // Disk cache ------------------------------------------------------------------------------------
+
+    /** Version of the fields' bytes and of the rules they are worked out by; a field kept under another is worked out again. */
+    static final int FORMAT = 1;
+
+    /** A 64-bit digest of a window's metres and classes. */
+    static long digest(float[] dem, byte[] code) {
+        long h = 0x9E3779B97F4A7C15L ^ dem.length;
+        for (float m : dem) h = (h ^ Float.floatToRawIntBits(m)) * 0x100000001B3L;
+        for (int k = 0; k < code.length; k += 8) {
+            long word = 0;
+            for (int b = 0; b < 8 && k + b < code.length; b++) word |= (code[k + b] & 0xFFL) << 8 * b;
+            h = (h ^ word) * 0x100000001B3L;
+        }
+        return h ^ h >>> 29;
+    }
+
+    /** A field's bytes, compressed. */
+    static byte[] write(Field field, long digest) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new DeflaterOutputStream(bytes), 1 << 16))) {
+            out.writeInt(FORMAT);
+            out.writeLong(digest);
+            out.writeBoolean(field.ground != null);
+            if (field.ground != null) { floats(out, field.ground); out.write(field.weight); out.write(field.water); }
+            out.writeBoolean(field.delta != null);
+            if (field.delta != null) { floats(out, field.delta); floats(out, field.smooth); out.write(field.band); }
+        }
+        return bytes.toByteArray();
+    }
+
+    /** The field kept at a path for a window with this digest, or null where there's none or it's for other data. */
+    static Field read(Path path, long digest) {
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) return null;
+        try (InputStream file = Files.newInputStream(path); DataInputStream in = new DataInputStream(new BufferedInputStream(new InflaterInputStream(file), 1 << 16))) {
+            if (in.readInt() != FORMAT || in.readLong() != digest) return null;
+            float[] ground = null, delta = null, smooth = null;
+            byte[] weight = null, water = null, band = null;
+            if (in.readBoolean()) { ground = floats(in); weight = bytes(in); water = bytes(in); }
+            if (in.readBoolean()) { delta = floats(in); smooth = floats(in); band = bytes(in); }
+            return ground == null && delta == null ? NONE : new Field(ground, weight, water, delta, smooth, band);
+        } catch (IOException | UncheckedIOException corrupt) {
+            return null;
+        }
+    }
+
+    private static void floats(DataOutputStream out, float[] values) throws IOException {
+        for (float v : values) out.writeInt(Float.floatToRawIntBits(v));
+    }
+
+    private static float[] floats(DataInputStream in) throws IOException {
+        float[] values = new float[GRID * GRID];
+        for (int k = 0; k < values.length; k++) values[k] = Float.intBitsToFloat(in.readInt());
+        return values;
+    }
+
+    private static byte[] bytes(DataInputStream in) throws IOException {
+        byte[] values = new byte[GRID * GRID];
+        in.readFully(values);
+        return values;
     }
 
     /** Pixels across the half-detail grid the smooth fields are worked out on. */
@@ -281,15 +420,59 @@ public final class BareEarth implements GlobalElevation.Tiles {
      * land's broad shape and the town and water shares are smooth, so they are worked out at half
      * detail; only the low share of the ground needs every pixel.
      */
-    static Field compute(float[] dem, byte[] code, double metres) {
+    static Field compute(float[] dem, byte[] code, double metres, boolean towns, boolean clearings) {
+        boolean[] dry = new boolean[SPAN * SPAN];
+        for (int at = 0; at < dry.length; at++) {
+            int c = code[at] & 0xFF;
+            dry[at] = !(c == WorldCoverSource.WATER || c == WorldCoverSource.NO_DATA || dem[at] == 0f);
+        }
+        float[] delta = null, smooth = null;
+        byte[] band = null;
+        if (clearings) {
+            // At half detail, as the town's shares are: a half pixel is the mean of its dry pixels.
+            float[] half = new float[HALF * HALF];
+            boolean[] land = new boolean[HALF * HALF], wet = new boolean[HALF * HALF];
+            int[] count = new int[HALF * HALF];
+            for (int j = 0; j < SPAN; j++) for (int i = 0; i < SPAN; i++) {
+                int at = j * SPAN + i, cell = (j >> 1) * HALF + (i >> 1), c = code[at] & 0xFF;
+                if (c == WorldCoverSource.WATER || c == WorldCoverSource.WETLAND) wet[cell] = true;
+                if (dry[at]) { half[cell] += dem[at]; count[cell]++; }
+            }
+            for (int cell = 0; cell < half.length; cell++) {
+                land[cell] = count[cell] >= 2;
+                half[cell] = count[cell] > 0 ? half[cell] / count[cell] : 0;
+            }
+            // Field point i lies at half pixel 63.25 + i; the steps are worked out that far round the field and their fade's reach.
+            double coarse = 2 * metres;
+            int pad = Math.min((MARGIN - 1) / 2, (int) Math.round(5 * ClearingEdges.DECAY_METRES / coarse));
+            int from = (MARGIN - 1) / 2 - pad, side = GRID + 2 + 2 * pad;
+            ClearingEdges.Steps steps = ClearingEdges.find(half, land, wet, HALF, coarse, from, side);
+            if (steps != null) {
+                delta = new float[GRID * GRID];
+                smooth = new float[GRID * GRID];
+                band = new byte[GRID * GRID];
+                for (int j = 0; j < GRID; j++) for (int i = 0; i < GRID; i++) {
+                    int cell = j * GRID + i;
+                    double x = (MARGIN - 1 + 2 * i + 0.5) / 2 - 0.5 - from, y = (MARGIN - 1 + 2 * j + 0.5) / 2 - 0.5 - from;
+                    delta[cell] = sample(steps.delta(), side, x, y);
+                    smooth[cell] = sample(steps.smooth(), side, x, y);
+                    band[cell] = (byte) Math.round(255 * sample(steps.band(), side, x, y));
+                }
+            }
+        }
+        Field town = towns ? town(dem, code, dry, metres) : null;
+        if (town == null && delta == null) return NONE;
+        return town == null ? new Field(null, null, null, delta, smooth, band)
+                : new Field(town.ground, town.weight, town.water, delta, smooth, band);
+    }
+
+    /** The ground under towns, or null where there's none. */
+    private static Field town(float[] dem, byte[] code, boolean[] dry, double metres) {
         int n = HALF * HALF;
         float[] land = new float[n], built = new float[n], water = new float[n], height = new float[n];
-        boolean[] dry = new boolean[SPAN * SPAN];
         for (int j = 0; j < SPAN; j++) for (int i = 0; i < SPAN; i++) {
             int at = j * SPAN + i, half = (j >> 1) * HALF + (i >> 1), c = code[at] & 0xFF;
-            boolean wet = c == WorldCoverSource.WATER || c == WorldCoverSource.NO_DATA || dem[at] == 0f;
-            dry[at] = !wet;
-            if (wet) { water[half] += 0.25f; continue; }
+            if (!dry[at]) { water[half] += 0.25f; continue; }
             land[half] += 0.25f;
             height[half] += 0.25f * dem[at];
             if (c == WorldCoverSource.BUILT_UP) built[half] += 0.25f;
@@ -297,12 +480,17 @@ public final class BareEarth implements GlobalElevation.Tiles {
         // How rough the land is a pixel or two across: rooftops, streets and treetops in a surface model, next to
         // nothing in a survey of the bare ground, as most of the United States', England's and the Netherlands' are.
         // A share of rough pixels rather than a mean, so the few along a ridge or an embankment don't count for much.
-        float[] smoothed = dem.clone();
+        float[] smoothed = dem.clone(), broader = dem.clone();
         blur(smoothed, SPAN, SPAN, 1);
-        float[] rough = new float[n];
+        blur(broader, SPAN, SPAN, 3);
+        float[] rough = new float[n], fine = new float[n], broad = new float[n];
         for (int j = 0; j < SPAN; j++) for (int i = 0; i < SPAN; i++) {
-            int at = j * SPAN + i;
-            if (dry[at] && Math.abs(dem[at] - smoothed[at]) > ROUGH_STEP) rough[(j >> 1) * HALF + (i >> 1)] += 0.25f;
+            int at = j * SPAN + i, half = (j >> 1) * HALF + (i >> 1);
+            if (!dry[at]) continue;
+            float finest = Math.abs(dem[at] - smoothed[at]);
+            if (finest > ROUGH_STEP) rough[half] += 0.25f;
+            fine[half] += 0.25f * finest;
+            broad[half] += 0.25f * Math.abs(smoothed[at] - broader[at]);
         }
         double coarse = 2 * metres;
         int town = Math.min(24, (int) Math.round(TOWN_METRES / coarse)), edge = reach(EDGE_METRES, coarse);
@@ -310,8 +498,12 @@ public final class BareEarth implements GlobalElevation.Tiles {
         float[] share = weighted(built, land, HALF, reach(BUILT_METRES, coarse), 0f);
         share = spread(share, HALF, town);
         blur(share, HALF, HALF, edge);
-        for (int i = 0; i < n; i++) if (land[i] > 0) rough[i] /= land[i];
+        for (int i = 0; i < n; i++) if (land[i] > 0) { rough[i] /= land[i]; fine[i] /= land[i]; broad[i] /= land[i]; }
         rough = weighted(rough, land, HALF, reach(ROUGH_METRES, coarse), 0f);
+        fine = weighted(fine, land, HALF, reach(ROUGH_METRES, coarse), 0f);
+        broad = weighted(broad, land, HALF, reach(ROUGH_METRES, coarse), 0f);
+        // A fraction of a metre added below, so near-flat land doesn't read as finely rough from its noise.
+        for (int i = 0; i < n; i++) fine[i] /= broad[i] + 0.3f;
         blur(water, HALF, HALF, reach(WATER_METRES, coarse));
         // The land's broad shape, from land alone ({@code height} holds land-weighted sums, as the blur wants).
         for (int i = 0; i < n; i++) if (land[i] > 0) height[i] /= land[i];
@@ -325,25 +517,57 @@ public final class BareEarth implements GlobalElevation.Tiles {
             float t = sample(trend, HALF, (from + i + 0.5) / 2 - 0.5, (from + j + 0.5) / 2 - 0.5);
             base[j * side + i] = Float.isNaN(t) ? dem[(from + j) * SPAN + from + i] : t;
         }
-        float[] ground = lowShare(dem, dry, base, from, side, low);
-        blur(ground, side, side, smooth);
-
-        float[] g = new float[GRID * GRID];
+        // The town's weight first: where it has none, the ground isn't needed, and most tiles with a few
+        // built-up pixels have none.
         byte[] w = new byte[GRID * GRID], keep = new byte[GRID * GRID];
+        boolean[] need = new boolean[side * side];
         boolean any = false;
         int offset = MARGIN - 1 - from;
         for (int j = 0; j < GRID; j++) for (int i = 0; i < GRID; i++) {
             int cell = j * GRID + i;
-            g[cell] = ground[(2 * j + offset) * side + 2 * i + offset];
             double hx = (MARGIN - 1 + 2 * i + 0.5) / 2 - 0.5, hy = (MARGIN - 1 + 2 * j + 0.5) / 2 - 0.5;
             double weight = step((sample(share, HALF, hx, hy) - BUILT_FROM) / (BUILT_FULL - BUILT_FROM))
                     * step((sample(rough, HALF, hx, hy) - ROUGH_FROM) / (ROUGH_FULL - ROUGH_FROM))
+                    * step((sample(fine, HALF, hx, hy) - FINE_FROM) / (FINE_FULL - FINE_FROM))
                     * step((STEEP_TO - slope(trend, hx, hy, coarse)) / (STEEP_TO - STEEP_FROM));
             w[cell] = (byte) Math.round(255 * weight);
             keep[cell] = (byte) Math.round(255 * step((sample(water, HALF, hx, hy) - WATER_FROM) / (WATER_FULL - WATER_FROM)));
-            any |= w[cell] != 0;
+            if (w[cell] != 0) { any = true; need[(2 * j + offset) * side + 2 * i + offset] = true; }
         }
-        return any ? new Field(g, w, keep) : NONE;
+        if (!any) return null;
+        // The ground where the weighted points and their smoothing reach, with a pixel or two over for the fill between.
+        need = dilate(need, side, 3 * smooth + 4);
+        float[] ground = lowShare(dem, dry, base, from, side, low, need);
+        blur(ground, side, side, smooth);
+        float[] g = new float[GRID * GRID];
+        for (int j = 0; j < GRID; j++) for (int i = 0; i < GRID; i++) g[j * GRID + i] = ground[(2 * j + offset) * side + 2 * i + offset];
+        return new Field(g, w, keep, null, null, null);
+    }
+
+    /** The cells of a square grid within {@code radius} of a marked one, along rows then columns. */
+    private static boolean[] dilate(boolean[] marked, int side, int radius) {
+        boolean[] rows = new boolean[marked.length], out = new boolean[marked.length];
+        for (int j = 0; j < side; j++) {
+            int last = Integer.MIN_VALUE / 2;
+            for (int i = 0; i < side; i++) if (marked[j * side + i]) last = i;
+                else if (i - last <= radius) rows[j * side + i] = true;
+            last = Integer.MAX_VALUE / 2;
+            for (int i = side - 1; i >= 0; i--) {
+                if (marked[j * side + i]) { last = i; rows[j * side + i] = true; }
+                else if (last - i <= radius) rows[j * side + i] = true;
+            }
+        }
+        for (int i = 0; i < side; i++) {
+            int last = Integer.MIN_VALUE / 2;
+            for (int j = 0; j < side; j++) if (rows[j * side + i]) last = j;
+                else if (j - last <= radius) out[j * side + i] = true;
+            last = Integer.MAX_VALUE / 2;
+            for (int j = side - 1; j >= 0; j--) {
+                if (rows[j * side + i]) { last = j; out[j * side + i] = true; }
+                else if (last - j <= radius) out[j * side + i] = true;
+            }
+        }
+        return out;
     }
 
     /** Slope, rise over run, of the land's broad shape at a half-detail position {@code metres} a pixel across; 0 where it is unknown. */
@@ -375,14 +599,18 @@ public final class BareEarth implements GlobalElevation.Tiles {
      * The ground over a {@code side}-pixel square of the window from {@code from}: {@code base}, the
      * land's shape there, plus the {@link #LOW_SHARE} quantile of the dry land's height over it within
      * {@code radius}. A pixel with too little land round it keeps the shape. Worked out every other
-     * pixel and filled between, as the blur after it smooths finer steps anyway.
+     * pixel and filled between, as the blur after it smooths finer steps anyway. Only pixels marked in
+     * {@code need} are worked out; the rest keep the shape.
      */
-    private static float[] lowShare(float[] dem, boolean[] dry, float[] base, int from, int side, int radius) {
+    private static float[] lowShare(float[] dem, boolean[] dry, float[] base, int from, int side, int radius, boolean[] need) {
         int stride = radius >= 6 ? 2 : 1;
+        // The opening reads the low share within its reach round each pixel it works out.
+        boolean[] reached = dilate(need, side, radius + 2);
         float[] scratch = new float[(2 * radius + 1) * (2 * radius + 1)];
         float[] offsets = new float[side * side];
         int least = Math.max(8, scratch.length / 8);
         for (int j = 0; j < side; j += stride) for (int i = 0; i < side; i += stride) {
+            if (!reached[j * side + i]) continue;
             int count = 0;
             for (int q = Math.max(0, j - radius); q <= Math.min(side - 1, j + radius); q++) {
                 int row = (from + q) * SPAN + from, own = q * side;
@@ -397,6 +625,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
             // the reach, as a hill's foot or a valley's shoulder, that the low share alone cut into.
             float[] opened = new float[side * side];
             for (int j = 0; j < side; j += stride) for (int i = 0; i < side; i += stride) {
+                if (!need[j * side + i]) continue;
                 int count = 0;
                 for (int q = Math.max(0, j - radius); q <= Math.min(side - 1, j + radius); q++)
                     for (int p = Math.max(0, i - radius); p <= Math.min(side - 1, i + radius); p++)
@@ -404,6 +633,13 @@ public final class BareEarth implements GlobalElevation.Tiles {
                 opened[j * side + i] = select(scratch, count, (int) (OPEN_SHARE * (count - 1)));
             }
             fill(opened, side, stride);
+            // It gives back, never adds: no higher than the tiles' own land, or the low share where that is lower
+            // still (a shadow pit), so it doesn't fill a valley narrower than the reach.
+            for (int j = 0; j < side; j++) for (int i = 0; i < side; i++) {
+                int at = j * side + i;
+                float own = dem[(from + j) * SPAN + from + i] - base[at];
+                opened[at] = Math.min(opened[at], Math.max(offsets[at], own));
+            }
             offsets = opened;
         }
         for (int i = 0; i < offsets.length; i++) offsets[i] += base[i];

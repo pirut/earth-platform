@@ -5,6 +5,8 @@ import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.MissingTerrainException;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
@@ -13,7 +15,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Dependency-free harness for the whole-planet surface layer. Synthetic tiles are served from a local HTTP server; the
- * optional live section (EARTH_LIVE_TILES=1) samples real AWS Terrain Tiles at known places.
+ * optional live section (EARTH_LIVE_TILES=1) samples real AWS Terrain Tiles at known places. Put
+ * {@code geography/src/main/resources} on the class path too (the REMA layer reads its geoid there).
  */
 public final class GlobeTest {
     private static int checks;
@@ -26,6 +29,7 @@ public final class GlobeTest {
         repair();
         despike();
         bareEarth();
+        clearings();
         kernel();
         streaming();
         worldCover();
@@ -34,7 +38,9 @@ public final class GlobeTest {
         climate();
         imagery();
         palette();
-        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); liveClimate(); liveImagery(); }
+        rema();
+        usgs();
+        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); liveClimate(); liveImagery(); liveRema(); liveUsgs(); }
         else System.out.println("GlobeTest: live AWS tile checks skipped (set EARTH_LIVE_TILES=1)");
         System.out.println("GlobeTest: " + checks + " checks passed");
     }
@@ -171,6 +177,82 @@ public final class GlobeTest {
         check(Arrays.equals(source.tile(10, 909, 403), bare.tile(10, 909, 403)), "coarse zooms pass through");
     }
 
+    private static final int CLEAR_X0 = 3000 * 256 + 128, CLEAR_Y0 = 2000 * 256 + 128;
+
+    /** Gently sloping land with a round hill, a forest block standing 15 m on it, and a 10 m bank over a river. */
+    private static float clearingSurface(double gx, double gy, double tilt) {
+        double x = Math.floor(gx) - CLEAR_X0, y = Math.floor(gy) - CLEAR_Y0;
+        double hillX = gx - CLEAR_X0 - 60, hillY = gy - CLEAR_Y0 + 60;
+        double ground = 100 + tilt * (gx - CLEAR_X0) + 25 * Math.exp(-(hillX * hillX + hillY * hillY) / (2 * 12 * 12));
+        if (y >= 80) ground -= 10;
+        return (float) (ground + (clearingBlock(x, y) ? 15 : 0));
+    }
+
+    private static boolean clearingBlock(double x, double y) { return x >= -70 && x < -20 && y >= -40 && y < 40; }
+
+    private static void clearings() {
+        long size = 256L << 12;
+        java.util.function.DoubleFunction<GlobalElevation.Tiles> source = tilt -> (zoom, x, y) -> {
+            float[] tile = new float[256 * 256];
+            double scale = Math.scalb(1.0, 12 - zoom);
+            for (int py = 0; py < 256; py++) for (int px = 0; px < 256; px++)
+                tile[py * 256 + px] = clearingSurface(((double) x * 256 + px + 0.5) * scale - 0.5, ((double) y * 256 + py + 0.5) * scale - 0.5, tilt);
+            return tile;
+        };
+        BareEarth.Cover cover = (latitude, longitude) -> {
+            double gx = (longitude + 180) / 360 * size, r = Math.toRadians(latitude);
+            double gy = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * size;
+            double x = Math.floor(gx) - CLEAR_X0, y = Math.floor(gy) - CLEAR_Y0;
+            if (y >= 90) return WorldCoverSource.WATER;
+            return clearingBlock(x, y) ? WorldCoverSource.TREE_COVER : WorldCoverSource.GRASSLAND;
+        };
+        GlobalElevation.Tiles flat = source.apply(0.1);
+        BareEarth bare = new BareEarth(flat, cover, 8, 8);
+        float[] raw = flat.tile(12, 3000, 2000), tile = bare.tile(12, 3000, 2000);
+        java.util.function.IntBinaryOperator at = (dx, dy) -> (128 + dy) * 256 + 128 + dx;
+        for (int edge : new int[] {-70, -20}) {
+            double steepest = 0;
+            for (int dy = -30; dy <= 30; dy += 10)
+                for (int dx = edge - 10; dx < edge + 10; dx++) steepest = Math.max(steepest, Math.abs(tile[at.applyAsInt(dx + 1, dy)] - tile[at.applyAsInt(dx, dy)]));
+            check(steepest < 2, "a forest block's 15 m edge eases into a slope: " + steepest + " m a pixel at x " + edge);
+        }
+        double topEdge = 0;
+        for (int dx = -60; dx <= -30; dx += 10)
+            for (int dy = -50; dy < -30; dy++) topEdge = Math.max(topEdge, Math.abs(tile[at.applyAsInt(dx, dy + 1)] - tile[at.applyAsInt(dx, dy)]));
+        check(topEdge < 2, "its edge across the slope eases too: " + topEdge);
+        near(raw[at.applyAsInt(60, -60)], tile[at.applyAsInt(60, -60)], 1.5, "a round hill keeps its height");
+        check(tile[at.applyAsInt(40, 81)] < tile[at.applyAsInt(40, 78)] - 9, "a river bank keeps its step: "
+                + tile[at.applyAsInt(40, 78)] + " over " + tile[at.applyAsInt(40, 81)]);
+        near(raw[at.applyAsInt(127, -127)], tile[at.applyAsInt(127, -127)], 0.2, "land well away from the block is untouched");
+        // Finer zooms read the same correction, with no ledge left where the edge was.
+        int fineX = (CLEAR_X0 - 70) * 8, fineY = CLEAR_Y0 * 8;
+        float[] fine = bare.tile(15, fineX >> 8, fineY >> 8);
+        double ledge = 0;
+        int row = (fineY & 255) * 256;
+        for (int i = 0; i < 255; i++) ledge = Math.max(ledge, Math.abs(fine[row + i + 1] - fine[row + i]));
+        check(ledge < 0.6, "zoom 15 has no ledge at the old edge: " + ledge);
+        // On a hillside the same block is left alone: a step there may well be the land's own.
+        GlobalElevation.Tiles steep = source.apply(6);
+        float[] hillside = steep.tile(12, 3000, 2000);
+        BareEarth steepBare = new BareEarth((zoom, x, y) -> zoom == 12 && x == 3000 && y == 2000 ? hillside : steep.tile(zoom, x, y), cover, 8, 8);
+        check(steepBare.tile(12, 3000, 2000) == hillside, "steps on steep land stay");
+        // Fields kept on disk read back as they were worked out, and are worked out again over changed data.
+        try {
+            java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("bare-earth");
+            float[] first = new BareEarth(flat, cover, 8, 8, dir).tile(12, 3000, 2000);
+            check(java.nio.file.Files.isRegularFile(dir.resolve("12/3000/2000.field")), "a field is kept on disk");
+            float[] again = new BareEarth(flat, cover, 8, 8, dir).tile(12, 3000, 2000);
+            check(java.util.Arrays.equals(first, tile) && java.util.Arrays.equals(again, tile), "a kept field reads back as worked out");
+            float[] changed = new BareEarth(steep, cover, 8, 8, dir).tile(12, 3000, 2000);
+            check(java.util.Arrays.equals(changed, steepBare.tile(12, 3000, 2000)), "a kept field isn't read over other tiles");
+            try (var files = java.nio.file.Files.walk(dir)) {
+                files.sorted(java.util.Comparator.reverseOrder()).forEach(f -> f.toFile().delete());
+            }
+        } catch (java.io.IOException failure) {
+            throw new java.io.UncheckedIOException(failure);
+        }
+    }
+
     private static void kernel() {
         double sum = 0;
         for (int i = -1; i <= 2; i++) sum += GlobalElevation.weight(i - 0.37);
@@ -277,6 +359,25 @@ public final class GlobeTest {
             try (var online = new TerrariumTileSource(base, cache, true, 4, 1, Duration.ofSeconds(5))) {
                 online.tile(zoom, 3, 3);
                 check(Files.exists(cache.resolve("2/3/3.png")), "corrupt cache entry refetched");
+            }
+            // Layers run in order on each cleaned tile, once, and the later one wins.
+            List<String> seen = Collections.synchronizedList(new ArrayList<>());
+            ElevationLayer plus = new ElevationLayer() {
+                public String id() { return "plus"; }
+                public void refine(int z, int x, int y, float[] values) { seen.add("plus " + z + "/" + x + "/" + y); values[0] += 100; }
+            };
+            ElevationLayer pin = new ElevationLayer() {
+                public String id() { return "pin"; }
+                public void refine(int z, int x, int y, float[] values) { seen.add("pin"); values[1] = 42; }
+            };
+            try (var layered = new TerrariumTileSource(base, cache, false, 4, 1, Duration.ofSeconds(5), List.of(plus, pin))) {
+                float[] tile = layered.tile(zoom, 1, 2);
+                near(planeAt(zoom, 256, 512) + 100, tile[0], 1 / 256.0, "first layer applied");
+                equal(42f, tile[1], "second layer applied after it");
+                near(planeAt(zoom, 256 + 2, 512), tile[2], 1 / 256.0, "untouched pixel kept");
+                check(layered.tile(zoom, 1, 2) == tile, "layered tile kept in memory");
+                equal(List.of("plus 2/1/2", "pin"), seen, "each layer runs once, in order");
+                equal(List.of(plus, pin), layered.layers(), "layers listed in order");
             }
             try (var stream = Files.list(cache.resolve("2/1"))) {
                 check(stream.noneMatch(p -> p.toString().endsWith(".part")), "no partial cache files left");
@@ -968,6 +1069,440 @@ public final class GlobeTest {
     }
 
     /** Known places on the real dataset; tolerances reflect source resolution and bicubic smoothing. */
+    /** A plane of heights in a synthetic REMA file: metres at a full-resolution pixel centre. */
+    private static double remaPlane(double column, double row) { return 1000 + 0.5 * column - 0.25 * row; }
+
+    /**
+     * REMA over a synthetic 2 m file served over local HTTP: LZW and the floating-point predictor,
+     * BigTIFF directories, an overview, a gap, missing files, the disk cache, and the layer's
+     * projection, geoid and edge blend.
+     */
+    private static void rema() throws Exception {
+        // LZW round trips, including runs long enough to fill the table and clear it.
+        Random random = new Random(7);
+        byte[] noise = new byte[200_000];
+        for (int i = 0; i < noise.length; i++) noise[i] = (byte) (i % 977 < 400 ? random.nextInt(4) : random.nextInt(256));
+        check(Arrays.equals(noise, FloatCogs.lzw(lzw(noise), noise.length)), "LZW round trip");
+        byte[] zeros = new byte[300_000];
+        check(Arrays.equals(zeros, FloatCogs.lzw(lzw(zeros), zeros.length)), "LZW round trip of one long run");
+        fail(() -> FloatCogs.lzw(Arrays.copyOf(lzw(noise), 1000), noise.length), java.io.IOException.class, "truncated LZW rejected");
+
+        // Projection and geoid against PROJ (EPSG:3031) and NGA's grid.
+        double[][] places = {{-78.5254, -85.6171, -1247100.934, 95584.793}, {-77.53, 167.153, 302405.631, -1326007.625},
+                {-60, 0, 0, 3333134.028}, {-71, 90, 2082760.109, 0}};
+        for (double[] place : places) {
+            double[] xy = RemaElevation.project(place[0], place[1]);
+            near(place[2], xy[0], 1e-3, "EPSG:3031 x at " + place[0] + ", " + place[1]);
+            near(place[3], xy[1], 1e-3, "EPSG:3031 y at " + place[0] + ", " + place[1]);
+        }
+        near(15.13, RemaElevation.geoid(-60, 0), 0.05, "EGM96 on a grid node");
+        near(-53.73, RemaElevation.geoid(-77.53, 167.153), 0.5, "EGM96 at Erebus");
+        near(-15.4, RemaElevation.geoid(-78.5254, -85.6171), 0.6, "EGM96 at Vinson");
+        near(RemaElevation.geoid(-70, -180), RemaElevation.geoid(-70, 180), 1e-9, "EGM96 wraps the antimeridian");
+
+        // One 2 km file of 1024 x 1024 pixels around a place on the ice, inside its 50 km square.
+        double[] centre = RemaElevation.project(-78, -80);
+        double x0 = Math.floor(centre[0] / 2) * 2 - 600, y0 = Math.floor(centre[1] / 2) * 2 + 600;
+        int column = (int) Math.floor((centre[0] + 3_100_000) / 100_000), row = (int) Math.floor((centre[1] + 3_100_000) / 100_000);
+        int east = centre[0] + 3_100_000 - column * 100_000 >= 50_000 ? 2 : 1, north = centre[1] + 3_100_000 - row * 100_000 >= 50_000 ? 2 : 1;
+        double squareWest = column * 100_000 - 3_100_000 + (east - 1) * 50_000, squareSouth = row * 100_000 - 3_100_000 + (north - 1) * 50_000;
+        check(x0 > squareWest && x0 + 2048 < squareWest + 50_000 && y0 - 2048 > squareSouth && y0 < squareSouth + 50_000, "fixture file inside its square");
+        String square = String.format(Locale.ROOT, "%02d_%02d", row, column);
+        String path = "/rema/2m/" + square + "/" + square + "_" + north + "_" + east + "_2m_v2.0_dem.tif";
+        float[] full = new float[1024 * 1024];
+        for (int j = 0; j < 1024; j++) for (int i = 0; i < 1024; i++) full[j * 1024 + i] = (float) remaPlane(i, j);
+        for (int j = 600; j < 606; j++) for (int i = 600; i < 606; i++) full[j * 1024 + i] = -9999f;
+        float[] half = new float[512 * 512];
+        for (int j = 0; j < 512; j++) for (int i = 0; i < 512; i++) half[j * 512 + i] = (float) remaPlane(2 * i + 0.5, 2 * j + 0.5);
+        byte[] file = remaTiff(x0, y0, full, 1024, half, 512);
+
+        Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/", exchange -> {
+            String asked = exchange.getRequestURI().getPath();
+            hits.computeIfAbsent(asked, k -> new AtomicInteger()).incrementAndGet();
+            if (!asked.equals(path)) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
+            String range = exchange.getRequestHeaders().getFirst("Range");
+            String[] bounds = range.substring("bytes=".length()).split("-");
+            int from = Integer.parseInt(bounds[0]), to = Math.min(file.length - 1, Integer.parseInt(bounds[1]));
+            byte[] body = Arrays.copyOfRange(file, from, to + 1);
+            exchange.sendResponseHeaders(206, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        Path cache = Files.createTempDirectory("rema-test");
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/rema/");
+        try {
+            try (var rema = new RemaSource(base, cache, true, 8, 2, Duration.ofSeconds(5))) {
+                // Pixel centres and points between them read the plane.
+                for (int[] p : new int[][]{{0, 0}, {5, 900}, {700, 3}, {1022, 1021}, {511, 512}}) {
+                    double x = x0 + 2 * (p[0] + 0.5), y = y0 - 2 * (p[1] + 0.5);
+                    near(remaPlane(p[0], p[1]), rema.metres(RemaSource.FINE, 0, x, y), 1e-3, "REMA pixel " + p[0] + "," + p[1]);
+                    near(remaPlane(p[0] + 0.25, p[1] + 0.5), rema.metres(RemaSource.FINE, 0, x + 0.5, y - 1), 1e-3, "REMA bilinear near " + p[0] + "," + p[1]);
+                    near(1, rema.coverage(RemaSource.FINE, 0, x, y), 1e-9, "REMA coverage inside at " + p[0] + "," + p[1]);
+                }
+                near(remaPlane(300.5, 200.5), rema.metres(RemaSource.FINE, 1, x0 + 2 * 301, y0 - 2 * 201), 1e-3, "REMA overview pixel");
+                // Overviews deeper than the file has fall back to its coarsest.
+                near(remaPlane(300.5, 200.5), rema.metres(RemaSource.FINE, 6, x0 + 2 * 301, y0 - 2 * 201), 1e-3, "REMA missing overview falls back");
+                double hx = x0 + 2 * 603, hy = y0 - 2 * 603;
+                check(Double.isNaN(rema.metres(RemaSource.FINE, 0, hx, hy)), "REMA gap reads no data");
+                near(0, rema.coverage(RemaSource.FINE, 0, hx, hy), 1e-9, "REMA gap has no coverage");
+                near(remaPlane(1205.0 / 2, 1205.0 / 2), rema.metres(RemaSource.FINE, 1, hx, hy), 1e-3, "REMA overview covers the gap");
+                // Next to the gap, only valid neighbours count.
+                near(remaPlane(599, 602.5), rema.metres(RemaSource.FINE, 0, x0 + 2 * 599.5 + 0.5, hy), 1e-3, "REMA bilinear skips gap pixels");
+                check(Double.isNaN(rema.metres(RemaSource.FINE, 0, x0 + 2048 + 10, y0 - 100)), "REMA outside the file reads no data");
+                check(Double.isNaN(rema.metres(RemaSource.FINE, 0, x0 - 60_000, y0)), "REMA missing file reads no data");
+                check(Double.isNaN(rema.metres(RemaSource.FINE, 0, 0, 3_400_000)), "REMA beyond its grid reads no data");
+                check(Files.exists(cache.resolve("2m/" + square + "/" + square + "_" + north + "_" + (3 - east) + "_2m_v2.0_dem.none"))
+                        || Files.exists(cache.resolve("2m/" + square + "/" + square + "_" + north + "_" + east + "_2m_v2.0_dem.header")), "REMA headers cached");
+                fail(() -> rema.metres(RemaSource.FINE, 7, x0, y0), IllegalArgumentException.class, "REMA overview out of range rejected");
+
+                // The layer on a zoom-15 tile across the file's east edge.
+                var layer = new RemaElevation(rema);
+                int zoom = 15;
+                double world = 256.0 * (1 << zoom);
+                double edgeLat = remaLatitude(x0 + 2048, y0 - 1024), edgeLon = Math.toDegrees(Math.atan2(x0 + 2048, y0 - 1024));
+                int tx = (int) ((edgeLon + 180) / 360 * (1 << zoom));
+                int ty = (int) Math.floor((1 - Math.log(Math.tan(Math.PI / 4 + Math.toRadians(edgeLat) / 2)) / Math.PI) / 2 * (1 << zoom));
+                float[] values = new float[256 * 256];
+                Arrays.fill(values, 500f);
+                values[3] = 0f;
+                layer.refine(zoom, tx, ty, values);
+                int taken = 0, kept = 0, between = 0;
+                for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) {
+                    double lat = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (ty * 256.0 + j + 0.5) / world))));
+                    double lon = (tx * 256.0 + i + 0.5) / world * 360 - 180;
+                    double[] xy = RemaElevation.project(lat, lon);
+                    double fx = (xy[0] - x0) / 2 - 0.5, fy = (y0 - xy[1]) / 2 - 0.5;
+                    float v = values[j * 256 + i];
+                    if (j * 256 + i == 3) { equal(0f, v, "REMA layer leaves open sea"); continue; }
+                    if (fx < 1000 && fx > 0 && fy > 0 && fy < 1000) {
+                        near(remaPlane(fx, fy) - RemaElevation.geoid(lat, lon), v, 0.01, "REMA layer inside the data at " + i + "," + j);
+                        taken++;
+                    } else if (fx > 1040) {
+                        equal(500f, v, "REMA layer keeps the tile beyond the data at " + i + "," + j);
+                        kept++;
+                    } else between++;
+                }
+                check(taken > 1000 && kept > 1000 && between > 0, "REMA fixture tile crosses the data's edge: " + taken + " / " + between + " / " + kept);
+                // North of REMA nothing changes.
+                float[] north50 = new float[256 * 256];
+                Arrays.fill(north50, 123f);
+                layer.refine(8, 10, 100, north50);
+                check(allEqual(north50, 123f), "REMA layer leaves tiles north of 50 S");
+                layer.refine(RemaElevation.MIN_ZOOM - 1, 0, 127, north50);
+                check(allEqual(north50, 123f), "REMA layer leaves coarse tiles");
+            }
+            int transfers = hits.get(path).get();
+            try (var offline = new RemaSource(base, cache, false, 8, 1, Duration.ofSeconds(5))) {
+                near(remaPlane(5, 900), offline.metres(RemaSource.FINE, 0, x0 + 11, y0 - 1801), 1e-3, "REMA disk cache offline");
+                equal(transfers, hits.get(path).get(), "REMA cached blocks need no transfer");
+            }
+            try (var empty = new RemaSource(base, Files.createTempDirectory("rema-empty"), false, 8, 1, Duration.ofSeconds(5))) {
+                fail(() -> empty.metres(RemaSource.FINE, 0, x0 + 11, y0 - 1801), MissingTerrainException.class, "REMA uncached file offline fails");
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    private static double usgsPlane(double column, double row) { return 160 + 0.05 * column - 0.03 * row; }
+
+    /** The 3DEP layer against a fixture 1° cell served over HTTP: cells, edges, sea and bathymetry. */
+    private static void usgs() throws Exception {
+        equal("n44w080", UsgsElevation.cellName(UsgsElevation.cell(43.07, -79.07)), "3DEP cell at Niagara");
+        equal("n44w080", UsgsElevation.cellName(UsgsElevation.cell(44.0, -80.0)), "3DEP cell holds its north-west corner");
+        equal("s14w171", UsgsElevation.cellName(UsgsElevation.cell(-14.3, -170.7)), "3DEP cell in American Samoa");
+        equal("n53e177", UsgsElevation.cellName(UsgsElevation.cell(52.5, 177.5)), "3DEP cell past the antimeridian");
+        equal("n44w080/USGS_13_n44w080_20230227.tif", UsgsElevation.name(UsgsElevation.cell(43.07, -79.07)), "3DEP cell pinned to its dated release");
+        fail(() -> UsgsElevation.name(UsgsElevation.cell(48.85, 2.35)), IllegalArgumentException.class, "3DEP has no cell in Paris");
+
+        // A coarse stand-in for n44w080: 1024 pixels a degree, a 6-pixel margin, 256-pixel blocks.
+        double p = 1.0 / 1024, x0 = -80 - 6 * p, y0 = 44 + 6 * p;
+        int n = 1036;
+        float[] full = new float[n * n];
+        for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) {
+            // No data in the north (past the border); sea level and below in the south-east.
+            full[j * n + i] = j < 300 ? -999999f : i >= 900 && j >= 900 ? -2f : (float) usgsPlane(i, j);
+        }
+        int h = n / 2;
+        float[] half = new float[h * h];
+        for (int j = 0; j < h; j++) for (int i = 0; i < h; i++) {
+            double fi = 2 * i + 0.5, fj = 2 * j + 0.5;
+            half[j * h + i] = fj < 300 ? -999999f : fi >= 900 && fj >= 900 ? -2f : (float) usgsPlane(fi, fj);
+        }
+        byte[] file = floatTiff(x0, y0, p, 256, full, n, half, h);
+        String path = "/3dep/n44w080/USGS_13_n44w080_20230227.tif";
+        Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/", exchange -> {
+            String asked = exchange.getRequestURI().getPath();
+            hits.computeIfAbsent(asked, k -> new AtomicInteger()).incrementAndGet();
+            if (!asked.equals(path)) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
+            String[] bounds = exchange.getRequestHeaders().getFirst("Range").substring("bytes=".length()).split("-");
+            int from = Integer.parseInt(bounds[0]), to = Math.min(file.length - 1, Integer.parseInt(bounds[1]));
+            byte[] body = Arrays.copyOfRange(file, from, to + 1);
+            exchange.sendResponseHeaders(206, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        Path cache = Files.createTempDirectory("3dep-test");
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/3dep/");
+        try {
+            // Zoom-10 pixels read the fixture's overview (its pixels are coarse for a cell).
+            int zoom = 10;
+            double world = 256.0 * (1 << zoom);
+            float[] online;
+            java.util.function.DoubleUnaryOperator column = lon -> (lon + 180) / 360 * (1 << zoom);
+            java.util.function.DoubleUnaryOperator row = lat -> (1 - Math.log(Math.tan(Math.PI / 4 + Math.toRadians(lat) / 2)) / Math.PI) / 2 * (1 << zoom);
+            try (var layer = new UsgsElevation(base, cache, true, 16, 2, Duration.ofSeconds(5))) {
+                // A tile across the data's north edge (row 300), with a pixel of open sea.
+                int tx = (int) column.applyAsDouble(x0 + 500 * p), ty = (int) row.applyAsDouble(y0 - 300 * p);
+                float[] values = new float[256 * 256];
+                Arrays.fill(values, 75f);
+                values[5] = 0f;
+                layer.refine(zoom, tx, ty, values);
+                int taken = 0, kept = 0, between = 0;
+                for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) {
+                    double lat = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (ty * 256.0 + j + 0.5) / world))));
+                    double lon = (tx * 256.0 + i + 0.5) / world * 360 - 180;
+                    double fx = (lon - x0) / p - 0.5, fy = (y0 - lat) / p - 0.5;
+                    float v = values[j * 256 + i];
+                    if (j * 256 + i == 5) { equal(0f, v, "3DEP layer leaves open sea"); continue; }
+                    if (fy > 306) { near(usgsPlane(fx, fy), v, 0.01, "3DEP layer inside the data at " + i + "," + j); taken++; }
+                    else if (fy < 290) { equal(75f, v, "3DEP layer keeps the tile past the data at " + i + "," + j); kept++; }
+                    else between++;
+                }
+                check(taken > 1000 && kept > 1000 && between > 0, "3DEP fixture tile crosses the data's edge: " + taken + " / " + between + " / " + kept);
+                online = values;
+
+                // Where 3DEP reads sea level or below, land takes it but bathymetry stays.
+                int sx = (int) column.applyAsDouble(x0 + 960 * p), sy = (int) row.applyAsDouble(y0 - 960 * p);
+                float[] sea = new float[256 * 256];
+                for (int k = 0; k < sea.length; k++) sea[k] = k % 2 == 0 ? -40f : 3f;
+                layer.refine(zoom, sx, sy, sea);
+                int low = 0;
+                for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) {
+                    double lat = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (sy * 256.0 + j + 0.5) / world))));
+                    double lon = (sx * 256.0 + i + 0.5) / world * 360 - 180;
+                    double fx = (lon - x0) / p - 0.5, fy = (y0 - lat) / p - 0.5;
+                    if (fx < 906 || fy < 906 || fx > 1029 || fy > 1029) continue;
+                    int k = j * 256 + i;
+                    if (k % 2 == 0) equal(-40f, sea[k], "3DEP keeps bathymetry at " + i + "," + j);
+                    else near(-2, sea[k], 1e-3, "3DEP takes land down to sea level at " + i + "," + j);
+                    low++;
+                }
+                check(low > 1000, "3DEP fixture tile reaches the low corner: " + low);
+
+                // Outside the listed cells nothing is asked for; coarse tiles are left alone.
+                int before = hits.values().stream().mapToInt(AtomicInteger::get).sum();
+                float[] paris = new float[256 * 256];
+                Arrays.fill(paris, 35f);
+                layer.refine(zoom, (int) column.applyAsDouble(2.35), (int) row.applyAsDouble(48.85), paris);
+                check(allEqual(paris, 35f), "3DEP leaves Paris");
+                float[] coarse = new float[256 * 256];
+                Arrays.fill(coarse, 35f);
+                layer.refine(UsgsElevation.MIN_ZOOM - 1, 35, 46, coarse);
+                check(allEqual(coarse, 35f), "3DEP leaves coarse tiles");
+                equal(before, hits.values().stream().mapToInt(AtomicInteger::get).sum(), "3DEP asks for nothing outside its cells");
+            }
+            int transfers = hits.get(path).get();
+            try (var offline = new UsgsElevation(base, cache, false, 16, 1, Duration.ofSeconds(5))) {
+                int tx = (int) column.applyAsDouble(x0 + 500 * p), ty = (int) row.applyAsDouble(y0 - 300 * p);
+                float[] values = new float[256 * 256];
+                Arrays.fill(values, 75f);
+                values[5] = 0f;
+                offline.refine(zoom, tx, ty, values);
+                check(Arrays.equals(online, values), "3DEP disk cache offline");
+                equal(transfers, hits.get(path).get(), "3DEP cached blocks need no transfer");
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    private static boolean allEqual(float[] values, float expected) {
+        for (float v : values) if (v != expected) return false;
+        return true;
+    }
+
+    /** Latitude of EPSG:3031 metres, by bisection on the layer's own projection. */
+    private static double remaLatitude(double x, double y) {
+        double rho = Math.hypot(x, y), lo = -90, hi = -50;
+        for (int k = 0; k < 80; k++) {
+            double mid = (lo + hi) / 2, r = Math.hypot(RemaElevation.project(mid, 0)[0], RemaElevation.project(mid, 0)[1]);
+            if (r > rho) hi = mid; else lo = mid;
+        }
+        return (lo + hi) / 2;
+    }
+
+    /** TIFF LZW as libtiff writes it: a clear code first, widths changing one code early, a clear before the table fills. */
+    private static byte[] lzw(byte[] data) {
+        var out = new java.io.ByteArrayOutputStream();
+        long[] bits = {0, 0};
+        java.util.function.BiConsumer<Integer, Integer> emit = (code, width) -> {
+            bits[0] = bits[0] << width | code;
+            bits[1] += width;
+            while (bits[1] >= 8) { out.write((int) (bits[0] >>> (bits[1] - 8)) & 0xFF); bits[1] -= 8; }
+            bits[0] &= (1L << bits[1]) - 1;
+        };
+        java.util.function.IntUnaryOperator width = next -> { int seen = Math.max(258, next - 1); return seen < 511 ? 9 : seen < 1023 ? 10 : seen < 2047 ? 11 : 12; };
+        Map<Long, Integer> table = new HashMap<>();
+        int next = 258;
+        emit.accept(256, 9);
+        int prefix = data[0] & 0xFF;
+        for (int i = 1; i < data.length; i++) {
+            int k = data[i] & 0xFF;
+            Integer known = table.get((long) prefix << 8 | k);
+            if (known != null) { prefix = known; continue; }
+            emit.accept(prefix, width.applyAsInt(next));
+            table.put((long) prefix << 8 | k, next++);
+            if (next >= 4094) {
+                emit.accept(256, width.applyAsInt(next));
+                table.clear();
+                next = 258;
+            }
+            prefix = k;
+        }
+        emit.accept(prefix, width.applyAsInt(next));
+        emit.accept(257, width.applyAsInt(next + 1));
+        if (bits[1] > 0) out.write((int) (bits[0] << (8 - bits[1])) & 0xFF);
+        return out.toByteArray();
+    }
+
+    /** A block of floats as REMA and 3DEP store it: byte planes from the most significant, differenced along each row, then LZW. */
+    private static byte[] remaBlock(float[] image, int width, int height, int bx, int by, int block) {
+        byte[] raw = new byte[block * block * 4];
+        for (int j = 0; j < block; j++) {
+            int start = j * block * 4;
+            for (int i = 0; i < block; i++) {
+                int x = bx * block + i, y = by * block + j;
+                int bitsOf = Float.floatToIntBits(x < width && y < height ? image[y * width + x] : 0f);
+                for (int b = 0; b < 4; b++) raw[start + b * block + i] = (byte) (bitsOf >>> (24 - 8 * b));
+            }
+            for (int i = start + block * 4 - 1; i > start; i--) raw[i] -= raw[i - 1];
+        }
+        return lzw(raw);
+    }
+
+    /** A little-endian BigTIFF like REMA's: a 2 m image at (x0, y0) and one overview, 512-pixel LZW blocks. */
+    private static byte[] remaTiff(double x0, double y0, float[] full, int fullSize, float[] overview, int overviewSize) {
+        return floatTiff(x0, y0, 2, 512, full, fullSize, overview, overviewSize);
+    }
+
+    /** A little-endian BigTIFF of square pixels at (x0, y0) and one overview, in LZW blocks with the floating-point predictor. */
+    private static byte[] floatTiff(double x0, double y0, double pixel, int block, float[] full, int fullSize, float[] overview, int overviewSize) {
+        float[][] images = {full, overview};
+        int[] sizes = {fullSize, overviewSize};
+        List<List<byte[]>> blocks = new ArrayList<>();
+        for (int level = 0; level < 2; level++) {
+            List<byte[]> list = new ArrayList<>();
+            int across = Math.ceilDiv(sizes[level], block);
+            for (int by = 0; by < across; by++) for (int bx = 0; bx < across; bx++) list.add(remaBlock(images[level], sizes[level], sizes[level], bx, by, block));
+            blocks.add(list);
+        }
+        // Layout: header, then per level its directory and arrays, then the blocks.
+        int[] tagsPerLevel = {14, 13};
+        long at = 16;
+        long[] directory = new long[2], offsetsAt = new long[2], countsAt = new long[2], scaleAt = new long[2], tieAt = new long[2];
+        for (int level = 0; level < 2; level++) {
+            directory[level] = at;
+            at += 8 + tagsPerLevel[level] * 20L + 8;
+            offsetsAt[level] = at; at += blocks.get(level).size() * 8L;
+            countsAt[level] = at; at += blocks.get(level).size() * 8L;
+            if (level == 0) { scaleAt[0] = at; at += 24; tieAt[0] = at; at += 48; }
+        }
+        long dataStart = at;
+        ByteBuffer out = ByteBuffer.allocate((int) (dataStart + blocks.stream().flatMap(List::stream).mapToLong(b -> b.length).sum())).order(ByteOrder.LITTLE_ENDIAN);
+        out.put((byte) 'I').put((byte) 'I').putShort((short) 43).putShort((short) 8).putShort((short) 0).putLong(directory[0]);
+        long data = dataStart;
+        for (int level = 0; level < 2; level++) {
+            int size = sizes[level];
+            List<long[]> tags = new ArrayList<>();
+            if (level == 1) tags.add(new long[]{254, 4, 1, 1});
+            tags.add(new long[]{256, 4, 1, size});
+            tags.add(new long[]{257, 4, 1, size});
+            tags.add(new long[]{258, 3, 1, 32});
+            tags.add(new long[]{259, 3, 1, 5});
+            tags.add(new long[]{262, 3, 1, 1});
+            tags.add(new long[]{277, 3, 1, 1});
+            tags.add(new long[]{317, 3, 1, 3});
+            tags.add(new long[]{322, 3, 1, block});
+            tags.add(new long[]{323, 3, 1, block});
+            tags.add(new long[]{324, 16, blocks.get(level).size(), offsetsAt[level]});
+            tags.add(new long[]{325, 16, blocks.get(level).size(), countsAt[level]});
+            tags.add(new long[]{339, 3, 1, 3});
+            if (level == 0) { tags.add(new long[]{33550, 12, 3, scaleAt[0]}); tags.add(new long[]{33922, 12, 6, tieAt[0]}); }
+            out.position((int) directory[level]);
+            out.putLong(tags.size());
+            // One block's offset and size fit in their entries, as BigTIFF keeps eight bytes inline.
+            int offsetsInline = -1, countsInline = -1;
+            for (long[] tag : tags) {
+                out.putShort((short) tag[0]).putShort((short) tag[1]).putLong(tag[2]);
+                int valueAt = out.position();
+                if (tag[1] == 3) out.putShort((short) tag[3]); else if (tag[1] == 4) out.putInt((int) tag[3]); else out.putLong(tag[3]);
+                if (tag[2] == 1 && tag[0] == 324) offsetsInline = valueAt;
+                if (tag[2] == 1 && tag[0] == 325) countsInline = valueAt;
+                out.position(valueAt + 8);
+            }
+            out.putLong(level == 0 ? directory[1] : 0);
+            List<byte[]> list = blocks.get(level);
+            for (int b = 0; b < list.size(); b++) {
+                out.putLong(offsetsInline >= 0 ? offsetsInline : (int) (offsetsAt[level] + b * 8L), data);
+                out.putLong(countsInline >= 0 ? countsInline : (int) (countsAt[level] + b * 8L), list.get(b).length);
+                out.position((int) data);
+                out.put(list.get(b));
+                data += list.get(b).length;
+            }
+            if (level == 0) {
+                out.position((int) scaleAt[0]);
+                out.putDouble(pixel).putDouble(pixel).putDouble(0);
+                out.putDouble(0).putDouble(0).putDouble(0).putDouble(x0).putDouble(y0).putDouble(0);
+            }
+        }
+        return out.array();
+    }
+
+    /** REMA's real heights at Antarctic summits. */
+    private static void liveRema() throws Exception {
+        try (var rema = new RemaSource(RemaSource.AWS_REMA, null, true, 32, 4, Duration.ofSeconds(30));
+             var tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, null, true, 64, 4, Duration.ofSeconds(30), List.of(new RemaElevation(rema)))) {
+            // Mount Vinson (4,892 m) in its zoom-13 tile; the composite alone reads under 2,900 m. Erebus
+            // (3,794 m surveyed) is an active volcano, so REMA's surface there is only checked roughly.
+            double[][] summits = {{-78.5254, -85.6171, 4892, 15}, {-77.53, 167.153, 3794, 80}};
+            for (double[] summit : summits) {
+                int zoom = 13, n = 1 << zoom;
+                int tx = (int) ((summit[1] + 180) / 360 * n);
+                int ty = (int) Math.floor((1 - Math.log(Math.tan(Math.PI / 4 + Math.toRadians(summit[0]) / 2)) / Math.PI) / 2 * n);
+                float highest = -1e9f;
+                for (float v : tiles.tile(zoom, tx, ty)) highest = Math.max(highest, v);
+                near(summit[2], highest, summit[3], "REMA summit at " + summit[0] + ", " + summit[1]);
+            }
+        }
+    }
+
+    /** 3DEP above Niagara Falls, where the composite drops the river to Lake Ontario's level. */
+    private static void liveUsgs() throws Exception {
+        try (var usgs = new UsgsElevation(UsgsElevation.AWS_3DEP, null, true, 32, 4, Duration.ofSeconds(30));
+             var plain = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, null, true, 64, 4, Duration.ofSeconds(30));
+             var tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, null, true, 64, 4, Duration.ofSeconds(30), List.of(usgs))) {
+            int zoom = 15, n = 1 << zoom;
+            double lat = 43.0725, lon = -79.0650;
+            int tx = (int) ((lon + 180) / 360 * n);
+            double fy = (1 - Math.log(Math.tan(Math.PI / 4 + Math.toRadians(lat) / 2)) / Math.PI) / 2 * n;
+            int ty = (int) fy, i = (int) (((lon + 180) / 360 * n - tx) * 256), j = (int) ((fy - ty) * 256);
+            float before = plain.tile(zoom, tx, ty)[j * 256 + i], after = tiles.tile(zoom, tx, ty)[j * 256 + i];
+            check(before < 90, "Composite has the upper Niagara at Lake Ontario's level: " + before);
+            near(168, after, 6, "3DEP upper Niagara river");
+        }
+    }
+
     private static void live() throws Exception {
         var grid = new MercatorGrid(1.0);
         try (var tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, null, true, 64, 4, Duration.ofSeconds(30))) {

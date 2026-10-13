@@ -140,6 +140,15 @@ public final class ServerCubeWorld extends CubeWorld {
         if (old.getLightEmission() != state.getLightEmission() || CubeLight.opacity(old) != CubeLight.opacity(state)) staleLightAround(cube.x, cube.y, cube.z);
     }
 
+    /** Light is recomputed and every watcher holding the cube is sent it again whole. */
+    @Override protected void onRewritten(Cube cube) {
+        staleLightAround(cube.x, cube.y, cube.z);
+        long column = CubeKey.column(cube.x, cube.z);
+        for (Watcher watcher : watchers.values()) {
+            if (watcher.sent.remove(cube.key)) watcher.columns.remove(column);
+        }
+    }
+
     @Override protected void forget(Cube cube) {
         super.forget(cube);
         light.remove(cube.key);

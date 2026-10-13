@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.earthplatform.geography.GeoPoint;
 import net.minecraft.world.level.block.Blocks;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -13,12 +12,12 @@ import org.junit.jupiter.api.Test;
 class StrataTest {
     @BeforeAll static void registries() { net.minecraft.SharedConstants.tryDetectVersion(); net.minecraft.server.Bootstrap.bootStrap(); }
 
-    /** A plateau at 2,000 m cut by a canyon 16 km wide with its floor at 800 m, at the Grand Canyon, or at Paris for x < -100,000. */
+    /** A plateau at 2,000 m cut by a canyon 16 km wide with its floor at 600 m, in a dry climate, or a wet one for x < -100,000. */
     private static Strata canyon() {
         return new Strata(1, new Strata.Globe() {
-            @Override public double metres(double x, double z) { return Math.abs(z) > 8000 ? 2000 : 800; }
-            @Override public GeoPoint geographic(double x, double z) { return x < -100_000 ? new GeoPoint(48.85, 2.35) : new GeoPoint(36.1, -112.1); }
+            @Override public double metres(double x, double z) { return Math.abs(z) > 8000 ? 2000 : 600; }
             @Override public double metresPerBlock(double z) { return 1; }
+            @Override public boolean arid(double x, double z) { return x >= -100_000; }
         }, null);
     }
 
@@ -36,7 +35,7 @@ class StrataTest {
     }
 
     @Test void rockFollowsTheSequenceDownToTheBasement() {
-        Strata.Layers rock = canyon().layers(0, 20_000, 62.5);
+        Strata.Layers rock = canyon().layers(0, 9_000, 62.5);
         // Kaibab Limestone at the rim: pale terracotta; Vishnu Schist (deepslate, tuff, granite) and the basement in the inner gorge.
         var rim = rock.at(62 + 1995);
         assertTrue(rim.is(Blocks.WHITE_TERRACOTTA) || rim.is(Blocks.LIGHT_GRAY_TERRACOTTA), rim.toString());
@@ -46,7 +45,7 @@ class StrataTest {
     }
 
     @Test void terracesKeepTheGroundInOrderAndTheFormationsInPlace() {
-        Strata.Layers rock = canyon().layers(0, 20_000, 62.5);
+        Strata.Layers rock = canyon().layers(0, 9_000, 62.5);
         double last = Double.NEGATIVE_INFINITY;
         for (double m = 500; m <= 2100; m += 0.125) {
             double t = rock.terrace(m);

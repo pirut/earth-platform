@@ -20,6 +20,18 @@ Mapzen/Tilezen terrain tiles on the [Registry of Open Data on AWS](https://regis
 - United Kingdom terrain data © Environment Agency copyright and/or database right 2015. All rights reserved.
 - United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey.
 
+## United States: USGS 3DEP (downloaded while you play)
+
+United States: USGS 3D Elevation Program 1/3 arc-second DEM (public domain), courtesy of the U.S. Geological Survey. U.S. Geological Survey, 3D Elevation Program 1/3 arc-second Digital Elevation Model, https://www.usgs.gov/3d-elevation-program.
+Changes: tiles are fetched from the USGS National Map staged products (prd-tnm on AWS) only for visited places inside 1,450 pinned 1° cells, cached on disk and blended into the elevation above. Turn it off with `-Dearthplatform.earth.3dep=false`. The USGS does not endorse Earth Platform.
+
+## Antarctica: REMA (downloaded while you play)
+
+Antarctica: Reference Elevation Model of Antarctica (REMA) v2.0, Polar Geospatial Center, University of Minnesota (CC BY 4.0); Howat, I., et al. (2022), The Reference Elevation Model of Antarctica - Mosaics, Version 2, Harvard Dataverse, https://doi.org/10.7910/DVN/EBW8UC. DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685.
+Howat, I. M., Porter, C., Smith, B. E., Noh, M.-J. & Morin, P. (2019). The Reference Elevation Model of Antarctica. *The Cryosphere* 13, 665-674. https://doi.org/10.5194/tc-13-665-2019
+Licence: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: REMA mosaic tiles are fetched from the Polar Geospatial Center's bucket on the Registry of Open Data on AWS only where you play, moved from the WGS 84 ellipsoid to the EGM96 geoid, and blended into the elevation above. Turn it off with `-Dearthplatform.earth.rema=false`.
+Geoid: EGM96 (NGA, public domain), shipped as a half-degree grid south of 50 S in geography/src/main/resources (`egm96-south.bin`, sampled from NGA's EGM96 15' grid as PROJ distributes it).
+
 ## Land cover: ESA WorldCover
 
 © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium.

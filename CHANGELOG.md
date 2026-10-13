@@ -46,12 +46,15 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - Xaero's Minimap, Xaero's World Map and JourneyMap map the Earth world, including ground above Y 2047.
 - Create contraptions (bearings, pistons and the rest) assemble in the Earth world.
 - Distant Horizons pauses itself in the Earth world, with a one-time note in chat, so it doesn't hide the far terrain.
+- Create Aeronautics ships assemble, fly and save in the Earth world, with air pressure from the real atmosphere. The jet stream carries ships east too, the altitude sensor reads from sea level to 10 km, and ships shade mobs at any height.
+- AE2 spatial storage captures and places Earth blocks, and AE2 meteorites generate in the Earth world.
 - Create's mechanical arm, pulley, scaffolding and elevators, Waystones, Mekanism (Digital Miner, multiblocks and pipes), Immersive Engineering's multiblocks and the Twilight Forest portal work in the Earth world.
 - JEI, EMI, Jade, AppleSkin, Ars Nouveau, AE2 networks, Refined Storage 2, Iron's Spells, FTB Quests and Teams, Farmer's Delight, Sophisticated Backpacks, Supplementaries, YUNG's structures and Open Parties and Claims work unchanged.
 
 ### Known issues
 - Iris and Sodium must be the exact tested versions.
 - On a Mac, Photon's Colored Lights, Colored Shadows and Cloud Shadows are unavailable (the mod adapts stock Photon for Apple's OpenGL automatically).
-- Create Aeronautics (and the Sable library it uses) can't build ships in the Earth world yet, and AE2 spatial storage can't capture Earth blocks.
+- Create Aeronautics ships with players aboard ride the jet stream at 40 blocks a second; only empty ships reach elytra speed.
+- In the Earth world, AE2's meteorite compass finds meteorites by map column only and doesn't notice blocks changed later.
 - Other mods that check build height or read chunks themselves may misbehave in the Earth world; please report them.
 - Blocks you place above Y 9,000 have no collision for a player gliding in the jet stream.

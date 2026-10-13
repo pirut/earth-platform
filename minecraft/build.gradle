@@ -405,6 +405,7 @@ tasks.named('prepareNeoForgeTestFiles') {
 }
 
 sourceSets.main.java.srcDir '../geography/src/main/java'
+sourceSets.main.resources.srcDir '../geography/src/main/resources'
 tasks.named('processResources', ProcessResources) {
     from('../geography/data/noaa-etopo2022-proof') {
         include 'world.properties', 'world-global.properties', 'regions/**/*.egp', 'source-lock.json'
