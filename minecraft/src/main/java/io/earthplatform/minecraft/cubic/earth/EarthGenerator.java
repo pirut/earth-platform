@@ -1079,14 +1079,15 @@ public final class EarthGenerator extends SurfaceGenerator {
             case 0 -> CLAY; case 1 -> SAND; default -> GRAVEL; };
         if (depth > 8 && patches.getValue(x / 19.0, z / 19.0) > 0.2) floor = MUD;
         // Tropical lagoons behind a reef, as at Bora Bora, are clear turquoise sea over sand, not river water.
-        if (t > 20 && water <= SEA + 16 && lagoon(x, z)) return new Surface(warmOcean, SAND, SAND, 0, 0, 0, 0, 0, false);
+        if (t > 20 && water <= SEA + 24 && lagoon(x, z)) return new Surface(warmOcean, SAND, SAND, 0, 0, 0, 0, 0, false);
         return new Surface(t < -2 ? frozenRiver : river, floor, floor, 0, 0, 0, 0, 0, false);
     }
 
     /** Whether water lies close to the open sea, as a lagoon inside a reef or a barrier island does. */
     private boolean lagoon(int x, int z) {
         int sea = 0;
-        for (int k = 0; k < 8; k++) if (waterY(x + (int) (RING_X[k] * 1500), z + (int) (RING_Z[k] * 1500)) == SEA && ++sea >= 2) return true;
+        for (int radius = 1500; radius <= 3000; radius += 1500)
+            for (int k = 0; k < 8; k++) if (waterY(x + (int) (RING_X[k] * radius), z + (int) (RING_Z[k] * radius)) == SEA && ++sea >= 2) return true;
         return false;
     }
 
@@ -1232,6 +1233,9 @@ public final class EarthGenerator extends SurfaceGenerator {
                 boolean hot = zone == ClimateZone.HOT_DESERT || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.TROPICAL_DRY;
                 // Dry lands' cliffs show their rock in coloured bands, as the Colorado Plateau's and the Sahara's do.
                 boolean arid = hot || dry;
+                // Bare ground in wet lowlands is cleared land (quarries, airfields, building sites): it goes back to grass.
+                if (!arid && !cliff && steep < 0.7 && local.rain() > 700 && y < SEA + 300 && t > 0)
+                    return covered(WorldCoverSource.GRASSLAND, x, z, y, local, steep, roll, slope);
                 if (arid && (cliff || steep > 0.9)) return new Surface(badlands, band(y), TERRACOTTA, 0, 0, 0, 0, 0, false);
                 // The Colorado Plateau's red rock: slickrock and red sand on the flats, as in Monument Valley.
                 if (arid && redRock(x, z)) {
@@ -1554,6 +1558,13 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Giant sequoias among old conifers, on duff, in the real groves.
         if (sequoias(x, z, y)) return new Surface(oldTaiga, patch > -0.2 ? PODZOL : GRASS, DIRT, 70, 7, 0, 90, 100, true, Tree.SEQUOIA);
         double t = local.temperature();
+        // A tropical climate over an ecoregion that is not tropical forest, as in south Florida: no jungle there.
+        if (local.zone() == ClimateZone.RAINFOREST || local.zone() == ClimateZone.TROPICAL_DRY) {
+            int eco = ecoregion(x, z), biome = eco == 0 ? Ecoregions.NONE : Ecoregions.get().biome(eco);
+            if (biome == Ecoregions.FLOODED_GRASSLAND) return new Surface(swamp, GRASS, DIRT, 40, 0, 0, 260, 280, false);
+            if (biome == Ecoregions.TEMPERATE_BROADLEAF || biome == Ecoregions.TEMPERATE_CONIFER || biome == Ecoregions.TEMPERATE_GRASSLAND)
+                return new Surface(forest, GRASS, DIRT, 70, 4, 0, 180, 200, false);
+        }
         return switch (local.zone()) {
             case RAINFOREST -> patch < -0.5 && bamboo(x, z) ? bambooForest(patch) : new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true, Tree.JUNGLE);
             // Monsoon forest where the wet season is long; open woodland with grass between the trees, as in the
