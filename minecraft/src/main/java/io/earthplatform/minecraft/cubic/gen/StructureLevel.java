@@ -82,12 +82,18 @@ final class StructureLevel implements WorldGenLevel {
     private final Long2ObjectOpenHashMap<BlockEntity> blockEntities = new Long2ObjectOpenHashMap<>();
     final List<CompoundTag> entities = new ArrayList<>();
     final LongOpenHashSet postProcess = new LongOpenHashSet();
-    /** Keys pack y relative to this, since a packed BlockPos only holds y -2048..2047 and structures sit far higher. */
-    private final int anchor;
+    /**
+     * Keys pack positions relative to this point: x and z in 16 bits each, y in 32, since a packed
+     * BlockPos only holds y -2048..2047 and structures sit far higher (or reach kilometres down).
+     */
+    private final int anchorX, anchorY, anchorZ;
+    /** Writes below this real height are dropped: an ocean monument's legs would otherwise reach a seabed kilometres down. */
+    private final int lowest;
 
-    StructureLevel(ServerLevel level, Terrain terrain, int shift, int minY, int height, int seaLevel, int anchor, long seed, RandomSource random) {
+    StructureLevel(ServerLevel level, Terrain terrain, int shift, int minY, int height, int seaLevel, BlockPos anchor, int lowest, long seed, RandomSource random) {
         this.level = level;
-        this.anchor = anchor;
+        this.anchorX = anchor.getX(); this.anchorY = anchor.getY(); this.anchorZ = anchor.getZ();
+        this.lowest = lowest;
         this.terrain = terrain;
         this.shift = shift; this.minY = minY; this.height = height; this.seaLevel = seaLevel;
         this.seed = seed;
@@ -103,10 +109,10 @@ final class StructureLevel implements WorldGenLevel {
         }, false, false);
     }
 
-    long key(int x, int y, int z) { return BlockPos.asLong(x, y - anchor, z); }
+    long key(int x, int y, int z) { return (long) (y - anchorY) << 32 | (long) ((x - anchorX) & 0xFFFF) << 16 | (z - anchorZ) & 0xFFFF; }
     long key(BlockPos pos) { return key(pos.getX(), pos.getY(), pos.getZ()); }
     /** The real position a key stands for. */
-    BlockPos at(long key) { return BlockPos.of(key).above(anchor); }
+    BlockPos at(long key) { return new BlockPos((short) (key >>> 16) + anchorX, (int) (key >> 32) + anchorY, (short) key + anchorZ); }
 
     BlockPos real(BlockPos pos) { return shift == 0 ? pos : pos.above(shift); }
 
@@ -151,6 +157,7 @@ final class StructureLevel implements WorldGenLevel {
 
     @Override public boolean setBlock(BlockPos pos, BlockState state, int flags, int recursionLeft) {
         BlockPos r = real(pos);
+        if (r.getY() < lowest) return false;
         long key = key(r);
         BlockState old = blocks.get(key);
         if (old == null) old = terrain.block(r.getX(), r.getY(), r.getZ());

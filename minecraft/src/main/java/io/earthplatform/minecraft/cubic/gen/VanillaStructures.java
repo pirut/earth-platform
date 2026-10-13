@@ -3,6 +3,7 @@ package io.earthplatform.minecraft.cubic.gen;
 import com.mojang.logging.LogUtils;
 import com.mojang.serialization.MapCodec;
 import io.earthplatform.minecraft.cubic.CubeWorld;
+import net.minecraft.world.level.levelgen.structure.structures.OceanMonumentStructure;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.shorts.ShortArrayList;
@@ -195,9 +196,10 @@ final class VanillaStructures {
             Start start = start(kind, (int) c[2], (int) c[3]);
             if (start == null || !wanted.test(start.start.getStructure())) continue;
             BlockPos centre = start.start.getBoundingBox().getCenter().above(start.frame.shift);
-            // Pieces that settle onto the ground as they are placed still sit at vanilla's Y 64 here
+            // Pieces that settle onto the ground as they are placed (temples, shipwrecks) still sit at vanilla's start height here
             int ground = host.ground(centre.getX(), centre.getZ());
-            return start.frame.shift == 0 && centre.getY() < ground - 64 ? centre.atY(ground) : centre;
+            return start.frame.shift == 0 && Math.abs(centre.getY() - ground) > 64 && start.start.getPieces().size() == 1
+                    && !(start.start.getStructure() instanceof OceanMonumentStructure) ? centre.atY(ground) : centre;
         }
         return null;
     }
@@ -365,7 +367,9 @@ final class VanillaStructures {
 
     private Long2ObjectOpenHashMap<Patch> build(Start start) {
         Frame frame = start.frame;
-        StructureLevel world = new StructureLevel(level, new Reader(), frame.shift, frame.minY, frame.height, frame.sea, (start.reach.minY() + start.reach.maxY()) >> 1, seed,
+        StructureLevel world = new StructureLevel(level, new Reader(), frame.shift, frame.minY, frame.height, frame.sea,
+                new BlockPos(start.chunkX << 4, (start.reach.minY() + start.reach.maxY()) >> 1, start.chunkZ << 4),
+                start.start.getStructure() instanceof OceanMonumentStructure ? start.start.getBoundingBox().minY() - 64 : CubeWorld.MIN_Y, seed,
                 RandomSource.create(startKey(start.kind, start.chunkX, start.chunkZ) ^ seed));
         adapt(world, start);
         BoundingBox box = start.start.getBoundingBox();
