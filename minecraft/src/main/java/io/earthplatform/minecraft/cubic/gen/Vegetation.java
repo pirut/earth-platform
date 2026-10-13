@@ -146,11 +146,11 @@ final class Vegetation {
                 stalk = CACTUS;
                 stalkHeight = 1 + (int) Math.floorMod(r >>> 20, 3);
             }
-        } else if (top == COARSE_DIRT && (biome.is(Biomes.SAVANNA) || biome.is(Biomes.WINDSWEPT_SAVANNA)
+        } else if ((top == COARSE_DIRT || top.is(Blocks.LIGHT_GRAY_TERRACOTTA)) && (biome.is(Biomes.SAVANNA) || biome.is(Biomes.WINDSWEPT_SAVANNA)
                 || biome.is(Biomes.DESERT) || biome.is(Biomes.BADLANDS))) {
             // Dry scrub on bare dirt: sagebrush and saltbush stand-ins, with a few tufts of grass.
             if (roll < s.grass() / 5) plant = state(Blocks.DEAD_BUSH);
-            else if (roll < s.grass() / 3) plant = state(Blocks.SHORT_GRASS);
+            else if (roll < s.grass() / 3 && top == COARSE_DIRT) plant = state(Blocks.SHORT_GRASS);
         } else if (top == MUD) {
             if (biome.is(Biomes.MANGROVE_SWAMP) && roll < 120) plant = state(Blocks.MOSS_CARPET);
         } else if (soil) {
