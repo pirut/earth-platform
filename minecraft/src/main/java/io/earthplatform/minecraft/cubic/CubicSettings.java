@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic;
 
 import io.earthplatform.geography.globe.ClimateSource;
+import io.earthplatform.geography.globe.CopernicusSource;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.TerrariumTileSource;
@@ -141,10 +142,16 @@ public final class CubicSettings {
      */
     public static synchronized TerrariumTileSource tiles() {
         if (tiles == null) {
-            Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
+            Path caches = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache");
+            Path cache = caches.resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
+            boolean network = !Boolean.getBoolean("earthplatform.earth.offline");
             try {
-                tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        256, 6, Duration.ofSeconds(20));
+                // Copernicus fills the tiles where they are wrong over a wide area: fjords filled in as
+                // land, and heights off the sea's datum north of SRTM. Its blocks are up to 4 MiB decoded.
+                // -Dearthplatform.earth.copernicus=false leaves the tiles as they are, to compare.
+                CopernicusSource copernicus = "false".equals(System.getProperty("earthplatform.earth.copernicus")) ? null
+                        : new CopernicusSource(CopernicusSource.AWS_COPERNICUS, caches.resolve(CopernicusSource.DATASET_ID), network, 12, 4, Duration.ofSeconds(30));
+                tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, network, 256, 6, Duration.ofSeconds(20), copernicus);
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the elevation tile cache at " + cache, failure);
             }
