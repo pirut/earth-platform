@@ -31,13 +31,41 @@ import java.util.Map;
 public final class UsgsElevation implements ElevationLayer, AutoCloseable {
     public static final String DATASET_ID = "3dep-13-v1";
     /**
-     * The same data read lighter, pinned by worlds made since: tiles of {@link #COARSE_ZOOM} and
-     * coarser read 3DEP no finer than its {@link #COARSE_OVERVIEW} overview (about 40 m), as wide
-     * water and bare-earth surveys read those tiles far out and the finer overview was most of a
-     * first visit's download. Worlds pinned to {@link #DATASET_ID} keep reading as before.
+     * The same data read lighter: tiles of zoom 12 and coarser read 3DEP no finer than its 40 m
+     * overview, as wide water and bare-earth surveys read those tiles far out and the finer overview
+     * was most of a first visit's download.
      */
     public static final String COARSE_ID = "3dep-13-v2";
-    static final int COARSE_ZOOM = 12, COARSE_OVERVIEW = 2;
+    /**
+     * Lighter again, pinned by worlds made since: 3DEP no finer than 80 m in tiles of zoom 12 and
+     * coarser, 40 m at zoom 13 and 20 m at zoom 14; zoom 15, the ground a player stands on, reads
+     * it at full detail. Worlds pinned to {@link #DATASET_ID} or {@link #COARSE_ID} keep theirs.
+     */
+    public static final String GRADED_ID = "3dep-13-v3";
+
+    /** How a world reads 3DEP, by the id it pinned. */
+    public enum Reading {
+        FULL(DATASET_ID, 0, 0, 0, 0),
+        COARSE(COARSE_ID, 0, 0, 2, 2),
+        GRADED(GRADED_ID, 1, 2, 3, 3);
+
+        final String id;
+        /** Finest overview read at zooms 14, 13 and 12, and at 11 and coarser (each a halving from 10 m). */
+        private final int at14, at13, at12, below;
+
+        Reading(String id, int at14, int at13, int at12, int below) {
+            this.id = id; this.at14 = at14; this.at13 = at13; this.at12 = at12; this.below = below;
+        }
+
+        int finest(int zoom) {
+            return zoom >= 15 ? 0 : zoom == 14 ? at14 : zoom == 13 ? at13 : zoom == 12 ? at12 : below;
+        }
+
+        public static Reading of(String id) {
+            for (Reading reading : values()) if (reading.id.equals(id)) return reading;
+            return null;
+        }
+    }
     public static final String ATTRIBUTION = "United States: USGS 3D Elevation Program 1/3 arc-second DEM (public domain)";
     public static final URI AWS_3DEP = URI.create("https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/historical/");
     /** Coarser tiles cover so much ground that they are left to the composite. */
@@ -49,7 +77,7 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
     private static final Map<Integer, String> RELEASES = releases();
 
     private final FloatCogs files;
-    private final boolean coarse;
+    private final Reading reading;
 
     /**
      * @param base              URI prefix the dated cells are named under
@@ -58,18 +86,18 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
      * @param maxBlocksInMemory decoded blocks kept (up to 1 MiB each)
      */
     public UsgsElevation(URI base, Path cacheRoot, boolean allowNetwork, int maxBlocksInMemory, int maxConcurrentTransfers, Duration timeout) throws IOException {
-        this(base, cacheRoot, allowNetwork, maxBlocksInMemory, maxConcurrentTransfers, timeout, false);
+        this(base, cacheRoot, allowNetwork, maxBlocksInMemory, maxConcurrentTransfers, timeout, Reading.FULL);
     }
 
-    /** @param coarse read as {@link #COARSE_ID} rather than {@link #DATASET_ID} */
+    /** @param reading how finely tiles of each zoom read 3DEP, as its id is pinned */
     public UsgsElevation(URI base, Path cacheRoot, boolean allowNetwork, int maxBlocksInMemory, int maxConcurrentTransfers, Duration timeout,
-                         boolean coarse) throws IOException {
-        this.coarse = coarse;
+                         Reading reading) throws IOException {
+        this.reading = java.util.Objects.requireNonNull(reading);
         files = new FloatCogs("USGS 3DEP elevation", DATASET_ID, "earth-3dep-io", base, UsgsElevation::name, -999999f,
                 cacheRoot, allowNetwork, maxBlocksInMemory, maxConcurrentTransfers, timeout);
     }
 
-    @Override public String id() { return coarse ? COARSE_ID : DATASET_ID; }
+    @Override public String id() { return reading.id; }
 
     @Override public void refine(int zoom, int x, int y, float[] values) {
         if (zoom < MIN_ZOOM) return;
@@ -83,7 +111,7 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
         double centre = latitude(world, (y + 0.5) * size);
         double pixel = 360 / world * Math.cos(Math.toRadians(centre));
         int overview = Math.max(0, Math.min(MAX_OVERVIEW, (int) Math.floor(Math.log(pixel / PIXEL) / Math.log(2))));
-        if (coarse && zoom <= COARSE_ZOOM) overview = Math.max(overview, COARSE_OVERVIEW);
+        overview = Math.max(overview, reading.finest(zoom));
         int edge = Math.min(MAX_OVERVIEW, overview + 2);
         // Reads go in three passes, each first loading together the 3DEP pieces it needs, so a tile
         // first seen waits about as long as its slowest download rather than all of them in turn:
