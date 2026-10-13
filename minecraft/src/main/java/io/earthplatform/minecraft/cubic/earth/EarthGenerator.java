@@ -241,8 +241,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION)
                 + (imagery == null ? "" : ". Imagery: " + ImagerySource.ATTRIBUTION)
                 + (cover == null ? "" : ". " + Ecoregions.ATTRIBUTION)
-                + (rivers == null ? "" : ". Rivers: " + io.earthplatform.geography.globe.SurfaceWaterSource.ATTRIBUTION)
-                + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION);
+                + (rivers == null ? "" : ". Rivers: " + io.earthplatform.geography.globe.SurfaceWaterSource.ATTRIBUTION);
     }
 
     // Height -------------------------------------------------------------------------------------

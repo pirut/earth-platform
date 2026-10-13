@@ -65,12 +65,9 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 
 ## Bundled in the jar
 
-- `earthplatform/copernicus_proof_data`, `alpine_data`: Copernicus WorldDEM-30 crops of the Everest area. The [GLO-30 licence](../../geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf) grants free reproduction, distribution and modification worldwide with the notice "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved". The licence PDF is in the jar. Credited.
-- `earthplatform/proof_data`: NOAA ETOPO 2022 extracts, CC0. Credited.
-- `earthplatform/worldcover_proof_data`: ESA WorldCover extracts, CC BY 4.0. Credited.
 - `assets/earthplatform/textures/globe/blue_marble.jpg` (PR #8): NASA Blue Marble Next Generation, downscaled. US government work, public domain; NASA asks for credit, which CREDITS.md, the notices and the mods list give. OK.
 - `earthplatform/ecoregions.png` (660 KB) and `ecoregions.tsv` (PR #14): a 0.05 degree raster derived from RESOLVE Ecoregions 2017 (Dinerstein et al. 2017, *BioScience* 67(6):534-545), with the ecoregion names. CC BY 4.0 allows redistribution and changes with attribution and a note of changes; CREDITS.md, the notices and the mods list give both. OK.
-- The proof data above are test fixtures for the older engine; Earth worlds don't read them. Dropping them from the release jar saves about 2.5 MB and three notices. Engineering item, not a licence problem.
+- Left out of the release jar (round 34): the older engine's proof areas, `earthplatform/copernicus_proof_data` and `alpine_data` (Copernicus WorldDEM-30 crops of Everest), `proof_data` (NOAA ETOPO 2022 extracts, CC0) and `worldcover_proof_data` (ESA WorldCover extracts, CC BY 4.0), with the copied ESA WorldCover manual, Copernicus licence and AWS and ESA pages under their `provenance/`. About 9 MB. Earth worlds never read them; they stay in the repository for tests and dev runs, credited in CREDITS.md. The [GLO-30 licence](../../geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf) allows that redistribution with its notice.
 - No third-party libraries: Iris, Sodium and Distant Horizons are `compileOnly`; nothing is shaded or jar-in-jar.
 - The logo (`earthplatform_logo.png`) is original pixel art.
 

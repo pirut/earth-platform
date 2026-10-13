@@ -58,6 +58,10 @@ tasks.named('jar', Jar) {
     manifest.attributes('Earth-Platform-Artifact': 'original-shader-compatibility-shim',
             'Earth-Platform-Upstream-Bundled': 'false')
     from(licenceNotice) { into 'META-INF' }
+    // The older engine's proof areas (Everest, Marin, Challenger Deep) and their copied source
+    // documents stay in the resources tests and dev runs read; Earth worlds never use them.
+    exclude 'earthplatform/proof_data/**', 'earthplatform/alpine_data/**',
+            'earthplatform/copernicus_proof_data/**', 'earthplatform/worldcover_proof_data/**'
 }
 
 // Mojang ships Java 21 to end users in 1.21.1, so mods should target Java 21.
