@@ -174,6 +174,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             Surface surface = farSurface(level, wx, wz, h, water[g], slope);
             biome[cell] = surface.biome();
             top[cell] = surface.top();
+            // Cold dry ground under the snow Vegetation lays on it nearer.
+            if (water[g] <= h && Trees.snowy(surface) && !top[cell].is(Blocks.ICE) && !top[cell].is(Blocks.PACKED_ICE)
+                    && !top[cell].is(Blocks.POWDER_SNOW)) top[cell] = SNOW_BLOCK;
             under[cell] = v > 2 ? STONE : surface.under();
             // Voxels wider than a tree show forests as leaves: at 8 blocks a voxel above the ground, about a tree's
             // height, so they meet the rasterised trees nearer; wider voxels would stand too tall, so leaves lie on the ground voxel.
@@ -289,9 +292,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             LevelChunkSection section = stack[vy >> 4];
             if (!section.getBlockState(vx, vy & 15, vz).isAir()) continue;
             BlockState state = logCount[i] >= quarter && logCount[i] * 2 >= leafCount[i] ? logKind[i] : leafKind[i];
-            // Leaves under snow that covers a quarter of the voxel's top, lying in it or just above, show white.
-            int snow = snowCount[i] + (i + 256 < snowCount.length ? snowCount[i + 256] : 0);
-            if (state == leafKind[i] && snow > 0 && snow * 4 >= v * v) state = SNOW_BLOCK;
+            // Crowns' top leaves under snow that covers a quarter of the voxel, lying in it or just above, show white;
+            // the leaves below them stay green, as the trees' sides do nearer.
+            boolean above = i + 256 < snowCount.length;
+            int snow = snowCount[i] + (above ? snowCount[i + 256] : 0);
+            boolean covered = above && (leafCount[i + 256] >= quarter || logCount[i + 256] >= quarter);
+            if (state == leafKind[i] && !covered && snow > 0 && snow * 4 >= v * v) state = SNOW_BLOCK;
             if (state != null) section.setBlockState(vx, vy & 15, vz, state, false);
         }
     }
@@ -304,8 +310,14 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         if (surface.top() != GRASS && surface.top() != MUD && !surface.top().is(Blocks.PODZOL) || surface.trees() <= 0) return null;
         long r = mix(wx, v, wz);
         Tree kind = surface.tree((int) Math.floorMod(r >>> 24, 10));
-        // A tree's crown covers about 20 columns: thousandths covered, from its attempts per 256 columns.
-        if (Math.floorMod(r, 1000) >= Math.min(950, surface.trees() * Trees.full(kind) * 3 / 4)) return null;
+        // Thousandths covered, from the trees' attempts per 256 columns. Crowns standing a voxel tall (8 blocks) show
+        // their shaded sides and hide the ground between them, so a crown covering about 20 columns looks as dense as
+        // the trees drawn nearer. Leaves lying flat on wider voxels show neither, so they cover what a crown's 4-block
+        // voxels fill nearer, about 80 columns, overlapping at random: 1 - e^-(trees per column x 80). Otherwise
+        // forests turn paler and browner past the last standing crowns.
+        int attempts = surface.trees() * Trees.full(kind);
+        int covered = v == 8 ? attempts * 3 / 4 : (int) (1000 * (1 - Math.exp(-attempts / 25600.0 * 80)));
+        if (Math.floorMod(r, 1000) >= Math.min(950, covered)) return null;
         // Where snow falls it lies on most crowns, as it does on the trees nearer.
         return Trees.snowy(surface) && Math.floorMod(r >>> 40, 3) != 0 ? SNOW_BLOCK : Vegetation.leaves(kind);
     }
