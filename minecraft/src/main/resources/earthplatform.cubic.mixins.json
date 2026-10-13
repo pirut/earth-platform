@@ -14,7 +14,9 @@
     "CubicEntityMixin",
     "CubicTravelMixin",
     "CubicRespawnMixin",
-    "CubicSpawnerMixin"
+    "CubicSpawnerMixin",
+    "CubicWeatherMixin",
+    "CubicServerWeatherMixin"
   ],
   "client": [
     "CubicPredictionMixin",
@@ -22,7 +24,8 @@
     "CubicFarPlaneMixin",
     "CubicShaderFarMixin",
     "CubicIrisSourceNamesMixin",
-    "CubicIrisProgramSetMixin"
+    "CubicIrisProgramSetMixin",
+    "CubicRainRenderMixin"
   ],
   "injectors": {
     "defaultRequire": 1
