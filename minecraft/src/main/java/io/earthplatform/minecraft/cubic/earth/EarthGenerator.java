@@ -260,6 +260,17 @@ public final class EarthGenerator extends SurfaceGenerator {
         int y = Mth.floor(SEA + 0.5 + metres + detail);
         // Ground beside the sea never dips under its level, so the sea stays where it is.
         if (sample[2] > 0.02 && y < SEA) y = SEA;
+        // Land under a reservoir newer than the survey, which its water closes round, is the reservoir's bed; and
+        // its shore, a few metres under the water's level in the old valley's slopes, rises to it. Below its dam
+        // the valley keeps its drop.
+        if (cover != null) {
+            double drowned = drownedLevel(x, z);
+            if (!Double.isNaN(drowned)) {
+                int level = Mth.floor(SEA + 0.5 + Math.abs(drowned));
+                if (drowned > 0 && y < level) { out[0] = y; out[1] = level; return; }
+                if (y < level && y >= level - DROWNED_SHORE) y = level;
+            }
+        }
         // Nor does ground beside a lake or river, unless it lies well below it, as under a dam.
         if (cover != null) {
             int shore = shore(dem, memo, x, z, voxel);
@@ -632,11 +643,13 @@ public final class EarthGenerator extends SurfaceGenerator {
         double nearest = NEAR * NEAR, near = Double.NaN;
         double[] heights = new double[16], distances = new double[16];
         boolean drownedNear = false, fallingNear = false;
+        double drownedBy = Double.NaN;
         for (int dj = -1; dj <= 2; dj++) for (int di = -1; di <= 2; di++) {
             int si = bx + di, sj = bz + dj, k = Math.floorMod(sj, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(si, WATER_SAMPLES);
             Reaches reaches = reachLevels(Math.floorDiv(si, WATER_SAMPLES), Math.floorDiv(sj, WATER_SAMPLES));
             float height = reaches.samples[k];
             double d2 = (sx - si) * (sx - si) + (sz - sj) * (sz - sj);
+            if (!Float.isNaN(height) && (reaches.drowned[k >> 6] >>> (k & 63) & 1) != 0) drownedBy = Double.isNaN(drownedBy) ? height : Math.min(drownedBy, height);
             if (Float.isNaN(height) || d2 >= NEAR * NEAR) continue;
             heights[found] = height;
             distances[found++] = d2;
@@ -647,9 +660,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 fallingNear = (reaches.falling[k >> 6] >>> (k & 63) & 1) != 0;
             }
         }
-        // Drowned ground's level is its reach's across the cells around, blended smoothly between them, rather
-        // than stepping at the edges of each cell's samples.
-        if (found > 0 && !(drownedNear && drowned && !Double.isNaN(level))) {
+        if (found > 0) {
             // The cells' level joins in a little, so the water meets it smoothly where the samples run out.
             sum = 0;
             weight = 0;
@@ -663,11 +674,17 @@ public final class EarthGenerator extends SurfaceGenerator {
             level = sum / weight;
             drowned = drownedNear;
         } else fallingNear = false;
+        // Water with no drowned water close by, as a stream below a dam whose cell's reach is the reservoir's, keeps
+        // to its banks.
+        if (found == 0) drowned = false;
+        // Nor does water stand above drowned water beside it: on a reservoir's shore, where the survey reads the
+        // slopes above the old valley, it climbed them in steps.
+        if (!drowned && !Double.isNaN(drownedBy) && !Double.isNaN(level) && level > drownedBy) { level = drownedBy; drowned = true; }
         if (Double.isNaN(level)) return local;
         int surface = Mth.floor(SEA + 0.5 + level);
         // A falls' face stands at the level of the reach above it or the pool below, whatever the ground reads.
         if (fallingNear) return surface;
-        if (relief > MOUNTAINS) surface = Math.max(surface, local - DIP);
+        if (relief > MOUNTAINS && !drowned) surface = Math.max(surface, local - DIP);
         // Drowned ground lies far under its water, which stands at its shores' level.
         return drowned ? surface : Math.min(surface, local + BANK);
     }
@@ -727,9 +744,10 @@ public final class EarthGenerator extends SurfaceGenerator {
     /**
      * A cell's reach levels, lowest first, and which of them are drowned ground's; the level of the
      * reach each of its own samples belongs to, or NaN; which of its samples are drowned; and which
-     * lie on a falls' face ({@link #fallingWater}).
+     * lie on a falls' face ({@link #fallingWater}); and, if any, the level of the drowned water
+     * closing round each of its dry samples ({@link #drownedLand}), or NaN.
      */
-    private record Reaches(double[] levels, boolean[] drownedLevels, float[] samples, long[] drowned, long[] falling) {}
+    private record Reaches(double[] levels, boolean[] drownedLevels, float[] samples, long[] drowned, long[] falling, @Nullable float[] drownedLand) {}
     /** Fewest of a cell's own samples a reach needs to keep its own level there, rather than count as a stray reading. */
     private static final int REACH_SAMPLES = 3;
     /** How far, in samples, a column takes its level from the surveyed water samples near it. */
@@ -739,6 +757,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Drops of more than {@link #DROP} between wide water samples a reach must cross to count as drowned ground. */
     private static final int DROWNED_CROSSINGS = 3;
+    /** How far, in samples, a drowned sample's level takes its shores from, and the fewest it needs to rather than its body's. */
+    private static final int SHORE_REACH = 24, SHORE_POINTS = 16;
     /** Fewest samples of water joined within {@link #DROP} that stand as a reach either side of a falls; most samples of pockets between. */
     private static final int FALL_POOL = 8, FACE = 64;
     /** Least drop, in metres, between the reaches either side of a falls' face. */
@@ -755,9 +775,11 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Nullable
     private float[] drownedGround(int cx, int cz, int span, float[] water, float[] ground, boolean[] seaAt, it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue) {
         float[] sunk = null;
+        int[] owner = null;
         boolean[] seen = new boolean[span * span];
         it.unimi.dsi.fastutil.ints.IntArrayList body = new it.unimi.dsi.fastutil.ints.IntArrayList();
         it.unimi.dsi.fastutil.doubles.DoubleArrayList shores = new it.unimi.dsi.fastutil.doubles.DoubleArrayList();
+        it.unimi.dsi.fastutil.floats.FloatArrayList levels = new it.unimi.dsi.fastutil.floats.FloatArrayList();
         for (int start = 0; start < span * span; start++) {
             if (seen[start] || Float.isNaN(water[start]) || seaAt[start] || !wideWater(water, span, start % span, start / span)) continue;
             seen[start] = true;
@@ -791,18 +813,65 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (shores.isEmpty()) continue;
             double[] around = shores.toDoubleArray();
             java.util.Arrays.sort(around);
-            float level = (float) around[around.length / 2];
-            if (sunk == null) { sunk = new float[span * span]; java.util.Arrays.fill(sunk, Float.NaN); }
-            for (int m = 0; m < body.size(); m++) { sunk[body.getInt(m)] = level; queue.enqueue(body.getInt(m)); }
-            while (!queue.isEmpty()) {
-                int at = queue.dequeueInt(), i = at % span, j = at / span;
+            if (sunk == null) {
+                sunk = new float[span * span];
+                java.util.Arrays.fill(sunk, Float.NaN);
+                owner = new int[span * span];
+                java.util.Arrays.fill(owner, -1);
+            }
+            for (int m = 0; m < body.size(); m++) { sunk[body.getInt(m)] = (float) around[around.length / 2]; owner[body.getInt(m)] = levels.size(); }
+            levels.add((float) around[around.length / 2]);
+        }
+        if (sunk == null) return null;
+        // Each body backs up into the water joined to it that lies below its level, nearest body first.
+        for (int at = 0; at < span * span; at++) if (owner[at] >= 0) queue.enqueue(at);
+        while (!queue.isEmpty()) {
+            int at = queue.dequeueInt(), i = at % span, j = at / span;
+            float level = sunk[at] = levels.getFloat(owner[at]);
+            for (int d = 0; d < 8; d += 2) {
+                int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d], n = nj * span + ni;
+                if (ni < 0 || nj < 0 || ni >= span || nj >= span || Float.isNaN(water[n]) || seaAt[n] || owner[n] >= 0 || water[n] > level + BANK) continue;
+                if (!drownedShores(cx, cz, span, ground, ni, nj, level)) continue;
+                owner[n] = owner[at];
+                queue.enqueue(n);
+            }
+        }
+        // The cell's own samples take the middle of the shores near them, the same whichever window finds them,
+        // rather than the whole body's in this window, which stepped the water at the cells' edges; but never more
+        // than a bank's height from the middle of all the body's shores: narrow arms up steep side valleys read
+        // their shores high and would climb them, and a river by its falls' gorge reads them low.
+        int first = REACH * WATER_SAMPLES, last = first + WATER_SAMPLES;
+        for (int b = 0; b < levels.size(); b++) {
+            shores.clear();
+            body.clear();
+            for (int at = 0; at < span * span; at++) {
+                if (owner[at] != b) continue;
+                int i = at % span, j = at / span;
                 for (int d = 0; d < 8; d += 2) {
-                    int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d], n = nj * span + ni;
-                    if (ni < 0 || nj < 0 || ni >= span || nj >= span || Float.isNaN(water[n]) || seaAt[n] || !Float.isNaN(sunk[n]) || water[n] > level + BANK) continue;
-                    sunk[n] = level;
-                    seen[n] = true;
-                    queue.enqueue(n);
+                    int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d];
+                    if (ni >= 0 && nj >= 0 && ni < span && nj < span && !Float.isNaN(ground[nj * span + ni])) { shores.add(shoreHeight(cx, cz, i, j, ni, nj)); body.add(at); }
                 }
+            }
+            if (shores.isEmpty()) continue;
+            double[] near = shores.toDoubleArray(), all = near.clone();
+            java.util.Arrays.sort(all);
+            double middle = all[all.length / 2];
+            // Shores far under the middle are a falls' gorge or pool the body reached across its lip, as below
+            // Niagara's Horseshoe, where the survey flattens the river to the gorge's level: water there takes
+            // their middle, so it drops once at the lip.
+            int under = 0;
+            while (under < all.length && all[under] < middle - FALL) under++;
+            double pool = under >= SHORE_POINTS ? all[under / 2] : Double.NaN;
+            for (int j = first; j < last; j++) for (int i = first; i < last; i++) {
+                int at = j * span + i, count = 0;
+                if (owner[at] != b) continue;
+                for (int q = 0; q < body.size(); q++) {
+                    int pi = body.getInt(q) % span - i, pj = body.getInt(q) / span - j;
+                    if (pi * pi + pj * pj <= SHORE_REACH * SHORE_REACH) near[count++] = shores.getDouble(q);
+                }
+                if (count < SHORE_POINTS) { sunk[at] = (float) middle; continue; }
+                java.util.Arrays.sort(near, 0, count);
+                sunk[at] = (float) (near[count / 2] < middle - FALL && !Double.isNaN(pool) ? pool : Mth.clamp(near[count / 2], middle - BANK, middle + BANK));
             }
         }
         return sunk;
@@ -888,6 +957,95 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
         }
         return falling;
+    }
+
+    /** How far, in samples, drowned water or ground above its level must close round dry ground for it to lie under the water. */
+    private static final int ENCLOSED = 6;
+    /** Most blocks a drowned reach's shore may lie under its level and rise to it. */
+    private static final int DROWNED_SHORE = 12;
+
+    /**
+     * Drowned land in a reach window ({@link #reachLevels}): for each of the centre cell's samples,
+     * the level of drowned water closing round its dry ground, or NaN. The land cover maps a
+     * reservoir's shallows, flooded terraces and backwaters as land, but their survey is the
+     * valley before the dam, metres to tens of metres under the water; kept as land, they stood as
+     * dry pits walled by water. Dry ground under the drowned level lies under it where, within
+     * {@value #ENCLOSED} samples every way, drowned water or ground above the level closes round
+     * it, drowned water on two sides at least. Below a dam, the valley runs on under the level, to
+     * water that is not drowned, and stays dry.
+     */
+    private static float[] drownedLand(int span, int first, float[] ground, float[] sunk) {
+        float[] land = new float[WATER_SAMPLES * WATER_SAMPLES];
+        java.util.Arrays.fill(land, Float.NaN);
+        for (int j = 0; j < WATER_SAMPLES; j++) for (int i = 0; i < WATER_SAMPLES; i++) {
+            int at = (j + first) * span + i + first;
+            if (Float.isNaN(ground[at])) continue;
+            // Each way, the walk ends at drowned water, at ground above the water's level, or open: at other water,
+            // or still under the level, as a valley running on below a dam.
+            float[] wall = new float[4];
+            int wet = 0;
+            float level = Float.NaN;
+            for (int d = 0; d < 4; d++) {
+                wall[d] = Float.NaN;
+                for (int step = 1; step <= ENCLOSED; step++) {
+                    int ni = i + first + (int) RING_X[2 * d] * step, nj = j + first + (int) RING_Z[2 * d] * step;
+                    if (ni < 0 || nj < 0 || ni >= span || nj >= span) break;
+                    int n = nj * span + ni;
+                    if (!Float.isNaN(sunk[n])) { wet++; level = Float.isNaN(level) ? sunk[n] : Math.max(level, sunk[n]); wall[d] = Float.POSITIVE_INFINITY; break; }
+                    if (Float.isNaN(ground[n])) break;
+                    wall[d] = Math.max(Float.isNaN(wall[d]) ? Float.NEGATIVE_INFINITY : wall[d], ground[n]);
+                }
+            }
+            int closed = 0;
+            for (int d = 0; d < 4; d++) if (!Float.isNaN(wall[d]) && wall[d] >= level) closed++;
+            if (wet >= 2 && closed == 4 && ground[at] < level) land[j * WATER_SAMPLES + i] = level;
+        }
+        return land;
+    }
+
+    /**
+     * Level, in metres, of drowned water by a column: positive where it lies under that water, as
+     * the four samples round it are drowned water or drowned land ({@link #drownedLand}), or dry
+     * land above the level beside them;
+     * negative where one of them is drowned water, whose shore may rise to it; or NaN.
+     */
+    private double drownedLevel(int x, int z) {
+        double spacing = (double) WATER_CELL / WATER_SAMPLES;
+        int sx = Mth.floor(x / spacing - 0.5), sz = Mth.floor(z / spacing - 0.5);
+        if (reachLevels(Math.floorDiv(sx, WATER_SAMPLES), Math.floorDiv(sz, WATER_SAMPLES)).drownedLand == null) return Double.NaN;
+        int under = 0, banks = 0;
+        double level = Double.NaN;
+        float[] heights = new float[4];
+        for (int c = 0; c < 4; c++) {
+            int nx = sx + (c & 1), nz = sz + (c >> 1), n = Math.floorMod(nz, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(nx, WATER_SAMPLES);
+            Reaches near = reachLevels(Math.floorDiv(nx, WATER_SAMPLES), Math.floorDiv(nz, WATER_SAMPLES));
+            Survey survey = survey(Math.floorDiv(nx, WATER_SAMPLES), Math.floorDiv(nz, WATER_SAMPLES));
+            heights[c] = survey.kind[n] == DRY_LAND ? survey.metres[n] : Float.NaN;
+            float found = (near.drowned[n >> 6] >>> (n & 63) & 1) != 0 ? near.samples[n] : near.drownedLand != null ? near.drownedLand[n] : Float.NaN;
+            if (Float.isNaN(found)) continue;
+            under++;
+            level = Double.isNaN(level) ? found : Math.max(level, found);
+        }
+        // Between drowned water and land above its level, a column under the level is the reservoir's shore.
+        for (int c = 0; c < 4 && under > 0; c++) if (!Float.isNaN(heights[c]) && heights[c] >= level) banks++;
+        if (under > 0 && under + banks == 4 && banks > 0) under = 4;
+        return under == 4 ? Math.max(1e-3, level) : under > 0 ? -Math.max(1e-3, level) : Double.NaN;
+    }
+
+    /**
+     * Whether water joined to drowned water meets its dry land at about the drowned level, as an
+     * arm backed up a side valley does, rather than far below it, as a river below a dam does.
+     */
+    private boolean drownedShores(int cx, int cz, int span, float[] ground, int i, int j, float level) {
+        double sum = 0;
+        int count = 0;
+        for (int d = 0; d < 8; d += 2) {
+            int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d];
+            if (ni < 0 || nj < 0 || ni >= span || nj >= span || Float.isNaN(ground[nj * span + ni])) continue;
+            sum += shoreHeight(cx, cz, i, j, ni, nj);
+            count++;
+        }
+        return count == 0 || sum / count >= level - 2 * DROWNED_SHORE;
     }
 
     /**
@@ -1005,7 +1163,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         boolean[] sunkSorted = new boolean[sorted.length];
         if (order.length == 0) sorted[0] = waterCell(cx, cz).level;
         for (int k = 0; k < order.length; k++) { sorted[k] = levels.getDouble(order[k]); sunkSorted[k] = drownedLevels.getBoolean(order[k]); }
-        Reaches found = new Reaches(sorted, sunkSorted, samples, drowned, falling);
+        Reaches found = new Reaches(sorted, sunkSorted, samples, drowned, falling, sunk == null ? null : drownedLand(span, first, ground, sunk));
         if (reaches.size() > 1 << 20) reaches.clear();
         reaches.putIfAbsent(key, found);
         return found;
