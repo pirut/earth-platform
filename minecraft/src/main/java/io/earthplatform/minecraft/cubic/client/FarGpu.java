@@ -57,7 +57,8 @@ final class FarGpu {
     private int nextSlot, looksUploaded;
     private final String version;
     @Nullable private Program vanilla, pack;
-    @Nullable private String packSource;
+    @Nullable private FarShaders.PackPatch packSource;
+    @Nullable private Object packPipeline;
     private boolean vanillaFailed;
     private long quadBytes;
 
@@ -132,13 +133,14 @@ final class FarGpu {
      * ({@code patch}, preprocessed by the pack) or the generic pack program when {@code packMode}.
      * Returns false when there is nothing usable to draw with.
      */
-    boolean begin(boolean packMode, @Nullable String patch, Matrix4f modelView, Matrix4f projection, Vec3 camera, float[] shade) {
+    boolean begin(boolean packMode, @Nullable FarShaders.PackPatch patch, Matrix4f modelView, Matrix4f projection, Vec3 camera, float[] shade) {
         Program program = packMode ? packProgram(patch) : vanillaProgram();
         if (program == null) return false;
         uploadLooks();
         previousProgram = GL11C.glGetInteger(GL20C.GL_CURRENT_PROGRAM);
         GlStateManager._glUseProgram(program.id);
         current = program;
+        if (program.irisUniforms != null) program.irisUniforms.apply();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer matrix = stack.mallocFloat(16);
             GL20C.glUniformMatrix4fv(program.location("earth_ModelView"), false, modelView.get(matrix));
@@ -206,6 +208,7 @@ final class FarGpu {
         GlStateManager._activeTexture(previousActive);
         GL30C.glBindVertexArray(previousVao);
         BufferUploader.invalidate();
+        if (current.irisUniforms != null) FarIrisUniforms.done();
         GlStateManager._glUseProgram(previousProgram);
         current = null;
     }
@@ -255,25 +258,50 @@ final class FarGpu {
         return vanilla;
     }
 
-    /** The program for the active pack: its Voxy patch when it has one that builds, else the generic one. */
-    @Nullable private Program packProgram(@Nullable String patch) {
-        String source = patch == null ? "" : patch;
-        if (pack != null && source.equals(packSource)) return pack;
+    /**
+     * The program for the active pack: its Voxy patch when it has one that builds, else the generic
+     * one, jittered for the pack's TAA when it asks for that, and given the pack's uniforms. Rebuilt
+     * when the pack or its pipeline changes.
+     */
+    @Nullable private Program packProgram(@Nullable FarShaders.PackPatch patch) {
+        Object pipeline = ShaderBlocks.IRIS ? FarIrisUniforms.pipeline() : null;
+        if (pack != null && java.util.Objects.equals(patch, packSource) && pipeline == packPipeline) return pack;
         if (pack != null) pack.close();
         pack = null;
-        packSource = source;
+        packSource = patch;
+        packPipeline = pipeline;
+        String jitter = patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
         if (patch != null) {
-            try {
-                pack = Program.link(version + FarShaders.VERTEX, FarShaders.packFragment(version, patch), "far terrain (shader pack)");
-                EarthPlatformMod.LOGGER.info("Far terrain uses the shader pack's Voxy fragment code");
+            pack = linkPack(jitter, FarShaders.packFragment(version, patch.fragment()), "far terrain (shader pack)");
+            if (pack != null) {
+                EarthPlatformMod.LOGGER.info("Far terrain uses the shader pack's Voxy fragment code{}", pack.jittered ? ", jittered for its TAA" : "");
                 return pack;
-            } catch (IllegalStateException failure) {
-                EarthPlatformMod.LOGGER.warn("The shader pack's Voxy fragment code does not build for far terrain; using plain colours", failure);
+            }
+            EarthPlatformMod.LOGGER.warn("The shader pack's Voxy fragment code does not build for far terrain; using plain colours");
+        }
+        pack = linkPack(jitter, version + FarShaders.PACK_FALLBACK, "far terrain (plain, shader pack)");
+        if (pack == null) EarthPlatformMod.LOGGER.error("Far terrain shader failed to build");
+        return pack;
+    }
+
+    /** Links a pack program, jittered when {@code jitter} builds, and finds the pack's uniforms in it. */
+    @Nullable private Program linkPack(@Nullable String jitter, String fragment, String name) {
+        Program program = null;
+        if (jitter != null) {
+            try { program = Program.link(FarShaders.packVertex(version, jitter), fragment, name); program.jittered = true; }
+            catch (IllegalStateException failure) {
+                EarthPlatformMod.LOGGER.warn("The shader pack's TAA jitter does not build for far terrain; far terrain goes without it", failure);
             }
         }
-        try { pack = Program.link(version + FarShaders.VERTEX, version + FarShaders.PACK_FALLBACK, "far terrain (plain, shader pack)"); }
-        catch (IllegalStateException failure) { EarthPlatformMod.LOGGER.error("Far terrain shader failed to build", failure); }
-        return pack;
+        if (program == null) {
+            try { program = Program.link(FarShaders.packVertex(version, null), fragment, name); }
+            catch (IllegalStateException failure) {
+                EarthPlatformMod.LOGGER.warn("Could not build {}", name, failure);
+                return null;
+            }
+        }
+        if (ShaderBlocks.IRIS) program.irisUniforms = FarIrisUniforms.create(program.id, name);
+        return program;
     }
 
     void close() {
@@ -291,6 +319,9 @@ final class FarGpu {
     private static final class Program {
         final int id;
         private final Map<String, Integer> locations = new java.util.HashMap<>();
+        /** The shader pack's uniforms; only ever set with Iris, so FarIrisUniforms never loads without it. */
+        @Nullable FarIrisUniforms irisUniforms;
+        boolean jittered;
 
         private Program(int id) { this.id = id; }
 
@@ -337,7 +368,10 @@ final class FarGpu {
             return out.toString();
         }
 
-        void close() { GL20C.glDeleteProgram(id); }
+        void close() {
+            if (irisUniforms != null) irisUniforms.close();
+            GL20C.glDeleteProgram(id);
+        }
     }
 
     /** A GL buffer seen by shaders as a buffer texture of 16-byte texels, grown by copying on the GPU. */

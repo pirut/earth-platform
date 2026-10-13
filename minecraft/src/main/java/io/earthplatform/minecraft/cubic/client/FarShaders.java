@@ -1,5 +1,9 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import javax.annotation.Nullable;
+
 /**
  * GLSL for far terrain. The vertex shader unpacks {@link FarGpu} faces straight from a buffer
  * texture by vertex number, six vertices a face, so faces cost 16 bytes rather than four full
@@ -9,6 +13,27 @@ package io.earthplatform.minecraft.cubic.client;
  */
 final class FarShaders {
     private FarShaders() {}
+
+    /**
+     * A shader pack's Voxy code for one dimension: its fragment code, and the body of the GLSL
+     * function giving its temporal anti-aliasing jitter, or null when it asks for none.
+     */
+    record PackPatch(String fragment, @Nullable String taaOffset) {}
+
+    private static final Pattern TAA_OFFSET = Pattern.compile("\"taaOffset\"\\s*:\\s*\"([^\"]*)\"");
+
+    /**
+     * The body of a Voxy {@code voxy.json}'s {@code taaOffset}, a GLSL function returning this
+     * frame's jitter in clip space, or null when the pack asks for none. The file is loose JSON with
+     * the pack's settings pasted into it by the preprocessor, so only this one string is picked out.
+     */
+    @Nullable static String taaOffset(@Nullable String settings) {
+        if (settings == null) return null;
+        Matcher matcher = TAA_OFFSET.matcher(settings);
+        if (!matcher.find()) return null;
+        String body = matcher.group(1).trim();
+        return body.startsWith("{") && body.endsWith("}") ? body : null;
+    }
 
     static final String VERTEX = """
             uniform usamplerBuffer earth_Quads;
@@ -62,6 +87,10 @@ final class FarShaders {
                 else local = vec3(x * v, y + float(ab.y) * float(extent) / 16.0, (z + float(ab.x) * width) * v);
                 vec3 position = vec3(column.xyz - earth_CameraBlock) + local - earth_CameraFraction;
                 gl_Position = earth_Projection * earth_ModelView * vec4(position, 1.0);
+            #ifdef EARTH_JITTER
+                // The pack's TAA moves every frame's geometry by a sub-pixel jitter; far terrain moves with it.
+                gl_Position.xy += earth_taaOffset() * gl_Position.w;
+            #endif
                 earth_distance = earth_FogShape == 0 ? length(position) : max(length(position.xz), abs(position.y));
 
                 // Textures repeat once per block, laid on each face as the block renderer lays them.
@@ -178,6 +207,15 @@ final class FarShaders {
                 earth_fragColor = vec4(colour.rgb, 1.0);
             }
             """;
+
+    /**
+     * The vertex shader for a pack's far terrain: with {@code jitter} (uniform declarations and an
+     * {@code earth_taaOffset()} function built from the pack's {@code taaOffset}), far terrain
+     * jitters as the pack's own terrain does, so its TAA anti-aliases it instead of smearing it.
+     */
+    static String packVertex(String version, @Nullable String jitter) {
+        return jitter == null ? version + VERTEX : version + "#define EARTH_JITTER\n" + jitter + VERTEX;
+    }
 
     /** The pack's fragment shader: its Voxy patch, with any #extension lines moved up, between our declarations and main. */
     static String packFragment(String version, String patch) {
