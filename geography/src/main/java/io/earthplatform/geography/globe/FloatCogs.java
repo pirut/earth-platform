@@ -38,12 +38,20 @@ final class FloatCogs implements AutoCloseable {
     private final LinkedHashMap<Long, float[]> memory = new LinkedHashMap<>(32, 0.75f, true);
     private final Map<Long, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
     /** Each thread's last few blocks, so reads that stay in them skip the shared cache. */
-    private final ThreadLocal<Recent> recent = ThreadLocal.withInitial(Recent::new);
+    private final ThreadLocal<Recent> recent = ThreadLocal.withInitial(() -> new Recent(4));
 
     private static final class Recent {
-        final long[] keys = {-1, -1, -1, -1};
-        final float[][] blocks = new float[4][];
+        final long[] keys;
+        final float[][] blocks;
         int next;
+        /** Blocks a reader loaded ahead and holds until it is done, or null. */
+        Map<Long, float[]> held;
+
+        Recent(int size) {
+            keys = new long[size];
+            java.util.Arrays.fill(keys, -1);
+            blocks = new float[size][];
+        }
     }
 
     /**
@@ -80,6 +88,96 @@ final class FloatCogs implements AutoCloseable {
     /** An overview of the file that holds a point. */
     record Grid(int file, int overview, Header header, Level level, double pixelX, double pixelY) {}
 
+    /** Reads for one caller on one thread, such as one tile, as {@link #grid}, {@link #metres} and {@link #coverage} do. */
+    Reader reader() { return new Reader(); }
+
+    /**
+     * Keeps the last file's header and the last few blocks at hand, so reads that stay in them, as a
+     * tile's pixels do, skip the shared caches. Not for use across threads.
+     */
+    final class Reader {
+        // A tile at a corner of the blocks meets four at each of the two overviews it reads.
+        private final Recent recent = new Recent(8);
+        private final Map<Long, Grid> wanted = new java.util.HashMap<>();
+        private int file = -1;
+        private Header header;
+
+        Reader() { recent.held = new ConcurrentHashMap<>(); }
+
+        Grid grid(int file, int overview, double x, double y) {
+            if (overview < 0) throw new IllegalArgumentException("Unsupported " + what + " overview " + overview);
+            if (!Double.isFinite(x) || !Double.isFinite(y)) return null;
+            if (file != this.file) {
+                header = header(file);
+                this.file = file;
+            }
+            return FloatCogs.grid(header, file, overview, x, y);
+        }
+
+        double metres(Grid grid, double x, double y) { return FloatCogs.this.metres(grid, x, y, recent); }
+
+        double coverage(Grid grid, double x, double y) { return FloatCogs.this.coverage(grid, x, y, recent); }
+
+        /** Notes the blocks {@link #coverage} reads at {@code x, y}, for {@link #load}. */
+        void wantCoverage(Grid grid, double x, double y) { want(grid, x, y, true); }
+
+        /** Notes the blocks {@link #metres} reads at {@code x, y}, for {@link #load}. */
+        void wantMetres(Grid grid, double x, double y) { want(grid, x, y, false); }
+
+        private void want(Grid grid, double x, double y, boolean every) {
+            double fx = (x - grid.header.x0) / grid.pixelX - 0.5, fy = (grid.header.y0 - y) / grid.pixelY - 0.5;
+            int i = (int) Math.floor(fx), j = (int) Math.floor(fy);
+            double tx = fx - i, ty = fy - j;
+            for (int dj = 0; dj <= 1; dj++) for (int di = 0; di <= 1; di++) {
+                // metres skips corners of no weight; so does this.
+                if (!every && (di == 0 ? 1 - tx : tx) * (dj == 0 ? 1 - ty : ty) == 0) continue;
+                int index = index(grid, i + di, j + dj);
+                wanted.putIfAbsent(key(grid, index), grid);
+            }
+        }
+
+        /**
+         * Loads the blocks noted since the last call all at once, each on its own thread, so a tile
+         * that needs several waits for the slowest rather than for each in turn, and holds them until
+         * this reader is dropped.
+         */
+        void load() {
+            java.util.List<Runnable> loads = new java.util.ArrayList<>();
+            for (var entry : wanted.entrySet()) {
+                long key = entry.getKey();
+                if (recent.held.containsKey(key)) continue;
+                Grid grid = entry.getValue();
+                loads.add(() -> recent.held.put(key, block(grid, (int) (key & 0xFFFFF), key)));
+            }
+            wanted.clear();
+            if (loads.size() == 1) loads.get(0).run();
+            else if (!loads.isEmpty()) RangeFiles.all(loads);
+        }
+    }
+
+    /** Loads the headers of files all at once, as {@link #load} does blocks. */
+    void headers(java.util.Collection<Integer> files) {
+        java.util.List<Runnable> loads = new java.util.ArrayList<>();
+        for (int file : files) {
+            CompletableFuture<Header> known = headers.get(file);
+            // A header that fails here is asked for again, and reported, by the read that needs it.
+            if (known == null || !known.isDone()) loads.add(() -> { try { header(file); } catch (RuntimeException later) { } });
+        }
+        if (loads.size() == 1) loads.get(0).run();
+        else if (!loads.isEmpty()) RangeFiles.all(loads);
+    }
+
+    /** The block of a grid holding a pixel, its edges standing in for pixels past them. */
+    private static int index(Grid grid, int column, int row) {
+        Level level = grid.level;
+        column = Math.max(0, Math.min(level.width - 1, column));
+        row = Math.max(0, Math.min(level.height - 1, row));
+        int size = grid.header.block, across = Math.ceilDiv(level.width, size);
+        return (row / size) * across + column / size;
+    }
+
+    private static long key(Grid grid, int index) { return (long) grid.file << 24 | (long) grid.overview << 20 | index; }
+
     /**
      * An overview of a file, if the file exists and its image holds {@code x, y} (in the file's own
      * coordinates); null otherwise. A small file holds fewer overviews; its coarsest stands in for
@@ -88,7 +186,10 @@ final class FloatCogs implements AutoCloseable {
     Grid grid(int file, int overview, double x, double y) {
         if (overview < 0) throw new IllegalArgumentException("Unsupported " + what + " overview " + overview);
         if (!Double.isFinite(x) || !Double.isFinite(y)) return null;
-        Header header = header(file);
+        return grid(header(file), file, overview, x, y);
+    }
+
+    private static Grid grid(Header header, int file, int overview, double x, double y) {
         if (header.levels.length == 0) return null;
         overview = Math.min(overview, header.levels.length - 1);
         Level level = header.levels[overview], full = header.levels[0];
@@ -100,14 +201,16 @@ final class FloatCogs implements AutoCloseable {
     }
 
     /** The value at {@code x, y}, bilinear over the grid's valid pixels; NaN where there is no data. */
-    double metres(Grid grid, double x, double y) {
+    double metres(Grid grid, double x, double y) { return metres(grid, x, y, recent.get()); }
+
+    private double metres(Grid grid, double x, double y, Recent cache) {
         double fx = (x - grid.header.x0) / grid.pixelX - 0.5, fy = (grid.header.y0 - y) / grid.pixelY - 0.5;
         int i = (int) Math.floor(fx), j = (int) Math.floor(fy);
         double tx = fx - i, ty = fy - j, sum = 0, weights = 0;
         for (int dj = 0; dj <= 1; dj++) for (int di = 0; di <= 1; di++) {
             double w = (di == 0 ? 1 - tx : tx) * (dj == 0 ? 1 - ty : ty);
             if (w == 0) continue;
-            float v = pixel(grid, i + di, j + dj);
+            float v = pixel(grid, i + di, j + dj, cache);
             if (v == noData || !Float.isFinite(v)) continue;
             sum += w * v;
             weights += w;
@@ -119,32 +222,34 @@ final class FloatCogs implements AutoCloseable {
      * The share of the grid that holds data around {@code x, y}, bilinear between pixel centres: 1
      * inside the data, 0 outside, a ramp one pixel wide at its edge.
      */
-    double coverage(Grid grid, double x, double y) {
+    double coverage(Grid grid, double x, double y) { return coverage(grid, x, y, recent.get()); }
+
+    private double coverage(Grid grid, double x, double y, Recent cache) {
         double fx = (x - grid.header.x0) / grid.pixelX - 0.5, fy = (grid.header.y0 - y) / grid.pixelY - 0.5;
         int i = (int) Math.floor(fx), j = (int) Math.floor(fy);
         double tx = fx - i, ty = fy - j, share = 0;
         for (int dj = 0; dj <= 1; dj++) for (int di = 0; di <= 1; di++) {
-            float v = pixel(grid, i + di, j + dj);
+            float v = pixel(grid, i + di, j + dj, cache);
             if (v != noData && Float.isFinite(v)) share += (di == 0 ? 1 - tx : tx) * (dj == 0 ? 1 - ty : ty);
         }
         return share;
     }
 
-    private float pixel(Grid grid, int column, int row) {
+    private float pixel(Grid grid, int column, int row, Recent cache) {
         Level level = grid.level;
         column = Math.max(0, Math.min(level.width - 1, column));
         row = Math.max(0, Math.min(level.height - 1, row));
         int size = grid.header.block, across = Math.ceilDiv(level.width, size);
         int index = (row / size) * across + column / size;
         long key = (long) grid.file << 24 | (long) grid.overview << 20 | index;
-        Recent cache = recent.get();
         float[] block = null;
-        for (int k = 0; k < 4; k++) if (cache.keys[k] == key) { block = cache.blocks[k]; break; }
+        for (int k = 0; k < cache.keys.length; k++) if (cache.keys[k] == key) { block = cache.blocks[k]; break; }
         if (block == null) {
-            block = block(grid, index, key);
+            if (cache.held != null) block = cache.held.get(key);
+            if (block == null) block = block(grid, index, key);
             cache.keys[cache.next] = key;
             cache.blocks[cache.next] = block;
-            cache.next = (cache.next + 1) & 3;
+            cache.next = (cache.next + 1) % cache.keys.length;
         }
         return block[(row % size) * size + column % size];
     }
@@ -266,19 +371,24 @@ final class FloatCogs implements AutoCloseable {
         return out;
     }
 
-    /** TIFF LZW: 9 to 12-bit codes, most significant bit first, widths changing one code early. */
+    /**
+     * TIFF LZW: 9 to 12-bit codes, most significant bit first, widths changing one code early. Each
+     * code's string already lies in the output where it was first written, so a code is copied from
+     * there rather than walked back through its prefixes, and codes are cut from three bytes at once.
+     */
     static byte[] lzw(byte[] in, int size) throws IOException {
         byte[] out = new byte[size];
-        int[] prefix = new int[4096];
-        byte[] suffix = new byte[4096], first = new byte[4096];
-        int[] length = new int[4096];
-        for (int c = 0; c < 256; c++) { suffix[c] = (byte) c; first[c] = (byte) c; length[c] = 1; }
-        int done = 0, next = 258, width = 9, old = -1;
+        // Where each code's string starts in the output, and its length; codes below 256 are their own byte.
+        int[] offset = new int[4096], length = new int[4096];
+        int done = 0, next = 258, width = 9, old = -1, oldStart = 0;
         long bitPos = 0, bitEnd = (long) in.length * 8;
+        int last = in.length - 1;
         while (true) {
             if (bitPos + width > bitEnd) break;
-            int code = 0;
-            for (int b = 0; b < width; b++, bitPos++) code = code << 1 | (in[(int) (bitPos >>> 3)] >>> (7 - (bitPos & 7))) & 1;
+            int at = (int) (bitPos >>> 3), shift = (int) (bitPos & 7);
+            int window = (in[at] & 0xFF) << 16 | (at < last ? (in[at + 1] & 0xFF) << 8 : 0) | (at + 1 < last ? in[at + 2] & 0xFF : 0);
+            int code = window >>> (24 - shift - width) & (1 << width) - 1;
+            bitPos += width;
             if (code == 257) break;
             if (code == 256) {
                 next = 258;
@@ -286,40 +396,38 @@ final class FloatCogs implements AutoCloseable {
                 old = -1;
                 continue;
             }
-            int emit;
+            int start = done;
             if (old == -1) {
                 if (code > 255) throw new IOException("Bad LZW code after clear");
-                emit = code;
+                if (done >= size) throw new IOException("LZW block overruns its size");
+                out[done++] = (byte) code;
+            } else if (code < 256) {
+                if (done >= size) throw new IOException("LZW block overruns its size");
+                out[done++] = (byte) code;
             } else if (code < next) {
-                emit = code;
+                int n = length[code];
+                if (done + n > size) throw new IOException("LZW block overruns its size");
+                System.arraycopy(out, offset[code], out, done, n);
+                done += n;
             } else if (code == next) {
-                emit = -1;
+                // The code being defined: the previous string and its own first byte.
+                int n = (old < 256 ? 1 : length[old]) + 1;
+                if (done + n > size) throw new IOException("LZW block overruns its size");
+                System.arraycopy(out, oldStart, out, done, n - 1);
+                out[done + n - 1] = out[oldStart];
+                done += n;
             } else {
                 throw new IOException("Bad LZW code " + code);
             }
-            int start = done;
-            if (emit >= 0) {
-                int n = length[emit];
-                if (done + n > size) throw new IOException("LZW block overruns its size");
-                for (int c = emit, at = done + n - 1; at >= done; c = prefix[c], at--) out[at] = suffix[c];
-                done += n;
-            } else {
-                // The code being defined: the previous string and its own first byte.
-                int n = length[old] + 1;
-                if (done + n > size) throw new IOException("LZW block overruns its size");
-                for (int c = old, at = done + n - 2; at >= done; c = prefix[c], at--) out[at] = suffix[c];
-                out[done + n - 1] = first[old];
-                done += n;
-            }
             if (old != -1 && next < 4096) {
-                prefix[next] = old;
-                suffix[next] = out[start];
-                first[next] = first[old];
-                length[next] = length[old] + 1;
+                // The previous string plus this one's first byte, which follows it in the output.
+                offset[next] = oldStart;
+                length[next] = (old < 256 ? 1 : length[old]) + 1;
                 next++;
                 if (next + 1 >= 1 << width && width < 12) width++;
             }
             old = code;
+            oldStart = start;
         }
         if (done != size) throw new IOException("Short LZW block: " + done + " of " + size + " bytes");
         return out;

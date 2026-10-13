@@ -30,6 +30,14 @@ import java.util.Map;
  */
 public final class UsgsElevation implements ElevationLayer, AutoCloseable {
     public static final String DATASET_ID = "3dep-13-v1";
+    /**
+     * The same data read lighter, pinned by worlds made since: tiles of {@link #COARSE_ZOOM} and
+     * coarser read 3DEP no finer than its {@link #COARSE_OVERVIEW} overview (about 40 m), as wide
+     * water and bare-earth surveys read those tiles far out and the finer overview was most of a
+     * first visit's download. Worlds pinned to {@link #DATASET_ID} keep reading as before.
+     */
+    public static final String COARSE_ID = "3dep-13-v2";
+    static final int COARSE_ZOOM = 12, COARSE_OVERVIEW = 2;
     public static final String ATTRIBUTION = "United States: USGS 3D Elevation Program 1/3 arc-second DEM (public domain)";
     public static final URI AWS_3DEP = URI.create("https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/historical/");
     /** Coarser tiles cover so much ground that they are left to the composite. */
@@ -41,6 +49,7 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
     private static final Map<Integer, String> RELEASES = releases();
 
     private final FloatCogs files;
+    private final boolean coarse;
 
     /**
      * @param base              URI prefix the dated cells are named under
@@ -49,11 +58,18 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
      * @param maxBlocksInMemory decoded blocks kept (up to 1 MiB each)
      */
     public UsgsElevation(URI base, Path cacheRoot, boolean allowNetwork, int maxBlocksInMemory, int maxConcurrentTransfers, Duration timeout) throws IOException {
+        this(base, cacheRoot, allowNetwork, maxBlocksInMemory, maxConcurrentTransfers, timeout, false);
+    }
+
+    /** @param coarse read as {@link #COARSE_ID} rather than {@link #DATASET_ID} */
+    public UsgsElevation(URI base, Path cacheRoot, boolean allowNetwork, int maxBlocksInMemory, int maxConcurrentTransfers, Duration timeout,
+                         boolean coarse) throws IOException {
+        this.coarse = coarse;
         files = new FloatCogs("USGS 3DEP elevation", DATASET_ID, "earth-3dep-io", base, UsgsElevation::name, -999999f,
                 cacheRoot, allowNetwork, maxBlocksInMemory, maxConcurrentTransfers, timeout);
     }
 
-    @Override public String id() { return DATASET_ID; }
+    @Override public String id() { return coarse ? COARSE_ID : DATASET_ID; }
 
     @Override public void refine(int zoom, int x, int y, float[] values) {
         if (zoom < MIN_ZOOM) return;
@@ -61,48 +77,88 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
         double world = (double) size * (1L << zoom);
         double north = latitude(world, (double) y * size), south = latitude(world, (double) (y + 1) * size);
         double west = (double) x * size / world * 360 - 180, east = (double) (x + 1) * size / world * 360 - 180;
-        if (!covers(north, south, west, east)) return;
+        java.util.List<Integer> listedCells = cells(north, south, west, east);
+        if (listedCells.isEmpty()) return;
         // Read 3DEP at about the tile's pixel size, measured north-south at its centre.
         double centre = latitude(world, (y + 0.5) * size);
         double pixel = 360 / world * Math.cos(Math.toRadians(centre));
         int overview = Math.max(0, Math.min(MAX_OVERVIEW, (int) Math.floor(Math.log(pixel / PIXEL) / Math.log(2))));
+        if (coarse && zoom <= COARSE_ZOOM) overview = Math.max(overview, COARSE_OVERVIEW);
         int edge = Math.min(MAX_OVERVIEW, overview + 2);
-        for (int j = 0; j < size; j++) {
-            double lat = latitude(world, (double) y * size + j + 0.5);
-            for (int i = 0; i < size; i++) {
-                int at = j * size + i;
-                float own = values[at];
-                if (own == 0) continue;
-                double lon = ((double) x * size + i + 0.5) / world * 360 - 180;
-                int cell = cell(lat, lon);
-                if (!RELEASES.containsKey(cell)) continue;
-                FloatCogs.Grid around = files.grid(cell, edge, lon, lat);
-                if (around == null) continue;
-                double share = files.coverage(around, lon, lat);
-                if (share <= 0.5) continue;
-                double metres = Double.NaN;
-                // A gap at the finer overview takes the coarser data around it.
-                for (int level = overview; Double.isNaN(metres) && level <= MAX_OVERVIEW; level++) {
-                    FloatCogs.Grid grid = files.grid(cell, level, lon, lat);
-                    if (grid != null) metres = files.metres(grid, lon, lat);
-                }
-                if (Double.isNaN(metres)) continue;
-                // 3DEP has no bathymetry; the composite's stays.
-                if (metres <= 0 && own < 0) continue;
-                double s = Math.min(1, (share - 0.5) * 2), weight = s * s * (3 - 2 * s);
-                float out = (float) (own + weight * (metres - own));
-                // Exactly 0 means open sea to the generator.
-                values[at] = out == 0 ? Float.MIN_VALUE : out;
+        // Reads go in three passes, each first loading together the 3DEP pieces it needs, so a tile
+        // first seen waits about as long as its slowest download rather than all of them in turn:
+        // the cells' headers, the coarse overview that gives each pixel's share of data, then the
+        // overview read where that share is enough.
+        files.headers(listedCells);
+        FloatCogs.Reader read = files.reader();
+        int pixels = size * size;
+        int[] cells = new int[pixels];
+        FloatCogs.Grid[] grids = new FloatCogs.Grid[pixels];
+        double[] longitudes = new double[size], latitudes = new double[size];
+        for (int i = 0; i < size; i++) longitudes[i] = ((double) x * size + i + 0.5) / world * 360 - 180;
+        for (int j = 0; j < size; j++) latitudes[j] = latitude(world, (double) y * size + j + 0.5);
+        int lastCell = Integer.MIN_VALUE;
+        boolean listed = false;
+        for (int at = 0; at < pixels; at++) {
+            if (values[at] == 0) continue;
+            double lat = latitudes[at / size], lon = longitudes[at % size];
+            int cell = cell(lat, lon);
+            if (cell != lastCell) {
+                lastCell = cell;
+                listed = RELEASES.containsKey(cell);
             }
+            if (!listed) continue;
+            FloatCogs.Grid around = read.grid(cell, edge, lon, lat);
+            if (around == null) continue;
+            cells[at] = cell;
+            grids[at] = around;
+            read.wantCoverage(around, lon, lat);
+        }
+        read.load();
+        double[] shares = new double[pixels];
+        for (int at = 0; at < pixels; at++) {
+            if (grids[at] == null) continue;
+            double lat = latitudes[at / size], lon = longitudes[at % size];
+            double share = read.coverage(grids[at], lon, lat);
+            shares[at] = share;
+            grids[at] = null;
+            if (share <= 0.5) continue;
+            FloatCogs.Grid grid = read.grid(cells[at], overview, lon, lat);
+            grids[at] = grid;
+            // A pixel outside the finer overview reads coarser ones below, one at a time.
+            if (grid != null) read.wantMetres(grid, lon, lat);
+        }
+        read.load();
+        for (int at = 0; at < pixels; at++) {
+            double share = shares[at];
+            if (share <= 0.5) continue;
+            double lat = latitudes[at / size], lon = longitudes[at % size];
+            float own = values[at];
+            double metres = grids[at] == null ? Double.NaN : read.metres(grids[at], lon, lat);
+            // A gap at the finer overview takes the coarser data around it.
+            for (int level = overview + 1; Double.isNaN(metres) && level <= MAX_OVERVIEW; level++) {
+                FloatCogs.Grid grid = read.grid(cells[at], level, lon, lat);
+                if (grid != null) metres = read.metres(grid, lon, lat);
+            }
+            if (Double.isNaN(metres)) continue;
+            // 3DEP has no bathymetry; the composite's stays.
+            if (metres <= 0 && own < 0) continue;
+            double s = Math.min(1, (share - 0.5) * 2), weight = s * s * (3 - 2 * s);
+            float out = (float) (own + weight * (metres - own));
+            // Exactly 0 means open sea to the generator.
+            values[at] = out == 0 ? Float.MIN_VALUE : out;
         }
     }
 
-    /** Whether any listed cell meets the box. */
-    private static boolean covers(double north, double south, double west, double east) {
+    /** The listed cells that meet the box. */
+    private static java.util.List<Integer> cells(double north, double south, double west, double east) {
+        java.util.List<Integer> cells = new java.util.ArrayList<>();
         for (int top = (int) Math.ceil(south); top <= (int) Math.ceil(north); top++)
-            for (int left = (int) Math.floor(west); left <= (int) Math.floor(east); left++)
-                if (RELEASES.containsKey(key(top, Math.floorMod(left + 180, 360) - 180))) return true;
-        return false;
+            for (int left = (int) Math.floor(west); left <= (int) Math.floor(east); left++) {
+                int cell = key(top, Math.floorMod(left + 180, 360) - 180);
+                if (RELEASES.containsKey(cell)) cells.add(cell);
+            }
+        return cells;
     }
 
     /** The 1° cell holding a point: north edge {@code ceil(lat)}, west edge {@code floor(lon)}. */
