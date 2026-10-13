@@ -278,6 +278,25 @@ public final class GlobeTest {
                 online.tile(zoom, 3, 3);
                 check(Files.exists(cache.resolve("2/3/3.png")), "corrupt cache entry refetched");
             }
+            // Layers run in order on each cleaned tile, once, and the later one wins.
+            List<String> seen = Collections.synchronizedList(new ArrayList<>());
+            ElevationLayer plus = new ElevationLayer() {
+                public String id() { return "plus"; }
+                public void refine(int z, int x, int y, float[] values) { seen.add("plus " + z + "/" + x + "/" + y); values[0] += 100; }
+            };
+            ElevationLayer pin = new ElevationLayer() {
+                public String id() { return "pin"; }
+                public void refine(int z, int x, int y, float[] values) { seen.add("pin"); values[1] = 42; }
+            };
+            try (var layered = new TerrariumTileSource(base, cache, false, 4, 1, Duration.ofSeconds(5), List.of(plus, pin))) {
+                float[] tile = layered.tile(zoom, 1, 2);
+                near(planeAt(zoom, 256, 512) + 100, tile[0], 1 / 256.0, "first layer applied");
+                equal(42f, tile[1], "second layer applied after it");
+                near(planeAt(zoom, 256 + 2, 512), tile[2], 1 / 256.0, "untouched pixel kept");
+                check(layered.tile(zoom, 1, 2) == tile, "layered tile kept in memory");
+                equal(List.of("plus 2/1/2", "pin"), seen, "each layer runs once, in order");
+                equal(List.of(plus, pin), layered.layers(), "layers listed in order");
+            }
             try (var stream = Files.list(cache.resolve("2/1"))) {
                 check(stream.noneMatch(p -> p.toString().endsWith(".part")), "no partial cache files left");
             }

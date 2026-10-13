@@ -42,7 +42,9 @@ import java.util.concurrent.*;
  * everywhere, the tiles are left exactly as they were. Copernicus's sea, exactly 0 m, becomes the
  * tiles' open sea where the weight is whole.
  */
-final class CopernicusFill {
+public final class CopernicusFill implements ElevationLayer {
+    /** Pinned in a world's {@code earth.elevation}; reads {@link CopernicusSource#DATASET_ID}. */
+    public static final String DATASET_ID = "glo30-fill-v1";
     /** Coarsest zoom filled. Coarser zooms carry the bathymetry and stay as they are. */
     static final int MIN_ZOOM = 11;
     /**
@@ -67,7 +69,8 @@ final class CopernicusFill {
     private static final double SEA_CRUMB = 0.01;
     private static final double EARTH_CIRCUMFERENCE = 40_075_016.7;
 
-    interface Tiles { float[] tile(int zoom, int x, int y); }
+    /** The composite's tiles as they were before any layer, such as {@link TerrariumTileSource#cleaned}. */
+    public interface Tiles { float[] tile(int zoom, int x, int y); }
 
     /** Parts a degree square is checked in, along each side, so a place's first tiles wait on a sixteenth of it. */
     static final int PARTS = 4;
@@ -87,11 +90,15 @@ final class CopernicusFill {
     private final LinkedHashMap<Long, Part> parts = new LinkedHashMap<>(64, 0.75f, true);
     private final Map<Long, CompletableFuture<Part>> inFlight = new ConcurrentHashMap<>();
 
-    CopernicusFill(CopernicusSource dem, Tiles tiles, int maxParts) {
+    public CopernicusFill(CopernicusSource dem, Tiles tiles, int maxParts) {
         this.dem = dem;
         this.tiles = tiles;
         this.maxParts = maxParts;
     }
+
+    @Override public String id() { return DATASET_ID; }
+
+    @Override public void refine(int zoom, int x, int y, float[] values) { apply(values, zoom, x, y); }
 
     /** Moves a tile's pixels toward Copernicus by the weight where they stand. */
     void apply(float[] values, int zoom, int tileX, int tileY) {
