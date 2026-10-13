@@ -11,11 +11,11 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.HugeMushroomBlock;
 import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.RotatedPillarBlock;
 import net.minecraft.world.level.block.SnowLayerBlock;
-import net.minecraft.world.level.block.VineBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
@@ -36,8 +36,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             SNOW_BLOCK = Blocks.SNOW_BLOCK.defaultBlockState(), SNOW = Blocks.SNOW.defaultBlockState().setValue(SnowLayerBlock.LAYERS, 1),
             LAVA = Blocks.LAVA.defaultBlockState(), MUD = Blocks.MUD.defaultBlockState();
 
-    /** Tree shapes: rainforest trees with vines and bushes under them, flat-topped acacias, and mangroves on roots. */
-    public enum Tree { OAK, BIRCH, SPRUCE, JUNGLE, ACACIA, MANGROVE }
+    /** Tree kinds, shaped by {@link Vegetation}. */
+    public enum Tree { OAK, BIRCH, SPRUCE, JUNGLE, ACACIA, MANGROVE, DARK_OAK, CHERRY, AZALEA }
 
     /**
      * What covers a column. {@code trees} is the percent of 7-block cells holding a tree, whose kind
@@ -58,6 +58,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     protected final IdMap<Holder<Biome>> biomeIds;
     private final ImprovedNoise tunnelA, tunnelB, cavern, lavaNoise;
     private final ConcurrentHashMap<Long, Column> columns = new ConcurrentHashMap<>();
+    private final Vegetation vegetation = new Vegetation(this);
 
     /** Cave noise is drawn from {@code random} after whatever the subclass drew from it. */
     protected SurfaceGenerator(long seed, Registry<Biome> biomes, RandomSource random) {
@@ -164,7 +165,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             min = Math.min(min, h);
             max = Math.max(max, Math.max(h, water[g]));
         }
-        if (v <= 4) max += TALLEST + 1;
+        if (v <= 4) max += Vegetation.TALLEST + 1;
         int bottom = (min - v) >> (level + 4), highest = max >> (level + 4);
         // Columns taller than the section budget keep their top, where the view is.
         bottom = Math.max(bottom, highest - Far.MAX_SECTIONS + 1);
@@ -240,16 +241,19 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         int v = 1 << level, width = 16 * v, height = stack.length * 16, baseY = bottom * width;
         int[] leafCount = new int[16 * 16 * height], logCount = new int[leafCount.length];
         BlockState[] leafKind = new BlockState[leafCount.length], logKind = new BlockState[leafCount.length];
-        int minCellX = Math.floorDiv(x0 - REACH, CELL), maxCellX = Math.floorDiv(x0 + width + REACH, CELL);
-        int minCellZ = Math.floorDiv(z0 - REACH, CELL), maxCellZ = Math.floorDiv(z0 + width + REACH, CELL);
-        TreeSink sink = (x, y, z, state, force) -> {
+        int cell = Vegetation.CELL, reach = Vegetation.REACH;
+        int minCellX = Math.floorDiv(x0 - reach, cell), maxCellX = Math.floorDiv(x0 + width + reach, cell);
+        int minCellZ = Math.floorDiv(z0 - reach, cell), maxCellZ = Math.floorDiv(z0 + width + reach, cell);
+        Vegetation.TreeSink sink = (x, y, z, state, force) -> {
             int vx = (x - x0) >> level, vz = (z - z0) >> level, vy = (y - baseY) >> level;
-            if (vx < 0 || vz < 0 || vx > 15 || vz > 15 || vy < 0 || vy >= height || state == DIRT) return;
+            if (vx < 0 || vz < 0 || vx > 15 || vz > 15 || vy < 0 || vy >= height) return;
             int i = (vy * 16 + vz) * 16 + vx;
-            if (state.getBlock() instanceof LeavesBlock) { leafCount[i]++; leafKind[i] = state; }
-            else { logCount[i]++; logKind[i] = state; }
+            Block block = state.getBlock();
+            // Crowns and trunks only: vines, cocoa, roots and the ground under trees are too small to show.
+            if (block instanceof LeavesBlock || block instanceof HugeMushroomBlock) { leafCount[i]++; leafKind[i] = state; }
+            else if (block instanceof RotatedPillarBlock && block != Blocks.MUDDY_MANGROVE_ROOTS) { logCount[i]++; logKind[i] = state; }
         };
-        for (int gz = minCellZ; gz <= maxCellZ; gz++) for (int gx = minCellX; gx <= maxCellX; gx++) tree(gx, gz, baseY, baseY + height * v - 1, sink);
+        for (int gz = minCellZ; gz <= maxCellZ; gz++) for (int gx = minCellX; gx <= maxCellX; gx++) vegetation.tree(gx, gz, baseY, baseY + height * v - 1, sink);
         int quarter = Math.max(1, v * v * v / 4);
         for (int i = 0; i < leafCount.length; i++) {
             if (leafCount[i] < quarter && logCount[i] < quarter) continue;
@@ -266,18 +270,11 @@ public abstract class SurfaceGenerator implements CubeGenerator {
      * many blocks wide cannot follow individual trees.
      */
     private BlockState canopy(Surface surface, int wx, int wz, int v) {
-        if (surface.top() != GRASS && surface.top() != MUD || surface.trees() <= 0) return null;
+        if (surface.top() != GRASS && surface.top() != MUD && !surface.top().is(Blocks.PODZOL) || surface.trees() <= 0) return null;
         long r = mix(wx, v, wz);
         // Crowns cover a bit over half of each tree's cell.
         if (Math.floorMod(r, 1000) >= surface.trees() * 6) return null;
-        return switch (surface.tree((int) Math.floorMod(r >>> 24, 10))) {
-            case SPRUCE -> Blocks.SPRUCE_LEAVES.defaultBlockState();
-            case BIRCH -> Blocks.BIRCH_LEAVES.defaultBlockState();
-            case OAK -> Blocks.OAK_LEAVES.defaultBlockState();
-            case JUNGLE -> Blocks.JUNGLE_LEAVES.defaultBlockState();
-            case ACACIA -> Blocks.ACACIA_LEAVES.defaultBlockState();
-            case MANGROVE -> Blocks.MANGROVE_LEAVES.defaultBlockState();
-        };
+        return Vegetation.leaves(surface.tree((int) Math.floorMod(r >>> 24, 10)));
     }
 
     // Cubes --------------------------------------------------------------------------------------
@@ -314,7 +311,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                 if (state != AIR) section.setBlockState(lx, ly, lz, state, false);
             }
         }
-        if (!underground) decorate(section, cx, cy, cz, col);
+        if (!underground) vegetation.decorate(section, x0, y0, z0, col.height, col.water, col.surface);
         ores(section, cx, cy, cz, col);
         section.recalcBlockCounts();
         return section;
@@ -351,201 +348,6 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         double c011 = f[((iy + 1) * 5 + iz + 1) * 5 + ix], c111 = f[((iy + 1) * 5 + iz + 1) * 5 + ix + 1];
         double v = Mth.lerp3(tx, ty, tz, c000, c100, c010, c110, c001, c101, c011, c111);
         return v > 0;
-    }
-
-    // Decoration: trees, plants and snow --------------------------------------------------------
-
-    /** Tree placement cell size, how far a tree reaches from its trunk, and how far above the ground its top can be. */
-    private static final int CELL = 7, REACH = 5, TALLEST = 16;
-    private static final BlockState CACTUS = Blocks.CACTUS.defaultBlockState();
-    private void decorate(LevelChunkSection section, int cx, int cy, int cz, Column col) {
-        int x0 = cx << 4, y0 = cy << 4, z0 = cz << 4;
-        // Ground cover in the cube that holds y = h + 1.
-        for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
-            int ci = lz * 16 + lx, gi = (lz + 1) * 18 + lx + 1, h = col.height[gi], y = h + 1;
-            if (y + 2 < y0 || y > y0 + 15 || col.water[gi] != DRY) continue;
-            Surface surface = col.surface[ci];
-            BlockState top = surface.top();
-            long r = mix(x0 + lx, h, z0 + lz);
-            BlockState cover = null;
-            int roll = (int) Math.floorMod(r, 1000);
-            if (top == SNOW_BLOCK) cover = SNOW;
-            // Sand only grows anything in desert scrub: dead bushes, and cacti on every other column
-            // (so no two touch) with no higher ground beside them.
-            else if (top == SAND && roll < surface.flowers()) {
-                if (roll < surface.grass()) cover = Blocks.DEAD_BUSH.defaultBlockState();
-                else if (((x0 + lx | z0 + lz) & 1) == 0 && col.height[gi - 1] <= h && col.height[gi + 1] <= h
-                        && col.height[gi - 18] <= h && col.height[gi + 18] <= h) {
-                    for (int k = 1 + (int) Math.floorMod(r >>> 20, 3); k > 0; k--) {
-                        int cy0 = y + k - 1 - y0;
-                        if (cy0 >= 0 && cy0 < 16 && section.getBlockState(lx, cy0, lz).isAir()) section.setBlockState(lx, cy0, lz, CACTUS, false);
-                    }
-                }
-            }
-            else if (top == GRASS) {
-                if (roll < surface.grass()) cover = surface.ferns() && roll % 3 == 0 ? Blocks.FERN.defaultBlockState() : Blocks.SHORT_GRASS.defaultBlockState();
-                else if (roll < surface.flowers()) cover = switch ((int) (r >>> 20 & 3)) {
-                    case 0 -> Blocks.POPPY.defaultBlockState(); case 1 -> Blocks.DANDELION.defaultBlockState();
-                    case 2 -> Blocks.CORNFLOWER.defaultBlockState(); default -> Blocks.AZURE_BLUET.defaultBlockState(); };
-            }
-            if (cover != null && y <= y0 + 15 && y >= y0 && section.getBlockState(lx, y - y0, lz).isAir()) section.setBlockState(lx, y - y0, lz, cover, false);
-        }
-        // Trees from every cell whose crown can reach this cube.
-        int minCellX = Math.floorDiv(x0 - REACH, CELL), maxCellX = Math.floorDiv(x0 + 15 + REACH, CELL);
-        int minCellZ = Math.floorDiv(z0 - REACH, CELL), maxCellZ = Math.floorDiv(z0 + 15 + REACH, CELL);
-        TreeSink sink = (x, y, z, state, force) -> put(section, x0, y0, z0, x, y, z, state, force);
-        for (int gz = minCellZ; gz <= maxCellZ; gz++) for (int gx = minCellX; gx <= maxCellX; gx++) tree(gx, gz, y0, y0 + 15, sink);
-    }
-
-    /** Receives a tree's blocks; {@code force} marks trunk blocks that replace whatever is there. */
-    private interface TreeSink { void put(int x, int y, int z, BlockState state, boolean force); }
-
-    /** The tree of one placement cell, if it has one reaching heights minY..maxY. */
-    private void tree(int gx, int gz, int minY, int maxY, TreeSink sink) {
-        long r = mix(gx * 7919, 31, gz * 104729);
-        int tx = gx * CELL + (int) Math.floorMod(r, CELL - 1), tz = gz * CELL + (int) Math.floorMod(r >>> 8, CELL - 1);
-        int h = surfaceY(tx, tz);
-        if (h + TALLEST < minY || h - 1 > maxY) return;
-        int slope = Math.abs(surfaceY(tx + 1, tz) - surfaceY(tx - 1, tz)) + Math.abs(surfaceY(tx, tz + 1) - surfaceY(tx, tz - 1));
-        Surface surface = surface(tx, tz, h, waterY(tx, tz), slope);
-        if (Math.floorMod(r >>> 16, 100) >= surface.trees()) return;
-        Tree kind = surface.tree((int) Math.floorMod(r >>> 24, 10));
-        switch (kind) {
-            case JUNGLE -> { jungle(tx, tz, h, r, sink); return; }
-            case ACACIA -> { acacia(tx, tz, h, r, sink); return; }
-            default -> {}
-        }
-        int trunk = kind == Tree.SPRUCE ? 7 + (int) Math.floorMod(r >>> 30, 4) : 4 + (int) Math.floorMod(r >>> 30, 3);
-        BlockState log = switch (kind) {
-            case BIRCH -> Blocks.BIRCH_LOG.defaultBlockState(); case SPRUCE -> Blocks.SPRUCE_LOG.defaultBlockState();
-            case MANGROVE -> Blocks.MANGROVE_LOG.defaultBlockState(); default -> Blocks.OAK_LOG.defaultBlockState(); };
-        BlockState leaves = switch (kind) {
-            case BIRCH -> Blocks.BIRCH_LEAVES.defaultBlockState(); case SPRUCE -> Blocks.SPRUCE_LEAVES.defaultBlockState();
-            case MANGROVE -> Blocks.MANGROVE_LEAVES.defaultBlockState(); default -> Blocks.OAK_LEAVES.defaultBlockState(); };
-        leaves = leaves.setValue(LeavesBlock.DISTANCE, 1);
-        // Mangroves stand on a tangle of roots above the mud.
-        int foot = h;
-        if (kind == Tree.MANGROVE) {
-            BlockState roots = Blocks.MANGROVE_ROOTS.defaultBlockState();
-            for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
-                if (dx != 0 && dz != 0) continue;
-                sink.put(tx + dx, h + 1, tz + dz, roots, false);
-                if (dx != 0 || dz != 0) sink.put(tx + 2 * dx, h + 1, tz + 2 * dz, roots, false);
-            }
-            foot = h + 1;
-        }
-        int top = foot + trunk;
-        if (kind == Tree.SPRUCE) {
-            for (int y = h + 2; y <= top + 1; y++) {
-                int fromTop = top + 1 - y;
-                int radius = fromTop == 0 ? 0 : Math.min(3, 1 + (fromTop + ((y & 1) == 0 ? 1 : 0)) / 2);
-                for (int dz = -radius; dz <= radius; dz++) for (int dx = -radius; dx <= radius; dx++) {
-                    if (Math.abs(dx) + Math.abs(dz) > radius + 1 || (radius > 0 && Math.abs(dx) == radius && Math.abs(dz) == radius)) continue;
-                    sink.put(tx + dx, y, tz + dz, leaves, false);
-                }
-            }
-        } else {
-            for (int y = top - 2; y <= top + 1; y++) {
-                int radius = y >= top ? 1 : 2;
-                for (int dz = -radius; dz <= radius; dz++) for (int dx = -radius; dx <= radius; dx++) {
-                    if (radius == 2 && Math.abs(dx) == 2 && Math.abs(dz) == 2 && Math.floorMod(mix(tx + dx, y, tz + dz), 2) == 0) continue;
-                    if (y == top + 1 && Math.abs(dx) == 1 && Math.abs(dz) == 1) continue;
-                    sink.put(tx + dx, y, tz + dz, leaves, false);
-                }
-            }
-        }
-        for (int y = foot + 1; y <= top; y++) sink.put(tx, y, tz, log, true);
-        sink.put(tx, h, tz, kind == Tree.MANGROVE ? Blocks.MUDDY_MANGROVE_ROOTS.defaultBlockState() : DIRT, true);
-    }
-
-    /**
-     * A rainforest tree: a tall trunk, a giant one in four on a 2x2 trunk, under a broad flat crown
-     * hung with vines, with a bush beside it for the undergrowth. Trees of different heights layer
-     * the canopy as a real rainforest's does.
-     */
-    private void jungle(int tx, int tz, int h, long r, TreeSink sink) {
-        BlockState log = Blocks.JUNGLE_LOG.defaultBlockState();
-        BlockState leaves = Blocks.JUNGLE_LEAVES.defaultBlockState().setValue(LeavesBlock.DISTANCE, 1);
-        boolean giant = Math.floorMod(r >>> 40, 4) == 0;
-        int width = giant ? 2 : 1, radius = giant ? 4 : 3;
-        int top = h + (giant ? 12 + (int) Math.floorMod(r >>> 30, 3) : 7 + (int) Math.floorMod(r >>> 30, 5));
-        // Crown centre, doubled so a 2x2 trunk's lies between its logs.
-        int cx2 = 2 * tx + width - 1, cz2 = 2 * tz + width - 1;
-        for (int y = top - 1; y <= top + 1; y++) {
-            int ry = y == top + 1 ? radius - 2 : radius;
-            int reach = 2 * ry + width - 1;
-            for (int z = tz - ry; z <= tz + ry + width - 1; z++) for (int x = tx - ry; x <= tx + ry + width - 1; x++) {
-                int dx = 2 * x - cx2, dz = 2 * z - cz2, d = dx * dx + dz * dz;
-                if (d > reach * reach + 2) continue;
-                // Ragged edges.
-                if (d > (reach - 2) * (reach - 2) && Math.floorMod(mix(x, y, z), 3) == 0) continue;
-                sink.put(x, y, z, leaves, false);
-                // Vines hang from the crown's lower rim.
-                if (y == top - 1) {
-                    long v = mix(x, y * 3 + 1, z);
-                    if (Math.floorMod(v, 4) != 0) continue;
-                    int len = 1 + (int) Math.floorMod(v >>> 8, 5);
-                    hang(sink, x, y, z, cx2, cz2, reach, len);
-                }
-            }
-        }
-        for (int y = h + 1; y <= top; y++) for (int dz = 0; dz < width; dz++) for (int dx = 0; dx < width; dx++) sink.put(tx + dx, y, tz + dz, log, true);
-        for (int dz = 0; dz < width; dz++) for (int dx = 0; dx < width; dx++) sink.put(tx + dx, h, tz + dz, DIRT, true);
-        // A bush three blocks away on each axis, still in this tree's cell.
-        int bx = tx - Math.floorMod(tx, CELL) + (Math.floorMod(tx, CELL) + 3) % (CELL - 1);
-        int bz = tz - Math.floorMod(tz, CELL) + (Math.floorMod(tz, CELL) + 3) % (CELL - 1);
-        int bh = surfaceY(bx, bz);
-        if (Math.abs(bh - h) > 1 || waterY(bx, bz) != DRY) return;
-        BlockState bushLeaves = Blocks.OAK_LEAVES.defaultBlockState().setValue(LeavesBlock.DISTANCE, 1);
-        for (int y = bh + 1; y <= bh + 2; y++) {
-            int rb = y == bh + 1 ? 2 : 1;
-            for (int dz = -rb; dz <= rb; dz++) for (int dx = -rb; dx <= rb; dx++) {
-                if (Math.abs(dx) + Math.abs(dz) > rb + (rb == 2 && Math.floorMod(mix(bx + dx, y, bz + dz), 2) == 0 ? 1 : 0)) continue;
-                sink.put(bx + dx, y, bz + dz, bushLeaves, false);
-            }
-        }
-        sink.put(bx, bh + 1, bz, log, true);
-    }
-
-    /**
-     * Vines down the outward side of a crown block whose neighbour that way is outside the crown,
-     * attached to the leaves and then to the vine above. The crown is centred on (cx2, cz2) / 2.
-     */
-    private static void hang(TreeSink sink, int x, int y, int z, int cx2, int cz2, int reach, int len) {
-        int dx = 2 * x - cx2, dz = 2 * z - cz2, sx = Integer.signum(dx), sz = Integer.signum(dz);
-        boolean alongX = sx != 0 && (sz == 0 || (x + z & 1) == 0);
-        int vx = alongX ? x + sx : x, vz = alongX ? z : z + sz;
-        int ox = 2 * vx - cx2, oz = 2 * vz - cz2;
-        if (ox * ox + oz * oz <= reach * reach + 2) return;
-        BooleanProperty face = alongX ? (sx > 0 ? VineBlock.WEST : VineBlock.EAST) : (sz > 0 ? VineBlock.NORTH : VineBlock.SOUTH);
-        BlockState vine = Blocks.VINE.defaultBlockState().setValue(face, true);
-        for (int k = 0; k < len; k++) sink.put(vx, y - k, vz, vine, false);
-    }
-
-    /** A savanna acacia: a trunk that leans after a few blocks under a wide, flat crown. */
-    private void acacia(int tx, int tz, int h, long r, TreeSink sink) {
-        BlockState log = Blocks.ACACIA_LOG.defaultBlockState();
-        BlockState leaves = Blocks.ACACIA_LEAVES.defaultBlockState().setValue(LeavesBlock.DISTANCE, 1);
-        int trunk = 5 + (int) Math.floorMod(r >>> 30, 3), bend = 2 + (int) Math.floorMod(r >>> 34, 2);
-        int dir = (int) Math.floorMod(r >>> 36, 4), sx = dir == 0 ? 1 : dir == 1 ? -1 : 0, sz = dir == 2 ? 1 : dir == 3 ? -1 : 0;
-        int x = tx, z = tz, top = h + trunk;
-        for (int y = h + 1; y <= top; y++) {
-            if (y > h + bend && y < top && Math.abs(x - tx) + Math.abs(z - tz) < 2) { x += sx; z += sz; }
-            sink.put(x, y, z, log, true);
-        }
-        sink.put(tx, h, tz, DIRT, true);
-        for (int dz = -3; dz <= 3; dz++) for (int dx = -3; dx <= 3; dx++) {
-            int a = Math.abs(dx) + Math.abs(dz);
-            if (a <= 4 && !(a == 4 && Math.floorMod(mix(x + dx, top, z + dz), 2) == 0)) sink.put(x + dx, top + 1, z + dz, leaves, false);
-            if (a <= 1) sink.put(x + dx, top + 2, z + dz, leaves, false);
-        }
-    }
-
-    private static void put(LevelChunkSection section, int x0, int y0, int z0, int x, int y, int z, BlockState state, boolean force) {
-        int lx = x - x0, ly = y - y0, lz = z - z0;
-        if (lx < 0 || ly < 0 || lz < 0 || lx > 15 || ly > 15 || lz > 15) return;
-        BlockState here = section.getBlockState(lx, ly, lz);
-        if (force || here.isAir() || here.canBeReplaced()) section.setBlockState(lx, ly, lz, state, false);
     }
 
     // Ores: blobs placed per cube from its own seeded random, by depth below the ground ---------
