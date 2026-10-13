@@ -17,6 +17,8 @@ public final class Cube {
     volatile boolean modified;
     /** Changed since the last save. */
     volatile boolean dirty;
+    /** Blocks changed since the last save, so far terrain showing this cube must be remade. */
+    volatile boolean reshaped;
 
     public Cube(int x, int y, int z, LevelChunkSection section) {
         this.x = x; this.y = y; this.z = z; this.key = CubeKey.pack(x, y, z); this.section = section;

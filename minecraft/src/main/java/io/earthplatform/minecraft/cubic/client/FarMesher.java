@@ -74,9 +74,16 @@ final class FarMesher {
      * The column's opaque faces, 4 ints each, grouped as {@link #GROUPS} with {@code counts}
      * faces per group in order, and its water, drawn see-through after everything opaque.
      */
-    record Built(long key, int version, int[] quads, int[] counts, @Nullable Part water) {
-        void free() { if (water != null) water.free(); }
-        long bytes() { return quads.length * 4L + (water == null ? 0 : water.bytes()); }
+    record Built(long key, int version, int[] quads, int[] counts, @Nullable Part water, @Nullable Part[] waterWalls) {
+        void free() {
+            if (water != null) water.free();
+            for (Part wall : waterWalls) if (wall != null) wall.free();
+        }
+        long bytes() {
+            long bytes = quads.length * 4L + (water == null ? 0 : water.bytes());
+            for (Part wall : waterWalls) if (wall != null) bytes += wall.bytes();
+            return bytes;
+        }
     }
 
     static Built build(Job job) {
@@ -98,6 +105,9 @@ final class FarMesher {
         @SuppressWarnings("unchecked") final List<Piece>[][] pieces = new List[4][256];
         @Nullable ByteBufferBuilder waterMemory;
         @Nullable BufferBuilder water;
+        /** Water's own walls, north, south, west, east: water faces the next column's water hides, drawn when that column is not. */
+        final ByteBufferBuilder[] wallMemory = new ByteBufferBuilder[4];
+        final BufferBuilder[] waterWalls = new BufferBuilder[4];
 
         Builder(Job job) {
             this.job = job;
@@ -134,13 +144,17 @@ final class FarMesher {
             int[] quads = new int[total];
             int at = 0;
             for (IntArrayList group : groups) { group.getElements(0, quads, at, group.size()); at += group.size(); }
-            Part waterPart = null;
-            if (water != null) {
-                MeshData mesh = water.build();
-                if (mesh == null) waterMemory.close();
-                else waterPart = new Part(mesh, waterMemory);
-            }
-            return new Built(job.key, job.version, quads, counts, waterPart);
+            Part waterPart = part(water, waterMemory);
+            Part[] wallParts = new Part[4];
+            for (int wall = 0; wall < 4; wall++) wallParts[wall] = part(waterWalls[wall], wallMemory[wall]);
+            return new Built(job.key, job.version, quads, counts, waterPart, wallParts);
+        }
+
+        @Nullable private static Part part(@Nullable BufferBuilder builder, @Nullable ByteBufferBuilder memory) {
+            if (builder == null) return null;
+            MeshData mesh = builder.build();
+            if (mesh == null) { memory.close(); return null; }
+            return new Part(mesh, memory);
         }
 
         private void voxel(LevelChunkSection section, BlockState state, int x, int y, int vy, int z) {
@@ -161,7 +175,7 @@ final class FarMesher {
                     int height = direction == Direction.UP ? top : bottom;
                     if (!liquid) opaqueFlat.add(direction, x, vy, z, height, look(state, biome, direction, sky, cell));
                     else if (!job.textured) waterFlat.add(direction, x, vy, z, height, waterLook(state, biome, direction));
-                    else waterFace(state, biome, direction, x, z, height, 0);
+                    else waterFace(water(), state, biome, direction, x, z, height, 0);
                     continue;
                 }
                 int nx = x + direction.getStepX(), nz = z + direction.getStepZ(), wall = side(nx, nz);
@@ -181,11 +195,20 @@ final class FarMesher {
                         if (liquid && seeThrough(neighbour) || vy < tops[cell] - SEAM_DEPTH) continue;
                         group = direction.get3DDataValue();
                     } else if (hides(state, neighbour, direction)) {
-                        if (wall < 0 || liquid || vy < sideTops[wall][wall < 2 ? x : z] - WALL_DEPTH) continue;
+                        if (wall < 0) continue;
+                        if (liquid) {
+                            // Where a coarser or finer level's water meets this, at a slightly different
+                            // height, a wall of water closes the slit that showed the dark bed below.
+                            if (vy < tops[cell] - WALL_DEPTH) continue;
+                            if (biome == null) biome = section.getBiomes().get(x >> 2, y >> 2, z >> 2);
+                            waterFace(waterWall(wall), state, biome, direction, x, z, from, to - from);
+                            continue;
+                        }
+                        if (vy < sideTops[wall][wall < 2 ? x : z] - WALL_DEPTH) continue;
                         group = FIRST_WALL + wall;
                     } else group = direction.get3DDataValue();
                     if (biome == null) biome = section.getBiomes().get(x >> 2, y >> 2, z >> 2);
-                    if (liquid) waterFace(state, biome, direction, x, z, from, to - from);
+                    if (liquid) waterFace(water(), state, biome, direction, x, z, from, to - from);
                     else {
                         int index = direction.get3DDataValue() - 2;
                         // The ground's own step risers look like the ground's top, so a gentle slope of
@@ -262,9 +285,8 @@ final class FarMesher {
         }
 
         /** One water face drawn on its own, from {@code y} up by {@code height} (both in 1/256 blocks); up and down faces take no height. */
-        private void waterFace(BlockState state, Holder<Biome> biome, Direction direction, int x, int z, int y, int height) {
+        private void waterFace(BufferBuilder builder, BlockState state, Holder<Biome> biome, Direction direction, int x, int z, int y, int height) {
             float unit = 1.0F / UNIT;
-            BufferBuilder builder = water();
             ShaderBlocks.begin(builder, job.shaderIds, state, true, x, 0, z);
             face(builder, state, colour(state, biome, direction), direction, x * v, y * unit, z * v, v, height * unit, v,
                     LightTexture.FULL_SKY, job.textured);
@@ -277,6 +299,14 @@ final class FarMesher {
                 water = new BufferBuilder(waterMemory, VertexFormat.Mode.QUADS, DefaultVertexFormat.BLOCK);
             }
             return water;
+        }
+
+        BufferBuilder waterWall(int wall) {
+            if (waterWalls[wall] == null) {
+                wallMemory[wall] = new ByteBufferBuilder(1024);
+                waterWalls[wall] = new BufferBuilder(wallMemory[wall], VertexFormat.Mode.QUADS, DefaultVertexFormat.BLOCK);
+            }
+            return waterWalls[wall];
         }
 
         /** A water face's vertex colour: its biome tint, times its average colour when flat, shaded for its side. */
@@ -571,14 +601,19 @@ final class FarMesher {
         return sections[si].getBlockState(x, vy & 15, z);
     }
 
-    /** True when the cubes under a voxel are all drawn by the cube renderer. */
+    /**
+     * True when the cubes under a voxel are all drawn by the cube renderer. A voxel is drawn lowered by its column's
+     * drop, so it can reach into the cube below its own row: with only the air cube above the ground compiled, a far
+     * water voxel lowered into a cube still loading would otherwise vanish and leave a hole down to the sky.
+     */
     private static boolean drawn(Job job, int x, int vy, int z) {
         LongOpenHashSet drawn = job.drawn;
         if (drawn == null) return false;
         int v = 1 << job.level;
+        int drop = job.drops[Mth.clamp(z, 0, 15) * 16 + Mth.clamp(x, 0, 15)];
         int bx = job.x0 + x * v, by = job.bottom * (Far.SIZE << job.level) + vy * v, bz = job.z0 + z * v;
-        int cubes = Math.max(1, v >> 4);
-        for (int cy = by >> 4; cy < (by >> 4) + cubes; cy++) for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
+        int low = by - Mth.positiveCeilDiv(drop, Far.DROP_UNIT), high = by + v - 1 - drop / Far.DROP_UNIT, cubes = Math.max(1, v >> 4);
+        for (int cy = low >> 4; cy <= high >> 4; cy++) for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
             for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++) if (!drawn.contains(CubeKey.pack(cx, cy, cz))) return false;
         return true;
     }

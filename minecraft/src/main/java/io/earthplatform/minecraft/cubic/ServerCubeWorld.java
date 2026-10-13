@@ -4,6 +4,7 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.far.FarServer;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
+import io.earthplatform.minecraft.cubic.net.Throttle;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -12,6 +13,7 @@ import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -65,6 +67,12 @@ public final class ServerCubeWorld extends CubeWorld {
     private int failures, lastFailureLog = Integer.MIN_VALUE / 2;
     private final ConcurrentLinkedQueue<Ready> ready = new ConcurrentLinkedQueue<>();
     private final Map<UUID, Watcher> watchers = new HashMap<>();
+    /** Players' cube positions and the reach around them, for workers deciding whether a request is still wanted. */
+    private volatile int[] wantedAround = new int[0];
+    private volatile int wantedH, wantedV;
+    /** Requests workers dropped as no longer wanted, to take off {@code pending} on the server thread. */
+    private final java.util.concurrent.ConcurrentLinkedQueue<Long> droppedKeys = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private final java.util.concurrent.atomic.LongAdder generated = new java.util.concurrent.atomic.LongAdder(), dropped = new java.util.concurrent.atomic.LongAdder();
     private final Set<BlockPos> changed = new HashSet<>();
     private final LongOpenHashSet changedColumns = new LongOpenHashSet();
     /** Gameplay light per cube, computed on workers when first asked for; stamps count invalidations. */
@@ -139,15 +147,32 @@ public final class ServerCubeWorld extends CubeWorld {
 
     // Loading ------------------------------------------------------------------------------------
 
-    private void request(long key) {
-        if (closed || cubes.containsKey(key) || pending.contains(key)) return;
+    /**
+     * Queues a cube for loading or generation; false when it is loaded, queued or waiting to retry.
+     * Unless {@code always}, a worker skips it if no player still wants it when its turn comes, so
+     * a player travelling fast does not leave a queue of cubes behind that hold up the ones ahead.
+     */
+    private boolean request(long key, boolean always) {
+        if (closed || cubes.containsKey(key) || pending.contains(key)) return false;
         if (retryAt.containsKey(key)) {
-            if (ticks < retryAt.get(key)) return;
+            if (ticks < retryAt.get(key)) return false;
             retryAt.remove(key);
         }
         pending.add(key);
         int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
-        workers.execute(() -> ready.add(produce(key, x, y, z)));
+        workers.execute(() -> {
+            if (always || wanted(x, y, z)) { ready.add(produce(key, x, y, z)); generated.increment(); }
+            else { droppedKeys.add(key); dropped.increment(); }
+        });
+        return true;
+    }
+
+    /** Workers: whether a cube is still near a player, as of the last tick. */
+    private boolean wanted(int x, int y, int z) {
+        int[] at = wantedAround;
+        int h = wantedH, v = wantedV;
+        for (int i = 0; i + 2 < at.length; i += 3) if (CubeOffsets.within(x - at[i], y - at[i + 1], z - at[i + 2], h, v)) return true;
+        return false;
     }
 
     private Ready produce(long key, int x, int y, int z) {
@@ -182,6 +207,19 @@ public final class ServerCubeWorld extends CubeWorld {
     public void loadAround(BlockPos pos) {
         int cx = pos.getX() >> 4, cy = pos.getY() >> 4, cz = pos.getZ() >> 4;
         for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) loadNow(cx + dx, cy + dy, cz + dz);
+    }
+
+    /** Asks the workers for the cubes around a block without waiting; true once they are all loaded. */
+    public boolean readyAround(BlockPos pos) {
+        int cx = pos.getX() >> 4, cy = pos.getY() >> 4, cz = pos.getZ() >> 4;
+        boolean ready = true;
+        for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) {
+            long key = CubeKey.pack(cx + dx, cy + dy, cz + dz);
+            if (cubes.containsKey(key)) continue;
+            ready = false;
+            request(key, true);
+        }
+        return ready;
     }
 
     private void adoptReady(Ready result) {
@@ -219,18 +257,36 @@ public final class ServerCubeWorld extends CubeWorld {
 
     public void tick() {
         if (closed) return;
+        long start = System.nanoTime();
+        try { tickCubes(); }
+        finally { Timings.SERVER_TICK.since(start); }
+    }
+
+    private void tickCubes() {
         ticks++;
         for (int i = 0; i < MAX_ADOPT_PER_TICK; i++) {
             Ready result = ready.poll();
             if (result == null) break;
             adoptReady(result);
         }
+        for (Long key; (key = droppedKeys.poll()) != null; ) pending.remove(key.longValue());
         int h = horizontalRadius(), v = Cubic.VERTICAL_RADIUS;
         CubeOffsets offsets = CubeOffsets.of(h, v);
         syncWatchers();
-        for (Watcher watcher : watchers.values()) {
+        publishWanted(h + 2, v + 2);
+        // Each player gets an equal share of the free generation slots, starting with a different
+        // player each tick, so one player's backlog never starves another's.
+        List<Watcher> order = new ArrayList<>(watchers.values());
+        if (order.size() > 1) Collections.rotate(order, ticks % order.size());
+        int share = Math.max(8, (MAX_PENDING - pending.size()) / Math.max(1, order.size()));
+        for (Watcher watcher : order) {
             int cx = watcher.player.getBlockX() >> 4, cy = watcher.player.getBlockY() >> 4, cz = watcher.player.getBlockZ() >> 4;
-            requestAround(offsets, cx, cy, cz);
+            // A glider high above all terrain sees only far terrain and may be crossing a cube a tick: stream nothing.
+            if (io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(watcher.player)) {
+                if (ticks % 10 == 0) unsend(watcher, 1, 1, cx, cy, cz);
+                continue;
+            }
+            requestAround(offsets, cx, cy, cz, share);
             send(watcher, offsets, cx, cy, cz);
             if (ticks % 10 == 0) unsend(watcher, h + 1, v + 1, cx, cy, cz);
         }
@@ -252,16 +308,32 @@ public final class ServerCubeWorld extends CubeWorld {
         watchers.keySet().retainAll(present);
     }
 
-    private void requestAround(CubeOffsets offsets, int cx, int cy, int cz) {
-        for (int i = 0; i < offsets.size() && pending.size() < MAX_PENDING; i++) {
+    /**
+     * Shares where players are with the workers; the reach matches what {@link #unloadUnwatched}
+     * keeps. Gliders above all terrain stream no cubes, so nothing queued is wanted for them.
+     */
+    private void publishWanted(int h, int v) {
+        int[] at = new int[watchers.size() * 3];
+        int i = 0;
+        for (Watcher watcher : watchers.values()) {
+            if (io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(watcher.player)) continue;
+            at[i++] = watcher.player.getBlockX() >> 4; at[i++] = watcher.player.getBlockY() >> 4; at[i++] = watcher.player.getBlockZ() >> 4;
+        }
+        wantedH = h;
+        wantedV = v;
+        wantedAround = java.util.Arrays.copyOf(at, i);
+    }
+
+    private void requestAround(CubeOffsets offsets, int cx, int cy, int cz, int limit) {
+        for (int i = 0; i < offsets.size() && limit > 0 && pending.size() < MAX_PENDING; i++) {
             long key = CubeKey.pack(cx + offsets.dx(i), cy + offsets.dy(i), cz + offsets.dz(i));
-            if (!cubes.containsKey(key)) request(key);
+            if (request(key, false)) limit--;
         }
     }
 
     private void send(Watcher watcher, CubeOffsets offsets, int cx, int cy, int cz) {
-        int budget = SEND_CUBES_PER_TICK;
-        for (int i = 0; i < offsets.size() && budget > 0; i++) {
+        int budget = SEND_CUBES_PER_TICK, bytes = Throttle.allowance(watcher.player);
+        for (int i = 0; i < offsets.size() && budget > 0 && bytes > 0; i++) {
             int x = cx + offsets.dx(i), y = cy + offsets.dy(i), z = cz + offsets.dz(i);
             long key = CubeKey.pack(x, y, z);
             if (watcher.sent.contains(key)) continue;
@@ -271,8 +343,10 @@ public final class ServerCubeWorld extends CubeWorld {
             if (watcher.columns.add(column)) {
                 PacketDistributor.sendToPlayer(watcher.player, new CubePayloads.ColumnTops(x, z, topsFor(x, z).clone()));
             }
-            PacketDistributor.sendToPlayer(watcher.player, data(cube));
+            CubePayloads.CubeData data = data(cube);
+            PacketDistributor.sendToPlayer(watcher.player, data);
             watcher.sent.add(key);
+            bytes -= data.size();
             budget--;
         }
     }
@@ -357,6 +431,12 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     private void unloadUnwatched(int h, int v) {
+        long start = System.nanoTime();
+        try { unload(h, v); }
+        finally { Timings.CUBE_UNLOAD.since(start); }
+    }
+
+    private void unload(int h, int v) {
         List<Cube> drop = new ArrayList<>();
         for (Cube cube : cubes.values()) if (!watched(cube.key, h, v)) drop.add(cube);
         if (drop.isEmpty()) return;
@@ -366,7 +446,9 @@ public final class ServerCubeWorld extends CubeWorld {
         }
         // Keep sky tops near players only; far columns are rebuilt from the generator and cubes.
         tops.long2ObjectEntrySet().removeIf(entry -> !columnWatched(entry.getLongKey(), h * 3));
-        flushStorage();
+        long start = System.nanoTime();
+        storage.flushLater();
+        Timings.CUBE_FLUSH.since(start);
     }
 
     private void randomTicks(int v) {
@@ -500,7 +582,11 @@ public final class ServerCubeWorld extends CubeWorld {
         try {
             storage.put(cube.key, codec.write(cube, server.registryAccess()));
             cube.dirty = false;
-            far.edited(cube.x, cube.z);
+            // Saves that only record block entities or spawning leave far terrain as it was.
+            if (cube.reshaped) {
+                cube.reshaped = false;
+                far.edited(cube.x, cube.z);
+            }
         } catch (IOException | RuntimeException failure) {
             EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(cube.key), failure);
         }
@@ -518,7 +604,9 @@ public final class ServerCubeWorld extends CubeWorld {
 
     public void close() {
         if (closed) return;
-        save();
+        for (Cube cube : cubes.values()) store(cube);
+        try { storage.close(); }
+        catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not write cube regions", failure); }
         closed = true;
         workers.shutdownNow();
         far.close();
@@ -526,7 +614,7 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     public String describe() {
-        return generator.id() + ", " + cubes.size() + " cubes loaded, " + pending.size() + " pending, " + light.size() + " lit, "
+        return generator.id() + ", " + cubes.size() + " cubes loaded, " + pending.size() + " pending (" + generated + " made, " + dropped + " dropped as no longer wanted), " + light.size() + " lit, "
                 + watchers.size() + " watching, " + far.cached() + " far columns cached" + (failures > 0 ? ", " + failures + " generation failures" : "");
     }
 

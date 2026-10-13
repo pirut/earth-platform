@@ -10,8 +10,11 @@ import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import javax.annotation.Nullable;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
@@ -184,7 +187,8 @@ public final class EarthGenerator extends SurfaceGenerator {
             return;
         }
         double steep = Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1]));
-        if (cover != null && cover(x, z, voxel) == WorldCoverSource.WATER) {
+        CoverMemo memo = cover == null ? null : coverMemo.get();
+        if (cover != null && cover(memo, x, z, voxel) == WorldCoverSource.WATER) {
             // Water joined through water to the open sea at sea level is the sea, though the survey under it reads far
             // above it, as where a coarse ocean grid fills a lagoon with its island's slopes; but water mapped on a
             // steep slope of real ground, as a cliff's shadow, is not.
@@ -219,7 +223,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (sample[2] > 0.02 && y < SEA) y = SEA;
         // Nor does ground beside a lake or river, unless it lies well below it, as under a dam.
         if (cover != null) {
-            int shore = shore(dem, x, z, voxel);
+            int shore = shore(dem, memo, x, z, voxel);
             if (shore != DRY && y < shore && y >= shore - 4) y = shore;
             // A speck of land in a lagoon filled with coarse blocks, as a pier or a boat, takes the fill's height, tens
             // of metres up, and stood as a stone pillar out of the sea: it lies just above the water instead.
@@ -328,6 +332,33 @@ public final class EarthGenerator extends SurfaceGenerator {
      * voxel. Up close the read point wanders by about half a pixel, so class borders curve.
      */
     private int cover(double x, double z, int voxel) {
+        int ix = (int) x, iz = (int) z;
+        return ix == x && iz == z ? cover(coverMemo.get(), ix, iz, voxel) : coverAt(x, z, voxel);
+    }
+
+    /**
+     * Neighbouring columns probe the same points around them for shores and lakes, each about
+     * five times, and every probe costs a map projection: this remembers recent answers.
+     */
+    private int cover(CoverMemo memo, int ix, int iz, int voxel) {
+        long key = (long) (ix & 0x7FFFFFF) << 31 | (long) (iz & 0x7FFFFFF) << 4 | Integer.numberOfTrailingZeros(voxel) & 15;
+        int slot = (int) (key * 0x9E3779B97F4A7C15L >>> 52);
+        if (memo.keys[slot] == key) return memo.codes[slot];
+        int code = coverAt(ix, iz, voxel);
+        memo.keys[slot] = key;
+        memo.codes[slot] = code;
+        return code;
+    }
+
+    /** Recent land cover answers on one thread, by column and voxel size. */
+    private static final class CoverMemo {
+        final long[] keys = new long[4096];
+        final int[] codes = new int[4096];
+        CoverMemo() { Arrays.fill(keys, -1L); }
+    }
+    private final ThreadLocal<CoverMemo> coverMemo = ThreadLocal.withInitial(CoverMemo::new);
+
+    private int coverAt(double x, double z, int voxel) {
         double metresPerBlock = grid.groundMetresPerBlock(z);
         if (voxel <= 8) {
             double amplitude = 0.55 * PIXEL_METRES / metresPerBlock;
@@ -769,13 +800,13 @@ public final class EarthGenerator extends SurfaceGenerator {
      * The highest lake or river surface just beside a land column, or {@link #DRY} when there is
      * none, so the shore can be kept from dipping under it.
      */
-    private int shore(GlobalElevation dem, int x, int z, int voxel) {
+    private int shore(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel) {
         int best = DRY;
         double near = Math.max(3, voxel), far = Math.max(8, 2.5 * voxel);
         for (int k = 0; k < 8; k += 2) {
             for (double r : new double[]{near, far}) {
                 double px = x + RING_X[k] * r, pz = z + RING_Z[k] * r;
-                if (cover(px, pz, voxel) == WorldCoverSource.WATER && !seaWater(px, pz)) best = Math.max(best, lakeSurface(dem, px, pz, voxel));
+                if (cover(memo, (int) px, (int) pz, voxel) == WorldCoverSource.WATER && !seaWater(px, pz)) best = Math.max(best, lakeSurface(dem, px, pz, voxel));
             }
         }
         return best;
@@ -1141,46 +1172,62 @@ public final class EarthGenerator extends SurfaceGenerator {
     /**
      * Fetches the elevation tiles that cubes and every far level around a point read, several at a
      * time, so generation there never waits on the network. Failures are logged and left for the
-     * generator's own retries.
+     * generator's own retries. Elevation tiles, climate and land cover all load at once rather
+     * than one after another, as each spends most of its time waiting on the network.
      */
     @Override public void prepare(int x, int z) {
         record Tile(int zoom, int x, int y) {}
-        List<Tile> wanted = new ArrayList<>();
+        List<Runnable> loads = new ArrayList<>();
         for (int zoom = FAR_ZOOM; zoom <= TerrariumTileSource.MAX_ZOOM; zoom++) {
             // Each zoom serves levels whose reach doubles as the zoom halves.
             double reach = 1100.0 * (1 << (TerrariumTileSource.MAX_ZOOM - zoom));
             int tilesAcross = 1 << zoom;
             int x0 = (int) Math.floor(grid.pixelX(x - reach, zoom) / 256), x1 = (int) Math.floor(grid.pixelX(x + reach, zoom) / 256);
             int y0 = (int) Math.floor(grid.pixelY(z - reach, zoom) / 256), y1 = (int) Math.floor(grid.pixelY(z + reach, zoom) / 256);
-            for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++)
-                for (int tx = x0; tx <= x1; tx++) wanted.add(new Tile(zoom, Math.floorMod(tx, tilesAcross), ty));
+            for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) {
+                for (int tx = x0; tx <= x1; tx++) {
+                    Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
+                    loads.add(() -> {
+                        try { tiles.tile(tile.zoom, tile.x, tile.y); }
+                        catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch elevation tile {}/{}/{}: {}", tile.zoom, tile.x, tile.y, failure.getMessage()); }
+                    });
+                }
+            }
         }
-        wanted.parallelStream().forEach(tile -> {
-            try { tiles.tile(tile.zoom, tile.x, tile.y); }
-            catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch elevation tile {}/{}/{}: {}", tile.zoom, tile.x, tile.y, failure.getMessage()); }
-        });
         if (climate != null) {
             GeoPoint a = grid.geographic(x - 24000, z + 24000), b = grid.geographic(x + 24000, z - 24000);
-            try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
-            catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch climate: {}", failure.getMessage()); }
+            loads.add(() -> {
+                try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
+                catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch climate: {}", failure.getMessage()); }
+            });
         }
         if (imagery != null) {
             // Imagery: full detail near by, coarser zooms further out, as the far levels read them.
-            double[] reaches = {3500, 7000, 14000, 24000};
-            for (int k = 0; k < reaches.length; k++) {
-                double reach = reaches[k];
-                try { imagery.prefetch(grid, x - reach, z - reach, x + reach, z + reach, ImagerySource.MAX_ZOOM - k); }
-                catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch imagery: {}", failure.getMessage()); }
+            double[] imageryReaches = {3500, 7000, 14000, 24000};
+            for (int k = 0; k < imageryReaches.length; k++) {
+                double reach = imageryReaches[k];
+                int zoom = ImagerySource.MAX_ZOOM - k;
+                loads.add(() -> {
+                    try { imagery.prefetch(grid, x - reach, z - reach, x + reach, z + reach, zoom); }
+                    catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch imagery: {}", failure.getMessage()); }
+                });
             }
         }
-        if (cover == null) return;
-        // Land cover: full detail near by, overviews further out, as the far levels read them.
-        double[] reaches = {3500, 7000, 24000};
-        for (int overview = 0; overview < reaches.length; overview++) {
-            double reach = reaches[overview];
-            GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
-            try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), overview); }
-            catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch land cover: {}", failure.getMessage()); }
+        if (cover != null) {
+            // Land cover: full detail near by, overviews further out, as the far levels read them.
+            double[] reaches = {3500, 7000, 24000};
+            for (int overview = 0; overview < reaches.length; overview++) {
+                double reach = reaches[overview];
+                int level = overview;
+                GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
+                loads.add(() -> {
+                    try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), level); }
+                    catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch land cover: {}", failure.getMessage()); }
+                });
+            }
+        }
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (Runnable load : loads) pool.execute(load);
         }
     }
 }

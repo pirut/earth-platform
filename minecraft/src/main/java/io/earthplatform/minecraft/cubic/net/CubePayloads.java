@@ -41,6 +41,8 @@ public final class CubePayloads {
             for (int i = 0; i < count; i++) tags.add(buf.readNbt());
             return new CubeData(x, y, z, section, tags);
         });
+        /** Rough size on the wire, for pacing. */
+        public int size() { return 16 + section.length + 256 * blockEntities.size(); }
         @Override public Type<CubeData> type() { return TYPE; }
     }
 
@@ -115,6 +117,12 @@ public final class CubePayloads {
             for (int i = 0; i < 256; i++) drops[i] = buf.readShort();
             return new FarColumnData(key, bottom, sections, drops);
         });
+        /** Rough size on the wire, for pacing. */
+        public int size() {
+            int size = 528;
+            for (byte[] section : sections) size += 4 + section.length;
+            return size;
+        }
         @Override public Type<FarColumnData> type() { return TYPE; }
     }
 

@@ -17,6 +17,17 @@
     "CubicSpawnerMixin",
     "CubicWeatherMixin",
     "CubicServerWeatherMixin",
+    "CubicPortalFireMixin",
+    "CubicPortalMixin",
+    "CubicPortalPoiMixin",
+    "CubicEndExitMixin",
+    "NetherPortalAccess",
+    "CubicJetFlightMixin",
+    "CubicJetElytraMixin",
+    "CubicJetMoveCheckMixin",
+    "CubicJetChunkLoadMixin",
+    "CubicJetTicketMixin",
+    "CubicJetRocketMixin",
     "CubicPistonMixin",
     "CubicFallingBlockMixin",
     "CubicFallingEntityMixin",
@@ -45,7 +56,8 @@
     "CubicIrisPhotonCompatMixin",
     "CubicIrisVoxyMixin",
     "CubicIrisLodSamplersMixin",
-    "CubicIrisLodUniformsMixin"
+    "CubicIrisLodUniformsMixin",
+    "CubicJetWeatherMixin"
   ],
   "injectors": {
     "defaultRequire": 1

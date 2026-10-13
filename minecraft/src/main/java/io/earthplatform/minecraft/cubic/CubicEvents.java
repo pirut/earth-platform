@@ -5,6 +5,8 @@ import com.mojang.brigadier.arguments.DoubleArgumentType;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.ChatFormatting;
 import net.minecraft.Util;
@@ -17,13 +19,11 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.dimension.DimensionType;
-import net.minecraft.world.level.portal.DimensionTransition;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
-import net.neoforged.neoforge.event.entity.player.PlayerRespawnPositionEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
@@ -61,21 +61,42 @@ public final class CubicEvents {
     }
 
     @SubscribeEvent public static void tick(LevelTickEvent.Post event) {
-        if (event.getLevel() instanceof ServerLevel level && CubicLevel.of(level) instanceof ServerCubeWorld cubes) cubes.tick();
+        if (event.getLevel() instanceof ServerLevel level && CubicLevel.of(level) instanceof ServerCubeWorld cubes) {
+            cubes.tick();
+            arrive(level, cubes);
+        }
     }
 
-    /** Dying in the cubic world without a bed brings the player back to its arrival point, not the overworld. */
-    @SubscribeEvent public static void respawn(PlayerRespawnPositionEvent event) {
-        if (!(event.getEntity() instanceof ServerPlayer player) || !(CubicLevel.of(player.level()) instanceof ServerCubeWorld cubes)) return;
-        DimensionTransition target = event.getDimensionTransition();
-        if (Cubic.isCubic(target.newLevel().dimension())) return;
-        if (player.getRespawnPosition() != null && !target.missingRespawnBlock()) return;
-        event.setDimensionTransition(new DimensionTransition(player.serverLevel(), arrival(cubes), Vec3.ZERO,
-                target.yRot(), 0.0F, target.missingRespawnBlock(), target.postDimensionTransition()));
+    /** A travel waiting for the cubes at its landing spot; the player stays where they are meanwhile. */
+    private record Arrival(CommandSourceStack source, ServerPlayer player, int x, int z, int waited) {}
+
+    /** At most this many ticks of waiting before the rest of the cubes are loaded on the spot. */
+    private static final int ARRIVAL_PATIENCE = 200;
+    private static final List<Arrival> ARRIVALS = new ArrayList<>();
+
+    /**
+     * Moves each waiting traveller once the workers have the cubes around their landing spot, so
+     * several players travelling at once never generate those cubes on the server thread.
+     */
+    private static void arrive(ServerLevel level, ServerCubeWorld cubes) {
+        for (int i = ARRIVALS.size() - 1; i >= 0; i--) {
+            Arrival arrival = ARRIVALS.get(i);
+            if (arrival.player.isRemoved()) { ARRIVALS.remove(i); continue; }
+            CubeGenerator generator = cubes.generator();
+            int ground = Math.max(generator.surfaceY(arrival.x, arrival.z), generator.waterY(arrival.x, arrival.z));
+            if (!cubes.readyAround(new BlockPos(arrival.x, ground, arrival.z)) && arrival.waited < ARRIVAL_PATIENCE) {
+                ARRIVALS.set(i, new Arrival(arrival.source, arrival.player, arrival.x, arrival.z, arrival.waited + 1));
+                continue;
+            }
+            ARRIVALS.remove(i);
+            Vec3 stand = standOn(cubes, arrival.x, arrival.z);
+            arrival.player.teleportTo(level, stand.x, stand.y, stand.z, arrival.player.getYRot(), arrival.player.getXRot());
+            tellPlace(arrival.source, cubes, BlockPos.containing(stand));
+        }
     }
 
     /** The world's arrival point, with its cubes loaded so the player lands on solid ground. */
-    private static Vec3 arrival(ServerCubeWorld cubes) {
+    public static Vec3 arrival(ServerCubeWorld cubes) {
         int[] spot = landing(cubes.generator(), cubes.generator().arrival(), 4096, true);
         return standOn(cubes, spot[0], spot[1]);
     }
@@ -202,9 +223,8 @@ public final class CubicEvents {
                 return;
             }
             if (player.isRemoved()) return;
-            Vec3 stand = standOn(cubes, spot[0], spot[1]);
-            player.teleportTo(level, stand.x, stand.y, stand.z, player.getYRot(), player.getXRot());
-            tellPlace(source, cubes, BlockPos.containing(stand));
+            ARRIVALS.removeIf(waiting -> waiting.player == player);
+            ARRIVALS.add(new Arrival(source, player, spot[0], spot[1], 0));
         }));
         return 1;
     }

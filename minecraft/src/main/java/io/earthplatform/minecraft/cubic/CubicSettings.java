@@ -143,9 +143,10 @@ public final class CubicSettings {
         if (climate == null) {
             Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(ClimateSource.DATASET_ID);
             try {
-                // Rows are about 86 KiB; a 48 km square needs about 210 of them.
+                // Rows are about 86 KiB; a 48 km square needs about 210 of them. Its elevation comes in
+                // about 50 small reads, so more of them run at once.
                 climate = new ClimateSource(ClimateSource.CHELSA, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        320, 4, Duration.ofSeconds(30));
+                        320, 8, Duration.ofSeconds(30));
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the climate cache at " + cache, failure);
             }

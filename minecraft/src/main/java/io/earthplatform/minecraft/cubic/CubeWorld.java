@@ -161,6 +161,7 @@ public abstract class CubeWorld {
         if (old == state) return null;
         Block block = state.getBlock();
         cube.markModified();
+        cube.reshaped = true;
         updateTop(pos, state);
         onStateStored(cube, pos, old, state);
         boolean hadEntity = old.hasBlockEntity();
