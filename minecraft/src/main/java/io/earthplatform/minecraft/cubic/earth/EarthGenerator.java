@@ -16,6 +16,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import javax.annotation.Nullable;
@@ -118,7 +120,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Drawn from their own random, after the shared one, so caves stay as they were.
         RandomSource own = new LegacyRandomSource(seed ^ 0x434F564552L);
         warpX = new SimplexNoise(own); warpZ = new SimplexNoise(own); patches = new SimplexNoise(own);
-        for (int zoom = FAR_ZOOM; zoom <= TerrariumTileSource.MAX_ZOOM; zoom++) elevation[zoom] = new GlobalElevation(grid, tiles, zoom);
+        for (int zoom = COARSEST_ZOOM; zoom <= TerrariumTileSource.MAX_ZOOM; zoom++) elevation[zoom] = new GlobalElevation(grid, tiles, zoom);
         bathymetry = new GlobalElevation(grid, tiles, GlobalElevation.BATHYMETRY_ZOOM);
         SimplexNoise[] n = noises.noise;
         relief = n[0]; crags = n[1]; wetBroad = n[2]; wetLocal = n[3]; warmth = n[4];
@@ -188,12 +190,23 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     // Height -------------------------------------------------------------------------------------
 
-    /** Zoom of the coarsest elevation the far levels read. */
+    /** Zoom of the elevation the far terrain's surveys (strata, salt pans) read. */
     private static final int FAR_ZOOM = 11;
     /** Zoom the towers find tops and gorges in, near and far alike: pixels about 20 metres across. */
     private static final int TOWER_ZOOM = 13;
-    /** Source zoom for a far level: about one source pixel per voxel. */
-    private static int zoom(int level) { return level <= 2 ? TerrariumTileSource.MAX_ZOOM : Math.max(FAR_ZOOM, 17 - level); }
+    /** Zoom of the coarsest elevation the far levels read. */
+    private static final int COARSEST_ZOOM = 9;
+
+    /**
+     * Source zoom for a far level: about one source pixel per voxel, by the world's own scale. A
+     * world's blocks are metres at its home, so the farther a home is from the equator, the more
+     * pixels a block spans: a Svalbard home would read sixteen times the tiles a Yosemite one
+     * does at the same zoom, for detail the sources don't have.
+     */
+    private int zoom(int level) {
+        double zoom = Math.log(grid.worldWidthBlocks() / (256.0 * (1 << level))) / Math.log(2);
+        return Math.clamp(Math.round(zoom), COARSEST_ZOOM, TerrariumTileSource.MAX_ZOOM);
+    }
 
     @Override protected void ground(int x, int z, int[] out) { farGround(0, x, z, out); }
 
@@ -1799,9 +1812,14 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Override public void prepare(int x, int z) {
         record Tile(int zoom, int x, int y) {}
         List<Runnable> loads = new ArrayList<>();
-        for (int zoom = FAR_ZOOM; zoom <= TerrariumTileSource.MAX_ZOOM; zoom++) {
-            // Each zoom serves levels whose reach doubles as the zoom halves.
-            double reach = 1100.0 * (1 << (TerrariumTileSource.MAX_ZOOM - zoom));
+        // Each level's zoom, out to about three quarters of the level's square, as far as level 6 (17.6 km of
+        // blocks); the levels beyond load as they come. The water survey reads its own zoom 8.8 km around.
+        Map<Integer, Double> zooms = new TreeMap<>();
+        for (int level = 1; level <= 6; level++) zooms.merge(zoom(level), 275.0 * (1 << level), Math::max);
+        zooms.merge(WATER_ZOOM, 8800.0, Math::max);
+        for (Map.Entry<Integer, Double> entry : zooms.entrySet()) {
+            int zoom = entry.getKey();
+            double reach = entry.getValue();
             int tilesAcross = 1 << zoom;
             int x0 = (int) Math.floor(grid.pixelX(x - reach, zoom) / 256), x1 = (int) Math.floor(grid.pixelX(x + reach, zoom) / 256);
             int y0 = (int) Math.floor(grid.pixelY(z - reach, zoom) / 256), y1 = (int) Math.floor(grid.pixelY(z + reach, zoom) / 256);

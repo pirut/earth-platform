@@ -5,6 +5,7 @@ import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.CubeStorage;
 import io.earthplatform.minecraft.cubic.Timings;
+import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.FarColumn;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
@@ -98,7 +99,11 @@ public final class FarServer {
     public void request(ServerPlayer player, long[] keys) {
         if (closed) return;
         UUID id = player.getUUID();
-        Session session = sessions.computeIfAbsent(id, unused -> new Session());
+        Session session = sessions.get(id);
+        if (session == null) {
+            sessions.put(id, session = new Session());
+            if (generator instanceof EarthGenerator earth) PacketDistributor.sendToPlayer(player, new CubePayloads.EarthScale(earth.grid().metresPerBlock()));
+        }
         int bx = player.getBlockX(), bz = player.getBlockZ();
         session.bx = bx;
         session.bz = bz;

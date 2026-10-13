@@ -24,6 +24,7 @@ public final class GlobeTest {
         mend();
         seams();
         repair();
+        despike();
         kernel();
         streaming();
         worldCover();
@@ -267,6 +268,37 @@ public final class GlobeTest {
         near(0, tile[60 * 256 + 60], 0, "open-sea zeros are left for the bathymetry fill");
         near(expected[9 * 256 + 7], tile[9 * 256 + 7], 1e-3, "relief the reference smooths away is kept");
         near(expected[9 * 256 + 8], tile[9 * 256 + 8], 1e-3, "ordinary pixels are untouched");
+    }
+
+    private static void despike() {
+        // Flat coastal land 1 to 5 m high, sea (exact zeros) west of x 20.
+        float[] tile = new float[256 * 256];
+        for (int j = 0; j < 256; j++) for (int i = 20; i < 256; i++) tile[j * 256 + i] = 1 + ((i * 7 + j * 13) % 5);
+        float[] ground = tile.clone();
+        // A row of towers along a shore, 36 to 86 m, as at West Palm Beach at zoom 12, and a lone tower.
+        for (int j = 100; j < 103; j++) tile[j * 256 + 60] = 36 + (j - 100) * 25;
+        tile[120 * 256 + 90] = 140;
+        // A lake at 76 m with a 50 m hill on its shore, and an esker 60 m high and one pixel wide crossing it.
+        for (int j = 160; j < 200; j++) for (int i = 30; i < 80; i++) tile[j * 256 + i] = i < 55 ? 76 : 126;
+        for (int j = 160; j < 200; j++) tile[j * 256 + 40] = 136;
+        // A broad hill 30 m high, eight pixels across; a bluff 25 m high along the sea; a steady slope.
+        for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) {
+            double d = Math.hypot(i - 150, j - 150);
+            if (d < 8) tile[j * 256 + i] += (float) (30 * (1 - d / 8));
+            if (i >= 20 && i < 24 && j > 200) tile[j * 256 + i] = 25;
+            if (i >= 200 && j < 60) tile[j * 256 + i] = (i - 200) * 6f;
+        }
+        float[] before = tile.clone();
+        TerrariumTileSource.despike(tile);
+        for (int j = 100; j < 103; j++) near(ground[j * 256 + 60], tile[j * 256 + 60], 3, "tower at 60," + j + " lowered to the ground");
+        near(ground[120 * 256 + 90], tile[120 * 256 + 90], 3, "a lone tower lowered to the ground");
+        near(126, tile[180 * 256 + 55], 0, "a hill on a lake shore is kept");
+        near(136, tile[180 * 256 + 40], 0, "an esker across a lake is kept");
+        near(before[150 * 256 + 150], tile[150 * 256 + 150], 0, "a broad hill's top is kept");
+        near(25, tile[230 * 256 + 20], 0, "a bluff along the sea is kept");
+        near(before[30 * 256 + 250], tile[30 * 256 + 250], 0, "a steady slope is kept");
+        near(0, tile[50 * 256 + 5], 0, "open sea stays zero");
+        near(before[10 * 256 + 100], tile[10 * 256 + 100], 0, "ordinary ground is untouched");
     }
 
     /**
