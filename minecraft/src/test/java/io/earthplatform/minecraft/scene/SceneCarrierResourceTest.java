@@ -25,7 +25,7 @@ class SceneCarrierResourceTest {
         assertEquals(24,type.height()/16);
     }
     @Test void actualFlatCodecKeepsCarrierEmptyAndStructureFree() throws Exception {
-        var json=resource("/data/earthplatform/dimension/native_view_carrier.json");
+        var json=resource("/packs/prototypes/data/earthplatform/dimension/native_view_carrier.json");
         assertEquals("earthplatform:native_view_carrier",json.get("type").getAsString());
         var generator=json.getAsJsonObject("generator");assertEquals("minecraft:flat",generator.get("type").getAsString());
         var settings=generator.getAsJsonObject("settings");
