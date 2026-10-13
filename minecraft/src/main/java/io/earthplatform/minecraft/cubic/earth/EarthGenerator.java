@@ -167,7 +167,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Ground and water of a column from its elevation, slope, sea share and land cover. */
     private void place(GlobalElevation dem, int x, int z, double metres, double[] sample, int voxel, int[] out) {
-        if (sample[2] > 0.5) {
+        if (sample[2] > 0.5 || offshore(x, z, metres, voxel)) {
             out[0] = Math.min(SEA - 1, Mth.floor(SEA + 0.5 + metres));
             out[1] = SEA;
             return;
@@ -263,6 +263,69 @@ public final class EarthGenerator extends SurfaceGenerator {
         int reach = Math.max(40, voxel * 2), built = 0;
         for (int i = 0; i < 8; i += 2) if (cover(x + RING_X[i] * reach, z + RING_Z[i] * reach, voxel) == WorldCoverSource.BUILT_UP) built++;
         return built >= 2;
+    }
+
+    /** Cells, in blocks, for finding whether water joins the open sea, and how many cells out a search may go. */
+    private static final int SEA_CELL = 256, SEA_REACH = 512;
+    /** Whether each cell's water joins the open sea, as far as searches have found. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> openSea = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Whether a column under 0 m is sea though the elevation tiles mark no open sea there, as where
+     * they carry real depths (the North Sea, the Baltic). WorldCover leaves the open sea without
+     * data and marks coastal water, tidal flats and marsh beside it; those are sea when they join
+     * the open sea. Water that never reaches it, such as the Dead Sea or the Caspian, stays a lake
+     * at its own level, and other land under 0 m, such as a polder or Death Valley, stays dry.
+     */
+    private boolean offshore(int x, int z, double metres, int voxel) {
+        if (cover == null || metres >= 0) return false;
+        int code = cover(x, z, voxel);
+        if (code == WorldCoverSource.NO_DATA) return true;
+        boolean wet = code == WorldCoverSource.WATER
+                || metres < -1 && (code == WorldCoverSource.WETLAND || code == WorldCoverSource.BARE || code == WorldCoverSource.MANGROVES);
+        return wet && joinsOpenSea(x, z);
+    }
+
+    /**
+     * Whether the cell holding a column is water that joins the open sea through cells of water,
+     * within {@value #SEA_REACH} cells. A search that ends at the open sea answers for every water
+     * cell it crossed; one that runs out of water answers for all of them too, as a closed lake or
+     * sea such as the Caspian; one that reaches its limit answers only for the cells within half
+     * its reach, as open sea may lie just past the rest.
+     */
+    private boolean joinsOpenSea(int x, int z) {
+        long start = (long) Math.floorDiv(x, SEA_CELL) << 32 | Math.floorDiv(z, SEA_CELL) & 0xFFFFFFFFL;
+        Boolean known = openSea.get(start);
+        if (known != null) return known;
+        it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue queue = new it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue();
+        it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap steps = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+        it.unimi.dsi.fastutil.longs.LongArrayList crossed = new it.unimi.dsi.fastutil.longs.LongArrayList();
+        queue.enqueue(start);
+        steps.put(start, 0);
+        boolean found = false, cut = false;
+        while (!queue.isEmpty() && !found) {
+            long cell = queue.dequeueLong();
+            int cx = (int) (cell >> 32), cz = (int) cell, step = steps.get(cell);
+            int code = cover((double) cx * SEA_CELL + SEA_CELL / 2.0, (double) cz * SEA_CELL + SEA_CELL / 2.0, SEA_CELL);
+            if (code != WorldCoverSource.WATER && code != WorldCoverSource.NO_DATA) continue;
+            crossed.add(cell);
+            if (code == WorldCoverSource.NO_DATA) { found = true; break; }
+            if (step >= SEA_REACH) { cut = true; continue; }
+            for (int k = 0; k < 8 && !found; k += 2) {
+                long next = (long) (cx + (int) RING_X[k]) << 32 | (cz + (int) RING_Z[k]) & 0xFFFFFFFFL;
+                if (steps.containsKey(next)) continue;
+                Boolean result = openSea.get(next);
+                if (result != null && result) found = true;
+                else { steps.put(next, step + 1); queue.enqueue(next); }
+            }
+        }
+        if (openSea.size() > 1 << 20) openSea.clear();
+        if (crossed.isEmpty()) openSea.put(start, false);
+        for (int i = 0; i < crossed.size(); i++) {
+            long cell = crossed.getLong(i);
+            if (found || !cut || steps.get(cell) <= SEA_REACH / 2) openSea.put(cell, found);
+        }
+        return found && !crossed.isEmpty();
     }
 
     /**
@@ -454,7 +517,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         switch (code) {
             case WorldCoverSource.TREE_COVER -> {
                 if (cliff) return new Surface(t < 3 ? grove : stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false);
-                Surface s = forest(local, patch, x, z);
+                Surface s = forest(local, patch, x, z, y);
                 if (rocky != null || slope > 6) return new Surface(s.biome(), rocky != null ? rocky : COARSE_DIRT, STONE, 0, 0, 0, 0, 0, false);
                 return s;
             }
@@ -576,8 +639,51 @@ public final class EarthGenerator extends SurfaceGenerator {
         return longitude < -30 && longitude > -170;
     }
 
+    /**
+     * Giant sequoia groves: the larger real groves on the Sierra Nevada's western slope, as
+     * latitude, longitude and radius in metres (centres and sizes approximate).
+     */
+    private static final double[][] GROVES = {
+            {38.2777, -120.3080, 500},   // Calaveras North Grove
+            {38.2460, -120.2480, 1200},  // Calaveras South Grove
+            {37.7590, -119.8060, 400},   // Tuolumne Grove
+            {37.7480, -119.8410, 400},   // Merced Grove
+            {37.5110, -119.6000, 1100},  // Mariposa Grove
+            {37.4300, -119.5850, 900},   // Nelder Grove
+            {37.0230, -119.1080, 400},   // McKinley Grove
+            {36.8150, -118.9550, 1500},  // Converse Basin
+            {36.7470, -118.9720, 700},   // Grant Grove
+            {36.6950, -118.9200, 1900},  // Redwood Mountain Grove
+            {36.6380, -118.8170, 500},   // Muir Grove
+            {36.5700, -118.7600, 2000},  // Giant Forest
+            {36.4650, -118.6750, 1300},  // Atwell Grove
+            {36.2400, -118.6750, 2000},  // Mountain Home Grove
+            {36.1350, -118.5150, 1500},  // Freeman Creek Grove
+    };
+
+    /** The Sierra Nevada's sequoia belt, round all the groves. */
+    @Override protected boolean giants(int x, int z) {
+        GeoPoint p = grid.geographic(x, z);
+        return p.latitude() > 36.05 && p.latitude() < 38.33 && p.longitude() > -120.36 && p.longitude() < -118.45;
+    }
+
+    /** Whether a forest column is in a giant sequoia grove: inside a real grove, between 1,200 and 2,600 m up. */
+    private boolean sequoias(int x, int z, int y) {
+        int metres = y - SEA;
+        if (metres < 1200 || metres > 2600 || !giants(x, z)) return false;
+        GeoPoint p = grid.geographic(x, z);
+        double east = 111320 * Math.cos(Math.toRadians(p.latitude()));
+        for (double[] grove : GROVES) {
+            double dx = (p.longitude() - grove[1]) * east, dz = (p.latitude() - grove[0]) * 110540;
+            if (dx * dx + dz * dz < grove[2] * grove[2]) return true;
+        }
+        return false;
+    }
+
     /** The forest of a climate: rainforest, bamboo, dry tropical woodland, pine, oak, birch, dark oak, cherry or taiga. */
-    private Surface forest(Local local, double patch, int x, int z) {
+    private Surface forest(Local local, double patch, int x, int z, int y) {
+        // Giant sequoias among old conifers, on duff, in the real groves.
+        if (sequoias(x, z, y)) return new Surface(oldTaiga, patch > -0.2 ? PODZOL : GRASS, DIRT, 70, 7, 0, 90, 100, true, Tree.SEQUOIA);
         double t = local.temperature();
         return switch (local.zone()) {
             case RAINFOREST -> patch < -0.4 && bamboo(x, z) ? bambooForest(patch) : new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true, Tree.JUNGLE);
