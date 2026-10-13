@@ -36,6 +36,8 @@ The Earth comes from open data: elevation from AWS Terrain Tiles (USGS, NASA SRT
 
 Earth Platform changes these data to make a Minecraft world: it resamples them, picks blocks, and adds small procedural detail the data is too coarse for. It is not a survey and is not for navigation.
 
+Distant terrain is built on ideas from [Voxy](https://modrinth.com/mod/voxy) and [Distant Horizons](https://modrinth.com/mod/distanthorizons). We'd have used them directly, but neither works with a cubic-chunks world, so we wrote our own renderer following their lead; it contains no code from either. See [CREDITS.md](CREDITS.md#distant-terrain-thank-you-voxy-and-distant-horizons).
+
 Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.
 
 ## For developers

@@ -46,6 +46,7 @@ Land cover: © ESA WorldCover project 2021 / Contains modified Copernicus Sentin
 Climate: CHELSA V2.1 climatologies 1981-2010. Karger, D.N. et al. (2017) Climatologies at high resolution for the earth's land surface areas, Scientific Data 4:170122; Karger et al. (2021) EnviDat, doi:10.16904/envidat.228. CC0 1.0.
 Ground colours (optional, off by default): Sentinel-2 cloudless 2016, EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016).
 Built-in test areas (bundled): Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA; NOAA ETOPO 2022 (CC0).
+Distant terrain: built on ideas from Voxy by Cortex (MCRcortex) and Distant Horizons by James Seibel and contributors: the voxel level pyramid, detail by on-screen size, compact GPU faces and Voxy's shader-pack interface from Voxy; exact far heights and server-built far terrain from Distant Horizons. We'd have used them, but neither works with a cubic-chunks world, so Earth Platform has its own renderer. It contains no code from either.
 Earth Platform changes these data (resampling, block choices, procedural detail); it is not a survey and not for navigation. Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.''' #optional
 
 # The authors of the mod, displayed in the mod UI (optional)

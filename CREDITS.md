@@ -45,7 +45,27 @@ EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modifi
 
 ## Software
 
-Earth Platform runs on [NeoForge](https://neoforged.net/) and contains no third-party code. Optional companions are installed separately and keep their own licences: [Sodium](https://modrinth.com/mod/sodium) (PolyForm Shield 1.0.0), [Iris](https://modrinth.com/mod/iris) (LGPL-3.0) and [Photon](https://github.com/sixthsurge/photon) by Benjamin Stott (SixthSurge), under the Photon Shaders License Agreement. The far terrain renderer is original code that follows the ideas of [Voxy](https://modrinth.com/mod/voxy) and [Distant Horizons](https://modrinth.com/mod/distanthorizons); no code from either is included.
+Earth Platform runs on [NeoForge](https://neoforged.net/) and contains no third-party code. Optional companions are installed separately and keep their own licences: [Sodium](https://modrinth.com/mod/sodium) (PolyForm Shield 1.0.0), [Iris](https://modrinth.com/mod/iris) (LGPL-3.0) and [Photon](https://github.com/sixthsurge/photon) by Benjamin Stott (SixthSurge), under the Photon Shaders License Agreement. Earth Platform's own code was written for this project; see [Originality](docs/release/LICENSING-AUDIT.md#originality-check) for how that was checked.
+
+## Distant terrain: thank you, Voxy and Distant Horizons
+
+Earth Platform's far terrain would not exist without [Voxy](https://modrinth.com/mod/voxy) by Cortex (MCRcortex) and [Distant Horizons](https://modrinth.com/mod/distanthorizons) by James Seibel and contributors. They showed how to draw Minecraft terrain to the horizon, and our renderer is built on their ideas. We would have used them directly, but neither works with a cubic-chunks world: Distant Horizons stores heights in a 4,096-block band, too short for a world where Everest stands at Y 8,900, and Voxy builds its terrain from ordinary Minecraft chunks, which a cubic world doesn't have. So we wrote our own renderer for cubes, following their lead. It contains no code from either project.
+
+From **Voxy** we took the shape of the whole thing:
+- far terrain as a pyramid of 3D voxel sections, each level twice as coarse as the one inside it, so trees, cliffs, overhangs and player builds keep their shape in the distance;
+- choosing detail by how big a voxel looks on screen, so distant terrain stays sharp without wasting memory;
+- packing faces into a few bytes each in large GPU buffers, drawn by the renderer's own shader with one multi-draw per buffer, and one shared table of block looks;
+- the shader-pack interface Voxy created (`voxy.json`, `voxy_opaque.glsl`, `VoxyFragmentParameters` and `voxy_emitFragment`). Earth Platform speaks this interface so packs that support Voxy, such as Photon, light our far terrain the way they light Voxy's. Thanks to Voxy and to the shader authors who adopted it.
+
+From **Distant Horizons** we took:
+- exact heights in the distance: each far column is lowered so its ground or water sits at the real height instead of snapping to a voxel boundary;
+- building distant terrain on the server from the world generator, so far land is there before anyone has visited it;
+- how Iris hands a shader pack's uniforms to Distant Horizons' programs, which we follow for our own far programs;
+- years of showing players what "render distance" can mean.
+
+## Earlier Earth and cubic-chunks projects
+
+The [Cubic Chunks](https://github.com/OpenCubicChunks) mods, [Terrarium](https://github.com/gegy/terrarium) and [Terra++](https://github.com/BuildTheEarth/terraplusplus) (Build The Earth) proved that tall worlds and a real-scale Earth in Minecraft are possible. Earth Platform contains no code from them.
 
 ## Trademarks
 

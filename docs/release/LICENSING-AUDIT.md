@@ -78,3 +78,21 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 ## Mod licence
 
 `mod_license=All Rights Reserved`. Modrinth and CurseForge accept it, and the data credits don't depend on it. For a mod meant for everyone, an open licence (MIT, or LGPL-3.0 like Iris) invites contributions and modpack use; ARR keeps full control. Modpacks need permission under ARR unless the page grants it. JR's call.
+
+## Originality check
+
+JR asked (2026-10-13) that no code be taken from other projects, and that Voxy and Distant Horizons get full credit for what they inspired.
+
+**Method.** Every Java and GLSL file on the cubic engine branch and on every feature branch (PRs #3 to #8, the caves branch and the integration branch) was compared, after stripping comments, imports and whitespace, against the source of:
+Voxy, Distant Horizons (core and mod), Iris, Sodium, Photon's shaders, Cubic Chunks 1 and 2, Terrarium, Terra++, Terra 1:1, and Minecraft 1.21.1 itself (NeoForge sources).
+Two passes looked for shared runs: 30 identical tokens in a row (copied code), and 60 tokens with every name and number replaced (copied code with renamed variables). A narrower pass at 14 tokens covered the cubic engine, far terrain and Earth packages.
+
+**Findings.**
+- No copied implementation from any of these projects.
+- Matches that are not copying: Java and mixin-plugin boilerplate that every NeoForge mod has; Minecraft API calls and lists of vanilla block names; enum and switch layouts forced by Iris's own types.
+- Voxy's shader-pack interface (the `VoxyFragmentParameters` struct and the `voxy_emitFragment` call in `FarShaders`) is declared the way Voxy declares it, because shader packs are written against those exact names. This is an interface for compatibility, like a header file, and Voxy is credited for it.
+- One small helper to change for peace of mind: in the shader thread's `FarIrisUniforms` (PR #3), the switch that turns Iris uniform types into GLSL type names reads the same as the matching Voxy helper. It is a ten-line mapping fixed by Iris's enum, but it's being rewritten in our own form so no Voxy text remains. Asked through the coordinator.
+- The older 039 engine under `recovery/`, `unfinished/` and `historical/` was not scanned; it is not part of the mod. Its optional Distant Horizons backend only calls DH's public API (compile-only, not bundled).
+- Comments in the far terrain code already say where each idea came from ("the way Voxy keeps it", "as Distant Horizons keeps exact heights").
+
+**Credits.** The full thanks to Voxy and Distant Horizons is in [CREDITS.md](../../CREDITS.md#distant-terrain-thank-you-voxy-and-distant-horizons), the in-game Mods screen, the README and the store page draft. All of them say we would have used Voxy and Distant Horizons directly, but neither works with a cubic-chunks world.
