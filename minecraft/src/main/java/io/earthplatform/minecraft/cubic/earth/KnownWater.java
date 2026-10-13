@@ -7,8 +7,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Water at famous falls that the surveys cannot see, traced by hand from satellite imagery and
- * levelled from the elevation tiles around it. Victoria Falls' gorges are 60 to 120 m across and
+ * Water at famous falls that the surveys cannot see, traced by hand from EOX's Sentinel-2
+ * cloudless 2016 imagery (CC BY 4.0; not the later, non-commercial years) and levelled from the
+ * elevation tiles around it. Victoria Falls' gorges are 60 to 120 m across and
  * 100 m deep, and neither the 30 m elevation survey nor the land cover resolves them, so the
  * Zambezi fell onto a shelf rather than into its chasm. Skógafoss's river is narrower than the
  * land cover's pixels, so it had no water to pour. And the elevation tiles flatten the Niagara
@@ -41,24 +42,30 @@ final class KnownWater {
     static final List<Course> COURSES = List.of(
             // Victoria Falls: the First Gorge under the whole lip, then the Boiling Pot and the Second and Third Gorges
             // zigzagging down to the Batoka Gorge, which the survey does see.
+            // Source: traced on EOX Sentinel-2 cloudless 2016 (CC BY 4.0); levels from the elevation tiles.
             new Course("Victoria Falls, First Gorge", new double[][]{
                     {-17.92330, 25.84790, 765, 80}, {-17.92443, 25.85272, 765, 90}, {-17.92550, 25.85830, 765, 100}, {-17.92611, 25.86290, 765, 80}}, 6, false, 886),
+            // Source: traced on EOX Sentinel-2 cloudless 2016 (CC BY 4.0); levels from the elevation tiles.
             new Course("Victoria Falls, Second and Third Gorges", new double[][]{
                     {-17.92550, 25.85830, 765, 70}, {-17.92762, 25.85838, 764, 60}, {-17.92876, 25.85808, 764, 60}, {-17.92925, 25.85401, 763, 60},
                     {-17.92933, 25.84971, 763, 60}, {-17.92986, 25.84778, 763, 60}, {-17.93109, 25.84843, 762, 60}, {-17.93138, 25.85401, 762, 60},
                     {-17.93170, 25.85916, 761, 60}, {-17.93272, 25.85894, 761, 60}, {-17.93374, 25.85615, 760, 60}, {-17.93456, 25.85272, 759, 60}}, 6, false, 886),
             // Skógafoss: the Skógá down its ravine to the lip, and from the plunge pool out across the plain.
+            // Source: traced on EOX Sentinel-2 cloudless 2016 (CC BY 4.0); levels from the elevation tiles.
             new Course("Skógafoss, upper Skógá", new double[][]{
                     {63.53800, -19.50211, 208, 12}, {63.53685, -19.50103, 204, 12}, {63.53551, -19.50253, 190, 12}, {63.53503, -19.50511, 179, 14},
                     {63.53417, -19.50683, 172, 14}, {63.53322, -19.50768, 164, 16}, {63.53264, -19.50983, 158, 18}, {63.53226, -19.51112, 152, 22}}, 2, false, Double.NaN),
+            // Source: traced on EOX Sentinel-2 cloudless 2016 (CC BY 4.0); levels from the elevation tiles.
             new Course("Skógafoss, plunge pool and lower Skógá", new double[][]{
                     {63.53211, -19.51146, 87, 36}, {63.53195, -19.51176, 87, 32}, {63.53169, -19.51219, 87, 22}, {63.53073, -19.51305, 87, 16},
                     {63.52958, -19.51361, 86, 16}, {63.52805, -19.51391, 86, 16}, {63.52652, -19.51369, 85, 16}, {63.52537, -19.51455, 85, 16}}, 3, false, 152),
             // Iguazu's Devil's Throat, a chasm 150 m across at the head of the gorge, which the survey reads as a narrow notch.
+            // Source: traced on EOX Sentinel-2 cloudless 2016 (CC BY 4.0); levels from the elevation tiles.
             new Course("Iguazu Falls, Devil's Throat", new double[][]{
                     {-25.68400, -54.44120, 106, 80}, {-25.68593, -54.44056, 106, 80}, {-25.68787, -54.43970, 106, 90}, {-25.69057, -54.43863, 106, 100},
                     {-25.69289, -54.43756, 106, 120}, {-25.69463, -54.43670, 106, 150}, {-25.69579, -54.43605, 106, 160}, {-25.69637, -54.43571, 106, 120}}, 6, false, 180),
             // The Niagara gorge from the foot of the falls down through the Whirlpool Rapids to Lewiston.
+            // Source: traced on EOX Sentinel-2 cloudless 2016 (CC BY 4.0); levels from the elevation tiles.
             new Course("Niagara gorge", new double[][]{
                     {43.08000, -79.07600, 100, 350}, {43.08111, -79.07585, 100, 300}, {43.08425, -79.07410, 100, 380}, {43.08738, -79.07360, 99.5, 400},
                     {43.09039, -79.06766, 99, 300}, {43.09635, -79.06380, 98.5, 300}, {43.10261, -79.06122, 98, 300}, {43.10825, -79.05951, 96, 300},
@@ -67,6 +74,8 @@ final class KnownWater {
                     {43.16137, -79.04629, 71, 400}, {43.16512, -79.04886, 66, 400}}, 8, true, 157),
             // The Welland River, which joins the Niagara above the falls at the Niagara's level, but which the elevation
             // tiles read 40 to 70 m down in a trench of its own.
+            // Source: the river's water in ESA WorldCover, as the generator reads it, with its mouth checked on EOX Sentinel-2
+            // cloudless 2016 (CC BY 4.0); level from the elevation tiles.
             new Course("Welland River", new double[][]{
                     {43.06354, -79.04442, 171, 120}, {43.06221, -79.04910, 171, 100}, {43.05997, -79.05096, 171, 100}, {43.05781, -79.05460, 171, 100},
                     {43.05549, -79.05823, 171, 100}, {43.05250, -79.06096, 171, 100}, {43.05084, -79.06414, 171, 100}, {43.04918, -79.06868, 171, 100},
@@ -80,6 +89,7 @@ final class KnownWater {
     static final List<Pool> POOLS = List.of(
             // The upper Niagara from the Horseshoe Falls' crest up through the Cascades, two kilometres where the
             // elevation tiles read it at the gorge's level. The outline follows the crest; the land cover gives the shores.
+            // Source: traced on EOX Sentinel-2 cloudless 2016 (CC BY 4.0); levels from the elevation tiles.
             new Pool("Niagara above the Horseshoe Falls", new double[][]{
                     {43.07892, -79.07789}, {43.07798, -79.07768}, {43.07735, -79.07704}, {43.07716, -79.07607}, {43.07743, -79.07511},
                     {43.07814, -79.07453}, {43.07892, -79.07446}, {43.07978, -79.07457}, {43.07955, -79.07221}, {43.07876, -79.06311},
@@ -87,6 +97,7 @@ final class KnownWater {
                     {43.07892, -79.07865}},
                     new double[]{43.07760, -79.07620}, 158, new double[]{43.07650, -79.06600}, 171, 6, true),
             // The Horseshoe's plunge pool inside its curve, which the land cover maps as land under the spray.
+            // Source: traced on EOX Sentinel-2 cloudless 2016 (CC BY 4.0); levels from the elevation tiles.
             new Pool("Niagara, the Horseshoe Falls' plunge pool", new double[][]{
                     {43.07892, -79.07789}, {43.07798, -79.07768}, {43.07735, -79.07704}, {43.07716, -79.07607}, {43.07743, -79.07511},
                     {43.07814, -79.07453}, {43.07892, -79.07446}, {43.08000, -79.07446}, {43.08000, -79.07800}},
