@@ -47,6 +47,7 @@ public final class CubicClient {
     }
 
     @SubscribeEvent public static void frame(RenderFrameEvent.Pre event) {
+        FarLod.beginFrame();
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world != null) { world.renderer().beginFrame(); world.far().beginFrame(); }
     }

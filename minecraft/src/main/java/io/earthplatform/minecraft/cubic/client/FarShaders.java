@@ -56,6 +56,9 @@ final class FarShaders {
             flat out uint earth_light;
             flat out uint earth_look;
             flat out uint earth_normal;
+            out vec3 earth_position;
+            flat out vec3 earth_anchor;
+            flat out float earth_reach;
 
             // Corners (along the face's width, along its height) per direction, counter-clockwise from outside.
             const ivec2 CORNERS[24] = ivec2[](
@@ -66,6 +69,13 @@ final class FarShaders {
                 ivec2(0, 0), ivec2(1, 0), ivec2(1, 1), ivec2(0, 1),
                 ivec2(0, 0), ivec2(0, 1), ivec2(1, 1), ivec2(1, 0));
             const int TRIANGLES[6] = int[](0, 1, 2, 0, 2, 3);
+
+            // A point on a face, given as fractions along its width and its height.
+            vec3 earth_local(uint face, vec2 ab, float x, float y, float z, float width, uint extent, float v) {
+                if (face < 2u) return vec3((x + ab.x * width) * v, y, (z + ab.y * float(extent + 1u)) * v);
+                if (face < 4u) return vec3((x + ab.x * width) * v, y + ab.y * float(extent) / 16.0, z * v);
+                return vec3(x * v, y + ab.y * float(extent) / 16.0, (z + ab.x * width) * v);
+            }
 
             vec3 earth_rgb(uint colour) {
                 return vec3(float((colour >> 16) & 255u), float((colour >> 8) & 255u), float(colour & 255u)) / 255.0;
@@ -81,12 +91,13 @@ final class FarShaders {
                 float v = float(1 << column.w);
                 float x = float(q.x & 31u), z = float((q.x >> 5) & 31u), y = float(int(q.y)) / 16.0;
                 uint extent = q.z & 0xFFFFFu;
-                ivec2 ab = CORNERS[int(face) * 4 + corner];
-                vec3 local;
-                if (face < 2u) local = vec3((x + float(ab.x) * width) * v, y, (z + float(ab.y) * float(extent + 1u)) * v);
-                else if (face < 4u) local = vec3((x + float(ab.x) * width) * v, y + float(ab.y) * float(extent) / 16.0, z * v);
-                else local = vec3(x * v, y + float(ab.y) * float(extent) / 16.0, (z + float(ab.x) * width) * v);
-                vec3 position = vec3(column.xyz - earth_CameraBlock) + local - earth_CameraFraction;
+                vec2 ab = vec2(CORNERS[int(face) * 4 + corner]);
+                vec3 local = earth_local(face, ab, x, y, z, width, extent, v);
+                vec3 origin = vec3(column.xyz - earth_CameraBlock) - earth_CameraFraction;
+                vec3 position = origin + local;
+                earth_position = position;
+                earth_anchor = origin + earth_local(face, vec2(0.5), x, y, z, width, extent, v);
+                earth_reach = 16.0 * v;
                 gl_Position = earth_Projection * earth_ModelView * vec4(position, 1.0);
             #ifdef EARTH_JITTER
                 // The pack's TAA moves every frame's geometry by a sub-pixel jitter; far terrain moves with it.
@@ -229,9 +240,52 @@ final class FarShaders {
     private static final Pattern FACE_NORMAL =
             Pattern.compile("(vec3\\s+(\\w+)\\s*=\\s*vec3\\(\\s*uint\\(\\(\\s*parameters\\.face[^;]*;)");
 
-    /** Calls the pack's Voxy fragment code, which is placed before this. */
-    static final String PACK_MAIN = SAMPLE + """
+    /**
+     * Gives a ground face the depth of the slope it stands for: where the view ray through the
+     * pixel meets the plane through the face's middle along the ground slope, within sixteen voxels
+     * of the face. On an even staircase those planes are one plane, through every tread's and
+     * riser's middle, so a shader pack's screen-space shadows see a smooth hillside instead of
+     * stairs whose every step shades the next. Needs {@link #SLOPE} first.
+     */
+    private static final String SLOPE_DEPTH = """
+            in vec3 earth_position;
+            flat in vec3 earth_anchor;
+            flat in float earth_reach;
+            uniform mat4 earth_ModelView;
+            uniform mat4 earth_Projection;
+
+            void earth_slopeDepth() {
+                vec3 slope = earth_slope();
+                float along = dot(slope, earth_position);
+                float t = along == 0.0 ? 1.0 : dot(slope, earth_anchor) / along;
+                if (slope == vec3(0.0) || t <= 0.0 || abs(t - 1.0) * length(earth_position) > earth_reach) {
+                    gl_FragDepth = gl_FragCoord.z;
+                    return;
+                }
+                vec4 clip = earth_Projection * earth_ModelView * vec4(earth_position * t, 1.0);
+                gl_FragDepth = clamp((clip.z / clip.w) * 0.5 + 0.5, 0.0, 1.0);
+            }
+            """;
+
+    /**
+     * Calls the pack's Voxy fragment code, which is placed before this, after
+     * {@link #VOXY_PARAMETERS} and so the slope. When far terrain has its own depth
+     * ({@link FarLod}), pixels the game's terrain already covers are left to it, and ground faces
+     * take their slope's depth.
+     */
+    static final String PACK_MAIN = SAMPLE + SLOPE_DEPTH + """
+            #ifdef EARTH_OWN_DEPTH
+            uniform sampler2D earth_GameDepth;
+            // The face's own depth, before it takes its slope's, for telling what hides far water.
+            layout(location = 1) out float earth_faceDepth;
+            #endif
+
             void main() {
+            #ifdef EARTH_OWN_DEPTH
+                if (texelFetch(earth_GameDepth, ivec2(gl_FragCoord.xy), 0).r < 1.0) discard;
+                earth_faceDepth = gl_FragCoord.z;
+                earth_slopeDepth();
+            #endif
                 vec4 colour = earth_sample();
                 vec2 light = clamp(earth_levels() / 15.0 * (15.0 / 16.0) + 0.5 / 16.0, vec2(8.0 / 256.0), vec2(248.0 / 256.0));
                 voxy_emitFragment(VoxyFragmentParameters(colour, floor(earth_tile), earth_atlasUv(), earth_face, earth_look, light,
@@ -267,7 +321,7 @@ final class FarShaders {
      * declarations and main. Where the patch works out its normal from the face, the ground slope's
      * normal takes over.
      */
-    static String packFragment(String version, String patch) {
+    static String packFragment(String version, String patch, boolean ownDepth) {
         StringBuilder extensions = new StringBuilder(), body = new StringBuilder();
         for (String line : patch.split("\n", -1)) {
             String trimmed = line.trim();
@@ -275,6 +329,6 @@ final class FarShaders {
             else if (!trimmed.startsWith("#version")) body.append(line).append('\n');
         }
         String patched = FACE_NORMAL.matcher(body).replaceFirst("$1\n    $2 = earth_packNormal($2);");
-        return version + extensions + VOXY_PARAMETERS + patched + PACK_MAIN;
+        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + VOXY_PARAMETERS + patched + PACK_MAIN;
     }
 }

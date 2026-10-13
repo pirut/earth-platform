@@ -60,6 +60,7 @@ final class FarGpu {
     @Nullable private Program vanilla, pack;
     @Nullable private FarShaders.PackPatch packSource;
     @Nullable private Object packPipeline;
+    private boolean packOwnDepth;
     private boolean vanillaFailed;
     private long quadBytes;
 
@@ -132,7 +133,9 @@ final class FarGpu {
     /**
      * Starts a far terrain draw with the vanilla program, or with the shader pack's Voxy patch
      * ({@code patch}, preprocessed by the pack) or the generic pack program when {@code packMode}.
-     * Returns false when there is nothing usable to draw with.
+     * When far terrain has its own depth ({@link FarLod}), the pack program drops fragments where
+     * the game's depth (on {@link FarLod#vanillaUnit()}) already holds terrain. Returns false when
+     * there is nothing usable to draw with.
      */
     boolean begin(boolean packMode, @Nullable FarShaders.PackPatch patch, Matrix4f modelView, Matrix4f projection, Vec3 camera, float[] shade) {
         Program program = packMode ? packProgram(patch) : vanillaProgram();
@@ -162,6 +165,7 @@ final class FarGpu {
         GL20C.glUniform1i(program.location("earth_Columns"), COLUMN_UNIT);
         GL20C.glUniform1i(program.location("earth_Atlas"), ATLAS_UNIT);
         GL20C.glUniform1i(program.location("earth_Lightmap"), LIGHT_UNIT);
+        GL20C.glUniform1i(program.location("earth_GameDepth"), FarLod.vanillaUnit());
 
         int atlas = Minecraft.getInstance().getTextureManager().getTexture(InventoryMenu.BLOCK_ATLAS).getId();
         int lightmap = RenderSystem.getShaderTexture(2);
@@ -266,14 +270,16 @@ final class FarGpu {
      */
     @Nullable private Program packProgram(@Nullable FarShaders.PackPatch patch) {
         Object pipeline = ShaderBlocks.IRIS ? FarIrisUniforms.pipeline() : null;
-        if (pack != null && java.util.Objects.equals(patch, packSource) && pipeline == packPipeline) return pack;
+        boolean ownDepth = FarLod.active();
+        if (pack != null && java.util.Objects.equals(patch, packSource) && pipeline == packPipeline && ownDepth == packOwnDepth) return pack;
         if (pack != null) pack.close();
         pack = null;
         packSource = patch;
         packPipeline = pipeline;
+        packOwnDepth = ownDepth;
         String jitter = patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
         if (patch != null) {
-            pack = linkPack(jitter, FarShaders.packFragment(version, patch.fragment()), "far terrain (shader pack)");
+            pack = linkPack(jitter, FarShaders.packFragment(version, patch.fragment(), ownDepth), "far terrain (shader pack)");
             if (pack != null) {
                 EarthPlatformMod.LOGGER.info("Far terrain uses the shader pack's Voxy fragment code{}", pack.jittered ? ", jittered for its TAA" : "");
                 return pack;

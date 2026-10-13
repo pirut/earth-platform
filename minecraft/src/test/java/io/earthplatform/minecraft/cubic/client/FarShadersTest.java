@@ -59,15 +59,22 @@ class FarShadersTest {
             """;
 
     @Test void theGroundSlopeTakesOverThePacksFaceNormal() {
-        String source = FarShaders.packFragment("#version 330 core\n", PHOTON_NORMAL);
+        String source = FarShaders.packFragment("#version 330 core\n", PHOTON_NORMAL, false);
         int computed = source.indexOf("* 2.0 - 1.0);"), replaced = source.indexOf("normal = earth_packNormal(normal);");
         assertTrue(computed > 0 && replaced > computed, source);
         assertTrue(replaced < source.indexOf("encode_unit_vector(normal)"), source);
     }
 
+    @Test void ownDepthKeepsFarTerrainBehindTheGameAndWritesItsFaceDepth() {
+        String own = FarShaders.packFragment("#version 330 core\n", PHOTON_NORMAL, true);
+        assertTrue(own.startsWith("#version 330 core\n") && own.contains("#define EARTH_OWN_DEPTH"), own);
+        assertTrue(own.contains("earth_faceDepth = gl_FragCoord.z"), own);
+        assertTrue(!FarShaders.packFragment("#version 330 core\n", PHOTON_NORMAL, false).contains("#define EARTH_OWN_DEPTH"));
+    }
+
     @Test void packsWithAnotherNormalAreLeftAlone() {
         String patch = "void voxy_emitFragment(VoxyFragmentParameters parameters) { vec3 n = vec3(0.0, 1.0, 0.0); }\n";
-        assertTrue(!FarShaders.packFragment("#version 330 core\n", patch).contains("= earth_packNormal("));
+        assertTrue(!FarShaders.packFragment("#version 330 core\n", patch, false).contains("= earth_packNormal("));
     }
 
     @Test void flatGroundPointsStraightUp() {

@@ -37,7 +37,7 @@ import org.slf4j.Logger;
 public final class PhotonCompat {
     private static final Logger LOGGER = LogUtils.getLogger();
     /** Bumped whenever the edits change, so older copies are rebuilt. */
-    private static final int VERSION = 2;
+    private static final int VERSION = 4;
     private static final String MODE = System.getProperty("earthplatform.photon.compat", "auto");
 
     private PhotonCompat() {}
@@ -138,8 +138,15 @@ public final class PhotonCompat {
         edit(staging, "include/lighting/specular_lighting.glsl", text -> replace(text,
                 "(?m)^([ \\t]*)(vec3 fog_scattering_previous = texture\\(colortex7, hit_uv_prev\\)\\.rgb;)[ \\t]*$",
                 "#ifdef EARTH_NO_FOG_HISTORY\n$1const vec3 fog_scattering_previous = vec3(0.0);\n#else\n$1$2\n#endif", 1));
-        edit(staging, "program/d4_deferred_shading.fsh", text -> replace(text,
-                "(#include \"/include/global.glsl\"\\n)", "$1\n#define EARTH_NO_FOG_HISTORY\n", 1));
+        // Without screen-space reflections (see deferredShading) the hit branch is dead; some compilers still count its texture.
+        edit(staging, "include/lighting/specular_lighting.glsl", text -> replace(text,
+                "(?m)^([ \\t]*)(vec3 reflection = textureLod\\(colortex5, hit_uv_prev, mip_level\\)\\.rgb;)[ \\t]*$",
+                "#ifdef EARTH_DEPTH_FROM_COMBINED\n$1vec3 reflection = vec3(0.0);\n#else\n$1$2\n#endif", 1));
+        edit(staging, "program/d4_deferred_shading.fsh", PhotonCompat::deferredShading);
+        // Voxy's own far water buffer (colortex16) doesn't exist under Iris; Photon only reads it for far water we don't draw.
+        edit(staging, "program/c1_blend_layers.fsh", text -> replace(text,
+                "(?m)^([ \\t]*)vec4 gbuffer_data = texelFetch\\(colortex16, texel, 0\\);[ \\t]*$",
+                "$1vec4 gbuffer_data = vec4(0.0);", 1));
         // The cloud shadow map's pass refuses to compile without Cloud Shadows; it is switched off then instead.
         edit(staging, "program/p0_clouds_prep.vsh", text -> replace(text, "(?m)^#error .*Cloud Shadows.*$", "// (disabled without Cloud Shadows)", 1));
         edit(staging, "shaders.properties", PhotonCompat::properties);
@@ -158,6 +165,49 @@ public final class PhotonCompat {
         Files.createDirectories(copy.getParent());
         Files.move(staging, copy);
     }
+
+    /**
+     * The deferred shading pass. Besides skipping fog history: with far terrain's own depth
+     * (Photon's LOD path) it would read two more textures than fit, so there it goes without
+     * screen-space reflections on opaque surfaces, and tells far terrain from the rest by the
+     * combined and far depths instead of also reading the game's depth.
+     */
+    private static String deferredShading(String text) {
+        String out = replace(text, "(#include \"/include/global.glsl\"\\n)", Matcher.quoteReplacement(DEFERRED_DEFINES), 1);
+        out = replace(out, "(?m)^([ \\t]*)(float depth_mc = texelFetch\\(depthtex1, texel, 0\\)\\.x;)[ \\t]*$",
+                "#ifdef EARTH_DEPTH_FROM_COMBINED\n$1float depth_mc = earth_gameDepth(texel, depth);\n#else\n$1$2\n#endif", 1);
+        return replace(out, "(?m)^void main\\(\\) \\{$", Matcher.quoteReplacement(GAME_DEPTH + "void main() {"), 1);
+    }
+
+    private static final String DEFERRED_DEFINES = """
+            #include "/include/global.glsl"
+
+            #define EARTH_NO_FOG_HISTORY
+            #ifdef LOD_MOD_ACTIVE
+            #undef ENVIRONMENT_REFLECTIONS
+            #define EARTH_DEPTH_FROM_COMBINED
+            #endif
+            """;
+
+    /**
+     * Stands in for the game's depth where only the hand, far terrain and everything else need
+     * telling apart: the combined depth is 0 for the hand and 1 for sky, and is far terrain's own
+     * depth, re-projected, exactly where far terrain shows.
+     */
+    private static final String GAME_DEPTH = """
+            #ifdef EARTH_DEPTH_FROM_COMBINED
+            float earth_gameDepth(ivec2 texel, float combined) {
+                if (combined <= 0.0) return 0.0;
+                float lod = texelFetch(lod_depth_tex, texel, 0).x;
+                if (lod >= 1.0) return combined >= 1.0 ? 1.0 : 0.9;
+                if (combined >= 1.0) return 1.0;
+                float reprojected = view_to_screen_space_depth(combined_projection_matrix,
+                    screen_to_view_space_depth(lod_projection_matrix_inverse, lod));
+                return abs(reprojected - combined) <= 4e-7 ? 1.0 : 0.9;
+            }
+            #endif
+
+            """;
 
     private static String properties(String text) {
         // Profiles mustn't turn the features back on.

@@ -23,7 +23,10 @@
     "CubicShaderFarMixin",
     "CubicIrisSourceNamesMixin",
     "CubicIrisProgramSetMixin",
-    "CubicIrisPhotonCompatMixin"
+    "CubicIrisPhotonCompatMixin",
+    "CubicIrisVoxyMixin",
+    "CubicIrisLodSamplersMixin",
+    "CubicIrisLodUniformsMixin"
   ],
   "injectors": {
     "defaultRequire": 1
