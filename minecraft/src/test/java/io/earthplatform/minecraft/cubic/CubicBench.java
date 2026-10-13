@@ -75,14 +75,14 @@ class CubicBench {
         for (Place place : PLACES) {
             if (!only.isEmpty() && !place.name.toLowerCase(Locale.ROOT).startsWith(only)) continue;
             EarthSettings settings = EarthSettings.at(place.latitude, place.longitude);
-            EarthGenerator warm = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate);
+            EarthGenerator warm = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null);
             int[] home = warm.arrival();
             long t0 = System.nanoTime();
             warm.prepare(home[0], home[1]);
             System.out.printf(Locale.ROOT, "%n== %s (block %d, %d)%nprepare (data fetch): %.0f ms%n", place.name, home[0], home[1], ms(t0));
 
             // Cubes around a player standing on the ground, as the server loads them.
-            EarthGenerator gen = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate);
+            EarthGenerator gen = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null);
             int ground = gen.surfaceY(home[0], home[1]);
             int cx = home[0] >> 4, cy = (ground + 2) >> 4, cz = home[1] >> 4;
             CubeOffsets offsets = CubeOffsets.of(Cubic.MAX_HORIZONTAL_RADIUS, Cubic.VERTICAL_RADIUS);
