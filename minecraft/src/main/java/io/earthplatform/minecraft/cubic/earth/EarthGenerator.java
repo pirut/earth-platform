@@ -292,7 +292,9 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
             if (!shadow) {
                 // Over drowned ground, as a reservoir newer than the survey, the bed is the survey's, far below.
-                int bed = surface - lakeDepth(x, z, voxel), surveyedBed = Mth.floor(SEA + 0.5 + metres);
+                int depth = lakeDepth(x, z, voxel);
+                if (surface <= SEA + LOWLAND) depth = Math.min(depth, lowland(x, z));
+                int bed = surface - depth, surveyedBed = Mth.floor(SEA + 0.5 + metres);
                 out[0] = surface > surveyedBed + BANK ? Math.min(bed, surveyedBed) : bed;
                 out[1] = surface;
                 return;
@@ -457,7 +459,21 @@ public final class EarthGenerator extends SurfaceGenerator {
     private int lagoonBed(int x, int z, double metres, int voxel) {
         int bed = seabed(x, z, metres, voxel);
         // Where the detail holds real depths deeper than a lagoon lies, as in the North Sea, they stand.
-        return metres < -LAGOON_DEPTH ? bed : Math.max(bed, SEA - Math.min(LAGOON_DEPTH, lakeDepth(x, z, voxel)));
+        return metres < -LAGOON_DEPTH ? bed : Math.max(bed, SEA - Math.min(Math.min(LAGOON_DEPTH, lowland(x, z)), lakeDepth(x, z, voxel)));
+    }
+
+    /** Surface, in blocks above the sea's, under which water counts as lowland water for {@link #lowland}. */
+    private static final int LOWLAND = 3;
+
+    /**
+     * Deepest that water at about sea level lies in country as flat as the ground round it: a few
+     * blocks plus half the ground's height range. Marsh and swamp pools, sloughs and coastal bays in
+     * flat lowland, as the Everglades', the Okavango's or the Sundarbans', are a metre or two deep;
+     * shelving from their shores as lakes do, the Everglades' pools lay twenty blocks deep and read
+     * as open sea. Water in hilly or mountain country, as fjords and lochs, keeps its shelving.
+     */
+    private int lowland(double x, double z) {
+        return Mth.clamp((int) Math.round(LOWLAND + relief(x, z) / 2), LOWLAND, 40);
     }
 
     // Rivers ---------------------------------------------------------------------------------------
