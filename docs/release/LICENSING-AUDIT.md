@@ -16,7 +16,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | ESA WorldCover | OK | Credited, changes noted (CC BY 4.0) |
 | CHELSA climate | OK (licence) / courtesy | CC0; ask CHELSA about public traffic or mirror the four bands |
 | RESOLVE Ecoregions 2017 (PR #14) | OK | CC BY 4.0; credited with the citation, and the derived raster noted |
-| Copernicus GLO-30 for filling elevation holes (coming) | OK | Same licence as the bundled crop; credit and liability line drafted below |
+| Copernicus GLO-30 elevation fill (PR #22) | OK | Same licence as the bundled crop; credited with the liability and no-endorsement lines |
 | River channels (PR #19) | **OK: JRC Global Surface Water v1.4** | JRC GSW is free without restriction of use, with a citation. HydroRIVERS' licence forbids open redistribution of its data, so it can't ship in an LGPL mod (details below) |
 | Hand-traced falls water (PR #16 `KnownWater`) | **Resolved: removed** | Deleted in 3e297c3; falls now come from general rules on Terrarium elevation and WorldCover, so no traced or OSM data ships |
 | Bundled test data (Copernicus GLO-30, NOAA ETOPO, WorldCover) | OK | Credited; could be dropped from the release jar |
@@ -78,7 +78,8 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 
 Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `neoforge.mods.toml` when its PR lands. All three are data, separate from the LGPL-3.0 code licence: the code licence doesn't change their terms, and their terms don't restrict the code.
 
-### Copernicus DEM GLO-30 ("Filling elevation holes")
+### Copernicus DEM GLO-30 ("Filling elevation holes", PR #22), credited
+- Landed in PR #22. `CopernicusSource` range-reads GLO-30 from the AWS Open Data bucket, caches it on disk, and fills fjords and datum-offset ground. Off with `-Dearthplatform.earth.copernicus=false`. The credit below is now in CREDITS.md, THIRD_PARTY_NOTICES.md and the mods list.
 - Terms: the [Copernicus WorldDEM-30 licence](../../geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf) (Art. 4) allows reproduction, distribution, communication to the public, and adaptation and combination with other data, free of charge and for any purpose. Same licence as the Everest crop already in the jar. OK, whether tiles are streamed at runtime or a derived fill is bundled.
 - Obligations (Art. 6): give the "produced using" notice for adapted data; add the liability sentence in a notice covering the distribution; don't suggest Copernicus endorses the mod; and bind anyone we let redistribute to the same duties, which the notice in the jar and CREDITS.md does. The bundled crop's credit now carries the liability sentence too (it was missing).
 - GLO-30 Public leaves out a few tiles (Armenia and Azerbaijan); those areas keep the other elevation sources.

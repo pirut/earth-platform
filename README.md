@@ -7,7 +7,7 @@
 - **Real height, no limits.** Worlds run from Y -16384 to 16383, so Everest's summit is 8,848 blocks above the sea and you can climb it, mine it and build on it.
 - **Real ground.** Elevation, land cover and climate come from open satellite and survey data. Forests, deserts, glaciers, wetlands, mangroves, lakes and rivers sit where they are on Earth.
 - **Minecraft's own world, placed by the real climate.** The Amazon grows vanilla jungle, the Serengeti acacia savanna, Siberia snowy taiga. Giant sequoias stand at their real 70 to 90 m in the Sierra Nevada groves.
-- **See for kilometres.** Distant terrain is drawn as textured voxels out to about 23 km, so you see the far side of the valley, not fog.
+- **See for kilometres.** Distant terrain is drawn as textured voxels out to about 94 km, so you see the far side of the valley and the ranges beyond it, not fog.
 - **Ordinary survival.** Mine, craft, build and die as usual. Caves, ores, villages and other vanilla structures generate, and the Nether and the End work through normal portals.
 - **Pick where to start.** Choose a famous place or any latitude and longitude when you make the world, and travel anywhere later with `/earth visit` or `/earth goto`.
 - **Ride the jet stream.** Glide an elytra above Y 9,200 and the wind carries you across a continent in under an hour.
@@ -34,7 +34,7 @@ Full steps, shaders and the Mac notes: [Install guide](docs/INSTALL.md). Command
 
 ## Credits
 
-The Earth comes from open data: elevation from AWS Terrain Tiles (USGS, NASA SRTM, NOAA, Copernicus and national mapping agencies) plus finer USGS 3DEP heights in the United States and REMA from the Polar Geospatial Center in Antarctica, land cover from ESA WorldCover, climate from CHELSA, rivers from JRC Global Surface Water, ecoregions from RESOLVE Ecoregions 2017, and, if you turn it on, ground colours from EOX Sentinel-2 cloudless imagery. The full attribution each source requires is in [CREDITS.md](CREDITS.md) and in game under Mods → Earth Platform.
+The Earth comes from open data: elevation from AWS Terrain Tiles (USGS, NASA SRTM, NOAA, Copernicus and national mapping agencies) with Copernicus GLO-30 filling fjords and the far north, finer USGS 3DEP heights in the United States and REMA from the Polar Geospatial Center in Antarctica, land cover from ESA WorldCover, climate from CHELSA, rivers from JRC Global Surface Water, ecoregions from RESOLVE Ecoregions 2017, and, if you turn it on, ground colours from EOX Sentinel-2 cloudless imagery. The full attribution each source requires is in [CREDITS.md](CREDITS.md) and in game under Mods → Earth Platform.
 
 Earth Platform changes these data to make a Minecraft world: it resamples them, picks blocks, and adds small procedural detail the data is too coarse for. It is not a survey and is not for navigation.
 

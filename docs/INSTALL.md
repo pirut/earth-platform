@@ -23,7 +23,7 @@ Other launchers (Prism, Modrinth App, CurseForge App, MultiMC): make a NeoForge 
 
 ## Shaders (optional)
 
-Earth Platform is tested with this exact set. Iris and Sodium must be **these versions**: the game refuses to start if a different version of either is installed alongside Earth Platform.
+Earth Platform is tested with this set. Iris must be 1.8.14 or a later 1.8 release and Sodium 0.8.12 or a later 0.8 release; the game refuses to start with an older version or a new major version of either.
 
 | Project | Version | Goes in |
 | --- | --- | --- |

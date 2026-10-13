@@ -20,6 +20,11 @@ Mapzen/Tilezen terrain tiles on the [Registry of Open Data on AWS](https://regis
 - United Kingdom terrain data © Environment Agency copyright and/or database right 2015. All rights reserved.
 - United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey.
 
+## Fjords and the far north: Copernicus DEM GLO-30 (downloaded while you play)
+
+Elevation fill: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.
+Licence: the [Copernicus WorldDEM-30 licence](geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf), free of charge for any purpose. Changes: each 1° square is compared once with the elevation tiles, and where those stand well above GLO-30 over an area (fjords such as Milford Sound and Ísafjörður, and ground north of SRTM's reach), the tiles are moved toward GLO-30. Tiles come from the Copernicus DEM bucket on the Registry of Open Data on AWS and are cached on disk. Turn it off with `-Dearthplatform.earth.copernicus=false`. This project is not endorsed by the European Union, ESA or the Copernicus programme.
+
 ## United States: USGS 3DEP (downloaded while you play)
 
 United States: USGS 3D Elevation Program 1/3 arc-second DEM (public domain), courtesy of the U.S. Geological Survey. U.S. Geological Survey, 3D Elevation Program 1/3 arc-second Digital Elevation Model, https://www.usgs.gov/3d-elevation-program.
