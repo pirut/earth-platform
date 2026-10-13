@@ -43,7 +43,20 @@ public final class EarthClouds {
     private static double ground = Double.NaN;
     private static long lastNanos;
 
+    /**
+     * Where the Earth's sky starts to darken: vanilla turns the lower sky black below Y 63 and fogs
+     * everything below Y 32, which in a world with real heights blacks out Death Valley, the Dead Sea
+     * shore and the Caspian. Here that only happens a kilometre below sea level, deeper than any dry
+     * land on Earth.
+     */
+    public static final double HORIZON_Y = SEA - 1000;
+
     private EarthClouds() {}
+
+    /** True for the cubic dimension, whose sky follows real heights. */
+    public static boolean earthSky(Object level) {
+        return level instanceof ClientLevel client && Cubic.isCubic(client.dimension());
+    }
 
     /** Draws the Earth's clouds instead of vanilla's; false leaves the frame to vanilla. */
     public static boolean render(ClientLevel level, Matrix4f view, Matrix4f projection, float partialTick, double camX, double camY, double camZ) {

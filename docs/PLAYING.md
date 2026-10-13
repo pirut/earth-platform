@@ -39,3 +39,5 @@ Places you have visited work without a connection. When the data servers can't b
 ## How Earth worlds work
 
 An Earth world's overworld is an empty stand-in that nobody stays in. New players, respawns without a bed and anyone who would land in it are sent to the Earth (the `earthplatform:cubic` dimension). Older saves made with the Default world type keep `/cubes enter`.
+
+The Earth shares the overworld's clock and weather: sleeping through the night on the Earth skips it and clears the rain, as in vanilla. With **Bonus Chest** on in Create World, the chest and its torches appear beside where you first arrive on the Earth. Clouds float a few kilometres up (`cloudHeight` in the client settings, 0 for vanilla clouds), and the sky stays bright in real places below sea level such as Death Valley and the Dead Sea.

@@ -24,7 +24,9 @@
     "CubicIrisSourceNamesMixin",
     "CubicIrisProgramSetMixin",
     "EarthCreateWorldMixin",
-    "EarthCloudsMixin"
+    "EarthCloudsMixin",
+    "EarthHorizonMixin",
+    "EarthFogColourMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -287,7 +287,9 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     private CompoundTag updateTag(BlockEntity entity) {
-        if (entity.isRemoved() || entity.getUpdatePacket() == null) return null;
+        // Every block entity goes, as in vanilla chunk packets: chests, barrels and furnaces have no
+        // update packet, and without their tag the client has no entity to draw them with.
+        if (entity.isRemoved()) return null;
         CompoundTag tag = entity.getUpdateTag(server.registryAccess());
         BlockPos pos = entity.getBlockPos();
         tag.putInt("x", pos.getX()); tag.putInt("y", pos.getY()); tag.putInt("z", pos.getZ());

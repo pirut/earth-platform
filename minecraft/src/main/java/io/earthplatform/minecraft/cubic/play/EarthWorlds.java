@@ -262,6 +262,7 @@ public final class EarthWorlds {
             ServerLevel level = server.getLevel(Cubic.LEVEL);
             player.teleportTo(level, spot.x, spot.y, spot.z, player.getYRot(), 0.0F);
             player.resetFallDistance();
+            EarthBasics.bonusChest(level, cubicFolder(server), spot);
             status.send(player, status.payload(EarthStatus.PLAYING, EarthStatus.OK, 0, ""), Util.getMillis());
             if (player.getTags().contains(WELCOMED)) return;
             player.addTag(WELCOMED);
