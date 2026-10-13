@@ -81,7 +81,15 @@ public final class FarRenderer {
     private static final int JET_LEVEL = 6;
     private static final long UPLOAD_NANOS = 3_000_000L;
     private static final AtomicInteger THREADS = new AtomicInteger();
-    private static final ExecutorService MESHER = Executors.newFixedThreadPool(2, runnable -> {
+    /**
+     * Columns asked of the server and not yet back. Kept short so the server's queue always holds
+     * what the player wants most now: with every missing column asked for at once, a walk or a turn
+     * left thousands queued in the old order, and the view in front waited behind them.
+     */
+    private static final int IN_FLIGHT = Integer.getInteger("earthplatform.far.inFlight", 192);
+    /** Far mesher threads: two, or a quarter of the cores on bigger machines, so meshing keeps up with the server's workers. */
+    private static final int MESH_THREADS = Math.clamp(Runtime.getRuntime().availableProcessors() / 4, 2, 4);
+    private static final ExecutorService MESHER = Executors.newFixedThreadPool(MESH_THREADS, runnable -> {
         Thread thread = new Thread(runnable, "Earth far mesher " + THREADS.incrementAndGet());
         thread.setDaemon(true);
         thread.setPriority(Thread.NORM_PRIORITY - 1);
@@ -98,6 +106,13 @@ public final class FarRenderer {
     private boolean unsupported;
     private final Long2ObjectOpenHashMap<Column> columns = new Long2ObjectOpenHashMap<>();
     private final Long2IntOpenHashMap requested = new Long2IntOpenHashMap();
+    /** Missing columns in the order to ask for them, from the last plan, and how many of them have been looked at. */
+    private final LongArrayList plan = new LongArrayList();
+    private int planned;
+    /** The player's horizontal look direction, so columns in view come before those behind. */
+    private double lookX, lookZ = 1;
+    /** Columns the view wants at their own level, and how many of them are drawn: how settled the far terrain is. */
+    private int wanted, settled;
     private final ConcurrentLinkedQueue<FarMesher.Built> built = new ConcurrentLinkedQueue<>();
     private final List<Column> drawn = new ArrayList<>();
     private final LongOpenHashSet drawnKeys = new LongOpenHashSet();
@@ -255,6 +270,8 @@ public final class FarRenderer {
         return gpu;
     }
     public int drawnCount() { return drawn.size(); }
+    /** Share of the columns wanted at their own level that are meshed, in percent: 100 once the view has fully refined. */
+    public int settledPercent() { return wanted == 0 ? 0 : (int) (100L * settled / wanted); }
     /** Columns received again while already held, as when the server pushes an edit. */
     public int replacedCount() { return replaced; }
 
@@ -303,32 +320,74 @@ public final class FarRenderer {
                 player.getDeltaMovement().horizontalDistance() * 20.0, finest);
         if (ticks % MASK_TICKS == 0) mask();
         for (Column column : drawn) if (column.maskStale) column.due = Math.min(column.due, ticks + SETTLE_TICKS);
-        submitDue(player.getBlockX(), player.getBlockZ());
-        if (ticks % PLAN_TICKS != 0) return;
-        LongArrayList missing = new LongArrayList();
+        double yaw = Math.toRadians(player.getYRot());
+        lookX = -Math.sin(yaw);
+        lookZ = Math.cos(yaw);
         int bx = player.getBlockX(), bz = player.getBlockZ();
+        submitDue(bx, bz);
+        if (ticks % PLAN_TICKS == 0) {
+            plan(bx, bz);
+            evict();
+        }
+        request();
+    }
+
+    /** Lists the missing columns, the ones a player would see change most first, and forgets requests no longer wanted. */
+    private void plan(int bx, int bz) {
+        LongArrayList missing = new LongArrayList();
+        LongOpenHashSet all = new LongOpenHashSet(requested.size() * 2 + 16);
+        int[] counts = new int[2];
         Far.around(bx, bz, finest, key -> {
+            all.add(key);
             Column column = columns.get(key);
+            if (!Far.refined(Far.level(key), Far.x(key), Far.z(key), bx, bz, finest)) {
+                counts[0]++;
+                if (column != null && column.meshed) counts[1]++;
+            }
             if (column != null) column.lastWanted = ticks;
-            else if (ticks - requested.get(key) > RETRY_TICKS) missing.add(key);
+            else missing.add(key);
         });
-        // Ask for what a player would see change most first: the server makes columns in this order.
+        wanted = counts[0];
+        settled = counts[1];
+        // A request the server dropped (its player had moved on) or one for a place left behind
+        // frees its place for the columns wanted now; one still wanted is asked for again later.
+        requested.long2IntEntrySet().removeIf(entry -> !all.contains(entry.getLongKey()) || ticks - entry.getIntValue() > RETRY_TICKS);
         Long2LongOpenHashMap order = new Long2LongOpenHashMap(missing.size());
         for (int i = 0; i < missing.size(); i++) order.put(missing.getLong(i), priority(missing.getLong(i), bx, bz));
         missing.unstableSort((a, b) -> Long.compare(order.get(a), order.get(b)));
-        for (int i = 0; i < missing.size(); i += CubePayloads.FarRequest.MAX_KEYS) {
-            long[] keys = missing.subList(i, Math.min(missing.size(), i + CubePayloads.FarRequest.MAX_KEYS)).toLongArray();
-            for (long key : keys) requested.put(key, ticks);
-            PacketDistributor.sendToServer(new CubePayloads.FarRequest(keys));
-        }
-        requested.long2IntEntrySet().removeIf(entry -> ticks - entry.getIntValue() > RETRY_TICKS * 4);
-        evict();
+        plan.clear();
+        plan.addAll(missing);
+        planned = 0;
     }
+
+    /** Tops the columns asked of the server back up to {@link #IN_FLIGHT}, in the plan's order; the server makes them in the order asked. */
+    private void request() {
+        if (planned >= plan.size() || requested.size() >= IN_FLIGHT) return;
+        LongArrayList keys = new LongArrayList();
+        while (planned < plan.size() && requested.size() < IN_FLIGHT && keys.size() < CubePayloads.FarRequest.MAX_KEYS) {
+            long key = plan.getLong(planned++);
+            if (columns.containsKey(key) || requested.containsKey(key)) continue;
+            requested.put(key, ticks);
+            keys.add(key);
+        }
+        if (!keys.isEmpty()) PacketDistributor.sendToServer(new CubePayloads.FarRequest(keys.toLongArray()));
+    }
+
+    /**
+     * Levels whose middles stand in while the finer levels inside them load. The two coarsest
+     * levels' columns cost four to thirteen times as much to make as the rest (at Yosemite, 33
+     * and 97 ms against 4 to 15), and their middles only ever stand in for the 23 to 94 km the
+     * next finer square already covers, so making them first spent the first minute after
+     * arriving on ground nobody sees.
+     */
+    private static final int STAND_IN_LEVELS = 6;
+    /** How much later the two coarsest levels' own rings come, past the haze, where only mountains show. */
+    private static final double LEVEL_7_LATER = 1.5, LEVEL_8_LATER = 2.0;
 
     /**
      * The order to ask for a column in: by how far it is from a position in its own widths, so the
      * columns right around the player come first instead of last, when coarse voxels stood in
-     * for them close up after every move.
+     * for them close up after every move. Columns out of view, and the two coarsest levels, wait.
      */
     private long priority(long key, int bx, int bz) {
         int level = Far.level(key), width = Far.width(level);
@@ -341,11 +400,17 @@ public final class FarRenderer {
         // columns as they arrived. The outermost two rows always keep their place: the finer
         // level's outer edge under them comes in last of its ring, and without them a band of
         // sky showed there.
-        long order = Math.max(dx, dz) * 100 / width * 8 + level;
+        // Columns out of view wait a little: up to two and a half times as far for one right behind.
+        double cx = x0 + width / 2.0 - bx, cz = z0 + width / 2.0 - bz, length = Math.sqrt(cx * cx + cz * cz);
+        double facing = length < width ? 1.0 : (cx * lookX + cz * lookZ) / length;
+        double behind = facing >= 0.5 ? 1.0 : 1.5 - facing;
+        double later = level == 7 ? LEVEL_7_LATER : level == 8 ? LEVEL_8_LATER : 1.0;
+        long order = (long) (Math.max(dx, dz) * 100 * behind * later) / width * 8 + level;
         int x = Far.x(key), z = Far.z(key);
         if (!Far.refined(level, x, z, bx, bz, finest)) return order;
         int rings = Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level)));
-        return rings >= Far.HOLE - 1 || !childrenReady(level, x, z, bx, bz) ? order : order + (1L << 32);
+        if (rings >= Far.HOLE - 1) return order;
+        return level <= STAND_IN_LEVELS && !childrenReady(level, x, z, bx, bz) ? order : order + (1L << 32);
     }
 
     /**
