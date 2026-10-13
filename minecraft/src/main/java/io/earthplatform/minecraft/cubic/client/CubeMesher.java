@@ -197,16 +197,30 @@ final class CubeMesher {
             return container == null ? null : container.get((rx & 15) >> 2, (ry & 15) >> 2, (rz & 15) >> 2);
         }
 
-        /** 3x3 box blend over 4-block biome cells, close to vanilla's default blend radius. */
+        /**
+         * Blend over 4-block biome cells weighted by each block's distance to the cells' centres, falling to nothing two
+         * cells (8 blocks) away. The tint then changes block by block across a border, as a gradient, instead of in
+         * 4-block steps: a box blend gives every block of a cell the same samples, so a deep-sea edge became a staircase.
+         */
         @Override public int getBlockTint(BlockPos pos, ColorResolver resolver) {
-            int r = 0, g = 0, b = 0, n = 0;
-            for (int dz = -4; dz <= 4; dz += 4) for (int dx = -4; dx <= 4; dx += 4) {
-                Holder<Biome> biome = biome(pos.getX() + dx, pos.getY(), pos.getZ() + dz);
-                if (biome == null) continue;
-                int color = resolver.getColor(biome.value(), pos.getX() + dx, pos.getZ() + dz);
-                r += color >> 16 & 255; g += color >> 8 & 255; b += color & 255; n++;
+            // The block's centre in cell units, measured from the centre of cell 0.
+            double u = (pos.getX() + 0.5 - 2) / 4.0, v = (pos.getZ() + 0.5 - 2) / 4.0;
+            int i0 = Mth.floor(u), j0 = Mth.floor(v);
+            double r = 0, g = 0, b = 0, n = 0;
+            for (int j = j0 - 1; j <= j0 + 2; j++) {
+                double wz = Math.max(0, 1 - Math.abs(v - j) / 2);
+                for (int i = i0 - 1; i <= i0 + 2; i++) {
+                    double w = wz * Math.max(0, 1 - Math.abs(u - i) / 2);
+                    if (w <= 0) continue;
+                    int x = i * 4 + 2, z = j * 4 + 2;
+                    Holder<Biome> biome = biome(x, pos.getY(), z);
+                    if (biome == null) continue;
+                    int color = resolver.getColor(biome.value(), x, z);
+                    r += (color >> 16 & 255) * w; g += (color >> 8 & 255) * w; b += (color & 255) * w; n += w;
+                }
             }
-            return n == 0 ? 0xFFFFFF : (r / n) << 16 | (g / n) << 8 | (b / n);
+            if (n == 0) return 0xFFFFFF;
+            return (int) Math.round(r / n) << 16 | (int) Math.round(g / n) << 8 | (int) Math.round(b / n);
         }
     }
 }

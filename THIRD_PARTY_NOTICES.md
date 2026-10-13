@@ -33,11 +33,17 @@ Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based 
 
 The shader candidate additionally requires player-supplied Iris1.8.14-beta.1, Sodium0.8.12-beta.1 and Photonv1.3b. Their unchanged external artifacts, shaders, nested payloads and licenses are not part of our shim distribution. Exact input hashes and the three-classpath/no-copied-payload verification are recorded in review-evidence/shader-packaging015 and shader-aggregate. Users obtain each project from its official distribution and keep the terms accompanying that separate artifact. This candidate’s original code only adapts the pinned installed lifecycle, native format/material context and pass-owned renderer resources. No broader version or pack compatibility is implied.
 
+## EGM96 geoid grid (bundled)
+
+`geography/src/main/resources/io/earthplatform/geography/globe/egm96-south.bin`: EGM96 geoid heights every half degree south of 50° S, sampled from the U.S. National Geospatial-Intelligence Agency's EGM96 15' grid (public domain) as PROJ distributes it (`us_nga_egm96_15.tif`).
+
 ## Earth data streamed at runtime (never bundled)
 
 CHELSA V2.1 climatologies 1981-2010 (streamed by `geography/.../globe/ClimateSource` from https://os.zhdk.cloud.switch.ch/chelsav2/GLOBAL/): Karger, D.N. et al. (2017) Climatologies at high resolution for the earth's land surface areas. Scientific Data 4:170122; Karger, D.N. et al. (2021) EnviDat, https://doi.org/10.16904/envidat.228. CC0 1.0.
 
 ESA WorldCover 10 m 2021 v200 (streamed by `WorldCoverSource` from its public cloud-optimised GeoTIFFs): attribution as for the fixture above, CC BY 4.0; classes are mapped to Minecraft biomes and blocks and built-up classes are replaced by surrounding land cover.
+
+REMA v2.0 mosaics (streamed by `geography/.../globe/RemaSource` from https://pgc-opendata-dems.s3.us-west-2.amazonaws.com/rema/mosaics/v2.0/ only for Antarctic tiles a player visits, cached on disk; off with `-Dearthplatform.earth.rema=false`): Antarctica: Reference Elevation Model of Antarctica (REMA) v2.0, Polar Geospatial Center, University of Minnesota (CC BY 4.0); Howat, I., et al. (2022), The Reference Elevation Model of Antarctica - Mosaics, Version 2, Harvard Dataverse, https://doi.org/10.7910/DVN/EBW8UC. DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685.
 
 JRC Global Surface Water v1.4 occurrence (streamed by `geography/.../globe/SurfaceWaterSource` from https://storage.googleapis.com/global-surface-water/; used to carve river channels): JRC Global Surface Water v1.4 (Source: EC JRC/Google; Pekel et al. 2016, Nature 540, 418-422), Copernicus Programme; Pekel, J.-F. et al. (2016), doi:10.1038/nature20584. Free of charge, without restriction of use. The European Union and the organisations in charge of the Copernicus programme do not incur any liability for any use of these data.
 

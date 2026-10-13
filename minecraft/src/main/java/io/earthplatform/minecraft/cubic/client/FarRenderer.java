@@ -117,7 +117,7 @@ public final class FarRenderer {
         final long key;
         final int level, x0, z0, bottom;
         final LevelChunkSection[] sections;
-        final short[] drops;
+        final char[] drops;
         final AABB box;
         /** Block Y just above the column's highest voxel, or MIN_VALUE when it holds only air. */
         final int top;
@@ -136,7 +136,7 @@ public final class FarRenderer {
         long bytes;
         double distance;
 
-        Column(long key, int bottom, LevelChunkSection[] sections, short[] drops) {
+        Column(long key, int bottom, LevelChunkSection[] sections, char[] drops) {
             this.key = key;
             this.level = Far.level(key);
             this.bottom = bottom;
@@ -268,7 +268,7 @@ public final class FarRenderer {
             byte[] bytes = payload.sections().get(i);
             if (bytes.length > 0) sections[i] = CubeCodec.readSection(bytes, biomes);
         }
-        Column column = new Column(payload.key(), payload.bottom(), sections, payload.drops());
+        Column column = new Column(payload.key(), payload.bottom(), sections, unsigned(payload.drops()));
         column.lastWanted = ticks;
         Column old = columns.put(column.key, column);
         if (old != null) {
@@ -634,6 +634,16 @@ public final class FarRenderer {
         type.clearRenderState();
     }
 
+    /**
+     * Drops as sent, read unsigned: 256-block voxels drop up to 65,535 256ths of a block, past a
+     * short's range, and read signed the coarsest columns stood up to 128 blocks over the ground.
+     */
+    private static char[] unsigned(short[] drops) {
+        char[] out = new char[drops.length];
+        for (int i = 0; i < drops.length; i++) out[i] = (char) drops[i];
+        return out;
+    }
+
     /** Sets an Earth world's metres per block at the equator, from the server. */
     public void scale(double metresPerBlock) { this.metresPerBlock = metresPerBlock; }
 
@@ -649,6 +659,14 @@ public final class FarRenderer {
     }
 
     /** Draws the visible columns' water see-through, farthest first, before the near cubes' own water. */
+    /**
+     * How much nearer far water is drawn per block away, as a share of its distance: two steps of
+     * a 24-bit depth buffer behind vanilla's 0.05-block near plane, which grow with distance squared.
+     */
+    private static final double WATER_LIFT = 2.0 / (0.05 * (1 << 24));
+
+    private static double square(double value) { return value * value; }
+
     public void drawWater(Camera camera, Matrix4f modelView, Matrix4f projection) {
         if (closed || waterFrame == frame || camera.getFluidInCamera() != net.minecraft.world.level.material.FogType.NONE) return;
         waterFrame = frame;
@@ -663,7 +681,8 @@ public final class FarRenderer {
         shader.apply();
         // With far terrain in its own depth, far hills hide the water behind them this way instead.
         boolean own = ShaderBlocks.packInUse() && FarLod.active() && FarLod.beginWater();
-        Uniform offset = shader.CHUNK_OFFSET;
+        Uniform offset = shader.CHUNK_OFFSET, view = own ? null : shader.MODEL_VIEW_MATRIX;
+        Matrix4f nearer = new Matrix4f();
         for (int pass = 0; pass < 2; pass++) {
             // Water walls go last: where the next level's water stands as high, its surface is
             // already in the depth buffer and hides them, so they only show across a step.
@@ -673,6 +692,15 @@ public final class FarRenderer {
                 if (offset != null) {
                     offset.set((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                     offset.upload();
+                }
+                if (view != null) {
+                    // In the shared depth buffer a step of depth spans hundreds of blocks kilometres
+                    // off, and a lake's bed a few blocks under its water showed through it in dark
+                    // stripes. Drawn shrunk toward the camera the water covers the same pixels, at a
+                    // depth nearer by a couple of those steps.
+                    double distance = Math.sqrt(column.distance + square(column.box.getCenter().y - position.y));
+                    view.set(nearer.set(modelView).scale((float) Math.max(0.8, 1.0 - distance * WATER_LIFT)));
+                    view.upload();
                 }
                 if (pass == 0) {
                     column.water.bind();
@@ -688,6 +716,7 @@ public final class FarRenderer {
             }
         }
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
+        if (view != null) view.set(modelView);
         if (own) FarLod.endWater(modelView, () -> {
             for (Column column : visible) {
                 if (column.water == null && !column.hasWaterWalls()) continue;

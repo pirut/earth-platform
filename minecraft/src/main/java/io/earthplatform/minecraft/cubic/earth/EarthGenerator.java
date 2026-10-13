@@ -3,7 +3,10 @@ package io.earthplatform.minecraft.cubic.earth;
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.BareEarth;
+import io.earthplatform.geography.globe.CopernicusFill;
+import io.earthplatform.geography.globe.CopernicusSource;
 import io.earthplatform.geography.globe.GlobalElevation;
+import io.earthplatform.geography.globe.RemaElevation;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.RiverMap;
@@ -206,6 +209,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     @Override public String credits() {
         return "Elevation: AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, ETOPO1 and others)"
+                + (tiles.layers().stream().anyMatch(layer -> layer instanceof CopernicusFill) ? ", partly " + CopernicusSource.ATTRIBUTION : "")
+                + (tiles.layers().stream().anyMatch(layer -> layer instanceof RemaElevation) ? ". " + RemaElevation.ATTRIBUTION : "")
                 + (cover == null ? "" : ". Land cover: " + WorldCoverSource.ATTRIBUTION)
                 + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION)
                 + (imagery == null ? "" : ". Imagery: " + ImagerySource.ATTRIBUTION)
@@ -285,7 +290,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             boolean shadow = steep > 0.7 && SEA + 0.5 + metres - surface > 4 && relief(x, z) > MOUNTAINS;
             // Water by the coast is the sea, and so is water at sea level that joins it, as estuaries and lagoons do,
             // which otherwise stood a block above the sea around it wherever the survey read a little over 0 m.
-            if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && joinsOpenSea(x, z))) {
+            // So is water within a few metres of sea level right beside the sea, as the ponds and creeks among
+            // mangroves, whose survey reads the canopy round them: kept at its own level, it stood in walls and
+            // falls a few blocks above and below the sea.
+            if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && joinsOpenSea(x, z)
+                    || Math.abs(surface - SEA) <= TIDAL && besideSea(x, z))) {
                 out[0] = lagoonBed(x, z, metres, voxel);
                 out[1] = SEA;
                 return;
@@ -310,6 +319,17 @@ public final class EarthGenerator extends SurfaceGenerator {
         int y = Mth.floor(SEA + 0.5 + metres + detail);
         // Ground beside the sea never dips under its level, so the sea stays where it is.
         if (sample[2] > 0.02 && y < SEA) y = SEA;
+        // Land under a reservoir newer than the survey, which its water closes round, is the reservoir's bed; and
+        // its shore, a few metres under the water's level in the old valley's slopes, rises to it. Below its dam
+        // the valley keeps its drop.
+        if (cover != null) {
+            double drowned = drownedLevel(x, z);
+            if (!Double.isNaN(drowned)) {
+                int level = Mth.floor(SEA + 0.5 + Math.abs(drowned));
+                if (drowned > 0 && y < level) { out[0] = y; out[1] = level; return; }
+                if (y < level && y >= level - DROWNED_SHORE) y = level;
+            }
+        }
         // Nor does ground beside a lake or river, unless it lies well below it, as under a dam.
         if (cover != null) {
             int shore = shore(dem, memo, x, z, voxel);
@@ -632,8 +652,45 @@ public final class EarthGenerator extends SurfaceGenerator {
         // the year, and the river map traced its sheet flood as a mesh of channels that joined the sea and drowned it.
         if (rivers != null && voxel <= RIVER_VOXEL && code != WorldCoverSource.NO_DATA && code != WorldCoverSource.SNOW_AND_ICE
                 && code != WorldCoverSource.WETLAND
-                && rivers.strength(point.latitude(), point.longitude()) >= RiverMap.EDGE) return RIVER;
+                && rivers.strength(point.latitude(), point.longitude()) >= RiverMap.EDGE
+                && (code != WorldCoverSource.BUILT_UP || narrowRiver(point))) return RIVER;
         return code;
+    }
+
+    /** Surface water pixels either side of a river among buildings within which it must reach its banks. */
+    private static final double TOWN_RIVER = 2;
+
+    /**
+     * Whether the river map's water at a point among buildings is a narrow river: it reaches its
+     * banks within {@value #TOWN_RIVER} of the surface water record's pixels on both sides of some
+     * line through the point, east and west, north and south or either diagonal, and so does it
+     * as far along the river either way. The record sees a town's canals and streams as thin
+     * lines, but the shadows of its tall buildings as broad faint patches, which the map traced as
+     * rivers and lakes a few hundred metres wide winding across Manhattan's Midtown, Chicago's
+     * Loop, Hong Kong's Central and Tokyo's Marunouchi; looking along the river as well keeps
+     * the rims of those patches, narrow only along their edges, from standing as crescents.
+     */
+    private boolean narrowRiver(GeoPoint point) {
+        double reach = TOWN_RIVER / io.earthplatform.geography.globe.SurfaceWaterSource.PIXELS_PER_DEGREE;
+        double latitude = point.latitude(), longitude = point.longitude();
+        int across = narrowAxis(latitude, longitude, reach);
+        if (across < 0) return false;
+        int along = (across + 2) % 4;
+        for (int side = -1; side <= 1; side += 2) {
+            double la = latitude + side * RING_Z[along] * reach, lo = longitude + side * RING_X[along] * reach;
+            if (rivers.strength(la, lo) >= RiverMap.EDGE && narrowAxis(la, lo, reach) < 0) return false;
+        }
+        return true;
+    }
+
+    /** The first of {@link #RING_X}'s four lines through a point along which the river map's water reaches its banks within a reach (degrees) on both sides, or -1. */
+    private int narrowAxis(double latitude, double longitude, double reach) {
+        for (int k = 0; k < 4; k++) {
+            double north = RING_Z[k] * reach, east = RING_X[k] * reach;
+            if (rivers.strength(latitude + north, longitude + east) < RiverMap.EDGE
+                    && rivers.strength(latitude - north, longitude - east) < RiverMap.EDGE) return k;
+        }
+        return -1;
     }
 
     /** Most WorldCover pixels a patch of water mapped on a slope ({@link #strayWater}) holds: about fifty hectares. */
@@ -651,21 +708,34 @@ public final class EarthGenerator extends SurfaceGenerator {
     private static final int STRAY_VOXEL = 8;
     /** Least range of a water cell's ground, in metres, for it to hold stray patches: flat country has no slopes to hang them on. */
     private static final double STRAY_RELIEF = 30;
+    /** Most pixels a speck of water among buildings holds, about two hectares, and the least share of the land touching it built up. */
+    private static final int TOWN_SPECK = 300;
+    private static final double TOWN_SHARE = 0.6;
+    /**
+     * Least share of a speck's pixels the surface water record must see water at, at least
+     * {@value #SEEN_WET} percent of the time, for the speck to be water: a moat or a pond, not a
+     * shadow. The record sees the darkest shadows of a skyscraper district, as in Chicago's Loop, as
+     * water up to two passes in three, but open water nearly always.
+     */
+    private static final double TOWN_WET = 0.1;
+    private static final int SEEN_WET = 75;
     /** Water cells, keyed as {@link #waterCell}'s, as far as {@link #strayCell} has found their stray patches. */
     private final java.util.concurrent.ConcurrentHashMap<Long, Long2IntOpenHashMap> strayCells =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * The cover of water mapped at a point: the land round it where the point lies in a small patch
-     * of water hanging on a slope, else water. The map reads dark rock as water: the basalt that
+     * of water hanging on a slope or among buildings, else water. The map reads dark rock as water: the basalt that
      * poured over the Grand Canyon's walls at Lava Falls mapped as dozens of small patches all down
      * the slopes, each stood as a pool cut into the hillside. Water lies level, and the elevation
      * under a pond, a lake or a reach of river is level or nearly so, while under these it climbs
-     * the slope with the rock, which carries on falling away below them.
+     * the slope with the rock, which carries on falling away below them. In towns the map reads the
+     * shadows of tall buildings as water too, specks a few dozen metres across that stood as dry
+     * pits, and as ponds under the shore's rule raised the street round each into a square plateau,
+     * as all over Tokyo's Marunouchi.
      */
     private int strayWater(double x, double z, GeoPoint point) {
         int cx = Math.floorDiv(Mth.floor(x), WATER_CELL), cz = Math.floorDiv(Mth.floor(z), WATER_CELL);
-        if (waterCell(cx, cz).relief() < STRAY_RELIEF) return WorldCoverSource.WATER;
         Long2IntOpenHashMap stray = strayCell(cx, cz);
         if (stray.isEmpty()) return WorldCoverSource.WATER;
         return stray.getOrDefault(pixelKey(row(point.latitude()), column(point.longitude())), WorldCoverSource.WATER);
@@ -682,9 +752,13 @@ public final class EarthGenerator extends SurfaceGenerator {
      * lies wholly within the cell and a margin round it, holds no more than {@value #STRAY_PIXELS}
      * pixels, and whose ground rises at least {@value #STRAY_RISE} m across its middle half and a
      * tenth of its width across most of it, then falls more than {@value #STRAY_FALL} m below its
-     * lowest pixel within a hundred metres of it. Each of its pixels takes the class most of the
-     * land pixels touching the patch have. Larger water, as rivers and the sea, always stays; so do
-     * a creek's reach at a falls' lip, mostly level, and a river's below a falls, at the bottom.
+     * lowest pixel within a hundred metres of it, where the cell's ground ranges at least
+     * {@value #STRAY_RELIEF} m; or that holds no more than {@value #TOWN_SPECK} pixels with most of
+     * the land touching it built up, where the surface water record, years of satellite passes,
+     * seldom saw water. Each of its pixels takes the class most of the land pixels touching the
+     * patch have. Larger water, as rivers and the sea, always stays; so do a creek's reach at a
+     * falls' lip, mostly level, a river's below a falls, at the bottom, a pond in a town's park,
+     * among trees and grass, and a moat or a pond among buildings that the record sees.
      */
     private Long2IntOpenHashMap strayCell(int cx, int cz) {
         long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
@@ -705,6 +779,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         int[] patch = new int[STRAY_PIXELS + 1];
         int[] queue = new int[codes.length];
         GlobalElevation dem = elevation[TOWER_ZOOM];
+        boolean hilly = waterCell(cx, cz).relief() >= STRAY_RELIEF;
         for (int start = 0; start < codes.length; start++) {
             if (seen[start] || codes[start] != (byte) WorldCoverSource.WATER) continue;
             // The patch through this pixel, joined at edges and corners.
@@ -725,6 +800,26 @@ public final class EarthGenerator extends SurfaceGenerator {
                 }
             }
             if (!whole || size > STRAY_PIXELS) continue;
+            // The land round it decides what it is.
+            int[] votes = new int[256];
+            int best = WorldCoverSource.NO_DATA, land = 0;
+            for (int k = 0; k < size; k++) {
+                int i = patch[k] % width, j = patch[k] / width;
+                for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
+                    int ni = i + di, nj = j + dj;
+                    if (ni < 0 || nj < 0 || ni >= width || nj >= height) continue;
+                    int c = codes[nj * width + ni] & 0xFF;
+                    if (c == WorldCoverSource.WATER || c == WorldCoverSource.NO_DATA) continue;
+                    land++;
+                    if (++votes[c] > votes[best]) best = c;
+                }
+            }
+            if (best == WorldCoverSource.NO_DATA) continue;
+            if (size <= TOWN_SPECK && rivers != null && votes[WorldCoverSource.BUILT_UP] >= TOWN_SHARE * land && !recorded(patch, size, top, left, width)) {
+                for (int k = 0; k < size; k++) stray.put(pixelKey(top + patch[k] / width, left + patch[k] % width), WorldCoverSource.BUILT_UP);
+                continue;
+            }
+            if (!hilly) continue;
             double[] ground = new double[size];
             int north = height, south = 0, west = width, east = 0;
             double lowest = Double.MAX_VALUE, lowX = 0, lowZ = 0;
@@ -744,25 +839,22 @@ public final class EarthGenerator extends SurfaceGenerator {
             for (double ring : STRAY_RINGS) for (int d = 0; d < 8; d++)
                 below = Math.min(below, dem.metres(lowX + RING_X[d] * ring / metresPerBlock, lowZ + RING_Z[d] * ring / metresPerBlock));
             if (below > lowest - STRAY_FALL) continue;
-            // The land round it decides what it is.
-            int[] votes = new int[256];
-            int best = WorldCoverSource.NO_DATA;
-            for (int k = 0; k < size; k++) {
-                int i = patch[k] % width, j = patch[k] / width;
-                for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
-                    int ni = i + di, nj = j + dj;
-                    if (ni < 0 || nj < 0 || ni >= width || nj >= height) continue;
-                    int c = codes[nj * width + ni] & 0xFF;
-                    if (c == WorldCoverSource.WATER || c == WorldCoverSource.NO_DATA) continue;
-                    if (++votes[c] > votes[best]) best = c;
-                }
-            }
-            if (best == WorldCoverSource.NO_DATA) continue;
             for (int k = 0; k < size; k++) stray.put(pixelKey(top + patch[k] / width, left + patch[k] % width), best);
         }
         if (strayCells.size() > 1 << 14) strayCells.clear();
         strayCells.putIfAbsent(key, stray);
         return stray;
+    }
+
+    /** Whether the surface water record saw water often under at least {@value #TOWN_WET} of a patch's pixels. */
+    private boolean recorded(int[] patch, int size, long top, long left, int width) {
+        double ppd = WorldCoverSource.PIXELS_PER_DEGREE;
+        int wet = 0;
+        for (int k = 0; k < size; k++) {
+            if (rivers.occurrence(90 - (top + patch[k] / width + 0.5) / ppd, (left + patch[k] % width + 0.5) / ppd - 180) >= SEEN_WET) wet++;
+            if (wet >= TOWN_WET * size) return true;
+        }
+        return false;
     }
 
     /** Rings round water, in metres, that {@link #iceWater} looks along, out past a pond's far shore; none nearer than a pixel. */
@@ -984,11 +1076,13 @@ public final class EarthGenerator extends SurfaceGenerator {
         double nearest = NEAR * NEAR, near = Double.NaN;
         double[] heights = new double[16], distances = new double[16];
         boolean drownedNear = false, fallingNear = false;
+        double drownedBy = Double.NaN;
         for (int dj = -1; dj <= 2; dj++) for (int di = -1; di <= 2; di++) {
             int si = bx + di, sj = bz + dj, k = Math.floorMod(sj, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(si, WATER_SAMPLES);
             Reaches reaches = reachLevels(Math.floorDiv(si, WATER_SAMPLES), Math.floorDiv(sj, WATER_SAMPLES));
             float height = reaches.samples[k];
             double d2 = (sx - si) * (sx - si) + (sz - sj) * (sz - sj);
+            if (!Float.isNaN(height) && (reaches.drowned[k >> 6] >>> (k & 63) & 1) != 0) drownedBy = Double.isNaN(drownedBy) ? height : Math.min(drownedBy, height);
             if (Float.isNaN(height) || d2 >= NEAR * NEAR) continue;
             heights[found] = height;
             distances[found++] = d2;
@@ -999,9 +1093,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 fallingNear = (reaches.falling[k >> 6] >>> (k & 63) & 1) != 0;
             }
         }
-        // Drowned ground's level is its reach's across the cells around, blended smoothly between them, rather
-        // than stepping at the edges of each cell's samples.
-        if (found > 0 && !(drownedNear && drowned && !Double.isNaN(level))) {
+        if (found > 0) {
             // The cells' level joins in a little, so the water meets it smoothly where the samples run out.
             sum = 0;
             weight = 0;
@@ -1015,11 +1107,17 @@ public final class EarthGenerator extends SurfaceGenerator {
             level = sum / weight;
             drowned = drownedNear;
         } else fallingNear = false;
+        // Water with no drowned water close by, as a stream below a dam whose cell's reach is the reservoir's, keeps
+        // to its banks.
+        if (found == 0) drowned = false;
+        // Nor does water stand above drowned water beside it: on a reservoir's shore, where the survey reads the
+        // slopes above the old valley, it climbed them in steps.
+        if (!drowned && !Double.isNaN(drownedBy) && !Double.isNaN(level) && level > drownedBy) { level = drownedBy; drowned = true; }
         if (Double.isNaN(level)) return local;
         int surface = Mth.floor(SEA + 0.5 + level);
         // A falls' face stands at the level of the reach above it or the pool below, whatever the ground reads.
         if (fallingNear) return surface;
-        if (relief > MOUNTAINS) surface = Math.max(surface, local - DIP);
+        if (relief > MOUNTAINS && !drowned) surface = Math.max(surface, local - DIP);
         // Drowned ground lies far under its water, which stands at its shores' level.
         return drowned ? surface : Math.min(surface, local + BANK);
     }
@@ -1079,9 +1177,10 @@ public final class EarthGenerator extends SurfaceGenerator {
     /**
      * A cell's reach levels, lowest first, and which of them are drowned ground's; the level of the
      * reach each of its own samples belongs to, or NaN; which of its samples are drowned; and which
-     * lie on a falls' face ({@link #fallingWater}).
+     * lie on a falls' face ({@link #fallingWater}); and, if any, the level of the drowned water
+     * closing round each of its dry samples ({@link #drownedLand}), or NaN.
      */
-    private record Reaches(double[] levels, boolean[] drownedLevels, float[] samples, long[] drowned, long[] falling) {}
+    private record Reaches(double[] levels, boolean[] drownedLevels, float[] samples, long[] drowned, long[] falling, @Nullable float[] drownedLand) {}
     /** Fewest of a cell's own samples a reach needs to keep its own level there, rather than count as a stray reading. */
     private static final int REACH_SAMPLES = 3;
     /** How far, in samples, a column takes its level from the surveyed water samples near it. */
@@ -1091,6 +1190,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Drops of more than {@link #DROP} between wide water samples a reach must cross to count as drowned ground. */
     private static final int DROWNED_CROSSINGS = 3;
+    /** How far, in samples, a drowned sample's level takes its shores from, and the fewest it needs to rather than its body's. */
+    private static final int SHORE_REACH = 24, SHORE_POINTS = 16;
     /** Fewest samples of water joined within {@link #DROP} that stand as a reach either side of a falls; most samples of pockets between. */
     private static final int FALL_POOL = 8, FACE = 64;
     /** Least drop, in metres, between the reaches either side of a falls' face. */
@@ -1107,9 +1208,11 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Nullable
     private float[] drownedGround(int cx, int cz, int span, float[] water, float[] ground, boolean[] seaAt, it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue) {
         float[] sunk = null;
+        int[] owner = null;
         boolean[] seen = new boolean[span * span];
         it.unimi.dsi.fastutil.ints.IntArrayList body = new it.unimi.dsi.fastutil.ints.IntArrayList();
         it.unimi.dsi.fastutil.doubles.DoubleArrayList shores = new it.unimi.dsi.fastutil.doubles.DoubleArrayList();
+        it.unimi.dsi.fastutil.floats.FloatArrayList levels = new it.unimi.dsi.fastutil.floats.FloatArrayList();
         for (int start = 0; start < span * span; start++) {
             if (seen[start] || Float.isNaN(water[start]) || seaAt[start] || !wideWater(water, span, start % span, start / span)) continue;
             seen[start] = true;
@@ -1143,18 +1246,65 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (shores.isEmpty()) continue;
             double[] around = shores.toDoubleArray();
             java.util.Arrays.sort(around);
-            float level = (float) around[around.length / 2];
-            if (sunk == null) { sunk = new float[span * span]; java.util.Arrays.fill(sunk, Float.NaN); }
-            for (int m = 0; m < body.size(); m++) { sunk[body.getInt(m)] = level; queue.enqueue(body.getInt(m)); }
-            while (!queue.isEmpty()) {
-                int at = queue.dequeueInt(), i = at % span, j = at / span;
+            if (sunk == null) {
+                sunk = new float[span * span];
+                java.util.Arrays.fill(sunk, Float.NaN);
+                owner = new int[span * span];
+                java.util.Arrays.fill(owner, -1);
+            }
+            for (int m = 0; m < body.size(); m++) { sunk[body.getInt(m)] = (float) around[around.length / 2]; owner[body.getInt(m)] = levels.size(); }
+            levels.add((float) around[around.length / 2]);
+        }
+        if (sunk == null) return null;
+        // Each body backs up into the water joined to it that lies below its level, nearest body first.
+        for (int at = 0; at < span * span; at++) if (owner[at] >= 0) queue.enqueue(at);
+        while (!queue.isEmpty()) {
+            int at = queue.dequeueInt(), i = at % span, j = at / span;
+            float level = sunk[at] = levels.getFloat(owner[at]);
+            for (int d = 0; d < 8; d += 2) {
+                int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d], n = nj * span + ni;
+                if (ni < 0 || nj < 0 || ni >= span || nj >= span || Float.isNaN(water[n]) || seaAt[n] || owner[n] >= 0 || water[n] > level + BANK) continue;
+                if (!drownedShores(cx, cz, span, ground, ni, nj, level)) continue;
+                owner[n] = owner[at];
+                queue.enqueue(n);
+            }
+        }
+        // The cell's own samples take the middle of the shores near them, the same whichever window finds them,
+        // rather than the whole body's in this window, which stepped the water at the cells' edges; but never more
+        // than a bank's height from the middle of all the body's shores: narrow arms up steep side valleys read
+        // their shores high and would climb them, and a river by its falls' gorge reads them low.
+        int first = REACH * WATER_SAMPLES, last = first + WATER_SAMPLES;
+        for (int b = 0; b < levels.size(); b++) {
+            shores.clear();
+            body.clear();
+            for (int at = 0; at < span * span; at++) {
+                if (owner[at] != b) continue;
+                int i = at % span, j = at / span;
                 for (int d = 0; d < 8; d += 2) {
-                    int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d], n = nj * span + ni;
-                    if (ni < 0 || nj < 0 || ni >= span || nj >= span || Float.isNaN(water[n]) || seaAt[n] || !Float.isNaN(sunk[n]) || water[n] > level + BANK) continue;
-                    sunk[n] = level;
-                    seen[n] = true;
-                    queue.enqueue(n);
+                    int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d];
+                    if (ni >= 0 && nj >= 0 && ni < span && nj < span && !Float.isNaN(ground[nj * span + ni])) { shores.add(shoreHeight(cx, cz, i, j, ni, nj)); body.add(at); }
                 }
+            }
+            if (shores.isEmpty()) continue;
+            double[] near = shores.toDoubleArray(), all = near.clone();
+            java.util.Arrays.sort(all);
+            double middle = all[all.length / 2];
+            // Shores far under the middle are a falls' gorge or pool the body reached across its lip, as below
+            // Niagara's Horseshoe, where the survey flattens the river to the gorge's level: water there takes
+            // their middle, so it drops once at the lip.
+            int under = 0;
+            while (under < all.length && all[under] < middle - FALL) under++;
+            double pool = under >= SHORE_POINTS ? all[under / 2] : Double.NaN;
+            for (int j = first; j < last; j++) for (int i = first; i < last; i++) {
+                int at = j * span + i, count = 0;
+                if (owner[at] != b) continue;
+                for (int q = 0; q < body.size(); q++) {
+                    int pi = body.getInt(q) % span - i, pj = body.getInt(q) / span - j;
+                    if (pi * pi + pj * pj <= SHORE_REACH * SHORE_REACH) near[count++] = shores.getDouble(q);
+                }
+                if (count < SHORE_POINTS) { sunk[at] = (float) middle; continue; }
+                java.util.Arrays.sort(near, 0, count);
+                sunk[at] = (float) (near[count / 2] < middle - FALL && !Double.isNaN(pool) ? pool : Mth.clamp(near[count / 2], middle - BANK, middle + BANK));
             }
         }
         return sunk;
@@ -1240,6 +1390,95 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
         }
         return falling;
+    }
+
+    /** How far, in samples, drowned water or ground above its level must close round dry ground for it to lie under the water. */
+    private static final int ENCLOSED = 6;
+    /** Most blocks a drowned reach's shore may lie under its level and rise to it. */
+    private static final int DROWNED_SHORE = 12;
+
+    /**
+     * Drowned land in a reach window ({@link #reachLevels}): for each of the centre cell's samples,
+     * the level of drowned water closing round its dry ground, or NaN. The land cover maps a
+     * reservoir's shallows, flooded terraces and backwaters as land, but their survey is the
+     * valley before the dam, metres to tens of metres under the water; kept as land, they stood as
+     * dry pits walled by water. Dry ground under the drowned level lies under it where, within
+     * {@value #ENCLOSED} samples every way, drowned water or ground above the level closes round
+     * it, drowned water on two sides at least. Below a dam, the valley runs on under the level, to
+     * water that is not drowned, and stays dry.
+     */
+    private static float[] drownedLand(int span, int first, float[] ground, float[] sunk) {
+        float[] land = new float[WATER_SAMPLES * WATER_SAMPLES];
+        java.util.Arrays.fill(land, Float.NaN);
+        for (int j = 0; j < WATER_SAMPLES; j++) for (int i = 0; i < WATER_SAMPLES; i++) {
+            int at = (j + first) * span + i + first;
+            if (Float.isNaN(ground[at])) continue;
+            // Each way, the walk ends at drowned water, at ground above the water's level, or open: at other water,
+            // or still under the level, as a valley running on below a dam.
+            float[] wall = new float[4];
+            int wet = 0;
+            float level = Float.NaN;
+            for (int d = 0; d < 4; d++) {
+                wall[d] = Float.NaN;
+                for (int step = 1; step <= ENCLOSED; step++) {
+                    int ni = i + first + (int) RING_X[2 * d] * step, nj = j + first + (int) RING_Z[2 * d] * step;
+                    if (ni < 0 || nj < 0 || ni >= span || nj >= span) break;
+                    int n = nj * span + ni;
+                    if (!Float.isNaN(sunk[n])) { wet++; level = Float.isNaN(level) ? sunk[n] : Math.max(level, sunk[n]); wall[d] = Float.POSITIVE_INFINITY; break; }
+                    if (Float.isNaN(ground[n])) break;
+                    wall[d] = Math.max(Float.isNaN(wall[d]) ? Float.NEGATIVE_INFINITY : wall[d], ground[n]);
+                }
+            }
+            int closed = 0;
+            for (int d = 0; d < 4; d++) if (!Float.isNaN(wall[d]) && wall[d] >= level) closed++;
+            if (wet >= 2 && closed == 4 && ground[at] < level) land[j * WATER_SAMPLES + i] = level;
+        }
+        return land;
+    }
+
+    /**
+     * Level, in metres, of drowned water by a column: positive where it lies under that water, as
+     * the four samples round it are drowned water or drowned land ({@link #drownedLand}), or dry
+     * land above the level beside them;
+     * negative where one of them is drowned water, whose shore may rise to it; or NaN.
+     */
+    private double drownedLevel(int x, int z) {
+        double spacing = (double) WATER_CELL / WATER_SAMPLES;
+        int sx = Mth.floor(x / spacing - 0.5), sz = Mth.floor(z / spacing - 0.5);
+        if (reachLevels(Math.floorDiv(sx, WATER_SAMPLES), Math.floorDiv(sz, WATER_SAMPLES)).drownedLand == null) return Double.NaN;
+        int under = 0, banks = 0;
+        double level = Double.NaN;
+        float[] heights = new float[4];
+        for (int c = 0; c < 4; c++) {
+            int nx = sx + (c & 1), nz = sz + (c >> 1), n = Math.floorMod(nz, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(nx, WATER_SAMPLES);
+            Reaches near = reachLevels(Math.floorDiv(nx, WATER_SAMPLES), Math.floorDiv(nz, WATER_SAMPLES));
+            Survey survey = survey(Math.floorDiv(nx, WATER_SAMPLES), Math.floorDiv(nz, WATER_SAMPLES));
+            heights[c] = survey.kind[n] == DRY_LAND ? survey.metres[n] : Float.NaN;
+            float found = (near.drowned[n >> 6] >>> (n & 63) & 1) != 0 ? near.samples[n] : near.drownedLand != null ? near.drownedLand[n] : Float.NaN;
+            if (Float.isNaN(found)) continue;
+            under++;
+            level = Double.isNaN(level) ? found : Math.max(level, found);
+        }
+        // Between drowned water and land above its level, a column under the level is the reservoir's shore.
+        for (int c = 0; c < 4 && under > 0; c++) if (!Float.isNaN(heights[c]) && heights[c] >= level) banks++;
+        if (under > 0 && under + banks == 4 && banks > 0) under = 4;
+        return under == 4 ? Math.max(1e-3, level) : under > 0 ? -Math.max(1e-3, level) : Double.NaN;
+    }
+
+    /**
+     * Whether water joined to drowned water meets its dry land at about the drowned level, as an
+     * arm backed up a side valley does, rather than far below it, as a river below a dam does.
+     */
+    private boolean drownedShores(int cx, int cz, int span, float[] ground, int i, int j, float level) {
+        double sum = 0;
+        int count = 0;
+        for (int d = 0; d < 8; d += 2) {
+            int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d];
+            if (ni < 0 || nj < 0 || ni >= span || nj >= span || Float.isNaN(ground[nj * span + ni])) continue;
+            sum += shoreHeight(cx, cz, i, j, ni, nj);
+            count++;
+        }
+        return count == 0 || sum / count >= level - 2 * DROWNED_SHORE;
     }
 
     /**
@@ -1357,7 +1596,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         boolean[] sunkSorted = new boolean[sorted.length];
         if (order.length == 0) sorted[0] = waterCell(cx, cz).level;
         for (int k = 0; k < order.length; k++) { sorted[k] = levels.getDouble(order[k]); sunkSorted[k] = drownedLevels.getBoolean(order[k]); }
-        Reaches found = new Reaches(sorted, sunkSorted, samples, drowned, falling);
+        Reaches found = new Reaches(sorted, sunkSorted, samples, drowned, falling, sunk == null ? null : drownedLand(span, first, ground, sunk));
         if (reaches.size() > 1 << 20) reaches.clear();
         reaches.putIfAbsent(key, found);
         return found;
@@ -1407,6 +1646,21 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (surveys.size() > 1 << 12) surveys.clear();
         surveys.putIfAbsent(key, survey);
         return survey;
+    }
+
+    /** Most blocks a pond or creek beside the sea may stand above or below it and still be the sea's own; and how far, in blocks, it may lie from the sea. */
+    private static final int TIDAL = 6, TIDAL_REACH = 256;
+
+    /** Whether the sea lies within {@value #TIDAL_REACH} blocks of a column, by the water samples' survey. */
+    private boolean besideSea(int x, int z) {
+        double spacing = (double) WATER_CELL / WATER_SAMPLES;
+        for (int r = 0; r <= TIDAL_REACH; r += TIDAL_REACH / 2) for (int d = 0; d < 8; d++) {
+            int sx = Mth.floor((x + RING_X[d] * r) / spacing), sz = Mth.floor((z + RING_Z[d] * r) / spacing);
+            int cx = Math.floorDiv(sx, WATER_SAMPLES), cz = Math.floorDiv(sz, WATER_SAMPLES), k = Math.floorMod(sz, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(sx, WATER_SAMPLES);
+            if (survey(cx, cz).kind[k] == OPEN || (waterCell(cx, cz).sea[k >> 6] >>> (k & 63) & 1) != 0) return true;
+            if (r == 0) break;
+        }
+        return false;
     }
 
     /** No samples of a cell are the sea. */
@@ -1666,7 +1920,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         long r = mix(x, 7, z);
         int roll = (int) Math.floorMod(r, 100);
-        if (y <= SEA + 2 && nearSea(x, z)) {
+        // Marsh and mangrove coasts, as on a delta, run down to the water as marsh, not a strip of beach sand.
+        if (y <= SEA + 2 && nearSea(x, z) && !(local != null && marshy(cover(x, z, voxel)))) {
             if (steep > 1) return new Surface(stonyShore, STONE, STONE, 0, 0, 0, 0, 0, false);
             return new Surface(t < 0 ? snowyBeach : beach, SAND, SAND, 0, 0, 0, 0, 0, false);
         }
@@ -1674,10 +1929,10 @@ public final class EarthGenerator extends SurfaceGenerator {
             int code = cover(x, z, voxel);
             boolean built = code == WorldCoverSource.BUILT_UP || code == WorldCoverSource.BARE && inTown(x, z, voxel);
             if (built) code = wild(x, z, voxel);
-            Surface covered = code == WorldCoverSource.NO_DATA ? null : covered(code, x, z, y, local, steep, roll, slope);
+            Surface covered = code == WorldCoverSource.NO_DATA ? null : covered(code, x, z, y, local, steep, roll, slope, voxel);
             if (covered == null) {
                 code = typical(local.zone());
-                covered = covered(code, x, z, y, local, steep, roll, slope);
+                covered = covered(code, x, z, y, local, steep, roll, slope, voxel);
             }
             // Imagery has the last word on bare ground and how thick plants grow, except where towns and
             // roads were taken out: there it shows buildings and asphalt, not the wild land put in their place.
@@ -1766,16 +2021,30 @@ public final class EarthGenerator extends SurfaceGenerator {
     private boolean glacial(int x, int z, int water, double t) {
         if (t > 9) return false;
         if (water > SEA + 3500 && t < 3) return true;
-        return glacierFed(x, z);
+        // One answer for each 1024-block water cell, not the blended one rock takes, so a lake is never two colours.
+        return glacierCell(x >> 10, z >> 10, 1024);
     }
 
-    /** Whether glaciers or snowfields lie within about eight kilometres, judged for 128-block cells. */
+    /**
+     * Whether glaciers or snowfields lie within about eight kilometres, judged for 128-block cells blended into their
+     * neighbours along a wandering line, so the answer's edge is never a grid of squares in the rock or a lake.
+     */
     private boolean glacierFed(int x, int z) {
         if (cover == null) return false;
-        long key = (long) (x >> 7) << 32 | (z >> 7) & 0xFFFFFFFFL;
+        double fx = x / 128.0 - 0.5 + warpX.getValue(x / 83.0 + 7.1, z / 83.0) * 0.45, fz = z / 128.0 - 0.5 + warpZ.getValue(x / 83.0 + 7.1, z / 83.0) * 0.45;
+        int ix = Mth.floor(fx), iz = Mth.floor(fz);
+        double tx = fx - ix, tz = fz - iz, share = 0;
+        for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++)
+            if (glacierCell(ix + i, iz + j, 128)) share += (i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - tz : tz);
+        return share > 0.5;
+    }
+
+    /** Whether glaciers or snowfields lie within about eight kilometres of a cell's middle, for cells of 128 or 1024 blocks. */
+    private boolean glacierCell(int gx, int gz, int size) {
+        long key = (long) gx << 32 | gz & 0xFFFFFFFFL ^ (size == 128 ? 0 : 1L << 62);
         Boolean known = glacierFed.get(key);
         if (known != null) return known;
-        int cx = (x & ~127) + 64, cz = (z & ~127) + 64;
+        int cx = gx * size + size / 2, cz = gz * size + size / 2;
         boolean fed = false;
         for (int radius = 2000; radius <= 8000 && !fed; radius *= 2)
             for (int k = 0; k < 8 && !fed; k++)
@@ -1801,6 +2070,15 @@ public final class EarthGenerator extends SurfaceGenerator {
         return false;
     }
 
+    /** A column's land cover class, climate zone and ecoregion biome, for tuning reports; null without land cover. */
+    @Nullable String diagnose(int x, int z) {
+        if (cover == null) return null;
+        Local local = local(x, z, surfaceY(x, z));
+        int eco = ecoregion(x, z);
+        return String.format(Locale.ROOT, "cover %d %s eco %d", cover(x, z, 1), local.zone(), eco == 0 ? 0 : Ecoregions.get().biome(eco))
+                + String.format(Locale.ROOT, "|t %.0f warmest %.0f rain %.0f", local.temperature(), local.warmest(), Math.floor(local.rain() / 100) * 100);
+    }
+
     /** The cover a zone has where the map has none: forest wherever forest grows, else its open land. */
     private static int typical(ClimateZone zone) {
         return switch (zone) {
@@ -1819,7 +2097,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * What a WorldCover class puts on dry ground in this climate, or null for classes that are not
      * ground cover. Steep ground stays bare rock whatever is mapped on it, and sheds its snow.
      */
-    @Nullable private Surface covered(int code, int x, int z, int y, Local local, double steep, int roll, int slope) {
+    @Nullable private Surface covered(int code, int x, int z, int y, Local local, double steep, int roll, int slope, int voxel) {
         double t = local.temperature();
         ClimateZone zone = local.zone();
         boolean cliff = steep > 1.25;
@@ -1844,9 +2122,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         if (code == WorldCoverSource.BARE && volcanic(x, z)) {
             // Fresh flows, as on Hawaii, are black; Iceland's older lava and ash deserts are grey and brown.
+            // Cinders, ash and flows each lie in clumps and streaks, never diced block by block.
+            double kind = rockKind(x, z);
             BlockState top = weathered(x, z, t)
-                    ? patch < -0.3 ? TUFF : roll < 12 ? BLACKSTONE : roll < 60 ? BASALT : roll < 80 ? TUFF : COARSE_DIRT
-                    : patch < -0.55 && roll < 60 ? TUFF : roll < 55 ? BLACKSTONE : BASALT;
+                    ? patch < -0.3 ? TUFF : kind < -0.55 ? BLACKSTONE : kind < 0.1 ? BASALT : kind < 0.45 ? TUFF : COARSE_DIRT
+                    : patch < -0.55 ? TUFF : kind < 0 ? BLACKSTONE : BASALT;
             return new Surface(stonyPeaks, top, BASALT, 0, 0, 0, 0, 0, false);
         }
         // Australia's red centre: red sand under the spinifex and saltbush, and red rock wherever it stands bare, as Uluru does.
@@ -1874,7 +2154,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 || code == WorldCoverSource.WETLAND || code == PARKLAND;
         if (eco != 0 && ground && !cliff && steep < 0.4 && t >= 10) {
             int biome = Ecoregions.get().biome(eco);
-            if (biome == Ecoregions.MANGROVE && y <= SEA + 4) return covered(WorldCoverSource.MANGROVES, x, z, y, local, steep, roll, slope);
+            if (biome == Ecoregions.MANGROVE && y <= SEA + 4) return covered(WorldCoverSource.MANGROVES, x, z, y, local, steep, roll, slope, voxel);
             if (biome == Ecoregions.FLOODED_GRASSLAND) {
                 // A frost-free marsh coast, as the Everglades' Florida Bay and Ten Thousand Islands: mangrove islands among the creeks.
                 if (mangroveClimate(local) && y <= SEA + 1 && patch > 0.4 && lagoon(x, z))
@@ -1882,11 +2162,13 @@ public final class EarthGenerator extends SurfaceGenerator {
                 // Sloughs and ponds: standing water among the sawgrass, the more of it the wetter the climate, so that the
                 // Everglades are a river of grass and water, the Pantanal less so, and the Okavango's dry edges little.
                 double wet = patches.getValue(x / 90.0 + 41.7, z / 90.0 - 8.3) + patches.getValue(x / 23.0 - 5.1, z / 23.0 + 17.9) * 0.3;
-                if (steep < 0.25 && wet > Mth.clamp(0.3 - (local.rain() - 800) / 2400, 0.05, 0.4))
+                // About a fifth of the Everglades is open slough.
+                if (steep < 0.25 && wet > Mth.clamp(0.75 - (local.rain() - 800) / 2400, 0.5, 0.75))
                     return new Surface(swamp, POOL, MUD, 0, 0, 0, 0, 0, false);
                 // Open marsh with tree islands where the map has trees.
                 if (code == WorldCoverSource.TREE_COVER) return new Surface(swamp, patch > 0.45 ? MUD : GRASS, DIRT, 12, 0, 0, 400, 420, false);
-                if (code != WorldCoverSource.WETLAND) return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope);
+                // Sawgrass prairie: grey-brown sedge over marl and peat that lies bare much of the dry season, and no trees.
+                return new Surface(swamp, patch > 0.1 ? MUD : GRASS, DIRT, 0, 0, 0, 520, 540, false);
             }
             boolean temperate = biome == Ecoregions.TEMPERATE_BROADLEAF || biome == Ecoregions.TEMPERATE_GRASSLAND;
             if (code == WorldCoverSource.TREE_COVER && temperate && t >= 16 && local.rain() > 1100) {
@@ -1898,6 +2180,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (biome == Ecoregions.TEMPERATE_GRASSLAND) return new Surface(plains, GRASS, DIRT, 30, 10, 0, 300, 320, false);
             }
         }
+        // Boreal peatland, as the Hudson Bay Lowlands and the West Siberian mires: dark moss, peat and pools, a few small spruces.
+        if (!cliff && rocky == null && peatland(code, x, z, local)) return peat(code, x, z, patch);
         switch (code) {
             case WorldCoverSource.TREE_COVER -> {
                 // Forest climbs steep slopes, rooted in duff and stony soil; only the steepest faces are bare.
@@ -1932,7 +2216,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                             : sagebrush(rocky != null ? rocky : patch > 0.3 || roll < 55 ? scrubGround(x, z) : GRASS, trees);
                     // Chaparral and maquis: dry where summers are hot.
                     // Maquis and garrigue: oaks and pines among the scrub, never acacias.
-                    case MEDITERRANEAN -> new Surface(plains, top, DIRT, 9 * trees, t < 10 ? 5 : 0, 0, 330, 350, false);
+                    case MEDITERRANEAN -> parched(local) ? garrigue(x, z, local, patch, rocky, trees)
+                            : new Surface(plains, top, DIRT, 9 * trees, t < 10 ? 5 : 0, 0, 330, 350, false);
                     case SUBPOLAR_OCEANIC -> new Surface(t < -3 ? snowyPlains : plains, top, DIRT, 6 * trees, 4, 5, 250, 260, false);
                     // Boreal scrub and bog: dark taiga ground, moss and podzol, stunted spruce.
                     case SUBARCTIC -> t < -3 ? new Surface(snowyPlains, top, DIRT, 0, 0, 0, 250, 260, false) : boreal(top, patch, trees);
@@ -1950,7 +2235,9 @@ public final class EarthGenerator extends SurfaceGenerator {
                 double fallow = patches.getValue(x / 260.0 + 31.7, z / 260.0 - 12.3) + patches.getValue(x / 17.0 - 5.1, z / 17.0 + 77.9) * 0.2;
                 // On dry-farmed plains, such as Kansas, much of the land is stubble and bare soil; in wetter farmland little,
                 // and in monsoon rice country, such as the Mekong delta, none: the paddies are green or flooded.
-                double bare = local.rain() < 900 || zone == ClimateZone.MEDITERRANEAN ? -0.25 : local.rain() > 1500 && t > 18 ? 9 : 0.62;
+                // The drier the plains the more of it: about four fields in five in Kansas' wheat country.
+                double bare = local.rain() < 900 || zone == ClimateZone.MEDITERRANEAN ? -0.25 - Mth.clamp((900 - local.rain()) * 0.0015, 0, 0.6)
+                        : local.rain() > 1500 && t > 18 ? 9 : 0.62;
                 BlockState top = rocky != null ? rocky : fallow > bare ? COARSE_DIRT : GRASS;
                 if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
                 // Monsoon rice country is green, not savanna olive with acacias.
@@ -1975,7 +2262,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 boolean arid = hot || dry;
                 // Bare ground in wet lowlands is cleared land (quarries, airfields, building sites): it goes back to grass.
                 if (!arid && !cliff && steep < 0.7 && local.rain() > 700 && y < SEA + 300 && t > 0)
-                    return covered(WorldCoverSource.GRASSLAND, x, z, y, local, steep, roll, slope);
+                    return covered(WorldCoverSource.GRASSLAND, x, z, y, local, steep, roll, slope, voxel);
                 if (arid && (cliff || steep > 0.9)) return new Surface(badlands, band(y), TERRACOTTA, 0, 0, 0, 0, 0, false);
                 // The Colorado Plateau's red rock: slickrock and red sand on the flats, as in Monument Valley.
                 if (arid && redRock(x, z)) {
@@ -2007,9 +2294,11 @@ public final class EarthGenerator extends SurfaceGenerator {
                 // Only far above the snow line do gentle slopes keep snow between the rocks.
                 if (local.warmest() < -6 && steep < 0.5 && patch > 0.1) return new Surface(snowySlopes, SNOW_BLOCK, STONE, 0, 0, 0, 0, 0, false);
                 boolean scree = local.rain() < 600 || t < 0;
-                BlockState top = cliff || steep > 0.7 ? STONE : patch > 0.55 ? (scree ? GRAVEL : CALCITE) : patch > 0.3 ? GRAVEL
-                        : patch < -0.3 ? ANDESITE : roll < (scree ? 50 : 70) ? STONE : roll < 85 ? COARSE_DIRT : GRAVEL;
-                if (top == STONE && paleRock(x, z)) top = roll < 55 ? DIORITE : ANDESITE;
+                // Scree fans, moraine and outcrops in patches, and within them rock and grit in clumps a few blocks across.
+                double kind = rockKind(x, z);
+                BlockState top = cliff || steep > 0.7 ? STONE : patch > 0.3 ? GRAVEL : patch < -0.3 ? ANDESITE
+                        : kind < (scree ? 0 : 0.3) ? STONE : kind < 0.6 ? GRAVEL : COARSE_DIRT;
+                if (top == STONE && paleRock(x, z)) top = kind < -0.1 ? DIORITE : ANDESITE;
                 return new Surface(stonyPeaks, top, STONE, 0, 0, 0, 0, 0, false);
             }
             case WorldCoverSource.SNOW_AND_ICE -> {
@@ -2022,20 +2311,26 @@ public final class EarthGenerator extends SurfaceGenerator {
                     if (y < SEA + 600) return new Surface(frozenPeaks, BLUE_ICE, PACKED_ICE, 0, 0, 0, 0, 0, false);
                     return rock(x, z, roll);
                 }
+                // A snowfield's edge is ragged, melting back into the rock around it in tongues and patches rather than
+                // following the map's 10 m pixels.
+                if (patch < 0.1 && snowEdge(x, z, voxel, 6) || patch < -0.3 && snowEdge(x, z, voxel, 16)) return covered(WorldCoverSource.BARE, x, z, y, local, steep, roll, slope, voxel);
                 BlockState top = steep < 0.5 && patch > 0.5 ? POWDER_SNOW : SNOW_BLOCK;
                 return new Surface(steep > 0.75 ? frozenPeaks : snowySlopes, top, PACKED_ICE, 0, 0, 0, 0, 0, false);
             }
             case WorldCoverSource.WETLAND -> {
                 if (t < 0) return new Surface(snowyPlains, patch > 0.25 ? MOSS : GRASS, DIRT, 2, 10, 0, 300, 310, true);
-                // Warm marshes, such as the Pantanal and the Mississippi delta, are open grass and reeds with a few trees.
-                if (t >= 18) return new Surface(swamp, patch > 0.45 ? MUD : GRASS, DIRT, 2, 0, 0, 450, 470, false);
-                return new Surface(swamp, patch > 0.25 ? MUD : GRASS, DIRT, 10, 0, 0, 300, 320, true);
+                // Marshes, such as the Pantanal, the Mississippi's and the Danube's deltas, are open reed beds and sedge with a few
+                // pools and bare mud: trees stand only where the map has them, and tidal marsh by the sea has none at all.
+                double pool = patches.getValue(x / 40.0 - 17.3, z / 40.0 + 5.9) + patches.getValue(x / 11.0 + 2.2, z / 11.0 - 9.4) * 0.25;
+                if (steep < 0.25 && pool > 0.62) return new Surface(swamp, POOL, MUD, 0, 0, 0, 0, 0, false);
+                int trees = y <= SEA + 3 ? 0 : t >= 18 ? 1 : 3;
+                return new Surface(swamp, patch > 0.4 ? MUD : GRASS, DIRT, trees, 0, 0, 520, 540, t < 18);
             }
             case WorldCoverSource.MANGROVES -> {
                 // Mangroves grow only on tidal coasts; inland swamps mapped as mangrove, as in the Okavango, are freshwater marsh.
                 // Nor north or south of the mangroves' range, as on the Mississippi delta, unless the ecoregion is mangrove.
                 if (y > SEA + 12 || !mangroveClimate(local) && !mangroveEcoregion(x, z))
-                    return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope);
+                    return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope, voxel);
                 return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false, Tree.MANGROVE);
             }
             case WorldCoverSource.MOSS_AND_LICHEN -> {
@@ -2062,6 +2357,14 @@ public final class EarthGenerator extends SurfaceGenerator {
         return humid && local.warmest() >= ClimateZone.TUNDRA_WARMEST && local.warmest() < 14 && local.temperature() < 6 && (y < 0 || y > SEA + 1000);
     }
 
+    /** Whether a snow and ice column lies within some metres of ground the map does not show as snow and ice. */
+    private boolean snowEdge(int x, int z, int voxel, int metres) {
+        int reach = Math.max(metres, 2 * voxel);
+        for (int k = 0; k < 8; k += 2)
+            if (cover(x + (int) RING_X[k] * reach, z + (int) RING_Z[k] * reach, voxel) != WorldCoverSource.SNOW_AND_ICE) return true;
+        return false;
+    }
+
     /** Bare rock in a biome where snow does not lie, for faces too steep to hold it. */
     private Surface rock() { return new Surface(stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false); }
 
@@ -2074,7 +2377,16 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Bare rock, pale granite where the mountains are granite. */
     private Surface rock(int x, int z, int roll) {
-        return paleRock(x, z) ? new Surface(stonyPeaks, roll < 55 ? DIORITE : ANDESITE, STONE, 0, 0, 0, 0, 0, false) : rock();
+        return paleRock(x, z) ? new Surface(stonyPeaks, rockKind(x, z) < 0.1 ? DIORITE : ANDESITE, STONE, 0, 0, 0, 0, 0, false) : rock();
+    }
+
+    /**
+     * Which of a bare ground's rocks lies at a column, about -1 to 1: clumps and streaks a few blocks across, with only a
+     * slight jitter at their edges, so rock, scree and cinders mottle the ground rather than speckling it block by block.
+     */
+    private double rockKind(int x, int z) {
+        return 0.7 * patches.getValue(x / 9.0 + 71.3, z / 9.0 - 33.1) + 0.3 * patches.getValue(x / 3.5 - 8.8, z / 3.5 + 14.2)
+                + ((mix(x, 0x4B494E44L, z) & 1023) / 511.5 - 1) * 0.06;
     }
 
     /** Open grass in a climate: savanna, steppe, meadow, prairie or moor. */
@@ -2085,12 +2397,19 @@ public final class EarthGenerator extends SurfaceGenerator {
         return switch (local.zone()) {
             // Savanna and steppe grass, dry for much of the year.
             // Where the dry season is long, as on the Serengeti, the grass is grazed and burnt down to bare earth in patches.
-            case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> new Surface(savanna, top == GRASS && local.rain() < 1100 && patch > 0.15 ? COARSE_DIRT : top,
-                    DIRT, 2, 0, 0, 380, 390, false, Tree.ACACIA);
+            // The drier, the more bare earth and the fewer trees: the Serengeti's short-grass plains, under 900 mm, are open
+            // tan grass and dust with no trees, as acacias stand only in the wooded country the map shows as trees or shrubs.
+            case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> {
+                double dust = 0.15 - Mth.clamp((1100 - local.rain()) / 1200, 0, 0.5);
+                yield new Surface(savanna, top == GRASS && local.rain() < 1100 && patch > dust ? scrubGround(x, z) : top,
+                        DIRT, local.rain() < 900 ? 0 : 2, 0, 0, 380, 390, false, Tree.ACACIA);
+            }
             // Junipers on the cold steppes.
             case COLD_DESERT, COLD_STEPPE -> new Surface(savanna, top, DIRT, 2, 10, 0, 380, 390, false);
             // Mediterranean meadows are parched brown by summer: as much bare earth as grass.
-            case MEDITERRANEAN -> new Surface(plains, top == GRASS && patch > -0.1 ? COARSE_DIRT : top, DIRT, 1, 0, 0, 300, 320, false);
+            // Where summers are long and hot, as in Tuscany and Provence, the grass is straw and olive, never lawn green.
+            case MEDITERRANEAN -> new Surface(parched(local) ? savanna : plains, top == GRASS && patch > -0.1 ? COARSE_DIRT : top, DIRT,
+                    parched(local) ? 0 : 1, 0, 0, 300, 320, false);
             // Rainforest clearings and floodplain meadows: jungle ground among scattered trees, not open prairie.
             case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 5, 0, 0, 380, 400, true, Tree.JUNGLE);
             // Alpine and arctic meadows.
@@ -2108,6 +2427,81 @@ public final class EarthGenerator extends SurfaceGenerator {
     private Surface boreal(BlockState top, double patch, int trees) {
         BlockState ground = top != GRASS ? top : patch > 0.35 ? MOSS : patch < -0.4 ? PODZOL : GRASS;
         return new Surface(taiga, ground, DIRT, 8 * trees, 10, 1, 300, 320, true);
+    }
+
+    /** Whether a land cover class is marsh or mangrove, which meets the sea without a beach. */
+    private static boolean marshy(int code) { return code == WorldCoverSource.WETLAND || code == WorldCoverSource.MANGROVES; }
+
+    /**
+     * Whether a Mediterranean climate's summers are long, hot and dry, as on the coasts of Provence, Tuscany, Greece,
+     * Andalusia and California, where open ground is garrigue and straw-coloured grass rather than green meadow.
+     */
+    private static boolean parched(Local local) {
+        return local.zone() == ClimateZone.MEDITERRANEAN && local.warmest() >= 19 && local.temperature() >= 10 && local.rain() < 1100;
+    }
+
+    /**
+     * Garrigue and dry maquis: pale limestone, scree and dust with low scrub between, more of it bare the drier the place, and
+     * a few low oaks and azaleas. The bare share comes in patches tens of metres across, broken up grain by grain at their edges.
+     */
+    private Surface garrigue(int x, int z, Local local, double patch, @Nullable BlockState rocky, int trees) {
+        double bare = Mth.clamp((1100 - local.rain()) / 600, 0.35, 0.8);
+        // Each kind of rock and dust lies in clumps a few blocks across, so the ground is mottled rather than salt and pepper.
+        double kind = patches.getValue(x / 6.0 + 13.1, z / 6.0 - 7.7) + ((mix(x, 0x524F434BL, z) & 1023) / 511.5 - 1) * 0.25;
+        BlockState top = rocky != null ? rocky : patch < (0.5 - bare) * 0.9 ? GRASS
+                : kind < -0.45 ? DIORITE : kind < -0.15 ? GRAVEL : kind < 0.2 ? TUFF : kind < 0.45 ? COARSE_DIRT : ANDESITE;
+        return new Surface(savanna, top, top == GRASS || top == COARSE_DIRT ? DIRT : STONE, top == GRASS ? 5 * trees : 0, 0, 0, 260, 270, false,
+                patch < 0 ? Tree.AZALEA : Tree.OAK);
+    }
+
+    /** Peatland cells, in blocks, and whether each lies on broad, level ground. */
+    private static final int PEAT_CELL = 256;
+    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> levelCells = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Whether open boreal ground is peatland: the subarctic's broad, level plains, where water cannot drain away and moss
+     * and peat build up for thousands of years, as in the Hudson Bay Lowlands, the West Siberian Plain and Finland's
+     * aapa mires. Hills and valleys between them drain, and keep the taiga's usual open ground.
+     */
+    private boolean peatland(int code, int x, int z, Local local) {
+        if (local.zone() != ClimateZone.SUBARCTIC || code != WorldCoverSource.WETLAND && code != WorldCoverSource.MOSS_AND_LICHEN
+                && code != WorldCoverSource.SHRUBLAND && code != WorldCoverSource.GRASSLAND) return false;
+        // Cells blended into their neighbours along a wandering line, so a mire's edge is never a grid of squares.
+        double fx = x / (double) PEAT_CELL - 0.5 + warpX.getValue(x / 151.0, z / 151.0) * 0.45;
+        double fz = z / (double) PEAT_CELL - 0.5 + warpZ.getValue(x / 151.0, z / 151.0) * 0.45;
+        int ix = Mth.floor(fx), iz = Mth.floor(fz);
+        double tx = fx - ix, tz = fz - iz, share = 0;
+        for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++)
+            if (levelCell(ix + i, iz + j)) share += (i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - tz : tz);
+        return share > 0.5;
+    }
+
+    /** Whether the ground two kilometres round a cell's middle lies within a few metres of it on every side. */
+    private boolean levelCell(int cx, int cz) {
+        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        Boolean known = levelCells.get(key);
+        if (known != null) return known;
+        GlobalElevation dem = elevation[FAR_ZOOM];
+        double px = (cx + 0.5) * PEAT_CELL, pz = (cz + 0.5) * PEAT_CELL, here = dem.metres(px, pz);
+        boolean level = true;
+        for (int k = 0; k < 8 && level; k++) level = Math.abs(dem.metres(px + RING_X[k] * 2000, pz + RING_Z[k] * 2000) - here) <= 10;
+        if (levelCells.size() > 1 << 18) levelCells.clear();
+        levelCells.putIfAbsent(key, level);
+        return level;
+    }
+
+    /**
+     * Peat bog and fen: dark sphagnum and wet peat among sedge, with pools a few metres across, and a few small
+     * black spruces on the drier hummocks. The map's wetland has the most pools and the fewest trees.
+     */
+    private Surface peat(int code, int x, int z, double patch) {
+        boolean wet = code == WorldCoverSource.WETLAND;
+        double pool = patches.getValue(x / 37.0 + 61.3, z / 37.0 - 27.1) + patches.getValue(x / 13.0 - 4.4, z / 13.0 + 3.7) * 0.3;
+        if (pool > (wet ? 0.5 : 0.7)) return new Surface(swamp, POOL, MUD, 0, 0, 0, 0, 0, false);
+        // Seen from above a mire is nearly black: wet peat and dark sedge, with only flecks of bright sphagnum and rusty podzol.
+        int grain = (int) Math.floorMod(mix(x, 0x50454154L, z), 100);
+        BlockState top = patch > -0.05 ? MUD : patch < -0.55 ? MOSS : grain < 4 ? PODZOL : GRASS;
+        return new Surface(swamp, top, DIRT, top == GRASS ? (wet ? 3 : 7) : 0, 10, 0, 300, 310, true);
     }
 
     /** Heather moor: dark, brown ground of peat and podzol among the grass, with ferns, few flowers and fewer trees. */
@@ -2196,10 +2590,24 @@ public final class EarthGenerator extends SurfaceGenerator {
      * the Matterhorn, Everest and Mont Blanc, have high neighbours and ridges that rise again, and fail the test.
      */
     private boolean cone(int x, int z) {
-        long key = (long) (x >> 10) << 32 | (z >> 10) & 0xFFFFFFFFL;
+        // Each cell finds its own summit, so a cone is looked for from the cells round about too: its edge then follows its
+        // own ring and height, not the cells' square borders. The ring wanders a little, so it is no perfect circle either.
+        double wx = x + warpX.getValue(x / 700.0, z / 700.0) * 600, wz = z + warpZ.getValue(x / 700.0, z / 700.0) * 600;
+        for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+            double[] c = coneOf((x >> 10) + i, (z >> 10) + j);
+            if (c.length == 0) continue;
+            double dx = wx - c[0], dz = wz - c[1];
+            if (dx * dx + dz * dz < 5000.0 * 5000.0 && elevation[FAR_ZOOM].metres(x, z) > c[2]) return true;
+        }
+        return false;
+    }
+
+    /** The volcanic cone a 1024-block cell's search finds: its summit's x and z and the mean height of the ring round it, or none. */
+    private double[] coneOf(int gx, int gz) {
+        long key = (long) gx << 32 | gz & 0xFFFFFFFFL;
         double[] c = cones.get(key);
         if (c == null) {
-            double cx = (x & ~1023) + 512, cz = (z & ~1023) + 512, px = cx, pz = cz, top = -1e9;
+            double cx = gx * 1024.0 + 512, cz = gz * 1024.0 + 512, px = cx, pz = cz, top = -1e9;
             for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
                 double m = elevation[FAR_ZOOM].metres(cx + i * 2000, cz + j * 2000);
                 if (m > top) { top = m; px = cx + i * 2000; pz = cz + j * 2000; }
@@ -2217,9 +2625,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (cones.size() > 1 << 14) cones.clear();
             cones.putIfAbsent(key, c);
         }
-        if (c.length == 0) return false;
-        double dx = x - c[0], dz = z - c[1];
-        return dx * dx + dz * dz < 5000.0 * 5000.0 && elevation[FAR_ZOOM].metres(x, z) > c[2];
+        return c;
     }
 
     /** The ecoregion at a column, or 0 off the real Earth or where the map has none. */
@@ -2415,10 +2821,15 @@ public final class EarthGenerator extends SurfaceGenerator {
                     : new Surface(savanna, GRASS, DIRT, 30, 4, 0, 260, 270, false);
             // Conifers on cooler, wetter Mediterranean mountains (the Sierra, the Cascades), oak below.
             case MEDITERRANEAN -> t < 12 ? new Surface(local.rain() > 900 ? oldTaiga : taiga, local.rain() > 900 && patch > 0.3 ? PODZOL : GRASS, DIRT, 80, 8, 0, 110, 120, true)
+                    // Where summers are parched, holm oak and pine woods are open, with dry dust and leaf litter between.
+                    : parched(local) ? new Surface(forest, patch > 0.3 ? COARSE_DIRT : GRASS, DIRT, 55, 1, 0, 140, 170, false)
                     : new Surface(forest, GRASS, DIRT, 70, 1, 0, 140, 170, false);
             case SUBTROPICAL -> patch < -0.62 && bamboo(x, z) ? bambooForest(patch)
                     // Jungle only where the ecoregion is tropical forest, as in south China; Florida's warm woods are oak and pine.
-                    : t > 20 && tropicalForest(x, z) ? new Surface(sparseJungle, GRASS, DIRT, 80, 0, 0, 140, 160, true, Tree.JUNGLE)
+                    // Humid subtropical forest, where winters are cool, is evergreen broadleaf and laurel rather than jungle: dense,
+                    // dark groves among broadleaf woods, as on south China's hills.
+                    : t > 20 && tropicalForest(x, z) ? patch < 0 ? new Surface(darkForest, GRASS, DIRT, 90, 0, 0, 80, 100, false, Tree.DARK_OAK)
+                            : new Surface(forest, GRASS, DIRT, 88, 0, 0, 100, 130, true)
                     : t > 20 ? new Surface(forest, GRASS, DIRT, 70, 4, 0, 180, 200, false)
                     : groves(patch, x, z, new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false));
             case OCEANIC -> groves(patch, x, z, new Surface(forest, GRASS, DIRT, 82, t < 8 ? 3 : 0, 2, 90, 130, true));

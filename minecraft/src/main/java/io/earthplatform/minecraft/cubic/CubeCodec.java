@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic;
 
 import com.mojang.serialization.Codec;
+import io.earthplatform.minecraft.EarthPlatformMod;
 import io.netty.buffer.Unpooled;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,15 +54,25 @@ public final class CubeCodec {
         return tag;
     }
 
-    /** Any thread. Block entities stay as tags until the owner thread adopts the cube. */
+    /**
+     * Any thread. Block entities stay as tags until the owner thread adopts the cube. Blocks and biomes
+     * from a mod that has since been removed become air and plains, like vanilla chunks, so the rest of
+     * the cube (someone's build) survives instead of the whole cube being regenerated.
+     */
     public Decoded read(CompoundTag tag) {
-        PalettedContainer<BlockState> states = STATES.parse(NbtOps.INSTANCE, tag.get("blocks")).getOrThrow();
-        PalettedContainerRO<Holder<Biome>> biomeData = biomes.parse(NbtOps.INSTANCE, tag.get("biomes")).getOrThrow();
+        PalettedContainer<BlockState> states = STATES.parse(NbtOps.INSTANCE, tag.get("blocks"))
+                .promotePartial(error -> missing(tag, error)).getOrThrow();
+        PalettedContainerRO<Holder<Biome>> biomeData = biomes.parse(NbtOps.INSTANCE, tag.get("biomes"))
+                .promotePartial(error -> missing(tag, error)).getOrThrow();
         LevelChunkSection section = new LevelChunkSection(states, biomeData);
         section.recalcBlockCounts();
         List<CompoundTag> entities = new ArrayList<>();
         for (Tag entry : tag.getList("block_entities", Tag.TAG_COMPOUND)) entities.add((CompoundTag) entry);
         return new Decoded(section, entities);
+    }
+
+    private static void missing(CompoundTag tag, String error) {
+        EarthPlatformMod.LOGGER.warn("Saved cube [{},{},{}]: {}", tag.getInt("x"), tag.getInt("y"), tag.getInt("z"), error);
     }
 
     public static byte[] sectionBytes(LevelChunkSection section) {

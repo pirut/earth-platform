@@ -469,6 +469,25 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return col.surface[(z & 15) * 16 + (x & 15)].biome();
     }
 
+    /**
+     * The biome at a block worked out from that spot alone, without building and caching its whole
+     * column, for biome searches (/locate biome, biome compasses) that sample far and wide.
+     */
+    @Override public Holder<Biome> biome(int x, int y, int z) {
+        int[] sample = new int[2];
+        ground(x + 1, z, sample); int east = sample[0];
+        ground(x - 1, z, sample); int west = sample[0];
+        ground(x, z + 1, sample); int south = sample[0];
+        ground(x, z - 1, sample); int north = sample[0];
+        ground(x, z, sample);
+        int cy = y >> 4;
+        if ((cy << 4) + 15 < Math.min(Math.min(east, west), Math.min(Math.min(south, north), sample[0])) - 6) {
+            Holder<Biome> cave = below.biome(below.kind(x >> 4, cy, z >> 4));
+            if (cave != null) return cave;
+        }
+        return surface(x, z, sample[0], sample[1], Math.abs(east - west) + Math.abs(south - north)).biome();
+    }
+
     /** What vanilla structure code reads of this world: the terrain before structures. */
     private final class StructureHost implements VanillaStructures.Host {
         @Override public int ground(int x, int z) { return surfaceY(x, z); }

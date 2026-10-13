@@ -17,7 +17,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 interface CubicLevelReaderMixin {
     @Inject(method = "getNoiseBiome(III)Lnet/minecraft/core/Holder;", at = @At("HEAD"), cancellable = true)
     private void earthplatform$cubeBiome(int x, int y, int z, CallbackInfoReturnable<Holder<Biome>> result) {
-        if ((Object) this instanceof Level level && CubicLevel.of(level) instanceof CubeWorld cubes) {
+        if ((Object) this instanceof Level level && CubicLevel.at(level, x << 2, z << 2) instanceof CubeWorld cubes) {
             Holder<Biome> biome = cubes.getNoiseBiome(x, y, z);
             if (biome != null) result.setReturnValue(biome);
         }
@@ -25,7 +25,7 @@ interface CubicLevelReaderMixin {
 
     @Inject(method = "hasChunksAt(IIIIII)Z", at = @At("HEAD"), cancellable = true)
     private void earthplatform$cubeBox(int fromX, int fromY, int fromZ, int toX, int toY, int toZ, CallbackInfoReturnable<Boolean> result) {
-        if (!((Object) this instanceof Level level) || !(CubicLevel.of(level) instanceof CubeWorld cubes)) return;
+        if (!((Object) this instanceof Level level) || !(CubicLevel.at(level, fromX, fromZ) instanceof CubeWorld cubes)) return;
         for (int cy = fromY >> 4; cy <= toY >> 4; cy++) for (int cz = fromZ >> 4; cz <= toZ >> 4; cz++) for (int cx = fromX >> 4; cx <= toX >> 4; cx++) {
             if (cubes.cube(CubeKey.pack(cx, cy, cz)) == null) { result.setReturnValue(false); return; }
         }

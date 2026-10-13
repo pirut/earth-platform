@@ -82,7 +82,7 @@ The first visit to a place downloads its terrain, so you need an internet connec
 
 You don't need Distant Horizons: Earth Platform has its own far terrain, and Distant Horizons pauses itself in Earth worlds.
 
-**Works with** Xaero's Minimap and World Map, JourneyMap, Create, Mekanism, Waystones, the Twilight Forest, JEI, EMI, Jade and many more. Not yet: Create Aeronautics ships and AE2 spatial storage in the Earth world.
+**Works with** Xaero's Minimap and World Map, JourneyMap, Create, Mekanism, Waystones, the Twilight Forest, JEI, EMI, Jade and many more. Create Aeronautics ships fly over the real Earth and ride the jet stream, and AE2 spatial storage works in Earth worlds.
 
 Install guide, FAQ and troubleshooting: TODO link to docs/INSTALL.md and docs/FAQ.md.
 

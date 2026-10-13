@@ -16,11 +16,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 interface CubicLightGetterMixin {
     @Inject(method = "getBrightness(Lnet/minecraft/world/level/LightLayer;Lnet/minecraft/core/BlockPos;)I", at = @At("HEAD"), cancellable = true)
     private void earthplatform$cubeBrightness(LightLayer layer, BlockPos pos, CallbackInfoReturnable<Integer> result) {
-        if ((Object) this instanceof Level level && CubicLevel.of(level) instanceof CubeWorld cubes) result.setReturnValue(cubes.getBrightness(layer, pos));
+        if ((Object) this instanceof Level level && CubicLevel.at(level, pos.getX(), pos.getZ()) instanceof CubeWorld cubes) result.setReturnValue(cubes.getBrightness(layer, pos));
     }
 
     @Inject(method = "getRawBrightness(Lnet/minecraft/core/BlockPos;I)I", at = @At("HEAD"), cancellable = true)
     private void earthplatform$cubeRawBrightness(BlockPos pos, int amount, CallbackInfoReturnable<Integer> result) {
-        if ((Object) this instanceof Level level && CubicLevel.of(level) instanceof CubeWorld cubes) result.setReturnValue(cubes.getRawBrightness(pos, amount));
+        if ((Object) this instanceof Level level && CubicLevel.at(level, pos.getX(), pos.getZ()) instanceof CubeWorld cubes) result.setReturnValue(cubes.getRawBrightness(pos, amount));
     }
 }

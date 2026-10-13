@@ -124,6 +124,8 @@ public final class Strata {
     private static final int CELL = 512;
     /** Metres under the datum before the ground's own cover gives way to rock and ledges; plateau tops keep theirs. */
     static final double RIM = 12;
+    /** The steepest ground that keeps its soil: two block steps across a column, as a single step's corner. */
+    private static final double FLAT = 0.9;
 
     private final Globe globe;
     private final Holder<Biome> badlands;
@@ -249,9 +251,11 @@ public final class Strata {
             BlockState top = surface.top();
             Block ground = built.region.ground();
             // Where the region has its own loose ground, as Monument Valley's red sand, its flats are all of it.
-            boolean loose = ground != null && (top.is(Blocks.GRASS_BLOCK) || steep <= 0.45), soil = loose;
+            // A flat here is anything short of three block steps across the column, so the corner of a single
+            // step, where it turns diagonally, keeps the sand rather than lining every gentle contour with rock.
+            boolean loose = ground != null && (top.is(Blocks.GRASS_BLOCK) || steep <= FLAT), soil = loose;
             for (Block b : SOIL) if (top.is(b)) { soil = true; break; }
-            if (!soil || steep > 0.75) {
+            if (!soil || steep > FLAT) {
                 BlockState rock = at(y);
                 return new Surface(badlands, rock, rock, 0, 0, 0, 0, 0, false);
             }

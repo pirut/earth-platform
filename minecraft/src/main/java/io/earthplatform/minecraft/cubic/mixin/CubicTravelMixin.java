@@ -15,9 +15,9 @@ abstract class CubicTravelMixin {
     @Inject(method = "travel(Lnet/minecraft/world/phys/Vec3;)V", at = @At("HEAD"), cancellable = true)
     private void earthplatform$waitForCubes(Vec3 input, CallbackInfo info) {
         LivingEntity self = (LivingEntity) (Object) this;
-        CubeWorld cubes = CubicLevel.of(self.level());
-        if (cubes == null || io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(self)) return;
         int x = self.getBlockX(), y = self.getBlockY(), z = self.getBlockZ();
+        CubeWorld cubes = CubicLevel.at(self.level(), x, z);
+        if (cubes == null || io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(self)) return;
         if (cubes.cubeAtBlock(x, y, z) != null && cubes.cubeAtBlock(x, y - 2, z) != null) return;
         self.setDeltaMovement(Vec3.ZERO);
         info.cancel();

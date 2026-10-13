@@ -10,6 +10,11 @@
  *       Terrain Tiles PNGs, single-flight per tile, bounded concurrent transfers with retry, a
  *       decoded-tile LRU, an atomic disk cache under {@code z/x/y.png} and an offline mode. Callers
  *       block, so use it from generation workers, never a tick thread.</li>
+ *   <li>{@link io.earthplatform.geography.globe.ElevationLayer}: a better source laid over each
+ *       cleaned tile, in order, pinned per world in {@code earth.elevation}.</li>
+ *   <li>{@link io.earthplatform.geography.globe.RemaElevation} ({@code rema-v2.0}): Antarctica from
+ *       the Reference Elevation Model of Antarctica, read block by block from
+ *       {@link io.earthplatform.geography.globe.RemaSource} and brought to the EGM96 geoid.</li>
  *   <li>{@link io.earthplatform.geography.globe.GlobalElevation}: Catmull-Rom bicubic in true
  *       metres across tile seams and the antimeridian. Above zoom 10 open sea is stored as 0 m, so
  *       those pixels take zoom-10 bathymetry.</li>

@@ -53,7 +53,8 @@ class CubicBench {
             new Place("Yosemite Valley", 37.7240, -119.6365),
             new Place("Lake Tahoe", 38.9520, -120.1080),
             new Place("Amazon", -3.4653, -62.2159),
-            new Place("Tokyo", 35.6812, 139.7671));
+            new Place("Tokyo", 35.6812, 139.7671),
+            new Place("Mato Grosso", -11.8243, -55.5029));
 
     @Test
     @EnabledIfEnvironmentVariable(named = "EARTH_BENCH", matches = ".+")
@@ -69,6 +70,15 @@ class CubicBench {
         MappedRegistry<Biome> biomes = new MappedRegistry<>(Registries.BIOME, Lifecycle.stable());
         lookup.lookupOrThrow(Registries.BIOME).listElements().forEach(holder ->
                 biomes.register(holder.key(), holder.value(), RegistrationInfo.BUILT_IN));
+        // The mod's own biomes, from its data pack.
+        for (String name : List.of("glacial_lake")) {
+            try (var in = CubicBench.class.getResourceAsStream("/data/earthplatform/worldgen/biome/" + name + ".json")) {
+                var json = com.google.gson.JsonParser.parseReader(new java.io.InputStreamReader(in));
+                Biome biome = Biome.DIRECT_CODEC.parse(net.minecraft.resources.RegistryOps.create(com.mojang.serialization.JsonOps.INSTANCE, lookup), json).getOrThrow();
+                biomes.register(net.minecraft.resources.ResourceKey.create(Registries.BIOME, net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("earthplatform", name)),
+                        biome, RegistrationInfo.BUILT_IN);
+            }
+        }
         TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve(TerrariumTileSource.DATASET_ID),
                 true, 256, 6, Duration.ofSeconds(20));
         WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, 4, Duration.ofSeconds(30));

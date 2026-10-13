@@ -19,7 +19,7 @@ abstract class CubicChunkCacheMixin {
 
     @Inject(method = "blockChanged(Lnet/minecraft/core/BlockPos;)V", at = @At("HEAD"), cancellable = true)
     private void earthplatform$cubeChanged(BlockPos pos, CallbackInfo info) {
-        CubeWorld cubes = CubicLevel.of(level);
+        CubeWorld cubes = CubicLevel.at(level, pos.getX(), pos.getZ());
         if (cubes == null) return;
         cubes.blockChanged(pos);
         info.cancel();

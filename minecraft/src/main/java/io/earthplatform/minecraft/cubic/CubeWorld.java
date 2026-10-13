@@ -227,6 +227,20 @@ public abstract class CubeWorld {
         state.onBlockStateChange(level, pos, old);
     }
 
+    /**
+     * For mods that rewrite a cube's block storage in place, such as AE2 spatial storage swapping a
+     * whole region: fold the new contents into the sky tops and the save, then {@link #onRewritten}.
+     */
+    public void rewritten(Cube cube) {
+        cube.markModified();
+        cube.reshaped = true;
+        refreshTops(cube);
+        onRewritten(cube);
+    }
+
+    /** Hook after {@link #rewritten}: refresh light and what clients hold. */
+    protected void onRewritten(Cube cube) {}
+
     /** Replaces the chunk holder broadcast: tell watchers that this position changed. */
     public abstract void blockChanged(BlockPos pos);
 
