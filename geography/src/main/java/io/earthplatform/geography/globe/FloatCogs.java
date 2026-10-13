@@ -164,6 +164,9 @@ final class FloatCogs implements AutoCloseable {
     }
 
     private Header header(int file) {
+        // Asked for every pixel read: a header already read is returned at once, without naming the file.
+        CompletableFuture<Header> known = headers.get(file);
+        if (known != null && known.isDone() && !known.isCompletedExceptionally()) return known.join();
         CompletableFuture<Header> mine = new CompletableFuture<>(), shared = headers.putIfAbsent(file, mine);
         if (shared == null) {
             try { mine.complete(readHeader(file)); }
