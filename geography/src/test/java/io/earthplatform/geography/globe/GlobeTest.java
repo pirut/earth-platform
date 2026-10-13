@@ -25,7 +25,9 @@ public final class GlobeTest {
         streaming();
         worldCover();
         climate();
-        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); liveClimate(); }
+        imagery();
+        palette();
+        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); liveClimate(); liveImagery(); }
         else System.out.println("GlobeTest: live AWS tile checks skipped (set EARTH_LIVE_TILES=1)");
         System.out.println("GlobeTest: " + checks + " checks passed");
     }
@@ -297,6 +299,95 @@ public final class GlobeTest {
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    private static void imagery() throws Exception {
+        var image = new java.awt.image.BufferedImage(256, 256, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) image.setRGB(x, y, x < 128 ? 0xD0B080 : 0x305020);
+        var out = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "jpg", out);
+        byte[] jpeg = out.toByteArray();
+        // The server's blank placeholder for tiles with no imagery is a small PNG.
+        byte[] blank = TerrariumTileSource.encode(new float[256 * 256]);
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/s2/", exchange -> {
+            requests.incrementAndGet();
+            String path = exchange.getRequestURI().getPath().substring("/s2/".length());
+            byte[] body = path.equals("14/6000/3000.jpg") ? jpeg : path.equals("14/6000/3001.jpg") ? blank : null;
+            if (body == null) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        Path cache = Files.createTempDirectory("imagery-test");
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/s2/");
+        try {
+            try (var imagery = new ImagerySource(base, cache, true, 4, 2, Duration.ofSeconds(5))) {
+                var pool = Executors.newFixedThreadPool(8);
+                List<Future<Integer>> futures = new ArrayList<>();
+                for (int i = 0; i < 16; i++) futures.add(pool.submit(() -> imagery.pixel(3000L * 256 + 10, 6000L * 256 + 10, 14)));
+                for (var f : futures) near(0xD0, f.get() >> 16 & 255, 6, "sand pixel red");
+                pool.shutdown();
+                equal(1, requests.get(), "one request for a tile wanted at once");
+                near(0x50, imagery.pixel(3000L * 256 + 200, 6000L * 256 + 10, 14) >> 8 & 255, 6, "forest pixel green");
+                equal(ImagerySource.NO_DATA, imagery.pixel(3001L * 256 + 5, 6000L * 256 + 5, 14), "placeholder tile is no imagery");
+                equal(ImagerySource.NO_DATA, imagery.pixel(5, 5, 14), "missing tile is no imagery");
+                double[] mean = new double[3];
+                check(imagery.mean(3000 * 256 + 20.5, 6000 * 256 + 20.5, 14, 3, mean), "mean over imagery");
+                near(ImagerySource.LINEAR[0xD0], mean[0], 0.03, "mean red in linear light");
+                check(!imagery.mean(3001 * 256 + 20.5, 6000 * 256 + 20.5, 14, 3, mean), "mean over no imagery fails");
+                fail(() -> imagery.tile(15, 0, 0), IllegalArgumentException.class, "zoom beyond the mosaic rejected");
+            }
+            try (var offline = new ImagerySource(base, cache, false, 4, 1, Duration.ofSeconds(5))) {
+                int before = requests.get();
+                near(0xD0, offline.pixel(3000L * 256 + 10, 6000L * 256 + 10, 14) >> 16 & 255, 6, "disk cache offline");
+                equal(ImagerySource.NO_DATA, offline.pixel(3001L * 256 + 5, 6000L * 256 + 5, 14), "placeholder remembered offline");
+                equal(before, requests.get(), "no transfer when cached");
+                fail(() -> offline.pixel(9, 9, 13), MissingTerrainException.class, "uncached tile offline");
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    private static void palette() {
+        // Colours sampled from the Sentinel-2 cloudless mosaic at known places.
+        GroundPalette.Reading dune = reading(254, 184, 96), hamada = reading(171, 134, 98), granite = reading(191, 166, 128);
+        GroundPalette.Reading forest = reading(46, 66, 30), dryGrass = reading(180, 160, 118), river = reading(16, 25, 40), snow = reading(240, 244, 248);
+        check(EnumSet.of(GroundPalette.Ground.RED_SAND, GroundPalette.Ground.SAND).contains(GroundPalette.match(dune, GroundPalette.DESERT_LOOSE, 0)), "Erg Chebbi dunes are sand");
+        int red = 0;
+        for (int i = 0; i < 100; i++) if (GroundPalette.match(dune, GroundPalette.DESERT_LOOSE, i / 100.0) == GroundPalette.Ground.RED_SAND) red++;
+        check(red > 30 && red < 100, "orange dunes mix red and pale sand: " + red);
+        check(EnumSet.of(GroundPalette.Ground.GRAVEL, GroundPalette.Ground.COARSE_DIRT).contains(GroundPalette.match(hamada, GroundPalette.DESERT_LOOSE, 0)), "stony desert plain is gravel or coarse dirt");
+        check(EnumSet.of(GroundPalette.Ground.STONE, GroundPalette.Ground.ANDESITE, GroundPalette.Ground.DIORITE, GroundPalette.Ground.CALCITE)
+                .contains(GroundPalette.match(granite, GroundPalette.ROCK, 0)), "Half Dome granite is pale grey rock: " + GroundPalette.match(granite, GroundPalette.ROCK, 0));
+        equal(GroundPalette.Ground.STONE, GroundPalette.match(granite, new GroundPalette.Ground[]{GroundPalette.Ground.STONE}, 0.99), "single candidate");
+        check(forest.green() && forest.vegetation() > 0.5, "forest is green");
+        check(!dryGrass.green() && dryGrass.vegetation() < 0.25, "dry grass is not");
+        check(river.shadow(), "dark water says nothing");
+        check(snow.snow() && !granite.snow(), "snow is snow, pale granite is not");
+    }
+
+    private static GroundPalette.Reading reading(int r, int g, int b) {
+        return GroundPalette.read(new double[]{ImagerySource.LINEAR[r], ImagerySource.LINEAR[g], ImagerySource.LINEAR[b]});
+    }
+
+    /** Known places in the real Sentinel-2 cloudless mosaic. */
+    private static void liveImagery() throws Exception {
+        try (var imagery = new ImagerySource(ImagerySource.EOX_S2_CLOUDLESS_2016, null, true, 16, 4, Duration.ofSeconds(30))) {
+            var grid = new MercatorGrid(1);
+            double[] mean = new double[3];
+            GeoPoint erg = new GeoPoint(31.15, -3.97);
+            check(imagery.mean(grid.pixelX(grid.blockX(erg), 14), grid.pixelY(grid.blockZ(erg), 14), 14, 3, mean), "Erg Chebbi has imagery");
+            check(GroundPalette.match(GroundPalette.read(mean), GroundPalette.DESERT_LOOSE, 0) == GroundPalette.Ground.RED_SAND, "Erg Chebbi reads as red sand");
+            GeoPoint sea = new GeoPoint(30, -40);
+            boolean any = imagery.mean(grid.pixelX(grid.blockX(sea), 14), grid.pixelY(grid.blockZ(sea), 14), 14, 1, mean);
+            check(!any || GroundPalette.read(mean).shadow(), "the open Atlantic says nothing about ground");
         }
     }
 
