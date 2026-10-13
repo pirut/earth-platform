@@ -36,7 +36,7 @@ import org.slf4j.Logger;
 public final class PhotonCompat {
     private static final Logger LOGGER = LogUtils.getLogger();
     /** Bumped whenever the edits change, so older copies are rebuilt. */
-    private static final int VERSION = 1;
+    private static final int VERSION = 2;
     private static final String MODE = System.getProperty("earthplatform.photon.compat", "auto");
 
     private PhotonCompat() {}
@@ -118,7 +118,8 @@ public final class PhotonCompat {
             Files.writeString(world.resolve("deferred4." + stage), SKY_SH_ENTRY.formatted(stage, stage));
         }
         Files.writeString(staging.resolve("program/earth_sky_sh.vsh"), SKY_SH_VERTEX);
-        Files.writeString(staging.resolve("program/earth_sky_sh.fsh"), SKY_SH_FRAGMENT);
+        Files.writeString(staging.resolve("program/earth_sky_sh.fsh"),
+                skyShDeclarations(Files.readString(staging.resolve("program/d4a_generate_sky_sh.csh"))) + SKY_SH_MAIN);
         Files.writeString(staging.resolve(DONE), "Photon adapted by Earth Platform for an OpenGL driver without compute shaders or with 16 texture units\n");
         deleteTree(copy);
         Files.createDirectories(copy.getParent());
@@ -178,60 +179,66 @@ public final class PhotonCompat {
             """;
 
     /**
-     * Projects the sky map onto second-order spherical harmonics, using the pack's own sky
-     * projection and harmonics functions, into the texels the pack's lighting reads them from:
-     * nine coefficients at (191, 2..10) and the upward irradiance at (191, 11). Every other texel
-     * of colortex4 passes through.
+     * The uniform declarations and includes of the pack's own sky light pass, read from the
+     * player's copy so the fragment pass sees exactly what that pass would. Compute-only lines
+     * (work group size, image and shared memory) are dropped.
      */
-    private static final String SKY_SH_FRAGMENT = """
-            #include "/include/global.glsl"
+    static String skyShDeclarations(String compute) {
+        int main = compute.indexOf("void main(");
+        if (main < 0) throw new IllegalStateException("no main() in the sky light pass");
+        StringBuilder out = new StringBuilder();
+        for (String line : compute.substring(0, main).split("\n")) {
+            String trimmed = line.strip();
+            boolean uniform = trimmed.startsWith("uniform ") && !trimmed.contains("image");
+            boolean preprocessor = trimmed.matches("#(include|if|ifdef|ifndef|elif|else|endif)\\b.*");
+            if (uniform || preprocessor) out.append(trimmed).append('\n');
+        }
+        String declarations = out.toString();
+        if (!declarations.contains("sampler2D colortex4;")) throw new IllegalStateException("the sky light pass doesn't read colortex4");
+        if (!declarations.contains("spherical_harmonics")) throw new IllegalStateException("the sky light pass doesn't include the harmonics");
+        return declarations;
+    }
+
+    /**
+     * Integrates the sky map over the upper hemisphere and writes it where the pack's lighting
+     * reads it: nine harmonic coefficients at (191, 2..10) and the upward irradiance at
+     * (191, 11). Every other texel of colortex4 passes through.
+     *
+     * <p>The hemisphere is split into a 16 x 16 grid of cells, even in height (cos theta) and in
+     * azimuth, so every cell covers the same solid angle; each cell is sampled once at its
+     * centre. The basis and the irradiance come from the pack, so coefficient order and scale
+     * are whatever it expects (including its Intel variant).
+     */
+    private static final String SKY_SH_MAIN = """
 
             layout(location = 0) out vec4 result;
 
             /* RENDERTARGETS: 4 */
 
-            uniform sampler2D colortex4;
+            const int earth_rings = 16;
+            const int earth_segments = 16;
 
-            uniform int worldTime;
-            uniform int worldDay;
-            uniform int moonPhase;
-            uniform float sunAngle;
-            uniform float rainStrength;
-            uniform float wetness;
-            uniform int frameCounter;
-            uniform float frameTimeCounter;
-            uniform int isEyeInWater;
-            uniform float blindness;
-            uniform float nightVision;
-            uniform float darknessFactor;
-            uniform vec3 light_dir;
-            uniform vec3 sun_dir;
-            uniform vec3 moon_dir;
-            uniform float biome_cave;
-            uniform float biome_may_rain;
-            uniform float biome_may_snow;
-            uniform float biome_snowy;
-            uniform float biome_temperate;
-            uniform float biome_arid;
-            uniform float biome_taiga;
-            uniform float biome_jungle;
-            uniform float biome_swamp;
-            uniform float biome_temperature;
-            uniform float biome_humidity;
-            uniform float desert_sandstorm;
-            uniform float world_age;
-            uniform float time_sunrise;
-            uniform float time_noon;
-            uniform float time_sunset;
-            uniform float time_midnight;
+            void earth_basis(vec3 dir, out float basis[9]) {
+            #ifdef MC_GL_RENDERER_INTEL
+                mat3 grid = sh_coeff_order_2(dir);
+                for (int k = 0; k < 9; ++k) basis[k] = grid[k / 3][k % 3];
+            #else
+                basis = sh_coeff_order_2(dir);
+            #endif
+            }
 
-            #include "/include/lighting/colors/light_color.glsl"
-            #include "/include/sky/projection.glsl"
-            #include "/include/utility/random.glsl"
-            #include "/include/utility/sampling.glsl"
-            #include "/include/utility/spherical_harmonics.glsl"
-
-            const uint directions = 256u;
+            vec3 earth_irradiance_up(vec3 sky[9]) {
+                const vec3 up = vec3(0.0, 1.0, 0.0);
+            #ifdef MC_GL_RENDERER_INTEL
+                sh3 grouped;
+                grouped.f1 = mat3(sky[0], sky[1], sky[2]);
+                grouped.f2 = mat3(sky[3], sky[4], sky[5]);
+                grouped.f3 = mat3(sky[6], sky[7], sky[8]);
+                return sh_evaluate_irradiance(grouped, up, 1.0);
+            #else
+                return sh_evaluate_irradiance(sky, up, 1.0);
+            #endif
+            }
 
             void main() {
                 ivec2 texel = ivec2(gl_FragCoord.xy);
@@ -240,19 +247,23 @@ public final class PhotonCompat {
                     return;
                 }
 
-                float boost = get_skylight_boost();
-                vec3 harmonics[9];
-                for (uint k = 0u; k < 9u; ++k) harmonics[k] = vec3(0.0);
-                for (uint i = 0u; i < directions; ++i) {
-                    vec3 dir = uniform_hemisphere_sample(vec3(0.0, 1.0, 0.0), r2(int(i)));
-                    vec3 light = texture(colortex4, project_sky(dir)).rgb * boost;
-                    float[9] basis = sh_coeff_order_2(dir);
-                    for (uint k = 0u; k < 9u; ++k) harmonics[k] += light * basis[k] * (tau / float(directions));
+                // Each cell's share of the hemisphere's 2 pi steradians, and the sky map's brightness scale.
+                float cell = tau / float(earth_rings * earth_segments) * get_skylight_boost();
+                vec3 sky[9] = vec3[9](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0));
+                for (int ring = 0; ring < earth_rings; ++ring) {
+                    float height = (float(ring) + 0.5) / float(earth_rings);
+                    float across = sqrt(1.0 - height * height);
+                    for (int segment = 0; segment < earth_segments; ++segment) {
+                        float azimuth = tau * (float(segment) + 0.5) / float(earth_segments);
+                        vec3 dir = vec3(across * cos(azimuth), height, across * sin(azimuth));
+                        vec3 light = texture(colortex4, project_sky(dir)).rgb * cell;
+                        float basis[9];
+                        earth_basis(dir, basis);
+                        for (int k = 0; k < 9; ++k) sky[k] += light * basis[k];
+                    }
                 }
 
-                result = texel.y < 11
-                    ? vec4(harmonics[texel.y - 2], 0.0)
-                    : vec4(sh_evaluate_irradiance(harmonics, vec3(0.0, 1.0, 0.0), 1.0), 0.0);
+                result = vec4(texel.y < 11 ? sky[texel.y - 2] : earth_irradiance_up(sky), 0.0);
             }
             """;
 }

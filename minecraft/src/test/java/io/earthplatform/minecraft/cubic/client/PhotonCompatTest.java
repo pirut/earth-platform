@@ -35,6 +35,9 @@ class PhotonCompatTest {
             assertFalse(properties.matches("(?s).*profile\\.ultra[^\\n]*\\s(SHADOW_COLOR|COLORED_LIGHTS)\\s.*"));
             assertEquals(Files.readString(pack.getPath("shaders/world0/deferred4.fsh")), Files.readString(copy.resolve("world0/deferred5.fsh")));
             assertTrue(Files.readString(copy.resolve("world0/deferred4.fsh")).contains("earth_sky_sh.fsh"));
+            String sky = Files.readString(copy.resolve("program/earth_sky_sh.fsh"));
+            assertTrue(sky.contains("uniform sampler2D colortex4;") && sky.contains("uniform vec3 sun_dir;"));
+            assertFalse(sky.contains("image2D") || sky.contains("shared ") || sky.contains("local_size"));
             if (System.getenv("EARTH_PHOTON_OUT") != null) {
                 try (var walk = Files.walk(copy)) {
                     for (Path file : walk.filter(Files::isRegularFile).toList()) {
