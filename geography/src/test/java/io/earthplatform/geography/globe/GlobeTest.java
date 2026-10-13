@@ -36,7 +36,8 @@ public final class GlobeTest {
         imagery();
         palette();
         rema();
-        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); liveClimate(); liveImagery(); liveRema(); }
+        usgs();
+        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); liveClimate(); liveImagery(); liveRema(); liveUsgs(); }
         else System.out.println("GlobeTest: live AWS tile checks skipped (set EARTH_LIVE_TILES=1)");
         System.out.println("GlobeTest: " + checks + " checks passed");
     }
@@ -900,10 +901,10 @@ public final class GlobeTest {
         Random random = new Random(7);
         byte[] noise = new byte[200_000];
         for (int i = 0; i < noise.length; i++) noise[i] = (byte) (i % 977 < 400 ? random.nextInt(4) : random.nextInt(256));
-        check(Arrays.equals(noise, RemaSource.lzw(lzw(noise), noise.length)), "LZW round trip");
+        check(Arrays.equals(noise, FloatCogs.lzw(lzw(noise), noise.length)), "LZW round trip");
         byte[] zeros = new byte[300_000];
-        check(Arrays.equals(zeros, RemaSource.lzw(lzw(zeros), zeros.length)), "LZW round trip of one long run");
-        fail(() -> RemaSource.lzw(Arrays.copyOf(lzw(noise), 1000), noise.length), java.io.IOException.class, "truncated LZW rejected");
+        check(Arrays.equals(zeros, FloatCogs.lzw(lzw(zeros), zeros.length)), "LZW round trip of one long run");
+        fail(() -> FloatCogs.lzw(Arrays.copyOf(lzw(noise), 1000), noise.length), java.io.IOException.class, "truncated LZW rejected");
 
         // Projection and geoid against PROJ (EPSG:3031) and NGA's grid.
         double[][] places = {{-78.5254, -85.6171, -1247100.934, 95584.793}, {-77.53, 167.153, 302405.631, -1326007.625},
@@ -1027,6 +1028,124 @@ public final class GlobeTest {
         }
     }
 
+    private static double usgsPlane(double column, double row) { return 160 + 0.05 * column - 0.03 * row; }
+
+    /** The 3DEP layer against a fixture 1° cell served over HTTP: cells, edges, sea and bathymetry. */
+    private static void usgs() throws Exception {
+        equal("n44w080", UsgsElevation.cellName(UsgsElevation.cell(43.07, -79.07)), "3DEP cell at Niagara");
+        equal("n44w080", UsgsElevation.cellName(UsgsElevation.cell(44.0, -80.0)), "3DEP cell holds its north-west corner");
+        equal("s14w171", UsgsElevation.cellName(UsgsElevation.cell(-14.3, -170.7)), "3DEP cell in American Samoa");
+        equal("n53e177", UsgsElevation.cellName(UsgsElevation.cell(52.5, 177.5)), "3DEP cell past the antimeridian");
+        equal("n44w080/USGS_13_n44w080_20230227.tif", UsgsElevation.name(UsgsElevation.cell(43.07, -79.07)), "3DEP cell pinned to its dated release");
+        fail(() -> UsgsElevation.name(UsgsElevation.cell(48.85, 2.35)), IllegalArgumentException.class, "3DEP has no cell in Paris");
+
+        // A coarse stand-in for n44w080: 1024 pixels a degree, a 6-pixel margin, 256-pixel blocks.
+        double p = 1.0 / 1024, x0 = -80 - 6 * p, y0 = 44 + 6 * p;
+        int n = 1036;
+        float[] full = new float[n * n];
+        for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) {
+            // No data in the north (past the border); sea level and below in the south-east.
+            full[j * n + i] = j < 300 ? -999999f : i >= 900 && j >= 900 ? -2f : (float) usgsPlane(i, j);
+        }
+        int h = n / 2;
+        float[] half = new float[h * h];
+        for (int j = 0; j < h; j++) for (int i = 0; i < h; i++) {
+            double fi = 2 * i + 0.5, fj = 2 * j + 0.5;
+            half[j * h + i] = fj < 300 ? -999999f : fi >= 900 && fj >= 900 ? -2f : (float) usgsPlane(fi, fj);
+        }
+        byte[] file = floatTiff(x0, y0, p, 256, full, n, half, h);
+        String path = "/3dep/n44w080/USGS_13_n44w080_20230227.tif";
+        Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/", exchange -> {
+            String asked = exchange.getRequestURI().getPath();
+            hits.computeIfAbsent(asked, k -> new AtomicInteger()).incrementAndGet();
+            if (!asked.equals(path)) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
+            String[] bounds = exchange.getRequestHeaders().getFirst("Range").substring("bytes=".length()).split("-");
+            int from = Integer.parseInt(bounds[0]), to = Math.min(file.length - 1, Integer.parseInt(bounds[1]));
+            byte[] body = Arrays.copyOfRange(file, from, to + 1);
+            exchange.sendResponseHeaders(206, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        Path cache = Files.createTempDirectory("3dep-test");
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/3dep/");
+        try {
+            // Zoom-10 pixels read the fixture's overview (its pixels are coarse for a cell).
+            int zoom = 10;
+            double world = 256.0 * (1 << zoom);
+            float[] online;
+            java.util.function.DoubleUnaryOperator column = lon -> (lon + 180) / 360 * (1 << zoom);
+            java.util.function.DoubleUnaryOperator row = lat -> (1 - Math.log(Math.tan(Math.PI / 4 + Math.toRadians(lat) / 2)) / Math.PI) / 2 * (1 << zoom);
+            try (var layer = new UsgsElevation(base, cache, true, 16, 2, Duration.ofSeconds(5))) {
+                // A tile across the data's north edge (row 300), with a pixel of open sea.
+                int tx = (int) column.applyAsDouble(x0 + 500 * p), ty = (int) row.applyAsDouble(y0 - 300 * p);
+                float[] values = new float[256 * 256];
+                Arrays.fill(values, 75f);
+                values[5] = 0f;
+                layer.refine(zoom, tx, ty, values);
+                int taken = 0, kept = 0, between = 0;
+                for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) {
+                    double lat = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (ty * 256.0 + j + 0.5) / world))));
+                    double lon = (tx * 256.0 + i + 0.5) / world * 360 - 180;
+                    double fx = (lon - x0) / p - 0.5, fy = (y0 - lat) / p - 0.5;
+                    float v = values[j * 256 + i];
+                    if (j * 256 + i == 5) { equal(0f, v, "3DEP layer leaves open sea"); continue; }
+                    if (fy > 306) { near(usgsPlane(fx, fy), v, 0.01, "3DEP layer inside the data at " + i + "," + j); taken++; }
+                    else if (fy < 290) { equal(75f, v, "3DEP layer keeps the tile past the data at " + i + "," + j); kept++; }
+                    else between++;
+                }
+                check(taken > 1000 && kept > 1000 && between > 0, "3DEP fixture tile crosses the data's edge: " + taken + " / " + between + " / " + kept);
+                online = values;
+
+                // Where 3DEP reads sea level or below, land takes it but bathymetry stays.
+                int sx = (int) column.applyAsDouble(x0 + 960 * p), sy = (int) row.applyAsDouble(y0 - 960 * p);
+                float[] sea = new float[256 * 256];
+                for (int k = 0; k < sea.length; k++) sea[k] = k % 2 == 0 ? -40f : 3f;
+                layer.refine(zoom, sx, sy, sea);
+                int low = 0;
+                for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) {
+                    double lat = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (sy * 256.0 + j + 0.5) / world))));
+                    double lon = (sx * 256.0 + i + 0.5) / world * 360 - 180;
+                    double fx = (lon - x0) / p - 0.5, fy = (y0 - lat) / p - 0.5;
+                    if (fx < 906 || fy < 906 || fx > 1029 || fy > 1029) continue;
+                    int k = j * 256 + i;
+                    if (k % 2 == 0) equal(-40f, sea[k], "3DEP keeps bathymetry at " + i + "," + j);
+                    else near(-2, sea[k], 1e-3, "3DEP takes land down to sea level at " + i + "," + j);
+                    low++;
+                }
+                check(low > 1000, "3DEP fixture tile reaches the low corner: " + low);
+
+                // Outside the listed cells nothing is asked for; coarse tiles are left alone.
+                int before = hits.values().stream().mapToInt(AtomicInteger::get).sum();
+                float[] paris = new float[256 * 256];
+                Arrays.fill(paris, 35f);
+                layer.refine(zoom, (int) column.applyAsDouble(2.35), (int) row.applyAsDouble(48.85), paris);
+                check(allEqual(paris, 35f), "3DEP leaves Paris");
+                float[] coarse = new float[256 * 256];
+                Arrays.fill(coarse, 35f);
+                layer.refine(UsgsElevation.MIN_ZOOM - 1, 35, 46, coarse);
+                check(allEqual(coarse, 35f), "3DEP leaves coarse tiles");
+                equal(before, hits.values().stream().mapToInt(AtomicInteger::get).sum(), "3DEP asks for nothing outside its cells");
+            }
+            int transfers = hits.get(path).get();
+            try (var offline = new UsgsElevation(base, cache, false, 16, 1, Duration.ofSeconds(5))) {
+                int tx = (int) column.applyAsDouble(x0 + 500 * p), ty = (int) row.applyAsDouble(y0 - 300 * p);
+                float[] values = new float[256 * 256];
+                Arrays.fill(values, 75f);
+                values[5] = 0f;
+                offline.refine(zoom, tx, ty, values);
+                check(Arrays.equals(online, values), "3DEP disk cache offline");
+                equal(transfers, hits.get(path).get(), "3DEP cached blocks need no transfer");
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
     private static boolean allEqual(float[] values, float expected) {
         for (float v : values) if (v != expected) return false;
         return true;
@@ -1076,30 +1195,35 @@ public final class GlobeTest {
         return out.toByteArray();
     }
 
-    /** A block of floats as REMA stores it: byte planes from the most significant, differenced along each row, then LZW. */
-    private static byte[] remaBlock(float[] image, int width, int height, int bx, int by) {
-        byte[] raw = new byte[512 * 512 * 4];
-        for (int j = 0; j < 512; j++) {
-            int start = j * 2048;
-            for (int i = 0; i < 512; i++) {
-                int x = bx * 512 + i, y = by * 512 + j;
+    /** A block of floats as REMA and 3DEP store it: byte planes from the most significant, differenced along each row, then LZW. */
+    private static byte[] remaBlock(float[] image, int width, int height, int bx, int by, int block) {
+        byte[] raw = new byte[block * block * 4];
+        for (int j = 0; j < block; j++) {
+            int start = j * block * 4;
+            for (int i = 0; i < block; i++) {
+                int x = bx * block + i, y = by * block + j;
                 int bitsOf = Float.floatToIntBits(x < width && y < height ? image[y * width + x] : 0f);
-                for (int b = 0; b < 4; b++) raw[start + b * 512 + i] = (byte) (bitsOf >>> (24 - 8 * b));
+                for (int b = 0; b < 4; b++) raw[start + b * block + i] = (byte) (bitsOf >>> (24 - 8 * b));
             }
-            for (int i = start + 2047; i > start; i--) raw[i] -= raw[i - 1];
+            for (int i = start + block * 4 - 1; i > start; i--) raw[i] -= raw[i - 1];
         }
         return lzw(raw);
     }
 
     /** A little-endian BigTIFF like REMA's: a 2 m image at (x0, y0) and one overview, 512-pixel LZW blocks. */
     private static byte[] remaTiff(double x0, double y0, float[] full, int fullSize, float[] overview, int overviewSize) {
+        return floatTiff(x0, y0, 2, 512, full, fullSize, overview, overviewSize);
+    }
+
+    /** A little-endian BigTIFF of square pixels at (x0, y0) and one overview, in LZW blocks with the floating-point predictor. */
+    private static byte[] floatTiff(double x0, double y0, double pixel, int block, float[] full, int fullSize, float[] overview, int overviewSize) {
         float[][] images = {full, overview};
         int[] sizes = {fullSize, overviewSize};
         List<List<byte[]>> blocks = new ArrayList<>();
         for (int level = 0; level < 2; level++) {
             List<byte[]> list = new ArrayList<>();
-            int across = Math.ceilDiv(sizes[level], 512);
-            for (int by = 0; by < across; by++) for (int bx = 0; bx < across; bx++) list.add(remaBlock(images[level], sizes[level], sizes[level], bx, by));
+            int across = Math.ceilDiv(sizes[level], block);
+            for (int by = 0; by < across; by++) for (int bx = 0; bx < across; bx++) list.add(remaBlock(images[level], sizes[level], sizes[level], bx, by, block));
             blocks.add(list);
         }
         // Layout: header, then per level its directory and arrays, then the blocks.
@@ -1128,8 +1252,8 @@ public final class GlobeTest {
             tags.add(new long[]{262, 3, 1, 1});
             tags.add(new long[]{277, 3, 1, 1});
             tags.add(new long[]{317, 3, 1, 3});
-            tags.add(new long[]{322, 3, 1, 512});
-            tags.add(new long[]{323, 3, 1, 512});
+            tags.add(new long[]{322, 3, 1, block});
+            tags.add(new long[]{323, 3, 1, block});
             tags.add(new long[]{324, 16, blocks.get(level).size(), offsetsAt[level]});
             tags.add(new long[]{325, 16, blocks.get(level).size(), countsAt[level]});
             tags.add(new long[]{339, 3, 1, 3});
@@ -1157,7 +1281,7 @@ public final class GlobeTest {
             }
             if (level == 0) {
                 out.position((int) scaleAt[0]);
-                out.putDouble(2).putDouble(2).putDouble(0);
+                out.putDouble(pixel).putDouble(pixel).putDouble(0);
                 out.putDouble(0).putDouble(0).putDouble(0).putDouble(x0).putDouble(y0).putDouble(0);
             }
         }
@@ -1179,6 +1303,22 @@ public final class GlobeTest {
                 for (float v : tiles.tile(zoom, tx, ty)) highest = Math.max(highest, v);
                 near(summit[2], highest, summit[3], "REMA summit at " + summit[0] + ", " + summit[1]);
             }
+        }
+    }
+
+    /** 3DEP above Niagara Falls, where the composite drops the river to Lake Ontario's level. */
+    private static void liveUsgs() throws Exception {
+        try (var usgs = new UsgsElevation(UsgsElevation.AWS_3DEP, null, true, 32, 4, Duration.ofSeconds(30));
+             var plain = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, null, true, 64, 4, Duration.ofSeconds(30));
+             var tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, null, true, 64, 4, Duration.ofSeconds(30), List.of(usgs))) {
+            int zoom = 15, n = 1 << zoom;
+            double lat = 43.0725, lon = -79.0650;
+            int tx = (int) ((lon + 180) / 360 * n);
+            double fy = (1 - Math.log(Math.tan(Math.PI / 4 + Math.toRadians(lat) / 2)) / Math.PI) / 2 * n;
+            int ty = (int) fy, i = (int) (((lon + 180) / 360 * n - tx) * 256), j = (int) ((fy - ty) * 256);
+            float before = plain.tile(zoom, tx, ty)[j * 256 + i], after = tiles.tile(zoom, tx, ty)[j * 256 + i];
+            check(before < 90, "Composite has the upper Niagara at Lake Ontario's level: " + before);
+            near(168, after, 6, "3DEP upper Niagara river");
         }
     }
 

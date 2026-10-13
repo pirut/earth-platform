@@ -9,6 +9,7 @@ import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.RemaElevation;
 import io.earthplatform.geography.globe.RemaSource;
 import io.earthplatform.geography.globe.TerrariumTileSource;
+import io.earthplatform.geography.globe.UsgsElevation;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
@@ -45,6 +46,7 @@ public final class CubicSettings {
     private static final Map<String, TerrariumTileSource> tiles = new HashMap<>();
     private static CopernicusSource copernicus;
     private static RemaElevation rema;
+    private static UsgsElevation usgs;
     private static WorldCoverSource cover;
     private static ClimateSource climate;
     private static ImagerySource imagery;
@@ -151,12 +153,14 @@ public final class CubicSettings {
 
     /**
      * The elevation pin for new worlds: the Terrarium composite, then the layers laid over it, joined
-     * by '+'. The Copernicus fill and Antarctica from REMA are on unless the game runs with
-     * {@code -Dearthplatform.earth.copernicus=false} or {@code -Dearthplatform.earth.rema=false}.
+     * by '+'. The Copernicus fill, the United States from 3DEP and Antarctica from REMA are on unless
+     * the game runs with {@code -Dearthplatform.earth.copernicus=false},
+     * {@code -Dearthplatform.earth.3dep=false} or {@code -Dearthplatform.earth.rema=false}.
      */
     public static String elevation() {
         String pin = TerrariumTileSource.DATASET_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.copernicus"))) pin += "+" + CopernicusFill.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.3dep"))) pin += "+" + UsgsElevation.DATASET_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.rema"))) pin += "+" + RemaElevation.DATASET_ID;
         return pin;
     }
@@ -180,6 +184,7 @@ public final class CubicSettings {
         TerrariumTileSource[] made = new TerrariumTileSource[1];
         for (int i = 1; i < ids.length; i++) {
             if (CopernicusFill.DATASET_ID.equals(ids[i])) layers.add(new CopernicusFill(copernicus(), (zoom, x, y) -> made[0].cleaned(zoom, x, y), 512));
+            else if (UsgsElevation.DATASET_ID.equals(ids[i])) layers.add(usgs());
             else if (RemaElevation.DATASET_ID.equals(ids[i])) layers.add(rema());
             else throw new IllegalStateException("Unsupported elevation layer '" + ids[i] + "' in '" + pin + "'");
         }
@@ -211,6 +216,21 @@ public final class CubicSettings {
             }
         }
         return copernicus;
+    }
+
+    /** The United States from 3DEP, cached on disk beside the elevation tiles. */
+    public static synchronized UsgsElevation usgs() {
+        if (usgs == null) {
+            Path cache = cacheFolder().resolve(UsgsElevation.DATASET_ID);
+            try {
+                // Blocks are up to 1 MiB decoded; a zoom-15 tile needs one to four.
+                usgs = new UsgsElevation(UsgsElevation.AWS_3DEP, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        48, 6, Duration.ofSeconds(30));
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the 3DEP elevation cache at " + cache, failure);
+            }
+        }
+        return usgs;
     }
 
     /** Antarctica from REMA, cached on disk beside the elevation tiles. */
