@@ -14,7 +14,8 @@
     "CubicEntityMixin",
     "CubicTravelMixin",
     "CubicRespawnMixin",
-    "CubicSpawnerMixin"
+    "CubicSpawnerMixin",
+    "compat.CreateContraptionMixin"
   ],
   "client": [
     "CubicPredictionMixin",
