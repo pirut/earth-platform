@@ -11,6 +11,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | Public name ("Minecraft Earth") | Resolved | JR chose Earth Platform (2026-10-13); PR #8's offline hint now says Earth Platform (179686a) |
 | Mod licence | Decided | JR chose LGPL-3.0-only (2026-10-13); LICENSE, COPYING and the jar notice are in place |
 | AWS Terrain Tiles | OK | Credited in game and in CREDITS.md |
+| USGS 3DEP for the United States (PR #24) | OK | Public domain (U.S. government work); credited "courtesy of the U.S. Geological Survey" as USGS asks. Canada's HRDEM not used |
 | REMA for Antarctica (PR #24) | OK | CC BY 4.0 (AWS Open Data registry); credited with PGC's required NSF acknowledgement and the dataset citation. EGM96 geoid grid bundled, public domain |
 | ESA WorldCover | OK | Credited, changes noted (CC BY 4.0) |
 | CHELSA climate | OK (licence) / courtesy | CC0; ask CHELSA about public traffic or mirror the four bands |
@@ -38,6 +39,12 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 - Code: `ClimateSource`, HTTP range reads from `https://os.zhdk.cloud.switch.ch/chelsav2/GLOBAL/...`.
 - Terms: [CC0 1.0](https://www.chelsa-climate.org/datasets/chelsa_climatologies) per the CHELSA site and EnviDat. No attribution required; citation requested, and we give it.
 - Courtesy, not licence: every player reads ranges from an academic object store. Before a big launch, either tell the CHELSA team (chelsa-climate.org) or mirror the five files we read (kg2, bio1, bio10, bio12 and the DEM) to our own storage, which CC0 allows.
+
+### USGS 3DEP 1/3 arc-second (United States, PR #24 c1cbf0e)
+- What: `UsgsElevation` fetches 3DEP 1/3 arc-second (about 10 m) GeoTIFF tiles from the USGS National Map staged products (`prd-tnm.s3.amazonaws.com`). It does this only for visited places inside the 1,450 1° cells pinned in `3dep-13-v1.txt`, caches them on disk, and blends them over the composite. Off with `-Dearthplatform.earth.3dep=false`. Canada's HRDEM is not used.
+- Terms: USGS-authored data is a U.S. government work in the public domain, with no restriction on use or redistribution. USGS asks for credit ("courtesy of the U.S. Geological Survey") and that its name not imply endorsement. OK.
+- The bundled cell list is our own index of which tiles exist, so it needs no credit beyond the above.
+- Service: a public USGS/AWS host built for bulk download. No courtesy email needed.
 
 ### REMA v2.0 (Antarctica, PR #24)
 - What: `RemaSource` reads REMA v2.0 mosaic tiles from the Polar Geospatial Center's `pgc-opendata-dems` bucket on the Registry of Open Data on AWS, only for Antarctic tiles a player visits, and caches them on disk. `RemaElevation` moves the heights from the WGS 84 ellipsoid to EGM96 and lays them over the composite. Off with `-Dearthplatform.earth.rema=false`. ArcticDEM is not used.
