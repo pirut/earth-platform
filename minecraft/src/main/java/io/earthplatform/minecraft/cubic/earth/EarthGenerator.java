@@ -176,7 +176,6 @@ public final class EarthGenerator extends SurfaceGenerator {
         }, badlands);
         towers = new Towers(seed, new Towers.Globe() {
             @Override public double metres(double x, double z) { return elevation[TOWER_ZOOM].metres(x, z); }
-            @Override public GeoPoint geographic(double x, double z) { return grid.geographic(x, z); }
             @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
         });
     }
@@ -222,7 +221,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Zoom of the elevation the far terrain's surveys (strata, salt pans) read. */
     private static final int FAR_ZOOM = 11;
-    /** Zoom the towers find tops and gorges in, near and far alike: pixels about 20 metres across. */
+    /** Zoom the towers find hills in, near and far alike: pixels about 20 metres across. */
     private static final int TOWER_ZOOM = 13;
     /** Zoom of the coarsest elevation the far levels read. */
     private static final int COARSEST_ZOOM = 9;
@@ -268,6 +267,16 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Land by sea the survey reads well above sea level lies as much lower, so it meets the sea as it meets its own;
         // its lakes and rivers lie as much lower with it, or they stood as pillars of water over the lowered ground.
         double lowered = cover == null ? 0 : metres - Math.max(metres - lift(x, z), Math.min(metres, 2 * SEA_METRES));
+        if (voxel >= BRIDGE_VOXEL && cover != null && cover(memo, x, z, voxel) == WorldCoverSource.BUILT_UP) {
+            int surface = bridged(dem, memo, x, z, voxel);
+            if (surface != DRY) {
+                surface -= (int) Math.round(lowered);
+                if (lowered > 0 && surface <= SEA + 2) surface = SEA;
+                out[0] = surface - lakeDepth(x, z, voxel);
+                out[1] = surface;
+                return;
+            }
+        }
         if (cover != null && cover(memo, x, z, voxel) == WorldCoverSource.WATER) {
             // Water joined through water to the open sea at sea level is the sea, though the survey under it reads far
             // above it, as where a coarse ocean grid fills a lagoon with its island's slopes; but water mapped on a
@@ -337,6 +346,51 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         out[0] = y;
         out[1] = DRY;
+    }
+
+    /** Narrowest far voxel that reads a bridge's deck as the water under it, and blocks a deck's voxels may reach to either side. */
+    private static final int BRIDGE_VOXEL = 8, BRIDGE_REACH = 32;
+
+    /**
+     * Surface of the water a built-up voxel bridges, or {@link #DRY}. Land cover maps a bridge's deck
+     * as built-up, and in the coarse overviews far levels read, a deck a few pixels wide fills whole
+     * voxels across a river, which stood at the deck's height as a dry line from bank to bank, as
+     * the Natchez-Vidalia bridges did over the Mississippi. A built-up voxel that has water on
+     * opposite sides within {@value #BRIDGE_REACH} blocks across built-up voxels, along a row, a
+     * column or a diagonal, the two level within a block, is that water. A dam has its water higher
+     * on one side than the other, and stands.
+     */
+    private int bridged(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel) {
+        int steps = Math.max(1, BRIDGE_REACH / voxel);
+        for (int k = 0; k < 4; k++) {
+            int dx = RING_STEP_X[k] * voxel, dz = RING_STEP_Z[k] * voxel;
+            int a = waterAcross(dem, memo, x, z, -dx, -dz, steps, voxel);
+            if (a == DRY) continue;
+            int b = waterAcross(dem, memo, x, z, dx, dz, steps, voxel);
+            if (b != DRY && Math.abs(a - b) <= 1) return Math.min(a, b);
+        }
+        return DRY;
+    }
+
+    /** Unit voxel steps along a row, a column and the two diagonals. */
+    private static final int[] RING_STEP_X = {1, 0, 1, 1}, RING_STEP_Z = {0, 1, 1, -1};
+
+    /** Surface of the first water from a column out along a step past built-up voxels, or {@link #DRY}. */
+    private int waterAcross(GlobalElevation dem, CoverMemo memo, int x, int z, int dx, int dz, int steps, int voxel) {
+        for (int i = 1; i <= steps; i++) {
+            int px = x + i * dx, pz = z + i * dz, code = cover(memo, px, pz, voxel);
+            if (code == WorldCoverSource.BUILT_UP) continue;
+            return waterLevel(dem, memo, px, pz, voxel);
+        }
+        return DRY;
+    }
+
+    /** Surface of the water a column's land cover maps, or {@link #DRY} where it maps none. */
+    private int waterLevel(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel) {
+        int code = cover(memo, x, z, voxel);
+        if (code == WorldCoverSource.NO_DATA) return SEA;
+        if (code != WorldCoverSource.WATER) return DRY;
+        return seaWater(x, z) ? SEA : waterSurface(dem, x, z, voxel);
     }
 
     /** Ring radii, in voxels, for how far a low bank is from its water. */
