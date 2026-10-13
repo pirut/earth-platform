@@ -516,7 +516,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     private float riverNode(int i, int j) {
-        long key = (long) i << 32 | j & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) i << 32 | j & 0xFFFFFFFFL);
         Float known = riverNodes.get(key);
         if (known != null) return known;
         GlobalElevation dem = elevation[TerrariumTileSource.MAX_ZOOM];
@@ -674,7 +674,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * a creek's reach at a falls' lip, mostly level, and a river's below a falls, at the bottom.
      */
     private Long2IntOpenHashMap strayCell(int cx, int cz) {
-        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         Long2IntOpenHashMap known = strayCells.get(key);
         if (known != null) return known;
         GeoPoint a = grid.geographic(cx * (double) WATER_CELL, cz * (double) WATER_CELL);
@@ -783,7 +783,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Whether a water cell holds any snow or ice, read on a coarse grid at the water survey's overview. */
     private boolean icyCell(int cx, int cz) {
-        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         Boolean known = icyCells.get(key);
         if (known != null) return known;
         boolean icy = false;
@@ -1036,7 +1036,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final java.util.concurrent.ConcurrentHashMap<Long, WaterCell> waterCells = new java.util.concurrent.ConcurrentHashMap<>();
 
     private WaterCell waterCell(int cx, int cz) {
-        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         WaterCell known = waterCells.get(key);
         if (known != null) return known;
         Survey survey = survey(cx, cz);
@@ -1268,7 +1268,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * either side of the shore.
      */
     private Reaches reachLevels(int cx, int cz) {
-        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         Reaches known = reaches.get(key);
         if (known != null) return known;
         int span = (2 * REACH + 1) * WATER_SAMPLES, first = REACH * WATER_SAMPLES, last = first + WATER_SAMPLES;
@@ -1370,7 +1370,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     private static final double SEA_METRES = 0.5;
 
     private Survey survey(int cx, int cz) {
-        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         Survey known = surveys.get(key);
         if (known != null) return known;
         GlobalElevation dem = elevation[WATER_ZOOM];
@@ -1479,7 +1479,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         long held = Long.MIN_VALUE;
         for (int sz = iz - reach + 1; sz <= iz + reach; sz++) for (int sx = ix - reach + 1; sx <= ix + reach; sx++) {
             int cx = Math.floorDiv(sx, WATER_SAMPLES), cz = Math.floorDiv(sz, WATER_SAMPLES);
-            long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+            long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
             if (key != held) { lifts = lifts(cx, cz); held = key; }
             if (lifts == NO_LIFT) continue;
             float lifted = lifts[Math.floorMod(sz, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(sx, WATER_SAMPLES)];
@@ -1498,7 +1498,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Each of a cell's samples' surveyed metres where it is sea with sea all round and reads above sea level, else 0. */
     private float[] lifts(int cx, int cz) {
-        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         float[] known = lifts.get(key);
         if (known != null) return known;
         Survey centre = survey(cx, cz);
@@ -1838,7 +1838,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Whether glaciers or snowfields lie within about eight kilometres, judged for 128-block cells. */
     private boolean glacierFed(int x, int z) {
         if (cover == null) return false;
-        long key = (long) (x >> 7) << 32 | (z >> 7) & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) (x >> 7) << 32 | (z >> 7) & 0xFFFFFFFFL);
         Boolean known = glacierFed.get(key);
         if (known != null) return known;
         int cx = (x & ~127) + 64, cz = (z & ~127) + 64;
@@ -1871,7 +1871,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Whether the sea lies 1.5 to 3 km off, in at least two directions; judged once per 64-block cell, or per voxel where wider. */
     private boolean nearSea(int x, int z, int level) {
         int shift = Math.max(NEAR_SEA_CELL, level), cx = x >> shift, cz = z >> shift;
-        long key = (long) level << 56 | ((long) cx & 0xFFFFFFFL) << 28 | (long) cz & 0xFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) level << 56 | ((long) cx & 0xFFFFFFFL) << 28 | (long) cz & 0xFFFFFFFL);
         Boolean known = nearSea.get(key);
         if (known != null) return known;
         int mx = (cx << shift) + (1 << shift - 1), mz = (cz << shift) + (1 << shift - 1), sea = 0;
@@ -2234,7 +2234,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Whether a salt pan cell is pan: flat, and the bottom of its basin. */
     private boolean panCell(int cx, int cz) {
-        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         Boolean known = saltPans.get(key);
         if (known != null) return known;
         // The far terrain's own survey, whose tiles are loaded anyway: a finer one would fetch tiles kilometres around
@@ -2282,7 +2282,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * the Matterhorn, Everest and Mont Blanc, have high neighbours and ridges that rise again, and fail the test.
      */
     private boolean cone(int x, int z) {
-        long key = (long) (x >> 10) << 32 | (z >> 10) & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) (x >> 10) << 32 | (z >> 10) & 0xFFFFFFFFL);
         double[] c = cones.get(key);
         if (c == null) {
             double cx = (x & ~1023) + 512, cz = (z & ~1023) + 512, px = cx, pz = cz, top = -1e9;

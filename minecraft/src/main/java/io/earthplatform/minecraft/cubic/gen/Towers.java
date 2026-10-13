@@ -124,7 +124,7 @@ public final class Towers {
     }
 
     private float fieldCorner(long i, long j) {
-        long key = i << 32 ^ (j & 0xFFFFFFFFL);
+        long key = it.unimi.dsi.fastutil.HashCommon.mix(i << 32 ^ (j & 0xFFFFFFFFL));
         Float known = field.get(key);
         if (known != null) return known;
         double cx = i * (double) FIELD_CELL, cz = j * (double) FIELD_CELL, metresPerBlock = globe.metresPerBlock(cz);
@@ -146,7 +146,7 @@ public final class Towers {
 
     /** The towers whose tops lie in a block of hill cells, each as {@link #survey} finds it. */
     private double[][] towers(long bi, long bj) {
-        long key = bi << 32 ^ (bj & 0xFFFFFFFFL);
+        long key = it.unimi.dsi.fastutil.HashCommon.mix(bi << 32 ^ (bj & 0xFFFFFFFFL));
         double[][] known = blocks.get(key);
         if (known != null) return known;
         double[][] found = new double[0][];
@@ -237,7 +237,7 @@ public final class Towers {
         }
 
         private float corner(long i, long j) {
-            long key = i << 32 ^ (j & 0xFFFFFFFFL);
+            long key = it.unimi.dsi.fastutil.HashCommon.mix(i << 32 ^ (j & 0xFFFFFFFFL));
             Float known = corners.get(key);
             if (known != null) return known;
             double cellMetres = cell * globe.metresPerBlock(j * (double) cell);
@@ -259,7 +259,7 @@ public final class Towers {
     /** The lowest and highest of 4x4 elevation samples across a cell. */
     private float[] cell(int cell, long i, long j) {
         ConcurrentHashMap<Long, float[]> cells = cell == TOP_CELL ? topCells : baseCells;
-        long key = i << 32 ^ (j & 0xFFFFFFFFL);
+        long key = it.unimi.dsi.fastutil.HashCommon.mix(i << 32 ^ (j & 0xFFFFFFFFL));
         float[] known = cells.get(key);
         if (known != null) return known;
         float low = Float.MAX_VALUE, high = -Float.MAX_VALUE;

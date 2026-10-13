@@ -139,7 +139,11 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     /** Heights and water for a cube column with a one-block border, plus per-column cover. */
     private record Column(int[] height, int[] water, Surface[] surface, Strata.Layers[] layers, int min, int max, int maxWater) {}
 
-    private static long columnKey(int cx, int cz) { return ((long) cx << 32) | (cz & 0xFFFFFFFFL); }
+    /**
+     * Keys of the generators' caches go through a mix: a boxed Long hashes as x ^ z, so nearby
+     * cells shared a handful of buckets, and lookups crawled through the bins' trees.
+     */
+    private static long columnKey(int cx, int cz) { return it.unimi.dsi.fastutil.HashCommon.mix(((long) cx << 32) | (cz & 0xFFFFFFFFL)); }
 
     private Column column(int cx, int cz) {
         long key = columnKey(cx, cz);
