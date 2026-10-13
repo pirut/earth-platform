@@ -151,8 +151,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Override public String credits() {
         return "Elevation: AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, ETOPO1 and others)"
                 + (cover == null ? "" : ". Land cover: " + WorldCoverSource.ATTRIBUTION)
-                + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION)
-                + (cover == null ? "" : ". " + Ecoregions.ATTRIBUTION);
+                + (cover == null ? "" : ". " + Ecoregions.ATTRIBUTION)
+                + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION);
     }
 
     // Height -------------------------------------------------------------------------------------
