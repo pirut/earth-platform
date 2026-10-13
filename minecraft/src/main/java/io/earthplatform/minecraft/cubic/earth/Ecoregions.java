@@ -22,8 +22,6 @@ public final class Ecoregions {
     public static final int NONE = 0, TROPICAL_MOIST = 1, TROPICAL_DRY = 2, TROPICAL_CONIFER = 3, TEMPERATE_BROADLEAF = 4,
             TEMPERATE_CONIFER = 5, BOREAL = 6, TROPICAL_GRASSLAND = 7, TEMPERATE_GRASSLAND = 8, FLOODED_GRASSLAND = 9,
             MONTANE_GRASSLAND = 10, TUNDRA = 11, MEDITERRANEAN = 12, DESERT = 13, MANGROVE = 14;
-    /** Ecoregions picked out by number. */
-    public static final int EVERGLADES = 581, SOUTHEAST_CONIFER_SAVANNAS = 399, MISSISSIPPI_LOWLAND_FORESTS = 337;
 
     private static final Logger LOG = LoggerFactory.getLogger(Ecoregions.class);
     private static final int WIDTH = 7200, HEIGHT = 3600, PER_DEGREE = 20;
