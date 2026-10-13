@@ -2,11 +2,7 @@ package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
 import java.io.IOException;
-import java.io.InterruptedIOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.*;
@@ -16,7 +12,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
@@ -52,16 +47,12 @@ public final class WorldCoverSource implements AutoCloseable {
     private final Path cacheRoot;
     private final boolean allowNetwork;
     private final int maxBlocksInMemory;
-    private final Duration timeout;
-    private final HttpClient http;
-    private final Semaphore transfers;
-    private final ExecutorService executor;
+    private final RangeFiles files;
     private final Map<Integer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
     private final LinkedHashMap<Long, byte[]> memory = new LinkedHashMap<>(64, 0.75f, true);
     private final Map<Long, CompletableFuture<byte[]>> inFlight = new ConcurrentHashMap<>();
     private final ThreadLocal<long[]> lastKey = ThreadLocal.withInitial(() -> new long[]{-1});
     private final ThreadLocal<byte[][]> lastBlock = ThreadLocal.withInitial(() -> new byte[1][]);
-    private final AtomicLong downloads = new AtomicLong(), diskHits = new AtomicLong(), failures = new AtomicLong();
 
     /**
      * @param base              URI prefix the files are named under
@@ -77,14 +68,7 @@ public final class WorldCoverSource implements AutoCloseable {
         this.cacheRoot = cacheRoot;
         this.allowNetwork = allowNetwork;
         this.maxBlocksInMemory = maxBlocksInMemory;
-        this.timeout = timeout;
-        this.transfers = new Semaphore(maxConcurrentTransfers);
-        this.executor = Executors.newFixedThreadPool(maxConcurrentTransfers, runnable -> {
-            Thread thread = new Thread(runnable, "earth-worldcover-io");
-            thread.setDaemon(true);
-            return thread;
-        });
-        this.http = HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NEVER).executor(executor).build();
+        this.files = new RangeFiles("Land cover", DATASET_ID, "earth-worldcover-io", maxConcurrentTransfers, timeout);
     }
 
     /**
@@ -157,7 +141,7 @@ public final class WorldCoverSource implements AutoCloseable {
             byte[] hit = memory.get(key);
             if (hit != null) return hit;
         }
-        byte[] decoded = singleFlight(inFlight, key, () -> readBlock(square, overview, index, header, level));
+        byte[] decoded = files.singleFlight(inFlight, key, () -> readBlock(square, overview, index, header, level), "land cover block");
         synchronized (memory) {
             memory.put(key, decoded);
             var iterator = memory.entrySet().iterator();
@@ -171,14 +155,14 @@ public final class WorldCoverSource implements AutoCloseable {
         if (shared == null) {
             try { mine.complete(readHeader(square)); }
             catch (Throwable failure) {
-                failures.incrementAndGet();
+                files.failures.incrementAndGet();
                 mine.completeExceptionally(failure);
                 // A failed header is retried by the next caller.
                 headers.remove(square, mine);
             }
             shared = mine;
         }
-        return await(shared, "land cover header " + name(south(square), west(square)));
+        return files.await(shared, "land cover header " + name(south(square), west(square)));
     }
 
     private Header readHeader(int square) throws IOException, InterruptedException {
@@ -189,7 +173,7 @@ public final class WorldCoverSource implements AutoCloseable {
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
                 Header header = parse(Files.readAllBytes(cached));
-                diskHits.incrementAndGet();
+                files.diskHits.incrementAndGet();
                 return header;
             } catch (IOException | RuntimeException corrupt) {
                 Files.deleteIfExists(cached);
@@ -198,14 +182,14 @@ public final class WorldCoverSource implements AutoCloseable {
         if (!allowNetwork) throw new MissingTerrainException("Land cover " + name + " not cached and network access is disabled");
         int size = HEADER_BYTES;
         while (true) {
-            byte[] bytes = fetch(name, 0, size);
+            byte[] bytes = files.fetch(base.resolve(name), 0, size);
             if (bytes == null) {
-                if (missing != null) write(missing, new byte[0]);
+                if (missing != null) RangeFiles.write(missing, new byte[0]);
                 return Header.MISSING;
             }
             try {
                 Header header = parse(bytes);
-                if (cached != null) write(cached, bytes);
+                if (cached != null) RangeFiles.write(cached, bytes);
                 return header;
             } catch (HeaderTooShort tooShort) {
                 if (bytes.length < size || size >= MAX_HEADER_BYTES) throw new IOException("Unreadable land cover header " + name);
@@ -222,7 +206,7 @@ public final class WorldCoverSource implements AutoCloseable {
             raw = Files.readAllBytes(cached);
             try {
                 byte[] decoded = decode(raw, header, level);
-                diskHits.incrementAndGet();
+                files.diskHits.incrementAndGet();
                 return decoded;
             } catch (IOException corrupt) {
                 Files.deleteIfExists(cached);
@@ -233,10 +217,10 @@ public final class WorldCoverSource implements AutoCloseable {
         if (offset == 0 || count == 0) return new byte[level.tileWidth * level.tileHeight];
         if (count > MAX_BLOCK_BYTES) throw new MissingTerrainException("Oversized land cover block in " + name);
         if (!allowNetwork) throw new MissingTerrainException("Land cover block of " + name + " not cached and network access is disabled");
-        raw = fetch(name, offset, (int) count);
+        raw = files.fetch(base.resolve(name), offset, (int) count);
         if (raw == null || raw.length != count) throw new MissingTerrainException("Land cover block of " + name + " is missing");
         byte[] decoded = decode(raw, header, level);
-        if (cached != null) write(cached, raw);
+        if (cached != null) RangeFiles.write(cached, raw);
         return decoded;
     }
 
@@ -333,77 +317,6 @@ public final class WorldCoverSource implements AutoCloseable {
         return values;
     }
 
-    // Transfers --------------------------------------------------------------------------------------
-
-    /** The bytes of a file from offset, or null when the file does not exist (open ocean). */
-    private byte[] fetch(String name, long offset, int length) throws IOException, InterruptedException {
-        URI uri = base.resolve(name);
-        HttpRequest request = HttpRequest.newBuilder(uri).timeout(timeout).header("User-Agent", "earth-platform/" + DATASET_ID)
-                .header("Range", "bytes=" + offset + "-" + (offset + length - 1)).GET().build();
-        IOException last = null;
-        for (int attempt = 0; attempt < 3; attempt++) {
-            if (attempt > 0) Thread.sleep(250L << attempt);
-            transfers.acquire();
-            try {
-                HttpResponse<byte[]> response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
-                int status = response.statusCode();
-                if (status == 206 || status == 200) {
-                    downloads.incrementAndGet();
-                    byte[] body = response.body();
-                    if (status == 200 && (offset != 0 || body.length > length)) body = java.util.Arrays.copyOfRange(body, (int) offset, (int) Math.min(body.length, offset + length));
-                    return body;
-                }
-                if (status == 404 || status == 403) return null;
-                last = new IOException("HTTP " + status + " for " + uri);
-            } catch (InterruptedIOException interrupted) {
-                throw interrupted;
-            } catch (IOException failure) {
-                last = failure;
-            } finally {
-                transfers.release();
-            }
-        }
-        throw new MissingTerrainException("Land cover download failed after retries: " + uri + " (" + last + ")");
-    }
-
-    private static void write(Path path, byte[] bytes) throws IOException {
-        Files.createDirectories(path.getParent());
-        Path temp = Files.createTempFile(path.getParent(), "cover", ".part");
-        try {
-            Files.write(temp, bytes);
-            Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } finally {
-            Files.deleteIfExists(temp);
-        }
-    }
-
-    private interface Load<T> { T get() throws IOException, InterruptedException; }
-
-    private <T> T singleFlight(Map<Long, CompletableFuture<T>> flights, long key, Load<T> load) {
-        CompletableFuture<T> mine = new CompletableFuture<>(), shared = flights.putIfAbsent(key, mine);
-        if (shared == null) {
-            try { mine.complete(load.get()); }
-            catch (Throwable failure) { failures.incrementAndGet(); mine.completeExceptionally(failure); }
-            finally { flights.remove(key, mine); }
-            shared = mine;
-        }
-        return await(shared, "land cover block");
-    }
-
-    private <T> T await(CompletableFuture<T> future, String what) {
-        try {
-            return future.get(timeout.toMillis() * 4, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new MissingTerrainException("Interrupted waiting for " + what);
-        } catch (TimeoutException late) {
-            throw new MissingTerrainException("Timed out waiting for " + what);
-        } catch (ExecutionException failed) {
-            if (failed.getCause() instanceof MissingTerrainException missing) throw missing;
-            throw new MissingTerrainException(what + " failed: " + failed.getCause());
-        }
-    }
-
     private static double wrap(double longitude) {
         double wrapped = ((longitude + 180) % 360 + 360) % 360 - 180;
         return wrapped == 180 ? -180 : wrapped;
@@ -412,10 +325,10 @@ public final class WorldCoverSource implements AutoCloseable {
     public Stats stats() {
         int resident;
         synchronized (memory) { resident = memory.size(); }
-        return new Stats(downloads.get(), diskHits.get(), failures.get(), resident);
+        return new Stats(files.downloads.get(), files.diskHits.get(), files.failures.get(), resident);
     }
 
     public record Stats(long downloads, long diskHits, long failures, int residentBlocks) {}
 
-    @Override public void close() { executor.shutdownNow(); }
+    @Override public void close() { files.close(); }
 }

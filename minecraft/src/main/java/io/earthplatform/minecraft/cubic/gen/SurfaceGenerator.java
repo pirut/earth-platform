@@ -357,9 +357,11 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             BlockState top = surface.top();
             long r = mix(x0 + lx, h, z0 + lz);
             BlockState cover = null;
+            int roll = (int) Math.floorMod(r, 1000);
             if (top == SNOW_BLOCK) cover = SNOW;
+            // Sand only grows anything in desert scrub, where its grass share is dead bushes.
+            else if (top == SAND && roll < surface.grass()) cover = Blocks.DEAD_BUSH.defaultBlockState();
             else if (top == GRASS) {
-                int roll = (int) Math.floorMod(r, 1000);
                 if (roll < surface.grass()) cover = surface.ferns() && roll % 3 == 0 ? Blocks.FERN.defaultBlockState() : Blocks.SHORT_GRASS.defaultBlockState();
                 else if (roll < surface.flowers()) cover = switch ((int) (r >>> 20 & 3)) {
                     case 0 -> Blocks.POPPY.defaultBlockState(); case 1 -> Blocks.DANDELION.defaultBlockState();
