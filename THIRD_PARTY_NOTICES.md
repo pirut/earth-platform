@@ -39,4 +39,4 @@ Sentinel-2 cloudless 2016 (streamed by `ImagerySource` from https://tiles.maps.e
 
 ## Photon adjusted for macOS
 
-A Photon v1.3b copy adjusted for Apple OpenGL was made for testing. It is a derivative of Photon (© 2021-2025 Benjamin Stott "SixthSurge", Photon Shaders License Agreement), keeps that licence file, and is not part of any Earth Platform distribution. Its licence forbids redistribution on platforms that pay creators (such as Modrinth and CurseForge) without the author's written permission.
+A Photon v1.3b copy adjusted for Apple OpenGL was made for testing. It was used for testing only and will not be distributed: the mod is required to work with stock Photon. It is a derivative of Photon (© 2021-2025 Benjamin Stott "SixthSurge", Photon Shaders License Agreement), keeps that licence file, and is not part of any Earth Platform distribution. Its licence forbids redistribution on platforms that pay creators (such as Modrinth and CurseForge) without the author's written permission.

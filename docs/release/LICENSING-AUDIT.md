@@ -7,7 +7,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | Item | Status | What's needed before a public release |
 | --- | --- | --- |
 | EOX Sentinel-2 cloudless (ground colours, PR #4) | Mitigated | Imagery is off by default (JR, 2026-10-13); players opt in. Emailing EOX is an optional follow-up |
-| Mac Photon pack | **Blocker for Modrinth/CurseForge** | Don't upload it there. Ask SixthSurge, upstream the fix, or host it on GitHub only |
+| Mac Photon pack | Resolved | JR (2026-10-13): the mod must work with stock, unmodified Photon. No modified pack is distributed anywhere |
 | Public name ("Minecraft Earth") | **Blocker** | Release as Earth Platform (or another name without "Minecraft"); fix one game string in PR #8 |
 | Mod licence (All Rights Reserved) | Decision | JR to choose: keep ARR or open the source |
 | AWS Terrain Tiles | OK | Credited in game and in CREDITS.md |
@@ -56,10 +56,8 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 ## Shader pack
 
 - Photon v1.3b, © 2021-2025 Benjamin Stott (SixthSurge), [Photon Shaders License Agreement](https://github.com/sixthsurge/photon/blob/main/LICENSE). The mod reads the player's own copy at runtime (its Voxy code) and ships none of it. OK.
-- The adjusted Mac pack (`photon_v1.3b_mac.zip`) is a derivative work. The licence allows redistributing derivatives with the licence included (our zip includes it and a MAC_CHANGES.txt), **except** on platforms that pay creators, naming Modrinth and CurseForge, and never for money, without SixthSurge's written permission.
-  - Don't upload it to Modrinth or CurseForge or bundle it in the mod.
-  - Options: ask SixthSurge for permission; offer the Mac changes upstream as a pull request to Photon (best for players); or attach it to a GitHub release (not a paying platform), with the licence inside.
-  - The install guide currently tells Mac players to turn Cloud Shadows and Shadow Color off in stock Photon, which needs no redistribution.
+- Decision (JR, 2026-10-13): Earth Platform must work with stock, unmodified Photon, and no modified pack is distributed. The Mac test copy (`photon_v1.3b_mac.zip`) was a derivative made for testing only; it stays out of every release, store page and download. The shader thread is making the mod itself handle the Mac's limits.
+- For the record: Photon's licence allows sharing derivatives with the licence included, except on platforms that pay creators (it names Modrinth and CurseForge) or for money, without SixthSurge's written permission. With no modified pack shipped, this no longer applies.
 
 ## Companion mods
 

@@ -43,7 +43,7 @@ Apple's OpenGL lets a shader use at most 16 textures and has no compute shaders,
 2. Open **Lighting**. Turn **Cloud Shadows** off, then open **Shadows** and turn **Shadow Color** off.
 3. Apply, then choose a profile no higher than Medium if the frame rate is low.
 
-Photon's sky light uses a compute pass a Mac can't run, so the sky light on shaded cliffs is flatter than on Windows or Linux. We have an adjusted Photon for Macs that fixes this, but Photon's licence does not let us share a changed copy on Modrinth or CurseForge without its author's permission; we will link it here if that is granted.
+Use the official Photon download; Earth Platform never needs a modified shader pack.
 
 ## Satellite ground colours (optional)
 
