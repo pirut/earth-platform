@@ -530,7 +530,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (water != DRY && water != SEA && cover != null) return lake(x, z, y, water, t);
         if (water != DRY) {
             int depth = water - y;
-            Holder<Biome> b = t < -2 ? frozenOcean : t < 6 ? (depth > 40 ? deepColdOcean : coldOcean)
+            // No polar bears in the south: the Southern Ocean is cold ocean, iced over by iced() as frozen ocean is.
+            Holder<Biome> b = t < -2 && latitude(z) > -50 ? frozenOcean : t < 6 ? (depth > 40 ? deepColdOcean : coldOcean)
                     : t > 21 ? warmOcean : t > 15 ? lukewarmOcean : depth > 40 ? deepOcean : ocean;
             BlockState floor = depth < 30 ? SAND : GRAVEL;
             return new Surface(b, floor, floor, 0, 0, 0, 0, 0, false);
@@ -585,11 +586,12 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /**
      * Lakes and rivers freeze over wherever their biome freezes; the sea freezes in floes, more of
-     * it the colder the coast, until it is closed pack ice in the high Arctic.
+     * it the colder the coast, until it is closed pack ice in the high Arctic and off Antarctica.
      */
     @Override protected boolean iced(Surface surface, int x, int z) {
-        if (!super.iced(surface, x, z)) return false;
-        if (surface.biome() != frozenOcean) return true;
+        boolean southern = (surface.biome() == coldOcean || surface.biome() == deepColdOcean) && latitude(z) < -50;
+        if (!southern && !super.iced(surface, x, z)) return false;
+        if (surface.biome() != frozenOcean && !southern) return true;
         double t = cover == null ? temperature(x, z, SEA) : local(x, z, SEA).temperature();
         double share = Mth.clamp((-t - 1) / 10, 0, 1);
         double floes = patches.getValue(x / 53.0 + 91.3, z / 53.0 - 17.7) * 0.75 + patches.getValue(x / 13.0 - 40.1, z / 13.0 + 8.3) * 0.25;
