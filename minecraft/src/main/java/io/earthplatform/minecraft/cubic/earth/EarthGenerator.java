@@ -677,6 +677,9 @@ public final class EarthGenerator extends SurfaceGenerator {
                 Surface s = forest(local, patch, x, z, y);
                 if (steep > 1.3 && crag < (steep - 1.3) * 2 - 0.3) return new Surface(s.biome(), STONE, STONE, 0, 0, 0, 0, 0, false);
                 // Duff in patches, grass between, so from afar the slope stays green rather than speckled brown.
+                // The low, flat coastal plain of the American South is swamp forest: cypress bayous, Okefenokee, Big Cypress.
+                if (steep < 0.15 && y < SEA + 40 && local.temperature() > 15 && gulfCoast(x, z))
+                    return new Surface(swamp, patch > 0.5 ? MUD : GRASS, DIRT, 45, 0, 0, 260, 280, false);
                 if (steep > 0.8) return new Surface(s.biome(), patch > 0.35 ? PODZOL : GRASS, DIRT, s.trees() * 3 / 4, s.spruce(), s.birch(),
                         s.grass() / 2, s.flowers() / 2, s.ferns(), s.broadleaf());
                 return s;
@@ -919,6 +922,12 @@ public final class EarthGenerator extends SurfaceGenerator {
         return false;
     }
 
+    /** Whether a column is on the Gulf and southern Atlantic coastal plain of the United States, Florida included. */
+    private boolean gulfCoast(int x, int z) {
+        GeoPoint p = grid.geographic(x, z);
+        return p.latitude() > 24 && p.latitude() < 33.5 && p.longitude() > -98 && p.longitude() < -75;
+    }
+
     /** Whether a volcanic column's lava is old and weathered, as in Iceland, rather than fresh. */
     private boolean weathered(int x, int z) { return grid.geographic(x, z).latitude() > 60; }
 
@@ -1058,7 +1067,9 @@ public final class EarthGenerator extends SurfaceGenerator {
             case MEDITERRANEAN -> t < 12 ? new Surface(local.rain() > 900 ? oldTaiga : taiga, local.rain() > 900 && patch > 0.3 ? PODZOL : GRASS, DIRT, 80, 8, 0, 110, 120, true)
                     : new Surface(forest, GRASS, DIRT, 70, 1, 0, 140, 170, false);
             case SUBTROPICAL -> patch < -0.62 && bamboo(x, z) ? bambooForest(patch)
-                    : t > 20 ? new Surface(sparseJungle, GRASS, DIRT, 80, 0, 0, 140, 160, true, Tree.JUNGLE)
+                    // Florida's uplands are pine and oak woods, not jungle.
+                    : t > 20 && !gulfCoast(x, z) ? new Surface(sparseJungle, GRASS, DIRT, 80, 0, 0, 140, 160, true, Tree.JUNGLE)
+                    : gulfCoast(x, z) ? new Surface(forest, GRASS, DIRT, 70, 4, 0, 180, 200, false)
                     : groves(patch, x, z, new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false));
             case OCEANIC -> groves(patch, x, z, new Surface(forest, GRASS, DIRT, 82, t < 8 ? 3 : 0, 2, 90, 130, true));
             case SUBPOLAR_OCEANIC -> new Surface(taiga, GRASS, DIRT, 70, 10, 0, 110, 120, true);
