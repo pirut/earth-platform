@@ -36,8 +36,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             SNOW_BLOCK = Blocks.SNOW_BLOCK.defaultBlockState(), SNOW = Blocks.SNOW.defaultBlockState().setValue(SnowLayerBlock.LAYERS, 1),
             LAVA = Blocks.LAVA.defaultBlockState(), MUD = Blocks.MUD.defaultBlockState();
 
-    /** Tree kinds, shaped by {@link Vegetation}. */
-    public enum Tree { OAK, BIRCH, SPRUCE, JUNGLE, ACACIA, MANGROVE, DARK_OAK, CHERRY, AZALEA }
+    /**
+     * Tree kinds, grown by {@link Trees} with vanilla's tree features: oak (with fancy oak and
+     * birch as the biome has them), birch, spruce and pine, jungle trees, acacia, mangrove, dark
+     * oak, cherry and azalea. Sequoia marks a giant sequoia grove: giants stand among its spruces.
+     */
+    public enum Tree { OAK, BIRCH, SPRUCE, JUNGLE, ACACIA, MANGROVE, DARK_OAK, CHERRY, AZALEA, SEQUOIA }
 
     /**
      * What covers a column. {@code trees} is the percent of 7-block cells holding a tree, whose kind
@@ -89,6 +93,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     /** Whether a cube column whose highest ground is {@code maxGround} is mountainous enough for emeralds. */
     protected abstract boolean emeralds(int maxGround);
 
+    /** Whether giant sequoia groves may be near a column; their trees stand far taller than any other. */
+    protected boolean giants(int x, int z) { return false; }
+
     // Columns ------------------------------------------------------------------------------------
 
     /** Heights and water for a cube column with a one-block border, plus per-column cover. */
@@ -129,6 +136,14 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return sample[0];
     }
 
+    /** A column's cover, from the cube column cache when it holds the column. */
+    final Surface coverAt(int x, int z, int ground, int water) {
+        Column cached = columns.get(columnKey(x >> 4, z >> 4));
+        if (cached != null) return cached.surface[(z & 15) * 16 + (x & 15)];
+        int slope = Math.abs(surfaceY(x + 1, z) - surfaceY(x - 1, z)) + Math.abs(surfaceY(x, z + 1) - surfaceY(x, z - 1));
+        return surface(x, z, ground, water, slope);
+    }
+
     @Override public final int waterY(int x, int z) {
         Column cached = columns.get(columnKey(x >> 4, z >> 4));
         if (cached != null) return cached.water[((z & 15) + 1) * 18 + (x & 15) + 1];
@@ -159,6 +174,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             Surface surface = farSurface(level, wx, wz, h, water[g], slope);
             biome[cell] = surface.biome();
             top[cell] = surface.top();
+            // Cold dry ground under the snow Vegetation lays on it nearer.
+            if (water[g] <= h && Trees.snowy(surface) && !top[cell].is(Blocks.ICE) && !top[cell].is(Blocks.PACKED_ICE)
+                    && !top[cell].is(Blocks.POWDER_SNOW)) top[cell] = SNOW_BLOCK;
             under[cell] = v > 2 ? STONE : surface.under();
             // Voxels wider than a tree show forests as leaves: at 8 blocks a voxel above the ground, about a tree's
             // height, so they meet the rasterised trees nearer; wider voxels would stand too tall, so leaves lie on the ground voxel.
@@ -170,7 +188,10 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             min = Math.min(min, h);
             max = Math.max(max, Math.max(h, water[g]));
         }
-        if (v <= 4) max += Vegetation.TALLEST + 1;
+        // Room for trees: drawn as they are out to 4-block voxels, sequoias out to 16.
+        boolean giants = v <= 16 && giants(x0 + width / 2, z0 + width / 2);
+        if (giants) max += Sequoia.TALLEST + 1;
+        else if (v <= 4) max += Trees.TALLEST + 1;
         else if (v == 8) max += v;
         int bottom = (min - v) >> (level + 4), highest = max >> (level + 4);
         // Columns taller than the section budget keep their top, where the view is.
@@ -197,7 +218,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             }
             stack[si] = section;
         }
-        if (v <= 4) farTrees(level, x0, z0, bottom, stack);
+        if (v <= 4 || giants) farTrees(level, x0, z0, bottom, stack, v > 4);
         for (LevelChunkSection section : stack) {
             section.recalcBlockCounts();
             out.sections.add(section.hasOnlyAir() ? null : section);
@@ -243,31 +264,40 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return container;
     }
 
-    /** Rasterises the real trees into voxels of 2 or 4 blocks: a voxel turns to leaves or log once a quarter of it is. */
-    private void farTrees(int level, int x0, int z0, int bottom, LevelChunkSection[] stack) {
+    /**
+     * Rasterises the real trees into voxels of 2 or 4 blocks, or only the sequoias into wider
+     * ones: a voxel turns to leaves or log once a quarter of it is (an eighth for sequoias, whose
+     * crowns are looser than a voxel that wide).
+     */
+    private void farTrees(int level, int x0, int z0, int bottom, LevelChunkSection[] stack, boolean giantsOnly) {
         int v = 1 << level, width = 16 * v, height = stack.length * 16, baseY = bottom * width;
-        int[] leafCount = new int[16 * 16 * height], logCount = new int[leafCount.length];
+        int[] leafCount = new int[16 * 16 * height], logCount = new int[leafCount.length], snowCount = new int[leafCount.length];
         BlockState[] leafKind = new BlockState[leafCount.length], logKind = new BlockState[leafCount.length];
-        int cell = Vegetation.CELL, reach = Vegetation.REACH;
-        int minCellX = Math.floorDiv(x0 - reach, cell), maxCellX = Math.floorDiv(x0 + width + reach, cell);
-        int minCellZ = Math.floorDiv(z0 - reach, cell), maxCellZ = Math.floorDiv(z0 + width + reach, cell);
-        Vegetation.TreeSink sink = (x, y, z, state, force) -> {
+        TreeShape.Sink sink = (x, y, z, state, kind) -> {
+            if (kind == TreeShape.GROUND) return;
             int vx = (x - x0) >> level, vz = (z - z0) >> level, vy = (y - baseY) >> level;
             if (vx < 0 || vz < 0 || vx > 15 || vz > 15 || vy < 0 || vy >= height) return;
             int i = (vy * 16 + vz) * 16 + vx;
             Block block = state.getBlock();
-            // Crowns and trunks only: vines, cocoa, roots and the ground under trees are too small to show.
+            // Crowns and trunks only: vines, cocoa and roots are too small to show.
             if (block instanceof LeavesBlock || block instanceof HugeMushroomBlock) { leafCount[i]++; leafKind[i] = state; }
             else if (block instanceof RotatedPillarBlock && block != Blocks.MUDDY_MANGROVE_ROOTS) { logCount[i]++; logKind[i] = state; }
+            else if (block == Blocks.SNOW) snowCount[i]++;
         };
-        for (int gz = minCellZ; gz <= maxCellZ; gz++) for (int gx = minCellX; gx <= maxCellX; gx++) vegetation.tree(gx, gz, baseY, baseY + height * v - 1, sink);
-        int quarter = Math.max(1, v * v * v / 4);
+        vegetation.trees(x0, baseY, z0, x0 + width - 1, baseY + height * v - 1, z0 + width - 1, giantsOnly, sink);
+        int quarter = Math.max(1, v * v * v / (giantsOnly ? 8 : 4));
         for (int i = 0; i < leafCount.length; i++) {
             if (leafCount[i] < quarter && logCount[i] < quarter) continue;
             int vx = i & 15, vz = i >> 4 & 15, vy = i >> 8;
             LevelChunkSection section = stack[vy >> 4];
             if (!section.getBlockState(vx, vy & 15, vz).isAir()) continue;
             BlockState state = logCount[i] >= quarter && logCount[i] * 2 >= leafCount[i] ? logKind[i] : leafKind[i];
+            // Crowns' top leaves under snow that covers a quarter of the voxel, lying in it or just above, show white;
+            // the leaves below them stay green, as the trees' sides do nearer.
+            boolean above = i + 256 < snowCount.length;
+            int snow = snowCount[i] + (above ? snowCount[i + 256] : 0);
+            boolean covered = above && (leafCount[i + 256] >= quarter || logCount[i + 256] >= quarter);
+            if (state == leafKind[i] && !covered && snow > 0 && snow * 4 >= v * v) state = SNOW_BLOCK;
             if (state != null) section.setBlockState(vx, vy & 15, vz, state, false);
         }
     }
@@ -279,9 +309,17 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     private BlockState canopy(Surface surface, int wx, int wz, int v) {
         if (surface.top() != GRASS && surface.top() != MUD && !surface.top().is(Blocks.PODZOL) || surface.trees() <= 0) return null;
         long r = mix(wx, v, wz);
-        // Crowns cover a bit over half of each tree's cell.
-        if (Math.floorMod(r, 1000) >= surface.trees() * 6) return null;
-        return Vegetation.leaves(surface.tree((int) Math.floorMod(r >>> 24, 10)));
+        Tree kind = surface.tree((int) Math.floorMod(r >>> 24, 10));
+        // Thousandths covered, from the trees' attempts per 256 columns. Crowns standing a voxel tall (8 blocks) show
+        // their shaded sides and hide the ground between them, so a crown covering about 20 columns looks as dense as
+        // the trees drawn nearer. Leaves lying flat on wider voxels show neither, so they cover what a crown's 4-block
+        // voxels fill nearer, about 80 columns, overlapping at random: 1 - e^-(trees per column x 80). Otherwise
+        // forests turn paler and browner past the last standing crowns.
+        int attempts = surface.trees() * Trees.full(kind);
+        int covered = v == 8 ? attempts * 3 / 4 : (int) (1000 * (1 - Math.exp(-attempts / 25600.0 * 80)));
+        if (Math.floorMod(r, 1000) >= Math.min(950, covered)) return null;
+        // Where snow falls it lies on most crowns, as it does on the trees nearer.
+        return Trees.snowy(surface) && Math.floorMod(r >>> 40, 3) != 0 ? SNOW_BLOCK : Vegetation.leaves(kind);
     }
 
     // Cubes --------------------------------------------------------------------------------------
@@ -294,7 +332,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                 biomes(col, fallback));
         int y0 = cy << 4, x0 = cx << 4, z0 = cz << 4;
         // Empty sky cubes: nothing generated, not even trees, above the tallest possible tree.
-        if (y0 > Math.max(col.max + 16, col.maxWater)) { section.recalcBlockCounts(); return section; }
+        if (y0 > Math.max(col.max + vegetation.tallest(cx, cz), col.maxWater)) { section.recalcBlockCounts(); return section; }
         boolean underground = y0 + 15 < col.min - 6;
         double[] caves = caveField(x0, y0, z0, col);
         int shore = shoreLevel() + 2;

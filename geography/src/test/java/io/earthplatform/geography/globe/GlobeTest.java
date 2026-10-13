@@ -21,6 +21,9 @@ public final class GlobeTest {
     public static void main(String[] args) throws Exception {
         projection();
         codec();
+        mend();
+        seams();
+        repair();
         kernel();
         streaming();
         worldCover();
@@ -62,6 +65,33 @@ public final class GlobeTest {
         float[] back = TerrariumTileSource.decode(TerrariumTileSource.encode(metres));
         for (int i = 0; i < metres.length; i++) near(metres[i], back[i], 1 / 256.0, "Terrarium codec");
         fail(() -> TerrariumTileSource.decode(new byte[]{1, 2, 3}), java.io.IOException.class, "non-image rejected");
+    }
+
+    /** Lone bad pixels are mended; steep real ground and open-sea zeros are left alone. */
+    private static void mend() {
+        int zoom = 15, tileY = 1 << 14;
+        float[] metres = new float[256 * 256];
+        // A cliff falling 100 m a pixel along a slanted line (steeper than Half Dome's face), sea on the left.
+        for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) metres[y * 256 + x] = x < 20 ? 0 : (float) (500 + 100 * x + 50 * y);
+        float[] clean = metres.clone();
+        metres[128 * 256 + 128] = -450;           // a pit, as the Rio Negro's
+        metres[60 * 256 + 60] -= 640; metres[61 * 256 + 60] -= 260;  // a pair
+        metres[0 * 256 + 200] += 1100;            // a spire on the tile's edge
+        metres[10 * 256 + 21] = 9000;             // a spire beside the sea
+        float[] mended = TerrariumTileSource.mend(metres, zoom, tileY);
+        Set<Integer> bad = Set.of(128 * 256 + 128, 60 * 256 + 60, 61 * 256 + 60, 200, 10 * 256 + 21);
+        for (int i : bad) near(clean[i], mended[i], 60, "bad pixel " + (i % 256) + "," + (i / 256) + " mended to within a pixel's slope");
+        int changed = 0;
+        for (int i = 0; i < clean.length; i++) if (!bad.contains(i) && mended[i] != clean[i]) changed++;
+        equal(0, changed, "good pixels never change");
+        check(TerrariumTileSource.mend(clean, zoom, tileY) == clean, "clean tile returned as it is");
+        // A sheer face 550 m high over three pixels, with a lip at its brink and ledges, wandering along its length.
+        float[] face = new float[256 * 256];
+        for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) {
+            double at = x - 100 - 2 * Math.sin(y / 3.0);
+            face[y * 256 + x] = (float) (1550 + 550 / (1 + Math.exp(at * 1.5)) + 70 * Math.exp(-(at + 1) * (at + 1)) + 25 * Math.sin(y * 1.7) * Math.exp(-at * at));
+        }
+        check(TerrariumTileSource.mend(face, zoom, tileY) == face, "a sheer face keeps its lip and ledges");
     }
 
     private static void kernel() {
@@ -178,6 +208,63 @@ public final class GlobeTest {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();
         }
+    }
+
+    /** Lines of bad pixels along whole degrees are mended, across tile edges too; real ground along them and lines off whole degrees keep their shape. */
+    private static void seams() {
+        int zoom = 15;
+        long size = 256L << zoom;
+        // Rolling hills; 5°W crosses the tile holding 5°W, 57.05°N at a column found the same way the source does.
+        int tileX = (int) (Math.floor(175 / 360.0 * size) / 256), tileY = 10030;
+        int line = (int) ((long) Math.floor(175 / 360.0 * size) - tileX * 256L);
+        float[] metres = new float[256 * 256];
+        for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) metres[y * 256 + x] = (float) (200 + 30 * Math.sin(x / 17.0) + 20 * Math.cos(y / 23.0) + 0.5 * x);
+        float[] clean = metres.clone();
+        TerrariumTileSource.Neighbours none = (z, x, y) -> null;
+        check(TerrariumTileSource.seams(clean, zoom, tileX, tileY, none) == clean, "clean tile returned as it is");
+        float[] dip = {12, 61, 85, 37};                                   // as along 5°W in the Highlands
+        for (int y = 0; y < 256; y++) for (int k = 0; k < 4; k++) metres[y * 256 + line - 1 + k] -= dip[k];
+        for (int y = 0; y < 256; y++) for (int k = 0; k < 4; k++) metres[y * 256 + 100 + k] -= dip[k];   // a gully off the line
+        metres[50 * 256 + line + 4] += 30; metres[51 * 256 + line + 4] += 30;                          // a knoll on it
+        float[] mended = TerrariumTileSource.seams(metres, zoom, tileX, tileY, none);
+        for (int y = 0; y < 256; y++) for (int k = 0; k < 4; k++) near(clean[y * 256 + line - 1 + k], mended[y * 256 + line - 1 + k], 3, "seam pixel mended");
+        int changed = 0;
+        for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) if ((x < line - 1 || x > line + 2) && mended[y * 256 + x] != metres[y * 256 + x]) changed++;
+        equal(0, changed, "gully off the line, knoll on it and the ground about untouched");
+        // A trench 4 km deep a pixel wide along Greenwich, which runs along a tile edge: each tile mends its own side.
+        int left = (int) (size / 2 / 256) - 1, right = left + 1, ty = 12000;
+        float[][] tiles = new float[2][256 * 256], cleanTiles = new float[2][];
+        for (int t = 0; t < 2; t++) {
+            for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) tiles[t][y * 256 + x] = (float) (5000 + 3 * (t * 256 + x) + 40 * Math.sin(y / 9.0));
+            cleanTiles[t] = tiles[t].clone();
+        }
+        for (int y = 0; y < 256; y++) { tiles[0][y * 256 + 255] = 1871; tiles[1][y * 256] = 1872; }
+        TerrariumTileSource.Neighbours both = (z, x, y) -> x == left ? tiles[0] : x == right ? tiles[1] : null;
+        float[] westSide = TerrariumTileSource.seams(tiles[0], zoom, left, ty, both), eastSide = TerrariumTileSource.seams(tiles[1], zoom, right, ty, both);
+        near(cleanTiles[0][77 * 256 + 255], westSide[77 * 256 + 255], 3, "trench mended west of a tile edge");
+        near(cleanTiles[1][77 * 256], eastSide[77 * 256], 3, "trench mended east of a tile edge");
+    }
+
+    private static void repair() {
+        // A 4x4 block of zoom-15 tiles under one zoom-13 reference tile, on a slope rising 2 m per fine pixel east.
+        float[] reference = new float[256 * 256];
+        for (int i = 0; i < reference.length; i++) reference[i] = 3000 + (i % 256) * 8f;
+        int tx = 4 * 9 + 2, ty = 4 * 5 + 1;
+        float[] tile = new float[256 * 256];
+        for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) tile[j * 256 + i] = 3000 + ((2 * 256 + i + 0.5f) / 4 - 0.5f) * 8f + (i % 7 == 0 && j < 100 ? 60 : 0) + (j > 128 ? 40 : 0);
+        float[] expected = tile.clone();
+        for (int j = 0; j < 256; j++) { tile[j * 256 + 114] = -8161; tile[j * 256 + 115] = 1519; }
+        tile[40 * 256 + 40] = 9000;
+        tile[41 * 256 + 41] -= 400;
+        tile[60 * 256 + 60] = 0;
+        TerrariumTileSource.repair(tile, reference, 2, tx, ty);
+        near(expected[5 * 256 + 114], tile[5 * 256 + 114], 9, "broken pit column takes the reference and its neighbours' detail");
+        near(expected[200 * 256 + 115], tile[200 * 256 + 115], 9, "broken low column keeps the neighbours' 40 m rise");
+        near(expected[40 * 256 + 40], tile[40 * 256 + 40], 9, "broken spike takes the reference");
+        near(expected[41 * 256 + 41], tile[41 * 256 + 41], 9, "a 400 m pit on a gentle slope takes the reference");
+        near(0, tile[60 * 256 + 60], 0, "open-sea zeros are left for the bathymetry fill");
+        near(expected[9 * 256 + 7], tile[9 * 256 + 7], 1e-3, "relief the reference smooths away is kept");
+        near(expected[9 * 256 + 8], tile[9 * 256 + 8], 1e-3, "ordinary pixels are untouched");
     }
 
     /**

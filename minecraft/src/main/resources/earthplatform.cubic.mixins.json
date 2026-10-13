@@ -14,7 +14,24 @@
     "CubicEntityMixin",
     "CubicTravelMixin",
     "CubicRespawnMixin",
-    "CubicSpawnerMixin"
+    "CubicSpawnerMixin",
+    "CubicWeatherMixin",
+    "CubicServerWeatherMixin",
+    "CubicPistonMixin",
+    "CubicFallingBlockMixin",
+    "CubicFallingEntityMixin",
+    "CubicScaffoldingMixin",
+    "CubicTreeGrowthMixin",
+    "CubicMushroomGrowthMixin",
+    "CubicVineMixin",
+    "CubicChorusFlowerMixin",
+    "CubicChorusFruitMixin",
+    "CubicTeleportMixin",
+    "CubicItemFrameMixin",
+    "CubicBeaconMixin",
+    "CubicWitherSkullMixin",
+    "CubicDripleafMixin",
+    "CubicDripstoneMixin"
   ],
   "client": [
     "CubicPredictionMixin",
@@ -26,7 +43,9 @@
     "EarthCreateWorldMixin",
     "EarthCloudsMixin",
     "EarthHorizonMixin",
-    "EarthFogColourMixin"
+    "EarthFogColourMixin",
+    "CubicRainRenderMixin",
+    "CubicWaterTintMixin"
   ],
   "injectors": {
     "defaultRequire": 1
