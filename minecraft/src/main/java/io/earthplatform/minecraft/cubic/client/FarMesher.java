@@ -516,14 +516,19 @@ final class FarMesher {
         return sections[si].getBlockState(x, vy & 15, z);
     }
 
-    /** True when the cubes under a voxel are all drawn by the cube renderer. */
+    /**
+     * True when the cubes under a voxel are all drawn by the cube renderer. A voxel is drawn lowered by its column's
+     * drop, so it can reach into the cube below its own row: with only the air cube above the ground compiled, a far
+     * water voxel lowered into a cube still loading would otherwise vanish and leave a hole down to the sky.
+     */
     private static boolean drawn(Job job, int x, int vy, int z) {
         LongOpenHashSet drawn = job.drawn;
         if (drawn == null) return false;
         int v = 1 << job.level;
+        int drop = job.drops[Mth.clamp(z, 0, 15) * 16 + Mth.clamp(x, 0, 15)];
         int bx = job.x0 + x * v, by = job.bottom * (Far.SIZE << job.level) + vy * v, bz = job.z0 + z * v;
-        int cubes = Math.max(1, v >> 4);
-        for (int cy = by >> 4; cy < (by >> 4) + cubes; cy++) for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
+        int low = by - Mth.positiveCeilDiv(drop, Far.DROP_UNIT), high = by + v - 1 - drop / Far.DROP_UNIT, cubes = Math.max(1, v >> 4);
+        for (int cy = low >> 4; cy <= high >> 4; cy++) for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
             for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++) if (!drawn.contains(CubeKey.pack(cx, cy, cz))) return false;
         return true;
     }
