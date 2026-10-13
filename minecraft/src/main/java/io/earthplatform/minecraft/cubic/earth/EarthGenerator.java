@@ -9,6 +9,7 @@ import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.gen.Strata;
+import io.earthplatform.minecraft.cubic.gen.Towers;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -72,6 +73,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final GlobalElevation bathymetry;
     /** Rock layers of layered sedimentary country, such as the Grand Canyon's. */
     private final Strata strata;
+    /** Tower karst and pillar forests, steeper than the elevation holds them. */
+    private final Towers towers;
     @Nullable private final WorldCoverSource cover;
     @Nullable private final ClimateSource climate;
     @Nullable private final ImagerySource imagery;
@@ -140,6 +143,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             @Override public GeoPoint geographic(double x, double z) { return grid.geographic(x, z); }
             @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
         }, badlands);
+        towers = new Towers(seed, new Towers.Globe() {
+            @Override public double metres(double x, double z) { return elevation[TOWER_ZOOM].metres(x, z); }
+            @Override public GeoPoint geographic(double x, double z) { return grid.geographic(x, z); }
+            @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
+        });
     }
 
     @Override protected Strata.Layers layers(int x, int z) { return strata.layers(x, z, SEA + 0.5); }
@@ -181,6 +189,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Zoom of the coarsest elevation the far levels read. */
     private static final int FAR_ZOOM = 11;
+    /** Zoom the towers find tops and gorges in, near and far alike: pixels about 20 metres across. */
+    private static final int TOWER_ZOOM = 13;
     /** Source zoom for a far level: about one source pixel per voxel. */
     private static int zoom(int level) { return level <= 2 ? TerrariumTileSource.MAX_ZOOM : Math.max(FAR_ZOOM, 17 - level); }
 
@@ -230,6 +240,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 return;
             }
         }
+        metres = towers.shape(x, z, metres, voxel);
         double amplitude = Mth.clamp((metres - 0.5) / 4, 0, 1) * (0.6 + 1.8 * steep), detail = 0;
         if (voxel <= 8) detail += fbm(relief, x / 27.0, z / 27.0, 3) * amplitude;
         if (voxel <= 2) detail += (0.5 - Math.abs(crags.getValue(x / 9.0, z / 9.0))) * amplitude * 0.6 * Math.min(1, steep);
