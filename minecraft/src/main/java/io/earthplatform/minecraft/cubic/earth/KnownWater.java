@@ -54,6 +54,10 @@ final class KnownWater {
             new Course("Skógafoss, plunge pool and lower Skógá", new double[][]{
                     {63.53211, -19.51146, 87, 36}, {63.53195, -19.51176, 87, 32}, {63.53169, -19.51219, 87, 22}, {63.53073, -19.51305, 87, 16},
                     {63.52958, -19.51361, 86, 16}, {63.52805, -19.51391, 86, 16}, {63.52652, -19.51369, 85, 16}, {63.52537, -19.51455, 85, 16}}, 3, false, 152),
+            // Iguazu's Devil's Throat, a chasm 150 m across at the head of the gorge, which the survey reads as a narrow notch.
+            new Course("Iguazu Falls, Devil's Throat", new double[][]{
+                    {-25.68400, -54.44120, 106, 80}, {-25.68593, -54.44056, 106, 80}, {-25.68787, -54.43970, 106, 90}, {-25.69057, -54.43863, 106, 100},
+                    {-25.69289, -54.43756, 106, 120}, {-25.69463, -54.43670, 106, 150}, {-25.69579, -54.43605, 106, 160}, {-25.69637, -54.43571, 106, 120}}, 6, false, 180),
             // The Niagara gorge from the foot of the falls down through the Whirlpool Rapids to Lewiston.
             new Course("Niagara gorge", new double[][]{
                     {43.08000, -79.07600, 100, 350}, {43.08111, -79.07585, 100, 300}, {43.08425, -79.07410, 100, 380}, {43.08738, -79.07360, 99.5, 400},
