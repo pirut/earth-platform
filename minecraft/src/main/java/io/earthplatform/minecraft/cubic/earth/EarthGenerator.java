@@ -1268,7 +1268,9 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
             case WorldCoverSource.MANGROVES -> {
                 // Mangroves grow only on tidal coasts; inland swamps mapped as mangrove, as in the Okavango, are freshwater marsh.
-                if (y > SEA + 12) return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope);
+                // Nor north or south of the mangroves' range, as on the Mississippi delta, unless the ecoregion is mangrove.
+                if (y > SEA + 12 || Math.abs(latitude(z)) > 28.5 && !mangroveEcoregion(x, z))
+                    return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope);
                 return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false, Tree.MANGROVE);
             }
             case WorldCoverSource.MOSS_AND_LICHEN -> {
@@ -1310,7 +1312,9 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (subalpine(-1, local) && top == GRASS) return new Surface(taiga, top, DIRT, 12, 10, 0, 300, 340, true);
         return switch (local.zone()) {
             // Savanna and steppe grass, dry for much of the year.
-            case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> new Surface(savanna, top, DIRT, 2, 0, 0, 380, 390, false, Tree.ACACIA);
+            // Where the dry season is long, as on the Serengeti, the grass is grazed and burnt down to bare earth in patches.
+            case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> new Surface(savanna, top == GRASS && local.rain() < 1100 && patch > 0.15 ? COARSE_DIRT : top,
+                    DIRT, 2, 0, 0, 380, 390, false, Tree.ACACIA);
             // Junipers on the cold steppes.
             case COLD_DESERT, COLD_STEPPE -> new Surface(savanna, top, DIRT, 2, 10, 0, 380, 390, false);
             case MEDITERRANEAN -> new Surface(plains, top, DIRT, 1, 0, 0, 300, 320, false);
@@ -1394,10 +1398,10 @@ public final class EarthGenerator extends SurfaceGenerator {
         return pan;
     }
 
-    /** Young volcanic islands and fields whose bare ground is black lava: Hawaii, Iceland, the Canaries, the Galápagos, Etna, Réunion. */
+    /** Young volcanic islands and fields whose bare ground is black lava: Hawaii, Iceland, the Canaries, the Galápagos, Etna, Réunion, Fuji. */
     private static final double[][] LAVA = {
             {18.8, 22.3, -160.5, -154.7}, {63.2, 66.6, -24.6, -13.4}, {27.6, 29.5, -18.2, -13.3},
-            {-1.5, 0.7, -92.0, -89.0}, {37.6, 37.9, 14.8, 15.2}, {-21.4, -20.8, 55.2, 55.9}};
+            {-1.5, 0.7, -92.0, -89.0}, {37.6, 37.9, 14.8, 15.2}, {-21.4, -20.8, 55.2, 55.9}, {35.25, 35.5, 138.6, 138.9}};
 
     private boolean volcanic(int x, int z) {
         GeoPoint p = grid.geographic(x, z);
@@ -1422,7 +1426,16 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** Whether a volcanic column's lava is old and weathered, as in Iceland, rather than fresh. */
-    private boolean weathered(int x, int z) { return grid.geographic(x, z).latitude() > 60; }
+    private boolean weathered(int x, int z) {
+        GeoPoint p = grid.geographic(x, z);
+        // Iceland's old lava, and Mount Fuji's brown scoria.
+        return p.latitude() > 60 || p.latitude() > 35.25 && p.latitude() < 35.5 && p.longitude() > 138.6 && p.longitude() < 138.9;
+    }
+
+    private boolean mangroveEcoregion(int x, int z) {
+        int eco = ecoregion(x, z);
+        return eco != 0 && Ecoregions.get().biome(eco) == Ecoregions.MANGROVE;
+    }
 
     /** Whether a mountain's bare rock is pale granite, as in Patagonia's Andes. */
     private boolean paleRock(int x, int z) {
