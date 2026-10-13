@@ -22,6 +22,7 @@ public final class GlobeTest {
         projection();
         codec();
         mend();
+        repair();
         kernel();
         streaming();
         worldCover();
@@ -199,6 +200,28 @@ public final class GlobeTest {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();
         }
+    }
+
+    private static void repair() {
+        // A 4x4 block of zoom-15 tiles under one zoom-13 reference tile, on a slope rising 2 m per fine pixel east.
+        float[] reference = new float[256 * 256];
+        for (int i = 0; i < reference.length; i++) reference[i] = 3000 + (i % 256) * 8f;
+        int tx = 4 * 9 + 2, ty = 4 * 5 + 1;
+        float[] tile = new float[256 * 256];
+        for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) tile[j * 256 + i] = 3000 + ((2 * 256 + i + 0.5f) / 4 - 0.5f) * 8f + (i % 7 == 0 && j < 100 ? 60 : 0) + (j > 128 ? 40 : 0);
+        float[] expected = tile.clone();
+        for (int j = 0; j < 256; j++) { tile[j * 256 + 114] = -8161; tile[j * 256 + 115] = 1519; }
+        tile[40 * 256 + 40] = 9000;
+        tile[41 * 256 + 41] -= 400;
+        tile[60 * 256 + 60] = 0;
+        TerrariumTileSource.repair(tile, reference, 2, tx, ty);
+        near(expected[5 * 256 + 114], tile[5 * 256 + 114], 9, "broken pit column takes the reference and its neighbours' detail");
+        near(expected[200 * 256 + 115], tile[200 * 256 + 115], 9, "broken low column keeps the neighbours' 40 m rise");
+        near(expected[40 * 256 + 40], tile[40 * 256 + 40], 9, "broken spike takes the reference");
+        near(expected[41 * 256 + 41], tile[41 * 256 + 41], 9, "a 400 m pit on a gentle slope takes the reference");
+        near(0, tile[60 * 256 + 60], 0, "open-sea zeros are left for the bathymetry fill");
+        near(expected[9 * 256 + 7], tile[9 * 256 + 7], 1e-3, "relief the reference smooths away is kept");
+        near(expected[9 * 256 + 8], tile[9 * 256 + 8], 1e-3, "ordinary pixels are untouched");
     }
 
     /**
