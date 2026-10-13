@@ -37,13 +37,9 @@ Packs that ship Voxy support (Photon does) light the far terrain the same way as
 
 ### On a Mac
 
-Apple's OpenGL lets a shader use at most 16 textures and has no compute shaders, so Photon's defaults exceed what a Mac can run. Before choosing Photon:
+Use the same official Photon zip at its default settings; there is nothing to change. Apple's OpenGL has no compute shaders and fewer texture slots than Photon's defaults need, so on a Mac Earth Platform makes an adapted copy of the pack for your own game in `earthplatform/photon-compat/` inside the game folder, and Iris loads that. Your Photon zip is never changed, and other systems run Photon exactly as it is.
 
-1. Options → Video Settings → Shader Packs → select Photon → **Shader Pack Settings**.
-2. Open **Lighting**. Turn **Cloud Shadows** off, then open **Shadows** and turn **Shadow Color** off.
-3. Apply, then choose a profile no higher than Medium if the frame rate is low.
-
-Use the official Photon download; Earth Platform never needs a modified shader pack.
+On a Mac, three Photon features are unavailable: **Colored Lights** (hidden from the menu), **Colored Shadows** and **Cloud Shadows** (shown, but stay off). To load Photon without the adapted copy, add `-Dearthplatform.photon.compat=off` to the JVM arguments.
 
 ## Satellite ground colours (optional)
 

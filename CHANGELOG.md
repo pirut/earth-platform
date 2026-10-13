@@ -35,6 +35,6 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 
 ### Known issues
 - Iris and Sodium must be the exact tested versions.
-- On a Mac, Photon needs Cloud Shadows and Shadow Color off, and its sky light is flatter.
+- On a Mac, Photon's Colored Lights, Colored Shadows and Cloud Shadows are unavailable (the mod adapts stock Photon for Apple's OpenGL automatically).
 - Distant Horizons is not supported alongside Earth Platform.
 - Bee nests generate without bees.

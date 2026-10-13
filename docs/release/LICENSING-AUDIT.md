@@ -7,7 +7,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | Item | Status | What's needed before a public release |
 | --- | --- | --- |
 | EOX Sentinel-2 cloudless (ground colours, PR #4) | Mitigated | Imagery is off by default (JR, 2026-10-13); players opt in. Emailing EOX is an optional follow-up |
-| Mac Photon pack | Resolved | JR (2026-10-13): the mod must work with stock, unmodified Photon. No modified pack is distributed anywhere |
+| Photon on Macs | **Fix needed** | No modified pack is distributed (JR: stock Photon only). The mod adapts Photon on the player's machine, which the licence allows; one embedded Photon-derived shader pass must be rebuilt from the player's copy instead |
 | Public name ("Minecraft Earth") | **Blocker** | Release as Earth Platform (or another name without "Minecraft"); fix one game string in PR #8 |
 | Mod licence (All Rights Reserved) | Decision | JR to choose: keep ARR or open the source |
 | AWS Terrain Tiles | OK | Credited in game and in CREDITS.md |
@@ -58,7 +58,12 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 
 - Photon v1.3b, © 2021-2025 Benjamin Stott (SixthSurge), [Photon Shaders License Agreement](https://github.com/sixthsurge/photon/blob/main/LICENSE). The mod reads the player's own copy at runtime (its Voxy code) and ships none of it. OK.
 - Decision (JR, 2026-10-13): Earth Platform must work with stock, unmodified Photon, and no modified pack is distributed. The Mac test copy (`photon_v1.3b_mac.zip`) was a derivative made for testing only; it stays out of every release, store page and download. The shader thread is making the mod itself handle the Mac's limits.
-- For the record: Photon's licence allows sharing derivatives with the licence included, except on platforms that pay creators (it names Modrinth and CurseForge) or for money, without SixthSurge's written permission. With no modified pack shipped, this no longer applies.
+- How Macs run stock Photon (PR #3, `PhotonCompat`): on a driver without compute shaders or with 16 texture units, the mod copies the player's own Photon into `<game dir>/earthplatform/photon-compat/`, applies a few edits (regex replacements, one pass moved, one new fragment pass), and Iris loads the copy. The installed zip is untouched and nothing is uploaded or shared.
+- Licence check (Photon Shaders License Agreement):
+  - "Modify Photon Shaders for personal use": the adapted copy is made on the player's machine from their own download, for their own play, and never redistributed. OK.
+  - "You may not redistribute Photon Shaders or derivative works on platforms that provide direct or indirect monetary compensation to creators (e.g. Modrinth, CurseForge) without my explicit written permission": the mod jar must therefore contain no Photon text. The regex edits quote only single lines to find them, which is fine. **Must fix before release:** at 183fe4b, `PhotonCompat.SKY_SH_FRAGMENT` embeds Photon's 31 uniform declarations and include list verbatim from `program/d4a_generate_sky_sh.csh`, and its `main()` ports that compute shader's algorithm. That makes it a derivative portion of Photon inside the jar. Fix: build that pass at adapt time from the player's own `d4a_generate_sky_sh.csh` (its uniform and include lines) and append only our own `main()`; or get SixthSurge's written permission. Reported to the shader thread 2026-10-13.
+  - Courtesy: tell SixthSurge before release, and offer the Mac support upstream.
+- The old Mac test copy (`photon_v1.3b_mac.zip`) stays out of every release.
 
 ## Companion mods
 

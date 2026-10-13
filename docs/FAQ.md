@@ -53,8 +53,11 @@ Photon v1.3b is tested. Packs that include Voxy support light the far terrain li
 **The game won't start after adding Iris or Sodium.**
 Earth Platform needs the exact versions in the [install guide](INSTALL.md#shaders-optional). Newer or older Iris or Sodium builds are refused at start-up so they can't break the far terrain.
 
-**On a Mac, Photon shows a black screen or an error.**
-Turn **Cloud Shadows** and **Shadow Color** off in Photon's settings. See [On a Mac](INSTALL.md#on-a-mac).
+**Do I need special Photon settings on a Mac?**
+No. Use the official Photon zip at its defaults. Earth Platform adapts it for Apple's OpenGL on your own computer (in `earthplatform/photon-compat/`), leaving your zip untouched. Colored Lights, Colored Shadows and Cloud Shadows are unavailable on a Mac. See [On a Mac](INSTALL.md#on-a-mac).
+
+**My log says "Failed to parse an ResourceLocation in item.properties".**
+Harmless; it comes from Photon itself.
 
 **Should I use Distant Horizons?**
 No. Earth Platform has its own far terrain, and Distant Horizons draws over it.

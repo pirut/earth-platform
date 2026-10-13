@@ -76,7 +76,7 @@ No cities: built-up land becomes the wild land around it, so the world is yours 
 
 The first visit to a place downloads its terrain, so you need an internet connection. Places you've been work offline afterwards.
 
-**Shaders:** Sodium 0.8.12-beta.1 and Iris 1.8.14-beta.1 (these exact versions) with Photon v1.3b. On a Mac, turn off Cloud Shadows and Shadow Color in Photon's Lighting settings.
+**Shaders:** Sodium 0.8.12-beta.1 and Iris 1.8.14-beta.1 (these exact versions) with Photon v1.3b. Macs use the same stock Photon at its defaults; the mod adapts it for Apple's OpenGL automatically.
 
 **Don't** install Distant Horizons alongside it: Earth Platform has its own far terrain.
 
