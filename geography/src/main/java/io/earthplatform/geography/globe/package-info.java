@@ -9,13 +9,9 @@
  *   <li>{@link io.earthplatform.geography.globe.TerrariumTileSource} ({@code terrarium-v1}): AWS
  *       Terrain Tiles PNGs, single-flight per tile, bounded concurrent transfers with retry, a
  *       decoded-tile LRU, an atomic disk cache under {@code z/x/y.png} and an offline mode. Callers
- *       block, so use it from generation workers, never a tick thread. {@link
- *       io.earthplatform.geography.globe.ElevationLayer}s laid over it refine each tile after
- *       its cleaning.</li>
- *   <li>{@link io.earthplatform.geography.globe.NationalElevation} ({@code mapterhorn-v1}): open
- *       national lidar and survey models from Mapterhorn wherever one exists, feathered into the
- *       composite at the edge of their coverage; tiles are lossless WebP, read by
- *       {@link io.earthplatform.geography.globe.WebpLossless}.</li>
+ *       block, so use it from generation workers, never a tick thread.</li>
+ *   <li>{@link io.earthplatform.geography.globe.ElevationLayer}: a better source laid over each
+ *       cleaned tile, in order, pinned per world in {@code earth.elevation}.</li>
  *   <li>{@link io.earthplatform.geography.globe.GlobalElevation}: Catmull-Rom bicubic in true
  *       metres across tile seams and the antimeridian. Above zoom 10 open sea is stored as 0 m, so
  *       those pixels take zoom-10 bathymetry.</li>

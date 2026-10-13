@@ -4,7 +4,6 @@ import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.ElevationLayer;
 import io.earthplatform.geography.globe.MercatorGrid;
-import io.earthplatform.geography.globe.NationalElevation;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
@@ -40,7 +39,6 @@ public final class CubicSettings {
     private static final String FILE = "generator.properties";
     /** Elevation sources by a world's {@code earth.elevation} pin, so worlds made with different sources never share tiles. */
     private static final Map<String, TerrariumTileSource> tiles = new HashMap<>();
-    private static NationalElevation national;
     private static WorldCoverSource cover;
     private static ClimateSource climate;
     private static ImagerySource imagery;
@@ -147,12 +145,10 @@ public final class CubicSettings {
 
     /**
      * The elevation pin for new worlds: the Terrarium composite, then the layers laid over it, joined
-     * by '+'. National elevation is on unless the game runs with
-     * {@code -Dearthplatform.earth.national=false}.
+     * by '+'. With no layers it is the composite's id alone, as worlds made before layers pinned.
      */
     public static String elevation() {
         String pin = TerrariumTileSource.DATASET_ID;
-        if (!"false".equals(System.getProperty("earthplatform.earth.national"))) pin += "+" + NationalElevation.DATASET_ID;
         return pin;
     }
 
@@ -171,8 +167,7 @@ public final class CubicSettings {
         if (!TerrariumTileSource.DATASET_ID.equals(ids[0])) throw new IllegalStateException("Unsupported elevation '" + pin + "'");
         List<ElevationLayer> layers = new ArrayList<>();
         for (int i = 1; i < ids.length; i++) {
-            if (NationalElevation.DATASET_ID.equals(ids[i])) layers.add(national());
-            else throw new IllegalStateException("Unsupported elevation layer '" + ids[i] + "' in '" + pin + "'");
+            throw new IllegalStateException("Unsupported elevation layer '" + ids[i] + "' in '" + pin + "'");
         }
         Path cache = cacheFolder().resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
         try {
@@ -183,21 +178,6 @@ public final class CubicSettings {
         }
         tiles.put(pin, known);
         return known;
-    }
-
-    /** High-resolution national elevation, cached on disk beside the elevation tiles. */
-    public static synchronized NationalElevation national() {
-        if (national == null) {
-            Path cache = cacheFolder().resolve(NationalElevation.DATASET_ID);
-            try {
-                // Source tiles are 1 MiB decoded and each serves four elevation tiles.
-                national = new NationalElevation(NationalElevation.MAPTERHORN_TILES, NationalElevation.MAPTERHORN_DOWNLOADS, cache,
-                        !Boolean.getBoolean("earthplatform.earth.offline"), 48, 6, Duration.ofSeconds(30));
-            } catch (IOException failure) {
-                throw new UncheckedIOException("Could not open the national elevation cache at " + cache, failure);
-            }
-        }
-        return national;
     }
 
     private static Path cacheFolder() { return FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache"); }

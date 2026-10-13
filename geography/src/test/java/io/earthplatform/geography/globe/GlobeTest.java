@@ -30,9 +30,7 @@ public final class GlobeTest {
         climate();
         imagery();
         palette();
-        webp();
-        national();
-        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); liveClimate(); liveImagery(); liveNational(); }
+        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); liveClimate(); liveImagery(); }
         else System.out.println("GlobeTest: live AWS tile checks skipped (set EARTH_LIVE_TILES=1)");
         System.out.println("GlobeTest: " + checks + " checks passed");
     }
@@ -204,6 +202,25 @@ public final class GlobeTest {
             try (var online = new TerrariumTileSource(base, cache, true, 4, 1, Duration.ofSeconds(5))) {
                 online.tile(zoom, 3, 3);
                 check(Files.exists(cache.resolve("2/3/3.png")), "corrupt cache entry refetched");
+            }
+            // Layers run in order on each cleaned tile, once, and the later one wins.
+            List<String> seen = Collections.synchronizedList(new ArrayList<>());
+            ElevationLayer plus = new ElevationLayer() {
+                public String id() { return "plus"; }
+                public void refine(int z, int x, int y, float[] values) { seen.add("plus " + z + "/" + x + "/" + y); values[0] += 100; }
+            };
+            ElevationLayer pin = new ElevationLayer() {
+                public String id() { return "pin"; }
+                public void refine(int z, int x, int y, float[] values) { seen.add("pin"); values[1] = 42; }
+            };
+            try (var layered = new TerrariumTileSource(base, cache, false, 4, 1, Duration.ofSeconds(5), List.of(plus, pin))) {
+                float[] tile = layered.tile(zoom, 1, 2);
+                near(planeAt(zoom, 256, 512) + 100, tile[0], 1 / 256.0, "first layer applied");
+                equal(42f, tile[1], "second layer applied after it");
+                near(planeAt(zoom, 256 + 2, 512), tile[2], 1 / 256.0, "untouched pixel kept");
+                check(layered.tile(zoom, 1, 2) == tile, "layered tile kept in memory");
+                equal(List.of("plus 2/1/2", "pin"), seen, "each layer runs once, in order");
+                equal(List.of(plus, pin), layered.layers(), "layers listed in order");
             }
             try (var stream = Files.list(cache.resolve("2/1"))) {
                 check(stream.noneMatch(p -> p.toString().endsWith(".part")), "no partial cache files left");
@@ -475,203 +492,6 @@ public final class GlobeTest {
     }
 
     /** Known places in the real Sentinel-2 cloudless mosaic. */
-    /** Lossless WebP images made by libwebp (cwebp -lossless -m 6), checked against its own decode. */
-    private static void webp() throws Exception {
-        String gradient = "UklGRpwAAABXRUJQVlA4TI8AAAAvJIAEALkyRPQ/BgratmHMH3e7w6AQYhqif0slnKb/E4BHMVlYWpxGkq1aj5kkYwCvXv7pwb+gvvzyW6Yxitu2jbMQ9Mw5QiYoaiBt21C2/TEBF0NaGrwJLc8fnmA8qlzAnNiXF4JenCjrxouT5by5IiglRimEZeTogGjWpLwQXj8pgsV6AWL5eJ0WB5aHLQA=";
-        String palette3 = "UklGRugAAABXRUJQVlA4TNwAAAAvJIAEEFUgattG2PY9KMcfTCMLBNIQUBTbLBZM/Bmm0puXQCDxt8hgtg3iq3u8XNGkacm2bbBZslrNsK0tFbI1a9GwrGZjW22rZptt20bbahqlpi1mrBatxrZmJTZbUyZNszbWYjZoaliGbCxVVlvMKi3NYDM2qrURpFGbaoVl1rYVa1vJAgKMqlWSVavUGputla0MtalaaqZgbVvT1mAlU2tbbazM1qbG1rZS2RpTRUsLiU0tljUZNjVUllnKlhmytWLS2rZmaxZLNoUaphZVm6ER1arWNJGsprUA";
-        String palette40 = "UklGRtICAABXRUJQVlA4TMUCAAAvJIAEED/BNADAJGu4O1kf4ACn8jbVaUR3i+MNNwIAEFF2jfUCj3xHL+4NTW22zaMTCQCQBnd3kjsPoNL5MEza0m4fcHf3OJxGAIBECWteyYzgktxhAfbg2MIS0e39EzN8syV+Arv4eD7dlhzF3f/fPecfuttM+/F+w/J2d0ZYZATGu//ZESF9dj+LChS/nYdBiL4+89xD4jMsm1+LtOw13zr/stWV9k3eFpMuJkz9vr18fm5t0Fx7pP+KueNB0S+q/FwnzOomi4jX0B5met/QdT2ghbGHAUcxg2n2M6IKELIFBYYBADKVlpKV3SANJET0P8BMCANYPc7I6by+8HK/VUfOqPcjXHgLGEGMGHj4y8sdrpJO7AHHsy/QwbuA5E0+oM8R5TEDZYhdGMGIx9WqT0yB1ue5lhWEKG1Fk5sfcANhxTeP3xmPsYpQL/+qpcHdtSfiMKND2FwiHr78s3W09hAwledMNtawu8oLzinh+wImoP1DSWvopcBrYN0nezQOR0iM2Nz/mvknPsxw14n3d3/lzGhVmryTvNtmIY64xBxYzP86vWp6HcrB1fb4LA2plHnyjyn1ce9QNrePRd2AQ/2SnupoQUgot0K/9wpJhhOufsghhcpVP02VlSZDRkkz/csMNVDf0mwBES80lrL0cLlmBmqzjXktw6l2v/LvW7fhD7M6wLfTA77805id85aGsF4siQb2IfDk+pJQZ94+GoSbT7elovUXGDEv0O6IJd3sv9zXTG5ar49divQwh46QpW92x+n4J0TB7m79CXk4Xz/+EekTojCP6ilJosJoOj4OBCLqfCTUsWprEhxed2M19FZQvWJU/7OfQ7+FcNOdDr3nmDOv2BsN9LJIR34RQk0dZhO3GMD22u9JS2l3FQQI78brHQQLwdcMhGnRX7KVadizp3jCz2ttDz+bLCuCHjiv53AkAA==";
-        Object[][] images = {{gradient, -1717325314}, {palette3, 1234437887}, {palette40, -172448698}};
-        for (Object[] image : images) {
-            WebpLossless.Image decoded = WebpLossless.decode(Base64.getDecoder().decode((String) image[0]));
-            equal(37, decoded.width(), "WebP width");
-            equal(19, decoded.height(), "WebP height");
-            equal(image[1], Arrays.hashCode(decoded.argb()), "WebP pixels match libwebp's");
-        }
-        float[] flat = NationalElevationTestTile.metres();
-        check(flat.length == 512 * 512 && flat[0] == 1000f && flat[flat.length - 1] == 1000f, "Terrarium WebP tile decodes to 1000 m");
-        byte[] truncated = Arrays.copyOf(Base64.getDecoder().decode(palette40), 300);
-        fail(() -> WebpLossless.decode(truncated), java.io.IOException.class, "truncated WebP rejected");
-        fail(() -> WebpLossless.decode(TerrariumTileSource.encode(new float[256 * 256])), java.io.IOException.class, "PNG is not WebP");
-    }
-
-    /** A 512-pixel lossless WebP Terrarium tile reading 1000 m everywhere. */
-    private static final class NationalElevationTestTile {
-        static final String WEBP = "UklGRi4AAABXRUJQVlA4TCEAAAAv/8F/AAdQ9A5G/wMCgWR/7xmK6H/Gf/7zn//85z//+T8A";
-        static byte[] bytes() { return Base64.getDecoder().decode(WEBP); }
-        static float[] metres() throws Exception {
-            int[] argb = WebpLossless.decode(bytes()).argb();
-            float[] out = new float[argb.length];
-            for (int i = 0; i < argb.length; i++) out[i] = (((argb[i] >>> 16) & 0xFF) * 256 + ((argb[i] >>> 8) & 0xFF) + (argb[i] & 0xFF) / 256f) - 32768;
-            return out;
-        }
-    }
-
-    /**
-     * National elevation over a synthetic region: one coverage cell holds a national model reading
-     * 1000 m, everything else is uncovered. Tiles deep in the cell take it; tiles at its edge fade in.
-     */
-    private static void national() throws Exception {
-        int rx = 33, ry = 22, cell = 13;
-        int cx = rx * 128 + 5, cy = ry * 128 + 5;
-        long cellId = NationalElevation.PmtilesIndex.base(cell) + hilbertIndex(cell, cx, cy);
-        // Hilbert order round trip on every cell of a small zoom.
-        for (int d = 0; d < 64; d++) {
-            long[] xy = NationalElevation.PmtilesIndex.hilbert(3, d);
-            equal((long) d, hilbertIndex(3, xy[0], xy[1]), "Hilbert curve round trip");
-        }
-        // A finer tile (zoom 14) inside the archive must not count as coverage.
-        long fineId = NationalElevation.PmtilesIndex.base(14) + hilbertIndex(14, (rx * 128 + 9) * 2L, (ry * 128 + 9) * 2L);
-        byte[] archive = pmtiles(new long[]{cellId, fineId}), empty = pmtiles(new long[0]);
-        String catalogue = "{\"version\":\"x\",\"items\":[{\"name\":\"planet.pmtiles\",\"min_zoom\":0,\"max_zoom\":12},"
-                + "{\"name\":\"6-33-22.pmtiles\",\"url\":\"x\",\"min_zoom\":13,\"max_zoom\":14},"
-                + "{\"name\":\"6-40-20.pmtiles\",\"min_zoom\":13,\"max_zoom\":13}]}";
-        Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.setExecutor(Executors.newFixedThreadPool(4));
-        server.createContext("/", exchange -> {
-            String path = exchange.getRequestURI().getPath();
-            hits.computeIfAbsent(path, k -> new AtomicInteger()).incrementAndGet();
-            byte[] file = switch (path) {
-                case "/downloads/download_urls.json" -> catalogue.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                case "/downloads/6-33-22.pmtiles" -> archive;
-                case "/downloads/6-40-20.pmtiles" -> empty;
-                default -> path.startsWith("/tiles/14/") || path.startsWith("/tiles/11/") ? NationalElevationTestTile.bytes() : null;
-            };
-            if (file == null) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
-            String range = exchange.getRequestHeaders().getFirst("Range");
-            int from = 0, to = file.length - 1;
-            if (range != null) {
-                String[] span = range.substring("bytes=".length()).split("-");
-                from = Integer.parseInt(span[0]);
-                to = Math.min(file.length - 1, Integer.parseInt(span[1]));
-            }
-            byte[] body = Arrays.copyOfRange(file, from, to + 1);
-            exchange.sendResponseHeaders(range == null ? 200 : 206, body.length);
-            exchange.getResponseBody().write(body);
-            exchange.close();
-        });
-        server.start();
-        Path cache = Files.createTempDirectory("national-test");
-        String root = "http://127.0.0.1:" + server.getAddress().getPort();
-        URI tiles = URI.create(root + "/tiles/"), downloads = URI.create(root + "/downloads/");
-        try {
-            try (var national = new NationalElevation(tiles, downloads, cache, true, 4, 2, Duration.ofSeconds(5))) {
-                check(national.covers(cx, cy), "covered cell");
-                check(!national.covers(cx + 1, cy) && !national.covers(rx * 128 + 9, ry * 128 + 9), "neighbours and finer tiles are not coverage");
-                check(!national.covers(40 * 128, 20 * 128 + 3), "empty archive region uncovered");
-                check(!national.covers(0, 0), "region outside the catalogue uncovered");
-                // Zoom 15 tile (1, 1) of the cell's 4x4 lies a whole tile inside every edge.
-                float[] inner = filled(-50f);
-                inner[5] = 0f;
-                national.refine(15, cx * 4 + 1, cy * 4 + 1, inner);
-                near(1000, inner[128 * 256 + 128], 1e-3, "inside coverage the national value wins");
-                near(1000, inner[255 * 256 + 255], 1e-3, "all of an inner tile is national");
-                equal(0f, inner[5], "open sea stays");
-                // Tile (0, 1) touches the uncovered cell to the west: its west edge keeps the composite.
-                float[] edge = filled(-50f);
-                national.refine(15, cx * 4, cy * 4 + 1, edge);
-                near(-50, edge[128 * 256], 25, "uncovered edge keeps the composite");
-                near(1000, edge[128 * 256 + 255], 1e-3, "past the feather the national value wins");
-                check(edge[128 * 256 + 20] > edge[128 * 256 + 10] && edge[128 * 256 + 10] > edge[128 * 256], "feather rises inward");
-                // A tile in no covered cell is untouched, and a zoom too coarse for regions too.
-                float[] outside = filled(-50f), coarse = filled(-50f);
-                national.refine(15, (cx + 3) * 4, cy * 4, outside);
-                national.refine(6, rx, ry, coarse);
-                check(outside[1000] == -50f && coarse[1000] == -50f, "uncovered and coarse tiles untouched");
-                // Zoom 12 reads the coarse planet tile where the cell is covered.
-                float[] wide = filled(-50f);
-                national.refine(12, cx >> 1, cy >> 1, wide);
-                int px = (cx & 1) * 128 + 64, py = (cy & 1) * 128 + 64;
-                near(1000, wide[py * 256 + px], 1e-3, "coarse zoom refined inside coverage");
-                equal(-50f, wide[(py ^ 128) * 256 + px], "coarse zoom outside coverage untouched");
-            }
-            int before = hits.values().stream().mapToInt(AtomicInteger::get).sum();
-            try (var offline = new NationalElevation(tiles, downloads, cache, false, 4, 1, Duration.ofSeconds(5))) {
-                float[] again = filled(-50f);
-                offline.refine(15, cx * 4 + 1, cy * 4 + 1, again);
-                near(1000, again[128 * 256 + 128], 1e-3, "disk cache offline");
-                float[] missing = filled(-50f);
-                fail(() -> offline.refine(15, cx * 4 + 2, cy * 4 + 2, missing), MissingTerrainException.class, "uncached national tile offline fails");
-            }
-            equal(before, hits.values().stream().mapToInt(AtomicInteger::get).sum(), "no transfer when cached");
-            // Through the tile source: layers run after cleaning and the layered tile is what callers see.
-            try (var national = new NationalElevation(tiles, downloads, cache, false, 4, 1, Duration.ofSeconds(5))) {
-                check(national.id().equals(NationalElevation.DATASET_ID), "layer id");
-            }
-        } finally {
-            server.stop(0);
-            ((ExecutorService) server.getExecutor()).shutdownNow();
-        }
-    }
-
-    private static float[] filled(float metres) {
-        float[] values = new float[256 * 256];
-        Arrays.fill(values, metres);
-        return values;
-    }
-
-    /** Position of tile (x, y) along a zoom's Hilbert curve, the inverse of the PMTiles order. */
-    private static long hilbertIndex(int zoom, long x, long y) {
-        long d = 0;
-        for (long s = (1L << zoom) / 2; s > 0; s /= 2) {
-            long rx = (x & s) > 0 ? 1 : 0, ry = (y & s) > 0 ? 1 : 0;
-            d += s * s * ((3 * rx) ^ ry);
-            if (ry == 0) {
-                if (rx == 1) { x = s - 1 - x; y = s - 1 - y; }
-                long swap = x; x = y; y = swap;
-            }
-        }
-        return d;
-    }
-
-    /** A PMTiles v3 archive whose root directory lists the given tile ids, each a tiny tile. */
-    private static byte[] pmtiles(long[] ids) throws Exception {
-        long[] sorted = ids.clone();
-        Arrays.sort(sorted);
-        var dir = new java.io.ByteArrayOutputStream();
-        varint(dir, sorted.length);
-        long last = 0;
-        for (long id : sorted) { varint(dir, id - last); last = id; }
-        for (long ignored : sorted) varint(dir, 1);
-        for (long ignored : sorted) varint(dir, 4);
-        for (int i = 0; i < sorted.length; i++) varint(dir, i == 0 ? 1 : 0);
-        var zipped = new java.io.ByteArrayOutputStream();
-        try (var gzip = new java.util.zip.GZIPOutputStream(zipped)) { gzip.write(dir.toByteArray()); }
-        byte[] root = zipped.toByteArray();
-        var header = java.nio.ByteBuffer.allocate(127).order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        header.put("PMTiles".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).put((byte) 3);
-        header.putLong(127).putLong(root.length).putLong(0).putLong(0).putLong(127 + root.length).putLong(0)
-                .putLong(127 + root.length).putLong(4L * sorted.length).putLong(sorted.length).putLong(sorted.length).putLong(sorted.length);
-        header.put((byte) 1).put((byte) 2).put((byte) 1).put((byte) 4).put((byte) 13).put((byte) 14);
-        var out = new java.io.ByteArrayOutputStream();
-        out.write(header.array());
-        out.write(root);
-        out.write(new byte[4 * sorted.length]);
-        return out.toByteArray();
-    }
-
-    private static void varint(java.io.ByteArrayOutputStream out, long value) {
-        while (value >= 0x80) { out.write((int) (value & 0x7F) | 0x80); value >>>= 7; }
-        out.write((int) value);
-    }
-
-    /** The real national models at peaks the composite rounds off, and one with none. */
-    private static void liveNational() throws Exception {
-        Path cache = Files.createTempDirectory("national-live");
-        try (var national = new NationalElevation(NationalElevation.MAPTERHORN_TILES, NationalElevation.MAPTERHORN_DOWNLOADS, cache.resolve("n"), true, 16, 4, Duration.ofSeconds(30));
-             var plain = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve("t"), true, 64, 4, Duration.ofSeconds(30));
-             var layered = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve("t"), true, 64, 4, Duration.ofSeconds(30), List.of(national))) {
-            var grid = new MercatorGrid(1.0);
-            var before = new GlobalElevation(grid, plain, 15);
-            var after = new GlobalElevation(grid, layered, 15);
-            GeoPoint matterhorn = new GeoPoint(45.9763, 7.6586), dru = new GeoPoint(45.9325, 6.9558), fitzRoy = new GeoPoint(-49.2714, -73.0431);
-            check(maxNear(before, matterhorn, 150) < 4400, "composite rounds off the Matterhorn");
-            near(4478, maxNear(after, matterhorn, 150), 15, "national Matterhorn summit");
-            near(3754, maxNear(after, dru, 150), 20, "national Aiguille du Dru summit");
-            near(maxNear(before, fitzRoy, 300), maxNear(after, fitzRoy, 300), 1e-6, "no national model in Patagonia: unchanged");
-        }
-    }
-
     private static void liveImagery() throws Exception {
         try (var imagery = new ImagerySource(ImagerySource.EOX_S2_CLOUDLESS_2016, null, true, 16, 4, Duration.ofSeconds(30))) {
             var grid = new MercatorGrid(1);
