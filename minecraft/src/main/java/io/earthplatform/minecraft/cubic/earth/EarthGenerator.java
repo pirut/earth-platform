@@ -266,14 +266,9 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         double steep = Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1]));
         CoverMemo memo = cover == null ? null : coverMemo.get();
-        // Land by sea the survey reads well above sea level lies as much lower, so it meets the sea as it meets its own;
-        // its lakes and rivers lie as much lower with it, or they stood as pillars of water over the lowered ground.
-        double lowered = cover == null ? 0 : metres - Math.max(metres - lift(x, z), Math.min(metres, 2 * SEA_METRES));
         if (voxel >= BRIDGE_VOXEL && cover != null && cover(memo, x, z, voxel) == WorldCoverSource.BUILT_UP) {
             int surface = bridged(dem, memo, x, z, voxel);
             if (surface != DRY) {
-                surface -= (int) Math.round(lowered);
-                if (lowered > 0 && surface <= SEA + 2) surface = SEA;
                 out[0] = surface - lakeDepth(x, z, voxel);
                 out[1] = surface;
                 return;
@@ -288,8 +283,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 out[1] = SEA;
                 return;
             }
-            int surface = (rivers != null && rawCover(memo, x, z, voxel) == RIVER ? riverSurface(x, z) : lakeSurface(dem, x, z, voxel)) - (int) Math.round(lowered);
-            metres -= lowered;
+            int surface = rivers != null && rawCover(memo, x, z, voxel) == RIVER ? riverSurface(x, z) : lakeSurface(dem, x, z, voxel);
             // Shadowed cliffs can map as water; water never lies on a steep slope well above its own level. Only
             // mountains cast such shadows: in flat country a steep rise under water is a seam between surveys, and
             // keeping it as land stood thin stone walls in rivers.
@@ -299,7 +293,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             // So is water within a few metres of sea level right beside the sea, as the ponds and creeks among
             // mangroves, whose survey reads the canopy round them: kept at its own level, it stood in walls and
             // falls a few blocks above and below the sea.
-            if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && (lowered > 0 || joinsOpenSea(x, z))
+            if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && joinsOpenSea(x, z)
                     || Math.abs(surface - SEA) <= TIDAL && besideSea(x, z))) {
                 out[0] = lagoonBed(x, z, metres, voxel);
                 out[1] = SEA;
@@ -312,7 +306,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 out[1] = surface;
                 return;
             }
-        } else metres -= lowered;
+        }
         metres = towers.shape(x, z, metres, voxel);
         double amplitude = Mth.clamp((metres - 0.5) / 4, 0, 1) * (0.6 + 1.8 * steep), detail = 0;
         if (voxel <= 8) detail += fbm(relief, x / 27.0, z / 27.0, 3) * amplitude;
@@ -1633,85 +1627,6 @@ public final class EarthGenerator extends SurfaceGenerator {
             any = true;
         }
         return any ? sea : NO_SEA;
-    }
-
-    /** How far, in blocks, land feels the height the survey reads over the sea beside it. */
-    private static final double LIFT_REACH = 256;
-    /** Lifts of the sea's samples by water cell, as far as they have been found. */
-    private final java.util.concurrent.ConcurrentHashMap<Long, float[]> lifts = new java.util.concurrent.ConcurrentHashMap<>();
-
-    /**
-     * Metres to take off a land column's surveyed height for the sea beside it reading above sea
-     * level. In places the survey has no sea at all but a fill or another datum: Iceland's Westfjords
-     * read one smooth 86 m over Ísafjörður's water and its slopes alike, the Galápagos bays a level
-     * 12 m, Lake Worth Lagoon two or three metres. The sea lies at sea level whatever the survey says,
-     * so the land beside it stood over it in walls as high as the reading, fifty blocks in the fjords.
-     * Land takes off the reading of the sea near it, in full at the water and less with distance, to
-     * nothing {@value #LIFT_REACH} blocks off. Only samples with sea all round count, a sample's
-     * spacing from any shore: by a cliff, the survey blurs the land out over the water, and that is
-     * no offset of the sea's.
-     */
-    private double lift(int x, int z) {
-        double spacing = (double) WATER_CELL / WATER_SAMPLES;
-        int reach = (int) Math.ceil(LIFT_REACH / spacing);
-        int ix = Mth.floor(x / spacing - 0.5), iz = Mth.floor(z / spacing - 0.5);
-        // The readings near by, weighted to the nearest, in full as close as the nearest of them and fading with distance.
-        double sum = 0, weight = 0, near = 0;
-        float[] lifts = null;
-        long held = Long.MIN_VALUE;
-        for (int sz = iz - reach + 1; sz <= iz + reach; sz++) for (int sx = ix - reach + 1; sx <= ix + reach; sx++) {
-            int cx = Math.floorDiv(sx, WATER_SAMPLES), cz = Math.floorDiv(sz, WATER_SAMPLES);
-            long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
-            if (key != held) { lifts = lifts(cx, cz); held = key; }
-            if (lifts == NO_LIFT) continue;
-            float lifted = lifts[Math.floorMod(sz, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(sx, WATER_SAMPLES)];
-            if (lifted <= 0) continue;
-            double close = 1 - Math.hypot((sx + 0.5) * spacing - x - 0.5, (sz + 0.5) * spacing - z - 0.5) / LIFT_REACH;
-            if (close <= 0) continue;
-            sum += lifted * close * close;
-            weight += close * close;
-            near = Math.max(near, close);
-        }
-        return weight == 0 ? 0 : sum / weight * near;
-    }
-
-    /** No sample of a cell is sea lifted above sea level. */
-    private static final float[] NO_LIFT = new float[0];
-
-    /** Each of a cell's samples' surveyed metres where it is sea with sea all round and reads above sea level, else 0. */
-    private float[] lifts(int cx, int cz) {
-        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
-        float[] known = lifts.get(key);
-        if (known != null) return known;
-        Survey centre = survey(cx, cz);
-        boolean raised = false;
-        for (int k = 0; k < centre.metres.length && !raised; k++) raised = centre.kind[k] != DRY_LAND && centre.metres[k] > SEA_METRES;
-        float[] out = NO_LIFT;
-        if (raised) {
-            int span = WATER_SAMPLES + 2;
-            double spacing = (double) WATER_CELL / WATER_SAMPLES;
-            boolean[] sea = new boolean[span * span];
-            for (int j = 0; j < span; j++) for (int i = 0; i < span; i++) {
-                int sx = cx * WATER_SAMPLES + i - 1, sz = cz * WATER_SAMPLES + j - 1;
-                int ncx = Math.floorDiv(sx, WATER_SAMPLES), ncz = Math.floorDiv(sz, WATER_SAMPLES);
-                int k = Math.floorMod(sz, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(sx, WATER_SAMPLES);
-                Survey survey = ncx == cx && ncz == cz ? centre : survey(ncx, ncz);
-                sea[j * span + i] = survey.kind[k] == OPEN || survey.kind[k] != DRY_LAND
-                        && joinsOpenSea(Mth.floor((sx + 0.5) * spacing), Mth.floor((sz + 0.5) * spacing));
-            }
-            float[] lifted = new float[centre.metres.length];
-            boolean any = false;
-            for (int j = 0; j < WATER_SAMPLES; j++) for (int i = 0; i < WATER_SAMPLES; i++) {
-                boolean open = true;
-                for (int dj = 0; dj <= 2 && open; dj++) for (int di = 0; di <= 2 && open; di++) open = sea[(j + dj) * span + i + di];
-                int k = j * WATER_SAMPLES + i;
-                if (open && centre.metres[k] > SEA_METRES) { lifted[k] = centre.metres[k]; any = true; }
-            }
-            if (any) out = lifted;
-        }
-        if (lifts.size() > 1 << 16) lifts.clear();
-        lifts.putIfAbsent(key, out);
-        return out;
     }
 
     /** Whether a sample's water spans all eight samples around it, so it is no river or creek. */
