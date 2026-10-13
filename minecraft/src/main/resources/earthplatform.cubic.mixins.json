@@ -14,7 +14,14 @@
     "CubicEntityMixin",
     "CubicTravelMixin",
     "CubicRespawnMixin",
-    "CubicSpawnerMixin"
+    "CubicSpawnerMixin",
+    "CubicPathRegionMixin",
+    "CubicNavigationMixin",
+    "CubicGroundNavigationMixin",
+    "CubicWalkNodesMixin",
+    "CubicRandomPosMixin",
+    "CubicGoalLimitsMixin",
+    "CubicSpreadPlayersMixin"
   ],
   "client": [
     "CubicPredictionMixin",
