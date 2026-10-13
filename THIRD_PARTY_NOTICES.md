@@ -1,12 +1,16 @@
-# Private sparse engine fixture: source and data notices
+# Third-party notices
 
-For the player-facing credits of the current Earth mod, see [CREDITS.md](CREDITS.md); the licence audit is in [docs/release/LICENSING-AUDIT.md](docs/release/LICENSING-AUDIT.md). The sections below also keep the older engine's notices.
+Earth Platform is licensed LGPL-3.0-only (see LICENSE and COPYING). This file lists the third-party data, documents and build files in the repository and the mod jar, and the services the mod reads at runtime. Player-facing credits are in [CREDITS.md](CREDITS.md); the licence audit is in [docs/release/LICENSING-AUDIT.md](docs/release/LICENSING-AUDIT.md). The mod jar contains no third-party code: only `io/earthplatform` classes, our own resources and the data listed below.
 
-Original engine source is a development prototype, with no new public redistribution or stable addon compatibility claim.
+## Build files
+
+- The Gradle build in `minecraft/` started from the NeoForged MDK template, © 2023 NeoForged project, MIT License; the licence text is in `minecraft/TEMPLATE_LICENSE.txt`.
+- `minecraft/gradlew` and `minecraft/gradlew.bat` are the Gradle wrapper scripts, © the original authors (Gradle), Apache License 2.0, as stated in their headers.
+- Neither is part of the mod jar, apart from the layout of `neoforge.mods.toml`, which follows the template.
 
 ## Distant Horizons
 
-Players obtain and install official Distant Horizons separately. The distributable contains our adapter/engine source and resources only, with no upstream DH JAR, implementation source or extracted shader. A separately installed official JAR in the disposable minecraft/run/mods directory is runtime-only; it is excluded from source/distribution inputs and must never be included in a release directory snapshot. Its headless tests use an externally supplied, unchanged official Distant Horizons 3.3.3 artifact. DH is copyright James Seibel and contributors, LGPL-3.0-only. Official artifact/source pins and provenance are recorded in `runtime-inputs/source-manifest.json`; upstream license texts remain with the separately obtained official artifact. Corresponding sources:
+Earth Platform draws its own far terrain and does not need Distant Horizons. The older engine's optional Distant Horizons backend, still in the jar, only calls DH's public API and mixes into DH at runtime when a player has installed it. Players obtain and install official Distant Horizons separately. The distributable contains our adapter/engine source and resources only, with no upstream DH JAR, implementation source or extracted shader. A separately installed official JAR in the disposable minecraft/run/mods directory is runtime-only; it is excluded from source/distribution inputs and must never be included in a release directory snapshot. Its headless tests use an externally supplied, unchanged official Distant Horizons 3.3.3 artifact. DH is copyright James Seibel and contributors, LGPL-3.0-only. Official artifact/source pins and provenance are recorded in `runtime-inputs/source-manifest.json`; upstream license texts remain with the separately obtained official artifact. Corresponding sources:
 
 - https://gitlab.com/distant-horizons-team/distant-horizons/-/tree/a54dd3eb1df0078e63a71266d042c10d9cda4493
 - https://gitlab.com/distant-horizons-team/distant-horizons-core/-/tree/b02c66d778beea11a931291815d652cd8abaa7ad
@@ -31,7 +35,21 @@ Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based 
 
 ## Separately installed shader inputs
 
-The shader candidate additionally requires player-supplied Iris1.8.14-beta.1, Sodium0.8.12-beta.1 and Photonv1.3b. Their unchanged external artifacts, shaders, nested payloads and licenses are not part of our shim distribution. Exact input hashes and the three-classpath/no-copied-payload verification are recorded in review-evidence/shader-packaging015 and shader-aggregate. Users obtain each project from its official distribution and keep the terms accompanying that separate artifact. This candidate’s original code only adapts the pinned installed lifecycle, native format/material context and pass-owned renderer resources. No broader version or pack compatibility is implied.
+Shaders are optional. Players install Iris (1.8.14 or a later 1.8 release, LGPL-3.0), Sodium (0.8.12 or a later 0.8 release, PolyForm Shield 1.0.0) and a shader pack such as Photon (Photon Shaders License Agreement) themselves. None of their files, shaders or licences ship in Earth Platform; the mod only compiles against Iris and Sodium and mixes into them at runtime. When the player's driver needs it, the mod adapts the player's own Photon copy on their machine (see the licensing audit); the jar contains no Photon text.
+
+Historical note (older engine): Exact input hashes and the three-classpath/no-copied-payload verification are recorded in review-evidence/shader-packaging015 and shader-aggregate. Users obtain each project from its official distribution and keep the terms accompanying that separate artifact. This candidate’s original code only adapts the pinned installed lifecycle, native format/material context and pass-owned renderer resources. No broader version or pack compatibility is implied.
+
+## Provenance documents kept with the test data
+
+The test areas keep copies of the documents their data came with, as a record of where the data came from and under what terms. They are bundled in the jar under `earthplatform/copernicus_proof_data/provenance/` and `earthplatform/worldcover_proof_data/provenance/` (sources in `geography/data/*/provenance/`). Copyright in each stays with its owner:
+
+- `License-COPDEM-30.pdf`, `source-eula.pdf`, `source-metadata.xml`: the Copernicus WorldDEM-30 licence, end-user licence and product metadata, from the European Space Agency and the Copernicus programme.
+- `aws-readme.html`, `aws-registry.html`: copies of the dataset pages on the Registry of Open Data on AWS.
+- `WorldCover_PUM_V2.0.pdf`: the ESA WorldCover 2021 Product User Manual, © ESA WorldCover consortium.
+- `data-access.html`: a copy of the ESA WorldCover data access page.
+- `noaa-metadata.html` (repository only): NOAA ETOPO 2022 metadata, a U.S. government work.
+
+Earth worlds don't read the test data; it is proposed for removal from the release jar.
 
 ## EGM96 geoid grid (bundled)
 
