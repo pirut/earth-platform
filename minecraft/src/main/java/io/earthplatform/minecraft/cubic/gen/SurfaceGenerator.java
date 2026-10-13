@@ -106,6 +106,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     /** Whether giant sequoia groves may be near a column; their trees stand far taller than any other. */
     protected boolean giants(int x, int z) { return false; }
 
+    /** Whether the water over a column is iced over: by default wherever its biome freezes. */
+    protected boolean iced(Surface surface, int x, int z) { return surface.biome().value().getBaseTemperature() < 0.15f; }
     /** The rock layers a column shows in its cliff faces, or null for plain stone. */
     protected Strata.Layers layers(int x, int z) { return null; }
 
@@ -181,6 +183,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         }
         @SuppressWarnings("unchecked") Holder<Biome>[] biome = new Holder[256];
         BlockState[] top = new BlockState[256], under = new BlockState[256], crown = new BlockState[256];
+        boolean[] ice = new boolean[256];
         Strata.Layers[] rock = new Strata.Layers[256];
         int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
         for (int cz = 0; cz < 16; cz++) for (int cx = 0; cx < 16; cx++) {
@@ -190,6 +193,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             Surface surface = farSurface(level, wx, wz, h, water[g], slope);
             biome[cell] = surface.biome();
             top[cell] = surface.top();
+            ice[cell] = water[g] > h && iced(surface, wx, wz);
             // Cold dry ground under the snow Vegetation lays on it nearer.
             if (water[g] <= h && Trees.snowy(surface) && !top[cell].is(Blocks.ICE) && !top[cell].is(Blocks.PACKED_ICE)
                     && !top[cell].is(Blocks.POWDER_SNOW)) top[cell] = SNOW_BLOCK;
@@ -229,6 +233,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                 for (int cz = 0; cz < 16; cz++) for (int cx = 0; cx < 16; cx++) {
                     int g = (cz + 1) * 18 + cx + 1;
                     BlockState state = voxel(ground[g], water[g], y0, v, top[cz * 16 + cx], under[cz * 16 + cx]);
+                    if (state == WATER && ice[cz * 16 + cx] && y0 + v > water[g]) state = Blocks.ICE.defaultBlockState();
                     if (rock[cz * 16 + cx] != null && ground[g] >= y0 + v && state != WATER) state = rock[cz * 16 + cx].at(y0 + (v >> 1));
                     if (state == AIR && crown[cz * 16 + cx] != null && ground[g] < y0 && ground[g] >= y0 - v) state = crown[cz * 16 + cx];
                     if (state != AIR) section.setBlockState(cx, vy, cz, state, false);
