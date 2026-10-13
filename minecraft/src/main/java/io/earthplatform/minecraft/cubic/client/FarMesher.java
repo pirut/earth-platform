@@ -574,7 +574,9 @@ final class FarMesher {
 
     /** Water, which is drawn see-through after the opaque terrain; lava and the rest are opaque. */
     private static boolean seeThrough(BlockState state) {
-        return state.getFluidState().is(FluidTags.WATER);
+        // Most voxels hold no fluid; asking the tag for those cost a third of meshing.
+        var fluid = state.getFluidState();
+        return !fluid.isEmpty() && fluid.is(FluidTags.WATER);
     }
 
     /** Which neighbouring column a voxel position outside this one lies in (north, south, west, east), or -1 inside. */

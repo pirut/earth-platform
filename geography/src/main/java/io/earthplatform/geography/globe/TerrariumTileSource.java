@@ -239,22 +239,42 @@ public final class TerrariumTileSource implements AutoCloseable {
      */
     static void despike(float[] values) {
         float[] fixed = null, window = new float[(2 * SPIKE_REACH + 1) * (2 * SPIKE_REACH + 1)];
+        // The lowest pixel and the number of pixels in each window, from those along each row's stretch first.
+        float[] rowLow = new float[TILE_SIZE * TILE_SIZE];
+        byte[] rowCount = new byte[TILE_SIZE * TILE_SIZE];
+        for (int py = 0; py < TILE_SIZE; py++) for (int px = 0; px < TILE_SIZE; px++) {
+            float low = Float.MAX_VALUE;
+            int n = 0;
+            for (int qx = Math.max(0, px - SPIKE_REACH); qx <= Math.min(TILE_SIZE - 1, px + SPIKE_REACH); qx++) {
+                float q = values[py * TILE_SIZE + qx];
+                if (q != 0f) { low = Math.min(low, q); n++; }
+            }
+            rowLow[py * TILE_SIZE + px] = low;
+            rowCount[py * TILE_SIZE + px] = (byte) n;
+        }
         for (int py = 0; py < TILE_SIZE; py++) for (int px = 0; px < TILE_SIZE; px++) {
             int i = py * TILE_SIZE + px;
             float value = values[i];
             // Land only: under water a shoal standing above the bed is real.
             if (value <= 0f) continue;
+            // Cheap test first: most pixels are not far above their lowest neighbours.
+            float low = Float.MAX_VALUE;
             int n = 0;
+            for (int qy = Math.max(0, py - SPIKE_REACH); qy <= Math.min(TILE_SIZE - 1, py + SPIKE_REACH); qy++) {
+                low = Math.min(low, rowLow[qy * TILE_SIZE + px]);
+                n += rowCount[qy * TILE_SIZE + px];
+            }
+            if (n < 9 || value - low <= SPIKE_METRES) continue;
+            n = 0;
             for (int qy = Math.max(0, py - SPIKE_REACH); qy <= Math.min(TILE_SIZE - 1, py + SPIKE_REACH); qy++)
                 for (int qx = Math.max(0, px - SPIKE_REACH); qx <= Math.min(TILE_SIZE - 1, px + SPIKE_REACH); qx++) {
                     float q = values[qy * TILE_SIZE + qx];
                     if (q != 0f) window[n++] = q;
                 }
-            if (n < 9) continue;
-            // Cheap test first: most pixels are not far above their lowest neighbours.
-            float low = Float.MAX_VALUE;
-            for (int k = 0; k < n; k++) low = Math.min(low, window[k]);
-            if (value - low <= SPIKE_METRES) continue;
+            // And on slopes: the median is within FLAT_METRES of the lowest only where more than half the window is.
+            int flat = 0;
+            for (int k = 0; k < n; k++) if (window[k] - low <= FLAT_METRES) flat++;
+            if (flat <= n / 2) continue;
             java.util.Arrays.sort(window, 0, n);
             float median = window[n / 2];
             if (value - median <= SPIKE_METRES || median - window[0] > FLAT_METRES || window[n - 1 - SPIKE_PIXELS] > median + SPIKE_METRES) continue;
@@ -273,7 +293,9 @@ public final class TerrariumTileSource implements AutoCloseable {
      * ({@link #despike}).
      */
     private float[] read(int zoom, int x, int y) throws IOException, InterruptedException {
-        float[] values = clean(zoom, x, y);
+        float[] kept;
+        synchronized (cleanMemory) { kept = cleanMemory.get(key(zoom, x, y)); }
+        float[] values = kept != null ? kept.clone() : clean(zoom, x, y);
         if (fill != null) fill.apply(values, zoom, x, y);
         if (zoom >= SPIKE_ZOOM) despike(values);
         return values;
@@ -286,11 +308,29 @@ public final class TerrariumTileSource implements AutoCloseable {
         return values;
     }
 
-    /** {@link #clean} for {@link CopernicusFill}'s check, which must see the tiles as they were; not kept in memory. */
+    /**
+     * Cleaned tiles {@link CopernicusFill}'s checks read, kept a while: the checks of a degree square's parts
+     * overlap, and each part would otherwise clean the same tiles again. Never modified once kept.
+     */
+    private final LinkedHashMap<Long, float[]> cleanMemory = new LinkedHashMap<>(64, 0.75f, true);
+    private static final int CLEAN_KEEP = 48;
+
+    /** {@link #clean} for {@link CopernicusFill}'s check, which must see the tiles as they were. */
     private float[] cleaned(int zoom, int x, int y) {
         checkTile(zoom, x, y);
+        long key = key(zoom, x, y);
+        synchronized (cleanMemory) {
+            float[] kept = cleanMemory.get(key);
+            if (kept != null) return kept;
+        }
         try {
-            return clean(zoom, x, y);
+            float[] values = clean(zoom, x, y);
+            synchronized (cleanMemory) {
+                cleanMemory.put(key, values);
+                var iterator = cleanMemory.entrySet().iterator();
+                while (cleanMemory.size() > CLEAN_KEEP && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+            }
+            return values;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new MissingTerrainException("Interrupted reading elevation tile " + zoom + "/" + x + "/" + y);
@@ -370,6 +410,8 @@ public final class TerrariumTileSource implements AutoCloseable {
     }
 
     static float[] decode(byte[] png) throws IOException {
+        float[] plain = decodePlain(png);
+        if (plain != null) return plain;
         BufferedImage image;
         try {
             image = ImageIO.read(new ByteArrayInputStream(png));
@@ -378,13 +420,116 @@ public final class TerrariumTileSource implements AutoCloseable {
         }
         if (image == null) throw new IOException("Not a readable image");
         if (image.getWidth() != TILE_SIZE || image.getHeight() != TILE_SIZE) throw new IOException("Unexpected tile size " + image.getWidth() + "x" + image.getHeight());
+        float[] metres = new float[TILE_SIZE * TILE_SIZE];
+        // Plain 8-bit sRGB tiles, nearly all of them, are read straight from their bytes; getRGB converts pixel by pixel.
+        if ((image.getType() == BufferedImage.TYPE_3BYTE_BGR || image.getType() == BufferedImage.TYPE_4BYTE_ABGR)
+                && image.getColorModel().getColorSpace().isCS_sRGB()
+                && image.getRaster().getDataBuffer() instanceof java.awt.image.DataBufferByte buffer
+                && buffer.getNumBanks() == 1 && image.getRaster().getMinX() == 0 && image.getRaster().getMinY() == 0
+                && image.getRaster().getSampleModel() instanceof java.awt.image.PixelInterleavedSampleModel model
+                && model.getPixelStride() == (image.getType() == BufferedImage.TYPE_3BYTE_BGR ? 3 : 4)
+                && model.getScanlineStride() == TILE_SIZE * model.getPixelStride() && buffer.getOffset() == 0
+                && image.getRaster().getSampleModelTranslateX() == 0 && image.getRaster().getSampleModelTranslateY() == 0) {
+            byte[] bytes = buffer.getData();
+            int stride = model.getPixelStride();
+            int[] offsets = model.getBandOffsets();
+            int red = offsets[0], green = offsets[1], blue = offsets[2];
+            for (int i = 0; i < metres.length; i++) {
+                int at = i * stride;
+                metres[i] = (float) (((bytes[at + red] & 0xFF) * 256 + (bytes[at + green] & 0xFF) + (bytes[at + blue] & 0xFF) / 256.0) - 32768.0);
+            }
+            return metres;
+        }
         int[] argb = image.getRGB(0, 0, TILE_SIZE, TILE_SIZE, null, 0, TILE_SIZE);
-        float[] metres = new float[argb.length];
         for (int i = 0; i < argb.length; i++) {
             int p = argb[i];
             metres[i] = (float) ((((p >>> 16) & 0xFF) * 256 + ((p >>> 8) & 0xFF) + (p & 0xFF) / 256.0) - 32768.0);
         }
         return metres;
+    }
+
+    /**
+     * A plain tile's metres read straight from its PNG: 256 x 256, 8-bit RGB or RGBA, not interlaced, with no
+     * colour profile, as the composite's tiles are. Null for anything else, which ImageIO reads instead.
+     */
+    static float[] decodePlain(byte[] png) {
+        if (png.length < 33 || (png[0] & 0xFF) != 0x89 || png[1] != 'P' || png[2] != 'N' || png[3] != 'G') return null;
+        java.nio.ByteBuffer in = java.nio.ByteBuffer.wrap(png);
+        in.position(8);
+        int channels = 0;
+        java.util.zip.Inflater inflater = new java.util.zip.Inflater();
+        try {
+            int stride = 0;
+            byte[] data = null;
+            int filled = 0;
+            while (in.remaining() >= 12) {
+                int length = in.getInt(), type = in.getInt();
+                if (length < 0 || length > in.remaining() - 4) return null;
+                int start = in.position();
+                if (type == 0x49484452) { // IHDR
+                    if (length != 13 || in.getInt() != TILE_SIZE || in.getInt() != TILE_SIZE) return null;
+                    int depth = in.get(), colour = in.get(), compression = in.get(), filter = in.get(), interlace = in.get();
+                    if (depth != 8 || (colour != 2 && colour != 6) || compression != 0 || filter != 0 || interlace != 0) return null;
+                    channels = colour == 2 ? 3 : 4;
+                    stride = TILE_SIZE * channels;
+                    data = new byte[(stride + 1) * TILE_SIZE];
+                } else if (type == 0x49444154) { // IDAT
+                    if (data == null) return null;
+                    inflater.setInput(png, start, length);
+                    while (!inflater.needsInput() && !inflater.finished() && filled < data.length) {
+                        int n = inflater.inflate(data, filled, data.length - filled);
+                        if (n == 0 && (inflater.needsDictionary() || inflater.needsInput())) break;
+                        filled += n;
+                    }
+                } else if (type == 0x49454E44) { // IEND
+                    break;
+                } else if (type == 0x69434350 || type == 0x504C5445) { // iCCP, PLTE
+                    return null;
+                }
+                in.position(start + length + 4);
+            }
+            if (data == null || filled != data.length) return null;
+            byte[] previous = new byte[stride], row = new byte[stride];
+            float[] metres = new float[TILE_SIZE * TILE_SIZE];
+            for (int y = 0; y < TILE_SIZE; y++) {
+                int at = y * (stride + 1), filter = data[at];
+                System.arraycopy(data, at + 1, row, 0, stride);
+                if (!unfilter(filter, row, previous, channels)) return null;
+                for (int x = 0, p = 0; x < TILE_SIZE; x++, p += channels)
+                    metres[y * TILE_SIZE + x] = (float) (((row[p] & 0xFF) * 256 + (row[p + 1] & 0xFF) + (row[p + 2] & 0xFF) / 256.0) - 32768.0);
+                byte[] swap = previous; previous = row; row = swap;
+            }
+            return metres;
+        } catch (java.util.zip.DataFormatException | RuntimeException malformed) {
+            return null;
+        } finally {
+            inflater.end();
+        }
+    }
+
+    /** Undoes one PNG row filter in place; false for an unknown filter. */
+    private static boolean unfilter(int filter, byte[] row, byte[] previous, int bpp) {
+        switch (filter) {
+            case 0 -> { }
+            case 1 -> { for (int i = bpp; i < row.length; i++) row[i] += row[i - bpp]; }
+            case 2 -> { for (int i = 0; i < row.length; i++) row[i] += previous[i]; }
+            case 3 -> {
+                for (int i = 0; i < row.length; i++)
+                    row[i] += (byte) (((i >= bpp ? row[i - bpp] & 0xFF : 0) + (previous[i] & 0xFF)) >> 1);
+            }
+            case 4 -> {
+                // With nothing to the left the predictor is the byte above.
+                for (int i = 0; i < bpp; i++) row[i] += previous[i];
+                for (int i = bpp; i < row.length; i++) {
+                    int a = row[i - bpp] & 0xFF, b = previous[i] & 0xFF, c = previous[i - bpp] & 0xFF;
+                    int pa = b - c, pb = a - c, pc = pa + pb;
+                    pa = pa < 0 ? -pa : pa; pb = pb < 0 ? -pb : pb; pc = pc < 0 ? -pc : pc;
+                    row[i] += (byte) (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
+                }
+            }
+            default -> { return false; }
+        }
+        return true;
     }
 
     /**
@@ -558,13 +703,15 @@ public final class TerrariumTileSource implements AutoCloseable {
                 float value = metres[y * TILE_SIZE + x];
                 if (value == 0f) continue;
                 int count = 0, close = 0;
+                // Most pixels have three close neighbours, which settles them, so the scan stops there.
+                scan:
                 for (int j = Math.max(0, y - 2); j <= Math.min(TILE_SIZE - 1, y + 2); j++) {
                     for (int i = Math.max(0, x - 2); i <= Math.min(TILE_SIZE - 1, x + 2); i++) {
                         float other = metres[j * TILE_SIZE + i];
                         if (i == x && j == y || other == 0f) continue;
                         at[count] = (j - y) * 8 + i - x;
                         around[count++] = other;
-                        if (Math.abs(other - value) <= tolerance) close++;
+                        if (Math.abs(other - value) <= tolerance && ++close >= 3) break scan;
                     }
                 }
                 if (close >= 3 || count < 8) continue;
