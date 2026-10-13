@@ -9,6 +9,7 @@ import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.gen.Strata;
+import io.earthplatform.minecraft.cubic.gen.Towers;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -72,6 +73,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final GlobalElevation bathymetry;
     /** Rock layers of layered sedimentary country, such as the Grand Canyon's. */
     private final Strata strata;
+    /** Tower karst and pillar forests, steeper than the elevation holds them. */
+    private final Towers towers;
     @Nullable private final WorldCoverSource cover;
     @Nullable private final ClimateSource climate;
     @Nullable private final ImagerySource imagery;
@@ -140,6 +143,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             @Override public GeoPoint geographic(double x, double z) { return grid.geographic(x, z); }
             @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
         }, badlands);
+        towers = new Towers(seed, new Towers.Globe() {
+            @Override public double metres(double x, double z) { return elevation[TOWER_ZOOM].metres(x, z); }
+            @Override public GeoPoint geographic(double x, double z) { return grid.geographic(x, z); }
+            @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
+        });
     }
 
     @Override protected Strata.Layers layers(int x, int z) { return strata.layers(x, z, SEA + 0.5); }
@@ -181,6 +189,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Zoom of the coarsest elevation the far levels read. */
     private static final int FAR_ZOOM = 11;
+    /** Zoom the towers find tops and gorges in, near and far alike: pixels about 20 metres across. */
+    private static final int TOWER_ZOOM = 13;
     /** Source zoom for a far level: about one source pixel per voxel. */
     private static int zoom(int level) { return level <= 2 ? TerrariumTileSource.MAX_ZOOM : Math.max(FAR_ZOOM, 17 - level); }
 
@@ -236,6 +246,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         // Land by sea the survey reads well above sea level lies as much lower, so it meets the sea as it meets its own.
         if (cover != null) metres = Math.max(metres - lift(x, z), Math.min(metres, 2 * SEA_METRES));
+        metres = towers.shape(x, z, metres, voxel);
         double amplitude = Mth.clamp((metres - 0.5) / 4, 0, 1) * (0.6 + 1.8 * steep), detail = 0;
         if (voxel <= 8) detail += fbm(relief, x / 27.0, z / 27.0, 3) * amplitude;
         if (voxel <= 2) detail += (0.5 - Math.abs(crags.getValue(x / 9.0, z / 9.0))) * amplitude * 0.6 * Math.min(1, steep);
@@ -250,8 +261,9 @@ public final class EarthGenerator extends SurfaceGenerator {
             int shore = shore(dem, memo, x, z, voxel);
             if (shore != DRY && y < shore && y >= shore - 4) y = shore;
             // A speck of land in a lagoon filled with coarse blocks, as a pier or a boat, takes the fill's height, tens
-            // of metres up, and stood as a stone pillar out of the sea: it lies just above the water instead.
-            if (y > SEA + 1 && speck(dem, x, z, metres, voxel)) y = SEA + 1;
+            // of metres up, and stood as a stone pillar out of the sea: it lies just above the water instead. Karst
+            // towers out of the sea, as in Ha Long Bay, are real pillars and stay.
+            if (y > SEA + 1 && !towers.covers(x, z) && speck(dem, x, z, metres, voxel)) y = SEA + 1;
             // Low ground slopes down to the water beside it rather than standing over it in a wall.
             if (y > SEA) y = bank(dem, x, z, y, voxel);
         }
@@ -358,7 +370,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /**
      * The WorldCover class of a column, read at an overview whose pixels are no bigger than a
-     * voxel. Up close the read point wanders by about half a pixel, so class borders curve.
+     * voxel. Up close the read point wanders by about half a pixel, so class borders curve. Water
+     * on a glacier with only snow and ice round it is more of the ice ({@link #iceWater}).
      */
     private int cover(double x, double z, int voxel) {
         int ix = (int) x, iz = (int) z;
@@ -397,7 +410,53 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         int overview = Mth.clamp(Mth.floor(Math.log(voxel * metresPerBlock / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
         GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
-        return cover.code(point.latitude(), point.longitude(), overview);
+        int code = cover.code(point.latitude(), point.longitude(), overview);
+        return code == WorldCoverSource.WATER && iceWater(x, z, overview, metresPerBlock) ? WorldCoverSource.SNOW_AND_ICE : code;
+    }
+
+    /** Rings round water, in metres, that {@link #iceWater} looks along, out past a pond's far shore; none nearer than a pixel. */
+    private static final double[] ICE_RINGS = {15, 30, 60, 120};
+    /** Water cells, keyed as {@link #waterCell}'s, as far as {@link #icyCell} has found whether they hold snow or ice. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> icyCells = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Whether water mapped on a glacier or snowfield is more of the ice. The map reads melt streaks,
+     * shadowed crevasses, slush and ponds on glaciers as water, where the elevation, older than the
+     * map, still has the ice's sloping surface: they stood as dark blue pools all over ones such as
+     * the Khumbu, and up close as stairs of ice down the slope. It is when rings round it, out past
+     * a pond's far shore, find snow and ice, and three times more of it than of any land. A lake
+     * beside a glacier has moraine or rock along most of its other shores, and a big one has water
+     * all round, so they stay.
+     */
+    private boolean iceWater(double x, double z, int overview, double metresPerBlock) {
+        if (!icyCell(Math.floorDiv(Mth.floor(x), WATER_CELL), Math.floorDiv(Mth.floor(z), WATER_CELL))) return false;
+        int snow = 0, other = 0;
+        for (double ring : ICE_RINGS) {
+            double r = Math.max(ring, PIXEL_METRES * (1 << overview)) / metresPerBlock;
+            for (int i = 0; i < 8; i++) {
+                GeoPoint point = grid.geographic(x + 0.5 + RING_X[i] * r, z + 0.5 + RING_Z[i] * r);
+                int code = cover.code(point.latitude(), point.longitude(), overview);
+                if (code == WorldCoverSource.SNOW_AND_ICE) snow++;
+                else if (code != WorldCoverSource.WATER) other++;
+            }
+        }
+        return snow >= 4 && snow >= 3 * other;
+    }
+
+    /** Whether a water cell holds any snow or ice, read on a coarse grid at the water survey's overview. */
+    private boolean icyCell(int cx, int cz) {
+        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        Boolean known = icyCells.get(key);
+        if (known != null) return known;
+        boolean icy = false;
+        double spacing = WATER_CELL / 8.0;
+        for (int k = 0; k < 64 && !icy; k++) {
+            GeoPoint point = grid.geographic(cx * (double) WATER_CELL + (k % 8 + 0.5) * spacing, cz * (double) WATER_CELL + (k / 8 + 0.5) * spacing);
+            icy = cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW) == WorldCoverSource.SNOW_AND_ICE;
+        }
+        if (icyCells.size() > 1 << 16) icyCells.clear();
+        icyCells.putIfAbsent(key, icy);
+        return icy;
     }
 
     /** Ring radii in blocks for {@link #wild}, each three times the last. */
