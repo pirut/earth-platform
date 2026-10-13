@@ -11,7 +11,9 @@ import net.minecraft.world.level.block.state.BlockState;
  * the player and the next finer level replaces its middle, so voxels grow with distance. With the
  * default detail each level reaches about 370 of its voxels from the player before the next
  * coarser one takes over, so a voxel never covers more than a few pixels, as Voxy aims for, and
- * the coarsest level (64-block voxels) reaches about 23 km.
+ * the coarsest level (256-block voxels) reaches about 94 km of blocks, so a range like the Alaska
+ * Range can stand on the horizon from 40 km away even where the map stretches each kilometre over
+ * nearly two thousand blocks.
  *
  * <p>Each voxel column of a far column also carries a drop: how far its whole stack sits below the
  * voxel grid, so the top of its ground or water lands at the real height instead of a voxel
@@ -20,7 +22,7 @@ import net.minecraft.world.level.block.state.BlockState;
  * stands lower than the column's top.
  */
 public final class Far {
-    public static final int MIN_LEVEL = 1, MAX_LEVEL = 6, SIZE = 16;
+    public static final int MIN_LEVEL = 1, MAX_LEVEL = 8, SIZE = 16;
     /** Most detail a client may ask for, in {@link #HOLE} columns. */
     public static final int MAX_HOLE = 24;
     /**
@@ -41,6 +43,9 @@ public final class Far {
     public static final int MAX_SECTIONS = 64;
 
     private Far() {}
+
+    /** Distance to the nearest edge of the coarsest level's square, in blocks. */
+    public static float reach() { return OUTER * (float) width(MAX_LEVEL); }
 
     public static int voxel(int level) { return 1 << level; }
     public static int width(int level) { return SIZE << level; }

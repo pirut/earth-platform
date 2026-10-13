@@ -126,6 +126,18 @@ public final class CubePayloads {
         @Override public Type<FarColumnData> type() { return TYPE; }
     }
 
+    /**
+     * An Earth world's map scale, sent when a player's far terrain starts: how many metres a block
+     * spans at the equator. Map stretch grows toward the poles, so the client measures its haze in
+     * ground metres rather than blocks.
+     */
+    public record EarthScale(double metresPerBlock) implements CustomPacketPayload {
+        public static final Type<EarthScale> TYPE = new Type<>(id("earth_scale"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, EarthScale> CODEC = StreamCodec.of(
+                (buf, p) -> buf.writeDouble(p.metresPerBlock), buf -> new EarthScale(buf.readDouble()));
+        @Override public Type<EarthScale> type() { return TYPE; }
+    }
+
     public static void register(RegisterPayloadHandlersEvent event) {
         var registrar = event.registrar("cubic-2");
         registrar.playToClient(CubeData.TYPE, CubeData.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.cube(p); });
@@ -133,6 +145,7 @@ public final class CubePayloads {
         registrar.playToClient(BlockChanges.TYPE, BlockChanges.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.changes(p); });
         registrar.playToClient(ColumnTops.TYPE, ColumnTops.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.tops(p); });
         registrar.playToClient(FarColumnData.TYPE, FarColumnData.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.far(p); });
+        registrar.playToClient(EarthScale.TYPE, EarthScale.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.scale(p); });
         registrar.playToServer(FarRequest.TYPE, FarRequest.CODEC, (p, c) -> {
             if (c.player() instanceof ServerPlayer player && CubicLevel.of(player.serverLevel()) instanceof ServerCubeWorld world) world.far().request(player, p.keys());
         });

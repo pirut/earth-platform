@@ -35,7 +35,11 @@ final class FarShaders {
         return body.startsWith("{") && body.endsWith("}") ? body : null;
     }
 
-    static final String VERTEX = """
+    /** Blocks of height over which the haze thins to about a third (1/e): roughly how deep the hazy lower air is. */
+    private static final float HAZE_HEIGHT = 1000.0F;
+
+    static final String VERTEX = String.format(java.util.Locale.ROOT,
+            "const float earth_HazeHeight = %.1f;\nconst float earth_Edge = %.1f;\n", HAZE_HEIGHT, 0.95F * io.earthplatform.minecraft.cubic.far.Far.reach()) + """
             uniform usamplerBuffer earth_Quads;
             uniform isamplerBuffer earth_Columns;
             uniform usamplerBuffer earth_Looks;
@@ -47,6 +51,7 @@ final class FarShaders {
 
             out vec2 earth_tile;
             out float earth_distance;
+            out float earth_edge;
             flat out vec4 earth_sprite;
             flat out vec3 earth_average;
             flat out vec3 earth_tint;
@@ -104,6 +109,12 @@ final class FarShaders {
                 gl_Position.xy += earth_taaOffset() * gl_Position.w;
             #endif
                 earth_distance = earth_FogShape == 0 ? length(position) : max(length(position.xz), abs(position.y));
+                // Haze thins with height, so a line of sight rising to a far summit crosses less of it
+                // than one over the lowlands: distant ranges stand clear of the haze that hides the plains.
+                float rise = position.y / earth_HazeHeight;
+                if (rise > 0.01) earth_distance *= (1.0 - exp(-rise)) / rise;
+                // Whatever rises clear still fades out before the coarsest level's square ends.
+                earth_edge = smoothstep(0.8 * earth_Edge, earth_Edge, length(position.xz));
 
                 // Textures repeat once per block, laid on each face as the block renderer lays them.
                 if (face < 2u) earth_tile = local.xz;
@@ -197,6 +208,7 @@ final class FarShaders {
             uniform float earth_FogStart;
             uniform float earth_FogEnd;
             uniform vec4 earth_FogColor;
+            in float earth_edge;
 
             out vec4 earth_fragColor;
 
@@ -205,10 +217,10 @@ final class FarShaders {
                 colour.rgb *= earth_tint * earth_shade();
                 vec2 light = clamp(earth_levels() / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0));
                 colour *= texture(earth_Lightmap, light) * earth_ColorModulator;
-                if (earth_distance > earth_FogStart) {
-                    float fog = earth_distance < earth_FogEnd ? smoothstep(earth_FogStart, earth_FogEnd, earth_distance) : 1.0;
-                    colour.rgb = mix(colour.rgb, earth_FogColor.rgb, fog * earth_FogColor.a);
-                }
+                float fog = earth_distance <= earth_FogStart ? 0.0
+                        : earth_distance < earth_FogEnd ? smoothstep(earth_FogStart, earth_FogEnd, earth_distance) : 1.0;
+                fog = max(fog, earth_edge);
+                if (fog > 0.0) colour.rgb = mix(colour.rgb, earth_FogColor.rgb, fog * earth_FogColor.a);
                 earth_fragColor = vec4(colour.rgb, 1.0);
             }
             """;
