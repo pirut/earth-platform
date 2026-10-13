@@ -35,7 +35,7 @@ import net.minecraft.world.level.levelgen.synth.SimplexNoise;
  * temperatures carried to each column's own height, and rainfall, which pick each class's biome,
  * trees and plants, so a forest is rainforest, oak, pine or taiga where it is on Earth. Classes:
  * forests, shrubs, grass, bare rock and sand, snow and ice, wetlands and mangroves, and lakes and
- * rivers, whose water sits at the surveyed surface with a bed that deepens away from the shore. The
+ * rivers, whose water lies level at the surveyed surface with a bed that deepens away from the shore. The
  * world is wild land only: towns take the cover their climate gives and farm fields are grassland.
  * The 10 m pixel edges are broken up by a small warp so borders look natural. Worlds
  * made before land cover keep a temperature from latitude and height, broad noise for wetness and
@@ -60,6 +60,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final MercatorGrid grid;
     private final TerrariumTileSource tiles;
     private final GlobalElevation[] elevation = new GlobalElevation[TerrariumTileSource.MAX_ZOOM + 1];
+    /** The coarse bathymetry the detail tiles' open sea is filled from. */
+    private final GlobalElevation bathymetry;
     @Nullable private final WorldCoverSource cover;
     @Nullable private final ClimateSource climate;
     private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth, warpX, warpZ, patches;
@@ -98,6 +100,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         RandomSource own = new LegacyRandomSource(seed ^ 0x434F564552L);
         warpX = new SimplexNoise(own); warpZ = new SimplexNoise(own); patches = new SimplexNoise(own);
         for (int zoom = FAR_ZOOM; zoom <= TerrariumTileSource.MAX_ZOOM; zoom++) elevation[zoom] = new GlobalElevation(grid, tiles, zoom);
+        bathymetry = new GlobalElevation(grid, tiles, GlobalElevation.BATHYMETRY_ZOOM);
         SimplexNoise[] n = noises.noise;
         relief = n[0]; crags = n[1]; wetBroad = n[2]; wetLocal = n[3]; warmth = n[4];
         ocean = holder(biomes, Biomes.OCEAN); deepOcean = holder(biomes, Biomes.DEEP_OCEAN); coldOcean = holder(biomes, Biomes.COLD_OCEAN);
@@ -168,18 +171,29 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Ground and water of a column from its elevation, slope, sea share and land cover. */
     private void place(GlobalElevation dem, int x, int z, double metres, double[] sample, int voxel, int[] out) {
         if (sample[2] > 0.5 || offshore(x, z, metres, voxel)) {
-            out[0] = Math.min(SEA - 1, Mth.floor(SEA + 0.5 + metres));
+            out[0] = seabed(x, z, metres, voxel);
             out[1] = SEA;
             return;
         }
         double steep = Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1]));
         if (cover != null && cover(x, z, voxel) == WorldCoverSource.WATER) {
+            // Water joined through water to the open sea at sea level is the sea, though the survey under it reads far
+            // above it, as where a coarse ocean grid fills a lagoon with its island's slopes; but water mapped on a
+            // steep slope of real ground, as a cliff's shadow, is not.
+            if (seaWater(x, z) && (steep <= 0.7 || coarse(dem, x + 0.5, z + 0.5, metres, Math.max(24, 3.0 * voxel)))) {
+                out[0] = seabed(x, z, metres, voxel);
+                out[1] = SEA;
+                return;
+            }
             int surface = lakeSurface(dem, x, z, voxel);
-            // Shadowed cliffs can map as water; water never lies on a steep slope well above its own level.
-            boolean shadow = steep > 0.7 && SEA + 0.5 + metres - surface > 4;
-            if (!shadow && sample[2] > 0.02 && surface <= SEA) {
-                // Water by the coast is the sea.
-                out[0] = Math.min(SEA - 1, Mth.floor(SEA + 0.5 + metres));
+            // Shadowed cliffs can map as water; water never lies on a steep slope well above its own level. Only
+            // mountains cast such shadows: in flat country a steep rise under water is a seam between surveys, and
+            // keeping it as land stood thin stone walls in rivers.
+            boolean shadow = steep > 0.7 && SEA + 0.5 + metres - surface > 4 && relief(x, z) > MOUNTAINS;
+            // Water by the coast is the sea, and so is water at sea level that joins it, as estuaries and lagoons do,
+            // which otherwise stood a block above the sea around it wherever the survey read a little over 0 m.
+            if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && joinsOpenSea(x, z))) {
+                out[0] = seabed(x, z, metres, voxel);
                 out[1] = SEA;
                 return;
             }
@@ -199,9 +213,40 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (cover != null) {
             int shore = shore(dem, x, z, voxel);
             if (shore != DRY && y < shore && y >= shore - 4) y = shore;
+            // A speck of land in a lagoon filled with coarse blocks, as a pier or a boat, takes the fill's height, tens
+            // of metres up, and stood as a stone pillar out of the sea: it lies just above the water instead.
+            if (y > SEA + 1 && speck(dem, x, z, metres, voxel)) y = SEA + 1;
         }
         out[0] = y;
         out[1] = DRY;
+    }
+
+    /** Whether a dry column is a speck of land on {@link #coarse} ground with the sea on most sides. */
+    private boolean speck(GlobalElevation dem, int x, int z, double metres, int voxel) {
+        if (waterCell(Math.floorDiv(x, WATER_CELL), Math.floorDiv(z, WATER_CELL)).sea == NO_SEA) return false;
+        double r = Math.max(16, 2.0 * voxel);
+        int sea = 0;
+        for (int k = 0; k < 8; k++) {
+            double px = x + RING_X[k] * r, pz = z + RING_Z[k] * r;
+            int code = cover(px, pz, voxel);
+            if (code == WorldCoverSource.NO_DATA || code == WorldCoverSource.WATER && seaWater(px, pz)) sea++;
+        }
+        return sea >= 5 && coarse(dem, x + 0.5, z + 0.5, metres, Math.max(24, 3.0 * voxel));
+    }
+
+    /**
+     * Top seabed block of a sea column. Where the detail tiles hold no depths they read the sea
+     * as exactly 0 m, filled from the coarse bathymetry, or as a few tenths of a metre either side
+     * of it, which left those spots a block deep: estuaries and coasts were a patchwork of shallows
+     * and deeps a few survey pixels across. The bed takes the deeper of the detail and the coarse
+     * bathymetry, which is smooth, never above 0 m, and close to the detail wherever the detail
+     * holds real depths, as in the North Sea. Where both are shallow, as in estuaries the coarse
+     * bathymetry counts as land, it shelves down from the shore as a lake's bed does.
+     */
+    private int seabed(int x, int z, double metres, int voxel) {
+        int bed = Math.min(SEA - 1, Mth.floor(SEA + 0.5 + Math.min(metres, Math.min(0, bathymetry.metres(x + 0.5, z + 0.5)))));
+        if (bed > SEA - 8 && cover != null) bed = Math.min(bed, SEA - lakeDepth(x, z, voxel));
+        return bed;
     }
 
     // Land cover ----------------------------------------------------------------------------------
@@ -329,27 +374,253 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /**
-     * Top water block of a lake or river at a column: the lowest surveyed height around it, so a
-     * lake is level and its water never stands above its shore.
+     * Top water block of a lake or river at a column. Real lakes and rivers are level or nearly,
+     * but the elevation tiles' water is not: radar speckle, patches from different surveys and
+     * banks blurred into the water put it metres up or down from one spot to the next, and each
+     * zoom differently. Taken spot by spot, water stepped up and down in terraces and stood at
+     * another height in every far level, leaving dark slits where the levels met. So the height
+     * comes from one place for cubes and every far level alike: the {@link #waterCell} levels of
+     * the four cells around, blended by distance and by how much water each holds. It never stands
+     * more than {@value #BANK} blocks above the lowest surveyed height close by, which the shore
+     * climbs to meet, and in steep country, where one cell holds lakes and streams at many heights,
+     * never more than {@value #DIP} below it either.
      */
     private int lakeSurface(GlobalElevation dem, double x, double z, int voxel) {
         double r = Math.max(8, voxel);
         double lowest = dem.metres(x + 0.5, z + 0.5);
         lowest = Math.min(lowest, Math.min(dem.metres(x + 0.5 + r, z + 0.5), dem.metres(x + 0.5 - r, z + 0.5)));
         lowest = Math.min(lowest, Math.min(dem.metres(x + 0.5, z + 0.5 + r), dem.metres(x + 0.5, z + 0.5 - r)));
-        return Mth.floor(SEA + 0.5 + lowest);
+        int local = Mth.floor(SEA + 0.5 + lowest);
+        double fx = x / WATER_CELL - 0.5, fz = z / WATER_CELL - 0.5;
+        int ix = Mth.floor(fx), iz = Mth.floor(fz);
+        double tx = fx - ix, tz = fz - iz, sum = 0, weight = 0, relief = 0;
+        for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
+            WaterCell cell = waterCell(ix + i, iz + j);
+            if (cell.samples == 0) continue;
+            double w = ((i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - tz : tz) + 1e-6) * cell.samples;
+            sum += cell.level * w;
+            weight += w;
+            relief = Math.max(relief, cell.relief);
+        }
+        if (weight == 0) return local;
+        int surface = Mth.floor(SEA + 0.5 + sum / weight);
+        if (relief > MOUNTAINS) surface = Math.max(surface, local - DIP);
+        return Math.min(surface, local + BANK);
+    }
+
+    /** The ground's height range over the water cells around a column, as {@link #lakeSurface} weighs them. */
+    private double relief(double x, double z) {
+        int ix = Mth.floor(x / WATER_CELL - 0.5), iz = Mth.floor(z / WATER_CELL - 0.5);
+        double relief = 0;
+        for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) relief = Math.max(relief, waterCell(ix + i, iz + j).relief);
+        return relief;
+    }
+
+    /** Water cells' size in blocks, the elevation zoom and land cover overview (both about 40 m) they read, and their samples across. */
+    private static final int WATER_CELL = 1024, WATER_ZOOM = 12, WATER_OVERVIEW = 2, WATER_SAMPLES = 16;
+    /** How far water may stand above the lowest surveyed height near it, and, in steep country, below it. */
+    private static final int BANK = 4, DIP = 2;
+    /** Height range (metres, middle 80% of a cell's ground) above which a cell counts as steep country. */
+    private static final double MOUNTAINS = 100;
+
+    /**
+     * A cell's water level in metres: the lowest quarter of its surveyed water heights, under the
+     * banks blurred into it; how many of its samples are water; the range of its ground; and which
+     * of its samples are the sea ({@link #seaSamples}). The level leaves out the sea's samples that
+     * read above sea level, which are coarse fill rather than any lake's or river's height.
+     */
+    private record WaterCell(double level, int samples, double relief, long[] sea) {}
+    private final java.util.concurrent.ConcurrentHashMap<Long, WaterCell> waterCells = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private WaterCell waterCell(int cx, int cz) {
+        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        WaterCell known = waterCells.get(key);
+        if (known != null) return known;
+        Survey survey = survey(cx, cz);
+        long[] sea = seaSamples(cx, cz, survey);
+        double[] water = new double[survey.metres.length];
+        int count = 0;
+        for (int k = 0; k < water.length; k++) {
+            boolean raisedSea = (sea[k >> 6] >>> (k & 63) & 1) != 0 && survey.metres[k] > SEA_METRES;
+            if ((survey.kind[k] == WET || survey.kind[k] == FLAT) && !raisedSea) water[count++] = survey.metres[k];
+        }
+        WaterCell cell;
+        if (count < 4) cell = new WaterCell(0, 0, survey.relief, sea);
+        else {
+            java.util.Arrays.sort(water, 0, count);
+            cell = new WaterCell(water[count / 4], count, survey.relief, sea);
+        }
+        if (waterCells.size() > 1 << 20) waterCells.clear();
+        waterCells.putIfAbsent(key, cell);
+        return cell;
+    }
+
+    /**
+     * A water cell's samples as surveyed: each one's height, and whether it is land, open sea,
+     * water on real ground, or water on {@link #coarse} ground or at sea level, which may be the
+     * sea; and the range of the cell's ground (middle 80%).
+     */
+    private record Survey(float[] metres, byte[] kind, double relief) {}
+    private static final byte DRY_LAND = 0, WET = 1, FLAT = 2, OPEN = 3;
+    /** Surveys kept for neighbouring cells' floods; only a few thousand are needed at once. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Survey> surveys = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Heights a water sample may read and still lie at sea level. */
+    private static final double SEA_METRES = 0.5;
+
+    private Survey survey(int cx, int cz) {
+        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        Survey known = surveys.get(key);
+        if (known != null) return known;
+        GlobalElevation dem = elevation[WATER_ZOOM];
+        float[] metres = new float[WATER_SAMPLES * WATER_SAMPLES];
+        double[] ground = new double[metres.length];
+        byte[] kind = new byte[metres.length];
+        double spacing = (double) WATER_CELL / WATER_SAMPLES;
+        for (int j = 0; j < WATER_SAMPLES; j++) for (int i = 0; i < WATER_SAMPLES; i++) {
+            double x = cx * (double) WATER_CELL + (i + 0.5) * spacing, z = cz * (double) WATER_CELL + (j + 0.5) * spacing;
+            double m = dem.metres(x, z);
+            int k = j * WATER_SAMPLES + i;
+            metres[k] = (float) m;
+            ground[k] = m;
+            GeoPoint point = grid.geographic(x, z);
+            int code = cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW);
+            kind[k] = code == WorldCoverSource.NO_DATA ? OPEN : code != WorldCoverSource.WATER ? DRY_LAND
+                    : m <= SEA_METRES || coarse(dem, x, z, m, 48) ? FLAT : WET;
+        }
+        java.util.Arrays.sort(ground);
+        Survey survey = new Survey(metres, kind, ground[ground.length * 9 / 10] - ground[ground.length / 10]);
+        if (surveys.size() > 1 << 12) surveys.clear();
+        surveys.putIfAbsent(key, survey);
+        return survey;
+    }
+
+    /** No samples of a cell are the sea. */
+    private static final long[] NO_SEA = new long[WATER_SAMPLES * WATER_SAMPLES / 64];
+
+    /**
+     * Which of a cell's samples are the sea: water reached through water from the open sea or from
+     * water at sea level that joins it, within the cell and the cells around it. Coarse ocean grids
+     * fill lagoons and small islands' bays with the island's slopes carried out over the water, tens
+     * of metres up, which otherwise stood as lakes in walled boxes above the sea beside them. The
+     * flood crosses water on {@link #coarse} ground or at sea level, and water on any ground where it
+     * is wide, as a lagoon is; a river mouth narrower than that is sea only where it meets the sea,
+     * so the river still climbs inland. Land between samples, as a reef islet or a dam, stops it.
+     * Within a cell or two of the sea, only cells holding raised water need it.
+     */
+    private long[] seaSamples(int cx, int cz, Survey centre) {
+        boolean raised = false;
+        for (int k = 0; k < centre.kind.length && !raised; k++) raised = centre.kind[k] == WET || centre.kind[k] == FLAT && centre.metres[k] > SEA_METRES;
+        if (!raised) return NO_SEA;
+        int span = 3 * WATER_SAMPLES;
+        Survey[] window = new Survey[9];
+        for (int j = 0; j < 3; j++) for (int i = 0; i < 3; i++) window[j * 3 + i] = i == 1 && j == 1 ? centre : survey(cx + i - 1, cz + j - 1);
+        double spacing = (double) WATER_CELL / WATER_SAMPLES, ox = (cx - 1) * (double) WATER_CELL, oz = (cz - 1) * (double) WATER_CELL;
+        byte[] kinds = new byte[span * span], state = new byte[span * span];
+        it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue = new it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue();
+        for (int j = 0; j < span; j++) for (int i = 0; i < span; i++) {
+            Survey survey = window[j / WATER_SAMPLES * 3 + i / WATER_SAMPLES];
+            int k = j % WATER_SAMPLES * WATER_SAMPLES + i % WATER_SAMPLES;
+            byte kind = kinds[j * span + i] = survey.kind[k];
+            if (kind == DRY_LAND) continue;
+            state[j * span + i] = 1;
+            if (kind == OPEN || kind == FLAT && survey.metres[k] <= SEA_METRES
+                    && joinsOpenSea(Mth.floor(ox + (i + 0.5) * spacing), Mth.floor(oz + (j + 0.5) * spacing))) {
+                state[j * span + i] = 2;
+                queue.enqueue(j * span + i);
+            }
+        }
+        if (queue.isEmpty()) return NO_SEA;
+        while (!queue.isEmpty()) {
+            int at = queue.dequeueInt(), i = at % span, j = at / span;
+            for (int d = 0; d < 8; d += 2) {
+                int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d], n = nj * span + ni;
+                if (ni < 0 || nj < 0 || ni >= span || nj >= span || state[n] != 1) continue;
+                if (!waterBetween(ox + (i + 0.5) * spacing, oz + (j + 0.5) * spacing, ox + (ni + 0.5) * spacing, oz + (nj + 0.5) * spacing)) continue;
+                state[n] = 2;
+                if (kinds[n] != WET || wide(kinds, span, ni, nj)) queue.enqueue(n);
+            }
+        }
+        long[] sea = new long[NO_SEA.length];
+        boolean any = false;
+        for (int j = 0; j < WATER_SAMPLES; j++) for (int i = 0; i < WATER_SAMPLES; i++) {
+            if (state[(j + WATER_SAMPLES) * span + i + WATER_SAMPLES] != 2) continue;
+            int k = j * WATER_SAMPLES + i;
+            sea[k >> 6] |= 1L << (k & 63);
+            any = true;
+        }
+        return any ? sea : NO_SEA;
+    }
+
+    /** Whether a sample's water spans all eight samples around it, so it is no river or creek. */
+    private static boolean wide(byte[] kinds, int span, int i, int j) {
+        if (i == 0 || j == 0 || i == span - 1 || j == span - 1) return false;
+        for (int d = 0; d < 8; d++) if (kinds[(j + Math.round((float) RING_Z[d])) * span + i + Math.round((float) RING_X[d])] == DRY_LAND) return false;
+        return true;
+    }
+
+    /** Whether the land cover between two neighbouring water samples is all water, so no reef islet or dam parts them. */
+    private boolean waterBetween(double x0, double z0, double x1, double z1) {
+        for (int step = 1; step < 4; step++) {
+            GeoPoint point = grid.geographic(x0 + (x1 - x0) * step / 4, z0 + (z1 - z0) * step / 4);
+            int code = cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW);
+            if (code != WorldCoverSource.WATER && code != WorldCoverSource.NO_DATA) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Whether a column's water joins one of the four water samples around it that is the sea
+     * ({@link #seaSamples}), so a lake behind a beach beside a lagoon stays a lake.
+     */
+    private boolean seaWater(double x, double z) {
+        double spacing = (double) WATER_CELL / WATER_SAMPLES;
+        int ix = Mth.floor(x / spacing - 0.5), iz = Mth.floor(z / spacing - 0.5);
+        for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
+            int sx = ix + i, sz = iz + j;
+            long[] sea = waterCell(Math.floorDiv(sx, WATER_SAMPLES), Math.floorDiv(sz, WATER_SAMPLES)).sea;
+            if (sea == NO_SEA) continue;
+            int k = Math.floorMod(sz, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(sx, WATER_SAMPLES);
+            if ((sea[k >> 6] >>> (k & 63) & 1) != 0 && waterBetween(x + 0.5, z + 0.5, (sx + 0.5) * spacing, (sz + 0.5) * spacing)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Whether the survey at a point is flat blocks of coarse data, as an ocean grid's, rather than
+     * real ground: level there, or on the step down from a level block within {@code reach}. The
+     * smooth sampling overshoots such steps, most where block corners meet, so the point may stand
+     * up to a quarter of the step above the block. Real ground, even the foot of a cliff, is never
+     * level to a hundredth of a metre three blocks apart.
+     */
+    private static boolean coarse(GlobalElevation dem, double x, double z, double metres, double reach) {
+        if (level(dem, x, z, metres)) return true;
+        double[] ring = new double[8];
+        double low = metres;
+        for (int k = 0; k < 8; k++) low = Math.min(low, ring[k] = dem.metres(x + RING_X[k] * reach, z + RING_Z[k] * reach));
+        double overshoot = Math.max(1, (metres - low) / 4);
+        for (int k = 0; k < 8; k++) {
+            if (ring[k] >= metres - overshoot && level(dem, x + RING_X[k] * reach, z + RING_Z[k] * reach, ring[k])) return true;
+        }
+        return false;
+    }
+
+    private static boolean level(GlobalElevation dem, double x, double z, double metres) {
+        return Math.abs(dem.metres(x + 3, z) - metres) < 0.01 && Math.abs(dem.metres(x, z + 3) - metres) < 0.01;
     }
 
     /** Ring radii, in blocks, for judging how far a lake column is from its shore. */
     private static final int[] RINGS = {5, 14, 36, 90};
 
-    /** Water depth: shallow by the shore, deepening by about one block in six away from it. */
+    /** Water depth: shallow by the shore, deepening by about one block in six away from it. The open sea is not shore. */
     private int lakeDepth(int x, int z, int voxel) {
         double scale = Math.max(1, voxel / 6.0), inner = 0, distance = -1;
         for (int radius : RINGS) {
             double r = radius * scale;
             int land = 0;
-            for (int k = 0; k < 8; k++) if (cover(x + RING_X[k] * r, z + RING_Z[k] * r, voxel) != WorldCoverSource.WATER) land++;
+            for (int k = 0; k < 8; k++) {
+                int code = cover(x + RING_X[k] * r, z + RING_Z[k] * r, voxel);
+                if (code != WorldCoverSource.WATER && code != WorldCoverSource.NO_DATA) land++;
+            }
             if (land > 0) { distance = inner + (r - inner) * (1 - land / 8.0); break; }
             inner = r;
         }
@@ -368,7 +639,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         for (int k = 0; k < 8; k += 2) {
             for (double r : new double[]{near, far}) {
                 double px = x + RING_X[k] * r, pz = z + RING_Z[k] * r;
-                if (cover(px, pz, voxel) == WorldCoverSource.WATER) best = Math.max(best, lakeSurface(dem, px, pz, voxel));
+                if (cover(px, pz, voxel) == WorldCoverSource.WATER && !seaWater(px, pz)) best = Math.max(best, lakeSurface(dem, px, pz, voxel));
             }
         }
         return best;

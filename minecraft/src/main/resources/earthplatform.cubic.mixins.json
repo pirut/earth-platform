@@ -19,7 +19,9 @@
     "compat.CreateBuildHeightMixin",
     "compat.WaystonesPlacementMixin",
     "compat.WaystonesTargetMixin",
-    "compat.MekanismWorldUtilsMixin"
+    "compat.MekanismWorldUtilsMixin",
+    "CubicWeatherMixin",
+    "CubicServerWeatherMixin"
   ],
   "client": [
     "CubicPredictionMixin",
@@ -34,7 +36,8 @@
     "compat.XaeroWorldMapSlopeMixin",
     "compat.JourneyMapDataCacheMixin",
     "compat.JourneyMapSnapshotMixin",
-    "compat.JourneyMapChunkMixin"
+    "compat.JourneyMapChunkMixin",
+    "CubicRainRenderMixin"
   ],
   "injectors": {
     "defaultRequire": 1
