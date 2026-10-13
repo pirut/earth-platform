@@ -1055,7 +1055,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private Surface lake(int x, int z, int y, int water, double t) {
         int depth = water - y;
         long r = mix(x, 11, z);
-        BlockState floor = depth <= 2 ? (t < 4 ? GRAVEL : SAND) : switch ((int) Math.floorMod(r, 5)) {
+        // Shallow tropical ponds, such as the Mekong delta's, are mostly muddy rather than rimmed with bright sand.
+        BlockState floor = depth <= 2 ? (t < 4 ? GRAVEL : t > 20 && patches.getValue(x / 90.0 + 3.3, z / 90.0 - 8.1) > -0.3 ? MUD : SAND) : switch ((int) Math.floorMod(r, 5)) {
             case 0 -> CLAY; case 1 -> SAND; default -> GRAVEL; };
         if (depth > 8 && patches.getValue(x / 19.0, z / 19.0) > 0.2) floor = MUD;
         // Tropical lagoons behind a reef, as at Bora Bora, are clear turquoise sea over sand, not river water.
@@ -1136,7 +1137,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (eco != 0 && y > SEA + 3000 && code != WorldCoverSource.SNOW_AND_ICE && code != WorldCoverSource.WATER
                 && code != WorldCoverSource.CROPLAND && Ecoregions.get().biome(eco) == Ecoregions.MONTANE_GRASSLAND) {
             if (cliff) return rock();
-            BlockState top = rocky != null ? rocky : patch > 0.35 ? GRAVEL : patch < -0.2 || roll < 35 ? COARSE_DIRT : GRASS;
+            // Mostly grass, with dust and scree in patches whose edges break up grain by grain.
+            BlockState top = rocky != null ? rocky : patch > 0.45 + roll * 0.003 ? GRAVEL : patch < -0.3 - roll * 0.003 || roll < 6 ? COARSE_DIRT : GRASS;
             return new Surface(windsweptHills, top, top == GRASS ? DIRT : STONE, 0, 0, 0, 260, 262, false);
         }
         boolean ground = code == WorldCoverSource.TREE_COVER || code == WorldCoverSource.GRASSLAND || code == WorldCoverSource.SHRUBLAND
@@ -1215,9 +1217,13 @@ public final class EarthGenerator extends SurfaceGenerator {
                     return new Surface(plains, rocky != null ? rocky : GRASS, DIRT, 2, 0, 0, 340, 360, false);
                 // Fields lying fallow or ploughed, in broad patches a few hundred metres across with ragged edges, never in straight lines.
                 double fallow = patches.getValue(x / 260.0 + 31.7, z / 260.0 - 12.3) + patches.getValue(x / 17.0 - 5.1, z / 17.0 + 77.9) * 0.2;
-                // On dry-farmed plains, such as Kansas, much of the land is stubble and bare soil; in wetter farmland little.
-                BlockState top = rocky != null ? rocky : fallow > (local.rain() < 900 || zone == ClimateZone.MEDITERRANEAN ? -0.25 : 0.62) ? COARSE_DIRT : GRASS;
+                // On dry-farmed plains, such as Kansas, much of the land is stubble and bare soil; in wetter farmland little,
+                // and in monsoon rice country, such as the Mekong delta, none: the paddies are green or flooded.
+                double bare = local.rain() < 900 || zone == ClimateZone.MEDITERRANEAN ? -0.25 : local.rain() > 1500 && t > 18 ? 9 : 0.62;
+                BlockState top = rocky != null ? rocky : fallow > bare ? COARSE_DIRT : GRASS;
                 if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
+                // Monsoon rice country is green, not savanna olive with acacias.
+                if (bare > 1) return new Surface(plains, top, DIRT, 1, 0, 0, 330, 360, false);
                 return grassland(top, x, z, local, patch, moor, roll, rocky);
             }
             case WorldCoverSource.GRASSLAND -> {
@@ -1251,7 +1257,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                     BlockState sand = roll < red * 100 ? RED_SAND : SAND;
                     return new Surface(desert, sand, sand == RED_SAND ? RED_SANDSTONE : SANDSTONE, 0, 0, 0, 0, 0, false);
                 }
-                if (dry && !cliff && steep <= 0.7) {
+                // Up to the steepness of a one-block step, so terrace edges in the elevation data don't outline the flats in stone.
+                if (dry && !cliff && steep <= 0.9) {
                     // Cold deserts and steppe beaches: gravel plains and dunes.
                     // Stretches of sand, gravel and dust a few hundred metres across, mixed grain by grain where they meet,
                     // so the desert reads as soft-edged washes rather than a maze of blobs.
