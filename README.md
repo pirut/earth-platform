@@ -10,6 +10,8 @@
 - **See for kilometres.** Distant terrain is drawn as textured voxels out to about 23 km, so you see the far side of the valley, not fog.
 - **Ordinary survival.** Mine, craft, build and die as usual. Caves, ores, villages and other vanilla structures generate, and the Nether and the End work through normal portals.
 - **Pick where to start.** Choose a famous place or any latitude and longitude when you make the world, and travel anywhere later with `/earth visit` or `/earth goto`.
+- **Ride the jet stream.** Glide an elytra above Y 9,200 and the wind carries you across a continent in under an hour.
+- **Plays well with others.** Create, Mekanism, Waystones, the Twilight Forest and the popular map mods work in the Earth world. See the [FAQ](docs/FAQ.md#which-other-mods-work) for the list and the [known limitations](docs/FAQ.md#known-limitations).
 - **Shaders.** Tested with Iris and Photon, which light both near blocks and far terrain.
 - **Servers.** Runs on a dedicated server; everyone shares the same Earth.
 
