@@ -141,12 +141,35 @@ public final class CubicEvents {
         return LOOK_REACH;
     }
 
+    /** Vanilla's default spawn radius, in blocks. */
+    private static final int DEFAULT_SPAWN_RADIUS = 10;
+
+    /**
+     * Spreads arrivals over the spawn radius, as vanilla does around its world spawn, so players
+     * joining a server don't all land on one block inside each other: a random dry column within
+     * the {@code spawnRadius} game rule (vanilla's 10 when it is 0) that is not much higher or lower than the spot itself.
+     */
+    private static int[] scatter(ServerCubeWorld cubes, int[] spot) {
+        if (!(cubes.level() instanceof ServerLevel level)) return spot;
+        // An Earth world sets the rule to 0 so vanilla never searches the stand-in overworld for a
+        // spawn; the Earth then scatters over vanilla's default instead.
+        int rule = level.getServer().getSpawnRadius(level), radius = rule > 0 ? rule : DEFAULT_SPAWN_RADIUS;
+        CubeGenerator generator = cubes.generator();
+        int ground = generator.surfaceY(spot[0], spot[1]);
+        for (int attempt = 0; attempt < 16; attempt++) {
+            int x = spot[0] + level.random.nextInt(radius * 2 + 1) - radius, z = spot[1] + level.random.nextInt(radius * 2 + 1) - radius;
+            int y = generator.surfaceY(x, z);
+            if (generator.waterY(x, z) < y && Math.abs(y - ground) <= Math.max(2, radius / 2)) return new int[]{x, z};
+        }
+        return spot;
+    }
+
     /** The world's arrival point, with its cubes loaded so the player lands on solid ground. */
     public static Vec3 arrival(ServerCubeWorld cubes) { return arrival(cubes, null); }
 
     /** The arrival point, drawn within sight of {@code view} (a landmark column) when the start is too far off to see it. */
     public static Vec3 arrival(ServerCubeWorld cubes, @Nullable int[] view) {
-        int[] spot = landing(cubes.generator(), withinSight(cubes.generator().arrival(), view), 4096, true);
+        int[] spot = scatter(cubes, landing(cubes.generator(), withinSight(cubes.generator().arrival(), view), 4096, true));
         return standOn(cubes, spot[0], spot[1]);
     }
 
