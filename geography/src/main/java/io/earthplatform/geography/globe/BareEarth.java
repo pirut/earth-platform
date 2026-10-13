@@ -84,6 +84,11 @@ public final class BareEarth implements GlobalElevation.Tiles {
     private static final int MARGIN = 128, SPAN = SIZE + 2 * MARGIN;
     /** A field covers its tile and one pixel round it, for interpolation across tile edges. */
     private static final int CORE = SIZE + 2;
+    /**
+     * Samples across a field, every other pixel of its cover: the ground is smoothed over several
+     * pixels, so this loses nothing and keeps a field to a quarter of the memory.
+     */
+    private static final int GRID = CORE / 2 + 1;
     /** Sampling step, in pixels, of the first look for any built-up land. */
     private static final int SCOUT = 8;
     private static final double EARTH_RADIUS = 6_378_137;
@@ -107,11 +112,11 @@ public final class BareEarth implements GlobalElevation.Tiles {
     private final int maxFields, maxTiles;
     private final LinkedHashMap<Long, Field> fields = new LinkedHashMap<>(64, 0.75f, true);
     private final Map<Long, CompletableFuture<Field>> fieldsInFlight = new ConcurrentHashMap<>();
-    /** Recently changed tiles; unchanged ones are the source's own arrays. */
+    /** Recently read tiles at the zooms changed; those left as they were are the source's own arrays. */
     private final LinkedHashMap<Long, float[]> changed = new LinkedHashMap<>(64, 0.75f, true);
 
     public BareEarth(TerrariumTileSource tiles, WorldCoverSource cover) {
-        this(tiles::tile, (latitude, longitude) -> cover.code(latitude, longitude, 0), 48, 96);
+        this(tiles::tile, (latitude, longitude) -> cover.code(latitude, longitude, 0), 160, 256);
     }
 
     BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles) {
@@ -122,20 +127,19 @@ public final class BareEarth implements GlobalElevation.Tiles {
     }
 
     @Override public float[] tile(int zoom, int x, int y) {
-        float[] source = tiles.tile(zoom, x, y);
-        if (zoom < FROM_ZOOM) return source;
+        if (zoom < FROM_ZOOM) return tiles.tile(zoom, x, y);
         long key = (long) zoom << 58 | (long) x << 29 | y;
         synchronized (changed) {
             float[] hit = changed.get(key);
             if (hit != null) return hit;
         }
+        float[] source = tiles.tile(zoom, x, y);
         float[] out = apply(source, zoom, x, y);
-        if (out != source) {
-            synchronized (changed) {
-                changed.put(key, out);
-                var iterator = changed.entrySet().iterator();
-                while (changed.size() > maxTiles && iterator.hasNext()) { iterator.next(); iterator.remove(); }
-            }
+        // Kept whether or not it changed, so a tile beside a town is looked over only once.
+        synchronized (changed) {
+            changed.put(key, out);
+            var iterator = changed.entrySet().iterator();
+            while (changed.size() > maxTiles && iterator.hasNext()) { iterator.next(); iterator.remove(); }
         }
         return out;
     }
@@ -171,10 +175,10 @@ public final class BareEarth implements GlobalElevation.Tiles {
                 int fi = Math.min(span - 1, Math.max(0, (int) Math.floor(u / SIZE)));
                 Field field = near[fj * span + fi];
                 if (field == NONE) continue;
-                double fu = u - fi * SIZE + 1;
-                int a = Math.min(CORE - 2, Math.max(0, (int) Math.floor(fu))), b = Math.min(CORE - 2, Math.max(0, (int) Math.floor(fv)));
-                double tx = Math.min(1, Math.max(0, fu - a)), ty = Math.min(1, Math.max(0, fv - b));
-                int at = b * CORE + a;
+                double fu = (u - fi * SIZE + 1) / 2, gv = fv / 2;
+                int a = Math.min(GRID - 2, Math.max(0, (int) Math.floor(fu))), b = Math.min(GRID - 2, Math.max(0, (int) Math.floor(gv)));
+                double tx = Math.min(1, Math.max(0, fu - a)), ty = Math.min(1, Math.max(0, gv - b));
+                int at = b * GRID + a;
                 double w = lerp(field.weight, at, tx, ty) / 255.0;
                 if (w <= 0) continue;
                 double ground = lerp(field.ground, at, tx, ty), keep = lerp(field.water, at, tx, ty) / 255.0;
@@ -188,12 +192,12 @@ public final class BareEarth implements GlobalElevation.Tiles {
     }
 
     private static double lerp(float[] values, int at, double tx, double ty) {
-        return (values[at] * (1 - tx) + values[at + 1] * tx) * (1 - ty) + (values[at + CORE] * (1 - tx) + values[at + CORE + 1] * tx) * ty;
+        return (values[at] * (1 - tx) + values[at + 1] * tx) * (1 - ty) + (values[at + GRID] * (1 - tx) + values[at + GRID + 1] * tx) * ty;
     }
 
     private static double lerp(byte[] values, int at, double tx, double ty) {
         return ((values[at] & 0xFF) * (1 - tx) + (values[at + 1] & 0xFF) * tx) * (1 - ty)
-                + ((values[at + CORE] & 0xFF) * (1 - tx) + (values[at + CORE + 1] & 0xFF) * tx) * ty;
+                + ((values[at + GRID] & 0xFF) * (1 - tx) + (values[at + GRID + 1] & 0xFF) * tx) * ty;
     }
 
     /** The field of a zoom-12 tile, worked out once and shared by threads asking at the same time. */
@@ -324,14 +328,14 @@ public final class BareEarth implements GlobalElevation.Tiles {
         float[] ground = lowShare(dem, dry, base, from, side, low);
         blur(ground, side, side, smooth);
 
-        float[] g = new float[CORE * CORE];
-        byte[] w = new byte[CORE * CORE], keep = new byte[CORE * CORE];
+        float[] g = new float[GRID * GRID];
+        byte[] w = new byte[GRID * GRID], keep = new byte[GRID * GRID];
         boolean any = false;
         int offset = MARGIN - 1 - from;
-        for (int j = 0; j < CORE; j++) for (int i = 0; i < CORE; i++) {
-            int cell = j * CORE + i;
-            g[cell] = ground[(j + offset) * side + i + offset];
-            double hx = (MARGIN - 1 + i + 0.5) / 2 - 0.5, hy = (MARGIN - 1 + j + 0.5) / 2 - 0.5;
+        for (int j = 0; j < GRID; j++) for (int i = 0; i < GRID; i++) {
+            int cell = j * GRID + i;
+            g[cell] = ground[(2 * j + offset) * side + 2 * i + offset];
+            double hx = (MARGIN - 1 + 2 * i + 0.5) / 2 - 0.5, hy = (MARGIN - 1 + 2 * j + 0.5) / 2 - 0.5;
             double weight = step((sample(share, HALF, hx, hy) - BUILT_FROM) / (BUILT_FULL - BUILT_FROM))
                     * step((sample(rough, HALF, hx, hy) - ROUGH_FROM) / (ROUGH_FULL - ROUGH_FROM))
                     * step((STEEP_TO - slope(trend, hx, hy, coarse)) / (STEEP_TO - STEEP_FROM));
