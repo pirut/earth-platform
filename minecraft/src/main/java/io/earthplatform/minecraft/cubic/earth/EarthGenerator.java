@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import javax.annotation.Nullable;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
@@ -684,37 +686,50 @@ public final class EarthGenerator extends SurfaceGenerator {
     /**
      * Fetches the elevation tiles that cubes and every far level around a point read, several at a
      * time, so generation there never waits on the network. Failures are logged and left for the
-     * generator's own retries.
+     * generator's own retries. Elevation tiles, climate and land cover all load at once rather
+     * than one after another, as each spends most of its time waiting on the network.
      */
     @Override public void prepare(int x, int z) {
         record Tile(int zoom, int x, int y) {}
-        List<Tile> wanted = new ArrayList<>();
+        List<Runnable> loads = new ArrayList<>();
         for (int zoom = FAR_ZOOM; zoom <= TerrariumTileSource.MAX_ZOOM; zoom++) {
             // Each zoom serves levels whose reach doubles as the zoom halves.
             double reach = 1100.0 * (1 << (TerrariumTileSource.MAX_ZOOM - zoom));
             int tilesAcross = 1 << zoom;
             int x0 = (int) Math.floor(grid.pixelX(x - reach, zoom) / 256), x1 = (int) Math.floor(grid.pixelX(x + reach, zoom) / 256);
             int y0 = (int) Math.floor(grid.pixelY(z - reach, zoom) / 256), y1 = (int) Math.floor(grid.pixelY(z + reach, zoom) / 256);
-            for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++)
-                for (int tx = x0; tx <= x1; tx++) wanted.add(new Tile(zoom, Math.floorMod(tx, tilesAcross), ty));
+            for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) {
+                for (int tx = x0; tx <= x1; tx++) {
+                    Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
+                    loads.add(() -> {
+                        try { tiles.tile(tile.zoom, tile.x, tile.y); }
+                        catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch elevation tile {}/{}/{}: {}", tile.zoom, tile.x, tile.y, failure.getMessage()); }
+                    });
+                }
+            }
         }
-        wanted.parallelStream().forEach(tile -> {
-            try { tiles.tile(tile.zoom, tile.x, tile.y); }
-            catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch elevation tile {}/{}/{}: {}", tile.zoom, tile.x, tile.y, failure.getMessage()); }
-        });
         if (climate != null) {
             GeoPoint a = grid.geographic(x - 24000, z + 24000), b = grid.geographic(x + 24000, z - 24000);
-            try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
-            catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch climate: {}", failure.getMessage()); }
+            loads.add(() -> {
+                try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
+                catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch climate: {}", failure.getMessage()); }
+            });
         }
-        if (cover == null) return;
-        // Land cover: full detail near by, overviews further out, as the far levels read them.
-        double[] reaches = {3500, 7000, 24000};
-        for (int overview = 0; overview < reaches.length; overview++) {
-            double reach = reaches[overview];
-            GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
-            try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), overview); }
-            catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch land cover: {}", failure.getMessage()); }
+        if (cover != null) {
+            // Land cover: full detail near by, overviews further out, as the far levels read them.
+            double[] reaches = {3500, 7000, 24000};
+            for (int overview = 0; overview < reaches.length; overview++) {
+                double reach = reaches[overview];
+                int level = overview;
+                GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
+                loads.add(() -> {
+                    try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), level); }
+                    catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch land cover: {}", failure.getMessage()); }
+                });
+            }
+        }
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (Runnable load : loads) pool.execute(load);
         }
     }
 }
