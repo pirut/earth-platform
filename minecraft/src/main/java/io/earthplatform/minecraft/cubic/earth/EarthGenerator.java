@@ -51,7 +51,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Top water block of the sea. */
     public static final int SEA = 62;
     private static final BlockState COARSE_DIRT = Blocks.COARSE_DIRT.defaultBlockState(),
-            SANDSTONE = Blocks.SANDSTONE.defaultBlockState(), PACKED_ICE = Blocks.PACKED_ICE.defaultBlockState(),
+            SANDSTONE = Blocks.SANDSTONE.defaultBlockState(), PACKED_ICE = Blocks.PACKED_ICE.defaultBlockState(), BLUE_ICE = Blocks.BLUE_ICE.defaultBlockState(),
             CLAY = Blocks.CLAY.defaultBlockState(), MOSS = Blocks.MOSS_BLOCK.defaultBlockState(), PODZOL = Blocks.PODZOL.defaultBlockState(),
             ANDESITE = Blocks.ANDESITE.defaultBlockState(), RED_SAND = Blocks.RED_SAND.defaultBlockState(),
             TERRACOTTA = Blocks.TERRACOTTA.defaultBlockState(), RED_SANDSTONE = Blocks.RED_SANDSTONE.defaultBlockState(),
@@ -80,7 +80,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final Holder<Biome> ocean, deepOcean, coldOcean, deepColdOcean, frozenOcean, lukewarmOcean, deepLukewarmOcean, warmOcean,
             beach, snowyBeach, stonyShore, snowySlopes, frozenPeaks, stonyPeaks, meadow, taiga, oldTaiga, forest,
             plains, jungle, desert, savanna, river, frozenRiver, swamp, mangroveSwamp, snowyPlains, birchForest,
-            badlands, sparseJungle, windsweptSavanna, snowyTaiga, grove, darkForest, flowerForest, cherryGrove, bambooJungle, sunflowerPlains;
+            badlands, sparseJungle, windsweptSavanna, snowyTaiga, grove, darkForest, flowerForest, cherryGrove, bambooJungle, sunflowerPlains, windsweptHills;
 
     private record Noises(RandomSource random, SimplexNoise[] noise) {
         static Noises of(long seed) {
@@ -131,7 +131,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         mangroveSwamp = holder(biomes, Biomes.MANGROVE_SWAMP); snowyPlains = holder(biomes, Biomes.SNOWY_PLAINS);
         birchForest = holder(biomes, Biomes.BIRCH_FOREST); badlands = holder(biomes, Biomes.BADLANDS);
         sparseJungle = holder(biomes, Biomes.SPARSE_JUNGLE); windsweptSavanna = holder(biomes, Biomes.WINDSWEPT_SAVANNA);
-        snowyTaiga = holder(biomes, Biomes.SNOWY_TAIGA); grove = holder(biomes, Biomes.GROVE);
+        snowyTaiga = holder(biomes, Biomes.SNOWY_TAIGA); grove = holder(biomes, Biomes.GROVE); windsweptHills = holder(biomes, Biomes.WINDSWEPT_HILLS);
         darkForest = holder(biomes, Biomes.DARK_FOREST); flowerForest = holder(biomes, Biomes.FLOWER_FOREST);
         cherryGrove = holder(biomes, Biomes.CHERRY_GROVE); bambooJungle = holder(biomes, Biomes.BAMBOO_JUNGLE);
         sunflowerPlains = holder(biomes, Biomes.SUNFLOWER_PLAINS);
@@ -1065,6 +1065,10 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Whether water lies close to the open sea, as a lagoon inside a reef or a barrier island does. */
     private boolean lagoon(int x, int z) {
+        // A lagoon is wide water: ponds and fish farms on a delta are not.
+        int level = waterY(x, z), wide = 0;
+        for (int k = 0; k < 8; k++) if (waterY(x + (int) (RING_X[k] * 150), z + (int) (RING_Z[k] * 150)) == level) wide++;
+        if (wide < 5) return false;
         int sea = 0;
         for (int radius = 1500; radius <= 3000; radius += 1500)
             for (int k = 0; k < 8; k++) if (waterY(x + (int) (RING_X[k] * radius), z + (int) (RING_Z[k] * radius)) == SEA && ++sea >= 2) return true;
@@ -1127,6 +1131,14 @@ public final class EarthGenerator extends SurfaceGenerator {
         // The ecoregion, where it knows more than climate and land cover: flooded grasslands such as the Everglades and the
         // Pantanal, mangrove coasts, and the American South's bayous and pine flatwoods.
         int eco = ecoregion(x, z);
+        // Puna, páramo and Afro-alpine heath above 3,000 m, as on the Altiplano and Kilimanjaro's Shira plateau:
+        // treeless tussock grass, bare dust and scree.
+        if (eco != 0 && y > SEA + 3000 && code != WorldCoverSource.SNOW_AND_ICE && code != WorldCoverSource.WATER
+                && code != WorldCoverSource.CROPLAND && Ecoregions.get().biome(eco) == Ecoregions.MONTANE_GRASSLAND) {
+            if (cliff) return rock();
+            BlockState top = rocky != null ? rocky : patch > 0.35 ? GRAVEL : patch < -0.2 || roll < 35 ? COARSE_DIRT : GRASS;
+            return new Surface(windsweptHills, top, top == GRASS ? DIRT : STONE, 0, 0, 0, 260, 262, false);
+        }
         boolean ground = code == WorldCoverSource.TREE_COVER || code == WorldCoverSource.GRASSLAND || code == WorldCoverSource.SHRUBLAND
                 || code == WorldCoverSource.WETLAND || code == PARKLAND;
         if (eco != 0 && ground && !cliff && steep < 0.4 && t >= 10) {
@@ -1176,7 +1188,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 int trees = slope > 6 || top != GRASS ? 0 : 1;
                 if (moor) return moor(patch, roll, rocky);
                 // Krummholz and dwarf pine below the treeline of temperate mountains, as in the Japanese Alps.
-                if (subalpine(y, local)) return new Surface(taiga, top, DIRT, 40 * trees, 10, 0, 250, 270, true);
+                if (subalpine(y, local) && !montaneGrassland(x, z)) return new Surface(taiga, top, DIRT, 40 * trees, 10, 0, 250, 270, true);
                 return switch (zone) {
                     case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 15 * trees, 0, 0, 320, 340, true, Tree.JUNGLE);
                     case TROPICAL_DRY, HOT_STEPPE -> new Surface(patch > 0.5 ? windsweptSavanna : savanna, top, DIRT, 7 * trees, 0, 0, 320, 330, false, Tree.ACACIA);
@@ -1241,7 +1253,11 @@ public final class EarthGenerator extends SurfaceGenerator {
                 }
                 if (dry && !cliff && steep <= 0.7) {
                     // Cold deserts and steppe beaches: gravel plains and dunes.
-                    BlockState top = patch > 0.15 ? SAND : patch < -0.25 ? COARSE_DIRT : GRAVEL;
+                    // Stretches of sand, gravel and dust a few hundred metres across, mixed grain by grain where they meet,
+                    // so the desert reads as soft-edged washes rather than a maze of blobs.
+                    double wash = patches.getValue(x / 380.0 + 7.7, z / 380.0 - 19.3) + patches.getValue(x / 60.0 - 3.9, z / 60.0 + 4.4) * 0.2;
+                    int grain = (int) Math.floorMod(mix(x, 0x57415348L, z), 100);
+                    BlockState top = grain < Mth.clamp(50 + wash * 120, 0, 100) ? SAND : grain < Mth.clamp(80 + wash * 60, 0, 100) ? GRAVEL : COARSE_DIRT;
                     return new Surface(t < -3 && local.warmest() < 5 ? snowyPlains : desert, top, top == SAND ? SANDSTONE : STONE, 0, 0, 0, 0, 0, false);
                 }
                 // High mountains' rock, moraine and scree are bare: WorldCover maps their glaciers and snowfields apart.
@@ -1258,9 +1274,13 @@ public final class EarthGenerator extends SurfaceGenerator {
                 // Drifts of powder snow lie on the gentler slopes.
                 // Judged on the survey's slope over a few blocks, not the block steps, which detail roughens.
                 double face = surveySlope(x, z);
-                if (face > 1.6 || face > 1.3 && patch > 0.3) return rock(x, z, roll);
+                if (face > 1.6 || face > 1.3 && patch > 0.3) {
+                    // A glacier's calving front and icefalls low down are blue-white ice; high faces are rock.
+                    if (y < SEA + 600) return new Surface(frozenPeaks, BLUE_ICE, PACKED_ICE, 0, 0, 0, 0, 0, false);
+                    return rock(x, z, roll);
+                }
                 BlockState top = steep < 0.5 && patch > 0.5 ? POWDER_SNOW : SNOW_BLOCK;
-                return new Surface(steep > 0.75 ? frozenPeaks : snowySlopes, top, steep < 0.6 ? PACKED_ICE : STONE, 0, 0, 0, 0, 0, false);
+                return new Surface(steep > 0.75 ? frozenPeaks : snowySlopes, top, PACKED_ICE, 0, 0, 0, 0, 0, false);
             }
             case WorldCoverSource.WETLAND -> {
                 if (t < 0) return new Surface(snowyPlains, patch > 0.25 ? MOSS : GRASS, DIRT, 2, 10, 0, 300, 310, true);
@@ -1318,7 +1338,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     private Surface grassland(BlockState top, int x, int z, Local local, double patch, boolean moor, int roll, @Nullable BlockState rocky) {
         if (moor) return moor(patch, roll, rocky);
         // Subalpine meadows among conifers.
-        if (subalpine(-1, local) && top == GRASS) return new Surface(taiga, top, DIRT, 12, 10, 0, 300, 340, true);
+        if (subalpine(-1, local) && top == GRASS && !montaneGrassland(x, z)) return new Surface(taiga, top, DIRT, 12, 10, 0, 300, 340, true);
         return switch (local.zone()) {
             // Savanna and steppe grass, dry for much of the year.
             // Where the dry season is long, as on the Serengeti, the grass is grazed and burnt down to bare earth in patches.
@@ -1440,6 +1460,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         GeoPoint p = grid.geographic(x, z);
         // Iceland's old lava, and Mount Fuji's brown scoria.
         return p.latitude() > 60 || p.latitude() > 35.25 && p.latitude() < 35.5 && p.longitude() > 138.6 && p.longitude() < 138.9;
+    }
+
+    private boolean montaneGrassland(int x, int z) {
+        int eco = ecoregion(x, z);
+        return eco != 0 && Ecoregions.get().biome(eco) == Ecoregions.MONTANE_GRASSLAND;
     }
 
     private boolean mangroveEcoregion(int x, int z) {
@@ -1601,7 +1626,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                     : patch > 0.25 ? new Surface(birchForest, GRASS, DIRT, 82, 1, 8, 90, 130, false)
                     : patch < -0.25 ? new Surface(taiga, GRASS, DIRT, 82, 10, 0, 110, 120, true)
                     : new Surface(forest, GRASS, DIRT, 82, 5, 2, 90, 120, true);
-            case SUBARCTIC -> t < -5 ? new Surface(snowyTaiga, GRASS, DIRT, 65, 10, 0, 90, 100, true)
+            // Snowy taiga only where the cold is extreme, so summer taiga is not dotted with snow-field patches.
+            case SUBARCTIC -> t < -10 ? new Surface(snowyTaiga, GRASS, DIRT, 65, 10, 0, 90, 100, true)
                     : new Surface(patch > 0.45 && local.rain() > 500 ? oldTaiga : taiga, patch > 0.45 ? PODZOL : GRASS, DIRT, 75, 9, 1, 110, 120, true);
             // Stunted trees at the treeline.
             case TUNDRA, ICE -> new Surface(t < -5 ? snowyTaiga : grove, GRASS, DIRT, 30, 10, 0, 60, 70, false);
