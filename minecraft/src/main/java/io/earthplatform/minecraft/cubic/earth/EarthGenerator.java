@@ -366,8 +366,9 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (shore != DRY && y < shore && y >= shore - (rock != null ? 12 : 4)) y = shore;
             // A speck of land in a lagoon filled with coarse blocks, as a pier or a boat, takes the fill's height, tens
             // of metres up, and stood as a stone pillar out of the sea: it lies just above the water instead. Karst
-            // towers out of the sea, as in Ha Long Bay, are real pillars and stay.
-            if (y > SEA + 1 && !towers.covers(x, z) && speck(dem, x, z, metres, voxel)) y = SEA + 1;
+            // towers out of the sea, as in Ha Long Bay, are real pillars and stay. Towers are asked last: away from the
+            // sea speck() answers at once, while asking them surveyed the detailed tiles under every far voxel inland.
+            if (y > SEA + 1 && speck(dem, x, z, metres, voxel) && !towers.covers(x, z)) y = SEA + 1;
             // Low ground slopes down to the water beside it rather than standing over it in a wall.
             if (y > SEA) y = bank(dem, x, z, y, voxel);
         }
