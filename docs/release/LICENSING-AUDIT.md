@@ -13,6 +13,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | AWS Terrain Tiles | OK | Credited in game and in CREDITS.md |
 | ESA WorldCover | OK | Credited, changes noted (CC BY 4.0) |
 | CHELSA climate | OK (licence) / courtesy | CC0; ask CHELSA about public traffic or mirror the four bands |
+| RESOLVE Ecoregions 2017 (PR #14) | OK | CC BY 4.0; credited with the citation, and the derived raster noted |
 | Bundled test data (Copernicus GLO-30, NOAA ETOPO, WorldCover) | OK | Credited; could be dropped from the release jar |
 | Iris, Sodium, Photon, Distant Horizons | OK | Not bundled; compile-only. Exact version pins hurt players (see below) |
 | Third-party code in the jar | OK | None. Only `io/earthplatform` classes and our own data |
@@ -50,6 +51,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 - `earthplatform/proof_data`: NOAA ETOPO 2022 extracts, CC0. Credited.
 - `earthplatform/worldcover_proof_data`: ESA WorldCover extracts, CC BY 4.0. Credited.
 - `assets/earthplatform/textures/globe/blue_marble.jpg` (PR #8): NASA Blue Marble Next Generation, downscaled. US government work, public domain; NASA asks for credit, which CREDITS.md, the notices and the mods list give. OK.
+- `earthplatform/ecoregions.png` (660 KB) and `ecoregions.tsv` (PR #14): a 0.05 degree raster derived from RESOLVE Ecoregions 2017 (Dinerstein et al. 2017, *BioScience* 67(6):534-545), with the ecoregion names. CC BY 4.0 allows redistribution and changes with attribution and a note of changes; CREDITS.md, the notices and the mods list give both. OK.
 - The proof data above are test fixtures for the older engine; Earth worlds don't read them. Dropping them from the release jar saves about 2.5 MB and three notices. Engineering item, not a licence problem.
 - No third-party libraries: Iris, Sodium and Distant Horizons are `compileOnly`; nothing is shaded or jar-in-jar.
 - The logo (`earthplatform_logo.png`) is original pixel art.

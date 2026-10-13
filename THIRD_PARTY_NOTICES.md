@@ -27,6 +27,8 @@ NASA Blue Marble Next Generation (bundled as `minecraft/src/main/resources/asset
 
 Regional relief and surface appearance are explicitly procedural heuristics layered on pinned measurements. They are not additional measured elevation, climate, biome or geology data.
 
+Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm, BioScience 67(6):534-545, CC BY 4.0; derived 0.05 degree raster. Bundled as `minecraft/src/main/resources/earthplatform/ecoregions.png` (derived raster) and `ecoregions.tsv` (ecoregion names). https://doi.org/10.1093/biosci/bix014 . Changes: polygons rasterised to 0.05 degree cells.
+
 ## Separately installed shader inputs
 
 The shader candidate additionally requires player-supplied Iris1.8.14-beta.1, Sodium0.8.12-beta.1 and Photonv1.3b. Their unchanged external artifacts, shaders, nested payloads and licenses are not part of our shim distribution. Exact input hashes and the three-classpath/no-copied-payload verification are recorded in review-evidence/shader-packaging015 and shader-aggregate. Users obtain each project from its official distribution and keep the terms accompanying that separate artifact. This candidate’s original code only adapts the pinned installed lifecycle, native format/material context and pass-owned renderer resources. No broader version or pack compatibility is implied.

@@ -166,6 +166,7 @@ final class FarGpu {
         GL20C.glUniform1i(program.location("earth_Atlas"), ATLAS_UNIT);
         GL20C.glUniform1i(program.location("earth_Lightmap"), LIGHT_UNIT);
         GL20C.glUniform1i(program.location("earth_GameDepth"), FarLod.vanillaUnit());
+        if (packMode && packOwnDepth) FarLod.shadowUniforms(program::location);
 
         int atlas = Minecraft.getInstance().getTextureManager().getTexture(InventoryMenu.BLOCK_ATLAS).getId();
         int lightmap = RenderSystem.getShaderTexture(2);

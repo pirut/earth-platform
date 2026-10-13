@@ -278,6 +278,29 @@ final class FarShaders {
             uniform sampler2D earth_GameDepth;
             // The face's own depth, before it takes its slope's, for telling what hides far water.
             layout(location = 1) out float earth_faceDepth;
+            // Last frame's shadows of far hills (see FarLod), and how much they darken.
+            uniform sampler2D earth_SunShadows;
+            uniform mat4 earth_ShadowFrame;
+            uniform float earth_ShadowShade;
+            uniform float earth_Occlusion;
+            uniform float earth_Detail;
+
+            // What far terrain loses to its hills: x the share of its colour (their shadow), y the share
+            // of the sky's light that their closeness keeps off it (which the pack takes from sky light).
+            vec2 earth_sunShadow() {
+                // Near terrain's nooks between blocks keep some sky off it; far off they're smaller than
+                // a pixel, so far terrain takes that on as it recedes.
+                float detail = earth_Detail * smoothstep(256.0, 1536.0, length(earth_position));
+                vec2 shade = vec2(0.0);
+                vec4 clip = earth_ShadowFrame * vec4(earth_position, 1.0);
+                vec2 uv = clip.xy / max(clip.w, 1e-6) * 0.5 + 0.5;
+                if (clip.w > 0.0 && all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
+                    shade = texture(earth_SunShadows, uv).rg;
+                }
+                // The nooks shade some sunlight too, which only the colour can take.
+                float colour = 1.0 - (1.0 - shade.r * earth_ShadowShade) * (1.0 - 0.2 * detail);
+                return vec2(colour, 1.0 - (1.0 - shade.g * earth_Occlusion) * (1.0 - detail));
+            }
             #endif
 
             void main() {
@@ -287,9 +310,17 @@ final class FarShaders {
                 earth_slopeDepth();
             #endif
                 vec4 colour = earth_sample();
-                vec2 light = clamp(earth_levels() / 15.0 * (15.0 / 16.0) + 0.5 / 16.0, vec2(8.0 / 256.0), vec2(248.0 / 256.0));
+                vec2 levels = earth_levels();
+                vec3 tint = earth_tint;
+            #ifdef EARTH_OWN_DEPTH
+                vec2 lost = earth_sunShadow();
+                tint *= 1.0 - lost.x;
+                // Packs light by the square of sky light, so this keeps off the share of it asked for.
+                levels.y *= sqrt(1.0 - lost.y);
+            #endif
+                vec2 light = clamp(levels / 15.0 * (15.0 / 16.0) + 0.5 / 16.0, vec2(8.0 / 256.0), vec2(248.0 / 256.0));
                 voxy_emitFragment(VoxyFragmentParameters(colour, floor(earth_tile), earth_atlasUv(), earth_face, earth_look, light,
-                        vec4(earth_tint, 1.0), earth_blockId));
+                        vec4(tint, 1.0), earth_blockId));
             }
             """;
 
