@@ -4,6 +4,8 @@ import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.ElevationLayer;
 import io.earthplatform.geography.globe.MercatorGrid;
+import io.earthplatform.geography.globe.RemaElevation;
+import io.earthplatform.geography.globe.RemaSource;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
@@ -39,6 +41,7 @@ public final class CubicSettings {
     private static final String FILE = "generator.properties";
     /** Elevation sources by a world's {@code earth.elevation} pin, so worlds made with different sources never share tiles. */
     private static final Map<String, TerrariumTileSource> tiles = new HashMap<>();
+    private static RemaElevation rema;
     private static WorldCoverSource cover;
     private static ClimateSource climate;
     private static ImagerySource imagery;
@@ -146,9 +149,11 @@ public final class CubicSettings {
     /**
      * The elevation pin for new worlds: the Terrarium composite, then the layers laid over it, joined
      * by '+'. With no layers it is the composite's id alone, as worlds made before layers pinned.
+     * Antarctica from REMA is on unless the game runs with {@code -Dearthplatform.earth.rema=false}.
      */
     public static String elevation() {
         String pin = TerrariumTileSource.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.rema"))) pin += "+" + RemaElevation.DATASET_ID;
         return pin;
     }
 
@@ -167,7 +172,8 @@ public final class CubicSettings {
         if (!TerrariumTileSource.DATASET_ID.equals(ids[0])) throw new IllegalStateException("Unsupported elevation '" + pin + "'");
         List<ElevationLayer> layers = new ArrayList<>();
         for (int i = 1; i < ids.length; i++) {
-            throw new IllegalStateException("Unsupported elevation layer '" + ids[i] + "' in '" + pin + "'");
+            if (RemaElevation.DATASET_ID.equals(ids[i])) layers.add(rema());
+            else throw new IllegalStateException("Unsupported elevation layer '" + ids[i] + "' in '" + pin + "'");
         }
         Path cache = cacheFolder().resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
         try {
@@ -178,6 +184,21 @@ public final class CubicSettings {
         }
         tiles.put(pin, known);
         return known;
+    }
+
+    /** Antarctica from REMA, cached on disk beside the elevation tiles. */
+    public static synchronized RemaElevation rema() {
+        if (rema == null) {
+            Path cache = cacheFolder().resolve(RemaSource.DATASET_ID);
+            try {
+                // Blocks are 1 MiB decoded; a zoom-15 tile needs one to four.
+                rema = new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        48, 6, Duration.ofSeconds(30)));
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the REMA elevation cache at " + cache, failure);
+            }
+        }
+        return rema;
     }
 
     private static Path cacheFolder() { return FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache"); }
