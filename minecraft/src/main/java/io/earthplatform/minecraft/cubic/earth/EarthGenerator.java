@@ -50,7 +50,10 @@ public final class EarthGenerator extends SurfaceGenerator {
             CLAY = Blocks.CLAY.defaultBlockState(), MOSS = Blocks.MOSS_BLOCK.defaultBlockState(), PODZOL = Blocks.PODZOL.defaultBlockState(),
             ANDESITE = Blocks.ANDESITE.defaultBlockState(), RED_SAND = Blocks.RED_SAND.defaultBlockState(),
             TERRACOTTA = Blocks.TERRACOTTA.defaultBlockState(), RED_SANDSTONE = Blocks.RED_SANDSTONE.defaultBlockState(),
-            CALCITE = Blocks.CALCITE.defaultBlockState(), POWDER_SNOW = Blocks.POWDER_SNOW.defaultBlockState();
+            CALCITE = Blocks.CALCITE.defaultBlockState(), POWDER_SNOW = Blocks.POWDER_SNOW.defaultBlockState(),
+            ORANGE_TERRACOTTA = Blocks.ORANGE_TERRACOTTA.defaultBlockState(), DIORITE = Blocks.DIORITE.defaultBlockState(),
+            BASALT = Blocks.SMOOTH_BASALT.defaultBlockState(), BLACKSTONE = Blocks.BLACKSTONE.defaultBlockState(), TUFF = Blocks.TUFF.defaultBlockState(),
+            RED_TERRACOTTA = Blocks.RED_TERRACOTTA.defaultBlockState();
     /** Badlands rock colours, plain and orange the most common. */
     private static final BlockState[] BANDS = {TERRACOTTA, Blocks.ORANGE_TERRACOTTA.defaultBlockState(), Blocks.YELLOW_TERRACOTTA.defaultBlockState(),
             Blocks.BROWN_TERRACOTTA.defaultBlockState(), Blocks.RED_TERRACOTTA.defaultBlockState(), Blocks.WHITE_TERRACOTTA.defaultBlockState(),
@@ -273,7 +276,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                 votes[found++] = code;
                 if (same > most) { most = same; best = code; }
             }
-            if (found > 0) return best;
+            // A town in the woods becomes open parkland, not a dense forest the satellite never shows there.
+            if (found > 0) return best == WorldCoverSource.TREE_COVER ? PARKLAND : best;
             if (bare) return WorldCoverSource.BARE;
         }
         return WorldCoverSource.NO_DATA;
@@ -579,6 +583,19 @@ public final class EarthGenerator extends SurfaceGenerator {
         return new Surface(b, top, top == GRASS || top == COARSE_DIRT ? DIRT : STONE, trees, spruce, birch, grass, flowers, ferns);
     }
 
+    /**
+     * Lakes and rivers freeze over wherever their biome freezes; the sea freezes in floes, more of
+     * it the colder the coast, until it is closed pack ice in the high Arctic.
+     */
+    @Override protected boolean iced(Surface surface, int x, int z) {
+        if (!super.iced(surface, x, z)) return false;
+        if (surface.biome() != frozenOcean) return true;
+        double t = cover == null ? temperature(x, z, SEA) : local(x, z, SEA).temperature();
+        double share = Mth.clamp((-t - 1) / 10, 0, 1);
+        double floes = patches.getValue(x / 53.0 + 91.3, z / 53.0 - 17.7) * 0.75 + patches.getValue(x / 13.0 - 40.1, z / 13.0 + 8.3) * 0.25;
+        return floes < share * 2 - 1;
+    }
+
     /** A lake or river bed: sand by the shore, then gravel, clay or mud further out. */
     private Surface lake(int x, int z, int y, int water, double t) {
         int depth = water - y;
@@ -600,9 +617,12 @@ public final class EarthGenerator extends SurfaceGenerator {
         };
     }
 
+    /** Not a WorldCover class: open parkland with scattered trees, where a town stood in the woods. */
+    private static final int PARKLAND = 1;
+
     /**
      * What a WorldCover class puts on dry ground in this climate, or null for classes that are not
-     * ground cover. Steep ground stays bare rock whatever is mapped on it.
+     * ground cover. Steep ground stays bare rock whatever is mapped on it, and sheds its snow.
      */
     @Nullable private Surface covered(int code, int x, int z, int y, Local local, double steep, int roll, int slope) {
         double t = local.temperature();
@@ -611,24 +631,52 @@ public final class EarthGenerator extends SurfaceGenerator {
         BlockState rocky = steep > 0.8 && roll < 60 ? STONE : null;
         // Patches tens of metres across: clearings, rock and scree that the 10 m map averages away.
         double patch = patches.getValue(x / 31.0, z / 31.0);
+        boolean dry = zone == ClimateZone.COLD_DESERT || zone == ClimateZone.COLD_STEPPE;
+        // Heather moorland where summers are cool and the rain never stops, as in Scotland, Ireland and Norway's coast.
+        boolean moor = (zone == ClimateZone.OCEANIC || zone == ClimateZone.SUBPOLAR_OCEANIC) && local.warmest() < 14 && local.rain() > 800;
+        // Young lava: black basalt flows and cinders, as on Hawaii and Iceland, where WorldCover maps bare ground.
+        if (code == WorldCoverSource.BARE && volcanic(x, z)) {
+            BlockState top = patch > 0.3 ? BLACKSTONE : patch < -0.35 ? TUFF : roll < 55 ? BASALT : BLACKSTONE;
+            return new Surface(stonyPeaks, top, BASALT, 0, 0, 0, 0, 0, false);
+        }
+        // Australia's red centre: red sand under the spinifex and saltbush, and red rock wherever it stands bare, as Uluru does.
+        boolean outback = (zone == ClimateZone.HOT_DESERT || zone == ClimateZone.HOT_STEPPE) && outback(x, z);
+        if (outback && code != WorldCoverSource.WATER && code != WorldCoverSource.WETLAND) {
+            if (steep > 0.9) return new Surface(badlands, roll < 65 ? ORANGE_TERRACOTTA : Math.floorMod(y, 7) < 2 ? RED_TERRACOTTA : RED_SANDSTONE,
+                    RED_SANDSTONE, 0, 0, 0, 0, 0, false);
+            if (code == WorldCoverSource.SHRUBLAND || code == WorldCoverSource.BARE || code == WorldCoverSource.BUILT_UP)
+                return new Surface(desert, RED_SAND, RED_SANDSTONE, 0, 0, 0, 40, 40, false);
+            if (code == WorldCoverSource.GRASSLAND && (patch > 0.1 || roll < 40)) return new Surface(savanna, RED_SAND, RED_SANDSTONE, 0, 0, 0, 60, 60, false);
+        }
         switch (code) {
             case WorldCoverSource.TREE_COVER -> {
-                if (cliff) return new Surface(t < 3 ? grove : stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false);
+                // Forest climbs steep slopes, rooted in duff and stony soil; only the steepest faces are bare.
+                if (steep > 1.7) return rock();
                 Surface s = forest(local, patch, x, z, y);
-                if (rocky != null || slope > 6) return new Surface(s.biome(), rocky != null ? rocky : COARSE_DIRT, STONE, 0, 0, 0, 0, 0, false);
+                if (steep > 1.25 && roll < 55) return new Surface(s.biome(), STONE, STONE, 0, 0, 0, 0, 0, false);
+                if (steep > 0.8) return new Surface(s.biome(), patch > 0 ? PODZOL : COARSE_DIRT, DIRT, s.trees() * 3 / 4, s.spruce(), s.birch(),
+                        s.grass() / 2, s.flowers() / 2, s.ferns(), s.broadleaf());
                 return s;
             }
+            case PARKLAND -> {
+                if (cliff) return rock();
+                Surface s = forest(local, patch, x, z, y);
+                if (rocky != null) return new Surface(stonyPeaks, rocky, STONE, 0, 0, 0, 0, 0, false);
+                return new Surface(s.biome(), GRASS, DIRT, Math.min(s.trees(), 12), s.spruce(), s.birch(), 330, 360, s.ferns(), s.broadleaf());
+            }
             case WorldCoverSource.SHRUBLAND -> {
-                if (cliff) return new Surface(stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false);
+                if (cliff || rocky != null && t < -3) return rock();
                 BlockState top = rocky != null ? rocky : patch > 0.4 || roll < 20 ? COARSE_DIRT : GRASS;
                 int trees = slope > 6 || top != GRASS ? 0 : 1;
+                if (moor) return moor(patch, roll, rocky);
                 return switch (zone) {
                     case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 15 * trees, 0, 0, 320, 340, true, Tree.JUNGLE);
                     case TROPICAL_DRY, HOT_STEPPE -> new Surface(patch > 0.5 ? windsweptSavanna : savanna, top, DIRT, 7 * trees, 0, 0, 320, 330, false, Tree.ACACIA);
                     // Desert scrub: bare sand and gravel with dead bushes, and cacti where they grow wild, in the Americas.
                     case HOT_DESERT -> new Surface(desert, rocky != null ? rocky : patch > 0.2 ? COARSE_DIRT : SAND, SANDSTONE, 0, 0, 0, 25, americas(x, z) ? 31 : 25, false);
+                    // Sagebrush and saltbush: mostly bare tan ground with low grey shrubs, grass only in patches.
                     case COLD_DESERT, COLD_STEPPE -> t < -3 ? new Surface(snowyPlains, top, DIRT, 0, 0, 0, 200, 210, false)
-                            : new Surface(savanna, top, DIRT, 2 * trees, 3, 0, 260, 270, false);
+                            : sagebrush(rocky != null ? rocky : patch > 0.3 || roll < 55 ? scrubGround(x, z) : GRASS, trees);
                     // Chaparral and maquis: dry where summers are hot.
                     case MEDITERRANEAN -> new Surface(local.warmest() >= 21 ? savanna : plains, top, DIRT, 9 * trees, t < 10 ? 5 : 0, 0, 330, 350, false);
                     case SUBPOLAR_OCEANIC, SUBARCTIC -> new Surface(t < -3 ? snowyPlains : plains, top, DIRT, 6 * trees, 4, 5, 250, 260, false);
@@ -637,61 +685,183 @@ public final class EarthGenerator extends SurfaceGenerator {
                     default -> new Surface(plains, top, DIRT, 9 * trees, t < 6 ? 6 : 0, 1, 330, 350, false, patch < 0 ? Tree.AZALEA : Tree.OAK);
                 };
             }
-            case WorldCoverSource.GRASSLAND, WorldCoverSource.CROPLAND -> {
-                if (cliff) return new Surface(stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false);
+            case WorldCoverSource.CROPLAND -> {
+                if (cliff) return rock();
+                // Farmland in a dry climate is watered, as along the Nile, the Indus and in the Imperial Valley: lush and green.
+                if (dry || zone == ClimateZone.HOT_DESERT || zone == ClimateZone.HOT_STEPPE)
+                    return new Surface(plains, rocky != null ? rocky : GRASS, DIRT, 2, 0, 0, 340, 360, false);
+                // Fields lying fallow or ploughed, in broad patches a few hundred metres across with ragged edges, never in straight lines.
+                double fallow = patches.getValue(x / 260.0 + 31.7, z / 260.0 - 12.3) + patches.getValue(x / 17.0 - 5.1, z / 17.0 + 77.9) * 0.2;
+                BlockState top = rocky != null ? rocky : fallow > 0.62 ? COARSE_DIRT : GRASS;
+                if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
+                return grassland(top, x, z, local, patch, moor, roll, rocky);
+            }
+            case WorldCoverSource.GRASSLAND -> {
+                if (cliff || rocky != null && t < -3) return rock();
                 BlockState top = rocky != null ? rocky : GRASS;
                 if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
-                return switch (zone) {
-                    // Savanna and steppe grass, dry for much of the year.
-                    case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> new Surface(savanna, top, DIRT, 2, 0, 0, 380, 390, false, Tree.ACACIA);
-                    // Junipers on the cold steppes.
-                    case COLD_DESERT, COLD_STEPPE -> new Surface(savanna, top, DIRT, 2, 10, 0, 380, 390, false);
-                    case MEDITERRANEAN -> new Surface(local.warmest() >= 21 ? savanna : plains, top, DIRT, 1, 0, 0, 360, 380, false);
-                    // Alpine and arctic meadows.
-                    case TUNDRA, ICE -> new Surface(meadow, top, DIRT, 0, 0, 0, 300, 360, false);
-                    case SUBARCTIC, SUBPOLAR_OCEANIC -> new Surface(plains, top, DIRT, 1, 10, 0, 330, 350, false);
-                    // Sunflower fields on the continental steppes and farmland.
-                    case CONTINENTAL -> patch > 0.45 ? new Surface(sunflowerPlains, top, DIRT, 1, 0, 1, 330, 420, false)
-                            : new Surface(plains, top, DIRT, 1, 0, 1, 330, 380, false);
-                    default -> new Surface(plains, top, DIRT, 1, 0, 1, 330, 380, false);
-                };
+                // Thin steppe on the driest cold plains, such as the Great Basin, with bare ground between the tufts.
+                if (dry && local.rain() < 300 && top == GRASS && (patch > 0.35 || roll < 35)) return sagebrush(scrubGround(x, z), 0);
+                return grassland(top, x, z, local, patch, moor, roll, rocky);
             }
             case WorldCoverSource.BARE -> {
                 boolean hot = zone == ClimateZone.HOT_DESERT || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.TROPICAL_DRY;
                 // Dry lands' cliffs show their rock in coloured bands, as the Colorado Plateau's and the Sahara's do.
-                boolean arid = hot || zone == ClimateZone.COLD_DESERT || zone == ClimateZone.COLD_STEPPE;
+                boolean arid = hot || dry;
                 if (arid && (cliff || steep > 0.9)) return new Surface(badlands, band(y), TERRACOTTA, 0, 0, 0, 0, 0, false);
+                // The Colorado Plateau's red rock: slickrock and red sand on the flats, as in Monument Valley.
+                if (arid && redRock(x, z)) {
+                    if (steep > 0.4) return new Surface(badlands, patch > 0.1 ? ORANGE_TERRACOTTA : TERRACOTTA, TERRACOTTA, 0, 0, 0, 0, 0, false);
+                    return new Surface(desert, RED_SAND, RED_SANDSTONE, 0, 0, 0, 0, 0, false);
+                }
+                // Salt pans on the floors of dry basins, such as Badwater and the Bonneville flats: white crust.
+                if (arid && steep < 0.2 && saltPan(x, z)) return new Surface(desert, roll < 12 ? DIORITE : CALCITE, CALCITE, 0, 0, 0, 0, 0, false);
                 if (hot) {
-                    BlockState sand = patch > 0.45 && t > 18 ? RED_SAND : SAND;
+                    // Ergs: pale and orange sand grain by grain, the orange share drifting over a few hundred metres, so
+                    // from afar the sand reads as the warm ochre between the two, with no blotches or edges.
+                    double ochre = patches.getValue(x / 160.0 + 57.1, z / 160.0 - 23.9);
+                    double red = Mth.clamp(redShare(x, z) + ochre * 0.3, 0, 1);
+                    BlockState sand = roll < red * 100 ? RED_SAND : SAND;
                     return new Surface(desert, sand, sand == RED_SAND ? RED_SANDSTONE : SANDSTONE, 0, 0, 0, 0, 0, false);
                 }
-                if (zone == ClimateZone.COLD_DESERT && !cliff && steep <= 0.7) {
-                    // Cold deserts: gravel plains and dunes.
+                if (dry && !cliff && steep <= 0.7) {
+                    // Cold deserts and steppe beaches: gravel plains and dunes.
                     BlockState top = patch > 0.15 ? SAND : patch < -0.25 ? COARSE_DIRT : GRAVEL;
-                    return new Surface(t < -3 ? snowyPlains : desert, top, top == SAND ? SANDSTONE : STONE, 0, 0, 0, 0, 0, false);
+                    return new Surface(t < -3 && local.warmest() < 5 ? snowyPlains : desert, top, top == SAND ? SANDSTONE : STONE, 0, 0, 0, 0, 0, false);
                 }
-                BlockState top = cliff || steep > 0.7 ? STONE : patch > 0.55 ? CALCITE : patch > 0.3 ? GRAVEL : patch < -0.3 ? ANDESITE : roll < 70 ? STONE : COARSE_DIRT;
-                return new Surface(t < 0 ? frozenPeaks : stonyPeaks, top, STONE, 0, 0, 0, 0, 0, false);
+                // High mountains' rock, moraine and scree are bare: WorldCover maps their glaciers and snowfields apart.
+                // Only far above the snow line do gentle slopes keep snow between the rocks.
+                if (local.warmest() < -6 && steep < 0.5 && patch > 0.1) return new Surface(snowySlopes, SNOW_BLOCK, STONE, 0, 0, 0, 0, 0, false);
+                boolean scree = local.rain() < 600 || t < 0;
+                BlockState top = cliff || steep > 0.7 ? STONE : patch > 0.55 ? (scree ? GRAVEL : CALCITE) : patch > 0.3 ? GRAVEL
+                        : patch < -0.3 ? ANDESITE : roll < (scree ? 50 : 70) ? STONE : roll < 85 ? COARSE_DIRT : GRAVEL;
+                return new Surface(stonyPeaks, top, STONE, 0, 0, 0, 0, 0, false);
             }
             case WorldCoverSource.SNOW_AND_ICE -> {
-                // Drifts of powder snow on the gentler slopes.
-                BlockState top = steep > 1.4 ? STONE : steep < 0.5 && patch > 0.5 ? POWDER_SNOW : SNOW_BLOCK;
-                return new Surface(steep > 0.9 ? frozenPeaks : snowySlopes, top, steep < 0.6 ? PACKED_ICE : STONE, 0, 0, 0, 0, 0, false);
+                // Faces too steep to hold snow show their rock; drifts of powder snow lie on the gentler slopes.
+                if (steep > 0.95) return rock();
+                BlockState top = steep > 0.75 && roll < 35 ? STONE : steep < 0.5 && patch > 0.5 ? POWDER_SNOW : SNOW_BLOCK;
+                return new Surface(steep > 0.75 ? frozenPeaks : snowySlopes, top, steep < 0.6 ? PACKED_ICE : STONE, 0, 0, 0, 0, 0, false);
             }
             case WorldCoverSource.WETLAND -> {
-                BlockState top = patch > 0.25 ? MUD : GRASS;
-                if (t < 0) return new Surface(snowyPlains, top == MUD ? MOSS : GRASS, DIRT, 2, 10, 0, 300, 310, true);
-                return new Surface(swamp, top, DIRT, 10, 0, 0, 300, 320, true);
+                if (t < 0) return new Surface(snowyPlains, patch > 0.25 ? MOSS : GRASS, DIRT, 2, 10, 0, 300, 310, true);
+                // Warm marshes, such as the Pantanal and the Mississippi delta, are open grass and reeds with a few trees.
+                if (t >= 18) return new Surface(swamp, patch > 0.45 ? MUD : GRASS, DIRT, 2, 0, 0, 450, 470, false);
+                return new Surface(swamp, patch > 0.25 ? MUD : GRASS, DIRT, 10, 0, 0, 300, 320, true);
             }
             case WorldCoverSource.MANGROVES -> {
+                // Mangroves grow only on tidal coasts; inland swamps mapped as mangrove, as in the Okavango, are freshwater marsh.
+                if (y > SEA + 12) return covered(WorldCoverSource.WETLAND, x, z, y, local, steep, roll, slope);
                 return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false, Tree.MANGROVE);
             }
             case WorldCoverSource.MOSS_AND_LICHEN -> {
+                if (cliff || rocky != null && t < -2) return rock();
+                if (moor) return moor(patch, roll, rocky);
                 BlockState top = rocky != null ? rocky : patch > 0.2 ? MOSS : roll < 30 ? GRAVEL : GRASS;
-                return new Surface(t < -2 ? snowyPlains : meadow, top, DIRT, 0, 0, 0, top == GRASS ? 200 : 0, top == GRASS ? 230 : 0, false);
+                // Arctic tundra lies under snow; high mountain lichen fields, warm for a few weeks each summer, mostly do not.
+                boolean snowy = t < -2 && (local.warmest() < 2 || Math.abs(latitude(z)) > 55);
+                return new Surface(snowy ? snowyPlains : meadow, top, DIRT, 0, 0, 0, top == GRASS ? 200 : 0, top == GRASS ? 230 : 0, false);
             }
             default -> { return null; }
         }
+    }
+
+    /** Bare rock in a biome where snow does not lie, for faces too steep to hold it. */
+    private Surface rock() { return new Surface(stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false); }
+
+    /** Open grass in a climate: savanna, steppe, meadow, prairie or moor. */
+    private Surface grassland(BlockState top, int x, int z, Local local, double patch, boolean moor, int roll, @Nullable BlockState rocky) {
+        if (moor) return moor(patch, roll, rocky);
+        return switch (local.zone()) {
+            // Savanna and steppe grass, dry for much of the year.
+            case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> new Surface(savanna, top, DIRT, 2, 0, 0, 380, 390, false, Tree.ACACIA);
+            // Junipers on the cold steppes.
+            case COLD_DESERT, COLD_STEPPE -> new Surface(savanna, top, DIRT, 2, 10, 0, 380, 390, false);
+            case MEDITERRANEAN -> new Surface(local.warmest() >= 21 ? savanna : plains, top, DIRT, 1, 0, 0, 360, 380, false);
+            // Alpine and arctic meadows.
+            case TUNDRA, ICE -> new Surface(meadow, top, DIRT, 0, 0, 0, 300, 360, false);
+            case SUBARCTIC, SUBPOLAR_OCEANIC -> new Surface(plains, top, DIRT, 1, 10, 0, 330, 350, false);
+            // Sunflower fields on the continental steppes and farmland.
+            case CONTINENTAL -> patch > 0.45 ? new Surface(sunflowerPlains, top, DIRT, 1, 0, 1, 330, 420, false)
+                    : new Surface(plains, top, DIRT, 1, 0, 1, 330, 380, false);
+            default -> new Surface(plains, top, DIRT, 1, 0, 1, 330, 380, false);
+        };
+    }
+
+    /** Heather moor: dark, brown ground of peat and podzol among the grass, with ferns, few flowers and fewer trees. */
+    private Surface moor(double patch, int roll, @Nullable BlockState rocky) {
+        BlockState top = rocky != null ? rocky : patch > 0.25 || roll < 25 ? PODZOL : patch < -0.35 ? COARSE_DIRT : GRASS;
+        return new Surface(taiga, top, DIRT, 1, 10, 0, 330, 345, true);
+    }
+
+    /** Sagebrush steppe: dead bushes and tufts on bare dirt, a few junipers. */
+    private Surface sagebrush(BlockState top, int trees) { return new Surface(savanna, top, DIRT, 2 * trees, 10, 0, 300, 310, false); }
+
+    /** Bare ground between the shrubs of a dry plain: red sand on the Colorado Plateau, else tan dirt. */
+    private BlockState scrubGround(int x, int z) { return redRock(x, z) ? RED_SAND : COARSE_DIRT; }
+
+    /** Salt pan cells, in blocks, and whether each is a salt pan. */
+    private static final int SALT_CELL = 64;
+    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> saltPans = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Whether a column lies on a salt pan: dead flat for a few hundred metres and the lowest ground
+     * of its basin, where water gathers and dries away. Plains that only look flat slope away
+     * somewhere, and dunes are never flat.
+     */
+    private boolean saltPan(int x, int z) {
+        int cx = Math.floorDiv(x, SALT_CELL), cz = Math.floorDiv(z, SALT_CELL);
+        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        Boolean known = saltPans.get(key);
+        if (known != null) return known;
+        GlobalElevation dem = elevation[WATER_ZOOM];
+        double px = (cx + 0.5) * SALT_CELL, pz = (cz + 0.5) * SALT_CELL;
+        // The survey is speckled a few metres up and down even on a dead flat pan, so flatness is judged by the spread.
+        double sum = dem.metres(px, pz), squares = sum * sum;
+        for (int k = 0; k < 8; k++) {
+            double m = dem.metres(px + RING_X[k] * 200, pz + RING_Z[k] * 200);
+            sum += m;
+            squares += m * m;
+        }
+        double mean = sum / 9, spread = Math.sqrt(Math.max(0, squares / 9 - mean * mean));
+        boolean pan = spread < 1.8;
+        // Nothing round about lies lower: the pan is the bottom of its basin, where no water drains away.
+        for (int k = 0; k < 8 && pan; k++) if (dem.metres(px + RING_X[k] * 3000, pz + RING_Z[k] * 3000) < mean - 3) pan = false;
+        if (saltPans.size() > 1 << 18) saltPans.clear();
+        saltPans.putIfAbsent(key, pan);
+        return pan;
+    }
+
+    /** Young volcanic islands and fields whose bare ground is black lava: Hawaii, Iceland, the Canaries, the Galápagos, Etna, Réunion. */
+    private static final double[][] LAVA = {
+            {18.8, 22.3, -160.5, -154.7}, {63.2, 66.6, -24.6, -13.4}, {27.6, 29.5, -18.2, -13.3},
+            {-1.5, 0.7, -92.0, -89.0}, {37.6, 37.9, 14.8, 15.2}, {-21.4, -20.8, 55.2, 55.9}};
+
+    private boolean volcanic(int x, int z) {
+        GeoPoint p = grid.geographic(x, z);
+        for (double[] box : LAVA) if (p.latitude() > box[0] && p.latitude() < box[1] && p.longitude() > box[2] && p.longitude() < box[3]) return true;
+        return false;
+    }
+
+    /** Whether a column is in Australia's arid interior, the red centre. */
+    private boolean outback(int x, int z) {
+        GeoPoint p = grid.geographic(x, z);
+        return p.latitude() > -32 && p.latitude() < -14 && p.longitude() > 114 && p.longitude() < 150;
+    }
+
+    /** Whether a column is on the Colorado Plateau, whose bare ground is red rock and red sand. */
+    private boolean redRock(int x, int z) {
+        GeoPoint p = grid.geographic(x, z);
+        return p.latitude() > 35 && p.latitude() < 38.5 && p.longitude() > -113 && p.longitude() < -108;
+    }
+
+    /** About how much of a hot desert's sand is orange: most in Australia, much in the Sahara and Arabia, little in the Americas. */
+    private double redShare(int x, int z) {
+        GeoPoint p = grid.geographic(x, z);
+        double lat = p.latitude(), lon = p.longitude();
+        if (lon > 110 && lon < 155 && lat < -10) return 0.7;
+        if (lon > -20 && lon < 65) return 0.5;
+        return 0.1;
     }
 
     /**
@@ -702,7 +872,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (patch > 0.35) return new Surface(birchForest, GRASS, DIRT, 82, 0, 8, 90, 130, false);
         if (patch > 0.22) return new Surface(flowerForest, GRASS, DIRT, 45, 0, 1, 100, 320, false);
         if (patch < -0.45) return new Surface(darkForest, GRASS, DIRT, 92, 0, 1, 80, 100, false, Tree.DARK_OAK);
-        if (patch < -0.2 && cherries(x, z)) return new Surface(cherryGrove, GRASS, DIRT, 35, 0, 0, 200, 420, false, Tree.CHERRY);
+        if (patch < -0.25 && patch > -0.35 && cherries(x, z)) return new Surface(cherryGrove, GRASS, DIRT, 35, 0, 0, 200, 420, false, Tree.CHERRY);
         return usual;
     }
 
@@ -783,8 +953,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (sequoias(x, z, y)) return new Surface(oldTaiga, patch > -0.2 ? PODZOL : GRASS, DIRT, 70, 7, 0, 90, 100, true, Tree.SEQUOIA);
         double t = local.temperature();
         return switch (local.zone()) {
-            case RAINFOREST -> patch < -0.4 && bamboo(x, z) ? bambooForest(patch) : new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true, Tree.JUNGLE);
-            case TROPICAL_DRY -> local.rain() > 1000 ? new Surface(sparseJungle, GRASS, DIRT, 70, 0, 0, 150, 160, true, Tree.JUNGLE)
+            case RAINFOREST -> patch < -0.5 && bamboo(x, z) ? bambooForest(patch) : new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true, Tree.JUNGLE);
+            // Monsoon forest where the wet season is long; open woodland with grass between the trees, as in the
+            // cerrado and the Pantanal's tree islands, where it is not; acacia savanna woodland where drier still.
+            case TROPICAL_DRY -> local.rain() > 1800 ? new Surface(sparseJungle, GRASS, DIRT, 70, 0, 0, 150, 160, true, Tree.JUNGLE)
+                    : local.rain() > 1000 ? new Surface(sparseJungle, GRASS, DIRT, 10, 0, 0, 300, 320, false, Tree.JUNGLE)
                     : new Surface(savanna, GRASS, DIRT, 35, 0, 0, 300, 310, false, Tree.ACACIA);
             case HOT_DESERT, HOT_STEPPE -> new Surface(savanna, GRASS, DIRT, 30, 0, 0, 260, 270, false, Tree.ACACIA);
             // Pinyon, juniper and pine on dry uplands.
@@ -793,7 +966,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             // Conifers on cooler, wetter Mediterranean mountains (the Sierra, the Cascades), oak below.
             case MEDITERRANEAN -> t < 12 ? new Surface(local.rain() > 900 ? oldTaiga : taiga, local.rain() > 900 && patch > 0.3 ? PODZOL : GRASS, DIRT, 80, 8, 0, 110, 120, true)
                     : new Surface(forest, GRASS, DIRT, 70, 1, 0, 140, 170, false);
-            case SUBTROPICAL -> patch < -0.45 && bamboo(x, z) ? bambooForest(patch)
+            case SUBTROPICAL -> patch < -0.62 && bamboo(x, z) ? bambooForest(patch)
                     : t > 20 ? new Surface(sparseJungle, GRASS, DIRT, 80, 0, 0, 140, 160, true, Tree.JUNGLE)
                     : groves(patch, x, z, new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false));
             case OCEANIC -> groves(patch, x, z, new Surface(forest, GRASS, DIRT, 82, t < 8 ? 3 : 0, 2, 90, 130, true));
