@@ -32,6 +32,7 @@ public final class EarthConfig {
     public static final ModConfigSpec.IntValue FAR_TEXTURED_LEVELS;
     public static final ModConfigSpec.BooleanValue SHOW_DOWNLOADS;
     public static final ModConfigSpec.BooleanValue PRESELECT_EARTH;
+    public static final ModConfigSpec.IntValue CLOUD_HEIGHT;
 
     // Common --------------------------------------------------------------------------------------
     public static final ModConfigSpec COMMON_SPEC;
@@ -52,6 +53,9 @@ public final class EarthConfig {
                 .translation(key("showDownloads")).define("showDownloadStatus", true);
         PRESELECT_EARTH = client.comment("Pick the Earth world type when you open Create World.")
                 .translation(key("preselectEarth")).define("preselectEarth", true);
+        CLOUD_HEIGHT = client.comment("Height of the clouds in Earth worlds, in metres above sea level; they also stay at least 1200 m over",
+                        "the ground you stand on. 0 keeps vanilla clouds at Y 192. Shader packs draw their own clouds. Default 2500.")
+                .translation(key("cloudHeight")).defineInRange("cloudHeight", 2500, 0, 9000);
         CLIENT_SPEC = client.build();
 
         ModConfigSpec.Builder common = new ModConfigSpec.Builder();
