@@ -34,9 +34,15 @@ public final class JetStream {
 
     public static boolean inCubic(LivingEntity entity) { return CubicLevel.of(entity.level()) != null; }
 
-    /** Gliding high enough that terrain can't be near. */
+    /** Gliding, or riding something carried by the wind such as a ship, high enough that terrain can't be near. */
     public static boolean aboveTerrain(LivingEntity entity) {
-        return entity.isFallFlying() && entity.getY() >= CLEAR_SKY && inCubic(entity);
+        return entity.getY() >= CLEAR_SKY && (entity.isFallFlying() || carried(entity)) && inCubic(entity);
+    }
+
+    /** Moved faster than any elytra flight below the wind since last tick, as a rider on a ship in the jet stream does. */
+    private static boolean carried(LivingEntity entity) {
+        double dx = entity.getX() - entity.xo, dz = entity.getZ() - entity.zo;
+        return dx * dx + dz * dz > NORMAL_TOP * NORMAL_TOP;
     }
 
     /** Gliding in the wind layer. */
