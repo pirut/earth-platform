@@ -89,8 +89,10 @@ final class FarMesher {
         final int[] tops;
         final int[][] sideTops;
         final float[] surface;
-        /** Each voxel column's ground slope as a {@link #normalCode}, under a shader pack; null without one. */
-        @Nullable final int[] normals;
+        /** Each voxel column's ground slope as a {@link #normalCode}. */
+        final int[] normals;
+        /** Each voxel column's highest ground row (not water or trees), or -1. */
+        final int[] groundRows = new int[256];
         final Flat opaqueFlat = new Flat(), waterFlat = new Flat();
         /** Side face pieces by direction (north, south, west, east) and voxel column. */
         @SuppressWarnings("unchecked") final List<Piece>[][] pieces = new List[4][256];
@@ -104,7 +106,8 @@ final class FarMesher {
             tops = tops(job.sections);
             sideTops = sideTops(job);
             surface = surface(job, v);
-            normals = job.shaderIds == null ? null : normals(job, voxel);
+            for (int cell = 0; cell < 256; cell++) groundRows[cell] = groundRow(job.sections, cell & 15, cell >> 4);
+            normals = normals(job, voxel);
         }
 
         Built build() {
@@ -185,9 +188,11 @@ final class FarMesher {
                     if (liquid) waterFace(state, biome, direction, x, z, from, to - from);
                     else {
                         int index = direction.get3DDataValue() - 2;
+                        // The ground's own step risers look like the ground's top, so a gentle slope of
+                        // voxel stairs reads as one surface rather than stripes of top and side texture.
                         List<Piece> list = pieces[index][cell];
                         if (list == null) list = pieces[index][cell] = new ArrayList<>(2);
-                        list.add(new Piece(from, to, look(state, biome, direction, sky, cell), group));
+                        list.add(new Piece(from, to, look(state, biome, vy == groundRows[cell] ? Direction.UP : direction, sky, cell), group));
                     }
                 }
             }
@@ -204,12 +209,12 @@ final class FarMesher {
         }
 
         /**
-         * A face's look id, its light and, under a shader pack, its ground slope, which faces must
-         * share to merge. Foliage and undersides keep their own face's normal.
+         * A face's look id, its light and its ground slope, which faces must share to merge.
+         * Foliage and undersides keep their own face's normal.
          */
         private long look(BlockState state, Holder<Biome> biome, Direction direction, int sky, int cell) {
             int id = job.looks.id(job.faces, state, direction, biome, job.textured, job.shaderIds);
-            int normal = normals == null || direction == Direction.DOWN || foliage(state) ? 0 : normals[cell];
+            int normal = direction == Direction.DOWN || foliage(state) ? 0 : normals[cell];
             return (long) normal << 40 | (long) id << 8 | sky;
         }
 
@@ -462,8 +467,9 @@ final class FarMesher {
 
     /**
      * The ground's slope at each voxel column, from the ground heights either side of it, so a
-     * shader pack lights a stepped hillside as the slope it stands for instead of as stripes of lit
-     * tops and dark risers. Columns next door give the heights past the edges, where they are known.
+     * stepped hillside is lit, with or without a shader pack, as the slope it stands for instead
+     * of as stripes of lit tops and dark risers. Columns next door give the heights past the
+     * edges, where they are known.
      */
     private static int[] normals(Job job, int voxel) {
         int[] ground = new int[18 * 18];

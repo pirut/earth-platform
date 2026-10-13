@@ -147,20 +147,48 @@ final class FarShaders {
             }
             """;
 
+    /**
+     * The ground slope a far face stands for, from {@link FarMesher#normalCode}; a zero vector for
+     * faces that keep their own normal (foliage and undersides).
+     */
+    private static final String SLOPE = """
+            flat in uint earth_normal;
+
+            vec3 earth_slope() {
+                if (earth_normal == 0u) return vec3(0.0);
+                vec2 xz = (vec2(float(earth_normal & 63u), float(earth_normal >> 6)) - 32.0) / 31.0;
+                return vec3(xz.x, sqrt(max(0.0, 1.0 - dot(xz, xz))), xz.y);
+            }
+            """;
+
+    /**
+     * Vanilla's side shading (up, north and south, east and west), weighted by how far the face's
+     * ground slope leans each way, so a stepped hillside shades as one slope instead of stripes.
+     */
+    private static final String SHADE = SLOPE + """
+            uniform float earth_Shade[6];
+
+            float earth_shade() {
+                vec3 slope = earth_slope();
+                if (slope == vec3(0.0)) return earth_Shade[earth_face];
+                vec3 weight = slope * slope;
+                return weight.x * earth_Shade[4] + weight.y * earth_Shade[1] + weight.z * earth_Shade[2];
+            }
+            """;
+
     /** Vanilla look: lightmap, side shading and linear fog, as rendertype_solid does. */
-    static final String FRAGMENT = SAMPLE + """
+    static final String FRAGMENT = SAMPLE + SHADE + """
             uniform sampler2D earth_Lightmap;
             uniform vec4 earth_ColorModulator;
             uniform float earth_FogStart;
             uniform float earth_FogEnd;
             uniform vec4 earth_FogColor;
-            uniform float earth_Shade[6];
 
             out vec4 earth_fragColor;
 
             void main() {
                 vec4 colour = earth_sample();
-                colour.rgb *= earth_tint * earth_Shade[earth_face];
+                colour.rgb *= earth_tint * earth_shade();
                 vec2 light = clamp(earth_levels() / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0));
                 colour *= texture(earth_Lightmap, light) * earth_ColorModulator;
                 if (earth_distance > earth_FogStart) {
@@ -187,15 +215,13 @@ final class FarShaders {
                 uint customId;
             };
 
-            flat in uint earth_normal;
+            """ + SLOPE + """
 
-            // A far voxel's face lit mostly as the slope its stack of voxels stands for, so hillsides
+            // A far voxel's face lit as the slope its stack of voxels stands for, so hillsides
             // don't show as stripes of lit tops and dark risers; foliage keeps its face's normal.
             vec3 earth_packNormal(vec3 face) {
-                if (earth_normal == 0u) return face;
-                vec2 xz = (vec2(float(earth_normal & 63u), float(earth_normal >> 6)) - 32.0) / 31.0;
-                vec3 slope = vec3(xz.x, sqrt(max(0.0, 1.0 - dot(xz, xz))), xz.y);
-                return normalize(mix(face, slope, 0.85));
+                vec3 slope = earth_slope();
+                return slope == vec3(0.0) ? face : slope;
             }
             """;
 
@@ -214,15 +240,14 @@ final class FarShaders {
             """;
 
     /** For packs without Voxy support: the far terrain's lit colour into the pack's first terrain target. */
-    static final String PACK_FALLBACK = SAMPLE + """
+    static final String PACK_FALLBACK = SAMPLE + SHADE + """
             uniform sampler2D earth_Lightmap;
-            uniform float earth_Shade[6];
 
             layout(location = 0) out vec4 earth_fragColor;
 
             void main() {
                 vec4 colour = earth_sample();
-                colour.rgb *= earth_tint * earth_Shade[earth_face];
+                colour.rgb *= earth_tint * earth_shade();
                 colour *= texture(earth_Lightmap, clamp(earth_levels() / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
                 earth_fragColor = vec4(colour.rgb, 1.0);
             }
