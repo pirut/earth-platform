@@ -26,6 +26,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * which land cover already holds, or seasonal floodplain the land cover rightly calls land.
  * </ol>
  * Strength between pixel centres follows a cubic B-spline, so outlines curve as rivers do.
+ *
+ * <p>Rivers narrower than the occurrence pixels, which no satellite water map holds, come from
+ * {@link Drainage}'s streams where it is given: each step of a stream is laid along the valley
+ * floor of the finer elevation between the lowest points by its two ends, as a line one pixel
+ * wide and stronger for the more ground it drains. Next to a narrow river the occurrence already
+ * shows, the stream gives way to it and joins it as its gaps do.
  */
 public final class RiverMap {
     /** Strength at a river's edge. */
@@ -44,8 +50,18 @@ public final class RiverMap {
     static final int WIDE = 3;
     private static final int TILE = 256, MARGIN = 56, SPAN = TILE + 2 * MARGIN, CELL = 16;
     private static final float SOLID = 0.5f;
+    /** Pixels round a stream step's ends searched for the valley floor; extra pixels round a step its course may take. */
+    static final int SNAP = 3, ROOM = 4;
+    /** Cost, per metre above the lowest ground within {@value #FLOOR} pixels, of a stream's course leaving the valley floor. */
+    static final double CLIMB = 30;
+    static final int FLOOR = 3;
+    /** Longest spur, in pixels, pruned off stream courses; and pixels round a narrow river's water a stream gives way within. */
+    static final int SPUR = 3, BESIDE = 12;
+    /** Strength of the smallest stream's line, enough that it stays unbroken where it runs aslant. */
+    private static final float STREAM = 0.7f;
 
     private final SurfaceWaterSource source;
+    private final Drainage drainage;
     private final int maxTiles;
     private final LinkedHashMap<Long, Traced> memory = new LinkedHashMap<>(64, 0.75f, true);
     private final Map<Long, CompletableFuture<Traced>> inFlight = new ConcurrentHashMap<>();
@@ -55,7 +71,13 @@ public final class RiverMap {
     private record Traced(long key, byte[] strength, byte[] cells) {}
 
     public RiverMap(SurfaceWaterSource source, int maxTiles) {
+        this(source, null, maxTiles);
+    }
+
+    /** @param drainage streams too narrow for the occurrence pixels, or null for the occurrence alone */
+    public RiverMap(SurfaceWaterSource source, Drainage drainage, int maxTiles) {
         this.source = Objects.requireNonNull(source);
+        this.drainage = drainage;
         if (maxTiles < 4) throw new IllegalArgumentException("River map needs room for at least four squares");
         this.maxTiles = maxTiles;
     }
@@ -163,7 +185,7 @@ public final class RiverMap {
         int[] occurrence = new int[SPAN * SPAN];
         for (int j = 0; j < SPAN; j++) for (int i = 0; i < SPAN; i++)
             occurrence[j * SPAN + i] = source.occurrence(x0 - MARGIN + i, y0 - MARGIN + j);
-        float[] strength = trace(occurrence, SPAN);
+        float[] strength = trace(occurrence, drainage == null ? null : streams(x0 - MARGIN, y0 - MARGIN), SPAN);
         byte[] out = new byte[TILE * TILE], cells = new byte[(TILE / CELL) * (TILE / CELL)];
         for (int j = 0; j < TILE; j++) for (int i = 0; i < TILE; i++) {
             int value = Math.round(Math.min(1, strength[(j + MARGIN) * SPAN + i + MARGIN]) * 255);
@@ -176,17 +198,180 @@ public final class RiverMap {
 
     /** Strength, 0 to 1, per pixel of a square {@code span} pixels across from its occurrence pixels. */
     static float[] trace(int[] occurrence, int span) {
+        return trace(occurrence, null, span);
+    }
+
+    /** As {@link #trace(int[], int)}, with streams' strength per pixel laid in where no narrow river shows beside them. */
+    static float[] trace(int[] occurrence, float[] streams, int span) {
         int n = span * span;
         float[] v = new float[n];
         for (int k = 0; k < n; k++) v[k] = Math.max(0, Math.min(1, (occurrence[k] - NONE) / (float) (FULL - NONE)));
         float[] f = close(v, span);
         boolean[] solid = new boolean[n];
         for (int k = 0; k < n; k++) solid[k] = f[k] >= SOLID;
+        if (streams != null) {
+            boolean[] wide = open(solid, span, WIDE), narrow = new boolean[n];
+            for (int k = 0; k < n; k++) narrow[k] = solid[k] && !wide[k];
+            boolean[] beside = grow(narrow, span, BESIDE);
+            for (int k = 0; k < n; k++) if (streams[k] > 0 && !beside[k]) {
+                f[k] = Math.max(f[k], streams[k]);
+                solid[k] |= streams[k] >= SOLID;
+            }
+        }
         join(f, solid, span);
         // Leave out wide water: pixels inside a disc of the given radius that fits wholly in water, and the disc.
         boolean[] wide = open(solid, span, WIDE);
         for (int k = 0; k < n; k++) if (wide[k]) f[k] = 0;
         return f;
+    }
+
+
+    /** Pixels within a square of the given radius of any set pixel. */
+    static boolean[] grow(boolean[] a, int span, int radius) {
+        boolean[] across = new boolean[a.length], out = new boolean[a.length];
+        for (int y = 0; y < span; y++) for (int x = 0; x < span; x++) {
+            boolean hit = false;
+            for (int r = -radius; r <= radius && !hit; r++) hit = at(a, span, x + r, y);
+            across[y * span + x] = hit;
+        }
+        for (int y = 0; y < span; y++) for (int x = 0; x < span; x++) {
+            boolean hit = false;
+            for (int r = -radius; r <= radius && !hit; r++) hit = at(across, span, x, y + r);
+            out[y * span + x] = hit;
+        }
+        return out;
+    }
+
+    /**
+     * Drainage's streams over a square of pixels from a corner: each step from the lowest point
+     * near one end to the lowest near the other along the cheapest course, where leaving the
+     * valley floor costs {@value #CLIMB} a metre, with spurs off the courses pruned. Strength per
+     * pixel, rising from {@link #STREAM} for the smallest stream to full for a river.
+     */
+    private float[] streams(int column, int row) {
+        int span = SPAN, n = span * span;
+        float[] height = new float[n];
+        for (int j = 0; j < span; j++) {
+            double latitude = SurfaceWaterSource.NORTH - (row + j + 0.5) / SurfaceWaterSource.PIXELS_PER_DEGREE;
+            for (int i = 0; i < span; i++)
+                height[j * span + i] = (float) drainage.metres(latitude, (column + i + 0.5) / SurfaceWaterSource.PIXELS_PER_DEGREE - 180);
+        }
+        float[] floor = lowest(height, span, FLOOR);
+        float[] streams = new float[n];
+        double north = SurfaceWaterSource.NORTH - (double) row / SurfaceWaterSource.PIXELS_PER_DEGREE;
+        double south = SurfaceWaterSource.NORTH - (double) (row + span) / SurfaceWaterSource.PIXELS_PER_DEGREE;
+        double west = (double) column / SurfaceWaterSource.PIXELS_PER_DEGREE - 180, east = (double) (column + span) / SurfaceWaterSource.PIXELS_PER_DEGREE - 180;
+        drainage.links(south, west, north, east, (latitude, longitude, toLatitude, toLongitude, area) -> {
+            int ax = (int) Math.floor((longitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE) - column;
+            int ay = (int) Math.floor((SurfaceWaterSource.NORTH - latitude) * SurfaceWaterSource.PIXELS_PER_DEGREE) - row;
+            int bx = (int) Math.floor((toLongitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE) - column;
+            int by = (int) Math.floor((SurfaceWaterSource.NORTH - toLatitude) * SurfaceWaterSource.PIXELS_PER_DEGREE) - row;
+            if (ax < 0 || ay < 0 || bx < 0 || by < 0 || ax >= span || ay >= span || bx >= span || by >= span) return;
+            double share = Math.log(Math.max(1, area / Drainage.STREAM_AREA)) / Math.log(Drainage.RIVER_AREA / Drainage.STREAM_AREA);
+            float strength = (float) (STREAM + (1 - STREAM) * Math.min(1, share));
+            course(height, floor, streams, span, snap(height, span, ax, ay), snap(height, span, bx, by), strength);
+        });
+        boolean[] on = new boolean[n];
+        for (int k = 0; k < n; k++) on[k] = streams[k] > 0;
+        prune(on, span, SPUR);
+        for (int k = 0; k < n; k++) if (!on[k]) streams[k] = 0;
+        return streams;
+    }
+
+    /** The lowest pixel within {@value #SNAP} pixels of one, as its index. */
+    private static int snap(float[] height, int span, int x, int y) {
+        int best = -1;
+        for (int j = Math.max(0, y - SNAP); j <= Math.min(span - 1, y + SNAP); j++)
+            for (int i = Math.max(0, x - SNAP); i <= Math.min(span - 1, x + SNAP); i++)
+                if (best < 0 || height[j * span + i] < height[best]) best = j * span + i;
+        return best;
+    }
+
+    /** Lowest height within a square of the given radius of each pixel. */
+    static float[] lowest(float[] height, int span, int radius) {
+        float[] across = new float[height.length], out = new float[height.length];
+        for (int y = 0; y < span; y++) for (int x = 0; x < span; x++) {
+            float low = Float.MAX_VALUE;
+            for (int i = Math.max(0, x - radius); i <= Math.min(span - 1, x + radius); i++) low = Math.min(low, height[y * span + i]);
+            across[y * span + x] = low;
+        }
+        for (int y = 0; y < span; y++) for (int x = 0; x < span; x++) {
+            float low = Float.MAX_VALUE;
+            for (int j = Math.max(0, y - radius); j <= Math.min(span - 1, y + radius); j++) low = Math.min(low, across[j * span + x]);
+            out[y * span + x] = low;
+        }
+        return out;
+    }
+
+    /** Lays the cheapest course from one pixel to another, within {@value #ROOM} pixels of the box round them, at a strength. */
+    private static void course(float[] height, float[] floor, float[] out, int span, int from, int to, float strength) {
+        int fx = from % span, fy = from / span, tx = to % span, ty = to / span;
+        int x0 = Math.max(0, Math.min(fx, tx) - ROOM), y0 = Math.max(0, Math.min(fy, ty) - ROOM);
+        int x1 = Math.min(span - 1, Math.max(fx, tx) + ROOM), y1 = Math.min(span - 1, Math.max(fy, ty) + ROOM);
+        int w = x1 - x0 + 1, h = y1 - y0 + 1, n = w * h;
+        double[] cost = new double[n];
+        int[] previous = new int[n];
+        java.util.Arrays.fill(cost, Double.MAX_VALUE);
+        java.util.PriorityQueue<double[]> queue = new java.util.PriorityQueue<>((a, b) -> a[0] != b[0] ? Double.compare(a[0], b[0]) : Double.compare(a[1], b[1]));
+        int start = (fy - y0) * w + fx - x0, goal = (ty - y0) * w + tx - x0;
+        cost[start] = 0;
+        previous[start] = -1;
+        queue.add(new double[]{0, start});
+        while (!queue.isEmpty()) {
+            double[] top = queue.poll();
+            int at = (int) top[1];
+            if (top[0] > cost[at]) continue;
+            if (at == goal) break;
+            int x = at % w, y = at / w;
+            for (int d = 0; d < 8; d++) {
+                int nx = x + NX[d], ny = y + NY[d];
+                if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+                int next = ny * w + nx, k = (ny + y0) * span + nx + x0;
+                double step = (1 + CLIMB * (height[k] - floor[k])) * (d % 2 == 1 ? Math.sqrt(2) : 1);
+                if (cost[at] + step < cost[next]) {
+                    cost[next] = cost[at] + step;
+                    previous[next] = at;
+                    queue.add(new double[]{cost[next], next});
+                }
+            }
+        }
+        for (int at = goal; at >= 0; at = at == start ? -1 : previous[at]) {
+            int k = (at / w + y0) * span + at % w + x0;
+            out[k] = Math.max(out[k], strength);
+        }
+    }
+
+    /**
+     * Prunes spurs of up to a length off lines one pixel wide: their ends are worn back that
+     * many times, then the ends left grow back over what was worn off them, which a spur's stub,
+     * sitting on a line, does not.
+     */
+    static void prune(boolean[] on, int span, int length) {
+        List<int[]> worn = new ArrayList<>();
+        for (int round = 0; round < length; round++) {
+            List<Integer> ends = new ArrayList<>();
+            for (int k = 0; k < on.length; k++) if (on[k] && neighbours(on, span, k) == 1) ends.add(k);
+            int[] these = ends.stream().mapToInt(Integer::intValue).toArray();
+            for (int k : these) on[k] = false;
+            worn.add(these);
+        }
+        for (int round = length - 1; round >= 0; round--) {
+            List<Integer> back = new ArrayList<>();
+            for (int k : worn.get(round)) {
+                int x = k % span, y = k / span;
+                for (int d = 0; d < 8; d++) {
+                    int qx = x + NX[d], qy = y + NY[d];
+                    if (at(on, span, qx, qy) && neighbours(on, span, qy * span + qx) <= 1) { back.add(k); break; }
+                }
+            }
+            for (int k : back) on[k] = true;
+        }
+    }
+
+    private static int neighbours(boolean[] on, int span, int k) {
+        int x = k % span, y = k / span, count = 0;
+        for (int d = 0; d < 8; d++) if (at(on, span, x + NX[d], y + NY[d])) count++;
+        return count;
     }
 
     /** Pixels raised to most of the weaker of the strongest pixels within a gap on either side of them along a line. */
