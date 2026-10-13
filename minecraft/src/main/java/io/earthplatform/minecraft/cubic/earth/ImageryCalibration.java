@@ -221,6 +221,8 @@ public final class ImageryCalibration {
         BlockState top = surface.top();
         int ground;
         Integer known = GROUND_RGB.get(top);
+        // Pools level with the ground, as in marshes and bogs, read as the water they are, as lakes do.
+        if (top.is(Blocks.WATER)) return 0x2B4F8C;
         if (known != null) ground = known;
         else if (top.is(Blocks.GRASS_BLOCK)) ground = tint(surface.biome().value().getGrassColor(x, z), 0.58);
         else ground = top.getMapColor(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).col;
