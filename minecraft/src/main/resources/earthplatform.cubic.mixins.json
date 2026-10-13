@@ -18,6 +18,7 @@
     "CubicPoiStorageMixin",
     "CubicPoiQueryMixin",
     "CubicMapStructureMixin",
+    "CubicStructureManagerMixin",
     "CubicLocateMixin"
   ],
   "client": [

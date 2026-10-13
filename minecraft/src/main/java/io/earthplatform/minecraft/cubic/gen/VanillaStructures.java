@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
@@ -28,6 +29,7 @@ import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.WorldGenRegion;
+import net.minecraft.tags.BiomeTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.LevelHeightAccessor;
@@ -56,6 +58,7 @@ import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
+import net.minecraft.world.level.levelgen.structure.pieces.StructurePieceSerializationContext;
 import net.minecraft.world.level.levelgen.structure.TerrainAdjustment;
 import net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement;
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement;
@@ -123,6 +126,8 @@ final class VanillaStructures {
     private final ConcurrentHashMap<Long, Optional<Start>> starts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, List<Start>> columns = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, CompletableFuture<Long2ObjectOpenHashMap<Patch>>> overlays = new ConcurrentHashMap<>();
+    /** Copies of deep starts moved to real heights, for vanilla's checks of what lies inside a structure. */
+    private final ConcurrentHashMap<Long, StructureStart> realStarts = new ConcurrentHashMap<>();
 
     VanillaStructures(ServerLevel level, Host host, long seed) {
         this.level = level;
@@ -202,6 +207,45 @@ final class VanillaStructures {
                     && !(start.start.getStructure() instanceof OceanMonumentStructure) ? centre.atY(ground) : centre;
         }
         return null;
+    }
+
+    /**
+     * The starts reaching a chunk column at real heights, standing in for the structure references
+     * vanilla keeps in chunks, which the carrier's chunks never get. Mob spawns (guardians in
+     * monuments, none in trial chambers) and advancements ask about these.
+     */
+    List<StructureStart> startsAt(int cx, int cz) {
+        List<Start> found = column(cx, cz);
+        if (found.isEmpty()) return List.of();
+        List<StructureStart> real = new ArrayList<>(found.size());
+        for (Start start : found) real.add(real(start));
+        return real;
+    }
+
+    /** One structure's start in a chunk at real heights, or null. */
+    @Nullable StructureStart startOf(Structure structure, int chunkX, int chunkZ) {
+        for (Kind kind : kinds) {
+            if (kind.set.value().structures().stream().noneMatch(e -> e.structure().value() == structure)) continue;
+            if (!kind.placement.isStructureChunk(state, chunkX, chunkZ)) continue;
+            Start start = start(kind, chunkX, chunkZ);
+            if (start != null && start.start.getStructure() == structure) return real(start);
+        }
+        return null;
+    }
+
+    /** A start as it stands in the real world: deep ones are laid out in a frame below it, so a moved copy. */
+    private StructureStart real(Start start) {
+        if (start.frame.shift == 0) return start.start;
+        long key = startKey(start.kind, start.chunkX, start.chunkZ);
+        StructureStart cached = realStarts.get(key);
+        if (cached != null) return cached;
+        StructurePieceSerializationContext context = StructurePieceSerializationContext.fromLevel(level);
+        StructureStart copy = StructureStart.loadStaticStart(context, start.start.createTag(context, new ChunkPos(start.chunkX, start.chunkZ)), seed);
+        if (copy == null || !copy.isValid()) return start.start;
+        for (StructurePiece piece : copy.getPieces()) piece.move(0, start.frame.shift, 0);
+        if (realStarts.size() > 4096) realStarts.clear();
+        StructureStart raced = realStarts.putIfAbsent(key, copy);
+        return raced != null ? raced : copy;
     }
 
     /** The structures reaching a block column, with how many blocks each lays and how many in the cube at y. For checking. */
@@ -352,10 +396,14 @@ final class VanillaStructures {
 
     private StructureStart generate(StructureSet.StructureSelectionEntry entry, Frame frame, ChunkPos chunk) {
         Structure structure = entry.structure().value();
+        // Vanilla keeps monuments to its deep ocean biomes, but Earth names its seas by climate and
+        // has no deep warm or lukewarm ones; monumentFloor checks the real seabed depth instead.
+        Predicate<Holder<Biome>> biomes = structure instanceof OceanMonumentStructure
+                ? biome -> biome.is(BiomeTags.IS_OCEAN) : structure.biomes()::contains;
         // Vanilla lays starts out on one thread; some piece builders (strongholds) keep static state
         synchronized (STARTS) {
             return structure.generate(level.registryAccess(), frame, frame.getBiomeSource(), randomState, level.getStructureManager(),
-                    seed, chunk, 0, frame.heights, structure.biomes()::contains);
+                    seed, chunk, 0, frame.heights, biomes);
         }
     }
 

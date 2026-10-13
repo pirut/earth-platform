@@ -22,6 +22,10 @@ public interface CubeGenerator {
     }
     /** The nearest generated structure of a kind (a structure id) within {@code radius} chunks, or null. Slow; call off-thread. */
     default @javax.annotation.Nullable net.minecraft.core.BlockPos locate(java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> structure, int x, int z, int radius) { return null; }
+    /** Starts of this world's structures reaching a chunk column, at real heights. */
+    default List<net.minecraft.world.level.levelgen.structure.StructureStart> structureStarts(int chunkX, int chunkZ) { return List.of(); }
+    /** One structure's start in a chunk at real heights, or null. */
+    default @javax.annotation.Nullable net.minecraft.world.level.levelgen.structure.StructureStart structureStart(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) { return null; }
     /** What structures reach a block, for checking. */
     default String structuresAt(int x, int y, int z) { return ""; }
     /** Called once the server level the cubes are for exists, before any cube generates there. */

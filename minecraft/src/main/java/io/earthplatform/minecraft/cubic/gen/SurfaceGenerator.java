@@ -354,6 +354,16 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return structures == null ? null : structures.locate(structure, x, z, radius);
     }
 
+    @Override public List<net.minecraft.world.level.levelgen.structure.StructureStart> structureStarts(int chunkX, int chunkZ) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? List.of() : structures.startsAt(chunkX, chunkZ);
+    }
+
+    @Override public @Nullable net.minecraft.world.level.levelgen.structure.StructureStart structureStart(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? null : structures.startOf(structure, chunkX, chunkZ);
+    }
+
     @Override public String structuresAt(int x, int y, int z) {
         VanillaStructures structures = vanilla;
         return structures == null ? "" : structures.describe(x, y, z);
