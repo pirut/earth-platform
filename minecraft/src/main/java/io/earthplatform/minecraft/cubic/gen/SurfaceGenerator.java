@@ -268,7 +268,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
      */
     private void farTrees(int level, int x0, int z0, int bottom, LevelChunkSection[] stack, boolean giantsOnly) {
         int v = 1 << level, width = 16 * v, height = stack.length * 16, baseY = bottom * width;
-        int[] leafCount = new int[16 * 16 * height], logCount = new int[leafCount.length];
+        int[] leafCount = new int[16 * 16 * height], logCount = new int[leafCount.length], snowCount = new int[leafCount.length];
         BlockState[] leafKind = new BlockState[leafCount.length], logKind = new BlockState[leafCount.length];
         TreeShape.Sink sink = (x, y, z, state, kind) -> {
             if (kind == TreeShape.GROUND) return;
@@ -279,6 +279,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             // Crowns and trunks only: vines, cocoa and roots are too small to show.
             if (block instanceof LeavesBlock || block instanceof HugeMushroomBlock) { leafCount[i]++; leafKind[i] = state; }
             else if (block instanceof RotatedPillarBlock && block != Blocks.MUDDY_MANGROVE_ROOTS) { logCount[i]++; logKind[i] = state; }
+            else if (block == Blocks.SNOW) snowCount[i]++;
         };
         vegetation.trees(x0, baseY, z0, x0 + width - 1, baseY + height * v - 1, z0 + width - 1, giantsOnly, sink);
         int quarter = Math.max(1, v * v * v / (giantsOnly ? 8 : 4));
@@ -288,6 +289,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             LevelChunkSection section = stack[vy >> 4];
             if (!section.getBlockState(vx, vy & 15, vz).isAir()) continue;
             BlockState state = logCount[i] >= quarter && logCount[i] * 2 >= leafCount[i] ? logKind[i] : leafKind[i];
+            // Leaves under snow that covers a quarter of the voxel's top, lying in it or just above, show white.
+            int snow = snowCount[i] + (i + 256 < snowCount.length ? snowCount[i + 256] : 0);
+            if (state == leafKind[i] && snow > 0 && snow * 4 >= v * v) state = SNOW_BLOCK;
             if (state != null) section.setBlockState(vx, vy & 15, vz, state, false);
         }
     }
@@ -302,7 +306,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         Tree kind = surface.tree((int) Math.floorMod(r >>> 24, 10));
         // A tree's crown covers about 20 columns: thousandths covered, from its attempts per 256 columns.
         if (Math.floorMod(r, 1000) >= Math.min(950, surface.trees() * Trees.full(kind) * 3 / 4)) return null;
-        return Vegetation.leaves(kind);
+        // Where snow falls it lies on most crowns, as it does on the trees nearer.
+        return Trees.snowy(surface) && Math.floorMod(r >>> 40, 3) != 0 ? SNOW_BLOCK : Vegetation.leaves(kind);
     }
 
     // Cubes --------------------------------------------------------------------------------------

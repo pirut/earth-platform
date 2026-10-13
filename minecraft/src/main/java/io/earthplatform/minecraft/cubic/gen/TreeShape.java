@@ -1,5 +1,7 @@
 package io.earthplatform.minecraft.cubic.gen;
 
+import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
@@ -17,13 +19,15 @@ import net.minecraft.world.level.block.MangroveRootsBlock;
 import net.minecraft.world.level.block.RotatedPillarBlock;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.EmptyBlockGetter;
 
 /**
  * One tree as block offsets from its origin, the first block above the ground its trunk stands
  * on, placeable in any of four quarter turns. Blocks below the origin are ground the tree changed
  * (dirt under the trunk, podzol, roots in mud): they follow each column's own ground height, so a
  * tree grown on flat ground sits on any slope. Above it, trunks (logs, stems, roots) replace what
- * is there and crowns (leaves, vines, cocoa, propagules, nests) only fill open space.
+ * is there and crowns (leaves, vines, cocoa, propagules, nests) only fill open space. In cold
+ * places a layer of snow lies on each column's top, as vanilla's freezing leaves it on trees.
  */
 final class TreeShape {
     static final byte GROUND = 0, TRUNK = 1, CROWN = 2;
@@ -31,7 +35,8 @@ final class TreeShape {
     /** Receives a tree's blocks. */
     interface Sink { void put(int x, int y, int z, BlockState state, byte kind); }
 
-    private static final BlockState NEST = Blocks.BEE_NEST.defaultBlockState().setValue(BeehiveBlock.FACING, Direction.SOUTH);
+    private static final BlockState NEST = Blocks.BEE_NEST.defaultBlockState().setValue(BeehiveBlock.FACING, Direction.SOUTH),
+            SNOW = Blocks.SNOW.defaultBlockState();
     private static final Rotation[] TURNS = {Rotation.NONE, Rotation.CLOCKWISE_90, Rotation.CLOCKWISE_180, Rotation.COUNTERCLOCKWISE_90};
 
     private final int[] at;
@@ -43,6 +48,8 @@ final class TreeShape {
     /** The chance of a bee nest, and the packed spots one can take in each quarter turn. */
     private final float bees;
     private final int[][] nests = new int[4][];
+    /** The packed top of each column the tree covers, where snow can settle on a full top face. */
+    private final int[] tops;
 
     private static int pack(int dx, int dy, int dz) { return (dx + 512) | (dz + 512) << 10 | (dy + 512) << 20; }
     private static int dx(int p) { return (p & 1023) - 512; }
@@ -64,6 +71,8 @@ final class TreeShape {
         int lowestLeaf = Integer.MAX_VALUE, lowestLog = Integer.MAX_VALUE;
         IntOpenHashSet taken = new IntOpenHashSet();
         IntArrayList logs = new IntArrayList();
+        Int2IntOpenHashMap top = new Int2IntOpenHashMap();
+        Int2ObjectOpenHashMap<BlockState> topState = new Int2ObjectOpenHashMap<>();
         for (Long2ObjectMap.Entry<BlockState> entry : blocks.long2ObjectEntrySet()) {
             long key = entry.getLongKey();
             int x = BlockPos.getX(key), y = BlockPos.getY(key), z = BlockPos.getZ(key);
@@ -76,10 +85,19 @@ final class TreeShape {
             lowZ = Math.min(lowZ, z); highZ = Math.max(highZ, z);
             if (y < 0) continue;
             taken.add(pack(x, y, z));
+            int column = pack(x, 0, z);
+            if (!top.containsKey(column) || top.get(column) < y) { top.put(column, y); topState.put(column, state); }
             if (state.getBlock() instanceof LeavesBlock) lowestLeaf = Math.min(lowestLeaf, y);
             else if (state.getBlock() instanceof RotatedPillarBlock) { lowestLog = Math.min(lowestLog, y); logs.add(pack(x, y, z)); }
         }
-        minY = lowY; maxY = highY;
+        minY = lowY; maxY = highY + 1;
+        IntArrayList settled = new IntArrayList();
+        for (var entry : top.int2IntEntrySet()) {
+            BlockState state = topState.get(entry.getIntKey());
+            if (Block.isFaceFull(state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO), Direction.UP))
+                settled.add(pack(dx(entry.getIntKey()), entry.getIntValue() + 1, dz(entry.getIntKey())));
+        }
+        tops = settled.toIntArray();
         palette = new BlockState[4][states.size()];
         kinds = new byte[states.size()];
         for (int s = 0; s < states.size(); s++) {
@@ -118,9 +136,9 @@ final class TreeShape {
     /**
      * Writes the blocks that fall in the box (x0..x1, y0..y1, z0..z1) for a tree whose origin is
      * at (ox, oy, oz), turned {@code turn} quarters; {@code ground} gives a column's ground height.
-     * {@code seed} decides the bee nest.
+     * {@code seed} decides the bee nest; with {@code snow}, snow lies on the tree.
      */
-    void place(int ox, int oy, int oz, int turn, long seed, int x0, int y0, int z0, int x1, int y1, int z1,
+    void place(int ox, int oy, int oz, int turn, long seed, boolean snow, int x0, int y0, int z0, int x1, int y1, int z1,
                IntBinaryOperator ground, Sink sink) {
         if (ox + maxX[turn] < x0 || ox + minX[turn] > x1 || oz + maxZ[turn] < z0 || oz + minZ[turn] > z1) return;
         if (oy + maxY < y0 || oy + minY - 8 > y1) return;
@@ -147,6 +165,10 @@ final class TreeShape {
             int spot = spots[(int) Math.floorMod(seed >>> 8, spots.length)];
             int x = ox + dx(spot), y = oy + dy(spot), z = oz + dz(spot);
             if (x >= x0 && x <= x1 && y >= y0 && y <= y1 && z >= z0 && z <= z1) sink.put(x, y, z, NEST, CROWN);
+        }
+        if (snow) for (int p : tops) {
+            int x = ox + turnX(turn, dx(p), dz(p)), y = oy + dy(p), z = oz + turnZ(turn, dx(p), dz(p));
+            if (x >= x0 && x <= x1 && y >= y0 && y <= y1 && z >= z0 && z <= z1) sink.put(x, y, z, SNOW, CROWN);
         }
     }
 }
