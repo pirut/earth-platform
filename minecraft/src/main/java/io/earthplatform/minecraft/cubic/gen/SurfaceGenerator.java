@@ -175,9 +175,35 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     @Override public final int surfaceY(int x, int z) {
         Column cached = columns.get(columnKey(x >> 4, z >> 4));
         if (cached != null) return cached.height[((z & 15) + 1) * 18 + (x & 15) + 1];
+        return (int) (groundOf(x, z) >> 32);
+    }
+
+    /** Ground and water of columns asked about before their cube column is made, packed as ground << 32 | water. */
+    private final ConcurrentHashMap<Long, java.util.concurrent.atomic.AtomicLongArray> grounds = new ConcurrentHashMap<>();
+    private static final long UNKNOWN = Long.MIN_VALUE;
+
+    /**
+     * A column's ground and water, remembered: dungeons and cave roofs ask about the columns round a cube
+     * before those columns' cubes are made, many times over, and each answer reads the whole survey.
+     */
+    private long groundOf(int x, int z) {
+        long key = columnKey(x >> 4, z >> 4);
+        java.util.concurrent.atomic.AtomicLongArray known = grounds.get(key);
+        if (known == null) {
+            java.util.concurrent.atomic.AtomicLongArray fresh = new java.util.concurrent.atomic.AtomicLongArray(256);
+            for (int i = 0; i < 256; i++) fresh.set(i, UNKNOWN);
+            if (grounds.size() > 8192) grounds.clear();
+            known = grounds.putIfAbsent(key, fresh);
+            if (known == null) known = fresh;
+        }
+        int i = (z & 15) << 4 | x & 15;
+        long packed = known.get(i);
+        if (packed != UNKNOWN) return packed;
         int[] sample = new int[2];
         ground(x, z, sample);
-        return sample[0];
+        packed = (long) sample[0] << 32 | sample[1] & 0xFFFFFFFFL;
+        known.set(i, packed);
+        return packed;
     }
 
     /** A column's cover, from the cube column cache when it holds the column. */
@@ -199,9 +225,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     @Override public final int waterY(int x, int z) {
         Column cached = columns.get(columnKey(x >> 4, z >> 4));
         if (cached != null) return cached.water[((z & 15) + 1) * 18 + (x & 15) + 1];
-        int[] sample = new int[2];
-        ground(x, z, sample);
-        return sample[1];
+        return (int) groundOf(x, z);
     }
 
     // Far terrain: voxel columns sampled from the same height, cover and tree rules -------------
