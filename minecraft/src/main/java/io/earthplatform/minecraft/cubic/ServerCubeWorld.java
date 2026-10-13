@@ -184,6 +184,19 @@ public final class ServerCubeWorld extends CubeWorld {
         for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) loadNow(cx + dx, cy + dy, cz + dz);
     }
 
+    /** Asks the workers for the cubes around a block without waiting; true once they are all loaded. */
+    public boolean readyAround(BlockPos pos) {
+        int cx = pos.getX() >> 4, cy = pos.getY() >> 4, cz = pos.getZ() >> 4;
+        boolean ready = true;
+        for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) {
+            long key = CubeKey.pack(cx + dx, cy + dy, cz + dz);
+            if (cubes.containsKey(key)) continue;
+            ready = false;
+            request(key);
+        }
+        return ready;
+    }
+
     private void adoptReady(Ready result) {
         pending.remove(result.key);
         if (cubes.containsKey(result.key)) return;
