@@ -111,6 +111,8 @@ public final class FarRenderer {
         boolean maskStale;
         @Nullable FarGpu.Allocation faces;
         @Nullable VertexBuffer water;
+        /** Water walls by side (north, south, west, east), drawn where that side's column is not. */
+        @Nullable VertexBuffer[] waterWalls = new VertexBuffer[4];
         /** Face and water bytes uploaded for this column, for the debug screen. */
         long bytes;
         double distance;
@@ -130,6 +132,11 @@ public final class FarRenderer {
 
         int baseY() { return bottom * Far.width(level); }
 
+        boolean hasWaterWalls() {
+            for (VertexBuffer wall : waterWalls) if (wall != null) return true;
+            return false;
+        }
+
         /**
          * Keeps drawing the faces of the column this one replaces until its own are built, so a
          * column the server sends again (after an edit, or a repeated request) never leaves a gap
@@ -139,6 +146,7 @@ public final class FarRenderer {
             drawnCubes = old.drawnCubes;
             faces = old.faces;
             water = old.water;
+            waterWalls = old.waterWalls;
             bytes = old.bytes;
             meshed = true;
             // Meshes of the old column still in flight no longer match.
@@ -162,6 +170,7 @@ public final class FarRenderer {
 
         void close(@Nullable FarGpu gpu) {
             if (water != null) { water.close(); water = null; }
+            for (int side = 0; side < 4; side++) if (waterWalls[side] != null) { waterWalls[side].close(); waterWalls[side] = null; }
             if (gpu != null) {
                 gpu.free(faces);
                 if (slot >= 0) gpu.freeSlot(slot);
@@ -282,9 +291,13 @@ public final class FarRenderer {
         long x0 = (long) Far.x(key) * width, z0 = (long) Far.z(key) * width;
         long dx = Math.max(0, Math.max(x0 - bx, bx - (x0 + width))), dz = Math.max(0, Math.max(z0 - bz, bz - (z0 + width)));
         // Hundredths of a width, and finer levels first among equals. Columns a finer level draws
-        // over only stand in while it loads, so they come after every drawn one.
+        // over only stand in while it loads, so they come after every drawn one, except the
+        // outermost two rows: the finer level's outer edge under them comes in last of its ring,
+        // after this level's ring just outside, and without them a band of sky showed there.
         long order = Math.max(dx, dz) * 100 / width * 8 + level;
-        return Far.refined(level, Far.x(key), Far.z(key), bx, bz, finest) ? order + (1L << 32) : order;
+        if (!Far.refined(level, Far.x(key), Far.z(key), bx, bz, finest)) return order;
+        int rings = Math.max(Math.abs(Far.x(key) - Far.column(bx, level)), Math.abs(Far.z(key) - Far.column(bz, level)));
+        return rings >= Far.HOLE - 1 ? order : order + (1L << 32);
     }
 
     /**
@@ -396,7 +409,7 @@ public final class FarRenderer {
             }
             catch (Throwable failure) {
                 EarthPlatformMod.LOGGER.error("Far column mesh failed", failure);
-                built.add(new FarMesher.Built(job.key(), -job.version(), new int[0], new int[FarMesher.GROUPS], null));
+                built.add(new FarMesher.Built(job.key(), -job.version(), new int[0], new int[FarMesher.GROUPS], null, new FarMesher.Part[4]));
             }
         });
     }
@@ -417,6 +430,7 @@ public final class FarRenderer {
                 gpu.free(column.faces);
                 column.faces = gpu.upload(result.quads(), result.counts());
                 column.water = upload(column.water, result.water());
+                for (int side = 0; side < 4; side++) column.waterWalls[side] = upload(column.waterWalls[side], result.waterWalls()[side]);
                 column.freeOldSlots(gpu);
             }
             if (column.stale) schedule(column);
@@ -535,7 +549,7 @@ public final class FarRenderer {
         if (closed || waterFrame == frame) return;
         waterFrame = frame;
         boolean any = false;
-        for (Column column : visible) if (column.water != null) { any = true; break; }
+        for (Column column : visible) if (column.water != null || column.hasWaterWalls()) { any = true; break; }
         if (!any) return;
         Vec3 position = camera.getPosition();
         RenderType type = RenderType.translucent();
@@ -544,15 +558,28 @@ public final class FarRenderer {
         shader.setDefaultUniforms(VertexFormat.Mode.QUADS, modelView, projection, Minecraft.getInstance().getWindow());
         shader.apply();
         Uniform offset = shader.CHUNK_OFFSET;
-        for (int i = visible.size() - 1; i >= 0; i--) {
-            Column column = visible.get(i);
-            if (column.water == null) continue;
-            if (offset != null) {
-                offset.set((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
-                offset.upload();
+        for (int pass = 0; pass < 2; pass++) {
+            // Water walls go last: where the next level's water stands as high, its surface is
+            // already in the depth buffer and hides them, so they only show across a step.
+            for (int i = visible.size() - 1; i >= 0; i--) {
+                Column column = visible.get(i);
+                if (pass == 0 ? column.water == null : !column.hasWaterWalls()) continue;
+                if (offset != null) {
+                    offset.set((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
+                    offset.upload();
+                }
+                if (pass == 0) {
+                    column.water.bind();
+                    column.water.draw();
+                    continue;
+                }
+                for (int side = 0; side < 4; side++) {
+                    VertexBuffer wall = column.waterWalls[side];
+                    if (wall == null || drawnKeys.contains(column.neighbour(side))) continue;
+                    wall.bind();
+                    wall.draw();
+                }
             }
-            column.water.bind();
-            column.water.draw();
         }
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
         shader.clear();
