@@ -61,7 +61,7 @@ public final class FarRenderer {
     private static final int TEXTURED_LEVELS = Integer.getInteger("earthplatform.far.textured", 2);
     private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "block/far_white");
     private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
-            SETTLE_TICKS = 3, UPLOADS_PER_FRAME = 8;
+            SETTLE_TICKS = 3, HIDDEN_SETTLE_TICKS = 40, UPLOADS_PER_FRAME = 8;
     private static final long UPLOAD_NANOS = 3_000_000L;
     private static final AtomicInteger THREADS = new AtomicInteger();
     private static final ExecutorService MESHER = Executors.newFixedThreadPool(2, runnable -> {
@@ -99,6 +99,8 @@ public final class FarRenderer {
         /** The slot of a replaced column's faces still drawn here, freed once this column's own faces are up. */
         int oldSlot = -1;
         boolean building, stale, meshed;
+        /** Its mask changed while a finer level drew over it, so its remesh waits unless it is drawn. */
+        boolean maskStale;
         @Nullable FarGpu.Allocation faces;
         @Nullable VertexBuffer water;
         /** Face and water bytes uploaded for this column, for the debug screen. */
@@ -240,6 +242,7 @@ public final class FarRenderer {
         var player = Minecraft.getInstance().player;
         if (closed || player == null) return;
         if (ticks % MASK_TICKS == 0) mask();
+        for (Column column : drawn) if (column.maskStale) column.due = Math.min(column.due, ticks + SETTLE_TICKS);
         for (Column column : columns.values()) if (column.due >= 0 && column.due <= ticks) submit(column);
         if (ticks % PLAN_TICKS != 0) return;
         LongArrayList missing = new LongArrayList();
@@ -311,12 +314,20 @@ public final class FarRenderer {
             LongOpenHashSet set = sets.get(column.key);
             if (Objects.equals(set, column.drawnCubes)) continue;
             column.drawnCubes = set;
-            schedule(column);
+            // Coarse columns under the finer ones near the player see every cube that compiles there;
+            // remeshing each at once kept the far meshers busy with columns nobody sees, so hidden
+            // ones gather their changes into one remesh a while later.
+            if (drawnKeys.contains(column.key) || !column.meshed) schedule(column);
+            else {
+                column.maskStale = true;
+                if (column.due < 0) column.due = ticks + HIDDEN_SETTLE_TICKS;
+            }
         }
     }
 
     private void submit(Column column) {
         column.due = -1;
+        column.maskStale = false;
         FarGpu gpu = gpu();
         if (gpu == null) return;
         if (column.building) { column.stale = true; return; }
