@@ -7,6 +7,7 @@ import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.RemaElevation;
 import io.earthplatform.geography.globe.RemaSource;
 import io.earthplatform.geography.globe.TerrariumTileSource;
+import io.earthplatform.geography.globe.UsgsElevation;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
@@ -42,6 +43,7 @@ public final class CubicSettings {
     /** Elevation sources by a world's {@code earth.elevation} pin, so worlds made with different sources never share tiles. */
     private static final Map<String, TerrariumTileSource> tiles = new HashMap<>();
     private static RemaElevation rema;
+    private static UsgsElevation usgs;
     private static WorldCoverSource cover;
     private static ClimateSource climate;
     private static ImagerySource imagery;
@@ -149,10 +151,12 @@ public final class CubicSettings {
     /**
      * The elevation pin for new worlds: the Terrarium composite, then the layers laid over it, joined
      * by '+'. With no layers it is the composite's id alone, as worlds made before layers pinned.
-     * Antarctica from REMA is on unless the game runs with {@code -Dearthplatform.earth.rema=false}.
+     * The United States from 3DEP and Antarctica from REMA are on unless the game runs with
+     * {@code -Dearthplatform.earth.3dep=false} or {@code -Dearthplatform.earth.rema=false}.
      */
     public static String elevation() {
         String pin = TerrariumTileSource.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.3dep"))) pin += "+" + UsgsElevation.DATASET_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.rema"))) pin += "+" + RemaElevation.DATASET_ID;
         return pin;
     }
@@ -172,7 +176,8 @@ public final class CubicSettings {
         if (!TerrariumTileSource.DATASET_ID.equals(ids[0])) throw new IllegalStateException("Unsupported elevation '" + pin + "'");
         List<ElevationLayer> layers = new ArrayList<>();
         for (int i = 1; i < ids.length; i++) {
-            if (RemaElevation.DATASET_ID.equals(ids[i])) layers.add(rema());
+            if (UsgsElevation.DATASET_ID.equals(ids[i])) layers.add(usgs());
+            else if (RemaElevation.DATASET_ID.equals(ids[i])) layers.add(rema());
             else throw new IllegalStateException("Unsupported elevation layer '" + ids[i] + "' in '" + pin + "'");
         }
         Path cache = cacheFolder().resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
@@ -184,6 +189,21 @@ public final class CubicSettings {
         }
         tiles.put(pin, known);
         return known;
+    }
+
+    /** The United States from 3DEP, cached on disk beside the elevation tiles. */
+    public static synchronized UsgsElevation usgs() {
+        if (usgs == null) {
+            Path cache = cacheFolder().resolve(UsgsElevation.DATASET_ID);
+            try {
+                // Blocks are up to 1 MiB decoded; a zoom-15 tile needs one to four.
+                usgs = new UsgsElevation(UsgsElevation.AWS_3DEP, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        48, 6, Duration.ofSeconds(30));
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the 3DEP elevation cache at " + cache, failure);
+            }
+        }
+        return usgs;
     }
 
     /** Antarctica from REMA, cached on disk beside the elevation tiles. */
