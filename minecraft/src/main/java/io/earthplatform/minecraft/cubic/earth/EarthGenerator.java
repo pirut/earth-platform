@@ -184,8 +184,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         cherryGrove = holder(biomes, Biomes.CHERRY_GROVE); bambooJungle = holder(biomes, Biomes.BAMBOO_JUNGLE);
         sunflowerPlains = holder(biomes, Biomes.SUNFLOWER_PLAINS);
         glacialLake = holder(biomes, ResourceKey.create(Registries.BIOME, ResourceLocation.fromNamespaceAndPath("earthplatform", "glacial_lake")));
+        // Rock layers and towers are found on the tiles as they are: both look over hundreds of metres to kilometres
+        // at every far level, where working out the ground under towns would cost more than the rest of the far
+        // terrain, and both judge rises of tens of metres or more, which a town's roofs don't make.
         strata = new Strata(seed, new Strata.Globe() {
-            @Override public double metres(double x, double z) { return elevation[FAR_ZOOM].metres(x, z); }
+            @Override public double metres(double x, double z) { return plain[FAR_ZOOM].metres(x, z); }
             @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
             @Override public boolean arid(double x, double z) {
                 if (climate == null) return false;
@@ -198,7 +201,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
         }, badlands);
         towers = new Towers(seed, new Towers.Globe() {
-            @Override public double metres(double x, double z) { return elevation[TOWER_ZOOM].metres(x, z); }
+            @Override public double metres(double x, double z) { return plain[TOWER_ZOOM].metres(x, z); }
             @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
         });
     }
@@ -1520,7 +1523,8 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW) == WorldCoverSource.WATER) wet = t; else dry = t;
         }
         double t = (wet + dry) / 2;
-        return elevation[WATER_ZOOM].metres(x0 + dx * t, z0 + dz * t);
+        // The tiles as they are, as the survey reads them.
+        return plain[WATER_ZOOM].metres(x0 + dx * t, z0 + dz * t);
     }
 
     /**
@@ -2419,7 +2423,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Rise per run of the elevation survey across eight blocks either way. */
     private double surveySlope(int x, int z) {
-        GlobalElevation dem = elevation[WATER_ZOOM];
+        // The tiles as they are: snow and ice hold no towns or forest, and far levels read this too.
+        GlobalElevation dem = plain[WATER_ZOOM];
         double dx = dem.metres(x + 8.5, z + 0.5) - dem.metres(x - 7.5, z + 0.5), dz = dem.metres(x + 0.5, z + 8.5) - dem.metres(x + 0.5, z - 7.5);
         return Math.sqrt(dx * dx + dz * dz) / (16 * grid.groundMetresPerBlock(z));
     }
@@ -2647,7 +2652,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             double[] c = coneOf((x >> 10) + i, (z >> 10) + j);
             if (c.length == 0) continue;
             double dx = wx - c[0], dz = wz - c[1];
-            if (dx * dx + dz * dz < 5000.0 * 5000.0 && elevation[FAR_ZOOM].metres(x, z) > c[2]) return true;
+            if (dx * dx + dz * dz < 5000.0 * 5000.0 && plain[FAR_ZOOM].metres(x, z) > c[2]) return true;
         }
         return false;
     }
@@ -2659,16 +2664,16 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (c == null) {
             double cx = gx * 1024.0 + 512, cz = gz * 1024.0 + 512, px = cx, pz = cz, top = -1e9;
             for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
-                double m = elevation[FAR_ZOOM].metres(cx + i * 2000, cz + j * 2000);
+                double m = plain[FAR_ZOOM].metres(cx + i * 2000, cz + j * 2000);
                 if (m > top) { top = m; px = cx + i * 2000; pz = cz + j * 2000; }
             }
             double sum = 0, sq = 0, high = -1e9;
             int down = 0;
             for (int k = 0; k < 8; k++) {
-                double m = elevation[FAR_ZOOM].metres(px + RING_X[k] * 5000, pz + RING_Z[k] * 5000);
+                double m = plain[FAR_ZOOM].metres(px + RING_X[k] * 5000, pz + RING_Z[k] * 5000);
                 sum += m; sq += m * m; high = Math.max(high, m);
                 // A cone's flanks go on falling to its foot; a range's peaks stand on ridges that rise again.
-                if (elevation[FAR_ZOOM].metres(px + RING_X[k] * 10000, pz + RING_Z[k] * 10000) < m) down++;
+                if (plain[FAR_ZOOM].metres(px + RING_X[k] * 10000, pz + RING_Z[k] * 10000) < m) down++;
             }
             double mean = sum / 8, spread = Math.sqrt(Math.max(0, sq / 8 - mean * mean)), drop = top - mean;
             c = drop > 1000 && spread < 0.3 * drop && high < top - 600 && down == 8 ? new double[] {px, pz, mean} : NO_CONE;
@@ -2717,9 +2722,10 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Whether ground lies on a broad, level floodplain: the land a few kilometres round is within a few metres of it. */
     private boolean floodplain(int x, int z) {
-        double here = elevation[FAR_ZOOM].metres(x, z);
+        // The tiles as they are: a few kilometres round, a town's roofs are noise, and far levels read this too.
+        double here = plain[FAR_ZOOM].metres(x, z);
         for (int k = 0; k < 8; k += 2)
-            if (Math.abs(elevation[FAR_ZOOM].metres(x + RING_X[k] * 3000, z + RING_Z[k] * 3000) - here) > 8) return false;
+            if (Math.abs(plain[FAR_ZOOM].metres(x + RING_X[k] * 3000, z + RING_Z[k] * 3000) - here) > 8) return false;
         return true;
     }
 

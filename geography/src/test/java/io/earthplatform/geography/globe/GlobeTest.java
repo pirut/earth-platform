@@ -30,6 +30,7 @@ public final class GlobeTest {
         despike();
         bareEarth();
         clearings();
+        islandBesideTown();
         kernel();
         streaming();
         worldCover();
@@ -175,6 +176,55 @@ public final class GlobeTest {
         BareEarth plainCountry = new BareEarth((zoom, x, y) -> plain, (latitude, longitude) -> WorldCoverSource.TREE_COVER, 8, 8);
         check(plainCountry.tile(14, 100, 100) == plain, "tiles away from towns come back unchanged");
         check(Arrays.equals(source.tile(10, 909, 403), bare.tile(10, 909, 403)), "coarse zooms pass through");
+    }
+
+    private static final int ISLE_X0 = 3100 * 256 + 128, ISLE_Y0 = 1900 * 256 + 128;
+
+    /** Pixel offsets from (ISLE_X0, ISLE_Y0): a rooftop town west of a channel, a wooded island in it, and the sea. */
+    private static int isle(double gx, double gy) {
+        double x = Math.floor(gx) - ISLE_X0, y = Math.floor(gy) - ISLE_Y0;
+        if (x < 0) return WorldCoverSource.BUILT_UP;
+        if (x >= 12 && x < 28 && Math.abs(y) < 10) return WorldCoverSource.TREE_COVER;
+        return WorldCoverSource.WATER;
+    }
+
+    private static float isleSurface(double gx, double gy) {
+        double x = Math.floor(gx) - ISLE_X0, y = Math.floor(gy) - ISLE_Y0;
+        long noise = Math.floorMod(((long) x * 92821 ^ (long) y * 68917) * 0x9E3779B97F4A7C15L >>> 40, 10);
+        return switch (isle(gx, gy)) {
+            case WorldCoverSource.BUILT_UP -> (float) (1.5 + (noise < 6 ? 20 : 1));
+            case WorldCoverSource.TREE_COVER -> (float) (2 + 6 * Math.exp(-((x - 20) * (x - 20) + y * y) / 30.0) + noise * 0.4);
+            default -> 0f;
+        };
+    }
+
+    /** An island across water from a town keeps its own ground, and low coastal land stays above the sea. */
+    private static void islandBesideTown() {
+        long size = 256L << 12;
+        GlobalElevation.Tiles source = (zoom, x, y) -> {
+            float[] tile = new float[256 * 256];
+            double scale = Math.scalb(1.0, 12 - zoom);
+            for (int py = 0; py < 256; py++) for (int px = 0; px < 256; px++)
+                tile[py * 256 + px] = isleSurface(((double) x * 256 + px + 0.5) * scale - 0.5, ((double) y * 256 + py + 0.5) * scale - 0.5);
+            return tile;
+        };
+        BareEarth.Cover cover = (latitude, longitude) -> {
+            double gx = (longitude + 180) / 360 * size, r = Math.toRadians(latitude);
+            double gy = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * size;
+            return isle(gx - 0.5, gy - 0.5);
+        };
+        float[] raw = source.tile(12, 3100, 1900), tile = new BareEarth(source, cover, 8, 8).tile(12, 3100, 1900);
+        java.util.function.IntBinaryOperator at = (dx, dy) -> (128 + dy) * 256 + 128 + dx;
+        double worst = 0, lowest = Double.MAX_VALUE, town = 0;
+        for (int dy = -9; dy <= 9; dy++) for (int dx = 12; dx < 28; dx++)
+            worst = Math.max(worst, Math.abs(tile[at.applyAsInt(dx, dy)] - raw[at.applyAsInt(dx, dy)]));
+        for (int dy = -60; dy <= 60; dy++) for (int dx = -60; dx < 0; dx++) {
+            lowest = Math.min(lowest, tile[at.applyAsInt(dx, dy)]);
+            town += tile[at.applyAsInt(dx, dy)] / (121.0 * 60);
+        }
+        check(worst < 0.5, "an island across water from a town keeps its ground: " + worst + " m changed");
+        check(town < 6, "the town's own ground still comes down: " + town + " m");
+        check(lowest >= 1 - 1e-4, "coastal town ground stays a metre over the sea: " + lowest);
     }
 
     private static final int CLEAR_X0 = 3000 * 256 + 128, CLEAR_Y0 = 2000 * 256 + 128;

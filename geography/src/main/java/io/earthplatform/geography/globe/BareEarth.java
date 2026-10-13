@@ -104,6 +104,8 @@ public final class BareEarth implements GlobalElevation.Tiles {
      * height and the low share of the ground would cut into the hillside.
      */
     static final double STEEP_FROM = 0.10, STEEP_TO = 0.22;
+    /** Height over the sea that the ground is never brought below, unless the tiles' own land is lower. */
+    static final double FLOOR_METRES = 1.0;
     /** Reach over which the share of water is taken, and the shares where water starts to keep its own level and wholly does. */
     static final double WATER_METRES = 100, WATER_FROM = 0.4, WATER_FULL = 0.7;
 
@@ -240,6 +242,9 @@ public final class BareEarth implements GlobalElevation.Tiles {
                         land += (target - land) * w;
                     }
                 }
+                // Never lower than the tiles' own land or a little over the sea, whichever is lower: low coasts and
+                // islands stay above the water beside them.
+                land = Math.max(land, Math.min(metres, FLOOR_METRES));
                 float value = (float) land;
                 if (value == metres) continue;
                 out[i] = value == 0f ? Math.ulp(0f) : value;
@@ -353,7 +358,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
     // Disk cache ------------------------------------------------------------------------------------
 
     /** Version of the fields' bytes and of the rules they are worked out by; a field kept under another is worked out again. */
-    static final int FORMAT = 1;
+    static final int FORMAT = 2;
 
     /** A 64-bit digest of a window's metres and classes. */
     static long digest(float[] dem, byte[] code) {
@@ -496,7 +501,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
         int town = Math.min(24, (int) Math.round(TOWN_METRES / coarse)), edge = reach(EDGE_METRES, coarse);
         // The town's weight: the share of built-up land, out past parks and riverside fields, faded at the edge.
         float[] share = weighted(built, land, HALF, reach(BUILT_METRES, coarse), 0f);
-        share = spread(share, HALF, town);
+        share = spread(share, land, HALF, town);
         blur(share, HALF, HALF, edge);
         for (int i = 0; i < n; i++) if (land[i] > 0) { rough[i] /= land[i]; fine[i] /= land[i]; broad[i] /= land[i]; }
         rough = weighted(rough, land, HALF, reach(ROUGH_METRES, coarse), 0f);
@@ -717,18 +722,24 @@ public final class BareEarth implements GlobalElevation.Tiles {
         }
     }
 
-    /** The highest value within {@code radius} along rows, then columns, of a square grid. */
-    private static float[] spread(float[] a, int width, int radius) {
-        float[] rows = new float[a.length], out = new float[a.length];
-        for (int j = 0; j < width; j++) for (int i = 0; i < width; i++) {
-            float most = 0;
-            for (int k = Math.max(0, i - radius); k <= Math.min(width - 1, i + radius); k++) most = Math.max(most, a[j * width + k]);
-            rows[j * width + i] = most;
-        }
-        for (int i = 0; i < width; i++) for (int j = 0; j < width; j++) {
-            float most = 0;
-            for (int k = Math.max(0, j - radius); k <= Math.min(width - 1, j + radius); k++) most = Math.max(most, rows[k * width + i]);
-            out[j * width + i] = most;
+    /**
+     * The most of a share within {@code radius} steps over land: a town reaches out over its own
+     * parks and fields, but not across a bay or lagoon to an island or the far shore, which have
+     * towns of their own if they're built up.
+     */
+    private static float[] spread(float[] a, float[] land, int width, int radius) {
+        float[] out = a.clone(), next = new float[a.length];
+        for (int step = 0; step < radius; step++) {
+            for (int j = 0; j < width; j++) for (int i = 0; i < width; i++) {
+                int at = j * width + i;
+                float most = out[at];
+                if (land[at] >= 0.5f)
+                    for (int dj = Math.max(0, j - 1); dj <= Math.min(width - 1, j + 1); dj++)
+                        for (int di = Math.max(0, i - 1); di <= Math.min(width - 1, i + 1); di++)
+                            if (land[dj * width + di] >= 0.5f) most = Math.max(most, out[dj * width + di]);
+                next[at] = most;
+            }
+            float[] t = out; out = next; next = t;
         }
         return out;
     }

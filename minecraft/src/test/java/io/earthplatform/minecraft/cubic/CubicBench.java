@@ -219,6 +219,11 @@ class CubicBench {
     }
 
     /** Blocks by registry id and biomes by name, so the print is the same in every run. */
+    private static Biome standIn(Biome like) {
+        return new Biome.BiomeBuilder().hasPrecipitation(true).temperature(0).downfall(0.5f).specialEffects(like.getSpecialEffects())
+                .mobSpawnSettings(like.getMobSettings()).generationSettings(like.getGenerationSettings()).build();
+    }
+
     private static void fingerprint(MessageDigest digest, LevelChunkSection section) {
         byte[] ids = new byte[4096 * 2];
         for (int i = 0; i < 4096; i++) {
