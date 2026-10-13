@@ -26,6 +26,7 @@ import net.minecraft.Util;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.HolderSet;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.ClickEvent;
@@ -306,7 +307,11 @@ public final class EarthWorlds {
         root.then(Commands.literal("goto").requires(EarthWorlds::mayTravel)
                 .then(Commands.argument("latitude", DoubleArgumentType.doubleArg(-80, 80))
                         .then(Commands.argument("longitude", DoubleArgumentType.doubleArg(-180, 180)).executes(context -> CubicEvents.travel(context.getSource(),
-                                DoubleArgumentType.getDouble(context, "latitude"), DoubleArgumentType.getDouble(context, "longitude"))))));
+                                        DoubleArgumentType.getDouble(context, "latitude"), DoubleArgumentType.getDouble(context, "longitude")))
+                                // Operators and the console can send someone else.
+                                .then(Commands.argument("player", EntityArgument.player()).requires(source -> source.hasPermission(2))
+                                        .executes(context -> CubicEvents.travel(context.getSource(), EntityArgument.getPlayer(context, "player"),
+                                                DoubleArgumentType.getDouble(context, "latitude"), DoubleArgumentType.getDouble(context, "longitude")))))));
         root.then(Commands.literal("home").requires(EarthWorlds::mayTravel).executes(context -> home(context.getSource())));
         root.then(Commands.literal("where").executes(context -> CubicEvents.where(context.getSource())));
         root.then(Commands.literal("places").executes(context -> places(context.getSource())));

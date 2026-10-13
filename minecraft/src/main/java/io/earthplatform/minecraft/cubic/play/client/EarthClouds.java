@@ -8,6 +8,7 @@ import com.mojang.blaze3d.vertex.Tesselator;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexSorting;
 import io.earthplatform.minecraft.cubic.Cubic;
+import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -15,6 +16,7 @@ import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.fml.ModList;
+import java.util.Arrays;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 
@@ -24,7 +26,9 @@ import org.lwjgl.opengl.GL11;
  * sea level (2500 m by default), and at least {@value #ABOVE_GROUND} m over the ground you stand on,
  * so high plateaus and mountains get a sky too; it follows the ground slowly, like weather, not like
  * a ceiling. Cells are scaled up to match and the edges fade into the sky, so it reads as weather
- * kilometres overhead. Other worlds keep vanilla clouds, and a shader pack keeps its own.
+ * kilometres overhead. Wherever the far terrain reaches up near the deck (Aconcagua from its foot,
+ * the Himalaya) the cloud thins away around the slopes, so peaks stand above the clouds rather than
+ * being sliced by them. Other worlds keep vanilla clouds, and a shader pack keeps its own.
  */
 public final class EarthClouds {
     private static final ResourceLocation TEXTURE = ResourceLocation.withDefaultNamespace("textures/environment/clouds.png");
@@ -40,6 +44,10 @@ public final class EarthClouds {
     private static final double ABOVE_GROUND = 1200;
     /** Seconds for the deck to settle after the ground under the player changes height. */
     private static final double SETTLE = 60;
+    /** Cloud fades out where the ground below comes within this many metres of it... */
+    private static final double CLEAR = 150;
+    /** ...over this much more height, so mountains rise through the deck instead of cutting it. */
+    private static final double CLEAR_FADE = 450;
     private static double ground = Double.NaN;
     private static long lastNanos;
 
@@ -65,7 +73,8 @@ public final class EarthClouds {
         if (height <= 0) return false;
         if (IRIS && net.irisshaders.iris.Iris.isPackInUseQuick()) return false;
 
-        double y = Math.max(SEA + height, followGround(level, camY) + ABOVE_GROUND) - camY;
+        double deck = Math.max(SEA + height, followGround(level, camY) + ABOVE_GROUND);
+        double y = deck - camY;
         // Far enough that the faded rim sits low on the horizon, near enough to keep cells visible.
         double radius = Math.max(8_000, 6 * Math.abs(y));
         double period = 256 * CELL;
@@ -89,13 +98,14 @@ public final class EarthClouds {
 
         BufferBuilder buffer = Tesselator.getInstance().begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
         double step = 2 * radius / GRID;
+        float[] clear = clearance(deck, camX, camZ, radius, step);
         for (int i = 0; i < GRID; i++) {
             for (int j = 0; j < GRID; j++) {
                 double x0 = -radius + i * step, z0 = -radius + j * step;
-                vertex(buffer, view, x0, y, z0, radius, period, baseU, baseV, r, g, b);
-                vertex(buffer, view, x0, y, z0 + step, radius, period, baseU, baseV, r, g, b);
-                vertex(buffer, view, x0 + step, y, z0 + step, radius, period, baseU, baseV, r, g, b);
-                vertex(buffer, view, x0 + step, y, z0, radius, period, baseU, baseV, r, g, b);
+                vertex(buffer, view, x0, y, z0, radius, period, baseU, baseV, r, g, b, clear[i * (GRID + 1) + j]);
+                vertex(buffer, view, x0, y, z0 + step, radius, period, baseU, baseV, r, g, b, clear[i * (GRID + 1) + j + 1]);
+                vertex(buffer, view, x0 + step, y, z0 + step, radius, period, baseU, baseV, r, g, b, clear[(i + 1) * (GRID + 1) + j + 1]);
+                vertex(buffer, view, x0 + step, y, z0, radius, period, baseU, baseV, r, g, b, clear[(i + 1) * (GRID + 1) + j]);
             }
         }
         BufferUploader.drawWithShader(buffer.buildOrThrow());
@@ -105,6 +115,38 @@ public final class EarthClouds {
         RenderSystem.disableBlend();
         RenderSystem.restoreProjectionMatrix();
         return true;
+    }
+
+    /**
+     * For each grid corner, how much cloud the ground lets through: 1 where the far terrain in the
+     * cells around it stays well below the deck, down to 0 where it reaches the deck. Every held far
+     * column counts toward each cell it overlaps, so no peak slips between samples.
+     */
+    private static float[] clearance(double deck, double camX, double camZ, double radius, double step) {
+        float[] clear = new float[(GRID + 1) * (GRID + 1)];
+        Arrays.fill(clear, 1);
+        ClientCubeWorld world = ClientCubeWorld.current();
+        if (world == null) return clear;
+        int[] high = new int[GRID * GRID];
+        Arrays.fill(high, Integer.MIN_VALUE);
+        double left = camX - radius, near = camZ - radius;
+        world.far().forEachTop((x0, z0, width, top) -> {
+            int i0 = Math.max(0, (int) Math.floor((x0 - left) / step)), i1 = Math.min(GRID - 1, (int) Math.floor((x0 + width - left) / step));
+            int j0 = Math.max(0, (int) Math.floor((z0 - near) / step)), j1 = Math.min(GRID - 1, (int) Math.floor((z0 + width - near) / step));
+            for (int i = i0; i <= i1; i++)
+                for (int j = j0; j <= j1; j++)
+                    if (top > high[i * GRID + j]) high[i * GRID + j] = top;
+        });
+        for (int i = 0; i <= GRID; i++) {
+            for (int j = 0; j <= GRID; j++) {
+                int top = Integer.MIN_VALUE;
+                for (int ci = i - 1; ci <= i; ci++)
+                    for (int cj = j - 1; cj <= j; cj++)
+                        if (ci >= 0 && cj >= 0 && ci < GRID && cj < GRID) top = Math.max(top, high[ci * GRID + cj]);
+                if (top != Integer.MIN_VALUE) clear[i * (GRID + 1) + j] = (float) smooth((deck - top - CLEAR) / CLEAR_FADE);
+            }
+        }
+        return clear;
     }
 
     /** The ground height the deck keeps clear of: where the player last stood, eased over time. */
@@ -122,13 +164,13 @@ public final class EarthClouds {
     }
 
     private static void vertex(BufferBuilder buffer, Matrix4f view, double x, double y, double z, double radius, double period,
-                               double baseU, double baseV, float r, float g, float b) {
+                               double baseU, double baseV, float r, float g, float b, float clear) {
         double distance = Math.sqrt(x * x + z * z) / radius;
         // Solid overhead, fading out over the outer half so no edge shows.
         double fade = 1 - smooth((distance - 0.45) / 0.55);
         buffer.addVertex(view, (float) x, (float) y, (float) z)
                 .setUv((float) (baseU + x / period), (float) (baseV + z / period))
-                .setColor(r, g, b, (float) (0.8 * fade));
+                .setColor(r, g, b, (float) (0.8 * fade * clear));
     }
 
     private static double smooth(double t) {

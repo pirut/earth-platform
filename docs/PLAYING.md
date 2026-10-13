@@ -17,7 +17,7 @@
 | `/earth where` | Your latitude, longitude and real height |
 | `/earth home` | Back to the world's starting point |
 
-In singleplayer you can always travel. On servers only operators can, unless `anyoneCanTravel` is on.
+In singleplayer you can always travel. On servers only operators can, unless `anyoneCanTravel` is on. Operators and the server console can send someone else: `/earth goto <latitude> <longitude> <player>`.
 
 ## Settings
 

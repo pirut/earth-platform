@@ -175,7 +175,11 @@ public final class CubicEvents {
      * none close by.
      */
     public static int travel(CommandSourceStack source, double latitude, double longitude) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
-        ServerPlayer player = source.getPlayerOrException();
+        return travel(source, source.getPlayerOrException(), latitude, longitude);
+    }
+
+    /** Sends {@code player} there; the replies go to {@code source}, which may be the console. */
+    public static int travel(CommandSourceStack source, ServerPlayer player, double latitude, double longitude) {
         ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
         if (level == null || !(CubicLevel.of(level) instanceof ServerCubeWorld cubes) || !(cubes.generator() instanceof EarthGenerator earth)) {
             source.sendFailure(Component.literal("This save's cubic world is not the Earth."));
