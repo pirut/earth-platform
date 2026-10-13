@@ -16,6 +16,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | RESOLVE Ecoregions 2017 (PR #14) | OK | CC BY 4.0; credited with the citation, and the derived raster noted |
 | Copernicus GLO-30 for filling elevation holes (coming) | OK | Same licence as the bundled crop; credit and liability line drafted below |
 | River channels (coming) | **Use JRC Global Surface Water** | JRC GSW is free without restriction of use, with a citation. HydroRIVERS' licence forbids open redistribution of its data, so it can't ship in an LGPL mod (details below) |
+| Hand-traced falls water (PR #16 `KnownWater`) | **Check source** | Fine if traced from EOX s2cloudless 2016 (CC BY 4.0, credit) or OSM (ODbL, credit); not if from Google/Bing/Esri imagery or EOX 2018+ (CC BY-NC-SA). Asked the Grand Canyon thread |
 | Bundled test data (Copernicus GLO-30, NOAA ETOPO, WorldCover) | OK | Credited; could be dropped from the release jar |
 | Iris, Sodium, Photon, Distant Horizons | OK | Not bundled; compile-only. Exact version pins hurt players (see below) |
 | Third-party code in the jar | OK | None. Only `io/earthplatform` classes and our own data |
@@ -73,6 +74,17 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
 - Terms ([data access page](https://global-surface-water.appspot.com/download)): produced under the Copernicus Programme and "provided free of charge, without restriction of use". Products that use it must acknowledge it and cite the dataset and the Nature paper; maps showing it should say "Source: EC JRC/Google". Redistributing a derived river mask inside the jar and under an open licence is fine. OK.
 - Credit line:
   > Surface water: JRC Global Surface Water, Source: EC JRC/Google. Pekel, J.-F., Cottam, A., Gorelick, N., Belward, A.S. (2016). High-resolution mapping of global surface water and its long-term changes. Nature 540, 418-422, doi:10.1038/nature20584. Produced under the Copernicus Programme.
+
+### Hand-traced water at famous falls (PR #16, `KnownWater`)
+- What: about 70 latitude/longitude points with widths, for Victoria Falls' gorges, the Niagara gorge and the river above the Horseshoe Falls, the Welland River and Skógafoss, "traced from satellite imagery". Water levels come from our elevation tiles.
+- Risk depends on the imagery:
+  - EOX `s2cloudless_3857` (the 2016 mosaic, what our imagery client uses): released CC BY 4.0. OK with an EOX credit that is not marked optional.
+  - EOX s2cloudless 2018 and later: CC BY-NC-SA 4.0. Not OK for a mod on monetised platforms or under the LGPL's terms.
+  - Google, Bing, Esri, Mapbox and similar basemaps: their terms forbid tracing features. Not OK; re-trace.
+- A few dozen points describing where a river runs are close to bare facts, so the legal risk is small, but a clean, credited source removes it. Clean sources, in order:
+  1. OpenStreetMap waterway lines and water outlines: ODbL. A few dozen points is an insubstantial extract; credit "© OpenStreetMap contributors, ODbL" in CREDITS.md and the mods list. A large extract would make the derived data ODbL too, which is fine for data but must be stated.
+  2. JRC Global Surface Water: free without restriction, but 30 m pixels may not show 60 m gorges.
+- Ask: each Course and Pool carries a one-line source comment (an OSM way id or "EOX s2cloudless 2016"). Asked the Grand Canyon thread 2026-10-13.
 
 ### HydroRIVERS (HydroSHEDS), not recommended
 - Terms: "freely available for scientific, educational and commercial use", but under the HydroSHEDS v1 License Agreement ([technical documentation, Appendix A](https://data.hydrosheds.org/file/technical-documentation/HydroSHEDS_TechDoc_v1_4.pdf)). That agreement lets us distribute the data only built into a derivative product, to end users bound by a written end-user licence "at least as protective" as WWF's, never as a stand-alone dataset. It also forbids reverse engineering, obliges us to protect the data against unauthorised copying, and asks us to indemnify WWF.
