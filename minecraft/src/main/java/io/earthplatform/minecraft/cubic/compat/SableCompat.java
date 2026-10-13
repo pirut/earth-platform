@@ -13,6 +13,7 @@ import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -45,6 +46,9 @@ public final class SableCompat {
     /** SubLevelsBlockSkyMixinHelper.checkSkyWithSublevels; null until first use or if missing. */
     private static MethodHandle shade;
     private static boolean shadeTried;
+    /** EntityMovementExtension.sable$getTrackingSubLevel, which Sable adds to every entity; null until first use or if missing. */
+    private static MethodHandle riding;
+    private static boolean ridingTried;
     /** SubLevelContainer.getContainer, physicsSystem() and its handleBlockChange; null until first use or if missing. */
     private static MethodHandle container, physics, blockChange;
     private static boolean handlesTried;
@@ -121,6 +125,29 @@ public final class SableCompat {
             EarthPlatformMod.LOGGER.warn("Sable ship shade check failed at {}", pos, failure);
             shade = null;
             return false;
+        }
+    }
+
+    /** The ship an entity is standing on or moving with, or null. */
+    @Nullable public static Object shipOf(Entity entity) {
+        if (!LOADED) return null;
+        if (!ridingTried) {
+            ridingTried = true;
+            try {
+                Class<?> extension = Class.forName("dev.ryanhcode.sable.mixinterface.entity.entity_sublevel_collision.EntityMovementExtension");
+                riding = MethodHandles.publicLookup().findVirtual(extension, "sable$getTrackingSubLevel",
+                        MethodType.methodType(Class.forName("dev.ryanhcode.sable.sublevel.SubLevel"))).asType(MethodType.methodType(Object.class, Entity.class));
+            } catch (ReflectiveOperationException | LinkageError failure) {
+                EarthPlatformMod.LOGGER.warn("Sable rider check not found; the jet stream won't slow ships for their riders", failure);
+            }
+        }
+        if (riding == null) return null;
+        try {
+            return (Object) riding.invokeExact(entity);
+        } catch (Throwable failure) {
+            EarthPlatformMod.LOGGER.warn("Sable rider check failed", failure);
+            riding = null;
+            return null;
         }
     }
 
