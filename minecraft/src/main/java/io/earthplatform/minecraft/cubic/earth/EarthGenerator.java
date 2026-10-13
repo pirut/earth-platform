@@ -627,7 +627,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         int bx = Mth.floor(sx), bz = Mth.floor(sz), found = 0;
         double nearest = NEAR * NEAR, near = Double.NaN;
         double[] heights = new double[16], distances = new double[16];
-        boolean drownedNear = false;
+        boolean drownedNear = false, fallingNear = false;
         for (int dj = -1; dj <= 2; dj++) for (int di = -1; di <= 2; di++) {
             int si = bx + di, sj = bz + dj, k = Math.floorMod(sj, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(si, WATER_SAMPLES);
             Reaches reaches = reachLevels(Math.floorDiv(si, WATER_SAMPLES), Math.floorDiv(sj, WATER_SAMPLES));
@@ -636,7 +636,12 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (Float.isNaN(height) || d2 >= NEAR * NEAR) continue;
             heights[found] = height;
             distances[found++] = d2;
-            if (d2 < nearest) { nearest = d2; near = height; drownedNear = (reaches.drowned[k >> 6] >>> (k & 63) & 1) != 0; }
+            if (d2 < nearest) {
+                nearest = d2;
+                near = height;
+                drownedNear = (reaches.drowned[k >> 6] >>> (k & 63) & 1) != 0;
+                fallingNear = (reaches.falling[k >> 6] >>> (k & 63) & 1) != 0;
+            }
         }
         // Drowned ground's level is its reach's across the cells around, blended smoothly between them, rather
         // than stepping at the edges of each cell's samples.
@@ -653,9 +658,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
             level = sum / weight;
             drowned = drownedNear;
-        }
+        } else fallingNear = false;
         if (Double.isNaN(level)) return local;
         int surface = Mth.floor(SEA + 0.5 + level);
+        // A falls' face stands at the level of the reach above it or the pool below, whatever the ground reads.
+        if (fallingNear) return surface;
         if (relief > MOUNTAINS) surface = Math.max(surface, local - DIP);
         // Drowned ground lies far under its water, which stands at its shores' level.
         return drowned ? surface : Math.min(surface, local + BANK);
@@ -715,9 +722,10 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final java.util.concurrent.ConcurrentHashMap<Long, Reaches> reaches = new java.util.concurrent.ConcurrentHashMap<>();
     /**
      * A cell's reach levels, lowest first, and which of them are drowned ground's; the level of the
-     * reach each of its own samples belongs to, or NaN; and which of its samples are drowned.
+     * reach each of its own samples belongs to, or NaN; which of its samples are drowned; and which
+     * lie on a falls' face ({@link #fallingWater}).
      */
-    private record Reaches(double[] levels, boolean[] drownedLevels, float[] samples, long[] drowned) {}
+    private record Reaches(double[] levels, boolean[] drownedLevels, float[] samples, long[] drowned, long[] falling) {}
     /** Fewest of a cell's own samples a reach needs to keep its own level there, rather than count as a stray reading. */
     private static final int REACH_SAMPLES = 3;
     /** How far, in samples, a column takes its level from the surveyed water samples near it. */
@@ -727,29 +735,11 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Drops of more than {@link #DROP} between wide water samples a reach must cross to count as drowned ground. */
     private static final int DROWNED_CROSSINGS = 3;
+    /** Fewest samples of water joined within {@link #DROP} that stand as a reach either side of a falls; most samples of pockets between. */
+    private static final int POOL = 8, FACE = 64;
+    /** Least drop, in metres, between the reaches either side of a falls' face. */
+    private static final double FALL = 20;
 
-    /**
-     * The water levels of a cell's reaches, in metres, lowest first: for each reach, the lowest
-     * quarter of the surveyed heights of the water joined to it through wide water, within
-     * {@value #REACH} cells. A big river's or lake's survey wanders metres up and down from one
-     * cell to the next, as over the Rio Negro; taken cell by cell, its level climbed and fell a
-     * block every few hundred blocks, in rings of steps across the water. Over the reach it is one
-     * level. Water joined only through narrow water, as a creek or a canal, keeps its own level,
-     * and so does water past a drop of more than {@value #DROP} metres between neighbouring
-     * samples, as at a dam or falls. A cell's own samples join the water next to them however
-     * narrow they are, so a sliver of a river at a cell's edge, which reads the banks blurred into
-     * it, takes the river's level; but not across such a drop, so a cell holding a river above
-     * and below its falls, as at Victoria Falls, has a level for each.
-     *
-     * <p>Wide water whose survey falls away under it again and again, at least
-     * {@value #DROWNED_CROSSINGS} drops of more than {@value #DROP} metres between samples with
-     * water all round them, is drowned ground: a reservoir filled after the survey, as the Three
-     * Gorges', whose elevation is the valley before the dam. A real falls or dam is one drop, with
-     * level water either side. Taken drop by drop, the reservoir stood in dozens of levels up the
-     * old valley's slopes, in tiers of stone shelves and sheer walls. It is one reach, at its
-     * shores' level: the middle of the heights where its water meets dry land, half a sample
-     * either side of the shore.
-     */
     /**
      * Drowned ground in a reach window ({@link #reachLevels}): for each sample, the level of the
      * drowned water it lies under, or NaN; or null if there is none. Each body of wide water is
@@ -815,6 +805,88 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /**
+     * Water on a falls' face in a reach window ({@link #reachLevels}): for each sample, the level
+     * it takes, or NaN; or null if there is none. Where water pours over a falls, its spray and
+     * the rapids above and below it map as water down the face, which the survey reads at every
+     * height between the reach above and the pool below, a few samples each, as at Iguazu's Devil's
+     * Throat or Gullfoss; taken as they read, they stood in a staircase of ledges down the falls.
+     * Water is level but where it falls, so each pocket of such water, joined to fewer than
+     * {@value #POOL} samples within {@value #DROP} metres, lying between reaches at least
+     * {@value #FALL} metres apart, takes the level of whichever of them reads nearest its own: the
+     * falls drops once, from the reach above to the pool below. Pockets of more than
+     * {@value #FACE} samples are a river's own course down its valley, and keep their heights.
+     */
+    @Nullable
+    private static float[] fallingWater(int span, float[] water, @Nullable float[] sunk, boolean[] seaAt, it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue) {
+        int count = span * span;
+        float[] height = new float[count];
+        for (int at = 0; at < count; at++) height[at] = seaAt[at] ? Float.NaN : sunk != null && !Float.isNaN(sunk[at]) ? sunk[at] : water[at];
+        // Reaches: water joined within a drop, each with its size and the lowest quarter of its heights.
+        int[] piece = new int[count];
+        java.util.Arrays.fill(piece, -1);
+        it.unimi.dsi.fastutil.ints.IntArrayList sizes = new it.unimi.dsi.fastutil.ints.IntArrayList(), members = new it.unimi.dsi.fastutil.ints.IntArrayList();
+        it.unimi.dsi.fastutil.floats.FloatArrayList levels = new it.unimi.dsi.fastutil.floats.FloatArrayList();
+        float[] heights = new float[count];
+        for (int start = 0; start < count; start++) {
+            if (piece[start] >= 0 || Float.isNaN(height[start])) continue;
+            int id = sizes.size(), size = 0;
+            piece[start] = id;
+            queue.enqueue(start);
+            while (!queue.isEmpty()) {
+                int at = queue.dequeueInt(), i = at % span, j = at / span;
+                heights[size++] = height[at];
+                for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
+                    int ni = i + di, nj = j + dj, n = nj * span + ni;
+                    if (ni < 0 || nj < 0 || ni >= span || nj >= span || piece[n] >= 0 || Float.isNaN(height[n]) || Math.abs(height[n] - height[at]) > DROP) continue;
+                    piece[n] = id;
+                    queue.enqueue(n);
+                }
+            }
+            java.util.Arrays.sort(heights, 0, size);
+            sizes.add(size);
+            levels.add(heights[size / 4]);
+        }
+        // Pockets: small reaches joined to each other, and the big reaches beside them.
+        float[] falling = null;
+        boolean[] seen = new boolean[count];
+        it.unimi.dsi.fastutil.floats.FloatArrayList beside = new it.unimi.dsi.fastutil.floats.FloatArrayList();
+        for (int start = 0; start < count; start++) {
+            if (seen[start] || piece[start] < 0 || sizes.getInt(piece[start]) >= POOL) continue;
+            seen[start] = true;
+            queue.enqueue(start);
+            members.clear();
+            beside.clear();
+            while (!queue.isEmpty()) {
+                int at = queue.dequeueInt(), i = at % span, j = at / span;
+                members.add(at);
+                for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
+                    int ni = i + di, nj = j + dj, n = nj * span + ni;
+                    if (ni < 0 || nj < 0 || ni >= span || nj >= span || piece[n] < 0) continue;
+                    if (sizes.getInt(piece[n]) >= POOL) {
+                        if (!beside.contains(levels.getFloat(piece[n]))) beside.add(levels.getFloat(piece[n]));
+                    } else if (!seen[n]) {
+                        seen[n] = true;
+                        queue.enqueue(n);
+                    }
+                }
+            }
+            if (members.size() > FACE || beside.size() < 2) continue;
+            float low = Float.POSITIVE_INFINITY, high = Float.NEGATIVE_INFINITY;
+            for (int k = 0; k < beside.size(); k++) { low = Math.min(low, beside.getFloat(k)); high = Math.max(high, beside.getFloat(k)); }
+            if (high - low < FALL) continue;
+            for (int m = 0; m < members.size(); m++) {
+                int at = members.getInt(m);
+                if (height[at] < low - BANK || height[at] > high + BANK) continue;
+                float nearest = Float.NaN;
+                for (int k = 0; k < beside.size(); k++) if (Float.isNaN(nearest) || Math.abs(beside.getFloat(k) - height[at]) < Math.abs(nearest - height[at])) nearest = beside.getFloat(k);
+                if (falling == null) { falling = new float[count]; java.util.Arrays.fill(falling, Float.NaN); }
+                falling[at] = nearest;
+            }
+        }
+        return falling;
+    }
+
+    /**
      * Surveyed height, in metres, where the land cover's shore lies between a water sample and the
      * dry sample beside it in a reach window around a cell: found by halving the gap four times.
      */
@@ -830,6 +902,28 @@ public final class EarthGenerator extends SurfaceGenerator {
         return elevation[WATER_ZOOM].metres(x0 + dx * t, z0 + dz * t);
     }
 
+    /**
+     * The water levels of a cell's reaches, in metres, lowest first: for each reach, the lowest
+     * quarter of the surveyed heights of the water joined to it through wide water, within
+     * {@value #REACH} cells. A big river's or lake's survey wanders metres up and down from one
+     * cell to the next, as over the Rio Negro; taken cell by cell, its level climbed and fell a
+     * block every few hundred blocks, in rings of steps across the water. Over the reach it is one
+     * level. Water joined only through narrow water, as a creek or a canal, keeps its own level,
+     * and so does water past a drop of more than {@value #DROP} metres between neighbouring
+     * samples, as at a dam or falls. A cell's own samples join the water next to them however
+     * narrow they are, so a sliver of a river at a cell's edge, which reads the banks blurred into
+     * it, takes the river's level; but not across such a drop, so a cell holding a river above
+     * and below its falls, as at Victoria Falls, has a level for each.
+     *
+     * <p>Wide water whose survey falls away under it again and again, at least
+     * {@value #DROWNED_CROSSINGS} drops of more than {@value #DROP} metres between samples with
+     * water all round them, is drowned ground: a reservoir filled after the survey, as the Three
+     * Gorges', whose elevation is the valley before the dam. A real falls or dam is one drop, with
+     * level water either side. Taken drop by drop, the reservoir stood in dozens of levels up the
+     * old valley's slopes, in tiers of stone shelves and sheer walls. It is one reach, at its
+     * shores' level: the middle of the heights where its water meets dry land, half a sample
+     * either side of the shore.
+     */
     private Reaches reachLevels(int cx, int cz) {
         long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
         Reaches known = reaches.get(key);
@@ -850,12 +944,13 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue = new it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue();
         float[] sunk = drownedGround(cx, cz, span, water, ground, seaAt, queue);
+        float[] falls = fallingWater(span, water, sunk, seaAt, queue);
         boolean[] reached = new boolean[span * span];
         double[] heights = new double[span * span];
         it.unimi.dsi.fastutil.doubles.DoubleArrayList levels = new it.unimi.dsi.fastutil.doubles.DoubleArrayList();
         it.unimi.dsi.fastutil.booleans.BooleanArrayList drownedLevels = new it.unimi.dsi.fastutil.booleans.BooleanArrayList();
         float[] samples = new float[WATER_SAMPLES * WATER_SAMPLES];
-        long[] drowned = new long[NO_SEA.length];
+        long[] drowned = new long[NO_SEA.length], falling = new long[NO_SEA.length];
         java.util.Arrays.fill(samples, Float.NaN);
         it.unimi.dsi.fastutil.ints.IntArrayList members = new it.unimi.dsi.fastutil.ints.IntArrayList();
         for (int sj = first; sj < last; sj++) for (int si = first; si < last; si++) {
@@ -864,6 +959,12 @@ public final class EarthGenerator extends SurfaceGenerator {
                 samples[k] = sunk[start];
                 drowned[k >> 6] |= 1L << (k & 63);
                 if (!levels.contains(sunk[start])) { levels.add(sunk[start]); drownedLevels.add(true); }
+                continue;
+            }
+            if (falls != null && !Float.isNaN(falls[start])) {
+                samples[k] = falls[start];
+                falling[k >> 6] |= 1L << (k & 63);
+                if (!levels.contains(falls[start])) { levels.add(falls[start]); drownedLevels.add(false); }
                 continue;
             }
             if (reached[start] || Float.isNaN(water[start])) continue;
@@ -882,7 +983,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 for (int d = 0; d < 8; d += 2) {
                     int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d], n = nj * span + ni;
                     if (ni < 0 || nj < 0 || ni >= span || nj >= span || joined[n] || Float.isNaN(water[n])) continue;
-                    if (Math.abs(water[n] - water[at]) > DROP || sunk != null && !Float.isNaN(sunk[n])) continue;
+                    if (Math.abs(water[n] - water[at]) > DROP || sunk != null && !Float.isNaN(sunk[n]) || falls != null && !Float.isNaN(falls[n])) continue;
                     joined[n] = true;
                     queue.enqueue(n);
                 }
@@ -900,7 +1001,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         boolean[] sunkSorted = new boolean[sorted.length];
         if (order.length == 0) sorted[0] = waterCell(cx, cz).level;
         for (int k = 0; k < order.length; k++) { sorted[k] = levels.getDouble(order[k]); sunkSorted[k] = drownedLevels.getBoolean(order[k]); }
-        Reaches found = new Reaches(sorted, sunkSorted, samples, drowned);
+        Reaches found = new Reaches(sorted, sunkSorted, samples, drowned, falling);
         if (reaches.size() > 1 << 20) reaches.clear();
         reaches.putIfAbsent(key, found);
         return found;
