@@ -20,6 +20,8 @@
     "compat.WaystonesPlacementMixin",
     "compat.WaystonesTargetMixin",
     "compat.MekanismWorldUtilsMixin",
+    "compat.MekanismDigitalMinerMixin",
+    "compat.MekanismMinerRegionCacheMixin",
     "CubicWeatherMixin",
     "CubicServerWeatherMixin"
   ],
