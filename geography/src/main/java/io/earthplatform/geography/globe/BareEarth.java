@@ -415,16 +415,14 @@ public final class BareEarth implements GlobalElevation.Tiles {
             float t = sample(trend, HALF, (from + i + 0.5) / 2 - 0.5, (from + j + 0.5) / 2 - 0.5);
             base[j * side + i] = Float.isNaN(t) ? dem[(from + j) * SPAN + from + i] : t;
         }
-        float[] ground = lowShare(dem, dry, base, from, side, low);
-        blur(ground, side, side, smooth);
-
-        float[] g = new float[GRID * GRID];
+        // The town's weight first: where it has none, the ground isn't needed, and most tiles with a few
+        // built-up pixels have none.
         byte[] w = new byte[GRID * GRID], keep = new byte[GRID * GRID];
+        boolean[] need = new boolean[side * side];
         boolean any = false;
         int offset = MARGIN - 1 - from;
         for (int j = 0; j < GRID; j++) for (int i = 0; i < GRID; i++) {
             int cell = j * GRID + i;
-            g[cell] = ground[(2 * j + offset) * side + 2 * i + offset];
             double hx = (MARGIN - 1 + 2 * i + 0.5) / 2 - 0.5, hy = (MARGIN - 1 + 2 * j + 0.5) / 2 - 0.5;
             double weight = step((sample(share, HALF, hx, hy) - BUILT_FROM) / (BUILT_FULL - BUILT_FROM))
                     * step((sample(rough, HALF, hx, hy) - ROUGH_FROM) / (ROUGH_FULL - ROUGH_FROM))
@@ -432,9 +430,42 @@ public final class BareEarth implements GlobalElevation.Tiles {
                     * step((STEEP_TO - slope(trend, hx, hy, coarse)) / (STEEP_TO - STEEP_FROM));
             w[cell] = (byte) Math.round(255 * weight);
             keep[cell] = (byte) Math.round(255 * step((sample(water, HALF, hx, hy) - WATER_FROM) / (WATER_FULL - WATER_FROM)));
-            any |= w[cell] != 0;
+            if (w[cell] != 0) { any = true; need[(2 * j + offset) * side + 2 * i + offset] = true; }
         }
-        return any ? new Field(g, w, keep, null, null, null) : null;
+        if (!any) return null;
+        // The ground where the weighted points and their smoothing reach, with a pixel or two over for the fill between.
+        need = dilate(need, side, 3 * smooth + 4);
+        float[] ground = lowShare(dem, dry, base, from, side, low, need);
+        blur(ground, side, side, smooth);
+        float[] g = new float[GRID * GRID];
+        for (int j = 0; j < GRID; j++) for (int i = 0; i < GRID; i++) g[j * GRID + i] = ground[(2 * j + offset) * side + 2 * i + offset];
+        return new Field(g, w, keep, null, null, null);
+    }
+
+    /** The cells of a square grid within {@code radius} of a marked one, along rows then columns. */
+    private static boolean[] dilate(boolean[] marked, int side, int radius) {
+        boolean[] rows = new boolean[marked.length], out = new boolean[marked.length];
+        for (int j = 0; j < side; j++) {
+            int last = Integer.MIN_VALUE / 2;
+            for (int i = 0; i < side; i++) if (marked[j * side + i]) last = i;
+                else if (i - last <= radius) rows[j * side + i] = true;
+            last = Integer.MAX_VALUE / 2;
+            for (int i = side - 1; i >= 0; i--) {
+                if (marked[j * side + i]) { last = i; rows[j * side + i] = true; }
+                else if (last - i <= radius) rows[j * side + i] = true;
+            }
+        }
+        for (int i = 0; i < side; i++) {
+            int last = Integer.MIN_VALUE / 2;
+            for (int j = 0; j < side; j++) if (rows[j * side + i]) last = j;
+                else if (j - last <= radius) out[j * side + i] = true;
+            last = Integer.MAX_VALUE / 2;
+            for (int j = side - 1; j >= 0; j--) {
+                if (rows[j * side + i]) { last = j; out[j * side + i] = true; }
+                else if (last - j <= radius) out[j * side + i] = true;
+            }
+        }
+        return out;
     }
 
     /** Slope, rise over run, of the land's broad shape at a half-detail position {@code metres} a pixel across; 0 where it is unknown. */
@@ -466,14 +497,18 @@ public final class BareEarth implements GlobalElevation.Tiles {
      * The ground over a {@code side}-pixel square of the window from {@code from}: {@code base}, the
      * land's shape there, plus the {@link #LOW_SHARE} quantile of the dry land's height over it within
      * {@code radius}. A pixel with too little land round it keeps the shape. Worked out every other
-     * pixel and filled between, as the blur after it smooths finer steps anyway.
+     * pixel and filled between, as the blur after it smooths finer steps anyway. Only pixels marked in
+     * {@code need} are worked out; the rest keep the shape.
      */
-    private static float[] lowShare(float[] dem, boolean[] dry, float[] base, int from, int side, int radius) {
+    private static float[] lowShare(float[] dem, boolean[] dry, float[] base, int from, int side, int radius, boolean[] need) {
         int stride = radius >= 6 ? 2 : 1;
+        // The opening reads the low share within its reach round each pixel it works out.
+        boolean[] reached = dilate(need, side, radius + 2);
         float[] scratch = new float[(2 * radius + 1) * (2 * radius + 1)];
         float[] offsets = new float[side * side];
         int least = Math.max(8, scratch.length / 8);
         for (int j = 0; j < side; j += stride) for (int i = 0; i < side; i += stride) {
+            if (!reached[j * side + i]) continue;
             int count = 0;
             for (int q = Math.max(0, j - radius); q <= Math.min(side - 1, j + radius); q++) {
                 int row = (from + q) * SPAN + from, own = q * side;
@@ -488,6 +523,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
             // the reach, as a hill's foot or a valley's shoulder, that the low share alone cut into.
             float[] opened = new float[side * side];
             for (int j = 0; j < side; j += stride) for (int i = 0; i < side; i += stride) {
+                if (!need[j * side + i]) continue;
                 int count = 0;
                 for (int q = Math.max(0, j - radius); q <= Math.min(side - 1, j + radius); q++)
                     for (int p = Math.max(0, i - radius); p <= Math.min(side - 1, i + radius); p++)
