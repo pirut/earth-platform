@@ -14,7 +14,9 @@ import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,6 +38,7 @@ import net.minecraft.world.level.chunk.PalettedContainer;
 import net.minecraft.world.level.chunk.PalettedContainerRO;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.neoforged.neoforge.client.model.data.ModelData;
 import org.joml.Matrix4f;
 
 /**
@@ -186,6 +189,22 @@ public final class CubeRenderer {
         for (int i = 0; i < count; i++) submit(picks[i], camera);
     }
 
+    /**
+     * Block entity model data for the cube, gathered on the client thread the way vanilla's chunk
+     * compiler gets it. Together with the cube's block entities (handed to the mesher's view, as
+     * vanilla's render region does), connected and multiblock models such as Immersive Engineering's
+     * formed machines draw the right parts.
+     */
+    private static Map<BlockPos, ModelData> modelData(Cube cube) {
+        if (cube.blockEntities().isEmpty()) return Map.of();
+        Map<BlockPos, ModelData> data = new HashMap<>();
+        for (BlockEntity entity : cube.blockEntities().values()) {
+            ModelData model = entity.getModelData();
+            if (model != ModelData.EMPTY) data.put(entity.getBlockPos().immutable(), model);
+        }
+        return data;
+    }
+
     @SuppressWarnings("unchecked")
     private void submit(long key, Vec3 camera) {
         Cube center = world.cube(key);
@@ -217,7 +236,8 @@ public final class CubeRenderer {
         int version = versions.get(key);
         CubeMesher.Snapshot snapshot = new CubeMesher.Snapshot(key, version, x, y, z, states, biomes, tops,
                 (float) camera.x, (float) camera.y, (float) camera.z, world.client().effects().constantAmbientLight(),
-                ShaderBlocks.ids());
+                ShaderBlocks.ids(), modelData(center),
+                center.blockEntities().isEmpty() ? Map.of() : new HashMap<>(center.blockEntities()));
         building.add(key);
         POOL.execute(() -> {
             try { built.add(CubeMesher.build(snapshot)); }

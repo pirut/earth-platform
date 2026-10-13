@@ -26,6 +26,7 @@
     "compat.TwilightPortalReturnMixin",
     "compat.AetherPortalCreationMixin",
     "compat.AetherPortalReturnMixin",
+    "compat.ImmersiveEngineeringChunkMixin",
     "CubicWeatherMixin",
     "CubicServerWeatherMixin"
   ],
