@@ -175,6 +175,15 @@ public final class EarthWorlds {
             return level != null && CubicLevel.of(level) instanceof ServerCubeWorld cubes ? cubes : null;
         }
 
+        /** The column a new arrival faces: the home place's sight, or the home point itself. */
+        @Nullable private static int[] view(ServerCubeWorld cubes) {
+            if (!(cubes.generator() instanceof EarthGenerator earth)) return null;
+            EarthSettings home = earth.settings();
+            return EarthPlaces.near(home.latitude(), home.longitude())
+                    .map(place -> earth.block(place.viewLatitude(), place.viewLongitude()))
+                    .orElseGet(() -> earth.block(home.latitude(), home.longitude()));
+        }
+
         String place() {
             if (!homeName.isEmpty()) return homeName;
             ServerCubeWorld cubes = cubes();
@@ -261,11 +270,10 @@ public final class EarthWorlds {
         private void arrive(ServerPlayer player, ServerCubeWorld cubes) {
             Vec3 spot = CubicEvents.arrival(cubes);
             ServerLevel level = server.getLevel(Cubic.LEVEL);
-            player.teleportTo(level, spot.x, spot.y, spot.z, player.getYRot(), 0.0F);
+            player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view(cubes), player.getYRot())), 0.0F);
             player.resetFallDistance();
-            EarthBasics.bonusChest(level, cubicFolder(server), spot);
             status.send(player, status.payload(EarthStatus.PLAYING, EarthStatus.OK, 0, ""), Util.getMillis());
-            if (player.getTags().contains(WELCOMED)) return;
+            if (player.getTags().contains(WELCOMED)) { EarthBasics.bonusChest(level, cubicFolder(server), spot, player); return; }
             player.addTag(WELCOMED);
             String place = place();
             player.sendSystemMessage(Component.literal("Welcome to the Earth" + (place.isEmpty() ? "." : ": " + place + "."))
@@ -279,6 +287,7 @@ public final class EarthWorlds {
                     .append(Component.literal(" lists famous spots.")));
             String credits = cubes.generator().credits();
             if (!credits.isEmpty()) player.sendSystemMessage(Component.literal(credits).withStyle(ChatFormatting.DARK_GRAY));
+            EarthBasics.bonusChest(level, cubicFolder(server), spot, player);
         }
     }
 
@@ -347,7 +356,8 @@ public final class EarthWorlds {
             return 0;
         }
         source.sendSuccess(() -> Component.literal("Travelling to " + place.get().label() + ".").withStyle(ChatFormatting.GREEN), false);
-        return CubicEvents.travel(source, place.get().latitude(), place.get().longitude());
+        return CubicEvents.travel(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude(),
+                place.get().viewLatitude(), place.get().viewLongitude());
     }
 
     private static int home(CommandSourceStack source) throws com.mojang.brigadier.exceptions.CommandSyntaxException {

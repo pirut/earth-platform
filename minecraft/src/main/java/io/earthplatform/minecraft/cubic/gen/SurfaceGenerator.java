@@ -161,6 +161,14 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return surface(x, z, ground, water, slope);
     }
 
+    /** Whether trees grow in a column (the same rule tree placement uses), for callers outside generation. */
+    public final boolean wooded(int x, int z) {
+        int ground = surfaceY(x, z), water = waterY(x, z);
+        if (water >= ground) return false;
+        Surface surface = coverAt(x, z, ground, water);
+        return surface.trees() > 0 && (surface.top() == GRASS || surface.top() == MUD || surface.top().is(Blocks.PODZOL));
+    }
+
     @Override public final int waterY(int x, int z) {
         Column cached = columns.get(columnKey(x >> 4, z >> 4));
         if (cached != null) return cached.water[((z & 15) + 1) * 18 + (x & 15) + 1];
