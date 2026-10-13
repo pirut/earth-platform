@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic;
 
+import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
@@ -32,6 +33,7 @@ public final class CubicSettings {
     private static final String FILE = "generator.properties";
     private static TerrariumTileSource tiles;
     private static WorldCoverSource cover;
+    private static ClimateSource climate;
 
     private CubicSettings() {}
 
@@ -52,6 +54,7 @@ public final class CubicSettings {
                     properties.setProperty("earth.projection", earth.projection());
                     properties.setProperty("earth.elevation", TerrariumTileSource.DATASET_ID);
                     properties.setProperty("earth.cover", WorldCoverSource.DATASET_ID);
+                    properties.setProperty("earth.climate", ClimateSource.DATASET_ID);
                 }
                 Files.createDirectories(folder);
                 Path temp = folder.resolve(FILE + ".tmp");
@@ -75,7 +78,11 @@ public final class CubicSettings {
                 String coverId = properties.getProperty("earth.cover", "");
                 if (!coverId.isEmpty() && !WorldCoverSource.DATASET_ID.equals(coverId))
                     throw new IllegalStateException("Unsupported land cover '" + coverId + "' in " + file);
-                yield new EarthGenerator(seed, biomes, settings, tiles(), coverId.isEmpty() ? null : cover());
+                // Climate came with land cover (worlds made in between read the same dataset).
+                String climateId = properties.getProperty("earth.climate", "");
+                if (!climateId.isEmpty() && !ClimateSource.DATASET_ID.equals(climateId))
+                    throw new IllegalStateException("Unsupported climate '" + climateId + "' in " + file);
+                yield new EarthGenerator(seed, biomes, settings, tiles(), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate());
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
         };
@@ -121,5 +128,20 @@ public final class CubicSettings {
             }
         }
         return cover;
+    }
+
+    /** Climate shared by every Earth world in this game, cached on disk beside the elevation tiles. */
+    public static synchronized ClimateSource climate() {
+        if (climate == null) {
+            Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(ClimateSource.DATASET_ID);
+            try {
+                // Rows are about 86 KiB; a 48 km square needs about 210 of them.
+                climate = new ClimateSource(ClimateSource.CHELSA, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        320, 4, Duration.ofSeconds(30));
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the climate cache at " + cache, failure);
+            }
+        }
+        return climate;
     }
 }

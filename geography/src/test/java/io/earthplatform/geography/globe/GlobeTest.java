@@ -24,7 +24,8 @@ public final class GlobeTest {
         kernel();
         streaming();
         worldCover();
-        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); }
+        climate();
+        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); liveClimate(); }
         else System.out.println("GlobeTest: live AWS tile checks skipped (set EARTH_LIVE_TILES=1)");
         System.out.println("GlobeTest: " + checks + " checks passed");
     }
@@ -308,6 +309,162 @@ public final class GlobeTest {
             equal(WorldCoverSource.NO_DATA, cover.code(30.0, -40.0, 0), "mid-Atlantic has no file");
             equal(WorldCoverSource.WATER, cover.code(39.09, -120.04, 5), "Lake Tahoe in an overview");
             System.out.printf("GlobeTest live cover: %s%n", cover.stats());
+        }
+    }
+
+    /**
+     * A synthetic CHELSA GeoTIFF laid out as the real ones are: 43200 x 20880 16-bit pixels, one
+     * deflated strip per row with horizontal differencing. Every row holds {@code fill} except the
+     * rows given, and rows with the same values share one strip.
+     */
+    static byte[] syntheticClimate(int fill, Map<Integer, short[]> rows) throws Exception {
+        int width = ClimateSource.WIDTH, height = ClimateSource.HEIGHT;
+        short[] plain = new short[width];
+        Arrays.fill(plain, (short) fill);
+        int entries = 13, ifd = 8, arrays = ifd + 2 + entries * 12 + 4;
+        int offsetsAt = arrays, countsAt = offsetsAt + height * 4, scaleAt = countsAt + height * 4, tieAt = scaleAt + 24, dataAt = tieAt + 48;
+        var data = new java.io.ByteArrayOutputStream();
+        Map<Integer, int[]> strips = new HashMap<>();
+        int[] offsets = new int[height], counts = new int[height];
+        for (int row = 0; row < height; row++) {
+            short[] values = rows.getOrDefault(row, plain);
+            int[] strip = strips.get(System.identityHashCode(values));
+            if (strip == null) {
+                var bytes = java.nio.ByteBuffer.allocate(width * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                short previous = 0;
+                for (short v : values) { bytes.putShort((short) (v - previous)); previous = v; }
+                byte[] z = deflate(bytes.array());
+                strip = new int[]{dataAt + data.size(), z.length};
+                data.write(z);
+                strips.put(System.identityHashCode(values), strip);
+            }
+            offsets[row] = strip[0];
+            counts[row] = strip[1];
+        }
+        var header = java.nio.ByteBuffer.allocate(dataAt).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        header.put((byte) 'I').put((byte) 'I').putShort((short) 42).putInt(ifd);
+        header.putShort((short) entries);
+        int[][] tags = {{256, 4, 1, width}, {257, 4, 1, height}, {258, 3, 1, 16}, {259, 3, 1, 8}, {262, 3, 1, 1}, {273, 4, height, offsetsAt},
+                {277, 3, 1, 1}, {278, 3, 1, 1}, {279, 4, height, countsAt}, {284, 3, 1, 1}, {317, 3, 1, 2}, {33550, 12, 3, scaleAt}, {33922, 12, 6, tieAt}};
+        for (int[] t : tags) {
+            header.putShort((short) t[0]).putShort((short) t[1]).putInt(t[2]);
+            if (t[1] == 3) header.putShort((short) t[3]).putShort((short) 0);
+            else header.putInt(t[3]);
+        }
+        header.putInt(0);
+        for (int o : offsets) header.putInt(o);
+        for (int c : counts) header.putInt(c);
+        header.putDouble(1 / 120.0).putDouble(1 / 120.0).putDouble(0);
+        header.putDouble(0).putDouble(0).putDouble(0).putDouble(-180.00013888885).putDouble(83.99986041515).putDouble(0);
+        var out = new java.io.ByteArrayOutputStream();
+        out.write(header.array());
+        data.writeTo(out);
+        return out.toByteArray();
+    }
+
+    private static void climate() throws Exception {
+        // Row 6000 is latitude 34 N; columns 7000 and 7001 sit at about 121.66 W.
+        int row = 6000, column = 7000;
+        short[] mean = new short[ClimateSource.WIDTH], gap = new short[ClimateSource.WIDTH], rain = new short[ClimateSource.WIDTH], zones = new short[ClimateSource.WIDTH];
+        Arrays.fill(mean, (short) 2882);
+        mean[column] = (short) 2932;
+        mean[column + 1] = (short) 2832;
+        Arrays.fill(gap, (short) 2882);
+        gap[column] = 0;
+        Arrays.fill(rain, (short) 5000);
+        Arrays.fill(zones, (short) ClimateSource.CFB);
+        zones[column] = (short) ClimateSource.CSA;
+        zones[column + 1] = (short) ClimateSource.CSB;
+        Map<String, byte[]> served = new HashMap<>();
+        served.put(ClimateSource.Layer.MEAN.file, syntheticClimate(2882, Map.of(row, mean, row + 10, gap)));
+        served.put(ClimateSource.Layer.WARM.file, syntheticClimate(2982, Map.of()));
+        served.put(ClimateSource.Layer.RAIN.file, syntheticClimate(5000, Map.of(row, rain)));
+        served.put(ClimateSource.Layer.KOPPEN.file, syntheticClimate(ClimateSource.CFB, Map.of(row, zones)));
+        Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/chelsa/", exchange -> {
+            String path = exchange.getRequestURI().getPath().substring("/chelsa/".length());
+            String range = exchange.getRequestHeaders().getFirst("Range");
+            hits.computeIfAbsent(path + " " + range, k -> new AtomicInteger()).incrementAndGet();
+            byte[] file = served.get(path);
+            if (range == null || file == null && !path.equals(ClimateSource.DEM_FILE)) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
+            String[] span = range.substring("bytes=".length()).split("-");
+            long from = Long.parseLong(span[0]), to = Long.parseLong(span[1]);
+            byte[] body;
+            if (file != null) body = Arrays.copyOfRange(file, (int) from, (int) Math.min(file.length - 1, to) + 1);
+            else {
+                // The elevation grid: 1000 m everywhere, as geopotential.
+                var floats = java.nio.ByteBuffer.allocate((int) (to - from + 1)).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                while (floats.hasRemaining()) floats.putFloat(9806.65f);
+                body = floats.array();
+            }
+            exchange.sendResponseHeaders(206, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        Path cache = Files.createTempDirectory("climate-test");
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/chelsa/");
+        double lat = 84 - (row + 0.5) / 120, lon = -180 + (column + 0.5) / 120, quarter = 0.25 / 120;
+        try {
+            try (var climate = new ClimateSource(base, cache, true, 64, 2, Duration.ofSeconds(5))) {
+                var pool = Executors.newFixedThreadPool(8);
+                List<Future<ClimateSource.Climate>> futures = new ArrayList<>();
+                for (int i = 0; i < 16; i++) futures.add(pool.submit(() -> climate.at(lat, lon + quarter, 1000)));
+                for (var f : futures) near(17.55, f.get().meanTemperature(), 1e-6, "blend a quarter of the way between pixels");
+                pool.shutdown();
+                var here = climate.at(lat, lon + quarter, 1000);
+                equal(ClimateSource.CSA, here.koppen(), "nearest pixel's zone");
+                near(25.05, here.warmestQuarter(), 1e-6, "warmest quarter at the grid's own height");
+                near(500, here.precipitation(), 1e-6, "yearly precipitation");
+                near(17.55 + 6.5, climate.at(lat, lon + quarter, 0).meanTemperature(), 1e-6, "warmer 1000 m lower");
+                near(17.55 - 13, climate.at(lat, lon + quarter, 3000).meanTemperature(), 1e-6, "colder 2000 m higher");
+                equal(ClimateSource.CSB, climate.at(lat, lon + 3 * quarter, 1000).koppen(), "zone changes past the middle");
+                double gapLat = 84 - (row + 10.5) / 120;
+                near(15.05, climate.at(gapLat, lon + quarter, 1000).meanTemperature(), 1e-6, "a gap is skipped, not averaged in");
+                near(climate.at(lat, lon + quarter, 1000).meanTemperature(), climate.at(lat, lon + quarter + 360, 1000).meanTemperature(), 0, "longitude wraps");
+                check(climate.at(89.9, 10, 0) != null, "north of the grid reads its top row");
+                for (var layer : ClimateSource.Layer.values()) {
+                    long headerReads = hits.entrySet().stream().filter(e -> e.getKey().startsWith(layer.file + " bytes=0-")).mapToLong(e -> e.getValue().get()).sum();
+                    equal(1L, headerReads, layer + " header read once");
+                }
+                // Strips are written in row order, so row 6000's own strip comes right after the shared plain one.
+                var meanStrips = hits.entrySet().stream().filter(e -> e.getKey().startsWith(ClimateSource.Layer.MEAN.file) && !e.getKey().contains("bytes=0-"))
+                        .sorted(Comparator.comparingLong(e -> Long.parseLong(e.getKey().substring(e.getKey().indexOf('=') + 1, e.getKey().indexOf('-', e.getKey().indexOf('='))))))
+                        .toList();
+                equal(1, meanStrips.get(1).getValue().get(), "a row wanted by many threads is read once");
+                climate.prefetch(33.9, -121.8, 34.1, -121.5);
+            }
+            try (var offline = new ClimateSource(base, cache, false, 64, 1, Duration.ofSeconds(5))) {
+                int before = hits.values().stream().mapToInt(AtomicInteger::get).sum();
+                near(17.55, offline.at(lat, lon + quarter, 1000).meanTemperature(), 1e-6, "disk cache offline");
+                equal(ClimateSource.CFB, offline.at(34.05, -121.6, 0).koppen(), "prefetched rows offline");
+                equal(before, hits.values().stream().mapToInt(AtomicInteger::get).sum(), "no transfer when cached");
+                fail(() -> offline.at(-40, 100, 0), MissingTerrainException.class, "uncached row offline");
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    /** Known places in the real CHELSA climatologies. */
+    private static void liveClimate() throws Exception {
+        try (var climate = new ClimateSource(ClimateSource.CHELSA, null, true, 64, 4, Duration.ofSeconds(60))) {
+            var manaus = climate.at(-3.1, -60.0, 40);
+            equal(ClimateSource.AF, manaus.koppen(), "Manaus is tropical rainforest");
+            near(27, manaus.meanTemperature(), 1.5, "Manaus is hot");
+            check(manaus.precipitation() > 2000, "Manaus is wet");
+            equal(ClimateSource.BWH, climate.at(23.0, 10.0, 600).koppen(), "the Sahara is hot desert");
+            equal(ClimateSource.CFB, climate.at(51.5, -0.1, 20).koppen(), "London is oceanic");
+            equal(ClimateSource.DFD, climate.at(62.0, 129.7, 100).koppen(), "Yakutsk is extremely continental");
+            equal(ClimateSource.EF, climate.at(72.5, -40.0, 3000).koppen(), "inland Greenland is ice cap");
+            var valley = climate.at(37.7240, -119.6365, 1200);
+            var rim = climate.at(37.7307, -119.5741, 2200);
+            check(valley.meanTemperature() - rim.meanTemperature() > 5, "Yosemite Valley is warmer than Glacier Point: " + valley + " " + rim);
+            near(11.5, valley.meanTemperature(), 2, "Yosemite Valley mean temperature");
+            System.out.printf("GlobeTest live climate: %s%n", climate.stats());
         }
     }
 
