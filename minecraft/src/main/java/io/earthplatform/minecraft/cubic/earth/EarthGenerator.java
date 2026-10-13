@@ -390,14 +390,16 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         if (local != null) {
             int code = cover(x, z, voxel);
-            if (code == WorldCoverSource.BUILT_UP || code == WorldCoverSource.BARE && inTown(x, z, voxel)) code = wild(x, z, voxel);
+            boolean built = code == WorldCoverSource.BUILT_UP || code == WorldCoverSource.BARE && inTown(x, z, voxel);
+            if (built) code = wild(x, z, voxel);
             Surface covered = code == WorldCoverSource.NO_DATA ? null : covered(code, x, z, y, local, steep, roll, slope);
             if (covered == null) {
                 code = typical(local.zone());
                 covered = covered(code, x, z, y, local, steep, roll, slope);
             }
-            // Imagery has the last word on bare ground and how thick plants grow.
-            return imageryGround == null ? covered
+            // Imagery has the last word on bare ground and how thick plants grow, except where towns and
+            // roads were taken out: there it shows buildings and asphalt, not the wild land put in their place.
+            return imageryGround == null || built ? covered
                     : imageryGround.apply(covered, code, x, z, local.zone(), steep, voxel, (mix(x, 0x494D47L, z) >>> 11) * 0x1.0p-53);
         }
         if (t < -8) {

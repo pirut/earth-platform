@@ -375,6 +375,10 @@ public final class GlobeTest {
         check(!dryGrass.green() && dryGrass.vegetation() < 0.25, "dry grass is not");
         check(river.shadow(), "dark water says nothing");
         check(snow.snow() && !granite.snow(), "snow is snow, pale granite is not");
+        GroundPalette.Reading asphalt = reading(118, 120, 124), concrete = reading(192, 191, 188), sagebrush = reading(163, 122, 91);
+        check(asphalt.grey() && concrete.grey(), "roads and roofs are grey");
+        check(!dryGrass.grey() && !hamada.grey() && !sagebrush.grey() && !dune.grey(), "soils, scrub and sand are not grey");
+        check(!java.util.Arrays.asList(GroundPalette.SOIL).contains(GroundPalette.Ground.GRAVEL), "no gravel in soil patches");
     }
 
     private static GroundPalette.Reading reading(int r, int g, int b) {

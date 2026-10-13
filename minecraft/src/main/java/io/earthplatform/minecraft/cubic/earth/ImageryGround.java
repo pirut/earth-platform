@@ -76,6 +76,8 @@ final class ImageryGround {
                     || zone == ClimateZone.COLD_DESERT || zone == ClimateZone.COLD_STEPPE;
             // Rock stays rock and loose ground loose, as land cover and slope chose; imagery picks which.
             boolean rock = top == STONE || top == ANDESITE;
+            // Grey on sand is a road or a roof, not the ground; left alone it never draws lines across a desert.
+            if (reading.grey() && (top == SAND || top == RED_SAND)) return surface;
             GroundPalette.Ground[] set = rock ? (arid ? GroundPalette.DESERT_ROCK : GroundPalette.ROCK) : arid ? GroundPalette.DESERT_LOOSE : GroundPalette.LOOSE;
             BlockState matched = BLOCKS[GroundPalette.match(reading, set, roll).ordinal()];
             return matched == top ? surface : with(surface, matched, surface.trees(), surface.grass(), surface.flowers());
@@ -87,7 +89,8 @@ final class ImageryGround {
             return trees == surface.trees() ? surface : with(surface, top, trees, surface.grass(), surface.flowers());
         }
         // Open land that looks dry and bare shows its soil, in patches as thick as the plants are thin.
-        if (vegetation < 0.25 && reading.lightness() > 42 && roll > vegetation * 3) {
+        // Grey pixels there are roads, roofs and car parks, which stay grass rather than drawing lines.
+        if (vegetation < 0.25 && reading.lightness() > 42 && !reading.grey() && roll > vegetation * 3) {
             BlockState soil = BLOCKS[GroundPalette.match(reading, GroundPalette.SOIL, roll).ordinal()];
             return with(surface, soil, 0, 0, 0);
         }

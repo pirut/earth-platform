@@ -108,7 +108,7 @@ public final class ImageryProbe {
     }
 
     /** Bare soil shows: neither green nor dark like shade under trees. */
-    private static boolean open(GroundPalette.Reading reading) { return reading.vegetation() < 0.25 && reading.lightness() > 42; }
+    private static boolean open(GroundPalette.Reading reading) { return reading.vegetation() < 0.25 && reading.lightness() > 42 && !reading.grey(); }
 
     private static int soil(GroundPalette.Reading reading, double roll) { return GroundPalette.match(reading, GroundPalette.SOIL, roll).rgb; }
 

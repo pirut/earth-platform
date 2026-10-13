@@ -50,8 +50,8 @@ public final class GroundPalette {
             Ground.COARSE_DIRT, Ground.DIRT};
     /** Bare gentle ground in dry lands: dunes, sand sheets and stony plains. */
     public static final Ground[] DESERT_LOOSE = {Ground.SAND, Ground.RED_SAND, Ground.GRAVEL, Ground.COARSE_DIRT};
-    /** Soil showing through thin, dry plant cover. */
-    public static final Ground[] SOIL = {Ground.COARSE_DIRT, Ground.DIRT, Ground.PACKED_MUD, Ground.SAND, Ground.RED_SAND, Ground.GRAVEL};
+    /** Soil showing through thin, dry plant cover. No gravel: grey there is roads and roofs, not ground. */
+    public static final Ground[] SOIL = {Ground.COARSE_DIRT, Ground.DIRT, Ground.PACKED_MUD, Ground.SAND, Ground.RED_SAND};
 
     /** Weight of lightness against hue and chroma. */
     static final double LIGHTNESS_WEIGHT = 0.45;
@@ -59,6 +59,8 @@ public final class GroundPalette {
     static final double CAST_A = 2, CAST_B = 10;
     /** How much further than the nearest the second nearest block may be and still be mixed in. */
     static final double MIX_RATIO = 1.3;
+    /** Chroma, before the cast correction, under which a pixel is grey. */
+    static final double GREY = 8;
     /** Lightness under which a pixel is shadow or water and says nothing. */
     static final double SHADOW = 25;
 
@@ -72,6 +74,8 @@ public final class GroundPalette {
         public boolean shadow() { return lightness < SHADOW; }
         /** Snow or ice: bright with almost no colour. */
         public boolean snow() { return lightness > 82 && Math.hypot(a + CAST_A, b + CAST_B) < 10; }
+        /** Grey with almost no colour, as asphalt, concrete and roofs are; soils and sands are tinted. */
+        public boolean grey() { return Math.hypot(a + CAST_A, b + CAST_B) < GREY; }
         /** Living plants: green leads red, with a clear excess of green. */
         public boolean green() { return !shadow() && greenness > 0.04; }
         /** How thick the plant cover looks, 0 for bare or dry ground to 1 for lush green. */
