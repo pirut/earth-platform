@@ -22,11 +22,15 @@ public final class GlobeTest {
         projection();
         codec();
         mend();
+        seams();
+        repair();
         kernel();
         streaming();
         worldCover();
         climate();
-        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); liveClimate(); }
+        imagery();
+        palette();
+        if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); liveClimate(); liveImagery(); }
         else System.out.println("GlobeTest: live AWS tile checks skipped (set EARTH_LIVE_TILES=1)");
         System.out.println("GlobeTest: " + checks + " checks passed");
     }
@@ -73,7 +77,7 @@ public final class GlobeTest {
         for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) metres[y * 256 + x] = x < 20 ? 0 : (float) (500 + 100 * x + 50 * y);
         float[] clean = metres.clone();
         metres[128 * 256 + 128] = -450;           // a pit, as the Rio Negro's
-        metres[60 * 256 + 60] -= 640; metres[61 * 256 + 60] -= 170;  // a pair
+        metres[60 * 256 + 60] -= 640; metres[61 * 256 + 60] -= 260;  // a pair
         metres[0 * 256 + 200] += 1100;            // a spire on the tile's edge
         metres[10 * 256 + 21] = 9000;             // a spire beside the sea
         float[] mended = TerrariumTileSource.mend(metres, zoom, tileY);
@@ -83,6 +87,13 @@ public final class GlobeTest {
         for (int i = 0; i < clean.length; i++) if (!bad.contains(i) && mended[i] != clean[i]) changed++;
         equal(0, changed, "good pixels never change");
         check(TerrariumTileSource.mend(clean, zoom, tileY) == clean, "clean tile returned as it is");
+        // A sheer face 550 m high over three pixels, with a lip at its brink and ledges, wandering along its length.
+        float[] face = new float[256 * 256];
+        for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) {
+            double at = x - 100 - 2 * Math.sin(y / 3.0);
+            face[y * 256 + x] = (float) (1550 + 550 / (1 + Math.exp(at * 1.5)) + 70 * Math.exp(-(at + 1) * (at + 1)) + 25 * Math.sin(y * 1.7) * Math.exp(-at * at));
+        }
+        check(TerrariumTileSource.mend(face, zoom, tileY) == face, "a sheer face keeps its lip and ledges");
     }
 
     private static void kernel() {
@@ -199,6 +210,63 @@ public final class GlobeTest {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();
         }
+    }
+
+    /** Lines of bad pixels along whole degrees are mended, across tile edges too; real ground along them and lines off whole degrees keep their shape. */
+    private static void seams() {
+        int zoom = 15;
+        long size = 256L << zoom;
+        // Rolling hills; 5°W crosses the tile holding 5°W, 57.05°N at a column found the same way the source does.
+        int tileX = (int) (Math.floor(175 / 360.0 * size) / 256), tileY = 10030;
+        int line = (int) ((long) Math.floor(175 / 360.0 * size) - tileX * 256L);
+        float[] metres = new float[256 * 256];
+        for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) metres[y * 256 + x] = (float) (200 + 30 * Math.sin(x / 17.0) + 20 * Math.cos(y / 23.0) + 0.5 * x);
+        float[] clean = metres.clone();
+        TerrariumTileSource.Neighbours none = (z, x, y) -> null;
+        check(TerrariumTileSource.seams(clean, zoom, tileX, tileY, none) == clean, "clean tile returned as it is");
+        float[] dip = {12, 61, 85, 37};                                   // as along 5°W in the Highlands
+        for (int y = 0; y < 256; y++) for (int k = 0; k < 4; k++) metres[y * 256 + line - 1 + k] -= dip[k];
+        for (int y = 0; y < 256; y++) for (int k = 0; k < 4; k++) metres[y * 256 + 100 + k] -= dip[k];   // a gully off the line
+        metres[50 * 256 + line + 4] += 30; metres[51 * 256 + line + 4] += 30;                          // a knoll on it
+        float[] mended = TerrariumTileSource.seams(metres, zoom, tileX, tileY, none);
+        for (int y = 0; y < 256; y++) for (int k = 0; k < 4; k++) near(clean[y * 256 + line - 1 + k], mended[y * 256 + line - 1 + k], 3, "seam pixel mended");
+        int changed = 0;
+        for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) if ((x < line - 1 || x > line + 2) && mended[y * 256 + x] != metres[y * 256 + x]) changed++;
+        equal(0, changed, "gully off the line, knoll on it and the ground about untouched");
+        // A trench 4 km deep a pixel wide along Greenwich, which runs along a tile edge: each tile mends its own side.
+        int left = (int) (size / 2 / 256) - 1, right = left + 1, ty = 12000;
+        float[][] tiles = new float[2][256 * 256], cleanTiles = new float[2][];
+        for (int t = 0; t < 2; t++) {
+            for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) tiles[t][y * 256 + x] = (float) (5000 + 3 * (t * 256 + x) + 40 * Math.sin(y / 9.0));
+            cleanTiles[t] = tiles[t].clone();
+        }
+        for (int y = 0; y < 256; y++) { tiles[0][y * 256 + 255] = 1871; tiles[1][y * 256] = 1872; }
+        TerrariumTileSource.Neighbours both = (z, x, y) -> x == left ? tiles[0] : x == right ? tiles[1] : null;
+        float[] westSide = TerrariumTileSource.seams(tiles[0], zoom, left, ty, both), eastSide = TerrariumTileSource.seams(tiles[1], zoom, right, ty, both);
+        near(cleanTiles[0][77 * 256 + 255], westSide[77 * 256 + 255], 3, "trench mended west of a tile edge");
+        near(cleanTiles[1][77 * 256], eastSide[77 * 256], 3, "trench mended east of a tile edge");
+    }
+
+    private static void repair() {
+        // A 4x4 block of zoom-15 tiles under one zoom-13 reference tile, on a slope rising 2 m per fine pixel east.
+        float[] reference = new float[256 * 256];
+        for (int i = 0; i < reference.length; i++) reference[i] = 3000 + (i % 256) * 8f;
+        int tx = 4 * 9 + 2, ty = 4 * 5 + 1;
+        float[] tile = new float[256 * 256];
+        for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) tile[j * 256 + i] = 3000 + ((2 * 256 + i + 0.5f) / 4 - 0.5f) * 8f + (i % 7 == 0 && j < 100 ? 60 : 0) + (j > 128 ? 40 : 0);
+        float[] expected = tile.clone();
+        for (int j = 0; j < 256; j++) { tile[j * 256 + 114] = -8161; tile[j * 256 + 115] = 1519; }
+        tile[40 * 256 + 40] = 9000;
+        tile[41 * 256 + 41] -= 400;
+        tile[60 * 256 + 60] = 0;
+        TerrariumTileSource.repair(tile, reference, 2, tx, ty);
+        near(expected[5 * 256 + 114], tile[5 * 256 + 114], 9, "broken pit column takes the reference and its neighbours' detail");
+        near(expected[200 * 256 + 115], tile[200 * 256 + 115], 9, "broken low column keeps the neighbours' 40 m rise");
+        near(expected[40 * 256 + 40], tile[40 * 256 + 40], 9, "broken spike takes the reference");
+        near(expected[41 * 256 + 41], tile[41 * 256 + 41], 9, "a 400 m pit on a gentle slope takes the reference");
+        near(0, tile[60 * 256 + 60], 0, "open-sea zeros are left for the bathymetry fill");
+        near(expected[9 * 256 + 7], tile[9 * 256 + 7], 1e-3, "relief the reference smooths away is kept");
+        near(expected[9 * 256 + 8], tile[9 * 256 + 8], 1e-3, "ordinary pixels are untouched");
     }
 
     /**
@@ -318,6 +386,103 @@ public final class GlobeTest {
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    private static void imagery() throws Exception {
+        var image = new java.awt.image.BufferedImage(256, 256, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) image.setRGB(x, y, x < 128 ? 0xD0B080 : 0x305020);
+        var out = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "jpg", out);
+        byte[] jpeg = out.toByteArray();
+        // The server's blank placeholder for tiles with no imagery is a small PNG.
+        byte[] blank = TerrariumTileSource.encode(new float[256 * 256]);
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/s2/", exchange -> {
+            requests.incrementAndGet();
+            String path = exchange.getRequestURI().getPath().substring("/s2/".length());
+            byte[] body = path.equals("14/6000/3000.jpg") ? jpeg : path.equals("14/6000/3001.jpg") ? blank : null;
+            if (body == null) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        Path cache = Files.createTempDirectory("imagery-test");
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/s2/");
+        try {
+            try (var imagery = new ImagerySource(base, cache, true, 4, 2, Duration.ofSeconds(5))) {
+                var pool = Executors.newFixedThreadPool(8);
+                List<Future<Integer>> futures = new ArrayList<>();
+                for (int i = 0; i < 16; i++) futures.add(pool.submit(() -> imagery.pixel(3000L * 256 + 10, 6000L * 256 + 10, 14)));
+                for (var f : futures) near(0xD0, f.get() >> 16 & 255, 6, "sand pixel red");
+                pool.shutdown();
+                equal(1, requests.get(), "one request for a tile wanted at once");
+                near(0x50, imagery.pixel(3000L * 256 + 200, 6000L * 256 + 10, 14) >> 8 & 255, 6, "forest pixel green");
+                equal(ImagerySource.NO_DATA, imagery.pixel(3001L * 256 + 5, 6000L * 256 + 5, 14), "placeholder tile is no imagery");
+                equal(ImagerySource.NO_DATA, imagery.pixel(5, 5, 14), "missing tile is no imagery");
+                double[] mean = new double[3];
+                check(imagery.mean(3000 * 256 + 20.5, 6000 * 256 + 20.5, 14, 3, mean), "mean over imagery");
+                near(ImagerySource.LINEAR[0xD0], mean[0], 0.03, "mean red in linear light");
+                check(!imagery.mean(3001 * 256 + 20.5, 6000 * 256 + 20.5, 14, 3, mean), "mean over no imagery fails");
+                // Halfway between the last sand and first forest pixel centres, the colour is their blend.
+                check(imagery.bilinear(3000 * 256 + 128.0, 6000 * 256 + 50.5, 14, mean), "bilinear over imagery");
+                near((ImagerySource.LINEAR[0xD0] + ImagerySource.LINEAR[0x30]) / 2, mean[0], 0.04, "bilinear blends across a pixel edge");
+                check(imagery.bilinear(3000 * 256 + 20.5, 6000 * 256 + 50.5, 14, mean) && Math.abs(mean[0] - ImagerySource.LINEAR[0xD0]) < 0.03, "bilinear at a pixel centre is that pixel");
+                fail(() -> imagery.tile(15, 0, 0), IllegalArgumentException.class, "zoom beyond the mosaic rejected");
+            }
+            try (var offline = new ImagerySource(base, cache, false, 4, 1, Duration.ofSeconds(5))) {
+                int before = requests.get();
+                near(0xD0, offline.pixel(3000L * 256 + 10, 6000L * 256 + 10, 14) >> 16 & 255, 6, "disk cache offline");
+                equal(ImagerySource.NO_DATA, offline.pixel(3001L * 256 + 5, 6000L * 256 + 5, 14), "placeholder remembered offline");
+                equal(before, requests.get(), "no transfer when cached");
+                fail(() -> offline.pixel(9, 9, 13), MissingTerrainException.class, "uncached tile offline");
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    private static void palette() {
+        // Colours sampled from the Sentinel-2 cloudless mosaic at known places.
+        GroundPalette.Reading dune = reading(254, 184, 96), hamada = reading(171, 134, 98), granite = reading(191, 166, 128);
+        GroundPalette.Reading forest = reading(46, 66, 30), dryGrass = reading(180, 160, 118), river = reading(16, 25, 40), snow = reading(240, 244, 248);
+        check(EnumSet.of(GroundPalette.Ground.RED_SAND, GroundPalette.Ground.SAND).contains(GroundPalette.match(dune, GroundPalette.DESERT_LOOSE, 0)), "Erg Chebbi dunes are sand");
+        int red = 0;
+        for (int i = 0; i < 100; i++) if (GroundPalette.match(dune, GroundPalette.DESERT_LOOSE, i / 100.0) == GroundPalette.Ground.RED_SAND) red++;
+        check(red > 30 && red < 100, "orange dunes mix red and pale sand: " + red);
+        check(EnumSet.of(GroundPalette.Ground.GRAVEL, GroundPalette.Ground.COARSE_DIRT).contains(GroundPalette.match(hamada, GroundPalette.DESERT_LOOSE, 0)), "stony desert plain is gravel or coarse dirt");
+        check(EnumSet.of(GroundPalette.Ground.STONE, GroundPalette.Ground.ANDESITE, GroundPalette.Ground.DIORITE, GroundPalette.Ground.CALCITE)
+                .contains(GroundPalette.match(granite, GroundPalette.ROCK, 0)), "Half Dome granite is pale grey rock: " + GroundPalette.match(granite, GroundPalette.ROCK, 0));
+        equal(GroundPalette.Ground.STONE, GroundPalette.match(granite, new GroundPalette.Ground[]{GroundPalette.Ground.STONE}, 0.99), "single candidate");
+        check(forest.green() && forest.vegetation() > 0.5, "forest is green");
+        check(!dryGrass.green() && dryGrass.vegetation() < 0.25, "dry grass is not");
+        check(river.shadow(), "dark water says nothing");
+        check(snow.snow() && !granite.snow(), "snow is snow, pale granite is not");
+        GroundPalette.Reading asphalt = reading(118, 120, 124), concrete = reading(192, 191, 188), sagebrush = reading(163, 122, 91);
+        check(asphalt.grey() && concrete.grey(), "roads and roofs are grey");
+        check(!dryGrass.grey() && !hamada.grey() && !sagebrush.grey() && !dune.grey(), "soils, scrub and sand are not grey");
+        check(!java.util.Arrays.asList(GroundPalette.SOIL).contains(GroundPalette.Ground.GRAVEL), "no gravel in soil patches");
+    }
+
+    private static GroundPalette.Reading reading(int r, int g, int b) {
+        return GroundPalette.read(new double[]{ImagerySource.LINEAR[r], ImagerySource.LINEAR[g], ImagerySource.LINEAR[b]});
+    }
+
+    /** Known places in the real Sentinel-2 cloudless mosaic. */
+    private static void liveImagery() throws Exception {
+        try (var imagery = new ImagerySource(ImagerySource.EOX_S2_CLOUDLESS_2016, null, true, 16, 4, Duration.ofSeconds(30))) {
+            var grid = new MercatorGrid(1);
+            double[] mean = new double[3];
+            GeoPoint erg = new GeoPoint(31.15, -3.97);
+            check(imagery.mean(grid.pixelX(grid.blockX(erg), 14), grid.pixelY(grid.blockZ(erg), 14), 14, 3, mean), "Erg Chebbi has imagery");
+            check(GroundPalette.match(GroundPalette.read(mean), GroundPalette.DESERT_LOOSE, 0) == GroundPalette.Ground.RED_SAND, "Erg Chebbi reads as red sand");
+            GeoPoint sea = new GeoPoint(30, -40);
+            boolean any = imagery.mean(grid.pixelX(grid.blockX(sea), 14), grid.pixelY(grid.blockZ(sea), 14), 14, 1, mean);
+            check(!any || GroundPalette.read(mean).shadow(), "the open Atlantic says nothing about ground");
         }
     }
 

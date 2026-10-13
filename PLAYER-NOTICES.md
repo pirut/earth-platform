@@ -2,7 +2,7 @@
 
 ## Original project
 
-Earth Platform is an experimental prototype. Its current mod metadata marks the original code **All Rights Reserved**. This document does not create a new license grant. It is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
+Earth Platform is an experimental prototype. Its original code is licensed under the GNU Lesser General Public License version 3 (LGPL-3.0-only); see `LICENSE` and `COPYING` at the repository root. It is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
 
 The selected Everest profile uses retained Copernicus elevations and ESA WorldCover classifications. Its bounded local relief and slope/shelter material variation are procedural. Measured heights are retained separately, and no surveyed summit height is substituted. Legacy diagnostic and procedural arena profiles remain separate.
 

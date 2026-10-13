@@ -24,7 +24,7 @@ final class ShaderBlocks {
     static boolean packInUse() { return IRIS && net.irisshaders.iris.Iris.isPackInUseQuick(); }
 
     /** The pack's Voxy fragment code for the current dimension, or null when it has none (see {@link FarPackPatch}). */
-    @Nullable static String voxyPatch() { return IRIS ? FarPackPatch.current() : null; }
+    @Nullable static FarShaders.PackPatch voxyPatch() { return IRIS ? FarPackPatch.current() : null; }
 
     /** True while a shader pack draws its shadow map, when only shadow casters are wanted. */
     static boolean shadowPass() {

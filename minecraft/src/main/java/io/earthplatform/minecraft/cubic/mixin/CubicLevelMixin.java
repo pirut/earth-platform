@@ -138,6 +138,6 @@ public abstract class CubicLevelMixin implements CubicLevel {
     @Inject(method = "getHeight(Lnet/minecraft/world/level/levelgen/Heightmap$Types;II)I", at = @At("HEAD"), cancellable = true)
     private void earthplatform$cubeHeight(Heightmap.Types type, int x, int z, CallbackInfoReturnable<Integer> result) {
         CubeWorld cubes = earthplatform$cubeWorld;
-        if (cubes != null) result.setReturnValue(cubes.skyTop(x, z) + 1);
+        if (cubes != null) result.setReturnValue(cubes.heightTop(type, x, z) + 1);
     }
 }
