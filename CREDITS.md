@@ -20,6 +20,11 @@ Mapzen/Tilezen terrain tiles on the [Registry of Open Data on AWS](https://regis
 - United Kingdom terrain data © Environment Agency copyright and/or database right 2015. All rights reserved.
 - United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey.
 
+## United States: USGS 3DEP (downloaded while you play)
+
+United States: USGS 3D Elevation Program 1/3 arc-second DEM (public domain), courtesy of the U.S. Geological Survey. U.S. Geological Survey, 3D Elevation Program 1/3 arc-second Digital Elevation Model, https://www.usgs.gov/3d-elevation-program.
+Changes: tiles are fetched from the USGS National Map staged products (prd-tnm on AWS) only for visited places inside 1,450 pinned 1° cells, cached on disk and blended into the elevation above. Turn it off with `-Dearthplatform.earth.3dep=false`. The USGS does not endorse Earth Platform.
+
 ## Antarctica: REMA (downloaded while you play)
 
 Antarctica: Reference Elevation Model of Antarctica (REMA) v2.0, Polar Geospatial Center, University of Minnesota (CC BY 4.0); Howat, I., et al. (2022), The Reference Elevation Model of Antarctica - Mosaics, Version 2, Harvard Dataverse, https://doi.org/10.7910/DVN/EBW8UC. DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685.

@@ -34,7 +34,7 @@ Full steps, shaders and the Mac notes: [Install guide](docs/INSTALL.md). Command
 
 ## Credits
 
-The Earth comes from open data: elevation from AWS Terrain Tiles (USGS, NASA SRTM, NOAA, Copernicus and national mapping agencies) and, in Antarctica, REMA from the Polar Geospatial Center, land cover from ESA WorldCover, climate from CHELSA, rivers from JRC Global Surface Water, ecoregions from RESOLVE Ecoregions 2017, and, if you turn it on, ground colours from EOX Sentinel-2 cloudless imagery. The full attribution each source requires is in [CREDITS.md](CREDITS.md) and in game under Mods → Earth Platform.
+The Earth comes from open data: elevation from AWS Terrain Tiles (USGS, NASA SRTM, NOAA, Copernicus and national mapping agencies) plus finer USGS 3DEP heights in the United States and REMA from the Polar Geospatial Center in Antarctica, land cover from ESA WorldCover, climate from CHELSA, rivers from JRC Global Surface Water, ecoregions from RESOLVE Ecoregions 2017, and, if you turn it on, ground colours from EOX Sentinel-2 cloudless imagery. The full attribution each source requires is in [CREDITS.md](CREDITS.md) and in game under Mods → Earth Platform.
 
 Earth Platform changes these data to make a Minecraft world: it resamples them, picks blocks, and adds small procedural detail the data is too coarse for. It is not a survey and is not for navigation.
 
