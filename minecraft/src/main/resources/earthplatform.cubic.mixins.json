@@ -16,7 +16,18 @@
     "CubicRespawnMixin",
     "CubicSpawnerMixin",
     "CubicWeatherMixin",
-    "CubicServerWeatherMixin"
+    "CubicServerWeatherMixin",
+    "CubicPortalFireMixin",
+    "CubicPortalMixin",
+    "CubicPortalPoiMixin",
+    "CubicEndExitMixin",
+    "NetherPortalAccess",
+    "CubicJetFlightMixin",
+    "CubicJetElytraMixin",
+    "CubicJetMoveCheckMixin",
+    "CubicJetChunkLoadMixin",
+    "CubicJetTicketMixin",
+    "CubicJetRocketMixin"
   ],
   "client": [
     "CubicPredictionMixin",
@@ -25,7 +36,8 @@
     "CubicShaderFarMixin",
     "CubicIrisSourceNamesMixin",
     "CubicIrisProgramSetMixin",
-    "CubicRainRenderMixin"
+    "CubicRainRenderMixin",
+    "CubicJetWeatherMixin"
   ],
   "injectors": {
     "defaultRequire": 1

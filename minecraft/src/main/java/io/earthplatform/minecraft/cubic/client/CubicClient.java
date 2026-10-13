@@ -63,7 +63,7 @@ public final class CubicClient {
         var player = Minecraft.getInstance().player;
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null || player == null || player.isSpectator() || player.isFallFlying() || player.isPassenger()
-                || !waitingForCubes(world, player)) {
+                || io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(player) || !waitingForCubes(world, player)) {
             held = null;
             return;
         }
@@ -167,6 +167,7 @@ public final class CubicClient {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null || minecraft.player == null) return;
         var player = minecraft.player;
+        if (io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(player)) return;
         if (!waitingForCubes(world, player)) return;
         var gui = event.getGuiGraphics();
         Component text = Component.literal("Loading terrain at Y " + player.getBlockY() + "...");

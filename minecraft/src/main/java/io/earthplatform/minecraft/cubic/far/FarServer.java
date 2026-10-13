@@ -8,6 +8,7 @@ import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.FarColumn;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
+import io.earthplatform.minecraft.cubic.net.Throttle;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
@@ -280,11 +281,13 @@ public final class FarServer {
             if (session == null) continue;
             session.bx = player.getBlockX();
             session.bz = player.getBlockZ();
-            for (int n = 0; n < SEND_PER_TICK && !session.outgoing.isEmpty(); n++) {
+            int bytes = Throttle.allowance(player);
+            for (int n = 0; n < SEND_PER_TICK && bytes > 0 && !session.outgoing.isEmpty(); n++) {
                 CubePayloads.FarColumnData column = session.outgoing.poll();
                 session.queued.remove(column.key());
                 session.sent.add(column.key());
                 PacketDistributor.sendToPlayer(player, column);
+                bytes -= column.size();
             }
             if (ticks % 200 == 0) {
                 int bx = player.getBlockX(), bz = player.getBlockZ();
