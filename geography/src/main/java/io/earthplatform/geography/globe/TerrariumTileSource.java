@@ -11,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.*;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -133,7 +134,7 @@ public final class TerrariumTileSource implements AutoCloseable {
             try {
                 float[] values = decode(Files.readAllBytes(cached));
                 diskHits.incrementAndGet();
-                return values;
+                return mend(values, zoom, y);
             } catch (IOException corrupt) {
                 // Cache bytes are derived; discard and refetch from the source rather than keep serving a broken tile.
                 Files.deleteIfExists(cached);
@@ -141,7 +142,7 @@ public final class TerrariumTileSource implements AutoCloseable {
         }
         if (!allowNetwork) throw new MissingTerrainException("Elevation tile " + zoom + "/" + x + "/" + y + " not cached and network access is disabled");
         byte[] bytes = download(zoom, x, y);
-        float[] values = decode(bytes);
+        float[] values = mend(decode(bytes), zoom, y);
         if (cached != null) {
             Files.createDirectories(cached.getParent());
             Path temp = Files.createTempFile(cached.getParent(), "tile", ".part");
@@ -199,6 +200,102 @@ public final class TerrariumTileSource implements AutoCloseable {
             metres[i] = (float) ((((p >>> 16) & 0xFF) * 256 + ((p >>> 8) & 0xFF) + (p & 0xFF) / 256.0) - 32768.0);
         }
         return metres;
+    }
+
+    /**
+     * Mends lone bad pixels and returns the tile. The composite holds single pixels and small
+     * clusters, mostly where its source patches meet, that read hundreds or thousands of metres off
+     * the ground or water around them; interpolated, each would sink a pit or raise a spire tens of
+     * blocks wide. A pixel is mended when it lies more than twice a tolerance from what its
+     * neighbours within two pixels predict and fewer than three of them lie within the tolerance of
+     * it: 20 m plus two pixel widths, steeper than nearly all real ground. The prediction is their
+     * median, or where the tile's edge or open sea cuts the window short, the plane through them,
+     * so a one-sided window on a slope predicts the slope. Cliffs, ridges and valleys always keep
+     * neighbours along them at their own height, so only spikes match. Two passes clear clusters.
+     * Open-sea zeros neither count as neighbours nor change.
+     */
+    static float[] mend(float[] metres, int zoom, int tileY) {
+        float[] out = metres;
+        for (int pass = 0; pass < 2; pass++) out = mendPass(out, zoom, tileY);
+        return out;
+    }
+
+    private static float[] mendPass(float[] metres, int zoom, int tileY) {
+        float[] around = new float[24];
+        int[] at = new int[24];
+        float[] mended = null;
+        for (int y = 0; y < TILE_SIZE; y++) {
+            // Ground width of a pixel on this row: the Mercator scale shrinks it toward the poles.
+            double n = Math.PI * (1 - 2.0 * (tileY * TILE_SIZE + y + 0.5) / (TILE_SIZE << zoom));
+            double tolerance = 20 + 2 * 40_075_016.7 / Math.cosh(n) / (TILE_SIZE << zoom);
+            for (int x = 0; x < TILE_SIZE; x++) {
+                float value = metres[y * TILE_SIZE + x];
+                if (value == 0f) continue;
+                int count = 0, close = 0;
+                for (int j = Math.max(0, y - 2); j <= Math.min(TILE_SIZE - 1, y + 2); j++) {
+                    for (int i = Math.max(0, x - 2); i <= Math.min(TILE_SIZE - 1, x + 2); i++) {
+                        float other = metres[j * TILE_SIZE + i];
+                        if (i == x && j == y || other == 0f) continue;
+                        at[count] = (j - y) * 8 + i - x;
+                        around[count++] = other;
+                        if (Math.abs(other - value) <= tolerance) close++;
+                    }
+                }
+                if (close >= 3 || count < 8) continue;
+                double expected = count == 24 ? median(around) : plane(around, at, count, 2 * tolerance);
+                if (Math.abs(value - expected) <= 2 * tolerance) continue;
+                if (mended == null) mended = metres.clone();
+                mended[y * TILE_SIZE + x] = (float) expected;
+            }
+        }
+        return mended == null ? metres : mended;
+    }
+
+    private static double median(float[] values) {
+        float[] sorted = values.clone();
+        Arrays.sort(sorted);
+        return (sorted[11] + sorted[12]) / 2.0;
+    }
+
+    /**
+     * Height at the centre of the least-squares plane through neighbours at offsets {@code at}
+     * (dy * 8 + dx), refitted without the one furthest from it while that lies further than
+     * {@code outlier}, so a few bad pixels among them cannot tilt it.
+     */
+    private static double plane(float[] values, int[] at, int count, double outlier) {
+        boolean[] dropped = new boolean[count];
+        double[] fit = new double[3];
+        for (int round = 0; ; round++) {
+            fit(values, at, count, dropped, fit);
+            if (round == 4) return fit[0];
+            int worst = -1;
+            double furthest = outlier;
+            for (int k = 0; k < count; k++) {
+                if (dropped[k]) continue;
+                int dy = Math.floorDiv(at[k] + 2, 8), dx = at[k] - dy * 8;
+                double off = Math.abs(fit[0] + fit[1] * dx + fit[2] * dy - values[k]);
+                if (off > furthest) { furthest = off; worst = k; }
+            }
+            if (worst < 0) return fit[0];
+            dropped[worst] = true;
+        }
+    }
+
+    /** Least-squares v = a + b dx + c dy through the neighbours not dropped, into {@code fit}; level at their mean where too few remain. */
+    private static void fit(float[] values, int[] at, int count, boolean[] dropped, double[] fit) {
+        double n = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, sv = 0, sxv = 0, syv = 0;
+        for (int k = 0; k < count; k++) {
+            if (dropped[k]) continue;
+            int dy = Math.floorDiv(at[k] + 2, 8), dx = at[k] - dy * 8;
+            double v = values[k];
+            n++; sx += dx; sy += dy; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; sv += v; sxv += dx * v; syv += dy * v;
+        }
+        // Normal equations, solved by Cramer's rule.
+        double det = n * (sxx * syy - sxy * sxy) - sx * (sx * syy - sxy * sy) + sy * (sx * sxy - sxx * sy);
+        if (n < 3 || Math.abs(det) < 1e-9) { fit[0] = n == 0 ? 0 : sv / n; fit[1] = fit[2] = 0; return; }
+        fit[0] = (sv * (sxx * syy - sxy * sxy) - sx * (sxv * syy - sxy * syv) + sy * (sxv * sxy - sxx * syv)) / det;
+        fit[1] = (n * (sxv * syy - sxy * syv) - sv * (sx * syy - sxy * sy) + sy * (sx * syv - sxv * sy)) / det;
+        fit[2] = (n * (sxx * syv - sxv * sxy) - sx * (sx * syv - sxv * sy) + sv * (sx * sxy - sxx * sy)) / det;
     }
 
     /** Encodes metres as a Terrarium PNG; used by fixtures and offline packs. */
