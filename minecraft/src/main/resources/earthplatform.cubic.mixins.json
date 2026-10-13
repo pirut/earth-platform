@@ -52,6 +52,7 @@
     "CubicIrisSourceNamesMixin",
     "CubicIrisProgramSetMixin",
     "CubicRainRenderMixin",
+    "CubicVoidFogMixin",
     "CubicJetWeatherMixin"
   ],
   "injectors": {

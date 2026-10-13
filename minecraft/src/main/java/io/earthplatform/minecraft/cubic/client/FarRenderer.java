@@ -507,6 +507,9 @@ public final class FarRenderer {
 
     /** Draws the columns for the camera's squares, using a finer level only once all four of its columns are ready. */
     public void draw(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
+        // Under water, lava or powder snow the near fog hides everything far terrain would draw;
+        // drawn anyway, the sea's surface far above showed through it from the deep sea floor.
+        if (camera.getFluidInCamera() != net.minecraft.world.level.material.FogType.NONE) return;
         FarGpu gpu = closed ? null : gpu();
         if (gpu == null) return;
         if (uploadedFrame != frame) {
@@ -580,7 +583,7 @@ public final class FarRenderer {
 
     /** Draws the visible columns' water see-through, farthest first, before the near cubes' own water. */
     public void drawWater(Camera camera, Matrix4f modelView, Matrix4f projection) {
-        if (closed || waterFrame == frame) return;
+        if (closed || waterFrame == frame || camera.getFluidInCamera() != net.minecraft.world.level.material.FogType.NONE) return;
         waterFrame = frame;
         boolean any = false;
         for (Column column : visible) if (column.water != null || column.hasWaterWalls()) { any = true; break; }
