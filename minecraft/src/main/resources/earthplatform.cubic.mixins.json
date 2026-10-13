@@ -86,7 +86,8 @@
     "compat.XaeroWorldMapSlopeMixin",
     "compat.JourneyMapDataCacheMixin",
     "compat.JourneyMapSnapshotMixin",
-    "compat.JourneyMapChunkMixin"
+    "compat.JourneyMapChunkMixin",
+    "CubicVoidFogMixin"
   ],
   "injectors": {
     "defaultRequire": 1
