@@ -396,14 +396,54 @@ public final class FarRenderer {
         }
     }
 
+    /** How often the sea under the drawn cubes is looked over again, and what it was last time. */
+    private static final int SUNK_TICKS = 20;
+    private int sunkAt = Integer.MIN_VALUE / 2;
+    private LongOpenHashSet sunk = new LongOpenHashSet();
+
+    /**
+     * The cubes of nothing but water from the lowest drawn in each column up: the sea goes on
+     * below them, past the cubes loaded. Far terrain still draws inside them, so its seabed shows
+     * through the water as it does farther out, where the deep sea was a pale grey-blue of sky
+     * seen through water with nothing under it.
+     */
+    private LongOpenHashSet sunk(LongOpenHashSet compiled) {
+        if (ticks - sunkAt < SUNK_TICKS) return sunk;
+        sunkAt = ticks;
+        LongOpenHashSet sunk = new LongOpenHashSet();
+        for (LongIterator it = compiled.iterator(); it.hasNext(); ) {
+            long key = it.nextLong();
+            int x = CubeKey.x(key), z = CubeKey.z(key);
+            if (compiled.contains(CubeKey.pack(x, CubeKey.y(key) - 1, z))) continue;
+            // The lowest drawn cube of its column: climb while the cubes are all water.
+            for (int y = CubeKey.y(key); ; y++) {
+                long up = CubeKey.pack(x, y, z);
+                if (!compiled.contains(up) || !allWater(world.cube(up))) break;
+                sunk.add(up);
+            }
+        }
+        this.sunk = sunk;
+        return sunk;
+    }
+
+    private static boolean allWater(@Nullable io.earthplatform.minecraft.cubic.Cube cube) {
+        if (cube == null) return false;
+        // A palette keeps states no longer used, so count the blocks themselves.
+        int[] water = new int[1];
+        cube.section.getStates().count((state, count) -> { if (state.getBlock() == net.minecraft.world.level.block.Blocks.WATER) water[0] += count; });
+        return water[0] == 4096;
+    }
+
     /**
      * Hands each column the cubes the cube renderer already draws inside it (plus a voxel's margin),
      * and remeshes the columns whose set changed.
      */
     private void mask() {
         Long2ObjectOpenHashMap<LongOpenHashSet> sets = new Long2ObjectOpenHashMap<>();
-        for (LongIterator it = world.renderer().compiledCubes().iterator(); it.hasNext(); ) {
+        LongOpenHashSet compiled = world.renderer().compiledCubes(), sunk = sunk(compiled);
+        for (LongIterator it = compiled.iterator(); it.hasNext(); ) {
             long cube = it.nextLong();
+            if (sunk.contains(cube)) continue;
             int bx = CubeKey.x(cube) << 4, bz = CubeKey.z(cube) << 4;
             for (int level = Far.MIN_LEVEL; level <= Far.MAX_LEVEL; level++) {
                 int v = Far.voxel(level);
