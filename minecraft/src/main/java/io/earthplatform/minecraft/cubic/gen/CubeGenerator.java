@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.gen;
 
 import java.util.List;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 
 /**
@@ -19,6 +20,8 @@ public interface CubeGenerator {
     default LevelChunkSection generate(int cubeX, int cubeY, int cubeZ, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
         return generate(cubeX, cubeY, cubeZ);
     }
+    /** Called once the server level the cubes are for exists, before any cube generates there. */
+    default void attach(ServerLevel level) {}
     /** Generated ground height (top solid block) for a column. */
     int surfaceY(int x, int z);
     /** Top generated water block of a column, or {@link Integer#MIN_VALUE} where it is dry. */

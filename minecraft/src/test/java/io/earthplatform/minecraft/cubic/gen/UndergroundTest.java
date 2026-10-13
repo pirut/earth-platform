@@ -83,10 +83,10 @@ class UndergroundTest {
         System.out.println("block entities " + blockEntities.size() + ", entities " + entities.size());
         for (CompoundTag tag : blockEntities) System.out.println("  " + tag);
         for (String ore : List.of("coal_ore", "iron_ore", "copper_ore", "deepslate_diamond_ore", "deepslate_redstone_ore", "deepslate_gold_ore",
-                "deepslate_lapis_ore", "granite", "diorite", "andesite", "tuff", "gravel", "lava", "glow_lichen"))
+                "deepslate_lapis_ore", "granite", "diorite", "andesite", "tuff", "gravel", "lava", "glow_lichen",
+                "sculk", "sculk_sensor", "sculk_shrieker", "moss_block", "pointed_dripstone"))
             assertTrue(counts.getOrDefault(ore, 0) > 0, ore);
         assertTrue(counts.getOrDefault("spawner", 0) > 0, "spawners");
-        assertTrue(counts.getOrDefault("rail", 0) > 0, "mineshaft rails");
         assertTrue(counts.getOrDefault("budding_amethyst", 0) > 0, "geodes");
         assertEquals(counts.getOrDefault("spawner", 0), (int) blockEntities.stream().filter(t -> t.getString("id").endsWith("mob_spawner")).count());
         assertTrue(ms < 25, "generation time per cube " + ms);

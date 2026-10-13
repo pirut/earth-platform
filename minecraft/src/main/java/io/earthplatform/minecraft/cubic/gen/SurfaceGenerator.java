@@ -4,11 +4,15 @@ import io.earthplatform.minecraft.cubic.far.Far;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import javax.annotation.Nullable;
 import net.minecraft.core.Holder;
 import net.minecraft.core.IdMap;
 import net.minecraft.core.Registry;
+import net.minecraft.core.SectionPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BiomeTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Block;
@@ -56,13 +60,19 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     protected final long seed;
     protected final IdMap<Holder<Biome>> biomeIds;
+    private final Registry<Biome> biomeRegistry;
     private final Underground below;
+    /** Vanilla's structures, once a server level is attached; until then cubes are terrain only. */
+    @Nullable private volatile VanillaStructures vanilla;
+    /** Base cubes (before vanilla structures) that structure layout reads, by section key. */
+    private final ConcurrentHashMap<Long, LevelChunkSection> bases = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Column> columns = new ConcurrentHashMap<>();
 
     /** Cave noise is drawn from {@code random} after whatever the subclass drew from it. */
     protected SurfaceGenerator(long seed, Registry<Biome> biomes, RandomSource random) {
         this.seed = seed;
         this.biomeIds = biomes.asHolderIdMap();
+        this.biomeRegistry = biomes;
         below = new Underground(this, seed, biomes, random);
     }
     Underground underground() { return below; }
@@ -284,7 +294,58 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     @Override public LevelChunkSection generate(int cx, int cy, int cz) { return generate(cx, cy, cz, new ArrayList<>(), new ArrayList<>()); }
 
+    @Override public void attach(ServerLevel level) { vanilla = new VanillaStructures(level, new StructureHost(), seed); }
+
     @Override public LevelChunkSection generate(int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
+        LevelChunkSection section = terrain(cx, cy, cz, blockEntities, entities);
+        VanillaStructures structures = vanilla;
+        if (structures != null) {
+            structures.place(section, cx, cy, cz, blockEntities, entities);
+            section.recalcBlockCounts();
+        }
+        return section;
+    }
+
+    /** The biome vanilla code sees at a block: the cave biome deep under the ground, else the column's. */
+    Holder<Biome> biomeAt(int x, int y, int z) {
+        Column col = column(x >> 4, z >> 4);
+        int cy = y >> 4;
+        if ((cy << 4) + 15 < col.min - 6) {
+            Holder<Biome> cave = below.biome(below.kind(x >> 4, cy, z >> 4));
+            if (cave != null) return cave;
+        }
+        return col.surface[(z & 15) * 16 + (x & 15)].biome();
+    }
+
+    /** What vanilla structure code reads of this world: the terrain before structures. */
+    private final class StructureHost implements VanillaStructures.Host {
+        @Override public int ground(int x, int z) { return surfaceY(x, z); }
+        @Override public int water(int x, int z) { return waterY(x, z); }
+        @Override public Holder<Biome> biome(int x, int y, int z) { return biomeAt(x, y, z); }
+        @Override public int floor(int x, int z) { return below.floor(x, z); }
+        @Override public int seaLevel() { return SurfaceGenerator.this.seaLevel() + 1; }
+        @Override public java.util.stream.Stream<Holder<Biome>> possibleBiomes() {
+            return biomeRegistry.holders().filter(h -> h.is(BiomeTags.IS_OVERWORLD)).map(h -> (Holder<Biome>) h);
+        }
+        @Override public BlockState fill(int x, int y, int z, int depth) {
+            Surface surface = column(x >> 4, z >> 4).surface[(z & 15) * 16 + (x & 15)];
+            return depth <= 0 ? surface.top() : depth < 4 ? surface.under() : below.rock(x, y, z, below.floor(x, z));
+        }
+        @Nullable @Override public LevelChunkSection cube(int cx, int cy, int cz) {
+            Column col = column(cx, cz);
+            if (cy << 4 > Math.max(col.max + 16, col.maxWater)) return null;
+            long key = SectionPos.asLong(cx, cy, cz);
+            LevelChunkSection cached = bases.get(key);
+            if (cached != null) return cached;
+            LevelChunkSection made = terrain(cx, cy, cz, new ArrayList<>(), new ArrayList<>());
+            if (bases.size() > 4096) bases.clear();
+            bases.putIfAbsent(key, made);
+            return made;
+        }
+    }
+
+    /** A cube as generated before vanilla structures: terrain, caves, ores, plants and this generator's own structures. */
+    private LevelChunkSection terrain(int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
         Column col = column(cx, cz);
         Holder<Biome> fallback = col.surface[8 * 16 + 8].biome();
         int y0 = cy << 4, x0 = cx << 4, z0 = cz << 4;

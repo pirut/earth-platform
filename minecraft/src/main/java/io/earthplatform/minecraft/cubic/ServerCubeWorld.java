@@ -99,6 +99,7 @@ public final class ServerCubeWorld extends CubeWorld {
         super(level);
         this.server = level;
         this.generator = generator;
+        generator.attach(level);
         this.codec = new CubeCodec(level.registryAccess().registryOrThrow(Registries.BIOME));
         this.storage = new CubeStorage(DimensionType.getStorageFolder(level.dimension(),
                 level.getServer().getWorldPath(LevelResource.ROOT)).resolve("cubes"));

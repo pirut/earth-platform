@@ -49,8 +49,8 @@ final class Underground {
 
     private final SurfaceGenerator terrain;
     private final long seed;
-    private final ImprovedNoise tunnelA, tunnelB, cavern, lavaNoise, noodleA, noodleB, noodleRegion, entrance, lush, dripstone;
-    private final Holder<Biome> lushCaves, dripstoneCaves;
+    private final ImprovedNoise tunnelA, tunnelB, cavern, lavaNoise, noodleA, noodleB, noodleRegion, entrance, lush, dripstone, deepDark;
+    private final Holder<Biome> lushCaves, dripstoneCaves, deepDarkCaves;
     private final ConcurrentHashMap<Long, Integer> floorNodes = new ConcurrentHashMap<>();
     final Structures structures;
 
@@ -66,8 +66,10 @@ final class Underground {
         RandomSource own = new LegacyRandomSource(seed ^ 0x554E44455247524FL);
         noodleA = new ImprovedNoise(own); noodleB = new ImprovedNoise(own); noodleRegion = new ImprovedNoise(own);
         entrance = new ImprovedNoise(own); lush = new ImprovedNoise(own); dripstone = new ImprovedNoise(own);
+        deepDark = new ImprovedNoise(own);
         lushCaves = biomes.getHolderOrThrow(Biomes.LUSH_CAVES);
         dripstoneCaves = biomes.getHolderOrThrow(Biomes.DRIPSTONE_CAVES);
+        deepDarkCaves = biomes.getHolderOrThrow(Biomes.DEEP_DARK);
         structures = new Structures(this, seed);
     }
 
@@ -188,20 +190,21 @@ final class Underground {
 
     // Cave kinds and biomes ----------------------------------------------------------------------
 
-    enum Kind { PLAIN, LUSH, DRIPSTONE }
+    enum Kind { PLAIN, LUSH, DRIPSTONE, DEEP_DARK }
 
     /** The kind of caves in a cube lying wholly under the ground, chosen by broad 3D regions as vanilla's cave biomes are. */
     Kind kind(int cx, int cy, int cz) {
         int x = (cx << 4) + 8, y = (cy << 4) + 8, z = (cz << 4) + 8;
         int vy = vanillaY(y, floor(x, z));
         if (vy > 100) return Kind.PLAIN;
+        if (vy < -4 && deepDark.noise(x / 240.0, y / 120.0, z / 240.0) > 0.22) return Kind.DEEP_DARK;
         if (vy > -40 && lush.noise(x / 280.0, y / 140.0, z / 280.0) > 0.32) return Kind.LUSH;
         if (dripstone.noise(x / 300.0, y / 150.0, z / 300.0) > 0.32) return Kind.DRIPSTONE;
         return Kind.PLAIN;
     }
 
     @Nullable Holder<Biome> biome(Kind kind) {
-        return switch (kind) { case LUSH -> lushCaves; case DRIPSTONE -> dripstoneCaves; case PLAIN -> null; };
+        return switch (kind) { case LUSH -> lushCaves; case DRIPSTONE -> dripstoneCaves; case DEEP_DARK -> deepDarkCaves; case PLAIN -> null; };
     }
 
     // After the rock is laid: veins, cave plants, structures -------------------------------------
@@ -330,7 +333,10 @@ final class Underground {
     private static final BlockState LICHEN_UP = Blocks.GLOW_LICHEN.defaultBlockState().setValue(MultifaceBlock.getFaceProperty(Direction.UP), true),
             LICHEN_DOWN = Blocks.GLOW_LICHEN.defaultBlockState().setValue(MultifaceBlock.getFaceProperty(Direction.DOWN), true),
             DRIPSTONE_BLOCK = Blocks.DRIPSTONE_BLOCK.defaultBlockState(), MOSS = Blocks.MOSS_BLOCK.defaultBlockState(),
-            CLAY = Blocks.CLAY.defaultBlockState(), WATER = Blocks.WATER.defaultBlockState();
+            CLAY = Blocks.CLAY.defaultBlockState(), WATER = Blocks.WATER.defaultBlockState(), SCULK = Blocks.SCULK.defaultBlockState(),
+            SHRIEKER = Blocks.SCULK_SHRIEKER.defaultBlockState().setValue(net.minecraft.world.level.block.SculkShriekerBlock.CAN_SUMMON, true),
+            VEIN_UP = Blocks.SCULK_VEIN.defaultBlockState().setValue(MultifaceBlock.getFaceProperty(Direction.UP), true),
+            VEIN_DOWN = Blocks.SCULK_VEIN.defaultBlockState().setValue(MultifaceBlock.getFaceProperty(Direction.DOWN), true);
 
     /**
      * Glow lichen in any cave; dripstone, or moss with azaleas, vines and pools, in their
@@ -339,6 +345,7 @@ final class Underground {
      */
     private void plants(LevelChunkSection section, int cx, int cy, int cz, Kind kind) {
         RandomSource random = new LegacyRandomSource(seed ^ mix(cx, cy, cz) ^ 0x504C414E54L);
+        int x0 = cx << 4, y0 = cy << 4, z0 = cz << 4;
         for (int ly = 1; ly < 15; ly++) for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
             BlockState here = section.getBlockState(lx, ly, lz);
             if (!here.isAir()) continue;
@@ -357,6 +364,20 @@ final class Underground {
                     if (floor && roll < 70) spike(section, lx, ly, lz, Direction.UP, 1 + random.nextInt(4));
                     else if (ceiling && roll < 150) spike(section, lx, ly, lz, Direction.DOWN, 1 + random.nextInt(5));
                 }
+                case DEEP_DARK -> {
+                    // Sculk in patches a few blocks across, with sensors, shriekers and the odd catalyst on it.
+                    boolean patch = Math.floorMod(mix(x0 + lx >> 2, y0 + ly >> 2, z0 + lz >> 2), 100) < 60;
+                    if (floor && stone(below) && patch) {
+                        section.setBlockState(lx, ly - 1, lz, SCULK, false);
+                        if (roll < 12) section.setBlockState(lx, ly, lz, Blocks.SCULK_SENSOR.defaultBlockState(), false);
+                        else if (roll < 16) section.setBlockState(lx, ly, lz, SHRIEKER, false);
+                        else if (roll < 18) section.setBlockState(lx, ly - 1, lz, Blocks.SCULK_CATALYST.defaultBlockState(), false);
+                        else if (roll < 120) section.setBlockState(lx, ly, lz, VEIN_DOWN, false);
+                    } else if (ceiling && stone(above) && patch) {
+                        section.setBlockState(lx, ly + 1, lz, SCULK, false);
+                    } else if (ceiling && roll < 60) section.setBlockState(lx, ly, lz, VEIN_UP, false);
+                    else if (floor && roll < 60) section.setBlockState(lx, ly, lz, VEIN_DOWN, false);
+                }
                 case LUSH -> {
                     if (floor && stone(below)) {
                         section.setBlockState(lx, ly - 1, lz, roll < 30 ? CLAY : MOSS, false);
@@ -365,7 +386,14 @@ final class Underground {
                         else if (roll < 450) section.setBlockState(lx, ly, lz, Blocks.SHORT_GRASS.defaultBlockState(), false);
                         else if (roll < 490) section.setBlockState(lx, ly, lz, Blocks.AZALEA.defaultBlockState(), false);
                         else if (roll < 510) section.setBlockState(lx, ly, lz, Blocks.FLOWERING_AZALEA.defaultBlockState(), false);
+                        else if (roll < 524) smallDripleaf(section, lx, ly, lz, random);
+                        else if (roll < 532) bigDripleaf(section, lx, ly, lz, 1 + random.nextInt(4), random);
                     } else if (ceiling) {
+                        if (stone(above) && roll > 940) {
+                            section.setBlockState(lx, ly + 1, lz, Blocks.ROOTED_DIRT.defaultBlockState(), false);
+                            section.setBlockState(lx, ly, lz, Blocks.HANGING_ROOTS.defaultBlockState(), false);
+                            continue;
+                        }
                         if (stone(above)) section.setBlockState(lx, ly + 1, lz, MOSS, false);
                         if (roll < 160) vine(section, lx, ly, lz, 1 + random.nextInt(6), random);
                         else if (roll < 164) section.setBlockState(lx, ly, lz, Blocks.SPORE_BLOSSOM.defaultBlockState(), false);
@@ -376,6 +404,29 @@ final class Underground {
     }
 
     private static boolean stone(BlockState state) { return rock(state); }
+
+    private static final Direction[] SIDES = {Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST};
+
+    /** A two-block small dripleaf, where it fits in the cube. */
+    private static void smallDripleaf(LevelChunkSection section, int lx, int ly, int lz, RandomSource random) {
+        if (ly + 1 > 15 || !section.getBlockState(lx, ly + 1, lz).isAir()) return;
+        Direction facing = SIDES[random.nextInt(4)];
+        BlockState lower = Blocks.SMALL_DRIPLEAF.defaultBlockState().setValue(net.minecraft.world.level.block.SmallDripleafBlock.FACING, facing);
+        section.setBlockState(lx, ly, lz, lower.setValue(net.minecraft.world.level.block.DoublePlantBlock.HALF,
+                net.minecraft.world.level.block.state.properties.DoubleBlockHalf.LOWER), false);
+        section.setBlockState(lx, ly + 1, lz, lower.setValue(net.minecraft.world.level.block.DoublePlantBlock.HALF,
+                net.minecraft.world.level.block.state.properties.DoubleBlockHalf.UPPER), false);
+    }
+
+    /** A big dripleaf on a stem {@code height} blocks tall in all, shortened to the air above it in the cube. */
+    private static void bigDripleaf(LevelChunkSection section, int lx, int ly, int lz, int height, RandomSource random) {
+        int top = ly;
+        while (top - ly + 1 < height && top + 1 <= 15 && section.getBlockState(lx, top + 1, lz).isAir() && (top + 2 > 15 || section.getBlockState(lx, top + 2, lz).isAir())) top++;
+        Direction facing = SIDES[random.nextInt(4)];
+        for (int y = ly; y < top; y++)
+            section.setBlockState(lx, y, lz, Blocks.BIG_DRIPLEAF_STEM.defaultBlockState().setValue(net.minecraft.world.level.block.BigDripleafStemBlock.FACING, facing), false);
+        section.setBlockState(lx, top, lz, Blocks.BIG_DRIPLEAF.defaultBlockState().setValue(net.minecraft.world.level.block.BigDripleafBlock.FACING, facing), false);
+    }
 
     /** Vanilla's base stone: what rock veins replace, and what cave plants grow from. Checked by block, as tags may be unbound. */
     static boolean rock(BlockState state) {
