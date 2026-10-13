@@ -15,6 +15,11 @@
     "CubicTravelMixin",
     "CubicRespawnMixin",
     "CubicSpawnerMixin",
+    "compat.CreateContraptionMixin",
+    "compat.CreateBuildHeightMixin",
+    "compat.WaystonesPlacementMixin",
+    "compat.WaystonesTargetMixin",
+    "compat.MekanismWorldUtilsMixin",
     "CubicWeatherMixin",
     "CubicServerWeatherMixin",
     "CubicPortalFireMixin",
@@ -66,7 +71,14 @@
     "EarthCreateWorldMixin",
     "EarthCloudsMixin",
     "EarthHorizonMixin",
-    "EarthFogColourMixin"
+    "EarthFogColourMixin",
+    "compat.XaeroMinimapWriterMixin",
+    "compat.XaeroWorldMapWriterMixin",
+    "compat.XaeroWorldMapDimensionMixin",
+    "compat.XaeroWorldMapSlopeMixin",
+    "compat.JourneyMapDataCacheMixin",
+    "compat.JourneyMapSnapshotMixin",
+    "compat.JourneyMapChunkMixin"
   ],
   "injectors": {
     "defaultRequire": 1
