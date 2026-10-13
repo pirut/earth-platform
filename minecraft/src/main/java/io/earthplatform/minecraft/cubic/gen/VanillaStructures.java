@@ -194,7 +194,10 @@ final class VanillaStructures {
             if (!kind.placement.isStructureChunk(state, (int) c[2], (int) c[3])) continue;
             Start start = start(kind, (int) c[2], (int) c[3]);
             if (start == null || !wanted.test(start.start.getStructure())) continue;
-            return start.start.getBoundingBox().getCenter().above(start.frame.shift);
+            BlockPos centre = start.start.getBoundingBox().getCenter().above(start.frame.shift);
+            // Pieces that settle onto the ground as they are placed still sit at vanilla's Y 64 here
+            int ground = host.ground(centre.getX(), centre.getZ());
+            return start.frame.shift == 0 && centre.getY() < ground - 64 ? centre.atY(ground) : centre;
         }
         return null;
     }
@@ -313,6 +316,16 @@ final class VanillaStructures {
         BoundingBox box = made.getBoundingBox().moved(0, frame.shift, 0);
         if (made.getStructure().terrainAdaptation() != TerrainAdjustment.NONE) box = box.inflatedBy(ADAPT, ADAPT_HEIGHT, ADAPT);
         else box = box.inflatedBy(4, 4, 4); // features in pieces (trees) reach a little past them
+        if (frame.shift == 0) {
+            // Temples, huts, igloos, shipwrecks and ocean ruins drop onto the ground only as they are placed
+            int low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
+            for (int x : new int[]{box.minX(), box.getCenter().getX(), box.maxX()})
+                for (int z : new int[]{box.minZ(), box.getCenter().getZ(), box.maxZ()}) {
+                    int ground = host.ground(x, z);
+                    low = Math.min(low, ground); high = Math.max(high, ground);
+                }
+            box = new BoundingBox(box.minX(), Math.min(box.minY(), low - 48), box.minZ(), box.maxX(), Math.max(box.maxY(), high + 32), box.maxZ());
+        }
         return new Start(kind.index, chunkX, chunkZ, made, frame, box);
     }
 
