@@ -68,6 +68,8 @@ final class ClearingEdges {
      * 30 m surveys across, so still sharp there, and the correction is smooth.
      */
     static Steps find(float[] dem, boolean[] dry, boolean[] water, int span, double metres, int from, int side) {
+        if (from < 0 || side < 1 || from + side > span)
+            throw new IllegalArgumentException("Square " + from + "+" + side + " is not inside a " + span + "-pixel window");
         int n = span * span;
         // The gates, over the whole window: flat, low and dry.
         float[] land = new float[n], height = new float[n];
