@@ -75,6 +75,8 @@ import org.slf4j.Logger;
  * terrain. Surface structures see real heights. Structures vanilla puts at fixed depths
  * (mineshafts, strongholds, ancient cities, trial chambers) see a frame shifted so that vanilla's
  * Y 64 lies at the local floor, the same datum the rock layers hang from (see {@link Underground}).
+ * Ruined portals see real ground in such a shifted frame too, as they bury themselves at fixed
+ * heights (vanilla's Y 70 in mountains, its bottom underground).
  *
  * <p>Each structure is laid out once, on the terrain as generated, into an overlay of blocks,
  * block entities and entities bucketed by cube. A cube copies its part of every overlay
@@ -101,15 +103,17 @@ final class VanillaStructures {
 
     /** Structure sets placed at vanilla's fixed depths under the local floor. */
     private static final Set<String> DEEP = Set.of("minecraft:mineshafts", "minecraft:strongholds", "minecraft:ancient_cities", "minecraft:trial_chambers");
+    /** Surface structure sets that bury themselves at fixed heights, shown real ground in a frame with vanilla's Y 64 at the local floor. */
+    private static final Set<String> FLOOR_RELATIVE = Set.of("minecraft:ruined_portals");
     /** How many chunks from its start chunk a structure reaches, as vanilla's structure references. */
     private static final int REACH = 8;
     /** How far terrain adaptation reaches from a piece, sideways and up or down. */
     private static final int ADAPT = 12, ADAPT_HEIGHT = 64;
     /** Strongholds sit on a spread grid rather than vanilla's rings around the origin, which a planet does not have. */
     private static final int STRONGHOLD_SPACING = 64, STRONGHOLD_SEPARATION = 32, STRONGHOLD_SALT = 0x53544E44;
-    private static final BlockState AIR = Blocks.AIR.defaultBlockState(), WATER = Blocks.WATER.defaultBlockState();
+    private static final BlockState AIR = Blocks.AIR.defaultBlockState(), WATER = Blocks.WATER.defaultBlockState(), STONE = Blocks.STONE.defaultBlockState();
 
-    private record Kind(int index, Holder<StructureSet> set, RandomSpreadStructurePlacement placement, boolean deep) {}
+    private record Kind(int index, Holder<StructureSet> set, RandomSpreadStructurePlacement placement, boolean deep, boolean relative) {}
     /** A structure start; {@code reach} covers its pieces and terrain adaptation in real coordinates. */
     private record Start(int kind, int chunkX, int chunkZ, StructureStart start, Frame frame, BoundingBox reach) {}
     /** The part of an overlay in one cube: block indices and states, block entity and entity tags. */
@@ -142,7 +146,7 @@ final class VanillaStructures {
             StructurePlacement placement = set.value().placement();
             if (placement instanceof ConcentricRingsStructurePlacement)
                 placement = new RandomSpreadStructurePlacement(STRONGHOLD_SPACING, STRONGHOLD_SEPARATION, RandomSpreadType.TRIANGULAR, STRONGHOLD_SALT);
-            if (placement instanceof RandomSpreadStructurePlacement spread) found.add(new Kind(found.size(), set, spread, DEEP.contains(id)));
+            if (placement instanceof RandomSpreadStructurePlacement spread) found.add(new Kind(found.size(), set, spread, DEEP.contains(id), FLOOR_RELATIVE.contains(id)));
             else LOGGER.info("Cubic world: no placement for structure set {}", id);
         }
         this.kinds = List.copyOf(found);
@@ -214,6 +218,19 @@ final class VanillaStructures {
      * vanilla keeps in chunks, which the carrier's chunks never get. Mob spawns (guardians in
      * monuments, none in trial chambers) and advancements ask about these.
      */
+    /**
+     * The one biome a structure reaching a cube keeps to, as ancient cities keep to the deep dark, or null. The cube's
+     * caves are then all that biome, so no lush cave grows through a city that started in the deep dark beside it.
+     */
+    @Nullable Holder<Biome> soleBiome(int cx, int cy, int cz) {
+        BoundingBox cube = new BoundingBox(cx << 4, cy << 4, cz << 4, (cx << 4) + 15, (cy << 4) + 15, (cz << 4) + 15);
+        for (Start start : column(cx, cz)) {
+            var biomes = start.start.getStructure().biomes();
+            if (biomes.size() == 1 && start.reach.intersects(cube)) return biomes.get(0);
+        }
+        return null;
+    }
+
     List<StructureStart> startsAt(int cx, int cz) {
         List<Start> found = column(cx, cz);
         if (found.isEmpty()) return List.of();
@@ -332,7 +349,7 @@ final class VanillaStructures {
     }
 
     @Nullable private Start makeStart(Kind kind, int chunkX, int chunkZ) {
-        Frame frame = new Frame(kind.deep ? host.floor((chunkX << 4) + 8, (chunkZ << 4) + 8) - 64 : 0, kind.deep);
+        Frame frame = new Frame(kind.deep || kind.relative ? host.floor((chunkX << 4) + 8, (chunkZ << 4) + 8) - 64 : 0, kind.deep);
         ChunkPos chunk = new ChunkPos(chunkX, chunkZ);
         List<StructureSet.StructureSelectionEntry> entries = kind.set.value().structures();
         StructureStart made = StructureStart.INVALID_START;
@@ -582,9 +599,10 @@ final class VanillaStructures {
         Frame(int shift, boolean deep) {
             super(new FrameBiomes(shift));
             this.shift = shift;
-            this.minY = deep ? -64 : CubeWorld.MIN_Y;
-            this.height = deep ? 384 : CubeWorld.MAX_Y - CubeWorld.MIN_Y + 1;
-            this.sea = deep ? 63 : host.seaLevel();
+            // A shifted surface frame starts at vanilla's bottom and reaches the top of the real world.
+            this.minY = deep || shift != 0 ? -64 : CubeWorld.MIN_Y;
+            this.height = deep ? 384 : CubeWorld.MAX_Y - shift - minY + 1;
+            this.sea = deep ? 63 : host.seaLevel() - shift;
             this.heights = LevelHeightAccessor.create(minY, height);
         }
 
@@ -599,11 +617,13 @@ final class VanillaStructures {
 
         @Override public NoiseColumn getBaseColumn(int x, int z, LevelHeightAccessor heights, RandomState random) {
             int ground = host.ground(x, z), water = host.water(x, z);
-            int lo = Math.max(heights.getMinBuildHeight(), ground - shift - 128), hi = Math.min(heights.getMaxBuildHeight(), Math.max(ground, water) - shift + 32);
+            // Down to the bottom of a shifted frame, so searches down a column find rock, not air; plain stone deep down.
+            int lo = shift != 0 ? heights.getMinBuildHeight() : Math.max(heights.getMinBuildHeight(), ground - 128);
+            int hi = Math.min(heights.getMaxBuildHeight(), Math.max(ground, water) - shift + 32);
             BlockState[] states = new BlockState[Math.max(0, hi - lo)];
             for (int i = 0; i < states.length; i++) {
                 int y = lo + i + shift;
-                states[i] = y <= ground ? host.fill(x, y, z, ground - y) : y <= water ? WATER : AIR;
+                states[i] = y < ground - 128 ? STONE : y <= ground ? host.fill(x, y, z, ground - y) : y <= water ? WATER : AIR;
             }
             return new NoiseColumn(lo, states);
         }

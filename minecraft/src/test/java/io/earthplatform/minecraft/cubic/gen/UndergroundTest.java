@@ -68,8 +68,14 @@ class UndergroundTest {
             int floor = under.floor((cx << 4) + 8, (cz << 4) + 8);
             // From vanilla's bottom up to the ground.
             for (int cy = (floor - 140) >> 4; cy <= ground >> 4; cy++) {
+                int before = blockEntities.size();
                 LevelChunkSection section = generator.generate(cx, cy, cz, blockEntities, entities);
                 cubes++;
+                // Every block entity a cube starts with sits on a block that takes it.
+                for (CompoundTag tag : blockEntities.subList(before, blockEntities.size())) {
+                    var type = BuiltInRegistries.BLOCK_ENTITY_TYPE.get(net.minecraft.resources.ResourceLocation.parse(tag.getString("id")));
+                    assertTrue(type != null && type.isValid(section.getBlockState(tag.getInt("x") & 15, tag.getInt("y") & 15, tag.getInt("z") & 15)), "block under " + tag);
+                }
                 for (int i = 0; i < 4096; i++) {
                     Block block = section.getBlockState(i & 15, i >> 8, i >> 4 & 15).getBlock();
                     if (block == Blocks.STONE || block == Blocks.AIR || block == Blocks.DEEPSLATE) continue;

@@ -23,8 +23,10 @@ enum ClimateZone {
             case AS, AW -> mean < 18 ? OCEANIC : TROPICAL_DRY;
             case BWH, BWK -> mean >= 18 ? HOT_DESERT : COLD_DESERT;
             case BSH, BSK -> mean >= 18 ? HOT_STEPPE : COLD_STEPPE;
-            // Dry-summer continental climates are Mediterranean mountains (the Sierra Nevada, the Zagros).
-            case CSA, CSB, CSC, DSA, DSB -> MEDITERRANEAN;
+            // Dry-summer continental climates are Mediterranean mountains (the Sierra Nevada, the Zagros),
+            // but where winters are long and hard, as in the Yukon's dry valleys, they are boreal.
+            case CSA, CSB, CSC -> MEDITERRANEAN;
+            case DSA, DSB -> mean < 3 ? SUBARCTIC : MEDITERRANEAN;
             case CFA, CWA -> SUBTROPICAL;
             case CFB, CWB -> OCEANIC;
             case CFC, CWC -> SUBPOLAR_OCEANIC;

@@ -9,8 +9,10 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.IdMap;
 import net.minecraft.core.Registry;
 import net.minecraft.core.SectionPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.BlockTags;
@@ -22,6 +24,7 @@ import net.minecraft.world.level.block.HugeMushroomBlock;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.RotatedPillarBlock;
 import net.minecraft.world.level.block.SnowLayerBlock;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
@@ -382,7 +385,22 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             structures.place(section, cx, cy, cz, blockEntities, entities);
             section.recalcBlockCounts();
         }
+        dropStrayBlockEntities(section, cx, cy, cz, blockEntities);
         return section;
+    }
+
+    /**
+     * Drops block entity tags whose block a later step replaced, such as a dungeon chest carved
+     * out by a neighbouring dungeon's room, so a cube's block entities always match its blocks.
+     */
+    private static void dropStrayBlockEntities(LevelChunkSection section, int cx, int cy, int cz, List<CompoundTag> blockEntities) {
+        blockEntities.removeIf(tag -> {
+            if (tag.getInt("x") >> 4 != cx || tag.getInt("y") >> 4 != cy || tag.getInt("z") >> 4 != cz) return false; // another cube's
+            ResourceLocation id = ResourceLocation.tryParse(tag.getString("id"));
+            BlockEntityType<?> type = id == null ? null : BuiltInRegistries.BLOCK_ENTITY_TYPE.get(id);
+            BlockState state = section.getBlockState(tag.getInt("x") & 15, tag.getInt("y") & 15, tag.getInt("z") & 15);
+            return type == null || !type.isValid(state);
+        });
     }
 
     @Override public @Nullable net.minecraft.core.BlockPos locate(java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> structure, int x, int z, int radius) {
@@ -403,6 +421,33 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     @Override public String structuresAt(int x, int y, int z) {
         VanillaStructures structures = vanilla;
         return structures == null ? "" : structures.describe(x, y, z);
+    }
+
+    @Override public @Nullable com.mojang.datafixers.util.Pair<net.minecraft.core.BlockPos, Holder<Biome>> findBiome(
+            java.util.function.Predicate<Holder<Biome>> biomes, net.minecraft.core.BlockPos from, int radius, int step) {
+        int[] sample = new int[2];
+        // Searching the caves costs the most; skip it when the biome sought is none of theirs.
+        boolean caves = false;
+        for (Underground.Kind kind : Underground.Kind.values()) {
+            Holder<Biome> cave = below.biome(kind);
+            caves |= cave != null && biomes.test(cave);
+        }
+        for (net.minecraft.core.BlockPos.MutableBlockPos at : net.minecraft.core.BlockPos.spiralAround(net.minecraft.core.BlockPos.ZERO,
+                Math.floorDiv(radius, step), net.minecraft.core.Direction.EAST, net.minecraft.core.Direction.SOUTH)) {
+            int x = from.getX() + at.getX() * step, z = from.getZ() + at.getZ() * step;
+            ground(x, z, sample);
+            int ground = sample[0], water = sample[1];
+            Holder<Biome> top = coverAt(x, z, ground, water).biome();
+            if (biomes.test(top)) return com.mojang.datafixers.util.Pair.of(new net.minecraft.core.BlockPos(x, Math.max(ground, water) + 1, z), top);
+            // Lush and dripstone caves and the deep dark, every 32 blocks down to vanilla's Y -64 under the local floor.
+            if (!caves) continue;
+            int floor = below.floor(x, z);
+            for (int y = ground - 32; y >= floor - 128; y -= 32) {
+                Holder<Biome> cave = below.biome(below.kind(x >> 4, y >> 4, z >> 4));
+                if (cave != null && biomes.test(cave)) return com.mojang.datafixers.util.Pair.of(new net.minecraft.core.BlockPos(x, y, z), cave);
+            }
+        }
+        return null;
     }
 
     /** The biome vanilla code sees at a block: the cave biome deep under the ground, else the column's. */
@@ -450,6 +495,11 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         int y0 = cy << 4, x0 = cx << 4, z0 = cz << 4;
         boolean underground = y0 + 15 < col.min - 6;
         Underground.Kind caves = underground ? below.kind(cx, cy, cz) : null;
+        VanillaStructures structures = vanilla;
+        if (caves != null && structures != null) {
+            Holder<Biome> sole = structures.soleBiome(cx, cy, cz);
+            for (Underground.Kind kind : Underground.Kind.values()) if (sole != null && sole.equals(below.biome(kind))) caves = kind;
+        }
         Holder<Biome> caveBiome = caves == null ? null : below.biome(caves);
         LevelChunkSection section = new LevelChunkSection(
                 new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, AIR, PalettedContainer.Strategy.SECTION_STATES),
