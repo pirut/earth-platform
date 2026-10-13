@@ -4,8 +4,14 @@ import static io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.*;
 
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Surface;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Tree;
+import java.util.ArrayList;
+import java.util.List;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtOps;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.block.BambooStalkBlock;
@@ -16,6 +22,8 @@ import net.minecraft.world.level.block.PinkPetalsBlock;
 import net.minecraft.world.level.block.SeaPickleBlock;
 import net.minecraft.world.level.block.SnowyDirtBlock;
 import net.minecraft.world.level.block.SweetBerryBushBlock;
+import net.minecraft.world.level.block.entity.BeehiveBlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BambooLeaves;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
@@ -82,6 +90,30 @@ final class Vegetation {
     /** Writes the trees in a box, for far terrain. */
     void trees(int x0, int y0, int z0, int x1, int y1, int z1, boolean giantsOnly, TreeShape.Sink sink) {
         trees.place(x0, y0, z0, x1, y1, z1, giantsOnly, sink);
+    }
+
+    /**
+     * Block entity tags for the bee nests in a generated cube whose lowest corner is (x0, y0, z0),
+     * each holding two or three bees, as vanilla's beehive decorator stocks a nest.
+     */
+    static void bees(LevelChunkSection section, int x0, int y0, int z0, List<CompoundTag> blockEntities) {
+        if (!section.maybeHas(state -> state.is(Blocks.BEE_NEST))) return;
+        String id = BlockEntityType.getKey(BlockEntityType.BEEHIVE).toString();
+        for (int i = 0; i < 4096; i++) {
+            int lx = i & 15, lz = i >> 4 & 15, ly = i >> 8;
+            if (!section.getBlockState(lx, ly, lz).is(Blocks.BEE_NEST)) continue;
+            int x = x0 + lx, y = y0 + ly, z = z0 + lz;
+            RandomSource random = RandomSource.create(BlockPos.asLong(x, y, z) * 0x9E3779B97F4A7C15L);
+            List<BeehiveBlockEntity.Occupant> bees = new ArrayList<>();
+            for (int b = 2 + random.nextInt(2); b > 0; b--) bees.add(BeehiveBlockEntity.Occupant.create(random.nextInt(599)));
+            CompoundTag tag = new CompoundTag();
+            tag.putString("id", id);
+            tag.putInt("x", x);
+            tag.putInt("y", y);
+            tag.putInt("z", z);
+            tag.put("bees", BeehiveBlockEntity.Occupant.LIST_CODEC.encodeStart(NbtOps.INSTANCE, bees).getOrThrow());
+            blockEntities.add(tag);
+        }
     }
 
     // Ground ---------------------------------------------------------------------------------------
