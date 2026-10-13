@@ -28,6 +28,8 @@ public interface CubeGenerator {
     default @javax.annotation.Nullable net.minecraft.world.level.levelgen.structure.StructureStart structureStart(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) { return null; }
     /** What structures reach a block, for checking. */
     default String structuresAt(int x, int y, int z) { return ""; }
+    /** The biome generated at a block, worked out without generating its cube, or null if unknown. */
+    default @javax.annotation.Nullable net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> biome(int x, int y, int z) { return null; }
     /** Called once the server level the cubes are for exists, before any cube generates there. */
     default void attach(ServerLevel level) {}
     /** Generated ground height (top solid block) for a column. */
