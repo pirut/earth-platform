@@ -12,11 +12,17 @@ class JetStreamTest {
     }
 
     @Test void crossesAContinentInAboutAnHour() {
-        // About 4,000 km coast to coast, at a block a metre, in an hour or less either way.
+        // San Francisco to New York is about 4.3 million blocks; an hour or less either way.
         double east = cruise(new Vec3(1, 0, 0), 10500).horizontalDistance() * 20 * 3600;
         double west = cruise(new Vec3(-1, 0, 0), 10500).horizontalDistance() * 20 * 3600;
-        assertTrue(west >= 4_000_000, "west " + west);
+        assertTrue(west >= 4_300_000, "west " + west);
         assertTrue(east > west, "the westerly wind helps flying east");
+    }
+
+    @Test void weatherStaysBelowTheClearSky() {
+        assertEquals(1.0F, JetStream.weather(3000), 1e-6);
+        assertEquals(0.0F, JetStream.weather(JetStream.CLEAR_SKY), 1e-6);
+        assertEquals(0.0F, JetStream.weather(JetStream.FLOOR + 500), 1e-6);
     }
 
     @Test void noWindBelowTheFloorAndFullAboveIt() {
