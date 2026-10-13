@@ -84,7 +84,7 @@ class UndergroundTest {
         for (CompoundTag tag : blockEntities) System.out.println("  " + tag);
         for (String ore : List.of("coal_ore", "iron_ore", "copper_ore", "deepslate_diamond_ore", "deepslate_redstone_ore", "deepslate_gold_ore",
                 "deepslate_lapis_ore", "granite", "diorite", "andesite", "tuff", "gravel", "lava", "glow_lichen",
-                "sculk", "sculk_sensor", "sculk_shrieker", "moss_block", "pointed_dripstone"))
+                "sculk", "sculk_sensor", "sculk_shrieker", "moss_block", "pointed_dripstone", "bone_block"))
             assertTrue(counts.getOrDefault(ore, 0) > 0, ore);
         assertTrue(counts.getOrDefault("spawner", 0) > 0, "spawners");
         assertTrue(counts.getOrDefault("budding_amethyst", 0) > 0, "geodes");

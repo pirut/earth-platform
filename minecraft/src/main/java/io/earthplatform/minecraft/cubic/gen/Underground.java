@@ -49,7 +49,7 @@ final class Underground {
 
     private final SurfaceGenerator terrain;
     private final long seed;
-    private final ImprovedNoise tunnelA, tunnelB, cavern, lavaNoise, noodleA, noodleB, noodleRegion, entrance, lush, dripstone, deepDark;
+    private final ImprovedNoise tunnelA, tunnelB, cavern, lavaNoise, noodleA, noodleB, noodleRegion, entrance, lush, dripstone, deepDark, veinToggle, veinA, veinB;
     private final Holder<Biome> lushCaves, dripstoneCaves, deepDarkCaves;
     private final ConcurrentHashMap<Long, Integer> floorNodes = new ConcurrentHashMap<>();
     final Structures structures;
@@ -67,6 +67,7 @@ final class Underground {
         noodleA = new ImprovedNoise(own); noodleB = new ImprovedNoise(own); noodleRegion = new ImprovedNoise(own);
         entrance = new ImprovedNoise(own); lush = new ImprovedNoise(own); dripstone = new ImprovedNoise(own);
         deepDark = new ImprovedNoise(own);
+        veinToggle = new ImprovedNoise(own); veinA = new ImprovedNoise(own); veinB = new ImprovedNoise(own);
         lushCaves = biomes.getHolderOrThrow(Biomes.LUSH_CAVES);
         dripstoneCaves = biomes.getHolderOrThrow(Biomes.DRIPSTONE_CAVES);
         deepDarkCaves = biomes.getHolderOrThrow(Biomes.DEEP_DARK);
@@ -106,10 +107,37 @@ final class Underground {
     BlockState rock(int x, int y, int z, int floor) {
         if (y <= CubeWorld.MIN_Y + 4 && y - CubeWorld.MIN_Y < 1 + Math.floorMod(mix(x, y, z), 5)) return BEDROCK;
         int vy = vanillaY(y, floor);
+        BlockState vein = largeVein(x, y, z, vy);
+        if (vein != null) return vein;
         if (vy < 0) return DEEPSLATE;
         if (vy >= DEEPSLATE_TOP) return STONE;
         // Vanilla's blend: the chance of deepslate falls from all to none over eight blocks.
         return Math.floorMod(mix(x, y, z) >>> 7, DEEPSLATE_TOP) >= vy ? DEEPSLATE : STONE;
+    }
+
+    private static final BlockState GRANITE = Blocks.GRANITE.defaultBlockState(), TUFF = Blocks.TUFF.defaultBlockState(),
+            COPPER_ORE = Blocks.COPPER_ORE.defaultBlockState(), DEEP_IRON_ORE = Blocks.DEEPSLATE_IRON_ORE.defaultBlockState(),
+            RAW_COPPER = Blocks.RAW_COPPER_BLOCK.defaultBlockState(), RAW_IRON = Blocks.RAW_IRON_BLOCK.defaultBlockState();
+
+    /**
+     * Vanilla's large ore veins: long winding bands of granite with copper (vanilla Y 0 to 50) or
+     * tuff with iron (-60 to -8), with the odd raw metal block. Same thresholds as vanilla's
+     * veinifier, fading out over 20 blocks at either end of the range.
+     */
+    @Nullable private BlockState largeVein(int x, int y, int z, int vy) {
+        if (vy < -60 || vy > 50 || vy > -8 && vy < 0) return null;
+        boolean copper = vy >= 0;
+        double toggle = veinToggle.noise(x / 96.0, y / 96.0, z / 96.0);
+        if (copper != toggle > 0) return null;
+        int edge = copper ? Math.min(vy, 50 - vy) : Math.min(vy + 60, -8 - vy);
+        double strength = Math.abs(toggle) + Mth.clampedMap(edge, 0, 20, -0.2, 0);
+        if (strength < 0.4) return null;
+        long r = mix(x, y ^ 0x5645494EL, z);
+        if ((r >>> 11 & 0xFFFF) > 0.7 * 65536) return null;
+        if (Math.max(Math.abs(veinA.noise(x / 26.0, y / 26.0, z / 26.0)), Math.abs(veinB.noise(x / 26.0, y / 26.0, z / 26.0))) >= 0.08) return null;
+        if ((r >>> 27 & 0xFFFF) < Mth.clampedMap(Math.abs(toggle), 0.4, 0.6, 0.1, 0.3) * 65536)
+            return (r >>> 43 & 0xFF) < 5 ? (copper ? RAW_COPPER : RAW_IRON) : copper ? COPPER_ORE : DEEP_IRON_ORE;
+        return copper ? GRANITE : TUFF;
     }
 
     /** What fills a cave at a height: air, or lava at the vanilla depth where lava lies. */

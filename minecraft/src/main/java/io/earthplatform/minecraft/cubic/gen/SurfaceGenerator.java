@@ -306,6 +306,16 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return section;
     }
 
+    @Override public @Nullable net.minecraft.core.BlockPos locate(net.minecraft.resources.ResourceLocation structure, int x, int z, int radius) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? null : structures.locate(structure, x, z, radius);
+    }
+
+    @Override public String structuresAt(int x, int y, int z) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? "" : structures.describe(x, y, z);
+    }
+
     /** The biome vanilla code sees at a block: the cave biome deep under the ground, else the column's. */
     Holder<Biome> biomeAt(int x, int y, int z) {
         Column col = column(x >> 4, z >> 4);

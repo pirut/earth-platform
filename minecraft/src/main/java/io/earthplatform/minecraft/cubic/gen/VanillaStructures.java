@@ -170,6 +170,51 @@ final class VanillaStructures {
         }
     }
 
+    /**
+     * The nearest start of a structure (by id) within {@code radius} chunks of a block column,
+     * as the centre of its pieces at real heights, or null. Slow; call off the server thread.
+     */
+    @Nullable BlockPos locate(net.minecraft.resources.ResourceLocation id, int x, int z, int radius) {
+        Structure wanted = level.registryAccess().registryOrThrow(Registries.STRUCTURE).get(id);
+        if (wanted == null) return null;
+        int cx = x >> 4, cz = z >> 4;
+        BlockPos best = null;
+        long bestDistance = Long.MAX_VALUE;
+        for (Kind kind : kinds) {
+            if (kind.set.value().structures().stream().noneMatch(e -> e.structure().value() == wanted)) continue;
+            int spacing = kind.placement.spacing();
+            for (int rz = Math.floorDiv(cz - radius, spacing); rz <= Math.floorDiv(cz + radius, spacing); rz++)
+                for (int rx = Math.floorDiv(cx - radius, spacing); rx <= Math.floorDiv(cx + radius, spacing); rx++) {
+                    ChunkPos chunk = kind.placement.getPotentialStructureChunk(seed, rx * spacing, rz * spacing);
+                    long d = (long) (chunk.x - cx) * (chunk.x - cx) + (long) (chunk.z - cz) * (chunk.z - cz);
+                    if (d >= bestDistance || !kind.placement.isStructureChunk(state, chunk.x, chunk.z)) continue;
+                    Start start = start(kind, chunk.x, chunk.z);
+                    if (start == null || start.start.getStructure() != wanted) continue;
+                    BlockPos centre = start.start.getBoundingBox().getCenter();
+                    best = centre.above(start.frame.shift);
+                    bestDistance = d;
+                }
+        }
+        return best;
+    }
+
+    /** The structures reaching a block column, with how many blocks each lays and how many in the cube at y. For checking. */
+    String describe(int x, int y, int z) {
+        StringBuilder text = new StringBuilder();
+        long cube = SectionPos.asLong(x >> 4, y >> 4, z >> 4);
+        for (Start start : column(x >> 4, z >> 4)) {
+            Long2ObjectOpenHashMap<Patch> overlay = overlay(start);
+            int blocks = 0, entities = 0;
+            for (Patch patch : overlay.values()) { blocks += patch.at.length; entities += patch.entities.size(); }
+            Patch here = overlay.get(cube);
+            text.append(level.registryAccess().registryOrThrow(Registries.STRUCTURE).getKey(start.start.getStructure()))
+                    .append(" box ").append(start.start.getBoundingBox().moved(0, start.frame.shift, 0))
+                    .append(": ").append(blocks).append(" blocks, ").append(entities).append(" entities, ")
+                    .append(here == null ? 0 : here.at.length).append(" here; ");
+        }
+        return text.length() == 0 ? "No structures here." : text.toString();
+    }
+
     // Placement: which structures start where -----------------------------------------------------
 
     private static long startKey(int kind, int chunkX, int chunkZ) {

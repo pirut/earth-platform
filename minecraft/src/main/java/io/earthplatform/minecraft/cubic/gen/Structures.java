@@ -38,6 +38,7 @@ final class Structures {
     private final ImprovedNoise geodeNoise;
     private final ConcurrentHashMap<Long, Optional<Geode>> geodes = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Optional<Dungeon>> dungeons = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Optional<Fossil>> fossils = new ConcurrentHashMap<>();
 
     Structures(Underground ground, long seed) {
         this.ground = ground;
@@ -50,6 +51,8 @@ final class Structures {
         Cut cut = new Cut(section, cx, cy, cz, blockEntities, entities);
         for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
             cached(geodes, cx + dx, cy + dy, cz + dz, this::planGeode).ifPresent(g -> drawGeode(g, cut));
+        for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
+            cached(fossils, cx + dx, cy + dy, cz + dz, this::planFossil).ifPresent(f -> drawFossil(f, cut));
         for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
             cached(dungeons, cx + dx, cy + dy, cz + dz, this::planDungeon).ifPresent(d -> drawDungeon(d, cut));
     }
@@ -105,6 +108,47 @@ final class Structures {
     }
 
     private int depthUnder(int x, int y, int z) { return ground.depth(x, y, z); }
+
+    // Fossils ------------------------------------------------------------------------------------
+
+    /** A buried skeleton: a spine along one axis with ribs and a skull, some bone turned to coal (or deep down, diamond). */
+    private record Fossil(int x, int y, int z, boolean alongX, int length, boolean deep, long salt) {}
+
+    /** Vanilla's rates: one try in 64 chunk columns each over vanilla heights 0 to 64, and -64 to -8 for the deep kind. */
+    private Optional<Fossil> planFossil(int cx, int cy, int cz) {
+        RandomSource random = new LegacyRandomSource(seed ^ ground.mix(cx, cy, cz) ^ 0x464F5353494CL);
+        if (random.nextInt(256) != 0) return Optional.empty();
+        int x = (cx << 4) + random.nextInt(16), y = (cy << 4) + random.nextInt(16), z = (cz << 4) + random.nextInt(16);
+        int vy = Underground.vanillaY(y, ground.floor(x, z));
+        boolean deep = vy < 0;
+        if (deep ? vy < -64 || vy > -8 : vy > 64) return Optional.empty();
+        if (depthUnder(x, y, z) < 12 || !ground.solid(x, y, z)) return Optional.empty();
+        return Optional.of(new Fossil(x, y, z, random.nextBoolean(), 5 + random.nextInt(5), deep, random.nextLong()));
+    }
+
+    private void drawFossil(Fossil f, Cut cut) {
+        BlockState bone = Blocks.BONE_BLOCK.defaultBlockState().setValue(net.minecraft.world.level.block.RotatedPillarBlock.AXIS,
+                f.alongX ? Direction.Axis.X : Direction.Axis.Z);
+        BlockState upright = Blocks.BONE_BLOCK.defaultBlockState();
+        BlockState ore = f.deep ? Blocks.DEEPSLATE_DIAMOND_ORE.defaultBlockState() : Blocks.COAL_ORE.defaultBlockState();
+        for (int i = 0; i < f.length; i++) {
+            put(f, cut, i, 0, 0, bone, ore);
+            if (i % 2 == 1 && i < f.length - 2) for (int s = -1; s <= 1; s += 2) {
+                put(f, cut, i, 1, s, upright, ore); put(f, cut, i, 0, 2 * s, upright, ore); put(f, cut, i, -1, 2 * s, upright, ore);
+            }
+        }
+        // The skull: a 2x2x2 block at the far end.
+        for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++) for (int c = 0; c < 2; c++) put(f, cut, f.length + a, b, c, upright, ore);
+    }
+
+    /** One fossil block, {@code along} the spine, {@code up} and {@code side} of it; some decay away, some are ore; only in rock. */
+    private void put(Fossil f, Cut cut, int along, int up, int side, BlockState bone, BlockState ore) {
+        int x = f.x + (f.alongX ? along : side), y = f.y + up, z = f.z + (f.alongX ? side : along);
+        if (!cut.inside(x, y, z) || !Underground.rock(cut.get(x, y, z))) return;
+        int roll = (int) Math.floorMod(ground.mix(x, y, z) ^ f.salt, 100);
+        if (roll < 10) return;
+        cut.set(x, y, z, roll < 20 ? ore : bone);
+    }
 
     // Geodes -------------------------------------------------------------------------------------
 

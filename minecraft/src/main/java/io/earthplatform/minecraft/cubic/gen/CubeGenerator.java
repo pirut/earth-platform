@@ -20,6 +20,10 @@ public interface CubeGenerator {
     default LevelChunkSection generate(int cubeX, int cubeY, int cubeZ, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
         return generate(cubeX, cubeY, cubeZ);
     }
+    /** The nearest generated structure of a kind (a structure id) within {@code radius} chunks, or null. Slow; call off-thread. */
+    default @javax.annotation.Nullable net.minecraft.core.BlockPos locate(net.minecraft.resources.ResourceLocation structure, int x, int z, int radius) { return null; }
+    /** What structures reach a block, for checking. */
+    default String structuresAt(int x, int y, int z) { return ""; }
     /** Called once the server level the cubes are for exists, before any cube generates there. */
     default void attach(ServerLevel level) {}
     /** Generated ground height (top solid block) for a column. */
