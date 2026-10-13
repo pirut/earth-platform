@@ -22,7 +22,9 @@
     "CubicRandomPosMixin",
     "CubicGoalLimitsMixin",
     "CubicSpreadPlayersMixin",
-    "CubicFloatingKickMixin"
+    "CubicFloatingKickMixin",
+    "CubicWeatherMixin",
+    "CubicServerWeatherMixin"
   ],
   "client": [
     "CubicPredictionMixin",
@@ -30,7 +32,8 @@
     "CubicFarPlaneMixin",
     "CubicShaderFarMixin",
     "CubicIrisSourceNamesMixin",
-    "CubicIrisProgramSetMixin"
+    "CubicIrisProgramSetMixin",
+    "CubicRainRenderMixin"
   ],
   "injectors": {
     "defaultRequire": 1
