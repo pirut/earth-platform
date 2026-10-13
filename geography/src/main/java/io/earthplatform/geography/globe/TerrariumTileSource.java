@@ -71,6 +71,8 @@ public final class TerrariumTileSource implements AutoCloseable {
     private final ExecutorService executor;
     private final LinkedHashMap<Long, float[]> memory = new LinkedHashMap<>(64, 0.75f, true);
     private final Map<Long, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
+    /** Tiles' raw values being read, so a tile and its neighbours' seams wanting the same one fetch it once. */
+    private final Map<Long, CompletableFuture<float[]>> rawInFlight = new ConcurrentHashMap<>();
     /** Better sources laid over the composite, in order; see {@link ElevationLayer}. */
     private final java.util.List<ElevationLayer> layers;
     private final AtomicLong downloads = new AtomicLong(), diskHits = new AtomicLong(), memoryHits = new AtomicLong(), failures = new AtomicLong();
@@ -119,6 +121,7 @@ public final class TerrariumTileSource implements AutoCloseable {
         CompletableFuture<float[]> shared = inFlight.putIfAbsent(key, mine);
         if (shared == null) {
             try {
+                early(zoom, x, y);
                 float[] values = read(zoom, x, y);
                 for (ElevationLayer layer : layers) refine(layer, zoom, x, y, values);
                 if (zoom >= SPIKE_ZOOM) despike(values);
@@ -332,8 +335,60 @@ public final class TerrariumTileSource implements AutoCloseable {
         }
     }
 
-    /** A tile's values as the composite holds them, from the disk cache or else the network. */
+    /**
+     * On a first visit a tile waits on a chain of downloads: its own pixels, then the neighbours its seams read, the
+     * coarser tile its repair compares against, and the layers' sources. None of them depends on another's values,
+     * so they all start at once here and the chain later joins the loads in flight or finds them cached.
+     */
+    private void early(int zoom, int x, int y) {
+        if (zoom > REFERENCE_ZOOM + 1) {
+            int shift = zoom - REFERENCE_ZOOM;
+            boolean known;
+            synchronized (memory) { known = memory.containsKey(key(REFERENCE_ZOOM, x >> shift, y >> shift)); }
+            if (!known) Thread.ofVirtual().start(() -> {
+                try { tile(REFERENCE_ZOOM, x >> shift, y >> shift); } catch (RuntimeException missing) { /* repair() does without */ }
+            });
+        }
+        for (ElevationLayer layer : layers) Thread.ofVirtual().start(() -> {
+            try { layer.prefetch(zoom, x, y); } catch (RuntimeException missing) { /* refine() reports it */ }
+        });
+        // Neighbours are worth reading ahead only when this tile must come over the network too: from the disk, seams
+        // reads them in moments, and reading them twice would cost more than it saves.
+        if (cacheRoot == null || !Files.isRegularFile(cacheRoot.resolve(zoom + "/" + x + "/" + y + ".png"), LinkOption.NOFOLLOW_LINKS))
+            seamNeighbours(zoom, x, y, (nz, nx, ny) -> {
+                if (ny < 0 || ny >= 1 << nz) return;
+                int wrapped = Math.floorMod(nx, 1 << nz);
+                if (cacheRoot != null && Files.isRegularFile(cacheRoot.resolve(nz + "/" + wrapped + "/" + ny + ".png"), LinkOption.NOFOLLOW_LINKS)) return;
+                Thread.ofVirtual().start(() -> neighbour(nz, wrapped, ny));
+            });
+    }
+
+    /** A tile's values as the composite holds them, from the disk cache or else the network; the caller's own copy. */
     private float[] raw(int zoom, int x, int y) throws IOException, InterruptedException {
+        long key = key(zoom, x, y);
+        CompletableFuture<float[]> mine = new CompletableFuture<>(), shared = rawInFlight.putIfAbsent(key, mine);
+        if (shared == null) {
+            try {
+                float[] values = load(zoom, x, y);
+                mine.complete(values);
+                return values.clone();
+            } catch (Throwable failure) {
+                mine.completeExceptionally(failure);
+                throw failure;
+            } finally {
+                rawInFlight.remove(key, mine);
+            }
+        }
+        try {
+            return shared.get().clone();
+        } catch (ExecutionException failed) {
+            if (failed.getCause() instanceof IOException io) throw io;
+            if (failed.getCause() instanceof RuntimeException runtime) throw runtime;
+            throw new MissingTerrainException("Elevation tile " + zoom + "/" + x + "/" + y + " failed: " + failed.getCause());
+        }
+    }
+
+    private float[] load(int zoom, int x, int y) throws IOException, InterruptedException {
         Path cached = cacheRoot == null ? null : cacheRoot.resolve(zoom + "/" + x + "/" + y + ".png");
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
@@ -382,10 +437,12 @@ public final class TerrariumTileSource implements AutoCloseable {
             if (attempt > 0) Thread.sleep(250L << attempt);
             transfers.acquire();
             try {
+                long start = System.nanoTime();
                 HttpResponse<byte[]> response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
                 int status = response.statusCode();
                 if (status == 200) {
                     downloads.incrementAndGet();
+                    Downloads.count("Elevation tiles", response.body().length, System.nanoTime() - start);
                     if (response.body().length > MAX_TILE_BYTES) throw new MissingTerrainException("Oversized elevation tile " + uri);
                     return response.body();
                 }
@@ -567,15 +624,24 @@ public final class TerrariumTileSource implements AutoCloseable {
      */
     static float[] seams(float[] metres, int zoom, int tileX, int tileY, Neighbours neighbours) {
         if (zoom < SEAM_ZOOM) return metres;
+        double pixel = 40_075_016.7 / Math.cosh(Math.PI * (1 - 2.0 * (tileY + 0.5) / (1 << zoom))) / ((long) TILE_SIZE << zoom);
+        float[][] out = {metres};
+        seamLines(zoom, tileX, tileY, (meridian, line, band) -> out[0] = across(metres, out[0], meridian, line, band, pixel, zoom, tileX, tileY, neighbours));
+        return out[0];
+    }
+
+    /** A seam {@link #seams} looks at: column {@code line} (a meridian) or row {@code line} (a parallel) and its band. */
+    private interface SeamLine { void at(boolean meridian, int line, int band); }
+
+    /** The whole-degree lines near a tile, in its pixels, with the band of pixels either side that {@link #seams} mends. */
+    private static void seamLines(int zoom, int tileX, int tileY, SeamLine each) {
         long size = (long) TILE_SIZE << zoom;
         double degrees = 360.0 / size;
-        double pixel = 40_075_016.7 / Math.cosh(Math.PI * (1 - 2.0 * (tileY + 0.5) / (1 << zoom))) / size;
-        float[] out = metres;
         int band = (int) Math.ceil(SEAM_REACH / degrees) + 1;
         long left = (long) tileX * TILE_SIZE;
         for (long lon = (long) Math.ceil((left - band - 3) * degrees - 180); lon <= (left + TILE_SIZE + band + 3) * degrees - 180; lon++) {
             int line = (int) ((long) Math.floor((lon + 180) / 360.0 * size) - left);
-            out = across(metres, out, true, line, band, pixel, zoom, tileX, tileY, neighbours);
+            each.at(true, line, band);
         }
         long top = (long) tileY * TILE_SIZE;
         double north = latitude(top - 4 * band - 3, size), south = latitude(top + TILE_SIZE + 4 * band + 3, size);
@@ -583,10 +649,22 @@ public final class TerrariumTileSource implements AutoCloseable {
             double phi = Math.toRadians(lat);
             int line = (int) ((long) Math.floor((1 - Math.log(Math.tan(phi) + 1 / Math.cos(phi)) / Math.PI) / 2 * size) - top);
             int rows = (int) Math.ceil(SEAM_REACH / (degrees * Math.cos(phi))) + 1;
-            out = across(metres, out, false, line, rows, pixel, zoom, tileX, tileY, neighbours);
+            each.at(false, line, rows);
         }
-        return out;
     }
+
+    /** The neighbouring tiles {@link #seams} will read for a tile, as {@link #across} asks for them; known before any pixel is. */
+    static void seamNeighbours(int zoom, int tileX, int tileY, Neighbour each) {
+        if (zoom < SEAM_ZOOM) return;
+        seamLines(zoom, tileX, tileY, (meridian, line, band) -> {
+            int reach = band + 2;
+            if (line + band < 0 || line - band >= TILE_SIZE) return;
+            if (line - reach < 0) { if (meridian) each.at(zoom, tileX - 1, tileY); else each.at(zoom, tileX, tileY - 1); }
+            if (line + reach >= TILE_SIZE) { if (meridian) each.at(zoom, tileX + 1, tileY); else each.at(zoom, tileX, tileY + 1); }
+        });
+    }
+
+    interface Neighbour { void at(int zoom, int x, int y); }
 
     /** Latitude in degrees of the top edge of a global pixel row, clamped to the map. */
     private static double latitude(long row, long size) {

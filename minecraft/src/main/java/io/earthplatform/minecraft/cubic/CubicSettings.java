@@ -286,7 +286,7 @@ public final class CubicSettings {
             Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(WorldCoverSource.DATASET_ID);
             try {
                 cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        48, 4, Duration.ofSeconds(30));
+                        48, 8, Duration.ofSeconds(30));
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the land cover cache at " + cache, failure);
             }

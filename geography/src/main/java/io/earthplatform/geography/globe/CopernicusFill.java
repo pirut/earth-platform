@@ -1,7 +1,9 @@
 package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
 
@@ -74,6 +76,8 @@ public final class CopernicusFill implements ElevationLayer {
 
     /** Parts a degree square is checked in, along each side, so a place's first tiles wait on a sixteenth of it. */
     static final int PARTS = 4;
+    /** Bands of a part's rows read together on a check: about as many as the tiles and blocks a part's margin crosses. */
+    static final int CHECK_BANDS = 8;
 
     /**
      * One part of a degree square's weights at the check overview: rows {@code row0} on and
@@ -99,6 +103,27 @@ public final class CopernicusFill implements ElevationLayer {
     @Override public String id() { return DATASET_ID; }
 
     @Override public void refine(int zoom, int x, int y, float[] values) { apply(values, zoom, x, y); }
+
+    /** The checks {@link #apply} asks first, and the Copernicus blocks under the tile's corners and middle where they weigh anything. */
+    @Override public void prefetch(int zoom, int tileX, int tileY) {
+        if (zoom < MIN_ZOOM) return;
+        long size = (long) TerrariumTileSource.TILE_SIZE << zoom;
+        double north = latitude(tileY * 256L, size), south = latitude((tileY + 1) * 256L, size);
+        double west = tileX * 360.0 / (1 << zoom) - 180, east = (tileX + 1) * 360.0 / (1 << zoom) - 180;
+        double margin = 0.02;
+        if (!any(Math.max(-89.9999, south - margin), Math.min(89.9999, north + margin), west - margin, east + margin)) return;
+        double pixel = EARTH_CIRCUMFERENCE * Math.cos(Math.toRadians((north + south) / 2)) / size;
+        int overview = (int) Math.max(0, Math.min(CopernicusSource.MAX_OVERVIEW, Math.floor(Math.log(pixel / COPERNICUS_METRES) / Math.log(2))));
+        List<Runnable> reads = new ArrayList<>();
+        for (double latitude : new double[] {north, (north + south) / 2, south})
+            for (double longitude : new double[] {west, (west + east) / 2, east})
+                reads.add(() -> {
+                    double at = Math.max(-89.9999, Math.min(89.9999, latitude));
+                    // Only blocks apply reads: where the weight stands.
+                    if (weight(at, longitude) > 0) dem.metres(at, longitude, overview);
+                });
+        RangeFiles.all(reads);
+    }
 
     /** Moves a tile's pixels toward Copernicus by the weight where they stand. */
     void apply(float[] values, int zoom, int tileX, int tileY) {
@@ -248,22 +273,43 @@ public final class CopernicusFill implements ElevationLayer {
         int m = WIDE, across = columns + 2 * m, down = rows + 2 * m;
         // The difference and Copernicus over the part and a margin round it, NaN where unknown.
         float[] difference = new float[across * down], copernicus = new float[across * down];
-        Terrarium terrarium = new Terrarium();
-        for (int r = 0; r < down; r++) {
-            double latitude = south + 1 - (row0 + r - m + 0.5) / height;
-            for (int c = 0; c < across; c++) {
-                int i = r * across + c;
-                difference[i] = copernicus[i] = Float.NaN;
-                if (Math.abs(latitude) >= 90) continue;
-                double longitude = west + (column0 + c - m + 0.5) / width;
-                double cop = dem.metres(latitude, longitude, CHECK_OVERVIEW);
-                if (Double.isNaN(cop)) continue;
-                copernicus[i] = (float) cop;
-                double t = terrarium.metres(latitude, longitude);
-                if (t > 0) difference[i] = (float) (t - cop);
-                else if (cop < SEA_CRUMB) difference[i] = 0;
+        // Bands of rows read at once: on a first visit each reads its own tiles and blocks from the network, which
+        // one after another kept a place's first tiles waiting seconds on this check.
+        int bands = Math.min(CHECK_BANDS, down);
+        List<Runnable> reads = new ArrayList<>(bands);
+        // The tiles under the part load beside Copernicus's block rather than after it; a failure is left for the bands to meet.
+        long size = (long) TerrariumTileSource.TILE_SIZE << CHECK_ZOOM;
+        double top = Math.min(85.0511, south + 1 - (row0 - m - 1.0) / height), bottom = Math.max(-85.0511, south + 1 - (row0 + down - m + 1.0) / height);
+        int tileTop = (int) (mercatorY(top, size) / TerrariumTileSource.TILE_SIZE), tileBottom = (int) (mercatorY(bottom, size) / TerrariumTileSource.TILE_SIZE);
+        double left = west + (column0 - m - 1.0) / width, right = west + (column0 + across - m + 1.0) / width;
+        int tileLeft = (int) Math.floor((left + 180) / 360 * (1 << CHECK_ZOOM)), tileRight = (int) Math.floor((right + 180) / 360 * (1 << CHECK_ZOOM));
+        for (int ty = Math.max(0, tileTop); ty <= Math.min((1 << CHECK_ZOOM) - 1, tileBottom); ty++)
+            for (int tx = tileLeft; tx <= tileRight; tx++) {
+                int x = Math.floorMod(tx, 1 << CHECK_ZOOM), y = ty;
+                reads.add(() -> { try { tiles.tile(CHECK_ZOOM, x, y); } catch (RuntimeException missing) { /* the bands meet it */ } });
             }
+        for (int b = 0; b < bands; b++) {
+            int from = b * down / bands, to = (b + 1) * down / bands;
+            reads.add(() -> {
+                Terrarium terrarium = new Terrarium();
+                for (int r = from; r < to; r++) {
+                    double latitude = south + 1 - (row0 + r - m + 0.5) / height;
+                    for (int c = 0; c < across; c++) {
+                        int i = r * across + c;
+                        difference[i] = copernicus[i] = Float.NaN;
+                        if (Math.abs(latitude) >= 90) continue;
+                        double longitude = west + (column0 + c - m + 0.5) / width;
+                        double cop = dem.metres(latitude, longitude, CHECK_OVERVIEW);
+                        if (Double.isNaN(cop)) continue;
+                        copernicus[i] = (float) cop;
+                        double t = terrarium.metres(latitude, longitude);
+                        if (t > 0) difference[i] = (float) (t - cop);
+                        else if (cop < SEA_CRUMB) difference[i] = 0;
+                    }
+                }
+            });
         }
+        RangeFiles.all(reads);
         Window window = new Window(difference, across, down);
         byte[] weights = new byte[rows * columns];
         boolean any = false;
@@ -355,6 +401,12 @@ public final class CopernicusFill implements ElevationLayer {
             }
             return tile[(int) ((gy & 255) * 256 + (gx & 255))];
         }
+    }
+
+    /** Global pixel row of a latitude at a map size. */
+    private static double mercatorY(double latitude, long size) {
+        double phi = Math.toRadians(latitude);
+        return (1 - Math.log(Math.tan(phi) + 1 / Math.cos(phi)) / Math.PI) / 2 * size;
     }
 
     /** Latitude in degrees of a global pixel row position at a map size. */

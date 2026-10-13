@@ -167,6 +167,9 @@ public final class EarthWorlds {
         final Set<UUID> floating = new HashSet<>();
         final EarthStatus status = new EarthStatus();
         CompletableFuture<Void> preparing;
+        /** Where the start's landing search found to stand, found off the server thread with the data. */
+        @Nullable volatile int[] landing;
+        static final int LANDING_PATIENCE = 200;
         boolean ready;
         long retryAt, lastSample, firstWait;
 
@@ -232,7 +235,7 @@ public final class EarthWorlds {
                     if (player != null) release(player);
                     continue;
                 }
-                if (ready) {
+                if (ready && landingLoaded(cubes)) {
                     waiting.remove(id);
                     arrive(player, cubes);
                 } else {
@@ -242,6 +245,23 @@ public final class EarthWorlds {
                     status.send(player, status.payload(EarthStatus.PREPARING, problem, (int) ((now - firstWait) / 1000), place()), now);
                 }
             }
+        }
+
+        /** Ticks spent waiting for the cubes at the landing, which the workers make; after that they load on the spot. */
+        int landingTicks;
+
+        /**
+         * Whether the cubes about the start's landing spot are made: asked of the workers and waited
+         * for, rather than generated on the server thread when the first player arrives.
+         */
+        private boolean landingLoaded(ServerCubeWorld cubes) {
+            int[] spot = landing;
+            if (spot == null || landingTicks >= LANDING_PATIENCE) return true;
+            var generator = cubes.generator();
+            int ground = Math.max(generator.surfaceY(spot[0], spot[1]), generator.waterY(spot[0], spot[1]));
+            if (cubes.readyAround(new net.minecraft.core.BlockPos(spot[0], ground, spot[1]))) return true;
+            landingTicks++;
+            return false;
         }
 
         /** Fetches the data around the home off the server thread, and checks it is there; retries until it is. */
@@ -254,6 +274,8 @@ public final class EarthWorlds {
                     generator.prepare(home[0], home[1]);
                     // Throws when the home's terrain is still missing.
                     generator.surfaceY(home[0], home[1]);
+                    // The search reads ground kilometres out, from the network where it is new: never on the server thread.
+                    landing = CubicEvents.landing(cubes, view(cubes));
                 }, Util.ioPool());
             } else if (preparing.isDone()) {
                 if (preparing.isCompletedExceptionally()) {
@@ -296,7 +318,8 @@ public final class EarthWorlds {
         private void arrive(ServerPlayer player, ServerCubeWorld cubes) {
             release(player);
             int[] view = view(cubes);
-            Vec3 spot = CubicEvents.arrival(cubes, view);
+            int[] found = landing;
+            Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found) : CubicEvents.arrival(cubes, view);
             ServerLevel level = server.getLevel(Cubic.LEVEL);
             player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
             player.resetFallDistance();
@@ -396,7 +419,9 @@ public final class EarthWorlds {
             return 0;
         }
         int[] view = Session.view(cubes);
-        Vec3 spot = CubicEvents.arrival(cubes, view);
+        Session running = session;
+        int[] found = running != null ? running.landing : null;
+        Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found) : CubicEvents.arrival(cubes, view);
         player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
         return CubicEvents.where(source);
     }

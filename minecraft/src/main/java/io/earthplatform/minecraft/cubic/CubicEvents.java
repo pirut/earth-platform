@@ -1,12 +1,14 @@
 package io.earthplatform.minecraft.cubic;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.geography.globe.Downloads;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import javax.annotation.Nullable;
 import java.util.concurrent.CompletableFuture;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
@@ -169,7 +171,17 @@ public final class CubicEvents {
 
     /** The arrival point, drawn within sight of {@code view} (a landmark column) when the start is too far off to see it. */
     public static Vec3 arrival(ServerCubeWorld cubes, @Nullable int[] view) {
-        int[] spot = scatter(cubes, landing(cubes.generator(), withinSight(cubes.generator().arrival(), view), 4096, true));
+        return arrivalAt(cubes, landing(cubes, view));
+    }
+
+    /** The start's landing spot, before scattering; slow where the data is new, so best found off the server thread. */
+    public static int[] landing(ServerCubeWorld cubes, @Nullable int[] view) {
+        return landing(cubes.generator(), withinSight(cubes.generator().arrival(), view), 4096, true);
+    }
+
+    /** The arrival point about a landing spot found before, scattered as {@link #arrival} does. */
+    public static Vec3 arrivalAt(ServerCubeWorld cubes, int[] landing) {
+        int[] spot = scatter(cubes, landing);
         return standOn(cubes, spot[0], spot[1]);
     }
 
@@ -371,9 +383,26 @@ public final class CubicEvents {
         int[] view = Double.isNaN(viewLatitude) ? null : earth.block(viewLatitude, viewLongitude);
         source.sendSuccess(() -> Component.literal("Fetching terrain around " + earth.place(target[0], target[1]) + "...").withStyle(ChatFormatting.GRAY), false);
         CompletableFuture.supplyAsync(() -> {
-            earth.prepare(target[0], target[1]);
+            // How long each part takes and what it downloads, so a slow first visit shows whether the network is why.
+            Map<String, long[]> before = Downloads.totals();
+            long start = System.nanoTime();
+            // Only the data about the landing first; the far levels' data comes in after the player arrives.
+            earth.prepareNear(target[0], target[1]);
+            long prepared = System.nanoTime();
+            String fetched = Downloads.since(before);
+            before = Downloads.totals();
             boolean famous = !Double.isNaN(viewLatitude);
-            return landing(earth, famous ? withinSight(target, view) : target, famous ? 2048 : 256, famous);
+            int[] spot = landing(earth, famous ? withinSight(target, view) : target, famous ? 2048 : 256, famous);
+            long landed = System.nanoTime();
+            EarthPlatformMod.LOGGER.info("Travel to {}, {}: data {} ms ({}); landing {} ms ({})", latitude, longitude,
+                    (prepared - start) / 1_000_000, fetched, (landed - prepared) / 1_000_000, Downloads.since(before));
+            Map<String, long[]> far = Downloads.totals();
+            Util.ioPool().execute(() -> {
+                earth.prepare(target[0], target[1]);
+                EarthPlatformMod.LOGGER.info("Travel to {}, {}: far data {} ms after landing ({})", latitude, longitude,
+                        (System.nanoTime() - landed) / 1_000_000, Downloads.since(far));
+            });
+            return spot;
         }, Util.ioPool()).whenComplete((spot, failure) -> source.getServer().execute(() -> {
             if (failure != null) {
                 source.sendFailure(Component.literal("Could not load terrain there: " + failure.getMessage()));
@@ -476,20 +505,54 @@ public final class CubicEvents {
         return search(generator, centre, maxRadius, welcoming, highest, null);
     }
 
-    /** The spiral search; with {@code unwooded}, only columns that generator grows no trees on. */
+    /** Spots of the spiral judged together, and how many each thread judges in turn. */
+    private static final int SEARCH_BATCH = 96, SEARCH_SHARE = 8;
+
+    /**
+     * The spiral search; with {@code unwooded}, only columns that generator grows no trees on. Spots are
+     * judged a batch of rings at a time, side by side, and the first good one in spiral order wins, as
+     * one at a time: in a new place each reads terrain not yet loaded, which one after another kept a
+     * player waiting seconds before a /cubes goto landed.
+     */
     private static int[] search(CubeGenerator generator, int[] centre, int maxRadius, boolean welcoming, int highest, @Nullable SurfaceGenerator unwooded) {
+        List<int[]> spots = new ArrayList<>();
         for (int radius = 0; radius < maxRadius; radius += 16) {
             for (int step = 0; step < Math.max(1, radius / 4); step++) {
                 double angle = step * Math.PI * 2 / Math.max(1, radius / 4);
-                int x = centre[0] + (int) Math.round(Math.cos(angle) * radius), z = centre[1] + (int) Math.round(Math.sin(angle) * radius);
-                int y = generator.surfaceY(x, z);
-                if (y <= generator.seaLevel() + 2 || y > highest || generator.waterY(x, z) >= y) continue;
-                int slope = Math.abs(generator.surfaceY(x + 2, z) - generator.surfaceY(x - 2, z))
-                        + Math.abs(generator.surfaceY(x, z + 2) - generator.surfaceY(x, z - 2));
-                if (slope <= 3 && !(welcoming && generator.barren(x, z, y)) && (unwooded == null || !unwooded.wooded(x, z))) return new int[]{x, z};
+                spots.add(new int[]{centre[0] + (int) Math.round(Math.cos(angle) * radius), centre[1] + (int) Math.round(Math.sin(angle) * radius)});
             }
+            if (spots.size() < SEARCH_BATCH && radius + 16 < maxRadius) continue;
+            boolean[] good = new boolean[spots.size()];
+            List<java.util.concurrent.Callable<Void>> shares = new ArrayList<>();
+            for (int from = 0; from < spots.size(); from += SEARCH_SHARE) {
+                int start = from, end = Math.min(spots.size(), from + SEARCH_SHARE);
+                shares.add(() -> {
+                    for (int i = start; i < end; i++) good[i] = suits(generator, spots.get(i)[0], spots.get(i)[1], welcoming, highest, unwooded);
+                    return null;
+                });
+            }
+            try (var threads = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                for (var share : threads.invokeAll(shares)) share.get();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return null;
+            } catch (java.util.concurrent.ExecutionException failed) {
+                if (failed.getCause() instanceof RuntimeException runtime) throw runtime;
+                throw new IllegalStateException(failed.getCause());
+            }
+            for (int i = 0; i < spots.size(); i++) if (good[i]) return spots.get(i);
+            spots.clear();
         }
         return null;
+    }
+
+    /** Whether a spot is dry, gentle ground to land on, as {@link #search} wants it. */
+    private static boolean suits(CubeGenerator generator, int x, int z, boolean welcoming, int highest, @Nullable SurfaceGenerator unwooded) {
+        int y = generator.surfaceY(x, z);
+        if (y <= generator.seaLevel() + 2 || y > highest || generator.waterY(x, z) >= y) return false;
+        int slope = Math.abs(generator.surfaceY(x + 2, z) - generator.surfaceY(x - 2, z))
+                + Math.abs(generator.surfaceY(x, z + 2) - generator.surfaceY(x, z - 2));
+        return slope <= 3 && !(welcoming && generator.barren(x, z, y)) && (unwooded == null || !unwooded.wooded(x, z));
     }
 
     /**
@@ -498,13 +561,28 @@ public final class CubicEvents {
      * (a loch shore, a fjord) has sea on one side only and keeps its upland start.
      */
     private static boolean nearSea(CubeGenerator generator, int[] centre) {
-        int sea = generator.seaLevel(), seaward = 0;
+        int sea = generator.seaLevel();
+        // The directions look out side by side, as each reads terrain a new place has not loaded yet.
+        List<java.util.concurrent.Callable<Boolean>> directions = new ArrayList<>();
         for (int step = 0; step < 24; step++) {
             double angle = step * Math.PI * 2 / 24;
-            for (int radius = 128; radius <= COAST_REACH; radius += 128) {
-                int x = centre[0] + (int) Math.round(Math.cos(angle) * radius), z = centre[1] + (int) Math.round(Math.sin(angle) * radius);
-                if (generator.waterY(x, z) == sea && generator.surfaceY(x, z) < sea - 3) { seaward++; break; }
-            }
+            directions.add(() -> {
+                for (int radius = 128; radius <= COAST_REACH; radius += 128) {
+                    int x = centre[0] + (int) Math.round(Math.cos(angle) * radius), z = centre[1] + (int) Math.round(Math.sin(angle) * radius);
+                    if (generator.waterY(x, z) == sea && generator.surfaceY(x, z) < sea - 3) return true;
+                }
+                return false;
+            });
+        }
+        int seaward = 0;
+        try (var threads = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            for (var direction : threads.invokeAll(directions)) if (direction.get()) seaward++;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (java.util.concurrent.ExecutionException failed) {
+            if (failed.getCause() instanceof RuntimeException runtime) throw runtime;
+            throw new IllegalStateException(failed.getCause());
         }
         return seaward >= 18;
     }
