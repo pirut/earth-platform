@@ -642,10 +642,14 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Young lava: black basalt flows and cinders, as on Hawaii and Iceland, where WorldCover maps bare ground.
         if (code == WorldCoverSource.MOSS_AND_LICHEN && volcanic(x, z) && !(patch > 0.3)) {
             // Moss on old lava: grey-green moss only in its hollows, black cinders and brown tuff between.
-            return new Surface(stonyPeaks, patch > 0 ? MOSS : patch < -0.4 ? TUFF : roll < 50 ? BLACKSTONE : COARSE_DIRT, BASALT, 0, 0, 0, 0, 0, false);
+            BlockState cinder = !weathered(x, z) && roll < 50 ? BLACKSTONE : roll < 75 ? COARSE_DIRT : BASALT;
+            return new Surface(stonyPeaks, patch > 0 ? MOSS : patch < -0.4 ? TUFF : cinder, BASALT, 0, 0, 0, 0, 0, false);
         }
         if (code == WorldCoverSource.BARE && volcanic(x, z)) {
-            BlockState top = patch < -0.55 && roll < 60 ? TUFF : roll < 55 ? BLACKSTONE : BASALT;
+            // Fresh flows, as on Hawaii, are black; Iceland's older lava and ash deserts are grey and brown.
+            BlockState top = weathered(x, z)
+                    ? patch < -0.3 ? TUFF : roll < 12 ? BLACKSTONE : roll < 60 ? BASALT : roll < 80 ? TUFF : COARSE_DIRT
+                    : patch < -0.55 && roll < 60 ? TUFF : roll < 55 ? BLACKSTONE : BASALT;
             return new Surface(stonyPeaks, top, BASALT, 0, 0, 0, 0, 0, false);
         }
         // Australia's red centre: red sand under the spinifex and saltbush, and red rock wherever it stands bare, as Uluru does.
@@ -715,7 +719,6 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (cliff || rocky != null && t < -3) return rock();
                 BlockState top = rocky != null ? rocky : GRASS;
                 if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
-                // Thin steppe on the driest cold plains, such as the Great Basin, with bare ground between the tufts.
                 // Cold steppe, as in Mongolia and the Great Basin: tufts of grass on bare ground, about a third grass.
                 if (dry && top == GRASS && (patch > 0.35 || roll < 60)) return sagebrush(scrubGround(x, z), 0);
                 return grassland(top, x, z, local, patch, moor, roll, rocky);
@@ -751,14 +754,13 @@ public final class EarthGenerator extends SurfaceGenerator {
                 boolean scree = local.rain() < 600 || t < 0;
                 BlockState top = cliff || steep > 0.7 ? STONE : patch > 0.55 ? (scree ? GRAVEL : CALCITE) : patch > 0.3 ? GRAVEL
                         : patch < -0.3 ? ANDESITE : roll < (scree ? 50 : 70) ? STONE : roll < 85 ? COARSE_DIRT : GRAVEL;
+                if (top == STONE && paleRock(x, z)) top = roll < 55 ? DIORITE : ANDESITE;
                 return new Surface(stonyPeaks, top, STONE, 0, 0, 0, 0, 0, false);
             }
             case WorldCoverSource.SNOW_AND_ICE -> {
-                // The map's snow and ice is snow: only faces too steep to hold it show their rock, and, where summers are
-                // warm (Patagonia's walls above warm valleys), steep slopes too, whose mapped snow is a spring cover.
+                // The map's snow and ice is snow: only faces too steep to hold it show their rock.
                 // Drifts of powder snow lie on the gentler slopes.
-                double summer = local.warmest();
-                if (steep > 1.0 || summer > 7 && steep > 0.5) return rock();
+                if (steep > 1.5 || steep > 1.0 && patch > 0) return rock(x, z, roll);
                 BlockState top = steep < 0.5 && patch > 0.5 ? POWDER_SNOW : SNOW_BLOCK;
                 return new Surface(steep > 0.75 ? frozenPeaks : snowySlopes, top, steep < 0.6 ? PACKED_ICE : STONE, 0, 0, 0, 0, 0, false);
             }
@@ -800,6 +802,11 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Bare rock in a biome where snow does not lie, for faces too steep to hold it. */
     private Surface rock() { return new Surface(stonyPeaks, STONE, STONE, 0, 0, 0, 0, 0, false); }
 
+    /** Bare rock, pale granite where the mountains are granite. */
+    private Surface rock(int x, int z, int roll) {
+        return paleRock(x, z) ? new Surface(stonyPeaks, roll < 55 ? DIORITE : ANDESITE, STONE, 0, 0, 0, 0, 0, false) : rock();
+    }
+
     /** Open grass in a climate: savanna, steppe, meadow, prairie or moor. */
     private Surface grassland(BlockState top, int x, int z, Local local, double patch, boolean moor, int roll, @Nullable BlockState rocky) {
         if (moor) return moor(patch, roll, rocky);
@@ -832,7 +839,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Heather moor: dark, brown ground of peat and podzol among the grass, with ferns, few flowers and fewer trees. */
     private Surface moor(double patch, int roll, @Nullable BlockState rocky) {
-        BlockState top = rocky != null ? rocky : patch > 0.45 || roll < 30 ? PODZOL : patch < -0.5 && roll < 70 ? COARSE_DIRT : GRASS;
+        BlockState top = rocky != null ? rocky : patch > 0.55 || roll < 15 ? PODZOL : patch < -0.6 && roll < 50 ? COARSE_DIRT : GRASS;
         return new Surface(taiga, top, DIRT, 1, 10, 0, 330, 345, true);
     }
 
@@ -900,6 +907,15 @@ public final class EarthGenerator extends SurfaceGenerator {
         return false;
     }
 
+    /** Whether a volcanic column's lava is old and weathered, as in Iceland, rather than fresh. */
+    private boolean weathered(int x, int z) { return grid.geographic(x, z).latitude() > 60; }
+
+    /** Whether a mountain's bare rock is pale granite, as in Patagonia's Andes. */
+    private boolean paleRock(int x, int z) {
+        GeoPoint p = grid.geographic(x, z);
+        return p.latitude() > -56 && p.latitude() < -40 && p.longitude() > -76 && p.longitude() < -68;
+    }
+
     /** Whether a column is in Australia's arid interior, the red centre. */
     private boolean outback(int x, int z) {
         GeoPoint p = grid.geographic(x, z);
@@ -917,8 +933,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         GeoPoint p = grid.geographic(x, z);
         double lat = p.latitude(), lon = p.longitude();
         if (lon > 110 && lon < 155 && lat < -10) return 0.7;
-        if (lon > -20 && lon < 65) return 0.5;
-        return 0.1;
+        // Orange ergs: Morocco's and the western Sahara's, the Namib's and Arabia's. Algeria's and Libya's are pale.
+        if (lon > -20 && lon < 0 && lat > 10) return 0.5;
+        if (lon > 10 && lon < 20 && lat < -15) return 0.5;
+        if (lon > 35 && lon < 60 && lat < 32) return 0.5;
+        return 0.05;
     }
 
     /**
