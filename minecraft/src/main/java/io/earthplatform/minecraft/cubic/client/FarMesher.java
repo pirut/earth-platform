@@ -57,10 +57,10 @@ final class FarMesher {
     private FarMesher() {}
 
     /** A same-level column next to this one: north, south, west, east. */
-    record Side(@Nullable LevelChunkSection[] sections, int bottom, short[] drops) {}
+    record Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops) {}
 
     /** Everything a worker needs; sections are never changed after they arrive, so sharing them is safe. */
-    record Job(long key, int version, int level, int slot, int x0, int z0, int bottom, LevelChunkSection[] sections, short[] drops,
+    record Job(long key, int version, int level, int slot, int x0, int z0, int bottom, LevelChunkSection[] sections, char[] drops,
                @Nullable Side[] sides, @Nullable LongOpenHashSet drawn, boolean textured, FarLooks looks, FarFaces faces,
                @Nullable Object2IntMap<BlockState> shaderIds, float[] shade, float[] white) {}
 
