@@ -233,7 +233,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             boolean shadow = steep > 0.7 && SEA + 0.5 + metres - surface > 4 && relief(x, z) > MOUNTAINS;
             // Water by the coast is the sea, and so is water at sea level that joins it, as estuaries and lagoons do,
             // which otherwise stood a block above the sea around it wherever the survey read a little over 0 m.
-            if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && joinsOpenSea(x, z))) {
+            // So is water within a few metres of sea level right beside the sea, as the ponds and creeks among
+            // mangroves, whose survey reads the canopy round them: kept at its own level, it stood in walls and
+            // falls a few blocks above and below the sea.
+            if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && joinsOpenSea(x, z)
+                    || Math.abs(surface - SEA) <= TIDAL && besideSea(x, z))) {
                 out[0] = lagoonBed(x, z, metres, voxel);
                 out[1] = SEA;
                 return;
@@ -1051,6 +1055,21 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (surveys.size() > 1 << 12) surveys.clear();
         surveys.putIfAbsent(key, survey);
         return survey;
+    }
+
+    /** Most blocks a pond or creek beside the sea may stand above or below it and still be the sea's own; and how far, in blocks, it may lie from the sea. */
+    private static final int TIDAL = 6, TIDAL_REACH = 256;
+
+    /** Whether the sea lies within {@value #TIDAL_REACH} blocks of a column, by the water samples' survey. */
+    private boolean besideSea(int x, int z) {
+        double spacing = (double) WATER_CELL / WATER_SAMPLES;
+        for (int r = 0; r <= TIDAL_REACH; r += TIDAL_REACH / 2) for (int d = 0; d < 8; d++) {
+            int sx = Mth.floor((x + RING_X[d] * r) / spacing), sz = Mth.floor((z + RING_Z[d] * r) / spacing);
+            int cx = Math.floorDiv(sx, WATER_SAMPLES), cz = Math.floorDiv(sz, WATER_SAMPLES), k = Math.floorMod(sz, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(sx, WATER_SAMPLES);
+            if (survey(cx, cz).kind[k] == OPEN || (waterCell(cx, cz).sea[k >> 6] >>> (k & 63) & 1) != 0) return true;
+            if (r == 0) break;
+        }
+        return false;
     }
 
     /** No samples of a cell are the sea. */
