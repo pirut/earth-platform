@@ -47,7 +47,9 @@ Photon's sky light uses a compute pass a Mac can't run, so the sky light on shad
 
 ## Satellite ground colours (optional)
 
-Earth Platform can use Sentinel-2 cloudless satellite imagery by EOX to match bare ground and plant cover more closely to each place. It is off by default. To turn it on, add `-Dearthplatform.earth.imagery=true` to the JVM arguments (step 2 above) before creating the world; worlds made with it keep using it. Imagery adds downloads from `tiles.maps.eox.at`.
+Earth Platform can use Sentinel-2 cloudless satellite imagery by EOX to match bare ground and plant cover more closely to each place. It is off by default. To turn it on for a new world, press **Customize** in Create World and set **Satellite imagery** to ON. To make it the default for every new world (and on servers), set `satelliteImagery = true` in `config/earthplatform-common.toml`, or use Mods → Earth Platform → Config. Worlds made with imagery keep using it, and worlds made without it never use it.
+
+The JVM argument `-Dearthplatform.earth.imagery=true` (or `=false`) also works and overrides the setting. Imagery adds downloads from `tiles.maps.eox.at`.
 
 ## Distant Horizons
 

@@ -18,7 +18,7 @@ Mountains, valleys, coasts and lakes come from measured elevation (about 30 m ap
 Yes. Mining, crafting, mobs, beds, death and respawn, the Nether and the End all work as usual. Nether portals built on the Earth link to the Nether and back.
 
 **What does the satellite imagery option do?**
-When turned on (see [the install guide](INSTALL.md#satellite-ground-colours-optional)), Sentinel-2 cloudless imagery nudges the choice of ground blocks, such as sand, gravel, stone and dry soil, and how dense trees are, to match each place's real colours. Biomes and tree kinds don't change. It's off by default.
+When turned on with the **Satellite imagery** toggle on the Customize screen or `satelliteImagery = true` in `config/earthplatform-common.toml` (see [the install guide](INSTALL.md#satellite-ground-colours-optional)), Sentinel-2 cloudless imagery nudges the choice of ground blocks, such as sand, gravel, stone and dry soil, and how dense trees are, to match each place's real colours. Biomes and tree kinds don't change. It's off by default.
 
 **Can I use an old world?**
 New Earth worlds need the Earth world type when they are created. Worlds made with the Default type stay ordinary Minecraft worlds.
