@@ -10,10 +10,12 @@ import com.mojang.blaze3d.vertex.VertexSorting;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
+import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.material.FogType;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.fml.ModList;
 import java.util.Arrays;
@@ -60,6 +62,17 @@ public final class EarthClouds {
     public static final double HORIZON_Y = SEA - 1000;
 
     private EarthClouds() {}
+
+    /**
+     * The horizon height for the Earth's sky this frame: {@link #HORIZON_Y}, or just below the
+     * camera when it is under water deeper than that, so the trench floors (Challenger Deep at
+     * -10.9 km) see water-tinted sky past the loaded terrain rather than a black band.
+     */
+    public static double horizon() {
+        Camera camera = Minecraft.getInstance().gameRenderer.getMainCamera();
+        if (camera.isInitialized() && camera.getFluidInCamera() == FogType.WATER) return Math.min(HORIZON_Y, camera.getPosition().y - 1);
+        return HORIZON_Y;
+    }
 
     /** True for the cubic dimension, whose sky follows real heights. */
     public static boolean earthSky(Object level) {
