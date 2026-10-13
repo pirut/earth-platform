@@ -542,13 +542,20 @@ public final class FarRenderer {
         type.clearRenderState();
     }
 
+    /**
+     * Draws a column, or its four children where a finer level replaces it. A replaced column only
+     * stands in while its children load if it has a mesh itself: it is asked for last, so after a
+     * goto it usually has none, and waiting for every child down to the finest level left the
+     * ground around the player empty until the whole tree under it had arrived.
+     */
     private void visit(int level, int x, int z, int bx, int bz) {
-        if (Far.refined(level, x, z, bx, bz) && childrenReady(level, x, z, bx, bz)) {
+        Column column = columns.get(Far.key(level, x, z));
+        boolean meshed = column != null && column.meshed;
+        if (Far.refined(level, x, z, bx, bz) && (!meshed || childrenReady(level, x, z, bx, bz))) {
             for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) visit(level - 1, 2 * x + dx, 2 * z + dz, bx, bz);
             return;
         }
-        Column column = columns.get(Far.key(level, x, z));
-        if (column != null && column.meshed) drawn.add(column);
+        if (meshed) drawn.add(column);
     }
 
     private boolean ready(int level, int x, int z, int bx, int bz) {
