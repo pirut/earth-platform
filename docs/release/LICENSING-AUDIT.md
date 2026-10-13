@@ -24,7 +24,7 @@ First checked on 2026-10-13 against the cubic engine branch (PR #2) and the feat
 | Distant Horizons | OK (licence) / **player issue** | Not bundled; the older engine's optional backend calls its public API. `neoforge.mods.toml` still declares exactly 3.3.3, so any other DH version stops the game from starting (see below) |
 | Provenance documents in the jar | Low risk | ESA's WorldCover user manual, copies of AWS registry and ESA web pages, Copernicus licence texts. Listed in THIRD_PARTY_NOTICES.md; drop them (with the test data) from the release jar |
 | NeoForged MDK template, Gradle wrapper | OK | MIT and Apache-2.0 build files in the repository only; noticed in THIRD_PARTY_NOTICES.md |
-| Older-engine archive in `recovery/` | Repository only | Holds 62 `javap` listings of Distant Horizons classes (LGPL-3.0) and old probe data; no Voxy material. Not in the jar. Settle before the repository goes public (see below) |
+| Older-engine archive in `recovery/` | Repository only | Holds 62 `javap` listings of Distant Horizons classes (LGPL-3.0) and old probe data; no Voxy material. Not in the jar. LGPL notice added; JR decides before the repository goes public |
 | Third-party code in the jar | OK | None. Only `io/earthplatform` classes and our own data |
 
 ## Release check before the build 33 playtest (2026-10-13)
@@ -47,7 +47,7 @@ Needs a decision or a code change (sent to the coordinator, not changed here):
 1. **Distant Horizons version pin.** `neoforge.mods.toml` declares DH as optional with exactly `[3.3.3]`. NeoForge refuses to start the game when any other DH version is installed, but the install guide and FAQ tell players DH simply pauses in Earth worlds. Fix: change the range to accept any version, or mark DH `discouraged`, and update the test that pins the block. A related cleanup is retiring the older engine's DH backend (about 117 classes in the jar).
 2. **Test data in the release jar.** The Everest, Marin and Challenger Deep test areas (about 9 MB) are not read by Earth worlds but ship in the jar, together with third-party documents: ESA's WorldCover user manual and copies of AWS and ESA web pages. These carry no restrictive terms and are noted, but leaving them out of the release jar removes the question.
 3. **Duplicate climate credit.** `EarthGenerator.credits()` appends `Climate: CHELSA ...` twice (lines 241 and 245, from the river merge). It is cosmetic and over-credits, but it reads like a mistake on the arrival screen. Engine-owned one-line fix.
-4. **`recovery/` archive.** It holds 62 `javap` listings of Distant Horizons classes from the older engine's audits. DH is LGPL-3.0, so this is allowed with its licence, but the archive doesn't carry DH's licence text. Before the GitHub repository goes public, either add DH's LGPL notice beside the archive or drop the archive from the public history. The archive has no Voxy material. It doesn't affect the mod jar.
+4. **`recovery/` archive.** It holds 62 `javap` listings of Distant Horizons classes from the older engine's audits. DH is LGPL-3.0, so this is allowed with its licence, but the archive doesn't carry DH's licence text. DH's LGPL notice is now beside it (`recovery/DISTANT-HORIZONS-NOTICE.md`). Whether the archive stays when the repository goes public is JR's call (release-day step 8). The archive has no Voxy material. It doesn't affect the mod jar.
 5. **CHELSA courtesy (unchanged).** Not a licence issue: tell the CHELSA team before a big launch, or mirror the five files we read.
 
 ## Data downloaded at runtime
