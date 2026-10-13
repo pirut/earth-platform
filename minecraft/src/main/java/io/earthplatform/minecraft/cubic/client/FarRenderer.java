@@ -105,6 +105,8 @@ public final class FarRenderer {
         final LevelChunkSection[] sections;
         final short[] drops;
         final AABB box;
+        /** Block Y just above the column's highest voxel, or MIN_VALUE when it holds only air. */
+        final int top;
         @Nullable LongOpenHashSet drawnCubes;
         int lastWanted, version, due = -1, slot = -1;
         /** The slot of a replaced column's faces still drawn here, freed once this column's own faces are up. */
@@ -131,6 +133,19 @@ public final class FarRenderer {
             // Drops lower a column by up to a voxel.
             box = new AABB(x0, (double) bottom * width - Far.voxel(level), z0, x0 + width,
                     (double) (bottom + Math.max(1, sections.length)) * width, z0 + width);
+            top = top(bottom, sections, level);
+        }
+
+        private static int top(int bottom, LevelChunkSection[] sections, int level) {
+            int width = Far.width(level), voxel = Far.voxel(level);
+            for (int si = sections.length - 1; si >= 0; si--) {
+                LevelChunkSection section = sections[si];
+                if (section == null || section.hasOnlyAir()) continue;
+                for (int y = 15; y >= 0; y--)
+                    for (int i = 0; i < 256; i++)
+                        if (!section.getBlockState(i & 15, y, i >> 4).isAir()) return (bottom + si) * width + (y + 1) * voxel;
+            }
+            return Integer.MIN_VALUE;
         }
 
         int baseY() { return bottom * Far.width(level); }
@@ -196,6 +211,15 @@ public final class FarRenderer {
     }
 
     public int columnCount() { return columns.size(); }
+
+    /** A held column's square of ground and the block Y just above its highest voxel. */
+    public interface TopVisitor { void accept(int x0, int z0, int width, int top); }
+
+    /** Visits every held column that holds anything, with how high its terrain reaches. */
+    public void forEachTop(TopVisitor visitor) {
+        for (Column column : columns.values())
+            if (column.top != Integer.MIN_VALUE) visitor.accept(column.x0, column.z0, Far.width(column.level), column.top);
+    }
     /** GPU memory of every uploaded column's faces and water, in bytes. */
     public long vertexBytes() {
         long total = 0;

@@ -62,7 +62,11 @@
     "CubicIrisVoxyMixin",
     "CubicIrisLodSamplersMixin",
     "CubicIrisLodUniformsMixin",
-    "CubicJetWeatherMixin"
+    "CubicJetWeatherMixin",
+    "EarthCreateWorldMixin",
+    "EarthCloudsMixin",
+    "EarthHorizonMixin",
+    "EarthFogColourMixin"
   ],
   "injectors": {
     "defaultRequire": 1
