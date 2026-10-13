@@ -8,11 +8,14 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeKey;
+import io.earthplatform.minecraft.cubic.Timings;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -47,14 +50,16 @@ import org.joml.Matrix4f;
  */
 public final class CubeRenderer {
     private static final AtomicInteger THREADS = new AtomicInteger();
-    private static final ExecutorService POOL = Executors.newFixedThreadPool(
-            Math.max(1, Math.min(3, Runtime.getRuntime().availableProcessors() / 2)), runnable -> {
+    private static final int THREAD_COUNT = Math.max(1, Math.min(3, Runtime.getRuntime().availableProcessors() / 2));
+    private static final ExecutorService POOL = Executors.newFixedThreadPool(THREAD_COUNT, runnable -> {
                 Thread thread = new Thread(runnable, "Earth cube mesher " + THREADS.incrementAndGet());
                 thread.setDaemon(true);
                 thread.setPriority(Thread.NORM_PRIORITY - 1);
                 return thread;
             });
-    private static final int MAX_IN_FLIGHT = 12, MAX_UPLOADS_PER_FRAME = 48, NEIGHBOUR_WAIT_TICKS = 20;
+    private static final int MIN_IN_FLIGHT = 48, MAX_IN_FLIGHT = 512, MIN_UPLOADS_PER_FRAME = 48, NEIGHBOUR_WAIT_TICKS = 20;
+    /** About how long one mesh takes a worker, to keep the workers busy for a whole frame. */
+    private static final long MESH_NANOS = 5_000_000L;
 
     private final ClientCubeWorld world;
     private final Long2ObjectOpenHashMap<Mesh> meshes = new Long2ObjectOpenHashMap<>();
@@ -68,6 +73,8 @@ public final class CubeRenderer {
     private final ConcurrentLinkedQueue<CubeMesher.Built> built = new ConcurrentLinkedQueue<>();
     private final List<Mesh> visible = new ArrayList<>();
     private int ticks, drawnFrame = -1, translucentFrame = -1, frame;
+    /** How long the last frame took, so meshing and uploads keep pace however low the frame rate goes. */
+    private long frameStart = System.nanoTime(), frameNanos = 16_000_000L;
     private boolean closed;
 
     private static final class Mesh {
@@ -169,24 +176,37 @@ public final class CubeRenderer {
     }
 
     private void schedule(Vec3 camera) {
-        if (dirty.isEmpty() || building.size() >= MAX_IN_FLIGHT) return;
+        int limit = inFlight();
+        if (dirty.isEmpty()) return;
         int cx = (int) Math.floor(camera.x) >> 4, cy = (int) Math.floor(camera.y) >> 4, cz = (int) Math.floor(camera.z) >> 4;
-        long[] picks = new long[MAX_IN_FLIGHT - building.size()];
-        long[] scores = new long[picks.length];
-        int count = 0;
+        LongArrayList ready = new LongArrayList(), order = new LongArrayList();
         for (LongIterator it = dirty.iterator(); it.hasNext(); ) {
             long key = it.nextLong();
             if (building.contains(key)) continue;
-            if (world.cube(key) == null) { it.remove(); dirtySince.remove(key); continue; }
+            Cube cube = world.cube(key);
+            if (cube == null) { it.remove(); dirtySince.remove(key); continue; }
+            // Air needs no worker, so it never waits its turn: high in the sky every cube is air,
+            // and a per-frame cap on them all held back the ground cubes behind thousands of them.
+            if (cube.isEmpty()) { it.remove(); dirtySince.remove(key); compileEmpty(key); continue; }
             if (!neighboursReady(key) && ticks - dirtySince.get(key) < NEIGHBOUR_WAIT_TICKS) continue;
             long dx = CubeKey.x(key) - cx, dy = CubeKey.y(key) - cy, dz = CubeKey.z(key) - cz;
-            long score = dx * dx + dy * dy * 2 + dz * dz;
-            if (count < picks.length) { picks[count] = key; scores[count++] = score; continue; }
-            int worst = 0;
-            for (int i = 1; i < count; i++) if (scores[i] > scores[worst]) worst = i;
-            if (score < scores[worst]) { picks[worst] = key; scores[worst] = score; }
+            // Distance in the high bits and the index below, so one primitive sort orders them.
+            order.add(Math.min(dx * dx + dy * dy * 2 + dz * dz, 1L << 40) << 22 | ready.size());
+            ready.add(key);
         }
-        for (int i = 0; i < count; i++) submit(picks[i], camera);
+        int count = Math.min(ready.size(), limit - building.size());
+        if (count <= 0) return;
+        // Nearest first; the picks can be hundreds.
+        long[] sorted = order.toLongArray();
+        if (count < sorted.length) Arrays.sort(sorted);
+        for (int i = 0; i < count; i++) submit(ready.getLong((int) (sorted[i] & ((1 << 22) - 1))), camera);
+    }
+
+    private void compileEmpty(long key) {
+        Mesh mesh = meshes.remove(key);
+        if (mesh != null) mesh.close();
+        light.remove(key);
+        compiled.add(key);
     }
 
     /**
@@ -212,13 +232,7 @@ public final class CubeRenderer {
         dirtySince.remove(key);
         if (center == null) return;
         int x = center.x, y = center.y, z = center.z;
-        if (center.isEmpty()) {
-            Mesh mesh = meshes.remove(key);
-            if (mesh != null) mesh.close();
-            light.remove(key);
-            compiled.add(key);
-            return;
-        }
+        if (center.isEmpty()) { compileEmpty(key); return; }
         PalettedContainer<BlockState>[] states = new PalettedContainer[27];
         PalettedContainerRO<Holder<Biome>>[] biomes = new PalettedContainerRO[27];
         for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
@@ -240,7 +254,11 @@ public final class CubeRenderer {
                 center.blockEntities().isEmpty() ? Map.of() : new HashMap<>(center.blockEntities()));
         building.add(key);
         POOL.execute(() -> {
-            try { built.add(CubeMesher.build(snapshot)); }
+            long start = System.nanoTime();
+            try {
+                built.add(CubeMesher.build(snapshot));
+                Timings.CUBE_MESH.since(start);
+            }
             catch (Throwable failure) {
                 EarthPlatformMod.LOGGER.error("Cube mesh build failed for {}", CubeKey.toString(key), failure);
                 built.add(new CubeMesher.Built(key, -1, List.of(), null));
@@ -248,8 +266,10 @@ public final class CubeRenderer {
         });
     }
 
+    /** Uploads finished meshes: a few every frame, and more while an eighth of the last frame's time lasts. */
     private void upload() {
-        for (int n = 0; n < MAX_UPLOADS_PER_FRAME; n++) {
+        long deadline = System.nanoTime() + frameNanos / 8;
+        for (int n = 0; n < MIN_UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
             CubeMesher.Built result = built.poll();
             if (result == null) return;
             building.remove(result.key());
@@ -282,7 +302,9 @@ public final class CubeRenderer {
         if (drawnFrame == frame) return;
         drawnFrame = frame;
         Vec3 position = camera.getPosition();
+        long start = System.nanoTime();
         upload();
+        Timings.CUBE_UPLOAD.since(start);
         schedule(position);
         visible.clear();
         for (Mesh mesh : meshes.values()) {
@@ -294,15 +316,31 @@ public final class CubeRenderer {
         visible.sort(Comparator.comparingDouble(mesh -> mesh.distance));
     }
 
-    public void beginFrame() { frame++; }
+    public void beginFrame() {
+        frame++;
+        long now = System.nanoTime();
+        frameNanos = Math.min(now - frameStart, 1_000_000_000L);
+        frameStart = now;
+    }
+
+    /**
+     * Meshes started per frame: enough to keep the workers busy until the next frame. A fixed 12
+     * (then 48) meant a frame rate of 1 under a shader pack built 12 cubes a second.
+     */
+    private int inFlight() {
+        long perFrame = frameNanos * THREAD_COUNT / MESH_NANOS;
+        return (int) Math.clamp(perFrame, MIN_IN_FLIGHT, MAX_IN_FLIGHT);
+    }
 
     public void drawOpaque(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
         prepare(camera, frustum);
+        long start = System.nanoTime();
         for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {
             RenderType type = CubeMesher.LAYERS.get(i);
             if (type == RenderType.translucent() || type == RenderType.tripwire()) continue;
             draw(i, camera.getPosition(), modelView, projection, false);
         }
+        Timings.CUBE_DRAW.since(start);
     }
 
     public void drawTranslucent(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
@@ -316,12 +354,17 @@ public final class CubeRenderer {
     public boolean drewOpaqueThisFrame() { return drawnFrame == frame; }
 
     /**
-     * Draws every mesh's opaque layers into a shader pack's shadow map, so near terrain casts
-     * shadows; not limited to the view, since what lies outside it still shades what is in it.
+     * Draws the opaque layers of every mesh inside a shader pack's shadow map into it, so near
+     * terrain casts shadows; not limited to the view, since what lies outside it still shades what
+     * is in it.
      */
     public void drawShadow(Camera camera, Matrix4f modelView, Matrix4f projection) {
         upload();
-        List<Mesh> all = new java.util.ArrayList<>(meshes.values());
+        Vec3 position = camera.getPosition();
+        Frustum shadow = new Frustum(modelView, projection);
+        shadow.prepare(position.x, position.y, position.z);
+        List<Mesh> all = new ArrayList<>(meshes.size());
+        for (Mesh mesh : meshes.values()) if (shadow.isVisible(mesh.box)) all.add(mesh);
         for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {
             RenderType type = CubeMesher.LAYERS.get(i);
             if (type == RenderType.translucent() || type == RenderType.tripwire()) continue;

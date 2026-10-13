@@ -38,9 +38,26 @@ base {
 
 // Original shim metadata also keeps the output manifest distinct from generic
 // manifests in upstream nested jars; those bytes remain covered by the scanner.
+// LGPL-3.0 section 4 asks that the jar carry the LGPL and the GPL it refers to.
+def licenceNotice = tasks.register('licenceNotice') {
+    def lgpl = file('../LICENSE')
+    def gpl = file('../COPYING')
+    def out = layout.buildDirectory.file('generated/licence/earthplatform-LICENSE.txt')
+    inputs.files(lgpl, gpl)
+    outputs.file(out)
+    doLast {
+        out.get().asFile.text = 'Earth Platform is free software: you can redistribute it and/or modify it under the terms of\n' +
+                'the GNU Lesser General Public License version 3 (LGPL-3.0-only), which follows, together with\n' +
+                'the GNU General Public License version 3 it builds on. The Earth data it downloads or bundles\n' +
+                'keeps its own terms, credited in CREDITS.md and on the mod\'s Mods screen.\n\n' +
+                lgpl.getText('UTF-8') + '\n\n' + gpl.getText('UTF-8')
+    }
+}
+
 tasks.named('jar', Jar) {
     manifest.attributes('Earth-Platform-Artifact': 'original-shader-compatibility-shim',
             'Earth-Platform-Upstream-Bundled': 'false')
+    from(licenceNotice) { into 'META-INF' }
 }
 
 // Mojang ships Java 21 to end users in 1.21.1, so mods should target Java 21.
@@ -67,6 +84,8 @@ neoForge {
             jvmArgument '-Xmx4G'
             // Comma-separated list of namespaces to load gametests from. Empty = all namespaces.
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            // Dev worlds keep the prototype calibration windows and carriers; players never get them.
+            systemProperty 'earthplatform.prototypes', 'true'
         }
 
         // Explicit disposable native-server integration gate; never a public server.
@@ -76,6 +95,7 @@ neoForge {
             jvmArgument '-Xmx3G'
             systemProperty 'neoforge.gameTestServer', 'true'
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            systemProperty 'earthplatform.prototypes', 'true'
             programArgument '--nogui'
         }
 
