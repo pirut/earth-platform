@@ -22,6 +22,8 @@
     "compat.MekanismWorldUtilsMixin",
     "compat.MekanismDigitalMinerMixin",
     "compat.MekanismMinerRegionCacheMixin",
+    "compat.TwilightPortalCreationMixin",
+    "compat.TwilightPortalReturnMixin",
     "CubicWeatherMixin",
     "CubicServerWeatherMixin"
   ],
