@@ -1098,6 +1098,16 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     private double wetness(int x, int z) { return fbm(wetBroad, x / 9000.0, z / 9000.0, 2) * 0.7 + wetLocal.getValue(x / 1400.0, z / 1400.0) * 0.3; }
 
+    /** Blocks above the sea and in from it that bare ground counts as beach. */
+    private static final int BEACH_RISE = 6, BEACH_REACH = 40;
+
+    /** Whether sea water lies within {@code r} blocks of a column, looking out at half and full reach. */
+    private boolean seaWithin(int x, int z, int r) {
+        for (int d = r / 2; d <= r; d += r / 2)
+            for (int k = 0; k < 8; k++) if (waterY(x + (int) (RING_X[k] * d), z + (int) (RING_Z[k] * d)) == SEA) return true;
+        return false;
+    }
+
     private boolean nearSea(int x, int z) {
         return waterY(x + 4, z) == SEA || waterY(x - 4, z) == SEA || waterY(x, z + 4) == SEA || waterY(x, z - 4) == SEA;
     }
@@ -1369,6 +1379,10 @@ public final class EarthGenerator extends SurfaceGenerator {
                 return grassland(top, x, z, local, patch, moor, roll, rocky);
             }
             case WorldCoverSource.BARE -> {
+                // Bare ground low by the sea is beach and dune, as Whitehaven's silica sand, not rock: the beach rule
+                // above reaches only two blocks up and four in from the water.
+                if (!cliff && steep < 0.6 && y <= SEA + BEACH_RISE && !volcanic(x, z) && seaWithin(x, z, BEACH_REACH))
+                    return new Surface(t < 0 ? snowyBeach : beach, SAND, SAND, 0, 0, 0, 0, 0, false);
                 boolean hot = zone == ClimateZone.HOT_DESERT || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.TROPICAL_DRY;
                 // Dry lands' cliffs show their rock in coloured bands, as the Colorado Plateau's and the Sahara's do.
                 boolean arid = hot || dry;
