@@ -89,10 +89,10 @@ class CubicBench {
         }
         // The same sources as a new world in the game: Copernicus fill and traced rivers too.
         CopernicusSource copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache.resolve(CopernicusSource.DATASET_ID), true, 12, 4, Duration.ofSeconds(30));
-        TerrariumTileSource[] made = new TerrariumTileSource[1];
+        TerrariumTileSource[] source = new TerrariumTileSource[1];
         TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve(TerrariumTileSource.DATASET_ID),
-                true, 256, 6, Duration.ofSeconds(20), List.of(new CopernicusFill(copernicus, (z, x, y) -> made[0].cleaned(z, x, y), 512)));
-        made[0] = tiles;
+                true, 256, 6, Duration.ofSeconds(20), List.of(new CopernicusFill(copernicus, (z, x, y) -> source[0].cleaned(z, x, y), 512)));
+        source[0] = tiles;
         RiverMap rivers = new RiverMap(new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache.resolve(SurfaceWaterSource.DATASET_ID), true,
                 96, 4, Duration.ofSeconds(30)), 256);
         WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, 4, Duration.ofSeconds(30));
