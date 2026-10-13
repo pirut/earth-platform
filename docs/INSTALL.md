@@ -4,7 +4,7 @@
 
 - Minecraft: Java Edition **1.21.1**
 - **NeoForge 21.1.256** (later 21.1.x builds should work but are untested)
-- At least **4 GB** of memory for the game, 6 GB or more if you raise the far terrain detail
+- At least **4 GB** of memory for the game; at least **6 GB** if you use shaders such as Photon or raise the far terrain detail (on an M4 Pro Mac with Photon, 4 GB gave 8 to 18 fps where 6 GB gave 36 to 60)
 - An internet connection the first time you visit each place
 - A few GB of free disk space for downloaded Earth data (the limit is a setting)
 
@@ -19,7 +19,7 @@
    - Linux: `~/.minecraft/mods`
 5. Start the game. Singleplayer → Create New World: the world type is already **Earth**. Press **Customize** to pick a starting place.
 
-Other launchers (Prism, Modrinth App, CurseForge App, MultiMC): make a NeoForge 21.1.256 instance for 1.21.1, add the jar, and set the memory to 4 GB or more.
+Other launchers (Prism, Modrinth App, CurseForge App, MultiMC): make a NeoForge 21.1.256 instance for 1.21.1, add the jar, and set the memory to 4 GB or more (6 GB or more with shaders). Prism defaults to 4 GB, so raise it if you use Photon.
 
 ## Shaders (optional)
 

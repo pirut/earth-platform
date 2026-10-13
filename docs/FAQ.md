@@ -40,7 +40,7 @@ The starting place has not finished downloading. Check your connection; the scre
 ## Performance
 
 **It's slow or stutters.**
-- Give the game at least 4 GB of memory (6 GB if you raise far terrain detail).
+- Give the game at least 4 GB of memory, and at least 6 GB with shaders such as Photon or higher far terrain detail. With Photon, 4 GB drops the frame rate sharply.
 - Lower **far terrain detail** in Mods → Earth Platform → Config → Graphics (restart to apply). The default is 11; 6 to 8 helps weaker GPUs.
 - Flying fast over new ground downloads and builds terrain as you go; it settles once the area is cached.
 - Sodium helps frame rate. Use 0.8.12 or a later 0.8 release, as in the [install guide](INSTALL.md#shaders-optional).
