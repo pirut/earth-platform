@@ -609,7 +609,7 @@ public final class FarRenderer {
         if (own && FarLod.beginDeepen(modelView)) {
             for (Column column : visible) {
                 if (column.water == null) continue;
-                FarLod.deepenOffset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
+                FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 column.water.bind();
                 column.water.draw();
             }
@@ -660,7 +660,22 @@ public final class FarRenderer {
             }
         }
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
-        if (own) FarLod.endWater();
+        if (own) FarLod.endWater(modelView, () -> {
+            for (Column column : visible) {
+                if (column.water == null && !column.hasWaterWalls()) continue;
+                FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
+                if (column.water != null) {
+                    column.water.bind();
+                    column.water.draw();
+                }
+                for (int side = 0; side < 4; side++) {
+                    VertexBuffer wall = column.waterWalls[side];
+                    if (wall == null || drawnKeys.contains(column.neighbour(side))) continue;
+                    wall.bind();
+                    wall.draw();
+                }
+            }
+        });
         shader.clear();
         VertexBuffer.unbind();
         type.clearRenderState();
