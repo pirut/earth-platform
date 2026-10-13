@@ -619,8 +619,45 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         // Narrow rivers the land cover lost, read at the same wandering point so their banks curve too.
         if (rivers != null && voxel <= RIVER_VOXEL && code != WorldCoverSource.NO_DATA && code != WorldCoverSource.SNOW_AND_ICE
-                && rivers.strength(point.latitude(), point.longitude()) >= RiverMap.EDGE) return RIVER;
+                && rivers.strength(point.latitude(), point.longitude()) >= RiverMap.EDGE
+                && (code != WorldCoverSource.BUILT_UP || narrowRiver(point))) return RIVER;
         return code;
+    }
+
+    /** Surface water pixels either side of a river among buildings within which it must reach its banks. */
+    private static final double TOWN_RIVER = 2;
+
+    /**
+     * Whether the river map's water at a point among buildings is a narrow river: it reaches its
+     * banks within {@value #TOWN_RIVER} of the surface water record's pixels on both sides of some
+     * line through the point, east and west, north and south or either diagonal, and so does it
+     * as far along the river either way. The record sees a town's canals and streams as thin
+     * lines, but the shadows of its tall buildings as broad faint patches, which the map traced as
+     * rivers and lakes a few hundred metres wide winding across Manhattan's Midtown, Chicago's
+     * Loop, Hong Kong's Central and Tokyo's Marunouchi; looking along the river as well keeps
+     * the rims of those patches, narrow only along their edges, from standing as crescents.
+     */
+    private boolean narrowRiver(GeoPoint point) {
+        double reach = TOWN_RIVER / io.earthplatform.geography.globe.SurfaceWaterSource.PIXELS_PER_DEGREE;
+        double latitude = point.latitude(), longitude = point.longitude();
+        int across = narrowAxis(latitude, longitude, reach);
+        if (across < 0) return false;
+        int along = (across + 2) % 4;
+        for (int side = -1; side <= 1; side += 2) {
+            double la = latitude + side * RING_Z[along] * reach, lo = longitude + side * RING_X[along] * reach;
+            if (rivers.strength(la, lo) >= RiverMap.EDGE && narrowAxis(la, lo, reach) < 0) return false;
+        }
+        return true;
+    }
+
+    /** The first of {@link #RING_X}'s four lines through a point along which the river map's water reaches its banks within a reach (degrees) on both sides, or -1. */
+    private int narrowAxis(double latitude, double longitude, double reach) {
+        for (int k = 0; k < 4; k++) {
+            double north = RING_Z[k] * reach, east = RING_X[k] * reach;
+            if (rivers.strength(latitude + north, longitude + east) < RiverMap.EDGE
+                    && rivers.strength(latitude - north, longitude - east) < RiverMap.EDGE) return k;
+        }
+        return -1;
     }
 
     /** Most WorldCover pixels a patch of water mapped on a slope ({@link #strayWater}) holds: about fifty hectares. */
@@ -638,21 +675,34 @@ public final class EarthGenerator extends SurfaceGenerator {
     private static final int STRAY_VOXEL = 8;
     /** Least range of a water cell's ground, in metres, for it to hold stray patches: flat country has no slopes to hang them on. */
     private static final double STRAY_RELIEF = 30;
+    /** Most pixels a speck of water among buildings holds, about two hectares, and the least share of the land touching it built up. */
+    private static final int TOWN_SPECK = 300;
+    private static final double TOWN_SHARE = 0.6;
+    /**
+     * Least share of a speck's pixels the surface water record must see water at, at least
+     * {@value #SEEN_WET} percent of the time, for the speck to be water: a moat or a pond, not a
+     * shadow. The record sees the darkest shadows of a skyscraper district, as in Chicago's Loop, as
+     * water up to two passes in three, but open water nearly always.
+     */
+    private static final double TOWN_WET = 0.1;
+    private static final int SEEN_WET = 75;
     /** Water cells, keyed as {@link #waterCell}'s, as far as {@link #strayCell} has found their stray patches. */
     private final java.util.concurrent.ConcurrentHashMap<Long, Long2IntOpenHashMap> strayCells =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * The cover of water mapped at a point: the land round it where the point lies in a small patch
-     * of water hanging on a slope, else water. The map reads dark rock as water: the basalt that
+     * of water hanging on a slope or among buildings, else water. The map reads dark rock as water: the basalt that
      * poured over the Grand Canyon's walls at Lava Falls mapped as dozens of small patches all down
      * the slopes, each stood as a pool cut into the hillside. Water lies level, and the elevation
      * under a pond, a lake or a reach of river is level or nearly so, while under these it climbs
-     * the slope with the rock, which carries on falling away below them.
+     * the slope with the rock, which carries on falling away below them. In towns the map reads the
+     * shadows of tall buildings as water too, specks a few dozen metres across that stood as dry
+     * pits, and as ponds under the shore's rule raised the street round each into a square plateau,
+     * as all over Tokyo's Marunouchi.
      */
     private int strayWater(double x, double z, GeoPoint point) {
         int cx = Math.floorDiv(Mth.floor(x), WATER_CELL), cz = Math.floorDiv(Mth.floor(z), WATER_CELL);
-        if (waterCell(cx, cz).relief() < STRAY_RELIEF) return WorldCoverSource.WATER;
         Long2IntOpenHashMap stray = strayCell(cx, cz);
         if (stray.isEmpty()) return WorldCoverSource.WATER;
         return stray.getOrDefault(pixelKey(row(point.latitude()), column(point.longitude())), WorldCoverSource.WATER);
@@ -669,9 +719,13 @@ public final class EarthGenerator extends SurfaceGenerator {
      * lies wholly within the cell and a margin round it, holds no more than {@value #STRAY_PIXELS}
      * pixels, and whose ground rises at least {@value #STRAY_RISE} m across its middle half and a
      * tenth of its width across most of it, then falls more than {@value #STRAY_FALL} m below its
-     * lowest pixel within a hundred metres of it. Each of its pixels takes the class most of the
-     * land pixels touching the patch have. Larger water, as rivers and the sea, always stays; so do
-     * a creek's reach at a falls' lip, mostly level, and a river's below a falls, at the bottom.
+     * lowest pixel within a hundred metres of it, where the cell's ground ranges at least
+     * {@value #STRAY_RELIEF} m; or that holds no more than {@value #TOWN_SPECK} pixels with most of
+     * the land touching it built up, where the surface water record, years of satellite passes,
+     * seldom saw water. Each of its pixels takes the class most of the land pixels touching the
+     * patch have. Larger water, as rivers and the sea, always stays; so do a creek's reach at a
+     * falls' lip, mostly level, a river's below a falls, at the bottom, a pond in a town's park,
+     * among trees and grass, and a moat or a pond among buildings that the record sees.
      */
     private Long2IntOpenHashMap strayCell(int cx, int cz) {
         long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
@@ -692,6 +746,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         int[] patch = new int[STRAY_PIXELS + 1];
         int[] queue = new int[codes.length];
         GlobalElevation dem = elevation[TOWER_ZOOM];
+        boolean hilly = waterCell(cx, cz).relief() >= STRAY_RELIEF;
         for (int start = 0; start < codes.length; start++) {
             if (seen[start] || codes[start] != (byte) WorldCoverSource.WATER) continue;
             // The patch through this pixel, joined at edges and corners.
@@ -712,6 +767,26 @@ public final class EarthGenerator extends SurfaceGenerator {
                 }
             }
             if (!whole || size > STRAY_PIXELS) continue;
+            // The land round it decides what it is.
+            int[] votes = new int[256];
+            int best = WorldCoverSource.NO_DATA, land = 0;
+            for (int k = 0; k < size; k++) {
+                int i = patch[k] % width, j = patch[k] / width;
+                for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
+                    int ni = i + di, nj = j + dj;
+                    if (ni < 0 || nj < 0 || ni >= width || nj >= height) continue;
+                    int c = codes[nj * width + ni] & 0xFF;
+                    if (c == WorldCoverSource.WATER || c == WorldCoverSource.NO_DATA) continue;
+                    land++;
+                    if (++votes[c] > votes[best]) best = c;
+                }
+            }
+            if (best == WorldCoverSource.NO_DATA) continue;
+            if (size <= TOWN_SPECK && rivers != null && votes[WorldCoverSource.BUILT_UP] >= TOWN_SHARE * land && !recorded(patch, size, top, left, width)) {
+                for (int k = 0; k < size; k++) stray.put(pixelKey(top + patch[k] / width, left + patch[k] % width), WorldCoverSource.BUILT_UP);
+                continue;
+            }
+            if (!hilly) continue;
             double[] ground = new double[size];
             int north = height, south = 0, west = width, east = 0;
             double lowest = Double.MAX_VALUE, lowX = 0, lowZ = 0;
@@ -731,25 +806,22 @@ public final class EarthGenerator extends SurfaceGenerator {
             for (double ring : STRAY_RINGS) for (int d = 0; d < 8; d++)
                 below = Math.min(below, dem.metres(lowX + RING_X[d] * ring / metresPerBlock, lowZ + RING_Z[d] * ring / metresPerBlock));
             if (below > lowest - STRAY_FALL) continue;
-            // The land round it decides what it is.
-            int[] votes = new int[256];
-            int best = WorldCoverSource.NO_DATA;
-            for (int k = 0; k < size; k++) {
-                int i = patch[k] % width, j = patch[k] / width;
-                for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
-                    int ni = i + di, nj = j + dj;
-                    if (ni < 0 || nj < 0 || ni >= width || nj >= height) continue;
-                    int c = codes[nj * width + ni] & 0xFF;
-                    if (c == WorldCoverSource.WATER || c == WorldCoverSource.NO_DATA) continue;
-                    if (++votes[c] > votes[best]) best = c;
-                }
-            }
-            if (best == WorldCoverSource.NO_DATA) continue;
             for (int k = 0; k < size; k++) stray.put(pixelKey(top + patch[k] / width, left + patch[k] % width), best);
         }
         if (strayCells.size() > 1 << 14) strayCells.clear();
         strayCells.putIfAbsent(key, stray);
         return stray;
+    }
+
+    /** Whether the surface water record saw water often under at least {@value #TOWN_WET} of a patch's pixels. */
+    private boolean recorded(int[] patch, int size, long top, long left, int width) {
+        double ppd = WorldCoverSource.PIXELS_PER_DEGREE;
+        int wet = 0;
+        for (int k = 0; k < size; k++) {
+            if (rivers.occurrence(90 - (top + patch[k] / width + 0.5) / ppd, (left + patch[k] % width + 0.5) / ppd - 180) >= SEEN_WET) wet++;
+            if (wet >= TOWN_WET * size) return true;
+        }
+        return false;
     }
 
     /** Rings round water, in metres, that {@link #iceWater} looks along, out past a pond's far shore; none nearer than a pixel. */
