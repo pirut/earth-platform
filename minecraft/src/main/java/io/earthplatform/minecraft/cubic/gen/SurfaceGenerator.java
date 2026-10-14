@@ -244,6 +244,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         BlockState[] top = new BlockState[256], under = new BlockState[256], crown = new BlockState[256];
         boolean[] ice = new boolean[256];
         Strata.Layers[] rock = new Strata.Layers[256];
+        int[] pours = new int[256];
+        java.util.Arrays.fill(pours, Integer.MIN_VALUE);
         int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
         for (int cz = 0; cz < 16; cz++) for (int cx = 0; cx < 16; cx++) {
             int g = (cz + 1) * 18 + cx + 1, h = ground[g], cell = cz * 16 + cx;
@@ -267,6 +269,13 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             }
             min = Math.min(min, h);
             max = Math.max(max, Math.max(h, water[g]));
+            // Where water steps down beside this column it pours over the edge here, as it does up close, rather
+            // than leaving a dark slot under the higher water's lip.
+            int beside = Math.max(Math.max(water[g - 1], water[g + 1]), Math.max(water[g - 18], water[g + 18]));
+            if (beside != DRY && beside > Math.max(h, water[g])) {
+                pours[cell] = Math.floorDiv(beside, v) * v;
+                max = Math.max(max, beside);
+            }
         }
         // Room for trees: drawn as they are out to 4-block voxels, sequoias out to 16.
         boolean giants = v <= 16 && giants(x0 + width / 2, z0 + width / 2);
@@ -298,6 +307,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                         else if (state == STONE && bedrock(under[cz * 16 + cx])) state = under[cz * 16 + cx];
                     }
                     if (state == AIR && crown[cz * 16 + cx] != null && ground[g] < y0 && ground[g] >= y0 - v) state = crown[cz * 16 + cx];
+                    if (state == AIR && y0 <= pours[cz * 16 + cx]) state = WATER;
                     if (state != AIR) section.setBlockState(cx, vy, cz, state, false);
                 }
             }
