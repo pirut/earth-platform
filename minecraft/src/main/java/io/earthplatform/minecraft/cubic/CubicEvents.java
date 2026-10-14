@@ -387,18 +387,20 @@ public final class CubicEvents {
             Map<String, long[]> before = Downloads.totals();
             long start = System.nanoTime();
             // Only the data about the landing first; the far levels' data comes in after the player arrives.
-            earth.prepareNear(target[0], target[1]);
+            // A famous place lands within sight of its view, which may stand kilometres off the point: fetch about there.
+            boolean famous = !Double.isNaN(viewLatitude);
+            int[] centre = famous ? withinSight(target, view) : target;
+            earth.prepareNear(centre[0], centre[1]);
             long prepared = System.nanoTime();
             String fetched = Downloads.since(before);
             before = Downloads.totals();
-            boolean famous = !Double.isNaN(viewLatitude);
-            int[] spot = landing(earth, famous ? withinSight(target, view) : target, famous ? 2048 : 256, famous);
+            int[] spot = landing(earth, centre, famous ? 2048 : 256, famous);
             long landed = System.nanoTime();
             EarthPlatformMod.LOGGER.info("Travel to {}, {}: data {} ms ({}); landing {} ms ({})", latitude, longitude,
                     (prepared - start) / 1_000_000, fetched, (landed - prepared) / 1_000_000, Downloads.since(before));
             Map<String, long[]> far = Downloads.totals();
             Util.ioPool().execute(() -> {
-                earth.prepare(target[0], target[1]);
+                earth.prepare(centre[0], centre[1]);
                 EarthPlatformMod.LOGGER.info("Travel to {}, {}: far data {} ms after landing ({})", latitude, longitude,
                         (System.nanoTime() - landed) / 1_000_000, Downloads.since(far));
             });
