@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferUploader;
 import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.far.Far;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
@@ -58,12 +59,16 @@ final class FarGpu {
     private final it.unimi.dsi.fastutil.ints.IntArrayList freeSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
     private int nextSlot, looksUploaded;
     private final String version;
-    @Nullable private Program vanilla, pack;
+    /** Programs by fade ({@link #NO_FADE}, {@link #FADE_OUT}, {@link #FADE_IN}); a fade's program is built when first asked for. */
+    private final Program[] vanilla = new Program[3], pack = new Program[3];
+    private final boolean[] vanillaFailed = new boolean[3], packFailed = new boolean[3];
     @Nullable private FarShaders.PackPatch packSource;
     @Nullable private Object packPipeline;
-    private boolean packOwnDepth;
-    private boolean vanillaFailed;
+    private boolean packOwnDepth, packJittered;
     private long quadBytes;
+
+    /** Faces drawn whole; faces fading out over the outer ring of their level; faces of the coarser level fading in there. */
+    static final int NO_FADE = 0, FADE_OUT = 1, FADE_IN = 2;
 
     /** A column's faces in one arena: {@code counts} faces per group, starting at {@code start}. */
     record Allocation(Arena arena, int start, int size, int[] counts, int[] firsts) {}
@@ -138,11 +143,64 @@ final class FarGpu {
      * the game's depth (on {@link FarLod#vanillaUnit()}) already holds terrain. Returns false when
      * there is nothing usable to draw with.
      */
-    boolean begin(boolean packMode, @Nullable FarShaders.PackPatch patch, Matrix4f modelView, Matrix4f projection, Vec3 camera, float[] shade) {
-        Program program = packMode ? packProgram(patch) : vanillaProgram();
+    boolean begin(boolean packMode, @Nullable FarShaders.PackPatch patch, Matrix4f modelView, Matrix4f projection, Vec3 camera, float[] shade,
+            int frame) {
+        Program program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
         if (program == null) return false;
         uploadLooks();
+        this.packMode = packMode;
+        this.patch = patch;
+        this.modelView = modelView;
+        this.projection = projection;
+        this.camera = camera;
+        this.shade = shade;
+        this.frame = frame;
         previousProgram = GL11C.glGetInteger(GL20C.GL_CURRENT_PROGRAM);
+        use(program);
+
+        int atlas = Minecraft.getInstance().getTextureManager().getTexture(InventoryMenu.BLOCK_ATLAS).getId();
+        int lightmap = RenderSystem.getShaderTexture(2);
+        previousActive = GlStateManager._getActiveTexture();
+        bind2d(ATLAS_UNIT, atlas, packMode);
+        bind2d(LIGHT_UNIT, lightmap, packMode);
+        bindBuffer(LOOK_UNIT, looks.texture);
+        bindBuffer(COLUMN_UNIT, columns.texture);
+        GlStateManager._activeTexture(previousActive);
+        previousVao = GL11C.glGetInteger(GL30C.GL_VERTEX_ARRAY_BINDING);
+        GL30C.glBindVertexArray(vao);
+        RenderSystem.enableDepthTest();
+        RenderSystem.depthMask(true);
+        RenderSystem.enableCull();
+        for (Arena arena : arenas) arena.clearDraws();
+        return true;
+    }
+
+    /**
+     * Draws what is queued so far, then switches to the program for a fade (see {@link FarShaders}).
+     * Returns false when that fade's program does not build: faces fading out are then drawn whole
+     * by the plain program, and faces fading in should be left out.
+     */
+    boolean fade(int fade) {
+        flush();
+        Program program = packMode ? packProgram(patch, fade) : vanillaProgram(fade);
+        boolean built = program != null;
+        if (program == null) program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
+        if (program != null && program != current) {
+            if (current.irisUniforms != null) FarIrisUniforms.done();
+            use(program);
+        }
+        return built;
+    }
+
+    private boolean packMode;
+    @Nullable private FarShaders.PackPatch patch;
+    private Matrix4f modelView, projection;
+    private Vec3 camera;
+    private float[] shade;
+    private int frame;
+
+    /** Puts a program in use with this draw's uniforms. */
+    private void use(Program program) {
         GlStateManager._glUseProgram(program.id);
         current = program;
         if (program.irisUniforms != null) program.irisUniforms.apply();
@@ -168,22 +226,9 @@ final class FarGpu {
         GL20C.glUniform1i(program.location("earth_Lightmap"), LIGHT_UNIT);
         GL20C.glUniform1i(program.location("earth_GameDepth"), FarLod.vanillaUnit());
         if (packMode && packOwnDepth) FarLod.shadowUniforms(program::location);
-
-        int atlas = Minecraft.getInstance().getTextureManager().getTexture(InventoryMenu.BLOCK_ATLAS).getId();
-        int lightmap = RenderSystem.getShaderTexture(2);
-        previousActive = GlStateManager._getActiveTexture();
-        bind2d(ATLAS_UNIT, atlas, packMode);
-        bind2d(LIGHT_UNIT, lightmap, packMode);
-        bindBuffer(LOOK_UNIT, looks.texture);
-        bindBuffer(COLUMN_UNIT, columns.texture);
-        GlStateManager._activeTexture(previousActive);
-        previousVao = GL11C.glGetInteger(GL30C.GL_VERTEX_ARRAY_BINDING);
-        GL30C.glBindVertexArray(vao);
-        RenderSystem.enableDepthTest();
-        RenderSystem.depthMask(true);
-        RenderSystem.enableCull();
-        for (Arena arena : arenas) arena.clearDraws();
-        return true;
+        GL20C.glUniform1f(program.location("earth_FadeHole"), Far.hole());
+        // Under a pack's TAA the dither moves every frame and blends into a smooth fade; without it, it holds still.
+        GL20C.glUniform1f(program.location("earth_DitherFrame"), program.jittered ? frame & 63 : 0);
     }
 
     private Program current;
@@ -196,19 +241,9 @@ final class FarGpu {
         if (count > 0) allocation.arena.queue(allocation.firsts[group] * 6, count * 6);
     }
 
-    /** Draws everything queued, one multi-draw per buffer, and puts GL back as it was. */
+    /** Draws everything queued and puts GL back as it was. */
     void end() {
-        for (Arena arena : arenas) {
-            if (arena.draws == 0) continue;
-            GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + QUAD_UNIT);
-            GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, arena.buffer.texture);
-            GlStateManager._activeTexture(previousActive);
-            arena.firsts.limit(arena.draws);
-            arena.counts.limit(arena.draws);
-            GL14C.glMultiDrawArrays(GL11C.GL_TRIANGLES, arena.firsts, arena.counts);
-            arena.firsts.clear();
-            arena.counts.clear();
-        }
+        flush();
         for (int unit : new int[] {QUAD_UNIT, LOOK_UNIT, COLUMN_UNIT}) bindBuffer(unit, 0);
         restore2d(ATLAS_UNIT);
         restore2d(LIGHT_UNIT);
@@ -218,6 +253,20 @@ final class FarGpu {
         if (current.irisUniforms != null) FarIrisUniforms.done();
         GlStateManager._glUseProgram(previousProgram);
         current = null;
+    }
+
+    /** Draws everything queued, one multi-draw per buffer. */
+    private void flush() {
+        for (Arena arena : arenas) {
+            if (arena.draws == 0) continue;
+            GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + QUAD_UNIT);
+            GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, arena.buffer.texture);
+            GlStateManager._activeTexture(previousActive);
+            arena.firsts.limit(arena.draws);
+            arena.counts.limit(arena.draws);
+            GL14C.glMultiDrawArrays(GL11C.GL_TRIANGLES, arena.firsts, arena.counts);
+            arena.clearDraws();
+        }
     }
 
     private void bind2d(int unit, int texture, boolean packMode) {
@@ -254,15 +303,17 @@ final class FarGpu {
 
     // Programs -----------------------------------------------------------------------------------
 
-    @Nullable private Program vanillaProgram() {
-        if (vanilla == null && !vanillaFailed) {
-            try { vanilla = Program.link(version + FarShaders.VERTEX, version + FarShaders.FRAGMENT, "far terrain"); }
+    @Nullable private Program vanillaProgram(int fade) {
+        if (vanilla[fade] == null && !vanillaFailed[fade]) {
+            String header = version + FarShaders.fade(fade);
+            try { vanilla[fade] = Program.link(header + FarShaders.VERTEX, header + FarShaders.FRAGMENT, "far terrain"); }
             catch (IllegalStateException failure) {
-                vanillaFailed = true;
-                EarthPlatformMod.LOGGER.error("Far terrain shader failed to build; far terrain is off", failure);
+                vanillaFailed[fade] = true;
+                if (fade == NO_FADE) EarthPlatformMod.LOGGER.error("Far terrain shader failed to build; far terrain is off", failure);
+                else EarthPlatformMod.LOGGER.warn("Far terrain's fade between levels failed to build; levels meet without it", failure);
             }
         }
-        return vanilla;
+        return vanilla[fade];
     }
 
     /**
@@ -270,40 +321,66 @@ final class FarGpu {
      * one, jittered for the pack's TAA when it asks for that, and given the pack's uniforms. Rebuilt
      * when the pack or its pipeline changes.
      */
-    @Nullable private Program packProgram(@Nullable FarShaders.PackPatch patch) {
+    @Nullable private Program packProgram(@Nullable FarShaders.PackPatch patch, int fade) {
         Object pipeline = ShaderBlocks.IRIS ? FarIrisUniforms.pipeline() : null;
         boolean ownDepth = FarLod.active();
-        if (pack != null && java.util.Objects.equals(patch, packSource) && pipeline == packPipeline && ownDepth == packOwnDepth) return pack;
-        if (pack != null) pack.close();
-        pack = null;
-        packSource = patch;
-        packPipeline = pipeline;
-        packOwnDepth = ownDepth;
-        String jitter = patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
-        if (patch != null) {
-            pack = linkPack(jitter, FarShaders.packFragment(version, patch.fragment(), ownDepth), "far terrain (shader pack)");
-            if (pack != null) {
-                EarthPlatformMod.LOGGER.info("Far terrain uses the shader pack's Voxy fragment code{}", pack.jittered ? ", jittered for its TAA" : "");
-                return pack;
+        if (!java.util.Objects.equals(patch, packSource) || pipeline != packPipeline || ownDepth != packOwnDepth) {
+            for (int i = 0; i < pack.length; i++) {
+                if (pack[i] != null) pack[i].close();
+                pack[i] = null;
+                packFailed[i] = false;
             }
+            packSource = patch;
+            packPipeline = pipeline;
+            packOwnDepth = ownDepth;
+            packPatched = patch != null;
+            packJittered = true;
+        }
+        if (pack[fade] != null || packFailed[fade]) return pack[fade];
+        // Every fade builds as the plain program did: the same patch, jittered or not.
+        String jitter = packJittered && patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
+        String header = version + FarShaders.fade(fade);
+        if (packPatched) {
+            pack[fade] = linkPack(jitter, FarShaders.packFragment(version, patch.fragment(), ownDepth, fade), "far terrain (shader pack)", header);
+            if (pack[fade] != null) {
+                if (fade == NO_FADE) {
+                    packJittered = pack[fade].jittered;
+                    EarthPlatformMod.LOGGER.info("Far terrain uses the shader pack's Voxy fragment code{}", packJittered ? ", jittered for its TAA" : "");
+                }
+                return pack[fade];
+            }
+            if (fade != NO_FADE) {
+                packFailed[fade] = true;
+                EarthPlatformMod.LOGGER.warn("Far terrain's fade between levels does not build with the shader pack; levels meet without it");
+                return null;
+            }
+            packPatched = false;
             EarthPlatformMod.LOGGER.warn("The shader pack's Voxy fragment code does not build for far terrain; using plain colours");
         }
-        pack = linkPack(jitter, version + FarShaders.PACK_FALLBACK, "far terrain (plain, shader pack)");
-        if (pack == null) EarthPlatformMod.LOGGER.error("Far terrain shader failed to build");
-        return pack;
+        pack[fade] = linkPack(jitter, header + FarShaders.PACK_FALLBACK, "far terrain (plain, shader pack)", header);
+        if (pack[fade] == null) {
+            packFailed[fade] = true;
+            if (fade == NO_FADE) EarthPlatformMod.LOGGER.error("Far terrain shader failed to build");
+        } else if (fade == NO_FADE) {
+            packJittered = pack[fade].jittered;
+        }
+        return pack[fade];
     }
 
+    /** Whether the pack's Voxy code builds; once it fails, every fade uses the plain colours too. */
+    private boolean packPatched;
+
     /** Links a pack program, jittered when {@code jitter} builds, and finds the pack's uniforms in it. */
-    @Nullable private Program linkPack(@Nullable String jitter, String fragment, String name) {
+    @Nullable private Program linkPack(@Nullable String jitter, String fragment, String name, String header) {
         Program program = null;
         if (jitter != null) {
-            try { program = Program.link(FarShaders.packVertex(version, jitter), fragment, name); program.jittered = true; }
+            try { program = Program.link(FarShaders.packVertex(header, jitter), fragment, name); program.jittered = true; }
             catch (IllegalStateException failure) {
                 EarthPlatformMod.LOGGER.warn("The shader pack's TAA jitter does not build for far terrain; far terrain goes without it", failure);
             }
         }
         if (program == null) {
-            try { program = Program.link(FarShaders.packVertex(version, null), fragment, name); }
+            try { program = Program.link(FarShaders.packVertex(header, null), fragment, name); }
             catch (IllegalStateException failure) {
                 EarthPlatformMod.LOGGER.warn("Could not build {}", name, failure);
                 return null;
@@ -319,8 +396,8 @@ final class FarGpu {
         arenas.clear();
         columns.close();
         looks.close();
-        if (vanilla != null) vanilla.close();
-        if (pack != null) pack.close();
+        for (Program program : vanilla) if (program != null) program.close();
+        for (Program program : pack) if (program != null) program.close();
         GL30C.glDeleteVertexArrays(vao);
     }
 

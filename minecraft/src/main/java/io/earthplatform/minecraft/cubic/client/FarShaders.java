@@ -35,6 +35,18 @@ final class FarShaders {
         return body.startsWith("{") && body.endsWith("}") ? body : null;
     }
 
+    /**
+     * Defines for a far terrain program by fade ({@link FarGpu#NO_FADE}, {@link FarGpu#FADE_OUT},
+     * {@link FarGpu#FADE_IN}). Where a level gives way to the next coarser one, both are drawn over
+     * the coarser level's ring of columns at the edge, and a dither hands each pixel to one of them:
+     * the finer level thins out across the ring as the coarser one fills in, so the step in voxel
+     * size, height and texture between them blends over a column's width instead of showing as a
+     * seam. Only those few columns are drawn twice, and only their programs discard fragments.
+     */
+    static String fade(int fade) {
+        return fade == 0 ? "" : "#define EARTH_FADE " + fade + "\n";
+    }
+
     /** Blocks of height over which the haze thins to about a third (1/e): roughly how deep the hazy lower air is. */
     private static final float HAZE_HEIGHT = 1000.0F;
 
@@ -64,6 +76,9 @@ final class FarShaders {
             out vec3 earth_position;
             flat out vec3 earth_anchor;
             flat out float earth_reach;
+            #ifdef EARTH_FADE
+            out vec2 earth_band;
+            #endif
 
             // Corners (along the face's width, along its height) per direction, counter-clockwise from outside.
             const ivec2 CORNERS[24] = ivec2[](
@@ -103,6 +118,13 @@ final class FarShaders {
                 earth_position = position;
                 earth_anchor = origin + earth_local(face, vec2(0.5), x, y, z, width, extent, v);
                 earth_reach = 16.0 * v;
+            #ifdef EARTH_FADE
+                // Where this point is among the coarser level's columns, from the middle of the one under the
+                // camera, in column widths: that level's middle, which the finer level draws, ends at ±(hole + 1/2).
+                int shift = column.w + (EARTH_FADE == 1 ? 5 : 4);
+                ivec2 inColumn = earth_CameraBlock.xz - ((earth_CameraBlock.xz >> shift) << shift);
+                earth_band = (position.xz + vec2(inColumn) + earth_CameraFraction.xz) / float(1 << shift) - 0.5;
+            #endif
                 gl_Position = earth_Projection * earth_ModelView * vec4(position, 1.0);
             #ifdef EARTH_JITTER
                 // The pack's TAA moves every frame's geometry by a sub-pixel jitter; far terrain moves with it.
@@ -167,6 +189,21 @@ final class FarShaders {
             vec2 earth_levels() {
                 return vec2(float(earth_light >> 4), float(earth_light & 15u));
             }
+
+            #ifdef EARTH_FADE
+            in vec2 earth_band;
+            uniform float earth_FadeHole;
+            uniform float earth_DitherFrame;
+
+            // Drops the fragment where the other level has this pixel: across the coarser level's outer
+            // ring of middle columns the finer level's share falls from all to none, by a dither both share.
+            void earth_fade() {
+                float coarse = smoothstep(earth_FadeHole - 0.5, earth_FadeHole + 0.5, max(abs(earth_band.x), abs(earth_band.y)));
+                vec2 pixel = gl_FragCoord.xy + 5.588238 * earth_DitherFrame;
+                float dither = fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+                if (EARTH_FADE == 1 ? dither < coarse : dither >= coarse) discard;
+            }
+            #endif
             """;
 
     /**
@@ -213,6 +250,9 @@ final class FarShaders {
             out vec4 earth_fragColor;
 
             void main() {
+            #ifdef EARTH_FADE
+                earth_fade();
+            #endif
                 vec4 colour = earth_sample();
                 colour.rgb *= earth_tint * earth_shade();
                 vec2 light = clamp(earth_levels() / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0));
@@ -319,6 +359,9 @@ final class FarShaders {
             #endif
 
             void main() {
+            #ifdef EARTH_FADE
+                earth_fade();
+            #endif
             #ifdef EARTH_OWN_DEPTH
                 if (texelFetch(earth_GameDepth, ivec2(gl_FragCoord.xy), 0).r < 1.0) discard;
                 earth_faceDepth = gl_FragCoord.z;
@@ -346,6 +389,9 @@ final class FarShaders {
             layout(location = 0) out vec4 earth_fragColor;
 
             void main() {
+            #ifdef EARTH_FADE
+                earth_fade();
+            #endif
                 vec4 colour = earth_sample();
                 colour.rgb *= earth_tint * earth_shade();
                 colour *= texture(earth_Lightmap, clamp(earth_levels() / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
@@ -367,7 +413,10 @@ final class FarShaders {
      * declarations and main. Where the patch works out its normal from the face, the ground slope's
      * normal takes over.
      */
-    static String packFragment(String version, String patch, boolean ownDepth) {
+    static String packFragment(String version, String patch, boolean ownDepth) { return packFragment(version, patch, ownDepth, 0); }
+
+    /** The same for a fade (see {@link #fade}). */
+    static String packFragment(String version, String patch, boolean ownDepth, int fade) {
         StringBuilder extensions = new StringBuilder(), body = new StringBuilder();
         for (String line : patch.split("\n", -1)) {
             String trimmed = line.trim();
@@ -375,6 +424,6 @@ final class FarShaders {
             else if (!trimmed.startsWith("#version")) body.append(line).append('\n');
         }
         String patched = FACE_NORMAL.matcher(body).replaceFirst("$1\n    $2 = earth_packNormal($2);");
-        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + VOXY_PARAMETERS + patched + PACK_MAIN;
+        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + fade(fade) + VOXY_PARAMETERS + patched + PACK_MAIN;
     }
 }
