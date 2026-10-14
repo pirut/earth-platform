@@ -34,11 +34,24 @@ More: [Install guide](docs/INSTALL.md) (shaders, Macs, servers) · [Playing on t
 
 ## Credits
 
-The Earth comes from open data: elevation from AWS Terrain Tiles (USGS, NASA SRTM, NOAA, Copernicus and national mapping agencies) with Copernicus GLO-30 filling fjords and the far north, USGS 3DEP in the United States and REMA from the Polar Geospatial Center in Antarctica; land cover from ESA WorldCover; climate from CHELSA; rivers from JRC Global Surface Water; ecoregions from RESOLVE Ecoregions 2017; and, if you turn it on, ground colours from EOX Sentinel-2 cloudless imagery. The full attribution each source requires is in [CREDITS.md](CREDITS.md) and in game under Mods → Earth Platform.
+**Earth Platform would not be possible without open data.** Every mountain, coastline, forest and river in the game comes from data that scientists, space agencies and mapping agencies collected over many years and chose to share. Thank you to every one of them.
 
-Earth Platform changes these data to make a Minecraft world: it resamples them, picks blocks, and adds small procedural detail the data is too coarse for. It is not a survey and is not for navigation.
+| Data | What it gives the game | From | Licence |
+| --- | --- | --- | --- |
+| [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) | The shape of the whole planet, land and sea floor | Mapzen/Tilezen, built from USGS, NASA SRTM, NOAA, Copernicus and national mapping agencies | Per source, see [CREDITS.md](CREDITS.md#elevation-aws-terrain-tiles) |
+| [Copernicus DEM GLO-30](https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model) | Steep fjords and the far north | European Union, ESA, DLR and Airbus | Copernicus WorldDEM-30 licence |
+| [USGS 3DEP](https://www.usgs.gov/3d-elevation-program) | Detailed heights across the United States | U.S. Geological Survey | Public domain |
+| [REMA](https://www.pgc.umn.edu/data/rema/) | Antarctica's ice and mountains | Polar Geospatial Center, University of Minnesota | CC BY 4.0 |
+| [ESA WorldCover](https://esa-worldcover.org/) | Where forests, grass, desert, snow, wetlands and water lie | European Space Agency and the WorldCover consortium | CC BY 4.0 |
+| [CHELSA](https://chelsa-climate.org/) | The real climate, which picks every biome | Karger et al., WSL | CC0 1.0 |
+| [JRC Global Surface Water](https://global-surface-water.appspot.com/) | Rivers and streams carved where water flows | European Commission JRC, Google, Copernicus | Free, without restriction |
+| [RESOLVE Ecoregions 2017](https://ecoregions.appspot.com/) | Each region's character, such as swamps and mangroves | RESOLVE, Dinerstein et al. | CC BY 4.0 |
+| [NASA Blue Marble](https://visibleearth.nasa.gov/collection/1484/blue-marble) | The globe on the start and travel maps | NASA Earth Observatory, Reto Stöckli | Public domain |
+| [Sentinel-2 cloudless](https://cloudless.eox.at) (optional, off by default) | Ground colours that match the view from space | EOX IT Services | See [CREDITS.md](CREDITS.md#ground-colours-optional-sentinel-2-cloudless) |
 
-The far terrain renderer is our own, built on ideas from [Voxy](https://modrinth.com/mod/voxy) and [Distant Horizons](https://modrinth.com/mod/distanthorizons), and contains no code from either. See [CREDITS.md](CREDITS.md#distant-terrain-thank-you-voxy-and-distant-horizons).
+The full attribution each source asks for, and how we changed its data, is in [CREDITS.md](CREDITS.md) and in game under Mods → Earth Platform. Earth Platform resamples these data, picks blocks and adds small procedural detail the data is too coarse for, so it is not a survey and is not for navigation.
+
+**Distant terrain: thank you, Voxy and Distant Horizons.** Our far terrain is built on ideas from [Voxy](https://modrinth.com/mod/voxy) by Cortex and [Distant Horizons](https://modrinth.com/mod/distanthorizons) by James Seibel and contributors. We'd have recommended using them directly, but neither works with a cubic-chunks world, so we wrote our own renderer following their lead; it contains no code from either. See [what we learned from each](CREDITS.md#distant-terrain-thank-you-voxy-and-distant-horizons).
 
 Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.
 
