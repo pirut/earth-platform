@@ -434,8 +434,10 @@ public final class TerrariumTileSource implements AutoCloseable {
         URI uri = base.resolve(zoom + "/" + x + "/" + y + ".png");
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(timeout).header("User-Agent", "earth-platform/terrarium-v1").GET().build();
         IOException last = null;
-        for (int attempt = 0; attempt < 3; attempt++) {
+        // Three tries for ordinary failures; a host asking us to slow down is waited out a few more times.
+        for (int attempt = 0, slowed = 0; attempt < 3; attempt++) {
             if (attempt > 0) Thread.sleep(250L << attempt);
+            HostBackoff.await(uri);
             transfers.acquire();
             try {
                 long start = System.nanoTime();
@@ -449,6 +451,10 @@ public final class TerrariumTileSource implements AutoCloseable {
                 }
                 if (status == 403 || status == 404) throw new MissingTerrainException("Elevation tile not available (" + status + "): " + uri);
                 last = new IOException("HTTP " + status + " for " + uri);
+                if (HostBackoff.slowDown(status) && ++slowed < HostBackoff.ATTEMPTS) {
+                    HostBackoff.pause(uri, response, slowed, "Elevation tiles");
+                    attempt--;
+                }
             } catch (InterruptedIOException interrupted) {
                 throw interrupted;
             } catch (IOException failure) {

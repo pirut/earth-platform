@@ -341,7 +341,7 @@ public final class GlobeTest {
         int zoom = 2;
         Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
         Set<String> missing = ConcurrentHashMap.newKeySet();
-        AtomicInteger flaky = new AtomicInteger(2);
+        AtomicInteger flaky = new AtomicInteger(2), limited = new AtomicInteger(3);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.setExecutor(Executors.newFixedThreadPool(4));
         server.createContext("/tiles/", exchange -> {
@@ -353,6 +353,7 @@ public final class GlobeTest {
             int status = 200;
             if (missing.contains(path)) { status = 404; body = new byte[0]; }
             else if (path.equals("2/3/3.png") && flaky.getAndDecrement() > 0) { status = 503; body = new byte[0]; }
+            else if (path.equals("2/2/3.png") && limited.getAndDecrement() > 0) { status = 429; body = new byte[0]; exchange.getResponseHeaders().add("Retry-After", "1"); }
             else {
                 float[] metres = new float[256 * 256];
                 for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) metres[j * 256 + i] = z == 11 ? 0 : planeAt(z, tx * 256L + i, ty * 256L + j);
@@ -411,6 +412,14 @@ public final class GlobeTest {
                 // Transient server errors are retried.
                 source.tile(zoom, 3, 3);
                 equal(3, hits.get("2/3/3.png").get(), "two retries then success");
+                // A host asking us to slow down is waited out (Retry-After) beyond the ordinary three tries.
+                long slowStart = System.nanoTime();
+                source.tile(zoom, 2, 3);
+                equal(4, hits.get("2/2/3.png").get(), "three slow-down replies then success");
+                check(System.nanoTime() - slowStart >= 2_500_000_000L, "Retry-After pauses were honoured");
+                equal(5_000L, HostBackoff.pauseMillis("5", 1), "Retry-After seconds");
+                equal(HostBackoff.MAX_PAUSE_MS, HostBackoff.pauseMillis("3600", 1), "Retry-After capped");
+                equal(4_000L, HostBackoff.pauseMillis("Wed, 21 Oct 2015 07:28:00 GMT", 3), "date form doubles instead");
 
                 missing.add("2/0/0.png");
                 fail(() -> source.tile(zoom, 0, 0), MissingTerrainException.class, "404 is explicit missing terrain");

@@ -49,8 +49,10 @@ final class RangeFiles implements AutoCloseable {
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(timeout).header("User-Agent", "earth-platform/" + agent)
                 .header("Range", "bytes=" + offset + "-" + (offset + length - 1)).GET().build();
         IOException last = null;
-        for (int attempt = 0; attempt < 3; attempt++) {
+        // Three tries for ordinary failures; a host asking us to slow down is waited out a few more times.
+        for (int attempt = 0, slowed = 0; attempt < 3; attempt++) {
             if (attempt > 0) Thread.sleep(250L << attempt);
+            HostBackoff.await(uri);
             transfers.acquire();
             try {
                 long start = System.nanoTime();
@@ -65,6 +67,10 @@ final class RangeFiles implements AutoCloseable {
                 }
                 if (status == 404 || status == 403) return null;
                 last = new IOException("HTTP " + status + " for " + uri);
+                if (HostBackoff.slowDown(status) && ++slowed < HostBackoff.ATTEMPTS) {
+                    HostBackoff.pause(uri, response, slowed, what);
+                    attempt--;
+                }
             } catch (InterruptedIOException interrupted) {
                 throw interrupted;
             } catch (IOException failure) {
