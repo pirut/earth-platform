@@ -30,13 +30,15 @@ import org.lwjgl.system.MemoryStack;
  *
  * <p>Far water still goes through the pack's own water shader and the game's depth buffer. So
  * that far hills hide the water behind them, {@link #beginWater} gives that draw a scratch depth
- * buffer holding the nearer of the game's depth and the far terrain's (in the game's projection),
+ * buffer holding the nearer of the game's depth and the far terrain's with its water floors laid in
+ * (in the game's projection),
  * and {@link #endWater} draws the water's surfaces once more into the game's depth, where far
  * terrain's own depth shows them. (In the game's depth a far lake's surface and its bed fall on the
  * same value, so telling where the water drew by comparing the two missed every other row, and
  * Photon then left clouds over far water out on those rows.) Packs judge
  * how deep water is from far terrain's depth, so {@link #beginDeepen} first gives far water a
- * floor at least {@link #WATER_DEPTH} blocks below its surface there.
+ * floor at least {@link #WATER_DEPTH} blocks below its surface there, and further at kilometres
+ * off, so the game's coarse depth there still puts the surface in front of it.
  *
  * <p>Everything here runs on the render thread; Iris reads it through {@link FarLodIris}.
  */
@@ -345,6 +347,7 @@ public final class FarLod {
             GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(deepen.id, "earth_Projection"), false, projection.get(matrix));
         }
         GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_Least"), WATER_DEPTH);
+        GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_GameNear"), vanilla.m32() / (vanilla.m22() - 1.0F));
         GL20C.glUniform2f(GL20C.glGetUniformLocation(deepen.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
         return true;
     }
@@ -383,7 +386,8 @@ public final class FarLod {
         GL11C.glDepthFunc(GL11C.GL_ALWAYS);
         GL11C.glDepthMask(true);
         bind(VANILLA_UNIT, waterDepth);
-        bind(SCRATCH_UNIT, faces);
+        // Far terrain's depth with the water floors laid in, so far water always lies in front.
+        bind(SCRATCH_UNIT, depth);
         GL20C.glUseProgram(merge.id);
         merge.matrices();
         fullScreen();
@@ -651,6 +655,7 @@ public final class FarLod {
             uniform sampler2D earth_Far;
             uniform mat4 earth_Projection;
             uniform float earth_Least;
+            uniform float earth_GameNear;
             uniform vec2 earth_NearFar;
             in vec3 earth_view;
             void main() {
@@ -661,8 +666,13 @@ public final class FarLod {
                 float n = earth_NearFar.x, f = earth_NearFar.y;
                 float behind = 2.0 * n * f / (f + n - (bed * 2.0 - 1.0) * (f - n));
                 if (-earth_view.z > behind + 2.0) discard;
+                // The pack's water is tested against this floor through the game's projection (see
+                // beginWater), where one step of a float depth spans z * z * 2^-24 / near blocks: a
+                // hundred at 10 km. Within a few steps the surface and floor round alike and the
+                // water drew on alternate rows and flickered as the camera moved.
                 float distance = length(earth_view);
-                vec4 clip = earth_Projection * vec4(earth_view * ((distance + earth_Least) / distance), 1.0);
+                float step = distance * distance * 5.96e-8 / earth_GameNear;
+                vec4 clip = earth_Projection * vec4(earth_view * ((distance + max(earth_Least, 4.0 * step)) / distance), 1.0);
                 gl_FragDepth = max(clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0), bed);
             }
             """;
