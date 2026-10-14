@@ -3,7 +3,6 @@ package io.earthplatform.minecraft.cubic.client;
 import com.mojang.blaze3d.shaders.Uniform;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.VertexBuffer;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cube;
@@ -81,14 +80,14 @@ public final class CubeRenderer {
         final long key;
         final int x, y, z;
         final AABB box;
-        final VertexBuffer[] buffers = new VertexBuffer[CubeMesher.LAYERS.size()];
+        final CubeBuffer[] buffers = new CubeBuffer[CubeMesher.LAYERS.size()];
         double distance;
         Mesh(long key) {
             this.key = key; x = CubeKey.x(key) << 4; y = CubeKey.y(key) << 4; z = CubeKey.z(key) << 4;
             box = new AABB(x, y, z, x + 16, y + 16, z + 16);
         }
         void close() { for (int i = 0; i < buffers.length; i++) if (buffers[i] != null) { buffers[i].close(); buffers[i] = null; } }
-        boolean empty() { for (VertexBuffer buffer : buffers) if (buffer != null) return false; return true; }
+        boolean empty() { for (CubeBuffer buffer : buffers) if (buffer != null) return false; return true; }
     }
 
     CubeRenderer(ClientCubeWorld world) { this.world = world; }
@@ -280,14 +279,12 @@ public final class CubeRenderer {
             if (mesh == null) { mesh = new Mesh(result.key()); meshes.put(result.key(), mesh); }
             boolean[] present = new boolean[mesh.buffers.length];
             for (CubeMesher.Layer layer : result.layers()) {
-                VertexBuffer buffer = mesh.buffers[layer.index()];
-                if (buffer == null) buffer = mesh.buffers[layer.index()] = new VertexBuffer(VertexBuffer.Usage.STATIC);
-                buffer.bind();
+                CubeBuffer buffer = mesh.buffers[layer.index()];
+                if (buffer == null) buffer = mesh.buffers[layer.index()] = new CubeBuffer();
                 buffer.upload(layer.mesh());
                 layer.memory().close();
                 present[layer.index()] = true;
             }
-            VertexBuffer.unbind();
             for (int i = 0; i < present.length; i++) {
                 if (!present[i] && mesh.buffers[i] != null) { mesh.buffers[i].close(); mesh.buffers[i] = null; }
             }
@@ -388,18 +385,17 @@ public final class CubeRenderer {
         Uniform offset = shader.CHUNK_OFFSET;
         for (int n = 0; n < visible.size(); n++) {
             Mesh mesh = visible.get(backToFront ? visible.size() - 1 - n : n);
-            VertexBuffer buffer = mesh.buffers[layer];
+            CubeBuffer buffer = mesh.buffers[layer];
             if (buffer == null) continue;
             if (offset != null) {
                 offset.set((float) (mesh.x - camera.x), (float) (mesh.y - camera.y), (float) (mesh.z - camera.z));
                 offset.upload();
             }
-            buffer.bind();
             buffer.draw();
         }
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
         shader.clear();
-        VertexBuffer.unbind();
+        CubeBuffer.unbind();
         type.clearRenderState();
     }
 
