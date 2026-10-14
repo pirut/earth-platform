@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="io.earthplatform.minecraft.lod.SurvivalDhResultTransferTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:41.900Z" hostname="4d821b23054b" time="0.534">
-  <properties/>
-  <testcase name="exactDownExpansionCountMatchesEuclideanSquares()" classname="io.earthplatform.minecraft.lod.SurvivalDhResultTransferTest" time="0.007"/>
-  <testcase name="exactBudgetExclusiveTransferRetainsCoverageAndReleasesPayloadOnce()" classname="io.earthplatform.minecraft.lod.SurvivalDhResultTransferTest" time="0.526"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

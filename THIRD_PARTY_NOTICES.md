@@ -32,8 +32,6 @@ Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based 
 
 Shaders are optional. Players install Iris (1.8.14 or a later 1.8 release, LGPL-3.0), Sodium (0.8.12 or a later 0.8 release, PolyForm Shield 1.0.0) and a shader pack such as Photon (Photon Shaders License Agreement) themselves. None of their files, shaders or licences ship in Earth Platform; the mod only compiles against Iris and Sodium and mixes into them at runtime. When the player's driver needs it, the mod adapts the player's own Photon copy on their machine (see the licensing audit); the jar contains no Photon text.
 
-Historical note (older engine): Exact input hashes and the three-classpath/no-copied-payload verification are recorded in review-evidence/shader-packaging015 and shader-aggregate. Users obtain each project from its official distribution and keep the terms accompanying that separate artifact. This candidate’s original code only adapts the pinned installed lifecycle, native format/material context and pass-owned renderer resources. No broader version or pack compatibility is implied.
-
 ## Provenance documents kept with the test data
 
 The test areas keep copies of the documents their data came with, as a record of where the data came from and under what terms. They are bundled in the jar under `earthplatform/copernicus_proof_data/provenance/` and `earthplatform/worldcover_proof_data/provenance/` (sources in `geography/data/*/provenance/`). Copyright in each stays with its owner:

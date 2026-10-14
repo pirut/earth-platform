@@ -1,9 +1,0 @@
-{
-  "utc": "2026-10-12T06:35:07.254488+00:00",
-  "scope": "Reviewed MAIN payload + bounded nested scopes + accepted Packet native write classification and failure unwind; all live authorities remain closed",
-  "inputs": 1225,
-  "reviewReceiptSha256": "7cf0ccd15718828c195b9ccbab7580d24c3c65372bfeebb73d2e1074305b0a35",
-  "freshBuild": "/tmp/earthplatform-foundation69-build",
-  "tmpFree": 3060269056,
-  "overlayFree": 18235711488
-}

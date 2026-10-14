@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="io.earthplatform.minecraft.survival.host.SurvivalMixinAnchorTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:46.327Z" hostname="4d821b23054b" time="0.033">
-  <properties/>
-  <testcase name="constructorPatchRunsOnlyForItsOriginalAnchor()" classname="io.earthplatform.minecraft.survival.host.SurvivalMixinAnchorTest" time="0.019"/>
-  <testcase name="serializerPatchRunsOnlyForItsOriginalAnchor()" classname="io.earthplatform.minecraft.survival.host.SurvivalMixinAnchorTest" time="0.007"/>
-  <testcase name="dimensionPatchRunsOnlyForItsOriginalAnchor()" classname="io.earthplatform.minecraft.survival.host.SurvivalMixinAnchorTest" time="0.005"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

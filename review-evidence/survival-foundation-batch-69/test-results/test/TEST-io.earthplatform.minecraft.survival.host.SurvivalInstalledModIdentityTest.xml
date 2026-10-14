@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="io.earthplatform.minecraft.survival.host.SurvivalInstalledModIdentityTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:45.999Z" hostname="4d821b23054b" time="0.004">
-  <properties/>
-  <testcase name="artifactHashUsesCompleteBytesAndRejectsSymlinksDirectoriesAndEmptyFiles()" classname="io.earthplatform.minecraft.survival.host.SurvivalInstalledModIdentityTest" time="0.003"/>
-  <testcase name="exactVersionInventoryRequiredWithoutSilentlyIgnoringAdditionalMods()" classname="io.earthplatform.minecraft.survival.host.SurvivalInstalledModIdentityTest" time="0.001"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>
