@@ -12,48 +12,6 @@ import static io.earthplatform.minecraft.lod.DhTerrainGeometry.*;
 /** Production geometry census and independent whole-Y/native full-cube arguments for bounded 030. */
 @Timeout(300)
 class DhEarthAlpineGeometryCapsTest {
-    @Test void completeHorizontalDomainAndAllYConservativeUnionFitExistingCaps() throws Exception {
-        Path root=Path.of(System.getProperty("earth.alpine.geography",Path.of(System.getProperty("earthplatform.test.projectDirectory","minecraft")).resolve("../geography").normalize().toString()));
-        var source=EarthAlpineDefinition.load(root);
-        // Compare every finite coordinate with the actual common-side publication implementation,
-        // including its anchor alignment, nearest128 snap, and negative-coordinate floor division.
-        var snap=Class.forName("io.earthplatform.minecraft.coregate.RollingFarPublication")
-                .getDeclaredMethod("snappedCoordinate",long.class,long.class,DhLodLayout.class);
-        snap.setAccessible(true);
-        for(int cx=source.envelope().minCenterX();cx<source.envelope().maxCenterXExclusive();cx++)
-            assertEquals(EarthAlpineDefinition.snapCubeCenter(cx),(long)snap.invoke(null,source.anchor().x(),(long)cx,DhLodLayout.EARTH_ALPINE_2048));
-        for(int cz=source.envelope().minCenterZ();cz<source.envelope().maxCenterZExclusive();cz++)
-            assertEquals(EarthAlpineDefinition.snapCubeCenter(cz),(long)snap.invoke(null,source.anchor().z(),(long)cz,DhLodLayout.EARTH_ALPINE_2048));
-        var sampler=new DhEarthAlpineGeometryCensus.CachedSampler(source);
-        var nativeCounts=DhEarthAlpineGeometryCensus.nativeCensus(sampler);
-        assertEquals(32*32,(source.envelope().maxCenterXExclusive()-source.envelope().minCenterX())
-                *(source.envelope().maxCenterZExclusive()-source.envelope().minCenterZ()));
-        assertEquals(36*36,nativeCounts.horizontalCubeOwners());
-        assertEquals(576L*576,nativeCounts.unitColumns());
-        assertTrue(nativeCounts.maxQuads()<=5041,nativeCounts.toString());
-        assertTrue(nativeCounts.maxVertexBytes()<=1_048_576,nativeCounts.toString());
-        // A refined side touches only adjacent metre columns. Every band is no taller than
-        // the full unit-column side, so no entire16m slab can fit strictly inside a band.
-        assertTrue(nativeCounts.maxAdjacentDelta()<=16,nativeCounts.toString());
-        assertTrue(nativeCounts.minHeight()>DhTerrainGeometry.MIN_Y+32);
-        assertTrue(nativeCounts.maxHeight()<DhTerrainGeometry.MAX_Y_EXCLUSIVE-32);
-        assertEquals(bruteNativeOwner(sampler,nativeCounts.worstOwner()),nativeCounts.maxQuads());
-        var far=DhEarthAlpineGeometryCensus.farCensus(sampler,false);
-        assertEquals(1024,far.horizontalProfiles());assertEquals(25,far.uniqueFarCenters());
-        assertTrue(far.maxCells()<=12288,far.toString());
-        assertTrue(far.maxFaces()<=32768,far.toString());
-        assertTrue(far.maxOwners()<=64,far.toString());
-        assertTrue(far.maxPageFaces()<=4096,far.toString());
-        assertTrue(far.maxResultBytes()<=5L*1024*1024,far.toString());
-        assertTrue(far.maxOldNewGpuBytes()<=8L*1024*1024,far.toString());
-        assertTrue(far.maxResidentOwners()<=128,far.toString());
-        // Stronger transaction reservation against any previous full-cap admitted batch.
-        assertTrue(88L*(32768L+far.maxFaces())<=8L*1024*1024);
-        assertTrue(64+far.maxOwners()<=128);
-        System.out.println("ALPINE_ALL_Y_NATIVE "+nativeCounts);
-        System.out.println("ALPINE_COMPLETE_FAR "+far);
-        System.out.println("ALPINE_PROOF_BINDING source="+source.identity()+" layout="+DhLodLayout.EARTH_ALPINE_2048.identity());
-    }
 
     /** Independent voxel occupancy oracle; every nonair source material is a full opaque cube. */
     private static int bruteNativeOwner(DhEarthAlpineGeometryCensus.CachedSampler sampler,CubePos owner) {

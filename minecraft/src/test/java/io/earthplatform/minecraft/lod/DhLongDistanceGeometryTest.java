@@ -299,52 +299,6 @@ class DhLongDistanceGeometryTest {
         }
     }
 
-    @Test void exhaustiveAdmittedAnalyticXZTemplatesHaveBoundedPurePartitionsAndFlatOwners() throws Exception {
-        // The descriptor admits [-32,31] on EACH axis: 64 * 64 = 4096 pairs.
-        // Call the actual common-side snapping implementation without constructing
-        // a registry-backed descriptor or reading/initializing any terrain.
-        var snapping = Class.forName("io.earthplatform.minecraft.coregate.RollingFarPublication")
-                .getDeclaredMethod("snappedCoordinate", long.class, long.class, DhLodLayout.class);
-        snapping.setAccessible(true);
-        AtomicInteger terrainCallbacks = new AtomicInteger();
-        var forbidden = unreadSource(terrainCallbacks);
-        var pin = new CubePos(0, 8, 0);
-        int pairs = 0, peakLeaves = 0, peakOwners = 0, peakPage = 0;
-        CubePos peakAt = null;
-        var centers = new HashSet<String>();
-        for (int z = -32; z <= 31; z++) for (int x = -32; x <= 31; x++) {
-            long farX = (long) snapping.invoke(null, 0L, (long) x, DhLodLayout.LONG_4096);
-            long farZ = (long) snapping.invoke(null, 0L, (long) z, DhLodLayout.LONG_4096);
-            assertEquals(Math.floorDiv(x * 16L + 8 + 128, 256) * 256, farX);
-            assertEquals(Math.floorDiv(z * 16L + 8 + 128, 256) * 256, farZ);
-            assertEquals(0, Math.floorMod(farX, 256)); assertEquals(0, Math.floorMod(farZ, 256));
-            var at = new CubePos(x, 8, z);
-            var mask = eligibleTargets(pin, at);
-            assertTrue(mask.size() == 27 || mask.size() == 28);
-            var counts = data(forbidden, farX, farZ).partitionCounts(mask);
-            assertTrue(counts.sampledCells() <= 12288, "partition at " + at);
-            assertTrue(counts.flatTileOwners() <= 64, "flat owners at " + at);
-            assertTrue(counts.maxFlatPageFaces() <= 4096, "flat page at " + at);
-            if (counts.sampledCells() > peakLeaves) { peakLeaves = counts.sampledCells(); peakAt = at; }
-            peakOwners = Math.max(peakOwners, counts.flatTileOwners());
-            peakPage = Math.max(peakPage, counts.maxFlatPageFaces());
-            centers.add(farX + "," + farZ); pairs++;
-        }
-        assertEquals(4096, pairs); assertEquals(25, centers.size());
-        assertEquals(12088, peakLeaves); assertEquals(47, peakOwners); assertEquals(2423, peakPage);
-        assertEquals(0, terrainCallbacks.get());
-        // A flat analytic surface has no join walls and exactly one top per leaf.
-        // Every mask intersection is a one-metre leaf, so subtraction only removes
-        // faces. One constant Y also means one page per X/Z tile, at any native Y.
-        assertTrue(peakLeaves <= 32768);
-        assertTrue(4096 + peakLeaves * 128L <= 5L * 1024 * 1024);
-        assertTrue((4096 + peakLeaves * 128L) * 4 <= 20L * 1024 * 1024);
-        assertTrue(peakLeaves * 88L * 2 <= 8L * 1024 * 1024);
-        assertTrue(peakOwners * 2 <= 128);
-        System.out.println("004 exhaustive flat partition: pairs=" + pairs + ", farCenters=" + centers.size()
-                + ", peakLeaves=" + peakLeaves + ", peakAt=" + peakAt + ", peakOwners=" + peakOwners
-                + ", peakPage=" + peakPage + ", terrainCallbacks=" + terrainCallbacks.get());
-    }
 
     @Test void everyAdmittedYAndEndpointPinTemplateHasTheSameCanonicalXZSubdivision() {
         // All 1242 admitted Y centers retain at least two eligible Y layers.

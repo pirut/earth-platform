@@ -20,7 +20,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 | River channels (PR #19) | **OK: JRC Global Surface Water v1.4** | JRC GSW is free without restriction of use, with a citation. HydroRIVERS' licence forbids open redistribution of its data, so it can't ship in an LGPL mod (details below) |
 | Hand-traced falls water (PR #16 `KnownWater`) | **Resolved: removed** | Deleted in 3e297c3; falls now come from general rules on Terrarium elevation and WorldCover, so no traced or OSM data ships |
 | Bundled test data (Copernicus GLO-30, NOAA ETOPO, WorldCover) | OK | Credited; could be dropped from the release jar |
-| Iris, Sodium, Photon, Distant Horizons | OK | Not bundled; compile-only. Exact version pins hurt players (see below) |
+| Iris, Sodium, Photon, Distant Horizons | OK | Not bundled. Iris and Sodium compile-only; Distant Horizons not used at build time (see below) |
 | Third-party code in the jar | OK | None. Only `io/earthplatform` classes and our own data |
 
 ## Data downloaded at runtime
@@ -68,7 +68,7 @@ Checked on 2026-10-13 (updated after JR's imagery decision) against the cubic en
 - `assets/earthplatform/textures/globe/blue_marble.jpg` (PR #8): NASA Blue Marble Next Generation, downscaled. US government work, public domain; NASA asks for credit, which CREDITS.md, the notices and the mods list give. OK.
 - `earthplatform/ecoregions.png` (660 KB) and `ecoregions.tsv` (PR #14): a 0.05 degree raster derived from RESOLVE Ecoregions 2017 (Dinerstein et al. 2017, *BioScience* 67(6):534-545), with the ecoregion names. CC BY 4.0 allows redistribution and changes with attribution and a note of changes; CREDITS.md, the notices and the mods list give both. OK.
 - Left out of the release jar (round 34): the older engine's proof areas, `earthplatform/copernicus_proof_data` and `alpine_data` (Copernicus WorldDEM-30 crops of Everest), `proof_data` (NOAA ETOPO 2022 extracts, CC0) and `worldcover_proof_data` (ESA WorldCover extracts, CC BY 4.0), with the copied ESA WorldCover manual, Copernicus licence and AWS and ESA pages under their `provenance/`. About 9 MB. Earth worlds never read them; they stay in the repository for tests and dev runs, credited in CREDITS.md. The [GLO-30 licence](../../geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf) allows that redistribution with its notice.
-- No third-party libraries: Iris, Sodium and Distant Horizons are `compileOnly`; nothing is shaded or jar-in-jar.
+- No third-party libraries: Iris and Sodium are `compileOnly`, and nothing is shaded or jar-in-jar. The build no longer uses Distant Horizons at all.
 - The logo (`earthplatform_logo.png`) is original pixel art.
 
 ## Coming data sources (checked 2026-10-13, credits drafted)
@@ -120,9 +120,9 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
 
 ## Companion mods
 
-- Sodium 0.8.12-beta.1 (PolyForm Shield 1.0.0), Iris 1.8.14-beta.1 (LGPL-3.0), Distant Horizons 3.3.3 (LGPL-3.0): players install them; we only compile against them and mix into Iris at runtime. OK.
+- Sodium 0.8.12-beta.1 (PolyForm Shield 1.0.0) and Iris 1.8.14-beta.1 (LGPL-3.0): players install them; we only compile against them and mix into Iris at runtime. OK.
 - Player impact, not licensing: `neoforge.mods.toml` declares Iris and Sodium as optional but with exact beta versions, so the game refuses to start with any other version installed. Most players with shaders will have newer builds. Widening the ranges needs the shader thread to confirm which Iris internals the mixins rely on.
-- Distant Horizons is declared optional with exact version 3.3.3 for the old engine's compatibility backend; the install guide tells players to leave it out. Consider declaring it `discouraged` once the old backend is retired (a test pins the current block).
+- Distant Horizons (LGPL-3.0): the old engine's backend for it is removed (round 34), and `neoforge.mods.toml` no longer names it, so any version can be installed alongside. In Earth worlds a small client hook pauses it through its public API, reached by reflection; nothing of DH is compiled against or bundled.
 
 ## Name and trademarks
 
@@ -150,7 +150,7 @@ Two passes looked for shared runs: 30 identical tokens in a row (copied code), a
 - Voxy's shader-pack interface (the `VoxyFragmentParameters` struct and the `voxy_emitFragment` call in `FarShaders`) is declared the way Voxy declares it, because shader packs are written against those exact names. This is an interface for compatibility, like a header file, and Voxy is credited for it.
 - PR #3 at 07da7f0 also hands far depth to packs through Voxy's hook (the `VOXY` define, samplers `vxDepthTexOpaque`/`vxDepthTexTrans`, uniforms `vxProj`, `vxProjInv`, `vxProjPrev`, `vxRenderDistance`). The names come from what Photon's shaders read. Re-scanned `FarLod`, `FarLodIris`, `FarShaders` and the three Iris mixins against Voxy, Iris and Sodium: the only shared runs are imports and the Iris method signature that any mixin into `IrisSamplers.addRenderTargetSamplers` must repeat. No copied code.
 - One small helper to change for peace of mind: in the shader thread's `FarIrisUniforms` (PR #3), the switch that turns Iris uniform types into GLSL type names reads the same as the matching Voxy helper. It is a ten-line mapping fixed by Iris's enum, but it's being rewritten in our own form so no Voxy text remains. Asked through the coordinator.
-- The older 039 engine under `recovery/`, `unfinished/` and `historical/` was not scanned; it is not part of the mod. Its optional Distant Horizons backend only calls DH's public API (compile-only, not bundled).
+- The older 039 engine under `recovery/`, `unfinished/` and `historical/` was not scanned; it is not part of the mod. Its Distant Horizons backend was removed in round 34.
 - Comments in the far terrain code already say where each idea came from ("the way Voxy keeps it", "as Distant Horizons keeps exact heights").
 
 **Credits.** The full thanks to Voxy and Distant Horizons is in [CREDITS.md](../../CREDITS.md#distant-terrain-thank-you-voxy-and-distant-horizons), the in-game Mods screen, the README and the store page draft. All of them say we would have used Voxy and Distant Horizons directly, but neither works with a cubic-chunks world.

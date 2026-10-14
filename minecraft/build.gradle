@@ -170,40 +170,6 @@ dependencies {
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
 }
 
-// This file is supplied by the operator. It is never downloaded, shaded, copied into
-// the distribution, or added to the global runtime classpath by this build.
-// A player's separate run/mods installation can also serve as the compile input.
-def officialDhVersion = '3.3.3'
-def officialDhSha256 = '864e70def5b0d54d619b940b66bb2784e91d3f3fc253064fdc1b3fc5786cbfab'
-def officialDhJar = providers.gradleProperty('installedDhJar')
-        .orElse(providers.environmentVariable('EARTH_INSTALLED_DH_JAR'))
-        .orElse(providers.environmentVariable('EARTH_DH_PROBE_JAR'))
-        .orElse(providers.systemProperty('earthplatform.installedDhTestJar'))
-        .orElse(providers.systemProperty('earthplatform.dhJar'))
-def officialDhFiles = files(officialDhJar.map { file(it) })
-def verifyOfficialDhInput = tasks.register('verifyOfficialDhInput') {
-    group = 'verification'
-    description = 'Verify the separately supplied official DH compile/test input; never fetch or install it.'
-    inputs.files(officialDhFiles).withPropertyName('officialDhJar')
-    inputs.property('sha256', officialDhSha256)
-    doLast {
-        if (!officialDhJar.isPresent())
-            throw new GradleException('Supply the unchanged official DH 3.3.3 / Minecraft 1.21.1 artifact using EARTH_INSTALLED_DH_JAR or -PinstalledDhJar. This shim does not download or bundle DH.')
-        def supplied = file(officialDhJar.get())
-        if (!supplied.isFile() || supplied.length() != 28289212L)
-            throw new GradleException('Missing or unsupported separately supplied official DH artifact: ' + supplied)
-        def actual = java.security.MessageDigest.getInstance('SHA-256').digest(supplied.bytes).encodeHex().toString()
-        if (actual != officialDhSha256)
-            throw new GradleException('Official DH artifact SHA-256 mismatch: expected ' + officialDhSha256 + ', got ' + actual)
-    }
-}
-dependencies {
-    compileOnly officialDhFiles
-    testCompileOnly officialDhFiles
-}
-tasks.named('compileJava') { dependsOn verifyOfficialDhInput }
-tasks.named('compileTestJava') { dependsOn verifyOfficialDhInput }
-
 // Exact, independently installed shader inputs. Nothing is resolved from a Maven
 // coordinate, downloaded, extracted, installed, shaded, or added to localRuntime.
 def officialIrisJar = providers.gradleProperty('installedIrisJar')
@@ -305,16 +271,9 @@ dependencies {
 // historical isolated-loader proofs must never see optional upstream classes co-loaded.
 tasks.withType(Test).configureEach {
     useJUnitPlatform()
-    dependsOn verifyOfficialDhInput, verifyOfficialShaderInputs
+    dependsOn verifyOfficialShaderInputs
     systemProperty 'earthplatform.test.projectDirectory', layout.projectDirectory.asFile.absolutePath
     systemProperty 'earthplatform.test.minecraftJar', layout.buildDirectory.file("moddev/artifacts/neoforge-${neo_version}-merged.jar").get().asFile.absolutePath
-    if (officialDhJar.isPresent()) {
-        def supplied = file(officialDhJar.get()).absolutePath
-        systemProperty 'earthplatform.dhJar', supplied
-        systemProperty 'earthplatform.lodProbeJar', supplied
-        systemProperty 'earthplatform.installedDhTestJar', supplied
-        environment 'EARTH_DH_PROBE_JAR', supplied
-    }
     [[officialIrisJar, 'earthplatform.installedIrisTestJar'],
      [officialSodiumJar, 'earthplatform.installedSodiumTestJar'],
      [officialShaderPack, 'earthplatform.installedShaderTestPack']].each { input ->
@@ -323,75 +282,12 @@ tasks.withType(Test).configureEach {
     testLogging { events 'passed', 'skipped', 'failed'; showStandardStreams = true }
 }
 tasks.named('test', Test) {
-    description = 'Run legacy engine and isolated-DH proofs without co-loaded DH classes.'
-    exclude 'io/earthplatform/compat/dh/**'
-    exclude 'io/earthplatform/minecraft/scene/NativeVisualGpuStorageIndependentTest.class'
-    exclude 'io/earthplatform/minecraft/coregate/RollingVisualFrontierHostTransactionTest.class'
-    exclude 'io/earthplatform/minecraft/coregate/NativeDistanceProgressHostAdversarialTest.class'
-    exclude 'io/earthplatform/minecraft/coregate/RollingDistanceBodyHostTest.class'
+    description = 'Run the engine tests without the separately supplied shader mods.'
     // These are bytecode inputs, not JUnit classes. Discovery must not eagerly
     // load deliberately failing negative targets or Mixin-reserved helpers.
-    // verifyShaderBuildContract still rejects any actual test without an owner.
     exclude 'io/earthplatform/minecraft/startupfixture/**'
     systemProperty 'earthplatform.test.partition', 'legacy-isolated'
-    systemProperty 'earthplatform.test.isolatedDhRuntime', 'true'
 }
-// Only the normal NeoForge test task has MDG's FML launch-argument wiring.
-// Keep the installed helper contracts a plain JVM by removing only FML's automatic
-// JUnit bootstrap listener module; retain every other runtime dependency unchanged.
-def junitFmlBootstrapFiles = configurations.testRuntimeClasspath.incoming.artifactView {
-    componentFilter { id ->
-        id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier
-                && id.group == 'net.neoforged.fancymodloader' && id.module == 'junit-fml'
-    }
-}.files
-def shaderTestPatterns = ['io/earthplatform/compat/dh/shader/**',
-                          'io/earthplatform/compat/dh/InstalledIris*Test.class',
-                          'io/earthplatform/compat/dh/InstalledShaderArtifactTest.class',
-                          'io/earthplatform/compat/dh/InstalledSodiumOriginTest.class',
-                          'io/earthplatform/compat/dh/InstalledPlayableInventory*Test.class',
-                          'io/earthplatform/minecraft/scene/NativeVisualGpuStorageIndependentTest.class',
-                          'io/earthplatform/minecraft/coregate/RollingVisualFrontierHostTransactionTest.class',
-                          'io/earthplatform/minecraft/coregate/NativeDistanceProgressHostAdversarialTest.class',
-                          'io/earthplatform/minecraft/coregate/RollingDistanceBodyHostTest.class']
-// Real Sodium-origin fixtures exercise FML's union/jij filesystem. Preserve the
-// standard named loader module opening instead of opening java.lang.invoke to all
-// unnamed modules. These are existing FML dependencies, not upstream mod inputs.
-def shaderFilesystemModuleFiles = configurations.testRuntimeClasspath.incoming.artifactView {
-    componentFilter { id ->
-        id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier
-                && ((id.group == 'cpw.mods' && id.module == 'securejarhandler')
-                || (id.group == 'org.ow2.asm' && id.module in ['asm', 'asm-tree']))
-    }
-}.files
-def installedDhTest = tasks.register('installedDhTest', Test) {
-    group = 'verification'
-    description = 'Run installed-DH compatibility contracts using the separately supplied official JAR.'
-    testClassesDirs = sourceSets.test.output.classesDirs
-    classpath = (sourceSets.test.runtimeClasspath - junitFmlBootstrapFiles) + officialDhFiles
-    include 'io/earthplatform/compat/dh/**'
-    shaderTestPatterns.each { exclude it }
-    systemProperty 'earthplatform.test.partition', 'installed-dh'
-    shouldRunAfter tasks.named('test')
-}
-def shaderCompatibilityTest = tasks.register('shaderCompatibilityTest', Test) {
-    group = 'verification'
-    description = 'Run explicit installed shader helper contracts with separately supplied DH, Iris and Sodium.'
-    testClassesDirs = sourceSets.test.output.classesDirs
-    classpath = (sourceSets.test.runtimeClasspath - junitFmlBootstrapFiles) + officialDhFiles + officialIrisFiles + officialSodiumFiles
-    shaderTestPatterns.each { include it }
-    systemProperty 'earthplatform.test.partition', 'installed-shader'
-    // Test-only surfaceless EGL reproduction uses installed Mesa without a disk shader cache.
-    environment 'MESA_SHADER_CACHE_DISABLE', 'true'
-    inputs.files(shaderFilesystemModuleFiles).withPropertyName('fmlFilesystemModules')
-    jvmArgumentProviders.add({ -> ['--module-path', shaderFilesystemModuleFiles.asPath,
-            '--add-modules', 'cpw.mods.securejarhandler',
-            '--add-opens', 'java.base/java.lang.invoke=cpw.mods.securejarhandler']
-    } as org.gradle.process.CommandLineArgumentProvider)
-    shouldRunAfter installedDhTest
-}
-// All three are required for the full verification invocation: check (or build).
-tasks.named('check') { dependsOn installedDhTest, shaderCompatibilityTest }
 
 neoForge {
     unitTest {
@@ -405,7 +301,6 @@ neoForge {
 // classes have transformed. This does not alter any of the three classpaths.
 tasks.named('prepareNeoForgeTestFiles') {
     programArguments.addAll('--mixin.config', 'earthplatform.terrain-priority-fixtures.mixins.json')
-    programArguments.addAll('--mixin.config', 'earthplatform.savedata-scan-tests.mixins.json')
 }
 
 sourceSets.main.java.srcDir '../geography/src/main/java'
@@ -439,97 +334,28 @@ tasks.named('processResources', ProcessResources) {
     }
 }
 
-// Check the resolved task classpaths as well as the distribution contents. Adding
-// official DH globally would invalidate the inherited isolated-runtime regression.
-def verifyInstalledDhBuildContract = tasks.register('verifyInstalledDhBuildContract') {
-    group = 'verification'
-    dependsOn verifyOfficialDhInput
-    doLast {
-        def official = file(officialDhJar.get()).canonicalFile
-        def containsOfficial = { collection -> collection.files.any { it.canonicalFile == official } }
-        if (!containsOfficial(configurations.compileClasspath) || !containsOfficial(configurations.testCompileClasspath))
-            throw new GradleException('Official DH must be present on both compile-only classpaths.')
-        if (containsOfficial(configurations.runtimeClasspath) || containsOfficial(configurations.testRuntimeClasspath)
-                || containsOfficial(tasks.named('test', Test).get().classpath))
-            throw new GradleException('Official DH leaked onto a global or isolated test runtime classpath.')
-        if (!containsOfficial(installedDhTest.get().classpath))
-            throw new GradleException('Installed compatibility tests require the separate official DH runtime input.')
-        def canonicalFiles = { collection -> collection.files.collect { it.canonicalFile } as Set }
-        def automaticBootstrap = canonicalFiles(junitFmlBootstrapFiles)
-        def plainRuntime = canonicalFiles(sourceSets.test.runtimeClasspath) - automaticBootstrap
-        if (automaticBootstrap.isEmpty()
-                || canonicalFiles(installedDhTest.get().classpath) != (plainRuntime + [official]))
-            throw new GradleException('Installed helper tests must omit only the junit-fml automatic bootstrap listener and retain every other runtime dependency plus official DH.')
-        if (!canonicalFiles(tasks.named('test', Test).get().classpath).containsAll(automaticBootstrap))
-            throw new GradleException('The normal NeoForge legacy test task must retain its junit-fml bootstrap wiring.')
-        for (def partition : [tasks.named('test', Test).get(), installedDhTest.get(), shaderCompatibilityTest.get()]) {
-            if (partition.systemProperties['earthplatform.test.projectDirectory'] != projectDir.absolutePath)
-                throw new GradleException('All three test partitions require the explicit absolute Gradle project directory.')
-        }
-        if (!tasks.named('test', Test).get().excludes.contains('io/earthplatform/compat/dh/**')
-                || installedDhTest.get().includes != (['io/earthplatform/compat/dh/**'] as Set)
-                || installedDhTest.get().excludes != (shaderTestPatterns as Set)
-                || shaderCompatibilityTest.get().includes != (shaderTestPatterns as Set))
-            throw new GradleException('Legacy, installed-DH and installed-shader test partitions must be disjoint and complete.')
-    }
-}
-
-// Resolve all optional-input classpaths and require a single disjoint owner for
-// every compiled *Test class. This prevents optional-mod leakage and silent skips.
+// Iris and Sodium stay compile-only and Photon stays off every JVM classpath.
 def verifyShaderBuildContract = tasks.register('verifyShaderBuildContract') {
     group = 'verification'
-    dependsOn verifyOfficialShaderInputs, verifyInstalledDhBuildContract, tasks.named('testClasses')
+    dependsOn verifyOfficialShaderInputs
     doLast {
         def canonicalFiles = { collection -> collection.files.collect { it.canonicalFile } as Set }
         def shaderMods = [file(officialIrisJar.get()).canonicalFile, file(officialSodiumJar.get()).canonicalFile] as Set
         def photon = file(officialShaderPack.get()).canonicalFile
-        def dh = file(officialDhJar.get()).canonicalFile
         for (def compile : [configurations.compileClasspath, configurations.testCompileClasspath]) {
             if (!canonicalFiles(compile).containsAll(shaderMods))
                 throw new GradleException('Exact external Iris and Sodium inputs must remain compile-only dependencies.')
         }
-        for (def runtime : [configurations.runtimeClasspath, configurations.testRuntimeClasspath,
-                             tasks.named('test', Test).get().classpath, installedDhTest.get().classpath]) {
+        for (def runtime : [configurations.runtimeClasspath, configurations.testRuntimeClasspath, tasks.named('test', Test).get().classpath]) {
             if (!Collections.disjoint(canonicalFiles(runtime), shaderMods))
-                throw new GradleException('Shader inputs leaked into a global, legacy-isolated or installed-DH-only runtime.')
-        }
-        def plainRuntime = canonicalFiles(sourceSets.test.runtimeClasspath) - canonicalFiles(junitFmlBootstrapFiles)
-        if (shaderFilesystemModuleFiles.files.size() != 3
-                || !plainRuntime.containsAll(canonicalFiles(shaderFilesystemModuleFiles)))
-            throw new GradleException('Shader filesystem fixtures require only existing securejarhandler and its two ASM modules.')
-        if (canonicalFiles(shaderCompatibilityTest.get().classpath) != (plainRuntime + shaderMods + [dh]))
-            throw new GradleException('The shader helper runtime may add only exact external DH/Iris/Sodium and omit only junit-fml bootstrap.')
-        for (def configuration : [configurations.compileClasspath, configurations.testCompileClasspath,
-                                  configurations.runtimeClasspath, configurations.testRuntimeClasspath,
-                                  tasks.named('test', Test).get().classpath, installedDhTest.get().classpath,
-                                  shaderCompatibilityTest.get().classpath]) {
-            if (canonicalFiles(configuration).contains(photon))
+                throw new GradleException('Shader inputs leaked into a runtime classpath.')
+            if (canonicalFiles(runtime).contains(photon))
                 throw new GradleException('Photon is a separate data input and must never be placed on a JVM classpath.')
         }
-        def partitions = [tasks.named('test', Test).get(), installedDhTest.get(), shaderCompatibilityTest.get()]
-        for (def partition : partitions) {
-            if (partition != tasks.named('test', Test).get()
-                    && partition.systemProperties.containsKey('earthplatform.test.isolatedDhRuntime'))
-                throw new GradleException('Installed helper partitions must never authorize the isolated diagnostic fallback.')
-            if (!partition.filter.includePatterns.isEmpty() || !partition.filter.excludePatterns.isEmpty()
-                    || !partition.filter.commandLineIncludePatterns.isEmpty())
-                throw new GradleException('A filtered test invocation cannot issue the complete shader shim verification receipt.')
-        }
-        def allTests = sourceSets.test.output.classesDirs.asFileTree.matching {
-            include '**/*Test.class', '**/*Tests.class', '**/*TestCase.class'
-            exclude '**/*$*'
-        }.files
-        if (allTests.isEmpty()) throw new GradleException('No compiled tests were available for partition coverage verification.')
-        allTests.each { testClass ->
-            def owners = partitions.findAll { partition ->
-                sourceSets.test.output.classesDirs.asFileTree.matching {
-                    if (!partition.includes.isEmpty()) include partition.includes
-                    exclude partition.excludes
-                }.files.contains(testClass)
-            }
-            if (owners.size() != 1)
-                throw new GradleException('Every test must have exactly one partition: ' + testClass + ' owners=' + owners*.name)
-        }
+        def test = tasks.named('test', Test).get()
+        if (!test.filter.includePatterns.isEmpty() || !test.filter.excludePatterns.isEmpty()
+                || !test.filter.commandLineIncludePatterns.isEmpty())
+            throw new GradleException('A filtered test invocation cannot issue the complete shader shim verification receipt.')
     }
 }
 
@@ -537,10 +363,9 @@ def verifyShaderBuildContract = tasks.register('verifyShaderBuildContract') {
 // Detect forbidden paths and unchanged upstream entries, including nested Sodium
 // classes. Nested archives are read in memory; no upstream entry is written out.
 tasks.register('verifyShimArtifact') {
-    dependsOn tasks.named('jar'), tasks.named('test'), installedDhTest, shaderCompatibilityTest,
-            verifyInstalledDhBuildContract, verifyShaderBuildContract
+    dependsOn tasks.named('jar'), tasks.named('test'), verifyShaderBuildContract
     doLast {
-        def partitions = [tasks.named('test', Test).get(), installedDhTest.get(), shaderCompatibilityTest.get()]
+        def partitions = [tasks.named('test', Test).get()]
         def partitionResults = [:]
         partitions.each { partition ->
             int testCount = 0
@@ -562,7 +387,7 @@ tasks.register('verifyShimArtifact') {
         def failures = []
         int entries = 0
         def upstreamPayloads = [:]
-        def upstreamInputs = [distantHorizons:[provider:officialDhJar, version:officialDhVersion, sha256:officialDhSha256]] + officialShaderInputs
+        def upstreamInputs = officialShaderInputs
         def fingerprint = { byte[] bytes, String origin ->
             if (bytes.length > 0) {
                 def hash = java.security.MessageDigest.getInstance('SHA-256').digest(bytes).encodeHex().toString()
@@ -652,13 +477,12 @@ tasks.register('verifyShimArtifact') {
         report.parentFile.mkdirs()
         report.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
                 status:'PASS_NO_BUNDLED_UPSTREAM_PAYLOAD', artifact:artifact.name, sha256:sha, inspectedEntries:entries,
-                officialDhVersion:officialDhVersion, officialDhSha256:officialDhSha256,
                 externalUpstreamInputs:upstreamInputs.collectEntries { name, spec -> [(name):[version:spec.version, sha256:spec.sha256]] },
                 fingerprintedPayloads:upstreamPayloads.size(),
-                requiredTestPartitions:['test', 'installedDhTest', 'shaderCompatibilityTest'],
+                requiredTestPartitions:['test'],
                 partitionResults:partitionResults, totalTests:partitionResults.values().sum { it.tests },
-                runtimeDependency:'Player supplies official DH, Iris, Sodium and Photon separately; no bundled or automatically downloaded upstream payload.',
-                scope:'Namespace/resource/archive exclusion and exact upstream/nested-entry fingerprint scan; all three unfiltered zero-skip headless partitions required. Actual installed-mod startup/render/reload remains a separate runtime proof.'])) + '\n'
+                runtimeDependency:'Player supplies Iris, Sodium and Photon separately; no bundled or automatically downloaded upstream payload.',
+                scope:'Namespace/resource/archive exclusion and exact upstream/nested-entry fingerprint scan; the unfiltered zero-skip headless test task required. Actual installed-mod startup/render/reload remains a separate runtime proof.'])) + '\n'
     }
 }
 tasks.named('check') { dependsOn tasks.named('verifyShimArtifact') }

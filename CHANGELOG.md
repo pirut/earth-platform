@@ -54,7 +54,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 ### Other mods
 - Xaero's Minimap, Xaero's World Map and JourneyMap map the Earth world, including ground above Y 2047.
 - Create contraptions (bearings, pistons and the rest) assemble in the Earth world.
-- Distant Horizons pauses itself in the Earth world, with a one-time note in chat, so it doesn't hide the far terrain.
+- Any version of Distant Horizons can be installed alongside. It's paused in the Earth world, with a one-time note in chat, so it doesn't hide the far terrain. The older engine's own Distant Horizons backend is gone.
 - Create Aeronautics ships assemble, fly and save in the Earth world, with air pressure from the real atmosphere. The jet stream carries ships east too, the altitude sensor reads from sea level to 10 km, and ships shade mobs at any height.
 - AE2 spatial storage captures and places Earth blocks, and AE2 meteorites generate in the Earth world.
 - Create's mechanical arm, pulley, scaffolding and elevators, Waystones, Mekanism (Digital Miner, multiblocks and pipes), Immersive Engineering's multiblocks and the Twilight Forest portal work in the Earth world.

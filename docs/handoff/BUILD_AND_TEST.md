@@ -6,14 +6,13 @@ These commands are provided for the next owner-authorized continuation. They wer
 
 Use Java21 and the previously used Gradle9.2.1. Build configuration pins Minecraft1.21.1, NeoForge21.1.256 and ModDev2.0.148. Consult `minecraft/gradle.properties`, `minecraft/build.gradle` and `minecraft/gradle/wrapper/gradle-wrapper.properties` as the executable source of truth.
 
-The Gradle wrapper scripts/properties are present, but the binary wrapper JAR is omitted along with other executable artifacts. Use an independently installed official Gradle9.2.1, or regenerate a wrapper only when authorized. No vendor toolchain/mod/shader files are bundled. Obtain the exact official external files listed in `historical/exploration-037/README.md` and preserve their license requirements:
+The Gradle wrapper scripts/properties are present, but the binary wrapper JAR is omitted along with other executable artifacts. Use an independently installed official Gradle9.2.1, or regenerate a wrapper only when authorized. No vendor toolchain/mod/shader files are bundled. Since round 34 the build needs no Distant Horizons file. Obtain the exact official external files listed in `historical/exploration-037/README.md` and preserve their license requirements:
 
-- DH: DistantHorizons-3.3.3-1.21.1-fabric-neoforge.jar
 - Iris: iris-neoforge-1.8.14-beta.1+mc1.21.1.jar
 - Sodium: sodium-neoforge-0.8.12-beta.1+mc1.21.1.jar
 - Photon: photon_v1.3b.zip
 
-Set EARTH_INSTALLED_DH_JAR, EARTH_INSTALLED_IRIS_JAR, EARTH_INSTALLED_SODIUM_JAR and EARTH_INSTALLED_SHADER_PACK to their separately downloaded absolute paths. The build checks exact bytes; do not replace with latest versions to make resolution easier. The four pinned Fabric API modules are nested in Sodium; do not download extra modules independently.
+Set EARTH_INSTALLED_IRIS_JAR, EARTH_INSTALLED_SODIUM_JAR and EARTH_INSTALLED_SHADER_PACK to their separately downloaded absolute paths. The build checks exact bytes; do not replace with latest versions to make resolution easier. The four pinned Fabric API modules are nested in Sodium; do not download extra modules independently.
 
 ## Source build and components
 

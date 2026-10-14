@@ -72,15 +72,6 @@ Choose the Earth world type in Create World and pick where to start. Travel anyw
 [[mixins]]
 config="${mod_id}.mixins.json"
 
-[[mixins]]
-config="${mod_id}.shaders.mixins.json"
-
-[[mixins]]
-config="${mod_id}.far-shaders.mixins.json"
-
-[[mixins]]
-config="${mod_id}.temp-files.mixins.json"
-
 # One cubic core: true-height cube storage behind the vanilla Level API.
 [[mixins]]
 config="${mod_id}.cubic.mixins.json"
@@ -124,17 +115,6 @@ config="${mod_id}.cubic.mixins.json"
 #[features.${mod_id}]
 #openGLVersion="[3.2,)"
 
-# Optional for ordinary worlds. The cubic installed-DH backend separately requires
-# this exact supported version/API/artifact and refuses unsupported configurations.
-# Players install official DH themselves; this metadata never downloads or bundles it.
-[[dependencies.${mod_id}]]
-    modId="distanthorizons"
-    type="optional"
-    reason="The opt-in cubic terrain compatibility backend requires separately installed official Distant Horizons 3.3.3 (API 7.2.0)."
-    versionRange="[3.3.3]"
-    ordering="AFTER"
-    side="CLIENT"
-
 # These remain separately installed optional inputs. Players update Sodium and Iris on their own
 # (Sodium Extra needs Sodium 0.8.13), so any 0.8.x Sodium and 1.8.x Iris from the tested ones up loads.
 [[dependencies.${mod_id}]]
@@ -157,10 +137,6 @@ config="earthplatform.native-player-tick-diagnostic.mixins.json"
 # Held native-session fixture only; both explicit bridge and GameTest-server flags required.
 [[mixins]]
 config="earthplatform.native-session-bridge.mixins.json"
-
-# Observation-only existing probe flag; no session authority.
-[[mixins]]
-config="earthplatform.installed-callback-observation.mixins.json"
 
 # Explicit ordinary LocalChannel observation; production flags must remain closed.
 [[mixins]]

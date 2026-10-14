@@ -50,8 +50,6 @@
     "NativeSparseClientCacheMixin",
     "NativeSparseClientLevelMixin",
     "SceneBufferBuilderAccessor",
-    "NativeRenderDistanceOptionMixin",
-    "NativeServerRenderDistanceMixin",
     "InstalledMarinStartupFenceMixin",
     "InstalledSessionPlayerListSaveAccess",
     "InstalledSessionServerSaveAccess",

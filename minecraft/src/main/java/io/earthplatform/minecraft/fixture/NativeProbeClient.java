@@ -3,7 +3,6 @@ package io.earthplatform.minecraft.fixture;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.network.EngineCubeSnapshot;
 import io.earthplatform.minecraft.residency.SparseFacadeException;
-import io.earthplatform.minecraft.renderprobe.NativeRenderSession;
 import io.earthplatform.streaming.CubeStreamAdmission;
 import io.netty.buffer.Unpooled;
 import java.io.IOException;
@@ -56,7 +55,6 @@ public final class NativeProbeClient {
         }
         var binding=NativeSparseBinding.find(fixture);
         var gate=new CubeStreamAdmission(NativeProbeChecks.world(binding),payload.epoch(),2);
-        boolean transferredToRenderer=false;
         try {
             gate.replaceInterest(List.of(NativeSparseBinding.LOWER,NativeSparseBinding.UPPER));
             var lower=read(payload.lower(),binding,payload.epoch());var upper=read(payload.upper(),binding,payload.epoch());
@@ -79,12 +77,8 @@ public final class NativeProbeClient {
             var path=NativeProbeChecks.write(report,"client",payload.epoch());
             EarthPlatformMod.LOGGER.info("NATIVE_SPARSE_CLIENT_PASS {}",path);
             minecraft.gui.getChat().addMessage(Component.literal("Native sparse fixture PASS: actual ServerLevel/ClientLevel, Y -11000/+8849, 2 cube owners, zero tall arrays. No rendered full-height gameplay yet."));
-            if(Boolean.getBoolean(NativeRenderSession.OPT_IN)) {
-                var session=NativeRenderSession.takeOwnership(fixture,binding,gate,renewedLower,upper);
-                transferredToRenderer=true;session.open();
-            }
         } finally {
-            if(!transferredToRenderer){gate.close();binding.beginDisposableClose();fixture.close();}
+            gate.close();binding.beginDisposableClose();fixture.close();
         }
     }
 }
