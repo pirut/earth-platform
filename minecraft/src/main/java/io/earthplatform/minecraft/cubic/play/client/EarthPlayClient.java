@@ -90,13 +90,13 @@ public final class EarthPlayClient {
         for (var listener : event.getListenersList()) {
             if (!(listener instanceof Button mods) || !(mods.getMessage().getContents() instanceof TranslatableContents text)
                     || !text.getKey().equals("fml.menu.mods")) continue;
-            int half = (mods.getWidth() - 4) / 2;
+            int full = mods.getWidth(), half = (full - 4) / 2;
             mods.setWidth(half);
             event.addListener(CycleButton.<EarthConfig.Sharpness>builder(EarthConfig.Sharpness::getTranslatedName)
                     .withValues(EarthConfig.Sharpness.values())
                     .withInitialValue(EarthConfig.FAR_SHARPNESS.get())
                     .withTooltip(value -> Tooltip.create(Component.translatable("earthplatform.pause.sharpness.tooltip")))
-                    .create(mods.getX() + mods.getWidth() - half, mods.getY(), half, mods.getHeight(),
+                    .create(mods.getX() + full - half, mods.getY(), half, mods.getHeight(),
                             Component.translatable("earthplatform.pause.sharpness"), (button, value) -> EarthConfig.setSharpness(value)));
             return;
         }
