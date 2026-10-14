@@ -67,6 +67,8 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
         }
     }
     public static final String ATTRIBUTION = "United States: USGS 3D Elevation Program 1/3 arc-second DEM (public domain)";
+    /** Metres 3DEP must read where the composite has exactly 0 for that 0 to be a void, not sea. */
+    static final double VOID_ABOVE_SEA = 50;
     public static final URI AWS_3DEP = URI.create("https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/historical/");
     /** Coarser tiles cover so much ground that they are left to the composite. */
     public static final int MIN_ZOOM = 8;
@@ -128,7 +130,6 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
         int lastCell = Integer.MIN_VALUE;
         boolean listed = false;
         for (int at = 0; at < pixels; at++) {
-            if (values[at] == 0) continue;
             double lat = latitudes[at / size], lon = longitudes[at % size];
             int cell = cell(lat, lon);
             if (cell != lastCell) {
@@ -171,6 +172,11 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
             if (Double.isNaN(metres)) continue;
             // 3DEP has no bathymetry; the composite's stays.
             if (metres <= 0 && own < 0) continue;
+            // Exactly 0 is open sea to the generator, and stays sea unless 3DEP has data all around it and
+            // stands well above the sea there. The composite has voids of 0 inland, pits hundreds of metres
+            // deep in a mountainside or a lake, that this fills. 3DEP also covers bays and sounds at a few
+            // metres, and a coarse pixel of sea under a bluff reads a few tens, so lower readings stay sea.
+            if (own == 0 && (share < 1 - 1e-9 || metres < VOID_ABOVE_SEA)) continue;
             double s = Math.min(1, (share - 0.5) * 2), weight = s * s * (3 - 2 * s);
             float out = (float) (own + weight * (metres - own));
             // Exactly 0 means open sea to the generator.
