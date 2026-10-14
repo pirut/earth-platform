@@ -37,7 +37,10 @@ jobs:
             tag=$(ls docs/release/notes | sed -n 's/^\(combined-[0-9][0-9]*\)\.md$/\1/p' | sort -t- -k2 -n | tail -1)
             if [ -z "$tag" ]; then echo "No release notes on main; nothing to release."; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; fi
             if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-              echo "$tag is already released; nothing to do."; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+              # Releases made before this change were pre-releases, which the repository page hides.
+              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --prerelease=false --draft=false --latest
+              echo "$tag is already released (now shown as the latest release); nothing else to do."
+              echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
             fi
           fi
           echo "Releasing $tag"
@@ -103,5 +106,6 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Earth Platform ${{ env.TAG }}
           body_path: release-notes.md
-          prerelease: true
+          prerelease: false
+          make_latest: 'true'
           files: dist/*
