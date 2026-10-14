@@ -246,9 +246,8 @@ public final class CubicSettings {
         if (usgs[at] == null) {
             Path cache = cacheFolder().resolve(UsgsElevation.DATASET_ID);
             try {
-                // Blocks are up to 1 MiB decoded; a zoom-15 tile needs one to four.
                 usgs[at] = new UsgsElevation(UsgsElevation.AWS_3DEP, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        48, 6, Duration.ofSeconds(30), reading);
+                        blocksKept(), 6, Duration.ofSeconds(30), reading);
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the 3DEP elevation cache at " + cache, failure);
             }
@@ -256,14 +255,21 @@ public final class CubicSettings {
         return usgs[at];
     }
 
+    /**
+     * Decoded 3DEP and REMA blocks kept in memory. A zoom-15 tile needs one to four, but far terrain,
+     * the water surveys and the cone search read the same coarse blocks again and again across the
+     * far range, and with only 48 kept a block was decoded two or three times over. Blocks are up
+     * to 1 MiB: a thirty-second of the heap, from 48 to 256 of them.
+     */
+    static int blocksKept() { return (int) Math.clamp(Runtime.getRuntime().maxMemory() / 32 / (1 << 20), 48, 256); }
+
     /** Antarctica from REMA, cached on disk beside the elevation tiles. */
     public static synchronized RemaElevation rema() {
         if (rema == null) {
             Path cache = cacheFolder().resolve(RemaSource.DATASET_ID);
             try {
-                // Blocks are 1 MiB decoded; a zoom-15 tile needs one to four.
                 rema = new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        48, 6, Duration.ofSeconds(30)));
+                        blocksKept(), 6, Duration.ofSeconds(30)));
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the REMA elevation cache at " + cache, failure);
             }

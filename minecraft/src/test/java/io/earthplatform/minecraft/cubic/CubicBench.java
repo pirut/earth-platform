@@ -95,8 +95,8 @@ class CubicBench {
         TerrariumTileSource[] source = new TerrariumTileSource[1];
         TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve(TerrariumTileSource.DATASET_ID),
                 true, 256, 6, Duration.ofSeconds(20), List.of(new CopernicusFill(copernicus, (z, x, y) -> source[0].cleaned(z, x, y), 512),
-                        new UsgsElevation(UsgsElevation.AWS_3DEP, cache.resolve(UsgsElevation.DATASET_ID), true, 48, 6, Duration.ofSeconds(30), UsgsElevation.Reading.valueOf(System.getenv().getOrDefault("EARTH_BENCH_3DEP", "GRADED"))),
-                        new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache.resolve(RemaSource.DATASET_ID), true, 48, 6, Duration.ofSeconds(30)))));
+                        new UsgsElevation(UsgsElevation.AWS_3DEP, cache.resolve(UsgsElevation.DATASET_ID), true, CubicSettings.blocksKept(), 6, Duration.ofSeconds(30), UsgsElevation.Reading.valueOf(System.getenv().getOrDefault("EARTH_BENCH_3DEP", "GRADED"))),
+                        new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache.resolve(RemaSource.DATASET_ID), true, CubicSettings.blocksKept(), 6, Duration.ofSeconds(30)))));
         source[0] = tiles;
         RiverMap rivers = new RiverMap(new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache.resolve(SurfaceWaterSource.DATASET_ID), true,
                 96, 4, Duration.ofSeconds(30)), 256);

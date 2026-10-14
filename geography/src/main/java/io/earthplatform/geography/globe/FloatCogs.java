@@ -99,6 +99,8 @@ final class FloatCogs implements AutoCloseable {
         // A tile at a corner of the blocks meets four at each of the two overviews it reads.
         private final Recent recent = new Recent(8);
         private final Map<Long, Grid> wanted = new java.util.HashMap<>();
+        // Neighbouring pixels nearly always share a block, so most of them skip the map.
+        private long lastWanted = -1;
         private int file = -1;
         private Header header;
 
@@ -131,8 +133,10 @@ final class FloatCogs implements AutoCloseable {
             for (int dj = 0; dj <= 1; dj++) for (int di = 0; di <= 1; di++) {
                 // metres skips corners of no weight; so does this.
                 if (!every && (di == 0 ? 1 - tx : tx) * (dj == 0 ? 1 - ty : ty) == 0) continue;
-                int index = index(grid, i + di, j + dj);
-                wanted.putIfAbsent(key(grid, index), grid);
+                long key = key(grid, index(grid, i + di, j + dj));
+                if (key == lastWanted) continue;
+                lastWanted = key;
+                wanted.putIfAbsent(key, grid);
             }
         }
 
@@ -150,6 +154,7 @@ final class FloatCogs implements AutoCloseable {
                 loads.add(() -> recent.held.put(key, block(grid, (int) (key & 0xFFFFF), key)));
             }
             wanted.clear();
+            lastWanted = -1;
             if (loads.size() == 1) loads.get(0).run();
             else if (!loads.isEmpty()) RangeFiles.all(loads);
         }
@@ -259,13 +264,20 @@ final class FloatCogs implements AutoCloseable {
             float[] hit = memory.get(key);
             if (hit != null) return hit;
         }
-        float[] decoded = files.singleFlight(inFlight, key, () -> readBlock(grid, index), what + " block");
-        synchronized (memory) {
-            memory.put(key, decoded);
-            var iterator = memory.entrySet().iterator();
-            while (memory.size() > maxBlocksInMemory && iterator.hasNext()) { iterator.next(); iterator.remove(); }
-        }
-        return decoded;
+        return files.singleFlight(inFlight, key, () -> {
+            // A thread that missed the cache just as another finished this block finds it here, not decoding it again.
+            synchronized (memory) {
+                float[] hit = memory.get(key);
+                if (hit != null) return hit;
+            }
+            float[] decoded = readBlock(grid, index);
+            synchronized (memory) {
+                memory.put(key, decoded);
+                var iterator = memory.entrySet().iterator();
+                while (memory.size() > maxBlocksInMemory && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+            }
+            return decoded;
+        }, what + " block");
     }
 
     private Header header(int file) {
