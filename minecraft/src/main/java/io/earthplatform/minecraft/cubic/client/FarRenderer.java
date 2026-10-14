@@ -71,6 +71,11 @@ public final class FarRenderer {
      * a texture blurs to at that distance anyway and stays steady when the camera moves.
      */
     private static final int TEXTURED_LEVELS = Integer.getInteger("earthplatform.far.textured", 2);
+    /**
+     * Whether a level fades into the next coarser one over the coarser level's outer ring of
+     * middle columns (see {@link FarShaders#fade}), rather than meeting it at a seam.
+     */
+    private static final boolean FADE = !"false".equals(System.getProperty("earthplatform.far.fade"));
     private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "block/far_white");
     private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
             SETTLE_TICKS = 3, HIDDEN_SETTLE_TICKS = 40, UPLOADS_PER_FRAME = 8, MESHES_IN_FLIGHT = 128;
@@ -115,6 +120,8 @@ public final class FarRenderer {
     private final ConcurrentLinkedQueue<FarMesher.Built> built = new ConcurrentLinkedQueue<>();
     private final List<Column> drawn = new ArrayList<>();
     private final LongOpenHashSet drawnKeys = new LongOpenHashSet();
+    /** Drawn columns fading in over the finer level they give way to; they keep out of the water passes. */
+    private final LongOpenHashSet fadingIn = new LongOpenHashSet();
     /** This frame's drawn columns in view, nearest first, for the water pass. */
     private List<Column> visible = List.of();
     private int waterFrame = -1;
@@ -164,6 +171,8 @@ public final class FarRenderer {
         /** Face and water bytes uploaded for this column, for the debug screen. */
         long bytes;
         double distance;
+        /** How this frame draws it: whole, fading out at its level's edge, or fading in over its children (see {@link FarGpu#NO_FADE}). */
+        int fade;
 
         Column(long key, int bottom, LevelChunkSection[] sections, char[] drops) {
             this.key = key;
@@ -685,10 +694,14 @@ public final class FarRenderer {
         drawn.clear();
         int px = Far.column(bx, Far.MAX_LEVEL), pz = Far.column(bz, Far.MAX_LEVEL);
         for (int z = pz - Far.OUTER; z <= pz + Far.OUTER; z++) for (int x = px - Far.OUTER; x <= px + Far.OUTER; x++) {
-            visit(Far.MAX_LEVEL, x, z, bx, bz);
+            visit(Far.MAX_LEVEL, x, z, bx, bz, false);
         }
         drawnKeys.clear();
-        for (Column column : drawn) drawnKeys.add(column.key);
+        fadingIn.clear();
+        for (Column column : drawn) {
+            drawnKeys.add(column.key);
+            if (column.fade == FarGpu.FADE_IN) fadingIn.add(column.key);
+        }
         List<Column> visible = new ArrayList<>(drawn.size());
         for (Column column : drawn) {
             if (column.faces == null && column.water == null || !frustum.isVisible(column.box)) continue;
@@ -712,35 +725,21 @@ public final class FarRenderer {
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = world.client().getShade(direction, true);
         if (own) FarLod.beginDraw(modelView, position.x, position.y, position.z);
-        if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade)) {
-            for (Column column : visible) {
-                FarGpu.Allocation faces = column.faces;
-                if (faces == null) continue;
-                AABB box = column.box;
-                // Only face groups turned toward the camera can show.
-                if (position.y < box.maxY) gpu.add(faces, 0);
-                if (position.y > box.minY) gpu.add(faces, 1);
-                if (position.z < box.maxZ) gpu.add(faces, 2);
-                if (position.z > box.minZ) gpu.add(faces, 3);
-                if (position.x < box.maxX) gpu.add(faces, 4);
-                if (position.x > box.minX) gpu.add(faces, 5);
-                for (int side = 0; side < 4; side++) {
-                    if (drawnKeys.contains(column.neighbour(side))) continue;
-                    boolean facing = switch (side) {
-                        case 0 -> position.z < box.minZ + 1;
-                        case 1 -> position.z > box.maxZ - 1;
-                        case 2 -> position.x < box.minX + 1;
-                        default -> position.x > box.maxX - 1;
-                    };
-                    if (facing) gpu.add(faces, FarMesher.FIRST_WALL + side);
-                }
+        if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame)) {
+            // Whole columns first, then those fading out, then those fading in, each with its own program.
+            boolean[] fades = new boolean[3];
+            for (Column column : visible) fades[column.fade] = true;
+            for (int fade = FarGpu.NO_FADE; fade <= FarGpu.FADE_IN; fade++) {
+                if (!fades[fade]) continue;
+                if (fade != FarGpu.NO_FADE && !gpu.fade(fade) && fade == FarGpu.FADE_IN) break;
+                for (Column column : visible) if (column.fade == fade) queue(gpu, column, position);
             }
             gpu.end();
         }
         if (own) FarLod.endDraw();
         if (own && FarLod.beginDeepen(modelView)) {
             for (Column column : visible) {
-                if (column.water == null) continue;
+                if (column.water == null || column.fade == FarGpu.FADE_IN) continue;
                 FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 column.water.draw();
             }
@@ -749,6 +748,30 @@ public final class FarRenderer {
         }
         shader.clear();
         type.clearRenderState();
+    }
+
+    /** Queues a column's faces that can face the camera, and its walls where its neighbours are not drawn. */
+    private void queue(FarGpu gpu, Column column, Vec3 position) {
+        FarGpu.Allocation faces = column.faces;
+        if (faces == null) return;
+        AABB box = column.box;
+        // Only face groups turned toward the camera can show.
+        if (position.y < box.maxY) gpu.add(faces, 0);
+        if (position.y > box.minY) gpu.add(faces, 1);
+        if (position.z < box.maxZ) gpu.add(faces, 2);
+        if (position.z > box.minZ) gpu.add(faces, 3);
+        if (position.x < box.maxX) gpu.add(faces, 4);
+        if (position.x > box.minX) gpu.add(faces, 5);
+        for (int side = 0; side < 4; side++) {
+            if (drawnKeys.contains(column.neighbour(side))) continue;
+            boolean facing = switch (side) {
+                case 0 -> position.z < box.minZ + 1;
+                case 1 -> position.z > box.maxZ - 1;
+                case 2 -> position.x < box.minX + 1;
+                default -> position.x > box.maxX - 1;
+            };
+            if (facing) gpu.add(faces, FarMesher.FIRST_WALL + side);
+        }
     }
 
     /**
@@ -788,7 +811,7 @@ public final class FarRenderer {
         if (closed || waterFrame == frame || camera.getFluidInCamera() != net.minecraft.world.level.material.FogType.NONE) return;
         waterFrame = frame;
         boolean any = false;
-        for (Column column : visible) if (column.water != null || column.hasWaterWalls()) { any = true; break; }
+        for (Column column : visible) if (column.fade != FarGpu.FADE_IN && (column.water != null || column.hasWaterWalls())) { any = true; break; }
         if (!any) return;
         Vec3 position = camera.getPosition();
         RenderType type = RenderType.translucent();
@@ -805,7 +828,8 @@ public final class FarRenderer {
             // already in the depth buffer and hides them, so they only show across a step.
             for (int i = visible.size() - 1; i >= 0; i--) {
                 Column column = visible.get(i);
-                if (pass == 0 ? column.water == null : !column.hasWaterWalls()) continue;
+                // Water stays with the finer level where two levels fade into each other.
+                if (column.fade == FarGpu.FADE_IN || (pass == 0 ? column.water == null : !column.hasWaterWalls())) continue;
                 if (offset != null) {
                     offset.set((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                     offset.upload();
@@ -825,7 +849,7 @@ public final class FarRenderer {
                 }
                 for (int side = 0; side < 4; side++) {
                     CubeBuffer wall = column.waterWalls[side];
-                    if (wall == null || drawnKeys.contains(column.neighbour(side))) continue;
+                    if (wall == null || waterDrawn(column.neighbour(side))) continue;
                     wall.draw();
                 }
             }
@@ -834,14 +858,14 @@ public final class FarRenderer {
         if (view != null) view.set(modelView);
         if (own) FarLod.endWater(modelView, () -> {
             for (Column column : visible) {
-                if (column.water == null && !column.hasWaterWalls()) continue;
+                if (column.fade == FarGpu.FADE_IN || column.water == null && !column.hasWaterWalls()) continue;
                 FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 if (column.water != null) {
                     column.water.draw();
                 }
                 for (int side = 0; side < 4; side++) {
                     CubeBuffer wall = column.waterWalls[side];
-                    if (wall == null || drawnKeys.contains(column.neighbour(side))) continue;
+                    if (wall == null || waterDrawn(column.neighbour(side))) continue;
                     wall.draw();
                 }
             }
@@ -857,18 +881,31 @@ public final class FarRenderer {
      * goto it usually has none, and waiting for every child down to the finest level left the
      * ground around the player empty until the whole tree under it had arrived.
      */
-    private void visit(int level, int x, int z, int bx, int bz) {
+    private void visit(int level, int x, int z, int bx, int bz, boolean fading) {
         Column column = columns.get(Far.key(level, x, z));
         boolean meshed = column != null && column.meshed;
         // Rising into the jet stream layer makes a coarser level the finest: until its columns
         // arrive, the finer ones already here keep standing in for them.
         boolean refined = Far.refined(level, x, z, bx, bz, finest) || !meshed && Far.refined(level, x, z, bx, bz);
         if (refined && (!meshed || childrenReady(level, x, z, bx, bz))) {
-            for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) visit(level - 1, 2 * x + dx, 2 * z + dz, bx, bz);
+            // The outer ring of a level's middle: drawn under its children too, fading in as they fade out.
+            boolean band = FADE && meshed && Far.refined(level, x, z, bx, bz, finest)
+                    && Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level))) == Far.hole();
+            if (band) {
+                column.fade = FarGpu.FADE_IN;
+                drawn.add(column);
+            }
+            for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) visit(level - 1, 2 * x + dx, 2 * z + dz, bx, bz, band);
             return;
         }
-        if (meshed) drawn.add(column);
+        if (meshed) {
+            column.fade = fading ? FarGpu.FADE_OUT : FarGpu.NO_FADE;
+            drawn.add(column);
+        }
     }
+
+    /** True when a column's water is drawn this frame: drawn, and not fading in over finer water. */
+    private boolean waterDrawn(long key) { return drawnKeys.contains(key) && !fadingIn.contains(key); }
 
     private boolean ready(int level, int x, int z, int bx, int bz) {
         Column column = columns.get(Far.key(level, x, z));
