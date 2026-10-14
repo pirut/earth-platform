@@ -53,11 +53,11 @@ final class RangeFiles implements AutoCloseable {
         for (int attempt = 0, slowed = 0; attempt < 3; attempt++) {
             if (attempt > 0) Thread.sleep(250L << attempt);
             HostBackoff.await(uri);
-            boolean check = HostBackoff.reachable(uri, what);
+            HostBackoff.reachable(uri, what);
             transfers.acquire();
             try {
                 // Asked again: a host can go down while this transfer waited its turn.
-                if (!check) HostBackoff.reachable(uri, what);
+                HostBackoff.reachable(uri, what);
                 long start = System.nanoTime();
                 HttpResponse<byte[]> response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
                 int status = response.statusCode();

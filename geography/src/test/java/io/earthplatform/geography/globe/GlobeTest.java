@@ -539,10 +539,14 @@ public final class GlobeTest {
             down.set(false);
             fail(() -> source.tile(2, 1, 1), MissingTerrainException.class, "still down until it is checked again");
             Thread.sleep(HostBackoff.FIRST_DOWN_MS + 200);
-            source.tile(2, 1, 1);
+            // Due a check: it runs off to the side, so even this caller does not wait on the host.
+            fail(() -> source.tile(2, 1, 1), MissingTerrainException.class, "the caller that starts a check still fails at once");
+            for (int i = 0; i < 100 && HostBackoff.anyDown(); i++) Thread.sleep(20);
             check(!HostBackoff.anyDown(), "host back once a check got an answer");
+            equal(tries + 1, hits.get(), "one request checked the host");
+            source.tile(2, 1, 1);
             source.tile(2, 2, 1);
-            check(hits.get() == tries + 2, "transfers flow again");
+            equal(tries + 3, hits.get(), "transfers flow again");
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();

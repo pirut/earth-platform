@@ -32,36 +32,54 @@ public final class HostBackoff {
      */
     static final int DOWN_AFTER = 3;
     static final long DOWN_STREAK_MS = 1_000;
-    /** How long a host stays down before one transfer checks it again, doubling up to the longest. */
-    static final long FIRST_DOWN_MS = 5_000, LONGEST_DOWN_MS = 60_000, CHECK_GIVES_WAY_MS = 180_000;
+    /** How long a host stays down before it is checked again, doubling up to the longest. */
+    static final long FIRST_DOWN_MS = 5_000, LONGEST_DOWN_MS = 60_000;
 
     private static final class Health {
         final AtomicLong failed = new AtomicLong(), streakStart = new AtomicLong();
-        volatile long downUntil, downFor;
-        /** When the transfer checking a down host started, 0 for none. */
-        final AtomicLong checking = new AtomicLong();
+        volatile long downUntil, downFor, downSince;
+        final java.util.concurrent.atomic.AtomicBoolean checking = new java.util.concurrent.atomic.AtomicBoolean();
         volatile String what;
-        volatile long downSince;
     }
 
     private static final Map<String, Health> HEALTH = new ConcurrentHashMap<>();
+    private static final java.time.Duration CHECK_TIMEOUT = java.time.Duration.ofSeconds(20);
+    private static volatile java.net.http.HttpClient checker;
 
     private HostBackoff() {}
 
     /**
-     * Fails at once while the uri's host is down, unless this transfer is the one to check whether
-     * it is back; that one goes ahead, and {@link #answered} or {@link #failed} says how it went.
-     *
-     * @return whether this transfer is that check
+     * Fails at once while the uri's host is down. When it is due another check, that is started off to
+     * the side: no caller ever waits on a host that is down, the server thread included.
      */
-    static boolean reachable(URI uri, String what) {
+    static void reachable(URI uri, String what) {
         Health health = HEALTH.get(String.valueOf(uri.getAuthority()));
-        if (health == null || health.downFor == 0) return false;
-        long now = System.currentTimeMillis();
-        long since = health.checking.get();
-        // A check that never reported back (its thread stopped) gives way after a while.
-        if (now >= health.downUntil && (since == 0 || now - since > CHECK_GIVES_WAY_MS) && health.checking.compareAndSet(since, now)) return true;
+        if (health == null || health.downFor == 0) return;
+        if (System.currentTimeMillis() >= health.downUntil && health.checking.compareAndSet(false, true)) check(uri, health);
         throw new MissingTerrainException(what + " server " + uri.getHost() + " can't be reached; trying it again shortly");
+    }
+
+    /** Asks the host for the first byte of a file it was failing on; any answer means it is back. */
+    private static void check(URI uri, Health health) {
+        Thread.ofVirtual().name("earth-host-check").start(() -> {
+            try {
+                java.net.http.HttpClient http = checker;
+                if (http == null) checker = http = java.net.http.HttpClient.newBuilder().connectTimeout(CHECK_TIMEOUT)
+                        .followRedirects(java.net.http.HttpClient.Redirect.NEVER).build();
+                java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(uri).timeout(CHECK_TIMEOUT)
+                        .header("User-Agent", "earth-platform/check").header("Range", "bytes=0-0").GET().build();
+                int status = http.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+                if (status < 500 || slowDown(status)) { answered(uri); return; }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } catch (java.io.IOException | RuntimeException failure) {
+                // Still down.
+            } finally {
+                health.checking.set(false);
+            }
+            health.downFor = Math.min(LONGEST_DOWN_MS, health.downFor * 2);
+            health.downUntil = System.currentTimeMillis() + health.downFor;
+        });
     }
 
     /** The host answered (any HTTP status): it is up. */
@@ -70,7 +88,6 @@ public final class HostBackoff {
         if (health == null) return;
         health.failed.set(0);
         health.streakStart.set(0);
-        health.checking.set(0);
         if (health.downFor != 0) {
             long seconds = (System.currentTimeMillis() - health.downSince) / 1000;
             health.downFor = 0;
@@ -85,14 +102,8 @@ public final class HostBackoff {
         Health health = HEALTH.computeIfAbsent(String.valueOf(uri.getAuthority()), h -> new Health());
         health.what = what;
         long now = System.currentTimeMillis();
-        if (health.downFor != 0) {
-            // The check failed, or a transfer started before the host went down did: wait longer.
-            if (health.checking.getAndSet(0) != 0) {
-                health.downFor = Math.min(LONGEST_DOWN_MS, health.downFor * 2);
-                health.downUntil = now + health.downFor;
-            }
-            return;
-        }
+        // Already down: transfers started before it went down still report in, and change nothing.
+        if (health.downFor != 0) return;
         // Many transfers can fail together: the streak starts with whichever of them reports first.
         long streak = health.streakStart.updateAndGet(start -> start == 0 ? now : start);
         // A connection that could not even be made in the whole timeout is down already: no need for more tries.
