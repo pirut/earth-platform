@@ -5,16 +5,17 @@
 - **Name: Earth Platform.** Kept from three options checked against Modrinth and CurseForge (Earth Platform, True Scale Earth, Cubic Earth); `earth-platform` was free on Modrinth and nothing on CurseForge used the name. No formal trademark search was done. "Minecraft" stays out of the name (Mojang's "Minecraft Earth").
 - **Licence: LGPL-3.0-only** for the mod's code and logo. `LICENSE` holds the LGPL-3.0 text and `COPYING` the GPL-3.0 text it builds on; the jar carries both in `META-INF/earthplatform-LICENSE.txt`, and `mod_license=LGPL-3.0-only`. Earth data keeps its own terms (CREDITS.md). LGPL means anyone may fork or port it as long as changes to our code stay open under the LGPL; modpacks and add-ons may include or build on it freely.
 
-## Steps
+## Release checklist
 
-Nothing here has been published. In order:
+Nothing has been published. The clicks for each of JR's steps are in [GO-PUBLIC.md](GO-PUBLIC.md); the page fields are in [STORE-PAGE.md](STORE-PAGE.md).
 
-1. ~~Settle the blockers in [LICENSING-AUDIT.md](LICENSING-AUDIT.md)~~ Done: no licence blockers remain, and the name is Earth Platform.
-2. ~~Pick the mod licence~~ Done: LGPL-3.0-only (see above). Before publishing, add a short header to source files if wanted (optional under the LGPL).
-3. **Freeze after build 30** (JR, 2026-10-13): no new features after combined build 30, only fixes. JR plays 30 in a fresh world and approves merging the cubic Earth build (PR #2) into main; the release jar is built from main.
-4. **Set the version.** `mod_version` is `0.1.0-engine-prototype`; for the release use `0.1.0-alpha.1`. The old engine pins that string in three places that must change with it: `compat/dh/InstalledPlayableInventory.java`, `survival/runtime/InstalledCallbackStartupSourcePins.java` and `survival/host/SurvivalInstalledModIdentity.java`, plus their tests `InstalledPlayableInventoryIndependentTest` and `SurvivalInstalledModIdentityTest`.
-5. **Check the jar:** Mods → Earth Platform shows the logo, description and credits; the arrival message shows the data credits; no file outside `io/earthplatform`, our data and resources is inside.
-6. **Smoke test** a fresh install from the [install guide](../INSTALL.md) on Windows and on the Mac (stock Photon at defaults on the Mac): new Earth world, spawn picker, travel, survival basics, Nether portal, shaders on and off, a dedicated server with two players.
-7. **Retake screenshots** at 1920×1080 on a real GPU for the gallery listed in [STORE-PAGE.md](STORE-PAGE.md).
-8. **Make the repository public** (or decide not to) so the Source and Issues links work, and add `displayURL` and `issueTrackerURL` to `neoforge.mods.toml`. The older engine's `recovery/` archive is already out of the tree; it is still in git history, which only a history rewrite would remove.
-9. **Publish** to Modrinth and CurseForge as Alpha with creator rewards off, using [STORE-PAGE.md](STORE-PAGE.md). Attach the jar to a GitHub release with [CHANGELOG.md](../../CHANGELOG.md) as the notes.
+- [x] Licence and credits settled; no copied code ([LICENSING-AUDIT.md](LICENSING-AUDIT.md)).
+- [x] Repository ready to go public: community files, issue forms, safe workflows, history checked ([GO-PUBLIC.md](GO-PUBLIC.md#1-readiness-check-done)).
+- [x] Every merge into `main` publishes a GitHub release of the newest build, marked **Latest**.
+- [ ] **JR:** make the repository public (GO-PUBLIC step 2).
+- [ ] **JR:** test the newest release in a fresh world, with and without Photon, on the Mac and on Windows if possible (step 3).
+- [ ] Set the public version `0.1.0-alpha.N` (step 4); the release workflow then names the jar and release with it.
+- [ ] Check the jar: Mods → Earth Platform shows the logo, description and credits; the arrival message shows the data credits.
+- [ ] Optional: retake the gallery at 1920 × 1080 on a real GPU.
+- [ ] **JR:** publish on Modrinth (step 5) and CurseForge (step 6) as Alpha, creator rewards off.
+- [ ] Add the Modrinth and CurseForge links to the README and the repository's About box (step 7).

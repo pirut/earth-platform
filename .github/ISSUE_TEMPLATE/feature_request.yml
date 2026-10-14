@@ -1,0 +1,11 @@
+name: Idea or request
+description: Suggest something for Earth Platform.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: Describe it from a player's point of view. Real places that show the idea are welcome.
+    validations:
+      required: true

@@ -1,0 +1,55 @@
+# Builds the mod and runs the tests on every pull request. Read-only: it can't push, tag or release,
+# and pull requests from forks get no secrets. Third-party actions are pinned to full commit SHAs.
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # The repository ignores gradle-wrapper.jar, so use a pinned Gradle instead of ./gradlew.
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          gradle-version: '9.2.1'
+
+      # Same checked inputs as the release build (see docs/BUILDING.md). None of them is bundled.
+      - name: Fetch the external build inputs
+        run: |
+          mkdir -p "$RUNNER_TEMP/inputs" && cd "$RUNNER_TEMP/inputs"
+          curl -fsSLo iris.jar 'https://cdn.modrinth.com/data/YL57xq9U/versions/KduFYu4t/iris-neoforge-1.8.14-beta.1%2Bmc1.21.1.jar'
+          curl -fsSLo sodium.jar 'https://cdn.modrinth.com/data/AANobbMI/versions/iw5APcWy/sodium-neoforge-0.8.12-beta.1%2Bmc1.21.1.jar'
+          curl -fsSLo photon_v1.3b.zip 'https://cdn.modrinth.com/data/lLqFfGNs/versions/gUv7fBPN/photon_v1.3b.zip'
+          sha256sum -c - <<'SUMS'
+          60d5f8bf52f25e9986440f4a4270a6bd986d9cff994510e1108ac1547063b314  iris.jar
+          dc2838d5538db39414171fe86586ab89d1a30d2fd97f59229cc44cf3777f569d  sodium.jar
+          120897768eaa8cb1f14a3e98f88dff009ae3204ee3b96904a4fe8586edfc1ead  photon_v1.3b.zip
+          SUMS
+          {
+            echo "EARTH_INSTALLED_IRIS_JAR=$PWD/iris.jar"
+            echo "EARTH_INSTALLED_SODIUM_JAR=$PWD/sodium.jar"
+            echo "EARTH_INSTALLED_SHADER_PACK=$PWD/photon_v1.3b.zip"
+          } >> "$GITHUB_ENV"
+
+      - name: Build and test
+        working-directory: minecraft
+        env:
+          LC_ALL: C.UTF-8
+          # ModDevGradle skips recompiling Minecraft when CI=true; the pinned-bytecode tests need it.
+          CI: 'false'
+        run: gradle --no-daemon --console=plain jar test

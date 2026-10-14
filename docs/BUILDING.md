@@ -33,7 +33,7 @@ The jar is `minecraft/build/libs/earthplatform-0.1.0-engine-prototype.jar`. That
 ./gradlew --no-daemon test --continue
 ```
 
-About 1,300 unit tests run in a few minutes, and all should pass. `core/test.sh` and `streaming/test.sh` run the stand-alone test suites of those two folders with plain `javac`.
+About 1,300 unit tests run in a few minutes, and all should pass. GitHub runs the same build and tests on every pull request (`.github/workflows/ci.yml`), and every merge into `main` publishes the newest build as a GitHub release (`.github/workflows/release.yml`). `core/test.sh` and `streaming/test.sh` run the stand-alone test suites of those two folders with plain `javac`.
 
 ## Try it in game
 

@@ -1,0 +1,54 @@
+name: Bug report
+description: Something in Earth Platform doesn't work or looks wrong.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please check the [FAQ](https://github.com/pirut/earth-cubic-platform/blob/main/docs/FAQ.md) first, and try a **fresh world**: worlds keep the terrain choices they were made with.
+  - type: input
+    id: version
+    attributes:
+      label: Earth Platform version
+      description: From Mods → Earth Platform, or the jar's file name.
+      placeholder: 0.1.0-alpha.37
+    validations:
+      required: true
+  - type: input
+    id: neoforge
+    attributes:
+      label: NeoForge version
+      placeholder: 21.1.259
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows, macOS, Linux, Dedicated server]
+    validations:
+      required: true
+  - type: input
+    id: shaders
+    attributes:
+      label: Shaders and other mods
+      description: Iris, Sodium and shader pack versions if you use them, and any other mods.
+      placeholder: Iris 1.8.14, Sodium 0.8.12, Photon v1.3b, Xaero's Minimap
+  - type: input
+    id: place
+    attributes:
+      label: Where on Earth
+      description: Run /earth where (or press F3) and paste the latitude and longitude.
+      placeholder: 36.0544, -112.1401
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+      description: Screenshots help a lot for terrain and rendering problems.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log or crash report
+      description: Upload `logs/latest.log` or the crash report from `crash-reports/` (drag the file in).

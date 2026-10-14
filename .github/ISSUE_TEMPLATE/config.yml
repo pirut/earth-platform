@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Install help and common questions
+    url: https://github.com/pirut/earth-cubic-platform/blob/main/docs/FAQ.md
+    about: Memory, shaders, slow first visits and other frequent questions.
+  - name: Report a security problem
+    url: https://github.com/pirut/earth-cubic-platform/security/advisories/new
+    about: Please report security problems privately, not as a public issue.
