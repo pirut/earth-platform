@@ -80,6 +80,9 @@ jobs:
         working-directory: minecraft
         env:
           LC_ALL: C.UTF-8
+          # ModDevGradle skips recompiling Minecraft when CI=true, and then the merged game jar that
+          # the pinned-bytecode tests read (earthplatform.test.minecraftJar) is never made.
+          CI: 'false'
         run: gradle --no-daemon --console=plain jar test
 
       - name: Collect the release files
