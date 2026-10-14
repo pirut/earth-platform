@@ -25,8 +25,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Nullable;
 import net.minecraft.core.Holder;
@@ -50,7 +48,6 @@ import net.neoforged.neoforge.network.PacketDistributor;
  */
 public final class FarServer {
     private static final int SEND_PER_TICK = 64, CACHE = 8192;
-    private static final AtomicInteger THREADS = new AtomicInteger();
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
     private final CubeGenerator generator;
@@ -58,18 +55,15 @@ public final class FarServer {
     private final CubeCodec codec;
     private final IdMap<Holder<Biome>> biomeIds;
     /**
-     * Far workers: two on four cores, and more on bigger machines, where two left most cores idle
-     * while the far terrain took minutes to refine. They run at low priority behind the cube
-     * workers. Set with {@code -Dearthplatform.far.threads}.
+     * Far workers kept busy: two on four cores, and more on bigger machines, where two left most
+     * cores idle while the far terrain took minutes to refine. They run at low priority behind the
+     * cube workers. Set with {@code -Dearthplatform.far.threads}.
      */
     static final int WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.threads",
             (Runtime.getRuntime().availableProcessors() - 4) / 2), 2, 8);
-    private final ExecutorService workers = Executors.newFixedThreadPool(WORKERS, runnable -> {
-        Thread thread = new Thread(runnable, "Earth far terrain " + THREADS.incrementAndGet());
-        thread.setDaemon(true);
-        thread.setPriority(Thread.MIN_PRIORITY);
-        return thread;
-    });
+    /** Most far columns made at once while they mostly wait on downloads, as over a new place; see {@link FarWorkers}. */
+    static final int MOST_WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.mostThreads", 4 * WORKERS), WORKERS, 16);
+    private final FarWorkers workers = new FarWorkers("Earth far terrain", WORKERS, MOST_WORKERS);
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> cache = new ConcurrentHashMap<>();
     /** What edited columns looked like before, so a remade one that came out the same is not sent again. */
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> before = new ConcurrentHashMap<>();

@@ -218,9 +218,8 @@ public final class CubicSettings {
             // that, a first visit cleaned the same tiles five or six times over. Each is 256 KiB: up to a
             // sixteenth of the heap, from 256 to 1,024 of them. Fetching them is mostly a wait on the round
             // trip, so many go at once.
-            int kept = (int) Math.clamp(Runtime.getRuntime().maxMemory() / 16 / (256 << 10), 256, 1024);
             known = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                    kept, 16, Duration.ofSeconds(20), layers);
+                    tilesKept(), 16, Duration.ofSeconds(20), layers);
         } catch (IOException failure) {
             throw new UncheckedIOException("Could not open the elevation tile cache at " + cache, failure);
         }
@@ -268,6 +267,7 @@ public final class CubicSettings {
      * far range, and with only 48 kept a block was decoded two or three times over. Blocks are up
      * to 1 MiB: a thirty-second of the heap, from 48 to 256 of them.
      */
+    static int tilesKept() { return (int) Math.clamp(Runtime.getRuntime().maxMemory() / 16 / (256 << 10), 256, 1024); }
     static int blocksKept() { return (int) Math.clamp(Runtime.getRuntime().maxMemory() / 32 / (1 << 20), 48, 256); }
 
     /** Antarctica from REMA, cached on disk beside the elevation tiles. */
