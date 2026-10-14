@@ -59,10 +59,24 @@ public final class EarthWindowGenerator extends ChunkGenerator {
         window.toEngineY(surfaceY);
         this.surfaceY = surfaceY;
         this.cubes = new CalibrationCubes(surfaceY);
-        this.realTerrain = realTerrain;
         this.terrainDataset = terrainDataset;
         this.horizontalProjection = horizontalProjection;
-        this.terrain = realTerrain ? new WindowTerrain(terrainDataset, horizontalProjection) : null;
+        this.terrain = realTerrain ? bundledTerrain(terrainDataset, horizontalProjection) : null;
+        this.realTerrain = terrain != null;
+    }
+
+    /**
+     * The release jar leaves the proof packs out. A world saved with one of these prototype windows
+     * (made before they were kept out of players' worlds) then gets the synthetic calibration there,
+     * rather than refusing to load at all.
+     */
+    private static WindowTerrain bundledTerrain(String dataset, String projection) {
+        try {
+            return new WindowTerrain(dataset, projection);
+        } catch (IllegalStateException missing) {
+            EarthPlatformMod.LOGGER.warn("Proof pack {} isn't in this build; its prototype window uses synthetic terrain", dataset);
+            return null;
+        }
     }
 
     public int originY() { return window.originY(); }

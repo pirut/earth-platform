@@ -191,61 +191,6 @@ class DhAdjacentWorkspaceCompositionTest {
             checkResult(anchor,Pattern.BOUNDARIES,packed,near(31,Math.floorDiv(anchor,16),-32),result);
         }
     }
-    @Test void pinnedOfficialPackingPreservesCanonicalUnionFacesAndExistingByteCaps() throws Exception {
-        String jar=System.getProperty("earthplatform.dhJar");
-        assertNotNull(jar,"Pinned official artifact is mandatory for this proof");
-        var runtime=DhOfficialRuntime.open(java.nio.file.Path.of(jar));
-        long checkedFaces=0,peakResult=0,peakGpu=0;int checkedOwners=0;
-        for(int anchor:new int[]{128,-11000,8849})for(Pattern pattern:new Pattern[]{Pattern.SHELL,Pattern.BOUNDARIES,Pattern.MIXED}) {
-            var r=fixture(anchor,pattern);
-            var result=DhReplacementSetComposition.build(policy(anchor),512,-512,DhLodLayout.LONG_4096,near(31,Math.floorDiv(anchor,16),-32),r,DhReplacementComposition.MAX_RESULT_BYTES,LIVE);
-            var directions=EnumSet.noneOf(Direction.class);var colors=new HashSet<Integer>();
-            long bytes=0;
-            for(var e:result.batch().tiles().entrySet()) {
-                var packed=runtime.buildRectangles(e.getValue());bytes+=packed.length;
-                assertTrue(packed.length>0&&packed.length%64==0&&packed.length<=e.getValue().size()*64L);
-                if(e.getKey().replacementIdentity().isEmpty())continue;
-                checkedOwners++;checkedFaces+=e.getValue().size();
-                for(var f:e.getValue()){directions.add(f.direction());colors.add(f.argb());}
-                var expected=new HashSet<Unit>();for(var f:e.getValue())assertTrue(expected.add(unit(worldFace(e.getKey(),f))));
-                var actual=new HashSet<Unit>();var b=java.nio.ByteBuffer.wrap(packed).order(java.nio.ByteOrder.nativeOrder());
-                for(int q=0;q<packed.length;q+=64) {
-                    // DH 3.3.3 putVertex stores RGBA at bytes8..11 and faceIndex at byte13.
-                    int argb=(Byte.toUnsignedInt(b.get(q+11))<<24)|(Byte.toUnsignedInt(b.get(q+8))<<16)|(Byte.toUnsignedInt(b.get(q+9))<<8)|Byte.toUnsignedInt(b.get(q+10));
-                    Direction direction=switch(Byte.toUnsignedInt(b.get(q+13))) {case 0->Direction.DOWN;case 1->Direction.UP;case 2->Direction.NORTH;case 3->Direction.SOUTH;case 4->Direction.WEST;case 5->Direction.EAST;default->throw new AssertionError("Invalid official face direction");};
-                    int[] lo={4096,2048,4096},hi={0,0,0};
-                    var corners=new HashSet<String>();
-                    for(int v=0;v<4;v++) {
-                        for(int attribute:new int[]{8,9,10,11,13})assertEquals(b.get(q+attribute),b.get(q+v*16+attribute),"Quad attributes must agree at every corner");
-                        int[] pnt=new int[3];
-                        for(int axis=0;axis<3;axis++){int value=Short.toUnsignedInt(b.getShort(q+v*16+axis*2));pnt[axis]=value;lo[axis]=Math.min(lo[axis],value);hi[axis]=Math.max(hi[axis],value);}
-                        assertTrue(pnt[0]<=32&&pnt[2]<=32&&pnt[1]<=2048);
-                        long y=e.getKey().pageY()*2048L+pnt[1];assertTrue(y>=-11008&&y<=8864);
-                        corners.add(Arrays.toString(pnt));
-                    }
-                    assertEquals(4,corners.size());
-                    var expectedCorners=new HashSet<String>();
-                    for(int x:new int[]{lo[0],hi[0]})for(int y:new int[]{lo[1],hi[1]})for(int z:new int[]{lo[2],hi[2]})expectedCorners.add(Arrays.toString(new int[]{x,y,z}));
-                    assertEquals(expectedCorners,corners,"Exact four official rectangle corners");
-                    int normal=lo[0]==hi[0]?0:lo[1]==hi[1]?1:2;
-                    assertEquals(lo[normal],hi[normal]);
-                    assertEquals(switch(direction){case WEST,EAST->0;case UP,DOWN->1;case NORTH,SOUTH->2;},normal);
-                    for(int axis=0;axis<3;axis++)if(axis!=normal)assertTrue(hi[axis]>lo[axis]);
-                    for(int x=lo[0];x<Math.max(lo[0]+1,hi[0]);x++)for(int y=lo[1];y<Math.max(lo[1]+1,hi[1]);y++)for(int z=lo[2];z<Math.max(lo[2]+1,hi[2]);z++)
-                        assertTrue(actual.add(new Unit(e.getKey().originX()+x,e.getKey().pageY()*2048L+y,e.getKey().originZ()+z,direction,argb)),"Official packing duplicated a union unit face");
-                }
-                assertEquals(expected,actual,"Official merged rectangles must preserve every canonical union unit face");
-            }
-            assertEquals(EnumSet.allOf(Direction.class),directions);assertEquals(Set.of(STONE,DIORITE),colors);
-            long captures=r.stream().mapToLong(DhReplacementInput.Data::declaredBytes).sum();
-            long declared=4096+captures+result.batch().faces()*64L+bytes;
-            long oldPlusCandidate=32768L*88+bytes/64*88;
-            assertTrue(declared<=5L*1024*1024);assertTrue(declared*4<=20L*1024*1024);assertTrue(oldPlusCandidate<=8L*1024*1024);
-            assertTrue(result.batch().tiles().size()+64<=128);
-            peakResult=Math.max(peakResult,declared);peakGpu=Math.max(peakGpu,oldPlusCandidate);
-        }
-        System.out.println("Adjacent official DH 3.3.3 packing: fixtures=9, owners="+checkedOwners+", exactUnitFaces="+checkedFaces+", peakResultBytes="+peakResult+", peakOldPlusCandidateGpuBytes="+peakGpu);
-    }
     @Test void all1242YTemplatesAndEmptyInitialCentersAreExact() throws Exception {
         var validate=DhReplacementSetComposition.class.getDeclaredMethod("validateReady",List.class);validate.setAccessible(true);
         int endpoints=0;

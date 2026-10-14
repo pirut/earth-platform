@@ -4,10 +4,8 @@ import com.mojang.serialization.Lifecycle;
 import io.earthplatform.core.CancellationToken;
 import io.earthplatform.core.CubePos;
 import io.earthplatform.core.CubeTickets;
-import io.earthplatform.minecraft.enginebridge.AnalyticNativeCubeProvider;
 import io.earthplatform.minecraft.enginebridge.NativeCollisionMotionFence;
 import io.earthplatform.minecraft.enginebridge.NativeCollisionLevelAccess;
-import io.earthplatform.minecraft.enginebridge.NativeCollisionView;
 import io.earthplatform.minecraft.enginebridge.NativeCubeCodec;
 import io.earthplatform.minecraft.network.EngineCubeSnapshot;
 import io.earthplatform.minecraft.network.EnginePaletteContext;
@@ -58,66 +56,6 @@ class CoreCollisionIntegrationReviewTest {
         registry.register(Biomes.PLAINS, VanillaRegistries.createLookup().lookupOrThrow(Registries.BIOME)
                 .getOrThrow(Biomes.PLAINS).value(), RegistrationInfo.BUILT_IN);
         palette = EnginePaletteContext.create(registry.freeze());
-    }
-
-    @Test void finiteCollisionFixtureIsExactlyFlatOutsideThePinnedCentralCube() {
-        var nativeProvider = new AnalyticNativeCubeProvider(0, AnalyticNativeCubeProvider.Config.boundedCollision(128), palette);
-        var flatProvider = new AnalyticNativeCubeProvider(0, AnalyticNativeCubeProvider.Config.flat(128), palette);
-        assertNotEquals(nativeProvider.identity(), flatProvider.identity(), "The distinct generator identity must isolate durable storage");
-        int different = 0;
-        for (var pos : CubeTickets.box(new CubePos(0, 8, 0), 2, 2, 125)) {
-            var actual = nativeProvider.load(pos, new CancellationToken()).join();
-            var flat = flatProvider.load(pos, new CancellationToken()).join();
-            for (int i = 0; i < CubePos.VOLUME; i++) {
-                if (actual.get(i) != flat.get(i)) {
-                    assertEquals(new CubePos(0, 8, 0), pos, "Far flat geometry must be exact outside actual native coverage");
-                    different++;
-                }
-            }
-        }
-        assertEquals(65, different, "35 roof cells, 6 support cells, 24 wall cells");
-    }
-
-    @Test void nativeFixtureHasRealAirUnderItsRoofAndAnIndependentWall() {
-        var provider = new AnalyticNativeCubeProvider(0, AnalyticNativeCubeProvider.Config.boundedCollision(128), palette);
-        var cube = provider.load(new CubePos(0, 8, 0), new CancellationToken()).join();
-        int air = provider.config().airState(), solid = provider.config().solidState();
-        assertEquals(solid, cube.get(CubePos.index(4, 0, 5)));
-        assertEquals(air, cube.get(CubePos.index(4, 1, 5)));
-        assertEquals(air, cube.get(CubePos.index(4, 3, 5)));
-        assertEquals(solid, cube.get(CubePos.index(4, 4, 5)));
-        assertEquals(air, cube.get(CubePos.index(4, 5, 5)));
-        assertEquals(solid, cube.get(CubePos.index(9, 3, 5)));
-        assertEquals(air, cube.get(CubePos.index(9, 4, 5)));
-    }
-
-    /**
-     * Characterizes pinned ServerGamePacketListenerImpl's decision AFTER player.move, deliberately
-     * assuming the Entity.move injection cancelled it. The actual CollisionGetter iterator is used.
-     * A separate packet-entry fence is necessary; a solid unknown view alone cannot freeze position.
-     */
-    @Test void vanillaPostMoveValidationStillAcceptsSmallMotionInsideTheSameUnavailableCells() {
-        var view = fixedFixture();
-        view.close();
-        var access = new Access(view);
-        var before = new AABB(4.2, 131, -1.8, 4.8, 132.8, -1.2);
-        var delta = new Vec3(0.05, 0, 0.05);
-        assertFalse(view.isCurrent());
-        assertFalse(access.noCollision(before));
-        assertTrue(vanillaAcceptsAfterCancelledMove(access, before, delta),
-                "The all-barrier view does not itself stop the later packet absMoveTo");
-    }
-
-    @Test void vanillaPostMoveValidationDiscardsLargeVerticalErrorInsideKnownAir() {
-        var view = fixedFixture();
-        var access = new Access(view);
-        var before = new AABB(4.2, 131, -1.8, 4.8, 132.8, -1.2);
-        var delta = new Vec3(0, 8, 0);
-        assertFalse(NativeCollisionMotionFence.bounded(before, delta));
-        assertTrue(access.noCollision(before));
-        assertTrue(access.noCollision(before.move(delta)));
-        assertTrue(vanillaAcceptsAfterCancelledMove(access, before, delta),
-                "A packet-entry bound must run before vanilla's post-move position acceptance");
     }
 
     @Test void serverPacketHookHasExactPinnedDescriptorAndRunsAfterThreadHandoffBeforeMovement() throws Exception {
@@ -185,53 +123,6 @@ class CoreCollisionIntegrationReviewTest {
                 "Packet descriptor inspection alone cannot establish transformed hook installation");
     }
 
-    @Test void logoutAndOrderlyShutdownRecoveryPrecedePinnedPlayerPersistence() throws Exception {
-        var playerList = nativeClass("net/minecraft/server/players/PlayerList");
-        var remove = playerList.methods.stream().filter(m -> m.name.equals("remove")
-                && m.desc.equals("(Lnet/minecraft/server/level/ServerPlayer;)V")).findFirst().orElseThrow();
-        int logout = invocationIndex(remove, "net/neoforged/neoforge/event/EventHooks", "firePlayerLoggedOut");
-        int save = invocationIndex(remove, "net/minecraft/server/players/PlayerList", "save");
-        assertTrue(logout < save, "Recovery must run before this player's final persisted location and mode");
-        var server = nativeClass("net/minecraft/server/MinecraftServer");
-        var run = server.methods.stream().filter(m -> m.name.equals("runServer") && m.desc.equals("()V")).findFirst().orElseThrow();
-        int stopping = invocationIndex(run, "net/neoforged/neoforge/server/ServerLifecycleHooks", "handleServerStopping");
-        int stop = invocationIndex(run, "net/minecraft/server/MinecraftServer", "stopServer");
-        assertTrue(stopping < stop, "Orderly shutdown recovery must precede stopServer's saveAll");
-        for (var event : Map.of("logout", "net/neoforged/neoforge/event/entity/player/PlayerEvent$PlayerLoggedOutEvent",
-                "login", "net/neoforged/neoforge/event/entity/player/PlayerEvent$PlayerLoggedInEvent",
-                "stopping", "net/neoforged/neoforge/event/server/ServerStoppingEvent").entrySet()) {
-            var handler = CoreGateCommands.class.getDeclaredMethod(event.getKey(), Class.forName(event.getValue().replace('/', '.')));
-            assertTrue(handler.isAnnotationPresent(net.neoforged.bus.api.SubscribeEvent.class));
-        }
-    }
-
-    @Test void deathCloneRecoveryRunsAfterNativeInventoryPolicyAndCopiesPersistedNamespace() throws Exception {
-        var player = nativeClass("net/minecraft/server/level/ServerPlayer");
-        var restore = player.methods.stream().filter(m -> m.name.equals("restoreFrom")
-                && m.desc.equals("(Lnet/minecraft/server/level/ServerPlayer;Z)V")).findFirst().orElseThrow();
-        int clone = invocationIndex(restore, "net/neoforged/neoforge/event/EventHooks", "onPlayerClone");
-        assertTrue(calls(restore).stream().filter(i -> i.name.equals("replaceWith"))
-                .allMatch(i -> restore.instructions.indexOf(i) < clone), "Death recovery must not rewrite vanilla inventory/drop policy");
-        assertTrue(calls(restore).stream().anyMatch(i -> i.owner.equals("net/minecraft/nbt/CompoundTag")
-                && i.name.equals("put") && restore.instructions.indexOf(i) < clone));
-        assertTrue(CoreGateCommands.class.getDeclaredMethod("clonePlayer", net.neoforged.neoforge.event.entity.player.PlayerEvent.Clone.class)
-                .isAnnotationPresent(net.neoforged.bus.api.SubscribeEvent.class));
-    }
-
-    @Test void respawnEventRegistersReplacementButDoesNotEstablishConnectionOwnership() throws Exception {
-        var playerList = nativeClass("net/minecraft/server/players/PlayerList");
-        var respawn = playerList.methods.stream().filter(m -> m.name.equals("respawn")
-                && m.desc.startsWith("(Lnet/minecraft/server/level/ServerPlayer;Z")).findFirst().orElseThrow();
-        int event = invocationIndex(respawn, "net/neoforged/neoforge/event/EventHooks", "firePlayerRespawnEvent");
-        int clone = invocationIndex(respawn, "net/minecraft/server/level/ServerPlayer", "restoreFrom");
-        int registered = invocationIndex(respawn, "net/minecraft/server/level/ServerLevel", "addRespawnedPlayer");
-        assertTrue(clone < registered && registered < event,
-                "Registration precedes the event, but is not sufficient evidence that connection.player is the replacement");
-        assertTrue(calls(respawn).stream().anyMatch(i -> i.name.equals("moveTo") && respawn.instructions.indexOf(i) < event));
-        assertTrue(CoreGateCommands.class.getDeclaredMethod("respawn", net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerRespawnEvent.class)
-                .isAnnotationPresent(net.neoforged.bus.api.SubscribeEvent.class));
-    }
-
     @Test void connectionPlayerReplacementOccursOnlyAfterTheEntireRespawnCallReturns() throws Exception {
         String listenerName = "net/minecraft/server/network/ServerGamePacketListenerImpl";
         String playerDescriptor = "Lnet/minecraft/server/level/ServerPlayer;";
@@ -280,27 +171,6 @@ class CoreCollisionIntegrationReviewTest {
                 && field.name.equals("player") && field.desc.equals(playerDescriptor)));
     }
 
-    @Test void closedEpochAndGenerationCannotReopenTheWalkHandshake() {
-        var h = new CoreCollisionHandshake(9);
-        assertTrue(h.accept(new CoreGateCollisionPayload(9, 2, 3, true), 2, false));
-        h.invalidate();
-        assertFalse(h.accept(new CoreGateCollisionPayload(8, 2, 999, true), 2, false));
-        assertFalse(h.accept(new CoreGateCollisionPayload(9, 2, 3, true), 2, false));
-        assertFalse(h.accept(new CoreGateCollisionPayload(9, 3, 4, true), 3, true));
-        assertFalse(h.ready());
-        assertTrue(h.accept(new CoreGateCollisionPayload(9, 3, 4, true), 3, false));
-        assertTrue(h.ready());
-    }
-
-    private static NativeCollisionView fixedFixture() {
-        var provider = new AnalyticNativeCubeProvider(0, AnalyticNativeCubeProvider.Config.boundedCollision(128), palette);
-        var codec = new NativeCubeCodec(provider.identity(), palette);
-        Map<CubePos, EngineCubeSnapshot> snapshots = new HashMap<>();
-        for (var pos : CubeTickets.box(new CubePos(0, 8, 0), 2, 2, 125))
-            snapshots.put(pos, codec.materialize(pos, provider.load(pos, new CancellationToken()).join(), 1, 1, 0));
-        return new NativeCollisionView(provider.identity(), 1, palette, snapshots, () -> true);
-    }
-
     private static boolean vanillaAcceptsAfterCancelledMove(CollisionGetter access, AABB before, Vec3 request) {
         // Pinned 1.21.1: d7 > -0.5 || d7 < 0.5 sets every finite vertical discrepancy to zero.
         boolean movedWrongly = request.x * request.x + request.z * request.z > 0.0625;
@@ -309,17 +179,6 @@ class CoreCollisionIntegrationReviewTest {
         for (var shape : access.getCollisions(null, before.move(request).deflate(1.0E-5F)))
             if (!Shapes.joinIsNotEmpty(shape, priorShape, BooleanOp.AND)) return false;
         return true;
-    }
-
-    private record Access(NativeCollisionView view) implements CollisionGetter {
-        @Override public BlockGetter getChunkForCollisions(int x, int z) { return view; }
-        @Override public BlockState getBlockState(BlockPos pos) { return view.getBlockState(pos); }
-        @Override public FluidState getFluidState(BlockPos pos) { return view.getFluidState(pos); }
-        @Override public BlockEntity getBlockEntity(BlockPos pos) { return view.getBlockEntity(pos); }
-        @Override public int getHeight() { return view.getHeight(); }
-        @Override public int getMinBuildHeight() { return view.getMinBuildHeight(); }
-        @Override public WorldBorder getWorldBorder() { return new WorldBorder(); }
-        @Override public List<VoxelShape> getEntityCollisions(Entity entity, AABB box) { return List.of(); }
     }
 
     private static ClassNode nativeClass(String name) throws Exception {

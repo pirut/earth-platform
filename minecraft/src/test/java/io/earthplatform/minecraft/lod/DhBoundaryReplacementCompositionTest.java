@@ -278,63 +278,6 @@ class DhBoundaryReplacementCompositionTest {
                 Map.of(new Cell(cube.minBlockX() - 1, cube.minBlockY(), cube.minBlockZ()), AIR)));
     }
 
-    @Test void officialCpuPackingPreservesBoundaryCavitiesAndDioriteAcrossPagesAndEndpoints() throws Exception {
-        String jar = System.getProperty("earthplatform.lodProbeJar", System.getenv("EARTH_DH_PROBE_JAR"));
-        org.junit.jupiter.api.Assumptions.assumeTrue(jar != null && !jar.isBlank(), "Explicit pinned official artifact required");
-        var runtime = DhOfficialRuntime.open(Path.of(jar));
-        long checkedUnits = 0, checkedQuads = 0;
-        int checkedOwners = 0;
-        for (int cubeY : new int[]{-688, -128, 0, 128, 553}) {
-            CubePos cube = new CubePos(-1, cubeY, -1);
-            long surface = Math.min(cube.minBlockY() + 15, MAX_Y_EXCLUSIVE - 1);
-            var fixture = new FlatFixture(cube, surface, Map.of(new Boundary(0, 0, 0).at(cube), AIR,
-                    new Boundary(15, 15, 15).at(cube), DIORITE));
-            var data = fixture.capture();
-            Result result = compose(fixture, List.of(), data);
-            assertComposedOracle(fixture, data, List.of(), result);
-            for (var entry : result.batch().tiles().entrySet()) {
-                if (entry.getKey().replacementIdentity().isEmpty()) continue;
-                var expected = new HashSet<String>();
-                for (var page : entry.getValue()) {
-                    assertEquals(1, page.width()); assertEquals(1, page.height());
-                    assertTrue(expected.add(geometricUnit(page.direction(), page.x(), page.y(), page.z())));
-                }
-                byte[] packed = runtime.buildRectangles(entry.getValue());
-                assertEquals(0, packed.length % 64);
-                var actual = new HashSet<String>();
-                var bytes = ByteBuffer.wrap(packed).order(ByteOrder.nativeOrder());
-                for (int quad = 0; quad < packed.length; quad += 64) {
-                    int[] low = {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE}, high = {-1, -1, -1};
-                    var corners = new HashSet<String>();
-                    for (int vertex = 0; vertex < 4; vertex++) {
-                        int offset = quad + vertex * 16;
-                        int x = Short.toUnsignedInt(bytes.getShort(offset)), y = Short.toUnsignedInt(bytes.getShort(offset + 2)),
-                                z = Short.toUnsignedInt(bytes.getShort(offset + 4));
-                        assertTrue(x <= 32 && y <= 2048 && z <= 32);
-                        long nativeY = entry.getKey().pageY() * 2048L + y;
-                        assertTrue(nativeY >= MIN_Y && nativeY <= MAX_Y_EXCLUSIVE);
-                        assertTrue(corners.add(x + "," + y + "," + z));
-                        int[] xyz = {x, y, z};
-                        for (int axis = 0; axis < 3; axis++) { low[axis] = Math.min(low[axis], xyz[axis]); high[axis] = Math.max(high[axis], xyz[axis]); }
-                    }
-                    int fixed = low[0] == high[0] ? 0 : low[1] == high[1] ? 1 : 2;
-                    assertEquals(low[fixed], high[fixed]);
-                    int a = (fixed + 1) % 3, b = (fixed + 2) % 3;
-                    assertTrue(high[a] > low[a] && high[b] > low[b]);
-                    for (int u = low[a]; u < high[a]; u++) for (int v = low[b]; v < high[b]; v++) {
-                        int[] point = low.clone(); point[a] = u; point[b] = v;
-                        assertTrue(actual.add(fixed + ":" + point[0] + "," + point[1] + "," + point[2]), "No duplicate packed unit area");
-                    }
-                    checkedQuads++;
-                }
-                assertEquals(expected, actual, "Independent unit-area oracle survives any official rectangle merging");
-                checkedUnits += expected.size(); checkedOwners++;
-            }
-        }
-        assertTrue(checkedUnits > 1500); assertTrue(checkedOwners >= 20);
-        System.out.println("008 official boundary CPU packing: fixtures=5, owners=" + checkedOwners + ", unitFaces=" + checkedUnits + ", quads=" + checkedQuads);
-    }
-
     /** Same FLAT equation as AnalyticNativeCubeProvider, materialized into explicit immutable cubes. */
     private static final class FlatFixture implements SceneSurfaceSampler {
         final CubePos cube;

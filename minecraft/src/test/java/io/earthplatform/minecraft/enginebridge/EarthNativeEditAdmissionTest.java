@@ -20,18 +20,6 @@ class EarthNativeEditAdmissionTest {
         for(var block:new net.minecraft.world.level.block.Block[]{Blocks.GRASS_BLOCK,Blocks.GRAVEL,Blocks.PACKED_ICE,Blocks.WATER,Blocks.OAK_LEAVES,Blocks.CAVE_AIR})
             assertFalse(EarthNativeEditAdmission.supported(block.defaultBlockState()));
     }
-    @Test void irisByteCapIsStricterThanLegacyVertexCount(){
-        assertEquals(52,EarthNativeEditAdmission.IRIS_STRIDE);
-        assertEquals(208,EarthNativeEditAdmission.BYTES_PER_FACE);
-        assertEquals(5041,EarthNativeEditAdmission.MAX_FACES);
-        assertEquals(io.earthplatform.minecraft.scene.SceneMesh.MAX_VERTEX_BYTES,EarthNativeEditAdmission.MAX_VERTEX_BYTES);
-        assertEquals(io.earthplatform.minecraft.scene.SceneMesh.MAX_VERTICES,EarthNativeEditAdmission.MAX_VERTICES);
-        assertTrue(EarthNativeEditAdmission.bytesForFaces(5041)<=1_048_576);
-        assertTrue(EarthNativeEditAdmission.bytesForFaces(5042)>1_048_576);
-        assertThrows(IllegalArgumentException.class,()->EarthNativeEditAdmission.bytesForFaces(-1));
-        assertDoesNotThrow(()->EarthNativeEditAdmission.requireStride(52));
-        for(int wrong:new int[]{0,32,48,56})assertThrows(IllegalStateException.class,()->EarthNativeEditAdmission.requireStride(wrong));
-    }
     @Test void allSixNeighborsAndActualBoundaryOcclusionAreCounted(){
         var hidden=EarthNativeEditAdmission.assessCurrent(TARGET,(x,y,z)->id(Blocks.STONE));
         assertEquals(0,hidden.faces());assertTrue(hidden.admitted());

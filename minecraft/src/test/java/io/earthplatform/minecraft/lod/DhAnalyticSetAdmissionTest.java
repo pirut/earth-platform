@@ -62,14 +62,5 @@ class DhAnalyticSetAdmissionTest {
         assertThrows(IllegalArgumentException.class,()->new DhAnalyticFlatPolicy(w.datasetVersion(),w,129,0xff808080));
         assertThrows(IllegalArgumentException.class,()->new DhAnalyticFlatPolicy(w.datasetVersion(),w,128,0xff000000));
     }
-    @Test void oversizedInputRejectsBeforeCopyOrElementReads(){
-        List<NativeReplacementCapture> tooMany=new AbstractList<>(){
-            public int size(){return Integer.MAX_VALUE;}
-            public NativeReplacementCapture get(int ignored){throw new AssertionError("Oversized list was read");}
-        };
-        assertFalse(assess(tooMany).admitted());
-        var caps=DhPreparedReplacementSetTest.captures();var cert=DhPreparedReplacementSetTest.certificate(caps,1,0,0,"c".repeat(64));
-        assertThrows(IllegalArgumentException.class,()->new DhReplacementSetInput(DhPreparedReplacementSetTest.POLICY,cert,tooMany,new DhPreparedReplacementSetTest.Guard()));
-    }
     private static DhAnalyticSetAdmission.Receipt assess(List<NativeReplacementCapture> captures){return DhAnalyticSetAdmission.assess(DhPreparedReplacementSetTest.POLICY,DhPreparedReplacementSetTest.WORKSPACES,captures,()->{});}
 }

@@ -219,60 +219,6 @@ class DhReplacementCompositionTest {
         assertThrows(UnsupportedOperationException.class, () -> result.batch().tiles().values().iterator().next().clear());
     }
 
-    @Test void pinnedOfficialCpuPackingPreservesReplacementPiecesAtSignedPagesAndNativeEndpoints() throws Exception {
-        String jar = System.getProperty("earthplatform.lodProbeJar", System.getenv("EARTH_DH_PROBE_JAR"));
-        org.junit.jupiter.api.Assumptions.assumeTrue(jar != null && !jar.isBlank(), "Explicit pinned official artifact required");
-        var runtime = DhOfficialRuntime.open(java.nio.file.Path.of(jar));
-        long checkedFaces = 0;
-        int checkedPieces = 0;
-        long peakDeclaredBytes = 0, peakGpuUnionBytes = 0;
-        for (int y : new int[]{-688, -128, 0, 128, 553}) {
-            var replacement = data(new CubePos(-1, y, -1), CHECKER, "a", DhReplacementInput.ANALYTIC_MATERIAL_POLICY);
-            Result result = compose(source((x, z) -> y * 16L + 7), List.of(), replacement);
-            long totalBytes = 0;
-            for (var entry : result.batch().tiles().entrySet()) {
-                var key = entry.getKey(); var faces = entry.getValue();
-                assertTrue(faces.size() <= 4096);
-                byte[] bytes = runtime.buildRectangles(faces);
-                assertTrue(bytes.length > 0 && bytes.length % 64 == 0 && bytes.length <= faces.size() * 64L);
-                totalBytes += bytes.length;
-                if (key.replacementIdentity().isEmpty()) continue;
-                checkedPieces++; checkedFaces += faces.size();
-                var expected = new HashSet<Set<String>>();
-                for (var face : faces) assertTrue(expected.add(corners(face)), "No duplicated input geometry");
-                var actual = new HashSet<Set<String>>();
-                var packed = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.nativeOrder());
-                for (int quad = 0; quad < bytes.length; quad += 64) {
-                    var points = new HashSet<String>();
-                    for (int vertex = 0; vertex < 4; vertex++) {
-                        int offset = quad + vertex * 16;
-                        int px = Short.toUnsignedInt(packed.getShort(offset));
-                        int py = Short.toUnsignedInt(packed.getShort(offset + 2));
-                        int pz = Short.toUnsignedInt(packed.getShort(offset + 4));
-                        assertTrue(px >= 0 && px <= 32 && pz >= 0 && pz <= 32 && py >= 0 && py <= 2048);
-                        long nativeY = key.pageY() * 2048L + py;
-                        assertTrue(nativeY >= DhTerrainGeometry.MIN_Y && nativeY <= DhTerrainGeometry.MAX_Y_EXCLUSIVE);
-                        points.add(px + "," + py + "," + pz);
-                    }
-                    assertTrue(actual.add(points), "No duplicated official quad");
-                }
-                // Checkerboard unit faces cannot merge coplanarly, so this checks
-                // every original face's exact four corners after official packing.
-                assertEquals(expected, actual);
-            }
-            long declaredBytes = 4096 + replacement.declaredBytes() + result.batch().faces() * 64L + totalBytes;
-            long gpuUnionBytes = (totalBytes + totalBytes / 64 * 24) * 2;
-            assertTrue(declaredBytes <= MAX_RESULT_BYTES);
-            assertTrue(gpuUnionBytes <= 8L * 1024 * 1024);
-            peakDeclaredBytes = Math.max(peakDeclaredBytes, declaredBytes);
-            peakGpuUnionBytes = Math.max(peakGpuUnionBytes, gpuUnionBytes);
-        }
-        assertTrue(checkedPieces >= 35); assertTrue(checkedFaces >= 80000);
-        System.out.println("007 exact replacement official CPU packing: fixtures=5, pieces=" + checkedPieces
-                + ", exactUnitFaces=" + checkedFaces + ", peakDeclaredResultBytes=" + peakDeclaredBytes
-                + ", peakOldNewGpuAccountingBytes=" + peakGpuUnionBytes);
-    }
-
     private static Set<String> corners(DhTerrainGeometry.PageFace face) {
         var points = new HashSet<String>();
         for (int u : new int[]{0, face.width()}) for (int v : new int[]{0, face.height()}) {

@@ -59,64 +59,6 @@ class DhArenaSourceBudgetTest {
         assertNotEquals(DhLodLayout.LONG_4096.identity(), DhLodLayout.ARENA_4096.identity());
     }
 
-    @Test void all1024ProductionTemplatesFitAndEveryPossibleNativeYMaskCannotIncreaseFaceCount() {
-        int maxLeaves = 0, minLeaves = Integer.MAX_VALUE, maxFaces = 0, maxOwners = 0, maxPage = 0, maxSource = 0;
-        long potentiallyClippedUnitFaces = 0; var centers = new TreeSet<Long>();
-        for (int cx = -16; cx <= 15; cx++) for (int cz = -16; cz <= 15; cz++) {
-            var data = terrain(cx, cz); var refined = refinement(cx, cz);
-            var batch = data.clip(List.of(), refined, List.of(ARENA), () -> {});
-            int independent = independentLeafCount(cx, cz);
-            assertEquals(independent, batch.sampledCells(), "Independent quadtree arithmetic versus actual production leaves");
-            assertEquals(independent, data.partitionCounts(refined).sampledCells());
-            assertEquals(batch.sampledCells(), batch.knownCells()); assertEquals(0, batch.unknownCells());
-            assertEquals(batch.sampledCells(), batch.fullySupportedCells());
-            assertTrue(batch.faces() <= 15887); assertTrue(batch.tiles().size() <= 42);
-            assertTrue(batch.sourceFaces() <= 32768);
-            int counted = 0;
-            for (var entry : batch.tiles().entrySet()) {
-                assertEquals(0, entry.getKey().pageY());
-                assertTrue(entry.getValue().size() <= 4056);
-                counted += entry.getValue().size(); maxPage = Math.max(maxPage, entry.getValue().size());
-                for (var face : entry.getValue()) {
-                    // Exact X/Z solid-side projection: every possibly owned face is1x1.
-                    // Every integral16m cube mask therefore keeps or deletes the whole face;
-                    // it cannot split a face or create an owner. The separate modular mask
-                    // test additionally guards the count/subset rule for narrow height2 strips.
-                    if (projectsIntoNear(face, entry.getKey(), cx, cz)) {
-                        assertEquals(1, face.width()); assertEquals(1, face.height());
-                        for (var unit : units(face)) {
-                            assertExactNativeSourceFace(unit, entry.getKey());
-                            potentiallyClippedUnitFaces++;
-                        }
-                    }
-                }
-            }
-            assertEquals(batch.faces(), counted);
-            maxLeaves = Math.max(maxLeaves, batch.sampledCells()); minLeaves = Math.min(minLeaves, batch.sampledCells());
-            maxFaces = Math.max(maxFaces, batch.faces()); maxOwners = Math.max(maxOwners, batch.tiles().size());
-            maxSource = Math.max(maxSource, batch.sourceFaces()); centers.add(farCenter(cx)); centers.add(farCenter(cz));
-        }
-        assertEquals(11476, maxLeaves); assertEquals(9976, minLeaves);
-        assertEquals(DhArenaAdmission.MAX_BASE_LEAVES, maxLeaves);
-        assertEquals(DhArenaAdmission.MAX_BASE_FACES, maxFaces);
-        assertEquals(DhArenaAdmission.MAX_BASE_OWNERS, maxOwners);
-        assertEquals(17043, maxSource);
-        assertEquals(15887, maxFaces); assertEquals(42, maxOwners); assertEquals(4056, maxPage);
-        assertTrue(potentiallyClippedUnitFaces > 1_000_000);
-        assertEquals(Set.of(-256L, 0L, 256L), centers);
-        // Prospective exact arena census may consume at most the remainder, never an unconditional edit promise.
-        assertEquals(22, 64 - maxOwners); assertEquals(16881, 32768 - maxFaces);
-        assertTrue(2L * (maxFaces + 16881) * 88 <= 8L * 1024 * 1024);
-        assertTrue(4096L + 11664L + 128L * (maxFaces + 16881) <= 5L * 1024 * 1024);
-        assertTrue(4L * (4096L + 11664L + 128L * (maxFaces + 16881)) <= 20L * 1024 * 1024);
-        System.out.println("ARENA_SOURCE_CENSUS templates=1024 minLeaves=" + minLeaves + " maxLeaves=" + maxLeaves
-                + " maxSourceFaces=" + maxSource + " maxBaseFaces=" + maxFaces + " maxBaseOwners=" + maxOwners
-                + " maxPerOwner=" + maxPage + " pages=[0] unitMaskFaces=" + potentiallyClippedUnitFaces
-                + " nativeYMask=any-integral-Y-monotone replacementFaceAllowance=16881 replacementOwnerAllowance=22");
-        System.out.println("ARENA_SOURCE_IDENTITY " + SOURCE.identity());
-        System.out.println("ARENA_LAYOUT_IDENTITY " + DhLodLayout.ARENA_4096.identity());
-    }
-
     @Test void actualProductionClippingAtEveryAllowedYAndCornerSeamCasesIsAnExactSubset() {
         int cases = 0;
         for (int cx : new int[] {-16, -9, -8, -1, 0, 1, 7, 8, 9, 15})

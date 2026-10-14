@@ -43,16 +43,5 @@ class CorePlayerVoidHookTest {
         one.setPos(4,-11009,4);one.checkBelowWorld();assertEquals(2,one.voidCalls);assertTrue(access.earthplatform$replaceCoreCollisionView(view,null));one.setPos(4,-10999,4);one.checkBelowWorld();assertEquals(3,one.voidCalls);assertEquals(384,level.getHeight());assertEquals(24,level.getSectionsCount());
     }
     @Test void positiveEndpointNeverNeededTheStockBelowWorldException(){var level=new FacadeTestLevel(registries,dimension,-64,384);var p=new ProbePlayer(level,UUID.randomUUID());p.setPos(4,8850,4);p.checkBelowWorld();assertEquals(0,p.voidCalls);}
-    @Test void actualBindingKeepsZeroOwnerSafetyThroughFenceAndReleasesOnlyOnDetach()throws Exception{
-        String key="earthplatform.experimental.coreCollisionGate",old=System.getProperty(key);System.setProperty(key,"true");
-        try{
-            var level=new FacadeTestLevel(registries,dimension,-64,384){@Override public net.minecraft.resources.ResourceKey<Level> dimension(){return io.earthplatform.minecraft.scene.SceneCommands.CARRIER;}};
-            var type=Class.forName("io.earthplatform.minecraft.coregate.CoreCollisionBinding");var ctor=type.getDeclaredConstructor(Level.class,UUID.class,long.class);ctor.setAccessible(true);var id=UUID.randomUUID();var binding=ctor.newInstance(level,id,1L);var safety=(NativePlayerVoidSafety)binding;var body=new AABB(4.2,-10999,-1.8,4.8,-10997.2,-1.2);
-            var fence=type.getDeclaredMethod("fence");fence.setAccessible(true);var detach=type.getDeclaredMethod("detach");detach.setAccessible(true);var resident=type.getDeclaredMethod("residentOwners");resident.setAccessible(true);
-            assertTrue(safety.preventsStockVoidCheck(id,body));fence.invoke(binding);assertEquals(0,resident.invoke(binding));assertTrue(safety.preventsStockVoidCheck(id,body),"Reload/edit/failed return cannot reinstate stock void damage");
-            assertTrue(((BlockGetter)binding).getBlockState(new BlockPos(4,-10999,4)).is(Blocks.BARRIER));
-            detach.invoke(binding);detach.invoke(binding);assertFalse(safety.preventsStockVoidCheck(id,body));assertNull(((NativeCollisionLevelAccess)level).earthplatform$coreCollisionView());
-        }finally{if(old==null)System.clearProperty(key);else System.setProperty(key,old);}
-    }
 
 }

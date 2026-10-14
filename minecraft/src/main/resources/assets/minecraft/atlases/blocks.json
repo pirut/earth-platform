@@ -1,0 +1,8 @@
+{
+  "sources": [
+    {
+      "type": "single",
+      "resource": "earthplatform:block/far_white"
+    }
+  ]
+}

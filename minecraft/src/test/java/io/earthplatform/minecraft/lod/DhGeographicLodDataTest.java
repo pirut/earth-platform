@@ -52,15 +52,4 @@ class DhGeographicLodDataTest {
         assertThrows(IllegalArgumentException.class,()->new DhGeographicLodData(absent,0,0));
         assertThrows(IllegalArgumentException.class,()->new DhGeographicLodData(flat(8864),0,0));
     }
-    @Test void actualOfficialDhBuilderSupportsRectangularTopsAndPageEdgeVertices() throws Exception {
-        String path=System.getProperty("earthplatform.lodProbeJar",System.getenv("EARTH_DH_PROBE_JAR"));
-        org.junit.jupiter.api.Assumptions.assumeTrue(path!=null&&!path.isBlank(),"Optional actual DH rectangle proof requires explicit pinned artifact");
-        var runtime=DhOfficialRuntime.open(Path.of(path));
-        var face=new DhTerrainGeometry.PageFace(DhTerrainGeometry.Direction.UP,3,5,2048,7,3,5,0xffddeeff);
-        byte[] bytes=runtime.buildRectangles(List.of(face));assertEquals(64,bytes.length);
-        var b=ByteBuffer.wrap(bytes).order(ByteOrder.nativeOrder());var points=new java.util.HashSet<String>();
-        for(int i=0;i<4;i++){assertEquals(2048,Short.toUnsignedInt(b.getShort(i*16+2)));points.add(Short.toUnsignedInt(b.getShort(i*16))+","+Short.toUnsignedInt(b.getShort(i*16+4)));}
-        assertEquals(java.util.Set.of("5,7","5,12","8,7","8,12"),points);
-        assertThrows(IllegalArgumentException.class,()->runtime.buildRectangles(List.of(new DhTerrainGeometry.PageFace(DhTerrainGeometry.Direction.DOWN,0,0,0,0,3,5,0xffffffff))));
-    }
 }

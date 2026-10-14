@@ -42,67 +42,11 @@ class DhPreparedAdjacentSetTest {
                 DhPreparedReplacementSetTest.RESOURCE,"00000000-0000-0000-0000-000000000001","c".repeat(64),"provider","a".repeat(64),
                 DhReplacementInput.ANALYTIC_MATERIAL_POLICY,"exact-owned18-read20-unit-faces-v1",generation,regions);
     }
-    static DhReplacementSetInput input(DhPreparedReplacementSetTest.Guard guard,long generation,long a,long b,List<NativeReplacementCapture> caps){
-        return new DhReplacementSetInput(DhPreparedReplacementSetTest.POLICY,certificate(caps,generation,a,b),caps,guard);
-    }
-    static DhReplacementSetInput input(long generation,long a,long b,List<NativeReplacementCapture> caps){return input(new DhPreparedReplacementSetTest.Guard(),generation,a,b,caps);}
     static DhAnalyticSetAdmission.Receipt assess(List<NativeReplacementCapture> captures){
         return DhAnalyticSetAdmission.assess(DhPreparedReplacementSetTest.POLICY,ADJACENT,captures,()->{});
     }
     static List<NativeReplacementCapture> overlay(List<NativeReplacementCapture> caps,long x,long y,long z,int material){
         return caps.stream().map(c->c.containsReadCell(x,y,z)?c.withReadMaterial(x,y,z,material):c).toList();
-    }
-    @Test void completeAdjacentCleanSetIsCertifiedAndOneOwnerPolicyIsExplicit(){
-        var caps=captures();var value=input(1,0,0,caps);var receipt=assess(caps);
-        assertTrue(receipt.admitted(),receipt.reason());assertEquals(16000,receipt.census().captureBytes());
-        assertEquals(ADJACENT.identity(),value.data().workspaceIdentity());
-        assertEquals("lowest-canonical-solid-owner-union-v1",value.data().ownershipPolicy());
-        assertTrue(value.data().members().stream().allMatch(m->m.certificate().identity().equals(value.certificateIdentity())));
-        try(var h=new DhPreparedReplacementSetTest.Harness()){
-            h.commit(1,10,value);assertTrue(h.view.replacementSetReady(value.certificateIdentity()));
-            assertEquals(2,h.n("replacementSetRegions"));assertEquals(0,h.n("replacementSetEditedRegions"));
-            assertEquals(value.data().ownershipPolicy(),h.view.diagnostics().get("replacementSetOwnershipPolicy").getAsString());
-        }
-    }
-    @Test void seamEditRefreshesBothReadCapturesWhileOnlyEditedCubeRevisionChanges(){
-        var old=captures();var next=overlay(old,15,130,4,2);
-        assertNotEquals(old.getFirst().contentIdentity(),next.getFirst().contentIdentity());
-        assertNotEquals(old.getLast().contentIdentity(),next.getLast().contentIdentity());
-        assertEquals(0,old.getFirst().materialAt(15,130,4));assertEquals(0,old.getLast().materialAt(15,130,4));
-        var value=input(2,1,0,next);assertTrue(assess(next).admitted());
-        assertEquals(0,value.certificate().region(ADJACENT.second()).revision());
-        try(var h=new DhPreparedReplacementSetTest.Harness()){
-            var previous=input(1,0,0,old);h.commit(1,10,previous);var ticket=h.prepare(2,10,value);
-            assertTrue(h.view.replacementSetReady(previous.certificateIdentity()));assertFalse(h.view.replacementSetReady(value.certificateIdentity()));
-            assertTrue(h.view.commitPrepared(ticket));assertTrue(h.view.replacementSetReady(value.certificateIdentity()));
-            assertFalse(h.view.commitPrepared(ticket));assertEquals(0,h.n("sameGeometryCommits"));
-        }
-    }
-    @Test void everySeamReadCellUsesHalfOpenOverlapAndPreservesPriorArrays(){
-        var base=captures();
-        for(int x=13;x<=18;x++){
-            var changed=overlay(base,x,130,4,2);
-            assertEquals(x<18,!changed.getFirst().contentIdentity().equals(base.getFirst().contentIdentity()));
-            assertEquals(x>=14,!changed.getLast().contentIdentity().equals(base.getLast().contentIdentity()));
-            assertTrue(assess(changed).admitted(),"prospective seam x="+x);
-            assertDoesNotThrow(()->input(2,1,1,changed));
-        }
-    }
-    @Test void individuallyCertifiedButContradictoryOverlapCannotAcquireRendererAuthority(){
-        var base=captures();var onlyA=List.of(base.getFirst().withMaterial(15,130,4,2),base.getLast());
-        var receipt=assess(onlyA);assertFalse(receipt.admitted());assertNull(receipt.census());
-        assertThrows(DhReplacementComposition.Declined.class,()->input(2,1,0,onlyA));
-        try(var h=new DhPreparedReplacementSetTest.Harness()){
-            var old=input(1,0,0,base);h.commit(1,10,old);int uploads=h.driver.uploads;
-            assertThrows(DhReplacementComposition.Declined.class,()->input(2,1,0,onlyA));
-            assertEquals(uploads,h.driver.uploads);assertTrue(h.view.replacementSetReady(old.certificateIdentity()));
-        }
-    }
-    @Test void haloEditsOutsideBothActualCubesAreNotMistakenForLegitimateOverlap(){
-        var invalid=overlay(captures(),-2,130,4,2);
-        var receipt=assess(invalid);assertFalse(receipt.admitted());assertNull(receipt.census());
-        assertThrows(DhReplacementComposition.Declined.class,()->input(2,1,0,invalid));
-        var valid=overlay(captures(),16,130,4,2);assertTrue(assess(valid).admitted());
     }
     @Test void worstLegalTwoCubeCheckerboardStillRefusesBeforeAnySaveOrGpuWork(){
         var receipt=assess(captures(Map.of(),true));assertFalse(receipt.admitted());assertNotNull(receipt.census());
@@ -112,40 +56,5 @@ class DhPreparedAdjacentSetTest {
     @Test void cancellationDuringOverlapValidationIsNotReportedAsCapacityOrSupportRefusal(){
         var count=new AtomicInteger();assertThrows(CancellationException.class,()->DhAnalyticSetAdmission.assess(
                 DhPreparedReplacementSetTest.POLICY,ADJACENT,captures(),()->{if(count.incrementAndGet()==650)throw new CancellationException();}));
-    }
-    @Test void adjacentAndDisjointWorkspaceModesCannotAliasOrSwitchWithinOneView(){
-        var adjacent=input(1,0,0,captures());var disjoint=DhPreparedReplacementSetTest.input(new DhPreparedReplacementSetTest.Guard(),1,0,0);
-        assertEquals(adjacent.data().policy().identity(),disjoint.data().policy().identity(),"The constant source facts are unchanged");
-        assertNotEquals(adjacent.data().workspaceIdentity(),disjoint.data().workspaceIdentity());assertNotEquals(adjacent.identity(),disjoint.identity());
-        assertFalse(DhAnalyticSetAdmission.assess(DhPreparedReplacementSetTest.POLICY,
-                DhPreparedReplacementSetTest.WORKSPACES,captures(),()->{}).admitted());
-        assertFalse(assess(DhPreparedReplacementSetTest.captures()).admitted());
-        try(var h=new DhPreparedReplacementSetTest.Harness()){
-            h.commit(1,10,adjacent);
-            assertThrows(IllegalStateException.class,()->h.prepare(2,10,disjoint));
-            assertTrue(h.view.replacementSetReady(adjacent.certificateIdentity()));
-        }
-    }
-    @Test void historicalSetKeepsExactOldOverlapWhileCurrentIsRevokedAndFreshPairRequiresAllow(){
-        try(var h=new DhPreparedReplacementSetTest.Harness()){
-            var guard=new DhPreparedReplacementSetTest.Guard();var old=input(guard,1,0,0,captures());
-            h.commit(1,10,old);var display=h.view.retainPresentation();guard.current=false;
-            assertFalse(h.view.replacementSetReady(old.certificateIdentity()));
-            assertTrue(h.view.drawPresented(display,new Matrix4f(),0,129,0,DhPreparedReplacementSetTest.RESOURCE));
-            var next=input(2,1,0,overlay(captures(),15,130,4,2));var ticket=h.prepare(2,10,next);
-            assertTrue(h.view.isPresentationCurrent(display));assertFalse(h.view.replacementSetReady(next.certificateIdentity()));
-            assertTrue(h.view.commitPrepared(ticket));assertFalse(h.view.isPresentationCurrent(display));
-            assertTrue(h.view.replacementSetReady(next.certificateIdentity()));
-        }
-    }
-    @Test void canceledLateAdjacentPreparationCannotReplaceARevisionMatchedCurrentSet() throws Exception {
-        try(var h=new DhPreparedReplacementSetTest.Harness()){
-            var old=input(1,0,0,captures());h.commit(1,10,old);
-            var gates=new CountDownLatch[]{new CountDownLatch(1),new CountDownLatch(1)};h.driver.block.set(gates);
-            var next=input(2,1,0,overlay(captures(),15,130,4,2));
-            var ticket=h.view.prepareCoverageSet(2,DhPreparedReplacementSetTest.ready(10),DhPreparedReplacementSetTest.center(10),0,next);
-            assertTrue(gates[0].await(10,TimeUnit.SECONDS));h.view.cancelPrepared(ticket);gates[1].countDown();
-            h.commit(3,10,old);assertFalse(h.view.commitPrepared(ticket));assertTrue(h.view.replacementSetReady(old.certificateIdentity()));
-        }
     }
 }

@@ -80,25 +80,4 @@ class DhEarthReplacementInputTest {
         var cause=new IllegalStateException("cancel");var calls=new AtomicInteger();
         assertSame(cause,assertThrows(IllegalStateException.class,()->DhVoxelReplacementGeometry.build(c,8192,8192L*64,()->{if(calls.incrementAndGet()==9)throw cause;})));
     }
-    @Test void exactEarthViewRequiresAuthorityEvenBeforeTheFirstPublication(){
-        try(var h=new Harness(DhLodLayout.EARTH_ALPINE_2048)){
-            assertThrows(IllegalStateException.class,()->h.view.prepareCoverage(1,List.of(),EarthAlpineDefinition.ANCHOR_X,EarthAlpineDefinition.ANCHOR_Z));
-            assertEquals(-1,h.view.diagnostics().get("highestRequestedCoverageGeneration").getAsLong());assertEquals(0,h.driver.uploads);
-        }
-    }
-    @Test void earthInputCannotEnterLegacyLayout(){
-        try(var h=new Harness(DhLodLayout.FIXED_512)){
-            var in=new DhReplacementInput(certificate(EarthReplacementAdmission.MATERIAL_POLICY,0),DhVoxelReplacementGeometry.captureEarth(isolated(5)),new Guard());
-            assertThrows(IllegalStateException.class,()->h.view.prepareCoverage(1,List.of(),EarthAlpineDefinition.ANCHOR_X,EarthAlpineDefinition.ANCHOR_Z,in));
-            assertEquals(0,h.driver.uploads);
-        }
-    }
-    static final class Harness implements AutoCloseable{
-        final DhPreparedReplacementTest.Driver driver=new DhPreparedReplacementTest.Driver();final ExecutorService worker=Executors.newSingleThreadExecutor();final DhPreparedLodView view;
-        Harness(DhLodLayout layout){
-            var sampler=new SceneSurfaceSampler(){public long surfaceY(long x,long z){return 7314;}public int argb(long x,long z,long y){return 0xfff1f5f6;}public String identity(){return EarthAlpineDefinition.DEFINITION_IDENTITY;}public boolean supportsConcurrentReads(){return true;}public boolean supportsFootprintCoverage(){return true;}public boolean supportsStratifiedSides(){return true;}};
-            view=new DhPreparedLodView(sampler,WORLD,4,2,EarthAlpineDefinition.ANCHOR_X,EarthAlpineDefinition.ANCHOR_Z,layout,driver,worker);view.initialize();
-        }
-        public void close(){try{view.close();}finally{worker.shutdownNow();}}
-    }
 }

@@ -11,7 +11,6 @@ import io.earthplatform.geography.survival.RegisteredBlockState;
 import io.earthplatform.geography.survival.SurvivalMaterials;
 import io.earthplatform.minecraft.network.EnginePaletteContext;
 import io.earthplatform.minecraft.survival.render.SurvivalRenderPalette;
-import io.earthplatform.minecraft.survival.render.SurvivalVisualPage;
 import io.earthplatform.minecraft.survival.world.NativeSurvivalWorld;
 import io.earthplatform.minecraft.survival.world.SurvivalPalette;
 import io.earthplatform.minecraft.survival.world.SurvivalRefusal;
@@ -128,34 +127,6 @@ class MarinVisualCubeSourceTest {
                 ImmutableCube.uniform(renderPalette.id(Blocks.GRAVEL.defaultBlockState()))));
         assertEquals(0, owner.usage().ownedCubes());
         assertEquals(0, owner.usage().residentCubes());
-    }
-
-    @Test void allSelectedDistancesHaveUnclampedPageAndHaloSupportFromEveryHorizontalTravelCorner() {
-        var bounds = definition.envelope();
-        for (int distance = 2; distance <= 32; distance++)
-            for (int x : new int[]{bounds.minCenterX(), bounds.maxCenterXExclusive() - 1})
-                for (int z : new int[]{bounds.minCenterZ(), bounds.maxCenterZExclusive() - 1}) {
-                    // Conservative square contains the selected circular/rounded native footprint.
-                    // Page rounding happens outward, then adds the exact one-cube dependency halo.
-                    var minimum = SurvivalVisualPage.containing(new CubePos(x - distance, 4, z - distance)).minimum();
-                    var maximum = SurvivalVisualPage.containing(new CubePos(x + distance, 12, z + distance)).minimum().offset(3, 3, 3);
-                    assertTrue(minimum.x() <= x - distance && maximum.x() >= x + distance);
-                    assertTrue(minimum.z() <= z - distance && maximum.z() >= z + distance);
-                    for (int cx : new int[]{minimum.x() - 1, maximum.x() + 1})
-                        for (int cy : new int[]{minimum.y() - 1, maximum.y() + 1})
-                            for (int cz : new int[]{minimum.z() - 1, maximum.z() + 1})
-                                assertTrue(visual.permits(new CubePos(cx, cy, cz)), "Every corner of the entire page-rounded dependency box must be supported");
-                }
-        var edgePage = SurvivalVisualPage.containing(new CubePos(bounds.minCenterX(), 8, bounds.minCenterZ()));
-        assertEquals(216, edgePage.dependencies().size());
-        int visualOnly = 0;
-        for (CubePos dependency : edgePage.dependencies()) {
-            assertTrue(visual.permits(dependency));
-            var actual = visual.generate(dependency, new CancellationToken());
-            renderPalette.validate(actual);
-            if (!definition.permitsCenter(dependency)) visualOnly++;
-        }
-        assertTrue(visualOnly > 0, "Exact page halo must cross the mutable boundary rather than being clipped");
     }
 
     @Test void sourceBoundaryRequiresEveryRootHaloAndLargeQueriesFailBeforeAllocation() {

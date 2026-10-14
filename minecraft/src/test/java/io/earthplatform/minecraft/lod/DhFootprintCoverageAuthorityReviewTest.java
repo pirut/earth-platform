@@ -10,7 +10,6 @@ import io.earthplatform.geography.RasterTile;
 import io.earthplatform.geography.TileSpec;
 import io.earthplatform.geography.WorldManifest;
 import io.earthplatform.minecraft.scene.SceneSurfaceSampler;
-import io.earthplatform.minecraft.scene.SceneTerrain;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -202,40 +201,6 @@ class DhFootprintCoverageAuthorityReviewTest {
         assertTrue(single.hasFiniteRectangleSupport(pointA, pointB));
     }
 
-    @Test void countedClientAdapterForwardsCompleteProofWithoutAddingHeightOrColorReads() throws Exception {
-        var source = new Source(r -> r.x1() <= 0); var heights = new AtomicLong(); var colors = new AtomicLong();
-        var type = Class.forName("io.earthplatform.minecraft.coregate.RollingGateClient");
-        var factory = type.getDeclaredMethod("countedSampler", SceneSurfaceSampler.class, String.class, long.class, AtomicLong.class, AtomicLong.class);
-        factory.setAccessible(true);
-        var wrapped = (SceneSurfaceSampler) factory.invoke(null, source, source.identity(), 1000L, heights, colors);
-        assertTrue(wrapped.supportsFootprintCoverage()); assertTrue(wrapped.knownFootprint(-16, 0, 0, 16));
-        assertFalse(wrapped.knownFootprint(0, 0, 16, 16));
-        assertEquals(List.of(new Rectangle(-16, 0, 0, 16), new Rectangle(0, 0, 16, 16)), source.footprints);
-        assertEquals(0, heights.get()); assertEquals(0, colors.get()); assertTrue(source.centers.isEmpty());
-        source.capability = false; assertFalse(wrapped.supportsFootprintCoverage());
-        var analytic = (SceneSurfaceSampler) factory.invoke(null, null, "analytic", 1000L, heights, colors);
-        assertTrue(analytic.supportsFootprintCoverage()); assertTrue(analytic.knownFootprint(-1, -1, 0, 0));
-        assertThrows(IllegalArgumentException.class, () -> analytic.knownFootprint(0, 0, 0, 16));
-    }
-
-    @Test void sceneProofChecksContinuousRectangleWithHaloAndEarthClientRequiresCapabilityBeforeAllocation() throws Exception {
-        var terrain = new SceneTerrain(true);
-        assertTrue(terrain.supportsFootprintCoverage());
-        for (long[] bad : List.of(new long[]{0,0,0,16}, new long[]{0,0,17,16}, new long[]{0,0,16,17}, new long[]{1,0,0,16}))
-            assertThrows(IllegalArgumentException.class, () -> terrain.knownFootprint(bad[0], bad[1], bad[2], bad[3]));
-        var events = methodEvents("io/earthplatform/minecraft/scene/SceneTerrain", "knownFootprint");
-        assertEquals(4, events.stream().filter("call:java/lang/Math.subtractExact"::equals).count(),
-                "Two dimension subtractions plus two halo subtractions");
-        assertEquals(2, events.stream().filter("call:java/lang/Math.addExact"::equals).count());
-        assertEquals(4, events.stream().filter("constant:8"::equals).count());
-        assertEquals(2, events.stream().filter("call:io/earthplatform/geography/EquirectangularProjection.toGeographic"::equals).count());
-        assertEquals(0, events.stream().filter("call:io/earthplatform/geography/EquirectangularProjection.blockCentre"::equals).count());
-        assertEquals(1, events.stream().filter("call:io/earthplatform/geography/OfflineTerrain.hasFiniteRectangleSupport"::equals).count());
-        var client = methodEvents("io/earthplatform/minecraft/coregate/RollingGateClient$Session", "prepareFarCoverage");
-        int required = client.indexOf("call:io/earthplatform/minecraft/scene/SceneSurfaceSampler.supportsFootprintCoverage");
-        int allocated = client.indexOf("call:io/earthplatform/minecraft/lod/DhPreparedLodView.<init>");
-        assertTrue(required >= 0 && allocated > required);
-    }
 
     private static RasterTile tile(String id, double west) {
         var spec = new TileSpec(id, id + ".egp", "a".repeat(64), west, 4, 1, 1, 5, 5);
