@@ -9,7 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 class SurvivalInstalledModIdentityTest {
     @TempDir Path temporary;
-    private static Map<String,String> inventory(){return new HashMap<>(Map.of("minecraft","1.21.1","neoforge","21.1.256","earthplatform","0.1.0-alpha.39","distanthorizons","3.3.3","iris","1.8.14-beta.1+mc1.21.1","sodium","0.8.12-beta.1+mc1.21.1",
+    private static Map<String,String> inventory(){return new HashMap<>(Map.of("minecraft","1.21.1","neoforge","21.1.256","earthplatform","0.1.0-alpha.40","distanthorizons","3.3.3","iris","1.8.14-beta.1+mc1.21.1","sodium","0.8.12-beta.1+mc1.21.1",
             "fabric_api_base","0.4.42+d1308ded19","fabric_rendering_data_attachment_v1","0.3.48+73761d2e19",
             "fabric_block_view_api_v2","1.0.10+9afaaf8c19","fabric_renderer_api_v1","3.4.1+9125b6dc19"));}
     @Test void exactVersionInventoryRequiredWithoutSilentlyIgnoringAdditionalMods()throws Exception{
