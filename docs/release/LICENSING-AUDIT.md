@@ -42,7 +42,7 @@ Fixed in the docs in this pass:
 - THIRD_PARTY_NOTICES.md: replaced the older engine's heading and pinned-shader text with the current state; added the NeoForged MDK (MIT) and Gradle wrapper (Apache-2.0) build files; listed the provenance documents bundled with the test data.
 - This audit: Iris and Sodium ranges, the `FarIrisUniforms` rewrite, and the rows below.
 
-Needs a decision or a code change (sent to the coordinator, not changed here):
+Needs a decision or a code change (handed to the engine work, not changed here):
 
 1. **Distant Horizons version pin.** `neoforge.mods.toml` declares DH as optional with exactly `[3.3.3]`. NeoForge refuses to start the game when any other DH version is installed, but the install guide and FAQ tell players DH simply pauses in Earth worlds. Fix: change the range to accept any version, or mark DH `discouraged`, and update the test that pins the block. A related cleanup is retiring the older engine's DH backend (about 117 classes in the jar).
 2. **Test data in the release jar.** The Everest, Marin and Challenger Deep test areas (about 9 MB) are not read by Earth worlds but ship in the jar, together with third-party documents: ESA's WorldCover user manual and copies of AWS and ESA web pages. These carry no restrictive terms and are noted, but leaving them out of the release jar removes the question.
@@ -76,7 +76,7 @@ Needs a decision or a code change (sent to the coordinator, not changed here):
 ### REMA v2.0 (Antarctica, PR #24)
 - What: `RemaSource` reads REMA v2.0 mosaic tiles from the Polar Geospatial Center's `pgc-opendata-dems` bucket on the Registry of Open Data on AWS, only for Antarctic tiles a player visits, and caches them on disk. `RemaElevation` moves the heights from the WGS 84 ellipsoid to EGM96 and lays them over the composite. Off with `-Dearthplatform.earth.rema=false`. ArcticDEM is not used.
 - Terms: the registry entry gives the licence as CC BY 4.0 and points to [PGC's acknowledgement policy](https://www.pgc.umn.edu/guides/user-services/acknowledgement-policy/), checked 2026-10-13. That policy asks users to cite PGC and the dataset and to acknowledge NSF: "DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685." REMA is made from Maxar imagery, but PGC states an exception to the EOCL contract keeps REMA data publicly available, and the open-data release is what we use. OK.
-- Credit: the elevation thread's line plus the NSF acknowledgement, in the mods list, CREDITS.md and THIRD_PARTY_NOTICES.md. The Cryosphere 2019 paper is cited in CREDITS.md too.
+- Credit: the elevation work's line plus the NSF acknowledgement, in the mods list, CREDITS.md and THIRD_PARTY_NOTICES.md. The Cryosphere 2019 paper is cited in CREDITS.md too.
 - Bundled: `egm96-south.bin` (116,640 bytes), EGM96 geoid heights every half degree south of 50° S, sampled from NGA's EGM96 15' grid as PROJ distributes it. EGM96 is a U.S. government work in the public domain. Credited anyway.
 - Service: an AWS-sponsored open-data bucket meant for public access. No courtesy email needed.
 
@@ -126,7 +126,7 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
 - A few dozen points describing where a river runs are close to bare facts, so the legal risk is small, but a clean, credited source removes it. Clean sources, in order:
   1. OpenStreetMap waterway lines and water outlines: ODbL. A few dozen points is an insubstantial extract; credit "© OpenStreetMap contributors, ODbL" in CREDITS.md and the mods list. A large extract would make the derived data ODbL too, which is fine for data but must be stated.
   2. JRC Global Surface Water: free without restriction, but 30 m pixels may not show 60 m gorges.
-- Ask: each Course and Pool carries a one-line source comment (an OSM way id or "EOX s2cloudless 2016"). Asked the Grand Canyon thread 2026-10-13.
+- Ask: each Course and Pool carries a one-line source comment (an OSM way id or "EOX s2cloudless 2016"). Asked the Grand Canyon work 2026-10-13.
 
 ### HydroRIVERS (HydroSHEDS), not recommended
 - Terms: "freely available for scientific, educational and commercial use", but under the HydroSHEDS v1 License Agreement ([technical documentation, Appendix A](https://data.hydrosheds.org/file/technical-documentation/HydroSHEDS_TechDoc_v1_4.pdf)). That agreement lets us distribute the data only built into a derivative product, to end users bound by a written end-user licence "at least as protective" as WWF's, never as a stand-alone dataset. It also forbids reverse engineering, obliges us to protect the data against unauthorised copying, and asks us to indemnify WWF.
@@ -137,7 +137,7 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
 ## Shader pack
 
 - Photon v1.3b, © 2021-2025 Benjamin Stott (SixthSurge), [Photon Shaders License Agreement](https://github.com/sixthsurge/photon/blob/main/LICENSE). The mod reads the player's own copy at runtime (its Voxy code) and ships none of it. OK.
-- Decision (JR, 2026-10-13): Earth Platform must work with stock, unmodified Photon, and no modified pack is distributed. The Mac test copy (`photon_v1.3b_mac.zip`) was a derivative made for testing only; it stays out of every release, store page and download. The shader thread is making the mod itself handle the Mac's limits.
+- Decision (JR, 2026-10-13): Earth Platform must work with stock, unmodified Photon, and no modified pack is distributed. The Mac test copy (`photon_v1.3b_mac.zip`) was a derivative made for testing only; it stays out of every release, store page and download. The shader work made the mod itself handle the Mac's limits.
 - How Macs run stock Photon (PR #3, `PhotonCompat`): on a driver without compute shaders or with 16 texture units, the mod copies the player's own Photon into `<game dir>/earthplatform/photon-compat/`, applies a few edits (regex replacements, one pass moved, one new fragment pass), and Iris loads the copy. The installed zip is untouched and nothing is uploaded or shared.
 - Licence check (Photon Shaders License Agreement):
   - "Modify Photon Shaders for personal use": the adapted copy is made on the player's machine from their own download, for their own play, and never redistributed. OK.
