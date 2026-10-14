@@ -412,7 +412,11 @@ public final class CubicEvents {
             return spot;
         }, Util.ioPool()).whenComplete((spot, failure) -> source.getServer().execute(() -> {
             if (failure != null) {
-                source.sendFailure(Component.literal("Could not load terrain there: " + failure.getMessage()));
+                // The data's own words, without the exception's class names: most often a data server can't be reached.
+                Throwable cause = failure instanceof java.util.concurrent.CompletionException && failure.getCause() != null ? failure.getCause() : failure;
+                source.sendFailure(Component.literal(cause instanceof io.earthplatform.geography.MissingTerrainException
+                        ? "Could not load terrain there yet: " + cause.getMessage() + ". Try again in a minute."
+                        : "Could not load terrain there: " + cause));
                 if (!player.isRemoved()) io.earthplatform.minecraft.cubic.play.EarthMap.failed(player);
                 return;
             }

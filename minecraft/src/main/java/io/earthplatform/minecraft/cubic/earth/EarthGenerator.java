@@ -3118,6 +3118,13 @@ public final class EarthGenerator extends SurfaceGenerator {
     private void prepare(int x, int z, double most) {
         record Tile(int zoom, int x, int y) {}
         List<Runnable> loads = new ArrayList<>();
+        // Failures are told once for the whole fetch: with a data server down, each of hundreds of pieces fails.
+        java.util.concurrent.atomic.AtomicInteger failed = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<String> first = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.function.BiConsumer<String, RuntimeException> missed = (piece, failure) -> {
+            failed.incrementAndGet();
+            first.compareAndSet(null, piece + ": " + failure.getMessage());
+        };
         // Each level's zoom, out to about three quarters of the level's square, as far as level 6 (17.6 km of
         // blocks); the levels beyond load as they come. The water survey reads its own zoom 8.8 km around.
         Map<Integer, Double> zooms = new TreeMap<>();
@@ -3138,7 +3145,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                     Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
                     loads.add(() -> {
                         try { ground.tile(tile.zoom, tile.x, tile.y); }
-                        catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch elevation tile {}/{}/{}: {}", tile.zoom, tile.x, tile.y, failure.getMessage()); }
+                        catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
                     });
                 }
             }
@@ -3149,7 +3156,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
             loads.add(() -> {
                 try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
-                catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch climate: {}", failure.getMessage()); }
+                catch (RuntimeException failure) { missed.accept("climate", failure); }
             });
         }
         if (rivers != null) {
@@ -3157,7 +3164,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
             loads.add(() -> {
                 try { rivers.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
-                catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch rivers: {}", failure.getMessage()); }
+                catch (RuntimeException failure) { missed.accept("rivers", failure); }
             });
         }
         if (imagery != null) {
@@ -3168,7 +3175,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 int zoom = ImagerySource.MAX_ZOOM - k;
                 loads.add(() -> {
                     try { imagery.prefetch(grid, x - reach, z - reach, x + reach, z + reach, zoom); }
-                    catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch imagery: {}", failure.getMessage()); }
+                    catch (RuntimeException failure) { missed.accept("imagery", failure); }
                 });
             }
         }
@@ -3183,7 +3190,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
                 loads.add(() -> {
                     try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), level); }
-                    catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch land cover: {}", failure.getMessage()); }
+                    catch (RuntimeException failure) { missed.accept("land cover", failure); }
                 });
             }
             // And the overview joinsOpenSea() reads its sea cells at, which a landing by the coast asks first.
@@ -3191,11 +3198,13 @@ public final class EarthGenerator extends SurfaceGenerator {
             GeoPoint a = grid.geographic(x - 24000, z + 24000), b = grid.geographic(x + 24000, z - 24000);
             loads.add(() -> {
                 try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), seaOverview); }
-                catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not prefetch land cover: {}", failure.getMessage()); }
+                catch (RuntimeException failure) { missed.accept("land cover", failure); }
             });
         }
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             for (Runnable load : loads) pool.execute(load);
         }
+        if (failed.get() > 0)
+            EarthPlatformMod.LOGGER.warn("Could not prefetch {} of {} pieces of Earth data; generation asks for them again (first: {})", failed.get(), loads.size(), first.get());
     }
 }

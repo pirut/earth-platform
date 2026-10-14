@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.play;
 
+import io.earthplatform.geography.globe.HostBackoff;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubicSettings;
@@ -83,7 +84,8 @@ public final class EarthStatus {
 
     static boolean offlineMode() { return Boolean.getBoolean("earthplatform.earth.offline"); }
 
-    boolean unreachable() { return unreachable; }
+    /** Whether the elevation server failed a check, or any data host is down, as when only the climate's is. */
+    boolean unreachable() { return unreachable || HostBackoff.anyDown(); }
 
     /** Asks the elevation server for its smallest tile, off the server thread. */
     private static CompletableFuture<Boolean> reach() {

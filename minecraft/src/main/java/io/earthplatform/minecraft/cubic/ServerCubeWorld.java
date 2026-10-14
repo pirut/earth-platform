@@ -125,7 +125,15 @@ public final class ServerCubeWorld extends CubeWorld {
     public CubeGenerator generator() { return generator; }
     public FarServer far() { return far; }
 
-    @Override protected int baselineTop(int x, int z) { return generator.skyTopY(x, z); }
+    /**
+     * The generator's ground, which the server thread asks for (sending tops, lighting, spawning)
+     * beside cubes not yet made: where its data is missing, as with a data server down, that is
+     * unknown for now rather than a crash.
+     */
+    @Override protected int baselineTop(int x, int z) {
+        try { return generator.skyTopY(x, z); }
+        catch (io.earthplatform.geography.MissingTerrainException missing) { return UNKNOWN_TOP; }
+    }
 
     @Override protected void topChanged(int x, int z, int oldTop, int top) {
         changedColumns.add(CubeKey.column(x >> 4, z >> 4));
