@@ -47,9 +47,7 @@ Earth Platform can use Sentinel-2 cloudless satellite imagery by EOX to match ba
 
 The JVM argument `-Dearthplatform.earth.imagery=true` (or `=false`) also works and overrides the setting. Imagery adds downloads from `tiles.maps.eox.at`.
 
-## Distant Horizons
-
-You don't need Distant Horizons: Earth Platform draws its own far terrain. Any version of it can stay installed for your other worlds. While you're in an Earth world, Earth Platform pauses it, with a one-time note in chat, and it works as usual everywhere else. If a version of Distant Horizons can't be paused that way, the note says so; then turn off its rendering in its own settings while you're in the Earth world.
+## Other mods
 
 For other mods, see [Which other mods work?](FAQ.md#which-other-mods-work) in the FAQ.
 

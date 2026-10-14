@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="io.earthplatform.minecraft.survival.persistence.NativeOrdinarySaveAuthorityTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:49.225Z" hostname="4d821b23054b" time="0.004">
-  <properties/>
-  <testcase name="foreignConsumerCannotUseReceiptAndScopeIsReleasedOnFailure()" classname="io.earthplatform.minecraft.survival.persistence.NativeOrdinarySaveAuthorityTest" time="0.003"/>
-  <testcase name="caughtNestedScopeFromBindingGetterStillPoisonsOuter()" classname="io.earthplatform.minecraft.survival.persistence.NativeOrdinarySaveAuthorityTest" time="0.001"/>
-  <testcase name="failedAuthorityIsConsumedOnceAndCannotBeRetried()" classname="io.earthplatform.minecraft.survival.persistence.NativeOrdinarySaveAuthorityTest" time="0.0"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

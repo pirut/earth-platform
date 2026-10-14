@@ -45,7 +45,8 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - `/earth visit`, `/earth goto`, `/earth places`, `/earth where` and `/earth home`.
 - The jet stream: glide with an elytra above Y 9,200 and the wind carries you at over 1,000 blocks a second, fast enough to cross a continent in under an hour.
 - A "Preparing your Earth" screen on first arrival, and a quiet note while data downloads or when it can't be reached.
-- Offline play in places you have visited, with a size limit for downloaded data.
+- A creative travel map: press N (or `/earth map`), click anywhere on the globe, and the camera flies out to the globe and back down at the new place.
+- Offline play in places you have visited. Downloaded data is capped at 8 GB by default, dropping the least recently used files first.
 - Settings in Mods → Earth Platform → Config.
 
 ### Servers
@@ -54,7 +55,6 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 ### Other mods
 - Xaero's Minimap, Xaero's World Map and JourneyMap map the Earth world, including ground above Y 2047.
 - Create contraptions (bearings, pistons and the rest) assemble in the Earth world.
-- Any version of Distant Horizons can be installed alongside. It's paused in the Earth world, with a one-time note in chat, so it doesn't hide the far terrain. The older engine's own Distant Horizons backend is gone.
 - Create Aeronautics ships assemble, fly and save in the Earth world, with air pressure from the real atmosphere. The jet stream carries ships east too, the altitude sensor reads from sea level to 10 km, and ships shade mobs at any height.
 - AE2 spatial storage captures and places Earth blocks, and AE2 meteorites generate in the Earth world.
 - Create's mechanical arm, pulley, scaffolding and elevators, Waystones, Mekanism (Digital Miner, multiblocks and pipes), Immersive Engineering's multiblocks and the Twilight Forest portal work in the Earth world.
