@@ -308,7 +308,7 @@ final class FloatCogs implements AutoCloseable {
         if (missing != null && Files.exists(missing)) return Header.MISSING;
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                Header header = parse(Files.readAllBytes(cached));
+                Header header = parse(DiskCache.read(cached));
                 files.diskHits.incrementAndGet();
                 return header;
             } catch (IOException | RuntimeException corrupt) {
@@ -339,7 +339,7 @@ final class FloatCogs implements AutoCloseable {
         Path cached = cached(name, "/" + grid.overview + "/" + index + ".lzw");
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                float[] decoded = decode(Files.readAllBytes(cached), grid.header.block, grid.header.bigEndian, grid.header.predictor);
+                float[] decoded = decode(DiskCache.read(cached), grid.header.block, grid.header.bigEndian, grid.header.predictor);
                 files.diskHits.incrementAndGet();
                 return decoded;
             } catch (IOException corrupt) {

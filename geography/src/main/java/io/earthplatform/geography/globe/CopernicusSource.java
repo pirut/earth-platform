@@ -210,7 +210,7 @@ public final class CopernicusSource implements AutoCloseable {
         if (missing != null && Files.exists(missing)) return Header.MISSING;
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                Header header = parse(Files.readAllBytes(cached));
+                Header header = parse(DiskCache.read(cached));
                 files.diskHits.incrementAndGet();
                 return header;
             } catch (IOException | RuntimeException corrupt) {
@@ -241,7 +241,7 @@ public final class CopernicusSource implements AutoCloseable {
         int width = Math.min(level.tileWidth, level.width - column * level.tileWidth), height = Math.min(level.tileHeight, level.height - row * level.tileHeight);
         Path cached = cacheRoot == null ? null : cacheRoot.resolve(name + "/" + overview + "/" + index + ".z");
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
-            byte[] raw = Files.readAllBytes(cached);
+            byte[] raw = DiskCache.read(cached);
             try {
                 Block decoded = new Block(width, height, decode(raw, header, level, width, height));
                 files.diskHits.incrementAndGet();

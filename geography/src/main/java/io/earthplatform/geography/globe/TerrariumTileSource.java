@@ -392,7 +392,7 @@ public final class TerrariumTileSource implements AutoCloseable {
         Path cached = cacheRoot == null ? null : cacheRoot.resolve(zoom + "/" + x + "/" + y + ".png");
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                float[] values = decode(Files.readAllBytes(cached));
+                float[] values = decode(DiskCache.read(cached));
                 diskHits.incrementAndGet();
                 return values;
             } catch (IOException corrupt) {
@@ -404,6 +404,7 @@ public final class TerrariumTileSource implements AutoCloseable {
         byte[] bytes = download(zoom, x, y);
         float[] values = decode(bytes);
         if (cached != null) {
+            DiskCache.wrote(bytes.length);
             Files.createDirectories(cached.getParent());
             Path temp = Files.createTempFile(cached.getParent(), "tile", ".part");
             try {

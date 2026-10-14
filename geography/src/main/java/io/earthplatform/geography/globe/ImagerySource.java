@@ -162,7 +162,7 @@ public final class ImagerySource implements AutoCloseable {
         Path cached = cacheRoot == null ? null : cacheRoot.resolve(name);
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                int[] pixels = decode(Files.readAllBytes(cached));
+                int[] pixels = decode(DiskCache.read(cached));
                 files.diskHits.incrementAndGet();
                 return pixels;
             } catch (IOException corrupt) {

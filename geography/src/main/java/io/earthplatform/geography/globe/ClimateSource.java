@@ -264,7 +264,7 @@ public final class ClimateSource implements AutoCloseable {
         Path cached = cacheRoot == null ? null : cacheRoot.resolve(layer.stem() + "/" + row + ".z");
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                short[] decoded = decode(Files.readAllBytes(cached), header);
+                short[] decoded = decode(DiskCache.read(cached), header);
                 files.diskHits.incrementAndGet();
                 return decoded;
             } catch (IOException corrupt) {
@@ -286,7 +286,7 @@ public final class ClimateSource implements AutoCloseable {
         Path cached = cacheRoot == null ? null : cacheRoot.resolve("dem/" + row + "/" + chunk + ".f");
         byte[] raw = null;
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
-            raw = Files.readAllBytes(cached);
+            raw = DiskCache.read(cached);
             if (raw.length == size * 4) files.diskHits.incrementAndGet();
             else { Files.deleteIfExists(cached); raw = null; }
         }
@@ -363,7 +363,7 @@ public final class ClimateSource implements AutoCloseable {
         Path cached = cacheRoot == null ? null : cacheRoot.resolve(layer.stem() + ".header");
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                Header header = parse(Files.readAllBytes(cached));
+                Header header = parse(DiskCache.read(cached));
                 files.diskHits.incrementAndGet();
                 return header;
             } catch (IOException | RuntimeException corrupt) {

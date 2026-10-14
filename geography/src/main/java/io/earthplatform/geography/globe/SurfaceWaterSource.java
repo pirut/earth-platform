@@ -149,7 +149,7 @@ public final class SurfaceWaterSource implements AutoCloseable {
         if (missing != null && Files.exists(missing)) return Index.MISSING;
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                Index index = load(Files.readAllBytes(cached));
+                Index index = load(DiskCache.read(cached));
                 files.diskHits.incrementAndGet();
                 return index;
             } catch (IOException | RuntimeException corrupt) {
@@ -249,7 +249,7 @@ public final class SurfaceWaterSource implements AutoCloseable {
         String name = name(square / 64, square % 64);
         Path cached = cacheRoot == null ? null : cacheRoot.resolve(name.replace(".tif", "") + "/" + index + ".lzw");
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
-            byte[] raw = Files.readAllBytes(cached);
+            byte[] raw = DiskCache.read(cached);
             try {
                 byte[] decoded = decode(raw, header.compression);
                 files.diskHits.incrementAndGet();
