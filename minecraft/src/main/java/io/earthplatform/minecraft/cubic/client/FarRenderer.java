@@ -2,7 +2,6 @@ package io.earthplatform.minecraft.cubic.client;
 
 import com.mojang.blaze3d.shaders.Uniform;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.VertexBuffer;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.minecraft.EarthPlatformMod;
@@ -128,6 +127,21 @@ public final class FarRenderer {
     private long frameStart = System.nanoTime(), frameNanos = 16_000_000L;
     private boolean closed;
 
+    /**
+     * The last mesh version handed out, for every column alike. A column's versions once started
+     * at 1 again whenever it was made anew (sent again before its first mesh was up, or evicted and
+     * sent again), so a mesh still in flight for the column it replaced could match the new one and
+     * be put up with the old column's slot, which had been freed and could be given to another
+     * column: its faces were then drawn at that column's place and scale, stretched or squeezed.
+     */
+    private static int lastVersion;
+
+    /** A mesh version no column has had; always positive, as failed meshes report theirs negated. */
+    private static int nextVersion() {
+        if (++lastVersion <= 0) lastVersion = 1;
+        return lastVersion;
+    }
+
     private static final class Column {
         final long key;
         final int level, x0, z0, bottom;
@@ -144,9 +158,9 @@ public final class FarRenderer {
         /** Its mask changed while a finer level drew over it, so its remesh waits unless it is drawn. */
         boolean maskStale;
         @Nullable FarGpu.Allocation faces;
-        @Nullable VertexBuffer water;
+        @Nullable CubeBuffer water;
         /** Water walls by side (north, south, west, east), drawn where that side's column is not. */
-        @Nullable VertexBuffer[] waterWalls = new VertexBuffer[4];
+        @Nullable CubeBuffer[] waterWalls = new CubeBuffer[4];
         /** Face and water bytes uploaded for this column, for the debug screen. */
         long bytes;
         double distance;
@@ -180,7 +194,7 @@ public final class FarRenderer {
         int baseY() { return bottom * Far.width(level); }
 
         boolean hasWaterWalls() {
-            for (VertexBuffer wall : waterWalls) if (wall != null) return true;
+            for (CubeBuffer wall : waterWalls) if (wall != null) return true;
             return false;
         }
 
@@ -197,7 +211,7 @@ public final class FarRenderer {
             bytes = old.bytes;
             meshed = true;
             // Meshes of the old column still in flight no longer match.
-            version = old.version + 1;
+            version = nextVersion();
             // The old faces use the old column's slot, or the one it kept from the column before it.
             oldSlot = old.oldSlot;
             if (old.bottom == bottom) slot = old.slot;
@@ -574,7 +588,7 @@ public final class FarRenderer {
         var level = world.client();
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = level.getShade(direction, true);
-        FarMesher.Job job = new FarMesher.Job(column.key, ++column.version, column.level, column.slot, column.x0, column.z0, column.bottom,
+        FarMesher.Job job = new FarMesher.Job(column.key, column.version = nextVersion(), column.level, column.slot, column.x0, column.z0, column.bottom,
                 column.sections, column.drops, sides, column.drawnCubes, column.level <= TEXTURED_LEVELS, looks, faces,
                 ShaderBlocks.ids(), shade, white());
         meshing++;
@@ -626,16 +640,14 @@ public final class FarRenderer {
     }
 
     /** Puts a built water mesh into a buffer, making or freeing the buffer as needed. */
-    @Nullable private static VertexBuffer upload(@Nullable VertexBuffer buffer, @Nullable FarMesher.Part part) {
+    @Nullable private static CubeBuffer upload(@Nullable CubeBuffer buffer, @Nullable FarMesher.Part part) {
         if (part == null) {
             if (buffer != null) buffer.close();
             return null;
         }
-        if (buffer == null) buffer = new VertexBuffer(VertexBuffer.Usage.STATIC);
-        buffer.bind();
+        if (buffer == null) buffer = new CubeBuffer();
         buffer.upload(part.mesh());
         part.memory().close();
-        VertexBuffer.unbind();
         return buffer;
     }
 
@@ -729,10 +741,9 @@ public final class FarRenderer {
             for (Column column : visible) {
                 if (column.water == null) continue;
                 FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
-                column.water.bind();
                 column.water.draw();
             }
-            VertexBuffer.unbind();
+            CubeBuffer.unbind();
             FarLod.endDeepen();
         }
         shader.clear();
@@ -808,14 +819,12 @@ public final class FarRenderer {
                     view.upload();
                 }
                 if (pass == 0) {
-                    column.water.bind();
                     column.water.draw();
                     continue;
                 }
                 for (int side = 0; side < 4; side++) {
-                    VertexBuffer wall = column.waterWalls[side];
+                    CubeBuffer wall = column.waterWalls[side];
                     if (wall == null || drawnKeys.contains(column.neighbour(side))) continue;
-                    wall.bind();
                     wall.draw();
                 }
             }
@@ -827,19 +836,17 @@ public final class FarRenderer {
                 if (column.water == null && !column.hasWaterWalls()) continue;
                 FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 if (column.water != null) {
-                    column.water.bind();
                     column.water.draw();
                 }
                 for (int side = 0; side < 4; side++) {
-                    VertexBuffer wall = column.waterWalls[side];
+                    CubeBuffer wall = column.waterWalls[side];
                     if (wall == null || drawnKeys.contains(column.neighbour(side))) continue;
-                    wall.bind();
                     wall.draw();
                 }
             }
         });
         shader.clear();
-        VertexBuffer.unbind();
+        CubeBuffer.unbind();
         type.clearRenderState();
     }
 

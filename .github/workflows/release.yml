@@ -1,10 +1,13 @@
-# Builds the mod jar and publishes it as a GitHub release when a build tag is pushed.
-# Tag a commit on main as combined-NN (for example combined-34) and push the tag, or run it by hand
-# from the Actions tab with a tag name, which releases the chosen branch's head under that tag.
+# Builds the mod jar and publishes it as a GitHub release.
+# Every push to main releases the newest build: the highest docs/release/notes/combined-NN.md names
+# the tag, and the run stops early when that release already exists (so docs-only merges do nothing).
+# A pushed combined-NN tag, or a run by hand from the Actions tab with a tag name, still works too.
 name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'combined-*'
   workflow_dispatch:
@@ -19,24 +22,43 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Pick the tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then tag="$INPUT_TAG"
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then tag="$GITHUB_REF_NAME"
+          else
+            tag=$(ls docs/release/notes | sed -n 's/^\(combined-[0-9][0-9]*\)\.md$/\1/p' | sort -t- -k2 -n | tail -1)
+            if [ -z "$tag" ]; then echo "No release notes on main; nothing to release."; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              echo "$tag is already released; nothing to do."; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+          fi
+          echo "Releasing $tag"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+
       - uses: actions/setup-java@v4
+        if: steps.tag.outputs.skip != 'true'
         with:
           distribution: temurin
           java-version: '21'
 
       # The repository ignores gradle-wrapper.jar, so use a pinned Gradle instead of ./gradlew.
       - uses: gradle/actions/setup-gradle@v4
+        if: steps.tag.outputs.skip != 'true'
         with:
           gradle-version: '9.2.1'
 
       # The build compiles against Iris and Sodium and checks the stock Photon pack, all supplied
       # from outside and verified by SHA-256 (verifyOfficialShaderInputs). None of them is bundled.
       - name: Fetch the external build inputs
+        if: steps.tag.outputs.skip != 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/inputs" && cd "$RUNNER_TEMP/inputs"
           curl -fsSLo iris.jar 'https://cdn.modrinth.com/data/YL57xq9U/versions/KduFYu4t/iris-neoforge-1.8.14-beta.1%2Bmc1.21.1.jar'
@@ -54,12 +76,14 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Build and test
+        if: steps.tag.outputs.skip != 'true'
         working-directory: minecraft
         env:
           LC_ALL: C.UTF-8
         run: gradle --no-daemon --console=plain jar test
 
       - name: Collect the release files
+        if: steps.tag.outputs.skip != 'true'
         run: |
           mkdir dist
           cp minecraft/build/libs/earthplatform-0.1.0-engine-prototype.jar "dist/earthplatform-$TAG.jar"
@@ -70,6 +94,7 @@ jobs:
           { echo; echo "Built from $(git rev-parse --short HEAD)."; echo; echo '```'; cat "dist/earthplatform-$TAG.jar.sha256"; echo '```'; } >> release-notes.md
 
       - uses: softprops/action-gh-release@v2
+        if: steps.tag.outputs.skip != 'true'
         with:
           tag_name: ${{ env.TAG }}
           target_commitish: ${{ github.sha }}
