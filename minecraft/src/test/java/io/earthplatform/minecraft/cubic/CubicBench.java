@@ -5,6 +5,7 @@ import io.earthplatform.geography.globe.BareEarth;
 import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
+import io.earthplatform.geography.globe.Drainage;
 import io.earthplatform.geography.globe.RemaElevation;
 import io.earthplatform.geography.globe.RemaSource;
 import io.earthplatform.geography.globe.RiverMap;
@@ -52,7 +53,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  * optional {@code EARTH_BENCH_THREADS} (default 2, as the server's cube workers on four cores),
  * {@code EARTH_BENCH_FAR} (far columns timed per level, default 150) and {@code EARTH_BENCH_PLACE}
  * (a place name prefix), {@code EARTH_BENCH_AT} ({@code name,latitude,longitude} for a place of one's own) and
- * {@code EARTH_BENCH_BARE=1} (towns on bare-earth ground). The cache dir has the game's {@code earthplatform/cache} layout; the first
+ * {@code EARTH_BENCH_BARE=1} (towns on bare-earth ground) and {@code EARTH_BENCH_STREAMS=0} (no streams from the elevation). The cache dir has the game's {@code earthplatform/cache} layout; the first
  * run downloads what it needs. Results go to standard output.
  */
 class CubicBench {
@@ -62,6 +63,7 @@ class CubicBench {
             new Place("Yosemite Valley", 37.7240, -119.6365),
             new Place("Lake Tahoe", 38.9520, -120.1080),
             new Place("Amazon", -3.4653, -62.2159),
+            new Place("Amazon tributaries", -3.3, -60.6),
             new Place("Tokyo", 35.6812, 139.7671),
             new Place("Mato Grosso", -11.8243, -55.5029));
 
@@ -98,10 +100,14 @@ class CubicBench {
                         new UsgsElevation(UsgsElevation.AWS_3DEP, cache.resolve(UsgsElevation.DATASET_ID), true, CubicSettings.blocksKept(), 6, Duration.ofSeconds(30), UsgsElevation.Reading.valueOf(System.getenv().getOrDefault("EARTH_BENCH_3DEP", "GRADED"))),
                         new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache.resolve(RemaSource.DATASET_ID), true, CubicSettings.blocksKept(), 6, Duration.ofSeconds(30)))));
         source[0] = tiles;
-        RiverMap rivers = new RiverMap(new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache.resolve(SurfaceWaterSource.DATASET_ID), true,
-                96, 4, Duration.ofSeconds(30)), 256);
         WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, 8, Duration.ofSeconds(30));
         ClimateSource climate = new ClimateSource(ClimateSource.CHELSA, cache.resolve(ClimateSource.DATASET_ID), true, 320, 8, Duration.ofSeconds(30));
+        SurfaceWaterSource water = new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache.resolve(SurfaceWaterSource.DATASET_ID), true,
+                96, 4, Duration.ofSeconds(30));
+        // EARTH_BENCH_STREAMS=0 leaves out the streams traced from the elevation's valleys, as worlds made before them.
+        RiverMap rivers = "0".equals(System.getenv("EARTH_BENCH_STREAMS")) ? new RiverMap(water, 256)
+                : new RiverMap(water, new Drainage(new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve(TerrariumTileSource.DATASET_ID), true, 64, 16, Duration.ofSeconds(20)),
+                        new ClimateSource(ClimateSource.CHELSA, cache.resolve(ClimateSource.DATASET_ID), true, 32, 8, Duration.ofSeconds(30))::precipitation, 24), 256);
         BareEarth bareEarth = bare ? new BareEarth(tiles, cover, bareCache ? cache.resolve(BareEarth.ID) : null) : null;
         MessageDigest all = MessageDigest.getInstance("SHA-256");
         List<Place> places = PLACES;
