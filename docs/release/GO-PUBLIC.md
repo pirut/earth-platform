@@ -41,16 +41,16 @@ The newest build is always on the [Releases page](https://github.com/pirut/earth
 
 ### Versioning
 
-- **Scheme:** `0.1.0-alpha.N`, where **N is the build number**, so build 37 is `0.1.0-alpha.37`. Players and testers then use one number, and the GitHub release reads "Earth Platform 0.1.0-alpha.37 (build 37)".
+- **Scheme:** `0.1.0-alpha.N`, where **N is the build number**, so build 38 is `0.1.0-alpha.38`. Players and testers then use one number, and the GitHub release reads "Earth Platform 0.1.0-alpha.38 (build 38)".
 - **Channel:** Alpha on Modrinth and CurseForge until the known issues in [CHANGELOG.md](../../CHANGELOG.md) are fixed; then `0.1.0-beta.N`, and `0.1.0` for the first stable release.
 - **Later:** `0.2.0` for the next large feature set; a new Minecraft version keeps the mod version and adds the game version on the listing.
 
 ### How it is set
 
-JR chose this scheme on 2026-10-14. `mod_version` in `minecraft/gradle.properties` is `0.1.0-alpha.37`, for build 37.
+JR chose this scheme on 2026-10-14. `mod_version` in `minecraft/gradle.properties` is `0.1.0-alpha.38`, for build 38.
 
 - **Each new build** raises `mod_version` to that build's number in the same change that adds `docs/release/notes/combined-NN.md`. The release workflow stops with an error if the two don't match, so a release is never labelled with the wrong version.
-- The jar, the GitHub release title ("Earth Platform 0.1.0-alpha.37 (build 37)") and the Mods screen all take the version from that one line.
+- The jar, the GitHub release title ("Earth Platform 0.1.0-alpha.38 (build 38)") and the Mods screen all take the version from that one line.
 
 ## 5. Publish on Modrinth (JR)
 
