@@ -7,6 +7,7 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -52,8 +53,8 @@ final class FarGpu {
     private final int vao;
     private final int arenaQuads;
     private final List<Arena> arenas = new ArrayList<>();
-    private final TextureBuffer columns = new TextureBuffer(GL30C.GL_RGBA32I, 4096);
-    private final TextureBuffer looks = new TextureBuffer(GL30C.GL_RGBA32UI, 8192);
+    private final TextureBuffer columns = new TextureBuffer(GL30C.GL_RGBA32I, 4096, true);
+    private final TextureBuffer looks = new TextureBuffer(GL30C.GL_RGBA32UI, 8192, true);
     private final it.unimi.dsi.fastutil.ints.IntArrayList freeSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
     private int nextSlot, looksUploaded;
     private final String version;
@@ -382,14 +383,23 @@ final class FarGpu {
         }
     }
 
-    /** A GL buffer seen by shaders as a buffer texture of 16-byte texels, grown by copying on the GPU. */
+    /**
+     * A GL buffer seen by shaders as a buffer texture of 16-byte texels, with a copy of its contents
+     * kept here: it grows by uploading that copy into a bigger buffer. Copying on the GPU with
+     * glCopyBufferSubData did nothing on Apple's OpenGL ("gldCopyBufferSubData: NEEDS
+     * IMPLEMENTATION" in the log), so once the column table outgrew its first size every far column
+     * read zeros or junk for its place and scale and drew as stretched, slanted sheets.
+     */
     private static final class TextureBuffer {
         final int format;
         int buffer, texture, capacity;
+        /** What the buffer holds, for one that grows; null for a fixed-size one (the face arenas). */
+        @Nullable private int[] contents;
 
-        TextureBuffer(int format, int capacity) {
+        TextureBuffer(int format, int capacity, boolean grows) {
             this.format = format;
             this.capacity = capacity;
+            if (grows) contents = new int[capacity * 4];
             buffer = GL15C.glGenBuffers();
             GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, buffer);
             GL15C.glBufferData(GL31C.GL_COPY_WRITE_BUFFER, capacity * 16L, GL15C.GL_DYNAMIC_DRAW);
@@ -409,14 +419,19 @@ final class FarGpu {
 
         void ensure(int texels) {
             if (texels <= capacity) return;
+            if (contents == null) throw new IllegalStateException("A fixed-size far buffer cannot grow");
             int grown = Math.max(texels, capacity * 2);
+            contents = Arrays.copyOf(contents, grown * 4);
             int bigger = GL15C.glGenBuffers();
-            GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, bigger);
-            GL15C.glBufferData(GL31C.GL_COPY_WRITE_BUFFER, grown * 16L, GL15C.GL_DYNAMIC_DRAW);
-            GL15C.glBindBuffer(GL31C.GL_COPY_READ_BUFFER, buffer);
-            GL31C.glCopyBufferSubData(GL31C.GL_COPY_READ_BUFFER, GL31C.GL_COPY_WRITE_BUFFER, 0, 0, capacity * 16L);
-            GL15C.glBindBuffer(GL31C.GL_COPY_READ_BUFFER, 0);
-            GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, 0);
+            IntBuffer ints = MemoryUtil.memAllocInt(contents.length);
+            try {
+                ints.put(contents).flip();
+                GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, bigger);
+                GL15C.glBufferData(GL31C.GL_COPY_WRITE_BUFFER, ints, GL15C.GL_DYNAMIC_DRAW);
+                GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, 0);
+            } finally {
+                MemoryUtil.memFree(ints);
+            }
             GL15C.glDeleteBuffers(buffer);
             buffer = bigger;
             capacity = grown;
@@ -428,6 +443,7 @@ final class FarGpu {
             IntBuffer ints = MemoryUtil.memAllocInt(data.length);
             try {
                 ints.put(data).flip();
+                if (contents != null) System.arraycopy(data, 0, contents, texel * 4, data.length);
                 GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, buffer);
                 GL15C.glBufferSubData(GL31C.GL_COPY_WRITE_BUFFER, texel * 16L, ints);
                 GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, 0);
@@ -450,7 +466,7 @@ final class FarGpu {
         int draws;
 
         Arena(int quads) {
-            buffer = new TextureBuffer(GL30C.GL_RGBA32UI, quads);
+            buffer = new TextureBuffer(GL30C.GL_RGBA32UI, quads, false);
             free.put(0, quads);
         }
 
