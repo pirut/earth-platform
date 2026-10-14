@@ -1,3 +1,0 @@
-README.md
-minecraft/src/main/java/io/earthplatform/minecraft/coregate/RollingDepthComposition.java
-minecraft/src/test/java/io/earthplatform/minecraft/coregate/RollingFramebufferDepthQueryReviewTest.java

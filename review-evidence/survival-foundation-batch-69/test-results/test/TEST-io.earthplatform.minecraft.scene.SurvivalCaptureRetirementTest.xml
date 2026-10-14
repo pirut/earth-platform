@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="io.earthplatform.minecraft.scene.SurvivalCaptureRetirementTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:45.275Z" hostname="4d821b23054b" time="0.013">
-  <properties/>
-  <testcase name="retirementDuringLiveReadIsNotAccepted()" classname="io.earthplatform.minecraft.scene.SurvivalCaptureRetirementTest" time="0.0"/>
-  <testcase name="actualEpochRevocationInvalidatesRetainedCaptureWithoutCheckingBundle()" classname="io.earthplatform.minecraft.scene.SurvivalCaptureRetirementTest" time="0.012"/>
-  <testcase name="refusalOrGuardFailureStopsLiveReadsAndCannotRevive()" classname="io.earthplatform.minecraft.scene.SurvivalCaptureRetirementTest" time="0.0"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

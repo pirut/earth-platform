@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="io.earthplatform.minecraft.survival.persistence.NativeSessionKinematicSelectorsTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-12T06:35:49.265Z" hostname="4d821b23054b" time="0.022">
-  <properties/>
-  <testcase name="allSixteenPinnedOverloadsAreExplicitlyRequired()" classname="io.earthplatform.minecraft.survival.persistence.NativeSessionKinematicSelectorsTest" time="0.016"/>
-  <testcase name="keepaliveInvokerTargetsTheExactNativeDeclaringClass()" classname="io.earthplatform.minecraft.survival.persistence.NativeSessionKinematicSelectorsTest" time="0.004"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

@@ -32,7 +32,7 @@ New Earth worlds need the Earth world type when they are created. Worlds made wi
 Only the first time you visit a place. The mod downloads that area's elevation, land cover and climate and keeps them on your computer, so later visits are instant and work offline. A note at the top of the screen tells you when the data servers can't be reached; new ground fills in once the connection is back.
 
 **How much disk space does it use?**
-It depends how much of the planet you explore. Downloaded data lives in `earthplatform/cache` inside your game folder. Set a size limit in Mods → Earth Platform → Config (or `config/earthplatform-common.toml`); the oldest files are removed when the game starts. Deleting the folder is safe: it downloads again when needed.
+It depends how much of the planet you explore. Downloaded data lives in `earthplatform/cache` inside your game folder. It is limited to 8 GB by default: the files you used least recently are removed when the game starts and as the cache grows. Change the limit in Mods → Earth Platform → Config (or `cacheLimitGb` in `config/earthplatform-common.toml`). Deleting the folder is safe: it downloads again when needed.
 
 **Stuck on "Preparing your Earth"?**
 The starting place has not finished downloading. Check your connection; the screen keeps retrying and enters the world as soon as the ground has arrived. Behind a firewall, allow `s3.amazonaws.com`, `esa-worldcover.s3.eu-central-1.amazonaws.com` and `os.zhdk.cloud.switch.ch` (plus `tiles.maps.eox.at` if you turned satellite imagery on).
@@ -62,9 +62,6 @@ No. Use the official Photon zip at its defaults. Earth Platform adapts it for Ap
 **My log says "Failed to parse an ResourceLocation in item.properties".**
 Harmless; it comes from Photon itself.
 
-**Should I use Distant Horizons?**
-There's no need. Earth Platform has its own far terrain. Any version of Distant Horizons can stay installed: Earth Platform pauses it while you're in an Earth world (a note in chat says so), and it works as usual in other worlds. If your version can't be paused, the note tells you to turn its rendering off in its settings while you're in the Earth world.
-
 ## Other mods
 
 **Which other mods work?**
@@ -84,7 +81,6 @@ That was a bug in early test builds and is fixed. Update to the latest version.
 - **Iris and Sodium** must be Iris 1.8.14 or later 1.8, and Sodium 0.8.12 or later 0.8 (see the [install guide](INSTALL.md#shaders-optional)).
 - **First visits are slow:** a place nobody has visited loads slowly the first time while its elevation is cleaned up. Later visits are quick, and work offline.
 - **On a Mac**, Photon's Colored Lights, Colored Shadows and Cloud Shadows are unavailable.
-- **Distant Horizons** (any version) is paused in the Earth world, which draws its own far terrain.
 - **Accuracy:** heights come from a surface model, so dense forests sit a little high, and some waterfalls may not fall where they should. Tell us about any place that looks wrong, with `/earth where`.
 
 ## Servers

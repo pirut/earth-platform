@@ -1,9 +1,0 @@
-{
-  "utc": "2026-10-12T06:35:07.161297+00:00",
-  "patchSha256": "b6d7fc57b6a8d46a709c1d1b936d45d9b8128944dd3df34003316a87cd16b23b",
-  "manifestSha256": "f79485da1d40ab90ace251454e886b711cc7562b546d1ff0fcd32e98d5fa1ec2",
-  "paths": 21,
-  "allBeforeAndAfterExact": true,
-  "reviewReceiptSha256": "7cf0ccd15718828c195b9ccbab7580d24c3c65372bfeebb73d2e1074305b0a35",
-  "authoritiesOpened": false
-}

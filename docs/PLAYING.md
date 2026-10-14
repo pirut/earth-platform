@@ -17,6 +17,10 @@
 | `/earth where` | Your latitude, longitude and real height |
 | `/earth home` | Back to the world's starting point |
 
+### The travel map
+
+In creative mode, press **N** (or run `/earth map`) to open a globe centred on you. Click where you want to go and press **Travel here**: the camera climbs out to the globe, swings across the planet and comes back down at the new place while its terrain loads. The key can be changed under Controls → Earth Platform.
+
 ### The jet stream
 
 For survival travel, climb high and glide. With an elytra, the wind above about Y 9,200 carries you along your heading at over 1,000 blocks a second, a little faster eastward and a little slower westward, so a continent takes under an hour. Fireworks pointed steeply up climb fast (about 30 take you from the ground into the wind); in the wind they add nothing, and your elytra doesn't wear. Tip your nose down to leave the wind; you slow over a few kilometres before landing. The terrain below stays drawn as far terrain the whole way.
@@ -39,7 +43,7 @@ Mods → Earth Platform → Config, or the files in `config/`.
 | `defaultHome` | common | Yosemite Valley | Where new worlds start when nobody picks: a place id from `/earth places`, or `latitude,longitude` |
 | `satelliteImagery` | common | off | Ground colours from EOX satellite imagery for new worlds (also a toggle on the Customize screen) |
 | `offline` | common | off | Never download; only places already cached generate. Restart to apply |
-| `cacheLimitGb` | common | 8 | Size limit for downloaded data; the least recently used files go first, when the game starts |
+| `cacheLimitGb` | common | 8 | Size limit for downloaded data in GB (0 for no limit); the least recently used files go first, when the game starts and as the cache grows |
 | `anyoneCanTravel` | common | off | Let every player use `/earth goto` on servers |
 
 Command-line `-Dearthplatform.far.detail`, `-Dearthplatform.far.textured`, `-Dearthplatform.earth.offline` and `-Dearthplatform.earth.imagery` still win over the files.
