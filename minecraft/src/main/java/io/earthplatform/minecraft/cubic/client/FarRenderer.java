@@ -423,7 +423,7 @@ public final class FarRenderer {
         int x = Far.x(key), z = Far.z(key);
         if (!Far.refined(level, x, z, bx, bz, finest)) return order;
         int rings = Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level)));
-        if (rings >= Far.HOLE - 1) return order;
+        if (rings >= Far.hole() - 1) return order;
         return level <= STAND_IN_LEVELS && !childrenReady(level, x, z, bx, bz) ? order : order + (1L << 32);
     }
 
@@ -437,7 +437,8 @@ public final class FarRenderer {
      */
     static int finest(double height, double blocksPerSecond, int current) {
         int finest = Far.MIN_LEVEL;
-        while (finest < Far.MAX_LEVEL && Far.HOLE * Far.width(finest) * (finest < current ? 0.8 : 1.0) <= height) finest++;
+        int hole = Far.hole();
+        while (finest < Far.MAX_LEVEL && hole * Far.width(finest) * (finest < current ? 0.8 : 1.0) <= height) finest++;
         double slack = current > finest ? 0.5 : 1.0;
         if (blocksPerSecond >= JET_BLOCKS_PER_SECOND * slack) finest = Math.max(finest, JET_LEVEL);
         else if (blocksPerSecond >= FAST_BLOCKS_PER_SECOND * slack) finest = Math.max(finest, 3);

@@ -2,6 +2,8 @@ package io.earthplatform.minecraft.cubic.play;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
+import io.earthplatform.minecraft.cubic.far.Far;
+import net.minecraft.network.chat.Component;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -10,6 +12,7 @@ import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.common.ModConfigSpec;
+import net.neoforged.neoforge.common.TranslatableEnum;
 
 /**
  * The player-facing settings, in config/earthplatform-client.toml and earthplatform-common.toml
@@ -21,6 +24,7 @@ public final class EarthConfig {
     // Client --------------------------------------------------------------------------------------
     public static final ModConfigSpec CLIENT_SPEC;
     public static final ModConfigSpec.IntValue FAR_DETAIL;
+    public static final ModConfigSpec.EnumValue<Sharpness> FAR_SHARPNESS;
     public static final ModConfigSpec.IntValue FAR_TEXTURED_LEVELS;
     public static final ModConfigSpec.BooleanValue SHOW_DOWNLOADS;
     public static final ModConfigSpec.BooleanValue PRESELECT_EARTH;
@@ -37,8 +41,12 @@ public final class EarthConfig {
     static {
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
         FAR_DETAIL = client.comment("How much detail far terrain keeps before coarser levels take over (4 to 24).",
-                        "Higher looks sharper and reaches further, but costs memory and video memory. Default 11.")
+                        "Higher looks sharper and reaches further, but costs memory and video memory. Default 11.",
+                        "The sharpness setting scales this while playing; this one sets how far the far terrain reaches.")
                 .translation(key("farDetail")).gameRestart().defineInRange("detail", 11, 4, 24);
+        FAR_SHARPNESS = client.comment("How sharp far terrain looks: how close coarser levels take over. Changes at once, without a restart.",
+                        "Sharper keeps finer voxels further out but takes longer to fill in and uses more memory; Fast fills in quickest. Default Balanced.")
+                .translation(key("farSharpness")).defineEnum("sharpness", Sharpness.BALANCED);
         FAR_TEXTURED_LEVELS = client.comment("How many far levels are drawn with block textures; further ones use flat colours. Default 2.")
                 .translation(key("farTexturedLevels")).gameRestart().defineInRange("texturedLevels", 2, 0, 6);
         SHOW_DOWNLOADS = client.comment("Show a small note while Earth data downloads, and when it can't be reached.")
@@ -73,6 +81,24 @@ public final class EarthConfig {
 
     private EarthConfig() {}
 
+    /** Far terrain sharpness choices, as scales of the start-up detail (see {@link Far#sharpness}). */
+    public enum Sharpness implements TranslatableEnum {
+        FAST(0.7), BALANCED(1.0), SHARP(1.3), SHARPEST(1.6);
+
+        final double scale;
+
+        Sharpness(double scale) { this.scale = scale; }
+
+        @Override public Component getTranslatedName() { return Component.translatable(key("farSharpness." + name().toLowerCase(java.util.Locale.ROOT))); }
+    }
+
+    /** Sets the far terrain's sharpness from a screen in game: saved to the file and in effect at once. */
+    public static void setSharpness(Sharpness sharpness) {
+        FAR_SHARPNESS.set(sharpness);
+        CLIENT_SPEC.save();
+        Far.sharpness(sharpness.scale);
+    }
+
     private static String key(String name) { return EarthPlatformMod.MOD_ID + ".configuration." + name; }
 
     /** Settings for a home written as a place id or "latitude,longitude", or null when it is neither. */
@@ -93,6 +119,7 @@ public final class EarthConfig {
         if (config.getSpec() == CLIENT_SPEC) {
             property("earthplatform.far.detail", Integer.toString(FAR_DETAIL.get()));
             property("earthplatform.far.textured", Integer.toString(FAR_TEXTURED_LEVELS.get()));
+            Far.sharpness(FAR_SHARPNESS.get().scale);
         } else if (config.getSpec() == COMMON_SPEC) {
             property("earthplatform.earth.offline", Boolean.toString(OFFLINE.get()));
             property("earthplatform.earth.imagery", Boolean.toString(SATELLITE_IMAGERY.get()));

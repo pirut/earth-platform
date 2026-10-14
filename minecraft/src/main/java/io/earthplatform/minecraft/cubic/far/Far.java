@@ -23,16 +23,33 @@ import net.minecraft.world.level.block.state.BlockState;
  */
 public final class Far {
     public static final int MIN_LEVEL = 1, MAX_LEVEL = 8, SIZE = 16;
-    /** Most detail a client may ask for, in {@link #HOLE} columns. */
+    /** Most detail a client may ask for, in {@link #hole} columns. */
     public static final int MAX_HOLE = 24;
+    /**
+     * The detail set at start-up, which fixes how far the coarsest level reaches. Set with
+     * {@code -Dearthplatform.far.detail} (4 to 24, default 11).
+     */
+    public static final int DETAIL = Math.clamp(Integer.getInteger("earthplatform.far.detail", 11), 4, MAX_HOLE);
+    /** Half-width of the coarsest level's square. */
+    public static final int OUTER = 2 * DETAIL + 1;
     /**
      * Half-width, in columns, of the middle of each level that the next finer level takes over:
      * how many voxels each level keeps before coarser ones take over, so how many pixels a voxel
-     * covers on screen. Set with {@code -Dearthplatform.far.detail} (4 to 24, default 11).
+     * covers on screen. Starts at {@link #DETAIL}; the sharpness setting changes it while playing
+     * (see {@link #sharpness}), which leaves the reach as it is.
      */
-    public static final int HOLE = Math.clamp(Integer.getInteger("earthplatform.far.detail", 11), 4, MAX_HOLE);
-    /** Half-width of the coarsest level's square. */
-    public static final int OUTER = 2 * HOLE + 1;
+    private static volatile int hole = DETAIL;
+
+    public static int hole() { return hole; }
+
+    /**
+     * Scales the detail by {@code scale}: below 1 coarser levels take over closer, for speed, above
+     * 1 every finer level keeps more columns, so the land looks sharper further out. The coarsest
+     * level keeps at least one ring of its own, and the server's slack covers every value.
+     */
+    public static void sharpness(double scale) {
+        hole = Math.clamp(Math.round(DETAIL * scale), 4, Math.min(OUTER - 1, MAX_HOLE));
+    }
     /** How far a request may stray from the player, in columns of its level, before the server ignores it; covers every detail setting. */
     public static final int SLACK = 2 * MAX_HOLE + 3;
     /** Drops are kept in 1/256ths of a block. */
@@ -90,6 +107,7 @@ public final class Far {
 
     /** The same down to level {@code finest} only, as for a player too high or fast for the finer ones to matter or keep up. */
     public static void around(int bx, int bz, int finest, LongConsumer out) {
+        int hole = Far.hole;
         for (int level = MAX_LEVEL; level >= finest; level--) {
             int minX, minZ, maxX, maxZ;
             if (level == MAX_LEVEL) {
@@ -97,7 +115,7 @@ public final class Far {
                 minX = px - OUTER; maxX = px + OUTER; minZ = pz - OUTER; maxZ = pz + OUTER;
             } else {
                 int px = 2 * column(bx, level + 1), pz = 2 * column(bz, level + 1);
-                minX = px - 2 * HOLE; maxX = px + 2 * HOLE + 1; minZ = pz - 2 * HOLE; maxZ = pz + 2 * HOLE + 1;
+                minX = px - 2 * hole; maxX = px + 2 * hole + 1; minZ = pz - 2 * hole; maxZ = pz + 2 * hole + 1;
             }
             for (int z = minZ; z <= maxZ; z++) for (int x = minX; x <= maxX; x++) out.accept(key(level, x, z));
         }
@@ -108,7 +126,8 @@ public final class Far {
 
     /** The same when level {@code finest} is the finest one drawn. */
     public static boolean refined(int level, int x, int z, int bx, int bz, int finest) {
-        return level > finest && Math.abs(x - column(bx, level)) <= HOLE && Math.abs(z - column(bz, level)) <= HOLE;
+        int hole = Far.hole;
+        return level > finest && Math.abs(x - column(bx, level)) <= hole && Math.abs(z - column(bz, level)) <= hole;
     }
 
     /** True when a column is close enough to a position to be worth making for it. */
