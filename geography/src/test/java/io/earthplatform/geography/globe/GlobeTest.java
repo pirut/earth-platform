@@ -28,6 +28,7 @@ public final class GlobeTest {
         seams();
         repair();
         despike();
+        strayZeros();
         bareEarth();
         clearings();
         islandBesideTown();
@@ -575,6 +576,39 @@ public final class GlobeTest {
         near(before[30 * 256 + 250], tile[30 * 256 + 250], 0, "a steady slope is kept");
         near(0, tile[50 * 256 + 5], 0, "open sea stays zero");
         near(before[10 * 256 + 100], tile[10 * 256 + 100], 0, "ordinary ground is untouched");
+    }
+
+    /** Zeros that are no open sea, as lines across a shallow bank and squares of an island's ground, take the ground's height. */
+    private static void strayZeros() {
+        // Open sea (exact zeros) west of x 40; east of it a bank a few centimetres either side of 0 m and an island.
+        float[] tile = new float[256 * 256];
+        for (int j = 0; j < 256; j++) for (int i = 40; i < 256; i++) tile[j * 256 + i] = (i + j) % 2 == 0 ? 0.04f : -0.03f;
+        for (int j = 150; j < 220; j++) for (int i = 150; i < 220; i++) tile[j * 256 + i] = 3 + (i + j) % 4;
+        // A line two pixels wide across the bank, joining the open sea; an eight-pixel square of 0 m on the island;
+        // and a wide bay of open sea reaching into the bank.
+        for (int i = 40; i < 140; i++) { tile[60 * 256 + i] = 0; tile[61 * 256 + i] = 0; }
+        for (int j = 180; j < 188; j++) for (int i = 180; i < 188; i++) tile[j * 256 + i] = 0;
+        for (int j = 100; j < 130; j++) for (int i = 40; i < 100; i++) tile[j * 256 + i] = 0;
+        // Thin zeros in a tile at zoom 10 are left: the bathymetry has no coarser zoom to fill from.
+        check(TerrariumTileSource.strayZeros(tile, 10, 0, 0, null) == tile, "zoom 10 left as it is");
+        float[] out = TerrariumTileSource.strayZeros(tile, 15, 0, 0, null);
+        check(out != tile && tile[60 * 256 + 90] == 0, "the tile itself is not changed");
+        for (int i = 42; i < 140; i += 7) check(out[60 * 256 + i] != 0 && Math.abs(out[60 * 256 + i]) < 0.05, "line across the bank at " + i + " takes the bank's level");
+        for (int j = 180; j < 188; j += 3) for (int i = 180; i < 188; i += 3) near(4.5, out[j * 256 + i], 1.6, "island square at " + i + "," + j + " takes the island's height");
+        near(0, out[115 * 256 + 70], 0, "a wide bay of open sea stays sea");
+        near(0, out[50 * 256 + 10], 0, "open sea stays zero");
+        near(0, out[60 * 256 + 20], 0, "open sea where the line leaves it stays zero");
+        near(tile[30 * 256 + 100], out[30 * 256 + 100], 0, "the bank is untouched");
+        // A small square cut by the tile's edge is measured on in the tile beside it: zeros there make it sea.
+        float[] edge = new float[256 * 256];
+        Arrays.fill(edge, 2f);
+        for (int j = 50; j < 58; j++) for (int i = 252; i < 256; i++) edge[j * 256 + i] = 0;
+        float[] beyondLand = new float[256 * 256], beyondSea = new float[256 * 256];
+        Arrays.fill(beyondLand, 2f);
+        for (int j = 50; j < 58; j++) for (int i = 0; i < 4; i++) beyondLand[j * 256 + i] = 0;
+        near(2, TerrariumTileSource.strayZeros(edge, 15, 5, 5, (z, x, y) -> beyondLand)[54 * 256 + 254], 0.01, "a square of 0 m across a tile edge is ground");
+        near(0, TerrariumTileSource.strayZeros(edge, 15, 5, 5, (z, x, y) -> beyondSea)[54 * 256 + 254], 0, "a bay of the sea beyond the edge stays sea");
+        near(0, TerrariumTileSource.strayZeros(edge, 15, 5, 5, (z, x, y) -> null)[54 * 256 + 254], 0, "with no tile beside it, it stays sea");
     }
 
     /**
