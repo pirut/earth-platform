@@ -49,7 +49,7 @@ The JVM argument `-Dearthplatform.earth.imagery=true` (or `=false`) also works a
 
 ## Distant Horizons
 
-You don't need Distant Horizons: Earth Platform draws its own far terrain. If it's installed anyway, it pauses itself while you're in an Earth world, with a one-time note in chat, and works as usual in other worlds.
+You don't need Distant Horizons: Earth Platform draws its own far terrain. Any version of it can stay installed for your other worlds. While you're in an Earth world, Earth Platform pauses it, with a one-time note in chat, and it works as usual everywhere else. If a version of Distant Horizons can't be paused that way, the note says so; then turn off its rendering in its own settings while you're in the Earth world.
 
 For other mods, see [Which other mods work?](FAQ.md#which-other-mods-work) in the FAQ.
 

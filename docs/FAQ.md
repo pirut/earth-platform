@@ -63,7 +63,7 @@ No. Use the official Photon zip at its defaults. Earth Platform adapts it for Ap
 Harmless; it comes from Photon itself.
 
 **Should I use Distant Horizons?**
-There's no need. Earth Platform has its own far terrain. If Distant Horizons is installed, it pauses itself while you're in an Earth world (a note in chat says so) and works as usual in other worlds.
+There's no need. Earth Platform has its own far terrain. Any version of Distant Horizons can stay installed: Earth Platform pauses it while you're in an Earth world (a note in chat says so), and it works as usual in other worlds. If your version can't be paused, the note tells you to turn its rendering off in its settings while you're in the Earth world.
 
 ## Other mods
 
@@ -84,7 +84,7 @@ That was a bug in early test builds and is fixed. Update to the latest version.
 - **Iris and Sodium** must be Iris 1.8.14 or later 1.8, and Sodium 0.8.12 or later 0.8 (see the [install guide](INSTALL.md#shaders-optional)).
 - **First visits are slow:** a place nobody has visited loads slowly the first time while its elevation is cleaned up. Later visits are quick, and work offline.
 - **On a Mac**, Photon's Colored Lights, Colored Shadows and Cloud Shadows are unavailable.
-- **Distant Horizons** pauses itself in the Earth world.
+- **Distant Horizons** (any version) is paused in the Earth world, which draws its own far terrain.
 - **Accuracy:** heights come from a surface model, so dense forests sit a little high, and some waterfalls may not fall where they should. Tell us about any place that looks wrong, with `/earth where`.
 
 ## Servers

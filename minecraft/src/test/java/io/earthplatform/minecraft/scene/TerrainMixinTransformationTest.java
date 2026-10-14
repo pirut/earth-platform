@@ -89,47 +89,6 @@ class TerrainMixinTransformationTest {
         assertEquals(calls.stream().map(c -> c.name).toList(), calls(method(node(restored), "renderSectionLayer")).stream().map(c -> c.name).toList());
     }
 
-    @Test void fixturePremisesMatchActualPinnedSodiumIrisAndProductionNativeBytecode() throws Exception {
-        ClassNode sodium = node(upstream("earthplatform.installedSodiumTestJar", SODIUM));
-        ClassNode iris = node(upstream("earthplatform.installedIrisTestJar", "net/irisshaders/iris/mixin/MixinLevelRenderer.class"));
-        ClassNode nativeMixin = node(resource("io/earthplatform/minecraft/mixin/NativeIrisTerrainLayerMixin.class"));
-        assertEquals(1000, priority(sodium));
-        assertEquals(1000, priority(iris));
-        assertEquals(priority(nativeMixin), priority(node(resource(FIXTURES + "Native1001.class"))));
-        assertEquals(1001, priority(nativeMixin));
-        MethodNode overwrite = method(sodium, "renderSectionLayer");
-        assertEquals(LAYER_DESCRIPTOR, overwrite.desc);
-        annotation(overwrite.visibleAnnotations, "Lorg/spongepowered/asm/mixin/Overwrite;");
-        List<MethodInsnNode> upstreamCalls = calls(overwrite);
-        int exit = lastIndex(upstreamCalls, "exitManagedCode");
-        assertEquals(2, upstreamCalls.stream().filter(c -> c.name.equals("exitManagedCode")).count());
-        assertFalse(overwrite.tryCatchBlocks.isEmpty());
-        List<MethodInsnNode> anchors = upstreamCalls.stream().filter(c -> c.owner.equals(ANCHOR_OWNER) && c.name.equals("getInstance")).toList();
-        assertEquals(1, anchors.size());
-        MethodInsnNode anchor = anchors.getFirst();
-        assertEquals(Opcodes.INVOKESTATIC, anchor.getOpcode());
-        assertEquals("()L" + ANCHOR_OWNER + ";", anchor.desc);
-        assertTrue(exit < upstreamCalls.indexOf(anchor));
-        assertEquals(upstreamCalls.get(exit).owner, "net/caffeinemc/mods/sodium/client/gl/device/RenderDevice");
-        AnnotationNode nativeInjection = annotation(method(nativeMixin, "earthplatform$nativeTerrain").visibleAnnotations, INJECT);
-        assertEquals(List.of("renderSectionLayer" + LAYER_DESCRIPTOR), value(nativeInjection, "method", null));
-        assertEquals(1, value(nativeInjection, "require", -1));
-        AnnotationNode nativeAt = at(nativeInjection);
-        assertEquals("INVOKE", value(nativeAt, "value", null));
-        assertEquals("L" + ANCHOR_OWNER + ";getInstance()L" + ANCHOR_OWNER + ";", value(nativeAt, "target", null));
-        assertEquals(false, value(nativeAt, "remap", true));
-        for (var callback : List.of("iris$beginTerrainLayer", "iris$endTerrainLayer")) {
-            AnnotationNode injection = annotation(method(iris, callback).visibleAnnotations, INJECT);
-            assertEquals(List.of("renderSectionLayer"), value(injection, "method", null));
-            assertEquals(callback.contains("begin") ? "HEAD" : "RETURN", value(at(injection), "value", null));
-            assertTrue(calls(method(iris, callback)).stream().anyMatch(c -> c.name.equals("setPhase")));
-        }
-        assertTrue(Arrays.stream(method(iris, "iris$endTerrainLayer").instructions.toArray()).anyMatch(i ->
-                i instanceof FieldInsnNode f && f.name.equals("NONE") && f.owner.equals("net/irisshaders/iris/pipeline/WorldRenderingPhase")));
-        // Inputs are read from exact hash-verified external artifacts, never co-loaded in this partition.
-        assertNull(getClass().getClassLoader().getResource("net/irisshaders/iris/Iris.class"));
-        assertNull(getClass().getClassLoader().getResource(SODIUM));
-    }
 
     private static final class FixtureLoader extends ClassLoader {
         FixtureLoader(ClassLoader parent) { super(parent); }

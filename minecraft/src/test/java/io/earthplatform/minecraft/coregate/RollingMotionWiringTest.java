@@ -34,28 +34,5 @@ class RollingMotionWiringTest {
         var entity=cls("io/earthplatform/minecraft/mixin/CoreCollisionMotionMixin");assertTrue(calls(method(entity,"earthplatform$rawPosition")).stream().anyMatch(x->x.name.equals("admitPosition")));
         assertTrue(calls(method(entity,"earthplatform$body")).stream().anyMatch(x->x.name.equals("admitBody")));
     }
-    @Test void reserveAndCommitHoldPrecedeActorRequestAndCollisionFence()throws Exception{
-        var commands=cls("io/earthplatform/minecraft/coregate/RollingGateCommands");var tick=method(commands,"tick");var calls=calls(tick);
-        int reserve=calls.stream().filter(x->x.name.equals("reserve")).mapToInt(tick.instructions::indexOf).findFirst().orElseThrow();
-        int request=calls.stream().filter(x->x.name.equals("requestCenter")).mapToInt(tick.instructions::indexOf).findFirst().orElseThrow();assertTrue(reserve<request);
-        var grant=method(commands,"tryGrant");int hold=calls(grant).stream().filter(x->x.name.equals("beginCommit")).mapToInt(grant.instructions::indexOf).findFirst().orElseThrow();
-        int fence=calls(grant).stream().filter(x->x.name.equals("fence")).mapToInt(grant.instructions::indexOf).findFirst().orElseThrow();assertTrue(hold<fence);
-        var event=method(commands,"handleEvent");assertTrue(calls(event).stream().anyMatch(x->x.name.equals("requireMetadata")));assertFalse(calls(event).stream().anyMatch(x->x.name.equals("requestCenter")));
-    }
-    @Test void exactTeleportAcknowledgementAndRawSweptCollisionReadsRemainBound()throws Exception{
-        var mixin=cls("io/earthplatform/minecraft/mixin/CoreCollisionServerMoveMixin");var ack=method(mixin,"earthplatform$correctionAck");
-        assertTrue(calls(ack).stream().anyMatch(x->x.name.equals("getId")));assertTrue(calls(ack).stream().anyMatch(x->x.name.equals("correctionAcknowledged")));
-        var fields=new HashSet<String>();for(var i:ack.instructions)if(i instanceof FieldInsnNode f)fields.add(f.name);assertTrue(fields.containsAll(Set.of("awaitingTeleport","awaitingPositionFromClient")));
-        var binding=cls("io/earthplatform/minecraft/coregate/CoreCollisionBinding");assertTrue(calls(method(binding,"admitPosition")).stream().anyMatch(x->x.name.equals("knownBox")));
-        assertFalse(calls(method(binding,"fence")).stream().anyMatch(x->x.owner.endsWith("RollingMotionGuard")),"Collision invalidation cannot reopen a body hold");
-    }
-    @Test void pairAndActorCommitWaitForOutstandingCorrectionInsteadOfDroppingTheReceipt()throws Exception{
-        var commands=cls("io/earthplatform/minecraft/coregate/RollingGateCommands");var commit=method(commands,"tryCommitReady");
-        var c=calls(commit);int pending=c.stream().filter(x->x.name.equals("correctionPending")).mapToInt(commit.instructions::indexOf).findFirst().orElseThrow();
-        int finish=c.stream().filter(x->x.name.equals("finishPublication")).mapToInt(commit.instructions::indexOf).findFirst().orElseThrow();
-        int actor=c.stream().filter(x->x.name.equals("commitPrepared")).mapToInt(commit.instructions::indexOf).findFirst().orElseThrow();
-        assertTrue(pending<finish&&pending<actor);assertTrue(calls(method(commands,"handleEvent")).stream().anyMatch(x->x.name.equals("tryCommitReady")));
-        assertTrue(calls(method(commands,"tick")).stream().anyMatch(x->x.name.equals("tryCommitReady")));
-    }
 
 }

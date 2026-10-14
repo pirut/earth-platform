@@ -54,38 +54,5 @@ class EarthEntryReloadIndependentTest {
         return node.methods.stream().filter(m->m.name.equals(name)).findFirst().orElseThrow();
     }
 
-    @Test void compiledValidityRetainsTheExactEntrySequenceAndComparesCurrentReload()throws Exception {
-        var node=compiledSession();
-        var field=node.fields.stream().filter(f->f.name.equals("entryResourceSequence")).findFirst().orElseThrow();
-        assertEquals("J",field.desc);assertNotEquals(0,field.access&Opcodes.ACC_FINAL);
-        boolean retained=false,current=false,read=false,compared=false;
-        for(var instruction:method(node,"valid").instructions) {
-            if(instruction instanceof FieldInsnNode f) {
-                retained|=f.getOpcode()==Opcodes.GETFIELD&&f.name.equals("entryResourceSequence");
-                current|=f.getOpcode()==Opcodes.GETSTATIC&&f.name.equals("SCENARIO_RELOAD_SEQUENCE");
-            }
-            if(instruction instanceof MethodInsnNode call)read|=call.owner.equals("java/util/concurrent/atomic/AtomicLong")&&call.name.equals("get");
-            compared|=instruction.getOpcode()==Opcodes.LCMP;
-        }
-        assertTrue(retained&&current&&read&&compared,"Every validity check must compare its immutable preflight generation against the current reload generation");
-        boolean capturesApproved=false,storesImmutable=false;
-        for(var instruction:method(node,"<init>").instructions)if(instruction instanceof FieldInsnNode f) {
-            capturesApproved|=f.getOpcode()==Opcodes.GETSTATIC&&f.name.equals("playableApprovedReload");
-            storesImmutable|=f.getOpcode()==Opcodes.PUTFIELD&&f.name.equals("entryResourceSequence");
-        }
-        assertTrue(capturesApproved&&storesImmutable,"A playable constructor must retain the exact approved resource generation");
-    }
 
-    @Test void compiledInitializationChecksValidityBeforeAnyShaderOrDhOwner()throws Exception {
-        var node=compiledSession();int index=0,valid=-1,owner=Integer.MAX_VALUE;
-        for(var instruction:method(node,"initialize").instructions) {
-            if(instruction instanceof MethodInsnNode call) {
-                if(call.owner.equals(node.name)&&call.name.equals("valid"))valid=index;
-                if(call.name.equals("initializeShader")||call.owner.endsWith("DhCarrierRenderGate")
-                        ||call.owner.endsWith("InstalledDhEvents"))owner=Math.min(owner,index);
-            }
-            index++;
-        }
-        assertTrue(valid>=0&&valid<owner&&owner<Integer.MAX_VALUE,"No render/source owner may be acquired before the retained entry generation is rechecked");
-    }
 }

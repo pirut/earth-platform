@@ -10,12 +10,7 @@ Earth Platform is licensed LGPL-3.0-only (see LICENSE and COPYING). This file li
 
 ## Distant Horizons
 
-Earth Platform draws its own far terrain and does not need Distant Horizons. The older engine's optional Distant Horizons backend, still in the jar, only calls DH's public API and mixes into DH at runtime when a player has installed it. Players obtain and install official Distant Horizons separately. The distributable contains our adapter/engine source and resources only, with no upstream DH JAR, implementation source or extracted shader. A separately installed official JAR in the disposable minecraft/run/mods directory is runtime-only; it is excluded from source/distribution inputs and must never be included in a release directory snapshot. Its headless tests use an externally supplied, unchanged official Distant Horizons 3.3.3 artifact. DH is copyright James Seibel and contributors, LGPL-3.0-only. Official artifact/source pins and provenance are recorded in `runtime-inputs/source-manifest.json`; upstream license texts remain with the separately obtained official artifact. Corresponding sources:
-
-- https://gitlab.com/distant-horizons-team/distant-horizons/-/tree/a54dd3eb1df0078e63a71266d042c10d9cda4493
-- https://gitlab.com/distant-horizons-team/distant-horizons-core/-/tree/b02c66d778beea11a931291815d652cd8abaa7ad
-
-The original engine's provisional licensing does not cover upstream DH implementation, shaders, binaries or license texts. No Voxy source/binary is included or executed. Inherited isolated-loader proofs run only in the legacy headless test JVM. The installed client backend must use the existing game/mod classloader and must not create or close a duplicate upstream runtime/pool. All shim-owned view GL objects must be deleted at session close; installed DH resources remain owned by DH.
+Earth Platform no longer contains a Distant Horizons backend, compiles against no Distant Horizons code and needs no Distant Horizons file to build or test. If a player has Distant Horizons installed, a small client hook reaches its public API by reflection to pause it in Earth worlds. DH is copyright James Seibel and contributors, LGPL-3.0-only. No Voxy source or binary is included or executed.
 
 ## Earth test fixture data
 
