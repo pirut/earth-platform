@@ -75,8 +75,19 @@ public abstract class CubeWorld {
 
     // Sky tops -----------------------------------------------------------------------------------
 
-    /** Sky top used before anything is known about a column. */
+    /** Sky top used before anything is known about a column, or {@link #UNKNOWN_TOP} when its terrain can't be had yet. */
     protected abstract int baselineTop(int x, int z);
+
+    /**
+     * A baseline top whose terrain can't be had yet, as when a data server is down: the column reads
+     * as open sky for now and is worked out again the next time it is asked for, not kept.
+     */
+    protected static final int UNKNOWN_TOP = Integer.MIN_VALUE;
+
+    private int baseline(int x, int z) {
+        int top = baselineTop(x, z);
+        return top == UNKNOWN_TOP ? MIN_Y - 1 : top;
+    }
 
     @Nullable public int[] columnTops(int cubeX, int cubeZ) { return tops.get(CubeKey.column(cubeX, cubeZ)); }
 
@@ -86,8 +97,13 @@ public abstract class CubeWorld {
         if (column == null) {
             column = new int[256];
             int x0 = cubeX << 4, z0 = cubeZ << 4;
-            for (int i = 0; i < 256; i++) column[i] = baselineTop(x0 + (i & 15), z0 + (i >> 4));
-            tops.put(key, column);
+            boolean known = true;
+            for (int i = 0; i < 256; i++) {
+                int top = baselineTop(x0 + (i & 15), z0 + (i >> 4));
+                if (top == UNKNOWN_TOP) { known = false; top = MIN_Y - 1; }
+                column[i] = top;
+            }
+            if (known) tops.put(key, column);
         }
         return column;
     }
@@ -95,7 +111,7 @@ public abstract class CubeWorld {
     /** Highest Y in this column that blocks skylight. */
     public int skyTop(int x, int z) {
         int[] column = tops.get(CubeKey.column(x >> 4, z >> 4));
-        return column == null ? baselineTop(x, z) : column[(z & 15) << 4 | (x & 15)];
+        return column == null ? baseline(x, z) : column[(z & 15) << 4 | (x & 15)];
     }
 
     /**

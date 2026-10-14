@@ -137,7 +137,7 @@ final class Trees {
 
     /** The ordinary trees whose origins are in a chunk column. */
     private Planted[] chunk(int cx, int cz) {
-        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         Planted[] cached = chunks.get(key);
         if (cached != null) return cached;
         List<Planted> trees = new ArrayList<>();
@@ -184,7 +184,7 @@ final class Trees {
      * the lowest ground under its trunk.
      */
     private Planted[] giants(int cx, int cz) {
-        long key = (long) cx << 32 | cz & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         Planted[] cached = giants.get(key);
         if (cached != null) return cached;
         List<Planted> trees = new ArrayList<>();

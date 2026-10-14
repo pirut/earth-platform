@@ -267,7 +267,7 @@ final class Vegetation {
      * enclosed pools, such as Ha Long Bay's karst lagoons, are too brackish and still for coral.
      */
     private boolean openWater(int x, int z, int water) {
-        long key = (long) (x >> 2) << 32 | (z >> 2) & 0xFFFFFFFFL;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) (x >> 2) << 32 | (z >> 2) & 0xFFFFFFFFL);
         Boolean known = openWater.get(key);
         if (known != null) return known;
         int cx = (x & ~3) + 2, cz = (z & ~3) + 2;

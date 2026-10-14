@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.far;
 
+import io.earthplatform.geography.MissingTerrainException;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
@@ -25,8 +26,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Nullable;
 import net.minecraft.core.Holder;
@@ -50,7 +49,6 @@ import net.neoforged.neoforge.network.PacketDistributor;
  */
 public final class FarServer {
     private static final int SEND_PER_TICK = 64, CACHE = 8192;
-    private static final AtomicInteger THREADS = new AtomicInteger();
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
     private final CubeGenerator generator;
@@ -58,24 +56,28 @@ public final class FarServer {
     private final CubeCodec codec;
     private final IdMap<Holder<Biome>> biomeIds;
     /**
-     * Far workers: two on four cores, and more on bigger machines, where two left most cores idle
-     * while the far terrain took minutes to refine. They run at low priority behind the cube
-     * workers. Set with {@code -Dearthplatform.far.threads}.
+     * Far workers kept busy: two on four cores, and more on bigger machines, where two left most
+     * cores idle while the far terrain took minutes to refine. They run at low priority behind the
+     * cube workers. Set with {@code -Dearthplatform.far.threads}.
      */
     static final int WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.threads",
             (Runtime.getRuntime().availableProcessors() - 4) / 2), 2, 8);
-    private final ExecutorService workers = Executors.newFixedThreadPool(WORKERS, runnable -> {
-        Thread thread = new Thread(runnable, "Earth far terrain " + THREADS.incrementAndGet());
-        thread.setDaemon(true);
-        thread.setPriority(Thread.MIN_PRIORITY);
-        return thread;
-    });
+    /**
+     * Most far columns made at once while they mostly wait on downloads, as over a new place; see
+     * {@link FarWorkers}. Two cores are left to the server tick and the cube workers, so on four
+     * cores it stays at {@link #WORKERS}, where more at once made the server answer late.
+     */
+    static final int MOST_WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.mostThreads",
+            Math.min(4 * WORKERS, Runtime.getRuntime().availableProcessors() - 2)), WORKERS, 16);
+    private final FarWorkers workers = new FarWorkers("Earth far terrain", WORKERS, MOST_WORKERS);
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> cache = new ConcurrentHashMap<>();
     /** What edited columns looked like before, so a remade one that came out the same is not sent again. */
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> before = new ConcurrentHashMap<>();
     private final ConcurrentLinkedQueue<Made> made = new ConcurrentLinkedQueue<>();
     /** Columns that could not be made, or were skipped as their player had moved away; players may ask for them again. */
     private final ConcurrentLinkedQueue<Long> failed = new ConcurrentLinkedQueue<>();
+    /** Columns whose data could not be had, given back to be asked for again every few seconds. */
+    private final ConcurrentLinkedQueue<Long> missing = new ConcurrentLinkedQueue<>();
     private final AtomicInteger failures = new AtomicInteger(), skipped = new AtomicInteger(), unchanged = new AtomicInteger();
     private volatile long lastFailureLog;
     private final Map<UUID, Session> sessions = new HashMap<>();
@@ -122,6 +124,9 @@ public final class FarServer {
         }
     }
 
+    /** Whether cubes near players are waiting to be made; far columns then run no more than {@link #WORKERS} at once. */
+    public void nearWaiting(boolean waiting) { workers.hold(waiting); }
+
     private void submit(@Nullable UUID player, @Nullable Session session, long key) {
         workers.execute(() -> {
             // After a teleport the old place's columns can be thousands deep in the queue: skip them.
@@ -140,7 +145,9 @@ public final class FarServer {
                 Timings.FAR_MAKE.since(start);
             }
             catch (RuntimeException | IOException failure) {
-                failed.add(key);
+                // Missing data is asked for again a few seconds on, not at once: with a data server down it fails at once again.
+                if (failure instanceof MissingTerrainException) missing.add(key);
+                else failed.add(key);
                 failures.incrementAndGet();
                 long now = System.currentTimeMillis();
                 if (now - lastFailureLog > 10_000) {
@@ -268,6 +275,7 @@ public final class FarServer {
     public void tick(Iterable<ServerPlayer> players) {
         ticks++;
         for (Long key; (key = failed.poll()) != null; ) for (Session session : sessions.values()) session.queued.remove(key.longValue());
+        if (ticks % 100 == 0) for (Long key; (key = missing.poll()) != null; ) for (Session session : sessions.values()) session.queued.remove(key.longValue());
         for (Made done; (done = made.poll()) != null; ) {
             if (done.player != null) {
                 Session session = sessions.get(done.player);

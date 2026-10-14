@@ -28,11 +28,13 @@ public final class GlobeTest {
         seams();
         repair();
         despike();
+        strayZeros();
         bareEarth();
         clearings();
         islandBesideTown();
         kernel();
         streaming();
+        outage();
         worldCover();
         copernicus();
         copernicusFill();
@@ -489,6 +491,69 @@ public final class GlobeTest {
         }
     }
 
+    /**
+     * A host that can't be reached is marked down after a few failed tries, so transfers to it fail at
+     * once instead of each waiting out its own timeouts; one transfer checks it again a few seconds
+     * later, and when it answers everything goes back to normal.
+     */
+    private static void outage() throws Exception {
+        AtomicInteger hits = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/tiles/", exchange -> {
+            hits.incrementAndGet();
+            // Down: the connection is dropped without an answer, as a host that is gone does.
+            if (down.get()) { exchange.close(); return; }
+            byte[] body = TerrariumTileSource.encode(new float[256 * 256]);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/tiles/");
+        Path cache = Files.createTempDirectory("terrarium-outage");
+        // A blip that breaks many transfers at once is not an outage: their retries get through.
+        try (var source = new TerrariumTileSource(base, Files.createTempDirectory("terrarium-blip"), true, 32, 16, Duration.ofSeconds(5))) {
+            var pool = Executors.newFixedThreadPool(16);
+            List<Future<float[]>> tiles = new ArrayList<>();
+            for (int i = 0; i < 16; i++) { int x = i % 8, y = i / 8; tiles.add(pool.submit(() -> source.tile(3, x, y))); }
+            Thread.sleep(150);
+            down.set(false);
+            for (var tile : tiles) check(tile.get().length == 256 * 256, "transfer broken off in a blip retried");
+            pool.shutdown();
+            check(!HostBackoff.anyDown(), "a blip does not mark the host down");
+            down.set(true);
+        }
+        try (var source = new TerrariumTileSource(base, cache, true, 4, 2, Duration.ofSeconds(5))) {
+            check(!HostBackoff.anyDown(), "no host down at first");
+            fail(() -> source.tile(2, 0, 0), MissingTerrainException.class, "a host that never answers fails the tile");
+            check(HostBackoff.anyDown(), "no answer on every try: host marked down");
+            int tries = hits.get();
+            long start = System.nanoTime();
+            for (int i = 0; i < 20; i++) {
+                int x = i % 4;
+                fail(() -> source.tile(2, x, 1), MissingTerrainException.class, "down host fails at once");
+            }
+            check(System.nanoTime() - start < 500_000_000L, "twenty tiles from a down host fail without waiting");
+            equal(tries, hits.get(), "nothing sent while down");
+            down.set(false);
+            fail(() -> source.tile(2, 1, 1), MissingTerrainException.class, "still down until it is checked again");
+            Thread.sleep(HostBackoff.FIRST_DOWN_MS + 200);
+            // Due a check: it runs off to the side, so even this caller does not wait on the host.
+            fail(() -> source.tile(2, 1, 1), MissingTerrainException.class, "the caller that starts a check still fails at once");
+            for (int i = 0; i < 100 && HostBackoff.anyDown(); i++) Thread.sleep(20);
+            check(!HostBackoff.anyDown(), "host back once a check got an answer");
+            equal(tries + 1, hits.get(), "one request checked the host");
+            source.tile(2, 1, 1);
+            source.tile(2, 2, 1);
+            equal(tries + 3, hits.get(), "transfers flow again");
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
     /** Lines of bad pixels along whole degrees are mended, across tile edges too; real ground along them and lines off whole degrees keep their shape. */
     private static void seams() {
         int zoom = 15;
@@ -575,6 +640,39 @@ public final class GlobeTest {
         near(before[30 * 256 + 250], tile[30 * 256 + 250], 0, "a steady slope is kept");
         near(0, tile[50 * 256 + 5], 0, "open sea stays zero");
         near(before[10 * 256 + 100], tile[10 * 256 + 100], 0, "ordinary ground is untouched");
+    }
+
+    /** Zeros that are no open sea, as lines across a shallow bank and squares of an island's ground, take the ground's height. */
+    private static void strayZeros() {
+        // Open sea (exact zeros) west of x 40; east of it a bank a few centimetres either side of 0 m and an island.
+        float[] tile = new float[256 * 256];
+        for (int j = 0; j < 256; j++) for (int i = 40; i < 256; i++) tile[j * 256 + i] = (i + j) % 2 == 0 ? 0.04f : -0.03f;
+        for (int j = 150; j < 220; j++) for (int i = 150; i < 220; i++) tile[j * 256 + i] = 3 + (i + j) % 4;
+        // A line two pixels wide across the bank, joining the open sea; an eight-pixel square of 0 m on the island;
+        // and a wide bay of open sea reaching into the bank.
+        for (int i = 40; i < 140; i++) { tile[60 * 256 + i] = 0; tile[61 * 256 + i] = 0; }
+        for (int j = 180; j < 188; j++) for (int i = 180; i < 188; i++) tile[j * 256 + i] = 0;
+        for (int j = 100; j < 130; j++) for (int i = 40; i < 100; i++) tile[j * 256 + i] = 0;
+        // Thin zeros in a tile at zoom 10 are left: the bathymetry has no coarser zoom to fill from.
+        check(TerrariumTileSource.strayZeros(tile, 10, 0, 0, null) == tile, "zoom 10 left as it is");
+        float[] out = TerrariumTileSource.strayZeros(tile, 15, 0, 0, null);
+        check(out != tile && tile[60 * 256 + 90] == 0, "the tile itself is not changed");
+        for (int i = 42; i < 140; i += 7) check(out[60 * 256 + i] != 0 && Math.abs(out[60 * 256 + i]) < 0.05, "line across the bank at " + i + " takes the bank's level");
+        for (int j = 180; j < 188; j += 3) for (int i = 180; i < 188; i += 3) near(4.5, out[j * 256 + i], 1.6, "island square at " + i + "," + j + " takes the island's height");
+        near(0, out[115 * 256 + 70], 0, "a wide bay of open sea stays sea");
+        near(0, out[50 * 256 + 10], 0, "open sea stays zero");
+        near(0, out[60 * 256 + 20], 0, "open sea where the line leaves it stays zero");
+        near(tile[30 * 256 + 100], out[30 * 256 + 100], 0, "the bank is untouched");
+        // A small square cut by the tile's edge is measured on in the tile beside it: zeros there make it sea.
+        float[] edge = new float[256 * 256];
+        Arrays.fill(edge, 2f);
+        for (int j = 50; j < 58; j++) for (int i = 252; i < 256; i++) edge[j * 256 + i] = 0;
+        float[] beyondLand = new float[256 * 256], beyondSea = new float[256 * 256];
+        Arrays.fill(beyondLand, 2f);
+        for (int j = 50; j < 58; j++) for (int i = 0; i < 4; i++) beyondLand[j * 256 + i] = 0;
+        near(2, TerrariumTileSource.strayZeros(edge, 15, 5, 5, (z, x, y) -> beyondLand)[54 * 256 + 254], 0.01, "a square of 0 m across a tile edge is ground");
+        near(0, TerrariumTileSource.strayZeros(edge, 15, 5, 5, (z, x, y) -> beyondSea)[54 * 256 + 254], 0, "a bay of the sea beyond the edge stays sea");
+        near(0, TerrariumTileSource.strayZeros(edge, 15, 5, 5, (z, x, y) -> null)[54 * 256 + 254], 0, "with no tile beside it, it stays sea");
     }
 
     /**
