@@ -62,8 +62,13 @@ public final class FarServer {
      */
     static final int WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.threads",
             (Runtime.getRuntime().availableProcessors() - 4) / 2), 2, 8);
-    /** Most far columns made at once while they mostly wait on downloads, as over a new place; see {@link FarWorkers}. */
-    static final int MOST_WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.mostThreads", 4 * WORKERS), WORKERS, 16);
+    /**
+     * Most far columns made at once while they mostly wait on downloads, as over a new place; see
+     * {@link FarWorkers}. Two cores are left to the server tick and the cube workers, so on four
+     * cores it stays at {@link #WORKERS}, where more at once made the server answer late.
+     */
+    static final int MOST_WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.mostThreads",
+            Math.min(4 * WORKERS, Runtime.getRuntime().availableProcessors() - 2)), WORKERS, 16);
     private final FarWorkers workers = new FarWorkers("Earth far terrain", WORKERS, MOST_WORKERS);
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> cache = new ConcurrentHashMap<>();
     /** What edited columns looked like before, so a remade one that came out the same is not sent again. */
