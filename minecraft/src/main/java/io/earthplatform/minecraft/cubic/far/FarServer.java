@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.far;
 
+import io.earthplatform.geography.MissingTerrainException;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
@@ -76,6 +77,8 @@ public final class FarServer {
     private final ConcurrentLinkedQueue<Made> made = new ConcurrentLinkedQueue<>();
     /** Columns that could not be made, or were skipped as their player had moved away; players may ask for them again. */
     private final ConcurrentLinkedQueue<Long> failed = new ConcurrentLinkedQueue<>();
+    /** Columns whose data could not be had, given back to be asked for again every few seconds. */
+    private final ConcurrentLinkedQueue<Long> missing = new ConcurrentLinkedQueue<>();
     private final AtomicInteger failures = new AtomicInteger(), skipped = new AtomicInteger(), unchanged = new AtomicInteger();
     private volatile long lastFailureLog;
     private final Map<UUID, Session> sessions = new HashMap<>();
@@ -140,7 +143,9 @@ public final class FarServer {
                 Timings.FAR_MAKE.since(start);
             }
             catch (RuntimeException | IOException failure) {
-                failed.add(key);
+                // Missing data is asked for again a few seconds on, not at once: with a data server down it fails at once again.
+                if (failure instanceof MissingTerrainException) missing.add(key);
+                else failed.add(key);
                 failures.incrementAndGet();
                 long now = System.currentTimeMillis();
                 if (now - lastFailureLog > 10_000) {
@@ -268,6 +273,7 @@ public final class FarServer {
     public void tick(Iterable<ServerPlayer> players) {
         ticks++;
         for (Long key; (key = failed.poll()) != null; ) for (Session session : sessions.values()) session.queued.remove(key.longValue());
+        if (ticks % 100 == 0) for (Long key; (key = missing.poll()) != null; ) for (Session session : sessions.values()) session.queued.remove(key.longValue());
         for (Made done; (done = made.poll()) != null; ) {
             if (done.player != null) {
                 Session session = sessions.get(done.player);

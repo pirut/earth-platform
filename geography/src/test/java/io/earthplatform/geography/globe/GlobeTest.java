@@ -33,6 +33,7 @@ public final class GlobeTest {
         islandBesideTown();
         kernel();
         streaming();
+        outage();
         worldCover();
         copernicus();
         copernicusFill();
@@ -483,6 +484,65 @@ public final class GlobeTest {
             try (var stream = Files.list(cache.resolve("2/1"))) {
                 check(stream.noneMatch(p -> p.toString().endsWith(".part")), "no partial cache files left");
             }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    /**
+     * A host that can't be reached is marked down after a few failed tries, so transfers to it fail at
+     * once instead of each waiting out its own timeouts; one transfer checks it again a few seconds
+     * later, and when it answers everything goes back to normal.
+     */
+    private static void outage() throws Exception {
+        AtomicInteger hits = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/tiles/", exchange -> {
+            hits.incrementAndGet();
+            // Down: the connection is dropped without an answer, as a host that is gone does.
+            if (down.get()) { exchange.close(); return; }
+            byte[] body = TerrariumTileSource.encode(new float[256 * 256]);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/tiles/");
+        Path cache = Files.createTempDirectory("terrarium-outage");
+        // A blip that breaks many transfers at once is not an outage: their retries get through.
+        try (var source = new TerrariumTileSource(base, Files.createTempDirectory("terrarium-blip"), true, 32, 16, Duration.ofSeconds(5))) {
+            var pool = Executors.newFixedThreadPool(16);
+            List<Future<float[]>> tiles = new ArrayList<>();
+            for (int i = 0; i < 16; i++) { int x = i % 8, y = i / 8; tiles.add(pool.submit(() -> source.tile(3, x, y))); }
+            Thread.sleep(150);
+            down.set(false);
+            for (var tile : tiles) check(tile.get().length == 256 * 256, "transfer broken off in a blip retried");
+            pool.shutdown();
+            check(!HostBackoff.anyDown(), "a blip does not mark the host down");
+            down.set(true);
+        }
+        try (var source = new TerrariumTileSource(base, cache, true, 4, 2, Duration.ofSeconds(5))) {
+            check(!HostBackoff.anyDown(), "no host down at first");
+            fail(() -> source.tile(2, 0, 0), MissingTerrainException.class, "a host that never answers fails the tile");
+            check(HostBackoff.anyDown(), "no answer on every try: host marked down");
+            int tries = hits.get();
+            long start = System.nanoTime();
+            for (int i = 0; i < 20; i++) {
+                int x = i % 4;
+                fail(() -> source.tile(2, x, 1), MissingTerrainException.class, "down host fails at once");
+            }
+            check(System.nanoTime() - start < 500_000_000L, "twenty tiles from a down host fail without waiting");
+            equal(tries, hits.get(), "nothing sent while down");
+            down.set(false);
+            fail(() -> source.tile(2, 1, 1), MissingTerrainException.class, "still down until it is checked again");
+            Thread.sleep(HostBackoff.FIRST_DOWN_MS + 200);
+            source.tile(2, 1, 1);
+            check(!HostBackoff.anyDown(), "host back once a check got an answer");
+            source.tile(2, 2, 1);
+            check(hits.get() == tries + 2, "transfers flow again");
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();

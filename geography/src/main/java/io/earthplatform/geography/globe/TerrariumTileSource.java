@@ -438,11 +438,16 @@ public final class TerrariumTileSource implements AutoCloseable {
         for (int attempt = 0, slowed = 0; attempt < 3; attempt++) {
             if (attempt > 0) Thread.sleep(250L << attempt);
             HostBackoff.await(uri);
+            boolean check = HostBackoff.reachable(uri, "Elevation tiles");
             transfers.acquire();
             try {
+                // Asked again: a host can go down while this transfer waited its turn.
+                if (!check) HostBackoff.reachable(uri, "Elevation tiles");
                 long start = System.nanoTime();
                 HttpResponse<byte[]> response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
                 int status = response.statusCode();
+                if (status >= 500 && !HostBackoff.slowDown(status)) HostBackoff.failed(uri, "Elevation tiles", "HTTP " + status);
+                else HostBackoff.answered(uri);
                 if (status == 200) {
                     downloads.incrementAndGet();
                     Downloads.count("Elevation tiles", response.body().length, System.nanoTime() - start);
@@ -459,6 +464,7 @@ public final class TerrariumTileSource implements AutoCloseable {
                 throw interrupted;
             } catch (IOException failure) {
                 last = failure;
+                HostBackoff.failed(uri, "Elevation tiles", failure);
             } finally {
                 transfers.release();
             }
