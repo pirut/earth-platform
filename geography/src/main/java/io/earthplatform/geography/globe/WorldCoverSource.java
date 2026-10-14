@@ -213,7 +213,7 @@ public final class WorldCoverSource implements AutoCloseable {
         if (missing != null && Files.exists(missing)) return Header.MISSING;
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                Header header = parse(Files.readAllBytes(cached));
+                Header header = parse(DiskCache.read(cached));
                 files.diskHits.incrementAndGet();
                 return header;
             } catch (IOException | RuntimeException corrupt) {
@@ -244,7 +244,7 @@ public final class WorldCoverSource implements AutoCloseable {
         Path cached = cacheRoot == null ? null : cacheRoot.resolve(name.replace(".tif", "") + "/" + overview + "/" + index + ".z");
         byte[] raw = null;
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
-            raw = Files.readAllBytes(cached);
+            raw = DiskCache.read(cached);
             try {
                 byte[] decoded = decode(raw, header, level);
                 files.diskHits.incrementAndGet();

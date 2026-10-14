@@ -2,14 +2,6 @@ package io.earthplatform.minecraft.cubic.play;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.stream.Stream;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -64,8 +56,8 @@ public final class EarthConfig {
                 .translation(key("defaultHome")).define("defaultHome", EarthPlaces.YOSEMITE.id(), value -> value instanceof String text && home(text) != null);
         OFFLINE = common.comment("Never download Earth data; only places already in the cache generate.")
                 .translation(key("offline")).gameRestart().define("offline", false);
-        CACHE_LIMIT_GB = common.comment("Largest size of the downloaded Earth data cache, in gigabytes; the least recently used files go first",
-                        "when the game starts. 0 keeps everything.")
+        CACHE_LIMIT_GB = common.comment("Largest size of the downloaded Earth data cache, in gigabytes; the least recently used files go first,",
+                        "when the game starts and as it grows, never ones this session has used. 0 keeps everything.")
                 .translation(key("cacheLimit")).defineInRange("cacheLimitGb", 8, 0, 1024);
         SATELLITE_IMAGERY = common.comment("Colour the ground of new Earth worlds from satellite photos (EOX Sentinel-2 cloudless imagery,",
                         "downloaded like the terrain). Off by default; existing worlds keep what they were made with.")
@@ -127,40 +119,7 @@ public final class EarthConfig {
     }
 
     @SubscribeEvent static void setup(FMLCommonSetupEvent event) {
-        long limit = (long) CACHE_LIMIT_GB.get() << 30;
-        if (limit <= 0) return;
-        Thread thread = new Thread(() -> trimCache(FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache"), limit), "Earth cache trim");
-        thread.setDaemon(true);
-        thread.setPriority(Thread.MIN_PRIORITY);
-        thread.start();
-    }
-
-    /** Deletes the least recently changed cache files until the cache fits in 90% of its limit. */
-    static void trimCache(Path cache, long limit) {
-        if (!Files.isDirectory(cache)) return;
-        record Entry(Path path, long size, long time) {}
-        List<Entry> entries = new ArrayList<>();
-        long total = 0;
-        try (Stream<Path> files = Files.walk(cache)) {
-            for (Path path : (Iterable<Path>) files::iterator) {
-                BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class);
-                if (!attributes.isRegularFile()) continue;
-                entries.add(new Entry(path, attributes.size(), attributes.lastModifiedTime().toMillis()));
-                total += attributes.size();
-            }
-        } catch (IOException | RuntimeException failure) {
-            EarthPlatformMod.LOGGER.warn("Could not measure the Earth data cache: {}", failure.toString());
-            return;
-        }
-        if (total <= limit) return;
-        entries.sort(Comparator.comparingLong(Entry::time));
-        long target = limit / 10 * 9, freed = 0;
-        int removed = 0;
-        for (Entry entry : entries) {
-            if (total - freed <= target) break;
-            try { if (Files.deleteIfExists(entry.path)) { freed += entry.size; removed++; } }
-            catch (IOException | RuntimeException ignored) { /* in use; try the next one */ }
-        }
-        EarthPlatformMod.LOGGER.info("Trimmed the Earth data cache: removed {} files, {} MB", removed, freed >> 20);
+        io.earthplatform.geography.globe.DiskCache.log = EarthPlatformMod.LOGGER::info;
+        io.earthplatform.geography.globe.DiskCache.limit(FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache"), (long) CACHE_LIMIT_GB.get() << 30);
     }
 }

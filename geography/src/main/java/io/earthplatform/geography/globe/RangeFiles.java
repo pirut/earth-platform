@@ -100,6 +100,7 @@ final class RangeFiles implements AutoCloseable {
     }
 
     static void write(Path path, byte[] bytes) throws IOException {
+        DiskCache.wrote(bytes.length);
         Files.createDirectories(path.getParent());
         Path temp = Files.createTempFile(path.getParent(), "part", ".part");
         try {

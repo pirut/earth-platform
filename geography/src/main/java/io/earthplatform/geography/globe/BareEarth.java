@@ -384,6 +384,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
     /** The field kept at a path for a window with this digest, or null where there's none or it's for other data. */
     static Field read(Path path, long digest) {
         if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) return null;
+        DiskCache.used(path);
         try (InputStream file = Files.newInputStream(path); DataInputStream in = new DataInputStream(new BufferedInputStream(new InflaterInputStream(file), 1 << 16))) {
             if (in.readInt() != FORMAT || in.readLong() != digest) return null;
             float[] ground = null, delta = null, smooth = null;
