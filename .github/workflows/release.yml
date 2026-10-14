@@ -1,0 +1,79 @@
+# Builds the mod jar and publishes it as a GitHub release when a build tag is pushed.
+# Tag a commit on main as combined-NN (for example combined-34) and push the tag.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'combined-*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and release (for example combined-34)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # The repository ignores gradle-wrapper.jar, so use a pinned Gradle instead of ./gradlew.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      # The build compiles against Iris and Sodium and checks the stock Photon pack, all supplied
+      # from outside and verified by SHA-256 (verifyOfficialShaderInputs). None of them is bundled.
+      - name: Fetch the external build inputs
+        run: |
+          mkdir -p "$RUNNER_TEMP/inputs" && cd "$RUNNER_TEMP/inputs"
+          curl -fsSLo iris.jar 'https://cdn.modrinth.com/data/YL57xq9U/versions/KduFYu4t/iris-neoforge-1.8.14-beta.1%2Bmc1.21.1.jar'
+          curl -fsSLo sodium.jar 'https://cdn.modrinth.com/data/AANobbMI/versions/iw5APcWy/sodium-neoforge-0.8.12-beta.1%2Bmc1.21.1.jar'
+          curl -fsSLo photon_v1.3b.zip 'https://cdn.modrinth.com/data/lLqFfGNs/versions/gUv7fBPN/photon_v1.3b.zip'
+          sha256sum -c - <<'SUMS'
+          60d5f8bf52f25e9986440f4a4270a6bd986d9cff994510e1108ac1547063b314  iris.jar
+          dc2838d5538db39414171fe86586ab89d1a30d2fd97f59229cc44cf3777f569d  sodium.jar
+          120897768eaa8cb1f14a3e98f88dff009ae3204ee3b96904a4fe8586edfc1ead  photon_v1.3b.zip
+          SUMS
+          {
+            echo "EARTH_INSTALLED_IRIS_JAR=$PWD/iris.jar"
+            echo "EARTH_INSTALLED_SODIUM_JAR=$PWD/sodium.jar"
+            echo "EARTH_INSTALLED_SHADER_PACK=$PWD/photon_v1.3b.zip"
+          } >> "$GITHUB_ENV"
+
+      - name: Build and test
+        working-directory: minecraft
+        env:
+          LC_ALL: C.UTF-8
+        run: gradle --no-daemon --console=plain jar test
+
+      - name: Collect the release files
+        run: |
+          mkdir dist
+          cp minecraft/build/libs/earthplatform-0.1.0-engine-prototype.jar "dist/earthplatform-$TAG.jar"
+          cp LICENSE COPYING THIRD_PARTY_NOTICES.md CREDITS.md dist/
+          ( cd dist && sha256sum "earthplatform-$TAG.jar" > "earthplatform-$TAG.jar.sha256" )
+          notes="docs/release/notes/$TAG.md"
+          if [ -f "$notes" ]; then cp "$notes" release-notes.md; else echo "Earth Platform $TAG" > release-notes.md; fi
+          { echo; echo "Built from $(git rev-parse --short HEAD)."; echo; echo '```'; cat "dist/earthplatform-$TAG.jar.sha256"; echo '```'; } >> release-notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Earth Platform ${{ env.TAG }}
+          body_path: release-notes.md
+          prerelease: true
+          files: dist/*
