@@ -1,0 +1,120 @@
+out @OUT@-preview
+fps 30
+time 1500
+preview 3
+
+# 1 Yosemite: push up the valley towards Half Dome
+shot yosemite frames=330
+cam 0 37.7155 -119.6815 =1650
+cam 1 37.7215 -119.6580 =1720
+look 0 37.7459 -119.5332 =2300
+look 1 37.7459 -119.5332 =2150
+
+# 2 Grand Canyon: out over the rim at Mather Point, tilt down to the river
+shot grand_canyon frames=210
+cam 0 36.0585 -112.1076 +60
+cam 1 36.0780 -112.1010 =2300
+look 0 36.1000 -112.1000 =1900
+look 1 36.1050 -112.0950 =1000
+
+# 3 Matterhorn: orbit the east side
+shot matterhorn frames=210
+cam 0 46.0030 7.6950 =5100
+cam 0.5 45.9870 7.7080 =5150
+cam 1 45.9700 7.7090 =5200
+look 0 45.9763 7.6586 =4250
+look 1 45.9763 7.6586 =4250
+
+# 4 Geirangerfjord: glide down the fjord
+shot geiranger frames=210
+cam 0 62.1062 7.1350 =600
+cam 1 62.1068 7.1000 =560
+look 0 62.1000 7.0200 =250
+look 1 62.0950 6.9800 =200
+
+# 5 Everest: rise up the south-west face to the summit
+shot everest frames=240 time=12000
+cam 0 27.9550 86.9000 =7200
+cam 1 27.9700 86.9120 =8700
+look 0 27.9881 86.9250 =8700
+look 1 27.9881 86.9250 =8850
+
+# 6 The big climb at Lauterbrunnen
+shot climb frames=330 warm=200
+cam 0 46.5935 7.9090 +25
+cam 0.35 46.5937 7.9088 =2600
+cam 1 46.6000 7.9050 =9500
+look 0 46.5367 7.9625 =3600
+look 0.35 46.5367 7.9625 =3300
+look 1 46.3000 8.1000 =1200
+
+# 8 Jet stream over the Himalaya
+shot jet frames=270 time=3000
+cam 0 27.8000 86.6000 =10500
+cam 1 27.8600 86.7400 =10400
+look 0 27.9500 86.8500 =6500
+look 1 28.0000 86.9500 =7000
+
+# 9 Quick cuts
+shot tahoe frames=100
+cam 0 38.9450 -120.1250 =2300
+cam 1 38.9480 -120.1180 =2250
+look 0 38.9550 -120.0900 =1900
+look 1 38.9550 -120.0900 =1900
+
+shot teton frames=100
+cam 0 43.7600 -110.7000 =2700
+cam 1 43.7580 -110.7150 =2750
+look 0 43.7410 -110.8024 =4000
+look 1 43.7410 -110.8024 =4000
+
+shot fuji frames=100 time=12200
+cam 0 35.5000 138.7600 =1500
+cam 1 35.4900 138.7550 =1600
+look 0 35.3606 138.7274 =3600
+look 1 35.3606 138.7274 =3650
+
+shot kilimanjaro frames=100
+cam 0 -2.9500 37.3000 =3500
+cam 1 -2.9600 37.3100 =3600
+look 0 -3.0758 37.3533 =5700
+look 1 -3.0758 37.3533 =5750
+
+shot sahara frames=100 time=12300
+cam 0 31.1300 -3.9900 +60
+cam 1 31.1400 -3.9850 +60
+look 0 31.1700 -3.9700 +0
+look 1 31.1800 -3.9650 +0
+
+shot rainier frames=100
+cam 0 46.7600 -121.7400 =2500
+cam 1 46.7700 -121.7450 =2600
+look 0 46.8523 -121.7603 =4300
+look 1 46.8523 -121.7603 =4300
+
+shot louise frames=100
+cam 0 51.4250 -116.1850 =1900
+cam 1 51.4200 -116.1950 =1850
+look 0 51.4050 -116.2450 =2300
+look 1 51.4050 -116.2450 =2300
+
+shot whitehaven frames=100
+cam 0 -20.3000 149.0300 =200
+cam 1 -20.2900 149.0350 =200
+look 0 -20.2700 149.0450 +0
+look 1 -20.2650 149.0450 +0
+
+shot iguazu frames=100
+cam 0 -25.6900 -54.4500 =350
+cam 1 -25.6920 -54.4450 =330
+look 0 -25.6953 -54.4367 =200
+look 1 -25.6953 -54.4367 =200
+
+shot uluru frames=100 time=12300
+cam 0 -25.3600 131.0000 =750
+cam 1 -25.3580 131.0100 =720
+look 0 -25.3444 131.0369 =850
+look 1 -25.3444 131.0369 =850
+
+# 7 Travel map flight, Alps to Mount Fuji
+map travel 46.5935 7.9090 35.4990 138.7600 tail=45 warm=60
