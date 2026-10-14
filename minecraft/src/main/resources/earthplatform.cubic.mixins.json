@@ -110,6 +110,7 @@
     "EarthCloudsMixin",
     "EarthHorizonMixin",
     "EarthFogColourMixin",
+    "EarthFlightCameraMixin",
     "compat.XaeroMinimapWriterMixin",
     "compat.XaeroWorldMapWriterMixin",
     "compat.XaeroWorldMapDimensionMixin",

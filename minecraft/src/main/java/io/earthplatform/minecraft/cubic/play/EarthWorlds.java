@@ -82,7 +82,9 @@ public final class EarthWorlds {
         private Registration() {}
         @SubscribeEvent public static void payloads(RegisterPayloadHandlersEvent event) {
             event.registrar("earth-1").playToClient(EarthStatus.Payload.TYPE, EarthStatus.Payload.CODEC,
-                    (payload, context) -> { if (FMLEnvironment.dist.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthPlayClient.status(payload); });
+                    (payload, context) -> { if (FMLEnvironment.dist.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthPlayClient.status(payload); })
+                    .playToClient(EarthMap.Payload.TYPE, EarthMap.Payload.CODEC,
+                    (payload, context) -> { if (FMLEnvironment.dist.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.received(payload); });
         }
     }
 
@@ -349,6 +351,8 @@ public final class EarthWorlds {
                                 .then(Commands.argument("player", EntityArgument.player()).requires(source -> source.hasPermission(2))
                                         .executes(context -> CubicEvents.travel(context.getSource(), EntityArgument.getPlayer(context, "player"),
                                                 DoubleArgumentType.getDouble(context, "latitude"), DoubleArgumentType.getDouble(context, "longitude")))))));
+        // The creative travel map: the client opens it with a key, through this command.
+        root.then(Commands.literal("map").requires(EarthWorlds::mayTravel).executes(context -> EarthMap.open(context.getSource())));
         root.then(Commands.literal("home").requires(EarthWorlds::mayTravel).executes(context -> home(context.getSource())));
         root.then(Commands.literal("where").executes(context -> CubicEvents.where(context.getSource())));
         root.then(Commands.literal("places").executes(context -> places(context.getSource())));
