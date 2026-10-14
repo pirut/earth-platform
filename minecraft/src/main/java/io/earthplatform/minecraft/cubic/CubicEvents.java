@@ -97,6 +97,7 @@ public final class CubicEvents {
             Vec3 stand = standOn(cubes, arrival.x, arrival.z);
             float yaw = lookOut(cubes, stand, facing(stand, arrival.view, arrival.player.getYRot()));
             arrival.player.teleportTo(level, stand.x, stand.y, stand.z, yaw, 0.0F);
+            io.earthplatform.minecraft.cubic.play.EarthMap.arrived(arrival.player);
             tellPlace(arrival.source, cubes, BlockPos.containing(stand));
         }
     }
@@ -408,6 +409,7 @@ public final class CubicEvents {
         }, Util.ioPool()).whenComplete((spot, failure) -> source.getServer().execute(() -> {
             if (failure != null) {
                 source.sendFailure(Component.literal("Could not load terrain there: " + failure.getMessage()));
+                if (!player.isRemoved()) io.earthplatform.minecraft.cubic.play.EarthMap.failed(player);
                 return;
             }
             if (player.isRemoved()) return;

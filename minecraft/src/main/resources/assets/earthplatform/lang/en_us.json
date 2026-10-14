@@ -65,5 +65,14 @@
   "earthplatform.globe.credit": "NASA Blue Marble, AWS Terrain Tiles, ESA WorldCover",
   "earthplatform.globe.offline": "Offline: showing the built-in map only",
   "earthplatform.globe.loading": "Loading terrain%s",
-  "earthplatform.globe.controls": "Drag to spin, scroll to zoom, click to place the pin"
+  "earthplatform.globe.controls": "Drag to spin, scroll to zoom, click to place the pin",
+  "earthplatform.map.title": "Where to?",
+  "earthplatform.map.travel": "Travel here",
+  "earthplatform.map.hint": "Click the globe where you want to go. The blue dot is you.",
+  "earthplatform.map.travelTo": "Travel to %s",
+  "earthplatform.map.flying": "Flying to %s",
+  "earthplatform.map.loading": "Loading terrain%s",
+  "earthplatform.map.creativeOnly": "The travel map is for creative mode.",
+  "key.earthplatform.map": "Travel map",
+  "key.categories.earthplatform": "Earth Platform"
 }
