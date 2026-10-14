@@ -349,7 +349,11 @@ final class FloatCogs implements AutoCloseable {
                     return Header.MISSING;
                 }
                 byte[] more = files.fetch(base.resolve(name), need.offset, length);
-                if (more == null || more.length < need.length) throw new IOException("Unreadable " + what + " header " + name);
+                // A file that ends before its own header says is as unreadable however often it is asked for.
+                if (more == null || more.length < need.length) {
+                    TerrariumTileSource.warnOnce(what + " " + name, "Cannot read " + what + " " + name + ": it ends before its header does; leaving it out", need);
+                    return Header.MISSING;
+                }
                 pieces.add(need.offset, more);
             }
         }
