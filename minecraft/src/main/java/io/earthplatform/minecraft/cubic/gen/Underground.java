@@ -88,7 +88,7 @@ final class Underground {
     int floor(int x, int z) { return floor(x, z, terrain.surfaceY(x, z)); }
 
     private int node(int nx, int nz) {
-        long key = ((long) nx << 32) | (nz & 0xFFFFFFFFL);
+        long key = it.unimi.dsi.fastutil.HashCommon.mix(((long) nx << 32) | (nz & 0xFFFFFFFFL));
         Integer cached = floorNodes.get(key);
         if (cached != null) return cached;
         int x = nx * NODE, z = nz * NODE, low = Integer.MAX_VALUE;

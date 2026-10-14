@@ -362,7 +362,7 @@ public final class Strata {
 
     /** The country around a datum cell corner. */
     Zone zone(long i, long j) {
-        long key = i << 32 ^ (j & 0xFFFFFFFFL);
+        long key = it.unimi.dsi.fastutil.HashCommon.mix(i << 32 ^ (j & 0xFFFFFFFFL));
         Zone known = zones.get(key);
         if (known != null) return known;
         double metresPerBlock = globe.metresPerBlock(j * (double) CELL);
@@ -453,7 +453,7 @@ public final class Strata {
 
     /** The lowest of a few coarse elevation samples across a cell. */
     private float lowest(long i, long j) {
-        long key = i << 32 ^ (j & 0xFFFFFFFFL);
+        long key = it.unimi.dsi.fastutil.HashCommon.mix(i << 32 ^ (j & 0xFFFFFFFFL));
         Float known = lowest.get(key);
         if (known != null) return known;
         double best = Double.MAX_VALUE;
