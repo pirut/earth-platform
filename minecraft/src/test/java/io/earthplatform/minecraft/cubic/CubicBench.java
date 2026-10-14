@@ -193,7 +193,10 @@ class CubicBench {
             System.out.printf(Locale.ROOT, "codec per cube: write %.3f ms, read %.3f ms, compress %.3f ms, %.0f bytes compressed%n",
                     write / tags.size(), read / tags.size(), deflate / tags.size(), compressed.size() / (double) tags.size());
 
-            // Far columns, nearest first at each level, as a client asks for them.
+            // Far columns, nearest first at each level, as a client asks for them. EARTH_BENCH_FAR_WORKERS=1 makes them
+            // as the server does, more at once while they wait on downloads.
+            io.earthplatform.minecraft.cubic.far.FarWorkers farWorkers = "1".equals(System.getenv("EARTH_BENCH_FAR_WORKERS"))
+                    ? new io.earthplatform.minecraft.cubic.far.FarWorkers("bench far", threads, 4 * threads) : null;
             MessageDigest farDigest = MessageDigest.getInstance("SHA-256");
             double farTotal = 0;
             long farCount = 0;
@@ -208,11 +211,17 @@ class CubicBench {
                 t0 = System.nanoTime();
                 for (int i = 0; i < n; i++) {
                     long key = keys.getLong(i);
-                    made.add(pool.submit(() -> {
+                    java.util.concurrent.Callable<FarColumn> job = () -> {
                         FarColumn column = new FarColumn();
                         gen.farColumn(Far.level(key), Far.x(key), Far.z(key), column);
                         return column;
-                    }));
+                    };
+                    if (farWorkers == null) made.add(pool.submit(job));
+                    else {
+                        java.util.concurrent.FutureTask<FarColumn> task = new java.util.concurrent.FutureTask<>(job);
+                        farWorkers.execute(task);
+                        made.add(task);
+                    }
                 }
                 long farBytes = 0, sections = 0;
                 MessageDigest levelDigest = MessageDigest.getInstance("SHA-256");
@@ -233,6 +242,7 @@ class CubicBench {
                 }
                 double levelWall = ms(t0);
                 farTotal += levelWall / n * keys.size() * threads;
+                if (farWorkers != null) System.out.printf(Locale.ROOT, "far level %d: %.1f s, %d at once at the end%n", level, levelWall / 1000, farWorkers.allowed());
                 farCount += keys.size();
                 System.out.printf(Locale.ROOT, "far level %d: %d of %d columns, %.2f ms per column per thread, %.1f sections and %.0f bytes per column; fingerprint %s%n",
                         level, n, keys.size(), levelWall * threads / n, sections / (double) n, farBytes / (double) n,
@@ -243,6 +253,7 @@ class CubicBench {
             System.out.printf(Locale.ROOT, "far: about %.0f s of one thread for all %d columns; fingerprint %s%n",
                     farTotal / 1000, farCount, HexFormat.of().formatHex(farHash, 0, 8));
             pool.shutdown();
+            if (farWorkers != null) farWorkers.shutdownNow();
         }
         System.out.printf(Locale.ROOT, "%nelevation %s%nland cover %s%nclimate %s%nfingerprint of everything: %s%n",
                 tiles.stats(), cover.stats(), climate.stats(), HexFormat.of().formatHex(all.digest(), 0, 8));
