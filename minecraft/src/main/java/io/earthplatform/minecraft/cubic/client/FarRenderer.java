@@ -128,6 +128,21 @@ public final class FarRenderer {
     private long frameStart = System.nanoTime(), frameNanos = 16_000_000L;
     private boolean closed;
 
+    /**
+     * The last mesh version handed out, for every column alike. A column's versions once started
+     * at 1 again whenever it was made anew (sent again before its first mesh was up, or evicted and
+     * sent again), so a mesh still in flight for the column it replaced could match the new one and
+     * be put up with the old column's slot, which had been freed and could be given to another
+     * column: its faces were then drawn at that column's place and scale, stretched or squeezed.
+     */
+    private static int lastVersion;
+
+    /** A mesh version no column has had; always positive, as failed meshes report theirs negated. */
+    private static int nextVersion() {
+        if (++lastVersion <= 0) lastVersion = 1;
+        return lastVersion;
+    }
+
     private static final class Column {
         final long key;
         final int level, x0, z0, bottom;
@@ -197,7 +212,7 @@ public final class FarRenderer {
             bytes = old.bytes;
             meshed = true;
             // Meshes of the old column still in flight no longer match.
-            version = old.version + 1;
+            version = nextVersion();
             // The old faces use the old column's slot, or the one it kept from the column before it.
             oldSlot = old.oldSlot;
             if (old.bottom == bottom) slot = old.slot;
@@ -574,7 +589,7 @@ public final class FarRenderer {
         var level = world.client();
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = level.getShade(direction, true);
-        FarMesher.Job job = new FarMesher.Job(column.key, ++column.version, column.level, column.slot, column.x0, column.z0, column.bottom,
+        FarMesher.Job job = new FarMesher.Job(column.key, column.version = nextVersion(), column.level, column.slot, column.x0, column.z0, column.bottom,
                 column.sections, column.drops, sides, column.drawnCubes, column.level <= TEXTURED_LEVELS, looks, faces,
                 ShaderBlocks.ids(), shade, white());
         meshing++;
