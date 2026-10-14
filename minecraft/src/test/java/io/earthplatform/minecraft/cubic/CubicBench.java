@@ -106,11 +106,8 @@ class CubicBench {
                 96, 4, Duration.ofSeconds(30));
         // EARTH_BENCH_STREAMS=0 leaves out the streams traced from the elevation's valleys, as worlds made before them.
         RiverMap rivers = "0".equals(System.getenv("EARTH_BENCH_STREAMS")) ? new RiverMap(water, 256)
-                : new RiverMap(water, new Drainage(new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve(TerrariumTileSource.DATASET_ID),
-                        true, 64, 4, Duration.ofSeconds(20), List.of()), (latitude, longitude) -> {
-                            ClimateSource.Climate here = climate.at(latitude, longitude, 0);
-                            return here == null ? Double.NaN : here.precipitation();
-                        }, 24), 256);
+                : new RiverMap(water, new Drainage(new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve(TerrariumTileSource.DATASET_ID), true, 64, 16, Duration.ofSeconds(20)),
+                        new ClimateSource(ClimateSource.CHELSA, cache.resolve(ClimateSource.DATASET_ID), true, 32, 8, Duration.ofSeconds(30))::precipitation, 24), 256);
         BareEarth bareEarth = bare ? new BareEarth(tiles, cover, bareCache ? cache.resolve(BareEarth.ID) : null) : null;
         MessageDigest all = MessageDigest.getInstance("SHA-256");
         List<Place> places = PLACES;

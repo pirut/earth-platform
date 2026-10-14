@@ -1,5 +1,6 @@
 package io.earthplatform.geography.globe;
 
+import io.earthplatform.geography.MissingTerrainException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,7 +30,7 @@ public final class Drainage {
     /** Names how streams are found, pinned in a world's settings so its rivers never change partway. */
     public static final String ID = "elevation-streams-v1";
     /** Zoom the land is drained at, about 150 m pixels at the equator; and tiles of margin each way. */
-    public static final int ZOOM = 10, SPREAD = 2;
+    public static final int ZOOM = 10, SPREAD = 1;
     /** Zoom of the elevation channels are laid along. */
     public static final int FINE_ZOOM = 13;
     /** Upstream ground, square kilometres counted by wetness, a stream drains; and that of a full-sized river. */
@@ -63,14 +64,6 @@ public final class Drainage {
     private final int maxRegions;
     private final LinkedHashMap<Long, Region> memory = new LinkedHashMap<>(16, 0.75f, true);
     private final Map<Long, CompletableFuture<Region>> inFlight = new ConcurrentHashMap<>();
-    /** A thread's most recent fine tile, since neighbouring reads mostly share one. */
-    private final ThreadLocal<Last> lastFine = ThreadLocal.withInitial(Last::new);
-
-    private static final class Last {
-        long key = -1;
-        float[] pixels;
-    }
-
     /** One drained tile: per pixel, the direction (0 to 7) a kept stream steps on in, or -1; and the ground it drains. */
     private record Region(byte[] step, float[] area) {}
 
@@ -101,25 +94,63 @@ public final class Drainage {
         }
     }
 
-    /** Elevation, metres, at a latitude and longitude, bilinear between {@value #FINE_ZOOM}-zoom pixels. */
-    public double metres(double latitude, double longitude) {
-        double fx = pixelX(longitude, FINE_ZOOM) - 0.5, fy = pixelY(latitude, FINE_ZOOM) - 0.5;
-        long ix = (long) Math.floor(fx), iy = (long) Math.floor(fy);
-        double tx = fx - ix, ty = fy - iy;
-        return (fine(ix, iy) * (1 - tx) + fine(ix + 1, iy) * tx) * (1 - ty) + (fine(ix, iy + 1) * (1 - tx) + fine(ix + 1, iy + 1) * tx) * ty;
+    /** Drains every tile an area's streams come from, several at a time, so later reads never wait. */
+    public void prefetch(double south, double west, double north, double east) {
+        int across = 1 << ZOOM;
+        int x0 = (int) Math.floor(pixelX(west, ZOOM) / TILE), x1 = (int) Math.floor(pixelX(east, ZOOM) / TILE);
+        int y0 = Math.max(0, (int) Math.floor(pixelY(north, ZOOM) / TILE)), y1 = Math.min(across - 1, (int) Math.floor(pixelY(south, ZOOM) / TILE));
+        List<Runnable> loads = new ArrayList<>();
+        for (int y = y0; y <= y1; y++) for (int x = x0; x <= x1; x++) {
+            int tx = Math.floorMod(x, across), ty = y;
+            loads.add(() -> region(tx, ty));
+        }
+        RangeFiles.all(loads);
     }
 
-    private float fine(long x, long y) {
+    /**
+     * Elevation, metres, over a grid of latitudes and longitudes, bilinear between
+     * {@value #FINE_ZOOM}-zoom pixels: {@code out[j * longitudes.length + i]} at the j-th latitude and
+     * i-th longitude, each tile read once.
+     */
+    public void metres(double[] latitudes, double[] longitudes, float[] out) {
+        int across = longitudes.length;
         long size = (long) TILE << FINE_ZOOM;
-        x = Math.floorMod(x, size);
-        y = Math.max(0, Math.min(size - 1, y));
-        long key = (x / TILE) << 32 | y / TILE;
-        Last last = lastFine.get();
-        if (last.key != key) {
-            last.pixels = tiles.tile(FINE_ZOOM, (int) (x / TILE), (int) (y / TILE));
-            last.key = key;
+        long[] ix = new long[across];
+        double[] tx = new double[across];
+        for (int i = 0; i < across; i++) {
+            double fx = pixelX(longitudes[i], FINE_ZOOM) - 0.5;
+            ix[i] = (long) Math.floor(fx);
+            tx[i] = fx - ix[i];
         }
-        return last.pixels[(int) ((y % TILE) * TILE + x % TILE)];
+        Map<Long, float[]> read = new java.util.HashMap<>();
+        long[] key = {-1, -1};
+        float[][] last = new float[2][];
+        for (int j = 0; j < latitudes.length; j++) {
+            double fy = pixelY(latitudes[j], FINE_ZOOM) - 0.5;
+            long iy = (long) Math.floor(fy);
+            double ty = fy - iy;
+            long y0 = Math.max(0, Math.min(size - 1, iy)), y1 = Math.max(0, Math.min(size - 1, iy + 1));
+            for (int i = 0; i < across; i++) {
+                long x0 = Math.floorMod(ix[i], size), x1 = Math.floorMod(ix[i] + 1, size);
+                float a = fine(read, key, last, x0, y0), b = fine(read, key, last, x1, y0);
+                float c = fine(read, key, last, x0, y1), d = fine(read, key, last, x1, y1);
+                out[j * across + i] = (float) ((a * (1 - tx[i]) + b * tx[i]) * (1 - ty) + (c * (1 - tx[i]) + d * tx[i]) * ty);
+            }
+        }
+    }
+
+    /** A fine pixel through a grid read's own tiles, its last two kept at hand. */
+    private float fine(Map<Long, float[]> read, long[] key, float[][] last, long x, long y) {
+        long k = (x / TILE) << 32 | y / TILE;
+        float[] pixels;
+        if (key[0] == k) pixels = last[0];
+        else if (key[1] == k) pixels = last[1];
+        else {
+            pixels = read.computeIfAbsent(k, ignored -> tiles.tile(FINE_ZOOM, (int) (x / TILE), (int) (y / TILE)));
+            key[1] = key[0]; last[1] = last[0];
+            key[0] = k; last[0] = pixels;
+        }
+        return pixels[(int) ((y % TILE) * TILE + x % TILE)];
     }
 
     static double pixelX(double longitude, int zoom) { return (longitude + 180) / 360 * ((long) TILE << zoom); }
@@ -173,16 +204,36 @@ public final class Drainage {
                     height[(oy + r) * SIDE + ox + c] = tile == null ? 0 : tile[r * TILE + c];
             });
         }
-        RangeFiles.all(loads);
         long originX = (long) (tx - SPREAD) * TILE, originY = (long) (ty - SPREAD) * TILE;
+        // The rain by rows of its points, which may each wait on a download: read while the land is
+        // fetched and flooded, as only the ground's share of water needs it.
+        int points = SIDE / RAIN_STEP + 1;
+        double[] wet = new double[points * points];
+        List<Runnable> rainRows = new ArrayList<>();
+        for (int j = 0; j < points; j++) {
+            int row = j;
+            rainRows.add(() -> wetness(originX, originY, row, wet));
+        }
+        java.util.concurrent.FutureTask<Void> rained = new java.util.concurrent.FutureTask<>(() -> RangeFiles.all(rainRows), null);
+        Thread.ofVirtual().start(rained);
+        RangeFiles.all(loads);
+        int[] down = new int[SIDE * SIDE], order = flood(height, down);
+        try {
+            rained.get();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new MissingTerrainException("Interrupted while reading rain");
+        } catch (java.util.concurrent.ExecutionException failed) {
+            if (failed.getCause() instanceof RuntimeException runtime) throw runtime;
+            if (failed.getCause() instanceof Error error) throw error;
+            throw new IllegalStateException(failed.getCause());
+        }
         float[] area = new float[SIDE * SIDE];
         double[] row = new double[SIDE];
         for (int y = 0; y < SIDE; y++) {
             double metres = 2 * Math.PI * MercatorGrid.RADIUS / ((long) TILE << ZOOM) * Math.cos(Math.toRadians(latitude(originY + y + 0.5, ZOOM)));
             row[y] = metres * metres / 1e6;
         }
-        double[] wet = wetness(originX, originY);
-        int points = SIDE / RAIN_STEP + 1;
         for (int y = 0; y < SIDE; y++) for (int x = 0; x < SIDE; x++) {
             int i = Math.min(points - 2, x / RAIN_STEP), j = Math.min(points - 2, y / RAIN_STEP);
             double u = (x - i * RAIN_STEP) / (double) RAIN_STEP, v = (y - j * RAIN_STEP) / (double) RAIN_STEP;
@@ -190,7 +241,6 @@ public final class Drainage {
                     + (wet[(j + 1) * points + i] * (1 - u) + wet[(j + 1) * points + i + 1] * u) * v;
             area[y * SIDE + x] = (float) (row[y] * share);
         }
-        int[] down = new int[SIDE * SIDE], order = flood(height, down);
         for (int k = order.length - 1; k >= 0; k--) {
             int at = order[k], to = down[at];
             if (to >= 0) area[to] += area[at];
@@ -210,16 +260,14 @@ public final class Drainage {
         return new Region(step, gathered);
     }
 
-    /** Share of its rain the ground sends on, at points {@value #RAIN_STEP} pixels apart over the window. */
-    private double[] wetness(long originX, long originY) {
+    /** Share of its rain the ground sends on, at one row of points {@value #RAIN_STEP} pixels apart over the window. */
+    private void wetness(long originX, long originY, int j, double[] wet) {
         int points = SIDE / RAIN_STEP + 1;
-        double[] wet = new double[points * points];
-        for (int j = 0; j < points; j++) for (int i = 0; i < points; i++) {
+        for (int i = 0; i < points; i++) {
             if (rain == null) { wet[j * points + i] = 1; continue; }
             double mm = rain.millimetres(latitude(originY + j * RAIN_STEP, ZOOM), longitude(originX + i * RAIN_STEP, ZOOM));
             wet[j * points + i] = Double.isNaN(mm) ? 0 : Math.max(0, Math.min(1, (mm - DRY) / (WET - DRY)));
         }
-        return wet;
     }
 
     /**
@@ -230,44 +278,59 @@ public final class Drainage {
     static int[] flood(float[] height, int[] down) {
         int n = height.length, side = (int) Math.round(Math.sqrt(n));
         boolean[] reached = new boolean[n];
-        int[] order = new int[n], byTicket = new int[n];
+        int[] order = new int[n];
+        // Pixels no higher than the water that reached them fill at its level, before anything
+        // higher: they skip the heap and wait in a plain queue, which most of a pit or flat does.
+        int[] pit = new int[n];
+        float[] water = new float[n];
         long[] heap = new long[4 * side];
-        int size = 0, ticket = 0, popped = 0;
+        int size = 0, head = 0, tail = 0, popped = 0;
         for (int at = 0; at < n; at++) {
             int x = at % side, y = at / side;
             if (x == 0 || y == 0 || x == side - 1 || y == side - 1) {
                 reached[at] = true; down[at] = -1;
-                byTicket[ticket] = at;
                 if (size == heap.length) heap = java.util.Arrays.copyOf(heap, size * 2);
-                size = push(heap, size, key(height[at], ticket++));
+                size = push(heap, size, key(height[at], at));
             }
         }
-        while (size > 0) {
-            long top = heap[0];
-            size = pop(heap, size);
-            int at = byTicket[(int) top];
-            float level = level(top);
+        while (head < tail || size > 0) {
+            int at;
+            float level;
+            if (head < tail) {
+                at = pit[head++];
+                level = water[at];
+            } else {
+                long top = heap[0];
+                size = pop(heap, size);
+                at = (int) top;
+                level = level(top);
+            }
             order[popped++] = at;
             int x = at % side, y = at / side;
+            boolean inside = x > 0 && y > 0 && x < side - 1 && y < side - 1;
             for (int d = 0; d < 8; d++) {
                 int nx = x + NX[d], ny = y + NY[d];
-                if (nx < 0 || ny < 0 || nx >= side || ny >= side) continue;
+                if (!inside && (nx < 0 || ny < 0 || nx >= side || ny >= side)) continue;
                 int next = ny * side + nx;
                 if (reached[next]) continue;
                 reached[next] = true;
                 down[next] = at;
-                byTicket[ticket] = next;
-                if (size == heap.length) heap = java.util.Arrays.copyOf(heap, size * 2);
-                size = push(heap, size, key(Math.max(level, height[next]), ticket++));
+                if (height[next] <= level) {
+                    water[next] = level;
+                    pit[tail++] = next;
+                } else {
+                    if (size == heap.length) heap = java.util.Arrays.copyOf(heap, size * 2);
+                    size = push(heap, size, key(height[next], next));
+                }
             }
         }
         return order;
     }
 
-    /** Heap key: the water level, ordered as a signed int, over the ticket that breaks ties first come first. */
-    private static long key(float level, int ticket) {
+    /** Heap key: the water level, ordered as a signed int, over the pixel, which breaks ties. */
+    private static long key(float level, int pixel) {
         int bits = Float.floatToIntBits(level);
-        return (long) (bits ^ (bits >> 31 & 0x7FFFFFFF)) << 32 | ticket;
+        return (long) (bits ^ (bits >> 31 & 0x7FFFFFFF)) << 32 | pixel;
     }
 
     private static float level(long key) {

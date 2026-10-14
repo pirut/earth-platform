@@ -50,7 +50,6 @@ public final class CubicSettings {
     private static final Map<String, TerrariumTileSource> tiles = new HashMap<>();
     private static CopernicusSource copernicus;
     private static RemaElevation rema;
-    private static TerrariumTileSource streamTiles;
     /** 3DEP by each way of reading it a world may pin. */
     private static final UsgsElevation[] usgs = new UsgsElevation[UsgsElevation.Reading.values().length];
     private static WorldCoverSource cover;
@@ -231,23 +230,6 @@ public final class CubicSettings {
     }
 
     /**
-     * The elevation composite alone, in a memory of its own, for tracing streams: their wide windows
-     * would otherwise push out the tiles terrain is being made from, and valleys need no finer layer.
-     */
-    private static synchronized TerrariumTileSource streamTiles() {
-        if (streamTiles == null) {
-            Path cache = cacheFolder().resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
-            try {
-                streamTiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        64, 4, Duration.ofSeconds(20));
-            } catch (IOException failure) {
-                throw new UncheckedIOException("Could not open the elevation tile cache at " + cache, failure);
-            }
-        }
-        return streamTiles;
-    }
-
-    /**
      * Copernicus GLO-30, for the fill of places where the elevation tiles are wrong over a wide area:
      * fjords filled in as land, and heights off the sea's datum north of SRTM. Cached on disk beside
      * the elevation tiles; its blocks are up to 4 MiB decoded.
@@ -338,13 +320,19 @@ public final class CubicSettings {
      */
     public static synchronized RiverMap riversAndStreams() {
         if (riversAndStreams == null) {
-            ClimateSource climate = climate();
-            Drainage.Rain rain = (latitude, longitude) -> {
-                ClimateSource.Climate here = climate.at(latitude, longitude, 0);
-                return here == null ? Double.NaN : here.precipitation();
-            };
-            // Each drained tile keeps 320 KiB.
-            riversAndStreams = new RiverMap(surfaceWater(), new Drainage(streamTiles(), rain, 24), 256);
+            Path caches = cacheFolder();
+            boolean network = !Boolean.getBoolean("earthplatform.earth.offline");
+            try {
+                // Elevation and rain of their own, the composite alone and the rainfall rows alone: a first visit
+                // then downloads what streams need beside the terrain's own, never queued behind it. Each drained
+                // tile keeps 320 KiB.
+                Path tiles = caches.resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
+                TerrariumTileSource elevation = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, tiles, network, 64, 16, Duration.ofSeconds(20));
+                ClimateSource rain = new ClimateSource(ClimateSource.CHELSA, caches.resolve(ClimateSource.DATASET_ID), network, 32, 8, Duration.ofSeconds(30));
+                riversAndStreams = new RiverMap(surfaceWater(), new Drainage(elevation, rain::precipitation, 24), 256);
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the stream caches under " + caches, failure);
+            }
         }
         return riversAndStreams;
     }

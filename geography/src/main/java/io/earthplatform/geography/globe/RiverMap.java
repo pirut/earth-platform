@@ -1,5 +1,6 @@
 package io.earthplatform.geography.globe;
 
+import io.earthplatform.geography.MissingTerrainException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -127,6 +128,15 @@ public final class RiverMap {
         int r1 = (int) Math.floor((SurfaceWaterSource.NORTH - Math.max(SurfaceWaterSource.SOUTH, south)) * SurfaceWaterSource.PIXELS_PER_DEGREE) / TILE;
         int c0 = (int) Math.floor((west + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE) / TILE, c1 = (int) Math.floor((east + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE) / TILE;
         List<Runnable> loads = new ArrayList<>();
+        // The streams' drained land is the longest wait, so it starts at once beside the water record's reads.
+        if (drainage != null) {
+            double margin = MARGIN / SurfaceWaterSource.PIXELS_PER_DEGREE;
+            double top = SurfaceWaterSource.NORTH - (double) Math.max(0, r0) * TILE / SurfaceWaterSource.PIXELS_PER_DEGREE + margin;
+            double bottom = SurfaceWaterSource.NORTH - (double) (r1 + 1) * TILE / SurfaceWaterSource.PIXELS_PER_DEGREE - margin;
+            double left = (double) c0 * TILE / SurfaceWaterSource.PIXELS_PER_DEGREE - 180 - margin;
+            double right = (double) (c1 + 1) * TILE / SurfaceWaterSource.PIXELS_PER_DEGREE - 180 + margin;
+            loads.add(() -> drainage.prefetch(bottom, left, top, right));
+        }
         for (int r = Math.max(0, r0); r <= r1 && r * TILE < SurfaceWaterSource.DOWN; r++)
             for (int c = c0; c <= c1; c++) { int row = r * TILE, column = c * TILE; loads.add(() -> traced(column, row)); }
         RangeFiles.all(loads);
@@ -180,12 +190,17 @@ public final class RiverMap {
     /** Steps along eight directions, for closing gaps on lines. */
     private static final int[][] DIRECTIONS = {{1, 0}, {0, 1}, {1, 1}, {1, -1}, {2, 1}, {1, 2}, {2, -1}, {1, -2}};
     private static final int[] NX = {1, 1, 0, -1, -1, -1, 0, 1}, NY = {0, 1, 1, 1, 0, -1, -1, -1};
+    /** Steps along each of {@link #DIRECTIONS} that span a gap of {@value #CLOSE} pixels. */
+    private static final int[] CLOSE_STEPS = java.util.Arrays.stream(DIRECTIONS).mapToInt(d -> Math.max(1, (int) Math.round(CLOSE / Math.hypot(d[0], d[1])))).toArray();
 
     private Traced trace(long key, int x0, int y0) {
+        // The streams are worked out while the occurrence pixels are read, which may wait on downloads.
+        java.util.concurrent.FutureTask<float[]> streams = drainage == null ? null : new java.util.concurrent.FutureTask<>(() -> streams(x0 - MARGIN, y0 - MARGIN));
+        if (streams != null) Thread.ofVirtual().start(streams);
         int[] occurrence = new int[SPAN * SPAN];
         for (int j = 0; j < SPAN; j++) for (int i = 0; i < SPAN; i++)
             occurrence[j * SPAN + i] = source.occurrence(x0 - MARGIN + i, y0 - MARGIN + j);
-        float[] strength = trace(occurrence, drainage == null ? null : streams(x0 - MARGIN, y0 - MARGIN), SPAN);
+        float[] strength = trace(occurrence, streams == null ? null : finished(streams), SPAN);
         byte[] out = new byte[TILE * TILE], cells = new byte[(TILE / CELL) * (TILE / CELL)];
         for (int j = 0; j < TILE; j++) for (int i = 0; i < TILE; i++) {
             int value = Math.round(Math.min(1, strength[(j + MARGIN) * SPAN + i + MARGIN]) * 255);
@@ -194,6 +209,19 @@ public final class RiverMap {
             if (value > (cells[cell] & 0xFF)) cells[cell] = (byte) value;
         }
         return new Traced(key, out, cells);
+    }
+
+    private static float[] finished(java.util.concurrent.FutureTask<float[]> task) {
+        try {
+            return task.get();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new MissingTerrainException("Interrupted while tracing streams");
+        } catch (java.util.concurrent.ExecutionException failed) {
+            if (failed.getCause() instanceof RuntimeException runtime) throw runtime;
+            if (failed.getCause() instanceof Error error) throw error;
+            throw new IllegalStateException(failed.getCause());
+        }
     }
 
     /** Strength, 0 to 1, per pixel of a square {@code span} pixels across from its occurrence pixels. */
@@ -228,16 +256,25 @@ public final class RiverMap {
 
     /** Pixels within a square of the given radius of any set pixel. */
     static boolean[] grow(boolean[] a, int span, int radius) {
+        // Along each row, then down each column, counting set pixels in a window sliding by one.
         boolean[] across = new boolean[a.length], out = new boolean[a.length];
-        for (int y = 0; y < span; y++) for (int x = 0; x < span; x++) {
-            boolean hit = false;
-            for (int r = -radius; r <= radius && !hit; r++) hit = at(a, span, x + r, y);
-            across[y * span + x] = hit;
+        for (int y = 0; y < span; y++) {
+            int count = 0, row = y * span;
+            for (int x = 0; x < Math.min(radius, span); x++) if (a[row + x]) count++;
+            for (int x = 0; x < span; x++) {
+                if (x + radius < span && a[row + x + radius]) count++;
+                if (x - radius - 1 >= 0 && a[row + x - radius - 1]) count--;
+                across[row + x] = count > 0;
+            }
         }
-        for (int y = 0; y < span; y++) for (int x = 0; x < span; x++) {
-            boolean hit = false;
-            for (int r = -radius; r <= radius && !hit; r++) hit = at(across, span, x, y + r);
-            out[y * span + x] = hit;
+        for (int x = 0; x < span; x++) {
+            int count = 0;
+            for (int y = 0; y < Math.min(radius, span); y++) if (across[y * span + x]) count++;
+            for (int y = 0; y < span; y++) {
+                if (y + radius < span && across[(y + radius) * span + x]) count++;
+                if (y - radius - 1 >= 0 && across[(y - radius - 1) * span + x]) count--;
+                out[y * span + x] = count > 0;
+            }
         }
         return out;
     }
@@ -251,11 +288,10 @@ public final class RiverMap {
     private float[] streams(int column, int row) {
         int span = SPAN, n = span * span;
         float[] height = new float[n];
-        for (int j = 0; j < span; j++) {
-            double latitude = SurfaceWaterSource.NORTH - (row + j + 0.5) / SurfaceWaterSource.PIXELS_PER_DEGREE;
-            for (int i = 0; i < span; i++)
-                height[j * span + i] = (float) drainage.metres(latitude, (column + i + 0.5) / SurfaceWaterSource.PIXELS_PER_DEGREE - 180);
-        }
+        double[] latitudes = new double[span], longitudes = new double[span];
+        for (int j = 0; j < span; j++) latitudes[j] = SurfaceWaterSource.NORTH - (row + j + 0.5) / SurfaceWaterSource.PIXELS_PER_DEGREE;
+        for (int i = 0; i < span; i++) longitudes[i] = (column + i + 0.5) / SurfaceWaterSource.PIXELS_PER_DEGREE - 180;
+        drainage.metres(latitudes, longitudes, height);
         float[] floor = lowest(height, span, FLOOR);
         float[] streams = new float[n];
         double north = SurfaceWaterSource.NORTH - (double) row / SurfaceWaterSource.PIXELS_PER_DEGREE;
@@ -377,11 +413,17 @@ public final class RiverMap {
     /** Pixels raised to most of the weaker of the strongest pixels within a gap on either side of them along a line. */
     static float[] close(float[] v, int span) {
         float[] f = v.clone();
+        // A pixel only rises with water on both sides of it within the gap, so nowhere without any near by.
+        boolean[] some = new boolean[v.length];
+        for (int k = 0; k < v.length; k++) some[k] = v[k] > 0;
+        boolean[] near = grow(some, span, CLOSE);
         for (int y = 0; y < span; y++) for (int x = 0; x < span; x++) {
             int k = y * span + x;
+            if (!near[k] || v[k] >= 0.8f) continue;
             float best = 0;
-            for (int[] d : DIRECTIONS) {
-                int steps = Math.max(1, (int) Math.round(CLOSE / Math.hypot(d[0], d[1])));
+            for (int i = 0; i < DIRECTIONS.length; i++) {
+                int[] d = DIRECTIONS[i];
+                int steps = CLOSE_STEPS[i];
                 float ahead = 0, behind = 0;
                 for (int s = 1; s <= steps; s++) {
                     ahead = Math.max(ahead, at(v, span, x + d[0] * s, y + d[1] * s));
@@ -456,6 +498,12 @@ public final class RiverMap {
             if (wet > NARROW) continue;
             ends.add(new End(x, y, dx / length, dy / length, Math.max(1, wet / 5.0), line[y * span + x]));
         }
+        // Each row's line pixels, by column, for the search ahead of each end.
+        int[] rowStart = new int[span + 1], columns;
+        for (int k = 0; k < line.length; k++) if (line[k] != 0) rowStart[k / span + 1]++;
+        for (int y = 0; y < span; y++) rowStart[y + 1] += rowStart[y];
+        columns = new int[rowStart[span]];
+        for (int k = 0, at = 0; k < line.length; k++) if (line[k] != 0) columns[at++] = k % span;
         for (End start : ends) {
             End at = start;
             for (int hop = 0; hop < HOPS; hop++) {
@@ -464,15 +512,14 @@ public final class RiverMap {
                 int tx = -1, ty = -1;
                 double best = Double.MAX_VALUE;
                 for (int y = Math.max(0, at.y - JOIN); y <= Math.min(span - 1, at.y + JOIN); y++)
-                    for (int x = Math.max(0, at.x - JOIN); x <= Math.min(span - 1, at.x + JOIN); x++) {
-                        int l = line[y * span + x];
-                        if (l == 0 || find(root, l) == own || wet(solid, span, x, y) > NARROW) continue;
-                        double gx = x - at.x, gy = y - at.y, d = Math.hypot(gx, gy);
-                        if (d > JOIN || d < 1) continue;
-                        double ahead = (at.dx * gx + at.dy * gy) / d;
+                    for (int c = first(columns, rowStart[y], rowStart[y + 1], at.x - JOIN); c < rowStart[y + 1] && columns[c] <= at.x + JOIN; c++) {
+                        int x = columns[c], l = line[y * span + x];
+                        double gx = x - at.x, gy = y - at.y, squared = gx * gx + gy * gy;
+                        if (squared > JOIN * JOIN || squared < 1 || find(root, l) == own) continue;
+                        double d = Math.hypot(gx, gy), ahead = (at.dx * gx + at.dy * gy) / d;
                         if (ahead < 0.5 + 0.4 * d / JOIN) continue;
                         double score = d * (2 - ahead);
-                        if (score < best) { best = score; tx = x; ty = y; }
+                        if (score < best && wet(solid, span, x, y) <= NARROW) { best = score; tx = x; ty = y; }
                     }
                 if (tx < 0) break;
                 int target = line[ty * span + tx];
@@ -497,6 +544,15 @@ public final class RiverMap {
     }
 
     /** Water pixels in the five by five around a pixel: five for a line one pixel wide, more for wider water. */
+    /** The first index from {@code from} to {@code to} whose column is at least {@code x}. */
+    private static int first(int[] columns, int from, int to, int x) {
+        while (from < to) {
+            int middle = (from + to) >>> 1;
+            if (columns[middle] < x) from = middle + 1; else to = middle;
+        }
+        return from;
+    }
+
     private static int wet(boolean[] solid, int span, int x, int y) {
         int wet = 0;
         for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) if (at(solid, span, x + i, y + j)) wet++;
@@ -556,31 +612,62 @@ public final class RiverMap {
     /** Zhang-Suen thinning: a one-pixel line down the middle of each shape. */
     static boolean[] thin(boolean[] solid, int span) {
         boolean[] a = solid.clone();
-        boolean changed = true;
-        List<Integer> clear = new ArrayList<>();
+        int n = a.length;
+        // A pixel's fate in a pass hangs on its eight neighbours alone, so after the first look each
+        // pass only looks again at pixels next to one cleared since: wide water thins in many rounds.
+        int[][] dirty = {new int[n], new int[n]};
+        boolean[][] marked = {new boolean[n], new boolean[n]};
+        int[] count = new int[2], clear = new int[n];
+        for (int y = 1; y < span - 1; y++) for (int x = 1; x < span - 1; x++) {
+            int k = y * span + x;
+            if (!a[k]) continue;
+            for (int pass = 0; pass < 2; pass++) { dirty[pass][count[pass]++] = k; marked[pass][k] = true; }
+        }
         // Ring order P2..P9: north, north-east, east, south-east, south, south-west, west, north-west.
-        int[] rx = {0, 1, 1, 1, 0, -1, -1, -1}, ry = {-1, -1, 0, 1, 1, 1, 0, -1};
+        int[] ring = {-span, -span + 1, 1, span + 1, span, span - 1, -1, -span - 1};
+        boolean changed = true;
         while (changed) {
             changed = false;
             for (int pass = 0; pass < 2; pass++) {
-                clear.clear();
-                for (int y = 1; y < span - 1; y++) for (int x = 1; x < span - 1; x++) {
-                    if (!a[y * span + x]) continue;
-                    boolean[] p = new boolean[8];
-                    int count = 0;
-                    for (int k = 0; k < 8; k++) { p[k] = a[(y + ry[k]) * span + x + rx[k]]; if (p[k]) count++; }
-                    if (count < 2 || count > 6) continue;
-                    int turns = 0;
-                    for (int k = 0; k < 8; k++) if (!p[k] && p[(k + 1) % 8]) turns++;
-                    if (turns != 1) continue;
-                    if (pass == 0 ? (p[0] && p[2] && p[4]) || (p[2] && p[4] && p[6]) : (p[0] && p[2] && p[6]) || (p[0] && p[4] && p[6])) continue;
-                    clear.add(y * span + x);
+                int[] list = dirty[pass];
+                int m = count[pass], cleared = 0;
+                count[pass] = 0;
+                for (int i = 0; i < m; i++) {
+                    int k = list[i];
+                    marked[pass][k] = false;
+                    if (!a[k]) continue;
+                    int bits = 0;
+                    for (int r = 0; r < 8; r++) if (a[k + ring[r]]) bits |= 1 << r;
+                    if (THIN[pass][bits]) clear[cleared++] = k;
                 }
-                for (int k : clear) a[k] = false;
-                changed |= !clear.isEmpty();
+                for (int i = 0; i < cleared; i++) a[clear[i]] = false;
+                for (int i = 0; i < cleared; i++) {
+                    int k = clear[i];
+                    for (int r = 0; r < 8; r++) {
+                        int q = k + ring[r], qx = q % span, qy = q / span;
+                        if (!a[q] || qx < 1 || qy < 1 || qx >= span - 1 || qy >= span - 1) continue;
+                        for (int other = 0; other < 2; other++)
+                            if (!marked[other][q]) { marked[other][q] = true; dirty[other][count[other]++] = q; }
+                    }
+                }
+                changed |= cleared > 0;
             }
         }
         return a;
+    }
+
+    /** Whether each pass of the thinning clears a pixel, by its neighbours as bits in ring order. */
+    private static final boolean[][] THIN = new boolean[2][256];
+    static {
+        for (int bits = 0; bits < 256; bits++) {
+            boolean[] p = new boolean[8];
+            for (int k = 0; k < 8; k++) p[k] = (bits >> k & 1) != 0;
+            int count = Integer.bitCount(bits), turns = 0;
+            for (int k = 0; k < 8; k++) if (!p[k] && p[(k + 1) % 8]) turns++;
+            if (count < 2 || count > 6 || turns != 1) continue;
+            THIN[0][bits] = !((p[0] && p[2] && p[4]) || (p[2] && p[4] && p[6]));
+            THIN[1][bits] = !((p[0] && p[2] && p[6]) || (p[0] && p[4] && p[6]));
+        }
     }
 
     /** Numbers each eight-connected shape from 1; 0 outside them. */
@@ -608,23 +695,51 @@ public final class RiverMap {
 
     /** Morphological opening with a disc: the pixels covered by discs of the radius that fit wholly in the shapes. */
     static boolean[] open(boolean[] a, int span, int radius) {
-        List<int[]> disc = new ArrayList<>();
-        for (int j = -radius; j <= radius; j++) for (int i = -radius; i <= radius; i++) if (i * i + j * j <= radius * radius + radius) disc.add(new int[]{i, j});
+        // The disc as a run of pixels across each of its rows, checked by counts along each row.
+        int[] half = new int[2 * radius + 1];
+        for (int j = -radius; j <= radius; j++) {
+            half[j + radius] = -1;
+            for (int i = 0; i <= radius; i++) if (i * i + j * j <= radius * radius + radius) half[j + radius] = i;
+        }
+        int[] sums = rowSums(a, span);
         boolean[] eroded = new boolean[a.length];
         for (int y = 0; y < span; y++) for (int x = 0; x < span; x++) {
             if (!a[y * span + x]) continue;
             boolean fits = true;
-            for (int[] d : disc) if (!at(a, span, x + d[0], y + d[1])) { fits = false; break; }
+            for (int j = -radius; j <= radius && fits; j++) {
+                int w = half[j + radius];
+                if (w < 0) continue;
+                int py = y + j, x0 = x - w, x1 = x + w;
+                fits = py >= 0 && py < span && x0 >= 0 && x1 < span && run(sums, span, py, x0, x1) == x1 - x0 + 1;
+            }
             eroded[y * span + x] = fits;
         }
+        // The disc is its own mirror, so a pixel is in the opening where the disc round it holds an eroded one.
+        sums = rowSums(eroded, span);
         boolean[] opened = new boolean[a.length];
         for (int y = 0; y < span; y++) for (int x = 0; x < span; x++) {
-            if (!eroded[y * span + x]) continue;
-            for (int[] d : disc) {
-                int px = x + d[0], py = y + d[1];
-                if (px >= 0 && py >= 0 && px < span && py < span) opened[py * span + px] = true;
+            boolean hit = false;
+            for (int j = -radius; j <= radius && !hit; j++) {
+                int w = half[j + radius], py = y + j;
+                if (w < 0 || py < 0 || py >= span) continue;
+                hit = run(sums, span, py, Math.max(0, x - w), Math.min(span - 1, x + w)) > 0;
             }
+            opened[y * span + x] = hit;
         }
         return opened;
     }
+
+    /** Set pixels in each row before each column, {@code span + 1} a row. */
+    private static int[] rowSums(boolean[] a, int span) {
+        int[] sums = new int[span * (span + 1)];
+        for (int y = 0; y < span; y++) for (int x = 0; x < span; x++)
+            sums[y * (span + 1) + x + 1] = sums[y * (span + 1) + x] + (a[y * span + x] ? 1 : 0);
+        return sums;
+    }
+
+    /** Set pixels in a row from one column to another, both included. */
+    private static int run(int[] sums, int span, int y, int x0, int x1) {
+        return sums[y * (span + 1) + x1 + 1] - sums[y * (span + 1) + x0];
+    }
+
 }
