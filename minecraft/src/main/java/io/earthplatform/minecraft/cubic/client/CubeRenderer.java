@@ -69,23 +69,6 @@ public final class CubeRenderer {
     private final LongOpenHashSet building = new LongOpenHashSet();
     /** Cubes whose current contents have a mesh (or need none), so far terrain can leave them out. */
     private final LongOpenHashSet compiled = new LongOpenHashSet();
-    /** Tick at which each cube was first compiled, so one held back too long shows anyway. */
-    private final Long2IntOpenHashMap compiledAt = new Long2IntOpenHashMap();
-    /**
-     * The compiled cubes that are drawn: those with every cube above them compiled too, up to open
-     * sky (an air cube) or the top of the cubes kept around the camera. While Earth data downloads,
-     * cubes arrive in no particular order up a column, and a cube drawn before the ones above it
-     * showed its unlit top and cave walls as a dark floor under the ground. Far terrain, which only
-     * leaves out drawn cubes, went on standing in above it, and under a shader pack (where far
-     * terrain gives way wherever near terrain is drawn at all, see FarShaders) it was torn to
-     * shreds over that floor. Held back, the cubes stay hidden behind far terrain until their
-     * column is whole.
-     */
-    private LongOpenHashSet shown = new LongOpenHashSet();
-    private boolean shownStale = true;
-    private int shownAt, shownCy = Integer.MIN_VALUE;
-    /** Longest a compiled cube is held back for the cubes above it: they may never come. */
-    private static final int HOLD_TICKS = 200;
     private final ConcurrentLinkedQueue<CubeMesher.Built> built = new ConcurrentLinkedQueue<>();
     private final List<Mesh> visible = new ArrayList<>();
     private int ticks, drawnFrame = -1, translucentFrame = -1, frame;
@@ -112,41 +95,7 @@ public final class CubeRenderer {
     public int meshCount() { return meshes.size(); }
     public int pendingCount() { return dirty.size() + building.size(); }
     /** Cubes whose current contents are drawn here; read only. */
-    LongOpenHashSet compiledCubes() { return shown; }
-
-    /** Works out {@link #shown} again when cubes were compiled or dropped, the camera changed cube level, or held cubes may be due. */
-    private void refreshShown(int cy) {
-        // At most every other tick while cubes stream in: it looks over every compiled cube.
-        if (cy == shownCy && ticks - shownAt < (shownStale ? 2 : 20)) return;
-        shownStale = false;
-        shownCy = cy;
-        shownAt = ticks;
-        LongOpenHashSet next = new LongOpenHashSet(compiled.size() * 2);
-        LongOpenHashSet held = new LongOpenHashSet();
-        LongArrayList walked = new LongArrayList();
-        int top = cy + io.earthplatform.minecraft.cubic.Cubic.VERTICAL_RADIUS;
-        for (LongIterator it = compiled.iterator(); it.hasNext(); ) {
-            long start = it.nextLong();
-            if (next.contains(start) || held.contains(start)) continue;
-            int x = CubeKey.x(start), z = CubeKey.z(start);
-            walked.clear();
-            boolean whole = false;
-            for (int y = CubeKey.y(start); ; y++) {
-                long key = CubeKey.pack(x, y, z);
-                if (next.contains(key)) { whole = true; break; }
-                if (held.contains(key) || !compiled.contains(key)) break;
-                walked.add(key);
-                Cube cube = world.cube(key);
-                if (y >= top || cube != null && cube.isEmpty()) { whole = true; break; }
-            }
-            for (int i = 0; i < walked.size(); i++) {
-                long key = walked.getLong(i);
-                if (whole || ticks - compiledAt.get(key) >= HOLD_TICKS) next.add(key);
-                else held.add(key);
-            }
-        }
-        shown = next;
-    }
+    LongOpenHashSet compiledCubes() { return compiled; }
 
     // Dirty tracking -----------------------------------------------------------------------------
 
@@ -176,8 +125,6 @@ public final class CubeRenderer {
         versions.remove(key);
         light.remove(key);
         compiled.remove(key);
-        compiledAt.remove(key);
-        shownStale = true;
         Mesh mesh = meshes.remove(key);
         if (mesh != null) mesh.close();
     }
@@ -258,8 +205,7 @@ public final class CubeRenderer {
         Mesh mesh = meshes.remove(key);
         if (mesh != null) mesh.close();
         light.remove(key);
-        if (compiled.add(key)) compiledAt.put(key, ticks);
-        shownStale = true;
+        compiled.add(key);
     }
 
     /**
@@ -328,8 +274,7 @@ public final class CubeRenderer {
             building.remove(result.key());
             if (closed || world.cube(result.key()) == null || result.version() < 0) { result.free(); continue; }
             if (result.light() != null) light.put(result.key(), result.light());
-            if (compiled.add(result.key())) compiledAt.put(result.key(), ticks);
-            shownStale = true;
+            compiled.add(result.key());
             Mesh mesh = meshes.get(result.key());
             if (mesh == null) { mesh = new Mesh(result.key()); meshes.put(result.key(), mesh); }
             boolean[] present = new boolean[mesh.buffers.length];
@@ -358,10 +303,9 @@ public final class CubeRenderer {
         upload();
         Timings.CUBE_UPLOAD.since(start);
         schedule(position);
-        refreshShown((int) Math.floor(position.y) >> 4);
         visible.clear();
         for (Mesh mesh : meshes.values()) {
-            if (!shown.contains(mesh.key) || !frustum.isVisible(mesh.box)) continue;
+            if (!frustum.isVisible(mesh.box)) continue;
             double dx = mesh.x + 8 - position.x, dy = mesh.y + 8 - position.y, dz = mesh.z + 8 - position.z;
             mesh.distance = dx * dx + dy * dy + dz * dz;
             visible.add(mesh);
@@ -417,8 +361,7 @@ public final class CubeRenderer {
         Frustum shadow = new Frustum(modelView, projection);
         shadow.prepare(position.x, position.y, position.z);
         List<Mesh> all = new ArrayList<>(meshes.size());
-        refreshShown((int) Math.floor(position.y) >> 4);
-        for (Mesh mesh : meshes.values()) if (shown.contains(mesh.key) && shadow.isVisible(mesh.box)) all.add(mesh);
+        for (Mesh mesh : meshes.values()) if (shadow.isVisible(mesh.box)) all.add(mesh);
         for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {
             RenderType type = CubeMesher.LAYERS.get(i);
             if (type == RenderType.translucent() || type == RenderType.tripwire()) continue;
@@ -485,8 +428,6 @@ public final class CubeRenderer {
         meshes.clear();
         light.clear();
         compiled.clear();
-        compiledAt.clear();
-        shown.clear();
         dirty.clear();
         CubeMesher.Built result;
         while ((result = built.poll()) != null) result.free();
