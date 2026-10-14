@@ -320,9 +320,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             // which otherwise stood a block above the sea around it wherever the survey read a little over 0 m.
             // So is water within a few metres of sea level right beside the sea, as the ponds and creeks among
             // mangroves, whose survey reads the canopy round them: kept at its own level, it stood in walls and
-            // falls a few blocks above and below the sea.
+            // falls a few blocks above and below the sea. And water below the sea's level that the sea's own samples
+            // reach is the sea: on a steep step in the survey of a shallow bank, as in the Exumas, it read as a lake
+            // ten blocks under the sea round it, in a straight walled trench.
             if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && joinsOpenSea(x, z)
-                    || Math.abs(surface - SEA) <= TIDAL && besideSea(x, z))) {
+                    || Math.abs(surface - SEA) <= TIDAL && besideSea(x, z) || surface < SEA && seaWater(x, z))) {
                 out[0] = lagoonBed(x, z, metres, voxel);
                 out[1] = SEA;
                 return;
@@ -1208,6 +1210,10 @@ public final class EarthGenerator extends SurfaceGenerator {
         // A falls' face stands at the level of the reach above it or the pool below, whatever the ground reads.
         if (fallingNear) return surface;
         if (relief > MOUNTAINS && !drowned) surface = Math.max(surface, local - DIP);
+        // Nor does a lake lie under the sea's level where the ground round it doesn't: a cell's water samples include
+        // the sea, whose survey reads the bathymetry, and the Exumas' salt ponds took its depth, twenty and thirty
+        // blocks under the sea beside them. Below-sea lakes, as the Dead Sea, have their ground as low.
+        if (!drowned && surface < SEA) surface = Math.max(surface, Math.min(SEA, local - DIP));
         // Drowned ground lies far under its water, which stands at its shores' level.
         return drowned ? surface : Math.min(surface, local + BANK);
     }
