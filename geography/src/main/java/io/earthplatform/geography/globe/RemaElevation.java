@@ -13,7 +13,7 @@ import java.io.UncheckedIOException;
  *
  * <p>REMA heights are above the WGS 84 ellipsoid; the EGM96 geoid, as the composite uses, is
  * subtracted (on the open ice sheet the two then agree to within a metre). Each tile pixel takes REMA
- * read at about its own size: the 2 m mosaic and its overviews for pixels under 32 m, the 32 m
+ * read at the overview nearest its own size: the 2 m mosaic and its overviews for pixels under 32 m, the 32 m
  * mosaic beyond. Where REMA has no data, over the sea and at the edges of its coverage, the tile
  * keeps its own values, blended over about 64 m. Open sea (exactly 0) is left as it is.
  */
@@ -56,16 +56,10 @@ public final class RemaElevation implements ElevationLayer, AutoCloseable {
         // Read REMA at about the tile's pixel size, measured at its centre.
         double centre = latitude(world, (y + 0.5) * size);
         double pixel = EQUATOR * Math.cos(Math.toRadians(centre)) / world;
-        int product, overview, edge;
-        if (pixel < 32) {
-            product = RemaSource.FINE;
-            overview = Math.max(0, Math.min(RemaSource.MAX_OVERVIEW[product], (int) Math.floor(Math.log(pixel / RemaSource.RESOLUTION[product]) / Math.log(2))));
-            edge = 5;
-        } else {
-            product = RemaSource.COARSE;
-            overview = Math.max(0, Math.min(RemaSource.MAX_OVERVIEW[product], (int) Math.floor(Math.log(pixel / RemaSource.RESOLUTION[product]) / Math.log(2))));
-            edge = 1;
-        }
+        // The nearest overview, not the next finer one: a finer one is up to four times the download for
+        // detail the tile's pixels cannot show.
+        int product = pixel < 32 ? RemaSource.FINE : RemaSource.COARSE, edge = product == RemaSource.FINE ? 5 : 1;
+        int overview = Math.max(0, Math.min(RemaSource.MAX_OVERVIEW[product], (int) Math.round(Math.log(pixel / RemaSource.RESOLUTION[product]) / Math.log(2))));
         double[] sin = new double[size], cos = new double[size], geoidColumn = new double[size];
         for (int i = 0; i < size; i++) {
             double lambda = Math.toRadians(((double) x * size + i + 0.5) / world * 360 - 180);
