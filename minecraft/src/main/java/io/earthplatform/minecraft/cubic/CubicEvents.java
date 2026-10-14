@@ -51,7 +51,11 @@ public final class CubicEvents {
         // Fetch the data around the arrival point now, so the first visit does not wait on it.
         int[] home = generator.arrival();
         // On the IO pool: downloads wait on the network, which must not hold up world generation workers.
-        Util.ioPool().execute(() -> generator.prepare(home[0], home[1]));
+        // The cubes' data first, which the first arrival waits on, then the far levels'.
+        Util.ioPool().execute(() -> {
+            generator.prepareNear(home[0], home[1]);
+            generator.prepare(home[0], home[1]);
+        });
     }
 
     @SubscribeEvent public static void save(LevelEvent.Save event) {
