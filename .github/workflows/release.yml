@@ -48,10 +48,19 @@ jobs:
             tag=$(ls docs/release/notes | sed -n 's/^\(combined-[0-9][0-9]*\)\.md$/\1/p' | sort -t- -k2 -n | tail -1)
             if [ -z "$tag" ]; then echo "No release notes on main; nothing to release."; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; fi
             if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$(name_for "$tag")" --prerelease=false --draft=false --latest
+              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --prerelease=false --draft=false --latest
               echo "$tag is already released; marked it Latest, nothing else to do."; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
             fi
           fi
+          # A public version 0.1.0-alpha.N (or beta.N) must name the same build N as the combined-N tag.
+          n="${version##*[.-]}"
+          case "$version:$tag" in
+            *-alpha.*:combined-*|*-beta.*:combined-*)
+              if [ "$n" != "${tag#combined-}" ]; then
+                echo "::error::mod_version $version does not match $tag. Set mod_version to the same build number as the newest docs/release/notes/combined-NN.md."
+                exit 1
+              fi ;;
+          esac
           echo "Releasing $tag"
           echo "TAG=$tag" >> "$GITHUB_ENV"
           echo "TITLE=$(name_for "$tag")" >> "$GITHUB_ENV"

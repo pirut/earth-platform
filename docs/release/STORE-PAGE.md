@@ -106,8 +106,8 @@ Earth Platform is free software under the GNU LGPL 3.0; the Earth data keeps its
 | Field | Value |
 | --- | --- |
 | File | `earthplatform-<version>.jar` from the GitHub release (the same file on both sites) |
-| Version number | The mod version, for example `0.1.0-alpha.37` (see [Versioning](GO-PUBLIC.md#versioning)) |
-| Version name / display name | `Earth Platform 0.1.0-alpha.37` |
+| Version number | The mod version, for example `0.1.0-alpha.38` (see [Versioning](GO-PUBLIC.md#versioning)) |
+| Version name / display name | `Earth Platform 0.1.0-alpha.38` |
 | Channel / release type | **Alpha** |
 | Game versions | 1.21.1 |
 | Loaders | NeoForge |

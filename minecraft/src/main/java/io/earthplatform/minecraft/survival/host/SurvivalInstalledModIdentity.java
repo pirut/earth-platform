@@ -16,7 +16,7 @@ import net.neoforged.fml.loading.FMLPaths;
 /** Exact installed first-slice executable profile; unexpected gameplay mods refuse before entry. */
 public final class SurvivalInstalledModIdentity {
     private static final Map<String,String> VERSIONS = Map.of(
-            "minecraft","1.21.1", "neoforge","21.1.256", "earthplatform","0.1.0-engine-prototype",
+            "minecraft","1.21.1", "neoforge","21.1.256",
             "distanthorizons","3.3.3", "iris","1.8.14-beta.1+mc1.21.1", "sodium","0.8.12-beta.1+mc1.21.1");
     private static final Map<String,String> DISTRIBUTIONS = Map.of(
             "distanthorizons","864e70def5b0d54d619b940b66bb2784e91d3f3fc253064fdc1b3fc5786cbfab",
@@ -63,6 +63,8 @@ public final class SurvivalInstalledModIdentity {
     }
     static void requireVersions(Map<String,String> versions) throws IOException {
         var expected=new TreeMap<>(VERSIONS);expected.putAll(SODIUM_EMBEDDED);
+        // Earth Platform itself must be present, at whatever version this build is (it changes every release).
+        expected.put("earthplatform",versions.getOrDefault("earthplatform",""));
         if(!expected.equals(versions))throw new IOException("Unsupported installed gameplay/mod version inventory: "+new TreeMap<>(versions));
     }
     /** Every regular JAR directly in the mods folder, keyed by file name. */

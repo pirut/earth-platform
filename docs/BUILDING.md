@@ -25,7 +25,7 @@ From `minecraft/`:
 ./gradlew --no-daemon jar
 ```
 
-The jar is `minecraft/build/libs/earthplatform-0.1.0-engine-prototype.jar`. That one file is the whole mod. `scripts/gradle.sh` runs the same wrapper and passes an `HTTPS_PROXY` on to Java when one is set.
+The jar is `minecraft/build/libs/earthplatform-<version>.jar` (for example `earthplatform-0.1.0-alpha.38.jar`; the version is `mod_version` in `minecraft/gradle.properties`). That one file is the whole mod. `scripts/gradle.sh` runs the same wrapper and passes an `HTTPS_PROXY` on to Java when one is set.
 
 ## Test
 

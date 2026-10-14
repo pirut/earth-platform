@@ -37,21 +37,20 @@ The newest build is always on the [Releases page](https://github.com/pirut/earth
 4. Add Sodium, Iris and stock Photon v1.3b; check again in the same world.
 5. Optional: a dedicated server with a friend.
 
-## 4. Set the public version
+## 4. The public version
 
 ### Versioning
 
-- **Scheme:** `0.1.0-alpha.N`, where **N is the build number**, so build 37 is `0.1.0-alpha.37`. Players and testers then use one number, and the GitHub release reads "Earth Platform 0.1.0-alpha.37 (build 37)".
+- **Scheme:** `0.1.0-alpha.N`, where **N is the build number**, so build 38 is `0.1.0-alpha.38`. Players and testers then use one number, and the GitHub release reads "Earth Platform 0.1.0-alpha.38 (build 38)".
 - **Channel:** Alpha on Modrinth and CurseForge until the known issues in [CHANGELOG.md](../../CHANGELOG.md) are fixed; then `0.1.0-beta.N`, and `0.1.0` for the first stable release.
 - **Later:** `0.2.0` for the next large feature set; a new Minecraft version keeps the mod version and adds the game version on the listing.
 
-### The change (a small pull request, which Claude can make when you say so)
+### How it is set
 
-- `minecraft/gradle.properties`: `mod_version=0.1.0-alpha.N`.
-- `minecraft/src/main/java/io/earthplatform/minecraft/survival/host/SurvivalInstalledModIdentity.java` and its test `SurvivalInstalledModIdentityTest` pin the old `0.1.0-engine-prototype` string; change both.
-- `docs/BUILDING.md` names the jar file; update it.
+JR chose this scheme on 2026-10-14. `mod_version` in `minecraft/gradle.properties` is `0.1.0-alpha.38`, for build 38.
 
-When that merges, the release workflow names the jar and the release with the new version automatically.
+- **Each new build** raises `mod_version` to that build's number in the same change that adds `docs/release/notes/combined-NN.md`. The release workflow stops with an error if the two don't match, so a release is never labelled with the wrong version.
+- The jar, the GitHub release title ("Earth Platform 0.1.0-alpha.38 (build 38)") and the Mods screen all take the version from that one line.
 
 ## 5. Publish on Modrinth (JR)
 
