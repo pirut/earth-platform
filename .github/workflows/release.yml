@@ -1,5 +1,6 @@
 # Builds the mod jar and publishes it as a GitHub release when a build tag is pushed.
-# Tag a commit on main as combined-NN (for example combined-34) and push the tag.
+# Tag a commit on main as combined-NN (for example combined-34) and push the tag, or run it by hand
+# from the Actions tab with a tag name, which releases the chosen branch's head under that tag.
 name: Release
 
 on:
@@ -9,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build and release (for example combined-34)
+        description: Tag to release (for example combined-34). Builds the chosen branch and creates the tag there if it does not exist yet.
         required: true
 
 permissions:
@@ -22,8 +23,6 @@ jobs:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - uses: actions/setup-java@v4
         with:
@@ -73,6 +72,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
           name: Earth Platform ${{ env.TAG }}
           body_path: release-notes.md
           prerelease: true
