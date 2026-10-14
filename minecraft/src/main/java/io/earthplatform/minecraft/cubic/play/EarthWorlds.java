@@ -273,7 +273,8 @@ public final class EarthWorlds {
                 var generator = cubes.generator();
                 int[] home = generator.arrival();
                 preparing = CompletableFuture.runAsync(() -> {
-                    generator.prepare(home[0], home[1]);
+                    // Only what the cubes about the home read: the far levels' data loads on without holding up the arrival.
+                    generator.prepareNear(home[0], home[1]);
                     // Throws when the home's terrain is still missing.
                     generator.surfaceY(home[0], home[1]);
                     // The search reads ground kilometres out, from the network where it is new: never on the server thread.

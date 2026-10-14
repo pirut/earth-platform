@@ -2940,7 +2940,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * Fetches only what the cubes about a point and the search for a landing there read, so a
      * traveller can arrive before the far levels' data is in; {@link #prepare} fetches the rest.
      */
-    public void prepareNear(int x, int z) { prepare(x, z, NEAR_REACH); }
+    @Override public void prepareNear(int x, int z) { prepare(x, z, NEAR_REACH); }
 
     private void prepare(int x, int z, double most) {
         record Tile(int zoom, int x, int y) {}

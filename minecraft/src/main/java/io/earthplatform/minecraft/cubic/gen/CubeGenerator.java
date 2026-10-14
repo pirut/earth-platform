@@ -63,4 +63,6 @@ public interface CubeGenerator {
     default String credits() { return ""; }
     /** Loads whatever generating near a point will need, so the server thread never waits on it. Blocks; call off-thread. */
     default void prepare(int x, int z) {}
+    /** Loads only what the cubes about a point need, before {@link #prepare} loads the rest. Blocks; call off-thread. */
+    default void prepareNear(int x, int z) { prepare(x, z); }
 }
