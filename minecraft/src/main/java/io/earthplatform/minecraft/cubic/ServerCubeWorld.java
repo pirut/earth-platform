@@ -290,6 +290,7 @@ public final class ServerCubeWorld extends CubeWorld {
             adoptReady(result);
         }
         for (Long key; (key = droppedKeys.poll()) != null; ) pending.remove(key.longValue());
+        far.nearWaiting(!pending.isEmpty());
         int h = horizontalRadius(), v = Cubic.VERTICAL_RADIUS;
         CubeOffsets offsets = CubeOffsets.of(h, v);
         syncWatchers();

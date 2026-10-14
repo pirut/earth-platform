@@ -116,6 +116,9 @@ public final class FarServer {
         }
     }
 
+    /** Whether cubes near players are waiting to be made; far columns then run no more than {@link #WORKERS} at once. */
+    public void nearWaiting(boolean waiting) { workers.hold(waiting); }
+
     private void submit(@Nullable UUID player, @Nullable Session session, long key) {
         workers.execute(() -> {
             // After a teleport the old place's columns can be thousands deep in the queue: skip them.

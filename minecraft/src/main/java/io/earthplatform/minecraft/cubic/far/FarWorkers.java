@@ -21,13 +21,15 @@ public final class FarWorkers {
     /** Least share of their time recent columns spent on the processor that is believed; below it, waits dominate anyway. */
     private static final double LEAST_SHARE = 0.2;
     /** How much each finished column's times count against the ones before. */
-    private static final double DECAY = 0.97;
+    private static final double DECAY = 0.9;
 
     private final int busy, most;
     private final ExecutorService threads;
     private final Object gate = new Object();
     private int running;
     private double cpu, wall;
+    /** Set while cubes near players are waiting to be made: they come first, so no more than {@code busy} run. */
+    private volatile boolean held;
 
     public FarWorkers(String name, int busy, int most) {
         this.busy = busy;
@@ -44,10 +46,17 @@ public final class FarWorkers {
     /** How many columns may run at once now. */
     public int allowed() {
         synchronized (gate) {
-            if (!MEASURED || wall <= 0) return busy;
+            if (held || !MEASURED || wall <= 0) return busy;
             double share = Math.max(LEAST_SHARE, cpu / wall);
             return Math.clamp((int) Math.ceil(busy / share), busy, most);
         }
+    }
+
+    /** Holds the workers to {@code busy} while near cubes wait, so far downloads and work never hold them up. */
+    public void hold(boolean held) {
+        if (this.held == held) return;
+        this.held = held;
+        if (!held) synchronized (gate) { gate.notifyAll(); }
     }
 
     public void execute(Runnable job) {
