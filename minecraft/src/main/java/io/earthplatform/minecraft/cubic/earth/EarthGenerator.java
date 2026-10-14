@@ -550,6 +550,13 @@ public final class EarthGenerator extends SurfaceGenerator {
      * river may lie for its level to stay that of the river along it.
      */
     private static final int RIVER_NODE = 32, RIVER_REACH = 40, RIVER_RUN = 128, RIVER_SINK = 3;
+    /**
+     * Rise, in metres, between the points round a column past which a river runs down a slope, and
+     * how far round it, in blocks, the ground its water must keep under then is read.
+     */
+    private static final int RIVER_STEEP = 6, RIVER_BANK = 6;
+    /** Fall per block across a river's reach from which its level is read against the slope ({@link #channel}). */
+    private static final double RIVER_SLOPE = 0.1;
     /** River levels at their points, in metres, as far as they have been read. */
     private final java.util.concurrent.ConcurrentHashMap<Long, Float> riverNodes = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -560,7 +567,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /**
      * Top water block of a narrow river. Each point of a {@value #RIVER_NODE}-block lattice takes the
-     * lowest ground within {@value #RIVER_REACH} blocks of it, which by a river is the river. The
+     * lowest ground within {@value #RIVER_REACH} blocks of it, which by a river is the river, read
+     * against the slope there ({@link #channel}) so a stream down a mountainside keeps to it. The
      * elevation over forest is the canopy's, a few metres up or down from one spot to the next, so
      * a river taken that way stepped every hundred blocks across flat country: where the lowest
      * ground within {@value #RIVER_RUN} blocks lies no more than {@value #RIVER_SINK} below it,
@@ -574,7 +582,16 @@ public final class EarthGenerator extends SurfaceGenerator {
         double fx = x / RIVER_NODE, fz = z / RIVER_NODE;
         int ix = Mth.floor(fx), iz = Mth.floor(fz);
         double tx = fx - ix, tz = fz - iz;
-        double level = Mth.lerp(tz, Mth.lerp(tx, riverNode(ix, iz), riverNode(ix + 1, iz)), Mth.lerp(tx, riverNode(ix, iz + 1), riverNode(ix + 1, iz + 1)));
+        float a = riverNode(ix, iz), b = riverNode(ix + 1, iz), c = riverNode(ix, iz + 1), d = riverNode(ix + 1, iz + 1);
+        double level = Mth.lerp(tz, Mth.lerp(tx, a, b), Mth.lerp(tx, c, d));
+        // Down a mountainside the points lie far apart in height, and where the slope bends between them
+        // the blend can stand over the ground beside the stream: there it keeps under the ground close by.
+        if (Math.max(Math.max(a, b), Math.max(c, d)) - Math.min(Math.min(a, b), Math.min(c, d)) > RIVER_STEEP) {
+            GlobalElevation dem = elevation[TerrariumTileSource.MAX_ZOOM];
+            double low = dem.metres(x, z);
+            for (int k = 0; k < 8; k++) low = Math.min(low, dem.metres(x + RING_X[k] * RIVER_BANK, z + RING_Z[k] * RIVER_BANK));
+            level = Math.min(level, low);
+        }
         // Blended levels cross whole blocks along straight lines; a slow wobble, only ever
         // downward so the water stays below its banks, makes those steps wander.
         double wobble = 0.25 * (1 + patches.getValue(x / 23.0 + 311.7, z / 23.0 - 97.3));
@@ -586,15 +603,18 @@ public final class EarthGenerator extends SurfaceGenerator {
         Float known = riverNodes.get(key);
         if (known != null) return known;
         GlobalElevation dem = elevation[TerrariumTileSource.MAX_ZOOM];
-        double cx = (double) i * RIVER_NODE, cz = (double) j * RIVER_NODE, near = Double.MAX_VALUE, run = Double.MAX_VALUE;
+        double cx = (double) i * RIVER_NODE, cz = (double) j * RIVER_NODE, run = Double.MAX_VALUE;
+        int reach = RIVER_REACH / 8, across = 2 * reach + 1;
+        double[] near = new double[across * across];
+        java.util.Arrays.fill(near, Double.NaN);
         for (int dz = -RIVER_RUN; dz <= RIVER_RUN; dz += 8) for (int dx = -RIVER_RUN; dx <= RIVER_RUN; dx += 8) {
             int d2 = dx * dx + dz * dz;
             if (d2 > RIVER_RUN * RIVER_RUN) continue;
             double metres = dem.metres(cx + dx, cz + dz);
             run = Math.min(run, metres);
-            if (d2 <= RIVER_REACH * RIVER_REACH) near = Math.min(near, metres);
+            if (d2 <= RIVER_REACH * RIVER_REACH) near[(dz / 8 + reach) * across + dx / 8 + reach] = metres;
         }
-        double lowest = Math.max(run, near - RIVER_SINK);
+        double lowest = Math.max(run, channel(near, reach) - RIVER_SINK);
         // Surveyed water nearby: its level, where it is lower.
         double spacing = (double) WATER_CELL / WATER_SAMPLES, sx = cx / spacing - 0.5, sz = cz / spacing - 0.5;
         int bx = Mth.floor(sx), bz = Mth.floor(sz);
@@ -608,6 +628,40 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (riverNodes.size() > 1 << 20) riverNodes.clear();
         riverNodes.putIfAbsent(key, level);
         return level;
+    }
+
+    /**
+     * The lowest ground of a river node's reach, {@code near} (metres on an 8-block grid
+     * {@code 2 * reach + 1} across, NaN outside the circle), read against the slope the reach lies
+     * on: each height less the rise of a plane fitted through them all, as at the node. On ground
+     * falling less than {@value #RIVER_SLOPE} a block that is just the lowest ground. On a mountainside a stream runs down, the lowest ground
+     * within the reach lies downhill, twenty-odd metres down a talus as steep as El Capitan's, and
+     * the stream sank that far into the slope in a trench with sheer walls all the way down; read
+     * against the slope, what stays is the dip of the stream's own bed. It is never above the
+     * ground at the node itself, nor below the lowest ground of the reach.
+     */
+    private static double channel(double[] near, int reach) {
+        int across = 2 * reach + 1;
+        double sx = 0, sz = 0, xx = 0, zz = 0;
+        for (int k = 0; k < near.length; k++) {
+            double metres = near[k];
+            if (Double.isNaN(metres)) continue;
+            int dx = k % across - reach, dz = k / across - reach;
+            sx += dx * metres; sz += dz * metres; xx += dx * dx; zz += dz * dz;
+        }
+        // The circle is symmetric, so the plane's slopes come apart from its level and from each other.
+        double gx = xx > 0 ? sx / xx : 0, gz = zz > 0 ? sz / zz : 0, lowest = Double.MAX_VALUE, sloped = Double.MAX_VALUE;
+        for (int k = 0; k < near.length; k++) {
+            double metres = near[k];
+            if (Double.isNaN(metres)) continue;
+            lowest = Math.min(lowest, metres);
+            sloped = Math.min(sloped, metres - gx * (k % across - reach) - gz * (k / across - reach));
+        }
+        // Gentle country keeps its lowest ground, so rivers there hold level as they did. Where level ground meets
+        // a valley wall the plane leans on the wall, and against it the floor's foot read lower than any ground
+        // there is: then the lowest ground stands too.
+        if (Math.sqrt(gx * gx + gz * gz) < RIVER_SLOPE * 8) return lowest;
+        return Math.max(lowest, sloped);
     }
 
     /**
