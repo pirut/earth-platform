@@ -1179,6 +1179,67 @@ public final class GlobeTest {
         check(Arrays.equals(zeros, FloatCogs.lzw(lzw(zeros), zeros.length)), "LZW round trip of one long run");
         fail(() -> FloatCogs.lzw(Arrays.copyOf(lzw(noise), 1000), noise.length), java.io.IOException.class, "truncated LZW rejected");
 
+        // A file with its directories at the end, uncompressed, its overview tiled smaller, as some 3DEP files are.
+        {
+            int full = 48, tile = 32, overview = 24, small = 16;
+            ByteBuffer file = ByteBuffer.allocate(70_000).order(ByteOrder.LITTLE_ENDIAN);
+            file.put(new byte[]{'I', 'I', 42, 0});
+            int ifd = 66_000, ifd2 = ifd + 2 + 12 * 12 + 4, arrays = ifd2 + 2 + 11 * 12 + 4;
+            file.putInt(4, ifd);
+            float[] first = new float[tile * tile];
+            for (int i = 0; i < first.length; i++) first[i] = i * 0.5f;
+            file.position(16);
+            for (float v : first) file.putFloat(v);
+            int blockBytes = tile * tile * 4, smallBytes = small * small * 4;
+            // Level 0: 2 x 2 tiles of 32; level 1: 2 x 2 tiles of 16. All tiles but the first point at it.
+            int[] tiles0 = {16, 16, 16, 16}, tiles1 = {16, 16, 16, 16};
+            int at = arrays;
+            int offsets0 = at, counts0 = at + 16, offsets1 = at + 32, counts1 = at + 48, scale = at + 64, tie = at + 88;
+            for (int i = 0; i < 4; i++) {
+                file.putInt(offsets0 + 4 * i, tiles0[i]);
+                file.putInt(counts0 + 4 * i, blockBytes);
+                file.putInt(offsets1 + 4 * i, tiles1[i]);
+                file.putInt(counts1 + 4 * i, smallBytes);
+            }
+            file.putDouble(scale, 10).putDouble(scale + 8, 10).putDouble(scale + 16, 0);
+            double[] ties = {0, 0, 0, 1000, 2000, 0};
+            for (int i = 0; i < 6; i++) file.putDouble(tie + 8 * i, ties[i]);
+            int[][] entries0 = {{256, 3, 1, full}, {257, 3, 1, full}, {258, 3, 1, 32}, {259, 3, 1, 1}, {277, 3, 1, 1}, {322, 3, 1, tile},
+                    {323, 3, 1, tile}, {324, 4, 4, offsets0}, {325, 4, 4, counts0}, {339, 3, 1, 3}, {33550, 12, 3, scale}, {33922, 12, 6, tie}};
+            int[][] entries1 = {{254, 4, 1, 1}, {256, 3, 1, overview}, {257, 3, 1, overview}, {258, 3, 1, 32}, {259, 3, 1, 1}, {277, 3, 1, 1},
+                    {322, 3, 1, small}, {323, 3, 1, small}, {324, 4, 4, offsets1}, {325, 4, 4, counts1}, {339, 3, 1, 3}};
+            int[] where = {ifd, ifd2};
+            int[][][] all = {entries0, entries1};
+            for (int d = 0; d < 2; d++) {
+                file.putShort(where[d], (short) all[d].length);
+                for (int e = 0; e < all[d].length; e++) {
+                    int[] entry = all[d][e];
+                    int base = where[d] + 2 + 12 * e;
+                    file.putShort(base, (short) entry[0]).putShort(base + 2, (short) entry[1]).putInt(base + 4, entry[2]);
+                    if (entry[1] == 3 && entry[2] == 1) file.putShort(base + 8, (short) entry[3]);
+                    else file.putInt(base + 8, entry[3]);
+                }
+                file.putInt(where[d] + 2 + 12 * all[d].length, d == 0 ? ifd2 : 0);
+            }
+            byte[] bytes = file.array();
+            FloatCogs.Pieces pieces = new FloatCogs.Pieces();
+            pieces.add(0, Arrays.copyOf(bytes, 65_536));
+            try {
+                FloatCogs.parse(pieces);
+                check(false, "directories past the bytes read are asked for");
+            } catch (FloatCogs.HeaderTooShort need) {
+                check(need.offset == ifd, "the bytes asked for are where the directories lie");
+                pieces.add(need.offset, Arrays.copyOfRange(bytes, (int) need.offset, bytes.length));
+            }
+            FloatCogs.Header header = FloatCogs.parse(FloatCogs.Pieces.of(pieces.bytes()));
+            check(header.overviews() == 2 && !header.compressed() && header.predictor() == 1 && header.x0() == 1000 && header.y0() == 2000,
+                    "a file with its directories at the end reads, through the disk cache's form too");
+            check(Arrays.equals(first, FloatCogs.decode(Arrays.copyOfRange(bytes, 16, 16 + blockBytes), tile, false, 1, false)), "uncompressed block");
+            fail(() -> FloatCogs.decode(new byte[100], tile, false, 1, false), java.io.IOException.class, "short uncompressed block rejected");
+            byte[] raw = Arrays.copyOf(bytes, 16);
+            check(Arrays.equals(raw, FloatCogs.Pieces.of(raw).bytes()), "a header read from the start alone is cached as it is");
+        }
+
         // Projection and geoid against PROJ (EPSG:3031) and NGA's grid.
         double[][] places = {{-78.5254, -85.6171, -1247100.934, 95584.793}, {-77.53, 167.153, 302405.631, -1326007.625},
                 {-60, 0, 0, 3333134.028}, {-71, 90, 2082760.109, 0}};

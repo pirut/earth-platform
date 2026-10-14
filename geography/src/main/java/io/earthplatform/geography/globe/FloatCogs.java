@@ -14,10 +14,11 @@ import java.util.concurrent.*;
 import java.util.function.IntFunction;
 
 /**
- * A set of cloud-optimised GeoTIFFs of one float band, read with HTTP range requests: in square
- * tiles (256 to 1024 pixels), LZW-compressed with or without the floating-point predictor, with halving
- * overviews, classic TIFF or BigTIFF. Files are numbered by their dataset and named by it; a file
- * that does not exist reads as no data.
+ * A set of tiled GeoTIFFs of one float band, read with HTTP range requests: in square tiles,
+ * LZW-compressed or not, with or without the floating-point predictor, with halving overviews,
+ * classic TIFF or BigTIFF. Most are cloud-optimised, their directories first, but some keep them
+ * at the end of the file, and those read too. Files are numbered by their dataset and named by
+ * it; a file that does not exist reads as no data.
  *
  * <p>Only a file's header and the blocks a caller touches are fetched, and both are kept in an
  * optional disk cache, so a world regenerates from the same bytes offline. Loads are single-flight
@@ -36,6 +37,7 @@ final class FloatCogs implements AutoCloseable {
     private final RangeFiles files;
     private final Map<Integer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
     private final LinkedHashMap<Long, float[]> memory = new LinkedHashMap<>(32, 0.75f, true);
+    private long memoryBytes;
     private final Map<Long, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
     /** Each thread's last few blocks, so reads that stay in them skip the shared cache. */
     private final ThreadLocal<Recent> recent = ThreadLocal.withInitial(() -> new Recent(4));
@@ -62,7 +64,7 @@ final class FloatCogs implements AutoCloseable {
      * @param noData            the value that marks no data
      * @param cacheRoot         optional disk cache directory, or null for memory only
      * @param allowNetwork      false reads only the disk cache
-     * @param maxBlocksInMemory decoded blocks kept (1 MiB each)
+     * @param maxBlocksInMemory decoded blocks kept, counted as 1 MiB each; smaller blocks are kept by the same memory
      */
     FloatCogs(String what, String datasetId, String threadName, URI base, IntFunction<String> names, float noData,
               Path cacheRoot, boolean allowNetwork, int maxBlocksInMemory, int maxConcurrentTransfers, Duration timeout) throws IOException {
@@ -80,9 +82,9 @@ final class FloatCogs implements AutoCloseable {
     }
 
     /** One overview of one file: where its pixels lie and where each block is. */
-    private record Level(int width, int height, long[] offsets, long[] counts) {}
-    record Header(Level[] levels, double x0, double y0, double pixelX, double pixelY, int block, boolean bigEndian, int predictor) {
-        static final Header MISSING = new Header(new Level[0], 0, 0, 0, 0, 0, false, 1);
+    private record Level(int width, int height, int block, long[] offsets, long[] counts) {}
+    record Header(Level[] levels, double x0, double y0, double pixelX, double pixelY, boolean bigEndian, int predictor, boolean compressed) {
+        static final Header MISSING = new Header(new Level[0], 0, 0, 0, 0, false, 1, true);
         int overviews() { return levels.length; }
     }
     /** An overview of the file that holds a point. */
@@ -177,7 +179,7 @@ final class FloatCogs implements AutoCloseable {
         Level level = grid.level;
         column = Math.max(0, Math.min(level.width - 1, column));
         row = Math.max(0, Math.min(level.height - 1, row));
-        int size = grid.header.block, across = Math.ceilDiv(level.width, size);
+        int size = level.block, across = Math.ceilDiv(level.width, size);
         return (row / size) * across + column / size;
     }
 
@@ -244,7 +246,7 @@ final class FloatCogs implements AutoCloseable {
         Level level = grid.level;
         column = Math.max(0, Math.min(level.width - 1, column));
         row = Math.max(0, Math.min(level.height - 1, row));
-        int size = grid.header.block, across = Math.ceilDiv(level.width, size);
+        int size = level.block, across = Math.ceilDiv(level.width, size);
         int index = (row / size) * across + column / size;
         long key = (long) grid.file << 24 | (long) grid.overview << 20 | index;
         float[] block = null;
@@ -272,9 +274,13 @@ final class FloatCogs implements AutoCloseable {
             }
             float[] decoded = readBlock(grid, index);
             synchronized (memory) {
-                memory.put(key, decoded);
+                float[] was = memory.put(key, decoded);
+                memoryBytes += decoded.length * 4L - (was == null ? 0 : was.length * 4L);
                 var iterator = memory.entrySet().iterator();
-                while (memory.size() > maxBlocksInMemory && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+                while (memoryBytes > (long) maxBlocksInMemory << 20 && memory.size() > 1 && iterator.hasNext()) {
+                    memoryBytes -= iterator.next().getValue().length * 4L;
+                    iterator.remove();
+                }
             }
             return decoded;
         }, what + " block");
@@ -308,7 +314,7 @@ final class FloatCogs implements AutoCloseable {
         if (missing != null && Files.exists(missing)) return Header.MISSING;
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                Header header = parse(DiskCache.read(cached));
+                Header header = parse(Pieces.of(DiskCache.read(cached)));
                 files.diskHits.incrementAndGet();
                 return header;
             } catch (IOException | RuntimeException corrupt) {
@@ -316,22 +322,101 @@ final class FloatCogs implements AutoCloseable {
             }
         }
         if (!allowNetwork) throw new MissingTerrainException(what + " " + name + " not cached and network access is disabled");
-        int size = HEADER_BYTES;
+        byte[] start = files.fetch(base.resolve(name), 0, HEADER_BYTES);
+        if (start == null) {
+            if (missing != null) RangeFiles.write(missing, new byte[0]);
+            return Header.MISSING;
+        }
+        Pieces pieces = new Pieces();
+        pieces.add(0, start);
+        // Directories and their arrays may lie anywhere in the file, even at its end: each part the
+        // parse finds it lacks is fetched where it lies, and the parse runs again.
         while (true) {
-            byte[] bytes = files.fetch(base.resolve(name), 0, size);
-            if (bytes == null) {
-                if (missing != null) RangeFiles.write(missing, new byte[0]);
-                return Header.MISSING;
-            }
             try {
-                Header header = parse(bytes);
-                if (cached != null) RangeFiles.write(cached, bytes);
+                Header header = parse(pieces);
+                if (cached != null) RangeFiles.write(cached, pieces.bytes());
                 return header;
-            } catch (HeaderTooShort tooShort) {
-                if (bytes.length < size || size >= MAX_HEADER_BYTES) throw new IOException("Unreadable " + what + " header " + name);
-                size *= 4;
+            } catch (UnsupportedFile unsupported) {
+                // The same for every read: a file laid out in a way this cannot read is no data, so
+                // tiles about it ease off its edge as at any edge of the data, rather than each failing.
+                // Not marked on disk, so a later version that reads it fetches it again.
+                TerrariumTileSource.warnOnce(what + " " + name, "Cannot read " + what + " " + name + "; leaving it out", unsupported);
+                return Header.MISSING;
+            } catch (HeaderTooShort need) {
+                int length = (int) Math.max(need.length, HEADER_BYTES);
+                if (need.offset < 0 || need.length > MAX_HEADER_BYTES || pieces.size() + length > MAX_HEADER_BYTES * 4L) {
+                    TerrariumTileSource.warnOnce(what + " " + name, "Cannot read " + what + " " + name + "; leaving it out", need);
+                    return Header.MISSING;
+                }
+                byte[] more = files.fetch(base.resolve(name), need.offset, length);
+                // A file that ends before its own header says is as unreadable however often it is asked for.
+                if (more == null || more.length < need.length) {
+                    TerrariumTileSource.warnOnce(what + " " + name, "Cannot read " + what + " " + name + ": it ends before its header does; leaving it out", need);
+                    return Header.MISSING;
+                }
+                pieces.add(need.offset, more);
             }
         }
+    }
+
+    /**
+     * The parts of a file read so far, by where they start. Kept on disk as the bytes from the
+     * file's start alone when that is all there is, as a cloud-optimised file needs; otherwise
+     * marked and listed piece by piece.
+     */
+    static final class Pieces {
+        private static final long MARK = 0x5049454345530A00L; // "PIECES\n\0"
+        private final java.util.TreeMap<Long, byte[]> read = new java.util.TreeMap<>();
+        private ByteOrder order = ByteOrder.LITTLE_ENDIAN;
+
+        static Pieces of(byte[] bytes) throws IOException {
+            Pieces pieces = new Pieces();
+            ByteBuffer in = ByteBuffer.wrap(bytes);
+            if (bytes.length < 8 || in.getLong(0) != MARK) {
+                pieces.add(0, bytes);
+                return pieces;
+            }
+            in.position(8);
+            while (in.hasRemaining()) {
+                if (in.remaining() < 12) throw new IOException("Truncated header pieces");
+                long offset = in.getLong();
+                int length = in.getInt();
+                if (length < 0 || length > in.remaining()) throw new IOException("Truncated header pieces");
+                byte[] piece = new byte[length];
+                in.get(piece);
+                pieces.add(offset, piece);
+            }
+            return pieces;
+        }
+
+        void add(long offset, byte[] bytes) {
+            byte[] was = read.get(offset);
+            if (was == null || was.length < bytes.length) read.put(offset, bytes);
+        }
+
+        long size() { return read.values().stream().mapToLong(piece -> piece.length).sum(); }
+
+        byte[] bytes() {
+            if (read.size() == 1 && read.firstKey() == 0) return read.firstEntry().getValue();
+            ByteBuffer out = ByteBuffer.allocate((int) (8 + 12L * read.size() + size()));
+            out.putLong(MARK);
+            read.forEach((offset, piece) -> out.putLong(offset).putInt(piece.length).put(piece));
+            return out.array();
+        }
+
+        /** {@code length} bytes from {@code offset}, in the file's byte order, from its first byte. */
+        ByteBuffer at(long offset, long length) throws HeaderTooShort {
+            var piece = offset < 0 ? null : read.floorEntry(offset);
+            if (piece == null || length > Integer.MAX_VALUE || offset + length > piece.getKey() + piece.getValue().length)
+                throw new HeaderTooShort(offset, length);
+            return ByteBuffer.wrap(piece.getValue(), (int) (offset - piece.getKey()), (int) length).slice().order(order);
+        }
+
+        int u16(long offset) throws HeaderTooShort { return Short.toUnsignedInt(at(offset, 2).getShort(0)); }
+
+        long u32(long offset) throws HeaderTooShort { return Integer.toUnsignedLong(at(offset, 4).getInt(0)); }
+
+        long u64(long offset) throws HeaderTooShort { return at(offset, 8).getLong(0); }
     }
 
     private float[] readBlock(Grid grid, int index) throws IOException, InterruptedException {
@@ -339,7 +424,7 @@ final class FloatCogs implements AutoCloseable {
         Path cached = cached(name, "/" + grid.overview + "/" + index + ".lzw");
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                float[] decoded = decode(DiskCache.read(cached), grid.header.block, grid.header.bigEndian, grid.header.predictor);
+                float[] decoded = decode(DiskCache.read(cached), grid);
                 files.diskHits.incrementAndGet();
                 return decoded;
             } catch (IOException corrupt) {
@@ -348,7 +433,7 @@ final class FloatCogs implements AutoCloseable {
         }
         long offset = grid.level.offsets[index], count = grid.level.counts[index];
         if (offset == 0 || count == 0) {
-            float[] empty = new float[grid.header.block * grid.header.block];
+            float[] empty = new float[grid.level.block * grid.level.block];
             java.util.Arrays.fill(empty, noData);
             return empty;
         }
@@ -356,15 +441,23 @@ final class FloatCogs implements AutoCloseable {
         if (!allowNetwork) throw new MissingTerrainException(what + " block of " + name + " not cached and network access is disabled");
         byte[] raw = files.fetch(base.resolve(name), offset, (int) count);
         if (raw == null || raw.length != count) throw new MissingTerrainException(what + " block of " + name + " is missing");
-        float[] decoded = decode(raw, grid.header.block, grid.header.bigEndian, grid.header.predictor);
+        float[] decoded = decode(raw, grid);
         if (cached != null) RangeFiles.write(cached, raw);
         return decoded;
     }
 
-    /** A block's floats from its LZW bytes, undoing the floating-point predictor (3) row by row if it is used. */
-    static float[] decode(byte[] raw, int block, boolean bigEndian, int predictor) throws IOException {
+    static float[] decode(byte[] raw, Grid grid) throws IOException {
+        return decode(raw, grid.level.block, grid.header.bigEndian, grid.header.predictor, grid.header.compressed);
+    }
+
+    /**
+     * A block's floats from its bytes, LZW-compressed or not, undoing the floating-point predictor
+     * (3) row by row if it is used. The bytes given are left as they are.
+     */
+    static float[] decode(byte[] raw, int block, boolean bigEndian, int predictor, boolean compressed) throws IOException {
         int rowBytes = block * 4;
-        byte[] bytes = lzw(raw, rowBytes * block);
+        if (!compressed && raw.length != rowBytes * block) throw new IOException("Uncompressed block of " + raw.length + " bytes");
+        byte[] bytes = compressed ? lzw(raw, rowBytes * block) : predictor == 1 ? raw : raw.clone();
         float[] out = new float[block * block];
         if (predictor == 1) {
             ByteBuffer.wrap(bytes).order(bigEndian ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(out);
@@ -445,40 +538,53 @@ final class FloatCogs implements AutoCloseable {
         return out;
     }
 
-    private static final class HeaderTooShort extends IOException {
-        HeaderTooShort() { super("Header extends past the bytes read"); }
+    /** A file this cannot read whatever is fetched of it. */
+    static final class UnsupportedFile extends IOException {
+        UnsupportedFile(String message) { super(message); }
+    }
+
+    /** A part of the header not read yet: {@code length} bytes from {@code offset}. */
+    static final class HeaderTooShort extends IOException {
+        final long offset, length;
+
+        HeaderTooShort(long offset, long length) {
+            super("Header needs bytes " + offset + " to " + (offset + length) + ", not read yet");
+            this.offset = offset;
+            this.length = length;
+        }
     }
 
     /**
      * Reads a tiled single-band float TIFF's directories (the image and its overviews) and its
      * georeferencing, classic or BigTIFF.
      */
-    static Header parse(byte[] bytes) throws IOException {
-        ByteBuffer in = ByteBuffer.wrap(bytes);
-        if (bytes.length < 16) throw new HeaderTooShort();
-        boolean bigEndian = bytes[0] == 'M';
-        in.order(bigEndian ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN);
-        int version = in.getShort(2);
-        if (version != 42 && version != 43) throw new IOException("Not a TIFF");
+    static Header parse(byte[] bytes) throws IOException { return parse(Pieces.of(bytes)); }
+
+    static Header parse(Pieces in) throws IOException {
+        ByteBuffer start = in.at(0, 16);
+        boolean bigEndian = start.get(0) == 'M';
+        in.order = bigEndian ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
+        int version = in.u16(2);
+        if (version != 42 && version != 43) throw new UnsupportedFile("Not a TIFF");
         boolean big = version == 43;
-        if (big && in.getShort(4) != 8) throw new IOException("Unsupported BigTIFF offset size");
-        // Sizes of a directory's entry count, an entry, and an offset.
-        int countSize = big ? 8 : 2, entrySize = big ? 20 : 12, offsetSize = big ? 8 : 4;
-        long next = big ? in.getLong(8) : Integer.toUnsignedLong(in.getInt(4));
+        if (big && in.u16(4) != 8) throw new UnsupportedFile("Unsupported BigTIFF offset size");
+        // Sizes of a directory's entry count and an entry.
+        int countSize = big ? 8 : 2, entrySize = big ? 20 : 12;
+        long next = big ? in.u64(8) : in.u32(4);
         java.util.List<Level> levels = new java.util.ArrayList<>();
         double x0 = Double.NaN, y0 = Double.NaN, pixelX = Double.NaN, pixelY = Double.NaN;
-        int firstPredictor = 0, block = 0;
+        int firstPredictor = 0, firstCompression = 0;
         while (next != 0 && levels.size() <= 8) {
-            if (next + countSize > bytes.length) throw new HeaderTooShort();
-            long entries = big ? in.getLong((int) next) : Short.toUnsignedInt(in.getShort((int) next));
-            if (entries > 4096) throw new IOException("Oversized TIFF directory");
-            if (next + countSize + entries * entrySize + offsetSize > bytes.length) throw new HeaderTooShort();
+            long entries = big ? in.u64(next) : in.u16(next);
+            if (entries > 4096) throw new UnsupportedFile("Oversized TIFF directory");
+            // The whole directory, and the link to the next, at once.
+            in.at(next, countSize + entries * entrySize + (big ? 8 : 4));
             int width = 0, height = 0, tileWidth = 0, tileHeight = 0, compression = 1, bits = 0, samples = 1, predictor = 1, format = 1, subfile = 0;
             long[] offsets = null, counts = null;
             for (int e = 0; e < entries; e++) {
-                int at = (int) (next + countSize + (long) e * entrySize);
-                int tag = Short.toUnsignedInt(in.getShort(at));
-                Entry entry = new Entry(in, bytes.length, at, big);
+                long at = next + countSize + (long) e * entrySize;
+                int tag = in.u16(at);
+                Entry entry = new Entry(in, at, big);
                 switch (tag) {
                     case 254 -> subfile = (int) entry.integers()[0];
                     case 256 -> width = (int) entry.integers()[0];
@@ -495,7 +601,7 @@ final class FloatCogs implements AutoCloseable {
                     case 33550 -> {
                         if (levels.isEmpty()) {
                             double[] scale = entry.doubles();
-                            if (scale.length < 2) throw new IOException("Unsupported pixel scale");
+                            if (scale.length < 2) throw new UnsupportedFile("Unsupported pixel scale");
                             pixelX = scale[0];
                             pixelY = scale[1];
                         }
@@ -503,7 +609,7 @@ final class FloatCogs implements AutoCloseable {
                     case 33922 -> {
                         if (levels.isEmpty()) {
                             double[] tie = entry.doubles();
-                            if (tie.length < 6 || tie[0] != 0 || tie[1] != 0) throw new IOException("Unsupported tie point");
+                            if (tie.length < 6 || tie[0] != 0 || tie[1] != 0) throw new UnsupportedFile("Unsupported tie point");
                             x0 = tie[3];
                             y0 = tie[4];
                         }
@@ -511,64 +617,64 @@ final class FloatCogs implements AutoCloseable {
                     default -> { }
                 }
             }
-            int link = (int) (next + countSize + entries * entrySize);
-            next = big ? in.getLong(link) : Integer.toUnsignedLong(in.getInt(link));
+            long link = next + countSize + entries * entrySize;
+            next = big ? in.u64(link) : in.u32(link);
             // Masks are not overviews.
             if ((subfile & 4) != 0) continue;
-            if (bits != 32 || samples != 1 || format != 3 || compression != 5 || (predictor != 1 && predictor != 3) || (firstPredictor != 0 && predictor != firstPredictor))
-                throw new IOException("Unsupported COG encoding");
+            if (bits != 32 || samples != 1 || format != 3 || (compression != 1 && compression != 5) || (predictor != 1 && predictor != 3)
+                    || (firstPredictor != 0 && predictor != firstPredictor) || (firstCompression != 0 && compression != firstCompression))
+                throw new UnsupportedFile("Unsupported COG encoding");
             firstPredictor = predictor;
-            if (width <= 0 || height <= 0 || tileWidth != tileHeight || tileWidth < 256 || tileWidth > 1024 || Integer.bitCount(tileWidth) != 1
-                    || (block != 0 && tileWidth != block) || offsets == null || counts == null || offsets.length != counts.length
+            firstCompression = compression;
+            // Tiles are square and a multiple of 16 pixels, as TIFF requires; overviews may tile smaller than the full image.
+            if (width <= 0 || height <= 0 || tileWidth != tileHeight || tileWidth < 16 || tileWidth > 1024 || tileWidth % 16 != 0
+                    || offsets == null || counts == null || offsets.length != counts.length
                     || offsets.length != Math.ceilDiv(width, tileWidth) * Math.ceilDiv(height, tileWidth))
-                throw new IOException("Unsupported COG layout");
-            block = tileWidth;
-            levels.add(new Level(width, height, offsets, counts));
+                throw new UnsupportedFile("Unsupported COG layout");
+            levels.add(new Level(width, height, tileWidth, offsets, counts));
         }
-        if (levels.isEmpty() || !(pixelX > 0) || !(pixelY > 0) || !Double.isFinite(x0) || !Double.isFinite(y0)) throw new IOException("COG lacks georeferencing");
-        return new Header(levels.toArray(Level[]::new), x0, y0, pixelX, pixelY, block, bigEndian, firstPredictor);
+        if (levels.isEmpty() || !(pixelX > 0) || !(pixelY > 0) || !Double.isFinite(x0) || !Double.isFinite(y0)) throw new UnsupportedFile("COG lacks georeferencing");
+        return new Header(levels.toArray(Level[]::new), x0, y0, pixelX, pixelY, bigEndian, firstPredictor, firstCompression == 5);
     }
 
-    /** One directory entry: its type, count and where its values are, inline or elsewhere. */
-    private record Entry(ByteBuffer in, int length, int type, long count, long start) {
-        Entry(ByteBuffer in, int length, int at, boolean big) throws IOException {
-            this(in, length, Short.toUnsignedInt(in.getShort(at + 2)),
-                    big ? in.getLong(at + 4) : Integer.toUnsignedLong(in.getInt(at + 4)), at + (big ? 12 : 8));
+    private record Entry(Pieces in, int type, long count, long start) {
+        Entry(Pieces in, long at, boolean big) throws IOException {
+            this(in, in.u16(at + 2), big ? in.u64(at + 4) : in.u32(at + 4), at + (big ? 12 : 8), big);
         }
 
-        private Entry(ByteBuffer in, int length, int type, long count, int valueAt) throws IOException {
-            this(in, length, type, count, place(in, type, count, valueAt, length));
+        private Entry(Pieces in, int type, long count, long valueAt, boolean big) throws IOException {
+            this(in, type, count, place(in, type, count, valueAt, big));
         }
 
-        private static long place(ByteBuffer in, int type, long count, int valueAt, int length) throws IOException {
-            int size = switch (type) { case 3 -> 2; case 4 -> 4; case 12, 16 -> 8; default -> 1; };
-            if (count > 1 << 20) throw new IOException("Oversized TIFF array");
+        private static int size(int type) { return switch (type) { case 3 -> 2; case 4 -> 4; case 12, 16 -> 8; default -> 1; }; }
+
+        private static long place(Pieces in, int type, long count, long valueAt, boolean big) throws IOException {
+            if (count > 1 << 20) throw new UnsupportedFile("Oversized TIFF array");
             // Classic entries hold four bytes inline, BigTIFF eight.
-            int inline = in.getShort(2) == 43 ? 8 : 4;
-            long start = count * size <= inline ? valueAt
-                    : inline == 8 ? in.getLong(valueAt) : Integer.toUnsignedLong(in.getInt(valueAt));
-            if (start + count * size > length) throw new HeaderTooShort();
-            return start;
+            int inline = big ? 8 : 4;
+            return count * size(type) <= inline ? valueAt : big ? in.u64(valueAt) : in.u32(valueAt);
         }
 
         long[] integers() throws IOException {
-            long[] values = new long[(int) count];
+            ByteBuffer values = in.at(start, count * size(type));
+            long[] out = new long[(int) count];
             for (int i = 0; i < count; i++) {
-                values[i] = switch (type) {
-                    case 3 -> Short.toUnsignedInt(in.getShort((int) (start + i * 2L)));
-                    case 4 -> Integer.toUnsignedLong(in.getInt((int) (start + i * 4L)));
-                    case 16 -> in.getLong((int) (start + i * 8L));
-                    default -> throw new IOException("Unsupported TIFF integer type " + type);
+                out[i] = switch (type) {
+                    case 3 -> Short.toUnsignedInt(values.getShort(i * 2));
+                    case 4 -> Integer.toUnsignedLong(values.getInt(i * 4));
+                    case 16 -> values.getLong(i * 8);
+                    default -> throw new UnsupportedFile("Unsupported TIFF integer type " + type);
                 };
             }
-            return values;
+            return out;
         }
 
         double[] doubles() throws IOException {
-            if (type != 12) throw new IOException("Unsupported TIFF double type " + type);
-            double[] values = new double[(int) count];
-            for (int i = 0; i < count; i++) values[i] = in.getDouble((int) (start + i * 8L));
-            return values;
+            if (type != 12) throw new UnsupportedFile("Unsupported TIFF double type " + type);
+            ByteBuffer values = in.at(start, count * 8);
+            double[] out = new double[(int) count];
+            for (int i = 0; i < count; i++) out[i] = values.getDouble(i * 8);
+            return out;
         }
     }
 
