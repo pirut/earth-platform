@@ -51,7 +51,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  *
  * <p>Off unless asked for: {@code EARTH_BENCH=<cache dir> ./gradlew test --tests '*CubicBench'}, with
  * optional {@code EARTH_BENCH_THREADS} (default 2, as the server's cube workers on four cores),
- * {@code EARTH_BENCH_FAR} (far columns timed per level, default 150) and {@code EARTH_BENCH_PLACE}
+ * {@code EARTH_BENCH_FAR} (far columns timed per level, default 150), {@code EARTH_BENCH_LEVEL} (the finest far level timed, default 1) and {@code EARTH_BENCH_PLACE}
  * (a place name prefix), {@code EARTH_BENCH_AT} ({@code name,latitude,longitude} for a place of one's own) and
  * {@code EARTH_BENCH_BARE=1} (towns on bare-earth ground) and {@code EARTH_BENCH_STREAMS=0} (no streams from the elevation). The cache dir has the game's {@code earthplatform/cache} layout; the first
  * run downloads what it needs. Results go to standard output.
@@ -96,7 +96,7 @@ class CubicBench {
         CopernicusSource copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache.resolve(CopernicusSource.DATASET_ID), true, 12, 8, Duration.ofSeconds(30));
         TerrariumTileSource[] source = new TerrariumTileSource[1];
         TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache.resolve(TerrariumTileSource.DATASET_ID),
-                true, 256, 16, Duration.ofSeconds(20), List.of(new CopernicusFill(copernicus, (z, x, y) -> source[0].cleaned(z, x, y), 512),
+                true, CubicSettings.tilesKept(), 16, Duration.ofSeconds(20), List.of(new CopernicusFill(copernicus, (z, x, y) -> source[0].cleaned(z, x, y), 512),
                         new UsgsElevation(UsgsElevation.AWS_3DEP, cache.resolve(UsgsElevation.DATASET_ID), true, CubicSettings.blocksKept(), 6, Duration.ofSeconds(30), UsgsElevation.Reading.valueOf(System.getenv().getOrDefault("EARTH_BENCH_3DEP", "GRADED"))),
                         new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache.resolve(RemaSource.DATASET_ID), true, CubicSettings.blocksKept(), 6, Duration.ofSeconds(30)))));
         source[0] = tiles;
@@ -197,7 +197,7 @@ class CubicBench {
             MessageDigest farDigest = MessageDigest.getInstance("SHA-256");
             double farTotal = 0;
             long farCount = 0;
-            for (int level = Far.MIN_LEVEL; level <= Far.MAX_LEVEL; level++) {
+            for (int level = Integer.parseInt(System.getenv().getOrDefault("EARTH_BENCH_LEVEL", "" + Far.MIN_LEVEL)); level <= Far.MAX_LEVEL; level++) {
                 int lv = level;
                 LongArrayList keys = new LongArrayList();
                 Far.around(home[0], home[1], key -> { if (Far.level(key) == lv) keys.add(key); });
