@@ -12,6 +12,7 @@ import io.earthplatform.geography.globe.RemaSource;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.UsgsElevation;
 import io.earthplatform.geography.globe.WorldCoverSource;
+import io.earthplatform.geography.globe.Drainage;
 import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.SurfaceWaterSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
@@ -54,7 +55,8 @@ public final class CubicSettings {
     private static WorldCoverSource cover;
     private static BareEarth bareEarth;
     private static ClimateSource climate;
-    private static RiverMap rivers;
+    private static SurfaceWaterSource surfaceWater;
+    private static RiverMap rivers, riversAndStreams;
     private static ImagerySource imagery;
 
     private CubicSettings() {}
@@ -97,6 +99,10 @@ public final class CubicSettings {
                 String riversId = properties.getProperty("earth.rivers", "");
                 if (!riversId.isEmpty() && !SurfaceWaterSource.DATASET_ID.equals(riversId))
                     throw new IllegalStateException("Unsupported rivers '" + riversId + "' in " + file);
+                // Worlds made before streams from the elevation keep only the rivers seen from space.
+                String streamsId = properties.getProperty("earth.streams", "");
+                if (!streamsId.isEmpty() && !Drainage.ID.equals(streamsId))
+                    throw new IllegalStateException("Unsupported streams '" + streamsId + "' in " + file);
                 // Worlds made before bare-earth ground keep their towns' roofs as ground.
                 String groundId = properties.getProperty("earth.ground", "");
                 if (!groundId.isEmpty() && !BareEarth.ID.equals(groundId))
@@ -104,7 +110,7 @@ public final class CubicSettings {
                 // Worlds made before elevation layers read the composite alone.
                 String elevationId = properties.getProperty("earth.elevation", TerrariumTileSource.DATASET_ID);
                 yield new EarthGenerator(seed, biomes, settings, tiles(elevationId), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
-                        coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : rivers(),
+                        coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : streamsId.isEmpty() ? rivers() : riversAndStreams(),
                         coverId.isEmpty() || groundId.isEmpty() ? null : bareEarth());
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
@@ -143,6 +149,7 @@ public final class CubicSettings {
         properties.setProperty("earth.cover", WorldCoverSource.DATASET_ID);
         properties.setProperty("earth.climate", ClimateSource.DATASET_ID);
         properties.setProperty("earth.rivers", SurfaceWaterSource.DATASET_ID);
+        properties.setProperty("earth.streams", Drainage.ID);
         properties.setProperty("earth.ground", BareEarth.ID);
         if (imageryEnabled()) properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
         if (!name.isEmpty()) properties.setProperty("earth.homeName", name);
@@ -300,19 +307,49 @@ public final class CubicSettings {
         return cover;
     }
 
-    /** Narrow rivers shared by every Earth world in this game, their surface water cached on disk beside the elevation tiles. */
+    /** Narrow rivers seen from space, for worlds made before streams from the elevation. */
     public static synchronized RiverMap rivers() {
-        if (rivers == null) {
+        // Each traced square keeps 64 KiB.
+        if (rivers == null) rivers = new RiverMap(surfaceWater(), 256);
+        return rivers;
+    }
+
+    /**
+     * Narrow rivers seen from space and the streams too narrow for that, which the elevation's
+     * valleys carry where the climate is wet enough, shared by every Earth world in this game.
+     */
+    public static synchronized RiverMap riversAndStreams() {
+        if (riversAndStreams == null) {
+            Path caches = cacheFolder();
+            boolean network = !Boolean.getBoolean("earthplatform.earth.offline");
+            try {
+                // Elevation and rain of their own, the composite alone and the rainfall rows alone: a first visit
+                // then downloads what streams need beside the terrain's own, never queued behind it. Each drained
+                // tile keeps 320 KiB.
+                Path tiles = caches.resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
+                TerrariumTileSource elevation = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, tiles, network, 64, 16, Duration.ofSeconds(20));
+                ClimateSource rain = new ClimateSource(ClimateSource.CHELSA, caches.resolve(ClimateSource.DATASET_ID), network, 32, 8, Duration.ofSeconds(30));
+                riversAndStreams = new RiverMap(surfaceWater(), new Drainage(elevation, rain::precipitation, 24), 256);
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the stream caches under " + caches, failure);
+            }
+        }
+        return riversAndStreams;
+    }
+
+    /** Surface water occurrence, cached on disk beside the elevation tiles. */
+    private static synchronized SurfaceWaterSource surfaceWater() {
+        if (surfaceWater == null) {
             Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(SurfaceWaterSource.DATASET_ID);
             try {
-                // Blocks are 64 KiB decoded and cover 7 km; each traced square keeps 64 KiB.
-                rivers = new RiverMap(new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        96, 4, Duration.ofSeconds(30)), 256);
+                // Blocks are 64 KiB decoded and cover 7 km.
+                surfaceWater = new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        96, 4, Duration.ofSeconds(30));
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the surface water cache at " + cache, failure);
             }
         }
-        return rivers;
+        return surfaceWater;
     }
 
     /** Climate shared by every Earth world in this game, cached on disk beside the elevation tiles. */
