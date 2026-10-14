@@ -7,10 +7,16 @@ import io.earthplatform.minecraft.cubic.play.EarthWorlds;
 import java.lang.ref.WeakReference;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
+import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.CycleButton;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.worldselection.CreateWorldScreen;
 import net.minecraft.client.gui.screens.worldselection.WorldCreationUiState;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.world.level.levelgen.presets.WorldPresets;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -73,6 +79,27 @@ public final class EarthPlayClient {
         if (current == null || !current.is(WorldPresets.NORMAL) || !state.getSeed().isEmpty()) return;
         for (WorldCreationUiState.WorldTypeEntry entry : state.getNormalPresetList())
             if (entry.preset() != null && entry.preset().is(EarthWorlds.PRESET)) { state.setWorldType(entry); break; }
+    }
+
+    /**
+     * Far terrain sharpness on the pause menu in Earth worlds: NeoForge's full-width Mods button
+     * gives up its right half to a button that cycles through the choices, in effect at once.
+     */
+    @SubscribeEvent public static void pauseMenu(ScreenEvent.Init.Post event) {
+        if (!(event.getScreen() instanceof PauseScreen) || ClientCubeWorld.current() == null) return;
+        for (var listener : event.getListenersList()) {
+            if (!(listener instanceof Button mods) || !(mods.getMessage().getContents() instanceof TranslatableContents text)
+                    || !text.getKey().equals("fml.menu.mods")) continue;
+            int half = (mods.getWidth() - 4) / 2;
+            mods.setWidth(half);
+            event.addListener(CycleButton.<EarthConfig.Sharpness>builder(EarthConfig.Sharpness::getTranslatedName)
+                    .withValues(EarthConfig.Sharpness.values())
+                    .withInitialValue(EarthConfig.FAR_SHARPNESS.get())
+                    .withTooltip(value -> Tooltip.create(Component.translatable("earthplatform.pause.sharpness.tooltip")))
+                    .create(mods.getX() + mods.getWidth() - half, mods.getY(), half, mods.getHeight(),
+                            Component.translatable("earthplatform.pause.sharpness"), (button, value) -> EarthConfig.setSharpness(value)));
+            return;
+        }
     }
 
     /** A quiet note while Earth data downloads, and a clear one when it can't be reached. */
