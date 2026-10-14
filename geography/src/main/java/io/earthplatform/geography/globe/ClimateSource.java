@@ -126,6 +126,29 @@ public final class ClimateSource implements AutoCloseable {
     }
 
     /**
+     * Yearly precipitation, mm, at a latitude and longitude, or NaN where the data has a gap: as
+     * {@link #at}'s, reading the precipitation rows alone.
+     */
+    public double precipitation(double latitude, double longitude) {
+        if (!(Math.abs(latitude) <= 90) || !Double.isFinite(longitude)) throw new IllegalArgumentException("Invalid position " + latitude + ", " + longitude);
+        longitude = wrap(longitude);
+        double fx = (longitude - WEST) * PIXELS_PER_DEGREE - 0.5, fy = (NORTH - latitude) * PIXELS_PER_DEGREE - 0.5;
+        int x0 = (int) Math.floor(fx), y0 = (int) Math.floor(fy);
+        double tx = fx - x0, ty = fy - y0, weights = 0, rain = 0;
+        for (int dy = 0; dy < 2; dy++) {
+            short[] rainRow = row(Layer.RAIN, Math.clamp(y0 + dy, 0, HEIGHT - 1));
+            for (int dx = 0; dx < 2; dx++) {
+                int r = Short.toUnsignedInt(rainRow[Math.floorMod(x0 + dx, WIDTH)]);
+                double weight = (dx == 0 ? 1 - tx : tx) * (dy == 0 ? 1 - ty : ty);
+                if (r == 0xFFFF || weight <= 0) continue;
+                weights += weight;
+                rain += weight * r * 0.1;
+            }
+        }
+        return weights <= 0 ? Double.NaN : rain / weights;
+    }
+
+    /**
      * Loads every row and elevation chunk an area needs, several at a time, so later reads never
      * wait. Rows of a variable that lie one after another in its file come in one request.
      */
