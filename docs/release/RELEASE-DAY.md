@@ -14,7 +14,7 @@ Nothing has been published. The clicks for each of JR's steps are in [GO-PUBLIC.
 - [x] Every merge into `main` publishes a GitHub release of the newest build, marked **Latest**.
 - [ ] **JR:** make the repository public (GO-PUBLIC step 2).
 - [ ] **JR:** test the newest release in a fresh world, with and without Photon, on the Mac and on Windows if possible (step 3).
-- [ ] Set the public version `0.1.0-alpha.N` (step 4); the release workflow then names the jar and release with it.
+- [x] Public version `0.1.0-alpha.N`, N = build number (JR, 2026-10-14); set to `0.1.0-alpha.37` for build 37 (GO-PUBLIC step 4). Each build raises it with its notes file.
 - [ ] Check the jar: Mods → Earth Platform shows the logo, description and credits; the arrival message shows the data credits.
 - [ ] Optional: retake the gallery at 1920 × 1080 on a real GPU.
 - [ ] **JR:** publish on Modrinth (step 5) and CurseForge (step 6) as Alpha, creator rewards off.
