@@ -331,9 +331,30 @@ public final class Cinema {
         return preview == 1 ? 0 : (int) Math.round(k * (shot.frames - 1) / (double) (preview - 1));
     }
 
+    // Iris times shader animation (swaying plants, water, clouds) by the wall clock, which would run
+    // several times too fast in footage rendered slower than real time. Pin each captured frame to 1/fps s.
+    private static Object irisTimer;
+    private static java.lang.reflect.Field irisLastStart;
+    private static boolean irisTried;
+
+    private static void pinShaderClock() {
+        if (!irisTried) {
+            irisTried = true;
+            try {
+                irisTimer = Class.forName("net.irisshaders.iris.uniforms.SystemTimeUniforms").getField("TIMER").get(null);
+                irisLastStart = irisTimer.getClass().getDeclaredField("lastStartTime");
+                irisLastStart.setAccessible(true);
+            } catch (Throwable t) { irisTimer = null; log("no Iris clock to pin ({})", t.toString()); }
+        }
+        if (irisTimer == null) return;
+        try { irisLastStart.set(irisTimer, java.util.OptionalLong.of(net.minecraft.Util.getNanos() - 1_000_000_000L / fps)); }
+        catch (Throwable t) { irisTimer = null; log("could not pin Iris clock ({})", t.toString()); }
+    }
+
     @SubscribeEvent public static void frameStart(RenderFrameEvent.Pre event) {
         posed = false;
         if (SCRIPT == null) return;
+        if (state == 3 || state == 4) pinShaderClock();
         if (state == 3) {
             Shot shot = shots.get(shotIndex);
             pose(shot.poses[poseIndex(shot)]);
