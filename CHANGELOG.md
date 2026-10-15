@@ -59,6 +59,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - AE2 spatial storage captures and places Earth blocks, and AE2 meteorites generate in the Earth world.
 - Create's mechanical arm, pulley, scaffolding and elevators, Waystones, Mekanism (Digital Miner, multiblocks and pipes), Immersive Engineering's multiblocks and the Twilight Forest portal work in the Earth world.
 - Cobblemon spawns Pokémon in the Earth world; Aether and Twilight Forest portals take you there and back.
+- Chunky pre-generates the Earth world: it downloads and caches the map data for the area you give it, so arriving there later doesn't wait on downloads.
 - `/locate biome` and Nature's Compass find the Earth's biomes; Quark and Handcrafted work at any height; Lithium no longer drops players through the ground.
 - JEI, EMI, Jade, AppleSkin, Ars Nouveau, AE2 networks, Refined Storage 2, Iron's Spells, FTB Quests and Teams, Farmer's Delight, Sophisticated Backpacks, Supplementaries, YUNG's structures and Open Parties and Claims work unchanged.
 
