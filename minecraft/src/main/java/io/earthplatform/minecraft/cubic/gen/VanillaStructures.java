@@ -295,6 +295,26 @@ final class VanillaStructures {
         return null;
     }
 
+    /**
+     * Whether a structure clears the ground at a column: within {@link #ADAPT} of a rigid piece of
+     * a surface structure that fits the terrain to itself, where {@link #adapt} cuts away whatever
+     * stands above its floor. Trees rooted there would be cut to stumps.
+     */
+    boolean clears(int x, int z) {
+        for (Start start : column(x >> 4, z >> 4)) {
+            if (start.frame.shift != 0) continue;
+            TerrainAdjustment how = start.start.getStructure().terrainAdaptation();
+            if (how != TerrainAdjustment.BEARD_THIN && how != TerrainAdjustment.BEARD_BOX) continue;
+            if (x < start.reach.minX() || x > start.reach.maxX() || z < start.reach.minZ() || z > start.reach.maxZ()) continue;
+            for (StructurePiece piece : start.start.getPieces()) {
+                if (piece instanceof PoolElementStructurePiece pool && pool.getElement().getProjection() != StructureTemplatePool.Projection.RIGID) continue;
+                BoundingBox b = piece.getBoundingBox();
+                if (x >= b.minX() - ADAPT && x <= b.maxX() + ADAPT && z >= b.minZ() - ADAPT && z <= b.maxZ() + ADAPT) return true;
+            }
+        }
+        return false;
+    }
+
     /** A start as it stands in the real world: deep ones are laid out in a frame below it, so a moved copy. */
     private StructureStart real(Start start) {
         if (start.frame.shift == 0) return start.start;
