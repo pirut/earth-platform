@@ -173,6 +173,9 @@ public final class FarRenderer {
         double distance;
         /** How this frame draws it: whole, fading out at its level's edge, or fading in over its children (see {@link FarGpu#NO_FADE}). */
         int fade;
+        /** Whether its children were drawn in its place last frame, and when it last began to fade (see {@link FarGpu#now}), or 0. */
+        boolean split;
+        int stamp;
 
         Column(long key, int bottom, LevelChunkSection[] sections, char[] drops) {
             this.key = key;
@@ -219,6 +222,8 @@ public final class FarRenderer {
             waterWalls = old.waterWalls;
             bytes = old.bytes;
             meshed = true;
+            split = old.split;
+            stamp = old.stamp;
             // Meshes of the old column still in flight no longer match.
             version = nextVersion();
             // The old faces use the old column's slot, or the one it kept from the column before it.
@@ -226,6 +231,11 @@ public final class FarRenderer {
             if (old.bottom == bottom) slot = old.slot;
             else if (oldSlot < 0) oldSlot = old.slot;
             else if (old.slot >= 0 && gpu != null) gpu.freeSlot(old.slot);
+        }
+
+        /** The same-level column at a corner: north-west, north-east, south-west, south-east. */
+        long diagonal(int corner) {
+            return Far.key(level, Far.x(key) + ((corner & 1) == 0 ? -1 : 1), Far.z(key) + (corner < 2 ? -1 : 1));
         }
 
         long neighbour(int side) {
@@ -321,6 +331,13 @@ public final class FarRenderer {
         for (Direction direction : Direction.Plane.HORIZONTAL) {
             Column side = columns.get(Far.key(level, x + direction.getStepX(), z + direction.getStepZ()));
             if (side != null) schedule(side);
+        }
+        // Smooth ground meets its diagonal neighbours at its corners too.
+        if (FarMesher.SMOOTH && level >= FarMesher.SMOOTH_FROM && level > TEXTURED_LEVELS) {
+            for (int corner = 0; corner < 4; corner++) {
+                Column diagonal = columns.get(column.diagonal(corner));
+                if (diagonal != null) schedule(diagonal);
+            }
         }
     }
 
@@ -590,16 +607,18 @@ public final class FarRenderer {
         column.building = true;
         column.stale = false;
         if (column.slot < 0) column.slot = gpu.slot(column.x0, column.baseY(), column.z0, column.level);
-        FarMesher.Side[] sides = new FarMesher.Side[4];
+        FarMesher.Side[] sides = new FarMesher.Side[4], diagonals = new FarMesher.Side[4];
         for (int i = 0; i < 4; i++) {
             Column side = columns.get(column.neighbour(i));
             if (side != null) sides[i] = new FarMesher.Side(side.sections, side.bottom, side.drops);
+            Column diagonal = columns.get(column.diagonal(i));
+            if (diagonal != null) diagonals[i] = new FarMesher.Side(diagonal.sections, diagonal.bottom, diagonal.drops);
         }
         var level = world.client();
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = level.getShade(direction, true);
         FarMesher.Job job = new FarMesher.Job(column.key, column.version = nextVersion(), column.level, column.slot, column.x0, column.z0, column.bottom,
-                column.sections, column.drops, sides, column.drawnCubes, column.level <= TEXTURED_LEVELS, looks, faces,
+                column.sections, column.drops, sides, diagonals, column.drawnCubes, column.level <= TEXTURED_LEVELS, looks, faces,
                 ShaderBlocks.ids(), shade, white());
         meshing++;
         MESHER.execute(() -> {
@@ -610,7 +629,7 @@ public final class FarRenderer {
             }
             catch (Throwable failure) {
                 EarthPlatformMod.LOGGER.error("Far column mesh failed", failure);
-                built.add(new FarMesher.Built(job.key(), -job.version(), new int[0], new int[FarMesher.GROUPS], null, new FarMesher.Part[4]));
+                built.add(new FarMesher.Built(job.key(), -job.version(), new int[0], new int[FarMesher.GROUPS], null, null, new FarMesher.Part[4]));
             }
         });
     }
@@ -629,7 +648,7 @@ public final class FarRenderer {
                 column.meshed = true;
                 column.bytes = result.bytes();
                 gpu.free(column.faces);
-                column.faces = gpu.upload(result.quads(), result.counts());
+                column.faces = gpu.upload(result.quads(), result.counts(), result.grid());
                 column.water = upload(column.water, result.water());
                 for (int side = 0; side < 4; side++) column.waterWalls[side] = upload(column.waterWalls[side], result.waterWalls()[side]);
                 column.freeOldSlots(gpu);
@@ -891,17 +910,51 @@ public final class FarRenderer {
             // The outer ring of a level's middle: drawn under its children too, fading in as they fade out.
             boolean band = FADE && meshed && Far.refined(level, x, z, bx, bz, finest)
                     && Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level))) == Far.hole();
-            if (band) {
+            boolean arriving = false;
+            if (FADE && meshed) {
+                int now = FarGpu.now();
+                if (!column.split) {
+                    // Its children have just all arrived: they fade in over it rather than pop in, once
+                    // its own fade in over its parent is done, so levels sharpen one after another.
+                    if (age(column, now) < FarShaders.FADE_TICKS) {
+                        column.fade = fading ? FarGpu.FADE_OUT : FarGpu.NO_FADE;
+                        drawn.add(column);
+                        return;
+                    }
+                    column.split = true;
+                    stamp(column, now);
+                    for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
+                        Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+                        if (child != null && child.meshed) stamp(child, now);
+                    }
+                }
+                arriving = age(column, now) < FarShaders.FADE_TICKS;
+            } else if (column != null) column.split = true;
+            if (band || arriving) {
                 column.fade = FarGpu.FADE_IN;
                 drawn.add(column);
             }
-            for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) visit(level - 1, 2 * x + dx, 2 * z + dz, bx, bz, band);
+            for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) visit(level - 1, 2 * x + dx, 2 * z + dz, bx, bz, band || arriving);
             return;
         }
+        if (column != null) column.split = false;
         if (meshed) {
             column.fade = fading ? FarGpu.FADE_OUT : FarGpu.NO_FADE;
             drawn.add(column);
         }
+    }
+
+    /** Hundredths of a second since a column last began to fade, on the clock {@link FarGpu#now} keeps. */
+    private static int age(Column column, int now) {
+        return column.stamp == 0 ? Integer.MAX_VALUE : now - column.stamp & 0x7FFFFFF;
+    }
+
+    /** Starts a column's fade now, in the slots its faces are drawn with. */
+    private void stamp(Column column, int now) {
+        column.stamp = now;
+        if (gpu == null) return;
+        gpu.stamp(column.slot, now);
+        gpu.stamp(column.oldSlot, now);
     }
 
     /** True when a column's water is drawn this frame: drawn, and not fading in over finer water. */

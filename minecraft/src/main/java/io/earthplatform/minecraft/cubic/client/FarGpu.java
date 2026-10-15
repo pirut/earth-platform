@@ -36,7 +36,8 @@ import org.lwjgl.system.MemoryUtil;
  * <ol>
  *   <li>x and z in voxels (5 bits each), direction (3), width in voxels less one (4), light (block
  *       level in the high nibble, sky in the low; 8), and the low 7 bits of the column slot;</li>
- *   <li>its bottom (sides) or height (tops and bottoms) above the column's base, in 1/16 blocks;</li>
+ *   <li>its bottom (sides) or height (tops and bottoms) above the column's base, in 1/16 blocks,
+ *       or for smooth ground (directions 6 and 7, see {@link FarMesher}) the texel its points start at;</li>
  *   <li>its height in 1/16 blocks (sides) or depth in voxels less one (tops and bottoms; 20 bits),
  *       and the rest of the column slot;</li>
  *   <li>its look in {@link FarLooks} (20 bits) and, under a shader pack, its ground slope's normal
@@ -108,10 +109,27 @@ final class FarGpu {
 
     void freeSlot(int slot) { freeSlots.add(slot); }
 
-    /** Uploads a column's faces, grouped, or null when there are none. */
-    @Nullable Allocation upload(int[] quads, int[] counts) {
-        int size = quads.length / 4;
-        if (size == 0) return null;
+    /** Now on the fade clock: hundredths of a second, wrapping in 27 bits; never 0, which stands for "not fading". */
+    static int now() {
+        int now = (int) (System.nanoTime() / 10_000_000L) & 0x7FFFFFF;
+        return now == 0 ? 1 : now;
+    }
+
+    /** Marks when a column's faces in a slot began to fade in or out over another level's (see {@link FarShaders#fade}). */
+    void stamp(int slot, int now) {
+        if (slot < 0) return;
+        int[] texel = columns.texel(slot);
+        texel[3] = texel[3] & 15 | now << 4;
+        columns.upload(slot, texel);
+    }
+
+    /**
+     * Uploads a column's faces, grouped, and the points of its smooth ground right after them (one
+     * texel each; its faces are pointed at them), or null when there are none.
+     */
+    @Nullable Allocation upload(int[] quads, int[] counts, @Nullable int[] grid) {
+        int faces = quads.length / 4, size = faces + (grid == null ? 0 : grid.length / 4);
+        if (faces == 0) return null;
         Arena arena = null;
         int start = -1;
         for (Arena candidate : arenas) if ((start = candidate.allocate(size)) >= 0) { arena = candidate; break; }
@@ -120,6 +138,10 @@ final class FarGpu {
             arenas.add(arena);
             start = arena.allocate(size);
             if (start < 0) return null;
+        }
+        if (grid != null) {
+            for (int i = 0; i < quads.length; i += 4) if ((quads[i] >> 10 & 7) >= FarMesher.SMOOTH_TOP) quads[i + 1] = start + faces;
+            arena.buffer.upload(start + faces, grid);
         }
         arena.buffer.upload(start, quads);
         int[] firsts = new int[counts.length];
@@ -227,6 +249,7 @@ final class FarGpu {
         GL20C.glUniform1i(program.location("earth_GameDepth"), FarLod.vanillaUnit());
         if (packMode && packOwnDepth) FarLod.shadowUniforms(program::location);
         GL20C.glUniform1f(program.location("earth_FadeHole"), Far.hole());
+        GL30C.glUniform1ui(program.location("earth_Now"), now());
         // Under a pack's TAA the dither moves every frame and blends into a smooth fade; without it, it holds still.
         GL20C.glUniform1f(program.location("earth_DitherFrame"), program.jittered ? frame & 63 : 0);
     }
@@ -514,6 +537,9 @@ final class FarGpu {
             capacity = grown;
             attach();
         }
+
+        /** A copy of one texel's ints, of a buffer that grows. */
+        int[] texel(int texel) { return Arrays.copyOfRange(contents, texel * 4, texel * 4 + 4); }
 
         /** Writes ints starting at a texel. */
         void upload(int texel, int[] data) {
