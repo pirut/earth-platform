@@ -130,10 +130,22 @@ final class Trees {
      * sequoias, whose trunks win where the two meet. With {@code giantsOnly}, sequoias only.
      */
     void place(int x0, int y0, int z0, int x1, int y1, int z1, boolean giantsOnly, TreeShape.Sink sink) {
+        place(x0, y0, z0, x1, y1, z1, giantsOnly, false, sink);
+    }
+
+    /**
+     * As {@link #place(int, int, int, int, int, int, boolean, TreeShape.Sink)}; with {@code clear},
+     * trees rooted where a structure clears the ground around its buildings are left out whole,
+     * rather than cut to stumps as the ground is cleared.
+     */
+    void place(int x0, int y0, int z0, int x1, int y1, int z1, boolean giantsOnly, boolean clear, TreeShape.Sink sink) {
         int cx0 = Math.floorDiv(x0 - REACH, 16), cx1 = Math.floorDiv(x1 + REACH, 16);
         int cz0 = Math.floorDiv(z0 - REACH, 16), cz1 = Math.floorDiv(z1 + REACH, 16);
         if (!giantsOnly) for (int cz = cz0; cz <= cz1; cz++) for (int cx = cx0; cx <= cx1; cx++)
-            for (Planted tree : chunk(cx, cz)) tree.place(x0, y0, z0, x1, y1, z1, ground, sink);
+            for (Planted tree : chunk(cx, cz)) {
+                if (clear && gen.cleared(tree.x, tree.z)) continue;
+                tree.place(x0, y0, z0, x1, y1, z1, ground, sink);
+            }
         for (int cz = cz0; cz <= cz1; cz++) for (int cx = cx0; cx <= cx1; cx++) {
             if (!gen.giants((cx << 4) + 8, (cz << 4) + 8)) continue;
             for (Planted tree : giants(cx, cz)) tree.place(x0, y0, z0, x1, y1, z1, ground, sink);
