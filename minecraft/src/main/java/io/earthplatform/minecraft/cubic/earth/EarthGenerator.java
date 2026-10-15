@@ -6,6 +6,9 @@ import io.earthplatform.geography.globe.BareEarth;
 import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
 import io.earthplatform.geography.globe.GlobalElevation;
+import io.earthplatform.geography.globe.GsiElevation;
+import io.earthplatform.geography.globe.HrdemElevation;
+import io.earthplatform.geography.globe.IgnElevation;
 import io.earthplatform.geography.globe.RemaElevation;
 import io.earthplatform.geography.globe.UsgsElevation;
 import io.earthplatform.geography.globe.ImagerySource;
@@ -237,6 +240,9 @@ public final class EarthGenerator extends SurfaceGenerator {
                 + (tiles.layers().stream().anyMatch(layer -> layer instanceof CopernicusFill) ? ", partly " + CopernicusSource.ATTRIBUTION : "")
                 + (tiles.layers().stream().anyMatch(layer -> layer instanceof UsgsElevation) ? ". " + UsgsElevation.ATTRIBUTION : "")
                 + (tiles.layers().stream().anyMatch(layer -> layer instanceof RemaElevation) ? ". " + RemaElevation.ATTRIBUTION : "")
+                + (tiles.layers().stream().anyMatch(layer -> layer instanceof HrdemElevation) ? ". " + HrdemElevation.ATTRIBUTION : "")
+                + (tiles.layers().stream().anyMatch(layer -> layer instanceof IgnElevation) ? ". " + IgnElevation.ATTRIBUTION : "")
+                + (tiles.layers().stream().anyMatch(layer -> layer instanceof GsiElevation) ? ". " + GsiElevation.ATTRIBUTION : "")
                 + (cover == null ? "" : ". Land cover: " + WorldCoverSource.ATTRIBUTION)
                 + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION)
                 + (imagery == null ? "" : ". Imagery: " + ImagerySource.ATTRIBUTION)

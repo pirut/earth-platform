@@ -6,6 +6,9 @@ import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.ElevationLayer;
+import io.earthplatform.geography.globe.GsiElevation;
+import io.earthplatform.geography.globe.HrdemElevation;
+import io.earthplatform.geography.globe.IgnElevation;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.RemaElevation;
 import io.earthplatform.geography.globe.RemaSource;
@@ -50,6 +53,9 @@ public final class CubicSettings {
     private static final Map<String, TerrariumTileSource> tiles = new HashMap<>();
     private static CopernicusSource copernicus;
     private static RemaElevation rema;
+    private static HrdemElevation hrdem;
+    private static IgnElevation ign;
+    private static GsiElevation gsi;
     /** 3DEP by each way of reading it a world may pin. */
     private static final UsgsElevation[] usgs = new UsgsElevation[UsgsElevation.Reading.values().length];
     private static WorldCoverSource cover;
@@ -177,15 +183,22 @@ public final class CubicSettings {
 
     /**
      * The elevation pin for new worlds: the Terrarium composite, then the layers laid over it, joined
-     * by '+'. The Copernicus fill, the United States from 3DEP and Antarctica from REMA are on unless
-     * the game runs with {@code -Dearthplatform.earth.copernicus=false},
-     * {@code -Dearthplatform.earth.3dep=false} or {@code -Dearthplatform.earth.rema=false}.
+     * by '+'. The Copernicus fill, Canada from HRDEM, the United States from 3DEP, Antarctica from REMA,
+     * France from IGN and Japan from GSI are on unless the game runs with
+     * {@code -Dearthplatform.earth.copernicus=false}, {@code -Dearthplatform.earth.hrdem=false},
+     * {@code -Dearthplatform.earth.3dep=false}, {@code -Dearthplatform.earth.rema=false},
+     * {@code -Dearthplatform.earth.ign=false} or {@code -Dearthplatform.earth.gsi=false}. Each national
+     * source covers only its own country, so their order matters only at a border: 3DEP follows HRDEM,
+     * and the United States keeps 3DEP.
      */
     public static String elevation() {
         String pin = TerrariumTileSource.DATASET_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.copernicus"))) pin += "+" + CopernicusFill.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.hrdem"))) pin += "+" + HrdemElevation.DATASET_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.3dep"))) pin += "+" + UsgsElevation.GRADED_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.rema"))) pin += "+" + RemaElevation.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.ign"))) pin += "+" + IgnElevation.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.gsi"))) pin += "+" + GsiElevation.DATASET_ID;
         return pin;
     }
 
@@ -210,6 +223,9 @@ public final class CubicSettings {
             if (CopernicusFill.DATASET_ID.equals(ids[i])) layers.add(new CopernicusFill(copernicus(), (zoom, x, y) -> made[0].cleaned(zoom, x, y), 512));
             else if (UsgsElevation.Reading.of(ids[i]) != null) layers.add(usgs(UsgsElevation.Reading.of(ids[i])));
             else if (RemaElevation.DATASET_ID.equals(ids[i])) layers.add(rema());
+            else if (HrdemElevation.DATASET_ID.equals(ids[i])) layers.add(hrdem());
+            else if (IgnElevation.DATASET_ID.equals(ids[i])) layers.add(ign());
+            else if (GsiElevation.DATASET_ID.equals(ids[i])) layers.add(gsi());
             else throw new IllegalStateException("Unsupported elevation layer '" + ids[i] + "' in '" + pin + "'");
         }
         Path cache = cacheFolder().resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
@@ -282,6 +298,51 @@ public final class CubicSettings {
             }
         }
         return rema;
+    }
+
+    /** Canada from HRDEM lidar, cached on disk beside the elevation tiles. */
+    public static synchronized HrdemElevation hrdem() {
+        if (hrdem == null) {
+            Path cache = cacheFolder().resolve(HrdemElevation.DATASET_ID);
+            try {
+                hrdem = new HrdemElevation(HrdemElevation.AWS_HRDEM, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        blocksKept(), 6, Duration.ofSeconds(30));
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the HRDEM elevation cache at " + cache, failure);
+            }
+        }
+        return hrdem;
+    }
+
+    /**
+     * France from IGN, cached on disk beside the elevation tiles. Its server works each tile out on
+     * request, a second or so apiece, so several go at once.
+     */
+    public static synchronized IgnElevation ign() {
+        if (ign == null) {
+            Path cache = cacheFolder().resolve(IgnElevation.DATASET_ID);
+            try {
+                ign = new IgnElevation(IgnElevation.IGN_WMS, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        64, 12, Duration.ofSeconds(30));
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the IGN elevation cache at " + cache, failure);
+            }
+        }
+        return ign;
+    }
+
+    /** Japan from GSI, cached on disk beside the elevation tiles. Its server is far from most players, so many tiles go at once. */
+    public static synchronized GsiElevation gsi() {
+        if (gsi == null) {
+            Path cache = cacheFolder().resolve(GsiElevation.DATASET_ID);
+            try {
+                gsi = new GsiElevation(GsiElevation.GSI_TILES, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        64, 16, Duration.ofSeconds(30));
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the GSI elevation cache at " + cache, failure);
+            }
+        }
+        return gsi;
     }
 
     private static Path cacheFolder() { return FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache"); }

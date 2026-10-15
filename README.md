@@ -5,7 +5,7 @@
 ![The Grand Canyon from Mather Point, with Photon shaders](docs/images/grand-canyon-photon.jpg)
 
 - **The whole planet, at real height.** Worlds run from Y -16384 to 16383, so Everest's summit is 8,848 blocks above the sea and you can climb it, mine it and build on it.
-- **Real ground.** Elevation, land cover and climate come from open satellite and survey data, with finer surveys where they exist: about 10 m across the United States and REMA in Antarctica. Forests, deserts, glaciers, wetlands, lakes and rivers sit where they are on Earth, and the Grand Canyon shows its real rock layers.
+- **Real ground.** Elevation, land cover and climate come from open satellite and survey data, with the best survey for each place where one is open to all: about 10 m across the United States, lidar across much of Canada, France's 1 to 5 m national model, Japan's 5 to 10 m model and REMA in Antarctica. Forests, deserts, glaciers, wetlands, lakes and rivers sit where they are on Earth, and the Grand Canyon shows its real rock layers.
 - **Minecraft's own world, placed by the real climate.** The Amazon grows vanilla jungle, the Serengeti acacia savanna, Siberia snowy taiga. Giant sequoias stand at their real 70 to 90 m in the Sierra Nevada groves.
 - **See for kilometers.** Distant terrain is drawn as textured voxels out to about 94 km (58 miles), so you see the far side of the valley and the ranges beyond it, not fog.
 - **Fly anywhere.** In creative, press **N** for the travel map: click a spot on the globe and the camera climbs out over the planet and comes back down there. In survival, use `/earth visit` and `/earth goto`, or glide an elytra above Y 9,200 and let the jet stream carry you across a continent in under an hour.
@@ -42,6 +42,9 @@ More: [Install guide](docs/INSTALL.md) (shaders, Macs, servers) · [Playing on t
 | [Copernicus DEM GLO-30](https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model) | Steep fjords and the far north | European Union, ESA, DLR and Airbus | Copernicus WorldDEM-30 license |
 | [USGS 3DEP](https://www.usgs.gov/3d-elevation-program) | Detailed heights across the United States | U.S. Geological Survey | Public domain |
 | [REMA](https://www.pgc.umn.edu/data/rema/) | Antarctica's ice and mountains | Polar Geospatial Center, University of Minnesota | CC BY 4.0 |
+| [HRDEM](https://open.canada.ca/data/en/dataset/957782bf-847c-4644-a757-e383c0057995) | Lidar ground across much of Canada | Natural Resources Canada | Open Government Licence - Canada |
+| [RGE ALTI](https://geoservices.ign.fr/rgealti) | Detailed heights across France | IGN, France | Licence Ouverte / Etalab 2.0 |
+| [GSI elevation tiles](https://maps.gsi.go.jp/development/ichiran.html) | Detailed heights across Japan | Geospatial Information Authority of Japan | Public Data License 1.0 |
 | [ESA WorldCover](https://esa-worldcover.org/) | Where forests, grass, desert, snow, wetlands and water lie | European Space Agency and the WorldCover consortium | CC BY 4.0 |
 | [CHELSA](https://chelsa-climate.org/) | The real climate, which picks every biome | Karger et al., WSL | CC0 1.0 |
 | [JRC Global Surface Water](https://global-surface-water.appspot.com/) | Rivers and streams carved where water flows | European Commission JRC, Google, Copernicus | Free, without restriction |
