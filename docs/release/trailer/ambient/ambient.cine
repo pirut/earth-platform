@@ -1,27 +1,22 @@
 out @OUT@
 fps 30
 
-# Relaxing ground-level views: camera just above the tall grass on open ground, very slow drift.
-# H +6 puts the landscape first: grass is only a swaying strip along the bottom; look aims below the
-# summit so the peak sits in the upper third with the valley and meadow beneath it.
+# Relaxing landscape views from open vantage points, very slow drift (about 25-35 m over 40 s).
+# The camera sits 6-25 m above the ground so the landscape is the subject and grass is only a strip
+# along the bottom; look heights put the summit or ridgeline in the upper third.
+# Dropped after three preview tries: teton (flat meadow and village), fuji (tree canopy), glencoe (open moor).
 
 shot yosemite frames=1200 settle=35 warm=200 clear=1 ease=0 time=1500
-cam 0 37.8107 -119.4851 +6
-cam 1 37.8105 -119.4848 +6
-look 0 37.7459 -119.5332 =2500
-look 1 37.7459 -119.5332 =2500
+cam 0 37.8107 -119.4851 +25
+cam 1 37.8105 -119.4848 +25
+look 0 37.7459 -119.5332 =900
+look 1 37.7459 -119.5332 =900
 
 shot matterhorn frames=1200 settle=35 warm=200 clear=1 ease=0 time=12200
-cam 0 45.9877 7.752 +6
-cam 1 45.9879 7.7516 +6
-look 0 45.9763 7.6586 =3500
-look 1 45.9763 7.6586 =3500
-
-shot teton frames=1200 settle=35 warm=200 clear=1 ease=0 time=12400
-cam 0 43.665 -110.67 +6
-cam 1 43.6655 -110.6725 +6
-look 0 43.741 -110.8024 =3000
-look 1 43.741 -110.8024 =3000
+cam 0 45.9869 7.7456 +25
+cam 1 45.9871 7.7452 +25
+look 0 45.9763 7.6586 =2700
+look 1 45.9763 7.6586 =2700
 
 shot rainier frames=1200 settle=35 warm=200 clear=1 ease=0 time=1000
 cam 0 46.804 -121.728 +6
@@ -30,19 +25,7 @@ look 0 46.8529 -121.7604 =3200
 look 1 46.8529 -121.7604 =3200
 
 shot lauterbrunnen frames=1200 settle=35 warm=200 clear=1 ease=0 time=2000
-cam 0 46.5935 7.909 +6
-cam 1 46.593 7.9092 +6
+cam 0 46.5935 7.909 +16
+cam 1 46.5933 7.9091 +16
 look 0 46.5368 7.9626 =2200
 look 1 46.5368 7.9626 =2200
-
-shot fuji frames=1200 settle=35 warm=200 clear=1 ease=0 time=12300
-cam 0 35.523 138.76 +6
-cam 1 35.5231 138.7596 +6
-look 0 35.3606 138.7274 =2200
-look 1 35.3606 138.7274 =2200
-
-shot glencoe frames=1200 settle=35 warm=200 clear=1 ease=0 time=1500
-cam 0 56.652 -4.85 +6
-cam 1 56.6519 -4.853 +6
-look 0 56.6467 -4.9001 =650
-look 1 56.6467 -4.9001 =650
