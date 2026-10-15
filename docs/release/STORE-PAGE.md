@@ -14,13 +14,13 @@ Everything to paste into the two project pages. Nothing has been published. JR c
 | Game version | 1.21.1 | 1.21.1 |
 | Environment | Client: required. Server: required. | Client and server |
 | Categories / tags | Primary **Worldgen**; also **Adventure** and **Transportation** | **World Gen** (main), **Biomes**, **Adventure and RPG** |
-| Licence | LGPL-3.0-only ("GNU Lesser General Public License v3.0 only") | "GNU Lesser General Public License version 3 (LGPLv3)" |
+| License | LGPL-3.0-only ("GNU Lesser General Public License v3.0 only") | "GNU Lesser General Public License version 3 (LGPLv3)" |
 | Icon | [docs/images/icon.png](../images/icon.png) (256 × 256) | Same file as the logo |
 | Source | https://github.com/pirut/earth-cubic-platform | Same, under "Source" |
 | Issues | https://github.com/pirut/earth-cubic-platform/issues | Same, under "Issues" |
 | Wiki | https://github.com/pirut/earth-cubic-platform/blob/main/docs/PLAYING.md | Same |
 | Discord | None yet; leave blank | Leave blank |
-| Monetisation | Creator rewards **off** for the first release. Turning them on later is fine with satellite imagery off by default, but ask EOX first if imagery ever becomes default ([LICENSING-AUDIT.md](LICENSING-AUDIT.md)) | Rewards programme **off** for the first release, for the same reason |
+| Monetization | Creator rewards **off** for the first release. Turning them on later is fine with satellite imagery off by default, but ask EOX first if imagery ever becomes default ([LICENSING-AUDIT.md](LICENSING-AUDIT.md)) | Rewards program **off** for the first release, for the same reason |
 
 ## Dependencies
 
@@ -58,14 +58,14 @@ Paste everything between the lines into the description editor (Markdown mode on
 
 # Earth Platform
 
-**The real Earth in Minecraft, at true scale.** One block is one metre. Every mountain stands at its real height, every lake and valley is where it really is, and the land reaches all the way to the horizon. Start anywhere on the planet and play ordinary survival there.
+**The real Earth in Minecraft, at true scale.** One block is one meter. Every mountain stands at its real height, every lake and valley is where it really is, and the land reaches all the way to the horizon. Start anywhere on the planet and play ordinary survival there.
 
 ## Features
 
 - **The whole planet, at real height.** Worlds run from Y -16384 to 16383, so Everest's summit is 8,848 blocks above the sea and you can climb it, mine it and build on it.
 - **Real ground.** Elevation, land cover and climate come from open satellite and survey data, with finer surveys where they exist: about 10 m across the United States and REMA in Antarctica. Forests, deserts, glaciers, wetlands, lakes and rivers sit where they are on Earth, and the Grand Canyon shows its real rock layers.
 - **Minecraft's own world, placed by the real climate.** The Amazon grows vanilla jungle, the Serengeti acacia savanna, Siberia snowy taiga. Giant sequoias stand at their real 70 to 90 m in the Sierra Nevada groves.
-- **See for kilometres.** Distant terrain is drawn as textured voxels out to about 94 km, so you see the far side of the valley and the ranges beyond it, not fog.
+- **See for kilometers.** Distant terrain is drawn as textured voxels out to about 94 km (58 miles), so you see the far side of the valley and the ranges beyond it, not fog.
 - **Fly anywhere.** In creative, press **N** for the travel map: click a spot on the globe and the camera climbs out over the planet and comes back down there. In survival, use `/earth visit` and `/earth goto`, or glide an elytra above Y 9,200 and let the jet stream carry you across a continent in under an hour.
 - **Ordinary survival.** Mine, craft, build and die as usual. Caves, ores, villages and other vanilla structures generate, and the Nether and the End work through normal portals.
 - **Shaders.** Works with Iris and the stock Photon download, which light near blocks and far terrain alike, Macs included.
@@ -89,7 +89,7 @@ You don't need Distant Horizons: Earth Platform has its own far terrain, and Dis
 
 ## Credits
 
-**Earth Platform would not be possible without open data.** Elevation from AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, NOAA ETOPO1, Copernicus EU-DEM, ArcticDEM and national mapping agencies), Copernicus DEM GLO-30 (produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved), USGS 3DEP (courtesy of the U.S. Geological Survey) and REMA (Polar Geospatial Center, University of Minnesota; DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685). Land cover © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium (CC BY 4.0). Climate from CHELSA V2.1 (Karger et al. 2017, CC0). Rivers from JRC Global Surface Water (Source: EC JRC/Google). Ecoregions from RESOLVE Ecoregions 2017 (Dinerstein et al. 2017, CC BY 4.0). Globe from NASA Blue Marble (NASA Earth Observatory, Reto Stöckli). Optional ground colours (off by default) from EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Full credits are in the mod (Mods → Earth Platform) and in [CREDITS.md](https://github.com/pirut/earth-cubic-platform/blob/main/CREDITS.md).
+**Earth Platform would not be possible without open data.** Elevation from AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, NOAA ETOPO1, Copernicus EU-DEM, ArcticDEM and national mapping agencies), Copernicus DEM GLO-30 (produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved), USGS 3DEP (courtesy of the U.S. Geological Survey) and REMA (Polar Geospatial Center, University of Minnesota; DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685). Land cover © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium (CC BY 4.0). Climate from CHELSA V2.1 (Karger et al. 2017, CC0). Rivers from JRC Global Surface Water (Source: EC JRC/Google). Ecoregions from RESOLVE Ecoregions 2017 (Dinerstein et al. 2017, CC BY 4.0). Globe from NASA Blue Marble (NASA Earth Observatory, Reto Stöckli). Optional ground colors (off by default) from EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Full credits are in the mod (Mods → Earth Platform) and in [CREDITS.md](https://github.com/pirut/earth-cubic-platform/blob/main/CREDITS.md).
 
 **Distant terrain: thank you, Voxy and Distant Horizons.** Our far terrain is built on ideas from Voxy by Cortex and Distant Horizons by James Seibel and contributors. We'd have recommended using them directly, but neither works with a cubic-chunks world, so we wrote our own renderer following their lead; it contains no code from either.
 

@@ -41,7 +41,7 @@ Use the same official Photon zip at its default settings; there is nothing to ch
 
 On a Mac, three Photon features are unavailable: **Colored Lights** (hidden from the menu), **Colored Shadows** and **Cloud Shadows** (shown, but stay off). To load Photon without the adapted copy, add `-Dearthplatform.photon.compat=off` to the JVM arguments.
 
-## Satellite ground colours (optional)
+## Satellite ground colors (optional)
 
 Earth Platform can use Sentinel-2 cloudless satellite imagery by EOX to match bare ground and plant cover more closely to each place. It is off by default. To turn it on for a new world, press **Customize** in Create World and set **Satellite imagery** to ON. To make it the default for every new world (and on servers), set `satelliteImagery = true` in `config/earthplatform-common.toml`, or use Mods → Earth Platform → Config. Worlds made with imagery keep using it, and worlds made without it never use it.
 

@@ -5,7 +5,7 @@
 The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 
 ### The Earth
-- The whole planet at one block per metre, with true heights from Y -16384 to 16383.
+- The whole planet at one block per meter, with true heights from Y -16384 to 16383.
 - Elevation from AWS Terrain Tiles, with ocean floors from bathymetry. Bad pixels in the source tiles (deep pits, lone spikes) are found and mended, so places like Aconcagua, Bora Bora and the Amazon have no holes or spires.
 - Finer heights where better surveys exist: USGS 3DEP (about 10 m) across the United States, REMA across Antarctica, and Copernicus GLO-30 to fill fjords such as Milford Sound and the far north beyond the main survey's reach.
 - Towns stand on the ground beneath their roofs, not on the rooftops the elevation survey sees.
@@ -19,7 +19,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - Ground and biomes tuned against satellite views around the world: glacial lakes, volcanic cones, ice-scoured rock, salt pans, desert washes, sloughs and swamps, Mediterranean garrigue, peat bogs and rice country.
 - Every surface block vanilla grows, placed where it would grow on Earth: cacti in the Americas, cherry groves in East Asia, bamboo in South and East Asia, coral reefs in warm seas.
 - Minecraft's own trees chosen by biome, and giant sequoias at real size in the Sierra Nevada's groves.
-- Optional ground colours guided by Sentinel-2 cloudless satellite imagery (off by default).
+- Optional ground colors guided by Sentinel-2 cloudless satellite imagery (off by default).
 - No cities: built-up land becomes the wild land around it.
 
 ### Survival
