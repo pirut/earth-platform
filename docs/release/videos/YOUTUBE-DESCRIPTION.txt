@@ -1,0 +1,14 @@
+Title: Earth Platform: the whole real Earth at 1:1 scale (coming soon)
+
+Earth Platform turns Minecraft: Java Edition into the real planet, at true scale. Every mountain, canyon and coastline sits where it really is and at its real height, and you can see up to 200 kilometers (125 miles) to the horizon.
+
+In this trailer: Yosemite Valley, the Grand Canyon, the Matterhorn, Geirangerfjord, Mount Everest, Lake Tahoe, Grand Teton, Mount Fuji, Kilimanjaro, Erg Chebbi in the Sahara, Mount Rainier, Lake Louise, Iguazu Falls and Uluru. Everything was recorded in game.
+
+Coming soon.
+
+Music: "Heroic Age" by Kevin MacLeod (incompetech.com)
+Licensed under Creative Commons: By Attribution 4.0 License
+http://creativecommons.org/licenses/by/4.0/
+
+Shaders: Photon.
+Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.
