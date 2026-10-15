@@ -1835,13 +1835,25 @@ public final class GlobeTest {
         near(3776.24, GsiElevation.metres(377624), 1e-3, "GSI height");
         near(-0.01, GsiElevation.metres((1 << 24) - 1), 1e-6, "GSI below sea level");
         check(Float.isNaN(GsiElevation.metres(1 << 23)), "GSI no data");
-        // IGN's BIL: little-endian floats, its no-data value NaN.
-        ByteBuffer bil = ByteBuffer.allocate(256 * 256 * 4).order(ByteOrder.LITTLE_ENDIAN);
-        for (int i = 0; i < 256 * 256; i++) bil.putFloat(i % 2 == 0 ? 123.5f : -99999f);
-        float[] decoded = IgnElevation.decode(bil.array());
-        near(123.5, decoded[0], 0, "IGN height");
-        check(Float.isNaN(decoded[1]), "IGN no data");
-        fail(() -> IgnElevation.decode("<ServiceException/>".getBytes()), java.io.IOException.class, "IGN error answer is not a tile");
+        // IGN's BIL: the service's own latitude and longitude grid, sampled at our pixel centres. A plane
+        // comes back exactly; pixels with no data around them are no data.
+        IgnElevation.Block block = IgnElevation.block(14, 8480, 5972);
+        equal(21, block.level(), "IGN reads pixels as wide as the tile's");
+        equal(IgnElevation.FINEST, IgnElevation.block(16, 0, 0).level(), "IGN reads no finer than its finest grid");
+        equal(8, IgnElevation.block(1, 1, 0).level(), "IGN reads a coarse grid for a coarse tile");
+        check(block.columns() > 256 && block.columns() < 262 && block.rows() > 183 && block.rows() < 192, "IGN block " + block);
+        double r = block.degrees();
+        ByteBuffer bil = ByteBuffer.allocate(block.columns() * block.rows() * 4).order(ByteOrder.LITTLE_ENDIAN);
+        for (int j = 0; j < block.rows(); j++) for (int i = 0; i < block.columns(); i++) {
+            double lat = (block.south() + block.rows() - j - 0.5) * r, lon = (block.west() + i + 0.5) * r;
+            bil.putFloat(i < 20 ? -99999f : (float) (1000 * (lat - 43.7) + 500 * (lon - 6.3) + 1000));
+        }
+        float[] decoded = IgnElevation.decode(block, 14, 8480, 5972, bil.array());
+        double world = 256.0 * (1 << 14);
+        double lat = MercatorTileLayer.latitude(world, 5972 * 256 + 100.5), lon = (8480 * 256 + 200.5) / world * 360 - 180;
+        near(1000 * (lat - 43.7) + 500 * (lon - 6.3) + 1000, decoded[100 * 256 + 200], 1e-3, "IGN samples the grid bilinearly");
+        check(Float.isNaN(decoded[0]), "IGN no data");
+        fail(() -> IgnElevation.decode(block, 14, 8480, 5972, "<ServiceException/>".getBytes()), java.io.IOException.class, "IGN error answer is not a tile");
 
         // The blend: the source's west half has data. Its interior takes the source, its edge eases in,
         // past it the tile stays; open sea stays sea and bathymetry stays.
