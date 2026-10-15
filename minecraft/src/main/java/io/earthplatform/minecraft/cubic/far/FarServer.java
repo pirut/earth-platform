@@ -199,7 +199,8 @@ public final class FarServer {
         int minX = columnX * cubes, minZ = columnZ * cubes;
         for (long key : storage.savedIn(minX, minX + cubes - 1, minZ, minZ + cubes - 1)) {
             CompoundTag tag = storage.read(key);
-            if (tag == null) continue;
+            // Cubes saved just as generated already match the far terrain made from the generator.
+            if (tag == null || tag.getBoolean(CubeCodec.UNTOUCHED)) continue;
             LevelChunkSection cube = codec.read(tag).section();
             int voxelY = (CubeKey.y(key) * 16) >> level, sectionIndex = (voxelY >> 4) - column.bottom;
             // Edits below the column's ground are out of sight from afar.

@@ -43,6 +43,7 @@ public final class GlobeTest {
         palette();
         rema();
         usgs();
+        nationalLayers();
         if ("1".equals(System.getenv("EARTH_LIVE_TILES"))) { live(); liveCover(); liveClimate(); liveImagery(); liveRema(); liveUsgs(); }
         else System.out.println("GlobeTest: live AWS tile checks skipped (set EARTH_LIVE_TILES=1)");
         System.out.println("GlobeTest: " + checks + " checks passed");
@@ -1811,6 +1812,145 @@ public final class GlobeTest {
             throw new AssertionError(label + ": expected " + expected.getSimpleName() + " but got " + t, t);
         }
         throw new AssertionError(label + ": expected " + expected.getSimpleName());
+    }
+
+    /** Japan, France and Canada: coverage lists, the sources' encodings, the blend over the composite and the tile reads. */
+    private static void nationalLayers() throws Exception {
+        // Coverage lists, read from the shipped resources.
+        TileCoverage gsi = TileCoverage.load("gsi-dem-v1.txt"), ign = TileCoverage.load("ign-rgealti-v1.txt");
+        int[] fuji = tileOf(35.3606, 138.7274, 15), paris = tileOf(48.8566, 2.3522, 14);
+        check(gsi.covers(15, fuji[0], fuji[1]), "GSI covers Mount Fuji");
+        check(gsi.covers(10, fuji[0] >> 5, fuji[1] >> 5), "GSI covers Fuji's zoom-10 tile");
+        check(gsi.covers(5, fuji[0] >> 10, fuji[1] >> 10), "GSI covers Fuji's zoom-5 tile");
+        int[] pacific = tileOf(30, 160, 15), seoul = tileOf(37.5665, 126.978, 13);
+        check(!gsi.covers(15, pacific[0], pacific[1]), "GSI leaves the open Pacific");
+        check(!gsi.covers(13, seoul[0], seoul[1]), "GSI leaves Seoul");
+        check(ign.covers(14, paris[0], paris[1]), "IGN covers Paris");
+        int[] london = tileOf(51.5074, -0.1278, 14), reunion = tileOf(-21.115, 55.536, 13);
+        check(!ign.covers(14, london[0], london[1]), "IGN leaves London");
+        check(ign.covers(13, reunion[0], reunion[1]), "IGN covers Reunion");
+
+        // GSI's PNG code: hundredths of a metre in 24 bits, two's complement, 2^23 no data.
+        near(0, GsiElevation.metres(0), 0, "GSI zero");
+        near(3776.24, GsiElevation.metres(377624), 1e-3, "GSI height");
+        near(-0.01, GsiElevation.metres((1 << 24) - 1), 1e-6, "GSI below sea level");
+        check(Float.isNaN(GsiElevation.metres(1 << 23)), "GSI no data");
+        // IGN's BIL: the service's own latitude and longitude grid, sampled at our pixel centres. A plane
+        // comes back exactly; pixels with no data around them are no data.
+        IgnElevation.Block block = IgnElevation.block(14, 8480, 5972);
+        equal(21, block.level(), "IGN reads pixels as wide as the tile's");
+        equal(IgnElevation.FINEST, IgnElevation.block(16, 0, 0).level(), "IGN reads no finer than its finest grid");
+        equal(8, IgnElevation.block(1, 1, 0).level(), "IGN reads a coarse grid for a coarse tile");
+        check(block.columns() > 256 && block.columns() < 262 && block.rows() > 183 && block.rows() < 192, "IGN block " + block);
+        double r = block.degrees();
+        ByteBuffer bil = ByteBuffer.allocate(block.columns() * block.rows() * 4).order(ByteOrder.LITTLE_ENDIAN);
+        for (int j = 0; j < block.rows(); j++) for (int i = 0; i < block.columns(); i++) {
+            double lat = (block.south() + block.rows() - j - 0.5) * r, lon = (block.west() + i + 0.5) * r;
+            bil.putFloat(i < 20 ? -99999f : (float) (1000 * (lat - 43.7) + 500 * (lon - 6.3) + 1000));
+        }
+        float[] decoded = IgnElevation.decode(block, 14, 8480, 5972, bil.array());
+        double world = 256.0 * (1 << 14);
+        double lat = MercatorTileLayer.latitude(world, 5972 * 256 + 100.5), lon = (8480 * 256 + 200.5) / world * 360 - 180;
+        near(1000 * (lat - 43.7) + 500 * (lon - 6.3) + 1000, decoded[100 * 256 + 200], 1e-3, "IGN samples the grid bilinearly");
+        check(Float.isNaN(decoded[0]), "IGN no data");
+        fail(() -> IgnElevation.decode(block, 14, 8480, 5972, "<ServiceException/>".getBytes()), java.io.IOException.class, "IGN error answer is not a tile");
+
+        // The blend: the source's west half has data. Its interior takes the source, its edge eases in,
+        // past it the tile stays; open sea stays sea and bathymetry stays.
+        float[] values = new float[256 * 256], source = new float[256 * 256];
+        Arrays.fill(values, 100f);
+        for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) source[j * 256 + i] = i < 128 ? 140f : Float.NaN;
+        values[40 * 256 + 40] = 0f; source[40 * 256 + 40] = 3f;        // sea where the source reads a few metres
+        values[41 * 256 + 41] = -30f; source[41 * 256 + 41] = -1f;     // bathymetry under a source at sea level
+        values[42 * 256 + 42] = 0f; source[42 * 256 + 42] = 900f;      // a void of 0 high in the source: filled
+        MercatorTileLayer.blend(values, source);
+        near(140, values[10 * 256 + 60], 1e-4, "source interior taken");
+        near(100, values[10 * 256 + 200], 0, "tile kept past the source");
+        check(values[10 * 256 + 126] > 100 && values[10 * 256 + 126] < 140, "source eases in at its edge: " + values[10 * 256 + 126]);
+        equal(0f, values[40 * 256 + 40], "open sea stays sea");
+        equal(-30f, values[41 * 256 + 41], "bathymetry stays");
+        near(900, values[42 * 256 + 42], 1e-3, "inland void filled");
+
+        // GSI read from a local server: zoom 15 takes the lidar, its gaps the 10 m model; a missing lidar tile is
+        // remembered, so a second read asks the server nothing.
+        int[] at = fuji;
+        Map<String, byte[]> tiles = new HashMap<>();
+        float[] lidar = new float[256 * 256], model = new float[256 * 256];
+        for (int k = 0; k < lidar.length; k++) { lidar[k] = k / 256 < 100 ? 3000f : Float.NaN; model[k] = 2900f; }
+        tiles.put("/gsi/dem5a_png/15/" + at[0] + "/" + at[1] + ".png", gsiPng(lidar));
+        tiles.put("/gsi/dem_png/14/" + (at[0] >> 1) + "/" + (at[1] >> 1) + ".png", gsiPng(model));
+        AtomicInteger asked = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/", exchange -> {
+            asked.incrementAndGet();
+            byte[] body = tiles.get(exchange.getRequestURI().getPath());
+            if (body == null) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        Path cache = Files.createTempDirectory("gsi-test");
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/gsi/");
+        try {
+            try (var layer = new GsiElevation(base, cache, true, 8, 2, Duration.ofSeconds(5))) {
+                float[] tile = new float[256 * 256];
+                Arrays.fill(tile, 2500f);
+                layer.refine(15, at[0], at[1], tile);
+                near(3000, tile[20 * 256 + 20], 1e-2, "GSI lidar taken");
+                // The fixture's z14 tile is a quarter of it: the model fills the lidar's gap.
+                near(2900, tile[200 * 256 + 20], 1e-2, "GSI model fills the lidar's gap");
+                // A neighbouring tile with no lidar on the server reads the model alone, once.
+                float[] next = new float[256 * 256];
+                Arrays.fill(next, 2500f);
+                int nx = at[0] ^ 1;
+                layer.refine(15, nx, at[1], next);
+                near(2900, next[128 * 256 + 128], 1e-2, "GSI tile without lidar takes the model");
+                check(Files.exists(cache.resolve("dem5a_png/15/" + nx + "/" + at[1] + ".none")), "GSI missing lidar remembered on disk");
+                // Coarse tiles keep the composite.
+                float[] far = new float[256 * 256];
+                Arrays.fill(far, 2500f);
+                layer.refine(11, at[0] >> 4, at[1] >> 4, far);
+                equal(2500f, far[0], "GSI leaves coarse tiles to the composite");
+            }
+            int before = asked.get();
+            try (var offline = new GsiElevation(base, cache, false, 8, 2, Duration.ofSeconds(5))) {
+                float[] next = new float[256 * 256];
+                Arrays.fill(next, 2500f);
+                offline.refine(15, at[0] ^ 1, at[1], next);
+                near(2900, next[128 * 256 + 128], 1e-2, "GSI reads its disk cache offline");
+            }
+            equal(before, asked.get(), "GSI cache answers without the server");
+        } finally {
+            server.stop(0);
+        }
+
+        // Canada Atlas Lambert: the origin, and the edge of an HRDEM square as NRCan's catalog gives it in degrees.
+        double[] xy = new double[2];
+        HrdemElevation.project(49, -95, xy);
+        near(0, xy[0], 1e-6, "EPSG:3979 origin x");
+        near(0, xy[1], 1e-6, "EPSG:3979 origin y");
+        HrdemElevation.project(42.665636, -76.986506, xy);
+        near(1_500_000, xy[0], 5, "HRDEM square 8_2 south-east corner x");
+        near(-500_000, xy[1], 5, "HRDEM square 8_2 south-east corner y");
+    }
+
+    private static int[] tileOf(double lat, double lon, int zoom) {
+        int n = 1 << zoom;
+        return new int[]{(int) ((lon + 180) / 360 * n), (int) ((1 - Math.log(Math.tan(Math.toRadians(lat)) + 1 / Math.cos(Math.toRadians(lat))) / Math.PI) / 2 * n)};
+    }
+
+    /** A GSI elevation PNG of metres, NaN as no data. */
+    private static byte[] gsiPng(float[] metres) throws java.io.IOException {
+        var image = new java.awt.image.BufferedImage(256, 256, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        for (int k = 0; k < metres.length; k++) {
+            int code = Float.isNaN(metres[k]) ? 1 << 23 : (int) Math.round(metres[k] * 100) & 0xFFFFFF;
+            image.setRGB(k % 256, k / 256, code);
+        }
+        var out = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "png", out);
+        return out.toByteArray();
     }
 
     private static void check(boolean condition, String label) {

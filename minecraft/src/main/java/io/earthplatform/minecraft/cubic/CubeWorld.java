@@ -298,7 +298,7 @@ public abstract class CubeWorld {
         entity.clearRemoved();
         BlockEntity previous = cube.blockEntities.put(pos.immutable(), entity);
         if (previous != null && previous != entity) previous.setRemoved();
-        cube.dirty = true; cube.modified = true;
+        cube.markModified();
         return true;
     }
 

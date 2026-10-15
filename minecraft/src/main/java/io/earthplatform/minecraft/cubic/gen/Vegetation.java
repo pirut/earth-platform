@@ -84,7 +84,7 @@ final class Vegetation {
                 } else if (h + 1 <= y0 + 15 && water[gi] + 1 >= y0) underwater(section, x0 + lx, y0, z0 + lz, h, water[gi], s);
             } else if (h + 1 + TALLEST_PLANT >= y0 && h <= y0 + 15) ground(section, x0 + lx, y0, z0 + lz, gi, height, water, s);
         }
-        trees.place(x0, y0, z0, x0 + 15, y0 + 15, z0 + 15, false, (x, y, z, state, kind) -> put(section, x - x0, y - y0, z - z0, state, kind));
+        trees.place(x0, y0, z0, x0 + 15, y0 + 15, z0 + 15, false, true, (x, y, z, state, kind) -> put(section, x - x0, y - y0, z - z0, state, kind));
     }
 
     /** How high above the ground the trees around this cube column can reach. */

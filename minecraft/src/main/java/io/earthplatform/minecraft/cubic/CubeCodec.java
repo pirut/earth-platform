@@ -26,6 +26,12 @@ import net.minecraft.world.level.chunk.PalettedContainerRO;
 /** Disk (NBT) and network (section bytes) forms of a cube. */
 public final class CubeCodec {
     public static final int VERSION = 1;
+    /** Saved as generated, never changed by play; far terrain skips these, as they match the generator. */
+    public static final String UNTOUCHED = "untouched";
+    /** A fresh surface cube still owed its first animals. */
+    public static final String UNPOPULATED = "unpopulated";
+    /** Entities a fresh cube starts with (chest minecarts), not yet placed in the level. */
+    public static final String ENTITIES = "entities";
     private static final Codec<PalettedContainer<BlockState>> STATES = PalettedContainer.codecRW(
             Block.BLOCK_STATE_REGISTRY, BlockState.CODEC, PalettedContainer.Strategy.SECTION_STATES, Blocks.AIR.defaultBlockState());
     private final Codec<PalettedContainerRO<Holder<Biome>>> biomes;
@@ -41,17 +47,42 @@ public final class CubeCodec {
 
     /** Main thread: block entities are saved through their owners. */
     public CompoundTag write(Cube cube, HolderLookup.Provider registries) {
-        CompoundTag tag = new CompoundTag();
-        tag.putInt("v", VERSION);
-        tag.putInt("x", cube.x); tag.putInt("y", cube.y); tag.putInt("z", cube.z);
-        tag.put("blocks", STATES.encodeStart(NbtOps.INSTANCE, cube.section.getStates()).getOrThrow());
-        tag.put("biomes", biomes.encodeStart(NbtOps.INSTANCE, cube.section.getBiomes()).getOrThrow());
+        CompoundTag tag = sectionTag(cube.x, cube.y, cube.z, cube.section);
         ListTag entities = new ListTag();
         for (BlockEntity entity : cube.blockEntities.values()) {
             if (!entity.isRemoved()) entities.add(entity.saveWithFullMetadata(registries));
         }
         if (!entities.isEmpty()) tag.put("block_entities", entities);
+        if (!cube.edited) tag.putBoolean(UNTOUCHED, true);
         return tag;
+    }
+
+    /** Any thread: a cube just as the generator made it, with its block entities still as tags. */
+    public CompoundTag writeGenerated(int x, int y, int z, LevelChunkSection section, List<CompoundTag> blockEntities) {
+        CompoundTag tag = sectionTag(x, y, z, section);
+        if (!blockEntities.isEmpty()) {
+            ListTag entities = new ListTag();
+            entities.addAll(blockEntities);
+            tag.put("block_entities", entities);
+        }
+        tag.putBoolean(UNTOUCHED, true);
+        return tag;
+    }
+
+    private CompoundTag sectionTag(int x, int y, int z, LevelChunkSection section) {
+        CompoundTag tag = new CompoundTag();
+        tag.putInt("v", VERSION);
+        tag.putInt("x", x); tag.putInt("y", y); tag.putInt("z", z);
+        tag.put("blocks", STATES.encodeStart(NbtOps.INSTANCE, section.getStates()).getOrThrow());
+        tag.put("biomes", biomes.encodeStart(NbtOps.INSTANCE, section.getBiomes()).getOrThrow());
+        return tag;
+    }
+
+    /** Any thread: the entity tags saved under a key, or none. */
+    public static List<CompoundTag> tags(CompoundTag tag, String key) {
+        List<CompoundTag> list = new ArrayList<>();
+        for (Tag entry : tag.getList(key, Tag.TAG_COMPOUND)) list.add((CompoundTag) entry);
+        return list;
     }
 
     /**
@@ -66,9 +97,7 @@ public final class CubeCodec {
                 .promotePartial(error -> missing(tag, error)).getOrThrow();
         LevelChunkSection section = new LevelChunkSection(states, biomeData);
         section.recalcBlockCounts();
-        List<CompoundTag> entities = new ArrayList<>();
-        for (Tag entry : tag.getList("block_entities", Tag.TAG_COMPOUND)) entities.add((CompoundTag) entry);
-        return new Decoded(section, entities);
+        return new Decoded(section, tags(tag, "block_entities"));
     }
 
     private static void missing(CompoundTag tag, String error) {
