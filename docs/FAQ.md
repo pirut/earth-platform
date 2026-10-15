@@ -3,7 +3,7 @@
 ## Playing
 
 **Is it really full size?**
-Yes. One block is one metre in every direction around the place your world starts, sea level is Y 63, and heights are real: Everest's summit is near Y 8,900 and the Dead Sea shore is below sea level. Worlds run from Y -16384 to 16383. Across very long distances the map uses Web Mercator, so far from your starting latitude a block is slightly more or less than a metre east to west.
+Yes. One block is one meter in every direction around the place your world starts, sea level is Y 63, and heights are real: Everest's summit is near Y 8,900 and the Dead Sea shore is below sea level. Worlds run from Y -16384 to 16383. Across very long distances the map uses Web Mercator, so far from your starting latitude a block is slightly more or less than a meter east to west.
 
 **Where is everything?**
 `/earth where` gives your latitude, longitude and real height. `/earth visit <place>` and `/earth goto <latitude> <longitude>` take you anywhere; `/earth places` lists famous spots. On servers only operators can travel unless the server turns on `anyoneCanTravel`. See [Playing on the Earth](PLAYING.md).
@@ -21,7 +21,7 @@ Yes. Mining, crafting, mobs, beds, death and respawn, the Nether and the End all
 Ride the jet stream: fly an elytra up above about Y 9,200 and the wind carries you at over 1,000 blocks a second. See [The jet stream](PLAYING.md#the-jet-stream).
 
 **What does the satellite imagery option do?**
-When turned on with the **Satellite imagery** toggle on the Customize screen or `satelliteImagery = true` in `config/earthplatform-common.toml` (see [the install guide](INSTALL.md#satellite-ground-colours-optional)), Sentinel-2 cloudless imagery nudges the choice of ground blocks, such as sand, gravel, stone and dry soil, and how dense trees are, to match each place's real colours. Biomes and tree kinds don't change. It's off by default.
+When turned on with the **Satellite imagery** toggle on the Customize screen or `satelliteImagery = true` in `config/earthplatform-common.toml` (see [the install guide](INSTALL.md#satellite-ground-colours-optional)), Sentinel-2 cloudless imagery nudges the choice of ground blocks, such as sand, gravel, stone and dry soil, and how dense trees are, to match each place's real colors. Biomes and tree kinds don't change. It's off by default.
 
 **Can I use an old world?**
 New Earth worlds need the Earth world type when they are created. Worlds made with the Default type stay ordinary Minecraft worlds.
@@ -88,10 +88,10 @@ That was a bug in early test builds and is fixed. Update to the latest version.
 **How do I run a server?**
 Set `level-type=earthplatform\:earth` in `server.properties` before the world is created. See [Dedicated servers](INSTALL.md#dedicated-servers). The server needs internet access; players need the mod but not the data.
 
-## Licence
+## License
 
 **Can I put it in a modpack, or change the code?**
-Yes. Earth Platform is free software under the GNU LGPL 3.0: include it in any modpack, and fork or port it as long as your changes to its code stay open under the same licence. The Earth data it downloads has its own terms and credits, listed in [CREDITS.md](../CREDITS.md).
+Yes. Earth Platform is free software under the GNU LGPL 3.0: include it in any modpack, and fork or port it as long as your changes to its code stay open under the same license. The Earth data it downloads has its own terms and credits, listed in [CREDITS.md](../CREDITS.md).
 
 ## Reporting a problem
 
