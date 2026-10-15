@@ -1,0 +1,19 @@
+[
+ ["travel", 0.0, 6.5, null, "Pick anywhere on Earth.", "in"],
+ ["fuji", 0.3, 3.0, ["Mount Fuji", "Japan"], null, null],
+ ["everest", 3.0, 4.5, ["Mount Everest", "Nepal and Tibet"], "Real mountains. Real height.", null],
+ ["matterhorn", 3.0, 3.5, ["Matterhorn", "Switzerland"], null, null],
+ ["grand_canyon", 3.0, 3.5, ["Grand Canyon", "Arizona"], null, null],
+ ["iguazu", 0.3, 2.5, ["Iguazu Falls", "Argentina and Brazil"], null, null],
+ ["geiranger", 3.0, 3.5, ["Geirangerfjord", "Norway"], null, null],
+ ["sahara", 0.3, 2.5, ["Erg Chebbi", "Sahara, Morocco"], null, null],
+ ["uluru", 0.3, 2.5, ["Uluru", "Australia"], null, "out"],
+ ["jet", 3.5, 5.0, null, "Glide the jet stream above 9,000 m", "in"],
+ ["rainier", 0.3, 1.6, ["Mount Rainier", "Washington"], null, null],
+ ["louise", 0.3, 1.6, ["Lake Louise", "Canadian Rockies"], null, null],
+ ["kilimanjaro", 0.3, 1.6, ["Kilimanjaro", "Tanzania"], null, null],
+ ["teton", 0.3, 1.6, ["Grand Teton", "Wyoming"], null, null],
+ ["tahoe", 0.3, 1.6, ["Lake Tahoe", "California"], null, null],
+ ["yosemite", 4.0, 6.0, ["Yosemite Valley", "California"], "Your world is waiting.", null],
+ ["climb", 3.0, 8.0, null, ["The whole planet.", "Out now."], "out"]
+]

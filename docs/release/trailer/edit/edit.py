@@ -9,6 +9,10 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 SHOTS, MUSIC, LOGO, OUT = sys.argv[1:5]
 SILENT = "--silent" in sys.argv
+def opt(name, default):
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else default
+BADGE = opt("--badge", "COMING SOON")  # end-card pill, e.g. "OUT NOW"
+SUBLINE = opt("--subline", "")  # optional line under the pill
 W, H, FPS = 1920, 1080, 30
 FONTS = os.environ.get("EARTH_FONTS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")) + "/"
 BLACK, BOLD, SEMI, REG = (FONTS + n for n in ("InterDisplay-Black.otf", "InterDisplay-Bold.otf", "Inter-SemiBold.otf", "Inter-Regular.otf"))
@@ -34,8 +38,11 @@ CUT = [
     ("iguazu", 0.6, 2.0, ("Iguazu Falls", "Argentina and Brazil"), None, None),
     ("uluru", 0.6, 2.4, ("Uluru", "Australia"), None, "out"),
 ]
+if "--cut" in sys.argv:  # JSON list of [shot, start, length, [place, sub] or null, line(s) or null, fade]
+    import json
+    CUT = [tuple(c) for c in json.load(open(sys.argv[sys.argv.index("--cut") + 1]))]
 END_CARD = 8.0
-MUSIC_CREDIT = 'Music: "Heroic Age" by Kevin MacLeod (incompetech.com), licensed under CC BY 4.0'
+MUSIC_CREDIT = 'Music: "%s" by Kevin MacLeod (incompetech.com), licensed under CC BY 4.0' % opt("--music-title", "Heroic Age")
 DISCLAIMER = "Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft."
 
 
@@ -75,10 +82,12 @@ def end_card(path):
     d = ImageDraw.Draw(im)
     f = font(BOLD, 52)
     y = 170 + logo.height + 70
-    tw = d.textlength("COMING SOON", font=f)
+    tw = d.textlength(BADGE, font=f)
     pad = 44
     d.rounded_rectangle(((W - tw) / 2 - pad, y - 10, (W + tw) / 2 + pad, y + 76), radius=43, fill=(44, 104, 190, 255))
-    d.text((W / 2, y + 33), "COMING SOON", font=f, fill=(255, 255, 255), anchor="mm")
+    d.text((W / 2, y + 33), BADGE, font=f, fill=(255, 255, 255), anchor="mm")
+    if SUBLINE:
+        d.text((W / 2, y + 150), SUBLINE, font=font(SEMI, 40), fill=(235, 240, 248), anchor="mm")
     d.text((W / 2, H - 92), MUSIC_CREDIT, font=font(REG, 24), fill=(170, 182, 204), anchor="mm")
     d.text((W / 2, H - 56), DISCLAIMER, font=font(REG, 24), fill=(170, 182, 204), anchor="mm")
     im.save(path)
