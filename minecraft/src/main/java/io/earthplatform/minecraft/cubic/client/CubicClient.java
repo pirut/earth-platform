@@ -192,7 +192,7 @@ public final class CubicClient {
     @SubscribeEvent public static void waiting(RenderGuiEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
         ClientCubeWorld world = ClientCubeWorld.current();
-        if (world == null || minecraft.player == null) return;
+        if (world == null || minecraft.player == null || minecraft.options.hideGui) return;
         var player = minecraft.player;
         if (io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(player)) return;
         if (!waitingForCubes(world, player)) return;
