@@ -2,45 +2,48 @@ out @OUT@
 fps 30
 preview 3
 
-# Relaxing ground-level views: camera at eye height in a meadow, very slow drift.
+# Relaxing ground-level views: camera just above the tall grass on open ground, very slow drift.
+# H +6 puts the landscape first: grass is only a swaying strip along the bottom; look aims below the
+# summit so the peak sits in the upper third with the valley and meadow beneath it.
+
 shot yosemite frames=1200 settle=35 warm=200 clear=1 ease=0 time=1500
-cam 0 37.7432 -119.5990 +1.8
-cam 1 37.7434 -119.5970 +1.8
+cam 0 37.8107 -119.4851 +6
+cam 1 37.8105 -119.4848 +6
 look 0 37.7459 -119.5332 =2500
 look 1 37.7459 -119.5332 =2500
 
 shot matterhorn frames=1200 settle=35 warm=200 clear=1 ease=0 time=12200
-cam 0 45.9925 7.7130 +1.8
-cam 1 45.9922 7.7115 +1.8
-look 0 45.9763 7.6586 =4300
-look 1 45.9763 7.6586 =4300
+cam 0 45.9877 7.752 +6
+cam 1 45.9879 7.7516 +6
+look 0 45.9763 7.6586 =3500
+look 1 45.9763 7.6586 =3500
 
 shot teton frames=1200 settle=35 warm=200 clear=1 ease=0 time=12400
-cam 0 43.6650 -110.6700 +1.8
-cam 1 43.6655 -110.6725 +1.8
-look 0 43.7410 -110.8024 =3900
-look 1 43.7410 -110.8024 =3900
+cam 0 43.665 -110.67 +6
+cam 1 43.6655 -110.6725 +6
+look 0 43.741 -110.8024 =3000
+look 1 43.741 -110.8024 =3000
 
 shot rainier frames=1200 settle=35 warm=200 clear=1 ease=0 time=1000
-cam 0 46.7880 -121.7380 +1.8
-cam 1 46.7885 -121.7385 +1.8
-look 0 46.8529 -121.7604 =4300
-look 1 46.8529 -121.7604 =4300
+cam 0 46.804 -121.728 +6
+cam 1 46.804 -121.7284 +6
+look 0 46.8529 -121.7604 =3200
+look 1 46.8529 -121.7604 =3200
 
 shot lauterbrunnen frames=1200 settle=35 warm=200 clear=1 ease=0 time=2000
-cam 0 46.5935 7.9090 +1.8
-cam 1 46.5930 7.9092 +1.8
-look 0 46.5368 7.9626 =3800
-look 1 46.5368 7.9626 =3800
+cam 0 46.5935 7.909 +6
+cam 1 46.593 7.9092 +6
+look 0 46.5368 7.9626 =2200
+look 1 46.5368 7.9626 =2200
 
 shot fuji frames=1200 settle=35 warm=200 clear=1 ease=0 time=12300
-cam 0 35.4100 138.6300 +1.8
-cam 1 35.4097 138.6305 +1.8
-look 0 35.3606 138.7274 =3600
-look 1 35.3606 138.7274 =3600
+cam 0 35.523 138.76 +6
+cam 1 35.5231 138.7596 +6
+look 0 35.3606 138.7274 =2200
+look 1 35.3606 138.7274 =2200
 
 shot glencoe frames=1200 settle=35 warm=200 clear=1 ease=0 time=1500
-cam 0 56.6520 -4.8500 +1.8
-cam 1 56.6519 -4.8530 +1.8
-look 0 56.6467 -4.9001 =1000
-look 1 56.6467 -4.9001 =1000
+cam 0 56.652 -4.85 +6
+cam 1 56.6519 -4.853 +6
+look 0 56.6467 -4.9001 =650
+look 1 56.6467 -4.9001 =650
