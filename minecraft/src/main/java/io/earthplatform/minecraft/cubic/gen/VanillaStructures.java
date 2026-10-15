@@ -107,13 +107,19 @@ final class VanillaStructures {
     private static final Set<String> FLOOR_RELATIVE = Set.of("minecraft:ruined_portals");
     /** How many chunks from its start chunk a structure reaches, as vanilla's structure references. */
     private static final int REACH = 8;
+    /** How many chunks out /locate looks for structures another mod places by its own rules, which are asked chunk by chunk. */
+    private static final int OWN_PLACEMENT_SEARCH = 128;
     /** How far terrain adaptation reaches from a piece, sideways and up or down. */
     private static final int ADAPT = 12, ADAPT_HEIGHT = 64;
     /** Strongholds sit on a spread grid rather than vanilla's rings around the origin, which a planet does not have. */
     private static final int STRONGHOLD_SPACING = 64, STRONGHOLD_SEPARATION = 32, STRONGHOLD_SALT = 0x53544E44;
     private static final BlockState AIR = Blocks.AIR.defaultBlockState(), WATER = Blocks.WATER.defaultBlockState(), STONE = Blocks.STONE.defaultBlockState();
 
-    private record Kind(int index, Holder<StructureSet> set, RandomSpreadStructurePlacement placement, boolean deep, boolean relative) {}
+    /**
+     * A structure set and where it may start: {@code spread} is the grid of vanilla's random spread,
+     * or null for another mod's own kind of placement, which is asked chunk by chunk.
+     */
+    private record Kind(int index, Holder<StructureSet> set, StructurePlacement placement, @Nullable RandomSpreadStructurePlacement spread, boolean deep, boolean relative) {}
     /** A structure start; {@code reach} covers its pieces and terrain adaptation in real coordinates. */
     private record Start(int kind, int chunkX, int chunkZ, StructureStart start, Frame frame, BoundingBox reach) {}
     /** The part of an overlay in one cube: block indices and states, block entity and entity tags. */
@@ -146,15 +152,45 @@ final class VanillaStructures {
             StructurePlacement placement = set.value().placement();
             if (placement instanceof ConcentricRingsStructurePlacement)
                 placement = new RandomSpreadStructurePlacement(STRONGHOLD_SPACING, STRONGHOLD_SEPARATION, RandomSpreadType.TRIANGULAR, STRONGHOLD_SALT);
-            if (placement instanceof RandomSpreadStructurePlacement spread) found.add(new Kind(found.size(), set, spread, DEEP.contains(id), FLOOR_RELATIVE.contains(id)));
-            else LOGGER.info("Cubic world: no placement for structure set {}", id);
+            found.add(new Kind(found.size(), set, placement, placement instanceof RandomSpreadStructurePlacement spread ? spread : null,
+                    deep(id, set.value()), FLOOR_RELATIVE.contains(id)));
         }
         this.kinds = List.copyOf(found);
+        long added = found.stream().filter(k -> !k.set.unwrapKey().map(key -> key.location().getNamespace().equals("minecraft")).orElse(false)).count();
+        if (added > 0) LOGGER.info("Cubic world: {} structure sets from other mods, {} placed by their own rules, {} at vanilla depths",
+                added, found.stream().filter(k -> k.spread == null).count(), found.stream().filter(k -> k.deep && !DEEP.contains(k.set.getRegisteredName())).count());
         Map<Integer, Integer> counts = new HashMap<>();
         for (Structure structure : level.registryAccess().registryOrThrow(Registries.STRUCTURE)) {
             int step = structure.step().ordinal();
             seeding.put(structure, new int[]{step, counts.merge(step, 1, Integer::sum) - 1});
         }
+    }
+
+    /**
+     * Whether a structure set lies at vanilla's fixed depths, so it is laid out in a frame with
+     * vanilla's Y 64 at the local floor. Vanilla's are listed. Another mod's are if every structure
+     * in the set starts at a fixed height rather than on the ground (a jigsaw start height with no
+     * heightmap to project it onto, as Repurposed Structures' mineshafts), or, for structures built
+     * by code that say neither, if they are made in an underground step (YUNG's mineshafts).
+     */
+    private boolean deep(String id, StructureSet set) {
+        if (id.startsWith("minecraft:")) return DEEP.contains(id);
+        if (set.structures().isEmpty()) return false;
+        var ops = net.minecraft.resources.RegistryOps.create(com.mojang.serialization.JsonOps.INSTANCE, level.registryAccess());
+        for (StructureSet.StructureSelectionEntry entry : set.structures()) {
+            Structure structure = entry.structure().value();
+            var json = Structure.DIRECT_CODEC.encodeStart(ops, structure).result()
+                    .filter(com.google.gson.JsonElement::isJsonObject).map(com.google.gson.JsonElement::getAsJsonObject).orElse(null);
+            boolean fixed;
+            if (json != null && json.has("project_start_to_heightmap")) fixed = false;
+            else if (json != null && json.has("start_height")) fixed = true;
+            else fixed = switch (structure.step()) {
+                case UNDERGROUND_STRUCTURES, STRONGHOLDS, UNDERGROUND_DECORATION -> true;
+                default -> false;
+            };
+            if (!fixed) return false;
+        }
+        return true;
     }
 
     /** Copies into a cube every structure block, block entity and entity falling in it. */
@@ -190,10 +226,19 @@ final class VanillaStructures {
         List<long[]> candidates = new ArrayList<>();
         for (Kind kind : kinds) {
             if (kind.set.value().structures().stream().noneMatch(e -> wanted.test(e.structure().value()))) continue;
-            int spacing = kind.placement.spacing();
+            if (kind.spread == null) {
+                // Another mod's placement: every chunk in reach, nearest first, out to 2,000 blocks.
+                int r = Math.min(radius, OWN_PLACEMENT_SEARCH);
+                for (int qz = cz - r; qz <= cz + r; qz++) for (int qx = cx - r; qx <= cx + r; qx++) {
+                    long d = (long) (qx - cx) * (qx - cx) + (long) (qz - cz) * (qz - cz);
+                    if (d <= (long) r * r && kind.placement.isStructureChunk(state, qx, qz)) candidates.add(new long[]{d, kind.index, qx, qz});
+                }
+                continue;
+            }
+            int spacing = kind.spread.spacing();
             for (int rz = Math.floorDiv(cz - radius, spacing); rz <= Math.floorDiv(cz + radius, spacing); rz++)
                 for (int rx = Math.floorDiv(cx - radius, spacing); rx <= Math.floorDiv(cx + radius, spacing); rx++) {
-                    ChunkPos chunk = kind.placement.getPotentialStructureChunk(seed, rx * spacing, rz * spacing);
+                    ChunkPos chunk = kind.spread.getPotentialStructureChunk(seed, rx * spacing, rz * spacing);
                     long d = (long) (chunk.x - cx) * (chunk.x - cx) + (long) (chunk.z - cz) * (chunk.z - cz);
                     if (d <= (long) radius * radius) candidates.add(new long[]{d, kind.index, chunk.x, chunk.z});
                 }
@@ -317,10 +362,18 @@ final class VanillaStructures {
         List<Start> found = new ArrayList<>();
         int x0 = cx << 4, z0 = cz << 4;
         for (Kind kind : kinds) {
-            int spacing = kind.placement.spacing();
+            if (kind.spread == null) {
+                for (int z = cz - REACH; z <= cz + REACH; z++) for (int x = cx - REACH; x <= cx + REACH; x++) {
+                    if (!kind.placement.isStructureChunk(state, x, z)) continue;
+                    Start start = start(kind, x, z);
+                    if (start != null && start.reach.intersects(x0, z0, x0 + 15, z0 + 15)) found.add(start);
+                }
+                continue;
+            }
+            int spacing = kind.spread.spacing();
             for (int rz = Math.floorDiv(cz - REACH, spacing); rz <= Math.floorDiv(cz + REACH, spacing); rz++)
                 for (int rx = Math.floorDiv(cx - REACH, spacing); rx <= Math.floorDiv(cx + REACH, spacing); rx++) {
-                    ChunkPos chunk = kind.placement.getPotentialStructureChunk(seed, rx * spacing, rz * spacing);
+                    ChunkPos chunk = kind.spread.getPotentialStructureChunk(seed, rx * spacing, rz * spacing);
                     if (Math.abs(chunk.x - cx) > REACH || Math.abs(chunk.z - cz) > REACH) continue;
                     if (!kind.placement.isStructureChunk(state, chunk.x, chunk.z)) continue;
                     Start start = start(kind, chunk.x, chunk.z);
