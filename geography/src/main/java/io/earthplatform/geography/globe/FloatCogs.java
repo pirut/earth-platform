@@ -34,6 +34,8 @@ final class FloatCogs implements AutoCloseable {
     private final Path cacheRoot;
     private final boolean allowNetwork;
     private final int maxBlocksInMemory;
+    /** The finest levels whose block tables are never read; see the constructor. */
+    private final int skipLevels;
     private final RangeFiles files;
     private final Map<Integer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
     private final LinkedHashMap<Long, float[]> memory = new LinkedHashMap<>(32, 0.75f, true);
@@ -68,6 +70,18 @@ final class FloatCogs implements AutoCloseable {
      */
     FloatCogs(String what, String datasetId, String threadName, URI base, IntFunction<String> names, float noData,
               Path cacheRoot, boolean allowNetwork, int maxBlocksInMemory, int maxConcurrentTransfers, Duration timeout) throws IOException {
+        this(what, datasetId, threadName, base, names, noData, cacheRoot, allowNetwork, maxBlocksInMemory, maxConcurrentTransfers, timeout, 0);
+    }
+
+    /**
+     * @param skipLevels the finest levels of each file that are never read: their block tables, megabytes in
+     *                   the largest files, are left unfetched, and a read of one reads the next coarser
+     *                   level that is kept
+     */
+    FloatCogs(String what, String datasetId, String threadName, URI base, IntFunction<String> names, float noData,
+              Path cacheRoot, boolean allowNetwork, int maxBlocksInMemory, int maxConcurrentTransfers, Duration timeout, int skipLevels) throws IOException {
+        if (skipLevels < 0 || skipLevels > 4) throw new IllegalArgumentException("Unsupported " + what + " levels skipped: " + skipLevels);
+        this.skipLevels = skipLevels;
         this.what = what;
         this.base = Objects.requireNonNull(base);
         if (!base.toString().endsWith("/")) throw new IllegalArgumentException(what + " base URI must end with /");
@@ -199,7 +213,10 @@ final class FloatCogs implements AutoCloseable {
     private static Grid grid(Header header, int file, int overview, double x, double y) {
         if (header.levels.length == 0) return null;
         overview = Math.min(overview, header.levels.length - 1);
+        // A level skipped stands in for nothing: the next coarser one is read.
+        while (header.levels[overview].offsets == null && overview < header.levels.length - 1) overview++;
         Level level = header.levels[overview], full = header.levels[0];
+        if (level.offsets == null) return null;
         double right = header.x0 + header.pixelX * full.width, bottom = header.y0 - header.pixelY * full.height;
         if (x < header.x0 || x >= right || y > header.y0 || y <= bottom) return null;
         // Overviews are rounded up, so their pixels span the full image a little unevenly; GDAL
@@ -314,7 +331,7 @@ final class FloatCogs implements AutoCloseable {
         if (missing != null && Files.exists(missing)) return Header.MISSING;
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                Header header = parse(Pieces.of(DiskCache.read(cached)));
+                Header header = parse(Pieces.of(DiskCache.read(cached)), skipLevels);
                 files.diskHits.incrementAndGet();
                 return header;
             } catch (IOException | RuntimeException corrupt) {
@@ -333,7 +350,7 @@ final class FloatCogs implements AutoCloseable {
         // parse finds it lacks is fetched where it lies, and the parse runs again.
         while (true) {
             try {
-                Header header = parse(pieces);
+                Header header = parse(pieces, skipLevels);
                 if (cached != null) RangeFiles.write(cached, pieces.bytes());
                 return header;
             } catch (UnsupportedFile unsupported) {
@@ -558,9 +575,12 @@ final class FloatCogs implements AutoCloseable {
      * Reads a tiled single-band float TIFF's directories (the image and its overviews) and its
      * georeferencing, classic or BigTIFF.
      */
-    static Header parse(byte[] bytes) throws IOException { return parse(Pieces.of(bytes)); }
+    static Header parse(byte[] bytes) throws IOException { return parse(Pieces.of(bytes), 0); }
 
-    static Header parse(Pieces in) throws IOException {
+    static Header parse(Pieces in) throws IOException { return parse(in, 0); }
+
+    /** @param skip the finest levels whose block tables are left unread, their offsets and counts null */
+    static Header parse(Pieces in, int skip) throws IOException {
         ByteBuffer start = in.at(0, 16);
         boolean bigEndian = start.get(0) == 'M';
         in.order = bigEndian ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN;
@@ -581,6 +601,9 @@ final class FloatCogs implements AutoCloseable {
             in.at(next, countSize + entries * entrySize + (big ? 8 : 4));
             int width = 0, height = 0, tileWidth = 0, tileHeight = 0, compression = 1, bits = 0, samples = 1, predictor = 1, format = 1, subfile = 0;
             long[] offsets = null, counts = null;
+            // Masks don't count among the levels, but which directory is a mask is known only once read.
+            boolean skipped = levels.size() < skip;
+            long tableEntries = -1;
             for (int e = 0; e < entries; e++) {
                 long at = next + countSize + (long) e * entrySize;
                 int tag = in.u16(at);
@@ -595,8 +618,8 @@ final class FloatCogs implements AutoCloseable {
                     case 317 -> predictor = (int) entry.integers()[0];
                     case 322 -> tileWidth = (int) entry.integers()[0];
                     case 323 -> tileHeight = (int) entry.integers()[0];
-                    case 324 -> offsets = entry.integers();
-                    case 325 -> counts = entry.integers();
+                    case 324 -> { if (skipped) tableEntries = entry.count(); else offsets = entry.integers(); }
+                    case 325 -> { if (skipped) tableEntries = tableEntries == entry.count() ? tableEntries : -2; else counts = entry.integers(); }
                     case 339 -> format = (int) entry.integers()[0];
                     case 33550 -> {
                         if (levels.isEmpty()) {
@@ -627,9 +650,9 @@ final class FloatCogs implements AutoCloseable {
             firstPredictor = predictor;
             firstCompression = compression;
             // Tiles are square and a multiple of 16 pixels, as TIFF requires; overviews may tile smaller than the full image.
+            long blocks = (long) Math.ceilDiv(width, Math.max(1, tileWidth)) * Math.ceilDiv(height, Math.max(1, tileWidth));
             if (width <= 0 || height <= 0 || tileWidth != tileHeight || tileWidth < 16 || tileWidth > 1024 || tileWidth % 16 != 0
-                    || offsets == null || counts == null || offsets.length != counts.length
-                    || offsets.length != Math.ceilDiv(width, tileWidth) * Math.ceilDiv(height, tileWidth))
+                    || (skipped ? tableEntries != blocks : offsets == null || counts == null || offsets.length != counts.length || offsets.length != blocks))
                 throw new UnsupportedFile("Unsupported COG layout");
             levels.add(new Level(width, height, tileWidth, offsets, counts));
         }
@@ -645,6 +668,7 @@ final class FloatCogs implements AutoCloseable {
         private Entry(Pieces in, int type, long count, long valueAt, boolean big) throws IOException {
             this(in, type, count, place(in, type, count, valueAt, big));
         }
+
 
         private static int size(int type) { return switch (type) { case 3 -> 2; case 4 -> 4; case 12, 16 -> 8; default -> 1; }; }
 
