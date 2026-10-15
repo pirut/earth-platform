@@ -63,6 +63,39 @@ Howat, I. M., Porter, C., Smith, B. E., Noh, M.-J. & Morin, P. (2019). The Refer
 License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: REMA mosaic tiles are fetched from the Polar Geospatial Center's bucket on the Registry of Open Data on AWS only where you play, moved from the WGS 84 ellipsoid to the EGM96 geoid, and blended into the elevation above. Turn it off with `-Dearthplatform.earth.rema=false`.
 Geoid: EGM96 (NGA, public domain), shipped as a half-degree grid south of 50 S in geography/src/main/resources (`egm96-south.bin`, sampled from NGA's EGM96 15' grid as PROJ distributes it).
 
+## Canada: HRDEM (downloaded while you play)
+
+**What it gives Earth Platform:** Bare ground from airborne lidar wherever Canada has flown it: most of the populated south, much of British Columbia, Quebec and the Maritimes.
+
+**Thank you** to Natural Resources Canada and the provinces and territories whose lidar surveys it gathers.
+
+**Attribution and license:**
+
+Canada: High Resolution Digital Elevation Model (HRDEM), Natural Resources Canada. Contains information licensed under the Open Government Licence - Canada.
+License: [Open Government Licence - Canada 2.0](https://open.canada.ca/en/open-government-licence-canada). Changes: blocks of the 2 m mosaic's digital terrain model are read from NRCan's bucket on AWS (canelevation-dem) only where you play, at 8 m and coarser, cached on disk and blended into the elevation above. Turn it off with `-Dearthplatform.earth.hrdem=false`. Natural Resources Canada does not endorse Earth Platform.
+
+## France: RGE ALTI (downloaded while you play)
+
+**What it gives Earth Platform:** France's 1 to 5 m national ground model, from lidar in the mountains, forests and along the coasts and rivers: the Alps, the Pyrenees, the Verdon Gorge and the overseas departments.
+
+**Thank you** to IGN, the French national mapping agency, for opening its data to everyone.
+
+**Attribution and license:**
+
+France: IGN, RGE ALTI.
+License: [Licence Ouverte / Open Licence 2.0 (Etalab)](https://www.etalab.gouv.fr/licence-ouverte-open-licence/). Changes: tiles are requested from IGN's Geoplateforme map service (data.geopf.fr) on the game's own map grid only where you play, cached on disk and blended into the elevation above. Turn it off with `-Dearthplatform.earth.ign=false`. IGN does not endorse Earth Platform.
+
+## Japan: GSI elevation tiles (downloaded while you play)
+
+**What it gives Earth Platform:** Japan's national ground model, 10 m everywhere and 5 m from lidar over most lowlands and many mountains: Mount Fuji and the Japanese Alps at their real height.
+
+**Thank you** to the Geospatial Information Authority of Japan for publishing its maps as open tiles.
+
+**Attribution and license:**
+
+Source: Geospatial Information Authority of Japan website (https://maps.gsi.go.jp/development/ichiran.html), elevation tiles (dem_png, dem5a_png), processed by Earth Platform. 出典：国土地理院ウェブサイト（地理院タイル 標高タイルを加工して作成）.
+License: [Public Data License 1.0](https://www.digital.go.jp/resources/open_data/public_data_license_v1.0) under GSI's content terms. Changes: tiles are fetched from cyberjapandata.gsi.go.jp only where you play, cached on disk and blended into the elevation above. Turn it off with `-Dearthplatform.earth.gsi=false`.
+
 ## Land cover: ESA WorldCover
 
 **What it gives Earth Platform:** Where forests, grassland, deserts, snow, wetlands, mangroves and water lie, at 10 m detail around the world.
