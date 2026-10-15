@@ -40,8 +40,8 @@ public final class EarthConfig {
 
     static {
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
-        FAR_DETAIL = client.comment("How much detail far terrain keeps before coarser levels take over (4 to 24).",
-                        "Higher looks sharper and reaches further, but costs memory and video memory. Default 11.",
+        FAR_DETAIL = client.comment("How far the far terrain reaches (4 to 24): 4 is about 37 km, 11 about 94 km, 24 about 201 km.",
+                        "Farther costs memory and video memory and takes longer to fill in. Default 11. Applies after a restart.",
                         "The sharpness setting scales this while playing; this one sets how far the far terrain reaches.")
                 .translation(key("farDetail")).gameRestart().defineInRange("detail", 11, 4, 24);
         FAR_SHARPNESS = client.comment("How sharp far terrain looks: how close coarser levels take over. Changes at once, without a restart.",
@@ -90,6 +90,18 @@ public final class EarthConfig {
         Sharpness(double scale) { this.scale = scale; }
 
         @Override public Component getTranslatedName() { return Component.translatable(key("farSharpness." + name().toLowerCase(java.util.Locale.ROOT))); }
+    }
+
+    /** How far the far terrain reaches with a detail setting, in kilometers where a block is a meter. */
+    public static int distanceKm(int detail) {
+        return (int) Math.round((2 * detail + 1) * (double) Far.width(Far.MAX_LEVEL) / 1000.0);
+    }
+
+    /** Sets the far terrain's distance from a screen in game: saved to the file, in effect after a restart. */
+    public static void setDetail(int detail) {
+        if (FAR_DETAIL.get() == detail) return;
+        FAR_DETAIL.set(detail);
+        CLIENT_SPEC.save();
     }
 
     /** Sets the far terrain's sharpness from a screen in game: saved to the file and in effect at once. */

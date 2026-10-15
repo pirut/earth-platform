@@ -82,8 +82,9 @@ public final class EarthPlayClient {
     }
 
     /**
-     * Far terrain sharpness on the pause menu in Earth worlds: NeoForge's full-width Mods button
-     * gives up its right half to a button that cycles through the choices, in effect at once.
+     * Far terrain settings on the pause menu in Earth worlds: NeoForge's full-width Mods button
+     * gives up its right half to a button that cycles through the sharpness choices, in effect at
+     * once, and a row under it holds the far distance slider, the buttons below moving down for it.
      */
     @SubscribeEvent public static void pauseMenu(ScreenEvent.Init.Post event) {
         if (!(event.getScreen() instanceof PauseScreen) || ClientCubeWorld.current() == null) return;
@@ -98,6 +99,10 @@ public final class EarthPlayClient {
                     .withTooltip(value -> Tooltip.create(Component.translatable("earthplatform.pause.sharpness.tooltip")))
                     .create(mods.getX() + full - half, mods.getY(), half, mods.getHeight(),
                             Component.translatable("earthplatform.pause.sharpness"), (button, value) -> EarthConfig.setSharpness(value)));
+            int row = mods.getHeight() + 4;
+            for (var other : event.getListenersList())
+                if (other instanceof net.minecraft.client.gui.components.AbstractWidget widget && widget.getY() > mods.getY()) widget.setY(widget.getY() + row);
+            event.addListener(new FarDistanceSlider(mods.getX(), mods.getY() + row, full, mods.getHeight()));
             return;
         }
     }
