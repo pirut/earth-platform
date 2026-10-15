@@ -5,7 +5,7 @@ The steps that only JR can take, in order, with the exact clicks. Everything els
 ## 1. Readiness check (done)
 
 - **Secrets and private details:** every file in the current tree and every file ever committed on any branch (3,195 versions), plus the old `recovery/` archive, were scanned. There are no passwords, keys or tokens, no private server addresses and no third-party mod files (no Photon, Iris, Sodium, Distant Horizons or Voxy jars or packs). The only email addresses in files are public data-provider contacts.
-- **Licences:** LGPL-3.0-only (`LICENSE`, `COPYING`, and in the jar). Every data source is credited ([CREDITS.md](../../CREDITS.md), [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md), in game). A full re-scan found no copied code ([LICENSING-AUDIT.md](LICENSING-AUDIT.md)).
+- **Licenses:** LGPL-3.0-only (`LICENSE`, `COPYING`, and in the jar). Every data source is credited ([CREDITS.md](../../CREDITS.md), [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md), in game). A full re-scan found no copied code ([LICENSING-AUDIT.md](LICENSING-AUDIT.md)).
 - **Workflows:** `release.yml` runs only on pushes to `main`, `combined-*` tags or a manual run, so pull requests from strangers can never publish a release. `ci.yml` builds and tests pull requests with read-only access and no secrets. Third-party actions are pinned to exact commits. Neither workflow uses any secret beyond GitHub's own short-lived token.
 - **Community files:** [CONTRIBUTING.md](../../CONTRIBUTING.md), [SECURITY.md](../../SECURITY.md), issue forms and a pull request template under `.github/`.
 
@@ -66,7 +66,7 @@ Paste the fields from [STORE-PAGE.md](STORE-PAGE.md).
 ## 6. Publish on CurseForge (JR)
 
 1. Go to https://authors.curseforge.com and sign in.
-2. **Create a project** → Game **Minecraft**, Class **Mods** → name `Earth Platform`, summary, description (switch the editor to **Markdown** and paste), main category **World Gen**, extra categories **Biomes** and **Adventure and RPG**, licence **GNU Lesser General Public License version 3 (LGPLv3)**, logo `docs/images/icon.png` → **Create project**.
+2. **Create a project** → Game **Minecraft**, Class **Mods** → name `Earth Platform`, summary, description (switch the editor to **Markdown** and paste), main category **World Gen**, extra categories **Biomes** and **Adventure and RPG**, license **GNU Lesser General Public License version 3 (LGPLv3)**, logo `docs/images/icon.png` → **Create project**.
 3. In the project, add the **Source** and **Issues** links, and upload the gallery images.
 4. **Files** → **Upload file** → the jar. Display name `Earth Platform 0.1.0-alpha.N`, release type **Alpha**, game versions **1.21.1**, **NeoForge**, **Java 21**, **Client** and **Server**. **Relations** → Sodium and Iris as **Optional Dependency**. Paste the changelog → **Upload**.
 5. CurseForge reviews new projects and files before they go live.

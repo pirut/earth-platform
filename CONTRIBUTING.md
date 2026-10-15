@@ -20,10 +20,10 @@ Security problems go to the private form on the [Security tab](https://github.co
 - The mod must keep working with **stock, unmodified** Photon. Fixes go in the mod, not in a shader pack.
 - CI builds and tests every pull request.
 
-## Licence and originality
+## License and originality
 
 Earth Platform is licensed **LGPL-3.0-only** (see [LICENSE](LICENSE) and [COPYING](COPYING)). By opening a pull request you agree that your contribution is licensed the same way.
 
-- Only submit code you wrote yourself. Don't copy code from other mods, even with changes, unless its licence is compatible and you name the source in the pull request. In particular, nothing may come from Voxy, whose code is all rights reserved.
-- New data sources need a licence that allows redistribution in an open-source mod, and a credit in [CREDITS.md](CREDITS.md), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the mods list (`credits` in `minecraft/src/main/templates/META-INF/neoforge.mods.toml`). No OpenStreetMap or HydroSHEDS data.
+- Only submit code you wrote yourself. Don't copy code from other mods, even with changes, unless its license is compatible and you name the source in the pull request. In particular, nothing may come from Voxy, whose code is all rights reserved.
+- New data sources need a license that allows redistribution in an open-source mod, and a credit in [CREDITS.md](CREDITS.md), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the mods list (`credits` in `minecraft/src/main/templates/META-INF/neoforge.mods.toml`). No OpenStreetMap or HydroSHEDS data.
 - No real-world cities or roads: built-up land becomes the wild land around it.

@@ -3,13 +3,13 @@
 ## Decided (JR, 2026-10-13)
 
 - **Name: Earth Platform.** Kept from three options checked against Modrinth and CurseForge (Earth Platform, True Scale Earth, Cubic Earth); `earth-platform` was free on Modrinth and nothing on CurseForge used the name. No formal trademark search was done. "Minecraft" stays out of the name (Mojang's "Minecraft Earth").
-- **Licence: LGPL-3.0-only** for the mod's code and logo. `LICENSE` holds the LGPL-3.0 text and `COPYING` the GPL-3.0 text it builds on; the jar carries both in `META-INF/earthplatform-LICENSE.txt`, and `mod_license=LGPL-3.0-only`. Earth data keeps its own terms (CREDITS.md). LGPL means anyone may fork or port it as long as changes to our code stay open under the LGPL; modpacks and add-ons may include or build on it freely.
+- **License: LGPL-3.0-only** for the mod's code and logo. `LICENSE` holds the LGPL-3.0 text and `COPYING` the GPL-3.0 text it builds on; the jar carries both in `META-INF/earthplatform-LICENSE.txt`, and `mod_license=LGPL-3.0-only`. Earth data keeps its own terms (CREDITS.md). LGPL means anyone may fork or port it as long as changes to our code stay open under the LGPL; modpacks and add-ons may include or build on it freely.
 
 ## Release checklist
 
 Nothing has been published. The clicks for each of JR's steps are in [GO-PUBLIC.md](GO-PUBLIC.md); the page fields are in [STORE-PAGE.md](STORE-PAGE.md).
 
-- [x] Licence and credits settled; no copied code ([LICENSING-AUDIT.md](LICENSING-AUDIT.md)).
+- [x] License and credits settled; no copied code ([LICENSING-AUDIT.md](LICENSING-AUDIT.md)).
 - [x] Repository ready to go public: community files, issue forms, safe workflows, history checked ([GO-PUBLIC.md](GO-PUBLIC.md#1-readiness-check-done)).
 - [x] Every merge into `main` publishes a GitHub release of the newest build, marked **Latest**.
 - [ ] **JR:** make the repository public (GO-PUBLIC step 2).

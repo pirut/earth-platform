@@ -19,11 +19,11 @@
 
 ### The travel map
 
-In creative mode, press **N** (or run `/earth map`) to open a globe centred on you. Click where you want to go and press **Travel here**: the camera climbs out to the globe, swings across the planet and comes back down at the new place while its terrain loads. The key can be changed under Controls → Earth Platform.
+In creative mode, press **N** (or run `/earth map`) to open a globe centered on you. Click where you want to go and press **Travel here**: the camera climbs out to the globe, swings across the planet and comes back down at the new place while its terrain loads. The key can be changed under Controls → Earth Platform.
 
 ### The jet stream
 
-For survival travel, climb high and glide. With an elytra, the wind above about Y 9,200 carries you along your heading at over 1,000 blocks a second, a little faster eastward and a little slower westward, so a continent takes under an hour. Fireworks pointed steeply up climb fast (about 30 take you from the ground into the wind); in the wind they add nothing, and your elytra doesn't wear. Tip your nose down to leave the wind; you slow over a few kilometres before landing. The terrain below stays drawn as far terrain the whole way.
+For survival travel, climb high and glide. With an elytra, the wind above about Y 9,200 carries you along your heading at over 1,000 blocks a second, a little faster eastward and a little slower westward, so a continent takes under an hour. Fireworks pointed steeply up climb fast (about 30 take you from the ground into the wind); in the wind they add nothing, and your elytra doesn't wear. Tip your nose down to leave the wind; you slow over a few kilometers before landing. The terrain below stays drawn as far terrain the whole way.
 
 ### Commands
 
@@ -36,12 +36,12 @@ Mods → Earth Platform → Config, or the files in `config/`.
 | Setting | File | Default | What it does |
 | --- | --- | --- | --- |
 | `detail` | client | 11 (4 to 24) | How far fine far terrain reaches. Lower helps weaker GPUs; higher needs more memory. Restart to apply |
-| `texturedLevels` | client | 2 (0 to 6) | How many far levels use block textures; further ones use flat colours. Restart to apply |
+| `texturedLevels` | client | 2 (0 to 6) | How many far levels use block textures; further ones use flat colors. Restart to apply |
 | `showDownloadStatus` | client | on | The small note while Earth data downloads or can't be reached |
 | `preselectEarth` | client | on | Create World starts with the Earth world type |
-| `cloudHeight` | client | 2500 | Cloud height in metres; 0 gives vanilla clouds |
+| `cloudHeight` | client | 2500 | Cloud height in meters; 0 gives vanilla clouds |
 | `defaultHome` | common | Yosemite Valley | Where new worlds start when nobody picks: a place id from `/earth places`, or `latitude,longitude` |
-| `satelliteImagery` | common | off | Ground colours from EOX satellite imagery for new worlds (also a toggle on the Customize screen) |
+| `satelliteImagery` | common | off | Ground colors from EOX satellite imagery for new worlds (also a toggle on the Customize screen) |
 | `offline` | common | off | Never download; only places already cached generate. Restart to apply |
 | `cacheLimitGb` | common | 8 | Size limit for downloaded data in GB (0 for no limit); the least recently used files go first, when the game starts and as the cache grows |
 | `anyoneCanTravel` | common | off | Let every player use `/earth goto` on servers |
@@ -68,4 +68,4 @@ Places you have visited work without a connection. When the data servers can't b
 
 An Earth world's overworld is an empty stand-in that nobody stays in. New players, respawns without a bed and anyone who would land in it are sent to the Earth (the `earthplatform:cubic` dimension). Older saves made with the Default world type keep `/cubes enter`.
 
-The Earth shares the overworld's clock and weather: sleeping through the night on the Earth skips it and clears the rain, as in vanilla. New players, and players respawning without a bed, land spread over the `spawnRadius` game rule (10 blocks when it is 0, as Earth worlds set it) around the start, so players joining a server don't stack on one block. With **Bonus Chest** on in Create World, the chest and its torches appear beside where you first arrive on the Earth. Clouds float a few kilometres up (`cloudHeight` in the client settings, 0 for vanilla clouds), and the sky stays bright in real places below sea level such as Death Valley and the Dead Sea.
+The Earth shares the overworld's clock and weather: sleeping through the night on the Earth skips it and clears the rain, as in vanilla. New players, and players respawning without a bed, land spread over the `spawnRadius` game rule (10 blocks when it is 0, as Earth worlds set it) around the start, so players joining a server don't stack on one block. With **Bonus Chest** on in Create World, the chest and its torches appear beside where you first arrive on the Earth. Clouds float a few kilometers up (`cloudHeight` in the client settings, 0 for vanilla clouds), and the sky stays bright in real places below sea level such as Death Valley and the Dead Sea.

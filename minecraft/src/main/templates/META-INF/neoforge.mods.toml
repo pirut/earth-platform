@@ -10,7 +10,7 @@ modLoader="javafml" #mandatory
 # A version range to match for said mod loader - for regular FML @Mod it will be the FML version. This is currently 2.
 loaderVersion="${loader_version_range}" #mandatory
 
-# The mod's licence as an SPDX id, from mod_license in gradle.properties (LGPL-3.0-only).
+# The mod's license as an SPDX id, from mod_license in gradle.properties (LGPL-3.0-only).
 license="${mod_license}"
 
 # Lithium speeds these up by reading LevelChunk sections directly. In the Earth world those carrier
@@ -55,7 +55,7 @@ Land cover: © ESA WorldCover project 2021 / Contains modified Copernicus Sentin
 Climate: CHELSA V2.1 climatologies 1981-2010. Karger, D.N. et al. (2017) Climatologies at high resolution for the earth's land surface areas, Scientific Data 4:170122; Karger et al. (2021) EnviDat, doi:10.16904/envidat.228. CC0 1.0.
 Rivers: JRC Global Surface Water v1.4 (Source: EC JRC/Google; Pekel et al. 2016, Nature 540, 418-422), Copernicus Programme. The European Union and the organisations in charge of the Copernicus programme do not incur any liability for any use of these data.
 Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm, BioScience 67(6):534-545, CC BY 4.0; derived 0.05 degree raster.
-Ground colours (optional, off by default): Sentinel-2 cloudless 2016, EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016).
+Ground colors (optional, off by default): Sentinel-2 cloudless 2016, EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016).
 Spawn picker globe (bundled): NASA Earth Observatory, Reto Stöckli, Blue Marble Next Generation (July 2004), public domain.
 Distant terrain: built on ideas from Voxy by Cortex (MCRcortex) and Distant Horizons by James Seibel and contributors: the voxel level pyramid, detail by on-screen size, compact GPU faces and Voxy's shader-pack interface from Voxy; exact far heights and server-built far terrain from Distant Horizons. Thank you to both. We'd have recommended using them directly, but neither works with a cubic-chunks world, so Earth Platform has its own renderer. It contains no code from either.
 Earth Platform changes these data (resampling, block choices, procedural detail); it is not a survey and not for navigation. Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.''' #optional
