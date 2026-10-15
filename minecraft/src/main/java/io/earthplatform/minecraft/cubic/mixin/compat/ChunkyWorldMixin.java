@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * Chunky in the Earth world. Its chunks there would be the empty carriers; instead each chunk it
- * asks for has the Earth data its cubes read fetched ahead of a visit. See {@link ChunkyCompat}.
+ * asks for has its Earth cubes generated and saved. See {@link ChunkyCompat}.
  */
 @Pseudo
 @Mixin(targets = "org.popcraft.chunky.platform.NeoForgeWorld", remap = false)
