@@ -1031,6 +1031,36 @@ public final class EarthGenerator extends SurfaceGenerator {
         return WorldCoverSource.NO_DATA;
     }
 
+    /**
+     * {@link #wild} for a town's column, asked at a point warped by tens of blocks: the rings read the map coarsely, and
+     * asked at the column itself the answer changed along the coarse pixels' edges, so a town filled in as rectangles of
+     * beach sand and marsh with dead straight borders. Warped, the filled-in classes meet along ragged, wandering lines.
+     */
+    private int townWild(int x, int z, int voxel) {
+        double dx = warpX.getValue(x / 160.0 - 21.3, z / 160.0 + 6.2) * 48 + warpX.getValue(x / 41.0 + 3.7, z / 41.0 - 12.9) * 14,
+                dz = warpZ.getValue(x / 160.0 - 21.3, z / 160.0 + 6.2) * 48 + warpZ.getValue(x / 41.0 + 3.7, z / 41.0 - 12.9) * 14;
+        return wild(x + dx + grain(x, z, 0x544F57L) * 2, z + dz + grain(x, z, 0x544F5AL) * 2, voxel);
+    }
+
+    /** Blocks either way that a column reads its ground cover from, up close. */
+    private static final int GRAIN = 2;
+
+    /** A whole number of blocks from {@code -GRAIN} to {@code GRAIN}, the same for a column every time. */
+    private int grain(int x, int z, long salt) { return (int) Math.floorMod(mix(x, salt, z), 2 * GRAIN + 1) - GRAIN; }
+
+    /**
+     * The land cover class whose ground a column takes. Up close each column reads the map a block or two from itself,
+     * so two classes interleave grain by grain along their border, as sand runs into marsh, instead of meeting on the
+     * edge of a 10 m pixel. Water and the open sea are never taken from a neighbour: they come only from the column's
+     * own reading, so no lone ground column turns into a pond.
+     */
+    private int groundCover(int x, int z, int voxel) {
+        int code = cover(x, z, voxel);
+        if (voxel > 1) return code;
+        int near = cover(x + grain(x, z, 0x47524EL), z + grain(x, z, 0x47525AL), voxel);
+        return near == WorldCoverSource.WATER || near == WorldCoverSource.NO_DATA ? code : near;
+    }
+
     /** Whether bare ground lies among buildings, where it is a lot or yard rather than wild rock or sand. */
     private boolean inTown(double x, double z, int voxel) {
         int reach = Math.max(40, voxel * 2), built = 0;
@@ -2058,10 +2088,14 @@ public final class EarthGenerator extends SurfaceGenerator {
     private Local local(int x, int z, int y) {
         int metres = Math.max(0, y - SEA);
         if (climate != null) {
-            // Zone borders follow the 1 km grid; a gentle warp of a few hundred metres bends them.
-            double amplitude = 350 / grid.groundMetresPerBlock(z);
-            GeoPoint point = grid.geographic(x + 0.5 + warpX.getValue(x / 900.0, z / 900.0) * amplitude,
-                    z + 0.5 + warpZ.getValue(x / 900.0, z / 900.0) * amplitude);
+            // Zone borders follow the 1 km grid; a gentle warp of a few hundred metres bends them, and finer layers down
+            // to a few blocks fray them, so forest gives way to taiga in tongues and patches rather than along a curve.
+            double perBlock = 1 / grid.groundMetresPerBlock(z);
+            GeoPoint point = grid.geographic(
+                    x + 0.5 + (warpX.getValue(x / 900.0, z / 900.0) * 350 + warpX.getValue(x / 190.0 + 9.4, z / 190.0 - 3.8) * 80
+                            + warpX.getValue(x / 37.0 - 5.2, z / 37.0 + 1.7) * 16) * perBlock + grain(x, z, 0x434C58L) * 3,
+                    z + 0.5 + (warpZ.getValue(x / 900.0, z / 900.0) * 350 + warpZ.getValue(x / 190.0 + 9.4, z / 190.0 - 3.8) * 80
+                            + warpZ.getValue(x / 37.0 - 5.2, z / 37.0 + 1.7) * 16) * perBlock + grain(x, z, 0x434C5AL) * 3);
             ClimateSource.Climate c = climate.at(point.latitude(), point.longitude(), metres);
             if (c != null) return new Local(ClimateZone.of(c.koppen(), c.meanTemperature(), c.warmestQuarter()),
                     c.meanTemperature(), c.warmestQuarter(), c.precipitation());
@@ -2094,8 +2128,13 @@ public final class EarthGenerator extends SurfaceGenerator {
         return false;
     }
 
-    private boolean nearSea(int x, int z) {
-        return waterY(x + 4, z) == SEA || waterY(x - 4, z) == SEA || waterY(x, z + 4) == SEA || waterY(x, z - 4) == SEA;
+    /**
+     * Whether the sea lies a few blocks from a column: three to six, varying column by column up close, so that the beach
+     * strip's inland edge breaks up into the ground behind it rather than running as a line a fixed distance from the water.
+     */
+    private boolean nearSea(int x, int z, int voxel) {
+        int d = voxel == 1 ? 3 + (int) Math.floorMod(mix(x, 0x42454143L, z), 4) : 4;
+        return waterY(x + d, z) == SEA || waterY(x - d, z) == SEA || waterY(x, z + d) == SEA || waterY(x, z - d) == SEA;
     }
 
     @Override protected Surface surface(int x, int z, int y, int water, int slope) { return surface(x, z, y, water, slope, 1); }
@@ -2115,6 +2154,14 @@ public final class EarthGenerator extends SurfaceGenerator {
      * of stone along every road. Cliffs and rocky mountainsides stay steep over this reach.
      */
     private static final int BROAD = 12;
+
+    /**
+     * Whether ground is gentler than {@code limit}, counting a single block's step on flat land as flat: tested on the
+     * step alone, each contour of a low coast or marsh, as the Everglades', drew a line of other ground through it.
+     */
+    private boolean level(double steep, double limit, int x, int z, int voxel) {
+        return steep < limit || steep < 1 && voxel < BROAD && broadSteep(x, z) < limit;
+    }
 
     /** The rise per run over {@link #BROAD} blocks each way, in the units of a column's steepness. */
     private double broadSteep(int x, int z) {
@@ -2152,14 +2199,14 @@ public final class EarthGenerator extends SurfaceGenerator {
         long r = mix(x, 7, z);
         int roll = (int) Math.floorMod(r, 100);
         // Marsh and mangrove coasts, as on a delta, run down to the water as marsh, not a strip of beach sand.
-        if (y <= SEA + 2 && voxel < SHORE_VOXEL && nearSea(x, z) && !(local != null && marshy(cover(x, z, voxel)))) {
+        if (y <= SEA + 2 && voxel < SHORE_VOXEL && nearSea(x, z, voxel) && !(local != null && marshy(cover(x, z, voxel)))) {
             if (steep > 1) return new Surface(stonyShore, STONE, STONE, 0, 0, 0, 0, 0, false);
             return new Surface(t < 0 ? snowyBeach : beach, SAND, SAND, 0, 0, 0, 0, 0, false);
         }
         if (local != null) {
-            int code = cover(x, z, voxel);
+            int code = groundCover(x, z, voxel);
             boolean built = code == WorldCoverSource.BUILT_UP || code == WorldCoverSource.BARE && inTown(x, z, voxel);
-            if (built) code = wild(x, z, voxel);
+            if (built) code = townWild(x, z, voxel);
             Surface covered = code == WorldCoverSource.NO_DATA ? null : covered(code, x, z, y, local, steep, roll, slope, voxel);
             if (covered == null) {
                 code = typical(local.zone());
@@ -2409,7 +2456,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         boolean ground = code == WorldCoverSource.TREE_COVER || code == WorldCoverSource.GRASSLAND || code == WorldCoverSource.SHRUBLAND
                 || code == WorldCoverSource.WETLAND || code == PARKLAND;
-        if (eco != 0 && ground && !cliff && steep < 0.4 && t >= 10) {
+        if (eco != 0 && ground && !cliff && level(steep, 0.4, x, z, voxel) && t >= 10) {
             int biome = Ecoregions.get().biome(eco);
             if (biome == Ecoregions.MANGROVE && y <= SEA + 4) return covered(WorldCoverSource.MANGROVES, x, z, y, local, steep, roll, slope, voxel);
             if (biome == Ecoregions.FLOODED_GRASSLAND) {
@@ -2512,7 +2559,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             case WorldCoverSource.BARE -> {
                 // Bare ground low by the sea is beach and dune, as Whitehaven's silica sand, not rock: the beach rule
                 // above reaches only two blocks up and four in from the water.
-                if (!cliff && steep < 0.6 && y <= SEA + BEACH_RISE && !volcanic(x, z) && seaWithin(x, z, BEACH_REACH, voxel))
+                if (!cliff && level(steep, 0.6, x, z, voxel) && y <= SEA + BEACH_RISE && !volcanic(x, z) && seaWithin(x, z, BEACH_REACH, voxel))
                     return new Surface(t < 0 ? snowyBeach : beach, SAND, SAND, 0, 0, 0, 0, 0, false);
                 boolean hot = zone == ClimateZone.HOT_DESERT || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.TROPICAL_DRY;
                 // Dry lands' cliffs show their rock in coloured bands, as the Colorado Plateau's and the Sahara's do.
@@ -2890,7 +2937,14 @@ public final class EarthGenerator extends SurfaceGenerator {
     private int ecoregion(int x, int z) {
         Ecoregions map = cover == null ? null : Ecoregions.get();
         if (map == null) return 0;
-        GeoPoint p = grid.geographic(x, z);
+        // The map's cells are 5 km squares: read through a warp of a few hundred metres, with finer layers down to a
+        // few blocks, its borders wander and fray like a real change of country rather than running dead straight.
+        double perBlock = 1 / grid.groundMetresPerBlock(z);
+        double dx = (warpX.getValue(x / 1700.0 + 31.7, z / 1700.0 - 4.1) * 600 + warpX.getValue(x / 310.0 - 8.3, z / 310.0 + 17.2) * 140
+                + warpX.getValue(x / 47.0 + 2.9, z / 47.0 - 6.6) * 24) * perBlock + grain(x, z, 0x45434FL) * 3;
+        double dz = (warpZ.getValue(x / 1700.0 + 31.7, z / 1700.0 - 4.1) * 600 + warpZ.getValue(x / 310.0 - 8.3, z / 310.0 + 17.2) * 140
+                + warpZ.getValue(x / 47.0 + 2.9, z / 47.0 - 6.6) * 24) * perBlock + grain(x, z, 0x45435AL) * 3;
+        GeoPoint p = grid.geographic(x + dx, z + dz);
         return map.ecoregion(p.latitude(), p.longitude());
     }
 
