@@ -91,9 +91,13 @@ public final class ServerCubeWorld extends CubeWorld {
     private int ticks;
     private boolean closed;
 
-    /** A loaded or generated cube; a null section means generating it failed. {@code surface} marks fresh cubes holding the ground. */
+    /**
+     * A loaded or generated cube; a null section means generating it failed. {@code surface} marks cubes holding the
+     * ground still owed their first animals; {@code edited} marks saved cubes changed by play; {@code kept} marks fresh
+     * cubes to save as generated.
+     */
     private record Ready(long key, int x, int y, int z, @Nullable LevelChunkSection section, List<CompoundTag> blockEntities,
-                         List<CompoundTag> entities, boolean saved, boolean surface, @Nullable RuntimeException failure) {}
+                         List<CompoundTag> entities, boolean saved, boolean edited, boolean surface, boolean kept, @Nullable RuntimeException failure) {}
     private record Lit(long key, int stamp, @Nullable byte[] values) {}
 
     private static final class Watcher {
@@ -203,7 +207,8 @@ public final class ServerCubeWorld extends CubeWorld {
             CompoundTag saved = storage.read(key);
             if (saved != null) {
                 CubeCodec.Decoded decoded = codec.read(saved);
-                return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), List.of(), true, false, null);
+                return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), CubeCodec.tags(saved, CubeCodec.ENTITIES), true,
+                        !saved.getBoolean(CubeCodec.UNTOUCHED), saved.getBoolean(CubeCodec.UNPOPULATED), false, null);
             }
         } catch (IOException | RuntimeException failure) {
             EarthPlatformMod.LOGGER.error("Could not read saved cube {}; regenerating it", CubeKey.toString(key), failure);
@@ -211,10 +216,11 @@ public final class ServerCubeWorld extends CubeWorld {
         try {
             List<CompoundTag> blockEntities = new ArrayList<>(), entities = new ArrayList<>();
             LevelChunkSection section = generator.generate(x, y, z, blockEntities, entities);
-            boolean surface = generator.surfaceY((x << 4) + 8, (z << 4) + 8) >> 4 == y;
-            return new Ready(key, x, y, z, section, blockEntities, entities, false, surface, null);
+            int[] band = surfaceBand(x, z);
+            boolean surface = band[0] + SAVED_BELOW == y;
+            return new Ready(key, x, y, z, section, blockEntities, entities, false, false, surface, y >= band[0] && y <= band[1], null);
         } catch (RuntimeException failure) {
-            return new Ready(key, x, y, z, null, List.of(), List.of(), false, false, failure);
+            return new Ready(key, x, y, z, null, List.of(), List.of(), false, false, false, false, failure);
         }
     }
 
@@ -246,6 +252,64 @@ public final class ServerCubeWorld extends CubeWorld {
         return ready;
     }
 
+    /**
+     * Cubes under the ground that are saved untouched with it. Below them, and above the treetops, untouched
+     * cubes are rock and air remade from the generator when needed; edited ones are always saved.
+     */
+    private static final int SAVED_BELOW = 1;
+    private int pregenerated;
+
+    /** Any thread; reads map data. The lowest and highest cube Y of a cube column that are saved as generated. */
+    private int[] surfaceBand(int cubeX, int cubeZ) {
+        int x = (cubeX << 4) + 8, z = (cubeZ << 4) + 8;
+        int ground = generator.surfaceY(x, z) >> 4;
+        return new int[]{ground - SAVED_BELOW, Math.max(ground + 1, generator.skyTopY(x, z) >> 4)};
+    }
+
+    /**
+     * Any thread; blocks on map data. Generates and saves the cubes of a column that a visit would
+     * save ({@link #surfaceBand}), for pre-generation mods such as Chunky. Cubes already saved are
+     * kept; the store happens on the server thread.
+     */
+    public void pregenerate(int cubeX, int cubeZ) {
+        if (closed) return;
+        int[] band = surfaceBand(cubeX, cubeZ);
+        LongArrayList keys = new LongArrayList();
+        List<CompoundTag> tags = new ArrayList<>();
+        for (int y = band[0]; y <= band[1]; y++) {
+            long key = CubeKey.pack(cubeX, y, cubeZ);
+            try { if (storage.read(key) != null) continue; }
+            catch (IOException failure) { continue; }
+            List<CompoundTag> blockEntities = new ArrayList<>(), entities = new ArrayList<>();
+            LevelChunkSection section = generator.generate(cubeX, y, cubeZ, blockEntities, entities);
+            CompoundTag tag = codec.writeGenerated(cubeX, y, cubeZ, section, blockEntities);
+            if (y == band[0] + SAVED_BELOW) tag.putBoolean(CubeCodec.UNPOPULATED, true);
+            if (!entities.isEmpty()) {
+                net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
+                list.addAll(entities);
+                tag.put(CubeCodec.ENTITIES, list);
+            }
+            keys.add(key);
+            tags.add(tag);
+        }
+        if (tags.isEmpty()) return;
+        server.getServer().execute(() -> {
+            if (closed) return;
+            for (int i = 0; i < tags.size(); i++) {
+                long key = keys.getLong(i);
+                // A cube loaded meanwhile is saved from its own state when it unloads.
+                if (cubes.containsKey(key)) continue;
+                try { storage.put(key, tags.get(i)); }
+                catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure); }
+            }
+            // Written as it goes, so a long run does not hold every region in memory until the next save.
+            if ((pregenerated += tags.size()) >= 2048) {
+                pregenerated = 0;
+                storage.flushLater();
+            }
+        });
+    }
+
     private void adoptReady(Ready result) {
         pending.remove(result.key);
         if (cubes.containsKey(result.key)) return;
@@ -261,7 +325,11 @@ public final class ServerCubeWorld extends CubeWorld {
             return;
         }
         Cube cube = new Cube(result.x, result.y, result.z, result.section);
-        cube.modified = result.saved;
+        // Generated ground is saved, as vanilla saves every chunk it generates: a fresh cube in the surface band when it
+        // unloads, and any cube once play changes it.
+        cube.modified = true;
+        cube.dirty = !result.saved && result.kept;
+        cube.edited = result.edited;
         if (result.surface) unpopulated.add(result.key);
         if (!result.entities.isEmpty()) unplacedEntities.put(result.key, result.entities);
         for (CompoundTag tag : result.blockEntities) {
@@ -554,8 +622,8 @@ public final class ServerCubeWorld extends CubeWorld {
             it.remove();
             int x = chunk.getMiddleBlockX(), z = chunk.getMiddleBlockZ();
             NaturalSpawner.spawnMobsForChunkGeneration(server, server.getBiome(new BlockPos(x, skyTop(x, z) + 1, z)), chunk, server.getRandom());
-            // Saved from now on, so a later visit does not populate it again.
-            cube.markModified();
+            // Saved again, so a later visit does not populate it again.
+            cube.markUnsaved();
         }
     }
 
@@ -570,7 +638,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 Entity entity = EntityType.loadEntityRecursive(tag, server, e -> e);
                 if (entity != null) server.addFreshEntity(entity);
             }
-            cube.markModified();
+            cube.markUnsaved();
         }
     }
 
@@ -634,10 +702,23 @@ public final class ServerCubeWorld extends CubeWorld {
 
     // Saving -------------------------------------------------------------------------------------
 
-    private void store(Cube cube) {
+    private void store(Cube cube) { store(cube, false); }
+
+    /** {@code now} stores even an untouched cube on this thread, as when the world closes. */
+    private void store(Cube cube, boolean now) {
         if (!cube.modified || !cube.dirty) return;
+        if (!cube.edited && !now) { storeUntouched(cube); return; }
         try {
-            storage.put(cube.key, codec.write(cube, server.registryAccess()));
+            CompoundTag tag = codec.write(cube, server.registryAccess());
+            // Owed first animals or starting entities stay owed to the next visit.
+            if (unpopulated.contains(cube.key)) tag.putBoolean(CubeCodec.UNPOPULATED, true);
+            List<CompoundTag> owed = unplacedEntities.get(cube.key);
+            if (owed != null && !owed.isEmpty()) {
+                net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
+                list.addAll(owed);
+                tag.put(CubeCodec.ENTITIES, list);
+            }
+            storage.put(cube.key, tag);
             cube.dirty = false;
             // Saves that only record block entities or spawning leave far terrain as it was.
             if (cube.reshaped) {
@@ -647,6 +728,48 @@ public final class ServerCubeWorld extends CubeWorld {
         } catch (IOException | RuntimeException failure) {
             EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(cube.key), failure);
         }
+    }
+
+    /**
+     * Stores a cube saved just as generated, encoding it on a worker: a traveler leaves many behind,
+     * and each would otherwise cost the server thread. Should it be edited or a newer copy loaded before
+     * the store lands, that is saved in its turn; one lost (the server stopping) is generated again, the
+     * same, when next asked for.
+     */
+    private void storeUntouched(Cube cube) {
+        cube.dirty = false;
+        long key = cube.key;
+        int x = cube.x, y = cube.y, z = cube.z;
+        LevelChunkSection section = new LevelChunkSection(cube.section.getStates().copy(), cube.section.getBiomes());
+        List<CompoundTag> blockEntities = new ArrayList<>();
+        for (BlockEntity entity : cube.blockEntities.values()) {
+            if (!entity.isRemoved()) blockEntities.add(entity.saveWithFullMetadata(server.registryAccess()));
+        }
+        boolean owedAnimals = unpopulated.contains(key);
+        List<CompoundTag> owed = unplacedEntities.get(key);
+        List<CompoundTag> entities = owed == null ? List.of() : List.copyOf(owed);
+        workers.execute(() -> {
+            CompoundTag tag;
+            try {
+                tag = codec.writeGenerated(x, y, z, section, blockEntities);
+                if (owedAnimals) tag.putBoolean(CubeCodec.UNPOPULATED, true);
+                if (!entities.isEmpty()) {
+                    net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
+                    list.addAll(entities);
+                    tag.put(CubeCodec.ENTITIES, list);
+                }
+            } catch (RuntimeException failure) {
+                EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure);
+                return;
+            }
+            server.getServer().execute(() -> {
+                // A copy loaded since, or this one edited since, is stored from its own state instead.
+                Cube now = cubes.get(key);
+                if (closed || cube.edited || now != null && now != cube) return;
+                try { storage.put(key, tag); }
+                catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure); }
+            });
+        });
     }
 
     private void flushStorage() {
@@ -661,7 +784,7 @@ public final class ServerCubeWorld extends CubeWorld {
 
     public void close() {
         if (closed) return;
-        for (Cube cube : cubes.values()) store(cube);
+        for (Cube cube : cubes.values()) store(cube, true);
         try { storage.close(); }
         catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not write cube regions", failure); }
         closed = true;

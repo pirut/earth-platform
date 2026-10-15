@@ -67,6 +67,12 @@ Harmless; it comes from Photon itself.
 **Which other mods work?**
 Most do. Tested in the Earth world: Xaero's Minimap and World Map, JourneyMap, Create (contraptions, mechanical arms, pulleys, scaffolding and elevators), Waystones, Mekanism (including the Digital Miner and multiblocks), Immersive Engineering, the Twilight Forest, JEI, EMI, Jade, AppleSkin, Ars Nouveau, Applied Energistics 2 networks, Refined Storage 2, Iron's Spells, FTB Quests and Teams, Farmer's Delight, Sophisticated Backpacks, Supplementaries, YUNG's structures, and Open Parties and Claims. Tinkers' Construct and Botania have no NeoForge 1.21.1 release yet. Terralith and other biome mods have no effect on the Earth, since the real climate picks the biomes. Cobblemon, the Aether, Quark, Handcrafted, Nature's Compass and Lithium work too, and so do Create Aeronautics ships and AE2 spatial storage. Sodium and Iris need the versions in the [install guide](INSTALL.md#shaders-optional).
 
+**Can I pre-generate the Earth with Chunky?**
+Yes. Pick the Earth world with `/chunky world earthplatform:cubic`, then set a center and radius as usual (`/chunky center` uses where you stand) and run `/chunky start`. Chunky generates and saves the ground in that area, from just under the surface to the treetops, so anyone arriving there later loads it from the save. A 1 km square takes about 25 seconds and 4 MB of save. It also fills the map data cache with the far terrain around the area.
+
+**How big do Earth saves get?**
+Like vanilla, the Earth saves the ground it generates, but only the surface: from one cube under the ground up to the treetops, plus anything you change at any depth. Untouched rock below and empty sky above are rebuilt when needed. That comes to about 2 to 4 MB per square kilometer explored, where a vanilla world uses about 20. Ground saved before an update keeps the terrain it was made with, as in vanilla.
+
 **A mod acts as if blocks aren't there, or as if I'm outside the world.**
 Some mods check the world's height limits themselves and don't know the Earth world is 32,768 blocks tall. Please report it with the mod's name and version; Create, Waystones and Mekanism had this and are fixed.
 
