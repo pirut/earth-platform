@@ -65,7 +65,7 @@ Paste everything between the lines into the description editor (Markdown mode on
 - **The whole planet, at real height.** Worlds run from Y -16384 to 16383, so Everest's summit is 8,848 blocks above the sea and you can climb it, mine it and build on it.
 - **Real ground.** Elevation, land cover and climate come from open satellite and survey data, with finer surveys where they exist: about 10 m across the United States and REMA in Antarctica. Forests, deserts, glaciers, wetlands, lakes and rivers sit where they are on Earth, and the Grand Canyon shows its real rock layers.
 - **Minecraft's own world, placed by the real climate.** The Amazon grows vanilla jungle, the Serengeti acacia savanna, Siberia snowy taiga. Giant sequoias stand at their real 70 to 90 m in the Sierra Nevada groves.
-- **See for kilometers.** Distant terrain is drawn as textured voxels out to about 94 km, so you see the far side of the valley and the ranges beyond it, not fog.
+- **See for kilometers.** Distant terrain is drawn as textured voxels out to about 94 km (58 miles), so you see the far side of the valley and the ranges beyond it, not fog.
 - **Fly anywhere.** In creative, press **N** for the travel map: click a spot on the globe and the camera climbs out over the planet and comes back down there. In survival, use `/earth visit` and `/earth goto`, or glide an elytra above Y 9,200 and let the jet stream carry you across a continent in under an hour.
 - **Ordinary survival.** Mine, craft, build and die as usual. Caves, ores, villages and other vanilla structures generate, and the Nether and the End work through normal portals.
 - **Shaders.** Works with Iris and the stock Photon download, which light near blocks and far terrain alike, Macs included.
