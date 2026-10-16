@@ -93,7 +93,8 @@ public final class Cinema {
         try {
             Shot shot = null;
             for (String raw : Files.readAllLines(Path.of(SCRIPT))) {
-                String line = raw.replaceAll("#.*", "").trim();
+                // run lines keep '#' for block tags like #minecraft:leaves; elsewhere it starts a comment
+                String line = raw.trim().startsWith("run ") ? raw.trim() : raw.replaceAll("#.*", "").trim();
                 if (line.isEmpty()) continue;
                 String[] p = line.split("\\s+");
                 switch (p[0]) {
@@ -180,7 +181,18 @@ public final class Cinema {
             }
             m.appendTail(sb);
             log("set {}: {}", shot.name, sb);
-            server(sb.toString());
+            String command = sb.toString();
+            // Run in the cubic level (the default source is the overworld) and log failures instead of hiding them.
+            MinecraftServer server = Minecraft.getInstance().getSingleplayerServer();
+            server.execute(() -> {
+                var source = server.createCommandSourceStack().withLevel(server.getLevel(Cubic.LEVEL)).withSuppressedOutput();
+                try {
+                    int n = server.getCommands().getDispatcher().execute(command, source);
+                    if (n == 0) log("set {} did nothing: {}", shot.name, command);
+                } catch (Exception e) {
+                    log("set {} failed: {} ({})", shot.name, command, e.getMessage());
+                }
+            });
         }
     }
 
