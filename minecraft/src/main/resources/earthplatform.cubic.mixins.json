@@ -97,6 +97,7 @@
     "CubicPredictionMixin",
     "CubicDestroyProgressMixin",
     "CubicFarPlaneMixin",
+    "CubicLevelPassMixin",
     "CubicShaderFarMixin",
     "CubicIrisSourceNamesMixin",
     "CubicIrisProgramSetMixin",

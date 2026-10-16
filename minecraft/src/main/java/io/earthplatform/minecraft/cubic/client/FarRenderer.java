@@ -126,9 +126,10 @@ public final class FarRenderer {
     private final LongOpenHashSet drawnKeys = new LongOpenHashSet();
     /** Drawn columns fading in over the finer level they give way to; they keep out of the water passes. */
     private final LongOpenHashSet fadingIn = new LongOpenHashSet();
-    /** This frame's drawn columns in view, nearest first, for the water pass. */
+    /** This pass's drawn columns in view, nearest first, for the water pass. */
     private List<Column> visible = List.of();
-    private int waterFrame = -1;
+    /** The level pass (see {@link LevelPasses}) whose water is drawn; a VR mod's second eye needs its own. */
+    private int waterPass = -1;
     private int ticks, frame, uploadedFrame = -1, replaced;
     /** The finest level asked for and drawn; coarser while the player is high up or fast (see {@link #finest}). */
     private int finest = Far.MIN_LEVEL;
@@ -845,16 +846,24 @@ public final class FarRenderer {
 
     /** Draws the visible columns' water see-through, farthest first, before the near cubes' own water. */
     /**
-     * How much nearer far water is drawn per block away, as a share of its distance: two steps of
-     * a 24-bit depth buffer behind vanilla's 0.05-block near plane, which grow with distance squared.
+     * How much nearer far water is drawn per block away, as a share of its distance, once divided by
+     * the near plane's distance: two steps of a 24-bit depth buffer, which grow with distance squared
+     * and shrink as the near plane moves out. Vanilla's near plane is 0.05 blocks; VR mods bring it
+     * in to 0.02 so hands and controllers aren't clipped, and the steps grow to match.
      */
-    private static final double WATER_LIFT = 2.0 / (0.05 * (1 << 24));
+    private static final double WATER_LIFT = 2.0 / (1 << 24);
 
     private static double square(double value) { return value * value; }
 
+    /** A perspective projection's near plane distance, whichever mod set it; vanilla's 0.05 if it can't be read. */
+    static double nearPlane(Matrix4f projection) {
+        double near = projection.m32() / (projection.m22() - 1.0);
+        return near > 1.0E-4 && near < 16.0 ? near : 0.05;
+    }
+
     public void drawWater(Camera camera, Matrix4f modelView, Matrix4f projection) {
-        if (closed || waterFrame == frame || camera.getFluidInCamera() != net.minecraft.world.level.material.FogType.NONE) return;
-        waterFrame = frame;
+        if (closed || waterPass == LevelPasses.current() || camera.getFluidInCamera() != net.minecraft.world.level.material.FogType.NONE) return;
+        waterPass = LevelPasses.current();
         boolean any = false;
         for (Column column : visible) if (column.fade != FarGpu.FADE_IN && (column.water != null || column.hasWaterWalls())) { any = true; break; }
         if (!any) return;
@@ -868,6 +877,7 @@ public final class FarRenderer {
         boolean own = ShaderBlocks.packInUse() && FarLod.active() && FarLod.beginWater();
         Uniform offset = shader.CHUNK_OFFSET, view = own ? null : shader.MODEL_VIEW_MATRIX;
         Matrix4f nearer = new Matrix4f();
+        double lift = WATER_LIFT / nearPlane(projection);
         for (int pass = 0; pass < 2; pass++) {
             // Water walls go last: where the next level's water stands as high, its surface is
             // already in the depth buffer and hides them, so they only show across a step.
@@ -885,7 +895,7 @@ public final class FarRenderer {
                     // stripes. Drawn shrunk toward the camera the water covers the same pixels, at a
                     // depth nearer by a couple of those steps.
                     double distance = Math.sqrt(column.distance + square(column.box.getCenter().y - position.y));
-                    view.set(nearer.set(modelView).scale((float) Math.max(0.8, 1.0 - distance * WATER_LIFT)));
+                    view.set(nearer.set(modelView).scale((float) Math.max(0.8, 1.0 - distance * lift)));
                     view.upload();
                 }
                 if (pass == 0) {

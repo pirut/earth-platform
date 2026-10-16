@@ -97,7 +97,7 @@ public final class CubicClient {
     }
 
     @SubscribeEvent public static void frame(RenderFrameEvent.Pre event) {
-        FarLod.beginFrame();
+        LevelPasses.beginFrame();
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world != null) { world.renderer().beginFrame(); world.far().beginFrame(); }
         long now = System.nanoTime();
@@ -117,7 +117,7 @@ public final class CubicClient {
             return;
         }
         if (stage == RenderLevelStageEvent.Stage.AFTER_CUTOUT_BLOCKS
-                || (stage == RenderLevelStageEvent.Stage.AFTER_ENTITIES && !renderer.drewOpaqueThisFrame())) {
+                || (stage == RenderLevelStageEvent.Stage.AFTER_ENTITIES && !renderer.drewOpaqueThisPass())) {
             renderer.drawOpaque(event.getCamera(), event.getFrustum(), event.getModelViewMatrix(), event.getProjectionMatrix());
             world.far().draw(event.getCamera(), event.getFrustum(), event.getModelViewMatrix(), event.getProjectionMatrix());
         } else if (stage == RenderLevelStageEvent.Stage.AFTER_BLOCK_ENTITIES) {

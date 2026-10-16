@@ -67,7 +67,14 @@ public final class FarLod {
     private static final int[] previous2d = new int[8];
 
     private static final Matrix4f projection = new Matrix4f(), inverse = new Matrix4f(), previous = new Matrix4f(), vanilla = new Matrix4f();
-    private static boolean projected, started;
+    /**
+     * Each pass of a frame's last projection, for the pack's history (see {@link LevelPasses}): a VR
+     * mod draws one pass per eye, and each eye's history is its own one a frame ago, not the other eye's.
+     */
+    private static final Matrix4f[] history = new Matrix4f[LevelPasses.TRACKED];
+    /** The projection {@link #shadows} were drawn with, which the next pass looks them up through. */
+    private static final Matrix4f shadowProjection = new Matrix4f();
+    private static boolean projected;
 
     /** How much light far terrain in its own hills' shadow keeps, as a share of its colour. */
     private static final float SHADE = 0.65F;
@@ -127,8 +134,12 @@ public final class FarLod {
 
     // Each frame ---------------------------------------------------------------------------------
 
-    /** Clears far terrain's depth at the start of a frame and keeps it the size of the game's targets. */
-    public static void beginFrame() {
+    /**
+     * Clears far terrain's depth each time the level is drawn and keeps it the size of the game's
+     * targets: per pass, not per frame, as a VR mod's second eye otherwise drew over the first's depth.
+     */
+    static void beginPass() {
+        projected = false;
         if (!defined || depth == 0) return;
         var target = Minecraft.getInstance().getMainRenderTarget();
         if (target.width != width || target.height != height) resize(target.width, target.height);
@@ -137,7 +148,6 @@ public final class FarLod {
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, 0, 0);
         clear();
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, bound);
-        projected = false;
     }
 
     /** Clears far terrain's depth and face depth to far; its framebuffer must be bound. */
@@ -168,19 +178,18 @@ public final class FarLod {
 
     /** Far terrain's projection for this frame: the game's, with far terrain's own near and far planes. */
     static Matrix4f project(Matrix4f game) {
-        if (!projected) {
-            previous.set(projection);
-            projected = true;
-        }
         vanilla.set(game);
         float near = NEAR, far = FarRenderer.DEPTH_FAR;
         projection.set(game).m22((far + near) / (near - far)).m32(2.0F * far * near / (near - far));
         projection.invert(inverse);
-        // A zero "previous" projection would reproject the pack's history to NaN, which never clears.
-        if (!started) {
-            previous.set(projection);
-            started = true;
+        Matrix4f last = history[LevelPasses.inFrame()];
+        if (!projected) {
+            // A zero "previous" projection would reproject the pack's history to NaN, which never clears.
+            previous.set(last != null ? last : projection);
+            projected = true;
         }
+        if (last == null) history[LevelPasses.inFrame()] = new Matrix4f(projection);
+        else last.set(projection);
         return new Matrix4f(projection);
     }
 
@@ -203,7 +212,7 @@ public final class FarLod {
         bind(SCRATCH_UNIT, shadows);
         GlStateManager._activeTexture(previousActive);
         // Last frame's shadows are looked up from where this frame's camera now stands.
-        shadowFrame.set(previous).mul(lastView).translate((float) (x - lastX), (float) (y - lastY), (float) (z - lastZ));
+        shadowFrame.set(shadowProjection).mul(lastView).translate((float) (x - lastX), (float) (y - lastY), (float) (z - lastZ));
         modelView.set(view);
         cameraX = x;
         cameraY = y;
@@ -256,6 +265,7 @@ public final class FarLod {
      */
     private static void shadows() {
         lastView.set(modelView);
+        shadowProjection.set(projection);
         lastX = cameraX;
         lastY = cameraY;
         lastZ = cameraZ;

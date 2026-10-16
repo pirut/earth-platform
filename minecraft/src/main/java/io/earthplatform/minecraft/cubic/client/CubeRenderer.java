@@ -80,7 +80,9 @@ public final class CubeRenderer {
     private final Long2IntOpenHashMap retireBy = new Long2IntOpenHashMap();
     private static final int RETIRE_TICKS = 100;
     private final List<Mesh> visible = new ArrayList<>();
-    private int ticks, drawnFrame = -1, translucentFrame = -1, frame;
+    private int ticks, drawnFrame = -1, frame;
+    /** The level passes (see {@link LevelPasses}) this renderer last culled for, drew the opaque layers in and drew the translucent ones in. */
+    private int culledPass = -1, opaquePass = -1, translucentPass = -1;
     /** How long the last frame took, so meshing and uploads keep pace however low the frame rate goes. */
     private long frameStart = System.nanoTime(), frameNanos = 16_000_000L;
     private boolean closed;
@@ -333,15 +335,22 @@ public final class CubeRenderer {
 
     // Drawing ------------------------------------------------------------------------------------
 
-    /** Once per frame before the first layer: upload finished meshes, queue more and cull. */
+    /**
+     * Before the first layer: once a frame, uploads finished meshes and queues more; once each time
+     * the level is drawn, culls for that pass's camera. A VR mod draws the level for each eye, and the
+     * first eye's list left the other eye's edges empty and its nearest-first order wrong.
+     */
     private void prepare(Camera camera, Frustum frustum) {
-        if (drawnFrame == frame) return;
-        drawnFrame = frame;
         Vec3 position = camera.getPosition();
-        long start = System.nanoTime();
-        upload();
-        Timings.CUBE_UPLOAD.since(start);
-        schedule(position);
+        if (drawnFrame != frame) {
+            drawnFrame = frame;
+            long start = System.nanoTime();
+            upload();
+            Timings.CUBE_UPLOAD.since(start);
+            schedule(position);
+        }
+        if (culledPass == LevelPasses.current()) return;
+        culledPass = LevelPasses.current();
         visible.clear();
         for (Mesh mesh : meshes.values()) see(mesh, frustum, position);
         for (Mesh mesh : retiring.values()) see(mesh, frustum, position);
@@ -372,6 +381,7 @@ public final class CubeRenderer {
     }
 
     public void drawOpaque(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
+        opaquePass = LevelPasses.current();
         prepare(camera, frustum);
         long start = System.nanoTime();
         for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {
@@ -383,14 +393,17 @@ public final class CubeRenderer {
     }
 
     public void drawTranslucent(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
-        if (translucentFrame == frame) return;
-        translucentFrame = frame;
+        // Called at two stages so it draws whichever comes; once per pass, not once per frame, or a
+        // second eye got no water or glass.
+        if (translucentPass == LevelPasses.current()) return;
+        translucentPass = LevelPasses.current();
         prepare(camera, frustum);
         draw(CubeMesher.LAYERS.indexOf(RenderType.translucent()), camera.getPosition(), modelView, projection, true);
         draw(CubeMesher.LAYERS.indexOf(RenderType.tripwire()), camera.getPosition(), modelView, projection, true);
     }
 
-    public boolean drewOpaqueThisFrame() { return drawnFrame == frame; }
+    /** Whether the opaque layers are drawn in this pass of the level already. */
+    public boolean drewOpaqueThisPass() { return opaquePass == LevelPasses.current(); }
 
     /**
      * Draws the opaque layers of every mesh inside a shader pack's shadow map into it, so near
