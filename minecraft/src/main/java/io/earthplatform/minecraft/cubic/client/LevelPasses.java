@@ -8,9 +8,9 @@ package io.earthplatform.minecraft.cubic.client;
  * <p>
  * A frame's first pass starts with the frame itself, before anything draws, as every frame did
  * before passes were counted; only a second or later pass in the same frame starts where the level
- * is drawn again. Starting the first pass there too depended on running before other mods' hooks
- * on the same method, and on a Mac under a shader pack it didn't, leaving near terrain's culled
- * list and far terrain's depth a pass behind: stretched and missing blocks and a dark wall.
+ * is drawn again. Starting the first pass there too (build 49) left its timing to the order of
+ * other mods' hooks on that method, and on a Mac under a shader pack near terrain then drew
+ * stretched and missing blocks and a dark wall; without VR, frames now go exactly as before.
  */
 public final class LevelPasses {
     /** How many passes in a frame keep their own history (see {@link #inFrame}); more share the last. */
