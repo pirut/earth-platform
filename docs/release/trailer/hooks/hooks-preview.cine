@@ -53,16 +53,27 @@ cam 1 35.5152 138.7500 +30
 look 0 35.3606 138.7274 =2300
 look 1 35.3606 138.7274 =2300
 
-# Grand Canyon descent: low and fast from the South Rim at the Bright Angel trailhead down toward the river at Phantom Ranch.
-# Stays close to the ground (+H keys) so it reads as a walk, sped up; the river should be visible near the end.
+# Grand Canyon descent: low and fast from the South Rim at the Bright Angel trailhead, down Garden Creek past Havasupai Gardens,
+# east over the Tonto Plateau (above the Pipe Creek gorge, which is too narrow to fly), then over the edge of the Inner Gorge
+# to the river, ending low over the water looking upstream toward Phantom Ranch. Keys are spaced by distance so the speed stays even.
 shot walk frames=600 settle=95 warm=600 clear=2 ease=0 time=1500 fov=70 hold=15
-cam 0 36.0570 -112.1436 +3
-cam 0.25 36.0700 -112.1350 +25
-cam 0.5 36.0830 -112.1200 +25
-cam 0.75 36.0950 -112.1050 +25
-cam 1 36.1040 -112.0960 +15
-look 0 36.0700 -112.1350 +0
-look 0.25 36.0830 -112.1200 +0
-look 0.5 36.0950 -112.1050 +0
-look 0.75 36.1040 -112.0960 +0
-look 1 36.1100 -112.0900 +0
+cam 0.000 36.0575 -112.1436 +3
+cam 0.124 36.0640 -112.1380 +25
+cam 0.226 36.0700 -112.1350 +25
+cam 0.347 36.0770 -112.1310 +25
+cam 0.461 36.0830 -112.1260 +25
+cam 0.580 36.0870 -112.1180 +25
+cam 0.769 36.0910 -112.1040 +25
+cam 0.829 36.0945 -112.1020 +20
+cam 0.910 36.0990 -112.0990 +15
+cam 1.000 36.1000 -112.0920 +12
+look 0.000 36.0640 -112.1380 +0
+look 0.124 36.0700 -112.1350 +0
+look 0.226 36.0770 -112.1310 +0
+look 0.347 36.0830 -112.1260 +0
+look 0.461 36.0870 -112.1180 +0
+look 0.580 36.0910 -112.1040 +0
+look 0.769 36.0945 -112.1020 +0
+look 0.829 36.0990 -112.0990 +0
+look 0.910 36.1000 -112.0920 +0
+look 1.000 36.1015 -112.0850 +0

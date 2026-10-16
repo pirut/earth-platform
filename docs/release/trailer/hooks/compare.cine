@@ -1,25 +1,74 @@
 out @OUT@
 fps 30
-# Real photo vs Minecraft: each shot matches the view in docs/release/trailer/hooks/photos/ (NPS, public domain).
-# Starting guesses: move the camera, look point and fov until the in-game frame lines up with the photo (center 9:16 crop).
+# Real photo vs Minecraft: each shot matches the view in docs/release/trailer/hooks/photos/ (NPS, public domain), center 9:16 crop.
+# Matched on build 47 against the photo crops. Fill lines clear trees from the sight line so the landmark shows.
+# The game's fov cannot go under 30, so Rainier comes out a little smaller than in the telephoto photo.
 
-# Grand Canyon from Mather Point, looking north-northeast across the canyon.
-shot c-grand_canyon frames=150 settle=95 warm=600 clear=2 ease=0 time=1500 fov=60
-cam 0 36.0617 -112.1078 +4
-cam 1 36.06185 -112.10775 +4
-look 0 36.1000 -112.0950 =1300
-look 1 36.1000 -112.0950 =1300
+# Grand Canyon from the rim just west of Mather Point, looking north-northeast; far rim a third of the way down.
+shot c-grand_canyon frames=150 settle=95 warm=600 clear=2 ease=0 time=1500 fov=40
+cam 0 36.0618 -112.1083 +3
+cam 1 36.06185 -112.10825 +3
+look 0 36.1300 -112.0850 =1240
+look 1 36.1300 -112.0850 =1240
+at C 36.0618 -112.1083
+run fill {C:-30:-8:-50} {C:30:0:5} air replace #minecraft:leaves
+run fill {C:-30:-8:-50} {C:30:0:5} air replace #minecraft:logs
+run fill {C:-30:1:-50} {C:30:9:5} air replace #minecraft:leaves
+run fill {C:-30:1:-50} {C:30:9:5} air replace #minecraft:logs
+run fill {C:-30:10:-50} {C:30:18:5} air replace #minecraft:leaves
+run fill {C:-30:10:-50} {C:30:18:5} air replace #minecraft:logs
+run fill {C:-30:19:-50} {C:30:27:5} air replace #minecraft:leaves
+run fill {C:-30:19:-50} {C:30:27:5} air replace #minecraft:logs
+run fill {C:-30:28:-50} {C:30:30:5} air replace #minecraft:leaves
+run fill {C:-30:28:-50} {C:30:30:5} air replace #minecraft:logs
 
-# Mount Rainier from near Tipsoo Lake / Naches Peak meadows, looking west-southwest at the summit.
-shot c-rainier frames=150 settle=95 warm=600 clear=2 ease=0 time=1500 fov=45
-cam 0 46.8697 -121.5183 +2
-cam 1 46.86972 -121.51840 +2
-look 0 46.8529 -121.7604 =4100
-look 1 46.8529 -121.7604 =4100
+# Mount Rainier from the meadows above Tipsoo Lake, looking west at the summit; meadow in front.
+shot c-rainier frames=150 settle=95 warm=600 clear=2 ease=0 time=1500 fov=30
+cam 0 46.8660 -121.5130 +4
+cam 1 46.86602 -121.51310 +4
+look 0 46.8529 -121.7604 =500
+look 1 46.8529 -121.7604 =500
+at C 46.8660 -121.5130
+run fill {C:-100:-8:-30} {C:2:-4:30} air replace #minecraft:leaves
+run fill {C:-100:-8:-30} {C:2:-4:30} air replace #minecraft:logs
+run fill {C:-100:-3:-30} {C:2:1:30} air replace #minecraft:leaves
+run fill {C:-100:-3:-30} {C:2:1:30} air replace #minecraft:logs
+run fill {C:-100:2:-30} {C:2:6:30} air replace #minecraft:leaves
+run fill {C:-100:2:-30} {C:2:6:30} air replace #minecraft:logs
+run fill {C:-100:7:-30} {C:2:11:30} air replace #minecraft:leaves
+run fill {C:-100:7:-30} {C:2:11:30} air replace #minecraft:logs
+run fill {C:-100:12:-30} {C:2:16:30} air replace #minecraft:leaves
+run fill {C:-100:12:-30} {C:2:16:30} air replace #minecraft:logs
+run fill {C:-100:17:-30} {C:2:21:30} air replace #minecraft:leaves
+run fill {C:-100:17:-30} {C:2:21:30} air replace #minecraft:logs
+run fill {C:-100:22:-30} {C:2:26:30} air replace #minecraft:leaves
+run fill {C:-100:22:-30} {C:2:26:30} air replace #minecraft:logs
+run fill {C:-100:27:-30} {C:2:30:30} air replace #minecraft:leaves
+run fill {C:-100:27:-30} {C:2:30:30} air replace #minecraft:logs
 
-# Half Dome from the upper Snow Creek Trail, across Tenaya Canyon, looking south-southeast.
-shot c-half_dome frames=150 settle=95 warm=600 clear=2 ease=0 time=1500 fov=50
-cam 0 37.7600 -119.5420 +3
-cam 1 37.76002 -119.54195 +3
-look 0 37.7459 -119.5332 =2500
-look 1 37.7459 -119.5332 =2500
+# Half Dome from the upper Snow Creek Trail across Tenaya Canyon, looking south-southeast; the dome sits at the right edge
+# like the photo crop. Afternoon light so the face is lit.
+shot c-half_dome frames=150 settle=95 warm=600 clear=2 ease=0 time=9000 fov=40
+cam 0 37.7680 -119.5440 +5
+cam 1 37.76802 -119.54395 +5
+look 0 37.7524 -119.5326 =2080
+look 1 37.7524 -119.5326 =2080
+at C 37.7680 -119.5440
+run fill {C:-10:-8:-5} {C:60:-4:80} air replace #minecraft:leaves
+run fill {C:-10:-8:-5} {C:60:-4:80} air replace #minecraft:logs
+run fill {C:-10:-3:-5} {C:60:1:80} air replace #minecraft:leaves
+run fill {C:-10:-3:-5} {C:60:1:80} air replace #minecraft:logs
+run fill {C:-10:2:-5} {C:60:6:80} air replace #minecraft:leaves
+run fill {C:-10:2:-5} {C:60:6:80} air replace #minecraft:logs
+run fill {C:-10:7:-5} {C:60:11:80} air replace #minecraft:leaves
+run fill {C:-10:7:-5} {C:60:11:80} air replace #minecraft:logs
+run fill {C:-10:12:-5} {C:60:16:80} air replace #minecraft:leaves
+run fill {C:-10:12:-5} {C:60:16:80} air replace #minecraft:logs
+run fill {C:-10:17:-5} {C:60:21:80} air replace #minecraft:leaves
+run fill {C:-10:17:-5} {C:60:21:80} air replace #minecraft:logs
+run fill {C:-10:22:-5} {C:60:26:80} air replace #minecraft:leaves
+run fill {C:-10:22:-5} {C:60:26:80} air replace #minecraft:logs
+run fill {C:-10:27:-5} {C:60:31:80} air replace #minecraft:leaves
+run fill {C:-10:27:-5} {C:60:31:80} air replace #minecraft:logs
+run fill {C:-10:32:-5} {C:60:35:80} air replace #minecraft:leaves
+run fill {C:-10:32:-5} {C:60:35:80} air replace #minecraft:logs
