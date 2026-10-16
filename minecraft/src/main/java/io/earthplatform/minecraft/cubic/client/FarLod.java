@@ -304,6 +304,7 @@ public final class FarLod {
         GL11C.glDepthMask(true);
         GL20C.glUseProgram(smooth.id);
         GL20C.glUniform2f(GL20C.glGetUniformLocation(smooth.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
+        GL20C.glUniform1f(GL20C.glGetUniformLocation(smooth.id, "earth_Focal"), projection.m11() * 0.5F * height);
         int step = GL20C.glGetUniformLocation(smooth.id, "earth_Step");
         for (int pass = 0; pass < 2; pass++) {
             int from = pass == 0 ? depth : scratch, to = pass == 0 ? scratch : depth;
@@ -597,6 +598,7 @@ public final class FarLod {
             uniform sampler2D earth_Game;
             uniform ivec2 earth_Step;
             uniform vec2 earth_NearFar;
+            uniform float earth_Focal;
             in vec2 earth_uv;
 
             float earth_linear(float depth) {
@@ -625,7 +627,11 @@ public final class FarLod {
                         weights += weight;
                     }
                 }
-                float n = earth_NearFar.x, f = earth_NearFar.y, smoothed = sum / weights;
+                // Close to the game's blocks, where the finest far voxels (two blocks) span plenty of
+                // pixels, the steps keep their depth so the pack shadows them step by step as it does
+                // the blocks in front (see FarShaders' earth_faceShare); smaller, they're smoothed.
+                float steps = smoothstep(2.0, 10.0, earth_Focal * 2.0 / z);
+                float n = earth_NearFar.x, f = earth_NearFar.y, smoothed = mix(sum / weights, z, steps);
                 gl_FragDepth = clamp(((f + n - 2.0 * n * f / smoothed) / (f - n)) * 0.5 + 0.5, 0.0, 1.0);
             }
             """;
