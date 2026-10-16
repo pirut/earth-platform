@@ -70,6 +70,8 @@ final class FarGpu {
 
     /** Faces drawn whole; faces fading out over the outer ring of their level; faces of the coarser level fading in there. */
     static final int NO_FADE = 0, FADE_OUT = 1, FADE_IN = 2;
+    /** The top bit of a column slot's stamp: its fade is a merge, the coarser level taking back over (see {@link #stamp}). */
+    static final int MERGING = 1 << 31;
 
     /** A column's faces in one arena: {@code counts} faces per group, starting at {@code start}. */
     /** A column's faces in an arena; smooth when they include smooth ground, whose slopes can face the camera from below. */
@@ -116,11 +118,15 @@ final class FarGpu {
         return now == 0 ? 1 : now;
     }
 
-    /** Marks when a column's faces in a slot began to fade in or out over another level's (see {@link FarShaders#fade}). */
-    void stamp(int slot, int now) {
+    /**
+     * Marks when a column's faces in a slot began to fade in or out over another level's (see
+     * {@link FarShaders#fade}), or with 0 clears the mark. A merging fade runs the other way: the
+     * coarser level takes back over from the finer one.
+     */
+    void stamp(int slot, int now, boolean merging) {
         if (slot < 0) return;
         int[] texel = columns.texel(slot);
-        texel[3] = texel[3] & 15 | now << 4;
+        texel[3] = texel[3] & 15 | now << 4 | (merging && now != 0 ? MERGING : 0);
         columns.upload(slot, texel);
     }
 

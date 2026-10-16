@@ -83,6 +83,7 @@ final class FarShaders {
             uniform uint earth_Now;
             out vec2 earth_band;
             flat out float earth_arrived;
+            flat out float earth_merging;
             #endif
             out vec3 earth_vcolour;
             out vec3 earth_vnormal;
@@ -187,8 +188,11 @@ final class FarShaders {
                 ivec2 inColumn = earth_CameraBlock.xz - ((earth_CameraBlock.xz >> shift) << shift);
                 earth_band = (position.xz + vec2(inColumn) + earth_CameraFraction.xz) / float(1 << shift) - 0.5;
                 // How far a finer level that has just arrived is through taking over from the coarser one.
-                uint stamp = uint(column.w) >> 4;
-                earth_arrived = stamp == 0u ? 1.0 : clamp(float((earth_Now - stamp) & 0x7FFFFFFu) / EARTH_FADE_TICKS, 0.0, 1.0);
+                // Where the camera has moved off, a merge runs it the other way, the coarser level taking back over.
+                uint stamp = (uint(column.w) >> 4) & 0x7FFFFFFu;
+                float since = clamp(float((earth_Now - stamp) & 0x7FFFFFFu) / EARTH_FADE_TICKS, 0.0, 1.0);
+                earth_merging = stamp != 0u && (uint(column.w) & 0x80000000u) != 0u ? 1.0 : 0.0;
+                earth_arrived = stamp == 0u ? 1.0 : earth_merging > 0.5 ? 1.0 - since : since;
             #endif
                 gl_Position = earth_Projection * earth_ModelView * vec4(position, 1.0);
             #ifdef EARTH_JITTER
@@ -310,15 +314,18 @@ final class FarShaders {
             #ifdef EARTH_FADE
             in vec2 earth_band;
             flat in float earth_arrived;
+            flat in float earth_merging;
             uniform float earth_FadeHole;
             uniform float earth_DitherFrame;
 
             // Drops the fragment where the other level has this pixel: across the coarser level's outer
             // ring of middle columns the finer level's share falls from all to none, by a dither both share.
-            // Where a finer level has only just arrived, its share also grows from none to all over a moment.
+            // Where a finer level has only just arrived, its share also grows from none to all over a moment,
+            // and where the camera has moved off, it shrinks back to none.
             void earth_fade() {
                 float coarse = smoothstep(earth_FadeHole - 0.5, earth_FadeHole + 0.5, max(abs(earth_band.x), abs(earth_band.y)));
-                coarse = max(coarse, 1.0 - earth_arrived);
+                // A merge happens just outside the ring, where the coarser level has it all: there only the time counts.
+                coarse = earth_merging > 0.5 ? 1.0 - earth_arrived : max(coarse, 1.0 - earth_arrived);
                 vec2 pixel = gl_FragCoord.xy + 5.588238 * earth_DitherFrame;
                 float dither = fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
                 if (EARTH_FADE == 1 ? dither < coarse : dither >= coarse) discard;
