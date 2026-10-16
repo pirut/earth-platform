@@ -29,7 +29,7 @@ class FarSharpnessTest {
 
     @Test void finerLevelsFillTheirParentsMiddle() {
         try {
-            for (double scale : new double[] {0.7, 1.0, 1.3, 1.6}) {
+            for (double scale : new double[] {0.7, 1.0, 1.3, 1.6, 2.0}) {
                 Far.sharpness(scale);
                 int[] count = new int[Far.MAX_LEVEL + 1];
                 Far.around(12_345, -6_789, key -> count[Far.level(key)]++);

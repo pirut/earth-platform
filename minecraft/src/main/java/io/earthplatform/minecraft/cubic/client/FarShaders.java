@@ -91,6 +91,9 @@ final class FarShaders {
             out vec2 earth_cellAt;
             flat out int earth_grid;
 
+            // How far a face reaches past its edges, per block of distance: about half a pixel at 1080p.
+            const float EARTH_GROW = 0.0006;
+
             // Corners (along the face's width, along its height) per direction, counter-clockwise from outside.
             const ivec2 CORNERS[24] = ivec2[](
                 ivec2(0, 0), ivec2(1, 0), ivec2(1, 1), ivec2(0, 1),
@@ -162,7 +165,15 @@ final class FarShaders {
                             : vec3(side == 2u ? -1.0 : side == 3u ? 1.0 : 0.0, 0.0, side == 0u ? -1.0 : side == 1u ? 1.0 : 0.0);
                     face = shown;
                 } else {
-                    local = earth_local(face, vec2(CORNERS[int(face) * 4 + corner]), x, y, z, width, extent, v);
+                    vec2 ab = vec2(CORNERS[int(face) * 4 + corner]);
+                    local = earth_local(face, ab, x, y, z, width, extent, v);
+                    // Faces merged to different lengths meet mid-edge, where rounding leaves pinholes
+                    // that show the sky through the ground; each face reaches about half a pixel
+                    // past its edges, which closes them.
+                    vec2 grow = (ab * 2.0 - 1.0) * (EARTH_GROW * length(origin + local));
+                    if (face < 2u) local.xz += grow;
+                    else if (face < 4u) local.xy += grow;
+                    else local.zy += grow;
                 }
                 vec3 position = origin + local;
                 earth_position = position;
@@ -198,6 +209,9 @@ final class FarShaders {
                 else if (face == 3u) earth_tile = vec2(local.x, -local.y);
                 else if (face == 4u) earth_tile = vec2(local.z, -local.y);
                 else earth_tile = vec2(-local.z, -local.y);
+                // Further out a texture spans more blocks, two to a voxel side, so each voxel reads as a
+                // block of its own at any distance instead of a blur of tiny repeats.
+                earth_tile /= max(1.0, v * 0.5);
 
                 uint look = q.w & 0xFFFFFu;
                 earth_normal = earth_smooth > 0.5 ? 0u : q.w >> 20;
