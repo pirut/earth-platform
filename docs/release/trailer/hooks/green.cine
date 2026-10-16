@@ -1,0 +1,112 @@
+out @OUT@
+fps 30
+# "Green canion pls" Short (build 48): JR's character walks to a desk in El Capitan Meadow, asks an AI,
+# then glides over the wrong guesses (Greenland, Grand Canyon, Waimea) before Green Canyon, Utah.
+# third=1: the player's body on the path in third person, camera back/up/side of it, aimed at the look point.
+# Made by a generator from block-space paths; the walk keys are dense so the speed profile survives the spline.
+
+shot desk-walk frames=120 settle=95 warm=600 clear=0 ease=0 time=3000 fov=70 third=1 back=4.5 side=1.4 up=0.7
+cam 0.0000 37.7223788 -119.6385368 =1268.62
+cam 0.0504 37.7223863 -119.6385345 =1268.62
+cam 0.1008 37.7223938 -119.6385323 =1268.62
+cam 0.1513 37.7224013 -119.6385300 =1268.62
+cam 0.2017 37.7224089 -119.6385277 =1268.62
+cam 0.2521 37.7224164 -119.6385255 =1268.62
+cam 0.3025 37.7224239 -119.6385232 =1268.62
+cam 0.3529 37.7224314 -119.6385210 =1268.62
+cam 0.4034 37.7224389 -119.6385187 =1268.62
+cam 0.4538 37.7224464 -119.6385164 =1268.62
+cam 0.5042 37.7224539 -119.6385142 =1268.62
+cam 0.5546 37.7224615 -119.6385119 =1268.62
+cam 0.6050 37.7224690 -119.6385096 =1268.62
+cam 0.6555 37.7224765 -119.6385074 =1268.62
+cam 0.7059 37.7224840 -119.6385051 =1268.62
+cam 0.7563 37.7224896 -119.6385034 =1268.62
+cam 0.8067 37.7224915 -119.6385029 =1268.62
+cam 0.8571 37.7224915 -119.6385029 =1268.62
+cam 0.9076 37.7224915 -119.6385029 =1268.62
+cam 0.9580 37.7224915 -119.6385029 =1268.62
+cam 1.0000 37.7224915 -119.6385029 =1268.62
+look 0.0000 37.7225095 -119.6385029 +2.5
+at D 37.7225005 -119.6385029
+run fill {D:-7:-1:-4} {D:7:3:16} air replace minecraft:short_grass
+run fill {D:-7:-1:-4} {D:7:3:16} air replace minecraft:tall_grass
+run fill {D:-7:-1:-4} {D:7:3:16} air replace minecraft:fern
+run fill {D:-7:-1:-4} {D:7:3:16} air replace minecraft:large_fern
+run fill {D:-7:-1:-4} {D:7:3:16} air replace #minecraft:small_flowers
+run fill {D:-7:-1:-1} {D:7:-1:16} minecraft:grass_block replace air
+run fill {D:-1:0:-1} {D:1:0:0} minecraft:spruce_slab[type=top]
+run setblock {D:0:1:-1} minecraft:black_concrete
+run setblock {D:0:1:0} minecraft:light_gray_carpet
+
+shot desk-type frames=210 settle=95 warm=600 clear=0 ease=1 time=3000 fov=60 third=1 type=1 back=2.6 back2=1.9 side=1.0 up=0.6 aimy=-0.85
+cam 0.0000 37.7224915 -119.6385029 =1268.62
+look 0.0000 37.7225095 -119.6385029 +2.5
+at D 37.7225005 -119.6385029
+run fill {D:-7:-1:-4} {D:7:3:16} air replace minecraft:short_grass
+run fill {D:-7:-1:-4} {D:7:3:16} air replace minecraft:tall_grass
+run fill {D:-7:-1:-4} {D:7:3:16} air replace minecraft:fern
+run fill {D:-7:-1:-4} {D:7:3:16} air replace minecraft:large_fern
+run fill {D:-7:-1:-4} {D:7:3:16} air replace #minecraft:small_flowers
+run fill {D:-7:-1:-1} {D:7:-1:16} minecraft:grass_block replace air
+run fill {D:-1:0:-1} {D:1:0:0} minecraft:spruce_slab[type=top]
+run setblock {D:0:1:-1} minecraft:black_concrete
+run setblock {D:0:1:0} minecraft:light_gray_carpet
+
+shot greenland frames=180 settle=95 warm=600 clear=6 ease=0 time=3000 fov=70 third=1 glide=1 back=5 up=1.3
+cam 0.0000 67.1050000 -50.1720000 ^70
+cam 0.1250 67.1050000 -50.1717445 ^70
+cam 0.2500 67.1050000 -50.1714889 ^70
+cam 0.3750 67.1050000 -50.1712334 ^70
+cam 0.5000 67.1050000 -50.1709779 ^70
+cam 0.6250 67.1050000 -50.1707223 ^70
+cam 0.7500 67.1050000 -50.1704668 ^70
+cam 0.8750 67.1050000 -50.1702112 ^70
+cam 1.0000 67.1050000 -50.1699557 ^70
+look 0.0000 67.1050000 -50.1617785 ^60
+look 0.5000 67.1050000 -50.1607564 ^60
+look 1.0000 67.1050000 -50.1597343 ^60
+
+shot grand_canyon frames=150 settle=95 warm=600 clear=6 ease=0 time=3000 fov=70 third=1 glide=1 back=5 up=1.3
+cam 0.0000 36.0672000 -112.1185000 ^40
+cam 0.1250 36.0673407 -112.1183540 ^40
+cam 0.2500 36.0674813 -112.1182080 ^40
+cam 0.3750 36.0676220 -112.1180620 ^40
+cam 0.5000 36.0677626 -112.1179160 ^40
+cam 0.6250 36.0679032 -112.1177700 ^40
+cam 0.7500 36.0680439 -112.1176240 ^40
+cam 0.8750 36.0681845 -112.1174780 ^40
+cam 1.0000 36.0683252 -112.1173320 ^40
+look 0.0000 36.0777481 -112.1075496 ^-260
+look 0.5000 36.0783106 -112.1069656 ^-260
+look 1.0000 36.0788731 -112.1063816 ^-260
+
+shot waimea frames=150 settle=95 warm=600 clear=6 ease=0 time=3000 fov=70 third=1 glide=1 back=5 up=1.3
+cam 0.0000 22.0700000 -159.6612000 ^50
+cam 0.1250 22.0699634 -159.6609763 ^50
+cam 0.2500 22.0699269 -159.6607526 ^50
+cam 0.3750 22.0698903 -159.6605289 ^50
+cam 0.5000 22.0698538 -159.6603052 ^50
+cam 0.6250 22.0698172 -159.6600815 ^50
+cam 0.7500 22.0697807 -159.6598578 ^50
+cam 0.8750 22.0697441 -159.6596342 ^50
+cam 1.0000 22.0697076 -159.6594105 ^50
+look 0.0000 22.0678068 -159.6477784 ^-180
+look 0.5000 22.0676606 -159.6468837 ^-180
+look 1.0000 22.0675144 -159.6459889 ^-180
+
+shot green_canyon frames=270 settle=95 warm=600 clear=6 ease=0 time=3000 fov=70 third=1 glide=1 back=5 up=1.3
+cam 0.0000 41.7699580 -111.7663360 +24.0
+cam 0.1111 41.7699989 -111.7659773 +24.0
+cam 0.2222 41.7699807 -111.7656147 +24.0
+cam 0.3333 41.7699626 -111.7652521 +24.0
+cam 0.4444 41.7699445 -111.7648895 +24.0
+cam 0.5556 41.7699263 -111.7645269 +24.0
+cam 0.6667 41.7699082 -111.7641643 +24.8
+cam 0.7778 41.7699339 -111.7638065 +29.9
+cam 0.8889 41.7699958 -111.7634526 +39.6
+cam 1.0000 41.7700577 -111.7630988 +54.0
+look 0.0000 41.7700035 -111.7634084 +22
+look 0.3333 41.7701893 -111.7623469 +30
+look 0.6667 41.7703405 -111.7612762 +38
+look 1.0000 41.7704749 -111.7602009 +46
