@@ -19,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
+import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.server.MinecraftServer;
@@ -30,6 +31,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
+import net.neoforged.neoforge.client.event.ViewportEvent;
 
 /**
  * Dev-only trailer camera, on with {@code -Dearthplatform.cinema=SCRIPT}. Flies the camera along
@@ -38,7 +40,8 @@ import net.neoforged.neoforge.client.event.RenderFrameEvent;
  * <pre>
  * out DIR | fps N | time TICKS
  * shot NAME frames=N settle=PCT warm=SECONDS clear=BLOCKS
- *   cam T LAT LON H     (H: metres above the ground there, or =Y for an absolute height)
+ *   cam T LAT LON H     (H: metres above the ground there, =Y for an absolute height, or ^H above the
+ *                        ground under the shot's first cam key, for level flight over uneven ground)
  *   look T LAT LON H
  * map NAME FROMLAT FROMLON TOLAT TOLON tail=FRAMES
  *   at NAME LAT LON     (a ground anchor for run lines: {NAME} or {NAME:DX:DY:DZ} becomes block X Y Z)
@@ -46,15 +49,22 @@ import net.neoforged.neoforge.client.event.RenderFrameEvent;
  * </pre>
  * Shots also take fov=DEGREES and hold=RENDERS (extra renders per pose before saving, so far
  * terrain keeps up with a fast move).
+ * <p>third=1 films the player's body in creative instead of a spectator camera: cam keys are then
+ * the body's eye path, look keys where it faces, and the camera sits back=M behind (easing to
+ * back2=M over the shot), up=M above the eyes and side=M to the right, aimed at the look point
+ * (aimy=M moves that aim up or down). Legs swing from the body's speed along the path. glide=1
+ * wears an elytra in the gliding pose; type=1 taps both hands as if typing.
  */
 @EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, value = Dist.CLIENT)
 public final class Cinema {
     private static final String SCRIPT = System.getProperty("earthplatform.cinema");
 
-    private record Key(double t, double lat, double lon, double h, boolean absolute) {}
+    private record Key(double t, double lat, double lon, double h, boolean absolute, boolean fromStart) {}
     private static final class Shot {
         String name; boolean map; int frames = 150, tail = 45; long time = -1; double settle = 25, warm = 150, clear = 40, ease = 1, fov = -1;
         int hold;
+        boolean third, glide, type;
+        double back = 5, back2 = Double.NaN, up = 1.2, side, aimy;
         boolean built;
         final java.util.Map<String, double[]> at = new java.util.HashMap<>();
         final List<String> run = new ArrayList<>();
@@ -130,15 +140,23 @@ public final class Cinema {
                                 case "time" -> shot.time = (long) v;
                                 case "fov" -> shot.fov = v;
                                 case "hold" -> shot.hold = (int) v;
+                                case "third" -> shot.third = v != 0;
+                                case "glide" -> shot.glide = v != 0;
+                                case "type" -> shot.type = v != 0;
+                                case "back" -> shot.back = v;
+                                case "back2" -> shot.back2 = v;
+                                case "up" -> shot.up = v;
+                                case "side" -> shot.side = v;
+                                case "aimy" -> shot.aimy = v;
                                 default -> throw new IllegalArgumentException("unknown " + kv[0]);
                             }
                         }
                         shots.add(shot);
                     }
                     case "cam", "look" -> {
-                        boolean absolute = p[4].startsWith("=");
+                        boolean absolute = p[4].startsWith("="), fromStart = p[4].startsWith("^");
                         Key key = new Key(Double.parseDouble(p[1]), Double.parseDouble(p[2]), Double.parseDouble(p[3]),
-                                Double.parseDouble(absolute ? p[4].substring(1) : p[4]), absolute);
+                                Double.parseDouble(absolute || fromStart ? p[4].substring(1) : p[4]), absolute, fromStart);
                         (p[0].equals("cam") ? shot.cam : shot.look).add(key);
                     }
                     case "at" -> shot.at.put(p[1], new double[]{Double.parseDouble(p[2]), Double.parseDouble(p[3])});
@@ -203,10 +221,14 @@ public final class Cinema {
 
     // Planning: keyframes to a block-space pose per frame ------------------------------------------
 
-    private static double[] point(EarthGenerator earth, Key key) {
+    private static double[] point(EarthGenerator earth, Key key) { return point(earth, key, key); }
+
+    private static double[] point(EarthGenerator earth, Key key, Key first) {
         GeoPoint g = new GeoPoint(key.lat, key.lon);
         double x = earth.grid().blockX(g), z = earth.grid().blockZ(g);
-        double y = key.absolute ? key.h : earth.surfaceY(Mth.floor(x), Mth.floor(z)) + key.h;
+        Key ground = key.fromStart ? first : key;
+        GeoPoint gg = new GeoPoint(ground.lat, ground.lon);
+        double y = key.absolute ? key.h : earth.surfaceY(Mth.floor(earth.grid().blockX(gg)), Mth.floor(earth.grid().blockZ(gg))) + key.h;
         return new double[]{x, y, z};
     }
 
@@ -233,8 +255,8 @@ public final class Cinema {
 
     private static double[][] plan(EarthGenerator earth, Shot shot) {
         List<double[]> cams = new ArrayList<>(), looks = new ArrayList<>();
-        for (Key k : shot.cam) cams.add(point(earth, k));
-        for (Key k : shot.look) looks.add(point(earth, k));
+        for (Key k : shot.cam) cams.add(point(earth, k, shot.cam.get(0)));
+        for (Key k : shot.look) looks.add(point(earth, k, shot.cam.get(0)));
         int n = shot.frames;
         double[][] pos = new double[n][];
         double[] floor = new double[n];
@@ -263,7 +285,19 @@ public final class Cinema {
             double dx = l[0] - c[0], dy = l[1] - c[1], dz = l[2] - c[2];
             double yaw = Math.toDegrees(Math.atan2(-dx, dz));
             double pitch = -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
-            poses[f] = new double[]{c[0], c[1], c[2], yaw, pitch};
+            // 5-7 look point, 8 eased progress, 9-10 leg swing speed and phase (filled below)
+            poses[f] = new double[]{c[0], c[1], c[2], yaw, pitch, l[0], l[1], l[2], t, 0, 0};
+        }
+        // Leg swing as vanilla would give it for this ground speed: per tick, speed eases toward
+        // min(1, 4 * blocks moved) and the phase advances by the speed.
+        double speed = 0, phase = 0, perTick = 20.0 / fps;
+        for (int f = 0; f < n; f++) {
+            double d = f == 0 ? 0 : Math.hypot(poses[f][0] - poses[f - 1][0], poses[f][2] - poses[f - 1][2]);
+            double target = shot.glide ? 0 : Math.min(1, 4 * d / perTick);
+            speed += (target - speed) * Math.min(1, 0.4 * perTick);
+            phase += speed * perTick;
+            poses[f][9] = speed;
+            poses[f][10] = phase;
         }
         // Unwrap yaw so it never spins the long way round.
         for (int f = 1; f < n; f++) {
@@ -296,8 +330,10 @@ public final class Cinema {
             double[] p = shot.poses[0];
             teleport(p);
             enter(2);
-        } else if (state == 2) {
+        } else if (state == 2 || state == 3) {
             Shot shot = shots.get(shotIndex);
+            if (shot.third) body(mc, shot);
+            if (state == 3) return;
             double since = (System.currentTimeMillis() - stateAt) / 1000.0;
             int settled = world.far().settledPercent(), pending = world.renderer().pendingCount();
             if (since > 5 && (int) since % 10 == 0 && (System.currentTimeMillis() - stateAt) % 1000 < 50)
@@ -343,7 +379,7 @@ public final class Cinema {
         if (shot.map) {
             server("gamemode creative " + mc.player.getGameProfile().getName());
             EarthGenerator earth = earth();
-            double[] start = point(earth, new Key(0, shot.fromLat, shot.fromLon, 1.7, false));
+            double[] start = point(earth, new Key(0, shot.fromLat, shot.fromLon, 1.7, false, false));
             teleport(new double[]{start[0], start[1], start[2], 0, 10});
             frame = 0;
             mapFrames = 0;
@@ -356,10 +392,97 @@ public final class Cinema {
             state = 6;
             return;
         }
-        server("gamemode spectator " + mc.player.getGameProfile().getName());
+        String name = mc.player.getGameProfile().getName();
+        mc.options.setCameraType(shot.third ? CameraType.THIRD_PERSON_BACK : CameraType.FIRST_PERSON);
+        mc.player.setNoGravity(shot.third);
+        server("gamemode " + (shot.third ? "creative " : "spectator ") + name);
+        server("item replace entity " + name + " armor.chest with " + (shot.glide ? "minecraft:elytra" : "minecraft:air"));
         EarthGenerator earth = earth();
         planning = CompletableFuture.supplyAsync(() -> plan(earth, shot));
         enter(1);
+    }
+
+    /** Holds the filmed body in the air between renders and keeps the server's gliding flag in step. */
+    private static void body(Minecraft mc, Shot shot) {
+        var player = mc.player;
+        player.setNoGravity(true);
+        player.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
+        player.getAbilities().flying = false;
+        MinecraftServer server = mc.getSingleplayerServer();
+        server.execute(() -> {
+            ServerPlayer sp = server.getPlayerList().getPlayers().get(0);
+            if (sp.getAbilities().flying) { sp.getAbilities().flying = false; sp.onUpdateAbilities(); }
+            sp.setNoGravity(true);
+            if (shot.glide && !sp.isFallFlying()) sp.startFallFlying();
+            if (!shot.glide && sp.isFallFlying()) sp.stopFallFlying();
+        });
+    }
+
+    private static java.lang.reflect.Field walkSpeed, walkSpeedOld, walkPosition;
+
+    /** Poses the body for third-person shots: facing, leg swing for its speed, gliding, typing taps. */
+    private static void bodyPose(Shot shot, double[] p, int index, float partial) {
+        var player = Minecraft.getInstance().player;
+        player.yBodyRot = player.yBodyRotO = (float) p[3];
+        player.yHeadRotO = (float) p[3];
+        player.getAbilities().flying = false;
+        player.setNoGravity(true);
+        if (shot.glide) { if (!player.isFallFlying()) player.startFallFlying(); player.setOnGround(false); }
+        else { if (player.isFallFlying()) player.stopFallFlying(); player.setOnGround(true); }
+        try {
+            if (walkSpeed == null) {
+                Class<?> c = net.minecraft.world.entity.WalkAnimationState.class;
+                walkSpeed = c.getDeclaredField("speed"); walkSpeedOld = c.getDeclaredField("speedOld"); walkPosition = c.getDeclaredField("position");
+                walkSpeed.setAccessible(true); walkSpeedOld.setAccessible(true); walkPosition.setAccessible(true);
+            }
+            float speed = (float) p[9];
+            walkSpeed.setFloat(player.walkAnimation, speed);
+            walkSpeedOld.setFloat(player.walkAnimation, speed);
+            // The renderer reads position - speed * (1 - partial); cancel that so the phase is exact.
+            walkPosition.setFloat(player.walkAnimation, (float) p[10] + speed * (1 - partial));
+        } catch (ReflectiveOperationException e) { log("no walk animation ({})", e.toString()); }
+        if (shot.type) {
+            int stroke = 6, k = index / stroke;
+            double u = (index % stroke) / (double) stroke;
+            // A short tap now and then a pause, alternating hands.
+            float a = (float) (k % 5 == 4 ? 0 : 0.32 * Math.sin(Math.PI * u));
+            player.swinging = a > 0;
+            player.swingingArm = k % 2 == 0 ? net.minecraft.world.InteractionHand.MAIN_HAND : net.minecraft.world.InteractionHand.OFF_HAND;
+            player.attackAnim = player.oAttackAnim = a;
+        } else {
+            player.swinging = false;
+            player.attackAnim = player.oAttackAnim = 0;
+        }
+    }
+
+    private static java.lang.reflect.Method camSetPosition, camSetRotation;
+
+    /** Third-person shots place the camera behind the body themselves, aimed at the look point. */
+    @SubscribeEvent public static void camera(ViewportEvent.ComputeCameraAngles event) {
+        if (!posed || state != 3) return;
+        Shot shot = shots.get(shotIndex);
+        if (!shot.third) return;
+        double[] p = shot.poses[poseIndex(shot)];
+        double yaw = Math.toRadians(p[3]);
+        double fx = -Math.sin(yaw), fz = Math.cos(yaw), rx = -Math.cos(yaw), rz = -Math.sin(yaw);
+        double back = Double.isNaN(shot.back2) ? shot.back : Mth.lerp(p[8], shot.back, shot.back2);
+        double cx = p[0] - fx * back + rx * shot.side, cy = p[1] + shot.up, cz = p[2] - fz * back + rz * shot.side;
+        double dx = p[5] - cx, dy = p[6] + shot.aimy - cy, dz = p[7] - cz;
+        float cyaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        float cpitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+        try {
+            if (camSetPosition == null) {
+                Class<?> c = net.minecraft.client.Camera.class;
+                camSetPosition = c.getDeclaredMethod("setPosition", net.minecraft.world.phys.Vec3.class);
+                camSetRotation = c.getDeclaredMethod("setRotation", float.class, float.class);
+                camSetPosition.setAccessible(true); camSetRotation.setAccessible(true);
+            }
+            camSetRotation.invoke(event.getCamera(), cyaw, cpitch);
+            camSetPosition.invoke(event.getCamera(), new net.minecraft.world.phys.Vec3(cx, cy, cz));
+        } catch (ReflectiveOperationException e) { log("could not place camera ({})", e.toString()); }
+        event.setYaw(cyaw);
+        event.setPitch(cpitch);
+        event.setRoll(0);
     }
 
     private static void pose(double[] p) {
@@ -408,7 +531,9 @@ public final class Cinema {
         if (state == 3 || state == 4) pinShaderClock(state == 3 && held < shots.get(shotIndex).hold);
         if (state == 3) {
             Shot shot = shots.get(shotIndex);
-            pose(shot.poses[poseIndex(shot)]);
+            int index = poseIndex(shot);
+            pose(shot.poses[index]);
+            if (shot.third) bodyPose(shot, shot.poses[index], index, event.getPartialTick().getGameTimeDeltaPartialTick(true));
             posed = true;
         } else if (state == 4) posed = true;
     }
