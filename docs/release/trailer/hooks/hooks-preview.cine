@@ -2,45 +2,53 @@ out @OUT@
 fps 30
 preview 3
 # Hook Shorts on build 45: a 1:1 scale pull-back and five 5 s "guess the place" clips.
+# Every shot sets fov, since the game keeps the last one between shots.
 
-# 1:1 scale: start beside a person-sized armor stand at the Hornli hut, pull back and up until the whole Matterhorn fits.
-shot scale frames=480 settle=95 warm=600 clear=2 ease=1 time=1500 fov=50
-cam 0 45.98270 7.67900 +2.0
-cam 0.25 45.98400 7.68200 +40
-cam 1 46.02500 7.74500 =5900
-look 0 45.98245 7.67850 +1.2
-look 0.2 45.9763 7.6586 =4000
-look 1 45.9763 7.6586 =4100
-at P 45.98245 7.67850
+# 1:1 scale: a person-sized armor stand on the Hornli ridge at the hut, Matterhorn behind;
+# pull back and up until the whole mountain fits.
+shot scale frames=480 settle=95 warm=600 clear=2 ease=1 time=1500 fov=70 hold=15
+cam 0 45.98203 7.67448 +2.0
+# Keys evenly spaced along the line out, so the spline never swings back into the ridge.
+cam 0.1 45.98383 7.67803 =3420
+cam 0.3 45.98742 7.68514 =3700
+cam 0.6 45.99281 7.69579 =4150
+cam 1 46.00000 7.71000 =4600
+look 0 45.9763 7.6586 =3550
+look 0.3 45.9763 7.6586 =3900
+look 1 45.9763 7.6586 =3700
+at P 45.98200 7.67440
 run summon armor_stand {P} {ShowArms:1b,NoGravity:1b,Rotation:[60f,0f],ArmorItems:[{id:"leather_boots"},{id:"leather_leggings"},{id:"leather_chestplate"},{id:"player_head"}]}
 
 # Guess the place: wide, recognizable views, slow drift, 150 frames each.
-shot q-grand_canyon frames=150 settle=95 warm=600 clear=2 ease=0 time=1500
+shot q-grand_canyon frames=150 settle=95 warm=600 clear=2 ease=0 time=1500 fov=50
 cam 0 36.0700 -112.1050 =2350
 cam 1 36.0760 -112.1020 =2350
 look 0 36.1050 -112.0950 =1100
 look 1 36.1080 -112.0920 =1100
 
-shot q-everest frames=150 settle=95 warm=600 clear=2 ease=0 time=3000
-cam 0 27.9300 86.8700 =8200
-cam 1 27.9330 86.8760 =8250
-look 0 27.9881 86.9250 =8600
-look 1 27.9881 86.9250 =8600
+# North face from above the Rongbuk glacier.
+shot q-everest frames=150 settle=95 warm=600 clear=2 ease=0 time=3000 fov=50
+cam 0 28.0900 86.8550 =6900
+cam 1 28.0880 86.8610 =6900
+look 0 27.9881 86.9250 =7700
+look 1 27.9881 86.9250 =7700
 
-shot q-uluru frames=150 settle=95 warm=600 clear=2 ease=0 time=12300
+shot q-uluru frames=150 settle=95 warm=600 clear=2 ease=0 time=12300 fov=50
 cam 0 -25.3600 131.0000 =750
 cam 1 -25.3585 131.0060 =740
 look 0 -25.3444 131.0369 =800
 look 1 -25.3444 131.0369 =800
 
-shot q-half_dome frames=150 settle=95 warm=600 clear=2 ease=0 time=1500
-cam 0 37.7155 -119.6815 =1700
-cam 1 37.7180 -119.6720 =1720
-look 0 37.7459 -119.5332 =2200
-look 1 37.7459 -119.5332 =2200
+# From just past Glacier Point, in afternoon light.
+shot q-half_dome frames=150 settle=95 warm=600 clear=2 ease=0 time=9000 fov=50
+cam 0 37.7300 -119.5730 =2350
+cam 1 37.7312 -119.5700 =2350
+look 0 37.7459 -119.5332 =2300
+look 1 37.7459 -119.5332 =2300
 
-shot q-fuji frames=150 settle=95 warm=600 clear=2 ease=0 time=1500
-cam 0 35.5000 138.7600 =1600
-cam 1 35.4950 138.7570 =1650
-look 0 35.3606 138.7274 =3400
-look 1 35.3606 138.7274 =3400
+# Low over Lake Kawaguchi, drifting west along the water.
+shot q-fuji frames=150 settle=95 warm=600 clear=2 ease=0 time=1500 fov=50
+cam 0 35.5150 138.7520 +30
+cam 1 35.5152 138.7500 +30
+look 0 35.3606 138.7274 =2300
+look 1 35.3606 138.7274 =2300

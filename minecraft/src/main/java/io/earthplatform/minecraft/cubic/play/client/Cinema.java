@@ -44,7 +44,8 @@ import net.neoforged.neoforge.client.event.RenderFrameEvent;
  *   at NAME LAT LON     (a ground anchor for run lines: {NAME} or {NAME:DX:DY:DZ} becomes block X Y Z)
  *   run COMMAND         (server command, run once while the shot warms, e.g. to build a set)
  * </pre>
- * Shots also take fov=DEGREES.
+ * Shots also take fov=DEGREES and hold=RENDERS (extra renders per pose before saving, so far
+ * terrain keeps up with a fast move).
  */
 @EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, value = Dist.CLIENT)
 public final class Cinema {
@@ -53,6 +54,7 @@ public final class Cinema {
     private record Key(double t, double lat, double lon, double h, boolean absolute) {}
     private static final class Shot {
         String name; boolean map; int frames = 150, tail = 45; long time = -1; double settle = 25, warm = 150, clear = 40, ease = 1, fov = -1;
+        int hold;
         boolean built;
         final java.util.Map<String, double[]> at = new java.util.HashMap<>();
         final List<String> run = new ArrayList<>();
@@ -76,6 +78,8 @@ public final class Cinema {
     private static int state;
     private static long stateAt, startedAt;
     private static boolean posed;
+    /** Renders of the current pose so far, while a shot holds each pose. */
+    private static int held;
     private static int mapFrames;
     private static CompletableFuture<double[][]> planning;
     private static final ExecutorService writers = Executors.newFixedThreadPool(2);
@@ -125,6 +129,7 @@ public final class Cinema {
                                 case "ease" -> shot.ease = v;
                                 case "time" -> shot.time = (long) v;
                                 case "fov" -> shot.fov = v;
+                                case "hold" -> shot.hold = (int) v;
                                 default -> throw new IllegalArgumentException("unknown " + kv[0]);
                             }
                         }
@@ -382,7 +387,7 @@ public final class Cinema {
     private static java.lang.reflect.Field irisLastStart;
     private static boolean irisTried;
 
-    private static void pinShaderClock() {
+    private static void pinShaderClock(boolean still) {
         if (!irisTried) {
             irisTried = true;
             try {
@@ -392,14 +397,15 @@ public final class Cinema {
             } catch (Throwable t) { irisTimer = null; log("no Iris clock to pin ({})", t.toString()); }
         }
         if (irisTimer == null) return;
-        try { irisLastStart.set(irisTimer, java.util.OptionalLong.of(net.minecraft.Util.getNanos() - 1_000_000_000L / fps)); }
+        try { irisLastStart.set(irisTimer, java.util.OptionalLong.of(net.minecraft.Util.getNanos() - (still ? 0 : 1_000_000_000L / fps))); }
         catch (Throwable t) { irisTimer = null; log("could not pin Iris clock ({})", t.toString()); }
     }
 
     @SubscribeEvent public static void frameStart(RenderFrameEvent.Pre event) {
         posed = false;
         if (SCRIPT == null) return;
-        if (state == 3 || state == 4) pinShaderClock();
+        // Held renders of a pose don't advance shader time; only the saved one does.
+        if (state == 3 || state == 4) pinShaderClock(state == 3 && held < shots.get(shotIndex).hold);
         if (state == 3) {
             Shot shot = shots.get(shotIndex);
             pose(shot.poses[poseIndex(shot)]);
@@ -410,6 +416,8 @@ public final class Cinema {
     @SubscribeEvent public static void frameEnd(RenderFrameEvent.Post event) {
         if (!posed) return;
         Shot shot = shots.get(shotIndex);
+        if (state == 3 && preview <= 0 && held < shot.hold) { held++; return; }
+        held = 0;
         Minecraft mc = Minecraft.getInstance();
         NativeImage image = Screenshot.takeScreenshot(mc.getMainRenderTarget());
         File file = out.resolve(shot.name).resolve(String.format(Locale.ROOT, "%05d.png", frame)).toFile();
