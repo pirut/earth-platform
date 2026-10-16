@@ -47,8 +47,9 @@ public final class EarthConfig {
         FAR_SHARPNESS = client.comment("How sharp far terrain looks: how close coarser levels take over. Changes at once, without a restart.",
                         "Sharper keeps finer voxels further out but takes longer to fill in and uses more memory; Fast fills in quickest. Default Balanced.")
                 .translation(key("farSharpness")).defineEnum("sharpness", Sharpness.BALANCED);
-        FAR_TEXTURED_LEVELS = client.comment("How many far levels are drawn with block textures; further ones use flat colours. Default 2.")
-                .translation(key("farTexturedLevels")).gameRestart().defineInRange("texturedLevels", 2, 0, 6);
+        // A new key, so configs saved with the old default of 2 take up the new one.
+        FAR_TEXTURED_LEVELS = client.comment("How many far levels are drawn with block textures; further ones use flat colours. Default 8, all of them.")
+                .translation(key("farTexturedLevels")).gameRestart().defineInRange("texturedFarLevels", 8, 0, 8);
         SHOW_DOWNLOADS = client.comment("Show a small note while Earth data downloads, and when it can't be reached.")
                 .translation(key("showDownloads")).define("showDownloadStatus", true);
         PRESELECT_EARTH = client.comment("Pick the Earth world type when you open Create World.")

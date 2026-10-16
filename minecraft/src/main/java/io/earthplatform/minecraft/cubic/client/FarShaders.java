@@ -198,6 +198,9 @@ final class FarShaders {
                 else if (face == 3u) earth_tile = vec2(local.x, -local.y);
                 else if (face == 4u) earth_tile = vec2(local.z, -local.y);
                 else earth_tile = vec2(-local.z, -local.y);
+                // Further out a texture spans more blocks, two to a voxel side, so each voxel reads as a
+                // block of its own at any distance instead of a blur of tiny repeats.
+                earth_tile /= max(1.0, v * 0.5);
 
                 uint look = q.w & 0xFFFFFu;
                 earth_normal = earth_smooth > 0.5 ? 0u : q.w >> 20;

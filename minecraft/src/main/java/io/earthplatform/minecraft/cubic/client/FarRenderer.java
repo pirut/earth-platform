@@ -70,7 +70,7 @@ public final class FarRenderer {
      * Levels drawn with block textures; coarser ones use each face's average colour, which is what
      * a texture blurs to at that distance anyway and stays steady when the camera moves.
      */
-    private static final int TEXTURED_LEVELS = Integer.getInteger("earthplatform.far.textured", 2);
+    private static final int TEXTURED_LEVELS = Integer.getInteger("earthplatform.far.textured", Far.MAX_LEVEL);
     /**
      * Whether a level fades into the next coarser one over the coarser level's outer ring of
      * middle columns (see {@link FarShaders#fade}), rather than meeting it at a seam.

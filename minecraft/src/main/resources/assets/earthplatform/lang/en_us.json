@@ -51,7 +51,7 @@
   "earthplatform.pause.sharpness": "Far",
   "earthplatform.pause.sharpness.tooltip": "Far terrain sharpness. Sharper keeps finer detail further out but takes longer to fill in and uses more memory. Fast fills in quickest. Changes at once.",
   "earthplatform.configuration.farTexturedLevels": "Textured far levels",
-  "earthplatform.configuration.farTexturedLevels.tooltip": "How many far levels are drawn with block textures; further ones use flat colors. Default 2.",
+  "earthplatform.configuration.farTexturedLevels.tooltip": "How many far levels are drawn with block textures; further ones use flat colors. Default 8, all of them.",
   "earthplatform.configuration.showDownloads": "Show download status",
   "earthplatform.configuration.showDownloads.tooltip": "A small note while Earth data downloads, and a warning when it can't be reached.",
   "earthplatform.configuration.preselectEarth": "Start Create World on Earth",

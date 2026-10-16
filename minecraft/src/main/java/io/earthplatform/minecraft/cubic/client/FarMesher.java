@@ -109,9 +109,12 @@ final class FarMesher {
         /** Water's own walls, north, south, west, east: water faces the next column's water hides, drawn when that column is not. */
         final ByteBufferBuilder[] wallMemory = new ByteBufferBuilder[4];
         final BufferBuilder[] waterWalls = new BufferBuilder[4];
+        /** Water shows its texture only near by: drawn face by face, textured oceans would cost far more faces than merged flat ones. */
+        final boolean texturedWater;
 
         Builder(Job job) {
             this.job = job;
+            texturedWater = job.textured && job.level <= TEXTURED_WATER_LEVELS;
             v = 1 << job.level;
             voxel = v * UNIT;
             tops = tops(job.sections);
@@ -187,7 +190,7 @@ final class FarMesher {
                     if (biome == null) biome = section.getBiomes().get(x >> 2, y >> 2, z >> 2);
                     int height = direction == Direction.UP ? top : bottom;
                     if (!liquid) opaqueFlat.add(direction, x, vy, z, height, look(state, biome, direction, sky, cell));
-                    else if (!job.textured) waterFlat.add(direction, x, vy, z, height, waterLook(state, biome, direction));
+                    else if (!texturedWater) waterFlat.add(direction, x, vy, z, height, waterLook(state, biome, direction));
                     else waterFace(water(), state, biome, direction, x, z, height, 0);
                     continue;
                 }
@@ -302,7 +305,7 @@ final class FarMesher {
             float unit = 1.0F / UNIT;
             ShaderBlocks.begin(builder, job.shaderIds, state, true, x, 0, z);
             face(builder, state, colour(state, biome, direction), direction, x * v, y * unit, z * v, v, height * unit, v,
-                    LightTexture.FULL_SKY, job.textured);
+                    LightTexture.FULL_SKY, texturedWater);
             ShaderBlocks.end(builder, job.shaderIds);
         }
 
@@ -326,9 +329,9 @@ final class FarMesher {
         int colour(BlockState state, Holder<Biome> biome, Direction direction) {
             FarFaces.Face face = job.faces.face(state, direction);
             int tint = job.faces.tint(state, biome, face);
-            int rgb = job.textured ? tint : multiply(face.rgb(), tint);
+            int rgb = texturedWater ? tint : multiply(face.rgb(), tint);
             // Flat faces have no texture to carry water's see-through alpha, so the vertices do.
-            int alpha = job.textured ? 255 : face.rgb() >>> 24;
+            int alpha = texturedWater ? 255 : face.rgb() >>> 24;
             return alpha << 24 | shade(rgb, job.shade[direction.get3DDataValue()]);
         }
 
@@ -359,14 +362,17 @@ final class FarMesher {
     }
 
     /**
-     * Whether far ground is drawn smooth: on by default, off with {@code -Dearthplatform.far.smooth=false}.
+     * Whether far ground is drawn smooth: off by default, so far terrain stays blocks all the way out
+     * as Minecraft looks; on with {@code -Dearthplatform.far.smooth=true}.
      * Every level is smooth, the textured ones too, or only from a later level with
      * {@code -Dearthplatform.far.smoothFrom}.
      */
-    static final boolean SMOOTH = !"false".equals(System.getProperty("earthplatform.far.smooth"));
+    static final boolean SMOOTH = Boolean.getBoolean("earthplatform.far.smooth");
     static final int SMOOTH_FROM = Integer.getInteger("earthplatform.far.smoothFrom", 1);
     /** Grid points along each side of a column's smooth ground: its two edges and the middles of its 16 voxel columns. */
     static final int POINTS = 18;
+    /** The levels whose water is textured; further out it is flat-coloured and merged. */
+    static final int TEXTURED_WATER_LEVELS = 2;
     /** Face kinds past the six block directions: a piece of smooth ground, and a wall hanging from its edge. */
     static final int SMOOTH_TOP = 6, SMOOTH_WALL = 7;
 
