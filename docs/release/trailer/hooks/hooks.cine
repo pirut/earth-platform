@@ -1,11 +1,11 @@
 out @OUT@
 fps 30
-# Hook Shorts on build 45: a 1:1 scale pull-back and five 5 s "guess the place" clips.
+# Hook Shorts on build 47: a 1:1 scale pull-back, five 5 s "guess the place" clips and a Grand Canyon descent.
 # Every shot sets fov, since the game keeps the last one between shots.
 
 # 1:1 scale: a person-sized armor stand on the Hornli ridge at the hut, Matterhorn behind;
 # pull back and up until the whole mountain fits.
-shot scale frames=480 settle=95 warm=600 clear=2 ease=1 time=1500 fov=70 hold=15
+shot scale frames=300 settle=95 warm=600 clear=2 ease=1 time=1500 fov=70 hold=15
 cam 0 45.98203 7.67448 +2.0
 # Keys evenly spaced along the line out, so the spline never swings back into the ridge.
 cam 0.1 45.98383 7.67803 =3420
@@ -51,3 +51,17 @@ cam 0 35.5150 138.7520 +30
 cam 1 35.5152 138.7500 +30
 look 0 35.3606 138.7274 =2300
 look 1 35.3606 138.7274 =2300
+
+# Grand Canyon descent: low and fast from the South Rim at the Bright Angel trailhead down toward the river at Phantom Ranch.
+# Stays close to the ground (+H keys) so it reads as a walk, sped up; the river should be visible near the end.
+shot walk frames=600 settle=95 warm=600 clear=2 ease=0 time=1500 fov=70 hold=15
+cam 0 36.0570 -112.1436 +3
+cam 0.25 36.0700 -112.1350 +25
+cam 0.5 36.0830 -112.1200 +25
+cam 0.75 36.0950 -112.1050 +25
+cam 1 36.1040 -112.0960 +15
+look 0 36.0700 -112.1350 +0
+look 0.25 36.0830 -112.1200 +0
+look 0.5 36.0950 -112.1050 +0
+look 0.75 36.1040 -112.0960 +0
+look 1 36.1100 -112.0900 +0
