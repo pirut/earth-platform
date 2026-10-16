@@ -352,9 +352,13 @@ final class FarShaders {
             // sides. Smaller, a stepped hillside lit that way breaks into stripes of lit treads and
             // dark risers, so there the slope takes most of it over and the steps keep only a
             // light relief. A texture spans half a voxel.
-            float earth_slopeShare() {
+            float earth_faceShare() {
                 float pixels = 2.0 / max(length(fwidth(earth_tile)), 1e-5);
-                return mix(0.85, 0.0, smoothstep(2.0, 10.0, pixels));
+                return smoothstep(2.0, 10.0, pixels);
+            }
+
+            float earth_slopeShare() {
+                return 0.85 * (1.0 - earth_faceShare());
             }
 
             vec3 earth_slope() {
@@ -465,6 +469,10 @@ final class FarShaders {
                     gl_FragDepth = gl_FragCoord.z;
                     return;
                 }
+                // Voxels many pixels wide keep their faces' depth, as the game's blocks do, so the pack's
+                // screen-space shadows step across them alike and the near edge doesn't show; the slope
+                // takes over as they shrink, wholly where steps a pixel or two wide shadowed in stripes.
+                t = mix(t, 1.0, earth_faceShare());
                 vec4 clip = earth_Projection * earth_ModelView * vec4(earth_position * t, 1.0);
                 gl_FragDepth = clamp((clip.z / clip.w) * 0.5 + 0.5, 0.0, 1.0);
             }
