@@ -128,6 +128,9 @@ final class FarGpu {
      * Uploads a column's faces, grouped, and the points of its smooth ground right after them (one
      * texel each; its faces are pointed at them), or null when there are none.
      */
+    /** Whether the shader pack's far program is jittered for its TAA, so a dither changes every frame. */
+    boolean jittered() { return packJittered; }
+
     @Nullable Allocation upload(int[] quads, int[] counts, @Nullable int[] grid) {
         int faces = quads.length / 4, size = faces + (grid == null ? 0 : grid.length / 4);
         if (faces == 0) return null;
