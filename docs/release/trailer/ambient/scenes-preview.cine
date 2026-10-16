@@ -6,7 +6,7 @@ preview 3
 # Teton dropped after four tries: a generated village sits on Mormon Row and the barn either hid behind it or hid the range.
 
 # Yosemite Valley from Valley View: a small campsite (campfire smoke, log seats) with the valley walls behind; looking east.
-shot yosemite frames=1200 settle=35 warm=240 clear=2 ease=0 time=1500 fov=50
+shot yosemite frames=1200 settle=95 warm=600 clear=2 ease=0 time=1500 fov=50
 cam 0 37.7172 -119.6633 +2.5
 cam 1 37.71722 -119.66321 +2.5
 look 0 37.7300 -119.6000 =1500
@@ -37,7 +37,7 @@ run setblock {C:16:0:-3} stripped_spruce_log[axis=z]
 run setblock {C:16:0:-2} stripped_spruce_log[axis=z]
 
 # Matterhorn over the Riffelsee: a bench and a lantern on the lakeshore; looking west.
-shot matterhorn frames=1200 settle=35 warm=240 clear=2 ease=0 time=1500 fov=40
+shot matterhorn frames=1200 settle=95 warm=600 clear=2 ease=0 time=1500 fov=40
 cam 0 45.9898 7.7578 +2.5
 cam 1 45.989787 7.757699 +2.5
 look 0 45.9763 7.6586 =3600
@@ -58,7 +58,7 @@ run setblock {C:-18:0:1} spruce_fence
 run setblock {C:-18:1:1} lantern
 
 # Mount Rainier from Reflection Lakes: a bench and a lantern on the shore; looking north.
-shot rainier frames=1200 settle=35 warm=240 clear=2 ease=0 time=1000 fov=50
+shot rainier frames=1200 settle=95 warm=600 clear=2 ease=0 time=1000 fov=50
 cam 0 46.7682 -121.7300 +2.5
 cam 1 46.76827 -121.730025 +2.5
 look 0 46.8529 -121.7604 =3000
@@ -97,7 +97,7 @@ run setblock {C:0:0:-13} spruce_fence
 run setblock {C:0:1:-13} lantern
 
 # Lauterbrunnen valley floor: a small wooden chalet and flowers, the cliffs and the Jungfrau ahead; looking SSE, slow push in.
-shot lauterbrunnen frames=1200 settle=35 warm=240 clear=2 ease=0 time=2500 fov=50
+shot lauterbrunnen frames=1200 settle=95 warm=600 clear=2 ease=0 time=2500 fov=50
 cam 0 46.5980 7.9085 +2.5
 cam 1 46.597953 7.90854 +2.5
 look 0 46.5368 7.9626 =2000
@@ -139,7 +139,7 @@ run fill {C:8:0:13} {C:10:0:15} allium replace air
 
 # Mount Fuji across Lake Kawaguchi from the north shore: a torii 55 m ahead sitting under the mountain, cherry trees either side; looking south.
 # (The in-game lake surface is about Y 896; this vantage is ~28 m above it.)
-shot fuji frames=1200 settle=35 warm=240 clear=2 ease=0 time=1000 fov=35
+shot fuji frames=1200 settle=95 warm=600 clear=2 ease=0 time=1000 fov=35
 cam 0 35.5270 138.7450 +2.5
 cam 1 35.526928 138.744992 +2.5
 look 0 35.3606 138.7274 =1500
