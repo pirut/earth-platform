@@ -82,9 +82,13 @@ public final class EarthConfig {
 
     private EarthConfig() {}
 
-    /** Far terrain sharpness choices, as scales of the start-up detail (see {@link Far#sharpness}). */
+    /**
+     * Far terrain sharpness choices, as scales of the start-up detail (see {@link Far#sharpness}).
+     * Even the default keeps each level a bit past where it would turn to blurry squares on screen,
+     * since far terrain drawn as blocks shows its block size far more than smooth ground did.
+     */
     public enum Sharpness implements TranslatableEnum {
-        FAST(0.7), BALANCED(1.0), SHARP(1.3), SHARPEST(1.6);
+        FAST(1.0), BALANCED(1.3), SHARP(1.6), SHARPEST(2.0);
 
         final double scale;
 

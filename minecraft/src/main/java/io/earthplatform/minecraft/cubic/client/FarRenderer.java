@@ -76,6 +76,8 @@ public final class FarRenderer {
      * middle columns (see {@link FarShaders#fade}), rather than meeting it at a seam.
      */
     private static final boolean FADE = !"false".equals(System.getProperty("earthplatform.far.fade"));
+    /** Whether this frame's levels fade into each other over a ring, or meet at a seam (see {@link #drawColumns}). */
+    private boolean bandFade;
     private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "block/far_white");
     private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
             SETTLE_TICKS = 3, HIDDEN_SETTLE_TICKS = 40, UPLOADS_PER_FRAME = 8, MESHES_IN_FLIGHT = 128;
@@ -711,6 +713,10 @@ public final class FarRenderer {
         Vec3 position = camera.getPosition();
         int bx = (int) Math.floor(position.x), bz = (int) Math.floor(position.z);
         drawn.clear();
+        // The dithered ring between levels only blends where a pack's TAA moves the dither every frame
+        // and averages it; without one it stays put, and where the two levels' outlines differ, as at
+        // cliff edges, it left fixed specks of sky. There levels meet at a plain seam.
+        bandFade = FADE && ShaderBlocks.packInUse() && gpu.jittered();
         int px = Far.column(bx, Far.MAX_LEVEL), pz = Far.column(bz, Far.MAX_LEVEL);
         for (int z = pz - Far.OUTER; z <= pz + Far.OUTER; z++) for (int x = px - Far.OUTER; x <= px + Far.OUTER; x++) {
             visit(Far.MAX_LEVEL, x, z, bx, bz, false);
@@ -909,7 +915,7 @@ public final class FarRenderer {
         boolean refined = Far.refined(level, x, z, bx, bz, finest) || !meshed && Far.refined(level, x, z, bx, bz);
         if (refined && (!meshed || childrenReady(level, x, z, bx, bz))) {
             // The outer ring of a level's middle: drawn under its children too, fading in as they fade out.
-            boolean band = FADE && meshed && Far.refined(level, x, z, bx, bz, finest)
+            boolean band = bandFade && meshed && Far.refined(level, x, z, bx, bz, finest)
                     && Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level))) == Far.hole();
             boolean arriving = false;
             if (FADE && meshed) {
