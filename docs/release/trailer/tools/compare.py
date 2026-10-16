@@ -16,15 +16,17 @@ HALF = H // 2
 SEQ = [("c-grand_canyon", "Grand Canyon", "grand_canyon-mather_point.jpg", 0.62, 0.55, 0.5),
        ("c-half_dome", "Half Dome", "half_dome-snow_creek.jpg", 0.72, 0.42, 0.33),
        ("c-rainier", "Mount Rainier", "rainier-tipsoo.jpg", 0.55, 0.35, 0.3)]
-SEG, END = 4.6, 2.2
+SEG, END = 4.0, 2.2
+INTRO = 1.7                       # cold open: full-screen real/game flips, faster and faster
+FLIPS = [0, 0.32, 0.6, 0.84, 1.04, 1.2, 1.33, 1.44, 1.53, 1.61]
 
 
-def photo_half(path, cx, cy, zoom):
+def photo_half(path, cx, cy, zoom, hh=HALF):
     im = Image.open(path).convert("RGB"); w, h = im.size
-    ch = h / zoom; cw = ch * W / HALF
-    if cw > w: cw = w; ch = cw * HALF / W
+    ch = h / zoom; cw = ch * W / hh
+    if cw > w: cw = w; ch = cw * hh / W
     x = min(max(cx * w - cw / 2, 0), w - cw); y = min(max(cy * h - ch / 2, 0), h - ch)
-    return im.resize((W, HALF), Image.LANCZOS, box=(x, y, x + cw, y + ch))
+    return im.resize((W, hh), Image.LANCZOS, box=(x, y, x + cw, y + ch))
 
 
 def label(text, sub=None):
@@ -34,8 +36,8 @@ def label(text, sub=None):
 
 def main():
     os.makedirs(TMP, exist_ok=True); os.makedirs(OUT, exist_ok=True)
-    ns, ne = round(SEG * FPS), round(END * FPS); total = ns * len(SEQ) + ne
-    hook = S.big([("Real photo", S.WHITE), ("vs Minecraft", S.YEL)], 78)
+    ns, ne, ni = round(SEG * FPS), round(END * FPS), round(INTRO * FPS); total = ni + ns * len(SEQ) + ne
+    hook = S.big([("Real", S.WHITE), ("or Minecraft?", S.YEL)], 96)
     real, mc = label("REAL", "photo: National Park Service"), label("MINECRAFT", "Earth Platform, 1:1 scale")
     names = [S.big([(t, S.WHITE)], 58) for _, t, *_ in SEQ]
     ask = S.big([("Which place", S.WHITE), ("should I try next?", S.YEL)], 64)
@@ -47,13 +49,28 @@ def main():
     subprocess.run([sys.executable, "-I", os.path.join(Lp.TOOLS, "ambience.py"), amb_wav, f"{total / FPS + 3:.1f}", "51", "--birds", "6", "--wind", "0.5"], check=True)
     n = round(total / FPS * SR); mix = Lp.read_wav(amb_wav)[int(2.0 * SR):][:n].copy() * 0.8
     k = int(0.3 * SR); mix[-k:] *= np.linspace(1, 0, k)[:, None]
-    mix += Lp.whooshes([i * SEG - 0.05 for i in range(1, len(SEQ))], total / FPS)[:n, None] * 0.8
+    mix += Lp.whooshes([0.02, INTRO - 0.05] + [INTRO + i * SEG - 0.05 for i in range(1, len(SEQ))], total / FPS)[:n, None] * 0.8
     mix = np.clip(mix / max(1.0, np.max(np.abs(mix)) / 0.89), -1, 1)
     wav = os.path.join(TMP, "mix.wav")
     with wave.open(wav, "wb") as w:
         w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes((mix * 32767).astype(np.int16).tobytes())
 
     tmp_out = os.path.join(TMP, "compare.mp4"); enc = S.encoder(tmp_out, wav, total)
+    # cold open: the first place, flipping between the real photo and the game, full screen
+    name, _, photo, pcx, pcy, _ = SEQ[0]
+    full = photo_half(os.path.join(PHOTOS, photo), pcx, pcy, 1.0, H)
+    src = subprocess.Popen(["ffmpeg", "-v", "error", "-i", os.path.join(CLIPS, PFX + name + ".mp4"), "-vf", f"scale={W}:{H}:flags=lanczos",
+                            "-frames:v", str(ni), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+    for c in range(ni):
+        t = c / FPS; game = Image.frombytes("RGB", (W, H), src.stdout.read(W * H * 3))
+        k = sum(1 for f in FLIPS if t >= f)
+        img = full.resize((W, H), Image.LANCZOS, box=(0, 0, W, H)) if k % 2 else game
+        img = img.copy(); zoom = 1.0 + 0.03 * t
+        img = img.resize((W, H), Image.LANCZOS, box=(W * (1 - 1 / zoom) / 2, H * (1 - 1 / zoom) / 2, W * (1 + 1 / zoom) / 2, H * (1 + 1 / zoom) / 2))
+        S.put_top(img, hook, W / 2, 170, scale=S.POP[min(c, len(S.POP) - 1)])
+        S.put_top(img, brand, W / 2, S.BRAND_TOP)
+        enc.stdin.write(img.tobytes())
+    src.stdout.close(); src.wait()
     for i, (name, title, photo, pcx, pcy, ccy) in enumerate(SEQ):
         last = i == len(SEQ) - 1; count = ns + (ne if last else 0)
         src = subprocess.Popen(["ffmpeg", "-v", "error", "-i", os.path.join(CLIPS, PFX + name + ".mp4"), "-vf", f"scale={W}:{H}:flags=lanczos,tpad=stop_mode=clone:stop=-1",
@@ -68,8 +85,7 @@ def main():
             img.paste(game.crop((0, y0, W, y0 + HALF)), (0, HALF))
             S.put(img, line, W / 2, HALF)
             S.put_top(img, real, real.width / 2 - 10, HALF - real.height + 10); S.put_top(img, mc, mc.width / 2 - 10, HALF - 10)
-            if i == 0 and t < 2.4: S.put_top(img, hook, W / 2, 130, alpha=1 - S.ease((t - 2.1) / 0.3))
-            a = S.ease((t - (2.2 if i == 0 else 0.1)) / 0.25) * (1 - S.ease((t - SEG + 0.3) / 0.25)) if not (last and t > SEG) else 0
+            a = (1.0 if i == 0 else S.ease((t - 0.1) / 0.25)) * (1 - S.ease((t - SEG + 0.3) / 0.25)) if not (last and t > SEG) else 0
             if a > 0: S.put_top(img, names[i], W / 2, 150, alpha=a)
             if last and t > SEG - 0.2:
                 u = t - SEG + 0.2
