@@ -12,6 +12,7 @@
     "CubicBuildHeightMixin",
     "CubicPlacementMixin",
     "CubicEntityMixin",
+    "CubicEntityHoldMixin",
     "CubicTravelMixin",
     "CubicRespawnMixin",
     "CubicSpawnerMixin",

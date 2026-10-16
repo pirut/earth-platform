@@ -92,17 +92,44 @@ public final class ServerCubeWorld extends CubeWorld {
     private boolean closed;
 
     /**
+     * Rock buried under the ground is out of sight from above it, and a player on the surface gets only the
+     * cubes holding the ground, the air over it and, near them, the rock under it: buried cubes further out
+     * are not made at all, and the client gets a plain rock stand-in so the ground shows no hole and needs
+     * no faces under it. A player who goes underground gets everything around again, nearest first.
+     * {@code -Dearthplatform.cubic.buried=true} makes every cube, as before.
+     */
+    private static final boolean ALL_BURIED = Boolean.getBoolean("earthplatform.cubic.buried");
+    /** Columns across around a surface player whose buried cubes are made anyway: room to dig down and around at full speed. */
+    private static final int NEAR = 3;
+    /** Blocks of rock under a cube column's lowest ground (and its four neighbours') before its cubes count as buried. */
+    private static final int COVER = 16;
+    private static final int UNKNOWN_LOW = Integer.MAX_VALUE;
+    /** Lowest ground of cube columns, worked out on the workers. */
+    private final Long2IntOpenHashMap lows = new Long2IntOpenHashMap();
+    private final LongOpenHashSet lowsPending = new LongOpenHashSet();
+    private final ConcurrentLinkedQueue<long[]> lowsReady = new ConcurrentLinkedQueue<>();
+    /** Saved buried cubes near players, such as a mine: they come back from the save, never as a stand-in that would fill them in. */
+    private final LongOpenHashSet kept = new LongOpenHashSet();
+    /** Buried cubes behind an open face of a cube in the ground band (see {@link #openBehind}): made for real. */
+    private final LongOpenHashSet opened = new LongOpenHashSet();
+    private final byte[] standIn;
+
+    /**
      * A loaded or generated cube; a null section means generating it failed. {@code surface} marks cubes holding the
      * ground still owed their first animals; {@code edited} marks saved cubes changed by play; {@code kept} marks fresh
      * cubes to save as generated.
      */
     private record Ready(long key, int x, int y, int z, @Nullable LevelChunkSection section, List<CompoundTag> blockEntities,
-                         List<CompoundTag> entities, boolean saved, boolean edited, boolean surface, boolean kept, @Nullable RuntimeException failure) {}
+                         List<CompoundTag> entities, boolean saved, boolean edited, boolean surface, boolean kept, @Nullable RuntimeException failure, int open) {}
     private record Lit(long key, int stamp, @Nullable byte[] values) {}
 
     private static final class Watcher {
         final ServerPlayer player;
         final LongOpenHashSet sent = new LongOpenHashSet();
+        /** Buried cubes sent as plain rock stand-ins, not made yet. */
+        final LongOpenHashSet stood = new LongOpenHashSet();
+        /** Underground (in a mine or a deep cave): every cube around is made, as rock is all there is to see. */
+        boolean deep;
         final LongOpenHashSet columns = new LongOpenHashSet();
         final List<CubePayloads.Change> changes = new ArrayList<>();
         Watcher(ServerPlayer player) { this.player = player; }
@@ -114,6 +141,11 @@ public final class ServerCubeWorld extends CubeWorld {
         this.generator = generator;
         generator.attach(level);
         this.codec = new CubeCodec(level.registryAccess().registryOrThrow(Registries.BIOME));
+        lows.defaultReturnValue(UNKNOWN_LOW);
+        var biomes = level.registryAccess().registryOrThrow(Registries.BIOME);
+        this.standIn = CubeCodec.sectionBytes(new LevelChunkSection(
+                new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(), PalettedContainer.Strategy.SECTION_STATES),
+                new PalettedContainer<>(biomes.asHolderIdMap(), biomes.getHolderOrThrow(net.minecraft.world.level.biome.Biomes.PLAINS), PalettedContainer.Strategy.SECTION_BIOMES)));
         this.storage = new CubeStorage(DimensionType.getStorageFolder(level.dimension(),
                 level.getServer().getWorldPath(LevelResource.ROOT)).resolve("cubes"));
         this.far = new FarServer(generator, storage, codec, level.registryAccess().registryOrThrow(Registries.BIOME));
@@ -208,7 +240,7 @@ public final class ServerCubeWorld extends CubeWorld {
             if (saved != null) {
                 CubeCodec.Decoded decoded = codec.read(saved);
                 return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), CubeCodec.tags(saved, CubeCodec.ENTITIES), true,
-                        !saved.getBoolean(CubeCodec.UNTOUCHED), saved.getBoolean(CubeCodec.UNPOPULATED), false, null);
+                        !saved.getBoolean(CubeCodec.UNTOUCHED), saved.getBoolean(CubeCodec.UNPOPULATED), false, null, openFaces(decoded.section()));
             }
         } catch (IOException | RuntimeException failure) {
             EarthPlatformMod.LOGGER.error("Could not read saved cube {}; regenerating it", CubeKey.toString(key), failure);
@@ -218,9 +250,9 @@ public final class ServerCubeWorld extends CubeWorld {
             LevelChunkSection section = generator.generate(x, y, z, blockEntities, entities);
             int[] band = surfaceBand(x, z);
             boolean surface = band[0] + SAVED_BELOW == y;
-            return new Ready(key, x, y, z, section, blockEntities, entities, false, false, surface, y >= band[0] && y <= band[1], null);
+            return new Ready(key, x, y, z, section, blockEntities, entities, false, false, surface, y >= band[0] && y <= band[1], null, openFaces(section));
         } catch (RuntimeException failure) {
-            return new Ready(key, x, y, z, null, List.of(), List.of(), false, false, false, false, failure);
+            return new Ready(key, x, y, z, null, List.of(), List.of(), false, false, false, false, failure, 0);
         }
     }
 
@@ -338,6 +370,7 @@ public final class ServerCubeWorld extends CubeWorld {
             if (entity != null) cube.blockEntities.put(pos, entity);
         }
         adopt(cube);
+        openBehind(cube, result.open);
         // Points of interest at cubic heights live only in memory: rebuild them from the blocks.
         server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
         CubicPoiClaims.reclaim(server, SectionPos.of(cube.x, cube.y, cube.z));
@@ -366,6 +399,11 @@ public final class ServerCubeWorld extends CubeWorld {
             adoptReady(result);
         }
         for (Long key; (key = droppedKeys.poll()) != null; ) pending.remove(key.longValue());
+        for (long[] low; (low = lowsReady.poll()) != null; ) {
+            lowsPending.remove(low[0]);
+            lows.put(low[0], (int) low[1]);
+            for (int i = 2; i < low.length; i++) kept.add(low[i]);
+        }
         far.nearWaiting(!pending.isEmpty());
         int h = horizontalRadius(), v = Cubic.VERTICAL_RADIUS;
         CubeOffsets offsets = CubeOffsets.of(h, v);
@@ -383,7 +421,8 @@ public final class ServerCubeWorld extends CubeWorld {
                 if (ticks % 10 == 0) unsend(watcher, 1, 1, cx, cy, cz);
                 continue;
             }
-            requestAround(offsets, cx, cy, cz, share);
+            watcher.deep = deep(watcher);
+            requestAround(watcher, offsets, cx, cy, cz, share);
             send(watcher, offsets, cx, cy, cz);
             if (ticks % 10 == 0) unsend(watcher, h + 1, v + 1, cx, cy, cz);
         }
@@ -430,21 +469,121 @@ public final class ServerCubeWorld extends CubeWorld {
         wantedAround = java.util.Arrays.copyOf(at, i);
     }
 
-    private void requestAround(CubeOffsets offsets, int cx, int cy, int cz, int limit) {
+    private void requestAround(Watcher watcher, CubeOffsets offsets, int cx, int cy, int cz, int limit) {
         for (int i = 0; i < offsets.size() && limit > 0 && pending.size() < MAX_PENDING; i++) {
-            long key = CubeKey.pack(cx + offsets.dx(i), cy + offsets.dy(i), cz + offsets.dz(i));
+            int dx = offsets.dx(i), dz = offsets.dz(i);
+            long key = CubeKey.pack(cx + dx, cy + offsets.dy(i), cz + dz);
+            if (cubes.containsKey(key) || pending.contains(key)) continue;
+            // Buried rock far from a surface player waits until someone goes underground; so does a cube
+            // whose ground is not worked out yet, for a tick or two.
+            if (!watcher.deep && !near(dx, dz, NEAR) && buried(cx + dx, cy + offsets.dy(i), cz + dz) != 0) continue;
             if (request(key, false)) limit--;
         }
     }
 
+    /** Workers: bits 0-5 (down, up, north, south, west, east) for the faces of a cube with a block on them that light and sight pass. */
+    private static int openFaces(LevelChunkSection section) {
+        if (section.hasOnlyAir()) return 63;
+        int open = 0;
+        for (int a = 0; a < 16 && open != 63; a++) for (int b = 0; b < 16; b++) {
+            if ((open & 1) == 0 && !section.getBlockState(a, 0, b).canOcclude()) open |= 1;
+            if ((open & 2) == 0 && !section.getBlockState(a, 15, b).canOcclude()) open |= 2;
+            if ((open & 4) == 0 && !section.getBlockState(a, b, 0).canOcclude()) open |= 4;
+            if ((open & 8) == 0 && !section.getBlockState(a, b, 15).canOcclude()) open |= 8;
+            if ((open & 16) == 0 && !section.getBlockState(0, a, b).canOcclude()) open |= 16;
+            if ((open & 32) == 0 && !section.getBlockState(15, a, b).canOcclude()) open |= 32;
+        }
+        return open;
+    }
+
+    /**
+     * Server thread. Opens the buried cubes right behind the open faces of a cube that is not buried itself, such as
+     * the rock under a cave going down from the ground band, so a cave seen from above carries on another 16 blocks
+     * before any stand-in's stone. Opened cubes don't open further: caves join up under most ground, and following
+     * them would bring back nearly all the rock.
+     */
+    private void openBehind(Cube cube, int open) {
+        if (open == 0 || buried(cube.x, cube.y, cube.z) != 0 || opened.contains(cube.key)) return;
+        for (int face = 0; face < 6; face++) {
+            if ((open & 1 << face) == 0) continue;
+            int x = cube.x + (face == 4 ? -1 : face == 5 ? 1 : 0), y = cube.y + (face == 0 ? -1 : face == 1 ? 1 : 0), z = cube.z + (face == 2 ? -1 : face == 3 ? 1 : 0);
+            if (buried(x, y, z) == 1) opened.add(CubeKey.pack(x, y, z));
+        }
+    }
+
+    private static boolean near(int dx, int dz, int reach) { return dx * dx + dz * dz <= reach * reach + reach; }
+
+    /**
+     * Server thread. 1 when a cube lies under at least {@link #COVER} blocks of rock below the lowest ground of
+     * its own and the four next cube columns, 0 when not, -1 while that ground is being worked out.
+     */
+    private int buried(int x, int y, int z) {
+        if (ALL_BURIED) return 0;
+        if (!kept.isEmpty() && kept.contains(CubeKey.pack(x, y, z)) || !opened.isEmpty() && opened.contains(CubeKey.pack(x, y, z))) return 0;
+        int low = lowAround(x, z);
+        if (low == UNKNOWN_LOW) return -1;
+        return (y << 4) + 15 < low - COVER ? 1 : 0;
+    }
+
+    /** Server thread. Lowest ground of a cube column and the four next to it, or {@link #UNKNOWN_LOW} while asked for. */
+    private int lowAround(int x, int z) {
+        int low = lowest(x, z), known = 1;
+        for (int side = 0; side < 4; side++) {
+            int each = lowest(x + (side == 0 ? 1 : side == 1 ? -1 : 0), z + (side == 2 ? 1 : side == 3 ? -1 : 0));
+            if (each == UNKNOWN_LOW) known = 0;
+            else low = Math.min(low, each);
+        }
+        return known == 0 || low == UNKNOWN_LOW ? UNKNOWN_LOW : low;
+    }
+
+    private int lowest(int x, int z) {
+        long column = CubeKey.column(x, z);
+        int low = lows.get(column);
+        if (low == UNKNOWN_LOW && !closed && lowsPending.add(column)) {
+            workers.execute(() -> {
+                LongArrayList result = new LongArrayList();
+                result.add(column);
+                // Ground that can't be had yet counts as nothing buried there: its cubes are all made, as before.
+                try {
+                    result.add(generator.lowestGround(x, z));
+                    result.addAll(storage.savedIn(x, x, z, z));
+                }
+                catch (IOException | RuntimeException failure) { result.size(1); result.add(Integer.MIN_VALUE); }
+                lowsReady.add(result.toLongArray());
+            });
+        }
+        return low;
+    }
+
+    /**
+     * Whether a player is underground: {@link #COVER} blocks under the generated ground where they stand, until back
+     * up near it, so walking along at that depth does not switch back and forth.
+     */
+    private boolean deep(Watcher watcher) {
+        if (ALL_BURIED) return true;
+        int ground;
+        try { ground = generator.surfaceY(watcher.player.getBlockX(), watcher.player.getBlockZ()); }
+        catch (RuntimeException missing) { return watcher.deep; }
+        return watcher.player.getBlockY() < ground - (watcher.deep ? COVER / 2 : COVER);
+    }
+
     private void send(Watcher watcher, CubeOffsets offsets, int cx, int cy, int cz) {
-        int budget = SEND_CUBES_PER_TICK, bytes = Throttle.allowance(watcher.player);
+        int budget = SEND_CUBES_PER_TICK, standIns = 4 * SEND_CUBES_PER_TICK, bytes = Throttle.allowance(watcher.player);
         for (int i = 0; i < offsets.size() && budget > 0 && bytes > 0; i++) {
-            int x = cx + offsets.dx(i), y = cy + offsets.dy(i), z = cz + offsets.dz(i);
+            int dx = offsets.dx(i), dz = offsets.dz(i), x = cx + dx, y = cy + offsets.dy(i), z = cz + dz;
             long key = CubeKey.pack(x, y, z);
             if (watcher.sent.contains(key)) continue;
             Cube cube = cubes.get(key);
-            if (cube == null) continue;
+            if (cube == null) {
+                // Buried rock not made yet goes as a stand-in, replaced by the real cube once it is made.
+                if (standIns <= 0 || watcher.stood.contains(key) || near(dx, dz, NEAR) || buried(x, y, z) != 1) continue;
+                CubePayloads.CubeData data = new CubePayloads.CubeData(x, y, z, standIn, List.of());
+                PacketDistributor.sendToPlayer(watcher.player, data);
+                watcher.stood.add(key);
+                bytes -= data.size();
+                standIns--;
+                continue;
+            }
             long column = CubeKey.column(x, z);
             if (watcher.columns.add(column)) {
                 PacketDistributor.sendToPlayer(watcher.player, new CubePayloads.ColumnTops(x, z, topsFor(x, z).clone()));
@@ -452,6 +591,7 @@ public final class ServerCubeWorld extends CubeWorld {
             CubePayloads.CubeData data = data(cube);
             PacketDistributor.sendToPlayer(watcher.player, data);
             watcher.sent.add(key);
+            watcher.stood.remove(key);
             bytes -= data.size();
             budget--;
         }
@@ -479,6 +619,10 @@ public final class ServerCubeWorld extends CubeWorld {
     private void unsend(Watcher watcher, int h, int v, int cx, int cy, int cz) {
         LongArrayList dropped = new LongArrayList();
         for (LongIterator it = watcher.sent.iterator(); it.hasNext(); ) {
+            long key = it.nextLong();
+            if (!CubeOffsets.within(CubeKey.x(key) - cx, CubeKey.y(key) - cy, CubeKey.z(key) - cz, h, v)) { dropped.add(key); it.remove(); }
+        }
+        for (LongIterator it = watcher.stood.iterator(); it.hasNext(); ) {
             long key = it.nextLong();
             if (!CubeOffsets.within(CubeKey.x(key) - cx, CubeKey.y(key) - cy, CubeKey.z(key) - cz, h, v)) { dropped.add(key); it.remove(); }
         }
@@ -521,11 +665,16 @@ public final class ServerCubeWorld extends CubeWorld {
         }
     }
 
-    private boolean watched(long key, int h, int v) {
+    private boolean watched(long key, int h, int v) { return watched(key, h, v, false); }
+
+    /** {@code edited} cubes stay while near anyone, buried or not, and once saved are never stood in for. */
+    private boolean watched(long key, int h, int v, boolean edited) {
         int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
         for (Watcher watcher : watchers.values()) {
-            if (CubeOffsets.within(x - (watcher.player.getBlockX() >> 4), y - (watcher.player.getBlockY() >> 4),
-                    z - (watcher.player.getBlockZ() >> 4), h, v)) return true;
+            int dx = x - (watcher.player.getBlockX() >> 4), dz = z - (watcher.player.getBlockZ() >> 4);
+            if (!CubeOffsets.within(dx, y - (watcher.player.getBlockY() >> 4), dz, h, v)) continue;
+            // Buried rock a surface player has walked away from goes, a little past where it would be made.
+            if (watcher.deep || edited || near(dx, dz, NEAR + 2) || buried(x, y, z) != 1) return true;
         }
         return false;
     }
@@ -546,7 +695,7 @@ public final class ServerCubeWorld extends CubeWorld {
 
     private void unload(int h, int v) {
         List<Cube> drop = new ArrayList<>();
-        for (Cube cube : cubes.values()) if (!watched(cube.key, h, v)) drop.add(cube);
+        for (Cube cube : cubes.values()) if (!watched(cube.key, h, v, cube.edited)) drop.add(cube);
         if (drop.isEmpty()) return;
         for (Cube cube : drop) {
             store(cube);
@@ -555,6 +704,9 @@ public final class ServerCubeWorld extends CubeWorld {
         }
         // Keep sky tops near players only; far columns are rebuilt from the generator and cubes.
         tops.long2ObjectEntrySet().removeIf(entry -> !columnWatched(entry.getLongKey(), h * 3));
+        lows.long2IntEntrySet().removeIf(entry -> !columnWatched(entry.getLongKey(), h * 3));
+        kept.removeIf(key -> !lows.containsKey(CubeKey.column(CubeKey.x(key), CubeKey.z(key))) && !lowsPending.contains(CubeKey.column(CubeKey.x(key), CubeKey.z(key))));
+        opened.removeIf(key -> !lows.containsKey(CubeKey.column(CubeKey.x(key), CubeKey.z(key))));
         long start = System.nanoTime();
         storage.flushLater();
         Timings.CUBE_FLUSH.since(start);
@@ -720,6 +872,8 @@ public final class ServerCubeWorld extends CubeWorld {
             }
             storage.put(cube.key, tag);
             cube.dirty = false;
+            // Edited rock now comes back from the save, not the generator, so it is never stood in for.
+            if (buried(cube.x, cube.y, cube.z) != 0) kept.add(cube.key);
             // Saves that only record block entities or spawning leave far terrain as it was.
             if (cube.reshaped) {
                 cube.reshaped = false;
@@ -794,7 +948,9 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     public String describe() {
-        return generator.id() + ", " + cubes.size() + " cubes loaded, " + pending.size() + " pending (" + generated + " made, " + dropped + " dropped as no longer wanted), " + light.size() + " lit, "
+        int standing = 0;
+        for (Watcher watcher : watchers.values()) standing += watcher.stood.size();
+        return generator.id() + ", " + cubes.size() + " cubes loaded, " + standing + " buried cubes stood in for, " + opened.size() + " opened by caves, " + pending.size() + " pending (" + generated + " made, " + dropped + " dropped as no longer wanted), " + light.size() + " lit, "
                 + watchers.size() + " watching, " + far.cached() + " far columns cached" + (failures > 0 ? ", " + failures + " generation failures" : "");
     }
 

@@ -40,6 +40,15 @@ public interface CubeGenerator {
     default void attach(ServerLevel level) {}
     /** Generated ground height (top solid block) for a column. */
     int surfaceY(int x, int z);
+    /**
+     * Lowest generated ground of a 16 by 16 cube column, for telling which cubes lie buried under it. Slow the first
+     * time for a column; call off-thread.
+     */
+    default int lowestGround(int cubeX, int cubeZ) {
+        int low = Integer.MAX_VALUE;
+        for (int i = 0; i < 256; i++) low = Math.min(low, surfaceY((cubeX << 4) + (i & 15), (cubeZ << 4) + (i >> 4)));
+        return low;
+    }
     /** Top generated water block of a column, or {@link Integer#MIN_VALUE} where it is dry. */
     default int waterY(int x, int z) { return Integer.MIN_VALUE; }
     /** Highest generated block that blocks skylight in a column, used as the initial sky top. */
