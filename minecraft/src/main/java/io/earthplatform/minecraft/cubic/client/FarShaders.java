@@ -248,7 +248,10 @@ final class FarShaders {
 
     /** Shared by both fragment shaders: the face's texel (or average colour), before tint. */
     private static final String SAMPLE = SMOOTH_IN + """
+            #ifndef EARTH_TILE_IN
+            #define EARTH_TILE_IN
             in vec2 earth_tile;
+            #endif
             in float earth_distance;
             flat in vec4 earth_sprite;
             flat in vec3 earth_average;
@@ -339,6 +342,20 @@ final class FarShaders {
      */
     private static final String SLOPE = SMOOTH_IN + """
             flat in uint earth_normal;
+            #ifndef EARTH_TILE_IN
+            #define EARTH_TILE_IN
+            in vec2 earth_tile;
+            #endif
+
+            // How far a face is lit as its ground's slope rather than as its own face. Where a voxel
+            // spans plenty of pixels it is lit face by face, as a block is, with a lit top and shaded
+            // sides. Smaller, a stepped hillside lit that way breaks into stripes of lit treads and
+            // dark risers, so there the slope takes most of it over and the steps keep only a
+            // light relief. A texture spans half a voxel.
+            float earth_slopeShare() {
+                float pixels = 2.0 / max(length(fwidth(earth_tile)), 1e-5);
+                return mix(0.85, 0.0, smoothstep(2.0, 10.0, pixels));
+            }
 
             vec3 earth_slope() {
                 if (earth_smooth > 0.5) return normalize(earth_vnormal);
@@ -362,7 +379,8 @@ final class FarShaders {
                 // Near by, smooth lighting darkens every stair corner of a stepped slope; flat ground
                 // and sheer walls have none, so the far slope darkens most at 45 degrees to match.
                 float corners = 1.0 - 0.9 * slope.y * (1.0 - slope.y);
-                return (weight.x * earth_Shade[4] + weight.y * earth_Shade[1] + weight.z * earth_Shade[2]) * corners;
+                float even = (weight.x * earth_Shade[4] + weight.y * earth_Shade[1] + weight.z * earth_Shade[2]) * corners;
+                return mix(earth_Shade[earth_face], even, earth_slopeShare());
             }
             """;
 
@@ -411,11 +429,12 @@ final class FarShaders {
 
             """ + SLOPE + """
 
-            // A far voxel's face lit as the slope its stack of voxels stands for, so hillsides
-            // don't show as stripes of lit tops and dark risers; foliage keeps its face's normal.
+            // A far voxel's face lit as its own face, as a block is, until it shrinks so small that
+            // the slope its stack of voxels stands for takes over (see earth_slopeShare); foliage
+            // keeps its face's normal.
             vec3 earth_packNormal(vec3 face) {
                 vec3 slope = earth_slope();
-                return slope == vec3(0.0) ? face : slope;
+                return slope == vec3(0.0) ? face : normalize(mix(face, slope, earth_slopeShare()));
             }
             """;
 

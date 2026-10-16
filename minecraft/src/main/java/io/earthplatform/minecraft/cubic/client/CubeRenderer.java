@@ -70,6 +70,15 @@ public final class CubeRenderer {
     /** Cubes whose current contents have a mesh (or need none), so far terrain can leave them out. */
     private final LongOpenHashSet compiled = new LongOpenHashSet();
     private final ConcurrentLinkedQueue<CubeMesher.Built> built = new ConcurrentLinkedQueue<>();
+    /**
+     * Meshes of cubes the server has taken back, still drawn until the far terrain under them has
+     * filled the hole it left for them, and the tick each must go by at the latest. Dropped at
+     * once, a camera climbing out of the band of loaded cubes saw the whole ground beneath it vanish
+     * until the far columns there had remeshed.
+     */
+    private final Long2ObjectOpenHashMap<Mesh> retiring = new Long2ObjectOpenHashMap<>();
+    private final Long2IntOpenHashMap retireBy = new Long2IntOpenHashMap();
+    private static final int RETIRE_TICKS = 100;
     private final List<Mesh> visible = new ArrayList<>();
     private int ticks, drawnFrame = -1, translucentFrame = -1, frame;
     /** How long the last frame took, so meshing and uploads keep pace however low the frame rate goes. */
@@ -126,7 +135,32 @@ public final class CubeRenderer {
         light.remove(key);
         compiled.remove(key);
         Mesh mesh = meshes.remove(key);
-        if (mesh != null) mesh.close();
+        if (mesh == null) return;
+        Mesh older = retiring.put(key, mesh);
+        if (older != null) older.close();
+        retireBy.put(key, ticks + RETIRE_TICKS);
+    }
+
+    /** Stops drawing a dropped cube's mesh once far terrain covers its place, or once it has waited long enough. */
+    private void retire() {
+        if (retiring.isEmpty()) return;
+        FarRenderer far = world.far();
+        for (var it = retiring.long2ObjectEntrySet().fastIterator(); it.hasNext(); ) {
+            var entry = it.next();
+            long key = entry.getLongKey();
+            if (ticks <= retireBy.get(key) && far != null && far.holeFor(key)) continue;
+            entry.getValue().close();
+            it.remove();
+            retireBy.remove(key);
+        }
+    }
+
+    /** A cube is drawn again: its old mesh, if still retiring, goes. */
+    private void unretire(long key) {
+        Mesh mesh = retiring.remove(key);
+        if (mesh == null) return;
+        mesh.close();
+        retireBy.remove(key);
     }
 
     void blockChanged(BlockPos pos, BlockState old, BlockState state) {
@@ -165,7 +199,10 @@ public final class CubeRenderer {
 
     // Scheduling ---------------------------------------------------------------------------------
 
-    public void tick() { ticks++; }
+    public void tick() {
+        ticks++;
+        retire();
+    }
 
     private boolean neighboursReady(long key) {
         int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
@@ -202,6 +239,7 @@ public final class CubeRenderer {
     }
 
     private void compileEmpty(long key) {
+        unretire(key);
         Mesh mesh = meshes.remove(key);
         if (mesh != null) mesh.close();
         light.remove(key);
@@ -275,6 +313,7 @@ public final class CubeRenderer {
             if (closed || world.cube(result.key()) == null || result.version() < 0) { result.free(); continue; }
             if (result.light() != null) light.put(result.key(), result.light());
             compiled.add(result.key());
+            unretire(result.key());
             Mesh mesh = meshes.get(result.key());
             if (mesh == null) { mesh = new Mesh(result.key()); meshes.put(result.key(), mesh); }
             boolean[] present = new boolean[mesh.buffers.length];
@@ -304,13 +343,16 @@ public final class CubeRenderer {
         Timings.CUBE_UPLOAD.since(start);
         schedule(position);
         visible.clear();
-        for (Mesh mesh : meshes.values()) {
-            if (!frustum.isVisible(mesh.box)) continue;
-            double dx = mesh.x + 8 - position.x, dy = mesh.y + 8 - position.y, dz = mesh.z + 8 - position.z;
-            mesh.distance = dx * dx + dy * dy + dz * dz;
-            visible.add(mesh);
-        }
+        for (Mesh mesh : meshes.values()) see(mesh, frustum, position);
+        for (Mesh mesh : retiring.values()) see(mesh, frustum, position);
         visible.sort(Comparator.comparingDouble(mesh -> mesh.distance));
+    }
+
+    private void see(Mesh mesh, Frustum frustum, Vec3 position) {
+        if (!frustum.isVisible(mesh.box)) return;
+        double dx = mesh.x + 8 - position.x, dy = mesh.y + 8 - position.y, dz = mesh.z + 8 - position.z;
+        mesh.distance = dx * dx + dy * dy + dz * dz;
+        visible.add(mesh);
     }
 
     public void beginFrame() {
@@ -362,6 +404,7 @@ public final class CubeRenderer {
         shadow.prepare(position.x, position.y, position.z);
         List<Mesh> all = new ArrayList<>(meshes.size());
         for (Mesh mesh : meshes.values()) if (shadow.isVisible(mesh.box)) all.add(mesh);
+        for (Mesh mesh : retiring.values()) if (shadow.isVisible(mesh.box)) all.add(mesh);
         for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {
             RenderType type = CubeMesher.LAYERS.get(i);
             if (type == RenderType.translucent() || type == RenderType.tripwire()) continue;
@@ -426,6 +469,9 @@ public final class CubeRenderer {
         closed = true;
         for (Mesh mesh : meshes.values()) mesh.close();
         meshes.clear();
+        for (Mesh mesh : retiring.values()) mesh.close();
+        retiring.clear();
+        retireBy.clear();
         light.clear();
         compiled.clear();
         dirty.clear();

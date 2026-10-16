@@ -118,7 +118,9 @@ public final class FarRenderer {
     /** The player's horizontal look direction, so columns in view come before those behind. */
     private double lookX, lookZ = 1;
     /** Columns the view wants at their own level, and how many of them are drawn: how settled the far terrain is. */
-    private int wanted, settled;
+    private int wanted, settled, planSize;
+    /** Columns kept beyond what the plan wants, for going back over ground just left. */
+    private static final int SPARE_COLUMNS = 4000;
     private final ConcurrentLinkedQueue<FarMesher.Built> built = new ConcurrentLinkedQueue<>();
     private final List<Column> drawn = new ArrayList<>();
     private final LongOpenHashSet drawnKeys = new LongOpenHashSet();
@@ -160,6 +162,8 @@ public final class FarRenderer {
         /** Block Y just above the column's highest voxel, or MIN_VALUE when it holds only air. */
         final int top;
         @Nullable LongOpenHashSet drawnCubes;
+        /** The cubes left out of the faces it draws now, and of the mesh being built (see {@link FarRenderer#holeFor}). */
+        @Nullable LongOpenHashSet meshedCubes, buildingCubes;
         int lastWanted, version, due = -1, slot = -1;
         /** The slot of a replaced column's faces still drawn here, freed once this column's own faces are up. */
         int oldSlot = -1;
@@ -221,6 +225,7 @@ public final class FarRenderer {
          */
         void takeOver(Column old, @Nullable FarGpu gpu) {
             drawnCubes = old.drawnCubes;
+            meshedCubes = old.meshedCubes;
             faces = old.faces;
             water = old.water;
             waterWalls = old.waterWalls;
@@ -393,6 +398,7 @@ public final class FarRenderer {
             else missing.add(key);
         });
         wanted = counts[0];
+        planSize = all.size();
         settled = counts[1];
         // A request the server dropped (its player had moved on) or one for a place left behind
         // frees its place for the columns wanted now; one still wanted is asked for again later.
@@ -498,7 +504,9 @@ public final class FarRenderer {
         List<Column> old = new ArrayList<>();
         for (Column column : columns.values()) if (column.lastWanted != ticks) old.add(column);
         old.sort(Comparator.comparingInt(column -> column.lastWanted));
-        int excess = columns.size() - MAX_COLUMNS;
+        // The plan alone can want more than MAX_COLUMNS (about 17,000 at the default detail), which
+        // left no room for the columns just behind: every one went at once and came back by download.
+        int excess = columns.size() - Math.max(MAX_COLUMNS, planSize + SPARE_COLUMNS);
         for (Column column : old) {
             if (excess <= 0 && ticks - column.lastWanted <= KEEP_TICKS) break;
             columns.remove(column.key);
@@ -569,7 +577,13 @@ public final class FarRenderer {
         for (Column column : columns.values()) {
             LongOpenHashSet set = sets.get(column.key);
             if (Objects.equals(set, column.drawnCubes)) continue;
+            // A cube gone from under a drawn column leaves a hole until it remeshes: that comes first.
+            boolean lost = column.drawnCubes != null && (set == null || !set.containsAll(column.drawnCubes));
             column.drawnCubes = set;
+            if (lost && drawnKeys.contains(column.key)) {
+                column.due = ticks;
+                continue;
+            }
             // Coarse columns under the finer ones near the player see every cube that compiles there;
             // remeshing each at once kept the far meshers busy with columns nobody sees, so hidden
             // ones gather their changes into one remesh a while later.
@@ -611,6 +625,7 @@ public final class FarRenderer {
         if (column.building) { column.stale = true; return; }
         column.building = true;
         column.stale = false;
+        column.buildingCubes = column.drawnCubes;
         if (column.slot < 0) column.slot = gpu.slot(column.x0, column.baseY(), column.z0, column.level);
         FarMesher.Side[] sides = new FarMesher.Side[4], diagonals = new FarMesher.Side[4];
         for (int i = 0; i < 4; i++) {
@@ -654,6 +669,7 @@ public final class FarRenderer {
                 column.bytes = result.bytes();
                 gpu.free(column.faces);
                 column.faces = gpu.upload(result.quads(), result.counts(), result.grid());
+                column.meshedCubes = column.buildingCubes;
                 column.water = upload(column.water, result.water());
                 for (int side = 0; side < 4; side++) column.waterWalls[side] = upload(column.waterWalls[side], result.waterWalls()[side]);
                 column.freeOldSlots(gpu);
@@ -1009,6 +1025,26 @@ public final class FarRenderer {
         for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
             Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
             if (child != null && child.stamp == stamp) stamp(child, 0, false);
+        }
+        return false;
+    }
+
+    /**
+     * Whether far terrain drawn now still leaves a hole for a cube, so the cube renderer keeps
+     * drawing a cube it has dropped there (see {@link CubeRenderer#drop}).
+     */
+    boolean holeFor(long cube) {
+        int bx = CubeKey.x(cube) << 4, bz = CubeKey.z(cube) << 4;
+        for (int level = Far.MIN_LEVEL; level <= Far.MAX_LEVEL; level++) {
+            int v = Far.voxel(level);
+            for (int x = Far.column(bx - v, level); x <= Far.column(bx + 15 + v, level); x++) {
+                for (int z = Far.column(bz - v, level); z <= Far.column(bz + 15 + v, level); z++) {
+                    long key = Far.key(level, x, z);
+                    if (!drawnKeys.contains(key)) continue;
+                    Column column = columns.get(key);
+                    if (column != null && column.meshedCubes != null && column.meshedCubes.contains(cube)) return true;
+                }
+            }
         }
         return false;
     }
