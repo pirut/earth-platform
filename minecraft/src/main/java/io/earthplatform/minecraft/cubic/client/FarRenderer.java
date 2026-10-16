@@ -178,6 +178,8 @@ public final class FarRenderer {
         /** Whether its children were drawn in its place last frame, and when it last began to fade (see {@link FarGpu#now}), or 0. */
         boolean split;
         int stamp;
+        /** Whether it is fading back in over its children, the camera having moved off (see {@link FarRenderer#visit}). */
+        boolean merging;
 
         Column(long key, int bottom, LevelChunkSection[] sections, char[] drops) {
             this.key = key;
@@ -226,6 +228,7 @@ public final class FarRenderer {
             meshed = true;
             split = old.split;
             stamp = old.stamp;
+            merging = old.merging;
             // Meshes of the old column still in flight no longer match.
             version = nextVersion();
             // The old faces use the old column's slot, or the one it kept from the column before it.
@@ -920,6 +923,17 @@ public final class FarRenderer {
             boolean arriving = false;
             if (FADE && meshed) {
                 int now = FarGpu.now();
+                if (column.merging) {
+                    // The camera has come back mid-merge: the children turn round and fade back in from where they got to.
+                    int start = now - Math.max(0, FarShaders.FADE_TICKS - age(column, now)) & 0x7FFFFFF;
+                    column.merging = false;
+                    column.split = true;
+                    stamp(column, start == 0 ? 1 : start);
+                    for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
+                        Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+                        if (child != null && child.meshed) stamp(child, column.stamp);
+                    }
+                }
                 if (!column.split) {
                     // Its children have just all arrived: they fade in over it rather than pop in, once
                     // its own fade in over its parent is done, so levels sharpen one after another.
@@ -944,11 +958,59 @@ public final class FarRenderer {
             for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) visit(level - 1, 2 * x + dx, 2 * z + dz, bx, bz, band || arriving);
             return;
         }
+        boolean wasSplit = column != null && column.split;
         if (column != null) column.split = false;
         if (meshed) {
+            if (FADE && (wasSplit || column.merging) && merge(column, level, x, z, wasSplit)) return;
             column.fade = fading ? FarGpu.FADE_OUT : FarGpu.NO_FADE;
             drawn.add(column);
         }
+    }
+
+    /**
+     * Fades a column back in over its children once the camera has moved off and it no longer
+     * needs them, the way they faded in over it, instead of swapping them out at once: flying along,
+     * a level's edge moves over the land behind as well as ahead. Returns false once the fade is done.
+     */
+    private boolean merge(Column column, int level, int x, int z, boolean starting) {
+        int now = FarGpu.now();
+        // With a child already gone, the column would fade in over a hole: it is drawn whole instead.
+        boolean whole = true;
+        for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
+            Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+            if (child == null || !child.meshed) whole = false;
+        }
+        if (starting && whole) {
+            // Mid-way through fading in over it, the children go no further and turn back from there.
+            int left = column.merging ? 0 : Math.max(0, FarShaders.FADE_TICKS - age(column, now));
+            int start = now - left & 0x7FFFFFF;
+            column.merging = true;
+            stamp(column, start == 0 ? 1 : start, true);
+            for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
+                Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+                if (child != null && child.meshed) stamp(child, column.stamp, true);
+            }
+        }
+        if (whole && column.merging && age(column, now) < FarShaders.FADE_TICKS) {
+            column.fade = FarGpu.FADE_IN;
+            drawn.add(column);
+            for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
+                Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+                child.fade = FarGpu.FADE_OUT;
+                drawn.add(child);
+            }
+            return true;
+        }
+        if (!column.merging) return false;
+        // Done: no stale merge left on any of them for the next fade to start from.
+        int stamp = column.stamp;
+        column.merging = false;
+        stamp(column, 0, false);
+        for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
+            Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+            if (child != null && child.stamp == stamp) stamp(child, 0, false);
+        }
+        return false;
     }
 
     /** Hundredths of a second since a column last began to fade, on the clock {@link FarGpu#now} keeps. */
@@ -957,11 +1019,14 @@ public final class FarRenderer {
     }
 
     /** Starts a column's fade now, in the slots its faces are drawn with. */
-    private void stamp(Column column, int now) {
+    private void stamp(Column column, int now) { stamp(column, now, false); }
+
+    /** Starts a column's fade, or a merge's (see {@link #merge}), at a time, or with 0 clears it. */
+    private void stamp(Column column, int now, boolean merging) {
         column.stamp = now;
         if (gpu == null) return;
-        gpu.stamp(column.slot, now);
-        gpu.stamp(column.oldSlot, now);
+        gpu.stamp(column.slot, now, merging);
+        gpu.stamp(column.oldSlot, now, merging);
     }
 
     /** True when a column's water is drawn this frame: drawn, and not fading in over finer water. */
