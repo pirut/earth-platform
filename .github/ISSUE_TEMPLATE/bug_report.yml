@@ -11,7 +11,7 @@ body:
     attributes:
       label: Earth Platform version
       description: From Mods → Earth Platform, or the jar's file name.
-      placeholder: 0.1.0-alpha.40
+      placeholder: 0.1.0-alpha.41
     validations:
       required: true
   - type: input

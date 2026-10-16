@@ -1,10 +1,10 @@
 # Third-party notices
 
-Earth Platform is licensed LGPL-3.0-only (see LICENSE and COPYING). This file lists the third-party data, documents and build files in the repository and the mod jar, and the services the mod reads at runtime. Player-facing credits are in [CREDITS.md](CREDITS.md); the licence audit is in [docs/release/LICENSING-AUDIT.md](docs/release/LICENSING-AUDIT.md). The mod jar contains no third-party code: only `io/earthplatform` classes, our own resources and the data listed below.
+Earth Platform is licensed LGPL-3.0-only (see LICENSE and COPYING). This file lists the third-party data, documents and build files in the repository and the mod jar, and the services the mod reads at runtime. Player-facing credits are in [CREDITS.md](CREDITS.md); the license audit is in [docs/release/LICENSING-AUDIT.md](docs/release/LICENSING-AUDIT.md). The mod jar contains no third-party code: only `io/earthplatform` classes, our own resources and the data listed below.
 
 ## Build files
 
-- The Gradle build in `minecraft/` started from the NeoForged MDK template, © 2023 NeoForged project, MIT License; the licence text is in `minecraft/TEMPLATE_LICENSE.txt`.
+- The Gradle build in `minecraft/` started from the NeoForged MDK template, © 2023 NeoForged project, MIT License; the license text is in `minecraft/TEMPLATE_LICENSE.txt`.
 - `minecraft/gradlew` and `minecraft/gradlew.bat` are the Gradle wrapper scripts, © the original authors (Gradle), Apache License 2.0, as stated in their headers.
 - Neither is part of the mod jar, apart from the layout of `neoforge.mods.toml`, which follows the template.
 
@@ -26,17 +26,17 @@ NASA Blue Marble Next Generation (bundled as `minecraft/src/main/resources/asset
 
 Regional relief and surface appearance are explicitly procedural heuristics layered on pinned measurements. They are not additional measured elevation, climate, biome or geology data.
 
-Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm, BioScience 67(6):534-545, CC BY 4.0; derived 0.05 degree raster. Bundled as `minecraft/src/main/resources/earthplatform/ecoregions.png` (derived raster) and `ecoregions.tsv` (ecoregion names). https://doi.org/10.1093/biosci/bix014 . Changes: polygons rasterised to 0.05 degree cells.
+Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm, BioScience 67(6):534-545, CC BY 4.0; derived 0.05 degree raster. Bundled as `minecraft/src/main/resources/earthplatform/ecoregions.png` (derived raster) and `ecoregions.tsv` (ecoregion names). https://doi.org/10.1093/biosci/bix014 . Changes: polygons rasterized to 0.05 degree cells.
 
 ## Separately installed shader inputs
 
-Shaders are optional. Players install Iris (1.8.14 or a later 1.8 release, LGPL-3.0), Sodium (0.8.12 or a later 0.8 release, PolyForm Shield 1.0.0) and a shader pack such as Photon (Photon Shaders License Agreement) themselves. None of their files, shaders or licences ship in Earth Platform; the mod only compiles against Iris and Sodium and mixes into them at runtime. When the player's driver needs it, the mod adapts the player's own Photon copy on their machine (see the licensing audit); the jar contains no Photon text.
+Shaders are optional. Players install Iris (1.8.14 or a later 1.8 release, LGPL-3.0), Sodium (0.8.12 or a later 0.8 release, PolyForm Shield 1.0.0) and a shader pack such as Photon (Photon Shaders License Agreement) themselves. None of their files, shaders or licenses ship in Earth Platform; the mod only compiles against Iris and Sodium and mixes into them at runtime. When the player's driver needs it, the mod adapts the player's own Photon copy on their machine (see the licensing audit); the jar contains no Photon text.
 
 ## Provenance documents kept with the test data
 
 The test areas keep copies of the documents their data came with, as a record of where the data came from and under what terms. They are bundled in the jar under `earthplatform/copernicus_proof_data/provenance/` and `earthplatform/worldcover_proof_data/provenance/` (sources in `geography/data/*/provenance/`). Copyright in each stays with its owner:
 
-- `License-COPDEM-30.pdf`, `source-eula.pdf`, `source-metadata.xml`: the Copernicus WorldDEM-30 licence, end-user licence and product metadata, from the European Space Agency and the Copernicus programme.
+- `License-COPDEM-30.pdf`, `source-eula.pdf`, `source-metadata.xml`: the Copernicus WorldDEM-30 license, end-user license and product metadata, from the European Space Agency and the Copernicus programme.
 - `aws-readme.html`, `aws-registry.html`: copies of the dataset pages on the Registry of Open Data on AWS.
 - `WorldCover_PUM_V2.0.pdf`: the ESA WorldCover 2021 Product User Manual, © ESA WorldCover consortium.
 - `data-access.html`: a copy of the ESA WorldCover data access page.
@@ -52,11 +52,17 @@ Earth worlds don't read the test data; it is proposed for removal from the relea
 
 CHELSA V2.1 climatologies 1981-2010 (streamed by `geography/.../globe/ClimateSource` from https://os.zhdk.cloud.switch.ch/chelsav2/GLOBAL/): Karger, D.N. et al. (2017) Climatologies at high resolution for the earth's land surface areas. Scientific Data 4:170122; Karger, D.N. et al. (2021) EnviDat, https://doi.org/10.16904/envidat.228. CC0 1.0.
 
-ESA WorldCover 10 m 2021 v200 (streamed by `WorldCoverSource` from its public cloud-optimised GeoTIFFs): attribution as for the fixture above, CC BY 4.0; classes are mapped to Minecraft biomes and blocks and built-up classes are replaced by surrounding land cover.
+ESA WorldCover 10 m 2021 v200 (streamed by `WorldCoverSource` from its public cloud-optimized GeoTIFFs): attribution as for the fixture above, CC BY 4.0; classes are mapped to Minecraft biomes and blocks and built-up classes are replaced by surrounding land cover.
 
 Copernicus DEM GLO-30 (streamed by `geography/.../globe/CopernicusSource` from https://copernicus-dem-30m.s3.amazonaws.com/ by range reads, cached on disk, to fill fjords and datum-offset ground; off with `-Dearthplatform.earth.copernicus=false`): Elevation fill: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30. Not endorsed by the European Union, ESA or the Copernicus programme.
 
 USGS 3DEP 1/3 arc-second DEM (streamed by `geography/.../globe/UsgsElevation` from https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/ for visited places in the 1,450 cells listed in `3dep-13-v1.txt`, cached on disk; off with `-Dearthplatform.earth.3dep=false`): United States: USGS 3D Elevation Program 1/3 arc-second DEM (public domain), courtesy of the U.S. Geological Survey.
+
+HRDEM 2 m mosaic, digital terrain model (streamed by `geography/.../globe/HrdemElevation` from https://canelevation-dem.s3.ca-central-1.amazonaws.com/hrdem-mosaic-2m/ for visited places in the 56 squares listed in `hrdem-2m-v1.txt`, cached on disk; off with `-Dearthplatform.earth.hrdem=false`): Canada: High Resolution Digital Elevation Model (HRDEM), Natural Resources Canada; contains information licensed under the Open Government Licence - Canada.
+
+IGN RGE ALTI (streamed by `geography/.../globe/IgnElevation` from IGN's Geoplateforme map service, https://data.geopf.fr/wms-r/wms, layer ELEVATION.ELEVATIONGRIDCOVERAGE.HIGHRES, for visited places inside `ign-rgealti-v1.txt`, cached on disk; off with `-Dearthplatform.earth.ign=false`): France: IGN, RGE ALTI, Licence Ouverte / Open Licence 2.0 (Etalab).
+
+GSI elevation tiles (streamed by `geography/.../globe/GsiElevation` from https://cyberjapandata.gsi.go.jp/xyz/ (dem_png, dem5a_png) for visited places inside `gsi-dem-v1.txt`, cached on disk; off with `-Dearthplatform.earth.gsi=false`): Source: Geospatial Information Authority of Japan website, elevation tiles, processed by Earth Platform (出典：国土地理院ウェブサイト、地理院タイルを加工して作成); Public Data License 1.0.
 
 REMA v2.0 mosaics (streamed by `geography/.../globe/RemaSource` from https://pgc-opendata-dems.s3.us-west-2.amazonaws.com/rema/mosaics/v2.0/ only for Antarctic tiles a player visits, cached on disk; off with `-Dearthplatform.earth.rema=false`): Antarctica: Reference Elevation Model of Antarctica (REMA) v2.0, Polar Geospatial Center, University of Minnesota (CC BY 4.0); Howat, I., et al. (2022), The Reference Elevation Model of Antarctica - Mosaics, Version 2, Harvard Dataverse, https://doi.org/10.7910/DVN/EBW8UC. DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685.
 
@@ -66,4 +72,4 @@ Sentinel-2 cloudless 2016 (streamed by `ImagerySource` from https://tiles.maps.e
 
 ## Photon adjusted for macOS
 
-A Photon v1.3b copy adjusted for Apple OpenGL was made for testing. It was used for testing only and will not be distributed: the mod is required to work with stock Photon. It is a derivative of Photon (© 2021-2025 Benjamin Stott "SixthSurge", Photon Shaders License Agreement), keeps that licence file, and is not part of any Earth Platform distribution. Its licence forbids redistribution on platforms that pay creators (such as Modrinth and CurseForge) without the author's written permission.
+A Photon v1.3b copy adjusted for Apple OpenGL was made for testing. It was used for testing only and will not be distributed: the mod is required to work with stock Photon. It is a derivative of Photon (© 2021-2025 Benjamin Stott "SixthSurge", Photon Shaders License Agreement), keeps that license file, and is not part of any Earth Platform distribution. Its license forbids redistribution on platforms that pay creators (such as Modrinth and CurseForge) without the author's written permission.

@@ -6,18 +6,18 @@ First checked on 2026-10-13 against the cubic engine branch (PR #2) and the feat
 
 | Item | Status | What's needed before a public release |
 | --- | --- | --- |
-| EOX Sentinel-2 cloudless (ground colours, PR #4) | Mitigated | Imagery is off by default (JR, 2026-10-13); players opt in. Emailing EOX is an optional follow-up |
-| Photon on Macs | Resolved | No modified pack is distributed (JR: stock Photon only). The mod adapts Photon on the player's machine, which the licence allows; since PR #3 5d8f139 the jar carries no Photon text |
+| EOX Sentinel-2 cloudless (ground colors, PR #4) | Mitigated | Imagery is off by default (JR, 2026-10-13); players opt in. Emailing EOX is an optional follow-up |
+| Photon on Macs | Resolved | No modified pack is distributed (JR: stock Photon only). The mod adapts Photon on the player's machine, which the license allows; since PR #3 5d8f139 the jar carries no Photon text |
 | Public name ("Minecraft Earth") | Resolved | JR chose Earth Platform (2026-10-13); PR #8's offline hint now says Earth Platform (179686a) |
-| Mod licence | Decided | JR chose LGPL-3.0-only (2026-10-13); LICENSE, COPYING and the jar notice are in place |
+| Mod license | Decided | JR chose LGPL-3.0-only (2026-10-13); LICENSE, COPYING and the jar notice are in place |
 | AWS Terrain Tiles | OK | Credited in game and in CREDITS.md |
 | USGS 3DEP for the United States (PR #24) | OK | Public domain (U.S. government work); credited "courtesy of the U.S. Geological Survey" as USGS asks. Canada's HRDEM not used |
 | REMA for Antarctica (PR #24) | OK | CC BY 4.0 (AWS Open Data registry); credited with PGC's required NSF acknowledgement and the dataset citation. EGM96 geoid grid bundled, public domain |
 | ESA WorldCover | OK | Credited, changes noted (CC BY 4.0) |
-| CHELSA climate | OK (licence) / courtesy | CC0; ask CHELSA about public traffic or mirror the four bands |
+| CHELSA climate | OK (license) / courtesy | CC0; ask CHELSA about public traffic or mirror the four bands |
 | RESOLVE Ecoregions 2017 (PR #14) | OK | CC BY 4.0; credited with the citation, and the derived raster noted |
-| Copernicus GLO-30 elevation fill (PR #22) | OK | Same licence as the bundled crop; credited with the liability and no-endorsement lines |
-| River channels (PR #19) | **OK: JRC Global Surface Water v1.4** | JRC GSW is free without restriction of use, with a citation. HydroRIVERS' licence forbids open redistribution of its data, so it can't ship in an LGPL mod (details below) |
+| Copernicus GLO-30 elevation fill (PR #22) | OK | Same license as the bundled crop; credited with the liability and no-endorsement lines |
+| River channels (PR #19) | **OK: JRC Global Surface Water v1.4** | JRC GSW is free without restriction of use, with a citation. HydroRIVERS' license forbids open redistribution of its data, so it can't ship in an LGPL mod (details below) |
 | Hand-traced falls water (PR #16 `KnownWater`) | **Resolved: removed** | Deleted in 3e297c3; falls now come from general rules on Terrarium elevation and WorldCover, so no traced or OSM data ships |
 | Bundled test data (Copernicus GLO-30, NOAA ETOPO, WorldCover) | **Resolved (round 34)** | Left out of the release jar; kept in the repository for tests, credited |
 | Iris, Sodium, Photon | OK | Not bundled; compile-only. Iris and Sodium now accept any later 1.8 and 0.8 release |
@@ -31,7 +31,7 @@ First checked on 2026-10-13 against the cubic engine branch (PR #2) and the feat
 
 What was checked, on PR #2 at 33470c6 and the combined-31 jar:
 
-- **Runtime data.** Every network address in the shipped code (`geography`, `core`, `minecraft` main sources) was listed. There are eight data hosts, all already covered below: AWS Terrain Tiles, Copernicus GLO-30, USGS 3DEP, REMA, ESA WorldCover, CHELSA, JRC GSW, and EOX (opt-in only). Each has its licence, required wording, change note and no-endorsement line in the mods list, CREDITS.md and THIRD_PARTY_NOTICES.md.
+- **Runtime data.** Every network address in the shipped code (`geography`, `core`, `minecraft` main sources) was listed. There are eight data hosts, all already covered below: AWS Terrain Tiles, Copernicus GLO-30, USGS 3DEP, REMA, ESA WorldCover, CHELSA, JRC GSW, and EOX (opt-in only). Each has its license, required wording, change note and no-endorsement line in the mods list, CREDITS.md and THIRD_PARTY_NOTICES.md.
 - **Jar contents.** All 2,150 classes are under `io/earthplatform`; nothing is shaded or jar-in-jar. Every other file was listed and traced: the logo and `far_white.png` are our own; the Blue Marble globe, ecoregion raster, EGM96 grid, 3DEP cell list and test-area data are credited; the language file, data packs, biome and advancement JSON are ours. No sounds, no Minecraft textures and no shader files are bundled.
 - **Libraries.** None bundled. Iris, Sodium and Distant Horizons are `compileOnly` from player-supplied files; Photon is only a checked test input. Minecraft, NeoForge, Mixin, Gson and Guava come from the game itself.
 - **Code originality, re-scanned.** All 933 shipped source files (901 Java, 32 JSON, plus the GLSL held in Java text blocks) were compared with Voxy (534d58e), Distant Horizons core (534e3f2) and mod (4e373c1), Iris 1.21.1 (eb7afb9), Sodium (07b349c), Photon (15458c0), CubicChunks2 (d5b6f90) and Terra++ (b6b49d2), at 30 identical tokens and at 60 tokens with names and numbers replaced. The result is no copied code. The only hits are mixin-plugin method stubs, an NBT `putInt` pair, a direction enum shaped like vanilla's, getters and JSON property chains, and the 29-token `VoxyFragmentParameters` struct, which is Voxy's shader-pack interface and is credited as such. The code never names Voxy's packages. It uses Distant Horizons' (22 files) only for API calls and mixins into an optional, separately installed DH, and the jar task filters `com/seibel` classes out.
@@ -48,7 +48,7 @@ Needs a decision or a code change (handed to the engine work, not changed here):
 2. **Test data in the release jar.** The Everest, Marin and Challenger Deep test areas (about 9 MB) are not read by Earth worlds but ship in the jar, together with third-party documents: ESA's WorldCover user manual and copies of AWS and ESA web pages. These carry no restrictive terms and are noted, but leaving them out of the release jar removes the question.
 3. **Duplicate climate credit.** `EarthGenerator.credits()` appends `Climate: CHELSA ...` twice (lines 241 and 245, from the river merge). It is cosmetic and over-credits, but it reads like a mistake on the arrival screen. Engine-owned one-line fix.
 4. **`recovery/` archive.** Removed from the repository tree on 2026-10-14, together with `unfinished/`, `historical/` and `review-evidence/`. It held 62 `javap` listings of Distant Horizons classes (LGPL-3.0) and its DH LGPL notice; both remain only in git history. Purging history too would need a history rewrite, which is JR's call.
-5. **CHELSA courtesy (unchanged).** Not a licence issue: tell the CHELSA team before a big launch, or mirror the five files we read.
+5. **CHELSA courtesy (unchanged).** Not a license issue: tell the CHELSA team before a big launch, or mirror the five files we read.
 
 ## Data downloaded at runtime
 
@@ -65,7 +65,7 @@ Needs a decision or a code change (handed to the engine work, not changed here):
 ### CHELSA V2.1 climatologies 1981-2010 (climate)
 - Code: `ClimateSource`, HTTP range reads from `https://os.zhdk.cloud.switch.ch/chelsav2/GLOBAL/...`.
 - Terms: [CC0 1.0](https://www.chelsa-climate.org/datasets/chelsa_climatologies) per the CHELSA site and EnviDat. No attribution required; citation requested, and we give it.
-- Courtesy, not licence: every player reads ranges from an academic object store. Before a big launch, either tell the CHELSA team (chelsa-climate.org) or mirror the five files we read (kg2, bio1, bio10, bio12 and the DEM) to our own storage, which CC0 allows.
+- Courtesy, not license: every player reads ranges from an academic object store. Before a big launch, either tell the CHELSA team (chelsa-climate.org) or mirror the five files we read (kg2, bio1, bio10, bio12 and the DEM) to our own storage, which CC0 allows.
 
 ### USGS 3DEP 1/3 arc-second (United States, PR #24 c1cbf0e)
 - What: `UsgsElevation` fetches 3DEP 1/3 arc-second (about 10 m) GeoTIFF tiles from the USGS National Map staged products (`prd-tnm.s3.amazonaws.com`). It does this only for visited places inside the 1,450 1° cells pinned in `3dep-13-v1.txt`, caches them on disk, and blends them over the composite. Off with `-Dearthplatform.earth.3dep=false`. Canada's HRDEM is not used.
@@ -75,43 +75,43 @@ Needs a decision or a code change (handed to the engine work, not changed here):
 
 ### REMA v2.0 (Antarctica, PR #24)
 - What: `RemaSource` reads REMA v2.0 mosaic tiles from the Polar Geospatial Center's `pgc-opendata-dems` bucket on the Registry of Open Data on AWS, only for Antarctic tiles a player visits, and caches them on disk. `RemaElevation` moves the heights from the WGS 84 ellipsoid to EGM96 and lays them over the composite. Off with `-Dearthplatform.earth.rema=false`. ArcticDEM is not used.
-- Terms: the registry entry gives the licence as CC BY 4.0 and points to [PGC's acknowledgement policy](https://www.pgc.umn.edu/guides/user-services/acknowledgement-policy/), checked 2026-10-13. That policy asks users to cite PGC and the dataset and to acknowledge NSF: "DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685." REMA is made from Maxar imagery, but PGC states an exception to the EOCL contract keeps REMA data publicly available, and the open-data release is what we use. OK.
+- Terms: the registry entry gives the license as CC BY 4.0 and points to [PGC's acknowledgement policy](https://www.pgc.umn.edu/guides/user-services/acknowledgement-policy/), checked 2026-10-13. That policy asks users to cite PGC and the dataset and to acknowledge NSF: "DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685." REMA is made from Maxar imagery, but PGC states an exception to the EOCL contract keeps REMA data publicly available, and the open-data release is what we use. OK.
 - Credit: the elevation work's line plus the NSF acknowledgement, in the mods list, CREDITS.md and THIRD_PARTY_NOTICES.md. The Cryosphere 2019 paper is cited in CREDITS.md too.
 - Bundled: `egm96-south.bin` (116,640 bytes), EGM96 geoid heights every half degree south of 50° S, sampled from NGA's EGM96 15' grid as PROJ distributes it. EGM96 is a U.S. government work in the public domain. Credited anyway.
 - Service: an AWS-sponsored open-data bucket meant for public access. No courtesy email needed.
 
-### EOX Sentinel-2 cloudless 2016 (ground colours) — mitigated
+### EOX Sentinel-2 cloudless 2016 (ground colors) — mitigated
 - Code (PR #4): `ImagerySource`, tiles from `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/`, cached under `earthplatform/cache/s2cloudless-2016-v1`.
-- What we know: EOX released the 2016 mosaic under CC BY 4.0 ("free to use for commercial and non-commercial purposes, as long as you provide proper attribution"); later years are CC BY-NC-SA 4.0. EOX's current licence pages describe one EOxCloudless licence for all years: non-commercial use unrestricted with attribution, commercial use only with a paid "EOX Commercial Attribution-RestrictedUse 1.2" licence, and no sub-licensing or redistribution. They no longer state the 2016 terms separately, and they publish no usage terms for the hosted tile service.
+- What we know: EOX released the 2016 mosaic under CC BY 4.0 ("free to use for commercial and non-commercial purposes, as long as you provide proper attribution"); later years are CC BY-NC-SA 4.0. EOX's current license pages describe one EOxCloudless license for all years: non-commercial use unrestricted with attribution, commercial use only with a paid "EOX Commercial Attribution-RestrictedUse 1.2" license, and no sub-licensing or redistribution. They no longer state the 2016 terms separately, and they publish no usage terms for the hosted tile service.
 - Decision (JR, 2026-10-13): imagery ships **off by default**. New worlds are made without it, so a normal install never contacts EOX. Players opt in with the **Satellite imagery** toggle on the Customize screen or `satelliteImagery = true` in `earthplatform-common.toml` (PR #8); `-Dearthplatform.earth.imagery` still overrides both; worlds made that way pin `earth.imagery` and keep it. The install guide and FAQ describe the opt-in.
 - Attribution: PR #4 now uses EOX's current form, "EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016)", and so do the mods-list credits, CREDITS.md and the store draft.
 - Optional follow-ups:
   1. Email EOX (cloudless.eox.at, contact or sales) describing the mod, the 2016 layer, the request volume and the caching, and ask for written OK. With it, imagery could be on by default.
-  2. Make our own ground-colour layer from Copernicus Sentinel-2 data (free and open) instead of EOX's mosaic. Larger job.
+  2. Make our own ground-color layer from Copernicus Sentinel-2 data (free and open) instead of EOX's mosaic. Larger job.
 - If Modrinth or CurseForge creator rewards are switched on, opted-in players use EOX data in a mod that earns money; get EOX's OK before that.
 
 ## Bundled in the jar
 
 - `assets/earthplatform/textures/globe/blue_marble.jpg` (PR #8): NASA Blue Marble Next Generation, downscaled. US government work, public domain; NASA asks for credit, which CREDITS.md, the notices and the mods list give. OK.
 - `earthplatform/ecoregions.png` (660 KB) and `ecoregions.tsv` (PR #14): a 0.05 degree raster derived from RESOLVE Ecoregions 2017 (Dinerstein et al. 2017, *BioScience* 67(6):534-545), with the ecoregion names. CC BY 4.0 allows redistribution and changes with attribution and a note of changes; CREDITS.md, the notices and the mods list give both. OK.
-- Left out of the release jar (round 34): the older engine's proof areas, `earthplatform/copernicus_proof_data` and `alpine_data` (Copernicus WorldDEM-30 crops of Everest), `proof_data` (NOAA ETOPO 2022 extracts, CC0) and `worldcover_proof_data` (ESA WorldCover extracts, CC BY 4.0), with the copied ESA WorldCover manual, Copernicus licence and AWS and ESA pages under their `provenance/`. About 9 MB. Earth worlds never read them; they stay in the repository for tests and dev runs, credited in CREDITS.md. The [GLO-30 licence](../../geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf) allows that redistribution with its notice.
+- Left out of the release jar (round 34): the older engine's proof areas, `earthplatform/copernicus_proof_data` and `alpine_data` (Copernicus WorldDEM-30 crops of Everest), `proof_data` (NOAA ETOPO 2022 extracts, CC0) and `worldcover_proof_data` (ESA WorldCover extracts, CC BY 4.0), with the copied ESA WorldCover manual, Copernicus license and AWS and ESA pages under their `provenance/`. About 9 MB. Earth worlds never read them; they stay in the repository for tests and dev runs, credited in CREDITS.md. The [GLO-30 license](../../geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf) allows that redistribution with its notice.
 - No third-party libraries: Iris and Sodium are `compileOnly`, and nothing is shaded or jar-in-jar. The build no longer uses Distant Horizons at all.
 - The logo (`earthplatform_logo.png`) is original pixel art.
 
 ## Coming data sources (checked 2026-10-13, credits drafted)
 
-Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `neoforge.mods.toml` when its PR lands. All three are data, separate from the LGPL-3.0 code licence: the code licence doesn't change their terms, and their terms don't restrict the code.
+Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `neoforge.mods.toml` when its PR lands. All three are data, separate from the LGPL-3.0 code license: the code license doesn't change their terms, and their terms don't restrict the code.
 
 ### Copernicus DEM GLO-30 ("Filling elevation holes", PR #22), credited
 - Landed in PR #22. `CopernicusSource` range-reads GLO-30 from the AWS Open Data bucket, caches it on disk, and fills fjords and datum-offset ground. Off with `-Dearthplatform.earth.copernicus=false`. The credit below is now in CREDITS.md, THIRD_PARTY_NOTICES.md and the mods list.
-- Terms: the [Copernicus WorldDEM-30 licence](../../geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf) (Art. 4) allows reproduction, distribution, communication to the public, and adaptation and combination with other data, free of charge and for any purpose. Same licence as the Everest crop already in the jar. OK, whether tiles are streamed at runtime or a derived fill is bundled.
+- Terms: the [Copernicus WorldDEM-30 license](../../geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf) (Art. 4) allows reproduction, distribution, communication to the public, and adaptation and combination with other data, free of charge and for any purpose. Same license as the Everest crop already in the jar. OK, whether tiles are streamed at runtime or a derived fill is bundled.
 - Obligations (Art. 6): give the "produced using" notice for adapted data; add the liability sentence in a notice covering the distribution; don't suggest Copernicus endorses the mod; and bind anyone we let redistribute to the same duties, which the notice in the jar and CREDITS.md does. The bundled crop's credit now carries the liability sentence too (it was missing).
 - GLO-30 Public leaves out a few tiles (Armenia and Azerbaijan); those areas keep the other elevation sources.
 - Credit line:
   > Elevation fill: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.
 
 ### JRC Global Surface Water ("Real river channels", PR #19), credited
-- Terms ([data access page](https://global-surface-water.appspot.com/download)): produced under the Copernicus Programme and "provided free of charge, without restriction of use". Products that use it must acknowledge it and cite the dataset and the Nature paper; maps showing it should say "Source: EC JRC/Google". Redistributing a derived river mask inside the jar and under an open licence is fine. OK.
+- Terms ([data access page](https://global-surface-water.appspot.com/download)): produced under the Copernicus Programme and "provided free of charge, without restriction of use". Products that use it must acknowledge it and cite the dataset and the Nature paper; maps showing it should say "Source: EC JRC/Google". Redistributing a derived river mask inside the jar and under an open license is fine. OK.
 - Credit line:
   > Surface water: JRC Global Surface Water, Source: EC JRC/Google. Pekel, J.-F., Cottam, A., Gorelick, N., Belward, A.S. (2016). High-resolution mapping of global surface water and its long-term changes. Nature 540, 418-422, doi:10.1038/nature20584. Produced under the Copernicus Programme.
 - PR #19 streams the v1.4 occurrence layer at runtime (`SurfaceWaterSource`, Google Cloud Storage); nothing is bundled. Credit added to CREDITS.md, THIRD_PARTY_NOTICES.md and the mods list with the Copernicus no-liability sentence, which the Copernicus data policy asks for on any Copernicus product.
@@ -129,8 +129,8 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
 - Ask: each Course and Pool carries a one-line source comment (an OSM way id or "EOX s2cloudless 2016"). Asked the Grand Canyon work 2026-10-13.
 
 ### HydroRIVERS (HydroSHEDS), not recommended
-- Terms: "freely available for scientific, educational and commercial use", but under the HydroSHEDS v1 License Agreement ([technical documentation, Appendix A](https://data.hydrosheds.org/file/technical-documentation/HydroSHEDS_TechDoc_v1_4.pdf)). That agreement lets us distribute the data only built into a derivative product, to end users bound by a written end-user licence "at least as protective" as WWF's, never as a stand-alone dataset. It also forbids reverse engineering, obliges us to protect the data against unauthorised copying, and asks us to indemnify WWF.
-- That doesn't fit Earth Platform: the mod and its source are open under the LGPL, anyone may copy and redistribute the jar, and Modrinth and CurseForge offer no end-user licence step. A river mask derived from HydroRIVERS would still contain the licensed data. Downloading it at runtime doesn't help either: the global file is 618 MB and each player would have to accept WWF's licence.
+- Terms: "freely available for scientific, educational and commercial use", but under the HydroSHEDS v1 License Agreement ([technical documentation, Appendix A](https://data.hydrosheds.org/file/technical-documentation/HydroSHEDS_TechDoc_v1_4.pdf)). That agreement lets us distribute the data only built into a derivative product, to end users bound by a written end-user license "at least as protective" as WWF's, never as a stand-alone dataset. It also forbids reverse engineering, obliges us to protect the data against unauthorised copying, and asks us to indemnify WWF.
+- That doesn't fit Earth Platform: the mod and its source are open under the LGPL, anyone may copy and redistribute the jar, and Modrinth and CurseForge offer no end-user license step. A river mask derived from HydroRIVERS would still contain the licensed data. Downloading it at runtime doesn't help either: the global file is 618 MB and each player would have to accept WWF's license.
 - Recommendation: build river channels from JRC Global Surface Water. If HydroRIVERS is ever needed, use it only offline as a check during development, with nothing derived from it shipped, or ask WWF (hydrosheds.org) for written permission first.
 - Required wording if it were used (Exhibit B): "This product Earth Platform incorporates data from the HydroSHEDS version 1 database which is © World Wildlife Fund, Inc. (2006-2022) and has been used herein under license. WWF has not evaluated the data as altered and incorporated within Earth Platform, and therefore gives no warranty regarding its accuracy, completeness, currency or suitability for any particular purpose. Portions of the HydroSHEDS v1 database incorporate data which are the intellectual property rights of © USGS (2006-2008), NASA (2000-2005), ESRI (1992-1998), CIAT (2004-2006), UNEP-WCMC (1993), WWF (2004), Commonwealth of Australia (2007), and Her Royal Majesty and the British Crown and are used under license. The HydroSHEDS v1 database and more information are available at https://www.hydrosheds.org." Citation: Lehner, B., Grill, G. (2013), Hydrological Processes 27(15): 2171-2186.
 
@@ -139,7 +139,7 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
 - Photon v1.3b, © 2021-2025 Benjamin Stott (SixthSurge), [Photon Shaders License Agreement](https://github.com/sixthsurge/photon/blob/main/LICENSE). The mod reads the player's own copy at runtime (its Voxy code) and ships none of it. OK.
 - Decision (JR, 2026-10-13): Earth Platform must work with stock, unmodified Photon, and no modified pack is distributed. The Mac test copy (`photon_v1.3b_mac.zip`) was a derivative made for testing only; it stays out of every release, store page and download. The shader work made the mod itself handle the Mac's limits.
 - How Macs run stock Photon (PR #3, `PhotonCompat`): on a driver without compute shaders or with 16 texture units, the mod copies the player's own Photon into `<game dir>/earthplatform/photon-compat/`, applies a few edits (regex replacements, one pass moved, one new fragment pass), and Iris loads the copy. The installed zip is untouched and nothing is uploaded or shared.
-- Licence check (Photon Shaders License Agreement):
+- License check (Photon Shaders License Agreement):
   - "Modify Photon Shaders for personal use": the adapted copy is made on the player's machine from their own download, for their own play, and never redistributed. OK.
   - "You may not redistribute Photon Shaders or derivative works on platforms that provide direct or indirect monetary compensation to creators (e.g. Modrinth, CurseForge) without my explicit written permission": the mod jar must therefore contain no Photon text. The regex edits quote only single lines to find them, which is fine. **Resolved at PR #3 5d8f139:** at 183fe4b, `PhotonCompat.SKY_SH_FRAGMENT` embedded Photon's uniform declarations and include list from `program/d4a_generate_sky_sh.csh` and ported its algorithm. Now the pass's uniform and `#include` lines are read from the player's own `d4a_generate_sky_sh.csh` at adapt time, and `main()` is new code (a 16x16 equal-solid-angle grid). A token-run comparison against Photon's file finds only trivial shared runs (`#include "/include/global.glsl"`, `vec3(0.0, 1.0, 0.0)`). Re-check this if `PhotonCompat` gains any new embedded shader text.
   - Courtesy: tell SixthSurge before release, and offer the Mac support upstream.
@@ -159,9 +159,9 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
 - Every page carries "Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft."
 - Screenshots of the game are fine to publish. Don't use the Minecraft logo or the end-poem screenshot on store pages.
 
-## Mod licence
+## Mod license
 
-JR chose **LGPL-3.0-only** (2026-10-13). `mod_license=LGPL-3.0-only`; `LICENSE` is the LGPL-3.0 text and `COPYING` the GPL-3.0 text, and the jar carries both in `META-INF/earthplatform-LICENSE.txt` (LGPL section 4). It is compatible with everything the mod uses: no third-party code is bundled, Iris is LGPL-3.0 itself, and the data licences (CC BY 4.0, CC0, the Copernicus licence) are separate from the code licence and keep their own credits. Earlier engine notices that said All Rights Reserved (PLAYER-NOTICES.md) were updated.
+JR chose **LGPL-3.0-only** (2026-10-13). `mod_license=LGPL-3.0-only`; `LICENSE` is the LGPL-3.0 text and `COPYING` the GPL-3.0 text, and the jar carries both in `META-INF/earthplatform-LICENSE.txt` (LGPL section 4). It is compatible with everything the mod uses: no third-party code is bundled, Iris is LGPL-3.0 itself, and the data licenses (CC BY 4.0, CC0, the Copernicus license) are separate from the code license and keep their own credits. Earlier engine notices that said All Rights Reserved (PLAYER-NOTICES.md) were updated.
 
 ## Originality check
 

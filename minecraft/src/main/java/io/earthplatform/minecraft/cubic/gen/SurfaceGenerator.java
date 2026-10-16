@@ -464,6 +464,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return structures == null ? null : structures.startOf(structure, chunkX, chunkZ);
     }
 
+    /** Whether a structure clears the ground at a column around its buildings, so no tree grows there. */
+    boolean cleared(int x, int z) {
+        VanillaStructures structures = vanilla;
+        return structures != null && structures.clears(x, z);
+    }
+
     @Override public String structuresAt(int x, int y, int z) {
         VanillaStructures structures = vanilla;
         return structures == null ? "" : structures.describe(x, y, z);

@@ -5,7 +5,7 @@
 The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 
 ### The Earth
-- The whole planet at one block per metre, with true heights from Y -16384 to 16383.
+- The whole planet at one block per meter, with true heights from Y -16384 to 16383.
 - Elevation from AWS Terrain Tiles, with ocean floors from bathymetry. Bad pixels in the source tiles (deep pits, lone spikes) are found and mended, so places like Aconcagua, Bora Bora and the Amazon have no holes or spires.
 - Finer heights where better surveys exist: USGS 3DEP (about 10 m) across the United States, REMA across Antarctica, and Copernicus GLO-30 to fill fjords such as Milford Sound and the far north beyond the main survey's reach.
 - Towns stand on the ground beneath their roofs, not on the rooftops the elevation survey sees.
@@ -19,11 +19,12 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - Ground and biomes tuned against satellite views around the world: glacial lakes, volcanic cones, ice-scoured rock, salt pans, desert washes, sloughs and swamps, Mediterranean garrigue, peat bogs and rice country.
 - Every surface block vanilla grows, placed where it would grow on Earth: cacti in the Americas, cherry groves in East Asia, bamboo in South and East Asia, coral reefs in warm seas.
 - Minecraft's own trees chosen by biome, and giant sequoias at real size in the Sierra Nevada's groves.
-- Optional ground colours guided by Sentinel-2 cloudless satellite imagery (off by default).
+- Optional ground colors guided by Sentinel-2 cloudless satellite imagery (off by default).
 - No cities: built-up land becomes the wild land around it.
 
 ### Survival
 - Ordinary survival at any height: mining, crafting, light, death and respawn.
+- The ground you explore is saved with the world, as in vanilla, so places you've been load from the save. Only the surface and what you change are kept, about 2 to 4 MB per square kilometer.
 - Mobs walk, chase and wander; villagers take jobs, sleep in beds and trade.
 - Sleeping skips the night and clears the rain.
 - The Bonus Chest world option places its chest beside your first arrival on the Earth.
@@ -59,6 +60,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - AE2 spatial storage captures and places Earth blocks, and AE2 meteorites generate in the Earth world.
 - Create's mechanical arm, pulley, scaffolding and elevators, Waystones, Mekanism (Digital Miner, multiblocks and pipes), Immersive Engineering's multiblocks and the Twilight Forest portal work in the Earth world.
 - Cobblemon spawns Pokémon in the Earth world; Aether and Twilight Forest portals take you there and back.
+- Chunky pre-generates the Earth world: the ground in the area you give it is generated and saved, so arriving there later loads it from the save.
 - `/locate biome` and Nature's Compass find the Earth's biomes; Quark and Handcrafted work at any height; Lithium no longer drops players through the ground.
 - JEI, EMI, Jade, AppleSkin, Ars Nouveau, AE2 networks, Refined Storage 2, Iron's Spells, FTB Quests and Teams, Farmer's Delight, Sophisticated Backpacks, Supplementaries, YUNG's structures and Open Parties and Claims work unchanged.
 

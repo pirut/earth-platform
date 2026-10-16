@@ -18,6 +18,13 @@ import java.util.function.IntBinaryOperator;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.valueproviders.IntProvider;
+import net.minecraft.world.level.block.HugeMushroomBlock;
+import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.levelgen.placement.PlacementModifier;
+import com.google.gson.JsonObject;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
@@ -123,10 +130,22 @@ final class Trees {
      * sequoias, whose trunks win where the two meet. With {@code giantsOnly}, sequoias only.
      */
     void place(int x0, int y0, int z0, int x1, int y1, int z1, boolean giantsOnly, TreeShape.Sink sink) {
+        place(x0, y0, z0, x1, y1, z1, giantsOnly, false, sink);
+    }
+
+    /**
+     * As {@link #place(int, int, int, int, int, int, boolean, TreeShape.Sink)}; with {@code clear},
+     * trees rooted where a structure clears the ground around its buildings are left out whole,
+     * rather than cut to stumps as the ground is cleared.
+     */
+    void place(int x0, int y0, int z0, int x1, int y1, int z1, boolean giantsOnly, boolean clear, TreeShape.Sink sink) {
         int cx0 = Math.floorDiv(x0 - REACH, 16), cx1 = Math.floorDiv(x1 + REACH, 16);
         int cz0 = Math.floorDiv(z0 - REACH, 16), cz1 = Math.floorDiv(z1 + REACH, 16);
         if (!giantsOnly) for (int cz = cz0; cz <= cz1; cz++) for (int cx = cx0; cx <= cx1; cx++)
-            for (Planted tree : chunk(cx, cz)) tree.place(x0, y0, z0, x1, y1, z1, ground, sink);
+            for (Planted tree : chunk(cx, cz)) {
+                if (clear && gen.cleared(tree.x, tree.z)) continue;
+                tree.place(x0, y0, z0, x1, y1, z1, ground, sink);
+            }
         for (int cz = cz0; cz <= cz1; cz++) for (int cx = cx0; cx <= cx1; cx++) {
             if (!gen.giants((cx << 4) + 8, (cz << 4) + 8)) continue;
             for (Planted tree : giants(cx, cz)) tree.place(x0, y0, z0, x1, y1, z1, ground, sink);
@@ -158,6 +177,10 @@ final class Trees {
             TreeShape[] grown = shapes(feature);
             if (grown.length == 0) continue;
             trees.add(new Planted(x, h + 1, z, grown[(int) Math.floorMod(r >>> 24, grown.length)], (int) (r >>> 34 & 3), r, snowy(surface)));
+        }
+        if (mostAdded() > 0) for (int dz = 0; dz < 16; dz++) for (int dx = 0; dx < 16; dx++) {
+            Planted tree = added((cx << 4) + dx, (cz << 4) + dz);
+            if (tree != null) trees.add(tree);
         }
         Planted[] made = trees.isEmpty() ? NONE : trees.toArray(Planted[]::new);
         if (chunks.size() > 32768) chunks.clear();
@@ -214,6 +237,178 @@ final class Trees {
         return made;
     }
 
+    // Trees other mods add -----------------------------------------------------------------------
+
+    /**
+     * A tree another mod adds to a biome's vegetation (a walnut in the plains, a palm on the beach),
+     * with the attempts per chunk, the deepest water and the ground its own placement asks for.
+     */
+    private record Added(ConfiguredFeature<?, ?> feature, float perChunk, int deepest, @Nullable BlockState survives, BlockState soil) {}
+    /** A biome's added trees; {@code scaled} where the biome has vanilla trees, whose density the land cover sets, so theirs follows it too. */
+    private record Additions(Added[] trees, float perChunk, boolean scaled) {}
+    private record Rooting(BlockState survives, BlockState top) {}
+    private static final Additions NO_ADDITIONS = new Additions(new Added[0], 0, false);
+    /** Ground added trees are tried on when their saplings name what they grow on, in order. */
+    private static final BlockState[] SOILS = {Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.SAND.defaultBlockState(), Blocks.RED_SAND.defaultBlockState(),
+            Blocks.MUD.defaultBlockState(), Blocks.PODZOL.defaultBlockState(), Blocks.MOSS_BLOCK.defaultBlockState(), Blocks.MYCELIUM.defaultBlockState(),
+            Blocks.SNOW_BLOCK.defaultBlockState(), Blocks.GRAVEL.defaultBlockState(), Blocks.STONE.defaultBlockState()};
+    private final ConcurrentHashMap<Holder<Biome>, Additions> additions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Rooting, Boolean> rootings = new ConcurrentHashMap<>();
+    private volatile float mostAdded = -1;
+
+    /** The most added-tree attempts per chunk in any biome, at the densest cover; 0 where no mod adds trees. */
+    private float mostAdded() {
+        float most = mostAdded;
+        if (most >= 0) return most;
+        most = 0;
+        for (Holder<Biome> biome : gen.biomeIds) {
+            Additions here = additions(biome);
+            most = Math.max(most, here.perChunk * (here.scaled ? 1.5f : 1));
+        }
+        if (most > 0) EarthPlatformMod.LOGGER.info("Earth trees: other mods add trees to {} biomes", additions.values().stream().filter(a -> a.trees.length > 0).count());
+        return mostAdded = Math.min(most, 64);
+    }
+
+    /** The added tree whose origin is a column, if one stands there. */
+    @Nullable private Planted added(int x, int z) {
+        long r = gen.mix(x, 0x4D4F4453L, z);
+        int roll = (int) (r & 0xFFFF);
+        // Chances in 65536ths: attempts per chunk x 256, as for vanilla's trees.
+        if (roll >= mostAdded() * 256) return null;
+        int h = gen.surfaceY(x, z), water = gen.waterY(x, z);
+        Surface surface = gen.coverAt(x, z, h, water);
+        Additions here = additions(surface.biome());
+        float scale = here.scaled ? surface.trees() / 100f : 1, at = 0;
+        for (Added tree : here.trees) {
+            at += tree.perChunk * scale * 256;
+            if (roll >= at) continue;
+            int depth = water == DRY ? 0 : water - h;
+            if (depth > tree.deepest || !roots(tree, surface.top())) return null;
+            TreeShape[] grown = shapes(tree.feature, tree.soil);
+            if (grown.length == 0) return null;
+            return new Planted(x, h + 1, z, grown[(int) Math.floorMod(r >>> 24, grown.length)], (int) (r >>> 34 & 3), r, snowy(surface));
+        }
+        return null;
+    }
+
+    /** Whether an added tree takes root in a column's top: where its sapling would survive, else on soil as vanilla's trees. */
+    private boolean roots(Added tree, BlockState top) {
+        if (tree.survives == null) return top.is(BlockTags.DIRT);
+        return rootings.computeIfAbsent(new Rooting(tree.survives, top), k -> survives(k.survives(), k.top()));
+    }
+
+    private boolean survives(BlockState sapling, BlockState top) {
+        try {
+            return sapling.canSurvive(new TreeLevel(top, under(top), gen.biomeIds.byIdOrThrow(0), RandomSource.create(0)), BlockPos.ZERO);
+        } catch (RuntimeException failure) {
+            return false;
+        }
+    }
+
+    private static BlockState under(BlockState top) {
+        return top.is(BlockTags.DIRT) && !top.is(Blocks.MUD) && !top.is(Blocks.MOSS_BLOCK) ? Blocks.DIRT.defaultBlockState() : top;
+    }
+
+    /**
+     * The trees other mods add to a biome: its vegetation features from outside vanilla that grow
+     * a tree, a huge mushroom or a feature of the mod's own that turns out to grow logs or leaves.
+     * Biome modifiers (NeoForge's add_features) and data packs both land in the biome's own list.
+     */
+    private Additions additions(Holder<Biome> biome) {
+        Additions known = additions.get(biome);
+        if (known != null) return known;
+        List<Added> found = new ArrayList<>();
+        var steps = biome.value().getGenerationSettings().features();
+        int step = GenerationStep.Decoration.VEGETAL_DECORATION.ordinal();
+        if (steps.size() > step) for (Holder<PlacedFeature> placed : steps.get(step)) {
+            String namespace = placed.unwrapKey().map(k -> k.location().getNamespace()).orElse("");
+            if (namespace.equals("minecraft") || namespace.equals(EarthPlatformMod.MOD_ID)) continue;
+            ConfiguredFeature<?, ?> feature = placed.value().feature().value();
+            if (feature.getFeatures().noneMatch(Trees::treeLike)) continue;
+            Added tree = added(placed.value());
+            if (tree != null && tree.perChunk > 0 && shapes(tree.feature, tree.soil).length > 0) found.add(tree);
+        }
+        float total = 0;
+        for (Added tree : found) total += tree.perChunk;
+        Additions made = found.isEmpty() ? NO_ADDITIONS : new Additions(found.toArray(Added[]::new), total, own(biome).isPresent());
+        Additions raced = additions.putIfAbsent(biome, made);
+        return raced != null ? raced : made;
+    }
+
+    /** A tree feature, a huge mushroom, or a mod's own kind of feature, which might be a tree. */
+    private static boolean treeLike(ConfiguredFeature<?, ?> feature) {
+        Feature<?> kind = feature.feature();
+        if (kind == Feature.TREE || kind == Feature.HUGE_RED_MUSHROOM || kind == Feature.HUGE_BROWN_MUSHROOM || feature.config() instanceof TreeConfiguration) return true;
+        ResourceLocation id = BuiltInRegistries.FEATURE.getKey(kind);
+        return id != null && !id.getNamespace().equals("minecraft");
+    }
+
+    /**
+     * Reads an added tree's placement: its count and rarity give the attempts per chunk, its water
+     * depth filter the deepest water, its would-survive check the sapling that names its ground.
+     */
+    @Nullable private Added added(PlacedFeature placed) {
+        float perChunk = 1;
+        int deepest = 0;
+        BlockState survives = null;
+        RandomSource random = RandomSource.create(0x434F554EL);
+        for (PlacementModifier modifier : placed.placement()) {
+            JsonElement json = PlacementModifier.CODEC.encodeStart(JsonOps.INSTANCE, modifier).result().orElse(null);
+            if (json == null || !json.isJsonObject()) continue;
+            JsonObject object = json.getAsJsonObject();
+            try {
+                switch (object.has("type") ? object.get("type").getAsString() : "") {
+                    case "minecraft:count", "minecraft:count_on_every_layer" -> perChunk *= mean(object.get("count"), random);
+                    case "minecraft:rarity_filter" -> perChunk /= Math.max(1, object.get("chance").getAsInt());
+                    case "minecraft:noise_threshold_count" -> perChunk *= (object.get("below_noise").getAsInt() + object.get("above_noise").getAsInt()) / 2f;
+                    case "minecraft:surface_water_depth_filter" -> deepest = object.get("max_water_depth").getAsInt();
+                    case "minecraft:block_predicate_filter" -> {
+                        BlockState sapling = sapling(object.get("predicate"));
+                        if (sapling != null) survives = sapling;
+                    }
+                    default -> {}
+                }
+            } catch (RuntimeException unreadable) {
+                // A placement this reading does not understand counts as one attempt.
+            }
+        }
+        BlockState soil = SOILS[0];
+        if (survives != null) {
+            soil = null;
+            for (BlockState top : SOILS) if (survives(survives, top)) { soil = top; break; }
+            if (soil == null) return null;
+        }
+        return new Added(placed.feature().value(), perChunk, deepest, survives, soil);
+    }
+
+    private static float mean(JsonElement count, RandomSource random) {
+        IntProvider provider = IntProvider.CODEC.parse(JsonOps.INSTANCE, count).getOrThrow();
+        long sum = 0;
+        for (int i = 0; i < 256; i++) sum += provider.sample(random);
+        return sum / 256f;
+    }
+
+    /** The block a would-survive check tests, anywhere in a block predicate. */
+    @Nullable private static BlockState sapling(JsonElement predicate) {
+        if (predicate == null) return null;
+        if (predicate.isJsonArray()) {
+            for (JsonElement each : predicate.getAsJsonArray()) {
+                BlockState found = sapling(each);
+                if (found != null) return found;
+            }
+            return null;
+        }
+        if (!predicate.isJsonObject()) return null;
+        JsonObject object = predicate.getAsJsonObject();
+        if (object.has("type") && object.get("type").getAsString().equals("minecraft:would_survive") && object.has("state"))
+            return BlockState.CODEC.parse(JsonOps.INSTANCE, object.get("state")).result().orElse(null);
+        for (var entry : object.entrySet()) {
+            BlockState found = sapling(entry.getValue());
+            if (found != null) return found;
+        }
+        return null;
+    }
+
     // Which vanilla trees ------------------------------------------------------------------------
 
     /** The trees for a kind in a biome: the biome's own if they are that family, else the family's. */
@@ -249,7 +444,12 @@ final class Trees {
         for (Holder<Biome> biome : gen.biomeIds) {
             if (!biome.is(home)) continue;
             Optional<Own> own = own(biome);
-            if (own.isPresent()) return own.get().pick();
+            if (own.isPresent() && own.get().family() == family) return own.get().pick();
+        }
+        // A mod took the home biome's trees away (Ecologics swaps the plains' oaks for walnuts): any biome still growing them.
+        for (Holder<Biome> biome : gen.biomeIds) {
+            Optional<Own> own = own(biome);
+            if (own.isPresent() && own.get().family() == family) return own.get().pick();
         }
         return new Pick(new float[0], new ConfiguredFeature<?, ?>[0], null);
     }
@@ -288,10 +488,13 @@ final class Trees {
 
     // Growing shapes -----------------------------------------------------------------------------
 
-    private TreeShape[] shapes(ConfiguredFeature<?, ?> feature) {
+    private TreeShape[] shapes(ConfiguredFeature<?, ?> feature) { return shapes(feature, null); }
+
+    /** A feature's shapes, grown the first time: vanilla's on grass (mud for mangroves), another mod's on {@code soil}. */
+    private TreeShape[] shapes(ConfiguredFeature<?, ?> feature, @Nullable BlockState soil) {
         TreeShape[] grown = shapes.get(feature);
         if (grown != null) return grown;
-        shapes.putIfAbsent(feature, grow(feature));
+        shapes.putIfAbsent(feature, grow(feature, soil));
         return shapes.get(feature);
     }
 
@@ -300,9 +503,9 @@ final class Trees {
      * shapes. Bee nests are left out and added as the shape is placed, at the feature's own odds.
      * Huge mushrooms get a patch of mycelium under them.
      */
-    private TreeShape[] grow(ConfiguredFeature<?, ?> feature) {
+    private TreeShape[] grow(ConfiguredFeature<?, ?> feature, @Nullable BlockState soil) {
         boolean mud = feature.config() instanceof TreeConfiguration tree && tree.rootPlacer.isPresent();
-        BlockState top = (mud ? Blocks.MUD : Blocks.GRASS_BLOCK).defaultBlockState(), under = (mud ? Blocks.MUD : Blocks.DIRT).defaultBlockState();
+        BlockState top = soil != null ? soil : (mud ? Blocks.MUD : Blocks.GRASS_BLOCK).defaultBlockState(), under = soil != null ? under(soil) : (mud ? Blocks.MUD : Blocks.DIRT).defaultBlockState();
         float bees = bees(feature);
         Holder<Biome> anywhere = gen.biomeIds.byIdOrThrow(0);
         List<TreeShape> grown = new ArrayList<>();
@@ -326,9 +529,23 @@ final class Trees {
                 for (int dz = -2; dz <= 2; dz++) for (int dx = -2; dx <= 2; dx++)
                     if (Math.abs(dx) + Math.abs(dz) <= 1 || Math.abs(dx) + Math.abs(dz) <= 3 && random.nextBoolean())
                         kept.put(BlockPos.asLong(dx, -1, dz), Blocks.MYCELIUM.defaultBlockState());
-            if (!kept.isEmpty()) grown.add(new TreeShape(kept, bees));
+            if (kept.isEmpty()) continue;
+            // Other mods' trees must fit the reach cubes look for trees in, and must grow a tree, not a patch of flowers.
+            if (soil != null && (!fits(kept) || kept.values().stream().noneMatch(Trees::woody))) continue;
+            grown.add(new TreeShape(kept, bees));
         }
         return grown.toArray(TreeShape[]::new);
+    }
+
+    /** Whether a grown tree stays within {@link #REACH} of its origin and {@link #TALLEST} above it. */
+    private static boolean fits(Long2ObjectOpenHashMap<BlockState> blocks) {
+        for (long key : blocks.keySet())
+            if (Math.abs(BlockPos.getX(key)) > REACH || Math.abs(BlockPos.getZ(key)) > REACH || BlockPos.getY(key) > TALLEST) return false;
+        return true;
+    }
+
+    private static boolean woody(BlockState state) {
+        return state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES) || state.getBlock() instanceof LeavesBlock || state.getBlock() instanceof HugeMushroomBlock;
     }
 
     /** The chance of a bee nest a vanilla tree feature gives, from its beehive decorator. */

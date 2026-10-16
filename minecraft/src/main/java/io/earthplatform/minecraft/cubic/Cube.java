@@ -13,8 +13,13 @@ public final class Cube {
     public final long key;
     public final LevelChunkSection section;
     final Map<BlockPos, BlockEntity> blockEntities = new HashMap<>();
-    /** Changed since it was generated, so it must be stored; generated cubes are rebuilt from the seed. */
+    /** To be stored when it unloads (with {@code dirty}): generated ground and every edited cube are, as vanilla saves the chunks it makes. */
     volatile boolean modified;
+    /**
+     * Changed by play (blocks or block entities) since it was generated. Cubes saved untouched are
+     * marked so in the save, so far terrain need not read them and a later version could remake them.
+     */
+    volatile boolean edited;
     /** Changed since the last save. */
     volatile boolean dirty;
     /** Blocks changed since the last save, so far terrain showing this cube must be remade. */
@@ -28,7 +33,10 @@ public final class Cube {
     public boolean isEmpty() { return section.hasOnlyAir(); }
     public Map<BlockPos, BlockEntity> blockEntities() { return blockEntities; }
     public boolean modified() { return modified; }
-    public void markModified() { modified = true; dirty = true; }
+    /** A change by play: blocks or block entities. */
+    public void markModified() { modified = true; dirty = true; edited = true; }
+    /** To be saved again without counting as a change by play, as when its first animals spawn. */
+    void markUnsaved() { modified = true; dirty = true; }
     public boolean contains(BlockPos pos) {
         return pos.getX() >> 4 == x && pos.getY() >> 4 == y && pos.getZ() >> 4 == z;
     }

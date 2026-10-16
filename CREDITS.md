@@ -1,6 +1,6 @@
 # Credits
 
-**Earth Platform would not be possible without the people and organisations below.** Every mountain, coastline, forest and river in the game comes from data that scientists, space agencies and mapping agencies spent years collecting and then chose to share openly. We are deeply grateful to each of them. If you enjoy exploring the Earth in Minecraft, they deserve the thanks.
+**Earth Platform would not be possible without the people and organizations below.** Every mountain, coastline, forest and river in the game comes from data that scientists, space agencies and mapping agencies spent years collecting and then chose to share openly. We are deeply grateful to each of them. If you enjoy exploring the Earth in Minecraft, they deserve the thanks.
 
 Earth Platform builds its world from this open data. Apart from the few small files marked bundled below, none of it ships in the mod: the mod downloads each area while you play and keeps it in `earthplatform/cache` in your game folder. Earth Platform changes these data to make a Minecraft world (resampling, block and biome choices, procedural detail), so the result is not the original data, not a survey, and not for navigation.
 
@@ -12,7 +12,7 @@ The same credits appear in game under Mods → Earth Platform, and as a short li
 
 **Thank you** to Mapzen and the Tilezen community for assembling these tiles from dozens of national surveys, to Amazon Web Services for hosting them openly, and to every agency listed below.
 
-**Attribution and licence:**
+**Attribution and license:**
 
 Mapzen/Tilezen terrain tiles on the [Registry of Open Data on AWS](https://registry.opendata.aws/terrain-tiles/). Attribution as required by [Tilezen](https://github.com/tilezen/joerd/blob/master/docs/attribution.md):
 
@@ -34,10 +34,10 @@ Mapzen/Tilezen terrain tiles on the [Registry of Open Data on AWS](https://regis
 
 **Thank you** to the European Union, ESA, DLR and Airbus for the Copernicus programme and for making this global model free to use.
 
-**Attribution and licence:**
+**Attribution and license:**
 
 Elevation fill: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.
-Licence: the [Copernicus WorldDEM-30 licence](geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf), free of charge for any purpose. Changes: each 1° square is compared once with the elevation tiles, and where those stand well above GLO-30 over an area (fjords such as Milford Sound and Ísafjörður, and ground north of SRTM's reach), the tiles are moved toward GLO-30. Tiles come from the Copernicus DEM bucket on the Registry of Open Data on AWS and are cached on disk. Turn it off with `-Dearthplatform.earth.copernicus=false`. This project is not endorsed by the European Union, ESA or the Copernicus programme.
+License: the [Copernicus WorldDEM-30 license](geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf), free of charge for any purpose. Changes: each 1° square is compared once with the elevation tiles, and where those stand well above GLO-30 over an area (fjords such as Milford Sound and Ísafjörður, and ground north of SRTM's reach), the tiles are moved toward GLO-30. Tiles come from the Copernicus DEM bucket on the Registry of Open Data on AWS and are cached on disk. Turn it off with `-Dearthplatform.earth.copernicus=false`. This project is not endorsed by the European Union, ESA or the Copernicus programme.
 
 ## United States: USGS 3DEP (downloaded while you play)
 
@@ -45,7 +45,7 @@ Licence: the [Copernicus WorldDEM-30 licence](geography/data/copernicus-everest-
 
 **Thank you** to the U.S. Geological Survey and its partners for surveying the country in such detail and putting it in the public domain.
 
-**Attribution and licence:**
+**Attribution and license:**
 
 United States: USGS 3D Elevation Program 1/3 arc-second DEM (public domain), courtesy of the U.S. Geological Survey. U.S. Geological Survey, 3D Elevation Program 1/3 arc-second Digital Elevation Model, https://www.usgs.gov/3d-elevation-program.
 Changes: tiles are fetched from the USGS National Map staged products (prd-tnm on AWS) only for visited places inside 1,450 pinned 1° cells, cached on disk and blended into the elevation above. Turn it off with `-Dearthplatform.earth.3dep=false`. The USGS does not endorse Earth Platform.
@@ -56,12 +56,45 @@ Changes: tiles are fetched from the USGS National Map staged products (prd-tnm o
 
 **Thank you** to the Polar Geospatial Center, the Byrd Polar and Climate Research Center and the U.S. National Science Foundation for mapping a whole continent and sharing it.
 
-**Attribution and licence:**
+**Attribution and license:**
 
 Antarctica: Reference Elevation Model of Antarctica (REMA) v2.0, Polar Geospatial Center, University of Minnesota (CC BY 4.0); Howat, I., et al. (2022), The Reference Elevation Model of Antarctica - Mosaics, Version 2, Harvard Dataverse, https://doi.org/10.7910/DVN/EBW8UC. DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685.
 Howat, I. M., Porter, C., Smith, B. E., Noh, M.-J. & Morin, P. (2019). The Reference Elevation Model of Antarctica. *The Cryosphere* 13, 665-674. https://doi.org/10.5194/tc-13-665-2019
-Licence: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: REMA mosaic tiles are fetched from the Polar Geospatial Center's bucket on the Registry of Open Data on AWS only where you play, moved from the WGS 84 ellipsoid to the EGM96 geoid, and blended into the elevation above. Turn it off with `-Dearthplatform.earth.rema=false`.
+License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: REMA mosaic tiles are fetched from the Polar Geospatial Center's bucket on the Registry of Open Data on AWS only where you play, moved from the WGS 84 ellipsoid to the EGM96 geoid, and blended into the elevation above. Turn it off with `-Dearthplatform.earth.rema=false`.
 Geoid: EGM96 (NGA, public domain), shipped as a half-degree grid south of 50 S in geography/src/main/resources (`egm96-south.bin`, sampled from NGA's EGM96 15' grid as PROJ distributes it).
+
+## Canada: HRDEM (downloaded while you play)
+
+**What it gives Earth Platform:** Bare ground from airborne lidar wherever Canada has flown it: most of the populated south, much of British Columbia, Quebec and the Maritimes.
+
+**Thank you** to Natural Resources Canada and the provinces and territories whose lidar surveys it gathers.
+
+**Attribution and license:**
+
+Canada: High Resolution Digital Elevation Model (HRDEM), Natural Resources Canada. Contains information licensed under the Open Government Licence - Canada.
+License: [Open Government Licence - Canada 2.0](https://open.canada.ca/en/open-government-licence-canada). Changes: blocks of the 2 m mosaic's digital terrain model are read from NRCan's bucket on AWS (canelevation-dem) only where you play, at 8 m and coarser, cached on disk and blended into the elevation above. Turn it off with `-Dearthplatform.earth.hrdem=false`. Natural Resources Canada does not endorse Earth Platform.
+
+## France: RGE ALTI (downloaded while you play)
+
+**What it gives Earth Platform:** France's 1 to 5 m national ground model, from lidar in the mountains, forests and along the coasts and rivers: the Alps, the Pyrenees, the Verdon Gorge and the overseas departments.
+
+**Thank you** to IGN, the French national mapping agency, for opening its data to everyone.
+
+**Attribution and license:**
+
+France: IGN, RGE ALTI.
+License: [Licence Ouverte / Open Licence 2.0 (Etalab)](https://www.etalab.gouv.fr/licence-ouverte-open-licence/). Changes: tiles are requested from IGN's Geoplateforme map service (data.geopf.fr) on the game's own map grid only where you play, cached on disk and blended into the elevation above. Turn it off with `-Dearthplatform.earth.ign=false`. IGN does not endorse Earth Platform.
+
+## Japan: GSI elevation tiles (downloaded while you play)
+
+**What it gives Earth Platform:** Japan's national ground model, 10 m everywhere and 5 m from lidar over most lowlands and many mountains: Mount Fuji and the Japanese Alps at their real height.
+
+**Thank you** to the Geospatial Information Authority of Japan for publishing its maps as open tiles.
+
+**Attribution and license:**
+
+Source: Geospatial Information Authority of Japan website (https://maps.gsi.go.jp/development/ichiran.html), elevation tiles (dem_png, dem5a_png), processed by Earth Platform. 出典：国土地理院ウェブサイト（地理院タイル 標高タイルを加工して作成）.
+License: [Public Data License 1.0](https://www.digital.go.jp/resources/open_data/public_data_license_v1.0) under GSI's content terms. Changes: tiles are fetched from cyberjapandata.gsi.go.jp only where you play, cached on disk and blended into the elevation above. Turn it off with `-Dearthplatform.earth.gsi=false`.
 
 ## Land cover: ESA WorldCover
 
@@ -69,11 +102,11 @@ Geoid: EGM96 (NGA, public domain), shipped as a half-degree grid south of 50 S i
 
 **Thank you** to the European Space Agency and the WorldCover consortium for this open map of the whole planet.
 
-**Attribution and licence:**
+**Attribution and license:**
 
 © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium.
 Zanaga, D., Van De Kerchove, R., Daems, D., et al. (2022). ESA WorldCover 10 m 2021 v200. https://doi.org/10.5281/zenodo.7254221
-Licence: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: land cover classes are mapped to Minecraft biomes and blocks; built-up classes are replaced by the surrounding wild land.
+License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: land cover classes are mapped to Minecraft biomes and blocks; built-up classes are replaced by the surrounding wild land.
 
 ## Climate: CHELSA
 
@@ -81,12 +114,12 @@ Licence: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: lan
 
 **Thank you** to Dirk Karger and the CHELSA team at WSL for these climatologies, released free for anyone to use.
 
-**Attribution and licence:**
+**Attribution and license:**
 
 CHELSA V2.1 climatologies, 1981-2010 (Köppen-Geiger zones, mean and warmest-quarter temperature, precipitation, and the CHELSA elevation model).
 Karger, D.N., Conrad, O., Böhner, J., Kawohl, T., Kreft, H., Soria-Auza, R.W., Zimmermann, N.E., Linder, H.P. & Kessler, M. (2017). Climatologies at high resolution for the earth's land surface areas. *Scientific Data* 4, 170122. https://doi.org/10.1038/sdata.2017.122
 Karger, D.N. et al. (2021). Climatologies at high resolution for the earth's land surface areas. EnviDat. https://doi.org/10.16904/envidat.228
-Licence: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+License: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
 
 ## Rivers: JRC Global Surface Water
 
@@ -94,7 +127,7 @@ Licence: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
 
 **Thank you** to the European Commission's Joint Research Centre, Google and the Copernicus programme for mapping decades of the world's surface water and sharing it without restriction.
 
-**Attribution and licence:**
+**Attribution and license:**
 
 JRC Global Surface Water v1.4 (Source: EC JRC/Google; Pekel et al. 2016, Nature 540, 418-422), Copernicus Programme.
 Pekel, J.-F., Cottam, A., Gorelick, N. & Belward, A.S. (2016). High-resolution mapping of global surface water and its long-term changes. *Nature* 540, 418-422. https://doi.org/10.1038/nature20584
@@ -106,19 +139,19 @@ Terms: produced under the Copernicus Programme and provided free of charge, with
 
 **Thank you** to RESOLVE, Eric Dinerstein and the many co-authors for this map of the world's 846 ecoregions.
 
-**Attribution and licence:**
+**Attribution and license:**
 
 Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm, BioScience 67(6):534-545, CC BY 4.0; derived 0.05 degree raster.
 Dinerstein, E., Olson, D., Joshi, A., et al. (2017). An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm. *BioScience* 67(6), 534-545. https://doi.org/10.1093/biosci/bix014
-Licence: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: the ecoregion polygons are rasterised to a 0.05 degree grid (`earthplatform/ecoregions.png`, with ecoregion names in `ecoregions.tsv`) and used to tune biomes and ground cover.
+License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: the ecoregion polygons are rasterized to a 0.05 degree grid (`earthplatform/ecoregions.png`, with ecoregion names in `ecoregions.tsv`) and used to tune biomes and ground cover.
 
-## Ground colours (optional): Sentinel-2 cloudless
+## Ground colors (optional): Sentinel-2 cloudless
 
 **What it gives Earth Platform:** When you turn it on, ground blocks that match what each place looks like from space.
 
 **Thank you** to EOX IT Services for their cloudless view of the Earth.
 
-**Attribution and licence:**
+**Attribution and license:**
 
 EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Off by default; used only when a player turns satellite imagery on, and then only to choose between ground blocks. No imagery is shown in game.
 
@@ -128,7 +161,7 @@ EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modifi
 
 **Thank you** to NASA Earth Observatory and Reto Stöckli for the Blue Marble.
 
-**Attribution and licence:**
+**Attribution and license:**
 
 The globe on the Customize screen shows NASA's Blue Marble: NASA Earth Observatory, Reto Stöckli, *Blue Marble Next Generation* (July 2004, topography and bathymetry), https://visibleearth.nasa.gov/collection/1484/blue-marble. Public domain in the United States; credited as NASA asks. Close up, the globe also shows the elevation and land cover data credited above.
 
@@ -136,13 +169,13 @@ The globe on the Customize screen shows NASA's Blue Marble: NASA Earth Observato
 
 The older engine's proof areas are test fixtures. They stay in the source repository for its tests and are not in the release jar.
 
-- Copernicus WorldDEM-30 (Everest area): produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. Licence text kept with the data under `geography/data/copernicus-everest-proof/provenance/`. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30. Earth Platform is not endorsed by the Copernicus programme.
+- Copernicus WorldDEM-30 (Everest area): produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. License text kept with the data under `geography/data/copernicus-everest-proof/provenance/`. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30. Earth Platform is not endorsed by the Copernicus programme.
 - NOAA National Centers for Environmental Information (2022). ETOPO 2022 15 Arc-Second Global Relief Model. https://doi.org/10.25921/fd45-gt74 (CC0 1.0).
 - ESA WorldCover extracts, credited as above.
 
 ## Software
 
-Earth Platform runs on [NeoForge](https://neoforged.net/) and contains no third-party code. Optional companions are installed separately and keep their own licences: [Sodium](https://modrinth.com/mod/sodium) (PolyForm Shield 1.0.0), [Iris](https://modrinth.com/mod/iris) (LGPL-3.0) and [Photon](https://github.com/sixthsurge/photon) by Benjamin Stott (SixthSurge), under the Photon Shaders License Agreement. Earth Platform's own code was written for this project; see [Originality](docs/release/LICENSING-AUDIT.md#originality-check) for how that was checked.
+Earth Platform runs on [NeoForge](https://neoforged.net/) and contains no third-party code. Optional companions are installed separately and keep their own licenses: [Sodium](https://modrinth.com/mod/sodium) (PolyForm Shield 1.0.0), [Iris](https://modrinth.com/mod/iris) (LGPL-3.0) and [Photon](https://github.com/sixthsurge/photon) by Benjamin Stott (SixthSurge), under the Photon Shaders License Agreement. Earth Platform's own code was written for this project; see [Originality](docs/release/LICENSING-AUDIT.md#originality-check) for how that was checked.
 
 ## Distant terrain: thank you, Voxy and Distant Horizons
 

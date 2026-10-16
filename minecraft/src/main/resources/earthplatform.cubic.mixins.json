@@ -31,6 +31,7 @@
     "compat.CobblemonSpawnerMixin",
     "compat.CobblemonBoundsMixin",
     "compat.NaturesCompassMixin",
+    "compat.ChunkyWorldMixin",
     "compat.QuarkBuildHeightMixin",
     "CubicBiomeSearchMixin",
     "CubicPathRegionMixin",
