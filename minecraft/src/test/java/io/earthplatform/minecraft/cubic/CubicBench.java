@@ -151,15 +151,23 @@ class CubicBench {
             CubeOffsets offsets = CubeOffsets.of(Cubic.MAX_HORIZONTAL_RADIUS, Cubic.VERTICAL_RADIUS);
             ExecutorService pool = Executors.newFixedThreadPool(threads);
             List<Future<LevelChunkSection>> futures = new ArrayList<>();
+            long[] took = new long[offsets.size()];
             long gc0 = gcMillis();
             t0 = System.nanoTime();
             for (int i = 0; i < offsets.size(); i++) {
                 int x = cx + offsets.dx(i), y = cy + offsets.dy(i), z = cz + offsets.dz(i);
-                futures.add(pool.submit(() -> gen.generate(x, y, z)));
+                int index = i;
+                futures.add(pool.submit(() -> {
+                    long start = System.nanoTime();
+                    LevelChunkSection section = gen.generate(x, y, z);
+                    took[index] = System.nanoTime() - start;
+                    return section;
+                }));
             }
             List<LevelChunkSection> cubes = new ArrayList<>(futures.size());
             for (Future<LevelChunkSection> future : futures) cubes.add(future.get());
             double wall = ms(t0);
+            if (System.getenv("EARTH_BENCH_DEPTH") != null) depths(gen, offsets, cx, cy, cz, cubes, took);
             System.out.printf(Locale.ROOT, "cubes: %d in %.0f ms on %d threads = %.0f cubes/s (%.3f ms per cube per thread), gc %d ms%n",
                     cubes.size(), wall, threads, cubes.size() / wall * 1000, wall * threads / cubes.size(), gcMillis() - gc0);
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -281,6 +289,67 @@ class CubicBench {
     private static long distance(long key, int px, int pz) {
         long dx = Far.x(key) - px, dz = Far.z(key) - pz;
         return dx * dx + dz * dz;
+    }
+
+    /**
+     * EARTH_BENCH_DEPTH=1: how the cubes around a player standing on the ground split between air above the ground,
+     * the ground itself and rock buried under it (below the lowest ground of its own and the four next columns), with
+     * generation time, faces a client would mesh (between solid and open blocks) and sent bytes for each.
+     */
+    private static void depths(EarthGenerator gen, CubeOffsets offsets, int cx, int cy, int cz, List<LevelChunkSection> cubes, long[] took) {
+        String[] names = {"above ground", "ground band", "buried"};
+        long[] count = new long[3], nanos = new long[3], faces = new long[3], bytes = new long[3];
+        long[] nearCount = new long[3];
+        java.util.Map<Long, Integer> lowest = new java.util.HashMap<>(), highest = new java.util.HashMap<>();
+        for (int i = 0; i < cubes.size(); i++) {
+            int x = cx + offsets.dx(i), y = cy + offsets.dy(i), z = cz + offsets.dz(i);
+            int low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
+            for (int[] d : new int[][]{{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                int bx = x + d[0], bz = z + d[1];
+                long column = ((long) bx << 32) | (bz & 0xffffffffL);
+                if (!lowest.containsKey(column)) {
+                    int lo = Integer.MAX_VALUE, hi = Integer.MIN_VALUE;
+                    for (int u = 0; u < 16; u++) for (int v = 0; v < 16; v++) {
+                        int g = gen.surfaceY((bx << 4) + u, (bz << 4) + v);
+                        lo = Math.min(lo, g);
+                        hi = Math.max(hi, gen.skyTopY((bx << 4) + u, (bz << 4) + v));
+                    }
+                    lowest.put(column, lo);
+                    highest.put(column, hi);
+                }
+                low = Math.min(low, lowest.get(column));
+                if (d[0] == 0 && d[1] == 0) high = highest.get(column);
+            }
+            int kind = (y << 4) > high ? 0 : (y << 4) + 15 < low - 16 ? 2 : 1;
+            LevelChunkSection section = cubes.get(i);
+            count[kind]++;
+            nanos[kind] += took[i];
+            bytes[kind] += CubeCodec.sectionBytes(section).length;
+            faces[kind] += openFaces(section);
+            int dx = offsets.dx(i), dy = offsets.dy(i), dz = offsets.dz(i);
+            if (dx * dx + dz * dz <= 2 * 2 + 2 && Math.abs(dy) <= Cubic.VERTICAL_RADIUS) nearCount[kind]++;
+        }
+        long allNanos = nanos[0] + nanos[1] + nanos[2], allFaces = faces[0] + faces[1] + faces[2], all = count[0] + count[1] + count[2];
+        for (int k = 0; k < 3; k++) {
+            System.out.printf(Locale.ROOT, "  %-12s %5d cubes (%2.0f%%), generation %6.0f ms (%2.0f%%), %.2f ms each, open faces %8d (%2.0f%%), %8d bytes; within 2 cubes across: %d%n",
+                    names[k], count[k], 100.0 * count[k] / all, nanos[k] / 1e6, 100.0 * nanos[k] / allNanos, nanos[k] / 1e6 / Math.max(1, count[k]),
+                    faces[k], 100.0 * faces[k] / Math.max(1, allFaces), bytes[k], nearCount[k]);
+        }
+    }
+
+    /** Faces between a solid block and an open one inside a cube: about what a client would mesh. */
+    private static long openFaces(LevelChunkSection section) {
+        if (section.hasOnlyAir()) return 0;
+        boolean[] solid = new boolean[4096];
+        for (int i = 0; i < 4096; i++) solid[i] = section.getBlockState(i & 15, i >> 8, i >> 4 & 15).canOcclude();
+        long faces = 0;
+        for (int i = 0; i < 4096; i++) {
+            int x = i & 15, z = i >> 4 & 15, y = i >> 8;
+            if (x < 15 && solid[i] != solid[i + 1]) faces++;
+            if (z < 15 && solid[i] != solid[i + 16]) faces++;
+            if (y < 15 && solid[i] != solid[i + 256]) faces++;
+        }
+        return faces;
     }
 
     private static double ms(long start) { return (System.nanoTime() - start) / 1e6; }
