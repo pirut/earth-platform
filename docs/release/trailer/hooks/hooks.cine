@@ -55,10 +55,11 @@ look 1 35.3606 138.7274 =2300
 # Grand Canyon descent: low and fast from the South Rim at the Bright Angel trailhead, down Garden Creek past Havasupai Gardens,
 # east over the Tonto Plateau (above the Pipe Creek gorge, which is too narrow to fly), then over the edge of the Inner Gorge
 # to the river, ending low over the water looking upstream toward Phantom Ranch. Keys are spaced by distance so the speed stays even.
+# The 0.226 key sits east of the butte past Garden Creek; at -112.1350 the path went through its wall at 5 s.
 shot walk frames=600 settle=95 warm=600 clear=2 ease=0 time=1500 fov=70 hold=15
 cam 0.000 36.0575 -112.1436 +3
 cam 0.124 36.0640 -112.1380 +25
-cam 0.226 36.0700 -112.1350 +25
+cam 0.226 36.0700 -112.1310 +25
 cam 0.347 36.0770 -112.1310 +25
 cam 0.461 36.0830 -112.1260 +25
 cam 0.580 36.0870 -112.1180 +25
