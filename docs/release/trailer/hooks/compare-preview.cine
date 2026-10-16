@@ -1,0 +1,26 @@
+out @OUT@
+fps 30
+preview 3
+# Real photo vs Minecraft: each shot matches the view in docs/release/trailer/hooks/photos/ (NPS, public domain).
+# Starting guesses: move the camera, look point and fov until the in-game frame lines up with the photo (center 9:16 crop).
+
+# Grand Canyon from Mather Point, looking north-northeast across the canyon.
+shot c-grand_canyon frames=150 settle=95 warm=600 clear=2 ease=0 time=1500 fov=60
+cam 0 36.0617 -112.1078 +4
+cam 1 36.06185 -112.10775 +4
+look 0 36.1000 -112.0950 =1300
+look 1 36.1000 -112.0950 =1300
+
+# Mount Rainier from near Tipsoo Lake / Naches Peak meadows, looking west-southwest at the summit.
+shot c-rainier frames=150 settle=95 warm=600 clear=2 ease=0 time=1500 fov=45
+cam 0 46.8697 -121.5183 +2
+cam 1 46.86972 -121.51840 +2
+look 0 46.8529 -121.7604 =4100
+look 1 46.8529 -121.7604 =4100
+
+# Half Dome from the upper Snow Creek Trail, across Tenaya Canyon, looking south-southeast.
+shot c-half_dome frames=150 settle=95 warm=600 clear=2 ease=0 time=1500 fov=50
+cam 0 37.7600 -119.5420 +3
+cam 1 37.76002 -119.54195 +3
+look 0 37.7459 -119.5332 =2500
+look 1 37.7459 -119.5332 =2500
