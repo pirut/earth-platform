@@ -1,0 +1,130 @@
+out @OUT@
+fps 30
+preview 3
+# Ambient scenes: each place gets a small built set in front of the landscape (Cinema run/at lines).
+
+# Yosemite Valley from Valley View: a small campsite (campfire smoke, log seats) with the valley walls behind.
+shot yosemite frames=1200 settle=35 warm=240 clear=2 ease=0 time=1500 fov=50
+cam 0 37.7172 -119.6633 +2.5
+cam 1 37.71735 -119.66345 +2.5
+look 0 37.7300 -119.6000 =1500
+look 1 37.7300 -119.6000 =1500
+at C 37.7172 -119.6633
+run fill {C:-2:0:-12} {C:45:14:12} air replace #minecraft:leaves
+run fill {C:-2:0:-12} {C:45:14:12} air replace #minecraft:logs
+run fill {C:-2:0:-12} {C:45:14:12} air replace tall_grass
+run fill {C:-2:0:-12} {C:45:14:12} air replace short_grass
+run setblock {C:7:0:2} campfire
+run setblock {C:7:0:4} stripped_spruce_log[axis=x]
+run setblock {C:8:0:4} stripped_spruce_log[axis=x]
+run setblock {C:9:0:1} stripped_spruce_log[axis=z]
+run setblock {C:9:0:2} stripped_spruce_log[axis=z]
+
+# Matterhorn over the Riffelsee: a bench and a lantern on the lakeshore.
+shot matterhorn frames=1200 settle=35 warm=240 clear=2 ease=0 time=1500 fov=50
+cam 0 45.9898 7.7578 +2.5
+cam 1 45.98995 7.7578 +2.5
+look 0 45.9763 7.6586 =3600
+look 1 45.9763 7.6586 =3600
+at C 45.9898 7.7578
+run fill {C:-30:0:-8} {C:2:6:8} air replace #minecraft:leaves
+run fill {C:-30:0:-8} {C:2:6:8} air replace #minecraft:logs
+run fill {C:-30:0:-8} {C:2:6:8} air replace tall_grass
+run fill {C:-30:0:-8} {C:2:6:8} air replace short_grass
+run setblock {C:-5:0:1} spruce_stairs[facing=east]
+run setblock {C:-5:0:2} spruce_stairs[facing=east]
+run setblock {C:-5:0:4} spruce_fence
+run setblock {C:-5:1:4} lantern
+
+# Mount Rainier from Reflection Lakes: a bench and a lantern on the shore.
+shot rainier frames=1200 settle=35 warm=240 clear=2 ease=0 time=1000 fov=50
+cam 0 46.7682 -121.7300 +2.5
+cam 1 46.7682 -121.73033 +2.5
+look 0 46.8529 -121.7604 =3000
+look 1 46.8529 -121.7604 =3000
+at C 46.7682 -121.7300
+run fill {C:-12:0:-45} {C:12:14:2} air replace #minecraft:leaves
+run fill {C:-12:0:-45} {C:12:14:2} air replace #minecraft:logs
+run fill {C:-12:0:-45} {C:12:14:2} air replace tall_grass
+run fill {C:-12:0:-45} {C:12:14:2} air replace short_grass
+run setblock {C:-1:0:-5} spruce_stairs[facing=south]
+run setblock {C:0:0:-5} spruce_stairs[facing=south]
+run setblock {C:2:0:-5} spruce_fence
+run setblock {C:2:1:-5} lantern
+
+# Lauterbrunnen valley floor: a small wooden chalet and flowers, the cliffs and the Jungfrau ahead.
+shot lauterbrunnen frames=1200 settle=35 warm=240 clear=2 ease=0 time=2500 fov=50
+cam 0 46.5980 7.9085 +2.5
+cam 1 46.5980 7.90883 +2.5
+look 0 46.5368 7.9626 =2000
+look 1 46.5368 7.9626 =2000
+at C 46.5980 7.9085
+run fill {C:-14:0:-2} {C:16:14:40} air replace #minecraft:leaves
+run fill {C:-14:0:-2} {C:16:14:40} air replace #minecraft:logs
+run fill {C:-14:0:-2} {C:16:14:40} air replace tall_grass
+run fill {C:-14:0:-2} {C:16:14:40} air replace short_grass
+run fill {C:-12:0:10} {C:-6:3:16} spruce_planks hollow
+run fill {C:-12:0:10} {C:-12:3:10} spruce_log
+run fill {C:-6:0:10} {C:-6:3:10} spruce_log
+run fill {C:-12:0:16} {C:-12:3:16} spruce_log
+run fill {C:-6:0:16} {C:-6:3:16} spruce_log
+run fill {C:-13:4:9} {C:-5:4:17} dark_oak_planks
+run fill {C:-12:5:9} {C:-6:5:17} dark_oak_planks
+run fill {C:-11:6:9} {C:-7:6:17} dark_oak_planks
+run fill {C:-10:7:9} {C:-8:7:17} dark_oak_planks
+run setblock {C:-6:1:13} glass_pane[north=true,south=true]
+run setblock {C:-9:1:10} glass_pane[east=true,west=true]
+run fill {C:-6:0:11} {C:-6:0:15} red_tulip replace air
+run place feature minecraft:flower_meadow {C:-2:0:8}
+run place feature minecraft:flower_meadow {C:4:0:12}
+
+# The Tetons from Mormon Row: a big wooden barn in the meadow with the range behind it.
+shot teton frames=1200 settle=35 warm=240 clear=2 ease=0 time=1500 fov=45
+cam 0 43.6663 -110.6630 +2.5
+cam 1 43.66645 -110.66300 +2.5
+look 0 43.7410 -110.8024 =2600
+look 1 43.7410 -110.8024 =2600
+at C 43.6663 -110.6630
+at B 43.66652 -110.66340
+run fill {C:-40:0:-30} {C:2:6:2} air replace #minecraft:leaves
+run fill {C:-40:0:-30} {C:2:6:2} air replace #minecraft:logs
+run fill {C:-40:0:-30} {C:2:6:2} air replace tall_grass
+run fill {C:-40:0:-30} {C:2:6:2} air replace short_grass
+run fill {B:0:-3:0} {B:8:-1:11} dirt replace air
+run fill {B:0:0:0} {B:8:4:11} spruce_planks hollow
+run fill {B:-1:5:-1} {B:9:5:12} dark_oak_planks
+run fill {B:0:6:-1} {B:8:6:12} dark_oak_planks
+run fill {B:1:7:-1} {B:7:7:12} dark_oak_planks
+run fill {B:2:8:-1} {B:6:8:12} dark_oak_planks
+run fill {B:3:9:-1} {B:5:9:12} dark_oak_planks
+run fill {B:3:0:11} {B:5:2:11} air
+run fill {B:3:0:0} {B:5:2:0} air
+run fill {B:-2:0:-3} {B:-2:0:14} spruce_fence
+
+# Mount Fuji across Lake Kawaguchi from the north shore (Oishi Park), with a small built set:
+# a torii gate at the water's edge framing the mountain and cherry trees either side.
+# Camera stays at least 3 blocks over the ground and never below the lake surface (~833 m).
+shot fuji frames=1200 settle=35 warm=240 clear=3 ease=0 time=1000 fov=50
+cam 0 35.5232 138.73550 =838
+cam 1 35.5232 138.73577 =838
+look 0 35.3606 138.7274 =1800
+look 1 35.3606 138.7274 =1800
+at C 35.5232 138.73563
+at T 35.5228 138.73563
+# clear tall grass right in front of the lens
+run fill {C:-3:0:1} {C:3:2:8} air replace tall_grass
+run fill {C:-3:0:1} {C:3:2:8} air replace short_grass
+# torii: posts reach down through any water, red frame, black top beam
+run fill {T:-3:-10:0} {T:-3:-1:0} red_concrete replace water
+run fill {T:3:-10:0} {T:3:-1:0} red_concrete replace water
+run fill {T:-3:0:0} {T:-3:6:0} red_concrete
+run fill {T:3:0:0} {T:3:6:0} red_concrete
+run fill {T:-4:4:0} {T:4:4:0} red_concrete
+run setblock {T:0:5:0} red_concrete
+run setblock {T:0:6:0} red_concrete
+run fill {T:-5:7:0} {T:5:7:0} red_concrete
+run fill {T:-6:8:0} {T:6:8:0} black_concrete
+# cherry trees framing the sides
+run place feature minecraft:cherry {C:-9:0:10}
+run place feature minecraft:cherry {C:10:0:14}
+run place feature minecraft:cherry {C:-15:0:3}
