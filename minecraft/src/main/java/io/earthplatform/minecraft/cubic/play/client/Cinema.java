@@ -41,7 +41,10 @@ import net.neoforged.neoforge.client.event.RenderFrameEvent;
  *   cam T LAT LON H     (H: metres above the ground there, or =Y for an absolute height)
  *   look T LAT LON H
  * map NAME FROMLAT FROMLON TOLAT TOLON tail=FRAMES
+ *   at NAME LAT LON     (a ground anchor for run lines: {NAME} or {NAME:DX:DY:DZ} becomes block X Y Z)
+ *   run COMMAND         (server command, run once while the shot warms, e.g. to build a set)
  * </pre>
+ * Shots also take fov=DEGREES.
  */
 @EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, value = Dist.CLIENT)
 public final class Cinema {
@@ -49,7 +52,10 @@ public final class Cinema {
 
     private record Key(double t, double lat, double lon, double h, boolean absolute) {}
     private static final class Shot {
-        String name; boolean map; int frames = 150, tail = 45; long time = -1; double settle = 25, warm = 150, clear = 40, ease = 1;
+        String name; boolean map; int frames = 150, tail = 45; long time = -1; double settle = 25, warm = 150, clear = 40, ease = 1, fov = -1;
+        boolean built;
+        final java.util.Map<String, double[]> at = new java.util.HashMap<>();
+        final List<String> run = new ArrayList<>();
         double fromLat, fromLon, toLat, toLon;
         final List<Key> cam = new ArrayList<>(), look = new ArrayList<>();
         double[][] poses;
@@ -117,6 +123,7 @@ public final class Cinema {
                                 case "tail" -> shot.tail = (int) v;
                                 case "ease" -> shot.ease = v;
                                 case "time" -> shot.time = (long) v;
+                                case "fov" -> shot.fov = v;
                                 default -> throw new IllegalArgumentException("unknown " + kv[0]);
                             }
                         }
@@ -128,6 +135,8 @@ public final class Cinema {
                                 Double.parseDouble(absolute ? p[4].substring(1) : p[4]), absolute);
                         (p[0].equals("cam") ? shot.cam : shot.look).add(key);
                     }
+                    case "at" -> shot.at.put(p[1], new double[]{Double.parseDouble(p[2]), Double.parseDouble(p[3])});
+                    case "run" -> shot.run.add(line.substring(4).trim());
                     default -> throw new IllegalArgumentException("unknown line " + line);
                 }
             }
@@ -151,6 +160,28 @@ public final class Cinema {
     private static void server(String command) {
         MinecraftServer server = Minecraft.getInstance().getSingleplayerServer();
         server.execute(() -> server.getCommands().performPrefixedCommand(server.createCommandSourceStack().withSuppressedOutput(), command));
+    }
+
+    /** Runs a shot's set-building commands, with {NAME} / {NAME:DX:DY:DZ} replaced by anchor block coordinates. */
+    private static void build(Shot shot) {
+        shot.built = true;
+        EarthGenerator earth = earth();
+        for (String cmd : shot.run) {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\{(\\w+)(?::(-?\\d+):(-?\\d+):(-?\\d+))?}").matcher(cmd);
+            StringBuilder sb = new StringBuilder();
+            while (m.find()) {
+                double[] ll = shot.at.get(m.group(1));
+                if (ll == null) throw new IllegalArgumentException("no anchor " + m.group(1));
+                GeoPoint g = new GeoPoint(ll[0], ll[1]);
+                int x = Mth.floor(earth.grid().blockX(g)), z = Mth.floor(earth.grid().blockZ(g));
+                int y = (int) Math.round(earth.surfaceY(x, z)) + 1;
+                if (m.group(2) != null) { x += Integer.parseInt(m.group(2)); y += Integer.parseInt(m.group(3)); z += Integer.parseInt(m.group(4)); }
+                m.appendReplacement(sb, x + " " + y + " " + z);
+            }
+            m.appendTail(sb);
+            log("set {}: {}", shot.name, sb);
+            server(sb.toString());
+        }
     }
 
     // Planning: keyframes to a block-space pose per frame ------------------------------------------
@@ -254,6 +285,7 @@ public final class Cinema {
             int settled = world.far().settledPercent(), pending = world.renderer().pendingCount();
             if (since > 5 && (int) since % 10 == 0 && (System.currentTimeMillis() - stateAt) % 1000 < 50)
                 log("warming {}: {} s, {}% settled, {} to compile", shot.name, (int) since, settled, pending);
+            if (!shot.built && !shot.run.isEmpty() && since > 6) build(shot);
             if (since > 8 && settled >= shot.settle && pending < 30 || since > shot.warm) {
                 log("recording {} after {} s ({}% settled, {} to compile)", shot.name, (int) since, settled, pending);
                 frame = 0;
@@ -284,6 +316,7 @@ public final class Cinema {
         if (only != null && !only.contains(shot.name)) { next(); return; }
         Minecraft mc = Minecraft.getInstance();
         mc.options.bobView().set(false);
+        if (shot.fov > 0) mc.options.fov().set((int) shot.fov);
         server("gamerule doDaylightCycle false");
         server("gamerule doWeatherCycle false");
         server("weather clear");

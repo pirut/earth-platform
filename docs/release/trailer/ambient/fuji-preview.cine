@@ -1,0 +1,31 @@
+out @OUT@
+fps 30
+preview 3
+
+# Mount Fuji across Lake Kawaguchi from the north shore (Oishi Park), with a small built set:
+# a torii gate at the water's edge framing the mountain and cherry trees either side.
+# Camera stays at least 3 blocks over the ground and never below the lake surface (~833 m).
+shot fuji frames=1200 settle=35 warm=240 clear=3 ease=0 time=1000 fov=50
+cam 0 35.5232 138.73550 =838
+cam 1 35.5232 138.73577 =838
+look 0 35.3606 138.7274 =1800
+look 1 35.3606 138.7274 =1800
+at C 35.5232 138.73563
+at T 35.5228 138.73563
+# clear tall grass right in front of the lens
+run fill {C:-3:0:1} {C:3:2:8} air replace tall_grass
+run fill {C:-3:0:1} {C:3:2:8} air replace short_grass
+# torii: posts reach down through any water, red frame, black top beam
+run fill {T:-3:-10:0} {T:-3:-1:0} red_concrete replace water
+run fill {T:3:-10:0} {T:3:-1:0} red_concrete replace water
+run fill {T:-3:0:0} {T:-3:6:0} red_concrete
+run fill {T:3:0:0} {T:3:6:0} red_concrete
+run fill {T:-4:4:0} {T:4:4:0} red_concrete
+run setblock {T:0:5:0} red_concrete
+run setblock {T:0:6:0} red_concrete
+run fill {T:-5:7:0} {T:5:7:0} red_concrete
+run fill {T:-6:8:0} {T:6:8:0} black_concrete
+# cherry trees framing the sides
+run place feature minecraft:cherry {C:-9:0:10}
+run place feature minecraft:cherry {C:10:0:14}
+run place feature minecraft:cherry {C:-15:0:3}
