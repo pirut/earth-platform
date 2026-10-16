@@ -333,7 +333,7 @@ public final class FarRenderer {
             if (side != null) schedule(side);
         }
         // Smooth ground meets its diagonal neighbours at its corners too.
-        if (FarMesher.SMOOTH && level >= FarMesher.SMOOTH_FROM && level > TEXTURED_LEVELS) {
+        if (FarMesher.SMOOTH && level >= FarMesher.SMOOTH_FROM) {
             for (int corner = 0; corner < 4; corner++) {
                 Column diagonal = columns.get(column.diagonal(corner));
                 if (diagonal != null) schedule(diagonal);
@@ -774,9 +774,10 @@ public final class FarRenderer {
         FarGpu.Allocation faces = column.faces;
         if (faces == null) return;
         AABB box = column.box;
-        // Only face groups turned toward the camera can show.
+        // Only face groups turned toward the camera can show. Smooth ground's slopes, cliffs among them,
+        // face sideways too, so it shows from below its column as well.
         if (position.y < box.maxY) gpu.add(faces, 0);
-        if (position.y > box.minY) gpu.add(faces, 1);
+        if (position.y > box.minY || faces.smooth()) gpu.add(faces, 1);
         if (position.z < box.maxZ) gpu.add(faces, 2);
         if (position.z > box.minZ) gpu.add(faces, 3);
         if (position.x < box.maxX) gpu.add(faces, 4);

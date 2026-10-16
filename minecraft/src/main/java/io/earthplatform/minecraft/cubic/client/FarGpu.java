@@ -72,7 +72,8 @@ final class FarGpu {
     static final int NO_FADE = 0, FADE_OUT = 1, FADE_IN = 2;
 
     /** A column's faces in one arena: {@code counts} faces per group, starting at {@code start}. */
-    record Allocation(Arena arena, int start, int size, int[] counts, int[] firsts) {}
+    /** A column's faces in an arena; smooth when they include smooth ground, whose slopes can face the camera from below. */
+    record Allocation(Arena arena, int start, int size, int[] counts, int[] firsts, boolean smooth) {}
 
     FarGpu() {
         RenderSystem.assertOnRenderThread();
@@ -147,7 +148,7 @@ final class FarGpu {
         int[] firsts = new int[counts.length];
         for (int g = 0, at = start; g < counts.length; at += counts[g], g++) firsts[g] = at;
         quadBytes += size * 16L;
-        return new Allocation(arena, start, size, counts.clone(), firsts);
+        return new Allocation(arena, start, size, counts.clone(), firsts, grid != null);
     }
 
     void free(@Nullable Allocation allocation) {

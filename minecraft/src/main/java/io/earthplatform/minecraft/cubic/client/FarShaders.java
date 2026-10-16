@@ -87,6 +87,9 @@ final class FarShaders {
             out vec3 earth_vcolour;
             out vec3 earth_vnormal;
             flat out float earth_smooth;
+            out vec3 earth_where;
+            out vec2 earth_cellAt;
+            flat out int earth_grid;
 
             // Corners (along the face's width, along its height) per direction, counter-clockwise from outside.
             const ivec2 CORNERS[24] = ivec2[](
@@ -136,6 +139,8 @@ final class FarShaders {
                 earth_smooth = 0.0;
                 earth_vcolour = vec3(1.0);
                 earth_vnormal = vec3(0.0, 1.0, 0.0);
+                earth_cellAt = vec2(0.0);
+                earth_grid = 0;
                 if (face >= 6u) {
                     // Smooth ground: each corner is a grid point of the column, whose height, colour and slope follow the faces.
                     uint side = q.w >> 20;
@@ -149,6 +154,8 @@ final class FarShaders {
                     float height = float(int(point.x)) / 256.0;
                     if (face == 7u && ab.y < 0.5) height -= float(extent) / 16.0;
                     local = vec3(earth_place(gx) * v, height, earth_place(gz) * v);
+                    earth_cellAt = vec2(earth_place(gx), earth_place(gz));
+                    earth_grid = int(q.y);
                     earth_smooth = 1.0;
                     earth_vcolour = earth_rgb(point.y);
                     earth_vnormal = face == 6u ? earth_decodeNormal(point.z)
@@ -159,6 +166,7 @@ final class FarShaders {
                 }
                 vec3 position = origin + local;
                 earth_position = position;
+                earth_where = local;
                 earth_anchor = earth_smooth > 0.5 ? position : origin + earth_local(face, vec2(0.5), x, y, z, width, extent, v);
                 earth_reach = 16.0 * v;
             #ifdef EARTH_FADE
@@ -214,6 +222,9 @@ final class FarShaders {
             in vec3 earth_vcolour;
             in vec3 earth_vnormal;
             flat in float earth_smooth;
+            in vec3 earth_where;
+            in vec2 earth_cellAt;
+            flat in int earth_grid;
             #endif
             """;
 
@@ -231,16 +242,50 @@ final class FarShaders {
             flat in uint earth_look;
 
             uniform sampler2D earth_Atlas;
+            uniform usamplerBuffer earth_Quads;
+            uniform usamplerBuffer earth_Looks;
+
+            // The texture this pixel shows: the face's own, or on textured smooth ground the block of
+            // the voxel column under the pixel, laid from above on gentle slopes and from the side on steep ones.
+            bool earth_looked = false;
+            vec4 earth_hereSprite;
+            vec2 earth_hereTile;
+            vec3 earth_hereAverage;
+
+            void earth_here() {
+                if (earth_looked) return;
+                earth_looked = true;
+                earth_hereSprite = earth_sprite;
+                earth_hereTile = earth_tile;
+                earth_hereAverage = earth_average;
+                if (earth_smooth < 0.5 || (earth_flags & 1u) == 0u) return;
+                ivec2 cell = clamp(ivec2(floor(earth_cellAt)), ivec2(0), ivec2(15));
+                uint id = texelFetch(earth_Quads, earth_grid + (cell.y + 1) * 18 + cell.x + 1).w;
+                if (id != 0u) {
+                    earth_hereSprite = uintBitsToFloat(texelFetch(earth_Looks, int(id - 1u) * 2));
+                    uint average = texelFetch(earth_Looks, int(id - 1u) * 2 + 1).x;
+                    earth_hereAverage = vec3(float((average >> 16) & 255u), float((average >> 8) & 255u), float(average & 255u)) / 255.0;
+                }
+                vec3 n = earth_vnormal;
+                vec3 w = earth_where;
+                if (n.y * n.y > 0.5 * dot(n, n)) earth_hereTile = w.xz;
+                else if (abs(n.z) >= abs(n.x)) earth_hereTile = vec2(n.z > 0.0 ? w.x : -w.x, -w.y);
+                else earth_hereTile = vec2(n.x > 0.0 ? -w.z : w.z, -w.y);
+            }
 
             vec2 earth_atlasUv() {
-                return earth_sprite.xy + fract(earth_tile) * (earth_sprite.zw - earth_sprite.xy);
+                earth_here();
+                return earth_hereSprite.xy + fract(earth_hereTile) * (earth_hereSprite.zw - earth_hereSprite.xy);
             }
 
             vec4 earth_sample() {
-                if (earth_smooth > 0.5) return vec4(earth_vcolour, 1.0);
+                if (earth_smooth > 0.5 && (earth_flags & 1u) == 0u) return vec4(earth_vcolour, 1.0);
                 if ((earth_flags & 1u) == 0u) return vec4(earth_average, 1.0);
-                vec2 size = earth_sprite.zw - earth_sprite.xy;
-                vec4 texel = textureGrad(earth_Atlas, earth_atlasUv(), dFdx(earth_tile) * size, dFdy(earth_tile) * size);
+                earth_here();
+                vec2 size = earth_hereSprite.zw - earth_hereSprite.xy;
+                vec4 texel = textureGrad(earth_Atlas, earth_atlasUv(), dFdx(earth_hereTile) * size, dFdy(earth_hereTile) * size);
+                // Smooth ground's colour blends from voxel column to voxel column; the texture keeps its pattern on top.
+                if (earth_smooth > 0.5) return vec4(earth_vcolour * min(texel.rgb / max(earth_hereAverage, vec3(1.0 / 255.0)), vec3(3.0)), 1.0);
                 return vec4(texel.rgb, 1.0);
             }
 

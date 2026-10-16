@@ -122,15 +122,16 @@ final class FarMesher {
         }
 
         Built build() {
-            // Far enough out, the ground is drawn as one smooth surface rather than voxels, so only water is meshed voxel by voxel.
-            boolean smooth = smooth(job);
+            // The ground is drawn as one smooth surface rather than voxels, so only water is meshed voxel by voxel,
+            // and on the textured levels trees too, which stand on the ground as blocks do up close.
+            boolean smooth = smooth(job), trees = smooth && job.textured;
             LevelChunkSection[] sections = job.sections;
             for (int si = 0; si < sections.length; si++) {
                 LevelChunkSection section = sections[si];
                 if (section == null || section.hasOnlyAir()) continue;
                 for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
                     BlockState state = section.getBlockState(x, y, z);
-                    if (state.isAir() || smooth && !seeThrough(state)) continue;
+                    if (state.isAir() || smooth && !seeThrough(state) && !(trees && foliage(state))) continue;
                     int vy = si * 16 + y;
                     if (drawn(job, x, vy, z)) continue;
                     voxel(section, state, x, y, vy, z);
@@ -139,8 +140,13 @@ final class FarMesher {
             IntArrayList[] groups = new IntArrayList[GROUPS];
             for (int g = 0; g < GROUPS; g++) groups[g] = new IntArrayList();
             int[] grid = null;
-            if (smooth) grid = new Smooth(this).emit(groups);
-            else {
+            if (smooth) {
+                grid = new Smooth(this).emit(groups);
+                if (trees) {
+                    opaqueFlat.emitQuads(this, groups);
+                    emitSides(groups);
+                }
+            } else {
                 opaqueFlat.emitQuads(this, groups);
                 emitSides(groups);
             }
@@ -354,19 +360,19 @@ final class FarMesher {
 
     /**
      * Whether far ground is drawn smooth: on by default, off with {@code -Dearthplatform.far.smooth=false}.
-     * Smooth ground starts at the first level drawn in flat colours, or later with
+     * Every level is smooth, the textured ones too, or only from a later level with
      * {@code -Dearthplatform.far.smoothFrom}.
      */
     static final boolean SMOOTH = !"false".equals(System.getProperty("earthplatform.far.smooth"));
-    static final int SMOOTH_FROM = Integer.getInteger("earthplatform.far.smoothFrom", 3);
+    static final int SMOOTH_FROM = Integer.getInteger("earthplatform.far.smoothFrom", 1);
     /** Grid points along each side of a column's smooth ground: its two edges and the middles of its 16 voxel columns. */
     static final int POINTS = 18;
     /** Face kinds past the six block directions: a piece of smooth ground, and a wall hanging from its edge. */
     static final int SMOOTH_TOP = 6, SMOOTH_WALL = 7;
 
-    /** True when a column's ground is drawn as a smooth surface: flat-coloured levels with nothing of theirs drawn up close. */
+    /** True when a column's ground is drawn as a smooth surface: any level with nothing of its own drawn up close. */
     static boolean smooth(Job job) {
-        return SMOOTH && !job.textured && job.level >= SMOOTH_FROM && (job.drawn == null || job.drawn.isEmpty());
+        return SMOOTH && job.level >= SMOOTH_FROM && (job.drawn == null || job.drawn.isEmpty());
     }
 
     /**
@@ -381,7 +387,10 @@ final class FarMesher {
      * walls hang from each edge for where the next column is drawn at another level.
      *
      * <p>Points are four ints each, after the column's faces (see {@link FarGpu}): height above
-     * the column's base in 1/256 blocks, RGB, and the ground's {@link #normalCode} there.
+     * the column's base in 1/256 blocks, RGB, the ground's {@link #normalCode} there, and on
+     * textured levels, for points in the middle of a voxel column, one more than the id of that
+     * voxel column's textured look (0 elsewhere), which the fragment shader reads to lay each voxel
+     * column's own block texture over the slope.
      */
     private static final class Smooth {
         /** Voxel columns from -1 to 16 each way: this column's and the edge of each one around it. */
@@ -428,7 +437,8 @@ final class FarMesher {
                 if (side == null || side.sections == null) return false;
                 sections = side.sections; bottom = side.bottom; drops = side.drops;
             }
-            int x = cx & 15, z = cz & 15, row = top(sections, x, z, true);
+            // Textured levels draw trees as blocks on the ground; further out they are part of the surface.
+            int x = cx & 15, z = cz & 15, row = job.textured ? groundRow(sections, x, z) : top(sections, x, z, true);
             int at = cell(cx, cz);
             height[at] = (row + 1 + (bottom - job.bottom) * 16) * voxel - drops[z * 16 + x];
             BlockState top = row < 0 ? GROUND : sections[row >> 4].getBlockState(x, row & 15, z);
@@ -520,6 +530,12 @@ final class FarMesher {
                 grid[i * 4 + 1] = pointRgb[i];
                 grid[i * 4 + 2] = pointNormal[i];
             }
+            if (job.textured) {
+                for (int cz = 0; cz < 16; cz++) for (int cx = 0; cx < 16; cx++) {
+                    int at = cell(cx, cz);
+                    grid[((cz + 1) * POINTS + cx + 1) * 4 + 3] = job.looks.id(job.faces, state[at], Direction.UP, biome[at], true, job.shaderIds) + 1;
+                }
+            }
             return grid;
         }
 
@@ -538,7 +554,7 @@ final class FarMesher {
             float surface = builder.surface[own];
             int sky = Mth.clamp(15 - (int) (surface - height[best] / (float) UNIT), 0, 15);
             Holder<Biome> holder = biome[best];
-            int id = job.looks.id(job.faces, state[best], Direction.UP, holder, false, job.shaderIds);
+            int id = job.looks.id(job.faces, state[best], Direction.UP, holder, job.textured, job.shaderIds);
             return (long) id << 8 | sky;
         }
 
