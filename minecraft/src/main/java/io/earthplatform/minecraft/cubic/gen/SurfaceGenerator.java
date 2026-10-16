@@ -172,6 +172,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return made;
     }
 
+    /** The cube column's own lowest ground, from the column its cubes are made from. */
+    @Override public final int lowestGround(int cubeX, int cubeZ) { return column(cubeX, cubeZ).min; }
+
     @Override public final int surfaceY(int x, int z) {
         Column cached = columns.get(columnKey(x >> 4, z >> 4));
         if (cached != null) return cached.height[((z & 15) + 1) * 18 + (x & 15) + 1];

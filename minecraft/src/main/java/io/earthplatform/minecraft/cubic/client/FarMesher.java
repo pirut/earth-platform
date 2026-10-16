@@ -101,6 +101,8 @@ final class FarMesher {
         final int[] normals;
         /** Each voxel column's highest ground row (not water or trees), or -1. */
         final int[] groundRows = new int[256];
+        /** What each voxel column's ground shows on top and on its step risers (see {@link #evenCover}), or null for its own block. */
+        @Nullable final BlockState[] cover;
         final Flat opaqueFlat = new Flat(), waterFlat = new Flat();
         /** Side face pieces by direction (north, south, west, east) and voxel column. */
         @SuppressWarnings("unchecked") final List<Piece>[][] pieces = new List[4][256];
@@ -122,6 +124,7 @@ final class FarMesher {
             surface = surface(job, v);
             for (int cell = 0; cell < 256; cell++) groundRows[cell] = groundRow(job.sections, cell & 15, cell >> 4);
             normals = normals(job, voxel);
+            cover = job.level >= COVER_FROM ? evenCover(job, groundRows) : null;
         }
 
         Built build() {
@@ -189,7 +192,8 @@ final class FarMesher {
                     } else if (hides(state, neighbour, direction)) continue;
                     if (biome == null) biome = section.getBiomes().get(x >> 2, y >> 2, z >> 2);
                     int height = direction == Direction.UP ? top : bottom;
-                    if (!liquid) opaqueFlat.add(direction, x, vy, z, height, look(state, biome, direction, sky, cell));
+                    BlockState shown = direction == Direction.UP && vy == groundRows[cell] ? cover(cell, state) : state;
+                    if (!liquid) opaqueFlat.add(direction, x, vy, z, height, look(shown, biome, direction, sky, cell));
                     else if (!texturedWater) waterFlat.add(direction, x, vy, z, height, waterLook(state, biome, direction));
                     else waterFace(water(), state, biome, direction, x, z, height, 0);
                     continue;
@@ -231,10 +235,15 @@ final class FarMesher {
                         // voxel stairs reads as one surface rather than stripes of top and side texture.
                         List<Piece> list = pieces[index][cell];
                         if (list == null) list = pieces[index][cell] = new ArrayList<>(2);
-                        list.add(new Piece(from, to, look(state, biome, vy == groundRows[cell] ? Direction.UP : direction, sky, cell), group));
+                        boolean ground = vy == groundRows[cell];
+                        list.add(new Piece(from, to, look(ground ? cover(cell, state) : state, biome, ground ? Direction.UP : direction, sky, cell), group));
                     }
                 }
             }
+        }
+
+        private BlockState cover(int cell, BlockState own) {
+            return cover == null || cover[cell] == null ? own : cover[cell];
         }
 
         /**
@@ -781,6 +790,56 @@ final class FarMesher {
         float length = (float) Math.sqrt(slopeX * slopeX + 1.0F + slopeZ * slopeZ);
         int nx = Math.round(-slopeX / length * 31.0F) + 32, nz = Math.round(-slopeZ / length * 31.0F) + 32;
         return nx | nz << 6;
+    }
+
+    /** The finest level whose ground cover is evened out (see {@link #evenCover}); finer ones sit by the real blocks and keep theirs. */
+    static final int COVER_FROM = Integer.getInteger("earthplatform.far.coverFrom", 2);
+
+    /**
+     * Evens out what the ground shows from voxel to voxel. A far voxel takes the block found at
+     * its spot, so where thin snow lies on rock, or grass on scree, neighbouring voxels flip
+     * between the two and a mountainside reads as salt and pepper rather than snowfields and
+     * rock. A voxel whose neighbours clearly agree on something else takes that on instead, twice
+     * over, so lone specks go and patches round off, the way a snowfield or a meadow looks from
+     * afar. Its shape and height stay as they are.
+     */
+    @Nullable static BlockState[] evenCover(Job job, int[] groundRows) {
+        BlockState[] cover = new BlockState[256];
+        boolean any = false;
+        for (int cell = 0; cell < 256; cell++) {
+            if (groundRows[cell] < 0) continue;
+            cover[cell] = at(job.sections, groundRows[cell], cell & 15, cell >> 4);
+            any = true;
+        }
+        if (!any) return null;
+        for (int pass = 0; pass < 2; pass++) {
+            BlockState[] next = cover.clone();
+            for (int cell = 0; cell < 256; cell++) {
+                BlockState own = cover[cell];
+                if (own == null) continue;
+                int x = cell & 15, z = cell >> 4, same = 0;
+                BlockState best = null;
+                int bestCount = 0;
+                BlockState[] seen = new BlockState[8];
+                int[] counts = new int[8];
+                int kinds = 0;
+                for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
+                    if (dx == 0 && dz == 0) continue;
+                    int nx = x + dx, nz = z + dz;
+                    if (nx < 0 || nx > 15 || nz < 0 || nz > 15) continue;
+                    BlockState other = cover[nz * 16 + nx];
+                    if (other == null) continue;
+                    if (other == own) { same++; continue; }
+                    int k = 0;
+                    while (k < kinds && seen[k] != other) k++;
+                    if (k == kinds) seen[kinds++] = other;
+                    if (++counts[k] > bestCount) { bestCount = counts[k]; best = other; }
+                }
+                if (best != null && bestCount >= same + 2) next[cell] = best;
+            }
+            cover = next;
+        }
+        return cover;
     }
 
     /** The highest voxel row of ground in a voxel column: solid, not water and not foliage. */
