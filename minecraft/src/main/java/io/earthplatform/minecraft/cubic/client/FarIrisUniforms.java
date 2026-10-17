@@ -7,7 +7,6 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
-import kroppeb.stareval.expression.Expression;
 import kroppeb.stareval.function.Type;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.gl.program.ProgramUniforms;

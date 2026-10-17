@@ -18,7 +18,7 @@ public record MercatorGrid(double metresPerBlock) {
     public static final String PROJECTION_ID = "web-mercator-v1";
 
     public MercatorGrid {
-        if (!Double.isFinite(metresPerBlock) || metresPerBlock <= 0) throw new IllegalArgumentException("Invalid metres per block");
+        if (!Double.isFinite(metresPerBlock) || metresPerBlock <= 0) throw new IllegalArgumentException("Invalid meters per block");
     }
 
     /** Circumference in blocks; also the full north/south extent of the covered square. */

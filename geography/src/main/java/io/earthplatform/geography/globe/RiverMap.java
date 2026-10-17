@@ -543,7 +543,6 @@ public final class RiverMap {
         }
     }
 
-    /** Water pixels in the five by five around a pixel: five for a line one pixel wide, more for wider water. */
     /** The first index from {@code from} to {@code to} whose column is at least {@code x}. */
     private static int first(int[] columns, int from, int to, int x) {
         while (from < to) {
@@ -553,6 +552,7 @@ public final class RiverMap {
         return from;
     }
 
+    /** Water pixels in the five by five around a pixel: five for a line one pixel wide, more for wider water. */
     private static int wet(boolean[] solid, int span, int x, int y) {
         int wet = 0;
         for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) if (at(solid, span, x + i, y + j)) wet++;
