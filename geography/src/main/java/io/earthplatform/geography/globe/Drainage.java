@@ -171,6 +171,7 @@ public final class Drainage {
         Region region;
         synchronized (memory) { region = memory.get(key); }
         if (region != null) return region;
+        TickShare.giveWay();
         CompletableFuture<Region> mine = new CompletableFuture<>(), shared = inFlight.putIfAbsent(key, mine);
         if (shared == null) {
             try {

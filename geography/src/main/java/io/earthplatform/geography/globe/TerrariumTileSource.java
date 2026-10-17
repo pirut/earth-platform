@@ -117,6 +117,7 @@ public final class TerrariumTileSource implements AutoCloseable {
             float[] hit = memory.get(key);
             if (hit != null) { memoryHits.incrementAndGet(); return hit; }
         }
+        TickShare.giveWay();
         CompletableFuture<float[]> mine = new CompletableFuture<>();
         CompletableFuture<float[]> shared = inFlight.putIfAbsent(key, mine);
         if (shared == null) {
