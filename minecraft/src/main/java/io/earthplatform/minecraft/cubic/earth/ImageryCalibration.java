@@ -157,11 +157,11 @@ public final class ImageryCalibration {
 
     private static String report(GeoPoint centre, int size, int land, double meanOff, double changed, Map<String, Group> groups) {
         StringBuilder out = new StringBuilder();
-        out.append(String.format(Locale.ROOT, "Calibration at %s, %d blocks square. Panels: satellite | generation alone | with imagery | colour gap (blue none, red %.0f+)%n",
+        out.append(String.format(Locale.ROOT, "Calibration at %s, %d blocks square. Panels: satellite | generation alone | with imagery | color gap (blue none, red %.0f+)%n",
                 centre, size, 2 * OFF));
-        out.append(String.format(Locale.ROOT, "Land pixels read: %d; mean colour gap %.1f; imagery would change %.0f%% of them.%n%n",
+        out.append(String.format(Locale.ROOT, "Land pixels read: %d; mean color gap %.1f; imagery would change %.0f%% of them.%n%n",
                 land, meanOff, land == 0 ? 0 : 100 * changed / land));
-        out.append("share  gap    colour gen / sat     lightness gen/sat  green gen/sat   bare ground there looks like            group\n");
+        out.append("share  gap    color gen / sat     lightness gen/sat  green gen/sat   bare ground there looks like            group\n");
         List<Group> sorted = new ArrayList<>(groups.values());
         sorted.sort((a, b) -> Double.compare(b.count, a.count));
         for (Group g : sorted) {
@@ -170,7 +170,7 @@ public final class ImageryCalibration {
                     100.0 * g.count / land, g.off / g.count, g.off / g.count > OFF ? "*" : " ", hex(g.generated()), hex(g.satellite()),
                     g.genL / g.count, g.satL / g.count, g.genGreen / g.count, g.satGreen / g.count, g.matches(), g.key));
         }
-        out.append("\n* colour gap above ").append((int) OFF).append(": the group looks unlike the place. Lightness is CIELAB L*; green is the excess green\n")
+        out.append("\n* color gap above ").append((int) OFF).append(": the group looks unlike the place. Lightness is CIELAB L*; green is the excess green\n")
                 .append("of sRGB chromaticity (about 0 for bare ground, 0.1 and up for lush plants). 'Bare ground there looks like' lists, for the\n")
                 .append("group's pixels the satellite shows bare (not green, not shadow), the nearest vanilla ground blocks with shares and the bare share.\n");
         return out.toString();

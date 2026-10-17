@@ -51,8 +51,6 @@ final class FarGpu {
     private static final int QUAD_UNIT = 3, LOOK_UNIT = 4, COLUMN_UNIT = 5, ATLAS_UNIT = 0, LIGHT_UNIT = 2;
     /** Faces per buffer texture: 64 MB each. */
     private static final int ARENA_QUADS = 1 << 22;
-    /** Ints per column slot: origin x, base y, origin z, level. */
-    private static final int SLOT_INTS = 4;
 
     private final int vao;
     /**
@@ -289,6 +287,7 @@ final class FarGpu {
         GL20C.glUniform1i(program.location("earth_GameDepth"), FarLod.vanillaUnit());
         if (packMode && packOwnDepth) FarLod.shadowUniforms(program::location);
         GL20C.glUniform1f(program.location("earth_FadeHole"), Far.hole());
+        GL20C.glUniform1f(program.location("earth_NearReach"), FarLod.nearReach());
         GL30C.glUniform1ui(program.location("earth_Now"), now());
         // Under a pack's TAA the dither moves every frame and blends into a smooth fade; without it, it holds still.
         GL20C.glUniform1f(program.location("earth_DitherFrame"), program.jittered ? frame & 63 : 0);
@@ -446,7 +445,7 @@ final class FarGpu {
                 return null;
             }
             packPatched = false;
-            EarthPlatformMod.LOGGER.warn("The shader pack's Voxy fragment code does not build for far terrain; using plain colours");
+            EarthPlatformMod.LOGGER.warn("The shader pack's Voxy fragment code does not build for far terrain; using plain colors");
         }
         pack[fade] = linkPack(jitter, header + FarShaders.PACK_FALLBACK, "far terrain (plain, shader pack)", header);
         if (pack[fade] == null) {
@@ -506,44 +505,7 @@ final class FarGpu {
         int location(String name) { return locations.computeIfAbsent(name, key -> GL20C.glGetUniformLocation(id, key)); }
 
         static Program link(String vertexSource, String fragmentSource, String name) {
-            int vertex = compile(GL20C.GL_VERTEX_SHADER, vertexSource, name);
-            int fragment;
-            try { fragment = compile(GL20C.GL_FRAGMENT_SHADER, fragmentSource, name); }
-            catch (IllegalStateException failure) { GL20C.glDeleteShader(vertex); throw failure; }
-            int program = GL20C.glCreateProgram();
-            GL20C.glAttachShader(program, vertex);
-            GL20C.glAttachShader(program, fragment);
-            GL20C.glLinkProgram(program);
-            GL20C.glDetachShader(program, vertex);
-            GL20C.glDetachShader(program, fragment);
-            GL20C.glDeleteShader(vertex);
-            GL20C.glDeleteShader(fragment);
-            if (GL20C.glGetProgrami(program, GL20C.GL_LINK_STATUS) == GL11C.GL_FALSE) {
-                String log = GL20C.glGetProgramInfoLog(program);
-                GL20C.glDeleteProgram(program);
-                throw new IllegalStateException("Could not link " + name + ": " + log);
-            }
-            return new Program(program);
-        }
-
-        private static int compile(int type, String source, String name) {
-            int shader = GL20C.glCreateShader(type);
-            GL20C.glShaderSource(shader, source);
-            GL20C.glCompileShader(shader);
-            if (GL20C.glGetShaderi(shader, GL20C.GL_COMPILE_STATUS) == GL11C.GL_FALSE) {
-                String log = GL20C.glGetShaderInfoLog(shader);
-                GL20C.glDeleteShader(shader);
-                throw new IllegalStateException("Could not compile " + name + (type == GL20C.GL_VERTEX_SHADER ? " vertex" : " fragment")
-                        + " shader: " + log + "\n" + numbered(source));
-            }
-            return shader;
-        }
-
-        private static String numbered(String source) {
-            StringBuilder out = new StringBuilder();
-            String[] lines = source.split("\n", -1);
-            for (int i = 0; i < lines.length; i++) out.append(i + 1).append(": ").append(lines[i]).append('\n');
-            return out.toString();
+            return new Program(GlShaders.link(vertexSource, fragmentSource, name));
         }
 
         void close() {

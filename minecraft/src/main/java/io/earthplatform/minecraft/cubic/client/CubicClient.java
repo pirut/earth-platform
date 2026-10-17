@@ -27,6 +27,8 @@ public final class CubicClient {
 
     private static long lastFrame;
     private static int perfTicks;
+    /** Ticks between perf log lines, with {@code -Dearthplatform.cubic.perf=true}. */
+    private static final int PERF_TICKS = Math.max(1, Integer.getInteger("earthplatform.cubic.perfTicks", 100));
 
     @SubscribeEvent public static void load(LevelEvent.Load event) {
         if (event.getLevel() instanceof ClientLevel level) ClientCubeWorld.attach(level);
@@ -80,12 +82,14 @@ public final class CubicClient {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world != null) { world.checkShaders(); world.renderer().tick(); world.far().tick(); }
         PhotonCloudsHook.tick();
-        if (world != null && Timings.LOG && ++perfTicks % 100 == 0) {
+        if (world != null && Timings.LOG && ++perfTicks % PERF_TICKS == 0) {
             Runtime runtime = Runtime.getRuntime();
-            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes, {} to compile, far {}/{} columns {}% settled {} MB {} draws, {} sent again; {}",
+            var camera = Minecraft.getInstance().gameRenderer.getMainCamera();
+            int[] byView = world.renderer().meshesByView(camera.getPosition(), camera.getYRot());
+            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes ({} in view), {} to compile, far {}/{} columns {}% settled ({}% in view) {} MB {} draws, {} sent again; {}",
                     Minecraft.getInstance().getFps(), (runtime.totalMemory() - runtime.freeMemory()) >> 20, world.loadedCubes(),
-                    world.renderer().meshCount(), world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
-                    world.far().settledPercent(), world.far().vertexBytes() >> 20, world.far().drawnRanges(), world.far().replacedCount(), timings(Timings.LOGGER));
+                    world.renderer().meshCount(), byView[0], world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
+                    world.far().settledPercent(), world.far().settledInViewPercent(), world.far().vertexBytes() >> 20, world.far().drawnRanges(), world.far().replacedCount(), timings(Timings.LOGGER));
         }
     }
 
@@ -140,7 +144,7 @@ public final class CubicClient {
         event.getLeft().add(at, "Cubic: " + world.loadedCubes() + " cubes, " + world.renderer().meshCount() + " meshes, "
                 + world.renderer().pendingCount() + " to compile");
         event.getLeft().add(at + 1, "Far: " + world.far().drawnCount() + "/" + world.far().columnCount() + " columns, "
-                + world.far().settledPercent() + "% settled, "
+                + world.far().settledPercent() + "% settled (" + world.far().settledInViewPercent() + "% in view), "
                 + world.far().vertexBytes() / (1 << 20) + " MB, " + world.far().drawnRanges() + " draws");
         // The debug screen redraws every frame; read the timings about twice a second so they can be read.
         long now = System.nanoTime();

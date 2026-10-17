@@ -14,8 +14,17 @@
 | `/earth visit <place>` | Go to a famous place, e.g. `/earth visit everest` (tab completes) |
 | `/earth goto <latitude> <longitude>` | Go anywhere, e.g. `/earth goto 46.5935 7.9090` |
 | `/earth places` | List famous places; click one to go there |
-| `/earth where` | Your latitude, longitude and real height |
-| `/earth home` | Back to the world's starting point |
+| `/earth where` | Your latitude, longitude, real height and country |
+| `/earth random` | A random trip to somewhere on land; `/earth random <km>` stays within that distance |
+| `/earth sethome` | Save where you stand as your home |
+| `/earth home` | Back to your home, or to your spawn if you haven't set one |
+| `/earth spawn` | Back to your spawn: your own or your team's if an operator gave you one, else the server spawn |
+| `/earth warps`, `/earth warp <name>` | List the server's warps (click one to go), or go to one |
+| `/earth tpa <player>`, `/earth tpahere <player>` | Ask to go to another player, or ask them to come to you; they click **Accept** or **Deny** (or `/earth tpaccept`, `/earth tpdeny`). Requests last two minutes |
+| `/earth race` | During a race, how far the finish is and which way |
+| `/earth guess` | During a GeoGuessr round, opens the globe to mark where you think you are |
+
+Crossing into another country shows its name on screen, as "Now entering France".
 
 ### The travel map
 
@@ -59,6 +68,64 @@ See [Which other mods work?](FAQ.md#which-other-mods-work) and [Known limitation
 ## Servers
 
 Set `level-type=earthplatform\:earth` in `server.properties` before the world is first created, and `defaultHome` in `config/earthplatform-common.toml` (a place id from `/earth places`, or `latitude,longitude`). Players join straight onto the Earth.
+
+### Server commands
+
+These are for operators, and all of them work from the server console too. Wherever a command takes a spot, you can write it three ways: `to <latitude> <longitude>`, `place <famous place>` (tab completes), or `here` for where you stand.
+
+| Command | What it does |
+| --- | --- |
+| `/earth spawn pick` | Opens the globe; click a spot and press **Set spawn here** to make it the server spawn |
+| `/earth spawn set to <lat> <lon>`, `set place <place>`, `set here` | Moves the server spawn: where new players arrive and where players without a bed respawn |
+| `/earth spawn reset` | The world's starting point is the server spawn again |
+| `/earth spawn info` | Shows where the server spawn is |
+| `/earth spawn player <players> to <lat> <lon>` (or `place`, `here`) | Gives players their own spawn, used when they have no bed |
+| `/earth spawn player <players> reset` | Back to the server spawn; also lets them choose their start again |
+| `/earth send <players> to <lat> <lon>` (or `place`, `here`) | Sends players somewhere, e.g. `/earth send @a place everest` |
+| `/earth send <players> random [km]` | Sends each player on their own random trip |
+| `/earth send <players> spawn` / `home` | Sends players to the server spawn or to their homes |
+| `/earth setwarp <name> here` (or `to`, `place`), `/earth delwarp <name>` | Adds a warp or removes one |
+| `/earth team <team> spawn to <lat> <lon>` (or `place`, `here`, `reset`) | Gives a vanilla `/team` its own start |
+| `/earth teams spread [km]` | Gives every team a random start on land, at least that far apart (2000 km unless given) |
+| `/earth border` | Shows the server's border |
+| `/earth border box <south> <west> <north> <east>` | Keeps players inside a latitude and longitude box |
+| `/earth border around <km>` | A box that many kilometers each way around the server spawn |
+| `/earth border country <name>` | Keeps players inside one country, e.g. `/earth border country Switzerland` |
+| `/earth border reset` | No border |
+| `/earth race start [place]` | A race to a famous place (a random one unless named). The first player to get within 250 meters wins the prize; a travel command takes a player out. `/earth race stop` calls it off |
+| `/earth guess start [players]` | A GeoGuessr round: everyone is dropped at the same random spot and marks on the globe where they think they are. Points by distance, up to 5000. `/earth guess end` reveals early; `/earth guess scores` totals the rounds |
+| `/earth preload <km>` | Downloads the Earth data within that many kilometers of the server spawn ahead of time, nearest first. `/earth preload stop` ends it |
+| `/earth settings` | Lists every feature below with clickable **[ON]** / **[OFF]** buttons. `/earth settings <feature> on` or `off` switches one, `/earth settings travelCost 3` sets a number. Saved to the config file and in effect at once, no restart |
+| `/earth admin` | Server status: TPS, memory, downloads, cache size, border, warps, web map and who is online (click a name to go there) |
+
+**The border.** Trips past the border are refused, whoever sends them, and players who walk out are put back. Operators in creative can cross it. Random trips, team starts and GeoGuessr spots stay inside it.
+
+**The players' globe.** When an operator picks a spawn on the globe, other players show as green dots (`showPlayersOnMap`).
+
+**The web map.** With `webMap` on, the server serves a live world map at `http://<your server>:8123/` with everyone online, the spawn and the warps, updating every few seconds. Open the port in your firewall to share it.
+
+**Turning features on and off.** Every feature is optional. Operators switch them in game with `/earth settings` (or edit `config/earthplatform-common.toml`; a running server picks up the edit). A feature switched off disappears from players' commands at once; a race or GeoGuessr round that is on ends. Operators keep their own tools (spawn, send, warps, border, preload) whatever the switches say.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `homes` (`anyoneCanUseHomes` in the file) | on | Players can use `/earth sethome`, `/earth home` and `/earth spawn` |
+| `warps` | on | Players can use `/earth warp` |
+| `randomTrips` | on | Players can use `/earth random` (players who may travel always can) |
+| `teleportRequests` | on | Players can use `/earth tpa` and `/earth tpahere` |
+| `anyoneCanTravel` | off | Players can use `/earth visit`, `/earth goto` and the travel map |
+| `chooseStart` (`playersChooseStart`) | off | New players get a **Choose on the map** button and pick, once, where they start (`/earth start`); they respawn there without a bed |
+| `countryNames` | on | "Now entering ..." when a player crosses a border |
+| `playersOnMap` (`showPlayersOnMap`) | on | Other players as dots on the globe and the web map |
+| `geoguessr` | on | GeoGuessr rounds |
+| `races` | on | Races |
+| `dailyRace` | off | A race to a random famous place each day (UTC) |
+| `webMap` | off | The live web map |
+| `travelCost` (`travelLevelsPer1000Km`) | 0 | In survival, trips players start themselves cost this many experience levels per 1000 km (at least one). Operators and creative players go free |
+| `travelCooldown` (`travelCooldownSeconds`) | 0 | In survival, seconds a player waits between their own trips |
+| `webMapPort` | 8123 | The web map's port |
+| `raceReward` (file only) | `minecraft:diamond 5` | The race prize as `item count`; empty for none |
+
+Console commands run in the overworld, but these `/earth` commands always act on the Earth, so you don't need `execute in`.
 
 ## Offline
 

@@ -8,6 +8,7 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.Timings;
+import io.earthplatform.minecraft.cubic.ViewOrder;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -105,6 +106,15 @@ public final class CubeRenderer {
 
     public int meshCount() { return meshes.size(); }
     public int pendingCount() { return dirty.size() + building.size(); }
+
+    /** Meshes in view (within 60 degrees of where the player looks) and behind, to see how the view fills in. */
+    public int[] meshesByView(Vec3 camera, float yaw) {
+        double lookX = ViewOrder.lookX(yaw), lookZ = ViewOrder.lookZ(yaw);
+        int cx = (int) Math.floor(camera.x) >> 4, cz = (int) Math.floor(camera.z) >> 4;
+        int[] counts = new int[2];
+        for (long key : meshes.keySet()) counts[ViewOrder.later(CubeKey.x(key) - cx, CubeKey.z(key) - cz, lookX, lookZ, 1.5) > 1.0 ? 1 : 0]++;
+        return counts;
+    }
     /** Cubes whose current contents are drawn here; read only. */
     LongOpenHashSet compiledCubes() { return compiled; }
 
@@ -219,9 +229,10 @@ public final class CubeRenderer {
                 && world.cube(CubeKey.pack(x, y, z + 1)) != null && world.cube(CubeKey.pack(x, y, z - 1)) != null;
     }
 
-    private void schedule(Vec3 camera) {
+    private void schedule(Vec3 camera, float yaw) {
         int limit = inFlight();
         if (dirty.isEmpty()) return;
+        double lookX = ViewOrder.lookX(yaw), lookZ = ViewOrder.lookZ(yaw);
         int cx = (int) Math.floor(camera.x) >> 4, cy = (int) Math.floor(camera.y) >> 4, cz = (int) Math.floor(camera.z) >> 4;
         LongArrayList ready = new LongArrayList(), order = new LongArrayList();
         for (LongIterator it = dirty.iterator(); it.hasNext(); ) {
@@ -233,14 +244,19 @@ public final class CubeRenderer {
             // and a per-frame cap on them all held back the ground cubes behind thousands of them.
             if (cube.isEmpty()) { it.remove(); dirtySince.remove(key); compileEmpty(key); continue; }
             if (!neighboursReady(key) && ticks - dirtySince.get(key) < NEIGHBOUR_WAIT_TICKS) continue;
-            long dx = CubeKey.x(key) - cx, dy = CubeKey.y(key) - cy, dz = CubeKey.z(key) - cz;
+            long dx = CubeKey.x(key) - cx, dy = CubeKey.y(key) - cy, dz = CubeKey.z(key) - cz, distance = dx * dx + dy * dy * 2 + dz * dz;
+            // Cubes out of view count as further off, so the view fills in first.
+            if (ViewOrder.ON) {
+                double later = ViewOrder.later(dx, dz, lookX, lookZ, 1.5);
+                distance = (long) (distance * later * later);
+            }
             // Distance in the high bits and the index below, so one primitive sort orders them.
-            order.add(Math.min(dx * dx + dy * dy * 2 + dz * dz, 1L << 40) << 22 | ready.size());
+            order.add(Math.min(distance, 1L << 40) << 22 | ready.size());
             ready.add(key);
         }
         int count = Math.min(ready.size(), limit - building.size());
         if (count <= 0) return;
-        // Nearest first; the picks can be hundreds.
+        // Nearest first, counting the view; the picks can be hundreds.
         long[] sorted = order.toLongArray();
         if (count < sorted.length) Arrays.sort(sorted);
         for (int i = 0; i < count; i++) submit(ready.getLong((int) (sorted[i] & ((1 << 22) - 1))), camera);
@@ -355,7 +371,7 @@ public final class CubeRenderer {
             long start = System.nanoTime();
             upload();
             Timings.CUBE_UPLOAD.since(start);
-            schedule(position);
+            schedule(position, camera.getYRot());
         }
         if (culledPass == LevelPasses.current()) return;
         culledPass = LevelPasses.current();

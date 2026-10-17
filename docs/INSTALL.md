@@ -57,6 +57,7 @@ For other mods, see [Which other mods work?](FAQ.md#which-other-mods-work) in th
 2. Put the Earth Platform jar in the server's `mods` folder.
 3. Before the world is first created, set `level-type=earthplatform\:earth` in `server.properties`.
 4. Optionally set `defaultHome` in `config/earthplatform-common.toml` to a place id from `/earth places` or to `latitude,longitude`.
+5. Once it runs, operators can move the spawn on a globe with `/earth spawn pick`, send players places and more; see [Server commands](PLAYING.md#server-commands).
 
 The server downloads Earth data, so it needs internet access. Players need the same Earth Platform version; they do not need Iris, Sodium or a shader pack.
 

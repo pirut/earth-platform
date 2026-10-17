@@ -58,10 +58,6 @@ tasks.named('jar', Jar) {
     manifest.attributes('Earth-Platform-Artifact': 'original-shader-compatibility-shim',
             'Earth-Platform-Upstream-Bundled': 'false')
     from(licenceNotice) { into 'META-INF' }
-    // The older engine's proof areas (Everest, Marin, Challenger Deep) and their copied source
-    // documents stay in the resources tests and dev runs read; Earth worlds never use them.
-    exclude 'earthplatform/proof_data/**', 'earthplatform/alpine_data/**',
-            'earthplatform/copernicus_proof_data/**', 'earthplatform/worldcover_proof_data/**'
 }
 
 // Mojang ships Java 21 to end users in 1.21.1, so mods should target Java 21.
@@ -86,21 +82,6 @@ neoForge {
             client()
             // Authorized disposable shader baseline; engine resource caps are unchanged.
             jvmArgument '-Xmx4G'
-            // Comma-separated list of namespaces to load gametests from. Empty = all namespaces.
-            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
-            // Dev worlds keep the prototype calibration windows and carriers; players never get them.
-            systemProperty 'earthplatform.prototypes', 'true'
-        }
-
-        // Explicit disposable native-server integration gate; never a public server.
-        survivalGameTest {
-            server()
-            gameDirectory = project.file('run-survival-gametest')
-            jvmArgument '-Xmx3G'
-            systemProperty 'neoforge.gameTestServer', 'true'
-            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
-            systemProperty 'earthplatform.prototypes', 'true'
-            programArgument '--nogui'
         }
 
         data {
@@ -259,17 +240,12 @@ idea {
     }
 }
 
-// Shared dependency-free cube kernel is compiled directly into this development artifact.
-sourceSets.main.java.srcDir '../core/src/main/java'
-sourceSets.main.java.srcDir '../streaming/src/main/java'
-
 dependencies {
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
-// One compiled test source set, three deliberately separate JVM classpaths. The
-// historical isolated-loader proofs must never see optional upstream classes co-loaded.
+// Iris and Sodium are compile-only for tests too; no optional upstream class is ever on a test classpath.
 tasks.withType(Test).configureEach {
     useJUnitPlatform()
     dependsOn verifyOfficialShaderInputs
@@ -284,10 +260,6 @@ tasks.withType(Test).configureEach {
 }
 tasks.named('test', Test) {
     description = 'Run the engine tests without the separately supplied shader mods.'
-    // These are bytecode inputs, not JUnit classes. Discovery must not eagerly
-    // load deliberately failing negative targets or Mixin-reserved helpers.
-    exclude 'io/earthplatform/minecraft/startupfixture/**'
-    systemProperty 'earthplatform.test.partition', 'legacy-isolated'
 }
 
 neoForge {
@@ -297,29 +269,8 @@ neoForge {
     }
 }
 
-// Register original test-only mixins before the first FML transformation. Late
-// Mixins.addConfiguration calls are ignored by the pinned Mixin processor once
-// classes have transformed. This does not alter any of the three classpaths.
-tasks.named('prepareNeoForgeTestFiles') {
-    programArguments.addAll('--mixin.config', 'earthplatform.terrain-priority-fixtures.mixins.json')
-}
-
 sourceSets.main.java.srcDir '../geography/src/main/java'
 sourceSets.main.resources.srcDir '../geography/src/main/resources'
-tasks.named('processResources', ProcessResources) {
-    from('../geography/data/noaa-etopo2022-proof') {
-        include 'world.properties', 'world-global.properties', 'regions/**/*.egp', 'source-lock.json'
-        into 'earthplatform/proof_data'
-    }
-    from('../geography/data/copernicus-everest-expanded-030') {
-        include 'world.properties', '*.egp', 'import-report.json', 'SHA256SUMS', 'README.md'
-        into 'earthplatform/alpine_data'
-    }
-    from('../geography/data/copernicus-everest-proof') {
-        include 'world.properties', 'everest.egp', 'source-lock.json', 'README.md', 'provenance/**'
-        into 'earthplatform/copernicus_proof_data'
-    }
-}
 
 // Resolve supported dev-client dependencies without opening a window or starting a server.
 // Useful when the native desktop terminal is offline but the managed build executor can fetch artifacts.
@@ -327,13 +278,6 @@ tasks.register('resolveClientRuntime') {
     doLast { println("Resolved client runtime files: " + configurations.runtimeClasspath.files.size()) }
 }
 
-// Pinned, offline classified cover; the Earth scene is one optional engine fixture.
-tasks.named('processResources', ProcessResources) {
-    from('../geography/data/worldcover-2021-proof') {
-        include 'landcover.properties', '*/landcover.elc', 'README.md', 'source-lock.json', 'provenance/**'
-        into 'earthplatform/worldcover_proof_data'
-    }
-}
 
 // Iris and Sodium stay compile-only and Photon stays off every JVM classpath.
 def verifyShaderBuildContract = tasks.register('verifyShaderBuildContract') {
@@ -378,11 +322,12 @@ tasks.register('verifyShimArtifact') {
             resultFiles.each { result ->
                 def xml = new groovy.xml.XmlSlurper().parse(result)
                 testCount += xml.@tests.toInteger()
-                if (xml.@failures.toInteger() != 0 || xml.@errors.toInteger() != 0 || xml.@skipped.toInteger() != 0)
-                    throw new GradleException('Required partition has failures, errors or skips: ' + result)
+                // Opt-in benchmarks and tests that need a supplied file skip themselves; failures still stop the receipt.
+                if (xml.@failures.toInteger() != 0 || xml.@errors.toInteger() != 0)
+                    throw new GradleException('Required partition has failures or errors: ' + result)
             }
             if (testCount == 0) throw new GradleException('Required partition executed zero tests: ' + partition.name)
-            partitionResults[partition.name] = [tests:testCount, failures:0, errors:0, skipped:0]
+            partitionResults[partition.name] = [tests:testCount, failures:0, errors:0]
         }
         def artifact = tasks.named('jar').get().archiveFile.get().asFile
         def failures = []
@@ -428,23 +373,11 @@ tasks.register('verifyShimArtifact') {
                 }
             }
         }
-        // The new boundary borrows loaded NeoForge/Minecraft code; it never bundles it.
-        def pinnedGameJar = layout.buildDirectory.file("moddev/artifacts/neoforge-${neo_version}-merged.jar").get().asFile
-        new java.util.zip.ZipFile(pinnedGameJar).withCloseable { upstream ->
-            ['net/neoforged/neoforge/common/IOUtilities.class',
-             'net/minecraft/world/level/saveddata/SavedData.class'].each { name ->
-                def entry = upstream.getEntry(name)
-                if (entry == null) throw new GradleException('Missing exact persistence-boundary input: ' + name)
-                upstream.getInputStream(entry).withCloseable { input -> fingerprint(input.readAllBytes(), 'pinned game!' + name) }
-            }
-        }
         new java.util.zip.ZipFile(artifact).withCloseable { zip ->
             zip.entries().each { entry ->
                 entries++
                 def path = entry.name.toLowerCase(java.util.Locale.ROOT)
-                if (path.contains('/startupfixture/') || path.contains('terrain-priority-fixtures')
-                        || path.contains('savedata-scan-tests') || path.contains('terrainmixintransformationtest')
-                        || path.startsWith('net/neoforged/') || path.startsWith('net/minecraft/')
+                if (path.startsWith('net/neoforged/') || path.startsWith('net/minecraft/')
                         || path.startsWith('com/mojang/') || path.startsWith('com/seibel/') || path.startsWith('com/distanthorizons/')
                         || path.startsWith('net/irisshaders/') || path.startsWith('net/caffeinemc/')
                         || path.startsWith('assets/distanthorizons/') || path.startsWith('distanthorizons/')
@@ -456,12 +389,6 @@ tasks.register('verifyShimArtifact') {
                     failures.add(entry.name)
                 if (!entry.directory && entry.size > 0) zip.getInputStream(entry).withCloseable { input ->
                     def payload = input.readAllBytes()
-                    def rawText = new String(payload, java.nio.charset.StandardCharsets.ISO_8859_1)
-                    if (rawText.contains('io/earthplatform/minecraft/startupfixture')
-                            || rawText.contains('io.earthplatform.minecraft.startupfixture')
-                            || rawText.contains('earthplatform.savedata-scan-tests.mixins.json')
-                            || rawText.contains('earthplatform.terrain-priority-fixtures.mixins.json'))
-                        failures.add('test-only fixture registration/payload: ' + entry.name)
                     def digest = java.security.MessageDigest.getInstance('SHA-256').digest(payload).encodeHex().toString()
                     if (upstreamPayloads.containsKey(digest)) failures.add('copied upstream payload: ' + entry.name + ' matches ' + upstreamPayloads[digest])
                 }

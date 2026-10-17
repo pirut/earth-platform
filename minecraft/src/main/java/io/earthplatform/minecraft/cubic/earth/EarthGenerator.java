@@ -224,6 +224,20 @@ public final class EarthGenerator extends SurfaceGenerator {
         return new int[]{Mth.floor(grid.blockX(home)), Mth.floor(grid.blockZ(home))};
     }
 
+    /** Coarse elevation, about 2.4 km a pixel at the equator: enough to tell land from sea in few downloads. */
+    private volatile GlobalElevation rough;
+
+    /**
+     * Rough height above sea level at a latitude and longitude, in meters, from coarse tiles: enough
+     * to tell land from open sea. May download, so not for the server thread.
+     */
+    public double roughMetres(double latitude, double longitude) {
+        GlobalElevation coarse = rough;
+        if (coarse == null) rough = coarse = new GlobalElevation(grid, tiles::tile, 6);
+        GeoPoint point = new GeoPoint(latitude, longitude);
+        return coarse.metres(grid.blockX(point), grid.blockZ(point));
+    }
+
     /** Block X and Z of a latitude and longitude. */
     public int[] block(double latitude, double longitude) {
         GeoPoint point = new GeoPoint(latitude, longitude);

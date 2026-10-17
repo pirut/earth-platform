@@ -465,6 +465,7 @@ final class FarShaders {
             flat in float earth_reach;
             uniform mat4 earth_ModelView;
             uniform mat4 earth_Projection;
+            uniform float earth_NearReach;
 
             void earth_slopeDepth() {
                 vec3 slope = earth_slope();
@@ -478,7 +479,11 @@ final class FarShaders {
                 // Voxels many pixels wide keep their faces' depth, as the game's blocks do, so the pack's
                 // screen-space shadows step across them alike and the near edge doesn't show; the slope
                 // takes over as they shrink, wholly where steps a pixel or two wide shadowed in stripes.
-                t = mix(t, 1.0, earth_faceShare());
+                // Only from the game's blocks' edge out: inside it far terrain only fills in for blocks
+                // not here yet (just after arriving, with Earth data still downloading), and there
+                // whole voxel faces at their own depth drew as huge walls under the pack.
+                float beyond = smoothstep(earth_NearReach - 32.0, earth_NearReach - 8.0, length(earth_position.xz));
+                t = mix(t, 1.0, earth_faceShare() * beyond);
                 vec4 clip = earth_Projection * earth_ModelView * vec4(earth_position * t, 1.0);
                 gl_FragDepth = clamp((clip.z / clip.w) * 0.5 + 0.5, 0.0, 1.0);
             }

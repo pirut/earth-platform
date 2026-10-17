@@ -132,6 +132,11 @@ public final class FarLod {
         return (int) Math.ceil(0.95F * 0.5F * FarRenderer.DEPTH_FAR / 16.0F);
     }
 
+    /** How far out from the camera, in blocks, the game's blocks reach before far terrain takes over. */
+    static float nearReach() {
+        return Math.min(io.earthplatform.minecraft.cubic.Cubic.MAX_HORIZONTAL_RADIUS, Minecraft.getInstance().options.getEffectiveRenderDistance()) * 16.0F;
+    }
+
     // Each frame ---------------------------------------------------------------------------------
 
     /**
@@ -315,6 +320,7 @@ public final class FarLod {
         GL20C.glUseProgram(smooth.id);
         GL20C.glUniform2f(GL20C.glGetUniformLocation(smooth.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
         GL20C.glUniform1f(GL20C.glGetUniformLocation(smooth.id, "earth_Focal"), projection.m11() * 0.5F * height);
+        GL20C.glUniform1f(GL20C.glGetUniformLocation(smooth.id, "earth_NearReach"), nearReach());
         int step = GL20C.glGetUniformLocation(smooth.id, "earth_Step");
         for (int pass = 0; pass < 2; pass++) {
             int from = pass == 0 ? depth : scratch, to = pass == 0 ? scratch : depth;
@@ -609,6 +615,7 @@ public final class FarLod {
             uniform ivec2 earth_Step;
             uniform vec2 earth_NearFar;
             uniform float earth_Focal;
+            uniform float earth_NearReach;
             in vec2 earth_uv;
 
             float earth_linear(float depth) {
@@ -640,7 +647,8 @@ public final class FarLod {
                 // Close to the game's blocks, where the finest far voxels (two blocks) span plenty of
                 // pixels, the steps keep their depth so the pack shadows them step by step as it does
                 // the blocks in front (see FarShaders' earth_faceShare); smaller, they're smoothed.
-                float steps = smoothstep(2.0, 10.0, earth_Focal * 2.0 / z);
+                // Only from the blocks' edge out, as in FarShaders' earth_slopeDepth.
+                float steps = smoothstep(2.0, 10.0, earth_Focal * 2.0 / z) * smoothstep(earth_NearReach - 32.0, earth_NearReach - 8.0, z);
                 float n = earth_NearFar.x, f = earth_NearFar.y, smoothed = mix(sum / weights, z, steps);
                 gl_FragDepth = clamp(((f + n - 2.0 * n * f / smoothed) / (f - n)) * 0.5 + 0.5, 0.0, 1.0);
             }
@@ -815,32 +823,7 @@ public final class FarLod {
         }
 
         static Program link(String vertexSource, String fragmentSource, String name) {
-            int vertex = compile(GL20C.GL_VERTEX_SHADER, vertexSource, name);
-            int fragment = compile(GL20C.GL_FRAGMENT_SHADER, fragmentSource, name);
-            int program = GL20C.glCreateProgram();
-            GL20C.glAttachShader(program, vertex);
-            GL20C.glAttachShader(program, fragment);
-            GL20C.glLinkProgram(program);
-            GL20C.glDeleteShader(vertex);
-            GL20C.glDeleteShader(fragment);
-            if (GL20C.glGetProgrami(program, GL20C.GL_LINK_STATUS) == GL11C.GL_FALSE) {
-                String log = GL20C.glGetProgramInfoLog(program);
-                GL20C.glDeleteProgram(program);
-                throw new IllegalStateException("Could not link " + name + ": " + log);
-            }
-            return new Program(program);
-        }
-
-        private static int compile(int type, String source, String name) {
-            int shader = GL20C.glCreateShader(type);
-            GL20C.glShaderSource(shader, source);
-            GL20C.glCompileShader(shader);
-            if (GL20C.glGetShaderi(shader, GL20C.GL_COMPILE_STATUS) == GL11C.GL_FALSE) {
-                String log = GL20C.glGetShaderInfoLog(shader);
-                GL20C.glDeleteShader(shader);
-                throw new IllegalStateException("Could not compile " + name + ": " + log);
-            }
-            return shader;
+            return new Program(GlShaders.link(vertexSource, fragmentSource, name));
         }
 
         void close() { GL20C.glDeleteProgram(id); }
