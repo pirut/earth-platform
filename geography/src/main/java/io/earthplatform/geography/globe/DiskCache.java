@@ -3,6 +3,7 @@ package io.earthplatform.geography.globe;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
@@ -53,6 +54,28 @@ public final class DiskCache {
             if (Files.getLastModifiedTime(cached).toMillis() < SESSION) Files.setLastModifiedTime(cached, FileTime.fromMillis(System.currentTimeMillis()));
         } catch (IOException | RuntimeException ignored) {
             // Read-only or gone: it is then only trimmed sooner.
+        }
+    }
+
+    /** Writes a cache file atomically, as {@link #write(Path, byte[], String)} with temporary files named {@code part*.part}. */
+    static void write(Path path, byte[] bytes) throws IOException {
+        write(path, bytes, "part");
+    }
+
+    /**
+     * Writes a cache file atomically: the bytes go to a temporary file beside it, named
+     * {@code prefix*.part}, which is then moved over it, so a reader never sees half a file.
+     * Counts the bytes toward the next trim and creates the file's folder if needed.
+     */
+    static void write(Path path, byte[] bytes, String prefix) throws IOException {
+        wrote(bytes.length);
+        Files.createDirectories(path.getParent());
+        Path temp = Files.createTempFile(path.getParent(), prefix, ".part");
+        try {
+            Files.write(temp, bytes);
+            Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temp);
         }
     }
 

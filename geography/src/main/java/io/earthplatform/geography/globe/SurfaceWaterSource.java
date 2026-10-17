@@ -11,13 +11,11 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.*;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.zip.DataFormatException;
-import java.util.zip.Inflater;
 
 /**
  * How often the ground was under water from 1984 to 2021, from the JRC Global Surface Water
@@ -46,7 +44,7 @@ public final class SurfaceWaterSource implements AutoCloseable {
     private final int maxBlocksInMemory;
     private final RangeFiles files;
     private final Map<Integer, CompletableFuture<Index>> indexes = new ConcurrentHashMap<>();
-    private final LinkedHashMap<Long, byte[]> memory = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, byte[]> memory = new LruMap<>(64);
     private final Map<Long, CompletableFuture<byte[]>> inFlight = new ConcurrentHashMap<>();
     private final ThreadLocal<Last> recent = ThreadLocal.withInitial(Last::new);
 
@@ -121,9 +119,7 @@ public final class SurfaceWaterSource implements AutoCloseable {
         }
         byte[] decoded = files.singleFlight(inFlight, key, () -> readBlock(square, index, header), "surface water block");
         synchronized (memory) {
-            memory.put(key, decoded);
-            var iterator = memory.entrySet().iterator();
-            while (memory.size() > maxBlocksInMemory && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+            memory.putAndTrim(key, decoded, maxBlocksInMemory);
         }
         return decoded;
     }
@@ -160,7 +156,7 @@ public final class SurfaceWaterSource implements AutoCloseable {
         URI uri = base.resolve(name);
         byte[] head = files.fetch(uri, 0, 8);
         if (head == null) {
-            if (missing != null) RangeFiles.write(missing, new byte[0]);
+            if (missing != null) DiskCache.write(missing, new byte[0]);
             return Index.MISSING;
         }
         if (head.length < 8) throw new IOException("Short surface water header " + name);
@@ -175,7 +171,7 @@ public final class SurfaceWaterSource implements AutoCloseable {
             if (bytes == null || bytes.length != length) throw new IOException("Short surface water block table in " + name);
             return bytes;
         });
-        if (cached != null) RangeFiles.write(cached, save(index));
+        if (cached != null) DiskCache.write(cached, save(index));
         return index;
     }
 
@@ -266,7 +262,7 @@ public final class SurfaceWaterSource implements AutoCloseable {
         byte[] raw = files.fetch(base.resolve(name), offset, (int) count);
         if (raw == null || raw.length != count) throw new MissingTerrainException("Surface water block of " + name + " is missing");
         byte[] decoded = decode(raw, header.compression);
-        if (cached != null) RangeFiles.write(cached, raw);
+        if (cached != null) DiskCache.write(cached, raw);
         return decoded;
     }
 
@@ -338,21 +334,11 @@ public final class SurfaceWaterSource implements AutoCloseable {
     }
 
     private static byte[] inflate(byte[] raw, int size) throws IOException {
-        Inflater inflater = new Inflater();
         try {
-            inflater.setInput(raw);
             byte[] out = new byte[size];
-            int done = 0;
-            while (done < size && !inflater.finished()) {
-                int n = inflater.inflate(out, done, size - done);
-                if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) break;
-                done += n;
-            }
-            return finish(out, done, size);
+            return finish(out, Deflate.inflate(raw, out), size);
         } catch (DataFormatException malformed) {
             throw new IOException("Malformed surface water block", malformed);
-        } finally {
-            inflater.end();
         }
     }
 

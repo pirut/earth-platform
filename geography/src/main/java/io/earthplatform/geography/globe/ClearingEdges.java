@@ -76,8 +76,8 @@ final class ClearingEdges {
         for (int i = 0; i < n; i++) if (dry[i]) { land[i] = 1; height[i] = dem[i]; }
         int trendReach = px(TREND_METRES / 1.7, metres);
         float[] num = height, den = land.clone();
-        BareEarth.blur(num, span, span, trendReach);
-        BareEarth.blur(den, span, span, trendReach);
+        GridFilters.blur(num, span, span, trendReach);
+        GridFilters.blur(den, span, span, trendReach);
         float[] trend = new float[n];
         for (int i = 0; i < n; i++) trend[i] = den[i] > 1e-4f ? num[i] / den[i] : 0;
         int relief = px(RELIEF_METRES, metres);
@@ -85,7 +85,7 @@ final class ClearingEdges {
         float[] wet = new float[n];
         for (int i = 0; i < n; i++) if (water[i]) wet[i] = 1;
         wet = filter(wet, span, px(WATER_METRES, metres), true);
-        BareEarth.blur(wet, span, span, 3);
+        GridFilters.blur(wet, span, span, 3);
 
         int m = side * side;
         float[] gate = new float[m];
@@ -133,7 +133,7 @@ final class ClearingEdges {
         float[] mask = new float[m];
         for (int i = 0; i < m; i++) if (reached[i] >= 0) mask[i] = 1;
         mask = filter(mask, side, px(ACROSS_METRES, metres), true);
-        BareEarth.blur(mask, side, side, 1);
+        GridFilters.blur(mask, side, side, 1);
         boolean any = false;
         for (int at = 0; at < m; at++) {
             mask[at] = Math.min(1, 2 * mask[at]) * gate[at];
@@ -143,7 +143,7 @@ final class ClearingEdges {
 
         // The land's slopes with the steps' given over to the broad shape's, put back together.
         float[] broad = dem.clone();
-        BareEarth.blur(broad, span, span, px(BROAD_METRES / 1.7, metres));
+        GridFilters.blur(broad, span, span, px(BROAD_METRES / 1.7, metres));
         float[] dx = new float[m], dy = new float[m];
         for (int j = 0; j < side; j++) for (int i = 0; i < side; i++) {
             int at = j * side + i, w = (from + j) * span + from + i;
@@ -172,9 +172,9 @@ final class ClearingEdges {
             int at = j * side + i;
             smooth[at] = dem[(from + j) * span + from + i] + delta[at];
         }
-        BareEarth.blur(smooth, side, side, px(ACROSS_METRES, metres));
+        GridFilters.blur(smooth, side, side, px(ACROSS_METRES, metres));
         float[] band = mask.clone();
-        BareEarth.blur(band, side, side, 1);
+        GridFilters.blur(band, side, side, 1);
         for (int i = 0; i < m; i++) band[i] = Math.min(1, 1.5f * band[i]);
         return new Steps(from, side, delta, smooth, band);
     }
