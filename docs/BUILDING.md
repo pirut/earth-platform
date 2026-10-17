@@ -41,6 +41,27 @@ Install the jar into a NeoForge 21.1.256 or newer instance for Minecraft 1.21.1 
 
 ## Where things are
 
-- `minecraft/src/main/java/io/earthplatform/minecraft/cubic`: the cubic world engine (cubes from Y -16384 to 16383, streaming, lighting, the far terrain renderer, the travel map and the Earth commands).
-- `geography/src/main/java`: the Earth itself: elevation, land cover, climate, rivers and the data sources they stream from.
-- [ROADMAP.md](../ROADMAP.md): how the engine works and what comes next.
+Start with the `package-info.java` in each package: it says what the package does and which classes to read first.
+
+| Path | What it is |
+| --- | --- |
+| `minecraft/src/main/java/io/earthplatform/minecraft/EarthPlatformMod.java` | The NeoForge entry point. Everything else registers itself with `@EventBusSubscriber` |
+| `.../minecraft/cubic` | The cubic world engine: cubes from Y -16384 to 16383, how they are made, saved, lit and sent (`ServerCubeWorld`, `CubeWorld`, `CubeStorage`, `CubicEvents`) |
+| `.../minecraft/cubic/gen` | Terrain shared by every cubic world: `SurfaceGenerator` turns column heights into cubes; caves, rock layers, plants, trees and vanilla structures |
+| `.../minecraft/cubic/earth` | The real Earth: `EarthGenerator` decides every column's height, water and surface from the Earth data |
+| `.../minecraft/cubic/far` | Far terrain on the server: the voxel pyramid (`Far`) and the workers that make its columns (`FarServer`) |
+| `.../minecraft/cubic/client` | Drawing: near cubes (`CubeRenderer`), far terrain (`FarRenderer`, `FarMesher`, `FarGpu`, `FarShaders`) and shader pack support (`FarLod`, `PhotonCompat`) |
+| `.../minecraft/cubic/net` | Cube and far column traffic, and the pacing for remote players |
+| `.../minecraft/cubic/play` | What players and operators use: the Earth world type, settings, `/earth` commands, spawns, the travel map, games. Screens are in `play/client` |
+| `.../minecraft/cubic/mixin` | Hooks into vanilla, NeoForge, Iris and Sodium, listed in `src/main/resources/earthplatform.cubic.mixins.json`; `mixin/compat` hooks into optional mods |
+| `.../minecraft/cubic/compat`, `portal`, `jet` | Other mods, Nether and End travel, the jet stream |
+| `geography/src/main/java/io/earthplatform/geography/globe` | The Earth data, with no Minecraft code: elevation tiles and national layers, land cover, climate, rivers, imagery, and their download and cache code |
+| `minecraft/src/test` | Unit tests, and `GlobeTest`, which runs the Earth data code against a local tile server. `CubicBench` (opt-in, set `EARTH_BENCH`) prints a world fingerprint for checking that a change leaves generation alone |
+| [docs/FLAGS.md](FLAGS.md) | Every `-Dearthplatform.*` developer flag |
+| [ROADMAP.md](../ROADMAP.md) | How the engine works and what comes next |
+
+### Changing things safely
+
+- A world pins its generator and data sources when it is made. Anything that changes generation needs a fresh world to see, and changes every world made after it.
+- Seed salts, hash functions, saved ids, network payload ids, cache folder names, mixin class names and flag names are read by saved worlds, other clients or the mixin system. Keep them as they are unless you mean to break compatibility.
+- Before and after a generation change, compare `CubicBench` fingerprints: `EARTH_BENCH=<cache folder> ./gradlew test --tests '*CubicBench' --rerun -i`.
