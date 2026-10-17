@@ -28,6 +28,7 @@ import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
+import net.minecraft.world.level.levelgen.synth.SimplexNoise;
 
 /**
  * A world made from a height and water level per block column: subclasses say how high the ground
@@ -87,6 +88,13 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     }
     Underground underground() { return below; }
     protected static Holder<Biome> holder(Registry<Biome> registry, ResourceKey<Biome> key) { return registry.getHolderOrThrow(key); }
+
+    /** Fractal noise: {@code octaves} layers of {@code noise}, each half as strong and 2.03x as fine, averaged by weight. */
+    protected static double fbm(SimplexNoise noise, double x, double z, int octaves) {
+        double sum = 0, amplitude = 1, norm = 0;
+        for (int i = 0; i < octaves; i++) { sum += noise.getValue(x, z) * amplitude; norm += amplitude; amplitude *= 0.5; x *= 2.03; z *= 2.03; }
+        return sum / norm;
+    }
 
     // What subclasses provide -------------------------------------------------------------------
 
