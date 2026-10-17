@@ -181,7 +181,12 @@ public final class CubicEvents {
 
     /** The start's landing spot, before scattering; slow where the data is new, so best found off the server thread. */
     public static int[] landing(ServerCubeWorld cubes, @Nullable int[] view) {
-        return landing(cubes.generator(), withinSight(cubes.generator().arrival(), view), 4096, true);
+        return landing(cubes, cubes.generator().arrival(), view);
+    }
+
+    /** The landing spot about a start of the server's choosing, rather than the world's own. */
+    public static int[] landing(ServerCubeWorld cubes, int[] start, @Nullable int[] view) {
+        return landing(cubes.generator(), withinSight(start, view), 4096, true);
     }
 
     /** The arrival point about a landing spot found before, scattered as {@link #arrival} does. */

@@ -37,6 +37,8 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue SATELLITE_IMAGERY;
     public static final ModConfigSpec.IntValue CACHE_LIMIT_GB;
     public static final ModConfigSpec.BooleanValue ANYONE_CAN_TRAVEL;
+    public static final ModConfigSpec.BooleanValue ANYONE_CAN_USE_HOMES;
+    public static final ModConfigSpec.BooleanValue PLAYERS_CHOOSE_START;
 
     static {
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
@@ -73,6 +75,12 @@ public final class EarthConfig {
                 .translation(key("satelliteImagery")).define("satelliteImagery", false);
         ANYONE_CAN_TRAVEL = common.comment("Let every player use /earth goto. When false, only operators can (singleplayer always can).")
                 .translation(key("anyoneCanTravel")).define("anyoneCanTravel", false);
+        ANYONE_CAN_USE_HOMES = common.comment("Let every player save a home with /earth sethome and go back with /earth home, and go to the server spawn",
+                        "with /earth spawn. When false, only players who may travel can.")
+                .translation(key("anyoneCanUseHomes")).define("anyoneCanUseHomes", true);
+        PLAYERS_CHOOSE_START = common.comment("Let each new player choose, once, where they start on a globe; they respawn there after that",
+                        "when they have no bed. Operators can reset a player's choice with /earth spawn player <name> reset.")
+                .translation(key("playersChooseStart")).define("playersChooseStart", false);
         COMMON_SPEC = common.build();
 
         var container = ModList.get().getModContainerById(EarthPlatformMod.MOD_ID).orElseThrow();

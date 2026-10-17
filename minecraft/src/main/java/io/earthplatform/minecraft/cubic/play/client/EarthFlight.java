@@ -81,6 +81,15 @@ public final class EarthFlight {
                     if (current == null && minecraft.player != null && minecraft.screen == null)
                         minecraft.setScreen(EarthGlobeScreen.travel(payload.latitude(), payload.longitude()));
                 }
+                case EarthMap.PICK_SPAWN, EarthMap.PICK_START -> {
+                    if (current == null && minecraft.player != null && minecraft.screen == null) {
+                        boolean spawn = payload.kind() == EarthMap.PICK_SPAWN;
+                        String command = spawn ? "earth spawn set to %.6f %.6f" : "earth start %.6f %.6f";
+                        minecraft.setScreen(EarthGlobeScreen.pick(spawn ? "earthplatform.map.spawn" : "earthplatform.map.start",
+                                payload.latitude(), payload.longitude(),
+                                (lat, lon) -> minecraft.player.connection.sendCommand(String.format(Locale.ROOT, command, lat, lon))));
+                    }
+                }
                 case EarthMap.ARRIVED -> { if (current != null && current.landedAt < 0) current.landedAt = clock(); }
                 case EarthMap.FAILED -> { if (current != null) current.skip(); }
                 default -> {}

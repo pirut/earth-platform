@@ -48,6 +48,8 @@ public final class EarthGlobeScreen extends Screen {
     private Hover hover;
     /** The trip this screen shows, with no controls; null when the globe is for choosing. */
     @Nullable private EarthFlight flight;
+    /** Translation keys (title, button, hint and pin) of a globe that picks a spot for the server rather than a trip; null otherwise. */
+    @Nullable private String keys;
     /** The travel map's "you are here", or NaN. */
     private double hereLat = Double.NaN, hereLon = Double.NaN;
     private int top = TOP, bottom = BOTTOM;
@@ -81,6 +83,17 @@ public final class EarthGlobeScreen extends Screen {
         return screen;
     }
 
+    /** A globe for picking a spot on a server, such as its spawn, opened where the player stands; {@code keys} name its texts. */
+    static EarthGlobeScreen pick(String keys, double lat, double lon, BiConsumer<Double, Double> picked) {
+        EarthGlobeScreen screen = new EarthGlobeScreen(Component.translatable(keys + ".title"), null, lat, lon, picked);
+        screen.keys = keys;
+        screen.hereLat = lat;
+        screen.hereLon = lon;
+        screen.pinned = false;
+        screen.zoom = 4;
+        return screen;
+    }
+
     /** The globe a trip flies over; it fades in over the world and back out again. */
     static EarthGlobeScreen flight(EarthFlight flight) {
         EarthGlobeScreen screen = new EarthGlobeScreen(Component.empty(), null, flight.toLatitude(), flight.toLongitude(), (a, b) -> {});
@@ -103,7 +116,7 @@ public final class EarthGlobeScreen extends Screen {
         int y = height - 28;
         addRenderableWidget(Button.builder(Component.literal("-"), b -> zoomBy(-1, width / 2.0, centreY())).bounds(width / 2 - 155, y, 20, 20).build());
         addRenderableWidget(Button.builder(Component.literal("+"), b -> zoomBy(1, width / 2.0, centreY())).bounds(width / 2 - 133, y, 20, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable(hereLat == hereLat ? "earthplatform.map.travel" : "earthplatform.globe.choose"), b -> finish()).bounds(width / 2 - 108, y, 130, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable(keys != null ? keys + ".button" : hereLat == hereLat ? "earthplatform.map.travel" : "earthplatform.globe.choose"), b -> finish()).bounds(width / 2 - 108, y, 130, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), b -> onClose()).bounds(width / 2 + 27, y, 128, 20).build());
         dirty = true;
     }
@@ -217,6 +230,8 @@ public final class EarthGlobeScreen extends Screen {
     private Component status() {
         if (warning != null && Util.getMillis() < warningUntil) return warning;
         boolean travel = hereLat == hereLat;
+        if (keys != null) return pinned ? Component.translatable(keys + ".at", EarthPlaces.near(pinLat, pinLon).map(EarthPlaces.Place::label)
+                .orElse(String.format(Locale.ROOT, "%.4f, %.4f", pinLat, pinLon))) : Component.translatable(keys + ".hint");
         if (!pinned) return Component.translatable(travel ? "earthplatform.map.hint" : "earthplatform.globe.hint");
         String point = String.format(Locale.ROOT, "%.4f, %.4f", pinLat, pinLon);
         if (travel) return Component.translatable("earthplatform.map.travelTo",

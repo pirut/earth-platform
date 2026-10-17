@@ -28,6 +28,10 @@ public final class EarthMap {
     public static final byte ARRIVED = 1;
     /** The trip could not happen; the player stays put. */
     public static final byte FAILED = 2;
+    /** Open the globe for an operator to pick the server spawn. */
+    public static final byte PICK_SPAWN = 3;
+    /** Open the globe for a new player to choose where they start. */
+    public static final byte PICK_START = 4;
 
     public record Payload(byte kind, double latitude, double longitude) implements CustomPacketPayload {
         public static final Type<Payload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "earth_map"));

@@ -15,7 +15,10 @@
 | `/earth goto <latitude> <longitude>` | Go anywhere, e.g. `/earth goto 46.5935 7.9090` |
 | `/earth places` | List famous places; click one to go there |
 | `/earth where` | Your latitude, longitude and real height |
-| `/earth home` | Back to the world's starting point |
+| `/earth random` | A random trip to somewhere on land; `/earth random <km>` stays within that distance |
+| `/earth sethome` | Save where you stand as your home |
+| `/earth home` | Back to your home, or to the server spawn if you haven't set one |
+| `/earth spawn` | Back to the server spawn (the world's starting point unless an operator moved it) |
 
 ### The travel map
 
@@ -59,6 +62,30 @@ See [Which other mods work?](FAQ.md#which-other-mods-work) and [Known limitation
 ## Servers
 
 Set `level-type=earthplatform\:earth` in `server.properties` before the world is first created, and `defaultHome` in `config/earthplatform-common.toml` (a place id from `/earth places`, or `latitude,longitude`). Players join straight onto the Earth.
+
+### Server commands
+
+These are for operators, and all of them work from the server console too. Wherever a command takes a spot, you can write it three ways: `to <latitude> <longitude>`, `place <famous place>` (tab completes), or `here` for where you stand.
+
+| Command | What it does |
+| --- | --- |
+| `/earth spawn pick` | Opens the globe; click a spot and press **Set spawn here** to make it the server spawn |
+| `/earth spawn set to <lat> <lon>`, `set place <place>`, `set here` | Moves the server spawn: where new players arrive and where players without a bed respawn |
+| `/earth spawn reset` | The world's starting point is the server spawn again |
+| `/earth spawn info` | Shows where the server spawn is |
+| `/earth spawn player <players> to <lat> <lon>` (or `place`, `here`) | Gives players their own spawn, used when they have no bed |
+| `/earth spawn player <players> reset` | Back to the server spawn; also lets them choose their start again |
+| `/earth send <players> to <lat> <lon>` (or `place`, `here`) | Sends players somewhere, e.g. `/earth send @a place everest` |
+| `/earth send <players> random [km]` | Sends each player on their own random trip |
+| `/earth send <players> spawn` / `home` | Sends players to the server spawn or to their homes |
+
+Settings in `config/earthplatform-common.toml`:
+
+- `anyoneCanUseHomes` (default true): every player can use `/earth sethome`, `/earth home` and `/earth spawn`. When false, only players who may travel can.
+- `playersChooseStart` (default false): each new player gets a **Choose on the map** button in their welcome message and can pick, once, where they start on the globe (`/earth start`). They respawn there when they have no bed.
+- `anyoneCanTravel` (default false): every player can use `/earth visit`, `/earth goto` and `/earth random`.
+
+Console commands run in the overworld, but these `/earth` commands always act on the Earth, so you don't need `execute in`.
 
 ## Offline
 

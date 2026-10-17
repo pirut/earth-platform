@@ -174,6 +174,10 @@ public final class EarthWorlds {
         static final int LANDING_PATIENCE = 200;
         boolean ready;
         long retryAt, lastSample, firstWait;
+        /** Counts server spawn moves, so a landing search for an old spawn is thrown away. */
+        volatile int round;
+        /** Waiting players sent to their own spawn, and when they may be sent again if that trip failed. */
+        final java.util.Map<UUID, Long> sent = new java.util.HashMap<>();
 
         Session(MinecraftServer server) {
             this.server = server;
@@ -185,16 +189,43 @@ public final class EarthWorlds {
             return level != null && CubicLevel.of(level) instanceof ServerCubeWorld cubes ? cubes : null;
         }
 
-        /** The column a new arrival faces: the home place's sight, or the home point itself. */
+        /** The column a new arrival faces: the server spawn's sight, else the home place's sight, or the home point itself. */
         @Nullable private static int[] view(ServerCubeWorld cubes) {
             if (!(cubes.generator() instanceof EarthGenerator earth)) return null;
+            Optional<EarthSpawns.Spot> spawn = spawn(cubes);
+            if (spawn.isPresent()) return Double.isNaN(spawn.get().viewLatitude()) ? null
+                    : earth.block(spawn.get().viewLatitude(), spawn.get().viewLongitude());
             EarthSettings home = earth.settings();
             return EarthPlaces.near(home.latitude(), home.longitude())
                     .map(place -> earth.block(place.viewLatitude(), place.viewLongitude()))
                     .orElseGet(() -> earth.block(home.latitude(), home.longitude()));
         }
 
+        /** The server spawn its operators set, if any. */
+        private static Optional<EarthSpawns.Spot> spawn(ServerCubeWorld cubes) {
+            return cubes.level() instanceof ServerLevel level ? EarthSpawns.of(level.getServer()).spawn() : Optional.empty();
+        }
+
+        /** Where arrivals start from: the server spawn, else the world's home. */
+        private static int[] start(ServerCubeWorld cubes) {
+            Optional<EarthSpawns.Spot> spawn = spawn(cubes);
+            if (spawn.isPresent() && cubes.generator() instanceof EarthGenerator earth) return earth.block(spawn.get().latitude(), spawn.get().longitude());
+            return cubes.generator().arrival();
+        }
+
+        /** The server spawn moved: arrivals wait while the landing there is found. */
+        void moved() {
+            ready = false;
+            preparing = null;
+            landing = null;
+            landingTicks = 0;
+            retryAt = 0;
+            round++;
+        }
+
         String place() {
+            ServerCubeWorld spawnCubes = cubes();
+            if (spawnCubes != null) { Optional<EarthSpawns.Spot> spawn = spawn(spawnCubes); if (spawn.isPresent()) return spawn.get().label(); }
             if (!homeName.isEmpty()) return homeName;
             ServerCubeWorld cubes = cubes();
             if (cubes != null && cubes.generator() instanceof EarthGenerator earth) {
@@ -211,7 +242,7 @@ public final class EarthWorlds {
             waiting.add(player.getUUID());
         }
 
-        void forget(UUID player) { waiting.remove(player); status.forget(player); }
+        void forget(UUID player) { waiting.remove(player); sent.remove(player); status.forget(player); }
 
         void tick() {
             long now = Util.getMillis();
@@ -234,7 +265,21 @@ public final class EarthWorlds {
                 ServerPlayer player = server.getPlayerList().getPlayer(id);
                 if (player == null || player.level().dimension() != Level.OVERWORLD) {
                     waiting.remove(id);
+                    sent.remove(id);
                     if (player != null) release(player);
+                    continue;
+                }
+                Optional<EarthSpawns.Spot> own = EarthSpawns.of(server).spawn(id);
+                if (own.isPresent()) {
+                    // A spawn of their own: travel there, held up here until the trip lands; tried again if it fails.
+                    hold(player);
+                    if (now >= sent.getOrDefault(id, 0L)) {
+                        sent.put(id, now + 30_000);
+                        EarthSpawns.Spot spot = own.get();
+                        CubicEvents.travel(server.createCommandSourceStack().withSuppressedOutput(), player,
+                                spot.latitude(), spot.longitude(), spot.viewLatitude(), spot.viewLongitude());
+                    }
+                    status.send(player, status.payload(EarthStatus.PREPARING, EarthStatus.OK, (int) ((now - firstWait) / 1000), own.get().label()), now);
                     continue;
                 }
                 if (ready && landingLoaded(cubes)) {
@@ -271,14 +316,17 @@ public final class EarthWorlds {
             if (preparing == null) {
                 if (now < retryAt) return;
                 var generator = cubes.generator();
-                int[] home = generator.arrival();
+                int[] home = start(cubes);
+                int[] view = view(cubes);
+                int asked = round;
                 preparing = CompletableFuture.runAsync(() -> {
                     // Only what the cubes about the home read: the far levels' data loads on without holding up the arrival.
                     generator.prepareNear(home[0], home[1]);
                     // Throws when the home's terrain is still missing.
                     generator.surfaceY(home[0], home[1]);
                     // The search reads ground kilometres out, from the network where it is new: never on the server thread.
-                    landing = CubicEvents.landing(cubes, view(cubes));
+                    int[] found = CubicEvents.landing(cubes, home, view);
+                    if (asked == round) landing = found;
                 }, Util.ioPool());
             } else if (preparing.isDone()) {
                 if (preparing.isCompletedExceptionally()) {
@@ -339,6 +387,11 @@ public final class EarthWorlds {
                     .append(Component.literal("; "))
                     .append(command("/earth places", "/earth places"))
                     .append(Component.literal(" lists famous spots.")));
+            if (EarthCommands.mayChooseStart(player))
+                player.sendSystemMessage(Component.literal("You can choose where you start, once: ")
+                        .append(Component.literal("[Choose on the map]").withStyle(style -> style.withColor(ChatFormatting.AQUA)
+                                .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/earth start"))
+                                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("Opens the globe"))))));
             String credits = cubes.generator().credits();
             if (!credits.isEmpty()) player.sendSystemMessage(Component.literal(credits).withStyle(ChatFormatting.DARK_GRAY));
             EarthBasics.bonusChest(level, cubicFolder(server), spot, player);
@@ -377,7 +430,7 @@ public final class EarthWorlds {
                                                 DoubleArgumentType.getDouble(context, "latitude"), DoubleArgumentType.getDouble(context, "longitude")))))));
         // The creative travel map: the client opens it with a key, through this command.
         root.then(Commands.literal("map").requires(EarthWorlds::mayTravel).executes(context -> EarthMap.open(context.getSource())));
-        root.then(Commands.literal("home").requires(EarthWorlds::mayTravel).executes(context -> home(context.getSource())));
+        EarthCommands.register(root);
         root.then(Commands.literal("where").executes(context -> CubicEvents.where(context.getSource())));
         root.then(Commands.literal("places").executes(context -> places(context.getSource())));
         dispatcher.register(root);
@@ -399,7 +452,7 @@ public final class EarthWorlds {
     }
 
     /** Travel is for operators, the singleplayer owner, or everyone when the server allows it. */
-    private static boolean mayTravel(CommandSourceStack source) {
+    static boolean mayTravel(CommandSourceStack source) {
         if (source.hasPermission(2) || EarthConfig.ANYONE_CAN_TRAVEL.get()) return true;
         ServerPlayer player = source.getPlayer();
         return player != null && source.getServer().isSingleplayerOwner(player.getGameProfile());
@@ -416,19 +469,33 @@ public final class EarthWorlds {
                 place.get().viewLatitude(), place.get().viewLongitude());
     }
 
-    private static int home(CommandSourceStack source) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
-        ServerPlayer player = source.getPlayerOrException();
+    /** Sends a player to the server spawn (the world's start unless operators moved it); replies go to {@code source}. */
+    static int toSpawn(CommandSourceStack source, ServerPlayer player) {
         ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
         if (level == null || !(CubicLevel.of(level) instanceof ServerCubeWorld cubes)) {
             source.sendFailure(Component.literal("This world has no Earth."));
             return 0;
         }
-        int[] view = Session.view(cubes);
         Session running = session;
-        int[] found = running != null ? running.landing : null;
+        int[] found = running != null && running.ready ? running.landing : null;
+        Optional<EarthSpawns.Spot> spawn = Session.spawn(cubes);
+        // A moved spawn whose landing is still being found: travel there like any trip.
+        if (found == null && spawn.isPresent())
+            return CubicEvents.travel(source, player, spawn.get().latitude(), spawn.get().longitude(), spawn.get().viewLatitude(), spawn.get().viewLongitude());
+        int[] view = Session.view(cubes);
         Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found) : CubicEvents.arrival(cubes, view);
         player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
-        return CubicEvents.where(source);
+        if (source.getPlayer() == player) {
+            try { return CubicEvents.where(source); } catch (com.mojang.brigadier.exceptions.CommandSyntaxException notAPlayer) { return 1; }
+        }
+        source.sendSuccess(() -> Component.literal("Sent " + player.getGameProfile().getName() + " to the server spawn."), true);
+        return 1;
+    }
+
+    /** The server spawn moved: players arriving from now on land there. */
+    static void spawnMoved() {
+        Session running = session;
+        if (running != null) running.moved();
     }
 
     private static int places(CommandSourceStack source) {
