@@ -49,7 +49,8 @@ class FarSharpnessTest {
 
     /**
      * At every choice, extreme ones included, the drawn columns (the ones no finer level replaces)
-     * cover the coarsest square exactly once, and each replaced column's four children are asked for.
+     * cover the coarsest square exactly once, each replaced column's four children are asked for,
+     * and the coarsest level keeps its outer ring.
      */
     @Test void drawnColumnsTileTheCoarsestSquare() {
         int bx = 12_345, bz = -6_789;
@@ -72,6 +73,9 @@ class FarSharpnessTest {
                     assertTrue(x >> shift >= Far.column(bx, Far.MAX_LEVEL) - Far.OUTER && x >> shift <= Far.column(bx, Far.MAX_LEVEL) + Far.OUTER);
                     assertTrue(z >> shift >= Far.column(bz, Far.MAX_LEVEL) - Far.OUTER && z >> shift <= Far.column(bz, Far.MAX_LEVEL) + Far.OUTER);
                 }
+                // The coarsest level keeps its outer ring, so the horizon never waits on finer levels.
+                for (int x = -Far.OUTER; x <= Far.OUTER; x++)
+                    assertTrue(!Far.refined(Far.MAX_LEVEL, Far.column(bx, Far.MAX_LEVEL) + x, Far.column(bz, Far.MAX_LEVEL) + Far.OUTER, bx, bz), "scale " + scale);
                 long side = (2L * Far.OUTER + 1) * Far.width(Far.MAX_LEVEL);
                 assertEquals(side * side, area, "scale " + scale);
             }

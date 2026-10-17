@@ -60,8 +60,9 @@ public final class Far {
      * choices scale the start-up detail, up to {@link #NORMAL_DETAIL}, and keep the coarsest level
      * at least one ring of its own, so an extreme distance only adds rings to the coarsest level.
      * The extreme ones, past {@link #EXTREME_SCALE}, scale the default detail instead, for the same
-     * voxel size on screen at every distance, and may let finer levels cover the coarsest level
-     * entirely, cut to its square (see {@link #around}). The server's slack covers every value.
+     * voxel size on screen at every distance; a level's square is then cut to its parent's middle,
+     * and the coarsest level still keeps its outer ring (see {@link #hole(int)}). The server's
+     * slack covers every value.
      */
     public static void sharpness(double scale) {
         hole = scale > EXTREME_SCALE
@@ -71,9 +72,8 @@ public final class Far {
 
     /**
      * How far a request may stray from the player, in columns of its level, before the server
-     * ignores it; covers every detail and sharpness setting, a level cut to the coarsest square
-     * (up to 2 * {@link #OUTER} + 2 columns of level 7) included. It was 51 before the extreme
-     * settings.
+     * ignores it; covers every detail and sharpness setting, including a level 7 square up to
+     * 2 * {@link #OUTER} columns across. It was 51 before the extreme settings.
      */
     public static final int SLACK = 2 * Math.max(MAX_HOLE, 2 * MAX_DETAIL + 1) + 3;
     /** Drops are kept in 1/256ths of a block. */
@@ -132,29 +132,37 @@ public final class Far {
     /** The same down to level {@code finest} only, as for a player too high or fast for the finer ones to matter or keep up. */
     public static void around(int bx, int bz, int finest, LongConsumer out) {
         int hole = Far.hole;
-        int cx = column(bx, MAX_LEVEL), cz = column(bz, MAX_LEVEL);
+        int minX = 0, minZ = 0, maxX = 0, maxZ = 0;
         for (int level = MAX_LEVEL; level >= finest; level--) {
-            int minX, minZ, maxX, maxZ;
             if (level == MAX_LEVEL) {
-                minX = cx - OUTER; maxX = cx + OUTER; minZ = cz - OUTER; maxZ = cz + OUTER;
+                int px = column(bx, level), pz = column(bz, level);
+                minX = px - OUTER; maxX = px + OUTER; minZ = pz - OUTER; maxZ = pz + OUTER;
             } else {
-                int px = 2 * column(bx, level + 1), pz = 2 * column(bz, level + 1);
-                minX = px - 2 * hole; maxX = px + 2 * hole + 1; minZ = pz - 2 * hole; maxZ = pz + 2 * hole + 1;
-                // Cut to the coarsest square, which an extreme sharpness can outgrow: nothing past it is drawn.
-                int shift = MAX_LEVEL - level;
-                minX = Math.max(minX, cx - OUTER << shift); maxX = Math.min(maxX, (cx + OUTER + 1 << shift) - 1);
-                minZ = Math.max(minZ, cz - OUTER << shift); maxZ = Math.min(maxZ, (cz + OUTER + 1 << shift) - 1);
+                // The children of the coarser level's middle, as far as the coarser level reaches.
+                int h = hole(level + 1, hole), px = column(bx, level + 1), pz = column(bz, level + 1);
+                minX = 2 * Math.max(minX, px - h); maxX = 2 * Math.min(maxX, px + h) + 1;
+                minZ = 2 * Math.max(minZ, pz - h); maxZ = 2 * Math.min(maxZ, pz + h) + 1;
             }
             for (int z = minZ; z <= maxZ; z++) for (int x = minX; x <= maxX; x++) out.accept(key(level, x, z));
         }
     }
+
+    /** The middle a level gives the next finer one, in its own columns. */
+    public static int hole(int level) { return hole(level, Far.hole); }
+
+    /**
+     * The coarsest level always keeps its outer ring: with an extreme sharpness the finer levels
+     * would otherwise cover it all, and while their many columns came in, the horizon and the
+     * square's corners stood empty.
+     */
+    private static int hole(int level, int hole) { return level == MAX_LEVEL ? Math.min(hole, OUTER - 1) : hole; }
 
     /** True for the middle columns of a level around a position, which the next finer level draws instead. */
     public static boolean refined(int level, int x, int z, int bx, int bz) { return refined(level, x, z, bx, bz, MIN_LEVEL); }
 
     /** The same when level {@code finest} is the finest one drawn. */
     public static boolean refined(int level, int x, int z, int bx, int bz, int finest) {
-        int hole = Far.hole;
+        int hole = hole(level);
         return level > finest && Math.abs(x - column(bx, level)) <= hole && Math.abs(z - column(bz, level)) <= hole;
     }
 

@@ -86,10 +86,10 @@ public final class CubicClient {
             Runtime runtime = Runtime.getRuntime();
             var camera = Minecraft.getInstance().gameRenderer.getMainCamera();
             int[] byView = world.renderer().meshesByView(camera.getPosition(), camera.getYRot());
-            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes ({} in view), {} to compile, far {}/{} columns {}% settled ({}% in view) {} MB, {} sent again; {}",
+            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes ({} in view), {} to compile, far {}/{} columns {}% settled ({}% in view) {} MB {} draws, {} sent again; {}",
                     Minecraft.getInstance().getFps(), (runtime.totalMemory() - runtime.freeMemory()) >> 20, world.loadedCubes(),
                     world.renderer().meshCount(), byView[0], world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
-                    world.far().settledPercent(), world.far().settledInViewPercent(), world.far().vertexBytes() >> 20, world.far().replacedCount(), timings(Timings.LOGGER));
+                    world.far().settledPercent(), world.far().settledInViewPercent(), world.far().vertexBytes() >> 20, world.far().drawnRanges(), world.far().replacedCount(), timings(Timings.LOGGER));
         }
     }
 
@@ -145,7 +145,7 @@ public final class CubicClient {
                 + world.renderer().pendingCount() + " to compile");
         event.getLeft().add(at + 1, "Far: " + world.far().drawnCount() + "/" + world.far().columnCount() + " columns, "
                 + world.far().settledPercent() + "% settled (" + world.far().settledInViewPercent() + "% in view), "
-                + world.far().vertexBytes() / (1 << 20) + " MB");
+                + world.far().vertexBytes() / (1 << 20) + " MB, " + world.far().drawnRanges() + " draws");
         // The debug screen redraws every frame; read the timings about twice a second so they can be read.
         long now = System.nanoTime();
         if (now - timingsAt > 500_000_000L) { timingsAt = now; timingLines = timings(Timings.SCREEN).split(", "); }
@@ -186,7 +186,7 @@ public final class CubicClient {
         var camera = event.getCamera().getPosition();
         ClientCubeWorld world = ClientCubeWorld.current();
         float height = (float) camera.y - world.skyTop(net.minecraft.util.Mth.floor(camera.x), net.minecraft.util.Mth.floor(camera.z));
-        float scale = world.far().hazeScale(camera.z), end = FarRenderer.FOG_END * scale;
+        float scale = FarRenderer.HAZE_AT_EDGE ? 1.0F : world.far().hazeScale(camera.z), end = FarRenderer.FOG_END * scale;
         float start = Math.min(Math.max(FarRenderer.FOG_START * scale, height * 1.25F), 0.8F * end);
         event.setNearPlaneDistance(start);
         event.setFarPlaneDistance(end);

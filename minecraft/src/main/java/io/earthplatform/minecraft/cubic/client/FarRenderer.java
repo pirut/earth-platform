@@ -57,16 +57,24 @@ public final class FarRenderer {
     /** Distance to the nearest edge of the coarsest level's square. */
     private static final float REACH = Far.reach();
     /**
-     * Where the haze over low ground starts and ends: where it did when the coarsest level was
-     * level 6, 23 km of blocks out. The levels beyond show only what rises above the haze (see
-     * {@link FarShaders}), so the plains look as they did and distant mountains stand clear.
+     * Where the haze over low ground ends, in meters: by default just inside the far view's edge,
+     * so everything drawn stays clear and the haze only hides where the terrain stops. It no longer
+     * follows the old 23 km plains haze. {@code -Dearthplatform.far.visibility} sets a real-world
+     * visibility instead, in meters (about 20 to 50 km in humid air, 100 km and more in dry western
+     * air), never past the edge. The levels beyond still show what rises above the haze (see
+     * {@link FarShaders}), so distant mountains stand clear.
      */
-    private static final float HAZE = Far.OUTER * (float) Far.width(6);
+    private static final float VISIBILITY = Math.min(0.95F * REACH,
+            Math.max(5_000.0F, Float.parseFloat(System.getProperty("earthplatform.far.visibility", "1e9"))));
     /**
-     * Haze distances in blocks where a block is a metre, as at an Earth world's home latitude; see
-     * {@link #hazeScale}. The depth range covers the coarsest square's corners.
+     * Haze distances in blocks where a block is a meter, as at an Earth world's home latitude; see
+     * {@link #hazeScale}. At the edge the haze starts thin at 70% of the way out; a set visibility
+     * starts it a quarter of the way out. The depth range covers the coarsest square's corners.
      */
-    public static final float FOG_START = 0.25F * HAZE, FOG_END = 0.95F * HAZE, DEPTH_FAR = 2.0F * REACH;
+    public static final float FOG_START = (VISIBILITY >= 0.95F * REACH ? 0.7F : 0.25F) * VISIBILITY, FOG_END = VISIBILITY,
+            DEPTH_FAR = 2.0F * REACH;
+    /** True when the haze sits at the far view's edge, which is in blocks, not ground meters. */
+    public static final boolean HAZE_AT_EDGE = VISIBILITY >= 0.95F * REACH;
     /**
      * Levels drawn with block textures; coarser ones use each face's average colour, which is what
      * a texture blurs to at that distance anyway and stays steady when the camera moves.
@@ -295,6 +303,11 @@ public final class FarRenderer {
             if (column.top != Integer.MIN_VALUE) visitor.accept(column.x0, column.z0, Far.width(column.level), column.top);
     }
     /** GPU memory of every uploaded column's faces and water, in bytes. */
+    /** Ranges of faces the last draw of far terrain asked the GPU for (see {@link FarGpu#add}). */
+    public int drawnRanges() { return drawnRanges; }
+
+    private int drawnRanges;
+
     public long vertexBytes() {
         long total = 0;
         for (Column column : columns.values()) total += column.bytes;
@@ -341,8 +354,10 @@ public final class FarRenderer {
         Column column = new Column(payload.key(), payload.bottom(), sections, unsigned(payload.drops()));
         column.lastWanted = ticks;
         Column old = columns.put(column.key, column);
+        columnsVersion++;
         if (old != null) {
             replaced++;
+            dueColumns.remove(old);
             if (old.meshed) column.takeOver(old, gpu);
             else { column.drawnCubes = old.drawnCubes; old.close(gpu); }
         }
@@ -368,7 +383,7 @@ public final class FarRenderer {
 
     /** Meshes a column a few ticks from now, so neighbours arriving together cost one mesh each. */
     private void schedule(Column column) {
-        if (column.due < 0) column.due = ticks + SETTLE_TICKS;
+        if (column.due < 0) due(column, ticks + SETTLE_TICKS);
     }
 
     /** Asks for missing columns, forgets old ones, refreshes masks and starts due meshes. */
@@ -379,7 +394,7 @@ public final class FarRenderer {
         finest = finest(player.getY() - ground(player.getBlockX(), player.getBlockZ(), player.getY()),
                 player.getDeltaMovement().horizontalDistance() * 20.0, finest);
         if (ticks % MASK_TICKS == 0) mask();
-        for (Column column : drawn) if (column.maskStale) column.due = Math.min(column.due, ticks + SETTLE_TICKS);
+        for (Column column : drawn) if (column.maskStale && column.due >= 0) due(column, Math.min(column.due, ticks + SETTLE_TICKS));
         double yaw = Math.toRadians(player.getYRot());
         lookX = -Math.sin(yaw);
         lookZ = Math.cos(yaw);
@@ -475,7 +490,7 @@ public final class FarRenderer {
         int x = Far.x(key), z = Far.z(key);
         if (!Far.refined(level, x, z, bx, bz, finest)) return order;
         int rings = Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level)));
-        if (rings >= Far.hole() - 1) return order;
+        if (rings >= Far.hole(level) - 1) return order;
         return level <= STAND_IN_LEVELS && !childrenReady(level, x, z, bx, bz) ? order : order + (1L << 32);
     }
 
@@ -525,10 +540,15 @@ public final class FarRenderer {
         for (Column column : old) {
             if (excess <= 0 && ticks - column.lastWanted <= KEEP_TICKS) break;
             columns.remove(column.key);
+            columnsVersion++;
+            dueColumns.remove(column);
             column.close(gpu);
             excess--;
         }
     }
+
+    /** Counts up whenever a column comes or goes; with {@link CubeRenderer#compiledVersion}, what {@link #mask} last saw. */
+    private int columnsVersion, maskedColumns = -1, maskedCompiled = -1;
 
     /** How often the sea under the drawn cubes is looked over again, and what it was last time. */
     private static final int SUNK_TICKS = 20;
@@ -573,6 +593,12 @@ public final class FarRenderer {
      * and remeshes the columns whose set changed.
      */
     private void mask() {
+        // Standing still nothing changes, and working the sets out again cost a third of the
+        // render thread's own time every fourth tick.
+        int compiledVersion = world.renderer().compiledVersion();
+        if (compiledVersion == maskedCompiled && columnsVersion == maskedColumns) return;
+        maskedCompiled = compiledVersion;
+        maskedColumns = columnsVersion;
         Long2ObjectOpenHashMap<LongOpenHashSet> sets = new Long2ObjectOpenHashMap<>();
         LongOpenHashSet compiled = world.renderer().compiledCubes(), sunk = sunk(compiled);
         for (LongIterator it = compiled.iterator(); it.hasNext(); ) {
@@ -596,7 +622,7 @@ public final class FarRenderer {
             boolean lost = column.drawnCubes != null && (set == null || !set.containsAll(column.drawnCubes));
             column.drawnCubes = set;
             if (lost && drawnKeys.contains(column.key)) {
-                column.due = ticks;
+                due(column, ticks);
                 continue;
             }
             // Coarse columns under the finer ones near the player see every cube that compiles there;
@@ -605,7 +631,7 @@ public final class FarRenderer {
             if (drawnKeys.contains(column.key) || !column.meshed) schedule(column);
             else {
                 column.maskStale = true;
-                if (column.due < 0) column.due = ticks + HIDDEN_SETTLE_TICKS;
+                if (column.due < 0) due(column, ticks + HIDDEN_SETTLE_TICKS);
             }
         }
     }
@@ -616,12 +642,13 @@ public final class FarRenderer {
      * or a shader reload) left coarse stand-ins near the player until it had all drained.
      */
     private void submitDue(int bx, int bz) {
-        List<Column> due = new ArrayList<>();
-        for (Column column : columns.values()) {
-            if (column.due < 0 || column.due > ticks) continue;
-            if (column.building) submit(column);
+        List<Column> due = new ArrayList<>(), building = new ArrayList<>();
+        for (Column column : dueColumns) {
+            if (column.due > ticks) continue;
+            if (column.building) building.add(column);
             else due.add(column);
         }
+        for (Column column : building) submit(column);
         if (due.isEmpty()) return;
         Map<Column, Long> order = new HashMap<>(due.size() * 2);
         for (Column column : due) order.put(column, (drawnKeys.contains(column.key) ? 0 : 1L << 40) + priority(column.key, bx, bz));
@@ -632,8 +659,18 @@ public final class FarRenderer {
         }
     }
 
+    /** Sets when a column is next meshed, keeping {@link #dueColumns} to the columns with a time. */
+    private void due(Column column, int at) {
+        column.due = at;
+        dueColumns.add(column);
+    }
+
+    /** The columns waiting to be meshed: those with a {@code due} time, so a tick looks at them alone, not every column held. */
+    private final java.util.Set<Column> dueColumns = new java.util.HashSet<>();
+
     private void submit(Column column) {
         column.due = -1;
+        dueColumns.remove(column);
         column.maskStale = false;
         FarGpu gpu = gpu();
         if (gpu == null) return;
@@ -783,17 +820,21 @@ public final class FarRenderer {
         shader.apply();
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = world.client().getShade(direction, true);
-        if (own) FarLod.beginDraw(modelView, position.x, position.y, position.z);
-        if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame)) {
-            // Whole columns first, then those fading out, then those fading in, each with its own program.
-            boolean[] fades = new boolean[3];
-            for (Column column : visible) fades[column.fade] = true;
-            for (int fade = FarGpu.NO_FADE; fade <= FarGpu.FADE_IN; fade++) {
-                if (!fades[fade]) continue;
-                if (fade != FarGpu.NO_FADE && !gpu.fade(fade) && fade == FarGpu.FADE_IN) break;
-                for (Column column : visible) if (column.fade == fade) queue(gpu, column, position);
+        if (own) {
+            // Far terrain inside the game's blocks' reach goes in the game's own depth, as without a pack's Voxy support.
+            float reach = FarLod.nearReach();
+            List<Column> near = new ArrayList<>();
+            for (Column column : visible) {
+                double dx = Math.max(0.0, Math.max(column.box.minX - position.x, position.x - column.box.maxX));
+                double dz = Math.max(0.0, Math.max(column.box.minZ - position.z, position.z - column.box.maxZ));
+                if (dx * dx + dz * dz < reach * reach) near.add(column);
             }
-            gpu.end();
+            if (!near.isEmpty() && gpu.begin(pack, ShaderBlocks.voxyPatch(), modelView, projection, position, shade, frame, true)) drawEach(gpu, near, position);
+            FarLod.beginDraw(modelView, position.x, position.y, position.z);
+        }
+        if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false)) {
+            drawEach(gpu, visible, position);
+            drawnRanges = gpu.ranges;
         }
         if (own) FarLod.endDraw();
         if (own && FarLod.beginDeepen(modelView)) {
@@ -809,6 +850,18 @@ public final class FarRenderer {
         type.clearRenderState();
     }
 
+    /** Draws columns: whole ones first, then those fading out, then those fading in, each with its own program. */
+    private void drawEach(FarGpu gpu, List<Column> columns, Vec3 position) {
+        boolean[] fades = new boolean[3];
+        for (Column column : columns) fades[column.fade] = true;
+        for (int fade = FarGpu.NO_FADE; fade <= FarGpu.FADE_IN; fade++) {
+            if (!fades[fade]) continue;
+            if (fade != FarGpu.NO_FADE && !gpu.fade(fade) && fade == FarGpu.FADE_IN) break;
+            for (Column column : columns) if (column.fade == fade) queue(gpu, column, position);
+        }
+        gpu.end();
+    }
+
     /** Queues a column's faces that can face the camera, and its walls where its neighbours are not drawn. */
     private void queue(FarGpu gpu, Column column, Vec3 position) {
         FarGpu.Allocation faces = column.faces;
@@ -816,12 +869,13 @@ public final class FarRenderer {
         AABB box = column.box;
         // Only face groups turned toward the camera can show. Smooth ground's slopes, cliffs among them,
         // face sideways too, so it shows from below its column as well.
-        if (position.y < box.maxY) gpu.add(faces, 0);
-        if (position.y > box.minY || faces.smooth()) gpu.add(faces, 1);
-        if (position.z < box.maxZ) gpu.add(faces, 2);
-        if (position.z > box.minZ) gpu.add(faces, 3);
-        if (position.x < box.maxX) gpu.add(faces, 4);
-        if (position.x > box.minX) gpu.add(faces, 5);
+        int groups = 0;
+        if (position.y < box.maxY) groups |= 1;
+        if (position.y > box.minY || faces.smooth()) groups |= 1 << 1;
+        if (position.z < box.maxZ) groups |= 1 << 2;
+        if (position.z > box.minZ) groups |= 1 << 3;
+        if (position.x < box.maxX) groups |= 1 << 4;
+        if (position.x > box.minX) groups |= 1 << 5;
         for (int side = 0; side < 4; side++) {
             if (drawnKeys.contains(column.neighbour(side))) continue;
             boolean facing = switch (side) {
@@ -830,8 +884,9 @@ public final class FarRenderer {
                 case 2 -> position.x < box.minX + 1;
                 default -> position.x > box.maxX - 1;
             };
-            if (facing) gpu.add(faces, FarMesher.FIRST_WALL + side);
+            if (facing) groups |= 1 << FarMesher.FIRST_WALL + side;
         }
+        gpu.add(faces, groups);
     }
 
     /**
@@ -958,8 +1013,11 @@ public final class FarRenderer {
         boolean refined = Far.refined(level, x, z, bx, bz, finest) || !meshed && Far.refined(level, x, z, bx, bz);
         if (refined && (!meshed || childrenReady(level, x, z, bx, bz))) {
             // The outer ring of a level's middle: drawn under its children too, fading in as they fade out.
+            // The shader puts the ring at the shared hole, so where the coarsest level keeps a narrower
+            // middle (an extreme sharpness) the two levels meet at a plain seam instead.
             boolean band = bandFade && meshed && Far.refined(level, x, z, bx, bz, finest)
-                    && Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level))) == Far.hole();
+                    && Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level))) == Far.hole(level)
+                    && Far.hole(level) == Far.hole();
             boolean arriving = false;
             if (FADE && meshed) {
                 int now = FarGpu.now();
@@ -1109,6 +1167,7 @@ public final class FarRenderer {
         closed = true;
         for (Column column : columns.values()) column.close(gpu);
         columns.clear();
+        dueColumns.clear();
         FarMesher.Built result;
         while ((result = built.poll()) != null) result.free();
         if (gpu != null) { gpu.close(); gpu = null; }
