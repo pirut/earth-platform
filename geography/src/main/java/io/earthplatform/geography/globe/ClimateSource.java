@@ -14,7 +14,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.zip.DataFormatException;
-import java.util.zip.Inflater;
 
 /**
  * Present-day climate from CHELSA V2.1, dataset id {@code chelsa-v2.1-1981-2010}: the 1981-2010
@@ -335,21 +334,11 @@ public final class ClimateSource implements AutoCloseable {
             if (raw.length != size) throw new IOException("Unexpected climate row size");
             bytes = raw;
         } else {
-            Inflater inflater = new Inflater();
             try {
-                inflater.setInput(raw);
                 bytes = new byte[size];
-                int done = 0;
-                while (done < size && !inflater.finished()) {
-                    int n = inflater.inflate(bytes, done, size - done);
-                    if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) break;
-                    done += n;
-                }
-                if (done != size) throw new IOException("Short climate row");
+                if (Deflate.inflate(raw, bytes) != size) throw new IOException("Short climate row");
             } catch (DataFormatException malformed) {
                 throw new IOException("Malformed climate row", malformed);
-            } finally {
-                inflater.end();
             }
         }
         ByteBuffer in = ByteBuffer.wrap(bytes).order(header.littleEndian ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);

@@ -12,7 +12,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.zip.DataFormatException;
-import java.util.zip.Inflater;
 
 /**
  * Global elevation from the Copernicus DEM GLO-30, dataset id {@code copernicus-glo30-v1}: a
@@ -272,21 +271,11 @@ public final class CopernicusSource implements AutoCloseable {
             if (raw.length != size) throw new IOException("Unexpected Copernicus block size");
             bytes = raw;
         } else {
-            Inflater inflater = new Inflater();
             try {
-                inflater.setInput(raw);
                 bytes = new byte[size];
-                int done = 0;
-                while (done < size && !inflater.finished()) {
-                    int n = inflater.inflate(bytes, done, size - done);
-                    if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) break;
-                    done += n;
-                }
-                if (done != size) throw new IOException("Short Copernicus block");
+                if (Deflate.inflate(raw, bytes) != size) throw new IOException("Short Copernicus block");
             } catch (DataFormatException malformed) {
                 throw new IOException("Malformed Copernicus block", malformed);
-            } finally {
-                inflater.end();
             }
         }
         float[] metres = new float[width * height];

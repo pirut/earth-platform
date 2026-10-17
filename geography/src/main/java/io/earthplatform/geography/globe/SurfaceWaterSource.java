@@ -16,7 +16,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.zip.DataFormatException;
-import java.util.zip.Inflater;
 
 /**
  * How often the ground was under water from 1984 to 2021, from the JRC Global Surface Water
@@ -335,21 +334,11 @@ public final class SurfaceWaterSource implements AutoCloseable {
     }
 
     private static byte[] inflate(byte[] raw, int size) throws IOException {
-        Inflater inflater = new Inflater();
         try {
-            inflater.setInput(raw);
             byte[] out = new byte[size];
-            int done = 0;
-            while (done < size && !inflater.finished()) {
-                int n = inflater.inflate(out, done, size - done);
-                if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) break;
-                done += n;
-            }
-            return finish(out, done, size);
+            return finish(out, Deflate.inflate(raw, out), size);
         } catch (DataFormatException malformed) {
             throw new IOException("Malformed surface water block", malformed);
-        } finally {
-            inflater.end();
         }
     }
 

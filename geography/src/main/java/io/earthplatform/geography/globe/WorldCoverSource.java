@@ -14,7 +14,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.zip.DataFormatException;
-import java.util.zip.Inflater;
 
 /**
  * Global land cover from ESA WorldCover 2021 v200, dataset id {@code esa-worldcover-v200}: one
@@ -268,22 +267,12 @@ public final class WorldCoverSource implements AutoCloseable {
             if (raw.length != size) throw new IOException("Unexpected land cover block size");
             return raw;
         }
-        Inflater inflater = new Inflater();
         try {
-            inflater.setInput(raw);
             byte[] out = new byte[size];
-            int done = 0;
-            while (done < size && !inflater.finished()) {
-                int n = inflater.inflate(out, done, size - done);
-                if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) break;
-                done += n;
-            }
-            if (done != size) throw new IOException("Short land cover block");
+            if (Deflate.inflate(raw, out) != size) throw new IOException("Short land cover block");
             return out;
         } catch (DataFormatException malformed) {
             throw new IOException("Malformed land cover block", malformed);
-        } finally {
-            inflater.end();
         }
     }
 
