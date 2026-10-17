@@ -279,6 +279,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
             Field hit = fields.get(key);
             if (hit != null) return hit;
         }
+        TickShare.giveWay();
         CompletableFuture<Field> mine = new CompletableFuture<>();
         CompletableFuture<Field> shared = fieldsInFlight.putIfAbsent(key, mine);
         if (shared == null) {

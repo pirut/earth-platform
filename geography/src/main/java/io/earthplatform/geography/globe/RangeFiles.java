@@ -125,6 +125,7 @@ final class RangeFiles implements AutoCloseable {
 
     /** Loads a piece once however many callers want it at the same time; a failure is retried by the next caller. */
     <K, T> T singleFlight(Map<K, CompletableFuture<T>> flights, K key, Load<T> load, String piece) {
+        TickShare.giveWay();
         CompletableFuture<T> mine = new CompletableFuture<>(), shared = flights.putIfAbsent(key, mine);
         if (shared == null) {
             try { mine.complete(load.get()); }

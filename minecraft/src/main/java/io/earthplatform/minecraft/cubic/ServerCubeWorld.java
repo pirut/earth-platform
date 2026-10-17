@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic;
 
+import io.earthplatform.geography.globe.TickShare;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.far.FarServer;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
@@ -220,6 +221,7 @@ public final class ServerCubeWorld extends CubeWorld {
         pending.add(key);
         int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
         workers.execute(() -> {
+            TickShare.giveWay();
             if (always || wanted(x, y, z)) { ready.add(produce(key, x, y, z)); generated.increment(); }
             else { droppedKeys.add(key); dropped.increment(); }
         });
@@ -386,9 +388,23 @@ public final class ServerCubeWorld extends CubeWorld {
 
     public void tick() {
         if (closed) return;
+        noteLateness();
         long start = System.nanoTime();
         try { tickCubes(); }
         finally { Timings.SERVER_TICK.since(start); }
+    }
+
+    /** How far behind its schedule a dedicated server's tick may run before background map work gives way. */
+    private static final long LATE_NANOS = 100_000_000L;
+
+    /**
+     * Tells {@link TickShare} while a dedicated server runs behind: its watchdog stops a server
+     * that falls a minute behind, which background map work using every core could cause there.
+     * Singleplayer has no watchdog and keeps loading at full speed.
+     */
+    private void noteLateness() {
+        var host = server.getServer();
+        if (host.isDedicatedServer() && net.minecraft.Util.getNanos() - host.getNextTickTime() > LATE_NANOS) TickShare.late();
     }
 
     private void tickCubes() {
