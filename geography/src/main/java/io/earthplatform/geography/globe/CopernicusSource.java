@@ -7,7 +7,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.*;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -45,7 +44,7 @@ public final class CopernicusSource implements AutoCloseable {
     private final int maxBlocksInMemory;
     private final RangeFiles files;
     private final Map<Integer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
-    private final LinkedHashMap<Long, Block> memory = new LinkedHashMap<>(32, 0.75f, true);
+    private final LruMap<Long, Block> memory = new LruMap<>(32);
     private final Map<Long, CompletableFuture<Block>> inFlight = new ConcurrentHashMap<>();
     /** Each thread's last block, so reads that stay in one block skip the shared cache. */
     private final ThreadLocal<Last> recent = ThreadLocal.withInitial(Last::new);
@@ -176,9 +175,7 @@ public final class CopernicusSource implements AutoCloseable {
         int across = Math.ceilDiv(level.width, level.tileWidth), index = row * across + column;
         Block decoded = files.singleFlight(inFlight, key, () -> readBlock(square, overview, index, row, column, header, level), "Copernicus elevation block");
         synchronized (memory) {
-            memory.put(key, decoded);
-            var iterator = memory.entrySet().iterator();
-            while (memory.size() > maxBlocksInMemory && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+            memory.putAndTrim(key, decoded, maxBlocksInMemory);
         }
         return decoded;
     }

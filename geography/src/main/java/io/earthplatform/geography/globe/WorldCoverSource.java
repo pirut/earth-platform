@@ -8,7 +8,6 @@ import java.nio.ByteOrder;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -51,7 +50,7 @@ public final class WorldCoverSource implements AutoCloseable {
     private final int maxBlocksInMemory;
     private final RangeFiles files;
     private final Map<Integer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
-    private final LinkedHashMap<Long, byte[]> memory = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, byte[]> memory = new LruMap<>(64);
     private final Map<Long, CompletableFuture<byte[]>> inFlight = new ConcurrentHashMap<>();
     /** Each thread's last block, so reads that stay in one block skip the shared cache. */
     private final ThreadLocal<Last> recent = ThreadLocal.withInitial(Last::new);
@@ -184,9 +183,7 @@ public final class WorldCoverSource implements AutoCloseable {
         }
         byte[] decoded = files.singleFlight(inFlight, key, () -> readBlock(square, overview, index, header, level), "land cover block");
         synchronized (memory) {
-            memory.put(key, decoded);
-            var iterator = memory.entrySet().iterator();
-            while (memory.size() > maxBlocksInMemory && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+            memory.putAndTrim(key, decoded, maxBlocksInMemory);
         }
         return decoded;
     }

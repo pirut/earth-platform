@@ -9,7 +9,6 @@ import java.nio.file.*;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -70,7 +69,7 @@ public final class ClimateSource implements AutoCloseable {
     private final int maxRowsInMemory;
     private final RangeFiles files;
     private final Map<Layer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
-    private final LinkedHashMap<Long, Object> memory = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, Object> memory = new LruMap<>(64);
     private final Map<Long, CompletableFuture<Object>> inFlight = new ConcurrentHashMap<>();
     /** Each thread's last few rows, so neighbouring reads skip the shared cache. */
     private final ThreadLocal<Recent> recent = ThreadLocal.withInitial(Recent::new);
@@ -253,9 +252,7 @@ public final class ClimateSource implements AutoCloseable {
         if (hit == null) {
             hit = files.singleFlight(inFlight, key, load, piece);
             synchronized (memory) {
-                memory.put(key, hit);
-                var iterator = memory.entrySet().iterator();
-                while (memory.size() > maxRowsInMemory && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+                memory.putAndTrim(key, hit, maxRowsInMemory);
             }
         }
         mine.put(key, hit);

@@ -12,7 +12,6 @@ import java.net.http.HttpResponse;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -69,7 +68,7 @@ public final class TerrariumTileSource implements AutoCloseable {
     private final HttpClient http;
     private final Semaphore transfers;
     private final ExecutorService executor;
-    private final LinkedHashMap<Long, float[]> memory = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, float[]> memory = new LruMap<>(64);
     private final Map<Long, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
     /** Tiles' raw values being read, so a tile and its neighbours' seams wanting the same one fetch it once. */
     private final Map<Long, CompletableFuture<float[]>> rawInFlight = new ConcurrentHashMap<>();
@@ -127,9 +126,7 @@ public final class TerrariumTileSource implements AutoCloseable {
                 for (ElevationLayer layer : layers) refine(layer, zoom, x, y, values);
                 if (zoom >= SPIKE_ZOOM) despike(values);
                 synchronized (memory) {
-                    memory.put(key, values);
-                    var iterator = memory.entrySet().iterator();
-                    while (memory.size() > maxTilesInMemory && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+                    memory.putAndTrim(key, values, maxTilesInMemory);
                 }
                 mine.complete(values);
             } catch (Throwable failure) {
@@ -310,7 +307,7 @@ public final class TerrariumTileSource implements AutoCloseable {
      * compare against the composite as it was. Kept a while, as the Copernicus checks of a degree square's
      * parts overlap and would otherwise clean the same tiles again; the array is shared and must not be modified.
      */
-    private final LinkedHashMap<Long, float[]> cleanMemory = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, float[]> cleanMemory = new LruMap<>(64);
     private static final int CLEAN_KEEP = 48;
 
     public float[] cleaned(int zoom, int x, int y) {
@@ -323,9 +320,7 @@ public final class TerrariumTileSource implements AutoCloseable {
         try {
             float[] values = read(zoom, x, y);
             synchronized (cleanMemory) {
-                cleanMemory.put(key, values);
-                var iterator = cleanMemory.entrySet().iterator();
-                while (cleanMemory.size() > CLEAN_KEEP && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+                cleanMemory.putAndTrim(key, values, CLEAN_KEEP);
             }
             return values;
         } catch (InterruptedException interrupted) {

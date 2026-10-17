@@ -10,7 +10,6 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -50,7 +49,7 @@ abstract class MercatorTileLayer implements ElevationLayer, AutoCloseable {
     private final boolean allowNetwork;
     private final RangeFiles files;
     private final Map<String, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
-    private final LinkedHashMap<String, float[]> memory = new LinkedHashMap<>(32, 0.75f, true);
+    private final LruMap<String, float[]> memory = new LruMap<>(32);
     private final int kept;
 
     MercatorTileLayer(String id, String what, String threadName, TileCoverage coverage, int minZoom, Path cacheRoot, boolean allowNetwork,
@@ -207,9 +206,7 @@ abstract class MercatorTileLayer implements ElevationLayer, AutoCloseable {
             if (decoded == BROKEN) return BROKEN;
             float[] kept = decoded == null ? NONE : decoded;
             synchronized (memory) {
-                memory.put(key, kept);
-                var iterator = memory.entrySet().iterator();
-                while (memory.size() > this.kept && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+                memory.putAndTrim(key, kept, this.kept);
             }
             return kept;
         }, what + " tile " + key);

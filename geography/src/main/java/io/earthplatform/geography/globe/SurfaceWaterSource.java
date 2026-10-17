@@ -11,7 +11,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.*;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -46,7 +45,7 @@ public final class SurfaceWaterSource implements AutoCloseable {
     private final int maxBlocksInMemory;
     private final RangeFiles files;
     private final Map<Integer, CompletableFuture<Index>> indexes = new ConcurrentHashMap<>();
-    private final LinkedHashMap<Long, byte[]> memory = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, byte[]> memory = new LruMap<>(64);
     private final Map<Long, CompletableFuture<byte[]>> inFlight = new ConcurrentHashMap<>();
     private final ThreadLocal<Last> recent = ThreadLocal.withInitial(Last::new);
 
@@ -121,9 +120,7 @@ public final class SurfaceWaterSource implements AutoCloseable {
         }
         byte[] decoded = files.singleFlight(inFlight, key, () -> readBlock(square, index, header), "surface water block");
         synchronized (memory) {
-            memory.put(key, decoded);
-            var iterator = memory.entrySet().iterator();
-            while (memory.size() > maxBlocksInMemory && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+            memory.putAndTrim(key, decoded, maxBlocksInMemory);
         }
         return decoded;
     }

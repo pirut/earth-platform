@@ -2,7 +2,6 @@ package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -62,7 +61,7 @@ public final class Drainage {
     private final GlobalElevation.Tiles tiles;
     private final Rain rain;
     private final int maxRegions;
-    private final LinkedHashMap<Long, Region> memory = new LinkedHashMap<>(16, 0.75f, true);
+    private final LruMap<Long, Region> memory = new LruMap<>(16);
     private final Map<Long, CompletableFuture<Region>> inFlight = new ConcurrentHashMap<>();
     /** One drained tile: per pixel, the direction (0 to 7) a kept stream steps on in, or -1; and the ground it drains. */
     private record Region(byte[] step, float[] area) {}
@@ -177,9 +176,7 @@ public final class Drainage {
             try {
                 Region made = drain(tx, ty);
                 synchronized (memory) {
-                    memory.put(key, made);
-                    var iterator = memory.entrySet().iterator();
-                    while (memory.size() > maxRegions && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+                    memory.putAndTrim(key, made, maxRegions);
                 }
                 mine.complete(made);
             } catch (Throwable failure) {

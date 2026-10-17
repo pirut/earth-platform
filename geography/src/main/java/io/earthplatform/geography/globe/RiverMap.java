@@ -2,7 +2,6 @@ package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -64,7 +63,7 @@ public final class RiverMap {
     private final SurfaceWaterSource source;
     private final Drainage drainage;
     private final int maxTiles;
-    private final LinkedHashMap<Long, Traced> memory = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, Traced> memory = new LruMap<>(64);
     private final Map<Long, CompletableFuture<Traced>> inFlight = new ConcurrentHashMap<>();
     private final ThreadLocal<Traced> recent = new ThreadLocal<>();
 
@@ -166,9 +165,7 @@ public final class RiverMap {
                 try {
                     Traced made = trace(key, (column / TILE) * TILE, (row / TILE) * TILE);
                     synchronized (memory) {
-                        memory.put(key, made);
-                        var iterator = memory.entrySet().iterator();
-                        while (memory.size() > maxTiles && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+                        memory.putAndTrim(key, made, maxTiles);
                     }
                     mine.complete(made);
                 } catch (Throwable failure) {

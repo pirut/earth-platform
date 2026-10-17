@@ -2,7 +2,6 @@ package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
@@ -91,7 +90,7 @@ public final class CopernicusFill implements ElevationLayer {
     private final CopernicusSource dem;
     private final Tiles tiles;
     private final int maxParts;
-    private final LinkedHashMap<Long, Part> parts = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, Part> parts = new LruMap<>(64);
     private final Map<Long, CompletableFuture<Part>> inFlight = new ConcurrentHashMap<>();
 
     public CopernicusFill(CopernicusSource dem, Tiles tiles, int maxParts) {
@@ -243,9 +242,7 @@ public final class CopernicusFill implements ElevationLayer {
             try {
                 Part computed = check(south, west, width, height, partRow, partColumn);
                 synchronized (parts) {
-                    parts.put(key, computed);
-                    var iterator = parts.entrySet().iterator();
-                    while (parts.size() > maxParts && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+                    parts.putAndTrim(key, computed, maxParts);
                 }
                 mine.complete(computed);
             } catch (Throwable failure) {

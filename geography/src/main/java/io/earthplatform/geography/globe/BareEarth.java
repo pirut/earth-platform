@@ -13,7 +13,6 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -153,10 +152,10 @@ public final class BareEarth implements GlobalElevation.Tiles {
     /** Where worked-out fields are kept on disk, or null to keep them in memory only. */
     private final Path cacheRoot;
     private final int maxFields, maxTiles;
-    private final LinkedHashMap<Long, Field> fields = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, Field> fields = new LruMap<>(64);
     private final Map<Long, CompletableFuture<Field>> fieldsInFlight = new ConcurrentHashMap<>();
     /** Recently read tiles at the zooms changed; those left as they were are the source's own arrays. */
-    private final LinkedHashMap<Long, float[]> changed = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, float[]> changed = new LruMap<>(64);
 
     /** @param cacheRoot optional disk cache directory for the worked-out fields, or null for memory only */
     public BareEarth(TerrariumTileSource tiles, WorldCoverSource cover, Path cacheRoot) {
@@ -196,9 +195,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
         }
         // Kept whether or not it changed, so a tile beside a town is looked over only once.
         synchronized (changed) {
-            changed.put(key, out);
-            var iterator = changed.entrySet().iterator();
-            while (changed.size() > maxTiles && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+            changed.putAndTrim(key, out, maxTiles);
         }
         return out;
     }
@@ -286,9 +283,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
             try {
                 Field field = compute(x, y);
                 synchronized (fields) {
-                    fields.put(key, field);
-                    var iterator = fields.entrySet().iterator();
-                    while (fields.size() > maxFields && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+                    fields.putAndTrim(key, field, maxFields);
                 }
                 mine.complete(field);
             } catch (Throwable failure) {

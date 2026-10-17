@@ -7,7 +7,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.*;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
@@ -38,7 +37,7 @@ final class FloatCogs implements AutoCloseable {
     private final int skipLevels;
     private final RangeFiles files;
     private final Map<Integer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
-    private final LinkedHashMap<Long, float[]> memory = new LinkedHashMap<>(32, 0.75f, true);
+    private final LruMap<Long, float[]> memory = new LruMap<>(32);
     private long memoryBytes;
     private final Map<Long, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
     /** Each thread's last few blocks, so reads that stay in them skip the shared cache. */

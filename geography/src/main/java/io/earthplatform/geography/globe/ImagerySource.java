@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.*;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
@@ -40,7 +39,7 @@ public final class ImagerySource implements AutoCloseable {
     private final boolean allowNetwork;
     private final int maxTilesInMemory;
     private final RangeFiles files;
-    private final LinkedHashMap<Long, int[]> memory = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, int[]> memory = new LruMap<>(64);
     private final Map<Long, CompletableFuture<int[]>> inFlight = new ConcurrentHashMap<>();
     private final ThreadLocal<long[]> lastKey = ThreadLocal.withInitial(() -> new long[]{-1});
     private final ThreadLocal<int[][]> lastTile = ThreadLocal.withInitial(() -> new int[1][]);
@@ -74,9 +73,7 @@ public final class ImagerySource implements AutoCloseable {
         }
         int[] pixels = files.singleFlight(inFlight, key, () -> read(zoom, x, y), "imagery tile " + zoom + "/" + x + "/" + y);
         synchronized (memory) {
-            memory.put(key, pixels);
-            var iterator = memory.entrySet().iterator();
-            while (memory.size() > maxTilesInMemory && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+            memory.putAndTrim(key, pixels, maxTilesInMemory);
         }
         return pixels;
     }
