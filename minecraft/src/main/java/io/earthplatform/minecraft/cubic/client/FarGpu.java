@@ -259,6 +259,7 @@ final class FarGpu {
         GL20C.glUniform1i(program.location("earth_GameDepth"), FarLod.vanillaUnit());
         if (packMode && packOwnDepth) FarLod.shadowUniforms(program::location);
         GL20C.glUniform1f(program.location("earth_FadeHole"), Far.hole());
+        GL20C.glUniform1f(program.location("earth_NearReach"), FarLod.nearReach());
         GL30C.glUniform1ui(program.location("earth_Now"), now());
         // Under a pack's TAA the dither moves every frame and blends into a smooth fade; without it, it holds still.
         GL20C.glUniform1f(program.location("earth_DitherFrame"), program.jittered ? frame & 63 : 0);
