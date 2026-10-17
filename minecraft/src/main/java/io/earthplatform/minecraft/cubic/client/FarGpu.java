@@ -70,8 +70,8 @@ final class FarGpu {
     private int nextSlot, looksUploaded;
     private final String version;
     /** Programs by fade ({@link #NO_FADE}, {@link #FADE_OUT}, {@link #FADE_IN}); a fade's program is built when first asked for. */
-    private final Program[] vanilla = new Program[3], pack = new Program[3];
-    private final boolean[] vanillaFailed = new boolean[3], packFailed = new boolean[3];
+    private final Program[] vanilla = new Program[3], pack = new Program[3], packNear = new Program[3];
+    private final boolean[] vanillaFailed = new boolean[3], packFailed = new boolean[3], packNearFailed = new boolean[3];
     @Nullable private FarShaders.PackPatch packSource;
     @Nullable private Object packPipeline;
     private boolean packOwnDepth, packJittered;
@@ -197,11 +197,13 @@ final class FarGpu {
      * Starts a far terrain draw with the vanilla program, or with the shader pack's Voxy patch
      * ({@code patch}, preprocessed by the pack) or the generic pack program when {@code packMode}.
      * When far terrain has its own depth ({@link FarLod}), the pack program drops fragments where
-     * the game's depth (on {@link FarLod#vanillaUnit()}) already holds terrain. Returns false when
-     * there is nothing usable to draw with.
+     * the game's depth (on {@link FarLod#vanillaUnit()}) already holds terrain, and those inside the
+     * game's blocks' reach, which a {@code near} draw puts in the game's own depth beforehand.
+     * Returns false when there is nothing usable to draw with.
      */
     boolean begin(boolean packMode, @Nullable FarShaders.PackPatch patch, Matrix4f modelView, Matrix4f projection, Vec3 camera, float[] shade,
-            int frame) {
+            int frame, boolean near) {
+        this.near = near;
         Program program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
         if (program == null) return false;
         uploadLooks();
@@ -252,7 +254,7 @@ final class FarGpu {
         return built;
     }
 
-    private boolean packMode;
+    private boolean packMode, near;
     @Nullable private FarShaders.PackPatch patch;
     private Matrix4f modelView, projection;
     private Vec3 camera;
@@ -285,7 +287,7 @@ final class FarGpu {
         GL20C.glUniform1i(program.location("earth_Atlas"), ATLAS_UNIT);
         GL20C.glUniform1i(program.location("earth_Lightmap"), LIGHT_UNIT);
         GL20C.glUniform1i(program.location("earth_GameDepth"), FarLod.vanillaUnit());
-        if (packMode && packOwnDepth) FarLod.shadowUniforms(program::location);
+        if (packMode && packOwnDepth && !near) FarLod.shadowUniforms(program::location);
         GL20C.glUniform1f(program.location("earth_FadeHole"), Far.hole());
         GL20C.glUniform1f(program.location("earth_NearReach"), FarLod.nearReach());
         GL30C.glUniform1ui(program.location("earth_Now"), now());
@@ -417,8 +419,9 @@ final class FarGpu {
         if (!java.util.Objects.equals(patch, packSource) || pipeline != packPipeline || ownDepth != packOwnDepth) {
             for (int i = 0; i < pack.length; i++) {
                 if (pack[i] != null) pack[i].close();
-                pack[i] = null;
-                packFailed[i] = false;
+                if (packNear[i] != null) packNear[i].close();
+                pack[i] = packNear[i] = null;
+                packFailed[i] = packNearFailed[i] = false;
             }
             packSource = patch;
             packPipeline = pipeline;
@@ -426,6 +429,7 @@ final class FarGpu {
             packPatched = patch != null;
             packJittered = true;
         }
+        if (near) return nearProgram(patch, fade);
         if (pack[fade] != null || packFailed[fade]) return pack[fade];
         // Every fade builds as the plain program did: the same patch, jittered or not.
         String jitter = packJittered && patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
@@ -455,6 +459,26 @@ final class FarGpu {
             packJittered = pack[fade].jittered;
         }
         return pack[fade];
+    }
+
+    /**
+     * The pack's program for far terrain inside the game's blocks' reach while it has its own depth
+     * (see {@link FarShaders#packFragment}): built only once the main one is, from the same patch.
+     */
+    @Nullable private Program nearProgram(@Nullable FarShaders.PackPatch patch, int fade) {
+        if (packNear[fade] != null || packNearFailed[fade]) return packNear[fade];
+        near = false;
+        Program main = packProgram(patch, fade);
+        near = true;
+        if (main == null || patch == null || !packPatched || !packOwnDepth) { packNearFailed[fade] = true; return null; }
+        String jitter = main.jittered && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
+        packNear[fade] = linkPack(jitter, FarShaders.packNearFragment(version, patch.fragment(), fade), "far terrain near by (shader pack)",
+                version + FarShaders.fade(fade));
+        if (packNear[fade] == null) {
+            packNearFailed[fade] = true;
+            EarthPlatformMod.LOGGER.warn("Far terrain near by does not build with the shader pack; it is left out until the game's blocks load");
+        }
+        return packNear[fade];
     }
 
     /** Whether the pack's Voxy code builds; once it fails, every fade uses the plain colours too. */

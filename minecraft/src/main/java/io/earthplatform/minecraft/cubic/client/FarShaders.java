@@ -529,8 +529,16 @@ final class FarShaders {
             #ifdef EARTH_FADE
                 earth_fade();
             #endif
+            #ifdef EARTH_NEAR
+                if (length(earth_position.xz) >= earth_NearReach) discard;
+            #endif
             #ifdef EARTH_OWN_DEPTH
                 if (texelFetch(earth_GameDepth, ivec2(gl_FragCoord.xy), 0).r < 1.0) discard;
+                // Inside the game's blocks' reach far terrain only fills in for blocks still loading,
+                // and goes in the game's own depth (EARTH_NEAR): the pack takes its own depth for
+                // distant level-of-detail terrain, and shading far voxels there right round the player
+                // (as after arriving with Earth data still downloading) drew huge walls and slabs.
+                if (length(earth_position.xz) < earth_NearReach) discard;
                 earth_faceDepth = gl_FragCoord.z;
                 earth_slopeDepth();
             #endif
@@ -592,5 +600,10 @@ final class FarShaders {
         }
         String patched = FACE_NORMAL.matcher(body).replaceFirst("$1\n    $2 = earth_packNormal($2);");
         return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + fade(fade) + VOXY_PARAMETERS + patched + PACK_MAIN;
+    }
+
+    /** The same for far terrain inside the game's blocks' reach, drawn into the game's depth while far terrain otherwise has its own. */
+    static String packNearFragment(String version, String patch, int fade) {
+        return packFragment(version, patch, false, fade).replaceFirst("\n", "\n#define EARTH_NEAR\n");
     }
 }
