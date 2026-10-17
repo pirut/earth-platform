@@ -52,7 +52,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
  * Server cube authority: generates or loads cubes around players on worker threads, adopts them
- * on the server thread, streams them to watching players nearest first, random-ticks them and
+ * on the server thread, streams them to watching players nearest first (what they look at before what is behind them), random-ticks them and
  * saves edited cubes.
  */
 public final class ServerCubeWorld extends CubeWorld {
@@ -422,7 +422,6 @@ public final class ServerCubeWorld extends CubeWorld {
         }
         far.nearWaiting(!pending.isEmpty());
         int h = horizontalRadius(), v = Cubic.VERTICAL_RADIUS;
-        CubeOffsets offsets = CubeOffsets.of(h, v);
         syncWatchers();
         publishWanted(h + 2, v + 2);
         // Each player gets an equal share of the free generation slots, starting with a different
@@ -438,6 +437,8 @@ public final class ServerCubeWorld extends CubeWorld {
                 continue;
             }
             watcher.deep = deep(watcher);
+            // What the player looks at is made and sent first; see ViewOrder.
+            CubeOffsets offsets = CubeOffsets.of(h, v, ViewOrder.sector(watcher.player.getYRot()));
             requestAround(watcher, offsets, cx, cy, cz, share);
             send(watcher, offsets, cx, cy, cz);
             if (ticks % 10 == 0) unsend(watcher, h + 1, v + 1, cx, cy, cz);
