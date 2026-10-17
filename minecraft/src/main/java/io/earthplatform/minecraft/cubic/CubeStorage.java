@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic;
 
+import io.earthplatform.geography.globe.NamedThreads;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongList;
 import java.io.IOException;
@@ -37,11 +38,7 @@ public final class CubeStorage {
     private final Set<Long> known = ConcurrentHashMap.newKeySet();
     private volatile boolean listed;
     /** Compressing and writing a region takes tens of milliseconds, so it happens here, not on the server thread. */
-    private final ExecutorService writer = Executors.newSingleThreadExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "Earth cube writer");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final ExecutorService writer = Executors.newSingleThreadExecutor(NamedThreads.daemon("Earth cube writer"));
     private final AtomicBoolean writing = new AtomicBoolean();
 
     public CubeStorage(Path directory) { this.directory = directory; }

@@ -4,6 +4,7 @@ import com.mojang.blaze3d.shaders.Uniform;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeKey;
@@ -23,7 +24,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -49,14 +49,9 @@ import org.joml.Matrix4f;
  * the vanilla terrain shaders, the way LevelRenderer draws its own sections.
  */
 public final class CubeRenderer {
-    private static final AtomicInteger THREADS = new AtomicInteger();
     private static final int THREAD_COUNT = Math.max(1, Math.min(3, Runtime.getRuntime().availableProcessors() / 2));
-    private static final ExecutorService POOL = Executors.newFixedThreadPool(THREAD_COUNT, runnable -> {
-                Thread thread = new Thread(runnable, "Earth cube mesher " + THREADS.incrementAndGet());
-                thread.setDaemon(true);
-                thread.setPriority(Thread.NORM_PRIORITY - 1);
-                return thread;
-            });
+    private static final ExecutorService POOL = Executors.newFixedThreadPool(THREAD_COUNT,
+            NamedThreads.numbered("Earth cube mesher", Thread.NORM_PRIORITY - 1));
     private static final int MIN_IN_FLIGHT = 48, MAX_IN_FLIGHT = 512, MIN_UPLOADS_PER_FRAME = 48, NEIGHBOUR_WAIT_TICKS = 20;
     /** About how long one mesh takes a worker, to keep the workers busy for a whole frame. */
     private static final long MESH_NANOS = 5_000_000L;

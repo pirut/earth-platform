@@ -36,11 +36,7 @@ final class RangeFiles implements AutoCloseable {
         this.agent = agent;
         this.timeout = timeout;
         this.transfers = new Semaphore(maxConcurrentTransfers);
-        this.executor = Executors.newFixedThreadPool(maxConcurrentTransfers, runnable -> {
-            Thread thread = new Thread(runnable, threadName);
-            thread.setDaemon(true);
-            return thread;
-        });
+        this.executor = Executors.newFixedThreadPool(maxConcurrentTransfers, NamedThreads.daemon(threadName));
         this.http = HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NEVER).executor(executor).build();
     }
 
