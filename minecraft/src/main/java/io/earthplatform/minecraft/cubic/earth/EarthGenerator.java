@@ -61,6 +61,21 @@ import net.minecraft.world.level.levelgen.synth.SimplexNoise;
  * The 10 m pixel edges are broken up by a small warp so borders look natural. Worlds
  * made before land cover keep a temperature from latitude and height, broad noise for wetness and
  * no inland water.
+ *
+ * <p>Reading this file: it is long because every part shares the same caches and data sources, so it is kept
+ * in one class and divided into sections, each marked by a {@code // Name ----} line:
+ * <ul>
+ *   <li><b>Height</b>: the ground height of a column, for cubes ({@link #ground}) and every far level
+ *       ({@link #farGround}), with the coast's sea bed, lagoons and lowlands.</li>
+ *   <li><b>Rivers</b>: narrow river channels carved from {@link RiverMap}.</li>
+ *   <li><b>Land cover</b>: what WorldCover says covers a column, with stray water, ice, towns and the open sea's reach.</li>
+ *   <li><b>Lakes and inland water levels</b>: level lakes and rivers from water cells and reaches, and drowned land.</li>
+ *   <li><b>Climate, biomes and ground surface</b>: a column's climate, then its biome, top blocks and plants
+ *       ({@link #surface}, {@link #farSurface}).</li>
+ *   <li><b>Fetching data ahead of generation</b>: {@link #prepare} and {@link #prepareNear}.</li>
+ * </ul>
+ * Called from {@code CubicSettings}, which builds the generator for an Earth world, and from the cube and far
+ * terrain workers through {@link SurfaceGenerator}.
  */
 public final class EarthGenerator extends SurfaceGenerator {
     public static final String ID = "earth-v1";
@@ -75,7 +90,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             ORANGE_TERRACOTTA = Blocks.ORANGE_TERRACOTTA.defaultBlockState(), DIORITE = Blocks.DIORITE.defaultBlockState(),
             POOL = Blocks.WATER.defaultBlockState(), BASALT = Blocks.SMOOTH_BASALT.defaultBlockState(), BLACKSTONE = Blocks.BLACKSTONE.defaultBlockState(), TUFF = Blocks.TUFF.defaultBlockState(),
             RED_TERRACOTTA = Blocks.RED_TERRACOTTA.defaultBlockState(), LIGHT_GRAY_TERRACOTTA = Blocks.LIGHT_GRAY_TERRACOTTA.defaultBlockState();
-    /** Badlands rock colours, plain and orange the most common. */
+    /** Badlands rock colors, plain and orange the most common. */
     private static final BlockState[] BANDS = {TERRACOTTA, Blocks.ORANGE_TERRACOTTA.defaultBlockState(), Blocks.YELLOW_TERRACOTTA.defaultBlockState(),
             Blocks.BROWN_TERRACOTTA.defaultBlockState(), Blocks.RED_TERRACOTTA.defaultBlockState(), Blocks.WHITE_TERRACOTTA.defaultBlockState(),
             Blocks.LIGHT_GRAY_TERRACOTTA.defaultBlockState()};
@@ -1145,6 +1160,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         return found && !crossed.isEmpty();
     }
 
+    // Lakes and inland water levels -------------------------------------------------------------
+
     /**
      * Top water block of a lake or river at a column. Real lakes and rivers are level or nearly,
      * but the elevation tiles' water is not: radar speckle, patches from different surveys and
@@ -2077,13 +2094,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         return best;
     }
 
-    private static double fbm(SimplexNoise noise, double x, double z, int octaves) {
-        double sum = 0, amplitude = 1, norm = 0;
-        for (int i = 0; i < octaves; i++) { sum += noise.getValue(x, z) * amplitude; norm += amplitude; amplitude *= 0.5; x *= 2.03; z *= 2.03; }
-        return sum / norm;
-    }
-
-    // Climate and cover --------------------------------------------------------------------------
+    // Climate, biomes and ground surface --------------------------------------------------------
 
     private double latitude(int z) {
         return Math.toDegrees(2 * Math.atan(Math.exp(-(z + 0.5) * settings.metresPerBlock() / MercatorGrid.RADIUS)) - Math.PI / 2);
@@ -3174,7 +3185,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         };
     }
 
-    // Data ---------------------------------------------------------------------------------------
+    // Fetching data ahead of generation -----------------------------------------------------------
 
     /**
      * Fetches the elevation tiles that cubes and every far level around a point read, several at a
