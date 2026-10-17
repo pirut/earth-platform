@@ -235,6 +235,7 @@ public final class FarRenderer {
             water = old.water;
             waterWalls = old.waterWalls;
             bytes = old.bytes;
+            old.bytes = 0;
             meshed = true;
             split = old.split;
             stamp = old.stamp;
@@ -297,13 +298,17 @@ public final class FarRenderer {
         for (Column column : columns.values())
             if (column.top != Integer.MIN_VALUE) visitor.accept(column.x0, column.z0, Far.width(column.level), column.top);
     }
-    /** GPU memory of every uploaded column's faces and water, in bytes. */
     /** Ranges of faces the last draw of far terrain asked the GPU for (see {@link FarGpu#add}). */
     public int drawnRanges() { return drawnRanges; }
 
     private int drawnRanges;
+    /** Maintained on the render thread so the debug overlay never walks every column. */
+    private long vertexBytes;
+    private static final boolean TRACK_BYTES = !"false".equals(System.getProperty("earthplatform.far.trackBytes"));
 
+    /** GPU memory of every uploaded column's faces and water, in bytes. */
     public long vertexBytes() {
+        if (TRACK_BYTES) return vertexBytes;
         long total = 0;
         for (Column column : columns.values()) total += column.bytes;
         return total;
@@ -354,7 +359,7 @@ public final class FarRenderer {
             replaced++;
             dueColumns.remove(old);
             if (old.meshed) column.takeOver(old, gpu);
-            else { column.drawnCubes = old.drawnCubes; old.close(gpu); }
+            else { column.drawnCubes = old.drawnCubes; free(old); }
         }
         schedule(column);
         int level = column.level, x = Far.x(column.key), z = Far.z(column.key);
@@ -537,7 +542,7 @@ public final class FarRenderer {
             columns.remove(column.key);
             columnsVersion++;
             dueColumns.remove(column);
-            column.close(gpu);
+            free(column);
             excess--;
         }
     }
@@ -713,6 +718,7 @@ public final class FarRenderer {
             column.building = false;
             if (result.version() > 0) {
                 column.meshed = true;
+                vertexBytes += result.bytes() - column.bytes;
                 column.bytes = result.bytes();
                 gpu.free(column.faces);
                 column.faces = gpu.upload(result.quads(), result.counts(), result.grid());
@@ -1158,9 +1164,16 @@ public final class FarRenderer {
         return true;
     }
 
+    /** Releases the bytes once; replacement columns transfer ownership without changing the total. */
+    private void free(Column column) {
+        vertexBytes -= column.bytes;
+        column.bytes = 0;
+        column.close(gpu);
+    }
+
     void close() {
         closed = true;
-        for (Column column : columns.values()) column.close(gpu);
+        for (Column column : columns.values()) free(column);
         columns.clear();
         dueColumns.clear();
         FarMesher.Built result;
