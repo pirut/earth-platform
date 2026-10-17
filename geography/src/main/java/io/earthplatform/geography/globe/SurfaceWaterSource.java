@@ -157,7 +157,7 @@ public final class SurfaceWaterSource implements AutoCloseable {
         URI uri = base.resolve(name);
         byte[] head = files.fetch(uri, 0, 8);
         if (head == null) {
-            if (missing != null) RangeFiles.write(missing, new byte[0]);
+            if (missing != null) DiskCache.write(missing, new byte[0]);
             return Index.MISSING;
         }
         if (head.length < 8) throw new IOException("Short surface water header " + name);
@@ -172,7 +172,7 @@ public final class SurfaceWaterSource implements AutoCloseable {
             if (bytes == null || bytes.length != length) throw new IOException("Short surface water block table in " + name);
             return bytes;
         });
-        if (cached != null) RangeFiles.write(cached, save(index));
+        if (cached != null) DiskCache.write(cached, save(index));
         return index;
     }
 
@@ -263,7 +263,7 @@ public final class SurfaceWaterSource implements AutoCloseable {
         byte[] raw = files.fetch(base.resolve(name), offset, (int) count);
         if (raw == null || raw.length != count) throw new MissingTerrainException("Surface water block of " + name + " is missing");
         byte[] decoded = decode(raw, header.compression);
-        if (cached != null) RangeFiles.write(cached, raw);
+        if (cached != null) DiskCache.write(cached, raw);
         return decoded;
     }
 

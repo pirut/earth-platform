@@ -353,7 +353,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
         if (field != null) return field;
         field = compute(dem, code, metres, towns, clearings);
         try {
-            RangeFiles.write(cached, write(field, digest));
+            DiskCache.write(cached, write(field, digest));
         } catch (IOException failure) {
             // The cache only saves work; the field is good without it.
         }

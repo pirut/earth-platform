@@ -170,7 +170,7 @@ public final class ImagerySource implements AutoCloseable {
         byte[] bytes = files.fetch(base.resolve(name), 0, MAX_TILE_BYTES);
         if (bytes == null) bytes = new byte[0];
         int[] pixels = decode(bytes);
-        if (cached != null) RangeFiles.write(cached, bytes);
+        if (cached != null) DiskCache.write(cached, bytes);
         return pixels;
     }
 

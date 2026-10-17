@@ -219,12 +219,12 @@ public final class CopernicusSource implements AutoCloseable {
         while (true) {
             byte[] bytes = files.fetch(uri(name), 0, size);
             if (bytes == null) {
-                if (missing != null) RangeFiles.write(missing, new byte[0]);
+                if (missing != null) DiskCache.write(missing, new byte[0]);
                 return Header.MISSING;
             }
             try {
                 Header header = parse(bytes);
-                if (cached != null) RangeFiles.write(cached, bytes);
+                if (cached != null) DiskCache.write(cached, bytes);
                 return header;
             } catch (HeaderTooShort tooShort) {
                 if (bytes.length < size || size >= MAX_HEADER_BYTES) throw new IOException("Unreadable Copernicus header " + name);
@@ -256,7 +256,7 @@ public final class CopernicusSource implements AutoCloseable {
         byte[] raw = files.fetch(uri(name), offset, (int) count);
         if (raw == null || raw.length != count) throw new MissingTerrainException("Copernicus block of " + name + " is missing");
         Block decoded = new Block(width, height, decode(raw, header, level, width, height));
-        if (cached != null) RangeFiles.write(cached, raw);
+        if (cached != null) DiskCache.write(cached, raw);
         return decoded;
     }
 

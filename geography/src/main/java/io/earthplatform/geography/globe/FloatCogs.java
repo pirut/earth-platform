@@ -340,7 +340,7 @@ final class FloatCogs implements AutoCloseable {
         if (!allowNetwork) throw new MissingTerrainException(what + " " + name + " not cached and network access is disabled");
         byte[] start = files.fetch(base.resolve(name), 0, HEADER_BYTES);
         if (start == null) {
-            if (missing != null) RangeFiles.write(missing, new byte[0]);
+            if (missing != null) DiskCache.write(missing, new byte[0]);
             return Header.MISSING;
         }
         Pieces pieces = new Pieces();
@@ -350,7 +350,7 @@ final class FloatCogs implements AutoCloseable {
         while (true) {
             try {
                 Header header = parse(pieces, skipLevels);
-                if (cached != null) RangeFiles.write(cached, pieces.bytes());
+                if (cached != null) DiskCache.write(cached, pieces.bytes());
                 return header;
             } catch (UnsupportedFile unsupported) {
                 // The same for every read: a file laid out in a way this cannot read is no data, so
@@ -458,7 +458,7 @@ final class FloatCogs implements AutoCloseable {
         byte[] raw = files.fetch(base.resolve(name), offset, (int) count);
         if (raw == null || raw.length != count) throw new MissingTerrainException(what + " block of " + name + " is missing");
         float[] decoded = decode(raw, grid);
-        if (cached != null) RangeFiles.write(cached, raw);
+        if (cached != null) DiskCache.write(cached, raw);
         return decoded;
     }
 

@@ -249,10 +249,10 @@ abstract class MercatorTileLayer implements ElevationLayer, AutoCloseable {
             if (!any) decoded = null;
         }
         if (decoded == null) {
-            if (none != null) RangeFiles.write(none, new byte[0]);
+            if (none != null) DiskCache.write(none, new byte[0]);
             return null;
         }
-        if (cached != null) RangeFiles.write(cached, gzip() ? gzipped(bytes) : bytes);
+        if (cached != null) DiskCache.write(cached, gzip() ? gzipped(bytes) : bytes);
         return decoded;
     }
 

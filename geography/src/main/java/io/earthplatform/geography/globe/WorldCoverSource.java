@@ -222,12 +222,12 @@ public final class WorldCoverSource implements AutoCloseable {
         while (true) {
             byte[] bytes = files.fetch(base.resolve(name), 0, size);
             if (bytes == null) {
-                if (missing != null) RangeFiles.write(missing, new byte[0]);
+                if (missing != null) DiskCache.write(missing, new byte[0]);
                 return Header.MISSING;
             }
             try {
                 Header header = parse(bytes);
-                if (cached != null) RangeFiles.write(cached, bytes);
+                if (cached != null) DiskCache.write(cached, bytes);
                 return header;
             } catch (HeaderTooShort tooShort) {
                 if (bytes.length < size || size >= MAX_HEADER_BYTES) throw new IOException("Unreadable land cover header " + name);
@@ -258,7 +258,7 @@ public final class WorldCoverSource implements AutoCloseable {
         raw = files.fetch(base.resolve(name), offset, (int) count);
         if (raw == null || raw.length != count) throw new MissingTerrainException("Land cover block of " + name + " is missing");
         byte[] decoded = decode(raw, header, level);
-        if (cached != null) RangeFiles.write(cached, raw);
+        if (cached != null) DiskCache.write(cached, raw);
         return decoded;
     }
 

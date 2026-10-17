@@ -400,15 +400,7 @@ public final class TerrariumTileSource implements AutoCloseable {
         byte[] bytes = download(zoom, x, y);
         float[] values = decode(bytes);
         if (cached != null) {
-            DiskCache.wrote(bytes.length);
-            Files.createDirectories(cached.getParent());
-            Path temp = Files.createTempFile(cached.getParent(), "tile", ".part");
-            try {
-                Files.write(temp, bytes);
-                Files.move(temp, cached, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } finally {
-                Files.deleteIfExists(temp);
-            }
+            DiskCache.write(cached, bytes, "tile");
         }
         return values;
     }

@@ -207,7 +207,7 @@ public final class ClimateSource implements AutoCloseable {
                 byte[] raw = Arrays.copyOfRange(run, from, from + (int) header.counts[row]);
                 cached(key(layer.ordinal(), row, 0), () -> {
                     short[] decoded = decode(raw, header);
-                    RangeFiles.write(cacheRoot.resolve(layer.stem() + "/" + row + ".z"), raw);
+                    DiskCache.write(cacheRoot.resolve(layer.stem() + "/" + row + ".z"), raw);
                     return decoded;
                 }, "climate row");
             }
@@ -297,7 +297,7 @@ public final class ClimateSource implements AutoCloseable {
         byte[] raw = files.fetch(base.resolve(layer.file), offset, (int) count);
         if (raw == null || raw.length != count) throw new MissingTerrainException("Climate row " + row + " of " + layer.stem() + " is missing");
         short[] decoded = decode(raw, header);
-        if (cached != null) RangeFiles.write(cached, raw);
+        if (cached != null) DiskCache.write(cached, raw);
         return decoded;
     }
 
@@ -316,7 +316,7 @@ public final class ClimateSource implements AutoCloseable {
             long offset = ((long) (HEIGHT - 1 - row) * WIDTH + from) * 4;
             raw = files.fetch(base.resolve(DEM_FILE), offset, size * 4);
             if (raw == null || raw.length != size * 4) throw new MissingTerrainException("Climate elevation row " + row + " is missing");
-            if (cached != null) RangeFiles.write(cached, raw);
+            if (cached != null) DiskCache.write(cached, raw);
         }
         ByteBuffer in = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
         float[] metres = new float[size];
@@ -397,7 +397,7 @@ public final class ClimateSource implements AutoCloseable {
             if (bytes == null) throw new MissingTerrainException("Climate file " + layer.file + " is missing");
             try {
                 Header header = parse(bytes);
-                if (cached != null) RangeFiles.write(cached, bytes);
+                if (cached != null) DiskCache.write(cached, bytes);
                 return header;
             } catch (HeaderTooShort tooShort) {
                 if (bytes.length < size || size >= MAX_HEADER_BYTES) throw new IOException("Unreadable climate header " + layer.stem());
