@@ -118,6 +118,11 @@ public final class CubeRenderer {
     /** Cubes whose current contents are drawn here; read only. */
     LongOpenHashSet compiledCubes() { return compiled; }
 
+    /** Counts up whenever a cube is compiled again or stops being drawn, so far terrain re-masks only then. */
+    int compiledVersion() { return compiledVersion; }
+
+    private int compiledVersion;
+
     // Dirty tracking -----------------------------------------------------------------------------
 
     private void markDirty(long key) {
@@ -146,6 +151,7 @@ public final class CubeRenderer {
         versions.remove(key);
         light.remove(key);
         compiled.remove(key);
+        compiledVersion++;
         Mesh mesh = meshes.remove(key);
         if (mesh == null) return;
         Mesh older = retiring.put(key, mesh);
@@ -262,6 +268,7 @@ public final class CubeRenderer {
         if (mesh != null) mesh.close();
         light.remove(key);
         compiled.add(key);
+        compiledVersion++;
     }
 
     /**
@@ -331,6 +338,7 @@ public final class CubeRenderer {
             if (closed || world.cube(result.key()) == null || result.version() < 0) { result.free(); continue; }
             if (result.light() != null) light.put(result.key(), result.light());
             compiled.add(result.key());
+            compiledVersion++;
             unretire(result.key());
             Mesh mesh = meshes.get(result.key());
             if (mesh == null) { mesh = new Mesh(result.key()); meshes.put(result.key(), mesh); }
@@ -503,6 +511,7 @@ public final class CubeRenderer {
         retireBy.clear();
         light.clear();
         compiled.clear();
+        compiledVersion++;
         dirty.clear();
         CubeMesher.Built result;
         while ((result = built.poll()) != null) result.free();

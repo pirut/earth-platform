@@ -295,6 +295,11 @@ public final class FarRenderer {
             if (column.top != Integer.MIN_VALUE) visitor.accept(column.x0, column.z0, Far.width(column.level), column.top);
     }
     /** GPU memory of every uploaded column's faces and water, in bytes. */
+    /** Ranges of faces the last draw of far terrain asked the GPU for (see {@link FarGpu#add}). */
+    public int drawnRanges() { return drawnRanges; }
+
+    private int drawnRanges;
+
     public long vertexBytes() {
         long total = 0;
         for (Column column : columns.values()) total += column.bytes;
@@ -341,8 +346,10 @@ public final class FarRenderer {
         Column column = new Column(payload.key(), payload.bottom(), sections, unsigned(payload.drops()));
         column.lastWanted = ticks;
         Column old = columns.put(column.key, column);
+        columnsVersion++;
         if (old != null) {
             replaced++;
+            dueColumns.remove(old);
             if (old.meshed) column.takeOver(old, gpu);
             else { column.drawnCubes = old.drawnCubes; old.close(gpu); }
         }
@@ -368,7 +375,7 @@ public final class FarRenderer {
 
     /** Meshes a column a few ticks from now, so neighbours arriving together cost one mesh each. */
     private void schedule(Column column) {
-        if (column.due < 0) column.due = ticks + SETTLE_TICKS;
+        if (column.due < 0) due(column, ticks + SETTLE_TICKS);
     }
 
     /** Asks for missing columns, forgets old ones, refreshes masks and starts due meshes. */
@@ -379,7 +386,7 @@ public final class FarRenderer {
         finest = finest(player.getY() - ground(player.getBlockX(), player.getBlockZ(), player.getY()),
                 player.getDeltaMovement().horizontalDistance() * 20.0, finest);
         if (ticks % MASK_TICKS == 0) mask();
-        for (Column column : drawn) if (column.maskStale) column.due = Math.min(column.due, ticks + SETTLE_TICKS);
+        for (Column column : drawn) if (column.maskStale && column.due >= 0) due(column, Math.min(column.due, ticks + SETTLE_TICKS));
         double yaw = Math.toRadians(player.getYRot());
         lookX = -Math.sin(yaw);
         lookZ = Math.cos(yaw);
@@ -525,10 +532,15 @@ public final class FarRenderer {
         for (Column column : old) {
             if (excess <= 0 && ticks - column.lastWanted <= KEEP_TICKS) break;
             columns.remove(column.key);
+            columnsVersion++;
+            dueColumns.remove(column);
             column.close(gpu);
             excess--;
         }
     }
+
+    /** Counts up whenever a column comes or goes; with {@link CubeRenderer#compiledVersion}, what {@link #mask} last saw. */
+    private int columnsVersion, maskedColumns = -1, maskedCompiled = -1;
 
     /** How often the sea under the drawn cubes is looked over again, and what it was last time. */
     private static final int SUNK_TICKS = 20;
@@ -573,6 +585,12 @@ public final class FarRenderer {
      * and remeshes the columns whose set changed.
      */
     private void mask() {
+        // Standing still nothing changes, and working the sets out again cost a third of the
+        // render thread's own time every fourth tick.
+        int compiledVersion = world.renderer().compiledVersion();
+        if (compiledVersion == maskedCompiled && columnsVersion == maskedColumns) return;
+        maskedCompiled = compiledVersion;
+        maskedColumns = columnsVersion;
         Long2ObjectOpenHashMap<LongOpenHashSet> sets = new Long2ObjectOpenHashMap<>();
         LongOpenHashSet compiled = world.renderer().compiledCubes(), sunk = sunk(compiled);
         for (LongIterator it = compiled.iterator(); it.hasNext(); ) {
@@ -596,7 +614,7 @@ public final class FarRenderer {
             boolean lost = column.drawnCubes != null && (set == null || !set.containsAll(column.drawnCubes));
             column.drawnCubes = set;
             if (lost && drawnKeys.contains(column.key)) {
-                column.due = ticks;
+                due(column, ticks);
                 continue;
             }
             // Coarse columns under the finer ones near the player see every cube that compiles there;
@@ -605,7 +623,7 @@ public final class FarRenderer {
             if (drawnKeys.contains(column.key) || !column.meshed) schedule(column);
             else {
                 column.maskStale = true;
-                if (column.due < 0) column.due = ticks + HIDDEN_SETTLE_TICKS;
+                if (column.due < 0) due(column, ticks + HIDDEN_SETTLE_TICKS);
             }
         }
     }
@@ -616,12 +634,13 @@ public final class FarRenderer {
      * or a shader reload) left coarse stand-ins near the player until it had all drained.
      */
     private void submitDue(int bx, int bz) {
-        List<Column> due = new ArrayList<>();
-        for (Column column : columns.values()) {
-            if (column.due < 0 || column.due > ticks) continue;
-            if (column.building) submit(column);
+        List<Column> due = new ArrayList<>(), building = new ArrayList<>();
+        for (Column column : dueColumns) {
+            if (column.due > ticks) continue;
+            if (column.building) building.add(column);
             else due.add(column);
         }
+        for (Column column : building) submit(column);
         if (due.isEmpty()) return;
         Map<Column, Long> order = new HashMap<>(due.size() * 2);
         for (Column column : due) order.put(column, (drawnKeys.contains(column.key) ? 0 : 1L << 40) + priority(column.key, bx, bz));
@@ -632,8 +651,18 @@ public final class FarRenderer {
         }
     }
 
+    /** Sets when a column is next meshed, keeping {@link #dueColumns} to the columns with a time. */
+    private void due(Column column, int at) {
+        column.due = at;
+        dueColumns.add(column);
+    }
+
+    /** The columns waiting to be meshed: those with a {@code due} time, so a tick looks at them alone, not every column held. */
+    private final java.util.Set<Column> dueColumns = new java.util.HashSet<>();
+
     private void submit(Column column) {
         column.due = -1;
+        dueColumns.remove(column);
         column.maskStale = false;
         FarGpu gpu = gpu();
         if (gpu == null) return;
@@ -794,6 +823,7 @@ public final class FarRenderer {
                 for (Column column : visible) if (column.fade == fade) queue(gpu, column, position);
             }
             gpu.end();
+            drawnRanges = gpu.ranges;
         }
         if (own) FarLod.endDraw();
         if (own && FarLod.beginDeepen(modelView)) {
@@ -816,12 +846,13 @@ public final class FarRenderer {
         AABB box = column.box;
         // Only face groups turned toward the camera can show. Smooth ground's slopes, cliffs among them,
         // face sideways too, so it shows from below its column as well.
-        if (position.y < box.maxY) gpu.add(faces, 0);
-        if (position.y > box.minY || faces.smooth()) gpu.add(faces, 1);
-        if (position.z < box.maxZ) gpu.add(faces, 2);
-        if (position.z > box.minZ) gpu.add(faces, 3);
-        if (position.x < box.maxX) gpu.add(faces, 4);
-        if (position.x > box.minX) gpu.add(faces, 5);
+        int groups = 0;
+        if (position.y < box.maxY) groups |= 1;
+        if (position.y > box.minY || faces.smooth()) groups |= 1 << 1;
+        if (position.z < box.maxZ) groups |= 1 << 2;
+        if (position.z > box.minZ) groups |= 1 << 3;
+        if (position.x < box.maxX) groups |= 1 << 4;
+        if (position.x > box.minX) groups |= 1 << 5;
         for (int side = 0; side < 4; side++) {
             if (drawnKeys.contains(column.neighbour(side))) continue;
             boolean facing = switch (side) {
@@ -830,8 +861,9 @@ public final class FarRenderer {
                 case 2 -> position.x < box.minX + 1;
                 default -> position.x > box.maxX - 1;
             };
-            if (facing) gpu.add(faces, FarMesher.FIRST_WALL + side);
+            if (facing) groups |= 1 << FarMesher.FIRST_WALL + side;
         }
+        gpu.add(faces, groups);
     }
 
     /**
@@ -1112,6 +1144,7 @@ public final class FarRenderer {
         closed = true;
         for (Column column : columns.values()) column.close(gpu);
         columns.clear();
+        dueColumns.clear();
         FarMesher.Built result;
         while ((result = built.poll()) != null) result.free();
         if (gpu != null) { gpu.close(); gpu = null; }

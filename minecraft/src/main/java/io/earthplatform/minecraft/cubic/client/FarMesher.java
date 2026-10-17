@@ -49,6 +49,11 @@ final class FarMesher {
     private static final int SEAM_DEPTH = 16;
     /** Face groups: the column's own faces by direction (down, up, north, south, west, east), then its walls north, south, west, east. */
     static final int GROUPS = 10, FIRST_WALL = 6;
+    /**
+     * The order groups are stored in: west, north, up, south, east, so the three a camera can see
+     * of a column (up and one of each pair of sides) mostly lie side by side and draw as one range.
+     */
+    static final int[] STORED = {0, 4, 2, 1, 3, 5, 6, 7, 8, 9};
     /** Heights inside the mesher are in 1/256 blocks, as drops are; faces store 1/16 blocks. */
     private static final int UNIT = Far.DROP_UNIT;
     /** A face's fourth int: its look in the low 20 bits, its ground slope's {@link #normalCode} in the high 12. */
@@ -162,7 +167,7 @@ final class FarMesher {
             for (int g = 0; g < GROUPS; g++) { counts[g] = groups[g].size() / 4; total += groups[g].size(); }
             int[] quads = new int[total];
             int at = 0;
-            for (IntArrayList group : groups) { group.getElements(0, quads, at, group.size()); at += group.size(); }
+            for (int g : STORED) { groups[g].getElements(0, quads, at, groups[g].size()); at += groups[g].size(); }
             Part waterPart = part(water, waterMemory);
             Part[] wallParts = new Part[4];
             for (int wall = 0; wall < 4; wall++) wallParts[wall] = part(waterWalls[wall], wallMemory[wall]);
