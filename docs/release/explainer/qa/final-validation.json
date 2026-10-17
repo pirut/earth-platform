@@ -1,0 +1,121 @@
+{
+  "source_commit": "5b2b62b745c9580f64ca3d3c95bc631f3570c683",
+  "production_date_utc": "2026-10-17",
+  "copies": {
+    "master_short": {
+      "sha256": "21a50fa5b6475c1d85ad092c1af041880b52d80adb1c27dc171fa5a7b894ec6d",
+      "bytes": 29582130,
+      "dimensions": [
+        1080,
+        1920
+      ],
+      "fps": 30.0,
+      "duration_seconds": 54.0,
+      "integrated_lufs": -14.01,
+      "true_peak_dbtp": -2.19,
+      "checks": {
+        "dimensions": true,
+        "fps_30": true,
+        "duration": true,
+        "video_duration": true,
+        "audio_duration": true,
+        "h264": true,
+        "aac": true,
+        "under_100_mb": true,
+        "loudness": true,
+        "true_peak": true,
+        "stereo_48khz": true,
+        "yuv420p": true,
+        "stream_start_alignment": true,
+        "complete_decode": true
+      }
+    },
+    "master_full": {
+      "sha256": "583bd7b960f6364c2e787584b19def55e2ebb21fe0bdb1a0f9ea294cb19d4b04",
+      "bytes": 90923120,
+      "dimensions": [
+        1920,
+        1080
+      ],
+      "fps": 30.0,
+      "duration_seconds": 300.0,
+      "integrated_lufs": -14.02,
+      "true_peak_dbtp": -1.47,
+      "checks": {
+        "dimensions": true,
+        "fps_30": true,
+        "duration": true,
+        "video_duration": true,
+        "audio_duration": true,
+        "h264": true,
+        "aac": true,
+        "under_100_mb": true,
+        "loudness": true,
+        "true_peak": true,
+        "stereo_48khz": true,
+        "yuv420p": true,
+        "stream_start_alignment": true,
+        "complete_decode": true
+      }
+    },
+    "prepared_repository_short": {
+      "sha256": "d5d4ee5a79a7008a013f195b12a6d627e3c99a6d085c13f0f9f618b6444f0f82",
+      "bytes": 16919116,
+      "dimensions": [
+        1080,
+        1920
+      ],
+      "fps": 30.0,
+      "duration_seconds": 54.016,
+      "integrated_lufs": -14.02,
+      "true_peak_dbtp": -2.18,
+      "checks": {
+        "dimensions": true,
+        "fps_30": true,
+        "duration": true,
+        "video_duration": true,
+        "audio_duration": true,
+        "h264": true,
+        "aac": true,
+        "under_100_mb": true,
+        "loudness": true,
+        "true_peak": true,
+        "stereo_48khz": true,
+        "yuv420p": true,
+        "stream_start_alignment": true,
+        "complete_decode": true,
+        "under_24_mb": true
+      }
+    },
+    "prepared_repository_full": {
+      "sha256": "a0b4032faec89892138665d36695c37b5ace0a46aa8e6aa865fa95e24b2344f9",
+      "bytes": 23280899,
+      "dimensions": [
+        1920,
+        1080
+      ],
+      "fps": 30.0,
+      "duration_seconds": 300.01,
+      "integrated_lufs": -14.03,
+      "true_peak_dbtp": -1.36,
+      "checks": {
+        "dimensions": true,
+        "fps_30": true,
+        "duration": true,
+        "video_duration": true,
+        "audio_duration": true,
+        "h264": true,
+        "aac": true,
+        "under_100_mb": true,
+        "loudness": true,
+        "true_peak": true,
+        "stereo_48khz": true,
+        "yuv420p": true,
+        "stream_start_alignment": true,
+        "complete_decode": true,
+        "under_24_mb": true
+      }
+    }
+  },
+  "repository_video_upload_status": "incomplete_unverified"
+}

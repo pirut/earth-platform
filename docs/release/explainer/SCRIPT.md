@@ -368,3 +368,11 @@ The server scenes explain implementation, not a recorded multiplayer stress test
 
 ### INSPIRATION
 Source: `CREDITS.md:180–188`, `THIRD_PARTY_NOTICES.md:13`. Earth Platform credits Voxy and Distant Horizons as inspiration, and its maintainers state no code from either project is included. The video attributes the originality statement to the project credits; this edit is not an independent whole-repository plagiarism audit. On-screen at 04:24–04:30.
+
+## Delivery compression limitation
+
+The prepared canonical videos are size-bounded 1080p delivery copies; repository upload is incomplete and unverified. These prepared files are delivery copies, not the higher-bitrate production masters. Two-pass H.264 preserves frame rate and dimensions, but some fine terrain, foliage and moving texture may look softer or show compression. The owner retains separate higher-bitrate masters. This compression does not change the implementation or elevation claims and is not a renderer-quality benchmark.
+
+## Publication status
+
+The source production was committed. Local renders passed QA and review copies were delivered to the owner. The canonical video upload did not reach a verified repository commit; it remains a separate open delivery step. No publication to a public video platform occurred.
