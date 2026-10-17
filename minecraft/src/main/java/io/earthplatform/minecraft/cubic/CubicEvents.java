@@ -181,7 +181,12 @@ public final class CubicEvents {
 
     /** The start's landing spot, before scattering; slow where the data is new, so best found off the server thread. */
     public static int[] landing(ServerCubeWorld cubes, @Nullable int[] view) {
-        return landing(cubes.generator(), withinSight(cubes.generator().arrival(), view), 4096, true);
+        return landing(cubes, cubes.generator().arrival(), view);
+    }
+
+    /** The landing spot about a start of the server's choosing, rather than the world's own. */
+    public static int[] landing(ServerCubeWorld cubes, int[] start, @Nullable int[] view) {
+        return landing(cubes.generator(), withinSight(start, view), 4096, true);
     }
 
     /** The arrival point about a landing spot found before, scattered as {@link #arrival} does. */
@@ -382,6 +387,13 @@ public final class CubicEvents {
         ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
         if (level == null || !(CubicLevel.of(level) instanceof ServerCubeWorld cubes) || !(cubes.generator() instanceof EarthGenerator earth)) {
             source.sendFailure(Component.literal("This save's cubic world is not the Earth."));
+            return 0;
+        }
+        // The server's rules, such as a region border, may refuse the trip.
+        String refused = io.earthplatform.minecraft.cubic.play.EarthRules.refuse(player, latitude, longitude);
+        if (refused != null) {
+            source.sendFailure(Component.literal(refused));
+            io.earthplatform.minecraft.cubic.play.EarthMap.failed(player);
             return 0;
         }
         int[] target = earth.block(latitude, longitude);

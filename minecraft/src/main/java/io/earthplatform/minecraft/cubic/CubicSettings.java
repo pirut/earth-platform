@@ -357,7 +357,7 @@ public final class CubicSettings {
     /** Land cover shared by every Earth world in this game, cached on disk beside the elevation tiles. */
     public static synchronized WorldCoverSource cover() {
         if (cover == null) {
-            Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(WorldCoverSource.DATASET_ID);
+            Path cache = cacheFolder().resolve(WorldCoverSource.DATASET_ID);
             try {
                 cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
                         48, 8, Duration.ofSeconds(30));
@@ -401,7 +401,7 @@ public final class CubicSettings {
     /** Surface water occurrence, cached on disk beside the elevation tiles. */
     private static synchronized SurfaceWaterSource surfaceWater() {
         if (surfaceWater == null) {
-            Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(SurfaceWaterSource.DATASET_ID);
+            Path cache = cacheFolder().resolve(SurfaceWaterSource.DATASET_ID);
             try {
                 // Blocks are 64 KiB decoded and cover 7 km.
                 surfaceWater = new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
@@ -416,7 +416,7 @@ public final class CubicSettings {
     /** Climate shared by every Earth world in this game, cached on disk beside the elevation tiles. */
     public static synchronized ClimateSource climate() {
         if (climate == null) {
-            Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(ClimateSource.DATASET_ID);
+            Path cache = cacheFolder().resolve(ClimateSource.DATASET_ID);
             try {
                 // Rows are about 86 KiB; a 48 km square needs about 210 of them. Its elevation comes in
                 // about 50 small reads, so more of them run at once.
@@ -430,9 +430,10 @@ public final class CubicSettings {
     }
 
     /**
-     * Whether new Earth worlds are made with satellite imagery: off unless the game runs with
-     * {@code -Dearthplatform.earth.imagery=true}, as EOX's tile service is not cleared for public
-     * use. A world keeps what it was made with, so its ground never changes partway.
+     * Whether new Earth worlds are made with satellite imagery: the "satellite imagery" setting
+     * (off by default, as EOX's tile service is not cleared for public use), which {@code EarthConfig}
+     * passes on as {@code earthplatform.earth.imagery}, or that property given on the command line.
+     * A world keeps what it was made with, so its ground never changes partway.
      */
     public static boolean imageryEnabled() {
         return Boolean.getBoolean("earthplatform.earth.imagery");
@@ -441,7 +442,7 @@ public final class CubicSettings {
     /** Satellite imagery shared by every Earth world in this game, cached on disk beside the elevation tiles. */
     public static synchronized ImagerySource imagery() {
         if (imagery == null) {
-            Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache").resolve(ImagerySource.DATASET_ID);
+            Path cache = cacheFolder().resolve(ImagerySource.DATASET_ID);
             try {
                 // Tiles are 256 KiB decoded; a 3 km square at full detail needs about 25 of them.
                 imagery = new ImagerySource(ImagerySource.EOX_S2_CLOUDLESS_2016, cache, !Boolean.getBoolean("earthplatform.earth.offline"),

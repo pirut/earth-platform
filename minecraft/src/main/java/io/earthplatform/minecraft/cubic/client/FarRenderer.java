@@ -8,6 +8,7 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.Timings;
+import io.earthplatform.minecraft.cubic.ViewOrder;
 import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
@@ -118,7 +119,7 @@ public final class FarRenderer {
     /** The player's horizontal look direction, so columns in view come before those behind. */
     private double lookX, lookZ = 1;
     /** Columns the view wants at their own level, and how many of them are drawn: how settled the far terrain is. */
-    private int wanted, settled, planSize;
+    private int wanted, settled, planSize, wantedInView, settledInView;
     /** Columns kept beyond what the plan wants, for going back over ground just left. */
     private static final int SPARE_COLUMNS = 4000;
     private final ConcurrentLinkedQueue<FarMesher.Built> built = new ConcurrentLinkedQueue<>();
@@ -316,6 +317,14 @@ public final class FarRenderer {
     public int drawnCount() { return drawn.size(); }
     /** Share of the columns wanted at their own level that are meshed, in percent: 100 once the view has fully refined. */
     public int settledPercent() { return wanted == 0 ? 0 : (int) (100L * settled / wanted); }
+    /** The same for the columns in view only, the ones within 60 degrees of where the player looks. */
+    public int settledInViewPercent() { return wantedInView == 0 ? 0 : (int) (100L * settledInView / wantedInView); }
+
+    private boolean inView(long key, int bx, int bz) {
+        int width = Far.width(Far.level(key));
+        double cx = (Far.x(key) + 0.5) * width - bx, cz = (Far.z(key) + 0.5) * width - bz, length = Math.sqrt(cx * cx + cz * cz);
+        return length < width || cx * lookX + cz * lookZ >= 0.5 * length;
+    }
     /** Columns received again while already held, as when the server pushes an edit. */
     public int replacedCount() { return replaced; }
 
@@ -387,13 +396,18 @@ public final class FarRenderer {
     private void plan(int bx, int bz) {
         LongArrayList missing = new LongArrayList();
         LongOpenHashSet all = new LongOpenHashSet(requested.size() * 2 + 16);
-        int[] counts = new int[2];
+        int[] counts = new int[4];
         Far.around(bx, bz, finest, key -> {
             all.add(key);
             Column column = columns.get(key);
             if (!Far.refined(Far.level(key), Far.x(key), Far.z(key), bx, bz, finest)) {
+                boolean meshed = column != null && column.meshed;
                 counts[0]++;
-                if (column != null && column.meshed) counts[1]++;
+                if (meshed) counts[1]++;
+                if (inView(key, bx, bz)) {
+                    counts[2]++;
+                    if (meshed) counts[3]++;
+                }
             }
             if (column != null) column.lastWanted = ticks;
             else missing.add(key);
@@ -401,6 +415,8 @@ public final class FarRenderer {
         wanted = counts[0];
         planSize = all.size();
         settled = counts[1];
+        wantedInView = counts[2];
+        settledInView = counts[3];
         // A request the server dropped (its player had moved on) or one for a place left behind
         // frees its place for the columns wanted now; one still wanted is asked for again later.
         requested.long2IntEntrySet().removeIf(entry -> !all.contains(entry.getLongKey()) || ticks - entry.getIntValue() > RETRY_TICKS);
@@ -452,10 +468,8 @@ public final class FarRenderer {
         // columns as they arrived. The outermost two rows always keep their place: the finer
         // level's outer edge under them comes in last of its ring, and without them a band of
         // sky showed there.
-        // Columns out of view wait a little: up to two and a half times as far for one right behind.
-        double cx = x0 + width / 2.0 - bx, cz = z0 + width / 2.0 - bz, length = Math.sqrt(cx * cx + cz * cz);
-        double facing = length < width ? 1.0 : (cx * lookX + cz * lookZ) / length;
-        double behind = facing >= 0.5 ? 1.0 : 1.5 - facing;
+        // Columns out of view wait: up to ViewOrder.BEHIND times as far for one right behind.
+        double behind = ViewOrder.later(x0 + width / 2.0 - bx, z0 + width / 2.0 - bz, lookX, lookZ, width);
         double later = level == 7 ? LEVEL_7_LATER : level == 8 ? LEVEL_8_LATER : 1.0;
         long order = (long) (Math.max(dx, dz) * 100 * behind * later) / width * 8 + level;
         int x = Far.x(key), z = Far.z(key);

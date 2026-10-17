@@ -43,6 +43,7 @@
     "CubicGoalLimitsMixin",
     "CubicSpreadPlayersMixin",
     "CubicFloatingKickMixin",
+    "CubicFallSpeedMixin",
     "compat.SableCarrierMixin",
     "compat.SableCarrierHeightMixin",
     "compat.SableAcceleratorMixin",

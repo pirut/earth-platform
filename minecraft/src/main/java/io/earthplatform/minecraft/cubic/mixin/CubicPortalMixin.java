@@ -1,6 +1,5 @@
 package io.earthplatform.minecraft.cubic.mixin;
 
-import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.portal.CubicPortals;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;

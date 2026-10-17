@@ -46,6 +46,28 @@ public final class CubeStorage {
 
     public CubeStorage(Path directory) { this.directory = directory; }
 
+    /** The folder the region files are in. */
+    public Path directory() { return directory; }
+
+    /**
+     * Any thread: every cube in the region files as last written, one region at a time, without
+     * keeping them; for a one-off pass over a whole save in the background.
+     */
+    public void forEachSaved(java.util.function.BiConsumer<Long, CompoundTag> visit) throws IOException {
+        listRegions();
+        for (long region : known) {
+            Path file = directory.resolve("r." + CubeKey.x(region) + "." + CubeKey.y(region) + "." + CubeKey.z(region) + ".nbt");
+            if (!Files.exists(file)) continue;
+            CompoundTag all = NbtIo.readCompressed(file, NbtAccounter.unlimitedHeap()).getCompound("cubes");
+            for (String name : all.getAllKeys()) {
+                long key;
+                try { key = Long.parseLong(name); }
+                catch (NumberFormatException ignored) { continue; }
+                visit.accept(key, all.getCompound(name));
+            }
+        }
+    }
+
     private static long regionKey(long cubeKey) {
         return CubeKey.pack(CubeKey.x(cubeKey) >> REGION_SHIFT, CubeKey.y(cubeKey) >> REGION_SHIFT, CubeKey.z(cubeKey) >> REGION_SHIFT);
     }
@@ -140,9 +162,6 @@ public final class CubeStorage {
         long now = System.nanoTime();
         regions.values().removeIf(region -> region.idle(now));
     }
-
-    /** Regions held in memory, for diagnostics. */
-    public int loadedRegions() { return regions.size(); }
 
     private static final class Region {
         private final Path file;
