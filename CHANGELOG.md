@@ -52,6 +52,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 
 ### Servers
 - Dedicated servers with several players on the same Earth.
+- Server commands: spawn picked on the globe, homes, warps, random trips, teleport requests, borders, team starts, country names, GeoGuessr rounds, races, preloading, a status page and a live web map.
 
 ### Other mods
 - Xaero's Minimap, Xaero's World Map and JourneyMap map the Earth world, including ground above Y 2047.
