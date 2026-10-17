@@ -69,7 +69,7 @@ final class FarMesher {
 
     /**
      * The column's opaque faces, 4 ints each, grouped as {@link #GROUPS} with {@code counts}
-     * faces per group in order, the points of its smooth ground (see {@link Smooth}) or null, and
+     * faces per group in order, the points of its smooth ground (see {@link FarSmoothGround}) or null, and
      * its water, drawn see-through after everything opaque.
      */
     record Built(long key, int version, int[] quads, int[] counts, @Nullable int[] grid, @Nullable Part water, @Nullable Part[] waterWalls) {
@@ -85,7 +85,7 @@ final class FarMesher {
     }
 
     static Built build(Job job) {
-        return new Builder(job).build();
+        return new FarColumnMesh(job).build();
     }
 
     /**

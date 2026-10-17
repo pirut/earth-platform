@@ -17,10 +17,10 @@ import net.minecraft.core.Direction;
 /**
  * Collects a column's up and down faces per voxel row and merges each row's matching faces
  * into rectangles, so flat ground and lakes cost a few faces instead of one per voxel.
- * {@link Builder} keeps two: one for opaque faces, packed for {@link FarGpu}, and one for
+ * {@link FarColumnMesh} keeps two: one for opaque faces, packed for {@link FarGpu}, and one for
  * flat-colored water.
  */
-final class Flat {
+final class FarFaceMerger {
     /** Per direction (down, up) and voxel row, a 16 x 16 grid of merge ids, 0 for none. */
     private final Map<Integer, int[]>[] rows = newRows();
     private final List<Object> looks = new ArrayList<>();
@@ -59,12 +59,12 @@ final class Flat {
         }
     }
 
-    void emitQuads(Builder builder, IntArrayList[] groups) {
+    void emitQuads(FarColumnMesh builder, IntArrayList[] groups) {
         merge((direction, x, z, width, depth, height, look) ->
                 builder.pack(groups[direction.get3DDataValue()], x, z, direction, width, height, depth - 1, (Long) look));
     }
 
-    void emitWater(Builder builder) {
+    void emitWater(FarColumnMesh builder) {
         float unit = 1.0F / UNIT;
         int v = builder.v;
         merge((direction, x, z, width, depth, height, look) -> {

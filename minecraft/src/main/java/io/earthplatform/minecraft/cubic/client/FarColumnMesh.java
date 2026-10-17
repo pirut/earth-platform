@@ -55,12 +55,12 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 
 /**
  * Meshes one far column for {@link FarMesher#build}: reads the column's voxels, collects their
- * visible faces (merged through {@link Flat}, or as smooth ground through {@link Smooth}), packs
+ * visible faces (merged through {@link FarFaceMerger}, or as smooth ground through {@link FarSmoothGround}), packs
  * the opaque ones into face groups and draws water into its own block-format meshes.
  * {@link FarRenderer}'s far mesher threads make one per {@link FarMesher.Job} and drop it once
  * its {@link FarMesher.Built} is returned.
  */
-final class Builder {
+final class FarColumnMesh {
     final Job job;
     final int v, voxel;
     final int[] tops;
@@ -72,7 +72,7 @@ final class Builder {
     final int[] groundRows = new int[256];
     /** What each voxel column's ground shows on top and on its step risers (see {@link FarMesher#evenCover}), or null for its own block. */
     @Nullable final BlockState[] cover;
-    final Flat opaqueFlat = new Flat(), waterFlat = new Flat();
+    final FarFaceMerger opaqueFlat = new FarFaceMerger(), waterFlat = new FarFaceMerger();
     /** Side face pieces by direction (north, south, west, east) and voxel column. */
     @SuppressWarnings("unchecked") final List<Piece>[][] pieces = new List[4][256];
     @Nullable ByteBufferBuilder waterMemory;
@@ -83,7 +83,7 @@ final class Builder {
     /** Water shows its texture only near by: drawn face by face, textured oceans would cost far more faces than merged flat ones. */
     final boolean texturedWater;
 
-    Builder(Job job) {
+    FarColumnMesh(Job job) {
         this.job = job;
         texturedWater = job.textured() && job.level() <= TEXTURED_WATER_LEVELS;
         v = 1 << job.level();
@@ -116,7 +116,7 @@ final class Builder {
         for (int g = 0; g < GROUPS; g++) groups[g] = new IntArrayList();
         int[] grid = null;
         if (smooth) {
-            grid = new Smooth(this).emit(groups);
+            grid = new FarSmoothGround(this).emit(groups);
             if (trees) {
                 opaqueFlat.emitQuads(this, groups);
                 emitSides(groups);

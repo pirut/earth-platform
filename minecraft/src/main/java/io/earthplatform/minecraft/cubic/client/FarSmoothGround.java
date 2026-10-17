@@ -41,13 +41,13 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
  * voxel column's textured look (0 elsewhere), which the fragment shader reads to lay each voxel
  * column's own block texture over the slope.
  *
- * <p>{@link Builder} makes one per column that {@link FarMesher#smooth} picks, and
+ * <p>{@link FarColumnMesh} makes one per column that {@link FarMesher#smooth} picks, and
  * {@link FarGpu}'s shaders draw the faces and points it emits.
  */
-final class Smooth {
+final class FarSmoothGround {
     /** Voxel columns from -1 to 16 each way: this column's and the edge of each one around it. */
     private static final int CELLS = 18;
-    final Builder builder;
+    final FarColumnMesh builder;
     final Job job;
     final int voxel;
     /** Each voxel column's top in 1/256 blocks above this column's base, its colour, and whether it was known. */
@@ -57,7 +57,7 @@ final class Smooth {
     final float[] pointHeight = new float[POINTS * POINTS];
     final int[] pointRgb = new int[POINTS * POINTS], pointNormal = new int[POINTS * POINTS];
 
-    Smooth(Builder builder) {
+    FarSmoothGround(FarColumnMesh builder) {
         this.builder = builder;
         this.job = builder.job;
         this.voxel = builder.voxel;
@@ -210,7 +210,7 @@ final class Smooth {
         return (long) id << 8 | sky;
     }
 
-    /** Packs a piece of ground (or a wall, with its side in the slope's bits) like {@link Builder#pack}. */
+    /** Packs a piece of ground (or a wall, with its side in the slope's bits) like {@link FarColumnMesh#pack}. */
     private void pack(IntArrayList out, int kind, int x, int z, int width, int extent, long look, int side) {
         int slot = job.slot(), light = (int) (look & 0xFF);
         out.add(x | z << 5 | kind << 10 | (width - 1) << 13 | light << 17 | (slot & 0x7F) << 25);
