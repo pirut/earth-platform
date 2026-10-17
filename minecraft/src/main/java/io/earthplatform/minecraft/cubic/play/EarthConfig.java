@@ -62,7 +62,8 @@ public final class EarthConfig {
                 .translation(key("farDetail")).gameRestart().defineInRange("detail", 11, 4, Far.MAX_DETAIL);
         FAR_SHARPNESS = client.comment("How sharp far terrain looks: how close coarser levels take over. Changes at once, without a restart.",
                         "Sharper keeps finer voxels further out but takes longer to fill in and uses more memory; Fast fills in quickest. Default Balanced.",
-                        "Extreme and Ultra are for very powerful computers: several times the far columns, GPU memory and fill-in time of Balanced.")
+                        "Extreme and Ultra are for very powerful computers: several times the far columns, GPU memory and fill-in time of Balanced,",
+                        "and single-digit frame rates even on fast ones, Ultra most of all.")
                 .translation(key("farSharpness")).defineEnum("sharpness", Sharpness.BALANCED);
         // A new key, so configs saved with the old default of 2 take up the new one.
         FAR_TEXTURED_LEVELS = client.comment("How many far levels are drawn with block textures; further ones use flat colours. Default 8, all of them.")

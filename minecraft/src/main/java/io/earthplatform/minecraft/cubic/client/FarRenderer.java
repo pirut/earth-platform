@@ -475,7 +475,7 @@ public final class FarRenderer {
         int x = Far.x(key), z = Far.z(key);
         if (!Far.refined(level, x, z, bx, bz, finest)) return order;
         int rings = Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level)));
-        if (rings >= Far.hole() - 1) return order;
+        if (rings >= Far.hole(level) - 1) return order;
         return level <= STAND_IN_LEVELS && !childrenReady(level, x, z, bx, bz) ? order : order + (1L << 32);
     }
 
@@ -958,8 +958,11 @@ public final class FarRenderer {
         boolean refined = Far.refined(level, x, z, bx, bz, finest) || !meshed && Far.refined(level, x, z, bx, bz);
         if (refined && (!meshed || childrenReady(level, x, z, bx, bz))) {
             // The outer ring of a level's middle: drawn under its children too, fading in as they fade out.
+            // The shader puts the ring at the shared hole, so where the coarsest level keeps a narrower
+            // middle (an extreme sharpness) the two levels meet at a plain seam instead.
             boolean band = bandFade && meshed && Far.refined(level, x, z, bx, bz, finest)
-                    && Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level))) == Far.hole();
+                    && Math.max(Math.abs(x - Far.column(bx, level)), Math.abs(z - Far.column(bz, level))) == Far.hole(level)
+                    && Far.hole(level) == Far.hole();
             boolean arriving = false;
             if (FADE && meshed) {
                 int now = FarGpu.now();
