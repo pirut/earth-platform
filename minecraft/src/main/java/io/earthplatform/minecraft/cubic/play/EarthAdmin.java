@@ -4,6 +4,7 @@ import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.globe.Downloads;
+import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
@@ -221,11 +222,7 @@ public final class EarthAdmin {
                     }
                 }
             });
-            server.setExecutor(java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
-                Thread thread = new Thread(runnable, "Earth web map");
-                thread.setDaemon(true);
-                return thread;
-            }));
+            server.setExecutor(java.util.concurrent.Executors.newSingleThreadExecutor(NamedThreads.daemon("Earth web map")));
             server.start();
             web = server;
             webPort = port;

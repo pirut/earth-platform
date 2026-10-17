@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.play.client;
 
+import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.cubic.CubicSettings;
 import java.awt.image.BufferedImage;
@@ -46,11 +47,8 @@ final class GlobeImagery {
 
     GlobeImagery() {
         world = loadBase();
-        ThreadPoolExecutor pool = new ThreadPoolExecutor(WORKERS, WORKERS, 10, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), runnable -> {
-            Thread thread = new Thread(runnable, "earth-globe-tiles");
-            thread.setDaemon(true);
-            return thread;
-        });
+        ThreadPoolExecutor pool = new ThreadPoolExecutor(WORKERS, WORKERS, 10, TimeUnit.SECONDS, new LinkedBlockingQueue<>(),
+                NamedThreads.daemon("earth-globe-tiles"));
         pool.allowCoreThreadTimeOut(true);
         workers = pool;
     }
