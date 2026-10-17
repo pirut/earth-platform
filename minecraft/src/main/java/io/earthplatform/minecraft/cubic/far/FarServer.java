@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic.far;
 
 import io.earthplatform.geography.MissingTerrainException;
+import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
@@ -58,12 +59,8 @@ public final class FarServer {
     /** What players built, for the coarse levels whose voxels cover several cubes. */
     private final FarBuilds builds;
     /** Summarizes saved builds off the server thread, in the order they were saved. */
-    private final java.util.concurrent.ExecutorService summarizer = java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "Earth far builds");
-        thread.setDaemon(true);
-        thread.setPriority(Thread.MIN_PRIORITY);
-        return thread;
-    });
+    private final java.util.concurrent.ExecutorService summarizer = java.util.concurrent.Executors.newSingleThreadExecutor(
+            NamedThreads.daemon("Earth far builds", Thread.MIN_PRIORITY));
     /** Coarse far columns made with a build showing, for diagnostics. */
     private final java.util.concurrent.atomic.AtomicIntegerArray builtColumns = new java.util.concurrent.atomic.AtomicIntegerArray(Far.MAX_LEVEL - Far.EDIT_LEVELS);
     /** Cube columns whose builds changed, so their coarse far columns are remade. */

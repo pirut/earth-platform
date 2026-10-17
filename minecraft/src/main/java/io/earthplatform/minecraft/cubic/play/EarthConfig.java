@@ -66,13 +66,13 @@ public final class EarthConfig {
                         "and single-digit frame rates even on fast ones, Ultra most of all.")
                 .translation(key("farSharpness")).defineEnum("sharpness", Sharpness.BALANCED);
         // A new key, so configs saved with the old default of 2 take up the new one.
-        FAR_TEXTURED_LEVELS = client.comment("How many far levels are drawn with block textures; further ones use flat colours. Default 8, all of them.")
+        FAR_TEXTURED_LEVELS = client.comment("How many far levels are drawn with block textures; further ones use flat colors. Default 8, all of them.")
                 .translation(key("farTexturedLevels")).gameRestart().defineInRange("texturedFarLevels", 8, 0, 8);
         SHOW_DOWNLOADS = client.comment("Show a small note while Earth data downloads, and when it can't be reached.")
                 .translation(key("showDownloads")).define("showDownloadStatus", true);
         PRESELECT_EARTH = client.comment("Pick the Earth world type when you open Create World.")
                 .translation(key("preselectEarth")).define("preselectEarth", true);
-        CLOUD_HEIGHT = client.comment("Height of the clouds in Earth worlds, in metres above sea level; they also stay at least 1200 m over",
+        CLOUD_HEIGHT = client.comment("Height of the clouds in Earth worlds, in meters above sea level; they also stay at least 1200 m over",
                         "the ground you stand on. 0 keeps vanilla clouds at Y 192. Shader packs draw their own clouds. Default 2500.")
                 .translation(key("cloudHeight")).defineInRange("cloudHeight", 2500, 0, 9000);
         CLIENT_SPEC = client.build();
@@ -86,7 +86,7 @@ public final class EarthConfig {
         CACHE_LIMIT_GB = common.comment("Largest size of the downloaded Earth data cache, in gigabytes; the least recently used files go first,",
                         "when the game starts and as it grows, never ones this session has used. 0 keeps everything.")
                 .translation(key("cacheLimit")).defineInRange("cacheLimitGb", 8, 0, 1024);
-        SATELLITE_IMAGERY = common.comment("Colour the ground of new Earth worlds from satellite photos (EOX Sentinel-2 cloudless imagery,",
+        SATELLITE_IMAGERY = common.comment("Color the ground of new Earth worlds from satellite photos (EOX Sentinel-2 cloudless imagery,",
                         "downloaded like the terrain). Off by default; existing worlds keep what they were made with.")
                 .translation(key("satelliteImagery")).define("satelliteImagery", false);
         ANYONE_CAN_TRAVEL = common.comment("Let every player use /earth goto. When false, only operators can (singleplayer always can).")

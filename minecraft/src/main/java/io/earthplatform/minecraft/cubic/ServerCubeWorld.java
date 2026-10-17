@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic;
 
+import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.geography.globe.TickShare;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.far.FarServer;
@@ -151,12 +152,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 level.getServer().getWorldPath(LevelResource.ROOT)).resolve("cubes"));
         this.far = new FarServer(generator, storage, codec, level.registryAccess().registryOrThrow(Registries.BIOME));
         int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 2));
-        this.workers = Executors.newFixedThreadPool(threads, runnable -> {
-            Thread thread = new Thread(runnable, "Earth cube worker " + THREADS.incrementAndGet());
-            thread.setDaemon(true);
-            thread.setPriority(Thread.NORM_PRIORITY - 1);
-            return thread;
-        });
+        this.workers = Executors.newFixedThreadPool(threads, NamedThreads.numbered("Earth cube worker", THREADS, Thread.NORM_PRIORITY - 1));
     }
 
     public CubeGenerator generator() { return generator; }

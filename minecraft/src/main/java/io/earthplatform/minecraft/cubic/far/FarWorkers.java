@@ -1,11 +1,11 @@
 package io.earthplatform.minecraft.cubic.far;
 
+import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.geography.globe.TickShare;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Low-priority threads that make far columns, as many at once as keep the processor busy. Columns
@@ -35,13 +35,7 @@ public final class FarWorkers {
     public FarWorkers(String name, int busy, int most) {
         this.busy = busy;
         this.most = Math.max(busy, most);
-        AtomicInteger count = new AtomicInteger();
-        threads = Executors.newFixedThreadPool(this.most, runnable -> {
-            Thread thread = new Thread(runnable, name + " " + count.incrementAndGet());
-            thread.setDaemon(true);
-            thread.setPriority(Thread.MIN_PRIORITY);
-            return thread;
-        });
+        threads = Executors.newFixedThreadPool(this.most, NamedThreads.numbered(name, Thread.MIN_PRIORITY));
     }
 
     /** How many columns may run at once now. */

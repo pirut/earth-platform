@@ -1,6 +1,7 @@
 package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
+import io.earthplatform.geography.globe.ClassicTiff.HeaderTooShort;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -8,14 +9,15 @@ import java.nio.ByteOrder;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.zip.DataFormatException;
-import java.util.zip.Inflater;
+
+import static io.earthplatform.geography.globe.ClassicTiff.array;
+import static io.earthplatform.geography.globe.ClassicTiff.scalar;
 
 /**
  * Global land cover from ESA WorldCover 2021 v200, dataset id {@code esa-worldcover-v200}: one
@@ -51,7 +53,7 @@ public final class WorldCoverSource implements AutoCloseable {
     private final int maxBlocksInMemory;
     private final RangeFiles files;
     private final Map<Integer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
-    private final LinkedHashMap<Long, byte[]> memory = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, byte[]> memory = new LruMap<>(64);
     private final Map<Long, CompletableFuture<byte[]>> inFlight = new ConcurrentHashMap<>();
     /** Each thread's last block, so reads that stay in one block skip the shared cache. */
     private final ThreadLocal<Last> recent = ThreadLocal.withInitial(Last::new);
@@ -184,9 +186,7 @@ public final class WorldCoverSource implements AutoCloseable {
         }
         byte[] decoded = files.singleFlight(inFlight, key, () -> readBlock(square, overview, index, header, level), "land cover block");
         synchronized (memory) {
-            memory.put(key, decoded);
-            var iterator = memory.entrySet().iterator();
-            while (memory.size() > maxBlocksInMemory && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+            memory.putAndTrim(key, decoded, maxBlocksInMemory);
         }
         return decoded;
     }
@@ -225,12 +225,12 @@ public final class WorldCoverSource implements AutoCloseable {
         while (true) {
             byte[] bytes = files.fetch(base.resolve(name), 0, size);
             if (bytes == null) {
-                if (missing != null) RangeFiles.write(missing, new byte[0]);
+                if (missing != null) DiskCache.write(missing, new byte[0]);
                 return Header.MISSING;
             }
             try {
                 Header header = parse(bytes);
-                if (cached != null) RangeFiles.write(cached, bytes);
+                if (cached != null) DiskCache.write(cached, bytes);
                 return header;
             } catch (HeaderTooShort tooShort) {
                 if (bytes.length < size || size >= MAX_HEADER_BYTES) throw new IOException("Unreadable land cover header " + name);
@@ -261,7 +261,7 @@ public final class WorldCoverSource implements AutoCloseable {
         raw = files.fetch(base.resolve(name), offset, (int) count);
         if (raw == null || raw.length != count) throw new MissingTerrainException("Land cover block of " + name + " is missing");
         byte[] decoded = decode(raw, header, level);
-        if (cached != null) RangeFiles.write(cached, raw);
+        if (cached != null) DiskCache.write(cached, raw);
         return decoded;
     }
 
@@ -271,27 +271,13 @@ public final class WorldCoverSource implements AutoCloseable {
             if (raw.length != size) throw new IOException("Unexpected land cover block size");
             return raw;
         }
-        Inflater inflater = new Inflater();
         try {
-            inflater.setInput(raw);
             byte[] out = new byte[size];
-            int done = 0;
-            while (done < size && !inflater.finished()) {
-                int n = inflater.inflate(out, done, size - done);
-                if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) break;
-                done += n;
-            }
-            if (done != size) throw new IOException("Short land cover block");
+            if (Deflate.inflate(raw, out) != size) throw new IOException("Short land cover block");
             return out;
         } catch (DataFormatException malformed) {
             throw new IOException("Malformed land cover block", malformed);
-        } finally {
-            inflater.end();
         }
-    }
-
-    private static final class HeaderTooShort extends IOException {
-        HeaderTooShort() { super("Header extends past the bytes read"); }
     }
 
     /** Reads the image file directories of a tiled 8-bit single-band TIFF: the image and its overviews. */
@@ -338,24 +324,6 @@ public final class WorldCoverSource implements AutoCloseable {
         }
         if (levels.size() <= MAX_OVERVIEW) throw new IOException("Land cover file lacks overviews");
         return new Header(levels.toArray(Level[]::new), deflate);
-    }
-
-    private static long scalar(ByteBuffer in, int at, int type) {
-        return type == 3 ? Short.toUnsignedInt(in.getShort(at + 8)) : Integer.toUnsignedLong(in.getInt(at + 8));
-    }
-
-    private static long[] array(ByteBuffer in, int length, int at, int type, long count) throws IOException {
-        if (type != 3 && type != 4) throw new IOException("Unsupported TIFF array type " + type);
-        int size = type == 3 ? 2 : 4;
-        if (count > 1 << 20) throw new IOException("Oversized TIFF array");
-        long start = count * size <= 4 ? at + 8 : Integer.toUnsignedLong(in.getInt(at + 8));
-        if (start + count * size > length) throw new HeaderTooShort();
-        long[] values = new long[(int) count];
-        for (int i = 0; i < count; i++) {
-            int p = (int) (start + (long) i * size);
-            values[i] = size == 2 ? Short.toUnsignedInt(in.getShort(p)) : Integer.toUnsignedLong(in.getInt(p));
-        }
-        return values;
     }
 
     private static double wrap(double longitude) {

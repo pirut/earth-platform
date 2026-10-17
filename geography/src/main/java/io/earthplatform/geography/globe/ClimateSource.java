@@ -1,6 +1,7 @@
 package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
+import io.earthplatform.geography.globe.ClassicTiff.HeaderTooShort;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -9,13 +10,15 @@ import java.nio.file.*;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.zip.DataFormatException;
-import java.util.zip.Inflater;
+
+import static io.earthplatform.geography.globe.ClassicTiff.array;
+import static io.earthplatform.geography.globe.ClassicTiff.doubles;
+import static io.earthplatform.geography.globe.ClassicTiff.scalar;
 
 /**
  * Present-day climate from CHELSA V2.1, dataset id {@code chelsa-v2.1-1981-2010}: the 1981-2010
@@ -70,7 +73,7 @@ public final class ClimateSource implements AutoCloseable {
     private final int maxRowsInMemory;
     private final RangeFiles files;
     private final Map<Layer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
-    private final LinkedHashMap<Long, Object> memory = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, Object> memory = new LruMap<>(64);
     private final Map<Long, CompletableFuture<Object>> inFlight = new ConcurrentHashMap<>();
     /** Each thread's last few rows, so neighbouring reads skip the shared cache. */
     private final ThreadLocal<Recent> recent = ThreadLocal.withInitial(Recent::new);
@@ -208,7 +211,7 @@ public final class ClimateSource implements AutoCloseable {
                 byte[] raw = Arrays.copyOfRange(run, from, from + (int) header.counts[row]);
                 cached(key(layer.ordinal(), row, 0), () -> {
                     short[] decoded = decode(raw, header);
-                    RangeFiles.write(cacheRoot.resolve(layer.stem() + "/" + row + ".z"), raw);
+                    DiskCache.write(cacheRoot.resolve(layer.stem() + "/" + row + ".z"), raw);
                     return decoded;
                 }, "climate row");
             }
@@ -253,9 +256,7 @@ public final class ClimateSource implements AutoCloseable {
         if (hit == null) {
             hit = files.singleFlight(inFlight, key, load, piece);
             synchronized (memory) {
-                memory.put(key, hit);
-                var iterator = memory.entrySet().iterator();
-                while (memory.size() > maxRowsInMemory && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+                memory.putAndTrim(key, hit, maxRowsInMemory);
             }
         }
         mine.put(key, hit);
@@ -300,7 +301,7 @@ public final class ClimateSource implements AutoCloseable {
         byte[] raw = files.fetch(base.resolve(layer.file), offset, (int) count);
         if (raw == null || raw.length != count) throw new MissingTerrainException("Climate row " + row + " of " + layer.stem() + " is missing");
         short[] decoded = decode(raw, header);
-        if (cached != null) RangeFiles.write(cached, raw);
+        if (cached != null) DiskCache.write(cached, raw);
         return decoded;
     }
 
@@ -319,7 +320,7 @@ public final class ClimateSource implements AutoCloseable {
             long offset = ((long) (HEIGHT - 1 - row) * WIDTH + from) * 4;
             raw = files.fetch(base.resolve(DEM_FILE), offset, size * 4);
             if (raw == null || raw.length != size * 4) throw new MissingTerrainException("Climate elevation row " + row + " is missing");
-            if (cached != null) RangeFiles.write(cached, raw);
+            if (cached != null) DiskCache.write(cached, raw);
         }
         ByteBuffer in = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
         float[] metres = new float[size];
@@ -338,21 +339,11 @@ public final class ClimateSource implements AutoCloseable {
             if (raw.length != size) throw new IOException("Unexpected climate row size");
             bytes = raw;
         } else {
-            Inflater inflater = new Inflater();
             try {
-                inflater.setInput(raw);
                 bytes = new byte[size];
-                int done = 0;
-                while (done < size && !inflater.finished()) {
-                    int n = inflater.inflate(bytes, done, size - done);
-                    if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) break;
-                    done += n;
-                }
-                if (done != size) throw new IOException("Short climate row");
+                if (Deflate.inflate(raw, bytes) != size) throw new IOException("Short climate row");
             } catch (DataFormatException malformed) {
                 throw new IOException("Malformed climate row", malformed);
-            } finally {
-                inflater.end();
             }
         }
         ByteBuffer in = ByteBuffer.wrap(bytes).order(header.littleEndian ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);
@@ -400,17 +391,13 @@ public final class ClimateSource implements AutoCloseable {
             if (bytes == null) throw new MissingTerrainException("Climate file " + layer.file + " is missing");
             try {
                 Header header = parse(bytes);
-                if (cached != null) RangeFiles.write(cached, bytes);
+                if (cached != null) DiskCache.write(cached, bytes);
                 return header;
             } catch (HeaderTooShort tooShort) {
                 if (bytes.length < size || size >= MAX_HEADER_BYTES) throw new IOException("Unreadable climate header " + layer.stem());
                 size *= 2;
             }
         }
-    }
-
-    private static final class HeaderTooShort extends IOException {
-        HeaderTooShort() { super("Header extends past the bytes read"); }
     }
 
     /** Reads the first image of a striped 16-bit single-band GeoTIFF on the CHELSA grid, one row per strip. */
@@ -457,36 +444,6 @@ public final class ClimateSource implements AutoCloseable {
         return new Header(offsets, counts, compression != 1, predictor == 2, little);
     }
 
-    private static long scalar(ByteBuffer in, int at, int type) {
-        return type == 3 ? Short.toUnsignedInt(in.getShort(at + 8)) : Integer.toUnsignedLong(in.getInt(at + 8));
-    }
-
-    private static long start(ByteBuffer in, int length, int at, long count, int size) throws IOException {
-        if (count > 1 << 20) throw new IOException("Oversized TIFF array");
-        long start = count * size <= 4 ? at + 8 : Integer.toUnsignedLong(in.getInt(at + 8));
-        if (start + count * size > length) throw new HeaderTooShort();
-        return start;
-    }
-
-    private static long[] array(ByteBuffer in, int length, int at, int type, long count) throws IOException {
-        if (type != 3 && type != 4) throw new IOException("Unsupported TIFF array type " + type);
-        int size = type == 3 ? 2 : 4;
-        long start = start(in, length, at, count, size);
-        long[] values = new long[(int) count];
-        for (int i = 0; i < count; i++) {
-            int p = (int) (start + (long) i * size);
-            values[i] = size == 2 ? Short.toUnsignedInt(in.getShort(p)) : Integer.toUnsignedLong(in.getInt(p));
-        }
-        return values;
-    }
-
-    private static double[] doubles(ByteBuffer in, int length, int at, int type, long count) throws IOException {
-        if (type != 12) throw new IOException("Unsupported TIFF double type " + type);
-        long start = start(in, length, at, count, 8);
-        double[] values = new double[(int) count];
-        for (int i = 0; i < count; i++) values[i] = in.getDouble((int) (start + i * 8L));
-        return values;
-    }
 
     private static double wrap(double longitude) {
         double wrapped = ((longitude + 180) % 360 + 360) % 360 - 180;

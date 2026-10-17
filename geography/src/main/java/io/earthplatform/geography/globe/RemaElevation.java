@@ -49,12 +49,12 @@ public final class RemaElevation implements ElevationLayer, AutoCloseable {
         if (zoom < MIN_ZOOM) return;
         int size = TerrariumTileSource.TILE_SIZE;
         double world = (double) size * (1L << zoom);
-        if (latitude(world, (double) y * size) > NORTH_LIMIT) {
+        if (Mercator.latitude((double) y * size, world) > NORTH_LIMIT) {
             // The tile's north edge is north of REMA; skip it unless its south edge reaches in.
-            if (latitude(world, (double) (y + 1) * size) > NORTH_LIMIT) return;
+            if (Mercator.latitude((double) (y + 1) * size, world) > NORTH_LIMIT) return;
         }
         // Read REMA at about the tile's pixel size, measured at its centre.
-        double centre = latitude(world, (y + 0.5) * size);
+        double centre = Mercator.latitude((y + 0.5) * size, world);
         double pixel = EQUATOR * Math.cos(Math.toRadians(centre)) / world;
         // The nearest overview, not the next finer one: a finer one is up to four times the download for
         // detail the tile's pixels cannot show.
@@ -68,7 +68,7 @@ public final class RemaElevation implements ElevationLayer, AutoCloseable {
             geoidColumn[i] = Math.toDegrees(lambda);
         }
         for (int j = 0; j < size; j++) {
-            double lat = latitude(world, (double) y * size + j + 0.5);
+            double lat = Mercator.latitude((double) y * size + j + 0.5, world);
             if (lat > NORTH_LIMIT) continue;
             double rho = SCALE * t(Math.toRadians(-lat));
             for (int i = 0; i < size; i++) {
@@ -89,11 +89,6 @@ public final class RemaElevation implements ElevationLayer, AutoCloseable {
                 values[at] = out == 0 ? Float.MIN_VALUE : out;
             }
         }
-    }
-
-    /** Latitude in degrees of a Web Mercator pixel row. */
-    private static double latitude(double world, double row) {
-        return Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * row / world))));
     }
 
     /** Snyder's t for the north-polar form, applied to the mirrored southern latitude. */
