@@ -71,7 +71,7 @@ final class EarthCommands {
                 .executes(context -> home(context.getSource(), context.getSource().getPlayerOrException())));
 
         // Random trips.
-        root.then(Commands.literal("random").requires(EarthWorlds::mayTravel)
+        root.then(Commands.literal("random").requires(source -> EarthWorlds.mayTravel(source) || source.getPlayer() != null && EarthConfig.RANDOM_TRIPS.get())
                 .executes(context -> randomSelf(context.getSource(), 0))
                 .then(Commands.argument("km", DoubleArgumentType.doubleArg(1, 20_000))
                         .executes(context -> randomSelf(context.getSource(), DoubleArgumentType.getDouble(context, "km")))));
@@ -96,8 +96,8 @@ final class EarthCommands {
                                         DoubleArgumentType.getDouble(context, "km")))))));
 
         // Warps: named spots for everyone.
-        root.then(Commands.literal("warps").executes(context -> warps(context.getSource())));
-        root.then(Commands.literal("warp").requires(EarthCommands::mayUseHomes).then(Commands.argument("name", StringArgumentType.word())
+        root.then(Commands.literal("warps").requires(EarthCommands::mayUseWarps).executes(context -> warps(context.getSource())));
+        root.then(Commands.literal("warp").requires(EarthCommands::mayUseWarps).then(Commands.argument("name", StringArgumentType.word())
                 .suggests((context, builder) -> SharedSuggestionProvider.suggest(EarthSpawns.of(context.getSource().getServer()).warps().keySet(), builder))
                 .executes(context -> warp(context.getSource(), StringArgumentType.getString(context, "name")))));
         root.then(Commands.literal("setwarp").requires(EarthCommands::op).then(spots(Commands.argument("name", StringArgumentType.word()),
@@ -176,6 +176,10 @@ final class EarthCommands {
     }
 
     /** Whether a player may still choose where they start. */
+    private static boolean mayUseWarps(CommandSourceStack source) {
+        return op(source) || EarthConfig.WARPS.get() && mayUseHomes(source);
+    }
+
     static boolean mayChooseStart(ServerPlayer player) {
         return EarthConfig.PLAYERS_CHOOSE_START.get() && !EarthSpawns.of(player.server).started(player.getUUID());
     }

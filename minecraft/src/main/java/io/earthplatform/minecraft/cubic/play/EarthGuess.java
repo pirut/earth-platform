@@ -54,7 +54,7 @@ final class EarthGuess {
     private EarthGuess() {}
 
     static void register(LiteralArgumentBuilder<CommandSourceStack> root) {
-        root.then(Commands.literal("guess")
+        root.then(Commands.literal("guess").requires(source -> EarthConfig.GEOGUESSR.get())
                 .executes(context -> open(context.getSource()))
                 .then(Commands.argument("latitude", DoubleArgumentType.doubleArg(-90, 90))
                         .then(Commands.argument("longitude", DoubleArgumentType.doubleArg(-180, 180))
@@ -177,6 +177,9 @@ final class EarthGuess {
         Round current = round;
         if (current != null && Util.getMillis() - current.started > ROUND) reveal(server);
     }
+
+    /** GeoGuessr was switched off: a round that is on ends with the guesses in. */
+    static void end(MinecraftServer server) { if (round != null) reveal(server); }
 
     static void stopped() { round = null; TOTALS.clear(); NAMES.clear(); }
 }

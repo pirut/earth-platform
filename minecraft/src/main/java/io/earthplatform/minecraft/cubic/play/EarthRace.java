@@ -39,7 +39,7 @@ final class EarthRace {
     private EarthRace() {}
 
     static void register(LiteralArgumentBuilder<CommandSourceStack> root) {
-        root.then(Commands.literal("race").executes(context -> show(context.getSource()))
+        root.then(Commands.literal("race").requires(source -> EarthConfig.RACES.get()).executes(context -> show(context.getSource()))
                 .then(Commands.literal("start").requires(EarthCommands::op)
                         .executes(context -> start(context.getSource().getServer(), null))
                         .then(Commands.argument("place", StringArgumentType.greedyString())
@@ -129,7 +129,7 @@ final class EarthRace {
     }
 
     private static void daily(MinecraftServer server) {
-        if (!EarthConfig.DAILY_RACE.get() || server.getPlayerList().getPlayerCount() == 0 || !EarthWorlds.isEarth(server)) return;
+        if (!EarthConfig.DAILY_RACE.get() || !EarthConfig.RACES.get() || server.getPlayerList().getPlayerCount() == 0 || !EarthWorlds.isEarth(server)) return;
         long day = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toEpochDay();
         EarthSpawns spawns = EarthSpawns.of(server);
         if (spawns.raceDay() == day) return;
@@ -138,4 +138,11 @@ final class EarthRace {
     }
 
     static void stopped() { race = null; OUT.clear(); }
+
+    /** Races were switched off: a race that is on is called off. */
+    static void off(MinecraftServer server) {
+        if (race == null) return;
+        stopped();
+        server.getPlayerList().broadcastSystemMessage(Component.literal("The race is called off.").withStyle(ChatFormatting.GOLD), false);
+    }
 }

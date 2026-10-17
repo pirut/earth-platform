@@ -47,6 +47,11 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue DAILY_RACE;
     public static final ModConfigSpec.ConfigValue<String> RACE_REWARD;
     public static final ModConfigSpec.IntValue WEB_MAP_PORT;
+    public static final ModConfigSpec.BooleanValue WARPS;
+    public static final ModConfigSpec.BooleanValue RANDOM_TRIPS;
+    public static final ModConfigSpec.BooleanValue GEOGUESSR;
+    public static final ModConfigSpec.BooleanValue RACES;
+    public static final ModConfigSpec.BooleanValue WEB_MAP;
 
     static {
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
@@ -104,9 +109,19 @@ public final class EarthConfig {
                 .translation(key("dailyRace")).define("dailyRace", false);
         RACE_REWARD = common.comment("The race winner's prize: an item and a count, such as \"minecraft:diamond 5\". Empty for none.")
                 .translation(key("raceReward")).define("raceReward", "minecraft:diamond 5");
-        WEB_MAP_PORT = common.comment("Serve a live web map of the players at http://<server>:<port>/ for sharing outside the game. 0 turns it off.",
+        WARPS = common.comment("Let players use the server's warps (/earth warp). Operators make them with /earth setwarp.")
+                .translation(key("warps")).define("warps", true);
+        RANDOM_TRIPS = common.comment("Let players take random trips to land with /earth random.")
+                .translation(key("randomTrips")).define("randomTrips", true);
+        GEOGUESSR = common.comment("Allow GeoGuessr rounds (/earth guess).")
+                .translation(key("geoguessr")).define("geoguessr", true);
+        RACES = common.comment("Allow races to famous places (/earth race).")
+                .translation(key("races")).define("races", true);
+        WEB_MAP = common.comment("Serve a live web map of the players at http://<server>:<webMapPort>/ for sharing outside the game.",
                         "It shows player names and where they are to anyone who can reach the port.")
-                .translation(key("webMapPort")).gameRestart().defineInRange("webMapPort", 0, 0, 65_535);
+                .translation(key("webMap")).define("webMap", false);
+        WEB_MAP_PORT = common.comment("The web map's port.")
+                .translation(key("webMapPort")).defineInRange("webMapPort", 8123, 1, 65_535);
         COMMON_SPEC = common.build();
 
         var container = ModList.get().getModContainerById(EarthPlatformMod.MOD_ID).orElseThrow();
@@ -174,6 +189,9 @@ public final class EarthConfig {
         } else if (config.getSpec() == COMMON_SPEC) {
             property("earthplatform.earth.offline", Boolean.toString(OFFLINE.get()));
             property("earthplatform.earth.imagery", Boolean.toString(SATELLITE_IMAGERY.get()));
+            // An edited file takes effect on a running server at once, as /earth settings does.
+            var server = net.neoforged.neoforge.server.ServerLifecycleHooks.getCurrentServer();
+            if (server != null) server.execute(() -> EarthToggles.changed(server));
         }
     }
 

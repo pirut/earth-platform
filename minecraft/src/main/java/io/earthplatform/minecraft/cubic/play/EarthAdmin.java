@@ -152,8 +152,7 @@ public final class EarthAdmin {
         EarthSpawns spawns = EarthSpawns.of(server);
         line(source, "Border: " + spawns.border().map(EarthSpawns.Border::label).orElse("none") + "; warps: " + spawns.warps().size()
                 + "; preload: " + (preloading != null ? "running" : "idle"), ChatFormatting.GRAY);
-        int port = EarthConfig.WEB_MAP_PORT.get();
-        if (port > 0) line(source, "Web map on port " + port + (web == null ? " (not running)" : ""), ChatFormatting.GRAY);
+        if (EarthConfig.WEB_MAP.get()) line(source, "Web map on port " + EarthConfig.WEB_MAP_PORT.get() + (web == null ? " (not running)" : ""), ChatFormatting.GRAY);
         // The cache size walks the whole folder, so it comes in after.
         Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache");
         CompletableFuture.supplyAsync(() -> size(cache), Util.ioPool()).thenAcceptAsync(size -> line(source,
@@ -192,12 +191,23 @@ public final class EarthAdmin {
     // The web map --------------------------------------------------------------------------------
 
     @Nullable private static com.sun.net.httpserver.HttpServer web;
+    /** The port the running web map listens on. */
+    private static int webPort;
     /** What the web map shows, made on the server thread each second and served from the web map's own thread. */
     private static volatile String snapshot = "{\"players\":[]}";
 
-    @SubscribeEvent public static void started(ServerStartedEvent event) {
+    @SubscribeEvent public static void started(ServerStartedEvent event) { webMap(event.getServer()); }
+
+    /** Starts or stops the web map as the settings say, or moves it to a new port. */
+    static void webMap(MinecraftServer minecraft) {
         int port = EarthConfig.WEB_MAP_PORT.get();
-        if (port <= 0 || !EarthWorlds.isEarth(event.getServer())) return;
+        boolean wanted = EarthConfig.WEB_MAP.get() && EarthWorlds.isEarth(minecraft);
+        if (web != null && (!wanted || webPort != port)) {
+            web.stop(0);
+            web = null;
+            EarthPlatformMod.LOGGER.info("Earth web map stopped");
+        }
+        if (!wanted || web != null) return;
         try {
             var server = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress(port), 16);
             server.createContext("/", exchange -> {
@@ -218,6 +228,7 @@ public final class EarthAdmin {
             }));
             server.start();
             web = server;
+            webPort = port;
             EarthPlatformMod.LOGGER.info("Earth web map at http://localhost:{}/", port);
         } catch (IOException | RuntimeException | LinkageError failure) {
             EarthPlatformMod.LOGGER.warn("The Earth web map could not start on port {}: {}", port, failure.toString());

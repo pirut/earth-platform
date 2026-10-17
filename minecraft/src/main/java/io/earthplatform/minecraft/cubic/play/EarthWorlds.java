@@ -441,6 +441,7 @@ public final class EarthWorlds {
         EarthRace.register(root);
         EarthGuess.register(root);
         EarthAdmin.register(root);
+        EarthToggles.register(root);
         root.then(Commands.literal("where").executes(context -> where(context.getSource())));
         root.then(Commands.literal("places").executes(context -> places(context.getSource())));
         dispatcher.register(root);
