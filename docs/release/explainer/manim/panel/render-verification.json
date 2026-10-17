@@ -1,0 +1,116 @@
+[
+  {
+    "scene": "DataToBlocks",
+    "path": "panel/media/videos/panel_scenes/800p30/DataToBlocks.mp4",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "width": 960,
+          "height": 800,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1"
+        }
+      ],
+      "format": {
+        "duration": "7.000000"
+      }
+    }
+  },
+  {
+    "scene": "TrueHeight",
+    "path": "panel/media/videos/panel_scenes/800p30/TrueHeight.mp4",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "width": 960,
+          "height": 800,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1"
+        }
+      ],
+      "format": {
+        "duration": "7.000000"
+      }
+    }
+  },
+  {
+    "scene": "FarTerrainLOD",
+    "path": "panel/media/videos/panel_scenes/800p30/FarTerrainLOD.mp4",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "width": 960,
+          "height": 800,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1"
+        }
+      ],
+      "format": {
+        "duration": "6.000000"
+      }
+    }
+  },
+  {
+    "scene": "SharedServer",
+    "path": "panel/media/videos/panel_scenes/800p30/SharedServer.mp4",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "width": 960,
+          "height": 800,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1"
+        }
+      ],
+      "format": {
+        "duration": "6.000000"
+      }
+    }
+  },
+  {
+    "scene": "FairComparison",
+    "path": "panel/media/videos/panel_scenes/800p30/FairComparison.mp4",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "width": 960,
+          "height": 800,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1"
+        }
+      ],
+      "format": {
+        "duration": "6.230729"
+      }
+    }
+  },
+  {
+    "scene": "HonestLimits",
+    "path": "panel/media/videos/panel_scenes/800p30/HonestLimits.mp4",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "width": 960,
+          "height": 800,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1"
+        }
+      ],
+      "format": {
+        "duration": "5.464714"
+      }
+    }
+  }
+]

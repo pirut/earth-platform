@@ -1,0 +1,1306 @@
+{
+  "short": [
+    {
+      "duration": 4,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/hooks/clips/b47-q-everest.mp4",
+      "title": "HOW DOES EARTH FIT\nIN MINECRAFT?",
+      "body": [
+        "Real elevation. Generated detail."
+      ],
+      "chapter": "How it works",
+      "sources": [
+        "SCALE",
+        "DATA"
+      ],
+      "start": 0,
+      "end": 4,
+      "source_in": 0,
+      "playback": "trim_then_retime_no_loop",
+      "source_duration": 4,
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 4,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/hooks/clips/b47-c-half_dome.mp4",
+      "title": "1. START WITH EARTH",
+      "body": [
+        "Elevation becomes blocks."
+      ],
+      "chapter": "Data",
+      "sources": [
+        "DATA"
+      ],
+      "start": 4,
+      "end": 8,
+      "source_in": 0,
+      "playback": "trim_then_retime_no_loop",
+      "source_duration": 4,
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 8,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-fuji.mp4",
+      "title": "MEASURED + GENERATED",
+      "body": [
+        "Earth data guides the landscape.",
+        "Individual trees are procedural."
+      ],
+      "chapter": "Data",
+      "sources": [
+        "DATA",
+        "LIFE"
+      ],
+      "scene": "DataToBlocks",
+      "start": 8,
+      "end": 16,
+      "source_in": 0,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 8,
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 6,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/hooks/clips/b48-scale.mp4",
+      "title": "2. KEEP THE HEIGHT",
+      "body": [
+        "32,768 block layers."
+      ],
+      "chapter": "Cubes",
+      "sources": [
+        "CUBES"
+      ],
+      "start": 16,
+      "end": 22,
+      "source_in": 0,
+      "playback": "trim_then_retime_no_loop",
+      "source_duration": 6,
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 8,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-matterhorn.mp4",
+      "title": "INDEPENDENT 16\u00b3 CUBES",
+      "body": [
+        "Y \u221216,384 to +16,383",
+        "Near origin: 1 m / block (3.28 ft)"
+      ],
+      "chapter": "Cubes",
+      "sources": [
+        "CUBES",
+        "SCALE"
+      ],
+      "scene": "TrueHeight",
+      "start": 22,
+      "end": 30,
+      "source_in": 10,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 8,
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 5,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/hooks/clips/b47-c-grand_canyon.mp4",
+      "title": "3. LOOK FARTHER",
+      "body": [
+        "Coarser voxels with distance."
+      ],
+      "chapter": "Far terrain",
+      "sources": [
+        "FAR"
+      ],
+      "start": 30,
+      "end": 35,
+      "source_in": 0,
+      "playback": "trim_then_retime_no_loop",
+      "source_duration": 5,
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 8,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-rainier.mp4",
+      "title": "A WORLD IN LEVELS",
+      "body": [
+        "About 94,000 blocks by default.",
+        "Configurable to about 201,000."
+      ],
+      "chapter": "Far terrain",
+      "sources": [
+        "FAR"
+      ],
+      "scene": "FarTerrainLOD",
+      "start": 35,
+      "end": 43,
+      "source_in": 20,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 8,
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 5,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/hooks/clips/b48-g-waimea.mp4",
+      "title": "OUR CUBES + EARTH DATA\n+ OUR FAR RENDERER",
+      "body": [
+        "Terra++, Tellus, DH, Voxy: different layers."
+      ],
+      "chapter": "Comparison",
+      "sources": [
+        "TERRA",
+        "TELLUS",
+        "DH",
+        "VOXY",
+        "CUBES",
+        "DATA",
+        "FAR"
+      ],
+      "start": 43,
+      "end": 48,
+      "source_in": 0,
+      "playback": "trim_then_retime_no_loop",
+      "source_duration": 5,
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 6,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/hooks/clips/b47-q-everest.mp4",
+      "title": "COMING SOON\nWhere should I go next?",
+      "body": [
+        "NOT AN OFFICIAL MINECRAFT PRODUCT.",
+        "NOT APPROVED BY OR ASSOCIATED WITH",
+        "MOJANG OR MICROSOFT."
+      ],
+      "chapter": "How it works",
+      "sources": [
+        "EDITORIAL"
+      ],
+      "start": 48,
+      "end": 54,
+      "source_in": 0,
+      "playback": "trim_then_retime_no_loop",
+      "source_duration": 5,
+      "playback_rate": 0.8333333333333334
+    }
+  ],
+  "full": [
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "EARTH, IN MINECRAFT",
+      "body": [
+        "Measured terrain. A block world."
+      ],
+      "chapter": "Intro",
+      "sources": [
+        "DATA"
+      ],
+      "start": 0,
+      "end": 3,
+      "source_in": 10,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-00",
+      "source_duration": 3,
+      "layout": "landscape_full_frame",
+      "shot_label": "Everest",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "EARTH, IN MINECRAFT",
+      "body": [
+        "Measured terrain. A block world."
+      ],
+      "chapter": "Intro",
+      "sources": [
+        "DATA"
+      ],
+      "start": 3,
+      "end": 6,
+      "source_in": 46,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-00",
+      "source_duration": 3,
+      "layout": "landscape_full_frame",
+      "shot_label": "Yosemite",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "HOW DOES IT WORK?",
+      "body": [
+        "Earth data \u2192 cubes \u2192 distant voxels"
+      ],
+      "chapter": "Intro",
+      "sources": [
+        "DATA",
+        "CUBES",
+        "FAR"
+      ],
+      "start": 6,
+      "end": 9,
+      "source_in": 14,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-01",
+      "source_duration": 2,
+      "layout": "landscape_full_frame",
+      "shot_label": "Matterhorn",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "HOW DOES IT WORK?",
+      "body": [
+        "Earth data \u2192 cubes \u2192 distant voxels"
+      ],
+      "chapter": "Intro",
+      "sources": [
+        "DATA",
+        "CUBES",
+        "FAR"
+      ],
+      "start": 9,
+      "end": 12,
+      "source_in": 17.5,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-01",
+      "source_duration": 2,
+      "layout": "landscape_full_frame",
+      "shot_label": "Grand Canyon",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "01 / EARTH DATA",
+      "body": [
+        "Start with elevation."
+      ],
+      "chapter": "Data",
+      "sources": [
+        "DATA"
+      ],
+      "start": 12,
+      "end": 15,
+      "source_in": 6.7,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-02",
+      "source_duration": 2,
+      "layout": "landscape_full_frame",
+      "shot_label": "Fuji",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "01 / EARTH DATA",
+      "body": [
+        "Start with elevation."
+      ],
+      "chapter": "Data",
+      "sources": [
+        "DATA"
+      ],
+      "start": 15,
+      "end": 18,
+      "source_in": 24,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-02",
+      "source_duration": 2,
+      "layout": "landscape_full_frame",
+      "shot_label": "Geiranger",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 10,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-fuji.mp4",
+      "title": "TERRARIUM: CLEAN ELEVATION",
+      "body": [
+        "Repair zeros, seams, isolated pixels.",
+        "Regional layers come next."
+      ],
+      "chapter": "Data",
+      "sources": [
+        "DATA",
+        "CLEAN"
+      ],
+      "scene": "DataToBlocks",
+      "start": 18,
+      "end": 28,
+      "source_in": 0,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 10,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-03",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 10,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/ambient/clips/b47-yosemite.mp4",
+      "title": "REGIONAL ELEVATION SOURCES",
+      "body": [
+        "Copernicus GLO-30 fill",
+        "USGS 3DEP: U.S. \u00b7 REMA: Antarctica"
+      ],
+      "chapter": "Data",
+      "sources": [
+        "DATA",
+        "REGIONAL"
+      ],
+      "start": 28,
+      "end": 38,
+      "source_in": 26,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 10,
+      "layout": "portrait_gameplay_panel",
+      "caption_group": "full-caption-04",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 10,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-yosemite.mp4",
+      "title": "ORDERED LAYERS, SAVED PER WORLD",
+      "body": [
+        "Later regional overlays can win.",
+        "Final despike follows the overlays."
+      ],
+      "chapter": "Data",
+      "sources": [
+        "PIN",
+        "CLEAN"
+      ],
+      "scene": "DataToBlocks",
+      "start": 38,
+      "end": 48,
+      "source_in": 0,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 10,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-05",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 10,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/ambient/clips/b47-rainier.mp4",
+      "title": "MORE THAN HEIGHT",
+      "body": [
+        "CHELSA climate + ecoregions",
+        "Land cover helps guide vegetation."
+      ],
+      "chapter": "Data",
+      "sources": [
+        "LIFE"
+      ],
+      "start": 48,
+      "end": 58,
+      "source_in": 28,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 10,
+      "layout": "portrait_gameplay_panel",
+      "caption_group": "full-caption-06",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 10,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-rainier.mp4",
+      "title": "RIVERS FROM OBSERVATION + TERRAIN",
+      "body": [
+        "JRC Global Surface Water",
+        "plus terrain-derived streams"
+      ],
+      "chapter": "Data",
+      "sources": [
+        "LIFE",
+        "JRC"
+      ],
+      "scene": "DataToBlocks",
+      "start": 58,
+      "end": 68,
+      "source_in": 0,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 10,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-07",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 10,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/ambient/clips/b47-fuji.mp4",
+      "title": "DATA GUIDES PROCEDURAL DETAIL",
+      "body": [
+        "Trees are generated individually.",
+        "Climate is long-term, not live weather."
+      ],
+      "chapter": "Data",
+      "sources": [
+        "LIFE"
+      ],
+      "start": 68,
+      "end": 78,
+      "source_in": 28,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 10,
+      "layout": "portrait_gameplay_panel",
+      "caption_group": "full-caption-08",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "02 / ROOM FOR HEIGHT",
+      "body": [
+        "Everest: 8,849 m / 29,032 ft",
+        "above sea level."
+      ],
+      "chapter": "Cubes",
+      "sources": [
+        "EVEREST"
+      ],
+      "start": 78,
+      "end": 81,
+      "source_in": 10,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-09",
+      "source_duration": 3,
+      "layout": "landscape_full_frame",
+      "shot_label": "Everest",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/hooks/clips/b47-q-everest.mp4",
+      "title": "02 / ROOM FOR HEIGHT",
+      "body": [
+        "Everest: 8,849 m / 29,032 ft",
+        "above sea level."
+      ],
+      "chapter": "Cubes",
+      "sources": [
+        "EVEREST"
+      ],
+      "start": 81,
+      "end": 84,
+      "source_in": 1,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-09",
+      "source_duration": 3,
+      "layout": "portrait_gameplay_panel",
+      "shot_label": "everest",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 12,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-matterhorn.mp4",
+      "title": "WORLD HEIGHT, COMPARED",
+      "body": [
+        "Vanilla: 384 layers (Y \u221264\u2026319)",
+        "Upper boundary: Y 320",
+        "Earth Platform: 32,768 layers"
+      ],
+      "chapter": "Cubes",
+      "sources": [
+        "VANILLA",
+        "CUBES"
+      ],
+      "scene": "TrueHeight",
+      "start": 84,
+      "end": 96,
+      "source_in": 0,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 12,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-10",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 12,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/ambient/clips/b47-matterhorn.mp4",
+      "title": "BLOCKS AT THEIR TRUE HEIGHT",
+      "body": [
+        "Independent 16 \u00d7 16 \u00d7 16 cubes",
+        "load around each player."
+      ],
+      "chapter": "Cubes",
+      "sources": [
+        "CUBES"
+      ],
+      "start": 96,
+      "end": 108,
+      "source_in": 26,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 12,
+      "layout": "portrait_gameplay_panel",
+      "caption_group": "full-caption-11",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 12,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-fuji.mp4",
+      "title": "SCALE NEEDS A CAVEAT",
+      "body": [
+        "Nominal 1 m / block near origin",
+        "1 m \u2248 3.28 ft; map scale varies."
+      ],
+      "chapter": "Cubes",
+      "sources": [
+        "SCALE"
+      ],
+      "scene": "TrueHeight",
+      "start": 108,
+      "end": 120,
+      "source_in": 10,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 12,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-12",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 6,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/ambient/clips/b47-rainier.mp4",
+      "title": "A BOUNDED NEIGHBORHOOD",
+      "body": [
+        "The whole height range",
+        "is not loaded all at once."
+      ],
+      "chapter": "Cubes",
+      "sources": [
+        "CUBES"
+      ],
+      "start": 120,
+      "end": 126,
+      "source_in": 2,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 6,
+      "layout": "portrait_gameplay_panel",
+      "caption_group": "full-caption-13",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "03 / DISTANT TERRAIN",
+      "body": [
+        "Near blocks. Farther voxels."
+      ],
+      "chapter": "Far terrain",
+      "sources": [
+        "FAR"
+      ],
+      "start": 126,
+      "end": 129,
+      "source_in": 17.5,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-14",
+      "source_duration": 2,
+      "layout": "landscape_full_frame",
+      "shot_label": "Grand Canyon",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "03 / DISTANT TERRAIN",
+      "body": [
+        "Near blocks. Farther voxels."
+      ],
+      "chapter": "Far terrain",
+      "sources": [
+        "FAR"
+      ],
+      "start": 129,
+      "end": 132,
+      "source_in": 24,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-14",
+      "source_duration": 2,
+      "layout": "landscape_full_frame",
+      "shot_label": "Geiranger",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 10,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-yosemite.mp4",
+      "title": "DOUBLE THE VOXEL SIZE",
+      "body": [
+        "2, 4, 8 \u2026 256 blocks per voxel",
+        "Eight far-detail levels."
+      ],
+      "chapter": "Far terrain",
+      "sources": [
+        "FAR"
+      ],
+      "scene": "FarTerrainLOD",
+      "start": 132,
+      "end": 142,
+      "source_in": 10,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 10,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-15",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 8,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/ambient/clips/b47-yosemite.mp4",
+      "title": "NESTED DISTANCE RINGS",
+      "body": [
+        "Finer levels replace the center.",
+        "Matching faces merge."
+      ],
+      "chapter": "Far terrain",
+      "sources": [
+        "FAR",
+        "MESH"
+      ],
+      "start": 142,
+      "end": 150,
+      "source_in": 2,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 8,
+      "layout": "portrait_gameplay_panel",
+      "caption_group": "full-caption-16",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 10,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-rainier.mp4",
+      "title": "HOW FAR?",
+      "body": [
+        "94,208 blocks by default",
+        "Up to 200,704 blocks: configured maximum"
+      ],
+      "chapter": "Far terrain",
+      "sources": [
+        "REACH"
+      ],
+      "scene": "FarTerrainLOD",
+      "start": 150,
+      "end": 160,
+      "source_in": 10,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 10,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-17",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 8,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/ambient/clips/b47-fuji.mp4",
+      "title": "BLOCK DISTANCE \u2260 MAP DISTANCE",
+      "body": [
+        "Nominally 94.2\u2013200.7 km / 58.5\u2013124.7 mi",
+        "Ground distance varies with projection."
+      ],
+      "chapter": "Far terrain",
+      "sources": [
+        "REACH",
+        "SCALE"
+      ],
+      "start": 160,
+      "end": 168,
+      "source_in": 2,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 8,
+      "layout": "portrait_gameplay_panel",
+      "caption_group": "full-caption-18",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 10,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-matterhorn.mp4",
+      "title": "WHAT ABOUT YOUR BUILDS?",
+      "body": [
+        "Saved edits enter levels 1\u20134.",
+        "Small details can disappear."
+      ],
+      "chapter": "Far terrain",
+      "sources": [
+        "EDITS"
+      ],
+      "scene": "FarTerrainLOD",
+      "start": 168,
+      "end": 178,
+      "source_in": 12,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 10,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-19",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 8,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/ambient/clips/b47-matterhorn.mp4",
+      "title": "HEIGHTS, NOT COARSE STEPS",
+      "body": [
+        "Far surfaces align to generated ground.",
+        "That does not mean survey accuracy."
+      ],
+      "chapter": "Far terrain",
+      "sources": [
+        "MESH"
+      ],
+      "start": 178,
+      "end": 186,
+      "source_in": 2,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 8,
+      "layout": "portrait_gameplay_panel",
+      "caption_group": "full-caption-20",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 1.5,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "04 / A SHARED WORLD",
+      "body": [
+        "The server generates shared terrain."
+      ],
+      "chapter": "Server",
+      "sources": [
+        "SERVER"
+      ],
+      "start": 186,
+      "end": 187.5,
+      "source_in": 36,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-21",
+      "source_duration": 1,
+      "layout": "landscape_full_frame",
+      "shot_label": "Rainier",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 1.5,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "04 / A SHARED WORLD",
+      "body": [
+        "The server generates shared terrain."
+      ],
+      "chapter": "Server",
+      "sources": [
+        "SERVER"
+      ],
+      "start": 187.5,
+      "end": 189.0,
+      "source_in": 38,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-21",
+      "source_duration": 1,
+      "layout": "landscape_full_frame",
+      "shot_label": "Lake Louise",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "04 / A SHARED WORLD",
+      "body": [
+        "The server generates shared terrain."
+      ],
+      "chapter": "Server",
+      "sources": [
+        "SERVER"
+      ],
+      "start": 189.0,
+      "end": 192.0,
+      "source_in": 46,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-21",
+      "source_duration": 3,
+      "layout": "landscape_full_frame",
+      "shot_label": "Yosemite",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 9,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-fuji.mp4",
+      "title": "SERVER \u2192 TWO CLIENTS",
+      "body": [
+        "Near cubes + far terrain stream out.",
+        "Conceptual; no multiplayer capture."
+      ],
+      "chapter": "Server",
+      "sources": [
+        "SERVER"
+      ],
+      "scene": "SharedServer",
+      "start": 192.0,
+      "end": 201.0,
+      "source_in": 22,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 9,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-22",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 6,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/ambient/clips/b47-yosemite.mp4",
+      "title": "SHARED BLOCK CHANGES",
+      "body": [
+        "The server sends changes",
+        "to watching players."
+      ],
+      "chapter": "Server",
+      "sources": [
+        "SERVER"
+      ],
+      "start": 201.0,
+      "end": 207.0,
+      "source_in": 32,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 6,
+      "layout": "portrait_gameplay_panel",
+      "caption_group": "full-caption-23",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 9,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-yosemite.mp4",
+      "title": "THE MAP HAS ITS OWN DATA",
+      "body": [
+        "Client globe tiles can download data.",
+        "Its cache is local to that installation."
+      ],
+      "chapter": "Server",
+      "sources": [
+        "CACHE"
+      ],
+      "scene": "SharedServer",
+      "start": 207.0,
+      "end": 216.0,
+      "source_in": 20,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 9,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-24",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 6,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/ambient/clips/b47-rainier.mp4",
+      "title": "SEPARATE MACHINES, SEPARATE CACHES",
+      "body": [
+        "A server cache is not",
+        "automatically a client cache."
+      ],
+      "chapter": "Server",
+      "sources": [
+        "CACHE"
+      ],
+      "start": 216.0,
+      "end": 222.0,
+      "source_in": 32,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 6,
+      "layout": "portrait_gameplay_panel",
+      "caption_group": "full-caption-25",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "05 / OTHER GOOD APPROACHES",
+      "body": [
+        "Different projects. Different choices."
+      ],
+      "chapter": "Comparison",
+      "sources": [
+        "TERRA",
+        "TELLUS",
+        "DH",
+        "VOXY"
+      ],
+      "start": 222.0,
+      "end": 225.0,
+      "source_in": 6.7,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-26",
+      "source_duration": 2,
+      "layout": "landscape_full_frame",
+      "shot_label": "Fuji",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "05 / OTHER GOOD APPROACHES",
+      "body": [
+        "Different projects. Different choices."
+      ],
+      "chapter": "Comparison",
+      "sources": [
+        "TERRA",
+        "TELLUS",
+        "DH",
+        "VOXY"
+      ],
+      "start": 225.0,
+      "end": 228.0,
+      "source_in": 14,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-26",
+      "source_duration": 2,
+      "layout": "landscape_full_frame",
+      "shot_label": "Matterhorn",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 12,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-rainier.mp4",
+      "title": "EARTH GENERATION",
+      "body": [
+        "Terra++: 1:1 + CubicChunks",
+        "Tellus: configurable, tall worlds"
+      ],
+      "chapter": "Comparison",
+      "sources": [
+        "TERRA",
+        "TELLUS"
+      ],
+      "scene": "FairComparison",
+      "start": 228.0,
+      "end": 240.0,
+      "source_in": 20,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 12,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-27",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 12,
+      "kind": "gameplay",
+      "clip": "docs/release/trailer/ambient/clips/b47-matterhorn.mp4",
+      "title": "DISTANT HORIZONS",
+      "body": [
+        "Stock 3.3.4 uses 12-bit Y fields.",
+        "Tellus supplies a tall-world fork."
+      ],
+      "chapter": "Comparison",
+      "sources": [
+        "DH",
+        "TELLUS"
+      ],
+      "start": 240.0,
+      "end": 252.0,
+      "source_in": 14,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 12,
+      "layout": "portrait_gameplay_panel",
+      "caption_group": "full-caption-28",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 12,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-matterhorn.mp4",
+      "title": "TWO VALID LOD APPROACHES",
+      "body": [
+        "DH: columns with stacked spans",
+        "Voxy: 3D voxel hierarchy"
+      ],
+      "chapter": "Comparison",
+      "sources": [
+        "DH",
+        "VOXY"
+      ],
+      "scene": "FairComparison",
+      "start": 252.0,
+      "end": 264.0,
+      "source_in": 22,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 12,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-29",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "OUR CHOICE: CUBES + EARTH DATA",
+      "body": [
+        "Voxy-inspired far renderer.",
+        "Project credits: no copied code."
+      ],
+      "chapter": "Comparison",
+      "sources": [
+        "CUBES",
+        "DATA",
+        "FAR",
+        "INSPIRATION"
+      ],
+      "start": 264.0,
+      "end": 267.0,
+      "source_in": 46,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-30",
+      "source_duration": 3,
+      "layout": "landscape_full_frame",
+      "shot_label": "Yosemite",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "OUR CHOICE: CUBES + EARTH DATA",
+      "body": [
+        "Voxy-inspired far renderer.",
+        "Project credits: no copied code."
+      ],
+      "chapter": "Comparison",
+      "sources": [
+        "CUBES",
+        "DATA",
+        "FAR",
+        "INSPIRATION"
+      ],
+      "start": 267.0,
+      "end": 270.0,
+      "source_in": 10,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-30",
+      "source_duration": 3,
+      "layout": "landscape_full_frame",
+      "shot_label": "Everest",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 1.5,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "06 / STILL AN ALPHA",
+      "body": [
+        "No recreated real cities or roads.",
+        "Real buildings are not reproduced."
+      ],
+      "chapter": "Limits",
+      "sources": [
+        "LIMITS"
+      ],
+      "start": 270.0,
+      "end": 271.5,
+      "source_in": 29.5,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-31",
+      "source_duration": 1,
+      "layout": "landscape_full_frame",
+      "shot_label": "Uluru",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 1.5,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "06 / STILL AN ALPHA",
+      "body": [
+        "No recreated real cities or roads.",
+        "Real buildings are not reproduced."
+      ],
+      "chapter": "Limits",
+      "sources": [
+        "LIMITS"
+      ],
+      "start": 271.5,
+      "end": 273.0,
+      "source_in": 27,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-31",
+      "source_duration": 1,
+      "layout": "landscape_full_frame",
+      "shot_label": "Dunes",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "06 / STILL AN ALPHA",
+      "body": [
+        "No recreated real cities or roads.",
+        "Real buildings are not reproduced."
+      ],
+      "chapter": "Limits",
+      "sources": [
+        "LIMITS"
+      ],
+      "start": 273.0,
+      "end": 276.0,
+      "source_in": 17.5,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-31",
+      "source_duration": 2,
+      "layout": "landscape_full_frame",
+      "shot_label": "Grand Canyon",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 12,
+      "kind": "diagram",
+      "clip": "docs/release/trailer/ambient/clips/b47-fuji.mp4",
+      "title": "WHAT TO EXPECT",
+      "body": [
+        "Data can be missing or imperfect.",
+        "First visits may need downloads."
+      ],
+      "chapter": "Limits",
+      "sources": [
+        "LIMITS",
+        "CACHE"
+      ],
+      "scene": "HonestLimits",
+      "start": 276.0,
+      "end": 288.0,
+      "source_in": 8,
+      "playback": "continuous_source_no_loop",
+      "source_duration": 12,
+      "layout": "gameplay_left_diagram_right",
+      "caption_group": "full-caption-32",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "EARTH PLATFORM \u00b7 COMING SOON",
+      "body": [
+        "NOT AN OFFICIAL MINECRAFT PRODUCT.",
+        "NOT APPROVED BY OR ASSOCIATED WITH",
+        "MOJANG OR MICROSOFT."
+      ],
+      "chapter": "Limits",
+      "sources": [
+        "EDITORIAL"
+      ],
+      "start": 288.0,
+      "end": 291.0,
+      "source_in": 10,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-33",
+      "source_duration": 3,
+      "layout": "landscape_full_frame",
+      "shot_label": "Everest",
+      "playback_rate": 1.0
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "EARTH PLATFORM \u00b7 COMING SOON",
+      "body": [
+        "NOT AN OFFICIAL MINECRAFT PRODUCT.",
+        "NOT APPROVED BY OR ASSOCIATED WITH",
+        "MOJANG OR MICROSOFT."
+      ],
+      "chapter": "Limits",
+      "sources": [
+        "EDITORIAL"
+      ],
+      "start": 291.0,
+      "end": 294.0,
+      "source_in": 6.7,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-33",
+      "source_duration": 2,
+      "layout": "landscape_full_frame",
+      "shot_label": "Fuji",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "EARTH PLATFORM \u00b7 COMING SOON",
+      "body": [
+        "NOT AN OFFICIAL MINECRAFT PRODUCT.",
+        "NOT APPROVED BY OR ASSOCIATED WITH",
+        "MOJANG OR MICROSOFT."
+      ],
+      "chapter": "Limits",
+      "sources": [
+        "EDITORIAL"
+      ],
+      "start": 294.0,
+      "end": 297.0,
+      "source_in": 14,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-33",
+      "source_duration": 2,
+      "layout": "landscape_full_frame",
+      "shot_label": "Matterhorn",
+      "playback_rate": 0.6666666666666666
+    },
+    {
+      "duration": 3,
+      "kind": "gameplay",
+      "clip": "docs/release/videos/earth-platform-trailer-out-now.mp4",
+      "title": "EARTH PLATFORM \u00b7 COMING SOON",
+      "body": [
+        "NOT AN OFFICIAL MINECRAFT PRODUCT.",
+        "NOT APPROVED BY OR ASSOCIATED WITH",
+        "MOJANG OR MICROSOFT."
+      ],
+      "chapter": "Limits",
+      "sources": [
+        "EDITORIAL"
+      ],
+      "start": 297.0,
+      "end": 300.0,
+      "source_in": 46,
+      "playback": "trim_then_retime_no_loop",
+      "caption_group": "full-caption-33",
+      "source_duration": 3,
+      "layout": "landscape_full_frame",
+      "shot_label": "Yosemite",
+      "playback_rate": 1.0
+    }
+  ]
+}

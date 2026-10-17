@@ -1,0 +1,21 @@
+{
+  "renderer": "Manim Community Edition / Cairo",
+  "fps": 30,
+  "layouts": {
+    "landscape": [1920, 1080],
+    "portrait": [1080, 1920]
+  },
+  "palette": {"yellow": "#FFDD00", "white": "#FFFFFF", "ink": "#08080C", "navy": "#0C1830", "blue": "#2C68BE"},
+  "font": "Inter",
+  "scenes": [
+    {"name": "DataToBlocks", "nominal_seconds": 8.0, "section": "Data stack to height samples to blocks"},
+    {"name": "TrueHeight", "nominal_seconds": 6.9, "section": "One-meter blocks and current world height"},
+    {"name": "FarTerrainLOD", "nominal_seconds": 7.5, "section": "Voxel-size doubling and conceptual view cone"},
+    {"name": "SharedServer", "nominal_seconds": 7.7, "section": "Authoritative shared server and two clients"},
+    {"name": "FairComparison", "nominal_seconds": 6.45, "section": "Fair architecture comparison"},
+    {"name": "HonestLimits", "nominal_seconds": 6.4, "section": "Data, procedural details and limitations"}
+  ],
+  "duration_note": "Nominal sums; actual frame-quantized output duration must be read from ffprobe. Each scene includes a final two-second hold.",
+  "evidence": ["README.md", "docs/FAQ.md", "docs/PLAYING.md", "CREDITS.md"],
+  "claim_note": "Conceptual illustrations only. No fabricated gameplay comparisons, FPS figures, or real-city reconstruction. Technical authority/doubling claims must be approved by production claim audit."
+}
