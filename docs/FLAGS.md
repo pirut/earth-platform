@@ -42,6 +42,9 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.lodDepth` | on | `false` makes far terrain share the game's depth buffer under shader packs | `FarLod` |
 | `earthplatform.far.indexed` | on | `false` draws six corners per face instead of indexed faces | `FarGpu` |
 | `earthplatform.far.splitRanges` | `false` | Draws every group as its own range, for comparing | `FarGpu` |
+| `earthplatform.far.trackBytes` | on | `false` sums every column for each memory query, for comparing | `FarRenderer` |
+| `earthplatform.far.cachePick` | on | `false` rebuilds selection, sorting and face groups every frame, for comparing | `FarRenderer` |
+| `earthplatform.far.fastWater` | on | `false` restores full water scans and uniform updates, for comparing | `FarRenderer`, `FarLod` |
 
 ## Cubes, loading and networking
 
