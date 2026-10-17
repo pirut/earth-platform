@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.far;
 
+import io.earthplatform.geography.globe.TickShare;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
 import java.util.concurrent.ExecutorService;
@@ -61,6 +62,8 @@ public final class FarWorkers {
 
     public void execute(Runnable job) {
         threads.execute(() -> {
+            // Before taking a place, so a late server tick is not kept waiting by far terrain.
+            TickShare.giveWay();
             synchronized (gate) {
                 try {
                     while (running >= allowed()) gate.wait();
