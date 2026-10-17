@@ -3,7 +3,6 @@ package io.earthplatform.minecraft.cubic.play;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.earthplatform.minecraft.EarthPlatformMod;
-import io.earthplatform.minecraft.cubic.CubicEvents;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -101,7 +100,7 @@ final class EarthGuess {
                         if (player.isRemoved()) continue;
                         ids.add(player.getUUID());
                         NAMES.put(player.getUUID(), player.getGameProfile().getName());
-                        CubicEvents.travel(quiet, player, spot.latitude(), spot.longitude());
+                        EarthCommands.wander(quiet, player, spot);
                         player.sendSystemMessage(Component.literal("GeoGuessr! You're off to somewhere on Earth. Look around, then ")
                                 .append(Component.literal("[Make your guess]").withStyle(style -> style.withColor(ChatFormatting.AQUA)
                                         .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/earth guess"))

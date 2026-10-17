@@ -157,13 +157,23 @@ EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modifi
 
 ## Spawn picker globe (bundled)
 
-**What it gives Earth Platform:** The globe you spin to choose where you start, and the travel map.
+**What it gives Earth Platform:** The globe you spin to choose where you start, the travel map, and the server's web map.
 
 **Thank you** to NASA Earth Observatory and Reto Stöckli for the Blue Marble.
 
 **Attribution and license:**
 
 The globe on the Customize screen shows NASA's Blue Marble: NASA Earth Observatory, Reto Stöckli, *Blue Marble Next Generation* (July 2004, topography and bathymetry), https://visibleearth.nasa.gov/collection/1484/blue-marble. Public domain in the United States; credited as NASA asks. Close up, the globe also shows the elevation and land cover data credited above.
+
+## Country borders (bundled)
+
+**What it gives Earth Platform:** The country names shown as you cross a border, `/earth border country`, and the country in `/earth where`, GeoGuessr reveals and the web map.
+
+**Thank you** to Natural Earth and its volunteers for free, public domain map data.
+
+**Attribution and license:**
+
+Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com. Admin 0 countries at 1:50m, packed into `minecraft/src/main/resources/earthplatform/countries.bin` by `minecraft/scripts/countries.py`. Public domain.
 
 ## Test areas (source repository only)
 

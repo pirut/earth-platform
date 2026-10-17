@@ -107,7 +107,7 @@ final class EarthRace {
                     + current.place.label() + " in " + minutes + " minutes!").withStyle(ChatFormatting.GOLD), false);
             ItemStack reward = reward();
             if (!reward.isEmpty()) {
-                player.sendSystemMessage(Component.literal("Your prize: " + reward.getCount() + " " + reward.getHoverName().getString() + ".").withStyle(ChatFormatting.GREEN));
+                player.sendSystemMessage(Component.literal("Your prize: " + reward.getHoverName().getString() + (reward.getCount() > 1 ? " x" + reward.getCount() : "") + ".").withStyle(ChatFormatting.GREEN));
                 if (!player.getInventory().add(reward)) player.drop(reward, false);
             }
             return;

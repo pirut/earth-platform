@@ -141,13 +141,11 @@ public final class EarthRules {
         if (player.hasPermissions(2) && player.isCreative()) return;
         Vec3 back = INSIDE.get(player.getUUID());
         player.displayClientMessage(Component.literal("You've reached the edge of this server's map.").withStyle(ChatFormatting.RED), true);
-        if (back != null) {
-            player.teleportTo(player.serverLevel(), back.x, back.y, back.z, player.getYRot() + 180, player.getXRot());
-            player.setDeltaMovement(Vec3.ZERO);
-            player.resetFallDistance();
-        } else {
-            EarthWorlds.toSpawn(player.server.createCommandSourceStack().withSuppressedOutput(), player);
-        }
+        // Someone already outside when the border was drawn (or who arrived there by an operator's command) stays put.
+        if (back == null) return;
+        player.teleportTo(player.serverLevel(), back.x, back.y, back.z, player.getYRot() + 180, player.getXRot());
+        player.setDeltaMovement(Vec3.ZERO);
+        player.resetFallDistance();
     }
 
     /** Names the country a player has just crossed into, on screen. */

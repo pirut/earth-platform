@@ -24,6 +24,8 @@ AWS Terrain Tiles (streamed at runtime by `geography/.../globe/TerrariumTileSour
 
 NASA Blue Marble Next Generation (bundled as `minecraft/src/main/resources/assets/earthplatform/textures/globe/blue_marble.jpg`, the July 2004 topography and bathymetry image downscaled to 4096x2048 for the spawn picker globe): NASA Earth Observatory, Reto Stöckli, Blue Marble Next Generation, https://visibleearth.nasa.gov/collection/1484/blue-marble . NASA imagery is not subject to copyright in the United States; credited as NASA asks. The globe also draws AWS Terrain Tiles and ESA WorldCover at runtime, with the attributions above.
 
+Natural Earth Admin 0 countries, 1:50m (bundled as `minecraft/src/main/resources/earthplatform/countries.bin`, converted by `minecraft/scripts/countries.py`, for country names and country borders on servers): Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com. Public domain.
+
 Regional relief and surface appearance are explicitly procedural heuristics layered on pinned measurements. They are not additional measured elevation, climate, biome or geology data.
 
 Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm, BioScience 67(6):534-545, CC BY 4.0; derived 0.05 degree raster. Bundled as `minecraft/src/main/resources/earthplatform/ecoregions.png` (derived raster) and `ecoregions.tsv` (ecoregion names). https://doi.org/10.1093/biosci/bix014 . Changes: polygons rasterized to 0.05 degree cells.

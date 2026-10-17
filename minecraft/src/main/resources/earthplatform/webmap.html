@@ -39,15 +39,24 @@ function draw() {
     for (let k = -2; k <= 2; k++) ctx.drawImage(image, x0 + k * w, y0, w, h);
   }
   ctx.font = `${12 * devicePixelRatio}px system-ui, sans-serif`; ctx.textBaseline = 'middle';
-  const dot = (lat, lon, color, label, r) => {
-    const [x, y] = toScreen(lat, lon);
-    ctx.beginPath(); ctx.arc(x, y, r * devicePixelRatio, 0, 2 * Math.PI); ctx.fillStyle = color; ctx.fill();
+  // Dots first, players on top; then labels, players first, each moved down a line when another is already there.
+  const items = [];
+  if (data.spawn) items.push({ lat: data.spawn.lat, lon: data.spawn.lon, color: '#ffd84a', label: 'Spawn', r: 5 });
+  for (const w of data.warps) items.push({ lat: w.lat, lon: w.lon, color: '#7fd1ff', label: w.name, r: 4 });
+  for (const p of data.players) items.push({ lat: p.lat, lon: p.lon, color: '#5cff8a', label: p.name, r: 6 });
+  for (const it of items) {
+    [it.x, it.y] = toScreen(it.lat, it.lon);
+    ctx.beginPath(); ctx.arc(it.x, it.y, it.r * devicePixelRatio, 0, 2 * Math.PI); ctx.fillStyle = it.color; ctx.fill();
     ctx.lineWidth = 2 * devicePixelRatio; ctx.strokeStyle = '#000a'; ctx.stroke();
-    if (label) { ctx.fillStyle = '#000b'; ctx.fillText(label, x + 9 * devicePixelRatio, y + devicePixelRatio); ctx.fillStyle = '#fff'; ctx.fillText(label, x + 8 * devicePixelRatio, y); }
-  };
-  if (data.spawn) dot(data.spawn.lat, data.spawn.lon, '#ffd84a', 'Spawn', 5);
-  for (const w of data.warps) dot(w.lat, w.lon, '#7fd1ff', w.name, 4);
-  for (const p of data.players) dot(p.lat, p.lon, '#5cff8a', p.name, 6);
+  }
+  const placed = [], line = 14 * devicePixelRatio;
+  for (const it of items.reverse()) {
+    const lx = it.x + 8 * devicePixelRatio, width = ctx.measureText(it.label).width;
+    let ly = it.y;
+    while (placed.some(b => lx < b.x + b.w && b.x < lx + width && Math.abs(ly - b.y) < line)) ly += line;
+    placed.push({ x: lx, y: ly, w: width });
+    ctx.fillStyle = '#000b'; ctx.fillText(it.label, lx + devicePixelRatio, ly + devicePixelRatio); ctx.fillStyle = '#fff'; ctx.fillText(it.label, lx, ly);
+  }
 }
 function list() {
   const ul = document.getElementById('list'); ul.innerHTML = '';

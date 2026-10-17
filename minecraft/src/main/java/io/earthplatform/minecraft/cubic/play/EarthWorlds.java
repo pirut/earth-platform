@@ -389,13 +389,14 @@ public final class EarthWorlds {
                     .append(Component.literal("; "))
                     .append(command("/earth places", "/earth places"))
                     .append(Component.literal(" lists famous spots.")));
+            String credits = cubes.generator().credits();
+            if (!credits.isEmpty()) player.sendSystemMessage(Component.literal(credits).withStyle(ChatFormatting.DARK_GRAY));
+            // After the credits, so it is the last line in chat and not scrolled away.
             if (EarthCommands.mayChooseStart(player))
                 player.sendSystemMessage(Component.literal("You can choose where you start, once: ")
                         .append(Component.literal("[Choose on the map]").withStyle(style -> style.withColor(ChatFormatting.AQUA)
                                 .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/earth start"))
                                 .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("Opens the globe"))))));
-            String credits = cubes.generator().credits();
-            if (!credits.isEmpty()) player.sendSystemMessage(Component.literal(credits).withStyle(ChatFormatting.DARK_GRAY));
             EarthBasics.bonusChest(level, cubicFolder(server), spot, player);
         }
     }

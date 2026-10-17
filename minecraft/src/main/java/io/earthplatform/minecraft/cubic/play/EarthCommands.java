@@ -47,26 +47,22 @@ final class EarthCommands {
     private static final int RANDOM_TRIES = 40;
     /** Ground at least this high is land to a random trip; lower is sea or shoreline. */
     private static final double LAND_METRES = 2;
+    /** How far from a random spot the land check looks for sea, in kilometers. */
+    private static final double COAST_KM = 4;
 
     private EarthCommands() {}
 
     static void register(LiteralArgumentBuilder<CommandSourceStack> root) {
         // The server spawn.
-        var spawn = Commands.literal("spawn").requires(EarthCommands::mayUseHomes).executes(context -> {
-            ServerPlayer player = context.getSource().getPlayerOrException();
-            EarthGenerator earth = earth(context.getSource());
-            GeoPoint to = earth == null ? null : spawnPoint(context.getSource(), earth);
-            if (to != null && !EarthRules.pay(context.getSource(), player, to.latitude(), to.longitude())) return 0;
-            return EarthWorlds.toSpawn(context.getSource(), player);
-        });
-        spawn.then(Commands.literal("set").requires(EarthCommands::op)
-                .then(spot(spot -> context -> setSpawn(context.getSource(), spot.apply(context)))));
+        var spawn = Commands.literal("spawn").requires(EarthCommands::mayUseHomes)
+                .executes(context -> ownSpawn(context.getSource(), context.getSource().getPlayerOrException()));
+        spawn.then(spots(Commands.literal("set").requires(EarthCommands::op), spot -> context -> setSpawn(context.getSource(), spot.apply(context))));
         spawn.then(Commands.literal("pick").requires(EarthCommands::op).executes(context -> pick(context.getSource(), EarthMap.PICK_SPAWN)));
         spawn.then(Commands.literal("reset").requires(EarthCommands::op).executes(context -> setSpawn(context.getSource(), null)));
         spawn.then(Commands.literal("info").requires(EarthCommands::op).executes(context -> info(context.getSource())));
-        spawn.then(Commands.literal("player").requires(EarthCommands::op).then(Commands.argument("players", EntityArgument.players())
-                .then(Commands.literal("reset").executes(context -> setSpawn(context.getSource(), EntityArgument.getPlayers(context, "players"), null)))
-                .then(spot(spot -> context -> setSpawn(context.getSource(), EntityArgument.getPlayers(context, "players"), spot.apply(context))))));
+        spawn.then(Commands.literal("player").requires(EarthCommands::op).then(spots(Commands.argument("players", EntityArgument.players())
+                .then(Commands.literal("reset").executes(context -> setSpawn(context.getSource(), EntityArgument.getPlayers(context, "players"), null))),
+                spot -> context -> setSpawn(context.getSource(), EntityArgument.getPlayers(context, "players"), spot.apply(context)))));
         root.then(spawn);
 
         // Homes.
@@ -81,8 +77,8 @@ final class EarthCommands {
                         .executes(context -> randomSelf(context.getSource(), DoubleArgumentType.getDouble(context, "km")))));
 
         // Sending players places, for operators and the console.
-        root.then(Commands.literal("send").requires(EarthCommands::op).then(Commands.argument("players", EntityArgument.players())
-                .then(spot(spot -> context -> send(context.getSource(), EntityArgument.getPlayers(context, "players"), spot.apply(context))))
+        root.then(Commands.literal("send").requires(EarthCommands::op).then(spots(Commands.argument("players", EntityArgument.players()),
+                        spot -> context -> send(context.getSource(), EntityArgument.getPlayers(context, "players"), spot.apply(context)))
                 .then(Commands.literal("spawn").executes(context -> {
                     int sent = 0;
                     for (ServerPlayer player : EntityArgument.getPlayers(context, "players")) sent += EarthWorlds.toSpawn(context.getSource(), player);
@@ -104,17 +100,17 @@ final class EarthCommands {
         root.then(Commands.literal("warp").requires(EarthCommands::mayUseHomes).then(Commands.argument("name", StringArgumentType.word())
                 .suggests((context, builder) -> SharedSuggestionProvider.suggest(EarthSpawns.of(context.getSource().getServer()).warps().keySet(), builder))
                 .executes(context -> warp(context.getSource(), StringArgumentType.getString(context, "name")))));
-        root.then(Commands.literal("setwarp").requires(EarthCommands::op).then(Commands.argument("name", StringArgumentType.word())
-                .then(spot(spot -> context -> setWarp(context.getSource(), StringArgumentType.getString(context, "name"), spot.apply(context))))));
+        root.then(Commands.literal("setwarp").requires(EarthCommands::op).then(spots(Commands.argument("name", StringArgumentType.word()),
+                spot -> context -> setWarp(context.getSource(), StringArgumentType.getString(context, "name"), spot.apply(context)))));
         root.then(Commands.literal("delwarp").requires(EarthCommands::op).then(Commands.argument("name", StringArgumentType.word())
                 .suggests((context, builder) -> SharedSuggestionProvider.suggest(EarthSpawns.of(context.getSource().getServer()).warps().keySet(), builder))
                 .executes(context -> setWarp(context.getSource(), StringArgumentType.getString(context, "name"), null))));
 
         // Team starts: each scoreboard team spawns in its own place.
         root.then(Commands.literal("team").requires(EarthCommands::op).then(Commands.argument("team", TeamArgument.team())
-                .then(Commands.literal("spawn")
-                        .then(Commands.literal("reset").executes(context -> setTeam(context.getSource(), TeamArgument.getTeam(context, "team"), null)))
-                        .then(spot(spot -> context -> setTeam(context.getSource(), TeamArgument.getTeam(context, "team"), spot.apply(context)))))));
+                .then(spots(Commands.literal("spawn")
+                        .then(Commands.literal("reset").executes(context -> setTeam(context.getSource(), TeamArgument.getTeam(context, "team"), null))),
+                        spot -> context -> setTeam(context.getSource(), TeamArgument.getTeam(context, "team"), spot.apply(context))))));
         root.then(Commands.literal("teams").requires(EarthCommands::op).then(Commands.literal("spread")
                 .executes(context -> spread(context.getSource(), 2000))
                 .then(Commands.argument("km", DoubleArgumentType.doubleArg(0, 10_000))
@@ -149,10 +145,10 @@ final class EarthCommands {
     private interface Run { int run(CommandContext<CommandSourceStack> context) throws CommandSyntaxException; }
 
     /**
-     * The three ways to name a spot, each running {@code then} with it: {@code <latitude> <longitude>},
+     * Adds to {@code parent} the three ways to name a spot, each running {@code then} with it: {@code <latitude> <longitude>},
      * {@code place <famous place>} and {@code here}, where the one running the command stands.
      */
-    private static ArgumentBuilder<CommandSourceStack, ?> spot(Function<SpotArgument, Run> then) {
+    private static <T extends ArgumentBuilder<CommandSourceStack, T>> T spots(T parent, Function<SpotArgument, Run> then) {
         Run coordinates = then.apply(context -> EarthSpawns.Spot.at(DoubleArgumentType.getDouble(context, "latitude"), DoubleArgumentType.getDouble(context, "longitude")));
         Run place = then.apply(context -> {
             String query = StringArgumentType.getString(context, "place");
@@ -164,9 +160,9 @@ final class EarthCommands {
             if (point == null) throw new SimpleCommandExceptionType(Component.literal("You are not on the Earth.")).create();
             return EarthSpawns.Spot.at(point.latitude(), point.longitude());
         });
-        return Commands.literal("to")
+        return parent.then(Commands.literal("to")
                 .then(Commands.argument("latitude", DoubleArgumentType.doubleArg(-80, 80))
-                        .then(Commands.argument("longitude", DoubleArgumentType.doubleArg(-180, 180)).executes(coordinates::run)))
+                        .then(Commands.argument("longitude", DoubleArgumentType.doubleArg(-180, 180)).executes(coordinates::run))))
                 .then(Commands.literal("place").then(Commands.argument("place", StringArgumentType.greedyString())
                         .suggests((context, builder) -> SharedSuggestionProvider.suggest(EarthPlaces.all().stream().map(EarthPlaces.Place::id), builder))
                         .executes(place::run)))
@@ -200,6 +196,14 @@ final class EarthCommands {
 
     private static int travel(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot) {
         return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), spot.viewLatitude(), spot.viewLongitude());
+    }
+
+    /**
+     * A trip to a spot nobody chose, such as a random one: it searches for good ground as far as a
+     * famous place's does, rather than landing on the nearest dry block or the water.
+     */
+    static int wander(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot) {
+        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), spot.latitude(), spot.longitude());
     }
 
     // The server spawn ---------------------------------------------------------------------------
@@ -260,24 +264,33 @@ final class EarthCommands {
     private static int home(CommandSourceStack source, ServerPlayer player) {
         Optional<EarthSpawns.Spot> home = EarthSpawns.of(source.getServer()).home(player.getUUID());
         if (home.isEmpty()) {
-            EarthGenerator earth = earth(source);
-            GeoPoint to = earth == null ? null : spawnPoint(source, earth);
-            if (to != null && !EarthRules.pay(source, player, to.latitude(), to.longitude())) return 0;
-            if (source.getPlayer() == player) source.sendSuccess(() -> Component.literal("You have no home yet (set one with /earth sethome); going to the server spawn.")
+            if (source.getPlayer() == player) source.sendSuccess(() -> Component.literal("You have no home yet (set one with /earth sethome); going to your spawn.")
                     .withStyle(ChatFormatting.GRAY), false);
-            return EarthWorlds.toSpawn(source, player);
+            return ownSpawn(source, player);
         }
         if (!EarthRules.pay(source, player, home.get().latitude(), home.get().longitude())) return 0;
         return travel(source, player, home.get());
+    }
+
+    /** Takes a player to where they spawn: their own or their team's spawn when an operator gave one, else the server spawn. */
+    private static int ownSpawn(CommandSourceStack source, ServerPlayer player) {
+        Optional<EarthSpawns.Spot> own = EarthSpawns.of(source.getServer()).personal(player);
+        if (own.isPresent()) {
+            if (!EarthRules.pay(source, player, own.get().latitude(), own.get().longitude())) return 0;
+            return travel(source, player, own.get());
+        }
+        EarthGenerator earth = earth(source);
+        GeoPoint to = earth == null ? null : spawnPoint(source, earth);
+        if (to != null && !EarthRules.pay(source, player, to.latitude(), to.longitude())) return 0;
+        return EarthWorlds.toSpawn(source, player);
     }
 
     // Sending and random trips -------------------------------------------------------------------
 
     private static int send(CommandSourceStack source, Collection<ServerPlayer> players, EarthSpawns.Spot spot) {
         for (ServerPlayer player : players) {
-            if (source.getPlayer() != player)
+            if (travel(source, player, spot) > 0 && source.getPlayer() != player)
                 player.sendSystemMessage(Component.literal("Sending you to " + spot.label() + ".").withStyle(ChatFormatting.GREEN));
-            travel(source, player, spot);
         }
         return players.size();
     }
@@ -305,7 +318,7 @@ final class EarthCommands {
                             return;
                         }
                         player.sendSystemMessage(Component.literal("Random trip to " + spot.label() + ".").withStyle(ChatFormatting.GREEN));
-                        travel(source, player, spot);
+                        wander(source, player, spot);
                     }));
         }
         return players.size();
@@ -319,7 +332,7 @@ final class EarthCommands {
             double[] point = km > 0 && centre != null ? near(random, centre, km) : border != null ? within(random, border) : anywhere(random);
             if (border != null && !border.contains(point[0], point[1])) continue;
             checked++;
-            if (earth.roughMetres(point[0], point[1]) >= LAND_METRES) return EarthSpawns.Spot.at(point[0], point[1]);
+            if (land(earth, point[0], point[1])) return EarthSpawns.Spot.at(point[0], point[1]);
         }
         return null;
     }
@@ -327,6 +340,17 @@ final class EarthCommands {
     /** A random spot on land for a round or a team, read from the server's border on the server thread. */
     @Nullable static EarthSpawns.Spot randomLand(net.minecraft.server.MinecraftServer server, EarthGenerator earth, RandomSource random, @Nullable GeoPoint centre, double km) {
         return randomLand(earth, random, EarthSpawns.of(server).border().orElse(null), centre, km);
+    }
+
+    /**
+     * Whether a point is well onto land: above {@link #LAND_METRES} there and a few kilometers away
+     * every way, so a trip doesn't drop someone on a shoreline or into a lagoon.
+     */
+    static boolean land(EarthGenerator earth, double latitude, double longitude) {
+        if (earth.roughMetres(latitude, longitude) < LAND_METRES) return false;
+        double dLat = COAST_KM / 111.32, dLon = COAST_KM / (111.32 * Math.max(0.05, Math.cos(Math.toRadians(latitude))));
+        return earth.roughMetres(latitude + dLat, longitude) >= LAND_METRES && earth.roughMetres(latitude - dLat, longitude) >= LAND_METRES
+                && earth.roughMetres(latitude, longitude + dLon) >= LAND_METRES && earth.roughMetres(latitude, longitude - dLon) >= LAND_METRES;
     }
 
     /** A point drawn evenly over the surface within a border's extent. */
@@ -388,7 +412,8 @@ final class EarthCommands {
         EarthSpawns.Spot named = spot == null || !spot.name().isEmpty() ? spot
                 : new EarthSpawns.Spot(spot.latitude(), spot.longitude(), spot.viewLatitude(), spot.viewLongitude(), name);
         spawns.setWarp(name, named);
-        source.sendSuccess(() -> Component.literal(named == null ? "Removed warp " + name + "." : "Warp " + name + " set at " + named.label() + ".")
+        source.sendSuccess(() -> Component.literal(named == null ? "Removed warp " + name + "."
+                        : String.format(java.util.Locale.ROOT, "Warp %s set at %.4f, %.4f.", name, named.latitude(), named.longitude()))
                 .withStyle(ChatFormatting.GREEN), true);
         return 1;
     }
