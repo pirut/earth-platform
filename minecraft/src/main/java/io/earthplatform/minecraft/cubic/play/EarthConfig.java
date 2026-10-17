@@ -39,6 +39,14 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue ANYONE_CAN_TRAVEL;
     public static final ModConfigSpec.BooleanValue ANYONE_CAN_USE_HOMES;
     public static final ModConfigSpec.BooleanValue PLAYERS_CHOOSE_START;
+    public static final ModConfigSpec.BooleanValue TELEPORT_REQUESTS;
+    public static final ModConfigSpec.BooleanValue SHOW_PLAYERS_ON_MAP;
+    public static final ModConfigSpec.BooleanValue COUNTRY_NAMES;
+    public static final ModConfigSpec.IntValue TRAVEL_LEVELS_PER_1000_KM;
+    public static final ModConfigSpec.IntValue TRAVEL_COOLDOWN;
+    public static final ModConfigSpec.BooleanValue DAILY_RACE;
+    public static final ModConfigSpec.ConfigValue<String> RACE_REWARD;
+    public static final ModConfigSpec.IntValue WEB_MAP_PORT;
 
     static {
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
@@ -81,6 +89,24 @@ public final class EarthConfig {
         PLAYERS_CHOOSE_START = common.comment("Let each new player choose, once, where they start on a globe; they respawn there after that",
                         "when they have no bed. Operators can reset a player's choice with /earth spawn player <name> reset.")
                 .translation(key("playersChooseStart")).define("playersChooseStart", false);
+        TELEPORT_REQUESTS = common.comment("Let players ask to teleport to each other with /earth tpa and /earth tpahere.")
+                .translation(key("teleportRequests")).define("teleportRequests", true);
+        SHOW_PLAYERS_ON_MAP = common.comment("Show other players as dots on the travel map and the spawn picker.")
+                .translation(key("showPlayersOnMap")).define("showPlayersOnMap", true);
+        COUNTRY_NAMES = common.comment("Show \"Now entering <country>\" on screen when a player crosses a border (Natural Earth borders).")
+                .translation(key("countryNames")).define("countryNames", true);
+        TRAVEL_LEVELS_PER_1000_KM = common.comment("What a trip by command costs players in survival, in experience levels per 1000 km (at least 1).",
+                        "Operators and creative players travel free. 0 makes travel free for everyone.")
+                .translation(key("travelLevels")).defineInRange("travelLevelsPer1000Km", 0, 0, 1000);
+        TRAVEL_COOLDOWN = common.comment("Seconds a survival player waits between trips by command. 0 for none.")
+                .translation(key("travelCooldown")).defineInRange("travelCooldownSeconds", 0, 0, 86_400);
+        DAILY_RACE = common.comment("Start a race to a random famous place each day (UTC) once someone is online. Operators can always start one with /earth race start.")
+                .translation(key("dailyRace")).define("dailyRace", false);
+        RACE_REWARD = common.comment("The race winner's prize: an item and a count, such as \"minecraft:diamond 5\". Empty for none.")
+                .translation(key("raceReward")).define("raceReward", "minecraft:diamond 5");
+        WEB_MAP_PORT = common.comment("Serve a live web map of the players at http://<server>:<port>/ for sharing outside the game. 0 turns it off.",
+                        "It shows player names and where they are to anyone who can reach the port.")
+                .translation(key("webMapPort")).gameRestart().defineInRange("webMapPort", 0, 0, 65_535);
         COMMON_SPEC = common.build();
 
         var container = ModList.get().getModContainerById(EarthPlatformMod.MOD_ID).orElseThrow();

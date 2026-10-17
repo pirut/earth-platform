@@ -84,7 +84,9 @@ public final class EarthWorlds {
             event.registrar("earth-1").playToClient(EarthStatus.Payload.TYPE, EarthStatus.Payload.CODEC,
                     (payload, context) -> { if (FMLEnvironment.dist.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthPlayClient.status(payload); })
                     .playToClient(EarthMap.Payload.TYPE, EarthMap.Payload.CODEC,
-                    (payload, context) -> { if (FMLEnvironment.dist.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.received(payload); });
+                    (payload, context) -> { if (FMLEnvironment.dist.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.received(payload); })
+                    .playToClient(EarthMap.Players.TYPE, EarthMap.Players.CODEC,
+                    (payload, context) -> { if (FMLEnvironment.dist.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.others(payload); });
         }
     }
 
@@ -269,7 +271,7 @@ public final class EarthWorlds {
                     if (player != null) release(player);
                     continue;
                 }
-                Optional<EarthSpawns.Spot> own = EarthSpawns.of(server).spawn(id);
+                Optional<EarthSpawns.Spot> own = EarthSpawns.of(server).personal(player);
                 if (own.isPresent()) {
                     // A spawn of their own: travel there, held up here until the trip lands; tried again if it fails.
                     hold(player);
@@ -422,8 +424,11 @@ public final class EarthWorlds {
                         .executes(context -> visit(context.getSource(), StringArgumentType.getString(context, "place")))));
         root.then(Commands.literal("goto").requires(EarthWorlds::mayTravel)
                 .then(Commands.argument("latitude", DoubleArgumentType.doubleArg(-80, 80))
-                        .then(Commands.argument("longitude", DoubleArgumentType.doubleArg(-180, 180)).executes(context -> CubicEvents.travel(context.getSource(),
-                                        DoubleArgumentType.getDouble(context, "latitude"), DoubleArgumentType.getDouble(context, "longitude")))
+                        .then(Commands.argument("longitude", DoubleArgumentType.doubleArg(-180, 180)).executes(context -> {
+                                    double latitude = DoubleArgumentType.getDouble(context, "latitude"), longitude = DoubleArgumentType.getDouble(context, "longitude");
+                                    if (!EarthRules.pay(context.getSource(), context.getSource().getPlayerOrException(), latitude, longitude)) return 0;
+                                    return CubicEvents.travel(context.getSource(), latitude, longitude);
+                                })
                                 // Operators and the console can send someone else.
                                 .then(Commands.argument("player", EntityArgument.player()).requires(source -> source.hasPermission(2))
                                         .executes(context -> CubicEvents.travel(context.getSource(), EntityArgument.getPlayer(context, "player"),
@@ -431,7 +436,11 @@ public final class EarthWorlds {
         // The creative travel map: the client opens it with a key, through this command.
         root.then(Commands.literal("map").requires(EarthWorlds::mayTravel).executes(context -> EarthMap.open(context.getSource())));
         EarthCommands.register(root);
-        root.then(Commands.literal("where").executes(context -> CubicEvents.where(context.getSource())));
+        EarthTeleports.register(root);
+        EarthRace.register(root);
+        EarthGuess.register(root);
+        EarthAdmin.register(root);
+        root.then(Commands.literal("where").executes(context -> where(context.getSource())));
         root.then(Commands.literal("places").executes(context -> places(context.getSource())));
         dispatcher.register(root);
     }
@@ -464,7 +473,8 @@ public final class EarthWorlds {
             source.sendFailure(Component.literal("No famous place called '" + query + "'. Try /earth places, or /earth goto <latitude> <longitude>."));
             return 0;
         }
-        source.sendSuccess(() -> Component.literal("Travelling to " + place.get().label() + ".").withStyle(ChatFormatting.GREEN), false);
+        if (!EarthRules.pay(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude())) return 0;
+        source.sendSuccess(() -> Component.literal("Traveling to " + place.get().label() + ".").withStyle(ChatFormatting.GREEN), false);
         return CubicEvents.travel(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude(),
                 place.get().viewLatitude(), place.get().viewLongitude());
     }
@@ -496,6 +506,16 @@ public final class EarthWorlds {
     static void spawnMoved() {
         Session running = session;
         if (running != null) running.moved();
+    }
+
+    /** Where the player is, with the country, unless that would give a GeoGuessr round away. */
+    private static int where(CommandSourceStack source) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        ServerPlayer player = source.getPlayerOrException();
+        if (EarthGuess.playing(player)) { source.sendFailure(Component.literal("Nice try! Make your guess with /earth guess.")); return 0; }
+        int result = CubicEvents.where(source);
+        String country = EarthRules.country(player);
+        if (result > 0 && !country.isEmpty()) source.sendSuccess(() -> Component.literal("In " + country + "."), false);
+        return result;
     }
 
     private static int places(CommandSourceStack source) {

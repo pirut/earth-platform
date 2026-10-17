@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Earth server map</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05070d; color: #e8eef7; font: 14px system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  #panel { position: fixed; top: 12px; left: 12px; background: rgba(10, 14, 24, .85); border-radius: 8px; padding: 10px 14px; max-width: min(320px, calc(100% - 48px)); }
+  #panel h1 { font-size: 15px; margin: 0 0 6px; }
+  #list { margin: 0; padding: 0; list-style: none; max-height: 50vh; overflow: auto; }
+  #list li { padding: 3px 0; cursor: pointer; }
+  #list li span { color: #9fb3c8; }
+  #note { position: fixed; bottom: 8px; right: 12px; color: #8090a0; font-size: 12px; }
+</style>
+</head>
+<body>
+<canvas id="map"></canvas>
+<div id="panel"><h1 id="title">Earth server</h1><ul id="list"></ul></div>
+<div id="note">Drag to pan, scroll to zoom. Imagery: NASA Blue Marble. Updates every few seconds.</div>
+<script>
+const canvas = document.getElementById('map'), ctx = canvas.getContext('2d');
+const image = new Image(); image.src = 'earth.jpg'; image.onload = draw;
+let data = { players: [], warps: [] }, view = { lon: 0, lat: 20, zoom: 1 }, drag = null;
+
+function size() { canvas.width = innerWidth * devicePixelRatio; canvas.height = innerHeight * devicePixelRatio; draw(); }
+function scale() { return canvas.width / 360 * view.zoom; }
+function toScreen(lat, lon) {
+  const s = scale(); let dx = lon - view.lon; dx -= 360 * Math.round(dx / 360);
+  return [canvas.width / 2 + dx * s, canvas.height / 2 - (lat - view.lat) * s];
+}
+function draw() {
+  const s = scale(), w = 360 * s, h = 180 * s;
+  ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (image.complete && image.naturalWidth) {
+    const x0 = canvas.width / 2 - (view.lon + 180) * s, y0 = canvas.height / 2 - (90 - view.lat) * s;
+    for (let k = -2; k <= 2; k++) ctx.drawImage(image, x0 + k * w, y0, w, h);
+  }
+  ctx.font = `${12 * devicePixelRatio}px system-ui, sans-serif`; ctx.textBaseline = 'middle';
+  const dot = (lat, lon, color, label, r) => {
+    const [x, y] = toScreen(lat, lon);
+    ctx.beginPath(); ctx.arc(x, y, r * devicePixelRatio, 0, 2 * Math.PI); ctx.fillStyle = color; ctx.fill();
+    ctx.lineWidth = 2 * devicePixelRatio; ctx.strokeStyle = '#000a'; ctx.stroke();
+    if (label) { ctx.fillStyle = '#000b'; ctx.fillText(label, x + 9 * devicePixelRatio, y + devicePixelRatio); ctx.fillStyle = '#fff'; ctx.fillText(label, x + 8 * devicePixelRatio, y); }
+  };
+  if (data.spawn) dot(data.spawn.lat, data.spawn.lon, '#ffd84a', 'Spawn', 5);
+  for (const w of data.warps) dot(w.lat, w.lon, '#7fd1ff', w.name, 4);
+  for (const p of data.players) dot(p.lat, p.lon, '#5cff8a', p.name, 6);
+}
+function list() {
+  const ul = document.getElementById('list'); ul.innerHTML = '';
+  document.getElementById('title').textContent = (data.motd || 'Earth server') + ` (${data.players.length} online)`;
+  for (const p of data.players) {
+    const li = document.createElement('li');
+    li.textContent = p.name + ' ';
+    const where = document.createElement('span'); where.textContent = p.country || `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}`;
+    li.appendChild(where);
+    li.onclick = () => { view.lat = p.lat; view.lon = p.lon; view.zoom = Math.max(view.zoom, 16); draw(); };
+    ul.appendChild(li);
+  }
+}
+async function poll() {
+  try { data = await (await fetch('players.json', { cache: 'no-store' })).json(); list(); draw(); } catch (e) {}
+  setTimeout(poll, 3000);
+}
+canvas.onmousedown = e => { drag = [e.clientX, e.clientY, view.lon, view.lat]; canvas.classList.add('dragging'); };
+onmouseup = () => { drag = null; canvas.classList.remove('dragging'); };
+onmousemove = e => {
+  if (!drag) return; const s = scale() / devicePixelRatio;
+  view.lon = drag[2] - (e.clientX - drag[0]) / s; view.lat = Math.max(-85, Math.min(85, drag[3] + (e.clientY - drag[1]) / s)); draw();
+};
+canvas.onwheel = e => { e.preventDefault(); view.zoom = Math.max(1, Math.min(4000, view.zoom * Math.exp(-e.deltaY / 400))); draw(); };
+let touch = null;
+canvas.ontouchstart = e => { const t = e.touches[0]; touch = [t.clientX, t.clientY, view.lon, view.lat]; };
+canvas.ontouchmove = e => {
+  e.preventDefault(); if (!touch) return; const t = e.touches[0], s = scale() / devicePixelRatio;
+  view.lon = touch[2] - (t.clientX - touch[0]) / s; view.lat = Math.max(-85, Math.min(85, touch[3] + (t.clientY - touch[1]) / s)); draw();
+};
+addEventListener('resize', size); size(); poll();
+</script>
+</body>
+</html>

@@ -389,6 +389,13 @@ public final class CubicEvents {
             source.sendFailure(Component.literal("This save's cubic world is not the Earth."));
             return 0;
         }
+        // The server's rules, such as a region border, may refuse the trip.
+        String refused = io.earthplatform.minecraft.cubic.play.EarthRules.refuse(player, latitude, longitude);
+        if (refused != null) {
+            source.sendFailure(Component.literal(refused));
+            io.earthplatform.minecraft.cubic.play.EarthMap.failed(player);
+            return 0;
+        }
         int[] target = earth.block(latitude, longitude);
         int[] view = Double.isNaN(viewLatitude) ? null : earth.block(viewLatitude, viewLongitude);
         source.sendSuccess(() -> Component.literal("Fetching terrain around " + earth.place(target[0], target[1]) + "...").withStyle(ChatFormatting.GRAY), false);

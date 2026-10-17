@@ -54,6 +54,31 @@ public final class EarthSpawns extends SavedData {
     private final Map<UUID, Spot> spawns = new HashMap<>(), homes = new HashMap<>();
     /** Players who have used their one choice of start. */
     private final Set<UUID> started = new HashSet<>();
+    /** Named spots anyone may go to, in the order they were made. */
+    private final Map<String, Spot> warps = new java.util.TreeMap<>();
+    /** Spawns of scoreboard teams, by team name. */
+    private final Map<String, Spot> teams = new HashMap<>();
+    /** Where players may go, or null for the whole Earth. */
+    @Nullable private Border border;
+    /** The day (since 1970, in UTC) the last daily race started. */
+    private long raceDay = -1;
+
+    /**
+     * A limit on where players may go: a latitude and longitude box, or a country's borders when
+     * {@code country} is set (then the box is its extent).
+     */
+    public record Border(double south, double west, double north, double east, String country) {
+        public boolean contains(double latitude, double longitude) {
+            if (latitude < south || latitude > north || longitude < west || longitude > east) return false;
+            if (country.isEmpty()) return true;
+            EarthCountries.Country found = EarthCountries.find(country).orElse(null);
+            return found == null || found.contains(latitude, longitude);
+        }
+
+        public String label() {
+            return country.isEmpty() ? String.format(java.util.Locale.ROOT, "%.3f to %.3f latitude, %.3f to %.3f longitude", south, north, west, east) : country;
+        }
+    }
 
     public static EarthSpawns of(MinecraftServer server) {
         return server.overworld().getDataStorage().computeIfAbsent(new SavedData.Factory<>(EarthSpawns::new, EarthSpawns::load, null), NAME);
@@ -63,6 +88,31 @@ public final class EarthSpawns extends SavedData {
     public Optional<Spot> spawn(UUID player) { return Optional.ofNullable(spawns.get(player)); }
     public Optional<Spot> home(UUID player) { return Optional.ofNullable(homes.get(player)); }
     public boolean started(UUID player) { return started.contains(player); }
+    public Map<String, Spot> warps() { return java.util.Collections.unmodifiableMap(warps); }
+    public Optional<Spot> team(String team) { return Optional.ofNullable(teams.get(team)); }
+    public Optional<Border> border() { return Optional.ofNullable(border); }
+    public long raceDay() { return raceDay; }
+
+    /** A player's own spawn, else their team's; empty when they spawn at the server spawn. */
+    public Optional<Spot> personal(net.minecraft.world.entity.player.Player player) {
+        Spot own = spawns.get(player.getUUID());
+        if (own != null) return Optional.of(own);
+        var team = player.getTeam();
+        return team == null ? Optional.empty() : team(team.getName());
+    }
+
+    public void setWarp(String name, @Nullable Spot spot) {
+        if (spot == null) warps.remove(name); else warps.put(name, spot);
+        setDirty();
+    }
+
+    public void setTeam(String team, @Nullable Spot spot) {
+        if (spot == null) teams.remove(team); else teams.put(team, spot);
+        setDirty();
+    }
+
+    public void setBorder(@Nullable Border border) { this.border = border; setDirty(); }
+    public void setRaceDay(long day) { raceDay = day; setDirty(); }
 
     public void setSpawn(@Nullable Spot spot) { spawn = spot; setDirty(); }
 
@@ -87,6 +137,15 @@ public final class EarthSpawns extends SavedData {
         if (tag.contains("spawn")) spawns.spawn = Spot.load(tag.getCompound("spawn"));
         read(tag.getCompound("spawns"), spawns.spawns);
         read(tag.getCompound("homes"), spawns.homes);
+        CompoundTag warps = tag.getCompound("warps");
+        for (String name : warps.getAllKeys()) spawns.warps.put(name, Spot.load(warps.getCompound(name)));
+        CompoundTag teams = tag.getCompound("teams");
+        for (String name : teams.getAllKeys()) spawns.teams.put(name, Spot.load(teams.getCompound(name)));
+        if (tag.contains("border")) {
+            CompoundTag b = tag.getCompound("border");
+            spawns.border = new Border(b.getDouble("south"), b.getDouble("west"), b.getDouble("north"), b.getDouble("east"), b.getString("country"));
+        }
+        if (tag.contains("raceDay")) spawns.raceDay = tag.getLong("raceDay");
         for (Tag id : tag.getList("started", Tag.TAG_STRING)) {
             try { spawns.started.add(UUID.fromString(id.getAsString())); } catch (IllegalArgumentException ignored) {}
         }
@@ -112,6 +171,19 @@ public final class EarthSpawns extends SavedData {
         var list = new net.minecraft.nbt.ListTag();
         for (UUID id : started) list.add(net.minecraft.nbt.StringTag.valueOf(id.toString()));
         tag.put("started", list);
+        CompoundTag warpTag = new CompoundTag();
+        warps.forEach((name, spot) -> warpTag.put(name, spot.save()));
+        tag.put("warps", warpTag);
+        CompoundTag teamTag = new CompoundTag();
+        teams.forEach((name, spot) -> teamTag.put(name, spot.save()));
+        tag.put("teams", teamTag);
+        if (border != null) {
+            CompoundTag b = new CompoundTag();
+            b.putDouble("south", border.south); b.putDouble("west", border.west); b.putDouble("north", border.north); b.putDouble("east", border.east);
+            b.putString("country", border.country);
+            tag.put("border", b);
+        }
+        tag.putLong("raceDay", raceDay);
         return tag;
     }
 }
