@@ -72,6 +72,11 @@ public final class EarthFlight {
 
     // Starting and ending ---------------------------------------------------------------------------
 
+    /** Where the other players are, sent along with a map. */
+    public static void others(EarthMap.Players payload) {
+        Minecraft.getInstance().execute(() -> EarthGlobeScreen.others(payload.players()));
+    }
+
     /** The server's word on the map or the trip. */
     public static void received(EarthMap.Payload payload) {
         Minecraft minecraft = Minecraft.getInstance();
@@ -80,6 +85,23 @@ public final class EarthFlight {
                 case EarthMap.OPEN -> {
                     if (current == null && minecraft.player != null && minecraft.screen == null)
                         minecraft.setScreen(EarthGlobeScreen.travel(payload.latitude(), payload.longitude()));
+                }
+                case EarthMap.PICK_SPAWN, EarthMap.PICK_START, EarthMap.PICK_GUESS -> {
+                    if (current == null && minecraft.player != null && minecraft.screen == null) {
+                        String keys = switch (payload.kind()) {
+                            case EarthMap.PICK_SPAWN -> "spawn";
+                            case EarthMap.PICK_START -> "start";
+                            default -> "guess";
+                        };
+                        String command = switch (payload.kind()) {
+                            case EarthMap.PICK_SPAWN -> "earth spawn set to %.6f %.6f";
+                            case EarthMap.PICK_START -> "earth start %.6f %.6f";
+                            default -> "earth guess %.6f %.6f";
+                        };
+                        minecraft.setScreen(EarthGlobeScreen.pick("earthplatform.map." + keys,
+                                payload.latitude(), payload.longitude(),
+                                (lat, lon) -> minecraft.player.connection.sendCommand(String.format(Locale.ROOT, command, lat, lon))));
+                    }
                 }
                 case EarthMap.ARRIVED -> { if (current != null && current.landedAt < 0) current.landedAt = clock(); }
                 case EarthMap.FAILED -> { if (current != null) current.skip(); }

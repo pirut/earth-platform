@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.play.client;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.RenderSystem;
+import io.earthplatform.minecraft.cubic.play.EarthMap;
 import io.earthplatform.minecraft.cubic.play.EarthPlaces;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -48,6 +49,12 @@ public final class EarthGlobeScreen extends Screen {
     private Hover hover;
     /** The trip this screen shows, with no controls; null when the globe is for choosing. */
     @Nullable private EarthFlight flight;
+    /** Other players on the server, as the server last told when a map opened. */
+    private static List<EarthMap.Other> others = List.of();
+    /** The player the pin was put on, or null. */
+    @Nullable private String pinnedPlayer;
+    /** Translation keys (title, button, hint and pin) of a globe that picks a spot for the server rather than a trip; null otherwise. */
+    @Nullable private String keys;
     /** The travel map's "you are here", or NaN. */
     private double hereLat = Double.NaN, hereLon = Double.NaN;
     private int top = TOP, bottom = BOTTOM;
@@ -81,6 +88,21 @@ public final class EarthGlobeScreen extends Screen {
         return screen;
     }
 
+    /** A globe for picking a spot on a server, such as its spawn, opened where the player stands; {@code keys} name its texts. */
+    static EarthGlobeScreen pick(String keys, double lat, double lon, BiConsumer<Double, Double> picked) {
+        // NaN: nowhere in particular (a GeoGuessr guess), so the whole globe and no dot for the player.
+        boolean somewhere = lat == lat && lon == lon;
+        EarthGlobeScreen screen = new EarthGlobeScreen(Component.translatable(keys + ".title"), null, somewhere ? lat : 20, somewhere ? lon : 0, picked);
+        screen.keys = keys;
+        if (somewhere) {
+            screen.hereLat = lat;
+            screen.hereLon = lon;
+            screen.zoom = 4;
+        }
+        screen.pinned = false;
+        return screen;
+    }
+
     /** The globe a trip flies over; it fades in over the world and back out again. */
     static EarthGlobeScreen flight(EarthFlight flight) {
         EarthGlobeScreen screen = new EarthGlobeScreen(Component.empty(), null, flight.toLatitude(), flight.toLongitude(), (a, b) -> {});
@@ -91,6 +113,9 @@ public final class EarthGlobeScreen extends Screen {
     }
 
     @Nullable EarthFlight flying() { return flight; }
+
+    /** The server's list of where the other players are, for the next map that opens. */
+    static void others(List<EarthMap.Other> players) { others = List.copyOf(players); }
 
     @Override public boolean isPauseScreen() { return flight == null && super.isPauseScreen(); }
 
@@ -103,7 +128,7 @@ public final class EarthGlobeScreen extends Screen {
         int y = height - 28;
         addRenderableWidget(Button.builder(Component.literal("-"), b -> zoomBy(-1, width / 2.0, centreY())).bounds(width / 2 - 155, y, 20, 20).build());
         addRenderableWidget(Button.builder(Component.literal("+"), b -> zoomBy(1, width / 2.0, centreY())).bounds(width / 2 - 133, y, 20, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable(hereLat == hereLat ? "earthplatform.map.travel" : "earthplatform.globe.choose"), b -> finish()).bounds(width / 2 - 108, y, 130, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable(keys != null ? keys + ".button" : hereLat == hereLat ? "earthplatform.map.travel" : "earthplatform.globe.choose"), b -> finish()).bounds(width / 2 - 108, y, 130, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), b -> onClose()).bounds(width / 2 + 27, y, 128, 20).build());
         dirty = true;
     }
@@ -152,6 +177,14 @@ public final class EarthGlobeScreen extends Screen {
             gui.fill(px - 1, py - 1, px + 1, py + 1, over ? 0xFFFFFFFF : 0xFFFFD34D);
             if (over) hover = new Hover(place, mouseX, mouseY);
             else if (zoom >= 3) gui.drawString(font, place.name(), px + 4, py - 4, 0xFFFFE9A8);
+        }
+        if (keys == null || !keys.endsWith("guess")) for (EarthMap.Other other : others) {
+            double[] at = project(other.latitude(), other.longitude(), cx, cy, r);
+            if (at == null) continue;
+            int px = (int) Math.round(at[0]), py = (int) Math.round(at[1]);
+            gui.fill(px - 3, py - 3, px + 3, py + 3, 0xFF000000);
+            gui.fill(px - 2, py - 2, px + 2, py + 2, 0xFF5CFF8A);
+            gui.drawString(font, other.name(), px + 5, py - 4, 0xFFB8FFC8);
         }
         if (hereLat == hereLat) {
             double[] at = project(hereLat, hereLon, cx, cy, r);
@@ -217,6 +250,9 @@ public final class EarthGlobeScreen extends Screen {
     private Component status() {
         if (warning != null && Util.getMillis() < warningUntil) return warning;
         boolean travel = hereLat == hereLat;
+        if (pinned && pinnedPlayer != null && keys == null && travel) return Component.translatable("earthplatform.map.travelTo", pinnedPlayer);
+        if (keys != null) return pinned ? Component.translatable(keys + ".at", EarthPlaces.near(pinLat, pinLon).map(EarthPlaces.Place::label)
+                .orElse(String.format(Locale.ROOT, "%.4f, %.4f", pinLat, pinLon))) : Component.translatable(keys + ".hint");
         if (!pinned) return Component.translatable(travel ? "earthplatform.map.hint" : "earthplatform.globe.hint");
         String point = String.format(Locale.ROOT, "%.4f, %.4f", pinLat, pinLon);
         if (travel) return Component.translatable("earthplatform.map.travelTo",
@@ -442,6 +478,14 @@ public final class EarthGlobeScreen extends Screen {
 
     private void click(double mouseX, double mouseY) {
         double cx = width / 2.0, cy = centreY(), r = radius();
+        if (keys == null || !keys.endsWith("guess")) for (EarthMap.Other other : others) {
+            double[] at = project(other.latitude(), other.longitude(), cx, cy, r);
+            if (at != null && Math.abs(mouseX - at[0]) <= 5 && Math.abs(mouseY - at[1]) <= 5) {
+                pin(other.latitude(), other.longitude());
+                pinnedPlayer = other.name();
+                return;
+            }
+        }
         for (EarthPlaces.Place place : EarthPlaces.all()) {
             double[] at = project(place.latitude(), place.longitude(), cx, cy, r);
             if (at != null && Math.abs(mouseX - at[0]) <= 4 && Math.abs(mouseY - at[1]) <= 4) {
@@ -460,6 +504,7 @@ public final class EarthGlobeScreen extends Screen {
             return;
         }
         warning = null;
+        pinnedPlayer = null;
         pinLat = lat;
         pinLon = lon;
         pinned = true;

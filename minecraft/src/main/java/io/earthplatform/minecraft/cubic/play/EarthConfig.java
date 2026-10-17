@@ -37,6 +37,21 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue SATELLITE_IMAGERY;
     public static final ModConfigSpec.IntValue CACHE_LIMIT_GB;
     public static final ModConfigSpec.BooleanValue ANYONE_CAN_TRAVEL;
+    public static final ModConfigSpec.BooleanValue ANYONE_CAN_USE_HOMES;
+    public static final ModConfigSpec.BooleanValue PLAYERS_CHOOSE_START;
+    public static final ModConfigSpec.BooleanValue TELEPORT_REQUESTS;
+    public static final ModConfigSpec.BooleanValue SHOW_PLAYERS_ON_MAP;
+    public static final ModConfigSpec.BooleanValue COUNTRY_NAMES;
+    public static final ModConfigSpec.IntValue TRAVEL_LEVELS_PER_1000_KM;
+    public static final ModConfigSpec.IntValue TRAVEL_COOLDOWN;
+    public static final ModConfigSpec.BooleanValue DAILY_RACE;
+    public static final ModConfigSpec.ConfigValue<String> RACE_REWARD;
+    public static final ModConfigSpec.IntValue WEB_MAP_PORT;
+    public static final ModConfigSpec.BooleanValue WARPS;
+    public static final ModConfigSpec.BooleanValue RANDOM_TRIPS;
+    public static final ModConfigSpec.BooleanValue GEOGUESSR;
+    public static final ModConfigSpec.BooleanValue RACES;
+    public static final ModConfigSpec.BooleanValue WEB_MAP;
 
     static {
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
@@ -73,6 +88,40 @@ public final class EarthConfig {
                 .translation(key("satelliteImagery")).define("satelliteImagery", false);
         ANYONE_CAN_TRAVEL = common.comment("Let every player use /earth goto. When false, only operators can (singleplayer always can).")
                 .translation(key("anyoneCanTravel")).define("anyoneCanTravel", false);
+        ANYONE_CAN_USE_HOMES = common.comment("Let every player save a home with /earth sethome and go back with /earth home, and go to the server spawn",
+                        "with /earth spawn. When false, only players who may travel can.")
+                .translation(key("anyoneCanUseHomes")).define("anyoneCanUseHomes", true);
+        PLAYERS_CHOOSE_START = common.comment("Let each new player choose, once, where they start on a globe; they respawn there after that",
+                        "when they have no bed. Operators can reset a player's choice with /earth spawn player <name> reset.")
+                .translation(key("playersChooseStart")).define("playersChooseStart", false);
+        TELEPORT_REQUESTS = common.comment("Let players ask to teleport to each other with /earth tpa and /earth tpahere.")
+                .translation(key("teleportRequests")).define("teleportRequests", true);
+        SHOW_PLAYERS_ON_MAP = common.comment("Show other players as dots on the travel map and the spawn picker.")
+                .translation(key("showPlayersOnMap")).define("showPlayersOnMap", true);
+        COUNTRY_NAMES = common.comment("Show \"Now entering <country>\" on screen when a player crosses a border (Natural Earth borders).")
+                .translation(key("countryNames")).define("countryNames", true);
+        TRAVEL_LEVELS_PER_1000_KM = common.comment("What a trip by command costs players in survival, in experience levels per 1000 km (at least 1).",
+                        "Operators and creative players travel free. 0 makes travel free for everyone.")
+                .translation(key("travelLevels")).defineInRange("travelLevelsPer1000Km", 0, 0, 1000);
+        TRAVEL_COOLDOWN = common.comment("Seconds a survival player waits between trips by command. 0 for none.")
+                .translation(key("travelCooldown")).defineInRange("travelCooldownSeconds", 0, 0, 86_400);
+        DAILY_RACE = common.comment("Start a race to a random famous place each day (UTC) once someone is online. Operators can always start one with /earth race start.")
+                .translation(key("dailyRace")).define("dailyRace", false);
+        RACE_REWARD = common.comment("The race winner's prize: an item and a count, such as \"minecraft:diamond 5\". Empty for none.")
+                .translation(key("raceReward")).define("raceReward", "minecraft:diamond 5");
+        WARPS = common.comment("Let players use the server's warps (/earth warp). Operators make them with /earth setwarp.")
+                .translation(key("warps")).define("warps", true);
+        RANDOM_TRIPS = common.comment("Let players take random trips to land with /earth random.")
+                .translation(key("randomTrips")).define("randomTrips", true);
+        GEOGUESSR = common.comment("Allow GeoGuessr rounds (/earth guess).")
+                .translation(key("geoguessr")).define("geoguessr", true);
+        RACES = common.comment("Allow races to famous places (/earth race).")
+                .translation(key("races")).define("races", true);
+        WEB_MAP = common.comment("Serve a live web map of the players at http://<server>:<webMapPort>/ for sharing outside the game.",
+                        "It shows player names and where they are to anyone who can reach the port.")
+                .translation(key("webMap")).define("webMap", false);
+        WEB_MAP_PORT = common.comment("The web map's port.")
+                .translation(key("webMapPort")).defineInRange("webMapPort", 8123, 1, 65_535);
         COMMON_SPEC = common.build();
 
         var container = ModList.get().getModContainerById(EarthPlatformMod.MOD_ID).orElseThrow();
@@ -140,6 +189,9 @@ public final class EarthConfig {
         } else if (config.getSpec() == COMMON_SPEC) {
             property("earthplatform.earth.offline", Boolean.toString(OFFLINE.get()));
             property("earthplatform.earth.imagery", Boolean.toString(SATELLITE_IMAGERY.get()));
+            // An edited file takes effect on a running server at once, as /earth settings does.
+            var server = net.neoforged.neoforge.server.ServerLifecycleHooks.getCurrentServer();
+            if (server != null) server.execute(() -> EarthToggles.changed(server));
         }
     }
 
