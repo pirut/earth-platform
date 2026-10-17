@@ -1,6 +1,7 @@
 package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
+import io.earthplatform.geography.globe.ClassicTiff.HeaderTooShort;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -14,6 +15,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.zip.DataFormatException;
+
+import static io.earthplatform.geography.globe.ClassicTiff.array;
+import static io.earthplatform.geography.globe.ClassicTiff.scalar;
 
 /**
  * Global land cover from ESA WorldCover 2021 v200, dataset id {@code esa-worldcover-v200}: one
@@ -276,10 +280,6 @@ public final class WorldCoverSource implements AutoCloseable {
         }
     }
 
-    private static final class HeaderTooShort extends IOException {
-        HeaderTooShort() { super("Header extends past the bytes read"); }
-    }
-
     /** Reads the image file directories of a tiled 8-bit single-band TIFF: the image and its overviews. */
     static Header parse(byte[] bytes) throws IOException {
         ByteBuffer in = ByteBuffer.wrap(bytes);
@@ -324,24 +324,6 @@ public final class WorldCoverSource implements AutoCloseable {
         }
         if (levels.size() <= MAX_OVERVIEW) throw new IOException("Land cover file lacks overviews");
         return new Header(levels.toArray(Level[]::new), deflate);
-    }
-
-    private static long scalar(ByteBuffer in, int at, int type) {
-        return type == 3 ? Short.toUnsignedInt(in.getShort(at + 8)) : Integer.toUnsignedLong(in.getInt(at + 8));
-    }
-
-    private static long[] array(ByteBuffer in, int length, int at, int type, long count) throws IOException {
-        if (type != 3 && type != 4) throw new IOException("Unsupported TIFF array type " + type);
-        int size = type == 3 ? 2 : 4;
-        if (count > 1 << 20) throw new IOException("Oversized TIFF array");
-        long start = count * size <= 4 ? at + 8 : Integer.toUnsignedLong(in.getInt(at + 8));
-        if (start + count * size > length) throw new HeaderTooShort();
-        long[] values = new long[(int) count];
-        for (int i = 0; i < count; i++) {
-            int p = (int) (start + (long) i * size);
-            values[i] = size == 2 ? Short.toUnsignedInt(in.getShort(p)) : Integer.toUnsignedLong(in.getInt(p));
-        }
-        return values;
     }
 
     private static double wrap(double longitude) {

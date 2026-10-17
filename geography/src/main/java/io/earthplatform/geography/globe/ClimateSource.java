@@ -1,6 +1,7 @@
 package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
+import io.earthplatform.geography.globe.ClassicTiff.HeaderTooShort;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -14,6 +15,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.zip.DataFormatException;
+
+import static io.earthplatform.geography.globe.ClassicTiff.array;
+import static io.earthplatform.geography.globe.ClassicTiff.doubles;
+import static io.earthplatform.geography.globe.ClassicTiff.scalar;
 
 /**
  * Present-day climate from CHELSA V2.1, dataset id {@code chelsa-v2.1-1981-2010}: the 1981-2010
@@ -395,10 +400,6 @@ public final class ClimateSource implements AutoCloseable {
         }
     }
 
-    private static final class HeaderTooShort extends IOException {
-        HeaderTooShort() { super("Header extends past the bytes read"); }
-    }
-
     /** Reads the first image of a striped 16-bit single-band GeoTIFF on the CHELSA grid, one row per strip. */
     static Header parse(byte[] bytes) throws IOException {
         if (bytes.length < 8) throw new HeaderTooShort();
@@ -443,36 +444,6 @@ public final class ClimateSource implements AutoCloseable {
         return new Header(offsets, counts, compression != 1, predictor == 2, little);
     }
 
-    private static long scalar(ByteBuffer in, int at, int type) {
-        return type == 3 ? Short.toUnsignedInt(in.getShort(at + 8)) : Integer.toUnsignedLong(in.getInt(at + 8));
-    }
-
-    private static long start(ByteBuffer in, int length, int at, long count, int size) throws IOException {
-        if (count > 1 << 20) throw new IOException("Oversized TIFF array");
-        long start = count * size <= 4 ? at + 8 : Integer.toUnsignedLong(in.getInt(at + 8));
-        if (start + count * size > length) throw new HeaderTooShort();
-        return start;
-    }
-
-    private static long[] array(ByteBuffer in, int length, int at, int type, long count) throws IOException {
-        if (type != 3 && type != 4) throw new IOException("Unsupported TIFF array type " + type);
-        int size = type == 3 ? 2 : 4;
-        long start = start(in, length, at, count, size);
-        long[] values = new long[(int) count];
-        for (int i = 0; i < count; i++) {
-            int p = (int) (start + (long) i * size);
-            values[i] = size == 2 ? Short.toUnsignedInt(in.getShort(p)) : Integer.toUnsignedLong(in.getInt(p));
-        }
-        return values;
-    }
-
-    private static double[] doubles(ByteBuffer in, int length, int at, int type, long count) throws IOException {
-        if (type != 12) throw new IOException("Unsupported TIFF double type " + type);
-        long start = start(in, length, at, count, 8);
-        double[] values = new double[(int) count];
-        for (int i = 0; i < count; i++) values[i] = in.getDouble((int) (start + i * 8L));
-        return values;
-    }
 
     private static double wrap(double longitude) {
         double wrapped = ((longitude + 180) % 360 + 360) % 360 - 180;
