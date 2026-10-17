@@ -55,12 +55,14 @@ public final class EarthConfig {
 
     static {
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
-        FAR_DETAIL = client.comment("How far the far terrain reaches (4 to 24): 4 is about 37 km, 11 about 94 km, 24 about 201 km.",
+        FAR_DETAIL = client.comment("How far the far terrain reaches (4 to 48): 4 is about 37 km, 11 about 94 km, 24 about 201 km.",
+                        "25 to 48 (up to about 397 km) is the extreme range, for very powerful computers.",
                         "Farther costs memory and video memory and takes longer to fill in. Default 11. Applies after a restart.",
                         "The sharpness setting scales this while playing; this one sets how far the far terrain reaches.")
-                .translation(key("farDetail")).gameRestart().defineInRange("detail", 11, 4, 24);
+                .translation(key("farDetail")).gameRestart().defineInRange("detail", 11, 4, Far.MAX_DETAIL);
         FAR_SHARPNESS = client.comment("How sharp far terrain looks: how close coarser levels take over. Changes at once, without a restart.",
-                        "Sharper keeps finer voxels further out but takes longer to fill in and uses more memory; Fast fills in quickest. Default Balanced.")
+                        "Sharper keeps finer voxels further out but takes longer to fill in and uses more memory; Fast fills in quickest. Default Balanced.",
+                        "Extreme and Ultra are for very powerful computers: several times the far columns, GPU memory and fill-in time of Balanced.")
                 .translation(key("farSharpness")).defineEnum("sharpness", Sharpness.BALANCED);
         // A new key, so configs saved with the old default of 2 take up the new one.
         FAR_TEXTURED_LEVELS = client.comment("How many far levels are drawn with block textures; further ones use flat colours. Default 8, all of them.")
@@ -135,9 +137,12 @@ public final class EarthConfig {
      * Far terrain sharpness choices, as scales of the start-up detail (see {@link Far#sharpness}).
      * Even the default keeps each level a bit past where it would turn to blurry squares on screen,
      * since far terrain drawn as blocks shows its block size far more than smooth ground did.
+     * Extreme and Ultra, past {@link Far#EXTREME_SCALE}, are for very powerful computers and big
+     * screens: far voxels about 0.4 and 0.3 times Balanced's size on screen at the default
+     * distance, at about 4.6 and 7.8 times its far columns.
      */
     public enum Sharpness implements TranslatableEnum {
-        FAST(1.0), BALANCED(1.3), SHARP(1.6), SHARPEST(2.0);
+        FAST(1.0), BALANCED(1.3), SHARP(1.6), SHARPEST(2.0), EXTREME(3.0), ULTRA(4.0);
 
         final double scale;
 
