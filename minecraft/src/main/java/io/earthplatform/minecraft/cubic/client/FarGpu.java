@@ -155,7 +155,7 @@ final class FarGpu {
         }
         arena.buffer.upload(start, quads);
         int[] firsts = new int[counts.length];
-        for (int g = 0, at = start; g < counts.length; at += counts[g], g++) firsts[g] = at;
+        for (int i = 0, at = start; i < counts.length; at += counts[FarMesher.STORED[i]], i++) firsts[FarMesher.STORED[i]] = at;
         quadBytes += size * 16L;
         return new Allocation(arena, start, size, counts.clone(), firsts, grid != null);
     }
@@ -204,6 +204,7 @@ final class FarGpu {
         RenderSystem.depthMask(true);
         RenderSystem.enableCull();
         for (Arena arena : arenas) arena.clearDraws();
+        ranges = 0;
         return true;
     }
 
@@ -264,14 +265,43 @@ final class FarGpu {
         GL20C.glUniform1f(program.location("earth_DitherFrame"), program.jittered ? frame & 63 : 0);
     }
 
+    /** Draws every group as a range of its own, as before build 52, to compare the two (-Dearthplatform.far.splitRanges=true). */
+    private static final boolean SPLIT_RANGES = Boolean.getBoolean("earthplatform.far.splitRanges");
+
+    /** Ranges drawn since {@link #begin}: each is a draw of its own inside the multi-draws. */
+    int ranges;
+
     private Program current;
     private int previousProgram, previousVao, previousActive;
     private final int[] previous2d = new int[16];
 
-    /** Queues one group of a column's faces. */
-    void add(Allocation allocation, int group) {
-        int count = allocation.counts[group];
-        if (count > 0) allocation.arena.queue(allocation.firsts[group] * 6, count * 6);
+    /**
+     * Queues the groups of a column's faces in a mask (bit per group), as few ranges as they make
+     * in the order they are stored: an empty group between two wanted ones joins them. Each range
+     * is a draw of its own in the multi-draw, and those cost the driver and the GPU more than the
+     * faces in them at far terrain's sizes.
+     */
+    void add(Allocation allocation, int groups) {
+        if (SPLIT_RANGES) {
+            for (int group = 0; group < FarMesher.GROUPS; group++) {
+                int size = allocation.counts[group];
+                if ((groups & 1 << group) != 0 && size > 0) allocation.arena.queue(allocation.firsts[group] * 6, size * 6);
+            }
+            return;
+        }
+        int first = -1, count = 0;
+        for (int group : FarMesher.STORED) {
+            int size = allocation.counts[group];
+            if ((groups & 1 << group) != 0 || size == 0 && first >= 0) {
+                if (first < 0) first = allocation.firsts[group];
+                count += size;
+            } else if (first >= 0) {
+                if (count > 0) allocation.arena.queue(first * 6, count * 6);
+                first = -1;
+                count = 0;
+            }
+        }
+        if (first >= 0 && count > 0) allocation.arena.queue(first * 6, count * 6);
     }
 
     /** Draws everything queued and puts GL back as it was. */
@@ -298,6 +328,7 @@ final class FarGpu {
             arena.firsts.limit(arena.draws);
             arena.counts.limit(arena.draws);
             GL14C.glMultiDrawArrays(GL11C.GL_TRIANGLES, arena.firsts, arena.counts);
+            ranges += arena.draws;
             arena.clearDraws();
         }
     }
@@ -604,6 +635,11 @@ final class FarGpu {
         void clearDraws() { draws = 0; firsts.clear(); counts.clear(); }
 
         void queue(int first, int count) {
+            // Right after the last range, as the next column's faces often are: one longer range.
+            if (!SPLIT_RANGES && draws > 0 && firsts.get(draws - 1) + counts.get(draws - 1) == first) {
+                counts.put(draws - 1, counts.get(draws - 1) + count);
+                return;
+            }
             if (draws == firsts.capacity()) {
                 firsts = MemoryUtil.memRealloc(firsts, draws * 2).clear();
                 counts = MemoryUtil.memRealloc(counts, draws * 2).clear();
