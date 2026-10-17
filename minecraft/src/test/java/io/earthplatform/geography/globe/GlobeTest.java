@@ -1283,10 +1283,10 @@ public final class GlobeTest {
         Random random = new Random(7);
         byte[] noise = new byte[200_000];
         for (int i = 0; i < noise.length; i++) noise[i] = (byte) (i % 977 < 400 ? random.nextInt(4) : random.nextInt(256));
-        check(Arrays.equals(noise, FloatCogs.lzw(lzw(noise), noise.length)), "LZW round trip");
+        check(Arrays.equals(noise, CogBlocks.lzw(lzw(noise), noise.length)), "LZW round trip");
         byte[] zeros = new byte[300_000];
-        check(Arrays.equals(zeros, FloatCogs.lzw(lzw(zeros), zeros.length)), "LZW round trip of one long run");
-        fail(() -> FloatCogs.lzw(Arrays.copyOf(lzw(noise), 1000), noise.length), java.io.IOException.class, "truncated LZW rejected");
+        check(Arrays.equals(zeros, CogBlocks.lzw(lzw(zeros), zeros.length)), "LZW round trip of one long run");
+        fail(() -> CogBlocks.lzw(Arrays.copyOf(lzw(noise), 1000), noise.length), java.io.IOException.class, "truncated LZW rejected");
 
         // A file with its directories at the end, uncompressed, its overview tiled smaller, as some 3DEP files are.
         {
@@ -1331,22 +1331,22 @@ public final class GlobeTest {
                 file.putInt(where[d] + 2 + 12 * all[d].length, d == 0 ? ifd2 : 0);
             }
             byte[] bytes = file.array();
-            FloatCogs.Pieces pieces = new FloatCogs.Pieces();
+            CogHeader.Pieces pieces = new CogHeader.Pieces();
             pieces.add(0, Arrays.copyOf(bytes, 65_536));
             try {
-                FloatCogs.parse(pieces);
+                CogHeader.parse(pieces);
                 check(false, "directories past the bytes read are asked for");
             } catch (FloatCogs.HeaderTooShort need) {
                 check(need.offset == ifd, "the bytes asked for are where the directories lie");
                 pieces.add(need.offset, Arrays.copyOfRange(bytes, (int) need.offset, bytes.length));
             }
-            FloatCogs.Header header = FloatCogs.parse(FloatCogs.Pieces.of(pieces.bytes()));
+            FloatCogs.Header header = CogHeader.parse(CogHeader.Pieces.of(pieces.bytes()));
             check(header.overviews() == 2 && !header.compressed() && header.predictor() == 1 && header.x0() == 1000 && header.y0() == 2000,
                     "a file with its directories at the end reads, through the disk cache's form too");
-            check(Arrays.equals(first, FloatCogs.decode(Arrays.copyOfRange(bytes, 16, 16 + blockBytes), tile, false, 1, false)), "uncompressed block");
-            fail(() -> FloatCogs.decode(new byte[100], tile, false, 1, false), java.io.IOException.class, "short uncompressed block rejected");
+            check(Arrays.equals(first, CogBlocks.decode(Arrays.copyOfRange(bytes, 16, 16 + blockBytes), tile, false, 1, false)), "uncompressed block");
+            fail(() -> CogBlocks.decode(new byte[100], tile, false, 1, false), java.io.IOException.class, "short uncompressed block rejected");
             byte[] raw = Arrays.copyOf(bytes, 16);
-            check(Arrays.equals(raw, FloatCogs.Pieces.of(raw).bytes()), "a header read from the start alone is cached as it is");
+            check(Arrays.equals(raw, CogHeader.Pieces.of(raw).bytes()), "a header read from the start alone is cached as it is");
         }
 
         // Projection and geoid against PROJ (EPSG:3031) and NGA's grid.
