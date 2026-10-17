@@ -186,7 +186,7 @@ public final class CubicClient {
         var camera = event.getCamera().getPosition();
         ClientCubeWorld world = ClientCubeWorld.current();
         float height = (float) camera.y - world.skyTop(net.minecraft.util.Mth.floor(camera.x), net.minecraft.util.Mth.floor(camera.z));
-        float scale = world.far().hazeScale(camera.z), end = FarRenderer.FOG_END * scale;
+        float scale = FarRenderer.HAZE_AT_EDGE ? 1.0F : world.far().hazeScale(camera.z), end = FarRenderer.FOG_END * scale;
         float start = Math.min(Math.max(FarRenderer.FOG_START * scale, height * 1.25F), 0.8F * end);
         event.setNearPlaneDistance(start);
         event.setFarPlaneDistance(end);
