@@ -127,8 +127,14 @@ final class FarShaders {
             }
 
             void main() {
+            #ifdef EARTH_INDEXED
+                // Drawn by index: four corners a face, 0 1 2 0 2 3 picked by the indices.
+                int quadIndex = gl_VertexID >> 2;
+                int corner = gl_VertexID & 3;
+            #else
                 int quadIndex = gl_VertexID / 6;
                 int corner = TRIANGLES[gl_VertexID - quadIndex * 6];
+            #endif
                 uvec4 q = texelFetch(earth_Quads, quadIndex);
                 uint face = (q.x >> 10) & 7u;
                 float width = float(((q.x >> 13) & 15u) + 1u);

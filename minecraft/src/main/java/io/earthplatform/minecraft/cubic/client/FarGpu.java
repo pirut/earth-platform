@@ -25,7 +25,9 @@ import org.lwjgl.opengl.GL15C;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL30C;
 import org.lwjgl.opengl.GL31C;
+import org.lwjgl.opengl.GL32C;
 import org.lwjgl.opengl.GLCapabilities;
+import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
@@ -53,6 +55,15 @@ final class FarGpu {
     private static final int SLOT_INTS = 4;
 
     private final int vao;
+    /**
+     * Quad indices (0 1 2 0 2 3 for each face's four corners) for {@link #INDEXED} draws: with them a
+     * face's corners are worked out four times instead of six, the GPU reusing the two that its
+     * triangles share. Ranges longer than this split, which changes nothing drawn.
+     */
+    private int indices;
+    static final int INDEX_QUADS = 1 << 16;
+    /** Draws faces by index; -Dearthplatform.far.indexed=false draws six corners per face as before build 52. */
+    static final boolean INDEXED = !"false".equals(System.getProperty("earthplatform.far.indexed"));
     private final int arenaQuads;
     private final List<Arena> arenas = new ArrayList<>();
     private final TextureBuffer columns = new TextureBuffer(GL30C.GL_RGBA32I, 4096, true);
@@ -80,9 +91,25 @@ final class FarGpu {
     FarGpu() {
         RenderSystem.assertOnRenderThread();
         vao = GL30C.glGenVertexArrays();
+        if (INDEXED) {
+            indices = GL15C.glGenBuffers();
+            IntBuffer quad = MemoryUtil.memAllocInt(INDEX_QUADS * 6);
+            try {
+                for (int q = 0; q < INDEX_QUADS; q++) {
+                    int c = q * 4;
+                    quad.put(c).put(c + 1).put(c + 2).put(c).put(c + 2).put(c + 3);
+                }
+                quad.flip();
+                GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, indices);
+                GL15C.glBufferData(GL31C.GL_COPY_WRITE_BUFFER, quad, GL15C.GL_STATIC_DRAW);
+                GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, 0);
+            } finally {
+                MemoryUtil.memFree(quad);
+            }
+        }
         int max = GL11C.glGetInteger(GL31C.GL_MAX_TEXTURE_BUFFER_SIZE);
         arenaQuads = Math.max(1 << 16, Math.min(ARENA_QUADS, max));
-        version = glslVersion();
+        version = glslVersion() + (INDEXED ? "#define EARTH_INDEXED\n" : "");
     }
 
     /** True when this GL can draw far terrain at all (OpenGL 3.3). */
@@ -200,6 +227,8 @@ final class FarGpu {
         GlStateManager._activeTexture(previousActive);
         previousVao = GL11C.glGetInteger(GL30C.GL_VERTEX_ARRAY_BINDING);
         GL30C.glBindVertexArray(vao);
+        // Bound again every draw, as the near cubes' are, so nothing outside can leave another there.
+        if (INDEXED) GL15C.glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, indices);
         RenderSystem.enableDepthTest();
         RenderSystem.depthMask(true);
         RenderSystem.enableCull();
@@ -285,7 +314,7 @@ final class FarGpu {
         if (SPLIT_RANGES) {
             for (int group = 0; group < FarMesher.GROUPS; group++) {
                 int size = allocation.counts[group];
-                if ((groups & 1 << group) != 0 && size > 0) allocation.arena.queue(allocation.firsts[group] * 6, size * 6);
+                if ((groups & 1 << group) != 0 && size > 0) allocation.arena.queue(allocation.firsts[group], size);
             }
             return;
         }
@@ -296,12 +325,12 @@ final class FarGpu {
                 if (first < 0) first = allocation.firsts[group];
                 count += size;
             } else if (first >= 0) {
-                if (count > 0) allocation.arena.queue(first * 6, count * 6);
+                if (count > 0) allocation.arena.queue(first, count);
                 first = -1;
                 count = 0;
             }
         }
-        if (first >= 0 && count > 0) allocation.arena.queue(first * 6, count * 6);
+        if (first >= 0 && count > 0) allocation.arena.queue(first, count);
     }
 
     /** Draws everything queued and puts GL back as it was. */
@@ -325,9 +354,7 @@ final class FarGpu {
             GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + QUAD_UNIT);
             GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, arena.buffer.texture);
             GlStateManager._activeTexture(previousActive);
-            arena.firsts.limit(arena.draws);
-            arena.counts.limit(arena.draws);
-            GL14C.glMultiDrawArrays(GL11C.GL_TRIANGLES, arena.firsts, arena.counts);
+            arena.draw();
             ranges += arena.draws;
             arena.clearDraws();
         }
@@ -463,6 +490,7 @@ final class FarGpu {
         for (Program program : vanilla) if (program != null) program.close();
         for (Program program : pack) if (program != null) program.close();
         GL30C.glDeleteVertexArrays(vao);
+        if (indices != 0) GL15C.glDeleteBuffers(indices);
     }
 
     /** A linked program and its uniform locations. */
@@ -606,7 +634,11 @@ final class FarGpu {
     static final class Arena {
         final TextureBuffer buffer;
         private final TreeMap<Integer, Integer> free = new TreeMap<>();
+        /** Queued ranges: first face and face count. */
         IntBuffer firsts = MemoryUtil.memAllocInt(1024), counts = MemoryUtil.memAllocInt(1024);
+        /** The same ranges as the multi-draw takes them: corner counts, and where each range starts. */
+        private IntBuffer drawCounts = MemoryUtil.memAllocInt(1024), drawStarts = MemoryUtil.memAllocInt(1024);
+        private PointerBuffer offsets = MemoryUtil.memAllocPointer(1024);
         int draws;
 
         Arena(int quads) {
@@ -634,11 +666,19 @@ final class FarGpu {
 
         void clearDraws() { draws = 0; firsts.clear(); counts.clear(); }
 
+        /** Queues a range of faces. */
         void queue(int first, int count) {
             // Right after the last range, as the next column's faces often are: one longer range.
-            if (!SPLIT_RANGES && draws > 0 && firsts.get(draws - 1) + counts.get(draws - 1) == first) {
+            if (!SPLIT_RANGES && draws > 0 && firsts.get(draws - 1) + counts.get(draws - 1) == first
+                    && (!INDEXED || counts.get(draws - 1) + count <= INDEX_QUADS)) {
                 counts.put(draws - 1, counts.get(draws - 1) + count);
                 return;
+            }
+            // An indexed range reaches only as far as the quad indices do.
+            while (INDEXED && count > INDEX_QUADS) {
+                queue(first, INDEX_QUADS);
+                first += INDEX_QUADS;
+                count -= INDEX_QUADS;
             }
             if (draws == firsts.capacity()) {
                 firsts = MemoryUtil.memRealloc(firsts, draws * 2).clear();
@@ -649,10 +689,35 @@ final class FarGpu {
             draws++;
         }
 
+        /** Draws the queued ranges in one multi-draw, with the far program and this arena's faces bound. */
+        void draw() {
+            if (drawCounts.capacity() < draws) {
+                drawCounts = MemoryUtil.memRealloc(drawCounts, firsts.capacity());
+                drawStarts = MemoryUtil.memRealloc(drawStarts, firsts.capacity());
+                offsets = MemoryUtil.memRealloc(offsets, firsts.capacity());
+            }
+            drawCounts.clear().limit(draws);
+            drawStarts.clear().limit(draws);
+            for (int i = 0; i < draws; i++) {
+                drawCounts.put(i, counts.get(i) * 6);
+                // Indexed, a range's corners count from its first face's (gl_VertexID adds the base); else its six per face.
+                drawStarts.put(i, INDEXED ? firsts.get(i) * 4 : firsts.get(i) * 6);
+            }
+            if (INDEXED) {
+                offsets.clear().limit(draws);
+                for (int i = 0; i < draws; i++) offsets.put(i, 0L);
+                GL32C.glMultiDrawElementsBaseVertex(GL11C.GL_TRIANGLES, drawCounts, GL11C.GL_UNSIGNED_INT, offsets, drawStarts);
+            }
+            else GL14C.glMultiDrawArrays(GL11C.GL_TRIANGLES, drawStarts, drawCounts);
+        }
+
         void close() {
             buffer.close();
             MemoryUtil.memFree(firsts);
             MemoryUtil.memFree(counts);
+            MemoryUtil.memFree(drawCounts);
+            MemoryUtil.memFree(drawStarts);
+            MemoryUtil.memFree(offsets);
         }
     }
 
