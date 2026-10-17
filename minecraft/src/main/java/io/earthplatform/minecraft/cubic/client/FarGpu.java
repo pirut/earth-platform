@@ -445,44 +445,7 @@ final class FarGpu {
         int location(String name) { return locations.computeIfAbsent(name, key -> GL20C.glGetUniformLocation(id, key)); }
 
         static Program link(String vertexSource, String fragmentSource, String name) {
-            int vertex = compile(GL20C.GL_VERTEX_SHADER, vertexSource, name);
-            int fragment;
-            try { fragment = compile(GL20C.GL_FRAGMENT_SHADER, fragmentSource, name); }
-            catch (IllegalStateException failure) { GL20C.glDeleteShader(vertex); throw failure; }
-            int program = GL20C.glCreateProgram();
-            GL20C.glAttachShader(program, vertex);
-            GL20C.glAttachShader(program, fragment);
-            GL20C.glLinkProgram(program);
-            GL20C.glDetachShader(program, vertex);
-            GL20C.glDetachShader(program, fragment);
-            GL20C.glDeleteShader(vertex);
-            GL20C.glDeleteShader(fragment);
-            if (GL20C.glGetProgrami(program, GL20C.GL_LINK_STATUS) == GL11C.GL_FALSE) {
-                String log = GL20C.glGetProgramInfoLog(program);
-                GL20C.glDeleteProgram(program);
-                throw new IllegalStateException("Could not link " + name + ": " + log);
-            }
-            return new Program(program);
-        }
-
-        private static int compile(int type, String source, String name) {
-            int shader = GL20C.glCreateShader(type);
-            GL20C.glShaderSource(shader, source);
-            GL20C.glCompileShader(shader);
-            if (GL20C.glGetShaderi(shader, GL20C.GL_COMPILE_STATUS) == GL11C.GL_FALSE) {
-                String log = GL20C.glGetShaderInfoLog(shader);
-                GL20C.glDeleteShader(shader);
-                throw new IllegalStateException("Could not compile " + name + (type == GL20C.GL_VERTEX_SHADER ? " vertex" : " fragment")
-                        + " shader: " + log + "\n" + numbered(source));
-            }
-            return shader;
-        }
-
-        private static String numbered(String source) {
-            StringBuilder out = new StringBuilder();
-            String[] lines = source.split("\n", -1);
-            for (int i = 0; i < lines.length; i++) out.append(i + 1).append(": ").append(lines[i]).append('\n');
-            return out.toString();
+            return new Program(GlShaders.link(vertexSource, fragmentSource, name));
         }
 
         void close() {

@@ -815,32 +815,7 @@ public final class FarLod {
         }
 
         static Program link(String vertexSource, String fragmentSource, String name) {
-            int vertex = compile(GL20C.GL_VERTEX_SHADER, vertexSource, name);
-            int fragment = compile(GL20C.GL_FRAGMENT_SHADER, fragmentSource, name);
-            int program = GL20C.glCreateProgram();
-            GL20C.glAttachShader(program, vertex);
-            GL20C.glAttachShader(program, fragment);
-            GL20C.glLinkProgram(program);
-            GL20C.glDeleteShader(vertex);
-            GL20C.glDeleteShader(fragment);
-            if (GL20C.glGetProgrami(program, GL20C.GL_LINK_STATUS) == GL11C.GL_FALSE) {
-                String log = GL20C.glGetProgramInfoLog(program);
-                GL20C.glDeleteProgram(program);
-                throw new IllegalStateException("Could not link " + name + ": " + log);
-            }
-            return new Program(program);
-        }
-
-        private static int compile(int type, String source, String name) {
-            int shader = GL20C.glCreateShader(type);
-            GL20C.glShaderSource(shader, source);
-            GL20C.glCompileShader(shader);
-            if (GL20C.glGetShaderi(shader, GL20C.GL_COMPILE_STATUS) == GL11C.GL_FALSE) {
-                String log = GL20C.glGetShaderInfoLog(shader);
-                GL20C.glDeleteShader(shader);
-                throw new IllegalStateException("Could not compile " + name + ": " + log);
-            }
-            return shader;
+            return new Program(GlShaders.link(vertexSource, fragmentSource, name));
         }
 
         void close() { GL20C.glDeleteProgram(id); }
