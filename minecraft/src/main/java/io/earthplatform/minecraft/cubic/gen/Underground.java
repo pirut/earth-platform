@@ -194,12 +194,6 @@ final class Underground {
         return 6;
     }
 
-    /** How many blocks of ground structures leave over themselves: more under water, so seabeds and lakes hold. */
-    int lid(int x, int z) {
-        int ground = terrain.surfaceY(x, z);
-        return ground <= terrain.shoreLevel() + 2 || terrain.waterY(x, z) != SurfaceGenerator.DRY ? 16 : 8;
-    }
-
     /** Whether a block is solid ground as generated, before veins, plants and structures. */
     boolean solid(int x, int y, int z) {
         int ground = terrain.surfaceY(x, z);

@@ -49,8 +49,6 @@ final class FarGpu {
     private static final int QUAD_UNIT = 3, LOOK_UNIT = 4, COLUMN_UNIT = 5, ATLAS_UNIT = 0, LIGHT_UNIT = 2;
     /** Faces per buffer texture: 64 MB each. */
     private static final int ARENA_QUADS = 1 << 22;
-    /** Ints per column slot: origin x, base y, origin z, level. */
-    private static final int SLOT_INTS = 4;
 
     private final int vao;
     private final int arenaQuads;
@@ -388,7 +386,7 @@ final class FarGpu {
                 return null;
             }
             packPatched = false;
-            EarthPlatformMod.LOGGER.warn("The shader pack's Voxy fragment code does not build for far terrain; using plain colours");
+            EarthPlatformMod.LOGGER.warn("The shader pack's Voxy fragment code does not build for far terrain; using plain colors");
         }
         pack[fade] = linkPack(jitter, header + FarShaders.PACK_FALLBACK, "far terrain (plain, shader pack)", header);
         if (pack[fade] == null) {

@@ -8,7 +8,7 @@ package io.earthplatform.minecraft.cubic.client;
  * <p>
  * A frame's first pass starts with the frame itself, before anything draws, as every frame did
  * before passes were counted; only a second or later pass in the same frame starts where the level
- * is drawn again. Starting the first pass there too (build 49) left its timing to the order of
+ * is drawn again. Starting the first pass there too, as one build did, left its timing to the order of
  * other mods' hooks on that method, and on a Mac under a shader pack near terrain then drew
  * stretched and missing blocks and a dark wall; without VR, frames now go exactly as before.
  */

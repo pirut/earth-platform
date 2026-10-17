@@ -141,9 +141,6 @@ public final class CubeStorage {
         regions.values().removeIf(region -> region.idle(now));
     }
 
-    /** Regions held in memory, for diagnostics. */
-    public int loadedRegions() { return regions.size(); }
-
     private static final class Region {
         private final Path file;
         private Map<Long, CompoundTag> cubes;
