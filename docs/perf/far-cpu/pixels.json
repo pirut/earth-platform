@@ -1,0 +1,82 @@
+{
+  "vanilla": {
+    "before vs after": {
+      "pixels": 1639680,
+      "changed_pixels": 0,
+      "mean_absolute_rgb_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "before vs before-repeat": {
+      "pixels": 1639680,
+      "changed_pixels": 0,
+      "mean_absolute_rgb_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "after vs after-repeat": {
+      "pixels": 1639680,
+      "changed_pixels": 0,
+      "mean_absolute_rgb_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  "photon": {
+    "before vs after": {
+      "pixels": 1639680,
+      "changed_pixels": 1432142,
+      "mean_absolute_rgb_channel_difference": 1.869671,
+      "max_channel_difference": 106
+    },
+    "before vs before-repeat": {
+      "pixels": 1639680,
+      "changed_pixels": 1402838,
+      "mean_absolute_rgb_channel_difference": 1.709787,
+      "max_channel_difference": 104
+    },
+    "after vs after-repeat": {
+      "pixels": 1639680,
+      "changed_pixels": 1403937,
+      "mean_absolute_rgb_channel_difference": 1.725539,
+      "max_channel_difference": 97
+    }
+  },
+  "bsl": {
+    "before vs after": {
+      "pixels": 1639680,
+      "changed_pixels": 482893,
+      "mean_absolute_rgb_channel_difference": 0.34693,
+      "max_channel_difference": 45
+    },
+    "before vs before-repeat": {
+      "pixels": 1639680,
+      "changed_pixels": 515068,
+      "mean_absolute_rgb_channel_difference": 0.390715,
+      "max_channel_difference": 42
+    },
+    "after vs after-repeat": {
+      "pixels": 1639680,
+      "changed_pixels": 94525,
+      "mean_absolute_rgb_channel_difference": 0.054458,
+      "max_channel_difference": 45
+    }
+  },
+  "complementary": {
+    "before vs after": {
+      "pixels": 1639680,
+      "changed_pixels": 466737,
+      "mean_absolute_rgb_channel_difference": 0.170945,
+      "max_channel_difference": 50
+    },
+    "before vs before-repeat": {
+      "pixels": 1639680,
+      "changed_pixels": 232724,
+      "mean_absolute_rgb_channel_difference": 0.096395,
+      "max_channel_difference": 57
+    },
+    "after vs after-repeat": {
+      "pixels": 1639680,
+      "changed_pixels": 477088,
+      "mean_absolute_rgb_channel_difference": 0.174809,
+      "max_channel_difference": 56
+    }
+  }
+}

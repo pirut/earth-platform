@@ -12,6 +12,7 @@ import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.ViewOrder;
 import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
+import io.earthplatform.minecraft.cubic.mixin.FrustumAccess;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -132,6 +133,15 @@ public final class FarRenderer {
     private final LongOpenHashSet fadingIn = new LongOpenHashSet();
     /** This pass's drawn columns in view, nearest first, for the water pass. */
     private List<Column> visible = List.of();
+    private static final boolean CACHE_PICK = !"false".equals(System.getProperty("earthplatform.far.cachePick"));
+    private final FarPickState pick = new FarPickState();
+    private final FarOrder order = new FarOrder();
+    /** Uploads and fade stamps also invalidate a pick when no column has come or gone. */
+    private int pickVersion;
+    private boolean pickAnimating;
+    static final boolean FAST_WATER = !"false".equals(System.getProperty("earthplatform.far.fastWater"));
+    /** Preserve water order while skipping dry columns and walls hidden by a drawn neighbor. */
+    private final List<Column> waterVisible = new ArrayList<>(), waterSurfaces = new ArrayList<>(), waterEdges = new ArrayList<>();
     /** The level pass (see {@link LevelPasses}) whose water is drawn; a VR mod's second eye needs its own. */
     private int waterPass = -1;
     private int ticks, frame, uploadedFrame = -1, replaced;
@@ -182,6 +192,8 @@ public final class FarRenderer {
         /** Face and water bytes uploaded for this column, for the debug screen. */
         long bytes;
         double distance;
+        int groups;
+        int waterSides;
         /** How this frame draws it: whole, fading out at its level's edge, or fading in over its children (see {@link FarGpu#NO_FADE}). */
         int fade;
         /** Whether its children were drawn in its place last frame, and when it last began to fade (see {@link FarGpu#now}), or 0. */
@@ -235,6 +247,7 @@ public final class FarRenderer {
             water = old.water;
             waterWalls = old.waterWalls;
             bytes = old.bytes;
+            old.bytes = 0;
             meshed = true;
             split = old.split;
             stamp = old.stamp;
@@ -297,13 +310,17 @@ public final class FarRenderer {
         for (Column column : columns.values())
             if (column.top != Integer.MIN_VALUE) visitor.accept(column.x0, column.z0, Far.width(column.level), column.top);
     }
-    /** GPU memory of every uploaded column's faces and water, in bytes. */
     /** Ranges of faces the last draw of far terrain asked the GPU for (see {@link FarGpu#add}). */
     public int drawnRanges() { return drawnRanges; }
 
     private int drawnRanges;
+    /** Maintained on the render thread so the debug overlay never walks every column. */
+    private long vertexBytes;
+    private static final boolean TRACK_BYTES = !"false".equals(System.getProperty("earthplatform.far.trackBytes"));
 
+    /** GPU memory of every uploaded column's faces and water, in bytes. */
     public long vertexBytes() {
+        if (TRACK_BYTES) return vertexBytes;
         long total = 0;
         for (Column column : columns.values()) total += column.bytes;
         return total;
@@ -354,7 +371,7 @@ public final class FarRenderer {
             replaced++;
             dueColumns.remove(old);
             if (old.meshed) column.takeOver(old, gpu);
-            else { column.drawnCubes = old.drawnCubes; old.close(gpu); }
+            else { column.drawnCubes = old.drawnCubes; free(old); }
         }
         schedule(column);
         int level = column.level, x = Far.x(column.key), z = Far.z(column.key);
@@ -537,7 +554,7 @@ public final class FarRenderer {
             columns.remove(column.key);
             columnsVersion++;
             dueColumns.remove(column);
-            column.close(gpu);
+            free(column);
             excess--;
         }
     }
@@ -712,7 +729,9 @@ public final class FarRenderer {
             if (closed || column == null || Math.abs(result.version()) != column.version) { result.free(); continue; }
             column.building = false;
             if (result.version() > 0) {
+                pickVersion++;
                 column.meshed = true;
+                vertexBytes += result.bytes() - column.bytes;
                 column.bytes = result.bytes();
                 gpu.free(column.faces);
                 column.faces = gpu.upload(result.quads(), result.counts(), result.grid());
@@ -778,30 +797,16 @@ public final class FarRenderer {
     private void drawColumns(FarGpu gpu, Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
         Vec3 position = camera.getPosition();
         int bx = (int) Math.floor(position.x), bz = (int) Math.floor(position.z);
-        drawn.clear();
-        // The dithered ring between levels only blends where a pack's TAA moves the dither every frame
-        // and averages it; without one it stays put, and where the two levels' outlines differ, as at
-        // cliff edges, it left fixed specks of sky. There levels meet at a plain seam.
-        bandFade = FADE && ShaderBlocks.packInUse() && gpu.jittered();
-        int px = Far.column(bx, Far.MAX_LEVEL), pz = Far.column(bz, Far.MAX_LEVEL);
-        for (int z = pz - Far.OUTER; z <= pz + Far.OUTER; z++) for (int x = px - Far.OUTER; x <= px + Far.OUTER; x++) {
-            visit(Far.MAX_LEVEL, x, z, bx, bz, false);
-        }
-        drawnKeys.clear();
-        fadingIn.clear();
-        for (Column column : drawn) {
-            drawnKeys.add(column.key);
-            if (column.fade == FarGpu.FADE_IN) fadingIn.add(column.key);
-        }
-        List<Column> visible = new ArrayList<>(drawn.size());
-        for (Column column : drawn) {
-            if (column.faces == null && column.water == null || !frustum.isVisible(column.box)) continue;
-            double dx = column.box.getCenter().x - position.x, dz = column.box.getCenter().z - position.z;
-            column.distance = dx * dx + dz * dz;
-            visible.add(column);
-        }
-        visible.sort(Comparator.comparingDouble(column -> column.distance));
-        this.visible = visible;
+        // Spatial dither still runs in the shaders every frame; only timed arrivals need a new pick.
+        boolean band = FADE && ShaderBlocks.packInUse() && gpu.jittered();
+        boolean changed = true;
+        if (CACHE_PICK && frustum.getClass() == Frustum.class && frustum instanceof FrustumAccess view) {
+            changed = pick.changed(position.x, position.y, position.z, camera.rotation(), view.earthplatform$matrix(),
+                    view.earthplatform$camX(), view.earthplatform$camY(), view.earthplatform$camZ(),
+                    columnsVersion, pickVersion, finest, Far.hole(), band);
+        } else pick.invalidate();
+        if (changed || pickAnimating) pickColumns(position, frustum, bx, bz, band);
+        List<Column> visible = this.visible;
         if (visible.isEmpty()) return;
         boolean pack = ShaderBlocks.packInUse();
         // Under a pack with Voxy support far terrain keeps its own, finer depth (see FarLod).
@@ -833,7 +838,7 @@ public final class FarRenderer {
         }
         if (own) FarLod.endDraw();
         if (own && FarLod.beginDeepen(modelView)) {
-            for (Column column : visible) {
+            for (Column column : FAST_WATER ? waterSurfaces : visible) {
                 if (column.water == null || column.fade == FarGpu.FADE_IN) continue;
                 FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 column.water.draw();
@@ -843,6 +848,60 @@ public final class FarRenderer {
         }
         shader.clear();
         type.clearRenderState();
+    }
+
+    /** Rebuilds selection only when its inputs change; timed fades keep visiting on every frame. */
+    private void pickColumns(Vec3 position, Frustum frustum, int bx, int bz, boolean band) {
+        drawn.clear();
+        pickAnimating = false;
+        // The dithered ring between levels only blends where a pack's TAA moves the dither every frame
+        // and averages it; without one it stays put, and where the two levels' outlines differ, as at
+        // cliff edges, it left fixed specks of sky. There levels meet at a plain seam.
+        bandFade = band;
+        int px = Far.column(bx, Far.MAX_LEVEL), pz = Far.column(bz, Far.MAX_LEVEL);
+        for (int z = pz - Far.OUTER; z <= pz + Far.OUTER; z++) for (int x = px - Far.OUTER; x <= px + Far.OUTER; x++) {
+            visit(Far.MAX_LEVEL, x, z, bx, bz, false);
+        }
+        drawnKeys.clear();
+        fadingIn.clear();
+        for (Column column : drawn) {
+            drawnKeys.add(column.key);
+            if (column.fade == FarGpu.FADE_IN) fadingIn.add(column.key);
+        }
+        List<Column> visible = new ArrayList<>(drawn.size());
+        for (Column column : drawn) {
+            if (column.faces == null && column.water == null || !frustum.isVisible(column.box)) continue;
+            double dx = column.box.getCenter().x - position.x, dz = column.box.getCenter().z - position.z;
+            column.distance = dx * dx + dz * dz;
+            visible.add(column);
+        }
+        if (CACHE_PICK) {
+            order.clear(visible.size());
+            for (Column column : visible) order.add(column.distance);
+            order.sort();
+            List<Column> sorted = new ArrayList<>(visible.size());
+            for (int i = 0; i < visible.size(); i++) sorted.add(visible.get(order.index(i)));
+            visible = sorted;
+        } else visible.sort(Comparator.comparingDouble(column -> column.distance));
+        this.visible = visible;
+        if (CACHE_PICK) for (Column column : visible) column.groups = faceGroups(column, position);
+        if (FAST_WATER) pickWater();
+    }
+
+    /** Water uses the same sorted pick and neighbor coverage in every pass. */
+    private void pickWater() {
+        waterVisible.clear();
+        waterSurfaces.clear();
+        waterEdges.clear();
+        for (Column column : visible) {
+            column.waterSides = 0;
+            if (column.fade == FarGpu.FADE_IN) continue;
+            for (int side = 0; side < 4; side++)
+                if (column.waterWalls[side] != null && !waterDrawn(column.neighbour(side))) column.waterSides |= 1 << side;
+            if (column.water != null) waterSurfaces.add(column);
+            if (column.waterSides != 0) waterEdges.add(column);
+            if (column.water != null || column.waterSides != 0) waterVisible.add(column);
+        }
     }
 
     /** Draws columns: whole ones first, then those fading out, then those fading in, each with its own program. */
@@ -859,8 +918,13 @@ public final class FarRenderer {
 
     /** Queues a column's faces that can face the camera, and its walls where its neighbours are not drawn. */
     private void queue(FarGpu gpu, Column column, Vec3 position) {
+        if (column.faces != null) gpu.add(column.faces, CACHE_PICK ? column.groups : faceGroups(column, position));
+    }
+
+    /** Facing and neighbor coverage stay fixed for the lifetime of the exact camera pick. */
+    private int faceGroups(Column column, Vec3 position) {
         FarGpu.Allocation faces = column.faces;
-        if (faces == null) return;
+        if (faces == null) return 0;
         AABB box = column.box;
         // Only face groups turned toward the camera can show. Smooth ground's slopes, cliffs among them,
         // face sideways too, so it shows from below its column as well.
@@ -881,7 +945,7 @@ public final class FarRenderer {
             };
             if (facing) groups |= 1 << FarMesher.FIRST_WALL + side;
         }
-        gpu.add(faces, groups);
+        return groups;
     }
 
     /**
@@ -928,9 +992,16 @@ public final class FarRenderer {
     public void drawWater(Camera camera, Matrix4f modelView, Matrix4f projection) {
         if (closed || waterPass == LevelPasses.current() || camera.getFluidInCamera() != net.minecraft.world.level.material.FogType.NONE) return;
         waterPass = LevelPasses.current();
-        boolean any = false;
-        for (Column column : visible) if (column.fade != FarGpu.FADE_IN && (column.water != null || column.hasWaterWalls())) { any = true; break; }
+        boolean any = FAST_WATER && !waterVisible.isEmpty();
+        if (!FAST_WATER)
+            for (Column column : visible) if (column.fade != FarGpu.FADE_IN && (column.water != null || column.hasWaterWalls())) { any = true; break; }
         if (!any) return;
+        long start = System.nanoTime();
+        try { drawWaterColumns(camera, modelView, projection); }
+        finally { Timings.FAR_WATER.since(start); }
+    }
+
+    private void drawWaterColumns(Camera camera, Matrix4f modelView, Matrix4f projection) {
         Vec3 position = camera.getPosition();
         RenderType type = RenderType.translucent();
         type.setupRenderState();
@@ -942,16 +1013,22 @@ public final class FarRenderer {
         Uniform offset = shader.CHUNK_OFFSET, view = own ? null : shader.MODEL_VIEW_MATRIX;
         Matrix4f nearer = new Matrix4f();
         double lift = WATER_LIFT / nearPlane(projection);
+        float lastX = Float.NaN, lastY = Float.NaN, lastZ = Float.NaN, lastScale = Float.NaN;
         for (int pass = 0; pass < 2; pass++) {
             // Water walls go last: where the next level's water stands as high, its surface is
             // already in the depth buffer and hides them, so they only show across a step.
-            for (int i = visible.size() - 1; i >= 0; i--) {
-                Column column = visible.get(i);
+            List<Column> water = FAST_WATER ? (pass == 0 ? waterSurfaces : waterEdges) : visible;
+            for (int i = water.size() - 1; i >= 0; i--) {
+                Column column = water.get(i);
                 // Water stays with the finer level where two levels fade into each other.
-                if (column.fade == FarGpu.FADE_IN || (pass == 0 ? column.water == null : !column.hasWaterWalls())) continue;
+                if (!FAST_WATER && (column.fade == FarGpu.FADE_IN || (pass == 0 ? column.water == null : !column.hasWaterWalls()))) continue;
                 if (offset != null) {
-                    offset.set((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
-                    offset.upload();
+                    float x = (float) (column.x0 - position.x), y = (float) (column.baseY() - position.y), z = (float) (column.z0 - position.z);
+                    if (!FAST_WATER || x != lastX || y != lastY || z != lastZ) {
+                        offset.set(x, y, z);
+                        offset.upload();
+                        lastX = x; lastY = y; lastZ = z;
+                    }
                 }
                 if (view != null) {
                     // In the shared depth buffer a step of depth spans hundreds of blocks kilometres
@@ -959,8 +1036,12 @@ public final class FarRenderer {
                     // stripes. Drawn shrunk toward the camera the water covers the same pixels, at a
                     // depth nearer by a couple of those steps.
                     double distance = Math.sqrt(column.distance + square(column.box.getCenter().y - position.y));
-                    view.set(nearer.set(modelView).scale((float) Math.max(0.8, 1.0 - distance * lift)));
-                    view.upload();
+                    float scale = (float) Math.max(0.8, 1.0 - distance * lift);
+                    if (!FAST_WATER || scale != lastScale) {
+                        view.set(nearer.set(modelView).scale(scale));
+                        view.upload();
+                        lastScale = scale;
+                    }
                 }
                 if (pass == 0) {
                     column.water.draw();
@@ -968,7 +1049,7 @@ public final class FarRenderer {
                 }
                 for (int side = 0; side < 4; side++) {
                     CubeBuffer wall = column.waterWalls[side];
-                    if (wall == null || waterDrawn(column.neighbour(side))) continue;
+                    if (FAST_WATER ? (column.waterSides & 1 << side) == 0 : wall == null || waterDrawn(column.neighbour(side))) continue;
                     wall.draw();
                 }
             }
@@ -976,15 +1057,15 @@ public final class FarRenderer {
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
         if (view != null) view.set(modelView);
         if (own) FarLod.endWater(modelView, () -> {
-            for (Column column : visible) {
-                if (column.fade == FarGpu.FADE_IN || column.water == null && !column.hasWaterWalls()) continue;
+            for (Column column : FAST_WATER ? waterVisible : visible) {
+                if (!FAST_WATER && (column.fade == FarGpu.FADE_IN || column.water == null && !column.hasWaterWalls())) continue;
                 FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 if (column.water != null) {
                     column.water.draw();
                 }
                 for (int side = 0; side < 4; side++) {
                     CubeBuffer wall = column.waterWalls[side];
-                    if (wall == null || waterDrawn(column.neighbour(side))) continue;
+                    if (FAST_WATER ? (column.waterSides & 1 << side) == 0 : wall == null || waterDrawn(column.neighbour(side))) continue;
                     wall.draw();
                 }
             }
@@ -1002,6 +1083,7 @@ public final class FarRenderer {
      */
     private void visit(int level, int x, int z, int bx, int bz, boolean fading) {
         Column column = columns.get(Far.key(level, x, z));
+        if (CACHE_PICK && FADE && column != null && age(column, FarGpu.now()) < FarShaders.FADE_TICKS) pickAnimating = true;
         boolean meshed = column != null && column.meshed;
         // Rising into the jet stream layer makes a coarser level the finest: until its columns
         // arrive, the finer ones already here keep standing in for them.
@@ -1136,6 +1218,8 @@ public final class FarRenderer {
 
     /** Starts a column's fade, or a merge's (see {@link #merge}), at a time, or with 0 clears it. */
     private void stamp(Column column, int now, boolean merging) {
+        pickVersion++;
+        if (now != 0) pickAnimating = true;
         column.stamp = now;
         if (gpu == null) return;
         gpu.stamp(column.slot, now, merging);
@@ -1158,10 +1242,25 @@ public final class FarRenderer {
         return true;
     }
 
+    /** Releases the bytes once; replacement columns transfer ownership without changing the total. */
+    private void free(Column column) {
+        vertexBytes -= column.bytes;
+        column.bytes = 0;
+        column.close(gpu);
+    }
+
     void close() {
         closed = true;
-        for (Column column : columns.values()) column.close(gpu);
+        for (Column column : columns.values()) free(column);
         columns.clear();
+        pick.invalidate();
+        drawn.clear();
+        drawnKeys.clear();
+        fadingIn.clear();
+        visible = List.of();
+        waterVisible.clear();
+        waterSurfaces.clear();
+        waterEdges.clear();
         dueColumns.clear();
         FarMesher.Built result;
         while ((result = built.poll()) != null) result.free();

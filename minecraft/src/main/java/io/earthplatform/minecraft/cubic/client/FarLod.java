@@ -371,7 +371,7 @@ public final class FarLod {
 
     /** Where the next column's water sits relative to the camera, for the water depth pass under way. */
     static void offset(float x, float y, float z) {
-        GL20C.glUniform3f(GL20C.glGetUniformLocation(drawing.id, "earth_Offset"), x, y, z);
+        GL20C.glUniform3f(FarRenderer.FAST_WATER ? drawing.offset : GL20C.glGetUniformLocation(drawing.id, "earth_Offset"), x, y, z);
     }
 
     static void endDeepen() {
@@ -589,8 +589,12 @@ public final class FarLod {
         final int id;
         private final int inverse, game;
 
+        /** Linked once; water used to look this up for every column in both depth passes. */
+        private final int offset;
+
         private Program(int id) {
             this.id = id;
+            offset = GL20C.glGetUniformLocation(id, "earth_Offset");
             inverse = GL20C.glGetUniformLocation(id, "earth_FarInverse");
             game = GL20C.glGetUniformLocation(id, "earth_GameProjection");
             int previous = GL11C.glGetInteger(GL20C.GL_CURRENT_PROGRAM);
