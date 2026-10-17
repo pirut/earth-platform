@@ -878,6 +878,7 @@ public final class ServerCubeWorld extends CubeWorld {
             if (cube.reshaped) {
                 cube.reshaped = false;
                 far.edited(cube.x, cube.z);
+                far.summarize(cube.key, cube.section.getStates().copy());
             }
         } catch (IOException | RuntimeException failure) {
             EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(cube.key), failure);
@@ -934,6 +935,7 @@ public final class ServerCubeWorld extends CubeWorld {
     public void save() {
         for (Cube cube : cubes.values()) store(cube);
         flushStorage();
+        far.flush();
     }
 
     public void close() {
@@ -951,7 +953,7 @@ public final class ServerCubeWorld extends CubeWorld {
         int standing = 0;
         for (Watcher watcher : watchers.values()) standing += watcher.stood.size();
         return generator.id() + ", " + cubes.size() + " cubes loaded, " + standing + " buried cubes stood in for, " + opened.size() + " opened by caves, " + pending.size() + " pending (" + generated + " made, " + dropped + " dropped as no longer wanted), " + light.size() + " lit, "
-                + watchers.size() + " watching, " + far.cached() + " far columns cached" + (failures > 0 ? ", " + failures + " generation failures" : "");
+                + watchers.size() + " watching, " + far.cached() + " far columns cached, " + far.builds() + (failures > 0 ? ", " + failures + " generation failures" : "");
     }
 
     /** Iterates loaded cubes; exposed for diagnostics. */
