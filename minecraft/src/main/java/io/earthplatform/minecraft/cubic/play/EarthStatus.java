@@ -110,6 +110,15 @@ public final class EarthStatus {
         return new Payload(phase, problem, downloading, recent, waitedSeconds, place);
     }
 
+    /**
+     * A playing player's status. Downloads are the server's, shared by everyone, so they are told
+     * only to a player whose own terrain is still on its way, not to one whose ground is all there
+     * while another player loads a place far away.
+     */
+    Payload playing(byte problem, boolean ownTerrainWaiting) {
+        return ownTerrainWaiting ? payload(PLAYING, problem, 0, "") : new Payload(PLAYING, problem, 0, 0, 0, "");
+    }
+
     /** Sends a player their status when it changed, and every few seconds anyway. */
     void send(ServerPlayer player, Payload payload, long now) {
         UUID id = player.getUUID();

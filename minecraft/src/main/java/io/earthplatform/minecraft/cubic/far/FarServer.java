@@ -104,6 +104,12 @@ public final class FarServer {
         this.biomeIds = biomes.asHolderIdMap();
     }
 
+    /** Far columns a player asked for that have not been sent yet: its own terrain is still on its way. */
+    public int waiting(UUID player) {
+        Session session = sessions.get(player);
+        return session == null ? 0 : session.queued.size();
+    }
+
     /** Queues the columns a player asked for; ones outside that player's squares are ignored. */
     public void request(ServerPlayer player, long[] keys) {
         if (closed) return;

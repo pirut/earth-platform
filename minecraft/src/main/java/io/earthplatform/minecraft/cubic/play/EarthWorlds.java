@@ -227,7 +227,7 @@ public final class EarthWorlds {
                     if (Cubic.isCubic(player.level().dimension())) told.add(player);
                 }
                 byte problem = status.unreachable() ? EarthStatus.UNREACHABLE : EarthStatus.OK;
-                for (ServerPlayer player : told) status.send(player, status.payload(EarthStatus.PLAYING, problem, 0, ""), now);
+                for (ServerPlayer player : told) status.send(player, status.playing(problem, cubes.far().waiting(player.getUUID()) > 0), now);
             }
             if (waiting.isEmpty()) return;
             for (UUID id : List.copyOf(waiting)) {
