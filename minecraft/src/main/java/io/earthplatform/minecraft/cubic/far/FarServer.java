@@ -55,6 +55,21 @@ public final class FarServer {
     private final CubeStorage storage;
     private final CubeCodec codec;
     private final IdMap<Holder<Biome>> biomeIds;
+    /** What players built, for the coarse levels whose voxels cover several cubes. */
+    private final FarBuilds builds;
+    /** Summarizes saved builds off the server thread, in the order they were saved. */
+    private final java.util.concurrent.ExecutorService summarizer = java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "Earth far builds");
+        thread.setDaemon(true);
+        thread.setPriority(Thread.MIN_PRIORITY);
+        return thread;
+    });
+    /** Coarse far columns made with a build showing, for diagnostics. */
+    private final java.util.concurrent.atomic.AtomicIntegerArray builtColumns = new java.util.concurrent.atomic.AtomicIntegerArray(Far.MAX_LEVEL - Far.EDIT_LEVELS);
+    /** Cube columns whose builds changed, so their coarse far columns are remade. */
+    private final ConcurrentLinkedQueue<Long> rebuilt = new ConcurrentLinkedQueue<>();
+    /** Cubes summarized since the world opened, which the reading of old saves leaves alone. */
+    private final Set<Long> summarized = ConcurrentHashMap.newKeySet();
     /**
      * Far workers kept busy: two on four cores, and more on bigger machines, where two left most
      * cores idle while the far terrain took minutes to refine. They run at low priority behind the
@@ -102,6 +117,13 @@ public final class FarServer {
         this.storage = storage;
         this.codec = codec;
         this.biomeIds = biomes.asHolderIdMap();
+        this.builds = new FarBuilds(storage.directory().resolveSibling("builds"));
+        if (!builds.scanned()) {
+            Thread scan = new Thread(this::scanOldSaves, "Earth far builds scan");
+            scan.setDaemon(true);
+            scan.setPriority(Thread.MIN_PRIORITY);
+            scan.start();
+        }
     }
 
     /** Far columns a player asked for that have not been sent yet: its own terrain is still on its way. */
@@ -189,6 +211,7 @@ public final class FarServer {
         FarColumn column = new FarColumn();
         generator.farColumn(level, Far.x(key), Far.z(key), column);
         if (level <= Far.EDIT_LEVELS) foldSavedCubes(level, Far.x(key), Far.z(key), column);
+        else foldBuilds(level, Far.x(key), Far.z(key), column);
         List<byte[]> sections = new ArrayList<>(column.sections.size());
         for (LevelChunkSection section : column.sections) sections.add(section == null ? new byte[0] : CubeCodec.sectionBytes(section));
         CubePayloads.FarColumnData data = new CubePayloads.FarColumnData(key, column.bottom, sections, column.drops);
@@ -230,6 +253,64 @@ public final class FarServer {
             if (section.hasOnlyAir()) column.sections.set(i, null);
         }
     }
+
+    /** Stands the summarized builds under a coarse column on its ground. */
+    private void foldBuilds(int level, int columnX, int columnZ, FarColumn column) {
+        int cubes = 1 << level, minX = columnX * cubes, minZ = columnZ * cubes;
+        var found = builds.in(minX, minX + cubes - 1, minZ, minZ + cubes - 1);
+        if (found.isEmpty()) return;
+        if (FarBuilds.fold(level, columnX, columnZ, found, column, this::section) > 0) builtColumns.incrementAndGet(level - Far.EDIT_LEVELS - 1);
+        for (int i = 0; i < column.sections.size(); i++) {
+            LevelChunkSection section = column.sections.get(i);
+            if (section != null) section.recalcBlockCounts();
+        }
+    }
+
+    // Builds -------------------------------------------------------------------------------------
+
+    /**
+     * An edited cube was saved: its build is summarized in the background, and the coarse columns
+     * over it are remade if that changed. {@code states} must be the caller's own copy.
+     */
+    public void summarize(long cubeKey, PalettedContainer<BlockState> states) {
+        if (closed) return;
+        summarized.add(cubeKey);
+        summarizer.execute(() -> {
+            try {
+                int x = CubeKey.x(cubeKey), y = CubeKey.y(cubeKey), z = CubeKey.z(cubeKey);
+                if (builds.put(cubeKey, FarBuilds.summarize(states, x, y, z, generator::surfaceY))) rebuilt.add(cubeKey);
+            } catch (RuntimeException failure) {
+                EarthPlatformMod.LOGGER.warn("Could not summarize the build in cube {}", CubeKey.toString(cubeKey), failure);
+            }
+        });
+    }
+
+    /** Reads the builds in every edited cube saved before summaries were kept. */
+    private void scanOldSaves() {
+        long start = System.nanoTime();
+        int[] counts = new int[2];
+        try {
+            storage.forEachSaved((cubeKey, tag) -> {
+                if (closed) throw new java.util.concurrent.CancellationException();
+                if (tag.getBoolean(CubeCodec.UNTOUCHED) || summarized.contains(cubeKey)) return;
+                counts[0]++;
+                FarBuilds.Summary summary = FarBuilds.summarize(codec.read(tag).section().getStates(),
+                        CubeKey.x(cubeKey), CubeKey.y(cubeKey), CubeKey.z(cubeKey), generator::surfaceY);
+                if (summary != null && builds.putIfAbsent(cubeKey, summary)) { counts[1]++; rebuilt.add(cubeKey); }
+            });
+            builds.flush();
+            builds.markScanned();
+            if (counts[0] > 0) EarthPlatformMod.LOGGER.info("Far terrain: read {} builds in {} edited cubes saved before, in {} ms",
+                    counts[1], counts[0], (System.nanoTime() - start) / 1_000_000);
+        } catch (java.util.concurrent.CancellationException stopped) {
+            // The world closed first; the next opening reads them again.
+        } catch (IOException | RuntimeException failure) {
+            EarthPlatformMod.LOGGER.warn("Could not read the builds of older saves for far terrain", failure);
+        }
+    }
+
+    /** Writes the build summaries that changed. */
+    public void flush() { if (!closed) summarizer.execute(builds::flush); }
 
     private static boolean waterOrAir(BlockState state) { return state.isAir() || state.getBlock() == Blocks.WATER; }
 
@@ -283,6 +364,15 @@ public final class FarServer {
         ticks++;
         for (Long key; (key = failed.poll()) != null; ) for (Session session : sessions.values()) session.queued.remove(key.longValue());
         if (ticks % 100 == 0) for (Long key; (key = missing.poll()) != null; ) for (Session session : sessions.values()) session.queued.remove(key.longValue());
+        for (Long cube; (cube = rebuilt.poll()) != null; ) {
+            int cubeX = CubeKey.x(cube), cubeZ = CubeKey.z(cube);
+            for (int level = Far.EDIT_LEVELS + 1; level <= Far.MAX_LEVEL; level++) {
+                long key = Far.key(level, cubeX >> level, cubeZ >> level);
+                CubePayloads.FarColumnData old = cache.remove(key);
+                if (old != null && before.size() < CACHE) before.putIfAbsent(key, old);
+                stale.add(key);
+            }
+        }
         for (Made done; (done = made.poll()) != null; ) {
             if (done.player != null) {
                 Session session = sessions.get(done.player);
@@ -325,6 +415,12 @@ public final class FarServer {
     }
 
     public int cached() { return cache.size(); }
+    /** Builds kept for the coarse levels, and how many coarse columns have shown one. */
+    public String builds() {
+        StringBuilder levels = new StringBuilder();
+        for (int i = 0; i < builtColumns.length(); i++) levels.append(i == 0 ? "" : ", ").append("level ").append(Far.EDIT_LEVELS + 1 + i).append(": ").append(builtColumns.get(i));
+        return builds.cubes() + " cubes with builds, shown in coarse far columns made (" + levels + ")";
+    }
     /** Columns skipped because their player had moved far away before their turn came. */
     public int skipped() { return skipped.get(); }
     /** Edited columns remade the same as before, so not sent again. */
@@ -333,6 +429,11 @@ public final class FarServer {
     public void close() {
         closed = true;
         workers.shutdownNow();
+        // Summaries already asked for are written before the thread ends.
+        summarizer.execute(builds::flush);
+        summarizer.shutdown();
+        try { summarizer.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS); }
+        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         sessions.clear();
     }
 }
