@@ -268,7 +268,7 @@ abstract class MercatorTileLayer implements ElevationLayer, AutoCloseable {
 
     /** Latitude in degrees of a Web Mercator pixel row. */
     static double latitude(double world, double row) {
-        return Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * row / world))));
+        return Mercator.latitude(row, world);
     }
 
     public RangeStats stats() { return new RangeStats(files.downloads.get(), files.diskHits.get(), files.failures.get()); }

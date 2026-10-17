@@ -156,13 +156,13 @@ public final class Drainage {
 
     static double pixelY(double latitude, int zoom) {
         double clamped = Math.max(-MercatorGrid.MAX_LATITUDE, Math.min(MercatorGrid.MAX_LATITUDE, latitude)), r = Math.toRadians(clamped);
-        return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * ((long) TILE << zoom);
+        return Mercator.row(r, (long) TILE << zoom);
     }
 
     static double longitude(double pixelX, int zoom) { return pixelX / ((long) TILE << zoom) * 360 - 180; }
 
     static double latitude(double pixelY, int zoom) {
-        return Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * pixelY / ((long) TILE << zoom)))));
+        return Mercator.latitude(pixelY, (long) TILE << zoom);
     }
 
     private Region region(int tx, int ty) {

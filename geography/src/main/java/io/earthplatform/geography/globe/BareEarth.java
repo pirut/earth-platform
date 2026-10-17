@@ -311,7 +311,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
         double[] latitude = new double[SPAN], longitude = new double[SPAN];
         for (int k = 0; k < SPAN; k++) {
             double row = Math.max(0, Math.min(size - 1, gy0 + k)) + 0.5;
-            latitude[k] = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * row / size))));
+            latitude[k] = Mercator.latitude(row, size);
             double column = Math.floorMod(gx0 + k, size) + 0.5;
             longitude[k] = column / size * 360 - 180;
         }

@@ -380,7 +380,7 @@ public final class CopernicusFill implements ElevationLayer {
             long size = (long) TerrariumTileSource.TILE_SIZE << CHECK_ZOOM;
             double phi = Math.toRadians(Math.max(-85.0511, Math.min(85.0511, latitude)));
             double px = (CopernicusSource.wrap(longitude) + 180) / 360 * size - 0.5;
-            double py = (1 - Math.log(Math.tan(phi) + 1 / Math.cos(phi)) / Math.PI) / 2 * size - 0.5;
+            double py = Mercator.row(phi, size) - 0.5;
             long x0 = (long) Math.floor(px), y0 = (long) Math.floor(py);
             double tx = px - x0, ty = py - y0;
             return (pixel(x0, y0, size) * (1 - tx) + pixel(x0 + 1, y0, size) * tx) * (1 - ty)
@@ -402,13 +402,12 @@ public final class CopernicusFill implements ElevationLayer {
 
     /** Global pixel row of a latitude at a map size. */
     private static double mercatorY(double latitude, long size) {
-        double phi = Math.toRadians(latitude);
-        return (1 - Math.log(Math.tan(phi) + 1 / Math.cos(phi)) / Math.PI) / 2 * size;
+        return Mercator.row(Math.toRadians(latitude), size);
     }
 
     /** Latitude in degrees of a global pixel row position at a map size. */
     private static double latitude(double row, long size) {
-        return Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * Math.max(0, Math.min(size, row)) / size))));
+        return Mercator.latitude(Math.max(0, Math.min(size, row)), size);
     }
 
     private static int wrapWest(int west) { return Math.floorMod(west + 180, 360) - 180; }

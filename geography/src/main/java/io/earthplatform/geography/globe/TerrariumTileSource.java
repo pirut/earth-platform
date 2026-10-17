@@ -784,7 +784,7 @@ public final class TerrariumTileSource implements AutoCloseable {
         double north = latitude(top - 4 * band - 3, size), south = latitude(top + TILE_SIZE + 4 * band + 3, size);
         for (long lat = (long) Math.ceil(south); lat <= north; lat++) {
             double phi = Math.toRadians(lat);
-            int line = (int) ((long) Math.floor((1 - Math.log(Math.tan(phi) + 1 / Math.cos(phi)) / Math.PI) / 2 * size) - top);
+            int line = (int) ((long) Math.floor(Mercator.row(phi, size)) - top);
             int rows = (int) Math.ceil(SEAM_REACH / (degrees * Math.cos(phi))) + 1;
             each.at(false, line, rows);
         }
@@ -806,7 +806,7 @@ public final class TerrariumTileSource implements AutoCloseable {
     /** Latitude in degrees of the top edge of a global pixel row, clamped to the map. */
     private static double latitude(long row, long size) {
         double clamped = Math.max(0, Math.min(size, row));
-        return Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * clamped / size))));
+        return Mercator.latitude(clamped, size);
     }
 
     /** Widest run of bad pixels across a seam that {@link #seams} mends. */
