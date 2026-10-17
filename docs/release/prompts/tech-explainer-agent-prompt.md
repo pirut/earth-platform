@@ -47,6 +47,20 @@ Make two cuts from the same Manim scenes:
    - The message: those are great tools for what they do. Earth Platform combines a true-height cube engine, a real-Earth generator and its own Voxy-style far renderer in one mod.
 6. **Honest limits:** elevation data quality varies (some spires are rounded and some fjords were filled in the source data), there are no real cities or roads, and the mod is still in alpha.
 
+## Blend Minecraft gameplay with the diagrams (required)
+This is a showcase of the mod, not a slideshow. Every point should start or end in real Minecraft gameplay, with the Manim graphics laid over or morphing out of that footage. Roughly half of the screen time should be gameplay.
+
+Ideas:
+- **Freeze-frame:** freeze on an in-game shot, then let Manim draw over it. For example, height lines on Everest, the cube grid around the player, or the far-view LOD rings spreading out to the horizon.
+- **Grid zoom:** zoom from a gameplay shot into a Manim grid of the same scene, then back out into the game.
+- **Morph:** turn a heightmap into blocks, reusing the photo-to-blocks mosaic morph in `docs/release/trailer/tools/rvm3.py`.
+- **Side by side:** split screen with the real NPS photo on one side and the in-game view on the other.
+- **Altitude meter:** fly up with the jet stream or elytra while a Manim altimeter counts past vanilla's build limit to Everest's height.
+- **Far view:** walk out to a cliff edge with the far view on, then show the 94 km horizon labeled.
+- **Server scene:** two players together in the world for the server part.
+
+Plan a shot list that names a clip for each beat. Reuse the existing clips where they fit, and film new ones with Cinema.java (third-person, glide, flyovers) where nothing fits. Match Manim colors and fonts to the Shorts branding in shorts.py so the graphics and the game read as one piece.
+
 The Short should cover only points 1-3 plus a one-line comparison. Its hook should be something like "How do you fit the ENTIRE Earth in Minecraft?" or "Minecraft's height limit is 320 blocks*. Everest is 8,849." (*check the real number), with a "Where should I go next?" loop ending.
 
 ## Hard rules
