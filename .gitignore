@@ -13,3 +13,4 @@
 .env
 .env.*
 recovered-snapshot/
+**/.gradle-home/

@@ -23,13 +23,22 @@ import net.minecraft.world.level.block.state.BlockState;
  */
 public final class Far {
     public static final int MIN_LEVEL = 1, MAX_LEVEL = 8, SIZE = 16;
-    /** Most detail a client may ask for, in {@link #hole} columns. */
-    public static final int MAX_HOLE = 24;
+    /** The detail when nothing sets it: about 94 km. */
+    public static final int DEFAULT_DETAIL = 11;
+    /** Most detail the normal settings reach, in {@link #hole} columns: 24 is about 201 km. */
+    public static final int NORMAL_DETAIL = 24;
+    /**
+     * Most detail at all, for the extreme distances past {@link #NORMAL_DETAIL}: 48 is about 397 km.
+     * Past the normal settings only the coarsest level grows (see {@link #sharpness}).
+     */
+    public static final int MAX_DETAIL = 48;
+    /** Widest middle any sharpness gives a level, in its own columns. */
+    public static final int MAX_HOLE = 48;
     /**
      * The detail set at start-up, which fixes how far the coarsest level reaches. Set with
-     * {@code -Dearthplatform.far.detail} (4 to 24, default 11).
+     * {@code -Dearthplatform.far.detail} (4 to 48, default 11; past 24 is the extreme range).
      */
-    public static final int DETAIL = Math.clamp(Integer.getInteger("earthplatform.far.detail", 11), 4, MAX_HOLE);
+    public static final int DETAIL = Math.clamp(Integer.getInteger("earthplatform.far.detail", DEFAULT_DETAIL), 4, MAX_DETAIL);
     /** Half-width of the coarsest level's square. */
     public static final int OUTER = 2 * DETAIL + 1;
     /**
@@ -38,20 +47,35 @@ public final class Far {
      * covers on screen. Starts at {@link #DETAIL}; the sharpness setting changes it while playing
      * (see {@link #sharpness}), which leaves the reach as it is.
      */
-    private static volatile int hole = DETAIL;
+    private static volatile int hole = Math.min(DETAIL, NORMAL_DETAIL);
 
     public static int hole() { return hole; }
 
+    /** The sharpness choices past this scale are the extreme ones (see {@link #sharpness}). */
+    public static final double EXTREME_SCALE = 2.0;
+
     /**
      * Scales the detail by {@code scale}: below 1 coarser levels take over closer, for speed, above
-     * 1 every finer level keeps more columns, so the land looks sharper further out. The coarsest
-     * level keeps at least one ring of its own, and the server's slack covers every value.
+     * 1 every finer level keeps more columns, so the land looks sharper further out. The normal
+     * choices scale the start-up detail, up to {@link #NORMAL_DETAIL}, and keep the coarsest level
+     * at least one ring of its own, so an extreme distance only adds rings to the coarsest level.
+     * The extreme ones, past {@link #EXTREME_SCALE}, scale the default detail instead, for the same
+     * voxel size on screen at every distance, and may let finer levels cover the coarsest level
+     * entirely, cut to its square (see {@link #around}). The server's slack covers every value.
      */
     public static void sharpness(double scale) {
-        hole = Math.clamp(Math.round(DETAIL * scale), 4, Math.min(OUTER - 1, MAX_HOLE));
+        hole = scale > EXTREME_SCALE
+                ? Math.clamp(Math.round(DEFAULT_DETAIL * scale), NORMAL_DETAIL + 1, MAX_HOLE)
+                : Math.clamp(Math.round(Math.min(DETAIL, NORMAL_DETAIL) * scale), 4, Math.min(OUTER - 1, NORMAL_DETAIL));
     }
-    /** How far a request may stray from the player, in columns of its level, before the server ignores it; covers every detail setting. */
-    public static final int SLACK = 2 * MAX_HOLE + 3;
+
+    /**
+     * How far a request may stray from the player, in columns of its level, before the server
+     * ignores it; covers every detail and sharpness setting, a level cut to the coarsest square
+     * (up to 2 * {@link #OUTER} + 2 columns of level 7) included. It was 51 before the extreme
+     * settings.
+     */
+    public static final int SLACK = 2 * Math.max(MAX_HOLE, 2 * MAX_DETAIL + 1) + 3;
     /** Drops are kept in 1/256ths of a block. */
     public static final int DROP_UNIT = 256;
     /** Levels whose voxels are small enough (16 blocks or less) to show what players built. */
@@ -108,14 +132,18 @@ public final class Far {
     /** The same down to level {@code finest} only, as for a player too high or fast for the finer ones to matter or keep up. */
     public static void around(int bx, int bz, int finest, LongConsumer out) {
         int hole = Far.hole;
+        int cx = column(bx, MAX_LEVEL), cz = column(bz, MAX_LEVEL);
         for (int level = MAX_LEVEL; level >= finest; level--) {
             int minX, minZ, maxX, maxZ;
             if (level == MAX_LEVEL) {
-                int px = column(bx, level), pz = column(bz, level);
-                minX = px - OUTER; maxX = px + OUTER; minZ = pz - OUTER; maxZ = pz + OUTER;
+                minX = cx - OUTER; maxX = cx + OUTER; minZ = cz - OUTER; maxZ = cz + OUTER;
             } else {
                 int px = 2 * column(bx, level + 1), pz = 2 * column(bz, level + 1);
                 minX = px - 2 * hole; maxX = px + 2 * hole + 1; minZ = pz - 2 * hole; maxZ = pz + 2 * hole + 1;
+                // Cut to the coarsest square, which an extreme sharpness can outgrow: nothing past it is drawn.
+                int shift = MAX_LEVEL - level;
+                minX = Math.max(minX, cx - OUTER << shift); maxX = Math.min(maxX, (cx + OUTER + 1 << shift) - 1);
+                minZ = Math.max(minZ, cz - OUTER << shift); maxZ = Math.min(maxZ, (cz + OUTER + 1 << shift) - 1);
             }
             for (int z = minZ; z <= maxZ; z++) for (int x = minX; x <= maxX; x++) out.accept(key(level, x, z));
         }

@@ -36,6 +36,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 
 ### Seeing far
 - Textured voxel far terrain out to about 94,000 blocks, at real height, with see-through far water, so distant ranges such as Denali and Annapurna stand clear on the horizon.
+- Far view and sharpness on the pause menu: 37 to 201 km of far terrain, and Fast to Sharpest. Extreme settings for very powerful computers go further: up to 397 km, and Extreme and Ultra sharpness for far blocks a half and a third of Balanced's size on screen.
 - Soft clouds at the Earth's cloud height, kept clear of the jet stream.
 - Works with Iris and Photon, which light near blocks and far terrain alike.
 - Macs run the stock Photon download at its defaults: the mod adapts it for Apple's OpenGL on your own computer.

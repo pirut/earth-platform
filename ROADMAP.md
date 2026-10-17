@@ -14,7 +14,7 @@ Every merge to `main` builds a numbered release on the [Releases page](https://g
 
 - **Cubic engine.** Worlds run from Y -16384 to 16383. Blocks, lighting, mobs, saving and loading all work at any height, and vanilla gameplay code runs on top of it unchanged.
 - **Survival.** Mining, crafting, building, death and respawn, caves, ores, vanilla structures and villages, and the Nether and the End through normal portals.
-- **Far terrain.** Our own voxel renderer, built on ideas from Voxy and Distant Horizons. It draws to about 94 km by default (201 km at most), and player builds show in it out to about 6 km.
+- **Far terrain.** Our own voxel renderer, built on ideas from Voxy and Distant Horizons. It draws to about 94 km by default (201 km at most, 397 km with the extreme settings), and player builds show in it out to about 6 km.
 - **Elevation.** AWS Terrain Tiles for the whole planet, with Copernicus GLO-30 filling gaps, USGS 3DEP for the United States (80, 40, then 20 m on a first visit) and REMA for Antarctica. Bad pixels in the source data are repaired as they load.
 - **Climate and biomes.** CHELSA climate and the RESOLVE ecoregion map pick the biome, and ESA WorldCover places forests, grass, rock, sand, snow, wetlands and water.
 - **Water.** Lakes and rivers sit level at their surveyed height. Narrow rivers come from JRC Global Surface Water, and small streams are traced from valleys in the elevation data.
