@@ -1,0 +1,759 @@
+{
+  "method": "Mean of five complete five-second cubic perf intervals inside each 30-second F3-visible measurement. Sequential local runs; no confidence interval.",
+  "excluded": [
+    "Initial no-shader cross-run samples: background uploads or concurrent build.",
+    "Complementary r5.9.3: Iris disabled shaders; no shader performance claim."
+  ],
+  "measurements": {
+    "far-baseline-photon": {
+      "fps": 18.5,
+      "samples": 5,
+      "mean": {
+        "frame": 54.074,
+        "far draw": 18.504,
+        "far upload": 0.0,
+        "far mesh": 0.0,
+        "drawn": 45966,
+        "held": 58909,
+        "settled": 100,
+        "in_view": 100,
+        "MB": 938,
+        "ranges": 28246
+      },
+      "rows": [
+        {
+          "frame": 54.03,
+          "far draw": 18.18,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        },
+        {
+          "frame": 55.03,
+          "far draw": 19.08,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        },
+        {
+          "frame": 53.51,
+          "far draw": 18.09,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        },
+        {
+          "frame": 54.48,
+          "far draw": 19.06,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        },
+        {
+          "frame": 53.32,
+          "far draw": 18.11,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        }
+      ]
+    },
+    "far-legacy-photon": {
+      "fps": 16.6,
+      "samples": 5,
+      "mean": {
+        "frame": 60.284,
+        "far draw": 18.44,
+        "far water": 8.232,
+        "far upload": 0.0,
+        "far mesh": 0.0,
+        "drawn": 45966,
+        "held": 58909,
+        "settled": 100,
+        "in_view": 100,
+        "MB": 938,
+        "ranges": 28245
+      },
+      "rows": [
+        {
+          "frame": 61.61,
+          "far draw": 18.72,
+          "far water": 8.39,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28245
+        },
+        {
+          "frame": 60.61,
+          "far draw": 18.0,
+          "far water": 8.09,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28245
+        },
+        {
+          "frame": 60.23,
+          "far draw": 18.74,
+          "far water": 8.35,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28245
+        },
+        {
+          "frame": 59.13,
+          "far draw": 18.18,
+          "far water": 8.08,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28245
+        },
+        {
+          "frame": 59.84,
+          "far draw": 18.56,
+          "far water": 8.25,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28245
+        }
+      ]
+    },
+    "far-after-photon": {
+      "fps": 22.0,
+      "samples": 5,
+      "mean": {
+        "frame": 45.578,
+        "far draw": 9.158,
+        "far water": 6.42,
+        "far upload": 0.0,
+        "far mesh": 0.0,
+        "drawn": 45966,
+        "held": 58909,
+        "settled": 100,
+        "in_view": 100,
+        "MB": 938,
+        "ranges": 28245
+      },
+      "rows": [
+        {
+          "frame": 44.96,
+          "far draw": 9.13,
+          "far water": 6.49,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28245
+        },
+        {
+          "frame": 44.7,
+          "far draw": 8.96,
+          "far water": 6.32,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28245
+        },
+        {
+          "frame": 46.74,
+          "far draw": 9.29,
+          "far water": 6.52,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28245
+        },
+        {
+          "frame": 44.45,
+          "far draw": 8.88,
+          "far water": 6.26,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28245
+        },
+        {
+          "frame": 47.04,
+          "far draw": 9.53,
+          "far water": 6.51,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28245
+        }
+      ]
+    },
+    "live-vanilla-before": {
+      "fps": 27.9,
+      "samples": 5,
+      "mean": {
+        "frame": 35.868,
+        "far draw": 14.364,
+        "far water": 4.046,
+        "far upload": 0.0,
+        "far mesh": 0.0,
+        "drawn": 44734,
+        "held": 58909,
+        "settled": 100,
+        "in_view": 100,
+        "MB": 908,
+        "ranges": 27535
+      },
+      "rows": [
+        {
+          "frame": 36.45,
+          "far draw": 14.24,
+          "far water": 4.04,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 908,
+          "ranges": 27535
+        },
+        {
+          "frame": 36.32,
+          "far draw": 14.66,
+          "far water": 4.15,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 908,
+          "ranges": 27535
+        },
+        {
+          "frame": 35.21,
+          "far draw": 14.15,
+          "far water": 3.97,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 908,
+          "ranges": 27535
+        },
+        {
+          "frame": 35.95,
+          "far draw": 14.62,
+          "far water": 4.09,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 908,
+          "ranges": 27535
+        },
+        {
+          "frame": 35.41,
+          "far draw": 14.15,
+          "far water": 3.98,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 908,
+          "ranges": 27535
+        }
+      ]
+    },
+    "live-vanilla-after": {
+      "fps": 36.6,
+      "samples": 5,
+      "mean": {
+        "frame": 27.284,
+        "far draw": 6.146,
+        "far water": 3.21,
+        "far upload": 0.0,
+        "far mesh": 0.0,
+        "drawn": 44734,
+        "held": 58909,
+        "settled": 100,
+        "in_view": 100,
+        "MB": 908,
+        "ranges": 27535
+      },
+      "rows": [
+        {
+          "frame": 27.6,
+          "far draw": 6.38,
+          "far water": 3.3,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 908,
+          "ranges": 27535
+        },
+        {
+          "frame": 27.02,
+          "far draw": 5.99,
+          "far water": 3.11,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 908,
+          "ranges": 27535
+        },
+        {
+          "frame": 27.28,
+          "far draw": 6.16,
+          "far water": 3.23,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 908,
+          "ranges": 27535
+        },
+        {
+          "frame": 27.09,
+          "far draw": 6.0,
+          "far water": 3.14,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 908,
+          "ranges": 27535
+        },
+        {
+          "frame": 27.43,
+          "far draw": 6.2,
+          "far water": 3.27,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 908,
+          "ranges": 27535
+        }
+      ]
+    },
+    "live-bsl-before": {
+      "fps": 24.0,
+      "samples": 5,
+      "mean": {
+        "frame": 41.574,
+        "far draw": 18.528,
+        "far water": 7.92,
+        "far upload": 0.0,
+        "far mesh": 0.0,
+        "drawn": 45966,
+        "held": 58909,
+        "settled": 100,
+        "in_view": 100,
+        "MB": 938,
+        "ranges": 28246
+      },
+      "rows": [
+        {
+          "frame": 41.47,
+          "far draw": 18.4,
+          "far water": 7.81,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        },
+        {
+          "frame": 41.97,
+          "far draw": 19.03,
+          "far water": 8.13,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        },
+        {
+          "frame": 41.69,
+          "far draw": 18.33,
+          "far water": 7.79,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        },
+        {
+          "frame": 41.33,
+          "far draw": 18.46,
+          "far water": 7.95,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        },
+        {
+          "frame": 41.41,
+          "far draw": 18.42,
+          "far water": 7.92,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        }
+      ]
+    },
+    "live-bsl-after": {
+      "fps": 30.4,
+      "samples": 5,
+      "mean": {
+        "frame": 32.818,
+        "far draw": 9.216,
+        "far water": 6.102,
+        "far upload": 0.0,
+        "far mesh": 0.0,
+        "drawn": 45966,
+        "held": 58909,
+        "settled": 100,
+        "in_view": 100,
+        "MB": 938,
+        "ranges": 28246
+      },
+      "rows": [
+        {
+          "frame": 32.83,
+          "far draw": 9.1,
+          "far water": 6.04,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        },
+        {
+          "frame": 32.84,
+          "far draw": 9.28,
+          "far water": 6.16,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        },
+        {
+          "frame": 32.84,
+          "far draw": 9.52,
+          "far water": 6.36,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        },
+        {
+          "frame": 32.74,
+          "far draw": 9.1,
+          "far water": 5.98,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        },
+        {
+          "frame": 32.84,
+          "far draw": 9.08,
+          "far water": 5.97,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 45966,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 28246
+        }
+      ]
+    },
+    "final-complementary-before": {
+      "fps": 25.9,
+      "samples": 5,
+      "mean": {
+        "frame": 38.47,
+        "far draw": 13.968,
+        "far water": 5.354,
+        "far upload": 0.0,
+        "far mesh": 0.0,
+        "drawn": 44734,
+        "held": 58909,
+        "settled": 100,
+        "in_view": 100,
+        "MB": 938,
+        "ranges": 27535
+      },
+      "rows": [
+        {
+          "frame": 38.4,
+          "far draw": 14.06,
+          "far water": 5.35,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 27535
+        },
+        {
+          "frame": 38.24,
+          "far draw": 13.77,
+          "far water": 5.31,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 27535
+        },
+        {
+          "frame": 38.88,
+          "far draw": 14.14,
+          "far water": 5.44,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 27535
+        },
+        {
+          "frame": 38.33,
+          "far draw": 13.8,
+          "far water": 5.31,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 27535
+        },
+        {
+          "frame": 38.5,
+          "far draw": 14.07,
+          "far water": 5.36,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 27535
+        }
+      ]
+    },
+    "final-complementary-after": {
+      "fps": 32.7,
+      "samples": 5,
+      "mean": {
+        "frame": 30.556,
+        "far draw": 5.97,
+        "far water": 4.304,
+        "far upload": 0.0,
+        "far mesh": 0.0,
+        "drawn": 44734,
+        "held": 58909,
+        "settled": 100,
+        "in_view": 100,
+        "MB": 938,
+        "ranges": 27535
+      },
+      "rows": [
+        {
+          "frame": 31.55,
+          "far draw": 6.04,
+          "far water": 4.26,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 27535
+        },
+        {
+          "frame": 30.55,
+          "far draw": 5.97,
+          "far water": 4.34,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 27535
+        },
+        {
+          "frame": 29.92,
+          "far draw": 5.84,
+          "far water": 4.28,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 27535
+        },
+        {
+          "frame": 30.34,
+          "far draw": 6.03,
+          "far water": 4.33,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 27535
+        },
+        {
+          "frame": 30.42,
+          "far draw": 5.97,
+          "far water": 4.31,
+          "far upload": 0.0,
+          "far mesh": 0.0,
+          "drawn": 44734,
+          "held": 58909,
+          "settled": 100,
+          "in_view": 100,
+          "MB": 938,
+          "ranges": 27535
+        }
+      ]
+    }
+  }
+}
