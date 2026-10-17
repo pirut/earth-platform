@@ -50,7 +50,7 @@ Start with the `package-info.java` in each package: it says what the package doe
 | `.../minecraft/cubic/gen` | Terrain shared by every cubic world: `SurfaceGenerator` turns column heights into cubes; caves, rock layers, plants, trees and vanilla structures |
 | `.../minecraft/cubic/earth` | The real Earth: `EarthGenerator` decides every column's height, water and surface from the Earth data |
 | `.../minecraft/cubic/far` | Far terrain on the server: the voxel pyramid (`Far`) and the workers that make its columns (`FarServer`) |
-| `.../minecraft/cubic/client` | Drawing: near cubes (`CubeRenderer`), far terrain (`FarRenderer`, `FarMesher`, `FarGpu`, `FarShaders`) and shader pack support (`FarLod`, `PhotonCompat`) |
+| `.../minecraft/cubic/client` | Drawing: near cubes (`CubeRenderer`), far terrain (`FarRenderer`, `FarMesher` and `FarColumnMesh`, `FarGpu`, `FarShaders`) and shader pack support (`FarLod`, `PhotonCompat`) |
 | `.../minecraft/cubic/net` | Cube and far column traffic, and the pacing for remote players |
 | `.../minecraft/cubic/play` | What players and operators use: the Earth world type, settings, `/earth` commands, spawns, the travel map, games. Screens are in `play/client` |
 | `.../minecraft/cubic/mixin` | Hooks into vanilla, NeoForge, Iris and Sodium, listed in `src/main/resources/earthplatform.cubic.mixins.json`; `mixin/compat` hooks into optional mods |
