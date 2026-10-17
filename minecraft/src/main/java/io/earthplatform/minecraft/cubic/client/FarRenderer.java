@@ -783,18 +783,19 @@ public final class FarRenderer {
         shader.apply();
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = world.client().getShade(direction, true);
-        if (own) FarLod.beginDraw(modelView, position.x, position.y, position.z);
-        if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame)) {
-            // Whole columns first, then those fading out, then those fading in, each with its own program.
-            boolean[] fades = new boolean[3];
-            for (Column column : visible) fades[column.fade] = true;
-            for (int fade = FarGpu.NO_FADE; fade <= FarGpu.FADE_IN; fade++) {
-                if (!fades[fade]) continue;
-                if (fade != FarGpu.NO_FADE && !gpu.fade(fade) && fade == FarGpu.FADE_IN) break;
-                for (Column column : visible) if (column.fade == fade) queue(gpu, column, position);
+        if (own) {
+            // Far terrain inside the game's blocks' reach goes in the game's own depth, as without a pack's Voxy support.
+            float reach = FarLod.nearReach();
+            List<Column> near = new ArrayList<>();
+            for (Column column : visible) {
+                double dx = Math.max(0.0, Math.max(column.box.minX - position.x, position.x - column.box.maxX));
+                double dz = Math.max(0.0, Math.max(column.box.minZ - position.z, position.z - column.box.maxZ));
+                if (dx * dx + dz * dz < reach * reach) near.add(column);
             }
-            gpu.end();
+            if (!near.isEmpty() && gpu.begin(pack, ShaderBlocks.voxyPatch(), modelView, projection, position, shade, frame, true)) drawEach(gpu, near, position);
+            FarLod.beginDraw(modelView, position.x, position.y, position.z);
         }
+        if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false)) drawEach(gpu, visible, position);
         if (own) FarLod.endDraw();
         if (own && FarLod.beginDeepen(modelView)) {
             for (Column column : visible) {
@@ -807,6 +808,18 @@ public final class FarRenderer {
         }
         shader.clear();
         type.clearRenderState();
+    }
+
+    /** Draws columns: whole ones first, then those fading out, then those fading in, each with its own program. */
+    private void drawEach(FarGpu gpu, List<Column> columns, Vec3 position) {
+        boolean[] fades = new boolean[3];
+        for (Column column : columns) fades[column.fade] = true;
+        for (int fade = FarGpu.NO_FADE; fade <= FarGpu.FADE_IN; fade++) {
+            if (!fades[fade]) continue;
+            if (fade != FarGpu.NO_FADE && !gpu.fade(fade) && fade == FarGpu.FADE_IN) break;
+            for (Column column : columns) if (column.fade == fade) queue(gpu, column, position);
+        }
+        gpu.end();
     }
 
     /** Queues a column's faces that can face the camera, and its walls where its neighbours are not drawn. */
