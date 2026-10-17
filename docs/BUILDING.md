@@ -1,6 +1,6 @@
 # Building and testing
 
-The mod is one Gradle project in `minecraft/`. It also compiles the pure Java code in `core/`, `streaming/` and `geography/` as extra source folders, so there is a single jar.
+The mod is one Gradle project in `minecraft/`. It also compiles the pure Java code in `geography/` as an extra source folder, so there is a single jar.
 
 ## What you need
 
@@ -33,7 +33,7 @@ The jar is `minecraft/build/libs/earthplatform-<version>.jar` (for example `eart
 ./gradlew --no-daemon test --continue
 ```
 
-About 1,300 unit tests run in a few minutes, and all should pass. GitHub runs the same build and tests on every pull request (`.github/workflows/ci.yml`), and every merge into `main` publishes the newest build as a GitHub release (`.github/workflows/release.yml`). `core/test.sh` and `streaming/test.sh` run the stand-alone test suites of those two folders with plain `javac`.
+The unit tests run in a couple of minutes, and all should pass. They include `GlobeTest`, a harness for the Earth data code that serves synthetic tiles from a local HTTP server. GitHub runs the same build and tests on every pull request (`.github/workflows/ci.yml`), and every merge into `main` publishes the newest build as a GitHub release (`.github/workflows/release.yml`).
 
 ## Try it in game
 
@@ -43,5 +43,4 @@ Install the jar into a NeoForge 21.1.256 or newer instance for Minecraft 1.21.1 
 
 - `minecraft/src/main/java/io/earthplatform/minecraft/cubic`: the cubic world engine (cubes from Y -16384 to 16383, streaming, lighting, the far terrain renderer, the travel map and the Earth commands).
 - `geography/src/main/java`: the Earth itself: elevation, land cover, climate, rivers and the data sources they stream from.
-- `core/` and `streaming/`: storage and cube streaming that don't depend on Minecraft.
 - [ROADMAP.md](../ROADMAP.md): how the engine works and what comes next.

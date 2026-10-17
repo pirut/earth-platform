@@ -72,10 +72,6 @@ The real Earth in Minecraft at true scale: every mountain at its real height, re
 Choose the Earth world type in Create World and pick where to start. Travel anywhere with /earth visit <place> or /earth goto <latitude> <longitude>.
 '''
 
-# The [[mixins]] block allows you to declare your mixin config to FML so that it gets loaded.
-[[mixins]]
-config="${mod_id}.mixins.json"
-
 # One cubic core: true-height cube storage behind the vanilla Level API.
 [[mixins]]
 config="${mod_id}.cubic.mixins.json"
@@ -133,15 +129,3 @@ config="${mod_id}.cubic.mixins.json"
     versionRange="[0.8.12-beta.1+mc1.21.1,0.9)"
     ordering="AFTER"
     side="CLIENT"
-
-# Both explicit native-player diagnostic and GameTest-server flags are required by its plugin.
-[[mixins]]
-config="earthplatform.native-player-tick-diagnostic.mixins.json"
-
-# Held native-session fixture only; both explicit bridge and GameTest-server flags required.
-[[mixins]]
-config="earthplatform.native-session-bridge.mixins.json"
-
-# Explicit ordinary LocalChannel observation; production flags must remain closed.
-[[mixins]]
-config="earthplatform.native-local-observation.mixins.json"

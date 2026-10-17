@@ -2,7 +2,6 @@ package io.earthplatform.minecraft.cubic.play;
 
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
-import com.mojang.brigadier.tree.CommandNode;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicEvents;
@@ -11,7 +10,6 @@ import io.earthplatform.minecraft.cubic.CubicSettings;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
-import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -353,15 +351,9 @@ public final class EarthWorlds {
 
     // Commands ------------------------------------------------------------------------------------
 
-    /**
-     * The player's /earth. The engine prototypes registered their own operator-only /earth debug
-     * commands; those move to /earth_legacy so players get one clear command.
-     */
+    /** The player's /earth. */
     @SubscribeEvent(priority = EventPriority.LOWEST) public static void commands(RegisterCommandsEvent event) {
         var dispatcher = event.getDispatcher();
-        CommandNode<CommandSourceStack> old = dispatcher.getRoot().getChild("earth");
-        if (old != null && detach(dispatcher.getRoot(), "earth"))
-            dispatcher.register(Commands.literal("earth_legacy").requires(source -> source.hasPermission(2)).redirect(old));
         var root = Commands.literal("earth");
         root.then(Commands.literal("visit").requires(EarthWorlds::mayTravel)
                 .then(Commands.argument("place", StringArgumentType.greedyString())
@@ -383,20 +375,6 @@ public final class EarthWorlds {
         dispatcher.register(root);
     }
 
-    /** Removes a top-level command node; brigadier has no public way to. */
-    private static boolean detach(CommandNode<CommandSourceStack> root, String name) {
-        try {
-            for (String field : new String[]{"children", "literals", "arguments"}) {
-                Field map = CommandNode.class.getDeclaredField(field);
-                map.setAccessible(true);
-                ((java.util.Map<?, ?>) map.get(root)).remove(name);
-            }
-            return true;
-        } catch (ReflectiveOperationException | RuntimeException failure) {
-            EarthPlatformMod.LOGGER.warn("Could not replace the prototype /earth command: {}", failure.toString());
-            return false;
-        }
-    }
 
     /** Travel is for operators, the singleplayer owner, or everyone when the server allows it. */
     private static boolean mayTravel(CommandSourceStack source) {

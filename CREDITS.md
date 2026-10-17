@@ -37,7 +37,7 @@ Mapzen/Tilezen terrain tiles on the [Registry of Open Data on AWS](https://regis
 **Attribution and license:**
 
 Elevation fill: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.
-License: the [Copernicus WorldDEM-30 license](geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf), free of charge for any purpose. Changes: each 1° square is compared once with the elevation tiles, and where those stand well above GLO-30 over an area (fjords such as Milford Sound and Ísafjörður, and ground north of SRTM's reach), the tiles are moved toward GLO-30. Tiles come from the Copernicus DEM bucket on the Registry of Open Data on AWS and are cached on disk. Turn it off with `-Dearthplatform.earth.copernicus=false`. This project is not endorsed by the European Union, ESA or the Copernicus programme.
+License: the [Copernicus WorldDEM-30 license](docs/licenses/License-COPDEM-30.pdf), free of charge for any purpose. Changes: each 1° square is compared once with the elevation tiles, and where those stand well above GLO-30 over an area (fjords such as Milford Sound and Ísafjörður, and ground north of SRTM's reach), the tiles are moved toward GLO-30. Tiles come from the Copernicus DEM bucket on the Registry of Open Data on AWS and are cached on disk. Turn it off with `-Dearthplatform.earth.copernicus=false`. This project is not endorsed by the European Union, ESA or the Copernicus programme.
 
 ## United States: USGS 3DEP (downloaded while you play)
 
@@ -164,14 +164,6 @@ EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modifi
 **Attribution and license:**
 
 The globe on the Customize screen shows NASA's Blue Marble: NASA Earth Observatory, Reto Stöckli, *Blue Marble Next Generation* (July 2004, topography and bathymetry), https://visibleearth.nasa.gov/collection/1484/blue-marble. Public domain in the United States; credited as NASA asks. Close up, the globe also shows the elevation and land cover data credited above.
-
-## Test areas (source repository only)
-
-The older engine's proof areas are test fixtures. They stay in the source repository for its tests and are not in the release jar.
-
-- Copernicus WorldDEM-30 (Everest area): produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. License text kept with the data under `geography/data/copernicus-everest-proof/provenance/`. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30. Earth Platform is not endorsed by the Copernicus programme.
-- NOAA National Centers for Environmental Information (2022). ETOPO 2022 15 Arc-Second Global Relief Model. https://doi.org/10.25921/fd45-gt74 (CC0 1.0).
-- ESA WorldCover extracts, credited as above.
 
 ## Software
 

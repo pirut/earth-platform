@@ -94,7 +94,7 @@ Needs a decision or a code change (handed to the engine work, not changed here):
 
 - `assets/earthplatform/textures/globe/blue_marble.jpg` (PR #8): NASA Blue Marble Next Generation, downscaled. US government work, public domain; NASA asks for credit, which CREDITS.md, the notices and the mods list give. OK.
 - `earthplatform/ecoregions.png` (660 KB) and `ecoregions.tsv` (PR #14): a 0.05 degree raster derived from RESOLVE Ecoregions 2017 (Dinerstein et al. 2017, *BioScience* 67(6):534-545), with the ecoregion names. CC BY 4.0 allows redistribution and changes with attribution and a note of changes; CREDITS.md, the notices and the mods list give both. OK.
-- Left out of the release jar (round 34): the older engine's proof areas, `earthplatform/copernicus_proof_data` and `alpine_data` (Copernicus WorldDEM-30 crops of Everest), `proof_data` (NOAA ETOPO 2022 extracts, CC0) and `worldcover_proof_data` (ESA WorldCover extracts, CC BY 4.0), with the copied ESA WorldCover manual, Copernicus license and AWS and ESA pages under their `provenance/`. About 9 MB. Earth worlds never read them; they stay in the repository for tests and dev runs, credited in CREDITS.md. The [GLO-30 license](../../geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf) allows that redistribution with its notice.
+- The older engine's test areas (Copernicus WorldDEM-30 crops of Everest, NOAA ETOPO 2022 and ESA WorldCover extracts, with their copied provenance documents) were left out of the jar in round 34 and removed from the repository with the rest of the older engine. The [GLO-30 license](../licenses/License-COPDEM-30.pdf) is kept for the streamed Copernicus DEM.
 - No third-party libraries: Iris and Sodium are `compileOnly`, and nothing is shaded or jar-in-jar. The build no longer uses Distant Horizons at all.
 - The logo (`earthplatform_logo.png`) is original pixel art.
 
@@ -104,7 +104,7 @@ Paste each credit into CREDITS.md, THIRD_PARTY_NOTICES.md and the `credits` in `
 
 ### Copernicus DEM GLO-30 ("Filling elevation holes", PR #22), credited
 - Landed in PR #22. `CopernicusSource` range-reads GLO-30 from the AWS Open Data bucket, caches it on disk, and fills fjords and datum-offset ground. Off with `-Dearthplatform.earth.copernicus=false`. The credit below is now in CREDITS.md, THIRD_PARTY_NOTICES.md and the mods list.
-- Terms: the [Copernicus WorldDEM-30 license](../../geography/data/copernicus-everest-proof/provenance/License-COPDEM-30.pdf) (Art. 4) allows reproduction, distribution, communication to the public, and adaptation and combination with other data, free of charge and for any purpose. Same license as the Everest crop already in the jar. OK, whether tiles are streamed at runtime or a derived fill is bundled.
+- Terms: the [Copernicus WorldDEM-30 license](../licenses/License-COPDEM-30.pdf) (Art. 4) allows reproduction, distribution, communication to the public, and adaptation and combination with other data, free of charge and for any purpose. OK, whether tiles are streamed at runtime or a derived fill is bundled.
 - Obligations (Art. 6): give the "produced using" notice for adapted data; add the liability sentence in a notice covering the distribution; don't suggest Copernicus endorses the mod; and bind anyone we let redistribute to the same duties, which the notice in the jar and CREDITS.md does. The bundled crop's credit now carries the liability sentence too (it was missing).
 - GLO-30 Public leaves out a few tiles (Armenia and Azerbaijan); those areas keep the other elevation sources.
 - Credit line:
