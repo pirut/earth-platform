@@ -95,6 +95,7 @@
     "CubicLocateMixin"
   ],
   "client": [
+    "FrustumAccess",
     "CubicPredictionMixin",
     "CubicDestroyProgressMixin",
     "CubicFarPlaneMixin",
