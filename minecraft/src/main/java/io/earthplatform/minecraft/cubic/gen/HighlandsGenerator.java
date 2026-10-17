@@ -49,12 +49,6 @@ public final class HighlandsGenerator extends SurfaceGenerator {
     @Override protected int shoreLevel() { return SEA; }
     @Override protected boolean emeralds(int maxGround) { return maxGround > SNOWLINE - 200; }
 
-    private static double fbm(SimplexNoise noise, double x, double z, int octaves) {
-        double sum = 0, amplitude = 1, norm = 0;
-        for (int i = 0; i < octaves; i++) { sum += noise.getValue(x, z) * amplitude; norm += amplitude; amplitude *= 0.5; x *= 2.03; z *= 2.03; }
-        return sum / norm;
-    }
-
     @Override protected void ground(int x, int z, int[] out) {
         double c = fbm(continent, x / 3200.0, z / 3200.0, 3);
         double r = 1 - Math.abs(fbm(ridge, x / 760.0, z / 760.0, 4));

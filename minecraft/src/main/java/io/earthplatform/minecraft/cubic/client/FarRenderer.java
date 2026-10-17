@@ -4,6 +4,7 @@ import com.mojang.blaze3d.shaders.Uniform;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import io.earthplatform.geography.globe.MercatorGrid;
+import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
@@ -26,7 +27,6 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Nullable;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -95,7 +95,6 @@ public final class FarRenderer {
     /** The finest level at jet stream speed: 64-block voxels, as before the far levels reached farther. */
     private static final int JET_LEVEL = 6;
     private static final long UPLOAD_NANOS = 3_000_000L;
-    private static final AtomicInteger THREADS = new AtomicInteger();
     /**
      * Columns asked of the server and not yet back. Kept short so the server's queue always holds
      * what the player wants most now: with every missing column asked for at once, a walk or a turn
@@ -104,12 +103,8 @@ public final class FarRenderer {
     private static final int IN_FLIGHT = Integer.getInteger("earthplatform.far.inFlight", 192);
     /** Far mesher threads: two, or a quarter of the cores on bigger machines, so meshing keeps up with the server's workers. */
     private static final int MESH_THREADS = Math.clamp(Runtime.getRuntime().availableProcessors() / 4, 2, 4);
-    private static final ExecutorService MESHER = Executors.newFixedThreadPool(MESH_THREADS, runnable -> {
-        Thread thread = new Thread(runnable, "Earth far mesher " + THREADS.incrementAndGet());
-        thread.setDaemon(true);
-        thread.setPriority(Thread.NORM_PRIORITY - 1);
-        return thread;
-    });
+    private static final ExecutorService MESHER = Executors.newFixedThreadPool(MESH_THREADS,
+            NamedThreads.numbered("Earth far mesher", Thread.NORM_PRIORITY - 1));
 
     /** An Earth world's metres per block at the equator, or 0 until the server says. */
     private volatile double metresPerBlock;

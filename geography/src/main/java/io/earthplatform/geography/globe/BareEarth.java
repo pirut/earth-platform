@@ -2,24 +2,19 @@ package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.UncheckedIOException;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.zip.DeflaterOutputStream;
-import java.util.zip.InflaterInputStream;
+
+import static io.earthplatform.geography.globe.GridFilters.blur;
+import static io.earthplatform.geography.globe.GridFilters.dilate;
+import static io.earthplatform.geography.globe.GridFilters.fill;
+import static io.earthplatform.geography.globe.GridFilters.sample;
+import static io.earthplatform.geography.globe.GridFilters.select;
+import static io.earthplatform.geography.globe.GridFilters.weighted;
 
 /**
  * Elevation tiles with the ground under towns brought down to the land it stands on, and the
@@ -118,7 +113,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
      * Samples across a field, every other pixel of its cover: the ground is smoothed over several
      * pixels, so this loses nothing and keeps a field to a quarter of the memory.
      */
-    private static final int GRID = CORE / 2 + 1;
+    static final int GRID = CORE / 2 + 1;
     /** Sampling step, in pixels, of the first look for any built-up land, forest and open land. */
     private static final int SCOUT = 8;
     /** Least share of the first look's samples that must be forest, and open land, for clearings' edges to be looked for. */
@@ -153,10 +148,10 @@ public final class BareEarth implements GlobalElevation.Tiles {
     /** Where worked-out fields are kept on disk, or null to keep them in memory only. */
     private final Path cacheRoot;
     private final int maxFields, maxTiles;
-    private final LinkedHashMap<Long, Field> fields = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, Field> fields = new LruMap<>(64);
     private final Map<Long, CompletableFuture<Field>> fieldsInFlight = new ConcurrentHashMap<>();
     /** Recently read tiles at the zooms changed; those left as they were are the source's own arrays. */
-    private final LinkedHashMap<Long, float[]> changed = new LinkedHashMap<>(64, 0.75f, true);
+    private final LruMap<Long, float[]> changed = new LruMap<>(64);
 
     /** @param cacheRoot optional disk cache directory for the worked-out fields, or null for memory only */
     public BareEarth(TerrariumTileSource tiles, WorldCoverSource cover, Path cacheRoot) {
@@ -196,9 +191,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
         }
         // Kept whether or not it changed, so a tile beside a town is looked over only once.
         synchronized (changed) {
-            changed.put(key, out);
-            var iterator = changed.entrySet().iterator();
-            while (changed.size() > maxTiles && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+            changed.putAndTrim(key, out, maxTiles);
         }
         return out;
     }
@@ -286,9 +279,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
             try {
                 Field field = compute(x, y);
                 synchronized (fields) {
-                    fields.put(key, field);
-                    var iterator = fields.entrySet().iterator();
-                    while (fields.size() > maxFields && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+                    fields.putAndTrim(key, field, maxFields);
                 }
                 mine.complete(field);
             } catch (Throwable failure) {
@@ -316,7 +307,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
         double[] latitude = new double[SPAN], longitude = new double[SPAN];
         for (int k = 0; k < SPAN; k++) {
             double row = Math.max(0, Math.min(size - 1, gy0 + k)) + 0.5;
-            latitude[k] = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * row / size))));
+            latitude[k] = Mercator.latitude(row, size);
             double column = Math.floorMod(gx0 + k, size) + 0.5;
             longitude[k] = column / size * 360 - 180;
         }
@@ -352,80 +343,17 @@ public final class BareEarth implements GlobalElevation.Tiles {
         double metres = 2 * Math.PI * EARTH_RADIUS * Math.cos(Math.toRadians(latitude[SPAN / 2])) / size;
         if (cacheRoot == null) return compute(dem, code, metres, towns, clearings);
         // Kept with a digest of what it was worked out from, so a field is never read back over changed tiles or cover.
-        long digest = digest(dem, code);
+        long digest = BareEarthCache.digest(dem, code);
         Path cached = cacheRoot.resolve(ZOOM + "/" + tileX + "/" + tileY + ".field");
-        Field field = read(cached, digest);
+        Field field = BareEarthCache.read(cached, digest);
         if (field != null) return field;
         field = compute(dem, code, metres, towns, clearings);
         try {
-            RangeFiles.write(cached, write(field, digest));
+            DiskCache.write(cached, BareEarthCache.write(field, digest));
         } catch (IOException failure) {
             // The cache only saves work; the field is good without it.
         }
         return field;
-    }
-
-    // Disk cache ------------------------------------------------------------------------------------
-
-    /** Version of the fields' bytes and of the rules they are worked out by; a field kept under another is worked out again. */
-    static final int FORMAT = 2;
-
-    /** A 64-bit digest of a window's metres and classes. */
-    static long digest(float[] dem, byte[] code) {
-        long h = 0x9E3779B97F4A7C15L ^ dem.length;
-        for (float m : dem) h = (h ^ Float.floatToRawIntBits(m)) * 0x100000001B3L;
-        for (int k = 0; k < code.length; k += 8) {
-            long word = 0;
-            for (int b = 0; b < 8 && k + b < code.length; b++) word |= (code[k + b] & 0xFFL) << 8 * b;
-            h = (h ^ word) * 0x100000001B3L;
-        }
-        return h ^ h >>> 29;
-    }
-
-    /** A field's bytes, compressed. */
-    static byte[] write(Field field, long digest) throws IOException {
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new DeflaterOutputStream(bytes), 1 << 16))) {
-            out.writeInt(FORMAT);
-            out.writeLong(digest);
-            out.writeBoolean(field.ground != null);
-            if (field.ground != null) { floats(out, field.ground); out.write(field.weight); out.write(field.water); }
-            out.writeBoolean(field.delta != null);
-            if (field.delta != null) { floats(out, field.delta); floats(out, field.smooth); out.write(field.band); }
-        }
-        return bytes.toByteArray();
-    }
-
-    /** The field kept at a path for a window with this digest, or null where there's none or it's for other data. */
-    static Field read(Path path, long digest) {
-        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) return null;
-        DiskCache.used(path);
-        try (InputStream file = Files.newInputStream(path); DataInputStream in = new DataInputStream(new BufferedInputStream(new InflaterInputStream(file), 1 << 16))) {
-            if (in.readInt() != FORMAT || in.readLong() != digest) return null;
-            float[] ground = null, delta = null, smooth = null;
-            byte[] weight = null, water = null, band = null;
-            if (in.readBoolean()) { ground = floats(in); weight = bytes(in); water = bytes(in); }
-            if (in.readBoolean()) { delta = floats(in); smooth = floats(in); band = bytes(in); }
-            return ground == null && delta == null ? NONE : new Field(ground, weight, water, delta, smooth, band);
-        } catch (IOException | UncheckedIOException corrupt) {
-            return null;
-        }
-    }
-
-    private static void floats(DataOutputStream out, float[] values) throws IOException {
-        for (float v : values) out.writeInt(Float.floatToRawIntBits(v));
-    }
-
-    private static float[] floats(DataInputStream in) throws IOException {
-        float[] values = new float[GRID * GRID];
-        for (int k = 0; k < values.length; k++) values[k] = Float.intBitsToFloat(in.readInt());
-        return values;
-    }
-
-    private static byte[] bytes(DataInputStream in) throws IOException {
-        byte[] values = new byte[GRID * GRID];
-        in.readFully(values);
-        return values;
     }
 
     /** Pixels across the half-detail grid the smooth fields are worked out on. */
@@ -564,32 +492,6 @@ public final class BareEarth implements GlobalElevation.Tiles {
         return new Field(g, w, keep, null, null, null);
     }
 
-    /** The cells of a square grid within {@code radius} of a marked one, along rows then columns. */
-    private static boolean[] dilate(boolean[] marked, int side, int radius) {
-        boolean[] rows = new boolean[marked.length], out = new boolean[marked.length];
-        for (int j = 0; j < side; j++) {
-            int last = Integer.MIN_VALUE / 2;
-            for (int i = 0; i < side; i++) if (marked[j * side + i]) last = i;
-                else if (i - last <= radius) rows[j * side + i] = true;
-            last = Integer.MAX_VALUE / 2;
-            for (int i = side - 1; i >= 0; i--) {
-                if (marked[j * side + i]) { last = i; rows[j * side + i] = true; }
-                else if (last - i <= radius) rows[j * side + i] = true;
-            }
-        }
-        for (int i = 0; i < side; i++) {
-            int last = Integer.MIN_VALUE / 2;
-            for (int j = 0; j < side; j++) if (rows[j * side + i]) last = j;
-                else if (j - last <= radius) out[j * side + i] = true;
-            last = Integer.MAX_VALUE / 2;
-            for (int j = side - 1; j >= 0; j--) {
-                if (rows[j * side + i]) { last = j; out[j * side + i] = true; }
-                else if (last - j <= radius) out[j * side + i] = true;
-            }
-        }
-        return out;
-    }
-
     /** Slope, rise over run, of the land's broad shape at a half-detail position {@code metres} a pixel across; 0 where it is unknown. */
     private static double slope(float[] trend, double x, double y, double metres) {
         double dx = sample(trend, HALF, x + 1, y) - sample(trend, HALF, x - 1, y), dy = sample(trend, HALF, x, y + 1) - sample(trend, HALF, x, y - 1);
@@ -603,16 +505,6 @@ public final class BareEarth implements GlobalElevation.Tiles {
     private static double step(double t) {
         t = Math.min(1, Math.max(0, t));
         return t * t * (3 - 2 * t);
-    }
-
-    /** Bilinear sample of a square grid {@code width} across at a pixel position, clamped at its edges; NaN where a corner is. */
-    private static float sample(float[] grid, int width, double x, double y) {
-        x = Math.max(0, Math.min(width - 1, x));
-        y = Math.max(0, Math.min(width - 1, y));
-        int x0 = Math.min(width - 2, (int) x), y0 = Math.min(width - 2, (int) y);
-        double fx = x - x0, fy = y - y0;
-        int at = y0 * width + x0;
-        return (float) ((grid[at] * (1 - fx) + grid[at + 1] * fx) * (1 - fy) + (grid[at + width] * (1 - fx) + grid[at + width + 1] * fx) * fy);
     }
 
     /**
@@ -664,77 +556,6 @@ public final class BareEarth implements GlobalElevation.Tiles {
         }
         for (int i = 0; i < offsets.length; i++) offsets[i] += base[i];
         return offsets;
-    }
-
-    /** Fills a grid worked out every {@code stride} pixels between its known ones. */
-    private static void fill(float[] grid, int side, int stride) {
-        if (stride != 2) return;
-        // Odd columns, then odd rows, from their even neighbours.
-        for (int j = 0; j < side; j += 2) for (int i = 1; i < side; i += 2) {
-            int at = j * side + i;
-            grid[at] = i + 1 < side ? (grid[at - 1] + grid[at + 1]) / 2 : grid[at - 1];
-        }
-        for (int j = 1; j < side; j += 2) for (int i = 0; i < side; i++) {
-            int at = j * side + i;
-            grid[at] = j + 1 < side ? (grid[at - side] + grid[at + side]) / 2 : grid[at - side];
-        }
-    }
-
-    /** The k-th smallest of the first n values, which are reordered. */
-    static float select(float[] a, int n, int k) {
-        int lo = 0, hi = n - 1;
-        while (lo < hi) {
-            float pivot = a[(lo + hi) >>> 1];
-            int i = lo, j = hi;
-            while (i <= j) {
-                while (a[i] < pivot) i++;
-                while (a[j] > pivot) j--;
-                if (i <= j) { float t = a[i]; a[i] = a[j]; a[j] = t; i++; j--; }
-            }
-            if (k <= j) hi = j;
-            else if (k >= i) lo = i;
-            else return a[k];
-        }
-        return a[k];
-    }
-
-    /** A three-pass blur of a square grid's {@code values} weighted by {@code weights}; where the weights are all zero, {@code empty}. */
-    private static float[] weighted(float[] values, float[] weights, int width, int radius, float empty) {
-        float[] num = new float[values.length], den = weights.clone();
-        for (int i = 0; i < num.length; i++) num[i] = values[i] * weights[i];
-        blur(num, width, width, radius);
-        blur(den, width, width, radius);
-        for (int i = 0; i < num.length; i++) num[i] = den[i] > 1e-4f ? num[i] / den[i] : empty;
-        return num;
-    }
-
-    /** Three passes of a box blur of {@code radius} along rows and columns, about a Gaussian; edges are held. */
-    static void blur(float[] a, int width, int height, int radius) {
-        float[] line = new float[Math.max(width, height)], out = new float[line.length];
-        for (int pass = 0; pass < 3; pass++) {
-            for (int j = 0; j < height; j++) {
-                System.arraycopy(a, j * width, line, 0, width);
-                box(line, out, width, radius);
-                System.arraycopy(out, 0, a, j * width, width);
-            }
-            for (int i = 0; i < width; i++) {
-                for (int j = 0; j < height; j++) line[j] = a[j * width + i];
-                box(line, out, height, radius);
-                for (int j = 0; j < height; j++) a[j * width + i] = out[j];
-            }
-        }
-    }
-
-    /** A running box mean of the first {@code n} values, the ends held beyond the line. */
-    private static void box(float[] line, float[] out, int n, int radius) {
-        float first = line[0], last = line[n - 1], scale = 1f / (2 * radius + 1);
-        double sum = 0;
-        for (int k = -radius; k <= radius; k++) sum += line[Math.max(0, Math.min(n - 1, k))];
-        for (int i = 0; i < n; i++) {
-            out[i] = (float) sum * scale;
-            int add = i + radius + 1, drop = i - radius;
-            sum += (add < n ? line[add] : last) - (drop >= 0 ? line[drop] : first);
-        }
     }
 
     /**

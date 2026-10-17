@@ -44,8 +44,9 @@ Mods → Earth Platform → Config, or the files in `config/`.
 
 | Setting | File | Default | What it does |
 | --- | --- | --- | --- |
-| `detail` | client | 11 (4 to 24) | How far fine far terrain reaches. Lower helps weaker GPUs; higher needs more memory. Restart to apply |
-| `texturedLevels` | client | 2 (0 to 6) | How many far levels use block textures; further ones use flat colors. Restart to apply |
+| `detail` | client | 11 (4 to 48) | How far fine far terrain reaches. Lower helps weaker GPUs; higher needs more memory, and past 24 is the extreme range for very powerful computers. Restart to apply |
+| `sharpness` | client | Balanced | How close coarser far levels take over: Fast, Balanced, Sharp, Sharpest, Extreme or Ultra. Changes at once (also on the pause menu) |
+| `texturedFarLevels` | client | 8 (0 to 8) | How many far levels use block textures; further ones use flat colors. Restart to apply |
 | `showDownloadStatus` | client | on | The small note while Earth data downloads or can't be reached |
 | `preselectEarth` | client | on | Create World starts with the Earth world type |
 | `cloudHeight` | client | 2500 | Cloud height in meters; 0 gives vanilla clouds |
@@ -55,7 +56,7 @@ Mods → Earth Platform → Config, or the files in `config/`.
 | `cacheLimitGb` | common | 8 | Size limit for downloaded data in GB (0 for no limit); the least recently used files go first, when the game starts and as the cache grows |
 | `anyoneCanTravel` | common | off | Let every player use `/earth goto` on servers |
 
-Command-line `-Dearthplatform.far.detail`, `-Dearthplatform.far.textured`, `-Dearthplatform.earth.offline` and `-Dearthplatform.earth.imagery` still win over the files.
+Command-line `-Dearthplatform.far.detail`, `-Dearthplatform.far.textured`, `-Dearthplatform.earth.offline` and `-Dearthplatform.earth.imagery` still win over the files. The other developer flags are listed in [FLAGS.md](FLAGS.md).
 
 ## The Nether, the End and other dimensions
 

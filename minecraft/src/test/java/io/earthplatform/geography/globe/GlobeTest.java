@@ -79,9 +79,9 @@ public final class GlobeTest {
         float[] metres = new float[256 * 256];
         for (int i = 0; i < metres.length; i++) metres[i] = (float) ((i % 997) * 9.25 - 4000 + (i / 256) * 0.5);
         metres[0] = -10_994; metres[1] = 8849.5f;
-        float[] back = TerrariumTileSource.decode(TerrariumTileSource.encode(metres));
+        float[] back = TerrariumPng.decode(TerrariumTileSource.encode(metres));
         for (int i = 0; i < metres.length; i++) near(metres[i], back[i], 1 / 256.0, "Terrarium codec");
-        fail(() -> TerrariumTileSource.decode(new byte[]{1, 2, 3}), java.io.IOException.class, "non-image rejected");
+        fail(() -> TerrariumPng.decode(new byte[]{1, 2, 3}), java.io.IOException.class, "non-image rejected");
     }
 
     /** Lone bad pixels are mended; steep real ground and open-sea zeros are left alone. */
@@ -95,20 +95,20 @@ public final class GlobeTest {
         metres[60 * 256 + 60] -= 640; metres[61 * 256 + 60] -= 260;  // a pair
         metres[0 * 256 + 200] += 1100;            // a spire on the tile's edge
         metres[10 * 256 + 21] = 9000;             // a spire beside the sea
-        float[] mended = TerrariumTileSource.mend(metres, zoom, tileY);
+        float[] mended = TileMending.mend(metres, zoom, tileY);
         Set<Integer> bad = Set.of(128 * 256 + 128, 60 * 256 + 60, 61 * 256 + 60, 200, 10 * 256 + 21);
         for (int i : bad) near(clean[i], mended[i], 60, "bad pixel " + (i % 256) + "," + (i / 256) + " mended to within a pixel's slope");
         int changed = 0;
         for (int i = 0; i < clean.length; i++) if (!bad.contains(i) && mended[i] != clean[i]) changed++;
         equal(0, changed, "good pixels never change");
-        check(TerrariumTileSource.mend(clean, zoom, tileY) == clean, "clean tile returned as it is");
+        check(TileMending.mend(clean, zoom, tileY) == clean, "clean tile returned as it is");
         // A sheer face 550 m high over three pixels, with a lip at its brink and ledges, wandering along its length.
         float[] face = new float[256 * 256];
         for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) {
             double at = x - 100 - 2 * Math.sin(y / 3.0);
             face[y * 256 + x] = (float) (1550 + 550 / (1 + Math.exp(at * 1.5)) + 70 * Math.exp(-(at + 1) * (at + 1)) + 25 * Math.sin(y * 1.7) * Math.exp(-at * at));
         }
-        check(TerrariumTileSource.mend(face, zoom, tileY) == face, "a sheer face keeps its lip and ledges");
+        check(TileMending.mend(face, zoom, tileY) == face, "a sheer face keeps its lip and ledges");
     }
 
     /** A synthetic town west of zoom 12 pixel (X0 + 20, Y0): buildings on 3 m ground, a hill, a river and shadow pits; fields east. */
@@ -567,12 +567,12 @@ public final class GlobeTest {
         for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) metres[y * 256 + x] = (float) (200 + 30 * Math.sin(x / 17.0) + 20 * Math.cos(y / 23.0) + 0.5 * x);
         float[] clean = metres.clone();
         TerrariumTileSource.Neighbours none = (z, x, y) -> null;
-        check(TerrariumTileSource.seams(clean, zoom, tileX, tileY, none) == clean, "clean tile returned as it is");
+        check(TileSeams.seams(clean, zoom, tileX, tileY, none) == clean, "clean tile returned as it is");
         float[] dip = {12, 61, 85, 37};                                   // as along 5°W in the Highlands
         for (int y = 0; y < 256; y++) for (int k = 0; k < 4; k++) metres[y * 256 + line - 1 + k] -= dip[k];
         for (int y = 0; y < 256; y++) for (int k = 0; k < 4; k++) metres[y * 256 + 100 + k] -= dip[k];   // a gully off the line
         metres[50 * 256 + line + 4] += 30; metres[51 * 256 + line + 4] += 30;                          // a knoll on it
-        float[] mended = TerrariumTileSource.seams(metres, zoom, tileX, tileY, none);
+        float[] mended = TileSeams.seams(metres, zoom, tileX, tileY, none);
         for (int y = 0; y < 256; y++) for (int k = 0; k < 4; k++) near(clean[y * 256 + line - 1 + k], mended[y * 256 + line - 1 + k], 3, "seam pixel mended");
         int changed = 0;
         for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) if ((x < line - 1 || x > line + 2) && mended[y * 256 + x] != metres[y * 256 + x]) changed++;
@@ -586,7 +586,7 @@ public final class GlobeTest {
         }
         for (int y = 0; y < 256; y++) { tiles[0][y * 256 + 255] = 1871; tiles[1][y * 256] = 1872; }
         TerrariumTileSource.Neighbours both = (z, x, y) -> x == left ? tiles[0] : x == right ? tiles[1] : null;
-        float[] westSide = TerrariumTileSource.seams(tiles[0], zoom, left, ty, both), eastSide = TerrariumTileSource.seams(tiles[1], zoom, right, ty, both);
+        float[] westSide = TileSeams.seams(tiles[0], zoom, left, ty, both), eastSide = TileSeams.seams(tiles[1], zoom, right, ty, both);
         near(cleanTiles[0][77 * 256 + 255], westSide[77 * 256 + 255], 3, "trench mended west of a tile edge");
         near(cleanTiles[1][77 * 256], eastSide[77 * 256], 3, "trench mended east of a tile edge");
     }
@@ -603,7 +603,7 @@ public final class GlobeTest {
         tile[40 * 256 + 40] = 9000;
         tile[41 * 256 + 41] -= 400;
         tile[60 * 256 + 60] = 0;
-        TerrariumTileSource.repair(tile, reference, 2, tx, ty);
+        TileRepair.repair(tile, reference, 2, tx, ty);
         near(expected[5 * 256 + 114], tile[5 * 256 + 114], 9, "broken pit column takes the reference and its neighbours' detail");
         near(expected[200 * 256 + 115], tile[200 * 256 + 115], 9, "broken low column keeps the neighbours' 40 m rise");
         near(expected[40 * 256 + 40], tile[40 * 256 + 40], 9, "broken spike takes the reference");
@@ -632,7 +632,7 @@ public final class GlobeTest {
             if (i >= 200 && j < 60) tile[j * 256 + i] = (i - 200) * 6f;
         }
         float[] before = tile.clone();
-        TerrariumTileSource.despike(tile);
+        TileDespike.despike(tile);
         for (int j = 100; j < 103; j++) near(ground[j * 256 + 60], tile[j * 256 + 60], 3, "tower at 60," + j + " lowered to the ground");
         near(ground[120 * 256 + 90], tile[120 * 256 + 90], 3, "a lone tower lowered to the ground");
         near(126, tile[180 * 256 + 55], 0, "a hill on a lake shore is kept");
@@ -656,8 +656,8 @@ public final class GlobeTest {
         for (int j = 180; j < 188; j++) for (int i = 180; i < 188; i++) tile[j * 256 + i] = 0;
         for (int j = 100; j < 130; j++) for (int i = 40; i < 100; i++) tile[j * 256 + i] = 0;
         // Thin zeros in a tile at zoom 10 are left: the bathymetry has no coarser zoom to fill from.
-        check(TerrariumTileSource.strayZeros(tile, 10, 0, 0, null) == tile, "zoom 10 left as it is");
-        float[] out = TerrariumTileSource.strayZeros(tile, 15, 0, 0, null);
+        check(StrayZeros.strayZeros(tile, 10, 0, 0, null) == tile, "zoom 10 left as it is");
+        float[] out = StrayZeros.strayZeros(tile, 15, 0, 0, null);
         check(out != tile && tile[60 * 256 + 90] == 0, "the tile itself is not changed");
         for (int i = 42; i < 140; i += 7) check(out[60 * 256 + i] != 0 && Math.abs(out[60 * 256 + i]) < 0.05, "line across the bank at " + i + " takes the bank's level");
         for (int j = 180; j < 188; j += 3) for (int i = 180; i < 188; i += 3) near(4.5, out[j * 256 + i], 1.6, "island square at " + i + "," + j + " takes the island's height");
@@ -672,9 +672,9 @@ public final class GlobeTest {
         float[] beyondLand = new float[256 * 256], beyondSea = new float[256 * 256];
         Arrays.fill(beyondLand, 2f);
         for (int j = 50; j < 58; j++) for (int i = 0; i < 4; i++) beyondLand[j * 256 + i] = 0;
-        near(2, TerrariumTileSource.strayZeros(edge, 15, 5, 5, (z, x, y) -> beyondLand)[54 * 256 + 254], 0.01, "a square of 0 m across a tile edge is ground");
-        near(0, TerrariumTileSource.strayZeros(edge, 15, 5, 5, (z, x, y) -> beyondSea)[54 * 256 + 254], 0, "a bay of the sea beyond the edge stays sea");
-        near(0, TerrariumTileSource.strayZeros(edge, 15, 5, 5, (z, x, y) -> null)[54 * 256 + 254], 0, "with no tile beside it, it stays sea");
+        near(2, StrayZeros.strayZeros(edge, 15, 5, 5, (z, x, y) -> beyondLand)[54 * 256 + 254], 0.01, "a square of 0 m across a tile edge is ground");
+        near(0, StrayZeros.strayZeros(edge, 15, 5, 5, (z, x, y) -> beyondSea)[54 * 256 + 254], 0, "a bay of the sea beyond the edge stays sea");
+        near(0, StrayZeros.strayZeros(edge, 15, 5, 5, (z, x, y) -> null)[54 * 256 + 254], 0, "with no tile beside it, it stays sea");
     }
 
     /**
@@ -1283,10 +1283,10 @@ public final class GlobeTest {
         Random random = new Random(7);
         byte[] noise = new byte[200_000];
         for (int i = 0; i < noise.length; i++) noise[i] = (byte) (i % 977 < 400 ? random.nextInt(4) : random.nextInt(256));
-        check(Arrays.equals(noise, FloatCogs.lzw(lzw(noise), noise.length)), "LZW round trip");
+        check(Arrays.equals(noise, CogBlocks.lzw(lzw(noise), noise.length)), "LZW round trip");
         byte[] zeros = new byte[300_000];
-        check(Arrays.equals(zeros, FloatCogs.lzw(lzw(zeros), zeros.length)), "LZW round trip of one long run");
-        fail(() -> FloatCogs.lzw(Arrays.copyOf(lzw(noise), 1000), noise.length), java.io.IOException.class, "truncated LZW rejected");
+        check(Arrays.equals(zeros, CogBlocks.lzw(lzw(zeros), zeros.length)), "LZW round trip of one long run");
+        fail(() -> CogBlocks.lzw(Arrays.copyOf(lzw(noise), 1000), noise.length), java.io.IOException.class, "truncated LZW rejected");
 
         // A file with its directories at the end, uncompressed, its overview tiled smaller, as some 3DEP files are.
         {
@@ -1331,22 +1331,22 @@ public final class GlobeTest {
                 file.putInt(where[d] + 2 + 12 * all[d].length, d == 0 ? ifd2 : 0);
             }
             byte[] bytes = file.array();
-            FloatCogs.Pieces pieces = new FloatCogs.Pieces();
+            CogHeader.Pieces pieces = new CogHeader.Pieces();
             pieces.add(0, Arrays.copyOf(bytes, 65_536));
             try {
-                FloatCogs.parse(pieces);
+                CogHeader.parse(pieces);
                 check(false, "directories past the bytes read are asked for");
             } catch (FloatCogs.HeaderTooShort need) {
                 check(need.offset == ifd, "the bytes asked for are where the directories lie");
                 pieces.add(need.offset, Arrays.copyOfRange(bytes, (int) need.offset, bytes.length));
             }
-            FloatCogs.Header header = FloatCogs.parse(FloatCogs.Pieces.of(pieces.bytes()));
+            FloatCogs.Header header = CogHeader.parse(CogHeader.Pieces.of(pieces.bytes()));
             check(header.overviews() == 2 && !header.compressed() && header.predictor() == 1 && header.x0() == 1000 && header.y0() == 2000,
                     "a file with its directories at the end reads, through the disk cache's form too");
-            check(Arrays.equals(first, FloatCogs.decode(Arrays.copyOfRange(bytes, 16, 16 + blockBytes), tile, false, 1, false)), "uncompressed block");
-            fail(() -> FloatCogs.decode(new byte[100], tile, false, 1, false), java.io.IOException.class, "short uncompressed block rejected");
+            check(Arrays.equals(first, CogBlocks.decode(Arrays.copyOfRange(bytes, 16, 16 + blockBytes), tile, false, 1, false)), "uncompressed block");
+            fail(() -> CogBlocks.decode(new byte[100], tile, false, 1, false), java.io.IOException.class, "short uncompressed block rejected");
             byte[] raw = Arrays.copyOf(bytes, 16);
-            check(Arrays.equals(raw, FloatCogs.Pieces.of(raw).bytes()), "a header read from the start alone is cached as it is");
+            check(Arrays.equals(raw, CogHeader.Pieces.of(raw).bytes()), "a header read from the start alone is cached as it is");
         }
 
         // Projection and geoid against PROJ (EPSG:3031) and NGA's grid.

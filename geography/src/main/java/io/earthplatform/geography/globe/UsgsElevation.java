@@ -105,12 +105,12 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
         if (zoom < MIN_ZOOM) return;
         int size = TerrariumTileSource.TILE_SIZE;
         double world = (double) size * (1L << zoom);
-        double north = latitude(world, (double) y * size), south = latitude(world, (double) (y + 1) * size);
+        double north = Mercator.latitude((double) y * size, world), south = Mercator.latitude((double) (y + 1) * size, world);
         double west = (double) x * size / world * 360 - 180, east = (double) (x + 1) * size / world * 360 - 180;
         java.util.List<Integer> listedCells = cells(north, south, west, east);
         if (listedCells.isEmpty()) return;
         // Read 3DEP at about the tile's pixel size, measured north-south at its centre.
-        double centre = latitude(world, (y + 0.5) * size);
+        double centre = Mercator.latitude((y + 0.5) * size, world);
         double pixel = 360 / world * Math.cos(Math.toRadians(centre));
         int overview = Math.max(0, Math.min(MAX_OVERVIEW, (int) Math.floor(Math.log(pixel / PIXEL) / Math.log(2))));
         overview = Math.max(overview, reading.finest(zoom));
@@ -126,7 +126,7 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
         FloatCogs.Grid[] grids = new FloatCogs.Grid[pixels];
         double[] longitudes = new double[size], latitudes = new double[size];
         for (int i = 0; i < size; i++) longitudes[i] = ((double) x * size + i + 0.5) / world * 360 - 180;
-        for (int j = 0; j < size; j++) latitudes[j] = latitude(world, (double) y * size + j + 0.5);
+        for (int j = 0; j < size; j++) latitudes[j] = Mercator.latitude((double) y * size + j + 0.5, world);
         int lastCell = Integer.MIN_VALUE;
         boolean listed = false;
         for (int at = 0; at < pixels; at++) {
@@ -212,11 +212,6 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
         String name = cellName(cell), date = RELEASES.get(cell);
         if (date == null) throw new IllegalArgumentException("No 3DEP release for " + name);
         return name + "/USGS_13_" + name + "_" + date + ".tif";
-    }
-
-    /** Latitude in degrees of a Web Mercator pixel row. */
-    private static double latitude(double world, double row) {
-        return Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * row / world))));
     }
 
     private static Map<Integer, String> releases() {

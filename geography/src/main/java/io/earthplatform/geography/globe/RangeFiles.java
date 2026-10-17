@@ -7,9 +7,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Map;
@@ -18,7 +15,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * HTTP range reads for the globe's streamed rasters: bounded in concurrency, retried, shared by
- * every caller waiting on the same piece (single flight), with atomic writes for disk caches.
+ * every caller waiting on the same piece (single flight). Their disk caches are written through
+ * {@link DiskCache#write(java.nio.file.Path, byte[])}.
  */
 final class RangeFiles implements AutoCloseable {
     interface Load<T> { T get() throws IOException, InterruptedException; }
@@ -36,11 +34,7 @@ final class RangeFiles implements AutoCloseable {
         this.agent = agent;
         this.timeout = timeout;
         this.transfers = new Semaphore(maxConcurrentTransfers);
-        this.executor = Executors.newFixedThreadPool(maxConcurrentTransfers, runnable -> {
-            Thread thread = new Thread(runnable, threadName);
-            thread.setDaemon(true);
-            return thread;
-        });
+        this.executor = Executors.newFixedThreadPool(maxConcurrentTransfers, NamedThreads.daemon(threadName));
         this.http = HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NEVER).executor(executor).build();
     }
 
@@ -109,18 +103,6 @@ final class RangeFiles implements AutoCloseable {
             }
         }
         if (first != null) throw first;
-    }
-
-    static void write(Path path, byte[] bytes) throws IOException {
-        DiskCache.wrote(bytes.length);
-        Files.createDirectories(path.getParent());
-        Path temp = Files.createTempFile(path.getParent(), "part", ".part");
-        try {
-            Files.write(temp, bytes);
-            Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } finally {
-            Files.deleteIfExists(temp);
-        }
     }
 
     /** Loads a piece once however many callers want it at the same time; a failure is retried by the next caller. */

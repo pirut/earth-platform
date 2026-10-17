@@ -57,7 +57,7 @@ class DrainageTest {
         boolean[] on = new boolean[span * span];
         for (int x = 4; x < 28; x++) on[16 * span + x] = true;
         for (int y = 13; y < 16; y++) on[y * span + 15] = true;
-        RiverMap.prune(on, span, RiverMap.SPUR);
+        Morphology.prune(on, span, RiverMap.SPUR);
         // The pixel touching the line stays: it is part of the line's corner, not the spur.
         for (int y = 13; y < 15; y++) assertFalse(on[y * span + 15], "the spur is gone at y " + y);
         assertTrue(on[16 * span + 4] && on[16 * span + 27], "the line keeps its ends");

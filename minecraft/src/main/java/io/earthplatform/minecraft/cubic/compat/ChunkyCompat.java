@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.compat;
 
+import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
@@ -25,13 +26,8 @@ import net.minecraft.server.level.ServerLevel;
 public final class ChunkyCompat {
     /** Squares, in blocks, that the far terrain's data is fetched for once each. */
     static final int CELL = 2048;
-    private static final AtomicInteger THREADS = new AtomicInteger();
-    private static final ExecutorService WORKERS = Executors.newFixedThreadPool(Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 2)), runnable -> {
-        Thread thread = new Thread(runnable, "Earth Chunky worker " + THREADS.incrementAndGet());
-        thread.setDaemon(true);
-        thread.setPriority(Thread.MIN_PRIORITY);
-        return thread;
-    });
+    private static final ExecutorService WORKERS = Executors.newFixedThreadPool(Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 2)),
+            NamedThreads.numbered("Earth Chunky worker", Thread.MIN_PRIORITY));
     private static final Set<Long> CELLS = ConcurrentHashMap.newKeySet();
     private static final AtomicInteger FAILURES = new AtomicInteger();
     private static final AtomicLong LAST_WARNING = new AtomicLong();
