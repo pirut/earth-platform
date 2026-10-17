@@ -57,16 +57,24 @@ public final class FarRenderer {
     /** Distance to the nearest edge of the coarsest level's square. */
     private static final float REACH = Far.reach();
     /**
-     * Where the haze over low ground starts and ends: where it did when the coarsest level was
-     * level 6, 23 km of blocks out. The levels beyond show only what rises above the haze (see
-     * {@link FarShaders}), so the plains look as they did and distant mountains stand clear.
+     * Where the haze over low ground ends, in meters: by default just inside the far view's edge,
+     * so everything drawn stays clear and the haze only hides where the terrain stops. It no longer
+     * follows the old 23 km plains haze. {@code -Dearthplatform.far.visibility} sets a real-world
+     * visibility instead, in meters (about 20 to 50 km in humid air, 100 km and more in dry western
+     * air), never past the edge. The levels beyond still show what rises above the haze (see
+     * {@link FarShaders}), so distant mountains stand clear.
      */
-    private static final float HAZE = Far.OUTER * (float) Far.width(6);
+    private static final float VISIBILITY = Math.min(0.95F * REACH,
+            Math.max(5_000.0F, Float.parseFloat(System.getProperty("earthplatform.far.visibility", "1e9"))));
     /**
-     * Haze distances in blocks where a block is a metre, as at an Earth world's home latitude; see
-     * {@link #hazeScale}. The depth range covers the coarsest square's corners.
+     * Haze distances in blocks where a block is a meter, as at an Earth world's home latitude; see
+     * {@link #hazeScale}. At the edge the haze starts thin at 70% of the way out; a set visibility
+     * starts it a quarter of the way out. The depth range covers the coarsest square's corners.
      */
-    public static final float FOG_START = 0.25F * HAZE, FOG_END = 0.95F * HAZE, DEPTH_FAR = 2.0F * REACH;
+    public static final float FOG_START = (VISIBILITY >= 0.95F * REACH ? 0.7F : 0.25F) * VISIBILITY, FOG_END = VISIBILITY,
+            DEPTH_FAR = 2.0F * REACH;
+    /** True when the haze sits at the far view's edge, which is in blocks, not ground meters. */
+    public static final boolean HAZE_AT_EDGE = VISIBILITY >= 0.95F * REACH;
     /**
      * Levels drawn with block textures; coarser ones use each face's average colour, which is what
      * a texture blurs to at that distance anyway and stays steady when the camera moves.
