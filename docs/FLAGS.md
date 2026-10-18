@@ -67,7 +67,9 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | Flag | Default | What it does | Read in |
 | --- | --- | --- | --- |
 | `earthplatform.photon.compat` | `auto` | `on` or `off` overrides the check for running Photon on drivers it doesn't fit | `PhotonCompat` |
-| `earthplatform.far.gpuTimers` | `false` | Diagnostic nonblocking GPU timestamp pairs for far opaque, depth, sun/AO and water subpasses; bounded render-thread samples via `FarGpuTimers.drain()`. Requires timer-query support and nonzero counter bits | `FarGpuTimers` |
+| `earthplatform.far.surfacePackets` | `false` | Bounded exact-run generation prototype at levels 3–8 without strata or rasterized giants; materializes legacy sections before existing edits/network/meshing. Direct run streaming/meshing is not enabled | `SurfaceGenerator` |
+| `earthplatform.far.shadowHints` | `false` | Experimental ping-pong original sun sample indices; validates current depth/sun/camera/noise and original-loop clipping prefix before accepting a blocker; otherwise runs the original loop | `FarLod`, `FarLodShaders` |
+| `earthplatform.far.gpuTimers` | `false` | Diagnostic bounded nonblocking GPU queries; timestamp pairs where supported, otherwise non-nested TIME_ELAPSED with occupied-target skipping. Render-thread samples via `FarGpuTimers.drain()` | `FarGpuTimers` |
 | `earthplatform.cubic.perf` | `false` | Logs every timing every few seconds | `Timings` |
 | `earthplatform.cubic.perfTicks` | 100 | Ticks between perf log lines | `CubicClient` |
 | `earthplatform.cubic.trace` | `false` | Logs cube traffic | `Cubic` |
