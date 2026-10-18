@@ -147,6 +147,57 @@ class FarSurfaceMeshOracleTest {
         var a=FarMesher.buildDenseOracle(job(column,4,false,faces));var b=FarMesher.build(direct(column,4,false,faces));
         try{equal(a,b);}finally{a.free();b.free();}
     }
+    private static FarColumn flatColumn() {
+        var biome=SurfacePacketFixtures.biomes().getHolderOrThrow(net.minecraft.world.level.biome.Biomes.PLAINS);
+        var run=List.of(new FarSurfacePacket.Run(4,net.minecraft.world.level.block.Blocks.STONE.defaultBlockState()),
+                new FarSurfacePacket.Run(16,net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()));
+        FarColumn column=new FarColumn();
+        column.packet=new FarSurfacePacket(4,0,16,column.drops,biome,Collections.nCopies(16,biome),Collections.nCopies(256,run));
+        column.sections.addAll(column.packet.materializeForMeshing());return column;
+    }
+    @Test void editedNeighbourPacketsKeepPackedNormalsAndSkirtsForPreparedAndConvertedOwnColumns() throws Exception {
+        var own=flatColumn();var neighbour=flatColumn();
+        var stone=net.minecraft.world.level.block.Blocks.STONE.defaultBlockState();
+        List<FarSurfacePacket.Edit> edits=new ArrayList<>();
+        for(int i=0;i<16;i++) {edits.add(new FarSurfacePacket.Edit(i,10,15,stone));edits.add(new FarSurfacePacket.Edit(0,11,i,stone));}
+        neighbour.packet=neighbour.packet.withEdits(0,1,edits);
+        var denseNeighbour=neighbour.packet.materializeForMeshing().toArray(LevelChunkSection[]::new);
+        assertEquals(10,FarMesher.groundRow(denseNeighbour,5,15));
+        assertEquals(10,neighbour.packet.top(15*16+5,state->!state.isAir()));
+        var faces=faces(own.sections.toArray(LevelChunkSection[]::new));
+        for(boolean prepared:new boolean[]{false,true})for(boolean diagonalOnly:new boolean[]{false,true}) {
+            var baseline=job(own,4,false,faces);var prototype=prepared?direct(own,4,false,faces):job(own,4,false,faces);
+            FarMesher.Side[] denseSides=new FarMesher.Side[4],runSides=new FarMesher.Side[4];
+            FarMesher.Side[] denseDiagonals=new FarMesher.Side[4],runDiagonals=new FarMesher.Side[4];
+            for(int i=0;i<4;i++) {
+                denseSides[i]=new FarMesher.Side(diagonalOnly?baseline.sections():denseNeighbour,0,baseline.drops());
+                runSides[i]=diagonalOnly?denseSides[i]:new FarMesher.Side(null,0,baseline.drops(),neighbour.packet);
+                denseDiagonals[i]=new FarMesher.Side(denseNeighbour,0,baseline.drops());
+                runDiagonals[i]=new FarMesher.Side(null,0,baseline.drops(),neighbour.packet);
+            }
+            var referenceJob=new FarMesher.Job(1,1,4,0,0,0,0,baseline.sections(),baseline.drops(),denseSides,denseDiagonals,baseline.drawn(),false,baseline.looks(),faces,null,baseline.shade(),baseline.white());
+            var candidateJob=new FarMesher.Job(1,1,4,0,0,0,0,prototype.sections(),prototype.drops(),runSides,runDiagonals,prototype.drawn(),false,prototype.looks(),faces,null,prototype.shade(),prototype.white(),prepared?own.packet:null);
+            var reference=FarMesher.buildDenseOracle(referenceJob);var candidate=FarMesher.buildRunPrototype(candidateJob);
+            try {equal(reference,candidate);assertArrayEquals(referenceJob.looks().copy(0,referenceJob.looks().count()),candidateJob.looks().copy(0,candidateJob.looks().count()));}
+            finally{reference.free();candidate.free();}
+        }
+    }
+    @Test void convertedDenseCavesOverhangsPartialWaterAndStatePropertiesKeepPackedOutputExact() throws Exception {
+        var column=flatColumn();
+        List<FarSurfacePacket.Edit> edits=new ArrayList<>();
+        edits.add(new FarSurfacePacket.Edit(5,1,5,net.minecraft.world.level.block.Blocks.CAVE_AIR.defaultBlockState()));
+        for(int i=0;i<8;i++) {
+            edits.add(new FarSurfacePacket.Edit(5+i,8,5,net.minecraft.world.level.block.Blocks.OAK_LOG.defaultBlockState().setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.AXIS,net.minecraft.core.Direction.Axis.X)));
+            edits.add(new FarSurfacePacket.Edit(5+i,9,5,net.minecraft.world.level.block.Blocks.OAK_LEAVES.defaultBlockState().setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.PERSISTENT,true)));
+            edits.add(new FarSurfacePacket.Edit(5+i,4,6,net.minecraft.world.level.block.Blocks.WATER.defaultBlockState().setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.LEVEL,i)));
+        }
+        column.packet=column.packet.withEdits(0,1,edits);column.sections.clear();column.sections.addAll(column.packet.materializeForMeshing());
+        for(int i=0;i<256;i++)column.drops[i]=(short)((i*677)&4095);
+        var faces=faces(column.sections.toArray(LevelChunkSection[]::new));var baseline=job(column,4,false,faces);var prototype=job(column,4,false,faces);
+        var before=FarMesher.runStats();var a=FarMesher.buildDenseOracle(baseline);var b=FarMesher.buildRunPrototype(prototype);
+        try {assertTrue(FarMesher.runStats().used()>before.used());equal(a,b);assertArrayEquals(baseline.looks().copy(0,baseline.looks().count()),prototype.looks().copy(0,prototype.looks().count()));}
+        finally{a.free();b.free();}
+    }
     @Test void directRunMesherComponentBench() throws Exception {
         org.junit.jupiter.api.Assumptions.assumeTrue("1".equals(System.getenv("EARTH_SURFACE_BENCH")));
         var bean=(com.sun.management.ThreadMXBean)java.lang.management.ManagementFactory.getThreadMXBean();

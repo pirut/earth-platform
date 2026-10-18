@@ -134,7 +134,13 @@ public final class FarSurfacePacket {
     public int afterLastRun(int cell) { return offsets[cell + 1]; }
     public int runEnd(int run) { return (int) (runs[run] >>> 32); }
     public BlockState runState(int run) { return Block.BLOCK_STATE_REGISTRY.byId((int) runs[run]); }
+    /** Exact height of the current immutable snapshot, including raised/removed sparse edits. */
     public int top(int cell, java.util.function.Predicate<BlockState> included) {
+        Objects.checkIndex(cell,256);
+        if(!edits.isEmpty()) {
+            for(int row=height-1;row>=0;row--)if(included.test(block(cell&15,row,cell>>4)))return row;
+            return -1;
+        }
         for (int i=offsets[cell+1]-1;i>=offsets[cell];i--) if(included.test(runState(i))) return runEnd(i)-1;
         return -1;
     }

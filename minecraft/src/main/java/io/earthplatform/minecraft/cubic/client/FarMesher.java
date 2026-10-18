@@ -70,14 +70,17 @@ final class FarMesher {
         }
         int height() { return packet == null ? sections.length * 16 : packet.height(); }
         Job dense() {
-            return new Job(key,version,level,slot,x0,z0,bottom,packet.materializeForMeshing().toArray(LevelChunkSection[]::new),drops,
-                    denseSides(sides),denseSides(diagonals),drawn,textured,looks,faces,shaderIds,shade,white);
+            Side[] plainSides=denseSides(sides),plainDiagonals=denseSides(diagonals);
+            if(packet==null&&plainSides==sides&&plainDiagonals==diagonals)return this;
+            return new Job(key,version,level,slot,x0,z0,bottom,packet==null?sections:packet.materializeForMeshing().toArray(LevelChunkSection[]::new),drops,
+                    plainSides,plainDiagonals,drawn,textured,looks,faces,shaderIds,shade,white);
         }
     }
     @Nullable private static Side[] denseSides(@Nullable Side[] sides) {
         if(sides==null)return null;
-        Side[] dense=sides.clone();
+        Side[] dense=sides;
         for(int i=0;i<dense.length;i++) if(dense[i]!=null && dense[i].packet!=null) {
+            if(dense==sides)dense=sides.clone();
             Side side=dense[i];dense[i]=new Side(side.packet.materializeForMeshing().toArray(LevelChunkSection[]::new),side.bottom,side.drops);
         }
         return dense;
@@ -115,7 +118,7 @@ final class FarMesher {
     record RunStats(long attempts,long used,long fallback) {}
     static RunStats runStats(){return new RunStats(RUN_ATTEMPTS.sum(),RUN_USED.sum(),RUN_FALLBACK.sum());}
     static boolean automaticRuns(){return AUTO_RUNS;}
-    static Built buildDenseOracle(Job job){return new FarColumnMesh(job.packet==null?job:job.dense()).build();}
+    static Built buildDenseOracle(Job job){return new FarColumnMesh(job.dense()).build();}
     static Built buildRunPrototype(Job job) {
         if(job.packet==null&&job.level>=3&&!smooth(job)&&(job.drawn==null||job.drawn.isEmpty())) {
             RUN_ATTEMPTS.increment();
