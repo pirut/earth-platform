@@ -12,7 +12,7 @@ Most are read once when the class that uses them loads, so set them on the comma
 
 | Flag | Default | What it does | Read in |
 | --- | --- | --- | --- |
-| `earthplatform.rivers.fastSample` | on | `false` restores the allocating per-pixel river sampler for exact-output/performance comparisons | `RiverMap` |
+| `earthplatform.rivers.fastSample` | on | `false` restores the allocating per-pixel strength sampler and per-cell nearby maxima lookups for exact-output/performance comparisons | `RiverMap` |
 | `earthplatform.earth.offline` | `false` | Never download; only places already in the cache generate. Same as the `offline` setting | `CubicSettings`, `EarthStatus` |
 | `earthplatform.earth.imagery` | `false` | New worlds take ground colors from EOX satellite imagery. Same as the `satelliteImagery` setting | `CubicSettings`, `EarthConfig` |
 | `earthplatform.earth.home` | Yosemite Valley | Default home of new worlds, as `LAT,LON` | `EarthSettings` |

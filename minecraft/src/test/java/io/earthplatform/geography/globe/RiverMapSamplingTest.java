@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 
 /** Sampling uses varied traced bytes, so dry synthetic source tiles cannot hide a changed kernel. */
 class RiverMapSamplingTest {
-    private static final int TILE = 256;
+    private static final int TILE = 256, CELL = 16;
 
     @Test
     void keepsEveryBitOfInteriorInterpolation() throws Exception {
@@ -27,6 +27,16 @@ class RiverMapSamplingTest {
                 double y = 120_000 + random.nextDouble() * 512;
                 fixture.check(point(x, y));
             }
+        }
+    }
+
+    @Test
+    void keepsEveryBitOfNearbyCellMaximaAroundCellAndTileBoundaries() throws Exception {
+        double[] offsets = {-0.001, 0, 0.001};
+        try (Fixture fixture = new Fixture(23)) {
+            for (int cx = 0; cx <= 32; cx++) for (int cy = 0; cy <= 32; cy++)
+                for (double dx : offsets) for (double dy : offsets)
+                    fixture.check(point(799_744 + cx * CELL + dx - 0.5, 119_808 + cy * CELL + dy - 0.5));
         }
     }
 
@@ -42,6 +52,7 @@ class RiverMapSamplingTest {
             fixture.prepare(new Point(20, -180));
             fixture.prepare(new Point(20, 180));
             assertBits(fixture.map.strength(20, -180), fixture.map.strength(20, 180), "antimeridian");
+            assertBits(fixture.map.near(20, -180), fixture.map.near(20, 180), "near antimeridian");
         }
     }
 
@@ -98,11 +109,12 @@ class RiverMapSamplingTest {
                 first.prepare(point);
                 second.prepare(point);
             }
-            long[][] expected = new long[2][points.size()];
+            long[][] expected = new long[2][points.size()], expectedNear = new long[2][points.size()];
             Fixture[] fixtures = {first, second};
             for (int m = 0; m < fixtures.length; m++) for (int i = 0; i < points.size(); i++) {
                 Point point = points.get(i);
                 expected[m][i] = Double.doubleToRawLongBits(fixtures[m].map.strengthReference(point.latitude, point.longitude));
+                expectedNear[m][i] = Double.doubleToRawLongBits(fixtures[m].map.nearReference(point.latitude, point.longitude));
             }
             List<Callable<Void>> jobs = new ArrayList<>();
             for (int t = 0; t < 8; t++) {
@@ -113,6 +125,8 @@ class RiverMapSamplingTest {
                         Point point = points.get(index);
                         assertBits(Double.longBitsToDouble(expected[m][index]), fixtures[m].map.strength(point.latitude, point.longitude),
                                 "map=" + m + ", " + point);
+                        assertBits(Double.longBitsToDouble(expectedNear[m][index]), fixtures[m].map.near(point.latitude, point.longitude),
+                                "near map=" + m + ", " + point);
                     }
                     return null;
                 });
@@ -178,26 +192,40 @@ class RiverMapSamplingTest {
 
         private void check(Point point) throws Exception {
             prepare(point);
-            assertBits(map.strengthReference(point.latitude, point.longitude), map.strength(point.latitude, point.longitude), point.toString());
+            assertBits(map.strengthReference(point.latitude, point.longitude), map.strength(point.latitude, point.longitude), "strength, " + point);
+            assertBits(map.nearReference(point.latitude, point.longitude), map.near(point.latitude, point.longitude), "near, " + point);
         }
 
         private void prepare(Point point) throws Exception {
             int ix = (int) Math.floor((point.longitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE - 0.5);
             int iy = (int) Math.floor((SurfaceWaterSource.NORTH - point.latitude) * SurfaceWaterSource.PIXELS_PER_DEGREE - 0.5);
             for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) {
-                int y = iy - 1 + j;
-                if (y < 0 || y >= SurfaceWaterSource.DOWN) continue;
-                int x = Math.floorMod(ix - 1 + i, SurfaceWaterSource.ACROSS);
-                long key = (long) (y / TILE) << 32 | x / TILE;
-                if (memory.containsKey(key)) continue;
-                byte[] values = new byte[TILE * TILE];
-                int x0 = (x / TILE) * TILE, y0 = (y / TILE) * TILE;
-                for (int py = 0; py < TILE; py++) for (int px = 0; px < TILE; px++) {
-                    int hash = (x0 + px) * 0x45D9F3B ^ (y0 + py) * 0x119DE1F3 ^ seed;
-                    values[py * TILE + px] = (byte) (hash ^ hash >>> 16);
-                }
-                memory.put(key, traced.newInstance(key, values, new byte[256]));
+                prepareTile(ix - 1 + i, iy - 1 + j);
             }
+            int column = (int) Math.floor((point.longitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE);
+            int row = (int) Math.floor((SurfaceWaterSource.NORTH - point.latitude) * SurfaceWaterSource.PIXELS_PER_DEGREE);
+            int cx = Math.floorDiv(column, CELL), cy = Math.floorDiv(row, CELL);
+            for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) prepareTile((cx + i) * CELL, (cy + j) * CELL);
+        }
+
+        private void prepareTile(int column, int row) throws Exception {
+            if (row < 0 || row >= SurfaceWaterSource.DOWN) return;
+            int x = Math.floorMod(column, SurfaceWaterSource.ACROSS);
+            long key = (long) (row / TILE) << 32 | x / TILE;
+            if (memory.containsKey(key)) return;
+            byte[] values = new byte[TILE * TILE], cells = new byte[(TILE / CELL) * (TILE / CELL)];
+            int x0 = (x / TILE) * TILE, y0 = (row / TILE) * TILE;
+            for (int py = 0; py < TILE; py++) for (int px = 0; px < TILE; px++) {
+                int hash = (x0 + px) * 0x45D9F3B ^ (y0 + py) * 0x119DE1F3 ^ seed;
+                values[py * TILE + px] = (byte) (hash ^ hash >>> 16);
+            }
+            // Independent varied maxima exercise indexing; deriving them from the random
+            // strengths above would make almost every 16x16 cell's maximum equal to 255.
+            for (int cy = 0; cy < TILE / CELL; cy++) for (int cx = 0; cx < TILE / CELL; cx++) {
+                int hash = (x0 / CELL + cx) * 0x45D9F3B ^ (y0 / CELL + cy) * 0x119DE1F3 ^ seed;
+                cells[cy * (TILE / CELL) + cx] = (byte) (hash ^ hash >>> 16);
+            }
+            memory.put(key, traced.newInstance(key, values, cells));
         }
 
         @Override

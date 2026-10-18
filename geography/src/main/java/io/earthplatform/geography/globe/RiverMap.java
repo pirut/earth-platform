@@ -177,6 +177,32 @@ public final class RiverMap {
      * kilometre) of a latitude and longitude: zero means no river near.
      */
     public double near(double latitude, double longitude) {
+        if (!FAST_SAMPLE) return nearReference(latitude, longitude);
+        double fx = (longitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE;
+        double fy = (SurfaceWaterSource.NORTH - latitude) * SurfaceWaterSource.PIXELS_PER_DEGREE;
+        if (!Double.isFinite(fx) || !Double.isFinite(fy)
+                || fx < Integer.MIN_VALUE || fx > Integer.MAX_VALUE
+                || fy < Integer.MIN_VALUE || fy > Integer.MAX_VALUE)
+            return nearReference(latitude, longitude);
+        int column = (int) Math.floor(fx), row = (int) Math.floor(fy);
+        // Keep the original wrapping int arithmetic at extreme coordinates, and the
+        // original edge behavior when any of the nine cells lies outside this tile.
+        if (column < Integer.MIN_VALUE + CELL || column > Integer.MAX_VALUE - CELL
+                || row < CELL || row >= SurfaceWaterSource.DOWN - CELL)
+            return nearReference(latitude, longitude);
+        int x = (Math.floorDiv(column, CELL) - 1) * CELL, y = (Math.floorDiv(row, CELL) - 1) * CELL;
+        int wrapped = Math.floorMod(x, SurfaceWaterSource.ACROSS), lx = wrapped % TILE, ly = y % TILE;
+        if (lx > TILE - 3 * CELL || ly > TILE - 3 * CELL)
+            return nearReference(latitude, longitude);
+        byte[] cells = traced(wrapped, y).cells;
+        int at = (ly / CELL) * (TILE / CELL) + lx / CELL, most = 0;
+        for (int j = 0; j < 3; j++, at += TILE / CELL)
+            for (int i = 0; i < 3; i++) most = Math.max(most, cells[at + i] & 0xFF);
+        return most / 255.0;
+    }
+
+    /** Original nine-lookup cell maximum, retained for seams, edge cases and comparisons. */
+    double nearReference(double latitude, double longitude) {
         int column = (int) Math.floor((longitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE);
         int row = (int) Math.floor((SurfaceWaterSource.NORTH - latitude) * SurfaceWaterSource.PIXELS_PER_DEGREE);
         int cx = Math.floorDiv(column, CELL), cy = Math.floorDiv(row, CELL), most = 0;
