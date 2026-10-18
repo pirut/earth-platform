@@ -120,6 +120,14 @@ final class FarLodShaders {
             """;
 
     /**
+     * Identical arithmetic and float operands to the ordinary water depth vertex shader. Only
+     * the offset's source changes, from a per-column uniform to a repeated per-vertex attribute.
+     * The original full block-format buffers still draw the colour pass through Iris unchanged.
+     */
+    static final String BATCH_DEPTH_VERTEX = DEEPEN_VERTEX.replace("uniform vec3 earth_Offset;",
+            "layout(location = 1) in vec3 earth_Offset;");
+
+    /**
      * Far water's floor, where the water shows over far terrain: its bed's own depth, or the least
      * depth if that is nearer. It replaces the slope depth there, which across a narrow channel
      * can lie well off the bed.

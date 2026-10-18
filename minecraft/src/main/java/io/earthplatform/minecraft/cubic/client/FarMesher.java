@@ -88,6 +88,9 @@ final class FarMesher {
         return new FarColumnMesh(job).build();
     }
 
+    /** Off with {@code -Dearthplatform.far.cacheCoverage=false} to compare the original cube lookup loop. */
+    static final boolean CACHE_COVERAGE = Boolean.parseBoolean(System.getProperty("earthplatform.far.cacheCoverage", "true"));
+
     /**
      * Whether far ground is drawn smooth: off by default, so far terrain stays blocks all the way out
      * as Minecraft looks; on with {@code -Dearthplatform.far.smooth=true}.

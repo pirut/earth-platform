@@ -12,6 +12,7 @@ Most are read once when the class that uses them loads, so set them on the comma
 
 | Flag | Default | What it does | Read in |
 | --- | --- | --- | --- |
+| `earthplatform.rivers.fastSample` | on | `false` restores the allocating per-pixel river sampler for exact-output/performance comparisons | `RiverMap` |
 | `earthplatform.earth.offline` | `false` | Never download; only places already in the cache generate. Same as the `offline` setting | `CubicSettings`, `EarthStatus` |
 | `earthplatform.earth.imagery` | `false` | New worlds take ground colors from EOX satellite imagery. Same as the `satelliteImagery` setting | `CubicSettings`, `EarthConfig` |
 | `earthplatform.earth.home` | Yosemite Valley | Default home of new worlds, as `LAT,LON` | `EarthSettings` |
@@ -45,6 +46,12 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.trackBytes` | on | `false` sums every column for each memory query, for comparing | `FarRenderer` |
 | `earthplatform.far.cachePick` | on | `false` rebuilds selection, sorting and face groups every frame, for comparing | `FarRenderer` |
 | `earthplatform.far.fastWater` | on | `false` restores full water scans and uniform updates, for comparing | `FarRenderer`, `FarLod` |
+| `earthplatform.far.cacheCommands` | on | Reuses assembled opaque multi-draw arguments for the exact camera pick; `false` rebuilds each frame | `FarRenderer`, `FarGpu` |
+| `earthplatform.far.indexedAllocator` | on | Size-indexed best-fit GPU face allocation; `false` scans free ranges by address | `FarGpu` |
+| `earthplatform.far.cacheCoverage` | on | Precomputes exact near-cube coverage per far mesh job; `false` repeats the original cube lookups | `FarMesher`, `FarColumnMesh` |
+| `earthplatform.far.batchWaterDepth` | `false` | Experimental ordered water depth batches with original GPU position/offset operands; color draws keep their shader attributes and order | `FarWaterBatch`, `FarLod` |
+| `earthplatform.far.strictUpload` | `false` | Experimental fixed 3 ms upload admission cap, without the legacy minimum-eight/adaptive policy; may delay terrain convergence | `FarRenderer` |
+| `earthplatform.far.uploadBytes` | 4194304 | Byte allowance per frame with `strictUpload`; first valid mesh always progresses, even if oversized | `FarRenderer` |
 
 ## Cubes, loading and networking
 

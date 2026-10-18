@@ -69,6 +69,8 @@ public final class RiverMap {
     static final int SPUR = 3, BESIDE = 12;
     /** Strength of the smallest stream's line, enough that it stays unbroken where it runs aslant. */
     private static final float STREAM = 0.7f;
+    /** Retain the original sampler for matched performance comparisons. */
+    private static final boolean FAST_SAMPLE = !"false".equals(System.getProperty("earthplatform.rivers.fastSample"));
 
     private final SurfaceWaterSource source;
     private final Drainage drainage;
@@ -94,6 +96,52 @@ public final class RiverMap {
 
     /** River strength, 0 to 1, at a latitude and longitude. */
     public double strength(double latitude, double longitude) {
+        if (!FAST_SAMPLE) return strengthReference(latitude, longitude);
+        double fx = (longitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE - 0.5;
+        double fy = (SurfaceWaterSource.NORTH - latitude) * SurfaceWaterSource.PIXELS_PER_DEGREE - 0.5;
+        int ix = (int) Math.floor(fx), iy = (int) Math.floor(fy);
+        double tx = fx - ix, ty = fy - iy, sx = 1 - tx, sy = 1 - ty;
+        // Keep spline()'s arithmetic and the left-to-right row sums exactly: worlds must
+        // not change merely because sampling no longer allocates two weight arrays.
+        double wx0 = sx * sx * sx / 6, wx1 = (4 - 6 * tx * tx + 3 * tx * tx * tx) / 6;
+        double wx2 = (4 - 6 * sx * sx + 3 * sx * sx * sx) / 6, wx3 = tx * tx * tx / 6;
+        double wy0 = sy * sy * sy / 6, wy1 = (4 - 6 * ty * ty + 3 * ty * ty * ty) / 6;
+        double wy2 = (4 - 6 * sy * sy + 3 * sy * sy * sy) / 6, wy3 = ty * ty * ty / 6;
+
+        int x = ix - 1, y = iy - 1;
+        // Most kernels lie within one traced tile: one lookup replaces sixteen. Do
+        // not carry a kernel across a tile, longitude wrap, data edge, or int wrap.
+        if (ix > Integer.MIN_VALUE && ix <= Integer.MAX_VALUE - 2 && y >= 0 && y <= SurfaceWaterSource.DOWN - 4) {
+            int column = Math.floorMod(x, SurfaceWaterSource.ACROSS), lx = column % TILE, ly = y % TILE;
+            if (lx <= TILE - 4 && ly <= TILE - 4) {
+                byte[] values = traced(column, y).strength;
+                int at = ly * TILE + lx;
+                double sum = 0;
+                for (int j = 0; j < 4; j++, at += TILE) {
+                    double row = 0;
+                    row += wx0 * (values[at] & 0xFF);
+                    row += wx1 * (values[at + 1] & 0xFF);
+                    row += wx2 * (values[at + 2] & 0xFF);
+                    row += wx3 * (values[at + 3] & 0xFF);
+                    sum += weight(j, wy0, wy1, wy2, wy3) * row;
+                }
+                return sum / 255.0;
+            }
+        }
+        double sum = 0;
+        for (int j = 0; j < 4; j++) {
+            double row = 0;
+            row += wx0 * pixel(ix - 1, iy - 1 + j);
+            row += wx1 * pixel(ix, iy - 1 + j);
+            row += wx2 * pixel(ix + 1, iy - 1 + j);
+            row += wx3 * pixel(ix + 2, iy - 1 + j);
+            sum += weight(j, wy0, wy1, wy2, wy3) * row;
+        }
+        return sum / 255.0;
+    }
+
+    /** Original per-pixel sampler, also an exact-output oracle for the optimized path. */
+    double strengthReference(double latitude, double longitude) {
         double fx = (longitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE - 0.5;
         double fy = (SurfaceWaterSource.NORTH - latitude) * SurfaceWaterSource.PIXELS_PER_DEGREE - 0.5;
         int ix = (int) Math.floor(fx), iy = (int) Math.floor(fy);
@@ -106,6 +154,10 @@ public final class RiverMap {
             sum += wy[j] * row;
         }
         return sum / 255.0;
+    }
+
+    private static double weight(int index, double w0, double w1, double w2, double w3) {
+        return switch (index) { case 0 -> w0; case 1 -> w1; case 2 -> w2; default -> w3; };
     }
 
     /** How often, 0 to 100 percent, the surface water record saw water at a latitude and longitude. */

@@ -57,6 +57,8 @@ public final class FarLod {
     private static int faces, scratch, waterFramebuffer, restoreFramebuffer, vao;
     private static int shadows, shadowFramebuffer;
     @Nullable private static Program merge, surface, smooth, deepen, sun;
+    @Nullable private static Program batchSurface, batchDeepen;
+    private static boolean batchFailed;
     /** The water depth pass under way, which {@link #offset} sets the next column's place on. */
     @Nullable private static Program drawing;
     private static boolean failed;
@@ -346,7 +348,14 @@ public final class FarLod {
      * {@link #offset} per column, then calls {@link #endDeepen}.
      */
     static boolean beginDeepen(Matrix4fc modelView) {
+        return beginDeepen(modelView, false);
+    }
+
+    /** Batched callers first require {@link #batchWaterDepthReady}; no partial fallback is drawn. */
+    static boolean beginDeepen(Matrix4fc modelView, boolean batched) {
         if (!programs()) return false;
+        if (batched && !batchWaterDepthReady()) return false;
+        Program program = batched ? batchDeepen : deepen;
         saved.save();
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, restoreFramebuffer);
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, depth, 0);
@@ -356,16 +365,16 @@ public final class FarLod {
         GL11C.glDisable(GL11C.GL_CULL_FACE);
         bind(VANILLA_UNIT, gameDepth);
         bind(SCRATCH_UNIT, faces);
-        GL20C.glUseProgram(deepen.id);
-        drawing = deepen;
+        GL20C.glUseProgram(program.id);
+        drawing = program;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer matrix = stack.mallocFloat(16);
-            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(deepen.id, "earth_ModelView"), false, modelView.get(matrix));
-            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(deepen.id, "earth_Projection"), false, projection.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(program.id, "earth_ModelView"), false, modelView.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(program.id, "earth_Projection"), false, projection.get(matrix));
         }
-        GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_Least"), WATER_DEPTH);
-        GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_GameNear"), vanilla.m32() / (vanilla.m22() - 1.0F));
-        GL20C.glUniform2f(GL20C.glGetUniformLocation(deepen.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
+        GL20C.glUniform1f(GL20C.glGetUniformLocation(program.id, "earth_Least"), WATER_DEPTH);
+        GL20C.glUniform1f(GL20C.glGetUniformLocation(program.id, "earth_GameNear"), vanilla.m32() / (vanilla.m22() - 1.0F));
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(program.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
         return true;
     }
 
@@ -428,6 +437,13 @@ public final class FarLod {
      * the pack finds the water's surface in front of what lies behind it.
      */
     static void endWater(Matrix4fc modelView, Runnable water) {
+        endWater(modelView, false, water);
+    }
+
+    /** Batched callers first require {@link #batchWaterDepthReady}; colour draws remain unchanged. */
+    static void endWater(Matrix4fc modelView, boolean batched, Runnable water) {
+        if (batched && !batchWaterDepthReady()) throw new IllegalStateException("Water depth batch shaders unavailable");
+        Program program = batched ? batchSurface : surface;
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, waterFrom);
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, waterDepth, 0);
         saved.save();
@@ -441,14 +457,14 @@ public final class FarLod {
         GL11C.glDisable(GL11C.GL_CULL_FACE);
         GL11C.glColorMask(false, false, false, false);
         bind(SCRATCH_UNIT, depth);
-        GL20C.glUseProgram(surface.id);
-        drawing = surface;
+        GL20C.glUseProgram(program.id);
+        drawing = program;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer matrix = stack.mallocFloat(16);
-            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(surface.id, "earth_ModelView"), false, modelView.get(matrix));
-            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(surface.id, "earth_Projection"), false, vanilla.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(program.id, "earth_ModelView"), false, modelView.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(program.id, "earth_Projection"), false, vanilla.get(matrix));
         }
-        GL20C.glUniform2f(GL20C.glGetUniformLocation(surface.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(program.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
         water.run();
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, 0, 0);
 
@@ -554,6 +570,23 @@ public final class FarLod {
         } catch (IllegalStateException failure) {
             failed = true;
             EarthPlatformMod.LOGGER.error("Far water can't be hidden behind far terrain under shaders; far water may show through far hills", failure);
+            return false;
+        }
+    }
+
+    /** Optional variants fail independently: a failed experiment must not change the legacy path. */
+    static boolean batchWaterDepthReady() {
+        if (!FarWaterBatch.ENABLED || batchFailed || !programs()) return false;
+        if (batchSurface != null && batchDeepen != null) return true;
+        try {
+            batchSurface = Program.link(FarLodShaders.BATCH_DEPTH_VERTEX, FarLodShaders.SURFACE, "batched far water surface depth");
+            batchDeepen = Program.link(FarLodShaders.BATCH_DEPTH_VERTEX, FarLodShaders.DEEPEN, "batched far water depth floor");
+            return true;
+        } catch (IllegalStateException failure) {
+            if (batchSurface != null) { batchSurface.close(); batchSurface = null; }
+            if (batchDeepen != null) { batchDeepen.close(); batchDeepen = null; }
+            batchFailed = true;
+            EarthPlatformMod.LOGGER.warn("Optional water depth batching unavailable; keeping original water draws", failure);
             return false;
         }
     }

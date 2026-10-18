@@ -11,7 +11,6 @@ import static io.earthplatform.minecraft.cubic.client.FarMesher.TEXTURED_WATER_L
 import static io.earthplatform.minecraft.cubic.client.FarMesher.UNIT;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.WALL_DEPTH;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.at;
-import static io.earthplatform.minecraft.cubic.client.FarMesher.drawn;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.evenCover;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.foliage;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.groundRow;
@@ -63,6 +62,8 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 final class FarColumnMesh {
     final Job job;
     final int v, voxel;
+    /** Near-cube masks belong to this job only; its drawn snapshot never changes while it meshes. */
+    @Nullable final FarCoverage coverage;
     final int[] tops;
     final int[][] sideTops;
     final float[] surface;
@@ -88,6 +89,9 @@ final class FarColumnMesh {
         texturedWater = job.textured() && job.level() <= TEXTURED_WATER_LEVELS;
         v = 1 << job.level();
         voxel = v * UNIT;
+        coverage = FarMesher.CACHE_COVERAGE && job.drawn() != null && !job.drawn().isEmpty()
+                ? new FarCoverage(job.level(), job.x0(), job.z0(), job.bottom(),
+                job.sections().length * 16, job.drops(), job.drawn()) : null;
         tops = tops(job.sections());
         sideTops = sideTops(job);
         surface = surface(job, v);
@@ -108,7 +112,7 @@ final class FarColumnMesh {
                 BlockState state = section.getBlockState(x, y, z);
                 if (state.isAir() || smooth && !seeThrough(state) && !(trees && foliage(state))) continue;
                 int vy = si * 16 + y;
-                if (drawn(job, x, vy, z)) continue;
+                if (drawn(x, vy, z)) continue;
                 voxel(section, state, x, y, vy, z);
             }
         }
@@ -156,7 +160,7 @@ final class FarColumnMesh {
             if (direction.getAxis() == Direction.Axis.Y) {
                 int ny = vy + direction.getStepY();
                 BlockState neighbour = at(job, x, ny, z);
-                if (drawn(job, x, ny, z)) {
+                if (drawn(x, ny, z)) {
                     if (liquid && seeThrough(neighbour) || vy < tops[cell] - SEAM_DEPTH) continue;
                 } else if (hides(state, neighbour, direction)) continue;
                 if (biome == null) biome = section.getBiomes().get(x >> 2, y >> 2, z >> 2);
@@ -179,7 +183,7 @@ final class FarColumnMesh {
                 int row = part == 0 ? lowRow : highRow;
                 BlockState neighbour = at(job, nx, row, nz);
                 int group;
-                if (drawn(job, nx, row, nz)) {
+                if (drawn(nx, row, nz)) {
                     // The cubes there are drawn up close; water carries on into theirs without a wall.
                     if (liquid && seeThrough(neighbour) || vy < tops[cell] - SEAM_DEPTH) continue;
                     group = direction.get3DDataValue();
@@ -213,6 +217,10 @@ final class FarColumnMesh {
 
     private BlockState cover(int cell, BlockState own) {
         return cover == null || cover[cell] == null ? own : cover[cell];
+    }
+
+    private boolean drawn(int x, int vy, int z) {
+        return coverage == null ? FarMesher.drawn(job, x, vy, z) : coverage.drawn(x, vy, z);
     }
 
     /**
