@@ -643,7 +643,6 @@ public final class FarLod {
         } catch (IllegalStateException failure) {
             hintsFailed = true;
             hintsReady = false;
-            io.earthplatform.minecraft.diagnostics.PerfFailures.record(io.earthplatform.minecraft.diagnostics.PerfFailures.Stage.FAR_SHADER,failure);
             EarthPlatformMod.LOGGER.warn("Sun blocker hints unavailable; retaining original sun loop", failure);
             return false;
         }
