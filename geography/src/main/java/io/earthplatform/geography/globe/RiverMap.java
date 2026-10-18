@@ -99,6 +99,13 @@ public final class RiverMap {
         if (!FAST_SAMPLE) return strengthReference(latitude, longitude);
         double fx = (longitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE - 0.5;
         double fy = (SurfaceWaterSource.NORTH - latitude) * SurfaceWaterSource.PIXELS_PER_DEGREE - 0.5;
+        // Only use scalar weights where floor-to-int leaves ordinary fractions. For
+        // NaN, infinity, or saturated coordinates, retain the original evaluation path:
+        // non-finite arithmetic can propagate NaN signs/payloads differently by CPU.
+        if (!Double.isFinite(fx) || !Double.isFinite(fy)
+                || fx < Integer.MIN_VALUE || fx > Integer.MAX_VALUE
+                || fy < Integer.MIN_VALUE || fy > Integer.MAX_VALUE)
+            return strengthReference(latitude, longitude);
         int ix = (int) Math.floor(fx), iy = (int) Math.floor(fy);
         double tx = fx - ix, ty = fy - iy, sx = 1 - tx, sy = 1 - ty;
         // Keep spline()'s arithmetic and the left-to-right row sums exactly: worlds must

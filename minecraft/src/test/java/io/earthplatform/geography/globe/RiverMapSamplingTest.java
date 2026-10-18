@@ -64,6 +64,30 @@ class RiverMapSamplingTest {
     }
 
     @Test
+    void usesTheReferenceForNonFiniteInputsAndOverflowingSplineWeights() throws Exception {
+        long[] payloads = {0x7ff8000000000000L, 0x7ff8000000000001L, 0x7ff8abcddcba1234L,
+                0xfff8000000000000L, 0xfff8000000004321L, 0x7ff0000000000001L, 0xfff0000000000001L};
+        double[] extremes = {Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, -Double.MAX_VALUE, Double.MAX_VALUE,
+                -1e150, 1e150, -1e103, 1e103};
+        try (Fixture fixture = new Fixture(47)) {
+            for (double coordinate : extremes) {
+                fixture.check(new Point(0, coordinate));
+                fixture.check(new Point(coordinate, 0));
+                fixture.check(new Point(coordinate, coordinate));
+            }
+            for (long latitudeBits : payloads) {
+                double latitude = Double.longBitsToDouble(latitudeBits);
+                fixture.check(new Point(latitude, 0));
+                fixture.check(new Point(0, latitude));
+                fixture.check(new Point(latitude, Double.POSITIVE_INFINITY));
+                fixture.check(new Point(Double.NEGATIVE_INFINITY, latitude));
+                for (long longitudeBits : payloads)
+                    fixture.check(new Point(latitude, Double.longBitsToDouble(longitudeBits)));
+            }
+        }
+    }
+
+    @Test
     void sharesNoSamplingScratchAcrossThreadsOrRiverMaps() throws Exception {
         try (Fixture first = new Fixture(61); Fixture second = new Fixture(73)) {
             List<Point> points = new ArrayList<>();
@@ -87,7 +111,8 @@ class RiverMapSamplingTest {
                     for (int r = 0; r < 8; r++) for (int i = 0; i < points.size(); i++) {
                         int index = (i + offset * 67) % points.size(), m = (i + r + offset) & 1;
                         Point point = points.get(index);
-                        assertEquals(expected[m][index], Double.doubleToRawLongBits(fixtures[m].map.strength(point.latitude, point.longitude)));
+                        assertBits(Double.longBitsToDouble(expected[m][index]), fixtures[m].map.strength(point.latitude, point.longitude),
+                                "map=" + m + ", " + point);
                     }
                     return null;
                 });
@@ -98,7 +123,13 @@ class RiverMapSamplingTest {
         }
     }
 
-    private record Point(double latitude, double longitude) {}
+    private record Point(double latitude, double longitude) {
+        @Override
+        public String toString() {
+            return "latitude=" + latitude + " (raw 0x" + Long.toHexString(Double.doubleToRawLongBits(latitude))
+                    + "), longitude=" + longitude + " (raw 0x" + Long.toHexString(Double.doubleToRawLongBits(longitude)) + ")";
+        }
+    }
 
     /** x/y are pixel-centre coordinates, before strength's half-pixel adjustment. */
     private static Point point(double x, double y) {
@@ -107,7 +138,15 @@ class RiverMapSamplingTest {
     }
 
     private static void assertBits(double expected, double actual, String where) {
-        assertEquals(Double.doubleToRawLongBits(expected), Double.doubleToRawLongBits(actual), where);
+        long expectedBits = Double.doubleToRawLongBits(expected), actualBits = Double.doubleToRawLongBits(actual);
+        if (expectedBits != actualBits)
+            System.err.println(mismatch(expected, actual, expectedBits, actualBits, where));
+        assertEquals(expectedBits, actualBits, () -> mismatch(expected, actual, expectedBits, actualBits, where));
+    }
+
+    private static String mismatch(double expected, double actual, long expectedBits, long actualBits, String where) {
+        return where + ", expected=" + expected + " (raw 0x" + Long.toHexString(expectedBits)
+                + "), actual=" + actual + " (raw 0x" + Long.toHexString(actualBits) + ")";
     }
 
     /**
