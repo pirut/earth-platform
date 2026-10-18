@@ -1,0 +1,504 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-18",
+  "description": "Sanitized rounded aggregates; not raw frame data or a statistical confidence interval. Component gains are not additive.",
+  "baseline_source": "8e3943461c3ea5bed688ad7c15c802d1dfb3f7c9",
+  "tested_source": "cc56ae0a23e274fe4a73e748c1bfa2de08feb74b",
+  "baseline_jar_sha256": "978abbd961c2b4f1a826da94c9e7255d22b1a06945fc34b43a1b553b2c291ed0",
+  "candidate_jar_sha256": "1a39cbdbfd0fd33971de163b243404c14b37465119d0b2d64dde0ed13b188cbe",
+  "hardware": {
+    "model": "Mac16,7",
+    "chip": "Apple M4 Pro",
+    "cpu_cores": 14,
+    "performance_cores": 10,
+    "gpu_cores": 20,
+    "ram_gib": 24,
+    "os": "macOS 27.0 26A428",
+    "power": "AC"
+  },
+  "settings": {
+    "jdk": "Microsoft OpenJDK 21.0.7+6 ARM64",
+    "gc": "G1",
+    "heap_initial_mib": 512,
+    "heap_max_mib": 6144,
+    "gl": "OpenGL 4.1 Metal 91.7",
+    "minecraft": "1.21.1",
+    "neoforge": "21.1.262",
+    "sodium": "0.8.13",
+    "iris": "1.8.14-beta.1",
+    "framebuffer": [
+      1708,
+      960
+    ],
+    "vsync": false,
+    "fps_limit": 260,
+    "fov": 90,
+    "graphics": "Fancy",
+    "render_distance": 12,
+    "simulation_distance": 12,
+    "sharpness": "Sharpest",
+    "detail": 11,
+    "textured_levels": 8,
+    "photon": "1.3b with existing driver compatibility adaptation",
+    "photon_zip_sha256": "120897768eaa8cb1f14a3e98f88dff009ae3204ee3b96904a4fe8586edfc1ead",
+    "world_seed": 20261013,
+    "region": "Yosemite",
+    "server": "quiet single-player integrated"
+  },
+  "client": {
+    "metric": "FPS=1000/mean frame ms; p95/p99 are frame milliseconds",
+    "window_seconds": 30,
+    "downloads_in_retained_windows": 0,
+    "geodata_disk_cache": "warm",
+    "rows": [
+      {
+        "condition": "no_shader_stationary_1",
+        "reference_fps": 42.5,
+        "candidate_fps": 44.9,
+        "reference_p95_ms": 39.6,
+        "candidate_p95_ms": 43.8,
+        "reference_p99_ms": 41.5,
+        "candidate_p99_ms": 44.8
+      },
+      {
+        "condition": "no_shader_stationary_2",
+        "reference_fps": 42.1,
+        "candidate_fps": 45,
+        "reference_p95_ms": 39.5,
+        "candidate_p95_ms": 43.7,
+        "reference_p99_ms": 42.2,
+        "candidate_p99_ms": 44.5
+      },
+      {
+        "condition": "no_shader_moving_1",
+        "reference_fps": 27,
+        "candidate_fps": 27.3,
+        "reference_p95_ms": 49.9,
+        "candidate_p95_ms": 49.3,
+        "reference_p99_ms": 67.4,
+        "candidate_p99_ms": 64.9
+      },
+      {
+        "condition": "no_shader_moving_2",
+        "reference_fps": 28.7,
+        "candidate_fps": 28.3,
+        "reference_p95_ms": 46.3,
+        "candidate_p95_ms": 47.8,
+        "reference_p99_ms": 63.4,
+        "candidate_p99_ms": 64.9
+      },
+      {
+        "condition": "photon_stationary_1",
+        "reference_fps": 26.2,
+        "candidate_fps": 26.3,
+        "reference_p95_ms": 40.2,
+        "candidate_p95_ms": 40.1,
+        "reference_p99_ms": 41.3,
+        "candidate_p99_ms": 41.1
+      },
+      {
+        "condition": "photon_stationary_2",
+        "reference_fps": 26.1,
+        "candidate_fps": 26.3,
+        "reference_p95_ms": 40.2,
+        "candidate_p95_ms": 39.9,
+        "reference_p99_ms": 41,
+        "candidate_p99_ms": 41
+      },
+      {
+        "condition": "photon_moving_1",
+        "reference_fps": 18.5,
+        "candidate_fps": 18.7,
+        "reference_p95_ms": 70.9,
+        "candidate_p95_ms": 70.3,
+        "reference_p99_ms": 82.1,
+        "candidate_p99_ms": 79.3
+      },
+      {
+        "condition": "photon_moving_2",
+        "reference_fps": 20.6,
+        "candidate_fps": 20.8,
+        "reference_p95_ms": 66.2,
+        "candidate_p95_ms": 65,
+        "reference_p99_ms": 81.9,
+        "candidate_p99_ms": 80
+      },
+      {
+        "condition": "near_stationary",
+        "reference_fps": 39.8,
+        "candidate_fps": 42.1,
+        "reference_p95_ms": 35.2,
+        "candidate_p95_ms": 37.9,
+        "reference_p99_ms": 37.6,
+        "candidate_p99_ms": 40.6
+      },
+      {
+        "condition": "near_moving",
+        "reference_fps": 29.2,
+        "candidate_fps": 29,
+        "reference_p95_ms": 43.1,
+        "candidate_p95_ms": 42.6,
+        "reference_p99_ms": 58,
+        "candidate_p99_ms": 60.3
+      },
+      {
+        "condition": "high_altitude",
+        "reference_fps": 85.2,
+        "candidate_fps": 86.7,
+        "reference_p95_ms": 22.4,
+        "candidate_p95_ms": 22.6,
+        "reference_p99_ms": 23,
+        "candidate_p99_ms": 23.1
+      }
+    ],
+    "loading": {
+      "initial_fill_fps": [
+        37.1,
+        39.4
+      ],
+      "photon_reload_first_60s_fps": [
+        11.6,
+        10.8
+      ],
+      "photon_reload_p99_ms": [
+        287.6,
+        426.1
+      ],
+      "photon_reload_max_ms": [
+        415,
+        528.8
+      ],
+      "photon_reload_total_seconds": [
+        132.5,
+        137.9
+      ],
+      "paired": false
+    },
+    "server": {
+      "steady_tps": 20,
+      "candidate_mean_tick_ms_range": [
+        0.8,
+        2.1
+      ],
+      "multiplayer_tested": false
+    },
+    "gc": {
+      "candidate_near_moving_max_noted_pause_ms": 33.15
+    },
+    "cpu_wall": {
+      "no_shader_far_draw_ms": [
+        7.2,
+        4.1
+      ],
+      "photon_far_draw_ms_approx": 25.5,
+      "photon_process_percent_one_core": [
+        81,
+        71
+      ],
+      "gpu_time_measured": false
+    }
+  },
+  "command_isolation": {
+    "order": "off/on/on/off",
+    "window_seconds": 25,
+    "no_shader_off_fps": [
+      41.6,
+      41.8
+    ],
+    "no_shader_on_fps": [
+      44.7,
+      44.9
+    ],
+    "photon_off_fps": [
+      26.2,
+      26.2
+    ],
+    "photon_on_fps": [
+      26.3,
+      26.3
+    ],
+    "same_geometry_and_allocation_map": true,
+    "pixels": {
+      "total_rgb_pixels": 1639680,
+      "no_shader_changed_pixels": 0,
+      "no_shader_main_depth_changed_raw_bits": 0,
+      "photon_cross_mean_absolute_rgb_255": 1.891,
+      "photon_repeat_mean_absolute_rgb_255": [
+        1.644,
+        1.646
+      ],
+      "photon_main_depth_changed_raw_bits": 0,
+      "photon_pixel_identity_proven": false
+    }
+  },
+  "actual_water_experiment": {
+    "enabled_at_startup_verified": true,
+    "default_enabled": false,
+    "order": "off/on/on/off",
+    "window_seconds": 20,
+    "off_fps": [
+      25.9,
+      26.2
+    ],
+    "on_fps": [
+      26.5,
+      26.6
+    ],
+    "off_p95_ms": [
+      40.8,
+      40
+    ],
+    "on_p95_ms": [
+      39.1,
+      38.9
+    ],
+    "off_p99_ms": [
+      41.8,
+      40.8
+    ],
+    "on_p99_ms": [
+      41.6,
+      39.4
+    ],
+    "off_far_water_cpu_wall_ms": [
+      8.11,
+      8.01
+    ],
+    "on_far_water_cpu_wall_ms": [
+      5.52,
+      5.59
+    ],
+    "off_far_draw_cpu_wall_ms": [
+      25.34,
+      25.29
+    ],
+    "on_far_draw_cpu_wall_ms": [
+      23.74,
+      23.57
+    ],
+    "enabled_reload_total_seconds": 152.7,
+    "normal_candidate_reload_total_seconds": 137.9,
+    "reload_paired": false,
+    "held_columns": 58909,
+    "water_sources": 16055,
+    "source_position_bytes": 19051632,
+    "missing_sources": 0,
+    "batches": {
+      "deepen": {
+        "sources": 1375,
+        "vertices": 258580,
+        "bytes": 6205920
+      },
+      "restore": {
+        "sources": 1394,
+        "vertices": 259116,
+        "bytes": 6218784
+      }
+    },
+    "pixels": {
+      "cross_mean_absolute_rgb_255": 2.17,
+      "repeat_mean_absolute_rgb_255": [
+        1.958,
+        2.089
+      ],
+      "main_depth_changed_raw_bits": 0,
+      "far_depth_cross_changed_raw_bits_percent": 76.16,
+      "far_depth_repeat_changed_raw_bits_percent": [
+        76.45,
+        76.5
+      ],
+      "photon_pixel_identity_proven": false
+    },
+    "earlier_runtime_toggle_water_trials_excluded": "No retained source positions; Prism cached startup arguments. They measured fallback, not batching."
+  },
+  "components": {
+    "coverage": {
+      "paired_runs": 6,
+      "metric": "synthetic predicate workload jobs/second including construction; not full mesh",
+      "rows": 48,
+      "gain_percent": {
+        "level1": 170,
+        "level4": 325,
+        "level8": 262,
+        "empty": -0.2
+      }
+    },
+    "allocator": {
+      "paired_runs": 6,
+      "metric": "synthetic allocation/release operations per second; both helpers retain ownership checks",
+      "gain_percent": {
+        "log_sizes_1_to_10000_faces": [
+          69,
+          103
+        ],
+        "small_uniform": [
+          126,
+          265
+        ],
+        "large_fragmented": [
+          0,
+          2.4
+        ],
+        "simple_large_fifo": -38
+      },
+      "simple_large_fifo_ops_per_sec_millions": [
+        26.4,
+        16.3
+      ],
+      "isolated_moving_fps_gain_proven": false
+    },
+    "river": {
+      "paired_runs": 6,
+      "points": 8192,
+      "strength": {
+        "single_tile_samples_per_sec_millions": [
+          21,
+          84
+        ],
+        "mixed_samples_per_sec_millions": [
+          8.68,
+          16.97
+        ],
+        "single_tile_bytes_per_sample": [
+          96,
+          0
+        ],
+        "mixed_bytes_per_sample": [
+          135.457,
+          39.457
+        ]
+      },
+      "near": {
+        "single_tile_queries_per_sec_millions": [
+          22.25,
+          112.38
+        ],
+        "mixed_queries_per_sec_millions": [
+          11.85,
+          21.55
+        ]
+      },
+      "mixed_tiles": 16,
+      "mixed_seam_percent": 10
+    },
+    "generator": {
+      "order": [
+        "reference",
+        "optimized",
+        "optimized",
+        "reference"
+      ],
+      "fresh_jvm": true,
+      "heap_gib": 3,
+      "threads": 4,
+      "far_columns_per_level": 20,
+      "downloads": 0,
+      "gradle_task_reuse_disabled": true,
+      "cubes": 6357,
+      "nonempty_cubes": 3382,
+      "network_format_bytes": 7549066,
+      "cube_throughput_reference_per_sec": [
+        3700,
+        4411
+      ],
+      "cube_throughput_optimized_per_sec": [
+        3950,
+        6022
+      ],
+      "weighted_far_proxy_reference_cpu_seconds": [
+        85,
+        102
+      ],
+      "weighted_far_proxy_optimized_cpu_seconds": [
+        94,
+        98
+      ],
+      "all_11_printed_hash_prefixes_equal": true,
+      "hash_prefix_bits": 64,
+      "combined_prefix": "ae76effbc45b216f",
+      "cube_prefix": "68bdfa4f6c1f1fce",
+      "far_prefix": "ed6fb77176bd74c2",
+      "reliable_end_to_end_gain": false
+    }
+  },
+  "quality": {
+    "live_command_and_ownership_audits": "passed in recorded active production phases",
+    "photon_full_job_coverage_audit": {
+      "passed": true,
+      "jobs": 24,
+      "levels": [
+        1,
+        8
+      ],
+      "masked_jobs": 22,
+      "quads": 13297,
+      "water_parts": 59,
+      "vertices": 9448,
+      "vertex_buffer_bytes": 491296,
+      "declared_attribute_bytes": 472400,
+      "padding_bytes_examined": 18896,
+      "padding_only_differences": 1604,
+      "declared_attributes_and_geometry_exact": true,
+      "padding_excluded_from_semantic_equality": true
+    },
+    "shader_free_full_job_audit": "pending: final launch failed before mod load, GLFW primary monitor unavailable",
+    "enabled_water_final_pond_image_review": "completed: pond, underwater and fixed-view screenshots inspected; no obvious structural defect; no exact pond off/on proof",
+    "diagnostic_assertion": "After valid water windows and Photon mesh proof, inactive underwater far-pass assertion ended driver run; driver corrected, rerun blocked at startup.",
+    "universal_visual_equivalence_proven": false
+  },
+  "verification": {
+    "local_tests_total": 124,
+    "passed": 122,
+    "failures": 0,
+    "errors": 0,
+    "skipped_opt_in_benchmarks": 2,
+    "source_ci_run": 39155485920,
+    "source_ci_conclusion": "success"
+  },
+  "followups": {
+    "cloud_height_grid": {
+      "implemented": false,
+      "estimated_no_shader_stationary_fps_gain_percent": [
+        5,
+        15
+      ],
+      "confidence": "low; speculative",
+      "effort_engineering_days": [
+        1,
+        3
+      ]
+    },
+    "photon_async_gpu_pass_timing": {
+      "implemented": false,
+      "required_before_gpu_cost_attribution": true
+    },
+    "depth_neutral_shader_specialization": {
+      "implemented": false,
+      "cost_verified": false,
+      "smooth_ground_default": false,
+      "preserve_corrected_stepped_depth": true
+    }
+  },
+  "blockers": [
+    "Final shader-free full-job audit blocked before mod load: GLFW primary monitor unavailable; GPU-only display query persisted after temporary wake",
+    "Stationary no-shader p95/p99 worsened; attribution and acceptance remain open"
+  ],
+  "raw_artifacts_uploaded": false,
+  "cleanup": {
+    "completed": true,
+    "artifact": "results/impl-final-audit/cleanup.json",
+    "benchmark_jvm_and_monitor_absent": true,
+    "production_jar_restored": true,
+    "ordinary_wrapper_restored": true,
+    "diagnostic_mod_and_driver_removed": true,
+    "test_water_sentinel_removed": true,
+    "automatic_script_disabled": true,
+    "personal_worlds_untouched": true
+  },
+  "acceptance": {
+    "accepted": false,
+    "pr_draft": true,
+    "merge_authorized": false,
+    "mean_fps_alone_sufficient": false
+  }
+}
