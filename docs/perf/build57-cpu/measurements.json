@@ -798,6 +798,14 @@
     "new_client_results": false,
     "prior_client_measurements_apply_to": "cc56ae0a23e274fe4a73e748c1bfa2de08feb74b",
     "mac_retest": "Pending execution-transport recovery; inspect build/probe processes before starting another test",
-    "new_experiments_implemented": false
+    "new_experiments_implemented": false,
+    "diagnostic_gpu_timestamps": {
+      "default_enabled": false,
+      "max_pairs": 128,
+      "max_age_frames": 120,
+      "max_retained_samples": 1024,
+      "mac_verified": false,
+      "observer_overhead_measured": false
+    }
   }
 }

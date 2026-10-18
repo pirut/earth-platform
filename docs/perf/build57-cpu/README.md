@@ -8,9 +8,17 @@ The production candidate delivered about **6% higher stationary FPS without shad
 
 Command caching is now **off by default**. Opt in only for diagnostics with `-Dearthplatform.far.cacheCommands=true`. The remaining allocator, coverage and river changes retain their existing defaults. This restores the original command assembly path; it does not establish a driver-level cause or a new measured performance result.
 
-Every client FPS, percentile, image and generator result below belongs to the earlier tested gameplay source `cc56ae0`, including its default-enabled command cache. Those results must not be attributed to this policy revision. The new default still needs a matched Mac retest. GPU timing, shadow blocker hints and exact far surface packets are not implemented by this policy change and remain acceptance work.
+Every client FPS, percentile, image and generator result below belongs to the earlier tested gameplay source `cc56ae0`, including its default-enabled command cache. Those results must not be attributed to this policy revision. The new default still needs a matched Mac retest. The command-cache policy change does not implement shadow blocker hints or exact far surface packets; these remain acceptance work.
 
 On 2026-10-18 the continuation found no benchmark/game JVM running. A native display query identified the online built-in Color LCD after a brief wake request. A subsequent GLFW probe and Gradle build were started, but the Mac execution and desktop transports disconnected before their results could be retrieved. No new client benchmark is claimed. No game instance, installed JAR, personal world or shader pack was changed by this continuation before the disconnect. The local build/probe process state must be checked after reconnecting before another test is started.
+
+## Diagnostic GPU timestamp implementation
+
+An opt-in `-Dearthplatform.far.gpuTimers=true` now issues timestamp pairs around near/full opaque draws, each depth-smoothing direction, the combined sun/occlusion fullscreen pass, and water merge/deepen/colour/restore. Timestamp pairs allow nesting without sharing a TIME_ELAPSED query target. The ring uses at most 128 pairs and polls only earlier frames. It reads results only when both timestamps report GL_QUERY_RESULT_AVAILABLE; samples older than 120 frames are deleted and dropped, with fresh names allocated lazily. Retained samples are also bounded. No glFinish or NO_WAIT assumption is used. Counter wrap is handled conservatively, and unsupported contexts remain inactive.
+
+The render-thread diagnostic consumer can drain pass/frame, CPU submission duration, GPU elapsed duration, age and range/face metadata from `FarGpuTimers.drain()`; unknown counts are -1. Opaque range counts are supplied by the actual draw. Readouts contain no disk IO during rendering. World renderer teardown deletes query names without waiting. Eight headless state-machine tests cover availability, saturation, overdue/aborted queries, stale tokens, nesting, wrap, bounded readouts and cleanup.
+
+This is instrumentation, not a measured optimization. Native support, observer overhead and GPU measurements on the Mac are **pending** because its execution connection dropped. The existing sun/AO shader is one draw, so its timer reports their combined GPU duration. Separating those components would require a separate diagnostic experiment.
 
 ## Revision, hardware and settings
 

@@ -790,6 +790,7 @@ public final class FarRenderer {
     // Drawing ------------------------------------------------------------------------------------
 
     public void beginFrame() {
+        FarGpuTimers.frame();
         frame++;
         long now = System.nanoTime();
         frameNanos = Math.min(now - frameStart, 1_000_000_000L);
@@ -852,12 +853,17 @@ public final class FarRenderer {
                 }
                 nearVisible = near;
             }
-            if (!nearVisible.isEmpty() && gpu.begin(pack, ShaderBlocks.voxyPatch(), modelView, projection, position, shade, frame, true))
-                drawEach(gpu, nearVisible, position, true, reach);
+            if (!nearVisible.isEmpty() && gpu.begin(pack, ShaderBlocks.voxyPatch(), modelView, projection, position, shade, frame, true)) {
+                long timer = FarGpuTimers.begin("near opaque");
+                try { drawEach(gpu, nearVisible, position, true, reach); }
+                finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
+            }
             FarLod.beginDraw(modelView, position.x, position.y, position.z);
         }
         if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false)) {
-            drawEach(gpu, visible, position, false, 0);
+            long timer = FarGpuTimers.begin("far opaque");
+            try { drawEach(gpu, visible, position, false, 0); }
+            finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
             drawnRanges = gpu.ranges;
         }
         if (own) FarLod.endDraw();
@@ -870,6 +876,7 @@ public final class FarRenderer {
             }
             batchedDeepen = waterDeepen.end();
         }
+        long deepenTimer = own ? FarGpuTimers.begin("water deepen") : 0;
         if (own && FarLod.beginDeepen(modelView, batchedDeepen)) {
             if (batchedDeepen) waterDeepen.draw();
             else for (Column column : FAST_WATER ? waterSurfaces : visible) {
@@ -880,6 +887,7 @@ public final class FarRenderer {
             CubeBuffer.unbind();
             FarLod.endDeepen();
         }
+        FarGpuTimers.end(deepenTimer);
         shader.clear();
         type.clearRenderState();
     }
@@ -1079,6 +1087,7 @@ public final class FarRenderer {
         shader.apply();
         // With far terrain in its own depth, far hills hide the water behind them this way instead.
         boolean own = ShaderBlocks.packInUse() && FarLod.active() && FarLod.beginWater();
+        long colourTimer = FarGpuTimers.begin("far water colour");
         Uniform offset = shader.CHUNK_OFFSET, view = own ? null : shader.MODEL_VIEW_MATRIX;
         Matrix4f nearer = new Matrix4f();
         double lift = WATER_LIFT / nearPlane(projection);
@@ -1123,6 +1132,7 @@ public final class FarRenderer {
                 }
             }
         }
+        FarGpuTimers.end(colourTimer);
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
         if (view != null) view.set(modelView);
         boolean batchedRestore = false;
@@ -1338,6 +1348,7 @@ public final class FarRenderer {
     }
 
     void close() {
+        FarGpuTimers.close();
         closed = true;
         for (Column column : columns.values()) free(column);
         columns.clear();

@@ -67,6 +67,7 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | Flag | Default | What it does | Read in |
 | --- | --- | --- | --- |
 | `earthplatform.photon.compat` | `auto` | `on` or `off` overrides the check for running Photon on drivers it doesn't fit | `PhotonCompat` |
+| `earthplatform.far.gpuTimers` | `false` | Diagnostic nonblocking GPU timestamp pairs for far opaque, depth, sun/AO and water subpasses; bounded render-thread samples via `FarGpuTimers.drain()`. Requires timer-query support and nonzero counter bits | `FarGpuTimers` |
 | `earthplatform.cubic.perf` | `false` | Logs every timing every few seconds | `Timings` |
 | `earthplatform.cubic.perfTicks` | 100 | Ticks between perf log lines | `CubicClient` |
 | `earthplatform.cubic.trace` | `false` | Logs cube traffic | `Cubic` |

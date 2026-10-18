@@ -296,7 +296,8 @@ public final class FarLod {
         GL20C.glUniform1i(GL20C.glGetUniformLocation(sun.id, "earth_SunUp"), sunUp ? 1 : 0);
         GL20C.glUniform3f(GL20C.glGetUniformLocation(sun.id, "earth_Up"), upView.x, upView.y, upView.z);
         GL20C.glUniform2f(GL20C.glGetUniformLocation(sun.id, "earth_Focal"), projection.m00() * 0.5F * width, projection.m11() * 0.5F * height);
-        fullScreen();
+        long timer = FarGpuTimers.begin("sun+occlusion");
+        try { fullScreen(); } finally { FarGpuTimers.end(timer); }
         unbind(VANILLA_UNIT);
         if (blend) GL11C.glEnable(GL11C.GL_BLEND);
         GL11C.glColorMask(mask[0], mask[1], mask[2], mask[3]);
@@ -329,7 +330,8 @@ public final class FarLod {
             GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, to, 0);
             bind(VANILLA_UNIT, from);
             GL20C.glUniform2i(step, pass == 0 ? 1 : 0, pass == 0 ? 0 : 1);
-            fullScreen();
+            long timer = FarGpuTimers.begin(pass == 0 ? "depth smooth x" : "depth smooth y");
+            try { fullScreen(); } finally { FarGpuTimers.end(timer); }
             unbind(VANILLA_UNIT);
         }
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, 0, 0);
@@ -416,7 +418,8 @@ public final class FarLod {
         bind(SCRATCH_UNIT, depth);
         GL20C.glUseProgram(merge.id);
         merge.matrices();
-        fullScreen();
+        long timer = FarGpuTimers.begin("water depth merge");
+        try { fullScreen(); } finally { FarGpuTimers.end(timer); }
 
         // The pack's water then tests and writes that instead of the game's depth.
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, waterFrom);
@@ -465,7 +468,8 @@ public final class FarLod {
             GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(program.id, "earth_Projection"), false, vanilla.get(matrix));
         }
         GL20C.glUniform2f(GL20C.glGetUniformLocation(program.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
-        water.run();
+        long timer = FarGpuTimers.begin("water depth restore");
+        try { water.run(); } finally { FarGpuTimers.end(timer); }
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, 0, 0);
 
         unbind(SCRATCH_UNIT);
