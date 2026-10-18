@@ -141,7 +141,8 @@ public final class FarRenderer {
     private final FarCullTree cullTree = new FarCullTree();
     private static final boolean CACHE_PICK = !"false".equals(System.getProperty("earthplatform.far.cachePick"));
     private final FarPickState pick = new FarPickState();
-    private static final boolean CACHE_COMMANDS = !"false".equals(System.getProperty("earthplatform.far.cacheCommands"));
+    // Opt-in until matched client tests clear the stationary p95/p99 regression.
+    private static final boolean CACHE_COMMANDS = Boolean.getBoolean("earthplatform.far.cacheCommands");
     private long selectionVersion;
     @Nullable private FarGpu.Commands fullCommands, nearCommands;
     private List<Column> nearVisible = List.of();

@@ -790,5 +790,14 @@
     "pr_draft": true,
     "merge_authorized": false,
     "mean_fps_alone_sufficient": false
+  },
+  "current_policy": {
+    "command_cache_default_enabled": false,
+    "opt_in": "-Dearthplatform.far.cacheCommands=true",
+    "reason": "Reproducible stationary frame-tail regression in the recorded Mac controls",
+    "new_client_results": false,
+    "prior_client_measurements_apply_to": "cc56ae0a23e274fe4a73e748c1bfa2de08feb74b",
+    "mac_retest": "Pending execution-transport recovery; inspect build/probe processes before starting another test",
+    "new_experiments_implemented": false
   }
 }

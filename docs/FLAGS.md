@@ -46,7 +46,7 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.trackBytes` | on | `false` sums every column for each memory query, for comparing | `FarRenderer` |
 | `earthplatform.far.cachePick` | on | `false` rebuilds selection, sorting and face groups every frame, for comparing | `FarRenderer` |
 | `earthplatform.far.fastWater` | on | `false` restores full water scans and uniform updates, for comparing | `FarRenderer`, `FarLod` |
-| `earthplatform.far.cacheCommands` | on | Reuses assembled opaque multi-draw arguments for the exact camera pick; `false` rebuilds each frame | `FarRenderer`, `FarGpu` |
+| `earthplatform.far.cacheCommands` | `false` | Experimental reuse of opaque multi-draw arguments for the exact camera pick; opt in with `true`. Disabled after a reproducible stationary p95/p99 regression on the Mac | `FarRenderer`, `FarGpu` |
 | `earthplatform.far.indexedAllocator` | on | Size-indexed best-fit GPU face allocation; `false` scans free ranges by address | `FarGpu` |
 | `earthplatform.far.cacheCoverage` | on | Precomputes exact near-cube coverage per far mesh job; `false` repeats the original cube lookups | `FarMesher`, `FarColumnMesh` |
 | `earthplatform.far.batchWaterDepth` | `false` | Experimental ordered water depth batches with original GPU position/offset operands; color draws keep their shader attributes and order | `FarWaterBatch`, `FarLod` |
