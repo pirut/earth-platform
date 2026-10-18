@@ -325,7 +325,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         // First bounded case: no rasterized trees or vertical strata. Every unsupported case
         // retains the original dense path, including all fine far levels and giant groves.
         if (packets && v >= 8 && !giants && java.util.Arrays.stream(rock).allMatch(java.util.Objects::isNull)) {
-            java.util.List<java.util.List<FarSurfacePacket.Run>> runs = new java.util.ArrayList<>(256);
+            int[] runOffsets = new int[257];
+            long[] packedRuns = new long[1024];
+            int totalRuns = 0;
             int rows = sections * 16;
             int[] cuts = new int[23], runEnds = new int[23];
             BlockState[] runStates = new BlockState[23];
@@ -353,13 +355,13 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                     runEnds[runCount - 1] = to;
                     from = to;
                 }
-                java.util.List<FarSurfacePacket.Run> column = new java.util.ArrayList<>(runCount);
-                for (int i = 0; i < runCount; i++) column.add(new FarSurfacePacket.Run(runEnds[i], runStates[i]));
-                runs.add(column);
+                if (totalRuns + runCount > packedRuns.length) packedRuns = java.util.Arrays.copyOf(packedRuns, packedRuns.length * 2);
+                for (int i = 0; i < runCount; i++) packedRuns[totalRuns++] = (long) runEnds[i] << 32 | (Block.getId(runStates[i]) & 0xffffffffL);
+                runOffsets[cell + 1] = totalRuns;
             }
             java.util.List<Holder<Biome>> quarts = new java.util.ArrayList<>(16);
             for (int qz = 0; qz < 4; qz++) for (int qx = 0; qx < 4; qx++) quarts.add(biome[(qz * 4 + 1) * 16 + qx * 4 + 1]);
-            out.packet = new FarSurfacePacket(level, bottom, rows, out.drops, biome[8 * 16 + 8], quarts, runs);
+            out.packet = FarSurfacePacket.generated(level, bottom, rows, out.drops, biome[8 * 16 + 8], quarts, runOffsets, packedRuns);
             // Legacy adapter preserves current wire/mesh/edit ordering until a direct consumer is validated.
             if (materialize) out.sections.addAll(out.packet.materialize(biomeIds));
             return;

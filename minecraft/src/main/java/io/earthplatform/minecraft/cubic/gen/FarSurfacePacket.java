@@ -28,45 +28,65 @@ public final class FarSurfacePacket {
         public Edit { Objects.requireNonNull(state); }
     }
     private final int level, bottom, height, runCount;
-    private final int[][] ends;
-    private final BlockState[][] states;
+    private final int[] offsets;
+    /** Exclusive row end in the high word, exact registry block-state id in the low word. */
+    private final long[] runs;
     private final short[] drops;
     private final Holder<Biome> initialBiome;
     private final List<Holder<Biome>> biomes;
     private final long revision;
     private final Map<Integer, BlockState> edits;
 
+    private record Runs(int[] offsets, long[] words) {}
     public FarSurfacePacket(int level, int bottom, int height, short[] drops, Holder<Biome> initialBiome,
                             List<Holder<Biome>> biomes, List<List<Run>> columns) {
-        if (level < Far.MIN_LEVEL || level > Far.MAX_LEVEL || height < 16 || height % 16 != 0
-                || height > Far.MAX_SECTIONS * 16 || drops.length != 256 || biomes.size() != 16 || columns.size() != 256)
-            throw new IllegalArgumentException("Unsupported surface packet dimensions");
-        this.level = level; this.bottom = bottom; this.height = height;
-        this.drops = drops.clone(); this.initialBiome = Objects.requireNonNull(initialBiome);
-        this.biomes = List.copyOf(biomes);
-        ends = new int[256][]; states = new BlockState[256][];
+        this(level, bottom, height, drops, initialBiome, biomes, pack(columns));
+    }
+    private static Runs pack(List<List<Run>> columns) {
+        if (columns.size() != 256) throw new IllegalArgumentException("Invalid column count");
         int total = 0;
+        for (var column : columns) {
+            if (column.isEmpty() || (total += column.size()) > MAX_RUNS) throw new IllegalArgumentException("Run budget exceeded");
+        }
+        int[] offsets = new int[257]; long[] words = new long[total]; int at = 0;
         for (int cell = 0; cell < 256; cell++) {
-            List<Run> runs = columns.get(cell);
-            if (runs.isEmpty() || runs.size() > height || (total += runs.size()) > MAX_RUNS)
-                throw new IllegalArgumentException("Surface packet run budget exceeded");
-            ends[cell] = new int[runs.size()]; states[cell] = new BlockState[runs.size()];
-            int previous = 0; BlockState last = null;
-            for (int i = 0; i < runs.size(); i++) {
-                Run run = runs.get(i);
-                if (run.end <= previous || run.end > height || run.state == last)
-                    throw new IllegalArgumentException("Runs must cover increasing rows without redundant neighbours");
-                ends[cell][i] = run.end; states[cell][i] = run.state;
-                previous = run.end; last = run.state;
+            for (Run run : columns.get(cell)) words[at++] = (long) run.end << 32 | (Block.getId(run.state) & 0xffffffffL);
+            offsets[cell + 1] = at;
+        }
+        return new Runs(offsets, words);
+    }
+    /** Package-private ownership transfer from the generator: the arrays have no surviving mutable aliases. */
+    static FarSurfacePacket generated(int level, int bottom, int height, short[] drops, Holder<Biome> initialBiome,
+                                      List<Holder<Biome>> biomes, int[] offsets, long[] words) {
+        return new FarSurfacePacket(level, bottom, height, drops, initialBiome, biomes, new Runs(offsets, words));
+    }
+    private FarSurfacePacket(int level, int bottom, int height, short[] drops, Holder<Biome> initialBiome,
+                             List<Holder<Biome>> biomes, Runs data) {
+        if (level < Far.MIN_LEVEL || level > Far.MAX_LEVEL || height < 16 || height % 16 != 0
+                || height > Far.MAX_SECTIONS * 16 || drops.length != 256 || biomes.size() != 16
+                || data.offsets.length != 257 || data.offsets[0] != 0 || data.offsets[256] > MAX_RUNS
+                || data.offsets[256] > data.words.length) throw new IllegalArgumentException("Unsupported surface packet dimensions");
+        this.level = level; this.bottom = bottom; this.height = height;
+        this.drops = drops.clone(); this.initialBiome = Objects.requireNonNull(initialBiome); this.biomes = List.copyOf(biomes);
+        offsets = data.offsets; runs = data.words; runCount = offsets[256];
+        for (int cell = 0; cell < 256; cell++) {
+            if (offsets[cell] < 0 || offsets[cell + 1] <= offsets[cell] || offsets[cell + 1] > runCount)
+                throw new IllegalArgumentException("Invalid run offsets");
+            int previous = 0, last = -1;
+            for (int i = offsets[cell]; i < offsets[cell + 1]; i++) {
+                int end = (int) (runs[i] >>> 32), state = (int) runs[i];
+                if (end <= previous || end > height || state == last || state < 0 || Block.BLOCK_STATE_REGISTRY.byId(state) == null)
+                    throw new IllegalArgumentException("Invalid or redundant vertical runs");
+                previous = end; last = state;
             }
             if (previous != height) throw new IllegalArgumentException("Incomplete vertical run coverage");
         }
-        runCount = total; revision = 0; edits = Map.of();
+        revision = 0; edits = Map.of();
     }
 
     private FarSurfacePacket(FarSurfacePacket base, long revision, Map<Integer, BlockState> edits) {
         level = base.level; bottom = base.bottom; height = base.height; runCount = base.runCount;
-        ends = base.ends; states = base.states; drops = base.drops;
+        offsets = base.offsets; runs = base.runs; drops = base.drops;
         initialBiome = base.initialBiome; biomes = base.biomes;
         this.revision = revision; this.edits = Map.copyOf(edits);
     }
@@ -86,8 +106,12 @@ public final class FarSurfacePacket {
         return row * 256 + z * 16 + x;
     }
     private BlockState base(int cell, int row) {
-        int found = Arrays.binarySearch(ends[cell], row + 1);
-        return states[cell][found >= 0 ? found : -found - 1];
+        int low = offsets[cell], high = offsets[cell + 1];
+        while (low < high) {
+            int mid = (low + high) >>> 1;
+            if ((runs[mid] >>> 32) <= row) low = mid + 1; else high = mid;
+        }
+        return Block.BLOCK_STATE_REGISTRY.byId((int) runs[low]);
     }
     public BlockState block(int x, int row, int z) {
         int key = index(x, row, z);
@@ -137,9 +161,9 @@ public final class FarSurfacePacket {
             out.writeInt(id(biomeIds, initialBiome));
             for (var b : biomes) out.writeInt(id(biomeIds, b));
             for (int cell = 0; cell < 256; cell++) {
-                out.writeShort(ends[cell].length);
-                for (int i = 0; i < ends[cell].length; i++) {
-                    out.writeShort(ends[cell][i]); out.writeInt(Block.getId(states[cell][i]));
+                out.writeShort(offsets[cell + 1] - offsets[cell]);
+                for (int i = offsets[cell]; i < offsets[cell + 1]; i++) {
+                    out.writeShort((int) (runs[i] >>> 32)); out.writeInt((int) runs[i]);
                 }
             }
             out.writeLong(revision); out.writeInt(edits.size());
