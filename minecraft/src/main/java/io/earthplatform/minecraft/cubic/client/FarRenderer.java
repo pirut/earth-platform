@@ -133,6 +133,9 @@ public final class FarRenderer {
     private final LongOpenHashSet fadingIn = new LongOpenHashSet();
     /** This pass's drawn columns in view, nearest first, for the water pass. */
     private List<Column> visible = List.of();
+    /** Off with {@code -Dearthplatform.far.cullTree=false}: every drawn column is tested against the view on its own. */
+    private static final boolean CULL_TREE = !"false".equals(System.getProperty("earthplatform.far.cullTree"));
+    private final FarCullTree cullTree = new FarCullTree();
     private static final boolean CACHE_PICK = !"false".equals(System.getProperty("earthplatform.far.cachePick"));
     private final FarPickState pick = new FarPickState();
     private final FarOrder order = new FarOrder();
@@ -859,8 +862,16 @@ public final class FarRenderer {
         // cliff edges, it left fixed specks of sky. There levels meet at a plain seam.
         bandFade = band;
         int px = Far.column(bx, Far.MAX_LEVEL), pz = Far.column(bz, Far.MAX_LEVEL);
+        boolean tree = CULL_TREE && frustum.getClass() == Frustum.class && frustum instanceof FrustumAccess;
+        cullTree.clear(tree);
         for (int z = pz - Far.OUTER; z <= pz + Far.OUTER; z++) for (int x = px - Far.OUTER; x <= px + Far.OUTER; x++) {
+            int parent = cullTree.open();
             visit(Far.MAX_LEVEL, x, z, bx, bz, false);
+            cullTree.close(parent);
+        }
+        if (tree) {
+            FrustumAccess view = (FrustumAccess) frustum;
+            cullTree.classify(view.earthplatform$intersection(), view.earthplatform$camX(), view.earthplatform$camY(), view.earthplatform$camZ());
         }
         drawnKeys.clear();
         fadingIn.clear();
@@ -869,9 +880,14 @@ public final class FarRenderer {
             if (column.fade == FarGpu.FADE_IN) fadingIn.add(column.key);
         }
         List<Column> visible = new ArrayList<>(drawn.size());
-        for (Column column : drawn) {
-            if (column.faces == null && column.water == null || !frustum.isVisible(column.box)) continue;
-            double dx = column.box.getCenter().x - position.x, dz = column.box.getCenter().z - position.z;
+        for (int i = 0; i < drawn.size(); i++) {
+            Column column = drawn.get(i);
+            if (column.faces == null && column.water == null) continue;
+            int seen = tree ? cullTree.state(i) : FarCullTree.PARTLY;
+            if (seen == FarCullTree.OUTSIDE || seen == FarCullTree.PARTLY && !frustum.isVisible(column.box)) continue;
+            // As AABB.getCenter() works it out, without making a Vec3 for each column.
+            AABB box = column.box;
+            double dx = box.minX + 0.5 * (box.maxX - box.minX) - position.x, dz = box.minZ + 0.5 * (box.maxZ - box.minZ) - position.z;
             column.distance = dx * dx + dz * dz;
             visible.add(column);
         }
@@ -886,6 +902,12 @@ public final class FarRenderer {
         this.visible = visible;
         if (CACHE_PICK) for (Column column : visible) column.groups = faceGroups(column, position);
         if (FAST_WATER) pickWater();
+    }
+
+    /** Adds a column to this pick's drawn ones, in the view-culling node that is open (see {@link FarCullTree}). */
+    private void addDrawn(Column column) {
+        cullTree.own(drawn.size(), column.box);
+        drawn.add(column);
     }
 
     /** Water uses the same sorted pick and neighbor coverage in every pass. */
@@ -1114,7 +1136,7 @@ public final class FarRenderer {
                     // its own fade in over its parent is done, so levels sharpen one after another.
                     if (age(column, now) < FarShaders.FADE_TICKS) {
                         column.fade = fading ? FarGpu.FADE_OUT : FarGpu.NO_FADE;
-                        drawn.add(column);
+                        addDrawn(column);
                         return;
                     }
                     column.split = true;
@@ -1128,9 +1150,11 @@ public final class FarRenderer {
             } else if (column != null) column.split = true;
             if (band || arriving) {
                 column.fade = FarGpu.FADE_IN;
-                drawn.add(column);
+                addDrawn(column);
             }
+            int parent = cullTree.open();
             for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) visit(level - 1, 2 * x + dx, 2 * z + dz, bx, bz, band || arriving);
+            cullTree.close(parent);
             return;
         }
         boolean wasSplit = column != null && column.split;
@@ -1138,7 +1162,7 @@ public final class FarRenderer {
         if (meshed) {
             if (FADE && (wasSplit || column.merging) && merge(column, level, x, z, wasSplit)) return;
             column.fade = fading ? FarGpu.FADE_OUT : FarGpu.NO_FADE;
-            drawn.add(column);
+            addDrawn(column);
         }
     }
 
@@ -1168,11 +1192,11 @@ public final class FarRenderer {
         }
         if (whole && column.merging && age(column, now) < FarShaders.FADE_TICKS) {
             column.fade = FarGpu.FADE_IN;
-            drawn.add(column);
+            addDrawn(column);
             for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
                 Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
                 child.fade = FarGpu.FADE_OUT;
-                drawn.add(child);
+                addDrawn(child);
             }
             return true;
         }
