@@ -177,6 +177,7 @@ public final class FarServer {
                 long now = System.currentTimeMillis();
                 if (now - lastFailureLog > 10_000) {
                     lastFailureLog = now;
+                    io.earthplatform.minecraft.diagnostics.PerfFailures.record(io.earthplatform.minecraft.diagnostics.PerfFailures.Stage.FAR_GENERATION,failure);
                     EarthPlatformMod.LOGGER.warn("Could not make far column {} ({} failures so far)", key, failures.get(), failure);
                 }
             }

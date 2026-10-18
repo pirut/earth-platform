@@ -312,6 +312,11 @@ public final class FarRenderer {
         requested.defaultReturnValue(Integer.MIN_VALUE / 2);
     }
 
+    static boolean commandCacheEnabled() { return CACHE_COMMANDS; }
+    private long diagnosticReceivedColumns, diagnosticReceivedEstimatedBytes;
+    record PerfState(int wanted,int settled,int wantedInView,int settledInView,int held,int visible,int requested,int meshing,long ownedBytes,int drawnRanges,int replacements,long receivedColumns,long receivedEstimatedBytes) {}
+    PerfState perfState() { return new PerfState(wanted,settled,wantedInView,settledInView,columns.size(),visible.size(),requested.size(),meshing,vertexBytes(),drawnRanges,replaced,diagnosticReceivedColumns,diagnosticReceivedEstimatedBytes); }
+
     public int columnCount() { return columns.size(); }
 
     /** A held column's square of ground and the block Y just above its highest voxel. */
@@ -369,6 +374,7 @@ public final class FarRenderer {
 
     public void receive(CubePayloads.FarColumnData payload) {
         if (closed || !Far.valid(payload.key())) return;
+        if(io.earthplatform.minecraft.diagnostics.BuildInfo.diagnostics()){diagnosticReceivedColumns++;diagnosticReceivedEstimatedBytes+=payload.size();}
         requested.remove(payload.key());
         LevelChunkSection[] sections = new LevelChunkSection[payload.sections().size()];
         for (int i = 0; i < sections.length; i++) {
@@ -724,6 +730,7 @@ public final class FarRenderer {
                 Timings.FAR_MESH.since(start);
             }
             catch (Throwable failure) {
+                io.earthplatform.minecraft.diagnostics.PerfFailures.record(io.earthplatform.minecraft.diagnostics.PerfFailures.Stage.FAR_MESH,failure);
                 EarthPlatformMod.LOGGER.error("Far column mesh failed", failure);
                 built.add(new FarMesher.Built(job.key(), -job.version(), new int[0], new int[FarMesher.GROUPS], null, null, new FarMesher.Part[4]));
             }

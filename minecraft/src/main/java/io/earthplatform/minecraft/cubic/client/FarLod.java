@@ -101,6 +101,8 @@ public final class FarLod {
     /** Whether {@link #shadows} holds last frame's far shadows, which this frame's far terrain reads. */
     private static boolean shadowsReady, sunUp;
 
+    static boolean shadowHintsConfigured() { return SHADOW_HINTS; }
+
     private FarLod() {}
 
     // The pack's side ---------------------------------------------------------------------------
@@ -641,6 +643,7 @@ public final class FarLod {
         } catch (IllegalStateException failure) {
             hintsFailed = true;
             hintsReady = false;
+            io.earthplatform.minecraft.diagnostics.PerfFailures.record(io.earthplatform.minecraft.diagnostics.PerfFailures.Stage.FAR_SHADER,failure);
             EarthPlatformMod.LOGGER.warn("Sun blocker hints unavailable; retaining original sun loop", failure);
             return false;
         }

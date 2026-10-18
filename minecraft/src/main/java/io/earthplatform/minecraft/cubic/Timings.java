@@ -38,6 +38,10 @@ public final class Timings {
         for (LongAccumulator max : longest) max.accumulate(spent);
     }
 
+    /** Non-resetting totals for the bounded diagnostic reader; existing readers remain independent. */
+    public record Total(long calls,long nanos) {}
+    public Total total() { return new Total(count.sum(),nanos.sum()); }
+
     /** "name 2.10 ms (max 9.0) x 40/s": average and longest time, and runs a second, since this reader last read. */
     public synchronized String read(int reader) {
         long now = System.nanoTime(), runs = count.sum(), total = nanos.sum();

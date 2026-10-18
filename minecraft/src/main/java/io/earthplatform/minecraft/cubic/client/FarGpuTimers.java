@@ -12,9 +12,13 @@ import org.lwjgl.opengl.GL33C;
  * All calls run on the render thread with its context current; disabled by default.
  */
 final class FarGpuTimers {
-    private static final boolean ENABLED = Boolean.getBoolean("earthplatform.far.gpuTimers");
+    private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("earthplatform.far.gpuTimers", Boolean.toString(io.earthplatform.minecraft.diagnostics.BuildInfo.diagnostics())));
+    private static final int SAMPLE_EVERY = Math.clamp(Integer.getInteger("earthplatform.far.gpuSampleEvery", io.earthplatform.minecraft.diagnostics.BuildInfo.diagnostics()?120:1),1,3600);
     private static GpuQueryRing ring;
     private static boolean checked;
+    private static String mode="inactive";
+    static String mode(){return mode;}
+    static int sampleEvery(){return SAMPLE_EVERY;}
     private static long frame;
     private FarGpuTimers() {}
 
@@ -23,6 +27,7 @@ final class FarGpuTimers {
         frame++;
         if (!checked) {
             checked = true;
+            mode="unavailable";
             var caps = GL.getCapabilities();
             if (!(caps.OpenGL33 || caps.GL_ARB_timer_query) || caps.glQueryCounter == 0
                     || caps.glGetQueryObjectui64v == 0) {
@@ -37,6 +42,7 @@ final class FarGpuTimers {
                 EarthPlatformMod.LOGGER.info("Far GPU queries unavailable: timestamp={} elapsed={} counter bits", timestampBits, elapsedBits);
                 return;
             }
+            mode=timestamp?"timestamp_pairs":"non_nested_elapsed";
             ring = new GpuQueryRing(new GpuQueryRing.Queries() {
                 public int create() { return GL15C.glGenQueries(); }
                 public void stamp(int q) { GL33C.glQueryCounter(q, GL33C.GL_TIMESTAMP); }
@@ -74,7 +80,7 @@ final class FarGpuTimers {
         if (ring != null) ring.poll(frame);
     }
 
-    static long begin(String pass) { return ring == null ? 0 : ring.begin(pass, frame); }
+    static long begin(String pass) { return !ENABLED || ring == null || frame % SAMPLE_EVERY != 0 ? 0 : ring.begin(pass, frame); }
     static void end(long token) { end(token, -1, -1); }
     static void end(long token, int ranges, int faces) { if (ring != null) ring.end(token, ranges, faces); }
 
@@ -86,5 +92,6 @@ final class FarGpuTimers {
     static void close() {
         if (ring != null) { ring.close(); ring = null; }
         checked = false;
+        mode="inactive";
     }
 }
