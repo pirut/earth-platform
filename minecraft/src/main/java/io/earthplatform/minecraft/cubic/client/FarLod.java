@@ -56,6 +56,12 @@ public final class FarLod {
     private static int depth, framebuffer;
     private static int faces, scratch, waterFramebuffer, restoreFramebuffer, vao;
     private static int shadows, shadowFramebuffer;
+    /** Experimental: hints contain only original successful sample indices, revalidated on CURRENT inputs. */
+    private static final boolean SHADOW_HINTS = Boolean.getBoolean("earthplatform.far.shadowHints");
+    private static final int[] blockerHints = new int[2];
+    private static int hintRead;
+    private static boolean hintsReady, hintsFailed;
+    @Nullable private static Program hintedSun;
     @Nullable private static Program merge, surface, smooth, deepen, sun;
     @Nullable private static Program batchSurface, batchDeepen;
     private static boolean batchFailed;
@@ -286,18 +292,49 @@ public final class FarLod {
         boolean blend = GL11C.glIsEnabled(GL11C.GL_BLEND);
         GL11C.glDisable(GL11C.GL_BLEND);
         bind(VANILLA_UNIT, depth);
-        GL20C.glUseProgram(sun.id);
+        Program shadowProgram = sun;
+        boolean hinting = shadowHintsReady();
+        if (hinting) {
+            int write = 1 - hintRead;
+            GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT1, GL11C.GL_TEXTURE_2D, blockerHints[write], 0);
+            GL20C.glDrawBuffers(new int[] {GL30C.GL_COLOR_ATTACHMENT0, GL30C.GL_COLOR_ATTACHMENT1});
+            if (GL30C.glCheckFramebufferStatus(GL30C.GL_DRAW_FRAMEBUFFER) != GL30C.GL_FRAMEBUFFER_COMPLETE) {
+                hintsFailed = true;
+                hinting = false;
+            }
+        }
+        if (hinting) {
+            shadowProgram = hintedSun;
+            bind(SCRATCH_UNIT, blockerHints[hintRead]);
+        } else {
+            GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT1, GL11C.GL_TEXTURE_2D, 0, 0);
+            GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
+        }
+        int sunId = shadowProgram.id;
+        GL20C.glUseProgram(sunId);
+        if (hinting) {
+            GL20C.glUniform1i(GL20C.glGetUniformLocation(sunId, "earth_Hints"), SCRATCH_UNIT);
+            GL20C.glUniform1i(GL20C.glGetUniformLocation(sunId, "earth_HintsReady"), hintsReady ? 1 : 0);
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer matrix = stack.mallocFloat(16);
-            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(sun.id, "earth_Projection"), false, projection.get(matrix));
-            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(sun.id, "earth_FarInverse"), false, inverse.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(sunId, "earth_Projection"), false, projection.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(sunId, "earth_FarInverse"), false, inverse.get(matrix));
         }
-        GL20C.glUniform3f(GL20C.glGetUniformLocation(sun.id, "earth_Sun"), sunView.x, sunView.y, sunView.z);
-        GL20C.glUniform1i(GL20C.glGetUniformLocation(sun.id, "earth_SunUp"), sunUp ? 1 : 0);
-        GL20C.glUniform3f(GL20C.glGetUniformLocation(sun.id, "earth_Up"), upView.x, upView.y, upView.z);
-        GL20C.glUniform2f(GL20C.glGetUniformLocation(sun.id, "earth_Focal"), projection.m00() * 0.5F * width, projection.m11() * 0.5F * height);
+        GL20C.glUniform3f(GL20C.glGetUniformLocation(sunId, "earth_Sun"), sunView.x, sunView.y, sunView.z);
+        GL20C.glUniform1i(GL20C.glGetUniformLocation(sunId, "earth_SunUp"), sunUp ? 1 : 0);
+        GL20C.glUniform3f(GL20C.glGetUniformLocation(sunId, "earth_Up"), upView.x, upView.y, upView.z);
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(sunId, "earth_Focal"), projection.m00() * 0.5F * width, projection.m11() * 0.5F * height);
         long timer = FarGpuTimers.begin("sun+occlusion");
         try { fullScreen(); } finally { FarGpuTimers.end(timer); }
+        if (hinting) {
+            unbind(SCRATCH_UNIT);
+            // Detach before swapping: the texture read next pass is never attached while sampled.
+            GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT1, GL11C.GL_TEXTURE_2D, 0, 0);
+            GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
+            hintRead = 1 - hintRead;
+            hintsReady = true;
+        }
         unbind(VANILLA_UNIT);
         if (blend) GL11C.glEnable(GL11C.GL_BLEND);
         GL11C.glColorMask(mask[0], mask[1], mask[2], mask[3]);
@@ -516,6 +553,11 @@ public final class FarLod {
         GL11C.glTexParameteri(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MIN_FILTER, GL11C.GL_LINEAR);
         GL11C.glTexParameteri(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MAG_FILTER, GL11C.GL_LINEAR);
         shadowsReady = false;
+        hintsReady = false;
+        if (SHADOW_HINTS) for (int i = 0; i < blockerHints.length; i++) {
+            if (blockerHints[i] == 0) blockerHints[i] = GL11C.glGenTextures();
+            storage(blockerHints[i], GL30C.GL_R32F, GL30C.GL_RED);
+        }
         GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, bound2d);
         GlStateManager._activeTexture(active);
 
@@ -574,6 +616,20 @@ public final class FarLod {
         } catch (IllegalStateException failure) {
             failed = true;
             EarthPlatformMod.LOGGER.error("Far water can't be hidden behind far terrain under shaders; far water may show through far hills", failure);
+            return false;
+        }
+    }
+
+    private static boolean shadowHintsReady() {
+        if (!SHADOW_HINTS || hintsFailed || blockerHints[0] == 0 || blockerHints[1] == 0) return false;
+        if (hintedSun != null) return true;
+        try {
+            hintedSun = Program.link(FarLodShaders.FULL_SCREEN, FarLodShaders.SUN_HINTS, "advisory sun blocker hints");
+            return true;
+        } catch (IllegalStateException failure) {
+            hintsFailed = true;
+            hintsReady = false;
+            EarthPlatformMod.LOGGER.warn("Sun blocker hints unavailable; retaining original sun loop", failure);
             return false;
         }
     }
