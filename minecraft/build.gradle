@@ -60,22 +60,22 @@ tasks.named('jar', Jar) {
     from(licenceNotice) { into 'META-INF' }
 }
 
-// Internal build profile. Players receive one combined diagnostic JAR, with no setup switches.
-def experimentalBuild = providers.gradleProperty('earthExperimentalBuild').map { it == 'true' }.getOrElse(false)
-def sourceCommit = providers.gradleProperty('earthBuildCommit').getOrElse('unknown')
+// The current build includes validated optimizations and bounded local diagnostics; one player artifact.
+def sourceCommit = providers.gradleProperty('earthBuildCommit').orElse(providers.exec {
+    commandLine 'git', 'rev-parse', 'HEAD'
+    ignoreExitValue = true
+}.standardOutput.asText.map { it.trim() }).getOrElse('unknown')
 if (!(sourceCommit ==~ /[a-f0-9]{40}/)) sourceCommit = 'unknown'
 def generateBuildIdentity = tasks.register('generateBuildIdentity') {
     def out = layout.buildDirectory.file('generated/buildIdentity/META-INF/earthplatform-build.properties')
     inputs.property('commit', sourceCommit)
-    inputs.property('experimental', experimentalBuild)
     inputs.property('version', project.version.toString())
     outputs.file(out)
     doLast {
         def target = out.get().asFile
         target.parentFile.mkdirs()
         target.text = 'commit=' + sourceCommit + '\nversion=' + project.version +
-                '\nflavor=' + (experimentalBuild ? 'combined-experimental' : 'standard') +
-                '\ndiagnostics=' + experimentalBuild + '\n'
+                '\nflavor=current\ndiagnostics=true\n'
     }
 }
 sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/buildIdentity')

@@ -6,7 +6,6 @@ import com.mojang.blaze3d.vertex.MeshData;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.cubic.gen.FarSurfacePacket;
-import io.earthplatform.minecraft.diagnostics.BuildInfo;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import java.util.ArrayList;
@@ -110,7 +109,7 @@ final class FarMesher {
         }
     }
 
-    private static final boolean AUTO_RUNS=Boolean.parseBoolean(System.getProperty("earthplatform.far.runMesher",Boolean.toString(BuildInfo.experimental())));
+    private static final boolean AUTO_RUNS=Boolean.parseBoolean(System.getProperty("earthplatform.far.runMesher","true"));
     private static final java.util.concurrent.atomic.LongAdder RUN_ATTEMPTS=new java.util.concurrent.atomic.LongAdder(),
             RUN_USED=new java.util.concurrent.atomic.LongAdder(),RUN_FALLBACK=new java.util.concurrent.atomic.LongAdder();
     record RunStats(long attempts,long used,long fallback) {}

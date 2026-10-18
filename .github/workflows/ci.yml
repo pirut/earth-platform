@@ -46,32 +46,24 @@ jobs:
             echo "EARTH_INSTALLED_SHADER_PACK=$PWD/photon_v1.3b.zip"
           } >> "$GITHUB_ENV"
 
-      - name: Build and test
+      - name: Build and verify the current artifact
         working-directory: minecraft
         env:
           LC_ALL: C.UTF-8
-          # ModDevGradle skips recompiling Minecraft when CI=true; the pinned-bytecode tests need it.
-          CI: 'false'
-        run: gradle --no-daemon --console=plain jar test
-
-      - name: Build the combined experimental test artifact
-        working-directory: minecraft
-        env:
-          LC_ALL: C.UTF-8
+          # Pinned-bytecode tests need Minecraft recompiled; the actual Photon ZIP is checked too.
           CI: 'false'
         run: |
-          perf_test_commit=$(git rev-parse HEAD)
-          perf_test_version="0.1.0-alpha.57-experimental.${perf_test_commit:0:8}"
-          EARTH_PHOTON_ZIP="$EARTH_INSTALLED_SHADER_PACK" gradle --no-daemon --console=plain verifyShimArtifact -PearthExperimentalBuild=true "-PearthBuildCommit=$perf_test_commit" "-Pmod_version=$perf_test_version"
-          mkdir -p build/experimental-delivery
-          cp "build/libs/earthplatform-$perf_test_version.jar" build/experimental-delivery/
-          cp ../docs/perf/build57-cpu/prototypes/PC-TEST.md build/experimental-delivery/README.md
-          cd build/experimental-delivery
+          build_commit=$(git rev-parse HEAD)
+          EARTH_PHOTON_ZIP="$EARTH_INSTALLED_SHADER_PACK" gradle --no-daemon --console=plain verifyShimArtifact "-PearthBuildCommit=$build_commit"
+          mkdir -p build/current-delivery
+          cp build/libs/earthplatform-*.jar build/current-delivery/
+          cp ../docs/perf/build57-cpu/prototypes/PC-TEST.md build/current-delivery/README.md
+          cd build/current-delivery
           sha256sum *.jar > SHA256SUMS.txt
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: EarthPlatform-combined-experimental
-          path: minecraft/build/experimental-delivery/
+          name: EarthPlatform-current-build
+          path: minecraft/build/current-delivery/
           if-no-files-found: error
           retention-days: 14

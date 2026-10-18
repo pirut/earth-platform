@@ -14,7 +14,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
 import org.lwjgl.opengl.*;
 
-/** Combined experimental build only. Fixed-cost frame capture, bounded async local-only JSONL. */
+/** Current build. Fixed-cost frame capture, bounded async local-only JSONL. */
 @EventBusSubscriber(modid=EarthPlatformMod.MOD_ID,value=Dist.CLIENT)
 public final class PerformanceDiagnostics {
     private static State state;
@@ -31,7 +31,7 @@ public final class PerformanceDiagnostics {
             Runtime.getRuntime().addShutdownHook(new Thread(log::close,"Earth performance log close"));
             JsonObject record=base("build");
             record.addProperty("commit",BuildInfo.commit());record.addProperty("version",BuildInfo.version());
-            record.addProperty("flavor","combined-experimental");record.addProperty("java",clean(System.getProperty("java.version")));
+            record.addProperty("flavor","current");record.addProperty("java",clean(System.getProperty("java.version")));
             record.addProperty("os",clean(System.getProperty("os.name")));record.addProperty("os_version",clean(System.getProperty("os.version")));
             record.addProperty("architecture",clean(System.getProperty("os.arch")));record.addProperty("hardware_threads",Runtime.getRuntime().availableProcessors());
             record.addProperty("max_heap_mib",Runtime.getRuntime().maxMemory()>>20);
@@ -48,7 +48,7 @@ public final class PerformanceDiagnostics {
             record.addProperty("frame_quantile_cap_ms",2000);record.addProperty("local_only",true);
             record.addProperty("log_max_files",3);record.addProperty("log_max_file_bytes",4<<20);
             log.offer(record.toString());
-            EarthPlatformMod.LOGGER.info("Experimental performance logs: earthplatform/perf/latest.jsonl (local only)");
+            EarthPlatformMod.LOGGER.info("Local performance logs: earthplatform/perf/latest.jsonl (local only)");
         }
         JsonObject base(String type) {JsonObject record=new JsonObject();record.addProperty("type",type);record.addProperty("utc",Instant.now().toString());return record;}
         void emit(Minecraft mc) {
@@ -87,7 +87,7 @@ public final class PerformanceDiagnostics {
             record.add("sampled_gpu_passes",passes);record.addProperty("gpu_query_mode",FarGpuTimers.mode());record.addProperty("gpu_query_dropped",FarGpuTimers.dropped());
             JsonObject errors=new JsonObject();for(var stage:PerfFailures.Stage.values())if(PerfFailures.count(stage)>0){JsonObject error=new JsonObject();error.addProperty("count",PerfFailures.count(stage));error.addProperty("exception_type",PerfFailures.type(stage));errors.add(stage.name(),error);}record.add("errors",errors);
             record.addProperty("log_dropped",log.dropped());log.offer(record.toString());
-            if(log.failed()&&!warned){warned=true;EarthPlatformMod.LOGGER.warn("Local experimental performance log could not be written");}
+            if(log.failed()&&!warned){warned=true;EarthPlatformMod.LOGGER.warn("Local performance log could not be written");}
         }
     }
     static String clean(String value) {return value==null?"unknown":value.replaceAll("[\\p{Cntrl}]"," ").substring(0,Math.min(256,value.length()));}

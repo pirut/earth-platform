@@ -3,7 +3,7 @@ package io.earthplatform.minecraft.diagnostics;
 import java.io.InputStream;
 import java.util.Properties;
 
-/** Baked build identity/profile. Players install one JAR; no runtime switch is required. */
+/** Baked current-build identity. Players install one JAR; no runtime switch is required. */
 public final class BuildInfo {
     private static final Properties VALUES = load();
     private BuildInfo() {}
@@ -20,6 +20,6 @@ public final class BuildInfo {
         String version=VALUES.getProperty("version", "development");
         return version.matches("[A-Za-z0-9.+_-]{1,96}") ? version : "development";
     }
-    public static boolean experimental() { return "combined-experimental".equals(VALUES.getProperty("flavor")); }
-    public static boolean diagnostics() { return experimental() && "true".equals(VALUES.getProperty("diagnostics")); }
+    /** Bounded local diagnostics are part of the current build, with no player setup. */
+    public static boolean diagnostics() { return true; }
 }

@@ -9,7 +9,7 @@ import org.lwjgl.opengl.GL33C;
 /**
  * Diagnostic-only GPU queries. Timestamp pairs preferred; non-nested TIME_ELAPSED fallback.
  * No glFinish or synchronous result reads; an occupied elapsed target is skipped.
- * All calls run on the render thread with its context current; disabled by default.
+ * All calls run on the render thread with its context current; sampled once per 120 frames by default.
  */
 final class FarGpuTimers {
     private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("earthplatform.far.gpuTimers", Boolean.toString(io.earthplatform.minecraft.diagnostics.BuildInfo.diagnostics())));
