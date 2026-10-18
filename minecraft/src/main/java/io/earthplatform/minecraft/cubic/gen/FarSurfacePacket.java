@@ -1,0 +1,197 @@
+package io.earthplatform.minecraft.cubic.gen;
+
+import io.earthplatform.minecraft.cubic.far.Far;
+import java.io.*;
+import java.util.*;
+import net.minecraft.core.Holder;
+import net.minecraft.core.IdMap;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.chunk.PalettedContainer;
+
+/**
+ * Experimental exact vertical runs, before dense sections or a wire palette are built. The base
+ * and revisioned sparse block overlay are immutable. This format is NOT a saved/network payload:
+ * the first integration deliberately materializes the existing sections at the legacy boundary.
+ * Unsupported generators/features continue through their original dense generation path.
+ */
+public final class FarSurfacePacket {
+    private static final int MAGIC = 0x45505231, VERSION = 1;
+    public static final int MAX_RUNS = 8192, MAX_EDITS = 16384, MAX_BYTES = 1 << 20;
+    public record Run(int end, BlockState state) {
+        public Run { Objects.requireNonNull(state); }
+    }
+    public record Edit(int x, int row, int z, BlockState state) {
+        public Edit { Objects.requireNonNull(state); }
+    }
+    private final int level, bottom, height, runCount;
+    private final int[][] ends;
+    private final BlockState[][] states;
+    private final short[] drops;
+    private final Holder<Biome> initialBiome;
+    private final List<Holder<Biome>> biomes;
+    private final long revision;
+    private final Map<Integer, BlockState> edits;
+
+    public FarSurfacePacket(int level, int bottom, int height, short[] drops, Holder<Biome> initialBiome,
+                            List<Holder<Biome>> biomes, List<List<Run>> columns) {
+        if (level < Far.MIN_LEVEL || level > Far.MAX_LEVEL || height < 16 || height % 16 != 0
+                || height > Far.MAX_SECTIONS * 16 || drops.length != 256 || biomes.size() != 16 || columns.size() != 256)
+            throw new IllegalArgumentException("Unsupported surface packet dimensions");
+        this.level = level; this.bottom = bottom; this.height = height;
+        this.drops = drops.clone(); this.initialBiome = Objects.requireNonNull(initialBiome);
+        this.biomes = List.copyOf(biomes);
+        ends = new int[256][]; states = new BlockState[256][];
+        int total = 0;
+        for (int cell = 0; cell < 256; cell++) {
+            List<Run> runs = columns.get(cell);
+            if (runs.isEmpty() || runs.size() > height || (total += runs.size()) > MAX_RUNS)
+                throw new IllegalArgumentException("Surface packet run budget exceeded");
+            ends[cell] = new int[runs.size()]; states[cell] = new BlockState[runs.size()];
+            int previous = 0; BlockState last = null;
+            for (int i = 0; i < runs.size(); i++) {
+                Run run = runs.get(i);
+                if (run.end <= previous || run.end > height || run.state == last)
+                    throw new IllegalArgumentException("Runs must cover increasing rows without redundant neighbours");
+                ends[cell][i] = run.end; states[cell][i] = run.state;
+                previous = run.end; last = run.state;
+            }
+            if (previous != height) throw new IllegalArgumentException("Incomplete vertical run coverage");
+        }
+        runCount = total; revision = 0; edits = Map.of();
+    }
+
+    private FarSurfacePacket(FarSurfacePacket base, long revision, Map<Integer, BlockState> edits) {
+        level = base.level; bottom = base.bottom; height = base.height; runCount = base.runCount;
+        ends = base.ends; states = base.states; drops = base.drops;
+        initialBiome = base.initialBiome; biomes = base.biomes;
+        this.revision = revision; this.edits = Map.copyOf(edits);
+    }
+
+    public int level() { return level; }
+    public int bottom() { return bottom; }
+    public int height() { return height; }
+    public int runCount() { return runCount; }
+    public int editCount() { return edits.size(); }
+    public long revision() { return revision; }
+    public short drop(int cell) { return drops[cell]; }
+    public Holder<Biome> biome(int x, int z) { return biomes.get((z >> 2) * 4 + (x >> 2)); }
+
+    private int index(int x, int row, int z) {
+        if (x < 0 || x > 15 || z < 0 || z > 15 || row < 0 || row >= height)
+            throw new IndexOutOfBoundsException("Voxel outside surface packet");
+        return row * 256 + z * 16 + x;
+    }
+    private BlockState base(int cell, int row) {
+        int found = Arrays.binarySearch(ends[cell], row + 1);
+        return states[cell][found >= 0 ? found : -found - 1];
+    }
+    public BlockState block(int x, int row, int z) {
+        int key = index(x, row, z);
+        BlockState edit = edits.get(key);
+        return edit == null ? base(z * 16 + x, row) : edit;
+    }
+
+    /** A stale revision cannot overwrite a newer snapshot. Edits never mutate the shared base. */
+    public FarSurfacePacket withEdits(long expectedRevision, long nextRevision, List<Edit> changes) {
+        if (expectedRevision != revision || nextRevision <= revision)
+            throw new IllegalArgumentException("Stale or non-increasing surface edit revision");
+        Map<Integer, BlockState> changed = new HashMap<>(edits);
+        for (Edit e : changes) {
+            int key = index(e.x, e.row, e.z);
+            if (e.state == base(e.z * 16 + e.x, e.row)) changed.remove(key);
+            else changed.put(key, e.state);
+            if (changed.size() > MAX_EDITS) throw new IllegalArgumentException("Use dense fallback for a large edit overlay");
+        }
+        return new FarSurfacePacket(this, nextRevision, changed);
+    }
+
+    /** Existing section/palette and traversal order, including biome defaults and all block states. */
+    public List<LevelChunkSection> materialize(IdMap<Holder<Biome>> biomeIds) {
+        List<LevelChunkSection> result = new ArrayList<>(height / 16);
+        BlockState air = Blocks.AIR.defaultBlockState();
+        for (int si = 0; si < height / 16; si++) {
+            var palette = new PalettedContainer<>(biomeIds, initialBiome, PalettedContainer.Strategy.SECTION_BIOMES);
+            for (int z = 0; z < 4; z++) for (int x = 0; x < 4; x++) for (int y = 0; y < 4; y++)
+                palette.set(x, y, z, biomes.get(z * 4 + x));
+            var section = new LevelChunkSection(new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, air,
+                    PalettedContainer.Strategy.SECTION_STATES), palette);
+            for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+                BlockState state = block(x, si * 16 + y, z);
+                if (state != air) section.setBlockState(x, y, z, state, false);
+            }
+            section.recalcBlockCounts(); result.add(section.hasOnlyAir() ? null : section);
+        }
+        return result;
+    }
+
+    /** Deterministic bounded experimental encoding; no existing packet id or world data changes. */
+    public byte[] encode(IdMap<Holder<Biome>> biomeIds) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream out = new DataOutputStream(bytes)) {
+            out.writeInt(MAGIC); out.writeByte(VERSION); out.writeByte(level); out.writeInt(bottom); out.writeShort(height);
+            for (short drop : drops) out.writeShort(drop);
+            out.writeInt(id(biomeIds, initialBiome));
+            for (var b : biomes) out.writeInt(id(biomeIds, b));
+            for (int cell = 0; cell < 256; cell++) {
+                out.writeShort(ends[cell].length);
+                for (int i = 0; i < ends[cell].length; i++) {
+                    out.writeShort(ends[cell][i]); out.writeInt(Block.getId(states[cell][i]));
+                }
+            }
+            out.writeLong(revision); out.writeInt(edits.size());
+            for (var e : new TreeMap<>(edits).entrySet()) { out.writeInt(e.getKey()); out.writeInt(Block.getId(e.getValue())); }
+        }
+        if (bytes.size() > MAX_BYTES) throw new IOException("Surface packet byte budget exceeded");
+        return bytes.toByteArray();
+    }
+    private static int id(IdMap<Holder<Biome>> ids, Holder<Biome> biome) throws IOException {
+        int id = ids.getId(biome);
+        if (id < 0) throw new IOException("Unknown biome");
+        return id;
+    }
+    private static BlockState state(int id) throws IOException {
+        BlockState state = id < 0 ? null : Block.BLOCK_STATE_REGISTRY.byId(id);
+        if (state == null) throw new IOException("Unknown block state");
+        return state;
+    }
+    private static Holder<Biome> biome(IdMap<Holder<Biome>> ids, int id) throws IOException {
+        Holder<Biome> biome = id < 0 ? null : ids.byId(id);
+        if (biome == null) throw new IOException("Unknown biome");
+        return biome;
+    }
+    public static FarSurfacePacket decode(byte[] bytes, IdMap<Holder<Biome>> ids) throws IOException {
+        if (bytes.length > MAX_BYTES) throw new IOException("Surface packet byte budget exceeded");
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes))) {
+            if (in.readInt() != MAGIC || in.readUnsignedByte() != VERSION) throw new IOException("Unknown surface packet format");
+            int level = in.readUnsignedByte(), bottom = in.readInt(), height = in.readUnsignedShort();
+            if (height < 16 || height % 16 != 0 || height > Far.MAX_SECTIONS * 16) throw new IOException("Invalid height");
+            short[] drops = new short[256]; for (int i = 0; i < 256; i++) drops[i] = in.readShort();
+            Holder<Biome> initial = biome(ids, in.readInt());
+            List<Holder<Biome>> biomes = new ArrayList<>(16);
+            for (int i = 0; i < 16; i++) biomes.add(biome(ids, in.readInt()));
+            List<List<Run>> columns = new ArrayList<>(256); int total = 0;
+            for (int cell = 0; cell < 256; cell++) {
+                int count = in.readUnsignedShort();
+                if (count < 1 || count > height || (total += count) > MAX_RUNS) throw new IOException("Invalid run count");
+                List<Run> runs = new ArrayList<>(count);
+                for (int i = 0; i < count; i++) runs.add(new Run(in.readUnsignedShort(), state(in.readInt())));
+                columns.add(runs);
+            }
+            FarSurfacePacket base = new FarSurfacePacket(level, bottom, height, drops, initial, biomes, columns);
+            long revision = in.readLong(); int count = in.readInt();
+            if (revision < 0 || count < 0 || count > MAX_EDITS || revision == 0 && count != 0) throw new IOException("Invalid edit overlay");
+            Map<Integer, BlockState> edits = new HashMap<>();
+            for (int i = 0; i < count; i++) {
+                int key = in.readInt(); BlockState state = state(in.readInt());
+                if (key < 0 || key >= height * 256 || edits.putIfAbsent(key, state) != null) throw new IOException("Invalid edit index");
+                if (state == base.base(key & 255, key >> 8)) throw new IOException("Redundant edit");
+            }
+            if (in.read() != -1) throw new IOException("Trailing surface packet data");
+            return revision == 0 ? base : new FarSurfacePacket(base, revision, edits);
+        } catch (IllegalArgumentException failure) { throw new IOException("Invalid surface packet", failure); }
+    }
+}

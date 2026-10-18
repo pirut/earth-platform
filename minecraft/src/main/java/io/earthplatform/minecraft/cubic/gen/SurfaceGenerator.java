@@ -241,7 +241,27 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     // Far terrain: voxel columns sampled from the same height, cover and tree rules -------------
 
+    private static final boolean SURFACE_PACKETS = Boolean.getBoolean("earthplatform.far.surfacePackets");
+
     @Override public void farColumn(int level, int columnX, int columnZ, FarColumn out) {
+        farColumn(level, columnX, columnZ, out, SURFACE_PACKETS);
+    }
+
+    /** Explicit control for the dense oracle; never changes near cube generation. */
+    final void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets) {
+        farColumn(level, columnX, columnZ, out, packets, true);
+    }
+
+    /** Bounded direct prototype: null requires the caller to use the existing dense path. */
+    @Nullable public final FarSurfacePacket surfacePacket(int level, int columnX, int columnZ) {
+        if (level < Far.MIN_LEVEL || level > Far.MAX_LEVEL) throw new IllegalArgumentException("Unsupported far level");
+        FarColumn out = new FarColumn();
+        farColumn(level, columnX, columnZ, out, true, false);
+        return out.packet;
+    }
+
+    private void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets, boolean materialize) {
+        out.packet = null;
         int v = 1 << level, width = 16 * v, x0 = columnX * width, z0 = columnZ * width, half = v >> 1;
         int[] ground = new int[18 * 18], water = new int[18 * 18], sample = new int[2];
         for (int j = 0; j < 18; j++) for (int i = 0; i < 18; i++) {
@@ -302,6 +322,49 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             int g = (cz + 1) * 18 + cx + 1;
             out.drops[cz * 16 + cx] = drop(ground[g], water[g], base, v);
         }
+        // First bounded case: no rasterized trees or vertical strata. Every unsupported case
+        // retains the original dense path, including all fine far levels and giant groves.
+        if (packets && v >= 8 && !giants && java.util.Arrays.stream(rock).allMatch(java.util.Objects::isNull)) {
+            java.util.List<java.util.List<FarSurfacePacket.Run>> runs = new java.util.ArrayList<>(256);
+            int rows = sections * 16;
+            int[] cuts = new int[23], runEnds = new int[23];
+            BlockState[] runStates = new BlockState[23];
+            for (int cell = 0; cell < 256; cell++) {
+                int g = ((cell >> 4) + 1) * 18 + (cell & 15) + 1;
+                int count = 2; cuts[0] = 0; cuts[1] = rows;
+                // All discrete state changes lie next to one of these exact integer thresholds.
+                for (int k = 0; k < 3; k++) {
+                    int threshold = k == 0 ? ground[g] : k == 1 ? water[g] : pours[cell];
+                    long row = Math.floorDiv((long) threshold, v) - (long) bottom * 16;
+                    for (int delta = -3; delta <= 3; delta++) cuts[count++] = (int) Math.clamp(row + delta, 0, rows);
+                }
+                java.util.Arrays.sort(cuts, 0, count);
+                int from = 0, runCount = 0;
+                for (int ci = 0; ci < count; ci++) {
+                    int to = cuts[ci];
+                    if (to <= from) continue;
+                    int y0 = base + from * v;
+                    BlockState state = voxel(ground[g], water[g], y0, v, top[cell], under[cell]);
+                    if (state == WATER && ice[cell] && y0 + v > water[g]) state = Blocks.ICE.defaultBlockState();
+                    if (ground[g] >= y0 + v && state != WATER && state == STONE && bedrock(under[cell])) state = under[cell];
+                    if (state == AIR && crown[cell] != null && ground[g] < y0 && ground[g] >= y0 - v) state = crown[cell];
+                    if (state == AIR && y0 <= pours[cell]) state = WATER;
+                    if (runCount == 0 || runStates[runCount - 1] != state) runStates[runCount++] = state;
+                    runEnds[runCount - 1] = to;
+                    from = to;
+                }
+                java.util.List<FarSurfacePacket.Run> column = new java.util.ArrayList<>(runCount);
+                for (int i = 0; i < runCount; i++) column.add(new FarSurfacePacket.Run(runEnds[i], runStates[i]));
+                runs.add(column);
+            }
+            java.util.List<Holder<Biome>> quarts = new java.util.ArrayList<>(16);
+            for (int qz = 0; qz < 4; qz++) for (int qx = 0; qx < 4; qx++) quarts.add(biome[(qz * 4 + 1) * 16 + qx * 4 + 1]);
+            out.packet = new FarSurfacePacket(level, bottom, rows, out.drops, biome[8 * 16 + 8], quarts, runs);
+            // Legacy adapter preserves current wire/mesh/edit ordering until a direct consumer is validated.
+            if (materialize) out.sections.addAll(out.packet.materialize(biomeIds));
+            return;
+        }
+        if (!materialize) return; // Unsupported direct request: caller retains the dense fallback.
         LevelChunkSection[] stack = new LevelChunkSection[sections];
         for (int si = 0; si < sections; si++) {
             LevelChunkSection section = new LevelChunkSection(

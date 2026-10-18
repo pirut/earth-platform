@@ -11,6 +11,8 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 public final class FarColumn {
     /** The lowest section's Y in this level's section units; everything below counts as solid ground. */
     public int bottom;
+    /** Optional immutable prototype base; sections remain the authoritative legacy/edit boundary. */
+    @javax.annotation.Nullable public FarSurfacePacket packet;
     /** Sections from the bottom upward; null for one that is all air. Everything above is air. */
     public final List<LevelChunkSection> sections = new ArrayList<>();
     /**
