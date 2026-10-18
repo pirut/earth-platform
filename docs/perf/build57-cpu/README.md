@@ -45,6 +45,29 @@ The initial fill window rose from 37.1 to 39.4 FPS, but this loading result is n
 
 The no-shader `far draw` CPU-wall section fell about 7.2 → 4.1 ms (43% less section time). Photon remained around 25.5 ms. These timers include OpenGL calls and possible waits; they are **not GPU timers**. Photon stationary process CPU was about 81% → 71% of one core, approximately 12% less observed process CPU, without meaningful FPS improvement.
 
+## Stationary tail regression: command-cache attribution
+
+**Acceptance remains blocked.** The saved same-process off/on/on/off control reproduces the adverse no-shader tail behavior when only command caching changes:
+
+| Command cache, in time order | FPS | p95 ms | p99 ms | Frames >40 ms | p95 after trimming first/last 2 seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Off | 41.6 | 38.7 | 42.0 | 3.7% | 39.6 |
+| On | 44.7 | 44.0 | 44.8 | 18.2% | 44.1 |
+| On | 44.9 | 43.8 | 44.6 | 16.9% | 43.8 |
+| Off | 41.8 | 39.9 | 42.2 | 4.9% | 40.0 |
+
+These are four 25-second windows in one JVM, with the same geometry/allocation map and other optimization flags fixed. Both enabled windows have p95 about **3.9–5.2 ms higher** (approximately 10–14% longer frame duration) and p99 about **2.3–2.8 ms higher** (approximately 6–7%) than the corresponding disabled windows. Frames exceeding 40 ms rose from 3.7–4.9% to 16.9–18.2%. Disabling the flag at the end restored the earlier distribution, despite being later in the run.
+
+No GC pause occurred during any of these four windows. Every recorded selection/allocation version and scene counter stayed fixed within its window: 17,005 visible columns, 27,535 ranges, 952,325,376 owned bytes, no meshing or requests, and zero measured far-upload time. Removing the first and last two seconds does not remove the effect; it also persists in each enabled window's thirds. The normal production reference/candidate stationary windows independently show the same direction.
+
+This is enough to associate the regression with **command caching enabled in this settled no-shader scene on this Mac**. It does not establish a portable code defect or separate CPU scheduling, driver queuing, GPU execution and presentation. CPU-observed RenderFrameEvent.Post intervals are not measured GPU/display presentation intervals. Individual frames are autocorrelated, and the two adjacent enabled windows are not independent multi-launch trials; no per-frame statistical confidence claim is made. The source review found matching submitted commands/order, but matching output does not explain the changed cadence.
+
+No speculative correction was made without a representative graphics retest. The default-on command-cache policy remains an **unaccepted draft behavior**. A mean-FPS gain is insufficient to approve it. If a correction cannot preserve tails, the command-cache default should be off until it can; any proposed policy/correction needs the matched verification below before acceptance.
+
+Required validation when the display returns: three fresh-launch blocks, alternating ABBA and BAAB starting states; four 60-second windows per block after at least 60 seconds of warm-up, settled queues/fades and a cache audit outside each window. Keep source, world, exact view/allocation map, quality settings, 260-FPS limit and vsync-off state fixed; change only the command flag. Capture frame IDs with CPU render/submit and swap/present-call boundaries, plus supported asynchronous GPU timestamps. First quantify instrumentation off/on overhead against natural repeat variance. Record p95/p99, >40 ms frequency, GC, queue/version stability and output equivalence. Compare any proposed fix directly with the disabled path; require tails to recover within demonstrated repeat variability. Do not mask the issue by silently changing visual settings or the frame cap. Complete the outstanding shader-free full-job audit as a separate quality gate.
+
+Recompute the saved-data finding with `python3 harness/analyze-command-tails.py`; detailed sanitized rows, trim checks, runtime counters and input CSV hashes are in `results/command-tail-analysis.json` locally and in the accompanying measurements' `command_isolation.tail_analysis` field. This analysis launches no client and changes no gameplay source.
+
 ## Findings, safeguards and measured scope
 
 | Change / source at tested revision | Evidence and expected benefit in the measured workload | Effort / residual risk |

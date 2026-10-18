@@ -229,6 +229,291 @@
       ],
       "photon_main_depth_changed_raw_bits": 0,
       "photon_pixel_identity_proven": false
+    },
+    "tail_analysis": {
+      "tested_source": "cc56ae0a23e274fe4a73e748c1bfa2de08feb74b",
+      "diagnostic_jar_sha256": "9616b48b08d2e1b30a0e9eeb7f73817b956f2969bca28922505489cc94b88499",
+      "evidence_type": "one same-process off/on/on/off block, two 25-second windows per state; supported by normal production reference/candidate windows",
+      "interpretation": "Within this settled no-shader scene on this Mac, the tail regression follows command caching. Mechanism and portability remain unresolved; performance acceptance is blocked.",
+      "methodological_limits": [
+        "Frames are autocorrelated, not independent experimental replicates.",
+        "Two adjacent enabled windows and two disabled windows in one JVM are not a multi-launch confidence interval.",
+        "RenderFrameEvent.Post intervals measure CPU-observed frame cadence; actual GPU and display presentation timing were not recorded.",
+        "GC exclusion and stable inputs do not exclude OS/driver/presentation interactions."
+      ],
+      "rows": [
+        {
+          "phase": "vanilla-cache-off-1",
+          "cache_commands": false,
+          "raw_csv_sha256": "7139602c745fdf37cad61cbe70897c2b798f5d0e8164ffef0bdc881e0f2c095e",
+          "duration_from_frames_seconds": 24.989137291000006,
+          "n": 1039,
+          "mean_ms": 24.05114272473532,
+          "fps": 41.57806601727714,
+          "p95_ms": 38.740358099999995,
+          "p99_ms": 42.03802449999996,
+          "frames_over_40_ms": 38,
+          "frames_over_40_ms_percent": 3.6573628488931664,
+          "trim_first_last_2_seconds": {
+            "n": 873,
+            "mean_ms": 24.0489693115693,
+            "fps": 41.581823613493796,
+            "p95_ms": 39.563566800000004,
+            "p99_ms": 42.192640239999996,
+            "frames_over_40_ms": 34,
+            "frames_over_40_ms_percent": 3.8946162657502863
+          },
+          "thirds_p95_ms": [
+            37.875916600000004,
+            39.408552,
+            39.8423454
+          ],
+          "gc_pauses_in_window": 0,
+          "stable_runtime_inputs": {
+            "selectionVersion": [
+              2156
+            ],
+            "allocationVersion": [
+              106915
+            ],
+            "wanted": [
+              44734
+            ],
+            "settled": [
+              44734
+            ],
+            "meshing": [
+              0
+            ],
+            "requested": [
+              0
+            ],
+            "visible": [
+              17005
+            ],
+            "water": [
+              1375
+            ],
+            "bytes": [
+              952325376
+            ],
+            "ranges": [
+              27535
+            ]
+          },
+          "far_draw_cpu_wall_ms": 7.473333333333334,
+          "far_upload_cpu_wall_ms": 0
+        },
+        {
+          "phase": "vanilla-cache-on-1",
+          "cache_commands": true,
+          "raw_csv_sha256": "8482b3b0c18846af34af1e6686419e19e921e016bfd3b911c4194cc15463ca06",
+          "duration_from_frames_seconds": 25.013614292000007,
+          "n": 1119,
+          "mean_ms": 22.35354270956211,
+          "fps": 44.73563823832868,
+          "p95_ms": 43.9802753,
+          "p99_ms": 44.809952,
+          "frames_over_40_ms": 204,
+          "frames_over_40_ms_percent": 18.230563002680967,
+          "trim_first_last_2_seconds": {
+            "n": 939,
+            "mean_ms": 22.406896432374868,
+            "fps": 44.629116888992186,
+            "p95_ms": 44.05916719999999,
+            "p99_ms": 44.87502162,
+            "frames_over_40_ms": 175,
+            "frames_over_40_ms_percent": 18.636847710330137
+          },
+          "thirds_p95_ms": [
+            43.9779752,
+            44.14232255,
+            43.789070949999996
+          ],
+          "gc_pauses_in_window": 0,
+          "stable_runtime_inputs": {
+            "selectionVersion": [
+              2157
+            ],
+            "allocationVersion": [
+              106915
+            ],
+            "wanted": [
+              44734
+            ],
+            "settled": [
+              44734
+            ],
+            "meshing": [
+              0
+            ],
+            "requested": [
+              0
+            ],
+            "visible": [
+              17005
+            ],
+            "water": [
+              1375
+            ],
+            "bytes": [
+              952325376
+            ],
+            "ranges": [
+              27535
+            ]
+          },
+          "far_draw_cpu_wall_ms": 4.235,
+          "far_upload_cpu_wall_ms": 0
+        },
+        {
+          "phase": "vanilla-cache-on-2",
+          "cache_commands": true,
+          "raw_csv_sha256": "97345a3972a2d0faf59da486dd03b57a53cf1c717e2edabf72280ae750846a6d",
+          "duration_from_frames_seconds": 24.984272834000024,
+          "n": 1121,
+          "mean_ms": 22.287486917038358,
+          "fps": 44.86822600153807,
+          "p95_ms": 43.791667,
+          "p99_ms": 44.567924999999995,
+          "frames_over_40_ms": 190,
+          "frames_over_40_ms_percent": 16.949152542372882,
+          "trim_first_last_2_seconds": {
+            "n": 941,
+            "mean_ms": 22.302894217853346,
+            "fps": 44.837230102607286,
+            "p95_ms": 43.791667,
+            "p99_ms": 44.56435,
+            "frames_over_40_ms": 164,
+            "frames_over_40_ms_percent": 17.42826780021254
+          },
+          "thirds_p95_ms": [
+            43.6437168,
+            43.802966999999995,
+            43.8554544
+          ],
+          "gc_pauses_in_window": 0,
+          "stable_runtime_inputs": {
+            "selectionVersion": [
+              2157
+            ],
+            "allocationVersion": [
+              106915
+            ],
+            "wanted": [
+              44734
+            ],
+            "settled": [
+              44734
+            ],
+            "meshing": [
+              0
+            ],
+            "requested": [
+              0
+            ],
+            "visible": [
+              17005
+            ],
+            "water": [
+              1375
+            ],
+            "bytes": [
+              952325376
+            ],
+            "ranges": [
+              27535
+            ]
+          },
+          "far_draw_cpu_wall_ms": 4.28,
+          "far_upload_cpu_wall_ms": 0
+        },
+        {
+          "phase": "vanilla-cache-off-2",
+          "cache_commands": false,
+          "raw_csv_sha256": "db25fa73a4c475e8a20d79db7af210a248b9294e75ccd7d9db37c49d9aea4d67",
+          "duration_from_frames_seconds": 25.01700024999998,
+          "n": 1045,
+          "mean_ms": 23.939713157894737,
+          "fps": 41.77159489775358,
+          "p95_ms": 39.902516000000006,
+          "p99_ms": 42.22656148,
+          "frames_over_40_ms": 51,
+          "frames_over_40_ms_percent": 4.880382775119617,
+          "trim_first_last_2_seconds": {
+            "n": 878,
+            "mean_ms": 23.94888961617312,
+            "fps": 41.755589341590266,
+            "p95_ms": 40.027356299999994,
+            "p99_ms": 42.26263698,
+            "frames_over_40_ms": 45,
+            "frames_over_40_ms_percent": 5.125284738041002
+          },
+          "thirds_p95_ms": [
+            39.90080975,
+            39.94277905,
+            39.71195779999999
+          ],
+          "gc_pauses_in_window": 0,
+          "stable_runtime_inputs": {
+            "selectionVersion": [
+              2158
+            ],
+            "allocationVersion": [
+              106915
+            ],
+            "wanted": [
+              44734
+            ],
+            "settled": [
+              44734
+            ],
+            "meshing": [
+              0
+            ],
+            "requested": [
+              0
+            ],
+            "visible": [
+              17005
+            ],
+            "water": [
+              1375
+            ],
+            "bytes": [
+              952325376
+            ],
+            "ranges": [
+              27535
+            ]
+          },
+          "far_draw_cpu_wall_ms": 7.4075,
+          "far_upload_cpu_wall_ms": 0
+        }
+      ],
+      "pooled_descriptive_only": {
+        "off": {
+          "n": 2084,
+          "mean_ms": 23.995267534069097,
+          "fps": 41.674884373769714,
+          "p95_ms": 39.62510985,
+          "p99_ms": 42.203275360000006,
+          "frames_over_40_ms": 89,
+          "frames_over_40_ms_percent": 4.27063339731286
+        },
+        "on": {
+          "n": 2240,
+          "mean_ms": 22.320485324107143,
+          "fps": 44.8018932151065,
+          "p95_ms": 43.8807298,
+          "p99_ms": 44.71913562,
+          "frames_over_40_ms": 394,
+          "frames_over_40_ms_percent": 17.589285714285715
+        }
+      },
+      "source_correction_validated": false,
+      "acceptance": "blocked: do not accept mean FPS gain with worse p95/p99",
+      "required_next_test": "Three fresh-launch blocks, alternating ABBA/BAAB, four 60-second windows each after warm-up and settled queues; same build/settings/geometry, only command flag changes. Capture CPU frame and swap boundaries and supported nonblocking GPU timestamps; compare instrumentation-off/on overhead, p95/p99 and >40ms rate. Validate any correction against the disabled path before acceptance. Complete the outstanding shader-free full-job audit."
     }
   },
   "actual_water_experiment": {
@@ -453,7 +738,12 @@
     "errors": 0,
     "skipped_opt_in_benchmarks": 2,
     "source_ci_run": 39155485920,
-    "source_ci_conclusion": "success"
+    "source_ci_conclusion": "success",
+    "first_documentation_ci": {
+      "commit": "ef951dad9d6297b140b496b6cfdbeee3f66bbcb5",
+      "run": 39160676070,
+      "conclusion": "success"
+    }
   },
   "followups": {
     "cloud_height_grid": {
@@ -481,7 +771,7 @@
   },
   "blockers": [
     "Final shader-free full-job audit blocked before mod load: GLFW primary monitor unavailable; GPU-only display query persisted after temporary wake",
-    "Stationary no-shader p95/p99 worsened; attribution and acceptance remain open"
+    "Stationary no-shader p95/p99 regression follows command-cache enablement in saved ABBA controls; mechanism/correction unvalidated, acceptance blocked"
   ],
   "raw_artifacts_uploaded": false,
   "cleanup": {
