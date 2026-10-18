@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 /** Actual packed mesher, synthetic stable looks: no model manager, display or GL context required. */
 class FarSurfaceMeshOracleTest {
     private static java.util.Map<net.minecraft.tags.TagKey<net.minecraft.world.level.material.Fluid>, java.util.List<net.minecraft.core.Holder<net.minecraft.world.level.material.Fluid>>> previousFluidTags;
+    private static java.util.Map<net.minecraft.tags.TagKey<net.minecraft.world.level.block.Block>, java.util.List<net.minecraft.core.Holder<net.minecraft.world.level.block.Block>>> previousBlockTags;
     @org.junit.jupiter.api.BeforeAll static void fluidTags() {
         SurfacePacketFixtures.biomes();
         var registry = net.minecraft.core.registries.BuiltInRegistries.FLUID;
@@ -21,9 +22,16 @@ class FarSurfaceMeshOracleTest {
         var tags = new java.util.HashMap<>(previousFluidTags);
         tags.put(net.minecraft.tags.FluidTags.WATER, java.util.List.of(registry.wrapAsHolder(net.minecraft.world.level.material.Fluids.WATER), registry.wrapAsHolder(net.minecraft.world.level.material.Fluids.FLOWING_WATER)));
         registry.bindTags(tags);
+        var blocks=net.minecraft.core.registries.BuiltInRegistries.BLOCK;
+        previousBlockTags=blocks.getTags().collect(java.util.stream.Collectors.toMap(p -> p.getFirst(), p -> p.getSecond().stream().toList()));
+        var blockTags=new java.util.HashMap<>(previousBlockTags);
+        blockTags.put(net.minecraft.tags.BlockTags.LEAVES,blocks.stream().filter(b -> b instanceof net.minecraft.world.level.block.LeavesBlock).map(blocks::wrapAsHolder).toList());
+        blockTags.put(net.minecraft.tags.BlockTags.LOGS,java.util.List.of(blocks.wrapAsHolder(net.minecraft.world.level.block.Blocks.OAK_LOG)));
+        blocks.bindTags(blockTags);
     }
     @org.junit.jupiter.api.AfterAll static void restoreTags() {
         net.minecraft.core.registries.BuiltInRegistries.FLUID.bindTags(previousFluidTags);
+        net.minecraft.core.registries.BuiltInRegistries.BLOCK.bindTags(previousBlockTags);
     }
     @SuppressWarnings("unchecked") private static FarFaces faces(LevelChunkSection[] sections) throws Exception {
         FarFaces result = new FarFaces();
@@ -54,6 +62,17 @@ class FarSurfaceMeshOracleTest {
         return new FarMesher.Job(1, 1, level, 0, 0, 0, column.bottom, sections, drops, sides, sides,
                 drawn, false, new FarLooks(), faces, null, new float[] {0.5f, 1, 0.8f, 0.8f, 0.6f, 0.6f}, new float[] {1, 1, 1, 1, 1, 1});
     }
+    private static FarMesher.Job direct(FarColumn column, int level, boolean masked, FarFaces faces) {
+        var old=job(column,level,masked,faces);
+        FarMesher.Side[] sides=new FarMesher.Side[4];
+        for(int i=0;i<4;i++)sides[i]=new FarMesher.Side(null,column.bottom,old.drops(),column.packet);
+        return new FarMesher.Job(old.key(),old.version(),old.level(),old.slot(),old.x0(),old.z0(),old.bottom(),new LevelChunkSection[0],old.drops(),
+                sides,sides,old.drawn(),old.textured(),old.looks(),old.faces(),old.shaderIds(),old.shade(),old.white(),column.packet);
+    }
+    private static void equal(FarMesher.Built a,FarMesher.Built b) {
+        assertArrayEquals(a.quads(),b.quads());assertArrayEquals(a.counts(),b.counts());assertArrayEquals(a.grid(),b.grid());
+        part(a.water(),b.water());for(int wall=0;wall<4;wall++)part(a.waterWalls()[wall],b.waterWalls()[wall]);
+    }
     private static void part(FarMesher.Part a, FarMesher.Part b) {
         assertEquals(a == null, b == null); if (a == null) return;
         var da = a.mesh().drawState(); var db = b.mesh().drawState();
@@ -71,15 +90,79 @@ class FarSurfaceMeshOracleTest {
         for (int level = 3; level <= 8; level++) for (boolean masked : new boolean[] {false, true}) {
             FarColumn dense = generator.column(level, 0, 0, false), packet = generator.column(level, 0, 0, true);
             FarFaces faces = faces(dense.sections.toArray(LevelChunkSection[]::new));
-            var a = FarMesher.build(job(dense, level, masked, faces));
-            var b = FarMesher.build(job(packet, level, masked, faces));
+            var a = FarMesher.buildDenseOracle(job(dense, level, masked, faces));
+            var b = FarMesher.buildDenseOracle(job(packet, level, masked, faces));
+            var c = FarMesher.build(direct(packet, level, masked, faces));
+            var converted=FarMesher.buildRunPrototype(job(dense,level,masked,faces));
             try {
+                equal(a,c);equal(a,converted);
                 assertArrayEquals(a.quads(), b.quads()); assertArrayEquals(a.counts(), b.counts()); assertArrayEquals(a.grid(), b.grid());
                 part(a.water(), b.water()); if (a.water() != null) waterParts++;
                 for (int wall = 0; wall < 4; wall++) part(a.waterWalls()[wall], b.waterWalls()[wall]);
                 quads += a.quads().length / 4; jobs++;
-            } finally { a.free(); b.free(); }
+            } finally { a.free(); b.free(); c.free(); converted.free(); }
         }
-        assertTrue(quads > 0); assertTrue(waterParts > 0); System.out.println("SURFACE_MESH_ORACLE jobs=" + jobs + " quads=" + quads + " waterParts=" + waterParts + " packed ordering/attributes exact");
+        assertTrue(quads > 0); assertTrue(waterParts > 0); System.out.println("SURFACE_MESH_ORACLE jobs=" + jobs + " quads=" + quads + " waterParts=" + waterParts + " directRunAndLegacy ordering/attributes exact");
     }
+    @Test void differentNeighbourDropsBottomsAndBiomesKeepDirectFacesAndLookTableExact() throws Exception {
+        var g=new SurfacePacketFixtures.Country(4);
+        for(int level:new int[]{3,5,8}) {
+            var own=g.column(level,-2,3,true);var faces=faces(own.sections.toArray(LevelChunkSection[]::new));
+            var old=job(own,level,false,faces);var prototype=direct(own,level,false,faces);
+            FarMesher.Side[] denseSides=new FarMesher.Side[4],runSides=new FarMesher.Side[4];
+            int[][] positions={{-2,2},{-2,4},{-3,3},{-1,3}};
+            for(int i=0;i<4;i++) {
+                var next=g.column(level,positions[i][0],positions[i][1],true);char[] drops=new char[256];
+                for(int cell=0;cell<256;cell++)drops[cell]=(char)(next.drops[cell]&65535);
+                denseSides[i]=new FarMesher.Side(next.sections.toArray(LevelChunkSection[]::new),next.bottom,drops);
+                runSides[i]=new FarMesher.Side(null,next.bottom,drops,next.packet);
+            }
+            var aJob=new FarMesher.Job(old.key(),old.version(),level,old.slot(),old.x0(),old.z0(),old.bottom(),old.sections(),old.drops(),denseSides,denseSides,old.drawn(),false,old.looks(),faces,null,old.shade(),old.white());
+            var bJob=new FarMesher.Job(prototype.key(),prototype.version(),level,prototype.slot(),prototype.x0(),prototype.z0(),prototype.bottom(),prototype.sections(),prototype.drops(),runSides,runSides,prototype.drawn(),false,prototype.looks(),faces,null,prototype.shade(),prototype.white(),own.packet);
+            var a=FarMesher.buildDenseOracle(aJob);var b=FarMesher.build(bJob);
+            try {equal(a,b);assertArrayEquals(aJob.looks().copy(0,aJob.looks().count()),bJob.looks().copy(0,bJob.looks().count()));}
+            finally{a.free();b.free();}
+        }
+    }
+    @Test void runCandidateOmissionOnlySkipsFullyHiddenOpaqueInteriorVoxels() {
+        var packet=new SurfacePacketFixtures.Country(0).column(4,0,0,true).packet;
+        var candidates=FarRunCandidates.make(packet);int omitted=0;
+        for(int y=0;y<packet.height();y++)for(int z=1;z<15;z++)for(int x=1;x<15;x++) {
+            var state=packet.block(x,y,z);
+            if(state.isAir()||candidates.get(y*256+z*16+x))continue;
+            omitted++;assertFalse(FarMesher.seeThrough(state));
+            assertTrue(y<packet.height()-1);
+            for(int row=Math.max(0,y-1);row<=y+1;row++)for(int[] at:new int[][]{{x-1,z},{x+1,z},{x,z-1},{x,z+1}}) {
+                var neighbour=packet.block(at[0],row,at[1]);assertFalse(neighbour.isAir());assertFalse(FarMesher.seeThrough(neighbour));
+            }
+            if(y>0)assertFalse(packet.block(x,y-1,z).isAir());assertFalse(packet.block(x,y+1,z).isAir());
+        }
+        assertTrue(omitted>0);System.out.println("RUN_CANDIDATE_ORACLE omittedHiddenVoxels="+omitted);
+    }
+    @Test void editedPacketDirectConsumerUsesExactDenseFallback() throws Exception {
+        var g=new SurfacePacketFixtures.Country(0);var column=g.column(4,0,0,true);
+        column.packet=column.packet.withEdits(0,1,List.of(new FarSurfacePacket.Edit(5,10,5,net.minecraft.world.level.block.Blocks.CAVE_AIR.defaultBlockState()),new FarSurfacePacket.Edit(5,11,5,net.minecraft.world.level.block.Blocks.OAK_LOG.defaultBlockState())));
+        column.sections.clear();column.sections.addAll(column.packet.materialize(SurfacePacketFixtures.biomes().asHolderIdMap()));
+        var faces=faces(column.sections.toArray(LevelChunkSection[]::new));
+        var a=FarMesher.buildDenseOracle(job(column,4,false,faces));var b=FarMesher.build(direct(column,4,false,faces));
+        try{equal(a,b);}finally{a.free();b.free();}
+    }
+    @Test void directRunMesherComponentBench() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue("1".equals(System.getenv("EARTH_SURFACE_BENCH")));
+        var bean=(com.sun.management.ThreadMXBean)java.lang.management.ManagementFactory.getThreadMXBean();
+        if(bean.isThreadAllocatedMemorySupported())bean.setThreadAllocatedMemoryEnabled(true);
+        var g=new SurfacePacketFixtures.Country(0);long tid=Thread.currentThread().threadId();
+        for(int level:new int[]{3,5,8}) {
+            var column=g.column(level,0,0,true);var faces=faces(column.sections.toArray(LevelChunkSection[]::new));
+            for(int i=0;i<30;i++){var a=FarMesher.buildDenseOracle(job(column,level,false,faces));a.free();var b=FarMesher.build(direct(column,level,false,faces));b.free();}
+            for(int round=0;round<4;round++)for(boolean direct:round%2==0?new boolean[]{false,true}:new boolean[]{true,false}) {
+                long allocated=bean.getThreadAllocatedBytes(tid),start=System.nanoTime();int n=50;
+                for(int i=0;i<n;i++){var input=job(column,level,false,faces);
+                    var result=direct?FarMesher.buildRunPrototype(input):FarMesher.buildDenseOracle(input);result.free();}
+                long elapsed=System.nanoTime()-start,bytes=bean.getThreadAllocatedBytes(tid)-allocated;
+                System.out.printf(java.util.Locale.ROOT,"SURFACE_MESH_COMPONENT level=%d round=%d directRuns=%s usPerJob=%.3f javaAllocatedBytesPerJob=%.1f%n",level,round,direct,elapsed/1e3/n,bytes/(double)n);
+            }
+        }
+    }
+
 }

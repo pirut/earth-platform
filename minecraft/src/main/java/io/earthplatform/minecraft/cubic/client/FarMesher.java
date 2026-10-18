@@ -5,6 +5,8 @@ import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.MeshData;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.far.Far;
+import io.earthplatform.minecraft.cubic.gen.FarSurfacePacket;
+import io.earthplatform.minecraft.diagnostics.BuildInfo;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import java.util.ArrayList;
@@ -54,12 +56,36 @@ final class FarMesher {
     private FarMesher() {}
 
     /** A same-level column next to this one: north, south, west, east. */
-    record Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops) {}
+    record Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops, @Nullable FarSurfacePacket packet) {
+        Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops) { this(sections, bottom, drops, null); }
+    }
 
     /** Everything a worker needs; sections are never changed after they arrive, so sharing them is safe. */
     record Job(long key, int version, int level, int slot, int x0, int z0, int bottom, LevelChunkSection[] sections, char[] drops,
                @Nullable Side[] sides, @Nullable Side[] diagonals, @Nullable LongOpenHashSet drawn, boolean textured, FarLooks looks,
-               FarFaces faces, @Nullable Object2IntMap<BlockState> shaderIds, float[] shade, float[] white) {}
+               FarFaces faces, @Nullable Object2IntMap<BlockState> shaderIds, float[] shade, float[] white, @Nullable FarSurfacePacket packet) {
+        Job(long key, int version, int level, int slot, int x0, int z0, int bottom, LevelChunkSection[] sections, char[] drops,
+            @Nullable Side[] sides, @Nullable Side[] diagonals, @Nullable LongOpenHashSet drawn, boolean textured, FarLooks looks,
+            FarFaces faces, @Nullable Object2IntMap<BlockState> shaderIds, float[] shade, float[] white) {
+            this(key,version,level,slot,x0,z0,bottom,sections,drops,sides,diagonals,drawn,textured,looks,faces,shaderIds,shade,white,null);
+        }
+        int height() { return packet == null ? sections.length * 16 : packet.height(); }
+        Job dense() {
+            return new Job(key,version,level,slot,x0,z0,bottom,packet.materializeForMeshing().toArray(LevelChunkSection[]::new),drops,
+                    denseSides(sides),denseSides(diagonals),drawn,textured,looks,faces,shaderIds,shade,white);
+        }
+    }
+    @Nullable private static Side[] denseSides(@Nullable Side[] sides) {
+        if(sides==null)return null;
+        Side[] dense=sides.clone();
+        for(int i=0;i<dense.length;i++) if(dense[i]!=null && dense[i].packet!=null) {
+            Side side=dense[i];dense[i]=new Side(side.packet.materializeForMeshing().toArray(LevelChunkSection[]::new),side.bottom,side.drops);
+        }
+        return dense;
+    }
+    static net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> biome(Job job,int x,int row,int z) {
+        return job.packet == null ? job.sections[row>>4].getBiomes().get(x>>2,(row&15)>>2,z>>2) : job.packet.biome(x,z);
+    }
 
     /** A finished water mesh and the memory holding it. */
     record Part(MeshData mesh, ByteBufferBuilder memory) {
@@ -84,7 +110,29 @@ final class FarMesher {
         }
     }
 
-    static Built build(Job job) {
+    private static final boolean AUTO_RUNS=Boolean.parseBoolean(System.getProperty("earthplatform.far.runMesher",Boolean.toString(BuildInfo.experimental())));
+    private static final java.util.concurrent.atomic.LongAdder RUN_ATTEMPTS=new java.util.concurrent.atomic.LongAdder(),
+            RUN_USED=new java.util.concurrent.atomic.LongAdder(),RUN_FALLBACK=new java.util.concurrent.atomic.LongAdder();
+    record RunStats(long attempts,long used,long fallback) {}
+    static RunStats runStats(){return new RunStats(RUN_ATTEMPTS.sum(),RUN_USED.sum(),RUN_FALLBACK.sum());}
+    static boolean automaticRuns(){return AUTO_RUNS;}
+    static Built buildDenseOracle(Job job){return new FarColumnMesh(job.packet==null?job:job.dense()).build();}
+    static Built buildRunPrototype(Job job) {
+        if(job.packet==null&&job.level>=3&&!smooth(job)&&(job.drawn==null||job.drawn.isEmpty())) {
+            RUN_ATTEMPTS.increment();
+            try {
+                var packet=FarSurfacePacket.fromDense(job.level,job.bottom,job.sections,job.drops);
+                if(packet!=null)job=new Job(job.key,job.version,job.level,job.slot,job.x0,job.z0,job.bottom,job.sections,job.drops,
+                        job.sides,job.diagonals,job.drawn,job.textured,job.looks,job.faces,job.shaderIds,job.shade,job.white,packet);
+            }catch(RuntimeException failure){io.earthplatform.minecraft.diagnostics.PerfFailures.record(io.earthplatform.minecraft.diagnostics.PerfFailures.Stage.RUN_CONVERSION,failure);}
+            if(job.packet==null)RUN_FALLBACK.increment();else RUN_USED.increment();
+        }
+        return buildPrepared(job);
+    }
+    static Built build(Job job) { return AUTO_RUNS&&job.packet==null?buildRunPrototype(job):buildPrepared(job); }
+    private static Built buildPrepared(Job job) {
+        // Bounded direct consumer: coverage masks, smooth terrain and edit overlays retain the dense oracle.
+        if (job.packet != null && (smooth(job) || job.drawn != null && !job.drawn.isEmpty() || job.packet.editCount() != 0)) job=job.dense();
         return new FarColumnMesh(job).build();
     }
 
@@ -156,6 +204,22 @@ final class FarMesher {
         return tops;
     }
 
+    static int[] tops(Job job) {
+        if(job.packet==null)return tops(job.sections);
+        int[] tops=new int[256];
+        for(int cell=0;cell<256;cell++)tops[cell]=job.packet.top(cell,state->!state.isAir());
+        return tops;
+    }
+    private static int top(Side side,int x,int z,boolean solid) {
+        return side.packet==null ? top(side.sections,x,z,solid) : side.packet.top(z*16+x,state->!state.isAir() && !(solid && seeThrough(state)));
+    }
+    static int groundRow(Job job,int x,int z) {
+        return job.packet==null ? groundRow(job.sections,x,z) : job.packet.top(z*16+x,state->!state.isAir() && !seeThrough(state) && !foliage(state));
+    }
+    private static int groundRow(Side side,int x,int z) {
+        return side.packet==null ? groundRow(side.sections,x,z) : side.packet.top(z*16+x,state->!state.isAir() && !seeThrough(state) && !foliage(state));
+    }
+
     /**
      * For each side (north, south, west, east) and place along it, the highest solid voxel row of
      * the next column's facing edge, in this column's rows; walls only need to reach a little below it.
@@ -165,9 +229,9 @@ final class FarMesher {
         for (int side = 0; side < 4; side++) {
             Side next = job.sides == null ? null : job.sides[side];
             for (int along = 0; along < 16; along++) {
-                if (next == null || next.sections == null) { tops[side][along] = Integer.MAX_VALUE; continue; }
+                if (next == null || next.sections == null && next.packet == null) { tops[side][along] = Integer.MAX_VALUE; continue; }
                 int x = side == 2 ? 15 : side == 3 ? 0 : along, z = side == 0 ? 15 : side == 1 ? 0 : along;
-                tops[side][along] = top(next.sections, x, z, true) + (next.bottom - job.bottom) * 16;
+                tops[side][along] = top(next, x, z, true) + (next.bottom - job.bottom) * 16;
             }
         }
         return tops;
@@ -190,6 +254,13 @@ final class FarMesher {
     static float[] surface(Job job, int v) {
         float[] surface = new float[256];
         java.util.Arrays.fill(surface, -1.0F);
+        if(job.packet!=null) {
+            for(int cell=0;cell<256;cell++) for(int run=job.packet.firstRun(cell);run<job.packet.afterLastRun(cell);run++) {
+                BlockState state=job.packet.runState(run);
+                if(seeThrough(state)) surface[cell]=Math.max(surface[cell],(job.packet.runEnd(run)-1+Far.fill(state))*v-job.drops[cell]/(float)UNIT);
+            }
+            return surface;
+        }
         LevelChunkSection[] sections = job.sections;
         for (int si = 0; si < sections.length; si++) {
             LevelChunkSection section = sections[si];
@@ -216,16 +287,16 @@ final class FarMesher {
         boolean[] known = new boolean[18 * 18];
         for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
             int cell = z * 16 + x;
-            ground[(z + 1) * 18 + x + 1] = (groundRow(job.sections, x, z) + 1) * voxel - job.drops[cell];
+            ground[(z + 1) * 18 + x + 1] = (groundRow(job, x, z) + 1) * voxel - job.drops[cell];
             known[(z + 1) * 18 + x + 1] = true;
         }
         for (int side = 0; side < 4 && job.sides != null; side++) {
             Side next = job.sides[side];
-            if (next == null || next.sections == null) continue;
+            if (next == null || next.sections == null && next.packet == null) continue;
             for (int along = 0; along < 16; along++) {
                 int x = side == 2 ? 15 : side == 3 ? 0 : along, z = side == 0 ? 15 : side == 1 ? 0 : along;
                 int gx = side == 2 ? 0 : side == 3 ? 17 : along + 1, gz = side == 0 ? 0 : side == 1 ? 17 : along + 1;
-                int row = groundRow(next.sections, x, z) + (next.bottom - job.bottom) * 16;
+                int row = groundRow(next, x, z) + (next.bottom - job.bottom) * 16;
                 ground[gz * 18 + gx] = (row + 1) * voxel - next.drops[z * 16 + x];
                 known[gz * 18 + gx] = true;
             }
@@ -273,7 +344,7 @@ final class FarMesher {
         boolean any = false;
         for (int cell = 0; cell < 256; cell++) {
             if (groundRows[cell] < 0) continue;
-            cover[cell] = at(job.sections, groundRows[cell], cell & 15, cell >> 4);
+            cover[cell] = at(job, cell & 15, groundRows[cell], cell >> 4);
             any = true;
         }
         if (!any) return null;
@@ -350,10 +421,15 @@ final class FarMesher {
 
     /** The voxel at a position relative to this column; below a column's sections is ground, above is air. */
     static BlockState at(Job job, int x, int vy, int z) {
-        if (x >= 0 && x < 16 && z >= 0 && z < 16) return at(job.sections, vy, x, z);
+        if (x >= 0 && x < 16 && z >= 0 && z < 16) return job.packet==null ? at(job.sections, vy, x, z) : packetAt(job.packet,vy,x,z);
         Side side = job.sides == null ? null : job.sides[side(x, z)];
         if (side == null || (x < 0 || x > 15) && (z < 0 || z > 15)) return AIR;
-        return at(side.sections, vy + (job.bottom - side.bottom) * 16, x & 15, z & 15);
+        int row=vy+(job.bottom-side.bottom)*16;
+        return side.packet==null ? at(side.sections,row,x&15,z&15) : packetAt(side.packet,row,x&15,z&15);
+    }
+
+    private static BlockState packetAt(FarSurfacePacket packet,int row,int x,int z) {
+        return row<0?GROUND:row>=packet.height()?AIR:packet.block(x,row,z);
     }
 
     static BlockState at(LevelChunkSection[] sections, int vy, int x, int z) {

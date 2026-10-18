@@ -100,6 +100,52 @@ public final class FarSurfacePacket {
     public short drop(int cell) { return drops[cell]; }
     public Holder<Biome> biome(int x, int z) { return biomes.get((z >> 2) * 4 + (x >> 2)); }
 
+    /** Exact transient client view; unsupported vertical biome variation/run counts keep dense input. */
+    @javax.annotation.Nullable public static FarSurfacePacket fromDense(int level,int bottom,LevelChunkSection[] sections,char[] drops) {
+        if(level<3||level>Far.MAX_LEVEL||sections.length==0||sections.length>Far.MAX_SECTIONS||drops.length!=256)return null;
+        LevelChunkSection first=null;boolean any=false;
+        for(var section:sections)if(section!=null){if(first==null)first=section;if(!section.hasOnlyAir())any=true;}
+        if(first==null||!any)return null;
+        List<Holder<Biome>> quarts=new ArrayList<>(16);
+        for(int z=0;z<4;z++)for(int x=0;x<4;x++)quarts.add(first.getBiomes().get(x,0,z));
+        for(var section:sections)if(section!=null)for(int z=0;z<4;z++)for(int x=0;x<4;x++)for(int y=0;y<4;y++)
+            if(section.getBiomes().get(x,y,z)!=quarts.get(z*4+x))return null;
+        int height=sections.length*16,total=0;int[] offsets=new int[257];long[] words=new long[1024];
+        BlockState air=Blocks.AIR.defaultBlockState();
+        for(int cell=0;cell<256;cell++) {
+            BlockState previous=null;
+            for(int row=0;row<=height;row++) {
+                LevelChunkSection section=row==height?null:sections[row>>4];
+                BlockState state=row==height?null:section==null?air:section.getBlockState(cell&15,row&15,cell>>4);
+                if(row!=0&&state!=previous) {
+                    if(total==MAX_RUNS)return null;
+                    if(total==words.length)words=Arrays.copyOf(words,Math.min(MAX_RUNS,words.length*2));
+                    words[total++]=(long)row<<32|(Block.getId(previous)&0xffffffffL);
+                }
+                previous=state;
+            }
+            offsets[cell+1]=total;
+        }
+        short[] lowered=new short[256];for(int i=0;i<256;i++)lowered[i]=(short)drops[i];
+        return generated(level,bottom,height,lowered,first.getBiomes().get(2,2,2),quarts,offsets,words);
+    }
+
+    public int firstRun(int cell) { return offsets[cell]; }
+    public int afterLastRun(int cell) { return offsets[cell + 1]; }
+    public int runEnd(int run) { return (int) (runs[run] >>> 32); }
+    public BlockState runState(int run) { return Block.BLOCK_STATE_REGISTRY.byId((int) runs[run]); }
+    public int top(int cell, java.util.function.Predicate<BlockState> included) {
+        for (int i=offsets[cell+1]-1;i>=offsets[cell];i--) if(included.test(runState(i))) return runEnd(i)-1;
+        return -1;
+    }
+    /** Transient client-mesher fallback only; registry wire encoding uses the caller's original id map. */
+    public List<LevelChunkSection> materializeForMeshing() {
+        net.minecraft.core.IdMapper<Holder<Biome>> ids = new net.minecraft.core.IdMapper<>(32);
+        ids.add(initialBiome);
+        for (var biome:biomes) if(ids.getId(biome)<0) ids.add(biome);
+        return materialize(ids);
+    }
+
     private int index(int x, int row, int z) {
         if (x < 0 || x > 15 || z < 0 || z > 15 || row < 0 || row >= height)
             throw new IndexOutOfBoundsException("Voxel outside surface packet");

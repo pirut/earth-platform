@@ -127,4 +127,23 @@ class FarSurfacePacketTest {
         assertThrows(IOException.class,()->FarSurfacePacket.decode(overflowing,ids));
     }
 
+    @Test void transientDenseViewKeepsExactStatesBiomesAndDropsAndRejectsVerticalBiomeChanges() {
+        var column=new SurfacePacketFixtures.Country(4).column(3,-1,2,false);
+        char[] drops=new char[256];for(int i=0;i<256;i++)drops[i]=(char)(column.drops[i]&65535);
+        var sections=column.sections.toArray(LevelChunkSection[]::new);
+        var packet=FarSurfacePacket.fromDense(3,column.bottom,sections,drops);assertNotNull(packet);
+        for(int row=0;row<packet.height();row++)for(int z=0;z<16;z++)for(int x=0;x<16;x++) {
+            var section=sections[row>>4];
+            assertSame(section==null?Blocks.AIR.defaultBlockState():section.getBlockState(x,row&15,z),packet.block(x,row,z));
+            if(section!=null)assertSame(section.getBiomes().get(x>>2,(row&15)>>2,z>>2),packet.biome(x,z));
+            assertEquals(column.drops[z*16+x],packet.drop(z*16+x));
+        }
+        assertNull(FarSurfacePacket.fromDense(2,column.bottom,sections,drops));
+        var section=java.util.Arrays.stream(sections).filter(java.util.Objects::nonNull).findFirst().orElseThrow();
+        var different=SurfacePacketFixtures.biomes().holders().filter(h->h!=section.getBiomes().get(0,0,0)).findFirst().orElseThrow();
+        section.getBiomes().set(0,1,0,different);
+        assertNull(FarSurfacePacket.fromDense(3,column.bottom,sections,drops));
+        assertNull(FarSurfacePacket.fromDense(3,0,new LevelChunkSection[65],drops));
+    }
+
 }

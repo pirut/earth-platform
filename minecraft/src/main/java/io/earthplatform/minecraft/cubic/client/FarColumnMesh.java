@@ -91,11 +91,11 @@ final class FarColumnMesh {
         voxel = v * UNIT;
         coverage = FarMesher.CACHE_COVERAGE && job.drawn() != null && !job.drawn().isEmpty()
                 ? new FarCoverage(job.level(), job.x0(), job.z0(), job.bottom(),
-                job.sections().length * 16, job.drops(), job.drawn()) : null;
-        tops = tops(job.sections());
+                job.height(), job.drops(), job.drawn()) : null;
+        tops = tops(job);
         sideTops = sideTops(job);
         surface = surface(job, v);
-        for (int cell = 0; cell < 256; cell++) groundRows[cell] = groundRow(job.sections(), cell & 15, cell >> 4);
+        for (int cell = 0; cell < 256; cell++) groundRows[cell] = groundRow(job, cell & 15, cell >> 4);
         normals = normals(job, voxel);
         cover = job.level() >= COVER_FROM ? evenCover(job, groundRows) : null;
     }
@@ -104,6 +104,14 @@ final class FarColumnMesh {
         // The ground is drawn as one smooth surface rather than voxels, so only water is meshed voxel by voxel,
         // and on the textured levels trees too, which stand on the ground as blocks do up close.
         boolean smooth = smooth(job), trees = smooth && job.textured();
+        if(job.packet()!=null) {
+            java.util.BitSet candidates=FarRunCandidates.make(job.packet());
+            for(int bit=candidates.nextSetBit(0);bit>=0;bit=candidates.nextSetBit(bit+1)) {
+                int cell=bit&255,row=bit>>>8,x=cell&15,z=cell>>4;
+                BlockState state=job.packet().block(x,row,z);
+                if(!state.isAir())voxel(state,x,row,z);
+            }
+        } else {
         LevelChunkSection[] sections = job.sections();
         for (int si = 0; si < sections.length; si++) {
             LevelChunkSection section = sections[si];
@@ -113,8 +121,9 @@ final class FarColumnMesh {
                 if (state.isAir() || smooth && !seeThrough(state) && !(trees && foliage(state))) continue;
                 int vy = si * 16 + y;
                 if (drawn(x, vy, z)) continue;
-                voxel(section, state, x, y, vy, z);
+                voxel(state, x, vy, z);
             }
+        }
         }
         IntArrayList[] groups = new IntArrayList[GROUPS];
         for (int g = 0; g < GROUPS; g++) groups[g] = new IntArrayList();
@@ -149,7 +158,7 @@ final class FarColumnMesh {
         return new Part(mesh, memory);
     }
 
-    private void voxel(LevelChunkSection section, BlockState state, int x, int y, int vy, int z) {
+    private void voxel(BlockState state, int x, int vy, int z) {
         int cell = z * 16 + x, drop = job.drops()[cell];
         boolean liquid = seeThrough(state);
         // Under water, sky light fades a level per block of water above, as it does near by.
@@ -163,7 +172,7 @@ final class FarColumnMesh {
                 if (drawn(x, ny, z)) {
                     if (liquid && seeThrough(neighbour) || vy < tops[cell] - SEAM_DEPTH) continue;
                 } else if (hides(state, neighbour, direction)) continue;
-                if (biome == null) biome = section.getBiomes().get(x >> 2, y >> 2, z >> 2);
+                if (biome == null) biome = FarMesher.biome(job,x,vy,z);
                 int height = direction == Direction.UP ? top : bottom;
                 BlockState shown = direction == Direction.UP && vy == groundRows[cell] ? cover(cell, state) : state;
                 if (!liquid) opaqueFlat.add(direction, x, vy, z, height, look(shown, biome, direction, sky, cell));
@@ -193,14 +202,14 @@ final class FarColumnMesh {
                         // Where a coarser or finer level's water meets this, at a slightly different
                         // height, a wall of water closes the slit that showed the dark bed below.
                         if (vy < tops[cell] - WALL_DEPTH) continue;
-                        if (biome == null) biome = section.getBiomes().get(x >> 2, y >> 2, z >> 2);
+                        if (biome == null) biome = FarMesher.biome(job,x,vy,z);
                         waterFace(waterWall(wall), state, biome, direction, x, z, from, to - from);
                         continue;
                     }
                     if (vy < sideTops[wall][wall < 2 ? x : z] - WALL_DEPTH) continue;
                     group = FIRST_WALL + wall;
                 } else group = direction.get3DDataValue();
-                if (biome == null) biome = section.getBiomes().get(x >> 2, y >> 2, z >> 2);
+                if (biome == null) biome = FarMesher.biome(job,x,vy,z);
                 if (liquid) waterFace(water(), state, biome, direction, x, z, from, to - from);
                 else {
                     int index = direction.get3DDataValue() - 2;
