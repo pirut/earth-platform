@@ -795,21 +795,37 @@
     "command_cache_default_enabled": false,
     "opt_in": "-Dearthplatform.far.cacheCommands=true",
     "reason": "Reproducible stationary frame-tail regression in the recorded Mac controls",
-    "new_client_results": false,
+    "new_client_results": true,
     "prior_client_measurements_apply_to": "cc56ae0a23e274fe4a73e748c1bfa2de08feb74b",
-    "mac_retest": "Pending execution-transport recovery; inspect build/probe processes before starting another test",
+    "mac_retest": "Completed serialized single-launch cache/hint/observer controls and shader-free/Photon live audits; current-default smoke separately recorded",
     "new_experiments_implemented": true,
     "diagnostic_gpu_timestamps": {
-      "default_enabled": false,
+      "default_enabled": true,
       "max_pairs": 128,
       "max_age_frames": 120,
       "max_retained_samples": 1024,
       "mac_verified": true,
-      "observer_overhead_measured": false,
+      "observer_overhead_measured": true,
       "mac_timestamp_bits": 0,
       "mac_elapsed_bits": 32,
-      "mode": "Timestamp pairs preferred; non-nested elapsed fallback skips occupied targets"
+      "mode": "Timestamp pairs preferred; non-nested elapsed fallback skips occupied targets",
+      "sample_every_frames": 120,
+      "observer_full_rate_fps_cost_pct": 1.25
     },
-    "prototype_scope": "Off-by-default bounded shadow hints and exact surface-run base/overlay/codec with legacy adapter; direct packet transport/meshing unfinished"
+    "prototype_scope": "Automatic bounded client exact run conversion/meshing; server generation/transport inactive. Shadow hints off after GPU regression.",
+    "current_version": "0.1.0-alpha.57",
+    "current_code_source": "dbf8f2d2830eb7dd810e9300414720d1c985ce52",
+    "automatic_client_run_mesher": true,
+    "automatic_local_logs": true,
+    "log_limits": {
+      "files": 3,
+      "bytes_per_file": 4194304,
+      "event_queue": 64,
+      "bytes_per_event": 16384
+    },
+    "quality_or_distance_reduced": false,
+    "review": "Independent Astra/high cleared all P2/P3 findings on dbf8f2d; 155 tests, zero failures, four optional skips",
+    "default_smoke_source": "a037c24b98be7b6f7dc6f3bef33e2e594af6aec9",
+    "reviewed_jar_native_startup": "15-second native menu/header smoke passed; clean exit; not a new performance run"
   }
 }
