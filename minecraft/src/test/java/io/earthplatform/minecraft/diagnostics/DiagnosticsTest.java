@@ -26,4 +26,16 @@ class DiagnosticsTest {
         try(var paths=Files.list(dir)) {var files=paths.toList();assertTrue(files.size()<=3);for(var p:files)assertTrue(Files.size(p)<=128);}
         assertFalse(log.offer("{}"));
     }
+    @Test void everyRetainedFileKeepsCapabilitiesAfterRepeatedRotation(@TempDir Path dir) throws Exception {
+        String header="{\"type\":\"build\",\"gpu\":\"fixture\"}";
+        LocalPerfLog log=new LocalPerfLog(dir,256,3,header);
+        for(int i=0;i<40;i++)assertTrue(log.offer("{\"sample\":"+i+",\"data\":\"1234567890\"}"));
+        log.close();assertFalse(log.failed());assertEquals(0,log.dropped());
+        try(var paths=Files.list(dir)) {
+            var files=paths.toList();assertEquals(3,files.size());
+            for(var file:files) {assertTrue(Files.size(file)<=256);assertEquals(header,Files.readAllLines(file).getFirst());}
+        }
+        assertThrows(IllegalArgumentException.class,()->new LocalPerfLog(dir,256,3,"x".repeat(64)));
+    }
+
 }

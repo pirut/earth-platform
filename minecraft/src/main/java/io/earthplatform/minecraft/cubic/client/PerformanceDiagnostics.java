@@ -27,8 +27,7 @@ public final class PerformanceDiagnostics {
         boolean warned;
         final Map<Timings,Timings.Total> previous=new IdentityHashMap<>();
         State(Minecraft mc,long now) {
-            log=new LocalPerfLog(mc.gameDirectory.toPath().resolve("earthplatform/perf"));nextLog=now+5_000_000_000L;windowStart=now;
-            Runtime.getRuntime().addShutdownHook(new Thread(log::close,"Earth performance log close"));
+            nextLog=now+5_000_000_000L;windowStart=now;
             JsonObject record=base("build");
             record.addProperty("commit",BuildInfo.commit());record.addProperty("version",BuildInfo.version());
             record.addProperty("flavor","current");record.addProperty("java",clean(System.getProperty("java.version")));
@@ -47,7 +46,8 @@ public final class PerformanceDiagnostics {
             record.addProperty("gpu_sample_every_frames",FarGpuTimers.sampleEvery());record.addProperty("frame_quantile_precision_ms",1);
             record.addProperty("frame_quantile_cap_ms",2000);record.addProperty("local_only",true);
             record.addProperty("log_max_files",3);record.addProperty("log_max_file_bytes",4<<20);
-            log.offer(record.toString());
+            log=new LocalPerfLog(mc.gameDirectory.toPath().resolve("earthplatform/perf"),record.toString());
+            Runtime.getRuntime().addShutdownHook(new Thread(log::close,"Earth performance log close"));
             EarthPlatformMod.LOGGER.info("Local performance logs: earthplatform/perf/latest.jsonl (local only)");
         }
         JsonObject base(String type) {JsonObject record=new JsonObject();record.addProperty("type",type);record.addProperty("utc",Instant.now().toString());return record;}
