@@ -138,6 +138,10 @@ class RiverMapSamplingTest {
     }
 
     private static void assertBits(double expected, double actual, String where) {
+        // Java does not specify NaN sign/payload propagation. Even calls to the same
+        // reference method can differ after inlining on another CPU. Preserve NaN
+        // semantics here; every non-NaN result, including zero and infinity, stays exact.
+        if (Double.isNaN(expected) && Double.isNaN(actual)) return;
         long expectedBits = Double.doubleToRawLongBits(expected), actualBits = Double.doubleToRawLongBits(actual);
         if (expectedBits != actualBits)
             System.err.println(mismatch(expected, actual, expectedBits, actualBits, where));

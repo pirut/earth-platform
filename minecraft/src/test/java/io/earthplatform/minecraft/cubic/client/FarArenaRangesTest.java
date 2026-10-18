@@ -68,6 +68,33 @@ class FarArenaRangesTest {
         }
     }
 
+    @Test void equalSizedHolesRemainDistinctThroughSplitsAndCoalescing() {
+        for (boolean indexed : new boolean[] {true, false}) {
+            FarArenaRanges ranges = new FarArenaRanges(1024, indexed);
+            List<FarArenaRanges.Allocation> original = new ArrayList<>(), replacements = new ArrayList<>();
+            for (int i = 0; i < 128; i++) original.add(ranges.allocate(8));
+            // Sixty-four equal-sized free ranges must all remain in the size/address indexes.
+            for (int i = 0; i < original.size(); i += 2) ranges.release(original.get(i));
+            assertEquals(64, ranges.freeRangeCount());
+            for (int i = 0; i < 64; i++) {
+                FarArenaRanges.Allocation left = ranges.allocate(4), right = ranges.allocate(4);
+                assertEquals(i * 16, left.start());
+                assertEquals(i * 16 + 4, right.start());
+                replacements.add(left);
+                replacements.add(right);
+            }
+            assertEquals(0, ranges.freeRangeCount());
+            assertNull(ranges.allocate(1));
+            // Releasing anchors first forces every replacement to coalesce against new neighbors.
+            for (int i = 1; i < original.size(); i += 2) ranges.release(original.get(i));
+            for (int i = replacements.size() - 1; i >= 0; i--) ranges.release(replacements.get(i));
+            assertEquals(0, ranges.allocationCount());
+            assertEquals(1, ranges.freeRangeCount());
+            assertEquals(1024, ranges.freeUnits());
+            assertEquals(0, ranges.allocate(1024).start());
+        }
+    }
+
     @Test void rejectsInvalidSizesWithoutChangingState() {
         assertThrows(IllegalArgumentException.class, () -> new FarArenaRanges(0));
         assertThrows(IllegalArgumentException.class, () -> new FarArenaRanges(-1));

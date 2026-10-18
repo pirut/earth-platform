@@ -2,7 +2,6 @@ package io.earthplatform.minecraft.cubic.client;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.NavigableSet;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -24,10 +23,13 @@ final class FarArenaRanges {
         int size() { return size; }
     }
 
+    /** The same immutable range is stored in both indexes; no per-size buckets are needed. */
+    private record FreeRange(int start, int size) {}
+
     private final int capacity;
-    private final TreeMap<Integer, Integer> freeByStart = new TreeMap<>();
+    private final TreeMap<Integer, FreeRange> freeByStart = new TreeMap<>();
     /** Null only for the address-first scan used by performance comparisons. */
-    private final TreeMap<Integer, NavigableSet<Integer>> freeBySize;
+    private final TreeSet<FreeRange> freeBySize;
     private final Map<Integer, Allocation> live = new HashMap<>();
     private int allocated;
 
@@ -36,29 +38,28 @@ final class FarArenaRanges {
     FarArenaRanges(int capacity, boolean indexed) {
         if (capacity <= 0) throw new IllegalArgumentException("Arena capacity must be positive");
         this.capacity = capacity;
-        freeBySize = indexed ? new TreeMap<>() : null;
+        freeBySize = indexed ? new TreeSet<>((left, right) -> {
+            int bySize = Integer.compare(left.size, right.size);
+            return bySize == 0 ? Integer.compare(left.start, right.start) : bySize;
+        }) : null;
         addFree(0, capacity);
     }
 
     /** Allocates a positive range, or returns null when no contiguous free range is large enough. */
     Allocation allocate(int size) {
         if (size <= 0) throw new IllegalArgumentException("Allocation size must be positive");
-        int start, available;
+        FreeRange fit = null;
         if (freeBySize != null) {
-            Map.Entry<Integer, NavigableSet<Integer>> fit = freeBySize.ceilingEntry(size);
-            if (fit == null) return null;
-            available = fit.getKey();
-            start = fit.getValue().first();
+            // Start zero includes every equal-size range; the set then breaks ties by address.
+            fit = freeBySize.ceiling(new FreeRange(0, size));
         } else {
-            Map.Entry<Integer, Integer> fit = null;
-            for (Map.Entry<Integer, Integer> entry : freeByStart.entrySet()) {
-                if (entry.getValue() >= size) { fit = entry; break; }
+            for (FreeRange range : freeByStart.values()) {
+                if (range.size >= size) { fit = range; break; }
             }
-            if (fit == null) return null;
-            start = fit.getKey();
-            available = fit.getValue();
         }
-        removeFree(start, available);
+        if (fit == null) return null;
+        int start = fit.start, available = fit.size;
+        removeFree(fit);
         if (available > size) addFree(start + size, available - size);
         Allocation allocation = new Allocation(start, size);
         live.put(start, allocation);
@@ -72,21 +73,24 @@ final class FarArenaRanges {
      */
     void release(Allocation allocation) {
         Objects.requireNonNull(allocation, "allocation");
-        if (live.get(allocation.start) != allocation)
+        // Allocation deliberately keeps Object's identity equality. Conditional removal performs
+        // one lookup while leaving a foreign/stale token's current owner untouched.
+        if (!live.remove(allocation.start, allocation))
             throw new IllegalArgumentException("Allocation does not belong to this arena or was already released");
-        live.remove(allocation.start);
         allocated -= allocation.size;
         int start = allocation.start, size = allocation.size;
-        Map.Entry<Integer, Integer> before = freeByStart.lowerEntry(start);
-        if (before != null && before.getKey() + before.getValue() == start) {
-            removeFree(before.getKey(), before.getValue());
-            start = before.getKey();
-            size += before.getValue();
+        Map.Entry<Integer, FreeRange> before = freeByStart.lowerEntry(start);
+        if (before != null && before.getValue().start + before.getValue().size == start) {
+            FreeRange range = before.getValue();
+            removeFree(range);
+            start = range.start;
+            size += range.size;
         }
-        Map.Entry<Integer, Integer> after = freeByStart.ceilingEntry(start);
-        if (after != null && start + size == after.getKey()) {
-            removeFree(after.getKey(), after.getValue());
-            size += after.getValue();
+        Map.Entry<Integer, FreeRange> after = freeByStart.ceilingEntry(start);
+        if (after != null && start + size == after.getValue().start) {
+            FreeRange range = after.getValue();
+            removeFree(range);
+            size += range.size;
         }
         addFree(start, size);
     }
@@ -97,16 +101,13 @@ final class FarArenaRanges {
     int freeRangeCount() { return freeByStart.size(); }
 
     private void addFree(int start, int size) {
-        freeByStart.put(start, size);
-        if (freeBySize != null) freeBySize.computeIfAbsent(size, ignored -> new TreeSet<>()).add(start);
+        FreeRange range = new FreeRange(start, size);
+        freeByStart.put(start, range);
+        if (freeBySize != null) freeBySize.add(range);
     }
 
-    private void removeFree(int start, int size) {
-        freeByStart.remove(start);
-        if (freeBySize != null) {
-            NavigableSet<Integer> starts = freeBySize.get(size);
-            starts.remove(start);
-            if (starts.isEmpty()) freeBySize.remove(size);
-        }
+    private void removeFree(FreeRange range) {
+        freeByStart.remove(range.start);
+        if (freeBySize != null) freeBySize.remove(range);
     }
 }
