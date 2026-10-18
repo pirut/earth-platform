@@ -12,6 +12,12 @@ final class GpuQueryRing implements AutoCloseable {
         boolean available(int query);
         long result(int query);
         void delete(int query);
+        default boolean canBegin() { return true; }
+        default void begin(int start, int end) { stamp(start); }
+        default void end(int start, int end) { stamp(end); }
+        default boolean finish(int start, int end) { end(start, end); return true; }
+        default boolean availablePair(int start, int end) { return available(start) && available(end); }
+        default long elapsed(int start, int end) { return result(end) - result(start); }
     }
 
     record Sample(String pass, long frame, int age, long cpuNanos, long gpuNanos, int ranges, int faces) {}
@@ -43,6 +49,7 @@ final class GpuQueryRing implements AutoCloseable {
 
     long begin(String pass, long frame) {
         if (closed) return 0;
+        if (!queries.canBegin()) { dropped++; return 0; }
         int index = cursor;
         cursor = (cursor + 1) % entries.length;
         Entry e = entries[index];
@@ -53,7 +60,7 @@ final class GpuQueryRing implements AutoCloseable {
         e.pass = pass;
         e.submitted = clock.getAsLong();
         e.ended = false;
-        queries.stamp(e.start);
+        queries.begin(e.start, e.end);
         return e.token;
     }
 
@@ -63,7 +70,7 @@ final class GpuQueryRing implements AutoCloseable {
         if (index < 0 || index >= entries.length) return;
         Entry e = entries[index];
         if (e.token != token || e.ended) return;
-        queries.stamp(e.end);
+        if (!queries.finish(e.start, e.end)) { discard(e); return; }
         e.cpu = clock.getAsLong() - e.submitted;
         e.ranges = ranges;
         e.faces = faces;
@@ -80,12 +87,11 @@ final class GpuQueryRing implements AutoCloseable {
                 if (age > maxAge) discard(e);
                 continue;
             }
-            if (!queries.available(e.start) || !queries.available(e.end)) continue;
+            if (!queries.availablePair(e.start, e.end)) continue;
             long wallAge = clock.getAsLong() - e.submitted;
             // A narrow timestamp counter could have wrapped more than once while queued.
             if (timestampBits < 63 && wallAge >= (1L << timestampBits)) { discard(e); continue; }
-            long start = queries.result(e.start), end = queries.result(e.end);
-            long elapsed = end - start;
+            long elapsed = queries.elapsed(e.start, e.end);
             if (timestampBits < 64) elapsed &= -1L >>> (64 - timestampBits);
             if (elapsed >= 0) {
                 if (ready.size() == entries.length * 8) { ready.remove(0); dropped++; }

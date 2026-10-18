@@ -7,7 +7,8 @@ import org.lwjgl.opengl.GL15C;
 import org.lwjgl.opengl.GL33C;
 
 /**
- * Diagnostic-only GPU timestamp pairs. No glFinish, TIME_ELAPSED nesting or synchronous reads.
+ * Diagnostic-only GPU queries. Timestamp pairs preferred; non-nested TIME_ELAPSED fallback.
+ * No glFinish or synchronous result reads; an occupied elapsed target is skipped.
  * All calls run on the render thread with its context current; disabled by default.
  */
 final class FarGpuTimers {
@@ -28,9 +29,12 @@ final class FarGpuTimers {
                 EarthPlatformMod.LOGGER.info("Far GPU timestamps unavailable on this context");
                 return;
             }
-            int bits = GL15C.glGetQueryi(GL33C.GL_TIMESTAMP, GL15C.GL_QUERY_COUNTER_BITS);
+            int timestampBits = GL15C.glGetQueryi(GL33C.GL_TIMESTAMP, GL15C.GL_QUERY_COUNTER_BITS);
+            int elapsedBits = GL15C.glGetQueryi(GL33C.GL_TIME_ELAPSED, GL15C.GL_QUERY_COUNTER_BITS);
+            boolean timestamp = timestampBits > 0 && timestampBits <= 64;
+            int bits = timestamp ? timestampBits : elapsedBits;
             if (bits <= 0 || bits > 64) {
-                EarthPlatformMod.LOGGER.info("Far GPU timestamps unavailable: {} counter bits", bits);
+                EarthPlatformMod.LOGGER.info("Far GPU queries unavailable: timestamp={} elapsed={} counter bits", timestampBits, elapsedBits);
                 return;
             }
             ring = new GpuQueryRing(new GpuQueryRing.Queries() {
@@ -38,9 +42,34 @@ final class FarGpuTimers {
                 public void stamp(int q) { GL33C.glQueryCounter(q, GL33C.GL_TIMESTAMP); }
                 public boolean available(int q) { return GL15C.glGetQueryObjecti(q, GL15C.GL_QUERY_RESULT_AVAILABLE) != 0; }
                 public long result(int q) { return GL33C.glGetQueryObjectui64(q, GL15C.GL_QUERY_RESULT); }
-                public void delete(int q) { GL15C.glDeleteQueries(q); }
+                public boolean canBegin() {
+                    return timestamp || GL15C.glGetQueryi(GL33C.GL_TIME_ELAPSED, GL15C.GL_CURRENT_QUERY) == 0;
+                }
+                public void begin(int start, int end) {
+                    if (timestamp) stamp(start); else GL15C.glBeginQuery(GL33C.GL_TIME_ELAPSED, start);
+                }
+                public void end(int start, int end) {
+                    if (timestamp) stamp(end);
+                    else if (GL15C.glGetQueryi(GL33C.GL_TIME_ELAPSED, GL15C.GL_CURRENT_QUERY) == start)
+                        GL15C.glEndQuery(GL33C.GL_TIME_ELAPSED);
+                }
+                public boolean finish(int start, int end) {
+                    if (!timestamp && GL15C.glGetQueryi(GL33C.GL_TIME_ELAPSED, GL15C.GL_CURRENT_QUERY) != start) return false;
+                    end(start, end); return true;
+                }
+                public boolean availablePair(int start, int end) {
+                    return timestamp ? available(start) && available(end) : available(start);
+                }
+                public long elapsed(int start, int end) { return timestamp ? result(end) - result(start) : result(start); }
+                public void delete(int q) {
+                    // Aborted/overdue scopes end ONLY their own active query before deletion.
+                    if (!timestamp && GL15C.glGetQueryi(GL33C.GL_TIME_ELAPSED, GL15C.GL_CURRENT_QUERY) == q)
+                        GL15C.glEndQuery(GL33C.GL_TIME_ELAPSED);
+                    GL15C.glDeleteQueries(q);
+                }
             }, System::nanoTime, 128, 120, bits);
-            EarthPlatformMod.LOGGER.info("Far GPU timestamps enabled: {} bits, 128 pairs, 120-frame maximum age", bits);
+            EarthPlatformMod.LOGGER.info("Far GPU diagnostics enabled: {} {} bits, 128 pairs, 120-frame age cap; occupied elapsed-query targets are skipped",
+                    timestamp ? "timestamp pairs" : "non-nested TIME_ELAPSED", bits);
         }
         if (ring != null) ring.poll(frame);
     }

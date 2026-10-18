@@ -111,6 +111,31 @@ class GpuQueryRingTest {
         assertEquals(0, r.begin("b", 2)); assertTrue(r.drain().isEmpty());
     }
 
+    @Test void elapsedBackendSkipsOccupiedTargetsAndNeedsOnlyItsOwnQueryResult() {
+        Fake q = new Fake();
+        boolean[] occupied = {true};
+        GpuQueryRing.Queries elapsed = new GpuQueryRing.Queries() {
+            public int create() { return q.create(); }
+            public void stamp(int id) { q.stamp(id); }
+            public boolean available(int id) { return q.available(id); }
+            public long result(int id) { return q.result(id); }
+            public void delete(int id) { q.delete(id); }
+            public boolean canBegin() { return !occupied[0]; }
+            public void begin(int start, int end) { occupied[0] = true; q.stamp(start); }
+            public void end(int start, int end) { occupied[0] = false; q.values.put(start, 17L); }
+            public boolean availablePair(int start, int end) { return available(start); }
+            public long elapsed(int start, int end) { return result(start); }
+        };
+        try (var r = new GpuQueryRing(elapsed, () -> 0, 2, 10, 32)) {
+            assertEquals(0, r.begin("external conflict", 1)); assertEquals(0, q.next);
+            occupied[0] = false; long token = r.begin("outer", 1);
+            assertEquals(0, r.begin("nested", 1)); r.end(token, 2, 3);
+            q.available.add(1); r.poll(2);
+            assertEquals(17, r.drain().getFirst().gpuNanos()); assertEquals(1, q.reads);
+            assertEquals(2, r.dropped());
+        }
+    }
+
     @Test void validatesResourceAndCounterBounds() {
         Fake q = new Fake();
         assertThrows(IllegalArgumentException.class, () -> new GpuQueryRing(q, () -> 0, 256, 10, 64));
