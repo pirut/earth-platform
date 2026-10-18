@@ -19,7 +19,7 @@ import net.minecraft.world.level.chunk.PalettedContainer;
  * Unsupported generators/features continue through their original dense generation path.
  */
 public final class FarSurfacePacket {
-    private static final int MAGIC = 0x45505231, VERSION = 1;
+    private static final int MAGIC = 0x45505231, VERSION = 2;
     public static final int MAX_RUNS = 8192, MAX_EDITS = 16384, MAX_BYTES = 1 << 20;
     public record Run(int end, BlockState state) {
         public Run { Objects.requireNonNull(state); }
@@ -158,19 +158,34 @@ public final class FarSurfacePacket {
         try (DataOutputStream out = new DataOutputStream(bytes)) {
             out.writeInt(MAGIC); out.writeByte(VERSION); out.writeByte(level); out.writeInt(bottom); out.writeShort(height);
             for (short drop : drops) out.writeShort(drop);
-            out.writeInt(id(biomeIds, initialBiome));
-            for (var b : biomes) out.writeInt(id(biomeIds, b));
+            writeVarInt(out, id(biomeIds, initialBiome));
+            for (var b : biomes) writeVarInt(out, id(biomeIds, b));
             for (int cell = 0; cell < 256; cell++) {
-                out.writeShort(offsets[cell + 1] - offsets[cell]);
+                writeVarInt(out, offsets[cell + 1] - offsets[cell]);
                 for (int i = offsets[cell]; i < offsets[cell + 1]; i++) {
-                    out.writeShort((int) (runs[i] >>> 32)); out.writeInt((int) runs[i]);
+                    writeVarInt(out, (int) (runs[i] >>> 32)); writeVarInt(out, (int) runs[i]);
                 }
             }
-            out.writeLong(revision); out.writeInt(edits.size());
-            for (var e : new TreeMap<>(edits).entrySet()) { out.writeInt(e.getKey()); out.writeInt(Block.getId(e.getValue())); }
+            out.writeLong(revision); writeVarInt(out, edits.size());
+            for (var e : new TreeMap<>(edits).entrySet()) { writeVarInt(out, e.getKey()); writeVarInt(out, Block.getId(e.getValue())); }
         }
         if (bytes.size() > MAX_BYTES) throw new IOException("Surface packet byte budget exceeded");
         return bytes.toByteArray();
+    }
+    private static void writeVarInt(DataOutput out, int value) throws IOException {
+        if (value < 0) throw new IOException("Negative surface packet integer");
+        while ((value & ~127) != 0) { out.writeByte((value & 127) | 128); value >>>= 7; }
+        out.writeByte(value);
+    }
+    private static int readVarInt(DataInput in) throws IOException {
+        int value = 0;
+        for (int shift = 0; shift <= 28; shift += 7) {
+            int next = in.readUnsignedByte();
+            if (shift == 28 && (next & 248) != 0) throw new IOException("Surface packet integer overflow");
+            value |= (next & 127) << shift;
+            if ((next & 128) == 0) return value;
+        }
+        throw new IOException("Unterminated surface packet integer");
     }
     private static int id(IdMap<Holder<Biome>> ids, Holder<Biome> biome) throws IOException {
         int id = ids.getId(biome);
@@ -194,23 +209,23 @@ public final class FarSurfacePacket {
             int level = in.readUnsignedByte(), bottom = in.readInt(), height = in.readUnsignedShort();
             if (height < 16 || height % 16 != 0 || height > Far.MAX_SECTIONS * 16) throw new IOException("Invalid height");
             short[] drops = new short[256]; for (int i = 0; i < 256; i++) drops[i] = in.readShort();
-            Holder<Biome> initial = biome(ids, in.readInt());
+            Holder<Biome> initial = biome(ids, readVarInt(in));
             List<Holder<Biome>> biomes = new ArrayList<>(16);
-            for (int i = 0; i < 16; i++) biomes.add(biome(ids, in.readInt()));
+            for (int i = 0; i < 16; i++) biomes.add(biome(ids, readVarInt(in)));
             List<List<Run>> columns = new ArrayList<>(256); int total = 0;
             for (int cell = 0; cell < 256; cell++) {
-                int count = in.readUnsignedShort();
+                int count = readVarInt(in);
                 if (count < 1 || count > height || (total += count) > MAX_RUNS) throw new IOException("Invalid run count");
                 List<Run> runs = new ArrayList<>(count);
-                for (int i = 0; i < count; i++) runs.add(new Run(in.readUnsignedShort(), state(in.readInt())));
+                for (int i = 0; i < count; i++) runs.add(new Run(readVarInt(in), state(readVarInt(in))));
                 columns.add(runs);
             }
             FarSurfacePacket base = new FarSurfacePacket(level, bottom, height, drops, initial, biomes, columns);
-            long revision = in.readLong(); int count = in.readInt();
+            long revision = in.readLong(); int count = readVarInt(in);
             if (revision < 0 || count < 0 || count > MAX_EDITS || revision == 0 && count != 0) throw new IOException("Invalid edit overlay");
             Map<Integer, BlockState> edits = new HashMap<>();
             for (int i = 0; i < count; i++) {
-                int key = in.readInt(); BlockState state = state(in.readInt());
+                int key = readVarInt(in); BlockState state = state(readVarInt(in));
                 if (key < 0 || key >= height * 256 || edits.putIfAbsent(key, state) != null) throw new IOException("Invalid edit index");
                 if (state == base.base(key & 255, key >> 8)) throw new IOException("Redundant edit");
             }

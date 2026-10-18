@@ -81,9 +81,11 @@ class FarSurfacePacketTest {
         assertThrows(IOException.class, () -> FarSurfacePacket.decode(Arrays.copyOf(bytes, bytes.length + 1), ids));
         byte[] bad = bytes.clone(); bad[4] = 77;
         assertThrows(IOException.class, () -> FarSurfacePacket.decode(bad, ids));
-        byte[] badBiome = bytes.clone(); java.util.Arrays.fill(badBiome, 524, 528, (byte) 255);
+        byte[] badBiome = bytes.clone(); java.util.Arrays.fill(badBiome, 524, 529, (byte) 255); badBiome[528]=7;
         assertThrows(IOException.class, () -> FarSurfacePacket.decode(badBiome, ids));
-        byte[] badState = bytes.clone(); java.util.Arrays.fill(badState, 596, 600, (byte) 127);
+        int stateAt=524;
+        for(int i=0;i<19;i++) { while((bytes[stateAt++] & 128)!=0) {} }
+        byte[] badState = bytes.clone(); java.util.Arrays.fill(badState, stateAt, stateAt+5, (byte) 255); badState[stateAt+4]=7;
         assertThrows(IOException.class, () -> FarSurfacePacket.decode(badState, ids));
         assertThrows(IOException.class, () -> FarSurfacePacket.decode(new byte[FarSurfacePacket.MAX_BYTES + 1], ids));
     }
@@ -104,6 +106,25 @@ class FarSurfacePacketTest {
         assertThrows(IndexOutOfBoundsException.class,()->base.block(0,1024,0));
         var decoded=FarSurfacePacket.decode(base.encode(registry.asHolderIdMap()),registry.asHolderIdMap());
         assertSame(stone,decoded.block(15,1023,15));
+    }
+
+    @Test void compactCodecRoundTripsVariedRegistryStatesPropertiesAndUnsignedDrops() throws Exception {
+        var registry=SurfacePacketFixtures.biomes(); var ids=registry.asHolderIdMap(); var biome=registry.getAny().orElseThrow();
+        Random random=new Random(167); short[] drops=new short[256]; List<List<FarSurfacePacket.Run>> columns=new ArrayList<>();
+        for(int i=0;i<256;i++) {
+            drops[i]=(short)random.nextInt(65536);
+            int a=random.nextInt(Block.BLOCK_STATE_REGISTRY.size()),b;
+            do { b=random.nextInt(Block.BLOCK_STATE_REGISTRY.size()); } while(a==b);
+            columns.add(List.of(new FarSurfacePacket.Run(17,Block.BLOCK_STATE_REGISTRY.byId(a)),new FarSurfacePacket.Run(32,Block.BLOCK_STATE_REGISTRY.byId(b))));
+        }
+        var packet=new FarSurfacePacket(8,-100,32,drops,biome,Collections.nCopies(16,biome),columns);
+        var decoded=FarSurfacePacket.decode(packet.encode(ids),ids);
+        for(int i=0;i<256;i++) {
+            assertEquals(drops[i],decoded.drop(i));
+            for(int y=0;y<32;y++) assertSame(packet.block(i&15,y,i>>4),decoded.block(i&15,y,i>>4));
+        }
+        byte[] overflowing=packet.encode(ids);Arrays.fill(overflowing,524,529,(byte)255);
+        assertThrows(IOException.class,()->FarSurfacePacket.decode(overflowing,ids));
     }
 
 }
