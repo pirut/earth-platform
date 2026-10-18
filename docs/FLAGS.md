@@ -12,6 +12,7 @@ Most are read once when the class that uses them loads, so set them on the comma
 
 | Flag | Default | What it does | Read in |
 | --- | --- | --- | --- |
+| `earthplatform.rivers.fastSample` | on | `false` restores the allocating per-pixel strength sampler and per-cell nearby maxima lookups for exact-output/performance comparisons | `RiverMap` |
 | `earthplatform.earth.offline` | `false` | Never download; only places already in the cache generate. Same as the `offline` setting | `CubicSettings`, `EarthStatus` |
 | `earthplatform.earth.imagery` | `false` | New worlds take ground colors from EOX satellite imagery. Same as the `satelliteImagery` setting | `CubicSettings`, `EarthConfig` |
 | `earthplatform.earth.home` | Yosemite Valley | Default home of new worlds, as `LAT,LON` | `EarthSettings` |
@@ -45,6 +46,12 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.trackBytes` | on | `false` sums every column for each memory query, for comparing | `FarRenderer` |
 | `earthplatform.far.cachePick` | on | `false` rebuilds selection, sorting and face groups every frame, for comparing | `FarRenderer` |
 | `earthplatform.far.fastWater` | on | `false` restores full water scans and uniform updates, for comparing | `FarRenderer`, `FarLod` |
+| `earthplatform.far.cacheCommands` | `false` | Experimental reuse of opaque multi-draw arguments for the exact camera pick; opt in with `true`. Disabled after a reproducible stationary p95/p99 regression on the Mac | `FarRenderer`, `FarGpu` |
+| `earthplatform.far.indexedAllocator` | on | Size-indexed best-fit GPU face allocation; `false` scans free ranges by address | `FarGpu` |
+| `earthplatform.far.cacheCoverage` | on | Precomputes exact near-cube coverage per far mesh job; `false` repeats the original cube lookups | `FarMesher`, `FarColumnMesh` |
+| `earthplatform.far.batchWaterDepth` | `false` | Experimental ordered water depth batches with original GPU position/offset operands; color draws keep their shader attributes and order | `FarWaterBatch`, `FarLod` |
+| `earthplatform.far.strictUpload` | `false` | Experimental fixed 3 ms upload admission cap, without the legacy minimum-eight/adaptive policy; may delay terrain convergence | `FarRenderer` |
+| `earthplatform.far.uploadBytes` | 4194304 | Byte allowance per frame with `strictUpload`; first valid mesh always progresses, even if oversized | `FarRenderer` |
 
 ## Cubes, loading and networking
 
@@ -60,6 +67,9 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | Flag | Default | What it does | Read in |
 | --- | --- | --- | --- |
 | `earthplatform.photon.compat` | `auto` | `on` or `off` overrides the check for running Photon on drivers it doesn't fit | `PhotonCompat` |
+| `earthplatform.far.surfacePackets` | `false` | Bounded exact-run generation prototype at levels 3–8 without strata or rasterized giants; materializes legacy sections before existing edits/network/meshing. Direct run streaming/meshing is not enabled | `SurfaceGenerator` |
+| `earthplatform.far.shadowHints` | `false` | Experimental ping-pong original sun sample indices; validates current depth/sun/camera/noise and original-loop clipping prefix before accepting a blocker; otherwise runs the original loop | `FarLod`, `FarLodShaders` |
+| `earthplatform.far.gpuTimers` | `false` | Diagnostic bounded nonblocking GPU queries; timestamp pairs where supported, otherwise non-nested TIME_ELAPSED with occupied-target skipping. Render-thread samples via `FarGpuTimers.drain()` | `FarGpuTimers` |
 | `earthplatform.cubic.perf` | `false` | Logs every timing every few seconds | `Timings` |
 | `earthplatform.cubic.perfTicks` | 100 | Ticks between perf log lines | `CubicClient` |
 | `earthplatform.cubic.trace` | `false` | Logs cube traffic | `Cubic` |

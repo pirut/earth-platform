@@ -28,7 +28,7 @@ final class GlShaders {
         if (GL20C.glGetProgrami(program, GL20C.GL_LINK_STATUS) == GL11C.GL_FALSE) {
             String log = GL20C.glGetProgramInfoLog(program);
             GL20C.glDeleteProgram(program);
-            throw new IllegalStateException("Could not link " + name + ": " + log);
+            throw failure("Could not link " + name + ": " + log);
         }
         return program;
     }
@@ -40,10 +40,16 @@ final class GlShaders {
         if (GL20C.glGetShaderi(shader, GL20C.GL_COMPILE_STATUS) == GL11C.GL_FALSE) {
             String log = GL20C.glGetShaderInfoLog(shader);
             GL20C.glDeleteShader(shader);
-            throw new IllegalStateException("Could not compile " + name + (type == GL20C.GL_VERTEX_SHADER ? " vertex" : " fragment")
+            throw failure("Could not compile " + name + (type == GL20C.GL_VERTEX_SHADER ? " vertex" : " fragment")
                     + " shader: " + log + "\n" + numbered(source));
         }
         return shader;
+    }
+
+    private static IllegalStateException failure(String details) {
+        var failure=new IllegalStateException(details);
+        io.earthplatform.minecraft.diagnostics.PerfFailures.record(io.earthplatform.minecraft.diagnostics.PerfFailures.Stage.FAR_SHADER,failure);
+        return failure;
     }
 
     private static String numbered(String source) {

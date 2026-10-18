@@ -174,6 +174,7 @@ public final class FarServer {
                 if (failure instanceof MissingTerrainException) missing.add(key);
                 else failed.add(key);
                 failures.incrementAndGet();
+                io.earthplatform.minecraft.diagnostics.PerfFailures.record(io.earthplatform.minecraft.diagnostics.PerfFailures.Stage.FAR_GENERATION,failure);
                 long now = System.currentTimeMillis();
                 if (now - lastFailureLog > 10_000) {
                     lastFailureLog = now;

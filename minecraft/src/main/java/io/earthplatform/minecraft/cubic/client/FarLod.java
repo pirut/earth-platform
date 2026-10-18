@@ -56,7 +56,20 @@ public final class FarLod {
     private static int depth, framebuffer;
     private static int faces, scratch, waterFramebuffer, restoreFramebuffer, vao;
     private static int shadows, shadowFramebuffer;
+    /** Experimental: hints contain only original successful sample indices, revalidated on CURRENT inputs. */
+    private static final boolean SHADOW_HINTS = Boolean.getBoolean("earthplatform.far.shadowHints");
+    private static final int[] blockerHints = new int[2];
+    private static int hintRead;
+    private static boolean hintsReady, hintsFailed, hintsAllocated;
+    /** Two R32F textures: bound extra VRAM on discrete GPUs and unified-memory devices alike. */
+    static final long HINT_MAX_BYTES = 32L << 20;
+    static boolean hintsFit(int width, int height) {
+        return width > 0 && height > 0 && (long) width * height <= HINT_MAX_BYTES / 8;
+    }
+    @Nullable private static Program hintedSun;
     @Nullable private static Program merge, surface, smooth, deepen, sun;
+    @Nullable private static Program batchSurface, batchDeepen;
+    private static boolean batchFailed;
     /** The water depth pass under way, which {@link #offset} sets the next column's place on. */
     @Nullable private static Program drawing;
     private static boolean failed;
@@ -87,6 +100,8 @@ public final class FarLod {
     private static double cameraX, cameraY, cameraZ, lastX, lastY, lastZ;
     /** Whether {@link #shadows} holds last frame's far shadows, which this frame's far terrain reads. */
     private static boolean shadowsReady, sunUp;
+
+    static boolean shadowHintsConfigured() { return SHADOW_HINTS; }
 
     private FarLod() {}
 
@@ -284,17 +299,50 @@ public final class FarLod {
         boolean blend = GL11C.glIsEnabled(GL11C.GL_BLEND);
         GL11C.glDisable(GL11C.GL_BLEND);
         bind(VANILLA_UNIT, depth);
-        GL20C.glUseProgram(sun.id);
+        Program shadowProgram = sun;
+        boolean hinting = shadowHintsReady();
+        if (hinting) {
+            int write = 1 - hintRead;
+            GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT1, GL11C.GL_TEXTURE_2D, blockerHints[write], 0);
+            GL20C.glDrawBuffers(new int[] {GL30C.GL_COLOR_ATTACHMENT0, GL30C.GL_COLOR_ATTACHMENT1});
+            if (GL30C.glCheckFramebufferStatus(GL30C.GL_DRAW_FRAMEBUFFER) != GL30C.GL_FRAMEBUFFER_COMPLETE) {
+                hintsFailed = true;
+                hinting = false;
+                EarthPlatformMod.LOGGER.warn("Sun blocker hint framebuffer unavailable; retaining original sun loop");
+            }
+        }
+        if (hinting) {
+            shadowProgram = hintedSun;
+            bind(SCRATCH_UNIT, blockerHints[hintRead]);
+        } else {
+            GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT1, GL11C.GL_TEXTURE_2D, 0, 0);
+            GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
+        }
+        int sunId = shadowProgram.id;
+        GL20C.glUseProgram(sunId);
+        if (hinting) {
+            GL20C.glUniform1i(GL20C.glGetUniformLocation(sunId, "earth_Hints"), SCRATCH_UNIT);
+            GL20C.glUniform1i(GL20C.glGetUniformLocation(sunId, "earth_HintsReady"), hintsReady ? 1 : 0);
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer matrix = stack.mallocFloat(16);
-            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(sun.id, "earth_Projection"), false, projection.get(matrix));
-            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(sun.id, "earth_FarInverse"), false, inverse.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(sunId, "earth_Projection"), false, projection.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(sunId, "earth_FarInverse"), false, inverse.get(matrix));
         }
-        GL20C.glUniform3f(GL20C.glGetUniformLocation(sun.id, "earth_Sun"), sunView.x, sunView.y, sunView.z);
-        GL20C.glUniform1i(GL20C.glGetUniformLocation(sun.id, "earth_SunUp"), sunUp ? 1 : 0);
-        GL20C.glUniform3f(GL20C.glGetUniformLocation(sun.id, "earth_Up"), upView.x, upView.y, upView.z);
-        GL20C.glUniform2f(GL20C.glGetUniformLocation(sun.id, "earth_Focal"), projection.m00() * 0.5F * width, projection.m11() * 0.5F * height);
-        fullScreen();
+        GL20C.glUniform3f(GL20C.glGetUniformLocation(sunId, "earth_Sun"), sunView.x, sunView.y, sunView.z);
+        GL20C.glUniform1i(GL20C.glGetUniformLocation(sunId, "earth_SunUp"), sunUp ? 1 : 0);
+        GL20C.glUniform3f(GL20C.glGetUniformLocation(sunId, "earth_Up"), upView.x, upView.y, upView.z);
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(sunId, "earth_Focal"), projection.m00() * 0.5F * width, projection.m11() * 0.5F * height);
+        long timer = FarGpuTimers.begin("sun+occlusion");
+        try { fullScreen(); } finally { FarGpuTimers.end(timer); }
+        if (hinting) {
+            unbind(SCRATCH_UNIT);
+            // Detach before swapping: the texture read next pass is never attached while sampled.
+            GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT1, GL11C.GL_TEXTURE_2D, 0, 0);
+            GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
+            hintRead = 1 - hintRead;
+            hintsReady = true;
+        }
         unbind(VANILLA_UNIT);
         if (blend) GL11C.glEnable(GL11C.GL_BLEND);
         GL11C.glColorMask(mask[0], mask[1], mask[2], mask[3]);
@@ -327,7 +375,8 @@ public final class FarLod {
             GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, to, 0);
             bind(VANILLA_UNIT, from);
             GL20C.glUniform2i(step, pass == 0 ? 1 : 0, pass == 0 ? 0 : 1);
-            fullScreen();
+            long timer = FarGpuTimers.begin(pass == 0 ? "depth smooth x" : "depth smooth y");
+            try { fullScreen(); } finally { FarGpuTimers.end(timer); }
             unbind(VANILLA_UNIT);
         }
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, 0, 0);
@@ -346,7 +395,14 @@ public final class FarLod {
      * {@link #offset} per column, then calls {@link #endDeepen}.
      */
     static boolean beginDeepen(Matrix4fc modelView) {
+        return beginDeepen(modelView, false);
+    }
+
+    /** Batched callers first require {@link #batchWaterDepthReady}; no partial fallback is drawn. */
+    static boolean beginDeepen(Matrix4fc modelView, boolean batched) {
         if (!programs()) return false;
+        if (batched && !batchWaterDepthReady()) return false;
+        Program program = batched ? batchDeepen : deepen;
         saved.save();
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, restoreFramebuffer);
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, depth, 0);
@@ -356,16 +412,16 @@ public final class FarLod {
         GL11C.glDisable(GL11C.GL_CULL_FACE);
         bind(VANILLA_UNIT, gameDepth);
         bind(SCRATCH_UNIT, faces);
-        GL20C.glUseProgram(deepen.id);
-        drawing = deepen;
+        GL20C.glUseProgram(program.id);
+        drawing = program;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer matrix = stack.mallocFloat(16);
-            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(deepen.id, "earth_ModelView"), false, modelView.get(matrix));
-            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(deepen.id, "earth_Projection"), false, projection.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(program.id, "earth_ModelView"), false, modelView.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(program.id, "earth_Projection"), false, projection.get(matrix));
         }
-        GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_Least"), WATER_DEPTH);
-        GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_GameNear"), vanilla.m32() / (vanilla.m22() - 1.0F));
-        GL20C.glUniform2f(GL20C.glGetUniformLocation(deepen.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
+        GL20C.glUniform1f(GL20C.glGetUniformLocation(program.id, "earth_Least"), WATER_DEPTH);
+        GL20C.glUniform1f(GL20C.glGetUniformLocation(program.id, "earth_GameNear"), vanilla.m32() / (vanilla.m22() - 1.0F));
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(program.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
         return true;
     }
 
@@ -407,7 +463,8 @@ public final class FarLod {
         bind(SCRATCH_UNIT, depth);
         GL20C.glUseProgram(merge.id);
         merge.matrices();
-        fullScreen();
+        long timer = FarGpuTimers.begin("water depth merge");
+        try { fullScreen(); } finally { FarGpuTimers.end(timer); }
 
         // The pack's water then tests and writes that instead of the game's depth.
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, waterFrom);
@@ -428,6 +485,13 @@ public final class FarLod {
      * the pack finds the water's surface in front of what lies behind it.
      */
     static void endWater(Matrix4fc modelView, Runnable water) {
+        endWater(modelView, false, water);
+    }
+
+    /** Batched callers first require {@link #batchWaterDepthReady}; colour draws remain unchanged. */
+    static void endWater(Matrix4fc modelView, boolean batched, Runnable water) {
+        if (batched && !batchWaterDepthReady()) throw new IllegalStateException("Water depth batch shaders unavailable");
+        Program program = batched ? batchSurface : surface;
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, waterFrom);
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, waterDepth, 0);
         saved.save();
@@ -441,15 +505,16 @@ public final class FarLod {
         GL11C.glDisable(GL11C.GL_CULL_FACE);
         GL11C.glColorMask(false, false, false, false);
         bind(SCRATCH_UNIT, depth);
-        GL20C.glUseProgram(surface.id);
-        drawing = surface;
+        GL20C.glUseProgram(program.id);
+        drawing = program;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer matrix = stack.mallocFloat(16);
-            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(surface.id, "earth_ModelView"), false, modelView.get(matrix));
-            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(surface.id, "earth_Projection"), false, vanilla.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(program.id, "earth_ModelView"), false, modelView.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(program.id, "earth_Projection"), false, vanilla.get(matrix));
         }
-        GL20C.glUniform2f(GL20C.glGetUniformLocation(surface.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
-        water.run();
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(program.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
+        long timer = FarGpuTimers.begin("water depth restore");
+        try { water.run(); } finally { FarGpuTimers.end(timer); }
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, 0, 0);
 
         unbind(SCRATCH_UNIT);
@@ -496,6 +561,17 @@ public final class FarLod {
         GL11C.glTexParameteri(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MIN_FILTER, GL11C.GL_LINEAR);
         GL11C.glTexParameteri(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MAG_FILTER, GL11C.GL_LINEAR);
         shadowsReady = false;
+        hintsReady = false;
+        hintsAllocated = SHADOW_HINTS && hintsFit(width, height) && GL11C.glGetInteger(GL20C.GL_MAX_DRAW_BUFFERS) >= 2;
+        for (int i = 0; i < blockerHints.length; i++) {
+            if (hintsAllocated) {
+                if (blockerHints[i] == 0) blockerHints[i] = GL11C.glGenTextures();
+                storage(blockerHints[i], GL30C.GL_R32F, GL30C.GL_RED);
+            } else if (blockerHints[i] != 0) {
+                GL11C.glDeleteTextures(blockerHints[i]);
+                blockerHints[i] = 0;
+            }
+        }
         GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, bound2d);
         GlStateManager._activeTexture(active);
 
@@ -554,6 +630,37 @@ public final class FarLod {
         } catch (IllegalStateException failure) {
             failed = true;
             EarthPlatformMod.LOGGER.error("Far water can't be hidden behind far terrain under shaders; far water may show through far hills", failure);
+            return false;
+        }
+    }
+
+    private static boolean shadowHintsReady() {
+        if (!SHADOW_HINTS || hintsFailed || !hintsAllocated || blockerHints[0] == 0 || blockerHints[1] == 0) return false;
+        if (hintedSun != null) return true;
+        try {
+            hintedSun = Program.link(FarLodShaders.FULL_SCREEN, FarLodShaders.SUN_HINTS, "advisory sun blocker hints");
+            return true;
+        } catch (IllegalStateException failure) {
+            hintsFailed = true;
+            hintsReady = false;
+            EarthPlatformMod.LOGGER.warn("Sun blocker hints unavailable; retaining original sun loop", failure);
+            return false;
+        }
+    }
+
+    /** Optional variants fail independently: a failed experiment must not change the legacy path. */
+    static boolean batchWaterDepthReady() {
+        if (!FarWaterBatch.ENABLED || batchFailed || !programs()) return false;
+        if (batchSurface != null && batchDeepen != null) return true;
+        try {
+            batchSurface = Program.link(FarLodShaders.BATCH_DEPTH_VERTEX, FarLodShaders.SURFACE, "batched far water surface depth");
+            batchDeepen = Program.link(FarLodShaders.BATCH_DEPTH_VERTEX, FarLodShaders.DEEPEN, "batched far water depth floor");
+            return true;
+        } catch (IllegalStateException failure) {
+            if (batchSurface != null) { batchSurface.close(); batchSurface = null; }
+            if (batchDeepen != null) { batchDeepen.close(); batchDeepen = null; }
+            batchFailed = true;
+            EarthPlatformMod.LOGGER.warn("Optional water depth batching unavailable; keeping original water draws", failure);
             return false;
         }
     }

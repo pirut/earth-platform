@@ -60,6 +60,27 @@ tasks.named('jar', Jar) {
     from(licenceNotice) { into 'META-INF' }
 }
 
+// The current build includes validated optimizations and bounded local diagnostics; one player artifact.
+def sourceCommit = providers.gradleProperty('earthBuildCommit').orElse(providers.exec {
+    commandLine 'git', 'rev-parse', 'HEAD'
+    ignoreExitValue = true
+}.standardOutput.asText.map { it.trim() }).getOrElse('unknown')
+if (!(sourceCommit ==~ /[a-f0-9]{40}/)) sourceCommit = 'unknown'
+def generateBuildIdentity = tasks.register('generateBuildIdentity') {
+    def out = layout.buildDirectory.file('generated/buildIdentity/META-INF/earthplatform-build.properties')
+    inputs.property('commit', sourceCommit)
+    inputs.property('version', project.version.toString())
+    outputs.file(out)
+    doLast {
+        def target = out.get().asFile
+        target.parentFile.mkdirs()
+        target.text = 'commit=' + sourceCommit + '\nversion=' + project.version +
+                '\nflavor=current\ndiagnostics=true\n'
+    }
+}
+sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/buildIdentity')
+tasks.named('processResources') { dependsOn generateBuildIdentity }
+
 // Mojang ships Java 21 to end users in 1.21.1, so mods should target Java 21.
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
@@ -377,6 +398,7 @@ tasks.register('verifyShimArtifact') {
             zip.entries().each { entry ->
                 entries++
                 def path = entry.name.toLowerCase(java.util.Locale.ROOT)
+                if (path.endsWith('.class') && path.contains(' ')) failures.add('invalid duplicate class filename: ' + entry.name)
                 if (path.startsWith('net/neoforged/') || path.startsWith('net/minecraft/')
                         || path.startsWith('com/mojang/') || path.startsWith('com/seibel/') || path.startsWith('com/distanthorizons/')
                         || path.startsWith('net/irisshaders/') || path.startsWith('net/caffeinemc/')

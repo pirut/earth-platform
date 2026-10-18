@@ -9,9 +9,9 @@ import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.inventory.InventoryMenu;
@@ -62,8 +62,10 @@ final class FarGpu {
     static final int INDEX_QUADS = 1 << 16;
     /** Draws faces by index; -Dearthplatform.far.indexed=false draws six corners per face as before build 52. */
     static final boolean INDEXED = !"false".equals(System.getProperty("earthplatform.far.indexed"));
+    private static final boolean INDEXED_ALLOCATOR = !"false".equals(System.getProperty("earthplatform.far.indexedAllocator"));
     private final int arenaQuads;
     private final List<Arena> arenas = new ArrayList<>();
+    private final List<Commands> commandSets = new ArrayList<>();
     private final TextureBuffer columns = new TextureBuffer(GL30C.GL_RGBA32I, 4096, true);
     private final TextureBuffer looks = new TextureBuffer(GL30C.GL_RGBA32UI, 8192, true);
     private final it.unimi.dsi.fastutil.ints.IntArrayList freeSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
@@ -76,6 +78,8 @@ final class FarGpu {
     @Nullable private Object packPipeline;
     private boolean packOwnDepth, packJittered;
     private long quadBytes;
+    /** Changes whenever allocations can invalidate cached draw commands. */
+    private long allocationVersion;
 
     /** Faces drawn whole; faces fading out over the outer ring of their level; faces of the coarser level fading in there. */
     static final int NO_FADE = 0, FADE_OUT = 1, FADE_IN = 2;
@@ -84,7 +88,7 @@ final class FarGpu {
 
     /** A column's faces in one arena: {@code counts} faces per group, starting at {@code start}. */
     /** A column's faces in an arena; smooth when they include smooth ground, whose slopes can face the camera from below. */
-    record Allocation(Arena arena, int start, int size, int[] counts, int[] firsts, boolean smooth) {}
+    record Allocation(Arena arena, FarArenaRanges.Allocation range, int start, int size, int[] counts, int[] firsts, boolean smooth) {}
 
     FarGpu() {
         RenderSystem.assertOnRenderThread();
@@ -166,14 +170,15 @@ final class FarGpu {
         int faces = quads.length / 4, size = faces + (grid == null ? 0 : grid.length / 4);
         if (faces == 0) return null;
         Arena arena = null;
-        int start = -1;
-        for (Arena candidate : arenas) if ((start = candidate.allocate(size)) >= 0) { arena = candidate; break; }
+        FarArenaRanges.Allocation range = null;
+        for (Arena candidate : arenas) if ((range = candidate.allocate(size)) != null) { arena = candidate; break; }
         if (arena == null) {
             arena = new Arena(arenaQuads);
             arenas.add(arena);
-            start = arena.allocate(size);
-            if (start < 0) return null;
+            range = arena.allocate(size);
+            if (range == null) return null;
         }
+        int start = range.start();
         if (grid != null) {
             for (int i = 0; i < quads.length; i += 4) if ((quads[i] >> 10 & 7) >= FarMesher.SMOOTH_TOP) quads[i + 1] = start + faces;
             arena.buffer.upload(start + faces, grid);
@@ -182,13 +187,15 @@ final class FarGpu {
         int[] firsts = new int[counts.length];
         for (int i = 0, at = start; i < counts.length; at += counts[FarMesher.STORED[i]], i++) firsts[FarMesher.STORED[i]] = at;
         quadBytes += size * 16L;
-        return new Allocation(arena, start, size, counts.clone(), firsts, grid != null);
+        allocationVersion++;
+        return new Allocation(arena, range, start, size, counts.clone(), firsts, grid != null);
     }
 
     void free(@Nullable Allocation allocation) {
         if (allocation == null) return;
-        allocation.arena.release(allocation.start, allocation.size);
+        allocation.arena.release(allocation.range);
         quadBytes -= allocation.size * 16L;
+        allocationVersion++;
     }
 
     // Drawing ------------------------------------------------------------------------------------
@@ -312,10 +319,14 @@ final class FarGpu {
      * faces in them at far terrain's sizes.
      */
     void add(Allocation allocation, int groups) {
+        add(allocation, groups, null, NO_FADE);
+    }
+
+    private void add(Allocation allocation, int groups, @Nullable Commands commands, int fade) {
         if (SPLIT_RANGES) {
             for (int group = 0; group < FarMesher.GROUPS; group++) {
                 int size = allocation.counts[group];
-                if ((groups & 1 << group) != 0 && size > 0) allocation.arena.queue(allocation.firsts[group], size);
+                if ((groups & 1 << group) != 0 && size > 0) queue(allocation.arena, allocation.firsts[group], size, commands, fade);
             }
             return;
         }
@@ -326,12 +337,109 @@ final class FarGpu {
                 if (first < 0) first = allocation.firsts[group];
                 count += size;
             } else if (first >= 0) {
-                if (count > 0) allocation.arena.queue(first, count);
+                if (count > 0) queue(allocation.arena, first, count, commands, fade);
                 first = -1;
                 count = 0;
             }
         }
-        if (first >= 0 && count > 0) allocation.arena.queue(first, count);
+        if (first >= 0 && count > 0) queue(allocation.arena, first, count, commands, fade);
+    }
+
+    private void queue(Arena arena, int first, int count, @Nullable Commands commands, int fade) {
+        if (commands == null) arena.queue(first, count);
+        else commands.ranges(arena, fade).queue(first, count);
+    }
+
+    Commands commands() {
+        Commands commands = new Commands();
+        commandSets.add(commands);
+        return commands;
+    }
+
+    /** Range data only: current programs, uniforms, textures and fade fallback still apply each frame. */
+    final class Commands {
+        private final FarCommandState state = new FarCommandState();
+        private final IdentityHashMap<Arena, CachedDraw[]> draws = new IdentityHashMap<>();
+        private final boolean[] fades = new boolean[3];
+
+        boolean matches(long selection, float reach) { return state.matches(FarGpu.this, selection, allocationVersion, reach); }
+
+        void begin() {
+            state.invalidate();
+            Arrays.fill(fades, false);
+            for (CachedDraw[] passes : draws.values()) for (CachedDraw draw : passes) draw.ranges.clear();
+        }
+
+        void add(int fade, @Nullable Allocation allocation, int groups) {
+            fades[fade] = true;
+            if (allocation != null) FarGpu.this.add(allocation, groups, this, fade);
+        }
+
+        private FarDrawRanges ranges(Arena arena, int fade) {
+            CachedDraw[] passes = draws.computeIfAbsent(arena, unused -> new CachedDraw[] {new CachedDraw(), new CachedDraw(), new CachedDraw()});
+            return passes[fade].ranges;
+        }
+
+        void finish(long selection, float reach) {
+            for (CachedDraw[] passes : draws.values()) for (CachedDraw draw : passes) draw.prepare();
+            state.remember(FarGpu.this, selection, allocationVersion, reach);
+        }
+
+        void draw() {
+            for (int fade = NO_FADE; fade <= FADE_IN; fade++) {
+                if (!fades[fade]) continue;
+                if (fade != NO_FADE && !FarGpu.this.fade(fade) && fade == FADE_IN) break;
+                // Preserve the legacy arena order within each fade.
+                for (Arena arena : arenas) {
+                    CachedDraw[] passes = draws.get(arena);
+                    if (passes == null || passes[fade].ranges.size() == 0) continue;
+                    GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + QUAD_UNIT);
+                    GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, arena.buffer.texture);
+                    GlStateManager._activeTexture(previousActive);
+                    passes[fade].draw();
+                    ranges += passes[fade].ranges.size();
+                }
+            }
+            end();
+        }
+
+        private void close() {
+            state.invalidate();
+            for (CachedDraw[] passes : draws.values()) for (CachedDraw draw : passes) draw.close();
+            draws.clear();
+        }
+    }
+
+    /** Native multi-draw arguments are converted once per selection, then reused unchanged. */
+    private static final class CachedDraw {
+        final FarDrawRanges ranges = new FarDrawRanges(INDEXED, SPLIT_RANGES, INDEX_QUADS);
+        private IntBuffer counts = MemoryUtil.memAllocInt(128), starts = MemoryUtil.memAllocInt(128);
+        private PointerBuffer offsets = MemoryUtil.memAllocPointer(128);
+
+        void prepare() {
+            int size = ranges.size();
+            if (counts.capacity() < size) {
+                int capacity = Math.max(size, counts.capacity() * 2);
+                counts = MemoryUtil.memRealloc(counts, capacity);
+                starts = MemoryUtil.memRealloc(starts, capacity);
+                offsets = MemoryUtil.memRealloc(offsets, capacity);
+            }
+            counts.clear().limit(size);
+            starts.clear().limit(size);
+            offsets.clear().limit(size);
+            for (int i = 0; i < size; i++) {
+                counts.put(i, ranges.count(i) * 6);
+                starts.put(i, ranges.first(i) * (INDEXED ? 4 : 6));
+                offsets.put(i, 0L);
+            }
+        }
+
+        void draw() {
+            if (INDEXED) GL32C.glMultiDrawElementsBaseVertex(GL11C.GL_TRIANGLES, counts, GL11C.GL_UNSIGNED_INT, offsets, starts);
+            else GL14C.glMultiDrawArrays(GL11C.GL_TRIANGLES, starts, counts);
+        }
+
+        void close() { MemoryUtil.memFree(counts); MemoryUtil.memFree(starts); MemoryUtil.memFree(offsets); }
     }
 
     /** Draws everything queued and puts GL back as it was. */
@@ -505,6 +613,8 @@ final class FarGpu {
     }
 
     void close() {
+        for (Commands commands : commandSets) commands.close();
+        commandSets.clear();
         RenderSystem.assertOnRenderThread();
         for (Arena arena : arenas) arena.close();
         arenas.clear();
@@ -616,10 +726,10 @@ final class FarGpu {
         }
     }
 
-    /** One buffer texture of faces, handed out to columns first-fit, with its queued draws. */
+    /** One buffer texture of faces, with indexed free ranges and its queued draws. */
     static final class Arena {
         final TextureBuffer buffer;
-        private final TreeMap<Integer, Integer> free = new TreeMap<>();
+        private final FarArenaRanges free;
         /** Queued ranges: first face and face count. */
         IntBuffer firsts = MemoryUtil.memAllocInt(1024), counts = MemoryUtil.memAllocInt(1024);
         /** The same ranges as the multi-draw takes them: corner counts, and where each range starts. */
@@ -629,26 +739,12 @@ final class FarGpu {
 
         Arena(int quads) {
             buffer = new TextureBuffer(GL30C.GL_RGBA32UI, quads, false);
-            free.put(0, quads);
+            free = new FarArenaRanges(quads, INDEXED_ALLOCATOR);
         }
 
-        int allocate(int size) {
-            for (Map.Entry<Integer, Integer> entry : free.entrySet()) {
-                if (entry.getValue() < size) continue;
-                int start = entry.getKey(), left = entry.getValue() - size;
-                free.remove(start);
-                if (left > 0) free.put(start + size, left);
-                return start;
-            }
-            return -1;
-        }
+        @Nullable FarArenaRanges.Allocation allocate(int size) { return free.allocate(size); }
 
-        void release(int start, int size) {
-            Map.Entry<Integer, Integer> before = free.floorEntry(start), after = free.ceilingEntry(start);
-            if (before != null && before.getKey() + before.getValue() == start) { start = before.getKey(); size += before.getValue(); }
-            if (after != null && start + size == after.getKey()) { size += after.getValue(); free.remove(after.getKey()); }
-            free.put(start, size);
-        }
+        void release(FarArenaRanges.Allocation range) { free.release(range); }
 
         void clearDraws() { draws = 0; firsts.clear(); counts.clear(); }
 
