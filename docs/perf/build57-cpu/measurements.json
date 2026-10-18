@@ -798,14 +798,18 @@
     "new_client_results": false,
     "prior_client_measurements_apply_to": "cc56ae0a23e274fe4a73e748c1bfa2de08feb74b",
     "mac_retest": "Pending execution-transport recovery; inspect build/probe processes before starting another test",
-    "new_experiments_implemented": false,
+    "new_experiments_implemented": true,
     "diagnostic_gpu_timestamps": {
       "default_enabled": false,
       "max_pairs": 128,
       "max_age_frames": 120,
       "max_retained_samples": 1024,
-      "mac_verified": false,
-      "observer_overhead_measured": false
-    }
+      "mac_verified": true,
+      "observer_overhead_measured": false,
+      "mac_timestamp_bits": 0,
+      "mac_elapsed_bits": 32,
+      "mode": "Timestamp pairs preferred; non-nested elapsed fallback skips occupied targets"
+    },
+    "prototype_scope": "Off-by-default bounded shadow hints and exact surface-run base/overlay/codec with legacy adapter; direct packet transport/meshing unfinished"
   }
 }

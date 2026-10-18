@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.LongSupplier;
 
-/** Bounded timestamp pairs. Results are read only after BOTH queries report availability. */
+/** Bounded GPU queries. Timestamp pairs require both results; elapsed backends require their owned result. */
 final class GpuQueryRing implements AutoCloseable {
     interface Queries {
         int create();

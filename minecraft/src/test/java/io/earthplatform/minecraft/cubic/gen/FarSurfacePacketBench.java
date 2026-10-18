@@ -23,6 +23,7 @@ class FarSurfacePacketBench {
             assertNotNull(packet);
             int legacyBytes = 0; for (var section : dense.sections) if (section != null) legacyBytes += CubeCodec.sectionBytes(section).length;
             byte[] encoded = packet.encode(ids);
+            java.util.List<byte[]> legacyPayload = dense.sections.stream().map(s -> s == null ? new byte[0] : CubeCodec.sectionBytes(s)).toList();
             System.out.printf(Locale.ROOT, "SURFACE_COMPONENT first level=%d denseMs=%.4f directRunMs=%.4f legacyBytes=%d runBytes=%d rows=%d runs=%d%n", level, denseCold/1e6, packetCold/1e6, legacyBytes, encoded.length, packet.height(), packet.runCount());
             for (int warm = 0; warm < 100; warm++) { sink = g.column(level, warm%7, -warm%7, false); sink = g.surfacePacket(level, warm%7, -warm%7); }
             for (int round = 0; round < 4; round++) for (boolean runs : round%2==0 ? new boolean[]{false,true} : new boolean[]{true,false}) {
@@ -32,9 +33,11 @@ class FarSurfacePacketBench {
                 long elapsed = System.nanoTime() - start, bytes = bean.getThreadAllocatedBytes(tid)-allocated;
                 System.out.printf(Locale.ROOT, "SURFACE_COMPONENT warm level=%d round=%d directRuns=%s usPerColumn=%.3f allocatedBytesPerColumn=%.1f%n", level, round, runs, elapsed/1e3/n, bytes/(double)n);
             }
-            for (String phase : new String[]{"runEncode","runDecode","materialize","editSnapshot"}) {
+            for (String phase : new String[]{"legacyEncode","legacyDecode","runEncode","runDecode","materialize","editSnapshot"}) {
                 long allocated = bean.getThreadAllocatedBytes(tid); start = System.nanoTime(); int n=160;
                 for (int i=0;i<n;i++) sink=switch(phase) {
+                    case "legacyEncode" -> dense.sections.stream().map(s -> s == null ? new byte[0] : CubeCodec.sectionBytes(s)).toList();
+                    case "legacyDecode" -> legacyPayload.stream().map(s -> s.length == 0 ? null : CubeCodec.readSection(s, SurfacePacketFixtures.biomes())).toList();
                     case "runEncode" -> packet.encode(ids);
                     case "runDecode" -> FarSurfacePacket.decode(encoded,ids);
                     case "materialize" -> packet.materialize(ids);
