@@ -60,7 +60,12 @@ public final class FarLod {
     private static final boolean SHADOW_HINTS = Boolean.getBoolean("earthplatform.far.shadowHints");
     private static final int[] blockerHints = new int[2];
     private static int hintRead;
-    private static boolean hintsReady, hintsFailed;
+    private static boolean hintsReady, hintsFailed, hintsAllocated;
+    /** Two R32F textures: bound extra VRAM on discrete GPUs and unified-memory devices alike. */
+    static final long HINT_MAX_BYTES = 32L << 20;
+    static boolean hintsFit(int width, int height) {
+        return width > 0 && height > 0 && (long) width * height <= HINT_MAX_BYTES / 8;
+    }
     @Nullable private static Program hintedSun;
     @Nullable private static Program merge, surface, smooth, deepen, sun;
     @Nullable private static Program batchSurface, batchDeepen;
@@ -301,6 +306,7 @@ public final class FarLod {
             if (GL30C.glCheckFramebufferStatus(GL30C.GL_DRAW_FRAMEBUFFER) != GL30C.GL_FRAMEBUFFER_COMPLETE) {
                 hintsFailed = true;
                 hinting = false;
+                EarthPlatformMod.LOGGER.warn("Sun blocker hint framebuffer unavailable; retaining original sun loop");
             }
         }
         if (hinting) {
@@ -554,9 +560,15 @@ public final class FarLod {
         GL11C.glTexParameteri(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MAG_FILTER, GL11C.GL_LINEAR);
         shadowsReady = false;
         hintsReady = false;
-        if (SHADOW_HINTS) for (int i = 0; i < blockerHints.length; i++) {
-            if (blockerHints[i] == 0) blockerHints[i] = GL11C.glGenTextures();
-            storage(blockerHints[i], GL30C.GL_R32F, GL30C.GL_RED);
+        hintsAllocated = SHADOW_HINTS && hintsFit(width, height) && GL11C.glGetInteger(GL20C.GL_MAX_DRAW_BUFFERS) >= 2;
+        for (int i = 0; i < blockerHints.length; i++) {
+            if (hintsAllocated) {
+                if (blockerHints[i] == 0) blockerHints[i] = GL11C.glGenTextures();
+                storage(blockerHints[i], GL30C.GL_R32F, GL30C.GL_RED);
+            } else if (blockerHints[i] != 0) {
+                GL11C.glDeleteTextures(blockerHints[i]);
+                blockerHints[i] = 0;
+            }
         }
         GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, bound2d);
         GlStateManager._activeTexture(active);
@@ -621,7 +633,7 @@ public final class FarLod {
     }
 
     private static boolean shadowHintsReady() {
-        if (!SHADOW_HINTS || hintsFailed || blockerHints[0] == 0 || blockerHints[1] == 0) return false;
+        if (!SHADOW_HINTS || hintsFailed || !hintsAllocated || blockerHints[0] == 0 || blockerHints[1] == 0) return false;
         if (hintedSun != null) return true;
         try {
             hintedSun = Program.link(FarLodShaders.FULL_SCREEN, FarLodShaders.SUN_HINTS, "advisory sun blocker hints");

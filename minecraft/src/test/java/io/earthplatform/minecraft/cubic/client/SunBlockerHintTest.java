@@ -26,6 +26,14 @@ class SunBlockerHintTest {
                 assertEquals(original(termination, 1 << blocker), hinted(termination, 1 << blocker, hint));
         }
     }
+    @Test void hintVramBudgetIsPortableAndOverflowSafe() {
+        assertTrue(FarLod.hintsFit(1708, 960));
+        assertTrue(FarLod.hintsFit(2560, 1440));
+        assertFalse(FarLod.hintsFit(3840, 2160));
+        assertFalse(FarLod.hintsFit(Integer.MAX_VALUE, Integer.MAX_VALUE));
+        assertFalse(FarLod.hintsFit(0, 960));
+        assertFalse(FarLod.hintsFit(-1, 960));
+    }
     @Test void originalFallbackAndAoArithmeticRemainPresentAndFloatSteppingIsNotReplacedByPowers() {
         String original = FarLodShaders.SUN, hinted = FarLodShaders.SUN_HINTS;
         String ao = original.substring(original.indexOf("float earth_occlusion"));
