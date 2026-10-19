@@ -10,10 +10,11 @@ import org.lwjgl.opengl.GL33C;
  * Diagnostic-only GPU queries. Timestamp pairs preferred; non-nested TIME_ELAPSED fallback.
  * No glFinish or synchronous result reads; an occupied elapsed target is skipped.
  * All calls run on the render thread with its context current; sampled once per 120 frames by default.
+ * Off unless {@code -Dearthplatform.far.gpuTimers=true}: queries wrap other mods' and shader packs' draws.
  */
 final class FarGpuTimers {
-    private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("earthplatform.far.gpuTimers", Boolean.toString(io.earthplatform.minecraft.diagnostics.BuildInfo.diagnostics())));
-    private static final int SAMPLE_EVERY = Math.clamp(Integer.getInteger("earthplatform.far.gpuSampleEvery", io.earthplatform.minecraft.diagnostics.BuildInfo.diagnostics()?120:1),1,3600);
+    private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("earthplatform.far.gpuTimers", "false"));
+    private static final int SAMPLE_EVERY = Math.clamp(Integer.getInteger("earthplatform.far.gpuSampleEvery", 120),1,3600);
     private static GpuQueryRing ring;
     private static boolean checked;
     private static String mode="inactive";

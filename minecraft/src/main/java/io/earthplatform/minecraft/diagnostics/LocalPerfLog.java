@@ -68,9 +68,10 @@ public final class LocalPerfLog implements AutoCloseable {
         }catch(IOException failure){failed=true;queue.clear();}
         finally {if(writer!=null)try{writer.close();}catch(IOException ignored){}}
     }
-    /** Best-effort bounded shutdown; a slow disk never prevents the game from exiting. */
+    /** Best-effort bounded shutdown; a slow disk never prevents the game from exiting. Not interrupted,
+     *  since an interrupt during a write closes the channel and loses the last line; the poll wakes in 250 ms. */
     @Override public void close() {
-        closed=true;worker.interrupt();
+        closed=true;
         try{worker.join(500);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();}
     }
 }
