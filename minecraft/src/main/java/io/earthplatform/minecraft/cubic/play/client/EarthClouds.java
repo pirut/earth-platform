@@ -183,11 +183,22 @@ public final class EarthClouds {
         Arrays.fill(clear, 1);
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null) return clear;
+        int[] high = new int[GRID * GRID];
+        Arrays.fill(high, Integer.MIN_VALUE);
         double left = camX - radius, near = camZ - radius;
-        int[] tops = world.far().cloudCorners(GRID, left, near, step);
+        world.far().forEachTop((x0, z0, width, top) -> {
+            int i0 = Math.max(0, (int) Math.floor((x0 - left) / step)), i1 = Math.min(GRID - 1, (int) Math.floor((x0 + width - left) / step));
+            int j0 = Math.max(0, (int) Math.floor((z0 - near) / step)), j1 = Math.min(GRID - 1, (int) Math.floor((z0 + width - near) / step));
+            for (int i = i0; i <= i1; i++)
+                for (int j = j0; j <= j1; j++)
+                    if (top > high[i * GRID + j]) high[i * GRID + j] = top;
+        });
         for (int i = 0; i <= GRID; i++) {
             for (int j = 0; j <= GRID; j++) {
-                int top = tops[i * (GRID + 1) + j];
+                int top = Integer.MIN_VALUE;
+                for (int ci = i - 1; ci <= i; ci++)
+                    for (int cj = j - 1; cj <= j; cj++)
+                        if (ci >= 0 && cj >= 0 && ci < GRID && cj < GRID) top = Math.max(top, high[ci * GRID + cj]);
                 if (top != Integer.MIN_VALUE) clear[i * (GRID + 1) + j] = (float) smooth((deck - top - CLEAR) / CLEAR_FADE);
             }
         }
