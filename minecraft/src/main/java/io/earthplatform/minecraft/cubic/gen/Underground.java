@@ -242,6 +242,18 @@ final class Underground {
         structures.place(section, cx, cy, cz, blockEntities, entities);
     }
 
+    /**
+     * Each cube's own random numbers come from a plain LCG, the same numbers as vanilla's legacy source without its
+     * atomic seed, which every draw updated with a compare-and-set; a cube draws thousands, for its 27 cubes' veins
+     * alone. {@code false} keeps the legacy source, for comparisons.
+     */
+    private static final boolean PLAIN_RANDOM = !"false".equals(System.getProperty("earthplatform.cubes.plainRandom"));
+
+    /** A cube's random source for a seed: the same sequence either way. */
+    static RandomSource random(long seed) {
+        return PLAIN_RANDOM ? new net.minecraft.world.level.levelgen.SingleThreadedRandomSource(seed) : new LegacyRandomSource(seed);
+    }
+
     // Veins --------------------------------------------------------------------------------------
 
     private enum Spread { UNIFORM, TRIANGLE }
@@ -303,7 +315,7 @@ final class Underground {
                 if ((ny << 4) > ground + 16) continue;
                 int vy = vanillaY((ny << 4) + 8, floor(x, z, ground));
                 boolean mountains = terrain.emeralds(ground);
-                RandomSource random = new LegacyRandomSource(seed ^ mix(nx, ny, nz) ^ (pass == ORE_VEINS ? 0x4F5245L : 0x524F434BL));
+                RandomSource random = random(seed ^ mix(nx, ny, nz) ^ (pass == ORE_VEINS ? 0x4F5245L : 0x524F434BL));
                 for (Vein vein : pass) {
                     double expected = vein.mountains && !mountains ? 0 : vein.perChunk * share(vein, vy);
                     int tries = (int) expected;
@@ -317,6 +329,13 @@ final class Underground {
         }
     }
 
+    /**
+     * Blobs that cannot reach the cube skip their spheres, and the rest work out each sphere's row and layer terms
+     * once and leave blocks already the vein's alone, which changes nothing; {@code false} restores the full walk,
+     * per-block sums and writes, for comparisons.
+     */
+    private static final boolean FAST_BLOBS = !"false".equals(System.getProperty("earthplatform.cubes.fastBlobs"));
+
     /** Vanilla's ore blob: spheres strung along a short random line, swelling in the middle. */
     private static void blob(LevelChunkSection section, int cx, int cy, int cz, Vein vein, RandomSource random, int x, int y, int z) {
         int size = vein.size;
@@ -325,6 +344,17 @@ final class Underground {
         double z0 = z + Mth.cos(angle) * reach, z1 = z - Mth.cos(angle) * reach;
         double y0 = y + random.nextInt(3) - 2, y1 = y + random.nextInt(3) - 2;
         int bx = cx << 4, by = cy << 4, bz = cz << 4;
+        if (FAST_BLOBS) {
+            // Every sphere's centre lies between the line's ends, and its radius is under size / 16 + 1/2; a block
+            // more allows for rounding. A blob that cannot reach the cube draws its spheres' sizes and nothing else.
+            double most = size / 16.0 + 1.5;
+            if (Math.max(x0, x1) + most < bx || Math.min(x0, x1) - most >= bx + 16
+                    || Math.max(y0, y1) + most < by || Math.min(y0, y1) - most >= by + 16
+                    || Math.max(z0, z1) + most < bz || Math.min(z0, z1) - most >= bz + 16) {
+                for (int i = 0; i < size; i++) random.nextDouble();
+                return;
+            }
+        }
         for (int i = 0; i < size; i++) {
             float t = i / (float) size;
             double px = Mth.lerp(t, x0, x1), py = Mth.lerp(t, y0, y1), pz = Mth.lerp(t, z0, z1);
@@ -333,12 +363,29 @@ final class Underground {
             int minX = Math.max(bx, Mth.floor(px - r)), maxX = Math.min(bx + 15, Mth.floor(px + r));
             int minY = Math.max(by, Mth.floor(py - r)), maxY = Math.min(by + 15, Mth.floor(py + r));
             int minZ = Math.max(bz, Mth.floor(pz - r)), maxZ = Math.min(bz + 15, Mth.floor(pz + r));
-            for (int qy = minY; qy <= maxY; qy++) for (int qz = minZ; qz <= maxZ; qz++) for (int qx = minX; qx <= maxX; qx++) {
-                double ex = (qx + 0.5 - px) / r, ey = (qy + 0.5 - py) / r, ez = (qz + 0.5 - pz) / r;
-                if (ex * ex + ey * ey + ez * ez >= 1) continue;
-                BlockState here = section.getBlockState(qx & 15, qy & 15, qz & 15);
-                BlockState next = replaced(vein, here);
-                if (next != null) section.setBlockState(qx & 15, qy & 15, qz & 15, next, false);
+            if (!FAST_BLOBS) {
+                for (int qy = minY; qy <= maxY; qy++) for (int qz = minZ; qz <= maxZ; qz++) for (int qx = minX; qx <= maxX; qx++) {
+                    double ex = (qx + 0.5 - px) / r, ey = (qy + 0.5 - py) / r, ez = (qz + 0.5 - pz) / r;
+                    if (ex * ex + ey * ey + ez * ez >= 1) continue;
+                    BlockState here = section.getBlockState(qx & 15, qy & 15, qz & 15);
+                    BlockState next = replaced(vein, here);
+                    if (next != null) section.setBlockState(qx & 15, qy & 15, qz & 15, next, false);
+                }
+                continue;
+            }
+            // The same sums with each row's and layer's terms worked out once; a block already the vein's is left be.
+            for (int qy = minY; qy <= maxY; qy++) {
+                double ey = (qy + 0.5 - py) / r, ey2 = ey * ey;
+                for (int qz = minZ; qz <= maxZ; qz++) {
+                    double ez = (qz + 0.5 - pz) / r, ez2 = ez * ez;
+                    for (int qx = minX; qx <= maxX; qx++) {
+                        double ex = (qx + 0.5 - px) / r;
+                        if (ex * ex + ey2 + ez2 >= 1) continue;
+                        BlockState here = section.getBlockState(qx & 15, qy & 15, qz & 15);
+                        BlockState next = replaced(vein, here);
+                        if (next != null && next != here) section.setBlockState(qx & 15, qy & 15, qz & 15, next, false);
+                    }
+                }
             }
         }
     }
@@ -366,7 +413,7 @@ final class Underground {
      * above and below go bare.
      */
     private void plants(LevelChunkSection section, int cx, int cy, int cz, Kind kind) {
-        RandomSource random = new LegacyRandomSource(seed ^ mix(cx, cy, cz) ^ 0x504C414E54L);
+        RandomSource random = random(seed ^ mix(cx, cy, cz) ^ 0x504C414E54L);
         int x0 = cx << 4, y0 = cy << 4, z0 = cz << 4;
         for (int ly = 1; ly < 15; ly++) for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
             BlockState here = section.getBlockState(lx, ly, lz);

@@ -15,10 +15,139 @@ final class FarShaders {
     private FarShaders() {}
 
     /**
-     * A shader pack's Voxy code for one dimension: its fragment code, and the body of the GLSL
-     * function giving its temporal anti-aliasing jitter, or null when it asks for none.
+     * A shader pack's Voxy code for one dimension: its fragment code, the body of the GLSL
+     * function giving its temporal anti-aliasing jitter, or null when it asks for none, the
+     * fragment output location far terrain's faces' own depth takes beside the pack's outputs
+     * (see {@link #faceDepthLocation}), and the uniforms and samplers (name to GLSL type) its
+     * {@code voxy.json} asks for, which Voxy declares for the code (see {@link #voxyDeclarations}).
      */
-    record PackPatch(String fragment, @Nullable String taaOffset) {}
+    record PackPatch(String fragment, @Nullable String taaOffset, int faceDepthLocation, java.util.List<String> uniforms,
+            java.util.Map<String, String> samplers) {
+        PackPatch(String fragment, @Nullable String taaOffset) { this(fragment, taaOffset, java.util.List.of(), java.util.Map.of()); }
+
+        PackPatch(String fragment, @Nullable String taaOffset, java.util.List<String> uniforms, java.util.Map<String, String> samplers) {
+            this(fragment, taaOffset, FarShaders.faceDepthLocation(fragment), uniforms, samplers);
+        }
+    }
+
+    private static final Pattern UNIFORM_LIST = Pattern.compile("\"uniforms\"\\s*:\\s*\\[([^\\]]*)\\]");
+    private static final Pattern SAMPLER_LIST = Pattern.compile("\"samplers\"\\s*:\\s*(\\[[^\\]]*\\]|\\{[^}]*\\})");
+    private static final Pattern QUOTED = Pattern.compile("\"([A-Za-z_][A-Za-z0-9_]*)\"");
+    private static final Pattern SAMPLER_ENTRY = Pattern.compile("\"([A-Za-z_][A-Za-z0-9_]*)\"\\s*:\\s*(?:\"([A-Za-z_][A-Za-z0-9_]*)\"|null)");
+
+    /** The uniform names a Voxy {@code voxy.json} lists, in order; empty when it lists none. */
+    static java.util.List<String> voxyUniforms(@Nullable String settings) {
+        if (settings == null) return java.util.List.of();
+        Matcher list = UNIFORM_LIST.matcher(settings);
+        if (!list.find()) return java.util.List.of();
+        java.util.List<String> names = new java.util.ArrayList<>();
+        Matcher name = QUOTED.matcher(list.group(1));
+        while (name.find()) if (!names.contains(name.group(1))) names.add(name.group(1));
+        return java.util.List.copyOf(names);
+    }
+
+    /**
+     * The samplers a Voxy {@code voxy.json} lists, by name, with their GLSL types: a list of names
+     * (each a {@code sampler2D}), or an object of names to types (null for the default), read as
+     * Voxy reads them, where only a sampler named exactly {@code shadowtex} defaults to a shadow sampler.
+     */
+    static java.util.Map<String, String> voxySamplers(@Nullable String settings) {
+        if (settings == null) return java.util.Map.of();
+        Matcher list = SAMPLER_LIST.matcher(settings);
+        if (!list.find()) return java.util.Map.of();
+        java.util.Map<String, String> samplers = new java.util.LinkedHashMap<>();
+        String body = list.group(1);
+        if (body.startsWith("[")) {
+            Matcher name = QUOTED.matcher(body);
+            while (name.find()) samplers.putIfAbsent(name.group(1), defaultSampler(name.group(1)));
+        } else {
+            Matcher entry = SAMPLER_ENTRY.matcher(body);
+            while (entry.find()) samplers.putIfAbsent(entry.group(1), entry.group(2) != null ? entry.group(2) : defaultSampler(entry.group(1)));
+        }
+        return java.util.Collections.unmodifiableMap(samplers);
+    }
+
+    private static String defaultSampler(String name) { return name.equals("shadowtex") ? "sampler2DShadow" : "sampler2D"; }
+
+    /**
+     * Declarations for the uniforms and samplers a pack's {@code voxy.json} lists, which Voxy
+     * declares ahead of the pack's Voxy code and the code itself doesn't: only those the code
+     * reads and doesn't declare itself, so code that declares its own (or reads none, as Photon's)
+     * is left exactly as it was. A uniform whose type isn't in {@code types} is left out; if the
+     * code needs it, it then fails to build and far terrain falls back to plain colours.
+     */
+    static String voxyDeclarations(String patch, java.util.List<String> uniforms, java.util.Map<String, String> types,
+            java.util.Map<String, String> samplers) {
+        String code = COMMENTS.matcher(patch).replaceAll(" ");
+        StringBuilder out = new StringBuilder();
+        for (String name : uniforms) {
+            String type = types.get(name);
+            if (type != null && reads(code, name) && !declares(code, name)) out.append("uniform ").append(type).append(' ').append(name).append(";\n");
+        }
+        for (java.util.Map.Entry<String, String> sampler : samplers.entrySet()) {
+            String name = sampler.getKey();
+            if (reads(code, name) && !declares(code, name)) out.append("uniform ").append(sampler.getValue()).append(' ').append(name).append(";\n");
+        }
+        return out.toString();
+    }
+
+    /** The sampler names {@link #voxyDeclarations} declares for a patch. */
+    static java.util.Set<String> declaredSamplers(String patch, java.util.Map<String, String> samplers) {
+        String code = COMMENTS.matcher(patch).replaceAll(" ");
+        java.util.Set<String> names = new java.util.LinkedHashSet<>();
+        for (String name : samplers.keySet()) if (reads(code, name) && !declares(code, name)) names.add(name);
+        return names;
+    }
+
+    private static boolean reads(String code, String name) {
+        return Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(code).find();
+    }
+
+    private static boolean declares(String code, String name) {
+        return Pattern.compile("\\buniform\\s+[^;{}]*\\b" + Pattern.quote(name) + "\\b").matcher(code).find();
+    }
+
+    /** Where {@link #PACK_MAIN} puts the faces' own depth, for a pack that leaves location 1 free. */
+    private static final String FACE_DEPTH_OUTPUT = "layout(location = 1) out float earth_faceDepth;";
+    private static final Pattern COMMENTS = Pattern.compile("/\\*.*?\\*/|//[^\n]*", Pattern.DOTALL);
+    /** A fragment output declared at global scope: its layout qualifier's contents, and its array size. */
+    private static final Pattern OUTPUT = Pattern.compile(
+            "(?m)^\\s*(?:layout\\s*\\(([^)]*)\\)\\s*)?(?:(?:flat|smooth|noperspective|centroid|sample|invariant|precise|highp|mediump|lowp)\\s+)*"
+            + "out\\s+\\w+\\s+\\w+\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*;");
+    private static final Pattern LOCATION = Pattern.compile("\\blocation\\s*=\\s*(\\d+)");
+
+    /**
+     * The fragment output location for far terrain's faces' own depth with a pack's Voxy code: the
+     * first from 1 up that none of the pack's outputs takes. Outputs with a location take theirs
+     * (and an array's the ones after); those without one are counted as taking the lowest free
+     * locations, as drivers hand them out. Photon's single output at 0 leaves 1, as before;
+     * Complementary's and others' second output at 1 put it further up instead of clashing there,
+     * which failed to build and left far terrain in plain colours.
+     */
+    static int faceDepthLocation(@Nullable String patch) {
+        if (patch == null) return 1;
+        java.util.BitSet used = new java.util.BitSet();
+        int unlocated = 0;
+        Matcher output = OUTPUT.matcher(COMMENTS.matcher(patch).replaceAll(" "));
+        while (output.find()) {
+            int size = output.group(2) == null ? 1 : Math.max(1, Integer.parseInt(output.group(2)));
+            Matcher location = output.group(1) == null ? null : LOCATION.matcher(output.group(1));
+            if (location != null && location.find()) used.set(Integer.parseInt(location.group(1)), Integer.parseInt(location.group(1)) + size);
+            else unlocated += size;
+        }
+        for (int at = 0; unlocated > 0; at++) {
+            if (!used.get(at)) {
+                used.set(at);
+                unlocated--;
+            }
+        }
+        return used.nextClearBit(1);
+    }
+
+    /** A far terrain fragment shader with the faces' own depth at {@code location} rather than 1. */
+    private static String faceDepthAt(String source, int location) {
+        return location == 1 ? source : source.replace(FACE_DEPTH_OUTPUT, "layout(location = " + location + ") out float earth_faceDepth;");
+    }
 
     private static final Pattern TAA_OFFSET = Pattern.compile("\"taaOffset\"\\s*:\\s*\"([^\"]*)\"");
 
@@ -599,11 +728,94 @@ final class FarShaders {
             else if (!trimmed.startsWith("#version")) body.append(line).append('\n');
         }
         String patched = FACE_NORMAL.matcher(body).replaceFirst("$1\n    $2 = earth_packNormal($2);");
-        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + fade(fade) + VOXY_PARAMETERS + patched + PACK_MAIN;
+        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + fade(fade) + VOXY_PARAMETERS + patched
+                + (ownDepth ? faceDepthAt(PACK_MAIN, faceDepthLocation(patch)) : PACK_MAIN);
     }
 
     /** The same for far terrain inside the game's blocks' reach, drawn into the game's depth while far terrain otherwise has its own. */
     static String packNearFragment(String version, String patch, int fade) {
         return packFragment(version, patch, false, fade).replaceFirst("\n", "\n#define EARTH_NEAR\n");
+    }
+
+    // Depth pre-pass (-Dearthplatform.far.depthPrepass=true; see FarGpu#DEPTH_PREPASS) ---------------
+
+    /**
+     * Put after the version and defines of both pre-pass vertex shaders, so the pre-pass and the
+     * shading pass place every corner, and so every fragment's window depth, bit for bit alike.
+     */
+    static final String INVARIANT = "invariant gl_Position;\n";
+
+    /** Everything of {@link #PACK_MAIN} before its main: the sample, the slope depth and the own-depth declarations. */
+    private static final String PACK_DECLARATIONS = PACK_MAIN.substring(0, PACK_MAIN.lastIndexOf("void main() {"));
+
+    /**
+     * The pre-pass: exactly the own-depth program's fragment-dropping and depth (the game's terrain,
+     * the game's blocks' reach, a fade's dither, the slope depth), and its faces' own depth into the
+     * second target, with no colour. Depth and that target then hold what the one-pass draw leaves.
+     */
+    private static final String PREPASS_MAIN = """
+            void main() {
+            #ifdef EARTH_FADE
+                earth_fade();
+            #endif
+                if (texelFetch(earth_GameDepth, ivec2(gl_FragCoord.xy), 0).r < 1.0) discard;
+                if (length(earth_position.xz) < earth_NearReach) discard;
+                earth_faceDepth = gl_FragCoord.z;
+                earth_slopeDepth();
+            }
+            """;
+
+    /**
+     * The shading pass after the pre-pass: the own-depth program's colour, with nothing that drops
+     * fragments (but a fade's dither) or writes depth, so the GPU tests depth before shading. It is
+     * drawn with depth test EQUAL against the pre-pass's faces' own depth, so only the face each
+     * pixel kept in the pre-pass is shaded.
+     */
+    private static final String SHADE_MAIN = """
+            void main() {
+            #ifdef EARTH_FADE
+                earth_fade();
+            #endif
+                vec4 colour = earth_sample();
+                vec2 levels = earth_levels();
+                vec3 tint = earth_tint;
+                vec2 lost = earth_sunShadow();
+                tint *= 1.0 - lost.x;
+                levels.y *= sqrt(1.0 - lost.y);
+                vec2 light = clamp(levels / 15.0 * (15.0 / 16.0) + 0.5 / 16.0, vec2(8.0 / 256.0), vec2(248.0 / 256.0));
+                voxy_emitFragment(VoxyFragmentParameters(colour, floor(earth_tile), earth_atlasUv(), earth_face, earth_look, light,
+                        vec4(tint, 1.0), earth_blockId));
+            }
+            """;
+
+    /** The slope depth's inputs the shading pass still reads, in place of the slope depth itself. */
+    private static final String SHADE_INPUTS = """
+            in vec3 earth_position;
+            uniform float earth_NearReach;
+            """;
+
+    /** The depth pre-pass's fragment shader for a fade: no shader pack code, but its faces' depth where the pack's program has it. */
+    static String packPrepassFragment(String version, String patch, int fade) {
+        return version + "#define EARTH_OWN_DEPTH\n" + fade(fade) + VOXY_PARAMETERS + faceDepthAt(PACK_DECLARATIONS, faceDepthLocation(patch)) + PREPASS_MAIN;
+    }
+
+    /** The shading pass's fragment shader for a fade: the pack's Voxy code, as {@link #packFragment} splices it, without the depth work. */
+    static String packShadeFragment(String version, String patch, int fade) {
+        String own = packFragment(version, patch, true, fade);
+        int location = faceDepthLocation(patch);
+        String declarations = faceDepthAt(PACK_DECLARATIONS.replace(SLOPE_DEPTH, SHADE_INPUTS), location);
+        return own.substring(0, own.length() - faceDepthAt(PACK_MAIN, location).length()) + declarations + SHADE_MAIN;
+    }
+
+    private static final Pattern BREAKS_PREPASS = Pattern.compile("\\bdiscard\\b|\\bgl_FragDepth\\b|\\bgl_SampleMask\\b|\\bdepth_(any|greater|less|unchanged)\\b");
+
+    /**
+     * Whether a pack's Voxy fragment code (as Iris preprocessed it, includes and all) leaves every
+     * fragment it is given and its depth alone, which the pre-pass relies on: it decides each
+     * pixel's face without the pack's code. Any mention of dropping fragments or writing depth,
+     * even in a comment, keeps the pack on the one-pass draw.
+     */
+    static boolean prepassSafe(@Nullable String patch) {
+        return patch != null && !BREAKS_PREPASS.matcher(patch).find();
     }
 }

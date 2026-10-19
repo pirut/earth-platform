@@ -20,6 +20,18 @@ final class FarLodShaders {
             """;
 
     /**
+     * Far terrain's faces' own depth, kept as a colour by the depth pre-pass, copied into a depth
+     * buffer for the shading pass to test against (see {@link FarGpu#DEPTH_PREPASS}).
+     */
+    static final String FACE_DEPTH = """
+            #version 330 core
+            uniform sampler2D earth_Far;
+            void main() {
+                gl_FragDepth = texelFetch(earth_Far, ivec2(gl_FragCoord.xy), 0).r;
+            }
+            """;
+
+    /**
      * The nearer of the game's depth and far terrain's, in the game's projection; also kept as a
      * colour to compare with later. Far terrain's faces' own depth is used rather than its
      * smoothed slopes', which can lie over a narrow river.

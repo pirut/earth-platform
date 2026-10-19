@@ -5,7 +5,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /** Only fixed stages and exception TYPES: never messages, stacks, paths, names or addresses. */
 public final class PerfFailures {
-    public enum Stage { FAR_MESH, FAR_GENERATION, FAR_SHADER, FAR_UPLOAD, PACKET_DECODE, RUN_CONVERSION, DIAGNOSTICS }
+    public enum Stage { FAR_MESH, FAR_GENERATION, FAR_SHADER, FAR_UPLOAD, PACKET_DECODE, RUN_CONVERSION, DIAGNOSTICS, LIGHTMAP_TEXTURE }
     private static final AtomicLongArray COUNTS=new AtomicLongArray(Stage.values().length);
     private static final AtomicReferenceArray<String> TYPES=new AtomicReferenceArray<>(Stage.values().length);
     private PerfFailures() {}

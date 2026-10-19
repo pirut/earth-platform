@@ -65,6 +65,13 @@ final class FarGpu {
     private final int arenaQuads;
     private final List<Arena> arenas = new ArrayList<>();
     private final TextureBuffer columns = new TextureBuffer(GL30C.GL_RGBA32I, 4096, true);
+    /**
+     * Uploads the fade stamps selection writes once it ends, adjacent slots in one call;
+     * -Dearthplatform.far.batchStamps=false uploads each stamp as it is written, as before build 61.
+     */
+    private static final boolean BATCH_STAMPS = !"false".equals(System.getProperty("earthplatform.far.batchStamps"));
+    private final DirtyTexels stamped = new DirtyTexels();
+    private boolean stamping;
     private final TextureBuffer looks = new TextureBuffer(GL30C.GL_RGBA32UI, 8192, true);
     private final it.unimi.dsi.fastutil.ints.IntArrayList freeSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
     private int nextSlot, looksUploaded;
@@ -76,6 +83,24 @@ final class FarGpu {
     @Nullable private Object packPipeline;
     private boolean packOwnDepth, packJittered;
     private long quadBytes;
+
+    /**
+     * Under a shader pack with far terrain's own depth, draws the far terrain twice: a pre-pass
+     * with only the program's fragment dropping and depth, then the shaded pass tested EQUAL
+     * against the depth of the faces the pre-pass kept, with nothing in it that stops the GPU
+     * testing depth before shading. The one-pass program drops fragments and writes depth, so
+     * every face under a pixel was shaded, pack code and all, however many lay behind.
+     * {@code -Dearthplatform.far.depthPrepass=true}; off by default until measured.
+     */
+    static final boolean DEPTH_PREPASS = Boolean.getBoolean("earthplatform.far.depthPrepass");
+    /** What {@link #begin} draws: the one-pass draw, the depth pre-pass, or the shading after it. */
+    static final int ONE_PASS = 0, PREPASS = 1, SHADE = 2;
+    private int phase = ONE_PASS;
+    private final Program[] prepass = new Program[3], shading = new Program[3];
+    private final boolean[] phasedFailed = new boolean[3];
+    /** The fade clock both passes of a pre-passed draw read, so a fade's dither drops the same fragments in both; 0 when not. */
+    private int frozenNow;
+    private int shadeDepthFunc;
 
     /** Faces drawn whole; faces fading out over the outer ring of their level; faces of the coarser level fading in there. */
     static final int NO_FADE = 0, FADE_OUT = 1, FADE_IN = 2;
@@ -150,9 +175,33 @@ final class FarGpu {
      */
     void stamp(int slot, int now, boolean merging) {
         if (slot < 0) return;
+        if (stamping) {
+            int at = slot * 4 + 3;
+            columns.contents[at] = columns.contents[at] & 15 | now << 4 | (merging && now != 0 ? MERGING : 0);
+            stamped.mark(slot);
+            return;
+        }
         int[] texel = columns.texel(slot);
         texel[3] = texel[3] & 15 | now << 4 | (merging && now != 0 ? MERGING : 0);
         columns.upload(slot, texel);
+    }
+
+    /**
+     * From here until {@link #endStamps}, {@link #stamp} only writes the column table's CPU mirror. Nothing draws
+     * with the table in between, so the GPU ends up with the same records as with one upload per stamp.
+     */
+    void beginStamps() {
+        if (!BATCH_STAMPS) return;
+        if (stamping) throw new IllegalStateException("Column stamp batch already open");
+        stamping = true;
+    }
+
+    /** Uploads the stamps written since {@link #beginStamps}, each run of adjacent slots in one call. */
+    void endStamps() {
+        if (!BATCH_STAMPS) return;
+        if (!stamping) throw new IllegalStateException("Column stamp batch not open");
+        stamping = false;
+        stamped.flush(columns::uploadRange);
     }
 
     /**
@@ -233,6 +282,12 @@ final class FarGpu {
         RenderSystem.enableDepthTest();
         RenderSystem.depthMask(true);
         RenderSystem.enableCull();
+        if (phase == PREPASS) frozenNow = now();
+        if (phase == SHADE) {
+            shadeDepthFunc = GL11C.glGetInteger(GL11C.GL_DEPTH_FUNC);
+            RenderSystem.depthMask(false);
+            RenderSystem.depthFunc(GL11C.GL_EQUAL);
+        }
         for (Arena arena : arenas) arena.clearDraws();
         ranges = 0;
         return true;
@@ -249,7 +304,7 @@ final class FarGpu {
         boolean built = program != null;
         if (program == null) program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
         if (program != null && program != current) {
-            if (current.irisUniforms != null) FarIrisUniforms.done();
+            if (current.irisUniforms != null) current.irisUniforms.done();
             use(program);
         }
         return built;
@@ -291,7 +346,7 @@ final class FarGpu {
         if (packMode && packOwnDepth && !near) FarLod.shadowUniforms(program::location);
         GL20C.glUniform1f(program.location("earth_FadeHole"), Far.hole());
         GL20C.glUniform1f(program.location("earth_NearReach"), FarLod.nearReach());
-        GL30C.glUniform1ui(program.location("earth_Now"), now());
+        GL30C.glUniform1ui(program.location("earth_Now"), frozenNow != 0 ? frozenNow : now());
         // Under a pack's TAA the dither moves every frame and blends into a smooth fade; without it, it holds still.
         GL20C.glUniform1f(program.location("earth_DitherFrame"), program.jittered ? frame & 63 : 0);
     }
@@ -344,9 +399,78 @@ final class FarGpu {
         GlStateManager._activeTexture(previousActive);
         GL30C.glBindVertexArray(previousVao);
         BufferUploader.invalidate();
-        if (current.irisUniforms != null) FarIrisUniforms.done();
+        if (current.irisUniforms != null) current.irisUniforms.done();
         GlStateManager._glUseProgram(previousProgram);
         current = null;
+        if (phase == SHADE) {
+            RenderSystem.depthFunc(shadeDepthFunc);
+            RenderSystem.depthMask(true);
+        }
+    }
+
+    /**
+     * After {@link #begin} for the far pass: whether its programs drop every fragment inside the
+     * game's blocks' reach, as the pack's own-depth programs do (not the plain-colour fallback).
+     */
+    boolean dropsNearReach() { return packMode && !near && packPatched && packOwnDepth; }
+
+    /** Sets what the next {@link #begin} draws; back to {@link #ONE_PASS} after the shading pass. */
+    void phase(int phase) {
+        this.phase = phase;
+        if (phase == ONE_PASS) frozenNow = 0;
+    }
+
+    /**
+     * Whether the far draw can go in two passes this frame: the pack's Voxy code builds with far
+     * terrain's own depth and leaves its fragments and depth alone, every fade the one-pass draw
+     * has a program for has both passes' programs too, and nothing blends.
+     */
+    boolean prepassReady(@Nullable FarShaders.PackPatch patch) {
+        if (!DEPTH_PREPASS || patch == null || !FarShaders.prepassSafe(patch.fragment()) || GL11C.glIsEnabled(GL11C.GL_BLEND)) return false;
+        boolean wasNear = near;
+        int was = phase;
+        near = false;
+        try {
+            for (int fade = NO_FADE; fade <= FADE_IN; fade++) {
+                phase = ONE_PASS;
+                if (packProgram(patch, fade) == null) continue;
+                if (!packPatched || !packOwnDepth) return false;
+                phase = PREPASS;
+                if (packProgram(patch, fade) == null) return false;
+                phase = SHADE;
+                if (packProgram(patch, fade) == null) return false;
+            }
+            return true;
+        } finally {
+            near = wasNear;
+            phase = was;
+        }
+    }
+
+    /** A pass of the pre-passed draw's program for a fade, built from the same patch as the one-pass program. */
+    @Nullable private Program phasedProgram(FarShaders.PackPatch patch, int fade) {
+        Program[] programs = phase == PREPASS ? prepass : shading;
+        if (programs[fade] != null || phasedFailed[fade]) return programs[fade];
+        int was = phase;
+        phase = ONE_PASS;
+        Program main = packProgram(patch, fade);
+        phase = was;
+        if (main == null || !packPatched || !packOwnDepth) return null;
+        String jitter = main.jittered && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
+        String header = version + FarShaders.fade(fade) + FarShaders.INVARIANT;
+        String fragment = phase == PREPASS ? FarShaders.packPrepassFragment(version, packCode(patch), fade) : FarShaders.packShadeFragment(version, packCode(patch), fade);
+        Program built = linkPack(jitter, fragment, phase == PREPASS ? "far terrain depth pre-pass" : "far terrain after its pre-pass", header,
+                phase != PREPASS && packSamplers);
+        if (built != null && built.jittered != main.jittered) {
+            built.close();
+            built = null;
+        }
+        if (built == null) {
+            phasedFailed[fade] = true;
+            EarthPlatformMod.LOGGER.warn("Far terrain's depth pre-pass does not build with the shader pack; it draws in one pass");
+        }
+        programs[fade] = built;
+        return built;
     }
 
     /** Draws everything queued, one multi-draw per buffer. */
@@ -423,20 +547,26 @@ final class FarGpu {
                 if (packNear[i] != null) packNear[i].close();
                 pack[i] = packNear[i] = null;
                 packFailed[i] = packNearFailed[i] = false;
+                if (prepass[i] != null) prepass[i].close();
+                if (shading[i] != null) shading[i].close();
+                prepass[i] = shading[i] = null;
+                phasedFailed[i] = false;
             }
             packSource = patch;
+            packCode = null;
             packPipeline = pipeline;
             packOwnDepth = ownDepth;
             packPatched = patch != null;
             packJittered = true;
         }
         if (near) return nearProgram(patch, fade);
+        if (phase != ONE_PASS) return patch == null ? null : phasedProgram(patch, fade);
         if (pack[fade] != null || packFailed[fade]) return pack[fade];
         // Every fade builds as the plain program did: the same patch, jittered or not.
         String jitter = packJittered && patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
         String header = version + FarShaders.fade(fade);
         if (packPatched) {
-            pack[fade] = linkPack(jitter, FarShaders.packFragment(version, patch.fragment(), ownDepth, fade), "far terrain (shader pack)", header);
+            pack[fade] = linkPack(jitter, FarShaders.packFragment(version, packCode(patch), ownDepth, fade), "far terrain (shader pack)", header, packSamplers);
             if (pack[fade] != null) {
                 if (fade == NO_FADE) {
                     packJittered = pack[fade].jittered;
@@ -452,7 +582,7 @@ final class FarGpu {
             packPatched = false;
             EarthPlatformMod.LOGGER.warn("The shader pack's Voxy fragment code does not build for far terrain; using plain colors");
         }
-        pack[fade] = linkPack(jitter, header + FarShaders.PACK_FALLBACK, "far terrain (plain, shader pack)", header);
+        pack[fade] = linkPack(jitter, header + FarShaders.PACK_FALLBACK, "far terrain (plain, shader pack)", header, false);
         if (pack[fade] == null) {
             packFailed[fade] = true;
             if (fade == NO_FADE) EarthPlatformMod.LOGGER.error("Far terrain shader failed to build");
@@ -473,8 +603,8 @@ final class FarGpu {
         near = true;
         if (main == null || patch == null || !packPatched || !packOwnDepth) { packNearFailed[fade] = true; return null; }
         String jitter = main.jittered && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
-        packNear[fade] = linkPack(jitter, FarShaders.packNearFragment(version, patch.fragment(), fade), "far terrain near by (shader pack)",
-                version + FarShaders.fade(fade));
+        packNear[fade] = linkPack(jitter, FarShaders.packNearFragment(version, packCode(patch), fade), "far terrain near by (shader pack)",
+                version + FarShaders.fade(fade), packSamplers);
         if (packNear[fade] == null) {
             packNearFailed[fade] = true;
             EarthPlatformMod.LOGGER.warn("Far terrain near by does not build with the shader pack; it is left out until the game's blocks load");
@@ -486,7 +616,7 @@ final class FarGpu {
     private boolean packPatched;
 
     /** Links a pack program, jittered when {@code jitter} builds, and finds the pack's uniforms in it. */
-    @Nullable private Program linkPack(@Nullable String jitter, String fragment, String name, String header) {
+    @Nullable private Program linkPack(@Nullable String jitter, String fragment, String name, String header, boolean samplers) {
         Program program = null;
         if (jitter != null) {
             try { program = Program.link(FarShaders.packVertex(header, jitter), fragment, name); program.jittered = true; }
@@ -501,9 +631,39 @@ final class FarGpu {
                 return null;
             }
         }
-        if (ShaderBlocks.IRIS) program.irisUniforms = FarIrisUniforms.create(program.id, name);
+        if (ShaderBlocks.IRIS) {
+            try { program.irisUniforms = FarIrisUniforms.create(program.id, name, samplers); }
+            catch (FarIrisUniforms.TooManySamplers full) {
+                EarthPlatformMod.LOGGER.warn("Shader pack {}: its Voxy code reads more textures than are left for far terrain ({}); far terrain uses plain colours",
+                        net.irisshaders.iris.Iris.getCurrentPackName(), full.getMessage());
+                program.close();
+                return null;
+            }
+        }
         return program;
     }
+
+    /**
+     * The pack's Voxy code as it is spliced into far terrain's programs: with declarations of the
+     * uniforms and samplers its {@code voxy.json} lists that it reads without declaring, as Voxy
+     * declares them for it (see {@link FarShaders#voxyDeclarations}). Nothing is added to code
+     * that declares its own or reads none, such as Photon's. Worked out once per pack.
+     */
+    private String packCode(FarShaders.PackPatch patch) {
+        if (packCode != null) return packCode;
+        String declarations = "";
+        packSamplers = false;
+        if (ShaderBlocks.IRIS && (!patch.uniforms().isEmpty() || !patch.samplers().isEmpty())) {
+            declarations = FarShaders.voxyDeclarations(patch.fragment(), patch.uniforms(), FarIrisUniforms.types(patch.uniforms()), patch.samplers());
+            packSamplers = !FarShaders.declaredSamplers(patch.fragment(), patch.samplers()).isEmpty();
+        }
+        packCode = declarations + patch.fragment();
+        return packCode;
+    }
+
+    @Nullable private String packCode;
+    /** Whether {@link #packCode} declares samplers of the pack's, which its programs then bind as Iris does. */
+    private boolean packSamplers;
 
     void close() {
         RenderSystem.assertOnRenderThread();
@@ -513,6 +673,8 @@ final class FarGpu {
         looks.close();
         for (Program program : vanilla) if (program != null) program.close();
         for (Program program : pack) if (program != null) program.close();
+        for (Program program : prepass) if (program != null) program.close();
+        for (Program program : shading) if (program != null) program.close();
         GL30C.glDeleteVertexArrays(vao);
         if (indices != 0) GL15C.glDeleteBuffers(indices);
     }
@@ -605,6 +767,19 @@ final class FarGpu {
                 if (contents != null) System.arraycopy(data, 0, contents, texel * 4, data.length);
                 GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, buffer);
                 GL15C.glBufferSubData(GL31C.GL_COPY_WRITE_BUFFER, texel * 16L, ints);
+                GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, 0);
+            } finally {
+                MemoryUtil.memFree(ints);
+            }
+        }
+
+        /** Uploads texels first up to end from what a buffer that grows holds. */
+        void uploadRange(int first, int end) {
+            IntBuffer ints = MemoryUtil.memAllocInt((end - first) * 4);
+            try {
+                ints.put(contents, first * 4, (end - first) * 4).flip();
+                GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, buffer);
+                GL15C.glBufferSubData(GL31C.GL_COPY_WRITE_BUFFER, first * 16L, ints);
                 GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, 0);
             } finally {
                 MemoryUtil.memFree(ints);

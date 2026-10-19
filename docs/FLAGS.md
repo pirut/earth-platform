@@ -13,6 +13,9 @@ Most are read once when the class that uses them loads, so set them on the comma
 | Flag | Default | What it does | Read in |
 | --- | --- | --- | --- |
 | `earthplatform.rivers.fastSample` | on | `false` restores the allocating per-pixel strength sampler and per-cell nearby maxima lookups for exact-output/performance comparisons | `RiverMap` |
+| `earthplatform.cogs.fastRead` | on | `false` restores per-pixel block lookups and per-pixel overview shapes when 3DEP, REMA and HRDEM files are read; the values read are identical | `FloatCogs` |
+| `earthplatform.climate.rowChunks` | on | `false` keeps CHELSA climate rows in memory whole (320 of them) rather than as 2048-column chunks in the same memory; the far levels re-decoded whole rows thousands of times. Values are identical | `ClimateSource` |
+| `earthplatform.copernicus.fastWeight` | on | `false` makes the Copernicus fill ask the shared caches for each tile pixel's check size and part, and wraps longitudes with remainders only; the weights are identical | `CopernicusFill`, `CopernicusSource` |
 | `earthplatform.earth.offline` | `false` | Never download; only places already in the cache generate. Same as the `offline` setting | `CubicSettings`, `EarthStatus` |
 | `earthplatform.earth.imagery` | `false` | New worlds take ground colors from EOX satellite imagery. Same as the `satelliteImagery` setting | `CubicSettings`, `EarthConfig` |
 | `earthplatform.earth.home` | Yosemite Valley | Default home of new worlds, as `LAT,LON` | `EarthSettings` |
@@ -22,6 +25,8 @@ Most are read once when the class that uses them loads, so set them on the comma
 | `earthplatform.earth.rema` | on | `false` leaves REMA (Antarctica) out of new worlds | `CubicSettings.elevation()` |
 | `earthplatform.earth.ign` | on | `false` leaves IGN RGE ALTI (France) out of new worlds | `CubicSettings.elevation()` |
 | `earthplatform.earth.gsi` | on | `false` leaves GSI (Japan) out of new worlds | `CubicSettings.elevation()` |
+| `earthplatform.cubes.fastBlobs` | on | `false` restores ore and rock blobs' per-block sphere sums, their writes of blocks that are already the vein's, and the walk through the spheres of blobs that cannot reach the cube; the cubes are identical | `Underground` |
+| `earthplatform.cubes.plainRandom` | on | `false` draws each cube's veins, cave plants and structure plans from vanilla's legacy random source (an atomic seed) instead of the plain one; both give the same numbers | `Underground`, `Structures` |
 
 A world pins its elevation layers when it is made, so the layer flags only change new worlds.
 
@@ -29,6 +34,7 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 
 | Flag | Default | What it does | Read in |
 | --- | --- | --- | --- |
+| `earthplatform.far.fastReach` | on | `false` restores the shrinking flood queue, a fresh mark array per flood and a land cover lookup per sample in the water reach windows (`reachLevels`); output is identical | `EarthGenerator` |
 | `earthplatform.far.detail` | 11 | How far fine far terrain reaches, 4 to 48 (past 24 is the extreme range). Same as the `detail` setting | `Far.DETAIL` |
 | `earthplatform.far.textured` | from settings | Far levels drawn with block textures; coarser ones use flat colors. Same as the `texturedLevels` setting | `FarRenderer` |
 | `earthplatform.far.threads` | (cores - 4) / 2, 2 to 8 | Server workers that make far columns | `FarServer.WORKERS` |
@@ -46,6 +52,9 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.trackBytes` | on | `false` sums every column for each memory query, for comparing | `FarRenderer` |
 | `earthplatform.far.cachePick` | on | `false` rebuilds selection, sorting and face groups every frame, for comparing | `FarRenderer` |
 | `earthplatform.far.fastWater` | on | `false` restores full water scans and uniform updates, for comparing | `FarRenderer`, `FarLod` |
+| `earthplatform.far.batchStamps` | on | Uploads the fade stamps selection writes once it ends, adjacent slots in one call; `false` uploads each stamp as it is written, for comparing | `FarGpu` |
+| `earthplatform.far.skipNear` | on | Under a shader pack with Voxy support, leaves out of the far pass the columns that lie wholly inside the game's blocks' reach, where that pass draws no pixel of them anyway (the near pass still draws them). `false` draws them, for comparing | `FarRenderer`, `FarNearSkip` |
+| `earthplatform.far.depthPrepass` | `false` | Experimental. Under a shader pack with Voxy support, draws far terrain in two passes: depth first (the same dropped fragments and slope depth as the one-pass draw), then the pack's shading tested equal against the depth of the faces the first pass kept, so hidden far faces are no longer shaded. Packs whose Voxy code mentions `discard`, `gl_FragDepth` or `gl_SampleMask`, or a blended draw, stay on the one-pass draw. Meant to draw the same pixels; off until measured | `FarGpu`, `FarLod` |
 | `earthplatform.far.indexedAllocator` | on | Finds free GPU space by size; `false` scans free ranges by address, for comparing | `FarGpu` |
 | `earthplatform.far.cacheCoverage` | on | Works out once per far column which parts near cubes cover; `false` looks them up per block, for comparing | `FarMesher`, `FarColumnMesh` |
 | `earthplatform.far.runMesher` | on | Meshes plain far columns (level 3 and coarser, one biome per column, no near cubes) from vertical runs of blocks, with the same faces in the same order; anything else uses the block-by-block mesher. `false` always uses the block-by-block mesher, for comparing | `FarMesher` |
@@ -58,6 +67,7 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.view.behind` | 4 | How many times as far ground straight behind the player counts as | `ViewOrder` |
 | `earthplatform.cubic.buried` | `false` | Make every buried cube instead of skipping rock out of sight | `ServerCubeWorld` |
 | `earthplatform.cubic.bytesPerTick` | 262144 | Terrain bytes a remote player is sent per tick | `Throttle` |
+| `earthplatform.cubic.lightmapRing` | on | In cubic worlds without a shader pack, uploads the game's lightmap to three textures in turn, so an upload never waits on frames still drawing with the last one; the same pixels are drawn. `false` always uploads to the one texture, for comparing | `CubicLightmapTexture` |
 
 ## Shaders, debugging and measuring
 

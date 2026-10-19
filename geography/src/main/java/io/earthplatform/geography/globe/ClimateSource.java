@@ -50,6 +50,16 @@ public final class ClimateSource implements AutoCloseable {
     static final double NORTH = 84, WEST = -180;
     /** Elevation columns fetched together. */
     static final int DEM_CHUNK = 2048;
+    /**
+     * Rows are kept in memory as chunks of {@value #DEM_CHUNK} columns, as the elevation is, rather than whole: a
+     * row is 43,200 columns round the globe, and the farthest far levels, some 200 km across, read about 840 rows
+     * of under 300 columns each. Whole rows, 320 kept, were decoded again and again (25,000 times for 600 columns of
+     * level 8); chunks keep all of them in the same memory. {@code false} keeps whole rows, for comparisons; the
+     * values are the same either way.
+     */
+    private static final boolean ROW_CHUNKS = !"false".equals(System.getProperty("earthplatform.climate.rowChunks"));
+    /** Chunks kept for each whole row the budget names: 8 KiB elevation chunks or 4 KiB row chunks, at most 80 KiB a row. */
+    private static final int CHUNKS_PER_ROW_KEPT = 10;
     private static final double GRAVITY = 9.80665;
     private static final int HEADER_BYTES = 256 << 10, MAX_HEADER_BYTES = 2 << 20, MAX_ROW_BYTES = 1 << 20;
 
@@ -71,6 +81,8 @@ public final class ClimateSource implements AutoCloseable {
     private final Path cacheRoot;
     private final boolean allowNetwork;
     private final int maxRowsInMemory;
+    /** Pieces kept in memory: rows, or with {@link #ROW_CHUNKS} the chunks of rows, which hold about the same bytes. */
+    private final int maxPiecesInMemory;
     private final RangeFiles files;
     private final Map<Layer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
     private final LruMap<Long, Object> memory = new LruMap<>(64);
@@ -92,6 +104,7 @@ public final class ClimateSource implements AutoCloseable {
         this.cacheRoot = cacheRoot;
         this.allowNetwork = allowNetwork;
         this.maxRowsInMemory = maxRowsInMemory;
+        this.maxPiecesInMemory = ROW_CHUNKS ? maxRowsInMemory * CHUNKS_PER_ROW_KEPT : maxRowsInMemory;
         this.files = new RangeFiles("Climate", DATASET_ID, "earth-climate-io", maxConcurrentTransfers, timeout);
     }
 
@@ -106,10 +119,23 @@ public final class ClimateSource implements AutoCloseable {
         double weights = 0, mean = 0, warm = 0, rain = 0;
         for (int dy = 0; dy < 2; dy++) {
             int row = Math.clamp(y0 + dy, 0, HEIGHT - 1);
-            short[] meanRow = row(Layer.MEAN, row), warmRow = row(Layer.WARM, row), rainRow = row(Layer.RAIN, row);
+            short[] meanRow, warmRow, rainRow, meanNext = null, warmNext = null, rainNext = null;
+            int first = Math.floorMod(x0, WIDTH), chunk = first / DEM_CHUNK, nextChunk = Math.floorMod(x0 + 1, WIDTH) / DEM_CHUNK;
+            if (ROW_CHUNKS) {
+                // The two columns read nearly always share a chunk.
+                meanRow = chunk(Layer.MEAN, row, chunk); warmRow = chunk(Layer.WARM, row, chunk); rainRow = chunk(Layer.RAIN, row, chunk);
+                if (nextChunk != chunk) {
+                    meanNext = chunk(Layer.MEAN, row, nextChunk); warmNext = chunk(Layer.WARM, row, nextChunk); rainNext = chunk(Layer.RAIN, row, nextChunk);
+                }
+            } else {
+                meanRow = row(Layer.MEAN, row); warmRow = row(Layer.WARM, row); rainRow = row(Layer.RAIN, row);
+            }
             for (int dx = 0; dx < 2; dx++) {
                 int column = Math.floorMod(x0 + dx, WIDTH);
-                int m = Short.toUnsignedInt(meanRow[column]), w = Short.toUnsignedInt(warmRow[column]), r = Short.toUnsignedInt(rainRow[column]);
+                boolean next = ROW_CHUNKS && dx == 1 && nextChunk != chunk;
+                int at = ROW_CHUNKS ? column - column / DEM_CHUNK * DEM_CHUNK : column;
+                int m = Short.toUnsignedInt((next ? meanNext : meanRow)[at]), w = Short.toUnsignedInt((next ? warmNext : warmRow)[at]),
+                        r = Short.toUnsignedInt((next ? rainNext : rainRow)[at]);
                 if (m == 0 || m == 0xFFFF || w == 0 || w == 0xFFFF || r == 0xFFFF) continue;
                 double weight = (dx == 0 ? 1 - tx : tx) * (dy == 0 ? 1 - ty : ty);
                 if (weight <= 0) continue;
@@ -123,7 +149,7 @@ public final class ClimateSource implements AutoCloseable {
         }
         if (weights <= 0) return null;
         int row = Math.clamp((int) Math.floor(fy + 0.5), 0, HEIGHT - 1), column = Math.floorMod((int) Math.floor(fx + 0.5), WIDTH);
-        int koppen = Short.toUnsignedInt(row(Layer.KOPPEN, row)[column]);
+        int koppen = Short.toUnsignedInt(ROW_CHUNKS ? sample(Layer.KOPPEN, row, column) : row(Layer.KOPPEN, row)[column]);
         if (koppen > EF) koppen = NO_DATA;
         return new Climate(koppen, mean / weights - LAPSE_RATE * metres, warm / weights - LAPSE_RATE * metres, rain / weights);
     }
@@ -139,9 +165,11 @@ public final class ClimateSource implements AutoCloseable {
         int x0 = (int) Math.floor(fx), y0 = (int) Math.floor(fy);
         double tx = fx - x0, ty = fy - y0, weights = 0, rain = 0;
         for (int dy = 0; dy < 2; dy++) {
-            short[] rainRow = row(Layer.RAIN, Math.clamp(y0 + dy, 0, HEIGHT - 1));
+            int row = Math.clamp(y0 + dy, 0, HEIGHT - 1);
+            short[] rainRow = ROW_CHUNKS ? null : row(Layer.RAIN, row);
             for (int dx = 0; dx < 2; dx++) {
-                int r = Short.toUnsignedInt(rainRow[Math.floorMod(x0 + dx, WIDTH)]);
+                int column = Math.floorMod(x0 + dx, WIDTH);
+                int r = Short.toUnsignedInt(ROW_CHUNKS ? sample(Layer.RAIN, row, column) : rainRow[column]);
                 double weight = (dx == 0 ? 1 - tx : tx) * (dy == 0 ? 1 - ty : ty);
                 if (r == 0xFFFF || weight <= 0) continue;
                 weights += weight;
@@ -161,7 +189,10 @@ public final class ClimateSource implements AutoCloseable {
         double span = Math.min(360, east - west);
         int first = (int) Math.floor((wrap(west) - WEST) * PIXELS_PER_DEGREE) - 1, columns = (int) Math.ceil(span * PIXELS_PER_DEGREE) + 3;
         List<Runnable> loads = new ArrayList<>();
-        for (Layer layer : Layer.values()) loads.add(() -> rows(layer, top, bottom));
+        java.util.Set<Integer> across = new java.util.TreeSet<>();
+        for (int c = 0; c < columns; c += DEM_CHUNK / 2) across.add(Math.floorMod(first + c, WIDTH) / DEM_CHUNK);
+        across.add(Math.floorMod(first + columns - 1, WIDTH) / DEM_CHUNK);
+        for (Layer layer : Layer.values()) loads.add(() -> rows(layer, top, bottom, across));
         for (int row = top; row <= bottom; row++) {
             int r = row;
             java.util.Set<Integer> chunks = new java.util.TreeSet<>();
@@ -179,13 +210,17 @@ public final class ClimateSource implements AutoCloseable {
      * Loads rows top to bottom of a variable. Rows not cached yet are read with as few requests as
      * their places in the file allow: their strips are sorted by offset (the files keep them in no
      * particular order) and strips close together come in one request.
+     *
+     * @param span the chunks of each row the caller will read, kept with {@link #ROW_CHUNKS}
      */
-    private void rows(Layer layer, int top, int bottom) {
+    private void rows(Layer layer, int top, int bottom, java.util.Set<Integer> span) {
         Header header = header(layer);
         List<Integer> missing = new ArrayList<>();
         for (int row = top; row <= bottom; row++) {
             long count = header.counts[row];
-            if (!allowNetwork || cacheRoot == null || count <= 0 || count > MAX_ROW_BYTES || present(layer, row)) row(layer, row);
+            if (!allowNetwork || cacheRoot == null || count <= 0 || count > MAX_ROW_BYTES || present(layer, row)) {
+                if (ROW_CHUNKS) rowChunks(layer, row, span); else row(layer, row);
+            }
             else missing.add(row);
         }
         missing.sort((a, b) -> Long.compare(header.offsets[a], header.offsets[b]));
@@ -209,6 +244,17 @@ public final class ClimateSource implements AutoCloseable {
             for (int k = first; k < i; k++) {
                 int row = missing.get(k), from = (int) (header.offsets[row] - start);
                 byte[] raw = Arrays.copyOfRange(run, from, from + (int) header.counts[row]);
+                if (ROW_CHUNKS) {
+                    short[] decoded;
+                    try {
+                        decoded = decode(raw, header);
+                        DiskCache.write(cacheRoot.resolve(layer.stem() + "/" + row + ".z"), raw);
+                    } catch (IOException failure) {
+                        throw new MissingTerrainException("Climate row " + row + " of " + layer.stem() + " failed: " + failure);
+                    }
+                    keep(layer, row, decoded, span);
+                    continue;
+                }
                 cached(key(layer.ordinal(), row, 0), () -> {
                     short[] decoded = decode(raw, header);
                     DiskCache.write(cacheRoot.resolve(layer.stem() + "/" + row + ".z"), raw);
@@ -221,7 +267,8 @@ public final class ClimateSource implements AutoCloseable {
     /** Whether a row is in memory or on disk already. */
     private boolean present(Layer layer, int row) {
         long key = key(layer.ordinal(), row, 0);
-        synchronized (memory) { if (memory.containsKey(key)) return true; }
+        // Chunks kept in memory came from the disk, or were written to it.
+        if (!ROW_CHUNKS) synchronized (memory) { if (memory.containsKey(key)) return true; }
         return Files.isRegularFile(cacheRoot.resolve(layer.stem() + "/" + row + ".z"), LinkOption.NOFOLLOW_LINKS);
     }
 
@@ -236,6 +283,50 @@ public final class ClimateSource implements AutoCloseable {
 
     private short[] row(Layer layer, int row) {
         return (short[]) cached(key(layer.ordinal(), row, 0), () -> readRow(layer, row), "climate row");
+    }
+
+    /** A row's value at a column, from the chunk of the row holding it. */
+    private short sample(Layer layer, int row, int column) {
+        int chunk = column / DEM_CHUNK;
+        return chunk(layer, row, chunk)[column - chunk * DEM_CHUNK];
+    }
+
+    /** Columns {@code chunk * DEM_CHUNK} on of a row. */
+    private short[] chunk(Layer layer, int row, int chunk) {
+        return (short[]) cached(key(layer.ordinal(), row, chunk + 1), () -> rowChunk(readRow(layer, row), chunk), "climate row");
+    }
+
+    private static short[] rowChunk(short[] row, int chunk) {
+        int from = chunk * DEM_CHUNK;
+        return Arrays.copyOfRange(row, from, Math.min(WIDTH, from + DEM_CHUNK));
+    }
+
+    /** Loads a row's chunks among {@code chunks} not already in memory, decoding the row at most once. */
+    private void rowChunks(Layer layer, int row, java.util.Set<Integer> chunks) {
+        boolean all = true;
+        synchronized (memory) {
+            for (int chunk : chunks) if (!memory.containsKey(key(layer.ordinal(), row, chunk + 1))) { all = false; break; }
+        }
+        if (all) return;
+        short[] decoded;
+        try {
+            decoded = readRow(layer, row);
+        } catch (IOException failure) {
+            throw new MissingTerrainException("Climate row " + row + " of " + layer.stem() + " failed: " + failure);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new MissingTerrainException("Interrupted reading climate row " + row + " of " + layer.stem());
+        }
+        keep(layer, row, decoded, chunks);
+    }
+
+    private void keep(Layer layer, int row, short[] decoded, java.util.Set<Integer> chunks) {
+        synchronized (memory) {
+            for (int chunk : chunks) {
+                long key = key(layer.ordinal(), row, chunk + 1);
+                if (!memory.containsKey(key)) memory.putAndTrim(key, rowChunk(decoded, chunk), maxPiecesInMemory);
+            }
+        }
     }
 
     /** Height in metres of a pixel in CHELSA's elevation grid (sea level where it has none). */
@@ -256,7 +347,7 @@ public final class ClimateSource implements AutoCloseable {
         if (hit == null) {
             hit = files.singleFlight(inFlight, key, load, piece);
             synchronized (memory) {
-                memory.putAndTrim(key, hit, maxRowsInMemory);
+                memory.putAndTrim(key, hit, maxPiecesInMemory);
             }
         }
         mine.put(key, hit);

@@ -30,8 +30,9 @@ public final class FarPackPatch {
         try {
             String patch = sources.apply(directory.resolve("voxy_opaque.glsl"));
             if (patch == null || patch.isBlank()) return;
-            String jitter = FarShaders.taaOffset(sources.apply(directory.resolve("voxy.json")));
-            PATCHES.put(programs, new FarShaders.PackPatch(patch, jitter));
+            String settings = sources.apply(directory.resolve("voxy.json"));
+            String jitter = FarShaders.taaOffset(settings);
+            PATCHES.put(programs, new FarShaders.PackPatch(patch, jitter, FarShaders.voxyUniforms(settings), FarShaders.voxySamplers(settings)));
             EarthPlatformMod.LOGGER.info("Shader pack folder {} has Voxy fragment code ({} characters) for far terrain{}",
                     directory.getPathString(), patch.length(), jitter == null ? "" : ", with its TAA jitter");
         } catch (RuntimeException failure) {
