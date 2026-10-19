@@ -100,6 +100,7 @@
     "CubicDestroyProgressMixin",
     "CubicFarPlaneMixin",
     "CubicLevelPassMixin",
+    "CubicWorldThumbnailMixin",
     "CubicShaderFarMixin",
     "CubicIrisSourceNamesMixin",
     "CubicIrisProgramSetMixin",
