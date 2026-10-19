@@ -210,8 +210,9 @@ public final class ClimateSource implements AutoCloseable {
      * Loads rows top to bottom of a variable. Rows not cached yet are read with as few requests as
      * their places in the file allow: their strips are sorted by offset (the files keep them in no
      * particular order) and strips close together come in one request.
+     *
+     * @param span the chunks of each row the caller will read, kept with {@link #ROW_CHUNKS}
      */
-    /** @param span the chunks of each row the caller will read, kept with {@link #ROW_CHUNKS} */
     private void rows(Layer layer, int top, int bottom, java.util.Set<Integer> span) {
         Header header = header(layer);
         List<Integer> missing = new ArrayList<>();
@@ -284,7 +285,6 @@ public final class ClimateSource implements AutoCloseable {
         return (short[]) cached(key(layer.ordinal(), row, 0), () -> readRow(layer, row), "climate row");
     }
 
-    /** Height in metres of a pixel in CHELSA's elevation grid (sea level where it has none). */
     /** A row's value at a column, from the chunk of the row holding it. */
     private short sample(Layer layer, int row, int column) {
         int chunk = column / DEM_CHUNK;
@@ -329,6 +329,7 @@ public final class ClimateSource implements AutoCloseable {
         }
     }
 
+    /** Height in metres of a pixel in CHELSA's elevation grid (sea level where it has none). */
     private double height(int row, int column) {
         float[] chunk = (float[]) cached(key(DEM, row, column / DEM_CHUNK), () -> readDem(row, column / DEM_CHUNK), "climate elevation");
         return chunk[column % DEM_CHUNK];
