@@ -8,6 +8,8 @@ final class LightmapRing {
     private int[] ids;
     private int cursor;
 
+    private static boolean assigned(int id) { return id != 0 && id != -1; }
+
     boolean active() { return ids != null; }
     int[] snapshot() { return ids == null ? new int[0] : ids.clone(); }
     boolean owns(int id) {
@@ -17,19 +19,19 @@ final class LightmapRing {
 
     int advance(int current, IntSupplier create, IntConsumer free) {
         if (ids == null) {
-            if (current <= 0) throw new IllegalStateException("Missing original lightmap texture");
+            if (!assigned(current)) throw new IllegalStateException("Missing original lightmap texture");
             int first = -1, second = -1;
             try {
                 first = create.getAsInt();
-                if (first <= 0 || first == current) throw new IllegalStateException("Invalid lightmap allocation");
+                if (!assigned(first) || first == current) throw new IllegalStateException("Invalid lightmap allocation");
                 second = create.getAsInt();
-                if (second <= 0 || second == current || second == first)
+                if (!assigned(second) || second == current || second == first)
                     throw new IllegalStateException("Invalid lightmap allocation");
                 ids = new int[] {current, first, second};
                 cursor = 0;
             } catch (RuntimeException failure) {
-                if (first > 0 && first != current) rollback(first, free, failure);
-                if (second > 0 && second != current && second != first) rollback(second, free, failure);
+                if (assigned(first) && first != current) rollback(first, free, failure);
+                if (assigned(second) && second != current && second != first) rollback(second, free, failure);
                 throw failure;
             }
         } else if (!owns(current)) throw new IllegalStateException("Lightmap texture changed outside its owner");

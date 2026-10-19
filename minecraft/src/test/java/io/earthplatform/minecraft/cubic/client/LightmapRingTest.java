@@ -59,7 +59,7 @@ class LightmapRingTest {
     }
 
     @Test void invalidAllocatorResultsNeverDeleteOriginalOrDeleteAnExtraTwice() {
-        for (int[] answers : new int[][] {{0}, {10}, {11, 0}, {11, 10}, {11, 11}}) {
+        for (int[] answers : new int[][] {{0}, {-1}, {10}, {11, -1}, {11, 0}, {11, 10}, {11, 11}}) {
             LightmapRing ring = new LightmapRing();
             AtomicInteger at = new AtomicInteger();
             List<Integer> freed = new ArrayList<>();
@@ -91,5 +91,17 @@ class LightmapRingTest {
         assertThrows(IllegalStateException.class, () -> ring.advance(99, next::getAndIncrement, id -> fail()));
         List<Integer> freed = new ArrayList<>(); ring.release(freed::add);
         assertEquals(List.of(11, 12), freed);
+    }
+    @Test void unsignedGlNamesWithTheHighBitSetRemainValidJavaInts() {
+        LightmapRing ring = new LightmapRing();
+        AtomicInteger next = new AtomicInteger(-2);
+        List<Integer> freed = new ArrayList<>();
+        int original = Integer.MIN_VALUE;
+        int current = ring.advance(original, next::getAndDecrement, freed::add);
+        assertEquals(-2, current);
+        assertEquals(-3, current = ring.advance(current, next::getAndDecrement, freed::add));
+        assertEquals(original, ring.advance(current, next::getAndDecrement, freed::add));
+        ring.release(freed::add);
+        assertEquals(List.of(-2, -3), freed);
     }
 }

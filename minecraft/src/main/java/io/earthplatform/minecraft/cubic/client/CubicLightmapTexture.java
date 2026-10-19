@@ -28,6 +28,8 @@ public final class CubicLightmapTexture extends DynamicTexture {
     private final IntConsumer discard = this::discard;
     private int[] intParameters;
     private float[] floatParameters, border;
+    private int storageFormat;
+    private float anisotropy = Float.NaN;
     private boolean uploading, failed;
     private long allocations, releases, rotations, restores, uploads;
 
@@ -42,6 +44,15 @@ public final class CubicLightmapTexture extends DynamicTexture {
 
     private void captureParameters(int original) {
         GlStateManager._bindTexture(original);
+        if (GL11C.glGetTexLevelParameteri(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_TEXTURE_WIDTH) != 16
+                || GL11C.glGetTexLevelParameteri(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_TEXTURE_HEIGHT) != 16
+                || GL11C.glGetTexParameteri(GL11C.GL_TEXTURE_2D, GL12C.GL_TEXTURE_BASE_LEVEL) != 0
+                || GL11C.glGetTexParameteri(GL11C.GL_TEXTURE_2D, GL12C.GL_TEXTURE_MAX_LEVEL) != 0)
+            throw new IllegalStateException("Unsupported lightmap storage");
+        storageFormat = GL11C.glGetTexLevelParameteri(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_TEXTURE_INTERNAL_FORMAT);
+        anisotropy = GL.getCapabilities().GL_EXT_texture_filter_anisotropic
+                ? GL11C.glGetTexParameterf(GL11C.GL_TEXTURE_2D,
+                        org.lwjgl.opengl.EXTTextureFilterAnisotropic.GL_TEXTURE_MAX_ANISOTROPY_EXT) : Float.NaN;
         intParameters = new int[INT_PARAMETERS.length];
         for (int i = 0; i < intParameters.length; i++)
             intParameters[i] = GL11C.glGetTexParameteri(GL11C.GL_TEXTURE_2D, INT_PARAMETERS[i]);
@@ -54,9 +65,15 @@ public final class CubicLightmapTexture extends DynamicTexture {
 
     private int allocate() {
         int texture = TextureUtil.generateTextureId();
-        if (texture <= 0) throw new IllegalStateException("Lightmap texture allocation failed");
+        if (texture == 0 || texture == NOT_ASSIGNED) throw new IllegalStateException("Lightmap texture allocation failed");
         try {
             TextureUtil.prepareImage(texture, 16, 16);
+            if (GL11C.glGetTexLevelParameteri(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_TEXTURE_WIDTH) != 16
+                    || GL11C.glGetTexLevelParameteri(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_TEXTURE_HEIGHT) != 16
+                    || GL11C.glGetTexLevelParameteri(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_TEXTURE_INTERNAL_FORMAT) != storageFormat)
+                throw new IllegalStateException("Lightmap backing storage unavailable");
+            if (!Float.isNaN(anisotropy)) GlStateManager._texParameter(GL11C.GL_TEXTURE_2D,
+                    org.lwjgl.opengl.EXTTextureFilterAnisotropic.GL_TEXTURE_MAX_ANISOTROPY_EXT, anisotropy);
             for (int i = 0; i < intParameters.length; i++)
                 GlStateManager._texParameter(GL11C.GL_TEXTURE_2D, INT_PARAMETERS[i], intParameters[i]);
             for (int i = 0; i < floatParameters.length; i++)
@@ -65,7 +82,8 @@ public final class CubicLightmapTexture extends DynamicTexture {
             allocations++;
             return texture;
         } catch (RuntimeException failure) {
-            TextureUtil.releaseTextureId(texture);
+            try { TextureUtil.releaseTextureId(texture); }
+            catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
             throw failure;
         }
     }
