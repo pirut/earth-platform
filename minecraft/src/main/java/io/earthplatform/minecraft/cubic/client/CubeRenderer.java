@@ -99,6 +99,8 @@ public final class CubeRenderer {
     CubeRenderer(ClientCubeWorld world) { this.world = world; }
 
     public int meshCount() { return meshes.size(); }
+    /** Cube meshes in the most recently rendered view, including retained transition meshes. */
+    public int visibleMeshCount() { return visible.size(); }
     public int pendingCount() { return dirty.size() + building.size(); }
 
     /** Meshes in view (within 60 degrees of where the player looks) and behind, to see how the view fills in. */
