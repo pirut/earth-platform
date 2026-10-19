@@ -141,5 +141,92 @@
   },
   "candidate_performance_status": "native ABBA and Photon/streaming controls in progress",
   "native_dedicated_gpu_tested": false,
-  "quality_oracles_status": "headless exact grid and mutation tests passed; native checks in progress"
+  "quality_oracles_status": "headless exact grid and mutation tests passed; native checks in progress",
+  "cloud_cache_abba": {
+    "cloud-cached-1": {
+      "frames": 2110,
+      "fps": 46.82855311623688,
+      "p95_ms": 39.665417,
+      "p99_ms": 40.248625,
+      "max_ms": 54.741666,
+      "over40_pct": 1.7061611374407584,
+      "over100": 0,
+      "trimmed_2_seconds_each_end": {
+        "frames": 1921,
+        "fps": 46.798044720715374,
+        "p95_ms": 39.647125,
+        "p99_ms": 40.248625
+      }
+    },
+    "cloud-cached-2": {
+      "frames": 2104,
+      "fps": 46.6778106796751,
+      "p95_ms": 39.666,
+      "p99_ms": 40.018166,
+      "max_ms": 283.528666,
+      "over40_pct": 1.0456273764258555,
+      "over100": 1,
+      "trimmed_2_seconds_each_end": {
+        "frames": 1917,
+        "fps": 46.63714955880053,
+        "p95_ms": 39.683375,
+        "p99_ms": 40.06575
+      }
+    },
+    "cloud-forced-0": {
+      "frames": 2114,
+      "fps": 46.957487403643675,
+      "p95_ms": 36.736917,
+      "p99_ms": 38.125584,
+      "max_ms": 39.834042,
+      "over40_pct": 0.0,
+      "over100": 0,
+      "trimmed_2_seconds_each_end": {
+        "frames": 1927,
+        "fps": 46.94977185497454,
+        "p95_ms": 36.719041,
+        "p99_ms": 38.127375
+      }
+    },
+    "cloud-forced-3": {
+      "frames": 2113,
+      "fps": 46.923396908921994,
+      "p95_ms": 37.133125,
+      "p99_ms": 38.38175,
+      "max_ms": 65.608041,
+      "over40_pct": 0.047326076668244205,
+      "over100": 0,
+      "trimmed_2_seconds_each_end": {
+        "frames": 1926,
+        "fps": 46.91423849452355,
+        "p95_ms": 37.154333,
+        "p99_ms": 38.38175
+      }
+    }
+  },
+  "cloud_cache_acceptance": "rejected: no mean FPS gain; both reuse windows worsened p95/p99 and >40ms frames; reverted in 093a9d2",
+  "proposed_code": "mesher result ownership only",
+  "native_cloud_opacity_oracles": [
+    {
+      "label": "arrivals",
+      "cases": 96,
+      "float_channels": 104544,
+      "columns": 2220,
+      "mismatches": 0
+    },
+    {
+      "label": "warm",
+      "cases": 96,
+      "float_channels": 104544,
+      "columns": 58909,
+      "mismatches": 0
+    },
+    {
+      "label": "after-controls",
+      "cases": 96,
+      "float_channels": 104544,
+      "columns": 58909,
+      "mismatches": 0
+    }
+  ]
 }

@@ -1,6 +1,6 @@
 # Build 58 performance continuation
 
-Baseline is released alpha.58, main `4cd96bf`; candidate gameplay source is `f5462ef`, based on that main. This is work in progress: no candidate FPS improvement or completed acceptance gate is claimed yet. Command caching and shadow hints remain disabled. No player switches, quality or distance changes are introduced.
+Baseline is released alpha.58, main `4cd96bf`. The proposed code now contains only mesher result ownership cleanup from `f5462ef`. The exact cloud-cache experiment in that native candidate failed its end-to-end acceptance gate and was reverted in `093a9d2`. No FPS gain is claimed. Command caching and shadow hints remain disabled. No player switches, quality or distance changes are introduced.
 
 ## Evidence and changes
 
@@ -12,11 +12,22 @@ The fresh Mac baseline used the published JAR, the existing 1708 × 960 framebuf
 - The settled scene held 58,909 far columns, 17,005 visible, 27,535 draw ranges, with no generation, meshing or uploads pending. Cloud-related stacks appeared in 376 of 812 render-thread Java execution samples without shaders, and zero with Photon. Sample share is not a whole-frame time percentage.
 - Cumulative per-thread allocation counter deltas in the movement profile show about 287 MiB/s in near meshing, 280 MiB/s in far meshing, 507 MiB/s in far generation and 140 MiB/s in near generation, plus render/server work. Raw ObjectAllocationSample weights carried older per-thread history and are not used as phase allocation totals.
 
-### Exact cloud terrain-grid reuse (`3f7ecd8`)
+### Rejected exact cloud terrain-grid experiment (`3f7ecd8`, reverted `093a9d2`)
 
 Cache only integer corner maxima for one FarRenderer, keyed by the existing column revision and exact bits of grid inputs. Receipts/replacements/edits and eviction advance that revision; movement or grid changes rebuild the data. Nonfinite inputs always rebuild. The original integer addition, floating-point cell mapping, inclusive boundaries and corner maxima are preserved. Deck/opacity, wind, colour, vertices, textures and projection still update on the original path. Photon keeps its own clouds and does not use this cache. Retained storage is about 8.3 KiB per renderer. Arrays are reused on misses as well as hits.
 
-The headless oracle compares the original clearance algorithm bit-for-bit across boundaries, overlapping columns, negative/extreme coordinates, movement, grid/deck changes, arrival/edit/removal revisions, revision wrap and world isolation. Native opacity checks and whole-frame cache-miss/cache-hit ABBA controls are in progress. Forcing misses is a local test-driver action, not a player option.
+The headless oracle compared the original clearance algorithm bit-for-bit across boundaries, overlapping columns, negative/extreme coordinates, movement, grid/deck changes, arrival/edit/removal revisions, revision wrap and world isolation. Three native oracles checked 96 cases / 104,544 float-opacity channels each: during arrivals with 2,220 held columns, then twice with 58,909 held columns. All had zero bit mismatches.
+
+The matched 45-second same-process controls rejected reuse:
+
+| In time order | FPS | p95 ms | p99 ms | Frames >40 ms |
+| --- | ---: | ---: | ---: | ---: |
+| Force rebuild | 46.96 | 36.74 | 38.13 | 0.000% |
+| Reuse | 46.83 | 39.67 | 40.25 | 1.706% |
+| Reuse | 46.68 | 39.67 | 40.02 | 1.046% |
+| Force rebuild | 46.92 | 37.13 | 38.38 | 0.047% |
+
+Both reverse controls recovered the earlier distribution. The second reuse window contained one 283.54 ms frame; full and two-second-trimmed distributions are retained in the JSON. Reuse saved Java work but produced no average-FPS improvement and consistently worsened tails, so it is absent from the proposed code. Forcing misses was a local test-driver action, not a player option. The control did not alter the draw-command buffer path, making it independent evidence that removing CPU work can change this Mac's frame cadence. It does not establish the underlying driver mechanism or behavior on other GPUs.
 
 ### Mesher result ownership (`f5462ef`)
 
@@ -26,6 +37,6 @@ The ownership queue now closes publication atomically, disposes late completions
 
 ## Validation and remaining gates
 
-Local verifyShimArtifact and actual-Photon validation passed: 163 tests total, 159 passed, four optional benchmark skips, zero failures/errors. Candidate native frame-tail, opacity equivalence, Photon and streaming controls are still running. Performance acceptance requires useful end-to-end gains without worse p95/p99 or stutters; a component sample reduction alone is insufficient. No additional third-party performance mods were installed. No NVIDIA/AMD native GPU or real VR hardware was tested; portable Java behavior and unchanged shader inputs do not substitute for those hardware checks. Nothing was merged or released by the agent.
+Local verifyShimArtifact and actual-Photon validation passed: 163 tests total, 159 passed, four optional benchmark skips, zero failures/errors. The native opacity and cloud ABBA controls completed; cloud reuse was rejected. Photon and streaming controls of the experimental artifact are finishing, and the final ownership-only artifact still needs its final build/smoke identity check. Performance acceptance requires useful end-to-end gains without worse p95/p99 or stutters; a component sample reduction alone is insufficient. No additional third-party performance mods were installed. No NVIDIA/AMD native GPU or real VR hardware was tested; portable Java behavior and unchanged shader inputs do not substitute for those hardware checks. Nothing was merged or released by the agent.
 
 Sanitized values are in [measurements.json](measurements.json). Raw JFR, worlds, account identifiers, screenshots and logs remain local. Further command-cache work must distinguish native argument-buffer reuse from CPU/driver cadence; no mechanism is established yet. Server far generation already suppresses byte-identical edit payloads and skips out-of-range tasks, so those existing checks are not claimed as new work.
