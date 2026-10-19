@@ -24,6 +24,12 @@ import java.util.function.IntFunction;
  */
 final class FloatCogs implements AutoCloseable {
     private static final int HEADER_BYTES = 65536, MAX_HEADER_BYTES = 1 << 20, MAX_BLOCK_BYTES = 4 << 20;
+    /**
+     * Reads that stay inside the last block a thread used take its pixels straight from it, and a reader keeps the
+     * shape of each overview it was asked for rather than making it again for every pixel. {@code false} restores
+     * the per-pixel block lookups for exact-output and speed comparisons; the values read are the same either way.
+     */
+    private static final boolean FAST_READ = !"false".equals(System.getProperty("earthplatform.cogs.fastRead"));
 
     private final String what;
     private final URI base;
@@ -48,6 +54,27 @@ final class FloatCogs implements AutoCloseable {
         int next;
         /** Blocks a reader loaded ahead and holds until it is done, or null. */
         Map<Long, float[]> held;
+        /** The block the last pixel came from, and the pixels it holds: columns c0..c1 and rows r0..r1 of its overview. */
+        float[] lastBlock;
+        int lastFile = -1, lastOverview = -1, lastC0, lastC1, lastR0, lastR1;
+
+        /** Whether pixels {@code i..i+1, j..j+1} of a grid all lie in {@link #lastBlock}, unclamped. */
+        boolean covers(Grid grid, int i, int j) {
+            return lastBlock != null && grid.file == lastFile && grid.overview == lastOverview
+                    && i >= lastC0 && i < lastC1 && j >= lastR0 && j < lastR1;
+        }
+
+        void last(Grid grid, int column, int row, float[] block) {
+            Level level = grid.level;
+            int size = level.block;
+            lastBlock = block;
+            lastFile = grid.file;
+            lastOverview = grid.overview;
+            lastC0 = (column / size) * size;
+            lastC1 = Math.min(lastC0 + size, level.width) - 1;
+            lastR0 = (row / size) * size;
+            lastR1 = Math.min(lastR0 + size, level.height) - 1;
+        }
 
         Recent(int size) {
             keys = new long[size];
@@ -115,8 +142,13 @@ final class FloatCogs implements AutoCloseable {
         private final Map<Long, Grid> wanted = new java.util.HashMap<>();
         // Neighbouring pixels nearly always share a block, so most of them skip the map.
         private long lastWanted = -1;
+        // The pixels of the block lastWanted names, or wantFile -1: corners inside it are noted already.
+        private int wantFile = -1, wantOverview, wantC0, wantC1, wantR0, wantR1;
         private int file = -1;
         private Header header;
+        // This file's overviews as asked for, each its shape for any point inside the image (null where it has none).
+        private final Grid[] shapes = new Grid[8];
+        private final boolean[] shaped = new boolean[8];
 
         Reader() { recent.held = new ConcurrentHashMap<>(); }
 
@@ -126,8 +158,15 @@ final class FloatCogs implements AutoCloseable {
             if (file != this.file) {
                 header = header(file);
                 this.file = file;
+                java.util.Arrays.fill(shaped, false);
             }
-            return FloatCogs.grid(header, file, overview, x, y);
+            if (!FAST_READ || overview >= shaped.length) return FloatCogs.grid(header, file, overview, x, y);
+            if (!shaped[overview]) {
+                shapes[overview] = shape(header, file, overview);
+                shaped[overview] = true;
+            }
+            Grid shape = shapes[overview];
+            return shape != null && inside(header, x, y) ? shape : null;
         }
 
         double metres(Grid grid, double x, double y) { return FloatCogs.this.metres(grid, x, y, recent); }
@@ -144,6 +183,8 @@ final class FloatCogs implements AutoCloseable {
             double fx = (x - grid.header.x0) / grid.pixelX - 0.5, fy = (grid.header.y0 - y) / grid.pixelY - 0.5;
             int i = (int) Math.floor(fx), j = (int) Math.floor(fy);
             double tx = fx - i, ty = fy - j;
+            // All four corners in the block noted last: each would be skipped below.
+            if (FAST_READ && wantFile == grid.file && wantOverview == grid.overview && i >= wantC0 && i < wantC1 && j >= wantR0 && j < wantR1) return;
             for (int dj = 0; dj <= 1; dj++) for (int di = 0; di <= 1; di++) {
                 // metres skips corners of no weight; so does this.
                 if (!every && (di == 0 ? 1 - tx : tx) * (dj == 0 ? 1 - ty : ty) == 0) continue;
@@ -151,6 +192,17 @@ final class FloatCogs implements AutoCloseable {
                 if (key == lastWanted) continue;
                 lastWanted = key;
                 wanted.putIfAbsent(key, grid);
+                if (FAST_READ) {
+                    Level level = grid.level;
+                    int size = level.block;
+                    int column = Math.max(0, Math.min(level.width - 1, i + di)), row = Math.max(0, Math.min(level.height - 1, j + dj));
+                    wantFile = grid.file;
+                    wantOverview = grid.overview;
+                    wantC0 = (column / size) * size;
+                    wantC1 = Math.min(wantC0 + size, level.width) - 1;
+                    wantR0 = (row / size) * size;
+                    wantR1 = Math.min(wantR0 + size, level.height) - 1;
+                }
             }
         }
 
@@ -169,6 +221,7 @@ final class FloatCogs implements AutoCloseable {
             }
             wanted.clear();
             lastWanted = -1;
+            wantFile = -1;
             if (loads.size() == 1) loads.get(0).run();
             else if (!loads.isEmpty()) RangeFiles.all(loads);
         }
@@ -209,14 +262,25 @@ final class FloatCogs implements AutoCloseable {
     }
 
     private static Grid grid(Header header, int file, int overview, double x, double y) {
+        Grid shape = shape(header, file, overview);
+        return shape != null && inside(header, x, y) ? shape : null;
+    }
+
+    /** Whether {@code x, y} lies in a file's image. */
+    private static boolean inside(Header header, double x, double y) {
+        Level full = header.levels[0];
+        double right = header.x0 + header.pixelX * full.width, bottom = header.y0 - header.pixelY * full.height;
+        return !(x < header.x0 || x >= right || y > header.y0 || y <= bottom);
+    }
+
+    /** An overview of a file as {@link #grid} gives it for any point inside the image, or null where the file has none. */
+    private static Grid shape(Header header, int file, int overview) {
         if (header.levels.length == 0) return null;
         overview = Math.min(overview, header.levels.length - 1);
         // A level skipped stands in for nothing: the next coarser one is read.
         while (header.levels[overview].offsets == null && overview < header.levels.length - 1) overview++;
         Level level = header.levels[overview], full = header.levels[0];
         if (level.offsets == null) return null;
-        double right = header.x0 + header.pixelX * full.width, bottom = header.y0 - header.pixelY * full.height;
-        if (x < header.x0 || x >= right || y > header.y0 || y <= bottom) return null;
         // Overviews are rounded up, so their pixels span the full image a little unevenly; GDAL
         // places them by the ratio of sizes.
         return new Grid(file, overview, header, level, header.pixelX * full.width / level.width, header.pixelY * full.height / level.height);
@@ -229,10 +293,12 @@ final class FloatCogs implements AutoCloseable {
         double fx = (x - grid.header.x0) / grid.pixelX - 0.5, fy = (grid.header.y0 - y) / grid.pixelY - 0.5;
         int i = (int) Math.floor(fx), j = (int) Math.floor(fy);
         double tx = fx - i, ty = fy - j, sum = 0, weights = 0;
+        boolean near = FAST_READ && cache.covers(grid, i, j);
+        int size = grid.level.block, at = near ? (j - cache.lastR0) * size + i - cache.lastC0 : 0;
         for (int dj = 0; dj <= 1; dj++) for (int di = 0; di <= 1; di++) {
             double w = (di == 0 ? 1 - tx : tx) * (dj == 0 ? 1 - ty : ty);
             if (w == 0) continue;
-            float v = pixel(grid, i + di, j + dj, cache);
+            float v = near ? cache.lastBlock[at + dj * size + di] : pixel(grid, i + di, j + dj, cache);
             if (v == noData || !Float.isFinite(v)) continue;
             sum += w * v;
             weights += w;
@@ -250,8 +316,10 @@ final class FloatCogs implements AutoCloseable {
         double fx = (x - grid.header.x0) / grid.pixelX - 0.5, fy = (grid.header.y0 - y) / grid.pixelY - 0.5;
         int i = (int) Math.floor(fx), j = (int) Math.floor(fy);
         double tx = fx - i, ty = fy - j, share = 0;
+        boolean near = FAST_READ && cache.covers(grid, i, j);
+        int size = grid.level.block, at = near ? (j - cache.lastR0) * size + i - cache.lastC0 : 0;
         for (int dj = 0; dj <= 1; dj++) for (int di = 0; di <= 1; di++) {
-            float v = pixel(grid, i + di, j + dj, cache);
+            float v = near ? cache.lastBlock[at + dj * size + di] : pixel(grid, i + di, j + dj, cache);
             if (v != noData && Float.isFinite(v)) share += (di == 0 ? 1 - tx : tx) * (dj == 0 ? 1 - ty : ty);
         }
         return share;
@@ -273,6 +341,7 @@ final class FloatCogs implements AutoCloseable {
             cache.blocks[cache.next] = block;
             cache.next = (cache.next + 1) % cache.keys.length;
         }
+        if (FAST_READ) cache.last(grid, column, row, block);
         return block[(row % size) * size + column % size];
     }
 
