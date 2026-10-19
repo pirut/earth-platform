@@ -377,6 +377,12 @@ final class FarGpu {
         }
     }
 
+    /**
+     * After {@link #begin} for the far pass: whether its programs drop every fragment inside the
+     * game's blocks' reach, as the pack's own-depth programs do (not the plain-colour fallback).
+     */
+    boolean dropsNearReach() { return packMode && !near && packPatched && packOwnDepth; }
+
     /** Sets what the next {@link #begin} draws; back to {@link #ONE_PASS} after the shading pass. */
     void phase(int phase) {
         this.phase = phase;

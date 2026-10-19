@@ -853,18 +853,19 @@ public final class FarRenderer {
         }
         if (own && FarGpu.DEPTH_PREPASS && FarLod.prepassReady() && gpu.prepassReady(ShaderBlocks.voxyPatch())) {
             // Depth first, then shading only the faces it kept (see FarGpu#DEPTH_PREPASS).
+            List<Column> far = FarNearSkip.ENABLED ? beyondReach(visible, position) : visible;
             FarLod.beginPrepass();
             gpu.phase(FarGpu.PREPASS);
             if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false)) {
                 long timer = FarGpuTimers.begin("far depth prepass");
-                try { drawEach(gpu, visible, position); }
+                try { drawEach(gpu, far, position); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
             }
             FarLod.beginShade();
             gpu.phase(FarGpu.SHADE);
             if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false)) {
                 long timer = FarGpuTimers.begin("far opaque");
-                try { drawEach(gpu, visible, position); }
+                try { drawEach(gpu, far, position); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
                 drawCount.submitted(gpu.ranges);
             }
@@ -872,7 +873,9 @@ public final class FarRenderer {
             FarLod.endShade();
         } else if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false)) {
             long timer = FarGpuTimers.begin("far opaque");
-            try { drawEach(gpu, visible, position); }
+            // Under a pack's own depth, columns wholly inside the game's blocks' reach draw no pixel there.
+            List<Column> far = own && FarNearSkip.ENABLED && gpu.dropsNearReach() ? beyondReach(visible, position) : visible;
+            try { drawEach(gpu, far, position); }
             finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
             drawCount.submitted(gpu.ranges);
         }
@@ -890,6 +893,20 @@ public final class FarRenderer {
         FarGpuTimers.end(deepenTimer);
         shader.clear();
         type.clearRenderState();
+    }
+
+    /** The columns, in order, that reach past the game's blocks' reach somewhere (see {@link FarNearSkip}). */
+    private static List<Column> beyondReach(List<Column> columns, Vec3 position) {
+        double reach = FarLod.nearReach();
+        List<Column> beyond = null;
+        for (int i = 0; i < columns.size(); i++) {
+            Column column = columns.get(i);
+            AABB box = column.box;
+            boolean dropped = FarNearSkip.dropped(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, position.x, position.y, position.z, reach);
+            if (dropped && beyond == null) beyond = new ArrayList<>(columns.subList(0, i));
+            else if (!dropped && beyond != null) beyond.add(column);
+        }
+        return beyond == null ? columns : beyond;
     }
 
     /** Rebuilds selection only when its inputs change; timed fades keep visiting on every frame. */
