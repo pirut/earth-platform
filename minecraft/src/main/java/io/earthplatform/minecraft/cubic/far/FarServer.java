@@ -12,6 +12,7 @@ import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.FarColumn;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.net.Throttle;
+import io.earthplatform.minecraft.diagnostics.PerfFailures;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
@@ -174,7 +175,7 @@ public final class FarServer {
                 if (failure instanceof MissingTerrainException) missing.add(key);
                 else failed.add(key);
                 failures.incrementAndGet();
-                io.earthplatform.minecraft.diagnostics.PerfFailures.record(io.earthplatform.minecraft.diagnostics.PerfFailures.Stage.FAR_GENERATION,failure);
+                PerfFailures.record(PerfFailures.Stage.FAR_GENERATION,failure);
                 long now = System.currentTimeMillis();
                 if (now - lastFailureLog > 10_000) {
                     lastFailureLog = now;

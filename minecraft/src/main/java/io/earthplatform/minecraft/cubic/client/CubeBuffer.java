@@ -5,13 +5,11 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferUploader;
 import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import com.mojang.blaze3d.vertex.VertexFormatElement;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import javax.annotation.Nullable;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL15C;
-import org.lwjgl.opengl.GL20C;
 import org.lwjgl.system.MemoryUtil;
 
 /**
@@ -32,10 +30,6 @@ final class CubeBuffer implements AutoCloseable {
     private int indexCount, indexType;
     /** True when this layer has its own sorted indices (translucent), else the shared quad ones. */
     private boolean sorted;
-    /** The dedicated depth batch uses Position and Offset float3 attributes at locations 0/1. */
-    private boolean waterDepthFormat;
-    /** Only opt-in far water retains a position copy; near cubes never pay this cost. */
-    @Nullable private FarWaterBatchPlan.Snapshot waterPositions;
 
     CubeBuffer() {
         RenderSystem.assertOnRenderThread();
@@ -46,11 +40,6 @@ final class CubeBuffer implements AutoCloseable {
 
     /** Uploads a mesh (and closes it); leaves no vertex array bound. */
     void upload(MeshData mesh) {
-        upload(mesh, false);
-    }
-
-    /** Far water may retain positions for its two dedicated depth passes, never its colour pass. */
-    void upload(MeshData mesh, boolean retainWaterPositions) {
         try (mesh) {
             if (array < 0) return;
             RenderSystem.assertOnRenderThread();
@@ -59,11 +48,6 @@ final class CubeBuffer implements AutoCloseable {
             BufferUploader.invalidate();
             GlStateManager._glBindVertexArray(array);
             GlStateManager._glBindBuffer(GL15C.GL_ARRAY_BUFFER, vertices);
-            if (waterDepthFormat) {
-                GL20C.glDisableVertexAttribArray(0);
-                GL20C.glDisableVertexAttribArray(1);
-                waterDepthFormat = false;
-            }
             if (!state.format().equals(format)) {
                 if (format != null) format.clearBufferState();
                 state.format().setupBufferState();
@@ -73,11 +57,6 @@ final class CubeBuffer implements AutoCloseable {
             if (vertexData != null) RenderSystem.glBufferData(GL15C.GL_ARRAY_BUFFER, vertexData, GL15C.GL_STATIC_DRAW);
             ByteBuffer own = mesh.indexBuffer();
             sorted = own != null;
-            releaseWaterPositions();
-            if (retainWaterPositions && vertexData != null && state.format().contains(VertexFormatElement.POSITION)
-                    && (long) state.vertexCount() / 4 * 6 == state.indexCount())
-                waterPositions = FarWaterBatch.retain(vertexData, state.format().getVertexSize(),
-                        state.format().getOffset(VertexFormatElement.POSITION), state.vertexCount(), sorted);
             indexCount = state.indexCount();
             if (sorted) {
                 GlStateManager._glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, indices);
@@ -91,39 +70,6 @@ final class CubeBuffer implements AutoCloseable {
             GlStateManager._glBindVertexArray(0);
             BufferUploader.invalidate();
         }
-    }
-
-    @Nullable FarWaterBatchPlan.Snapshot waterPositions() { return waterPositions; }
-
-    /** Uploads local Position + per-vertex Offset quads, exclusively for FarLod's batch shaders. */
-    void uploadWaterDepth(ByteBuffer data, int count) {
-        RenderSystem.assertOnRenderThread();
-        if (array < 0) throw new IllegalStateException("Closed water batch buffer");
-        if (count < 0 || count % 4 != 0 || (long) count * FarWaterBatchPlan.VERTEX_BYTES != data.remaining())
-            throw new IllegalArgumentException("Water depth batch must contain Position + Offset quads");
-        releaseWaterPositions();
-        BufferUploader.invalidate();
-        GlStateManager._glBindVertexArray(array);
-        GlStateManager._glBindBuffer(GL15C.GL_ARRAY_BUFFER, vertices);
-        if (format != null) { format.clearBufferState(); format = null; }
-        // No registered/custom VertexFormatElement ids: Iris and other mods own their formats.
-        GL20C.glEnableVertexAttribArray(0);
-        GL20C.glEnableVertexAttribArray(1);
-        GL20C.glVertexAttribPointer(0, 3, GL11C.GL_FLOAT, false, FarWaterBatchPlan.VERTEX_BYTES, 0L);
-        GL20C.glVertexAttribPointer(1, 3, GL11C.GL_FLOAT, false, FarWaterBatchPlan.VERTEX_BYTES, FarWaterBatchPlan.POSITION_BYTES);
-        waterDepthFormat = true;
-        RenderSystem.glBufferData(GL15C.GL_ARRAY_BUFFER, data, GL15C.GL_STATIC_DRAW);
-        sorted = false;
-        indexCount = count / 4 * 6;
-        indexType = GL11C.GL_UNSIGNED_INT;
-        QuadIndices.ensure(indexCount);
-        GlStateManager._glBindVertexArray(0);
-        BufferUploader.invalidate();
-    }
-
-    private void releaseWaterPositions() {
-        FarWaterBatch.release(waterPositions);
-        waterPositions = null;
     }
 
     /** Draws the mesh with the current shader; the caller unbinds the array afterwards. */
@@ -141,7 +87,6 @@ final class CubeBuffer implements AutoCloseable {
 
     @Override
     public void close() {
-        releaseWaterPositions();
         if (array < 0) return;
         RenderSystem.glDeleteBuffers(vertices);
         RenderSystem.glDeleteBuffers(indices);

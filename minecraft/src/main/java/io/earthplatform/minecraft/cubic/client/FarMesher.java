@@ -6,6 +6,7 @@ import com.mojang.blaze3d.vertex.MeshData;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.cubic.gen.FarSurfacePacket;
+import io.earthplatform.minecraft.diagnostics.PerfFailures;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import java.util.ArrayList;
@@ -126,7 +127,7 @@ final class FarMesher {
                 var packet=FarSurfacePacket.fromDense(job.level,job.bottom,job.sections,job.drops);
                 if(packet!=null)job=new Job(job.key,job.version,job.level,job.slot,job.x0,job.z0,job.bottom,job.sections,job.drops,
                         job.sides,job.diagonals,job.drawn,job.textured,job.looks,job.faces,job.shaderIds,job.shade,job.white,packet);
-            }catch(RuntimeException failure){io.earthplatform.minecraft.diagnostics.PerfFailures.record(io.earthplatform.minecraft.diagnostics.PerfFailures.Stage.RUN_CONVERSION,failure);}
+            }catch(RuntimeException failure){PerfFailures.record(PerfFailures.Stage.RUN_CONVERSION,failure);}
             if(job.packet==null)RUN_FALLBACK.increment();else RUN_USED.increment();
         }
         return buildPrepared(job);

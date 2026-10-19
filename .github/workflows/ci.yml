@@ -57,7 +57,7 @@ jobs:
           EARTH_PHOTON_ZIP="$EARTH_INSTALLED_SHADER_PACK" gradle --no-daemon --console=plain verifyShimArtifact "-PearthBuildCommit=$build_commit"
           mkdir -p build/current-delivery
           cp build/libs/earthplatform-*.jar build/current-delivery/
-          cp ../docs/perf/build57-cpu/prototypes/PC-TEST.md build/current-delivery/README.md
+          cp ../docs/PERFORMANCE-LOG.md build/current-delivery/README.md
           cd build/current-delivery
           sha256sum *.jar > SHA256SUMS.txt
 

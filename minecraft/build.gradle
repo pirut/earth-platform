@@ -60,11 +60,19 @@ tasks.named('jar', Jar) {
     from(licenceNotice) { into 'META-INF' }
 }
 
-// The current build includes validated optimizations and bounded local diagnostics; one player artifact.
-def sourceCommit = providers.gradleProperty('earthBuildCommit').orElse(providers.exec {
-    commandLine 'git', 'rev-parse', 'HEAD'
-    ignoreExitValue = true
-}.standardOutput.asText.map { it.trim() }).getOrElse('unknown')
+// The jar records the commit it was built from, for the local performance log. A source download
+// without git (or outside a checkout) builds too, as "unknown".
+def sourceCommit = providers.gradleProperty('earthBuildCommit').getOrNull()
+if (sourceCommit == null) {
+    try {
+        sourceCommit = providers.exec {
+            commandLine 'git', 'rev-parse', 'HEAD'
+            ignoreExitValue = true
+        }.standardOutput.asText.get().trim()
+    } catch (Exception ignored) {
+        sourceCommit = 'unknown'
+    }
+}
 if (!(sourceCommit ==~ /[a-f0-9]{40}/)) sourceCommit = 'unknown'
 def generateBuildIdentity = tasks.register('generateBuildIdentity') {
     def out = layout.buildDirectory.file('generated/buildIdentity/META-INF/earthplatform-build.properties')

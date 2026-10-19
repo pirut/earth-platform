@@ -20,6 +20,7 @@ public final class BuildInfo {
         String version=VALUES.getProperty("version", "development");
         return version.matches("[A-Za-z0-9.+_-]{1,96}") ? version : "development";
     }
-    /** Bounded local diagnostics are part of the current build, with no player setup. */
-    public static boolean diagnostics() { return true; }
+    /** Bounded local performance logs are on unless {@code -Dearthplatform.perfLog=false}. */
+    private static final boolean DIAGNOSTICS = Boolean.parseBoolean(System.getProperty("earthplatform.perfLog", "true"));
+    public static boolean diagnostics() { return DIAGNOSTICS; }
 }

@@ -10,6 +10,6 @@ New since build 58:
 
 Visual quality, render distance, detail and the active rendering paths are unchanged. The draw-command cache and shadow-hint experiments remain disabled. Cloud terrain-grid reuse was tested and removed after it failed average-FPS and frame-tail acceptance.
 
-Validation evidence is in docs/perf/build58-continuation/ and docs/perf/world-thumbnails/. Native checks used this Mac with stock Photon and shaders off, including automatic 64×64 icon files and exact world-list texture matches. NVIDIA/AMD native hardware and a real VR headset remain untested.
+Native checks used this Mac with stock Photon and shaders off, including automatic 64×64 icon files and exact world-list texture matches. NVIDIA/AMD native hardware and a real VR headset remain untested.
 
 Known: dark far slabs can show in the Amazon for the first ~20 seconds; Everglades far water is still patchy.

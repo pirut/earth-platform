@@ -13,6 +13,8 @@ import io.earthplatform.minecraft.cubic.ViewOrder;
 import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.mixin.FrustumAccess;
+import io.earthplatform.minecraft.diagnostics.BuildInfo;
+import io.earthplatform.minecraft.diagnostics.PerfFailures;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -95,9 +97,6 @@ public final class FarRenderer {
     /** The finest level at jet stream speed: 64-block voxels, as before the far levels reached farther. */
     private static final int JET_LEVEL = 6;
     private static final long UPLOAD_NANOS = 3_000_000L;
-    /** Experimental admission pacing; the established convergence policy remains the default. */
-    private static final boolean STRICT_UPLOAD = Boolean.getBoolean("earthplatform.far.strictUpload");
-    private static final long UPLOAD_BYTES = Math.max(1, Long.getLong("earthplatform.far.uploadBytes", 4L << 20));
     /**
      * Columns asked of the server and not yet back. Kept short so the server's queue always holds
      * what the player wants most now: with every missing column asked for at once, a walk or a turn
@@ -140,11 +139,6 @@ public final class FarRenderer {
     private final FarCullTree cullTree = new FarCullTree();
     private static final boolean CACHE_PICK = !"false".equals(System.getProperty("earthplatform.far.cachePick"));
     private final FarPickState pick = new FarPickState();
-    // Opt-in until matched client tests clear the stationary p95/p99 regression.
-    private static final boolean CACHE_COMMANDS = Boolean.getBoolean("earthplatform.far.cacheCommands");
-    private long selectionVersion;
-    @Nullable private FarGpu.Commands fullCommands, nearCommands;
-    private List<Column> nearVisible = List.of();
     private final FarOrder order = new FarOrder();
     /** Uploads and fade stamps also invalidate a pick when no column has come or gone. */
     private int pickVersion;
@@ -152,7 +146,6 @@ public final class FarRenderer {
     static final boolean FAST_WATER = !"false".equals(System.getProperty("earthplatform.far.fastWater"));
     /** Preserve water order while skipping dry columns and walls hidden by a drawn neighbor. */
     private final List<Column> waterVisible = new ArrayList<>(), waterSurfaces = new ArrayList<>(), waterEdges = new ArrayList<>();
-    private final FarWaterBatch waterDeepen = new FarWaterBatch(), waterRestore = new FarWaterBatch();
     /** The level pass (see {@link LevelPasses}) whose water is drawn; a VR mod's second eye needs its own. */
     private int waterPass = -1;
     private int ticks, frame, uploadedFrame = -1, replaced;
@@ -311,7 +304,6 @@ public final class FarRenderer {
         requested.defaultReturnValue(Integer.MIN_VALUE / 2);
     }
 
-    static boolean commandCacheEnabled() { return CACHE_COMMANDS; }
     private long diagnosticReceivedColumns, diagnosticReceivedEstimatedBytes;
     record PerfState(int wanted,int settled,int wantedInView,int settledInView,int held,int visible,int requested,int meshing,long ownedBytes,int drawnRanges,int replacements,long receivedColumns,long receivedEstimatedBytes) {}
     PerfState perfState() { return new PerfState(wanted,settled,wantedInView,settledInView,columns.size(),visible.size(),requested.size(),meshing,vertexBytes(),drawnRanges(),replaced,diagnosticReceivedColumns,diagnosticReceivedEstimatedBytes); }
@@ -373,7 +365,7 @@ public final class FarRenderer {
 
     public void receive(CubePayloads.FarColumnData payload) {
         if (closed || !Far.valid(payload.key())) return;
-        if(io.earthplatform.minecraft.diagnostics.BuildInfo.diagnostics()){diagnosticReceivedColumns++;diagnosticReceivedEstimatedBytes+=payload.size();}
+        if(BuildInfo.diagnostics()){diagnosticReceivedColumns++;diagnosticReceivedEstimatedBytes+=payload.size();}
         requested.remove(payload.key());
         LevelChunkSection[] sections = new LevelChunkSection[payload.sections().size()];
         for (int i = 0; i < sections.length; i++) {
@@ -730,7 +722,7 @@ public final class FarRenderer {
                 Timings.FAR_MESH.since(start);
             }
             catch (Throwable failure) {
-                io.earthplatform.minecraft.diagnostics.PerfFailures.record(io.earthplatform.minecraft.diagnostics.PerfFailures.Stage.FAR_MESH,failure);
+                PerfFailures.record(PerfFailures.Stage.FAR_MESH,failure);
                 EarthPlatformMod.LOGGER.error("Far column mesh failed", failure);
                 built.add(new FarMesher.Built(job.key(), -job.version(), new int[0], new int[FarMesher.GROUPS], null, null, new FarMesher.Part[4]));
             }
@@ -739,16 +731,8 @@ public final class FarRenderer {
 
     /** Uploads finished meshes: a few every frame, and more while a small part of the last frame's time lasts. */
     private void upload(FarGpu gpu) {
-        long now = System.nanoTime(), deadline = now + Math.max(UPLOAD_NANOS, frameNanos / 8);
-        UploadBudget budget = STRICT_UPLOAD ? new UploadBudget(now, UPLOAD_NANOS, UPLOAD_BYTES) : null;
-        for (int n = 0; STRICT_UPLOAD || n < UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
-            if (budget != null) {
-                FarMesher.Built next = built.peek();
-                if (next == null) return;
-                Column pending = columns.get(next.key());
-                if (!closed && pending != null && next.version() > 0 && next.version() == pending.version
-                        && !budget.tryAcquire(System.nanoTime(), next.bytes())) return;
-            }
+        long deadline = System.nanoTime() + Math.max(UPLOAD_NANOS, frameNanos / 8);
+        for (int n = 0; n < UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
             FarMesher.Built result = built.poll();
             if (result == null) return;
             meshing--;
@@ -789,7 +773,7 @@ public final class FarRenderer {
             return null;
         }
         if (buffer == null) buffer = new CubeBuffer();
-        buffer.upload(part.mesh(), FarWaterBatch.ENABLED);
+        buffer.upload(part.mesh());
         part.memory().close();
         return buffer;
     }
@@ -854,42 +838,29 @@ public final class FarRenderer {
         if (own) {
             // Far terrain inside the game's blocks' reach goes in the game's own depth, as without a pack's Voxy support.
             float reach = FarLod.nearReach();
-            if (!CACHE_COMMANDS || nearCommands == null || !nearCommands.matches(selectionVersion, reach)) {
-                List<Column> near = new ArrayList<>();
-                for (Column column : visible) {
-                    double dx = Math.max(0.0, Math.max(column.box.minX - position.x, position.x - column.box.maxX));
-                    double dz = Math.max(0.0, Math.max(column.box.minZ - position.z, position.z - column.box.maxZ));
-                    if (dx * dx + dz * dz < reach * reach) near.add(column);
-                }
-                nearVisible = near;
+            List<Column> near = new ArrayList<>();
+            for (Column column : visible) {
+                double dx = Math.max(0.0, Math.max(column.box.minX - position.x, position.x - column.box.maxX));
+                double dz = Math.max(0.0, Math.max(column.box.minZ - position.z, position.z - column.box.maxZ));
+                if (dx * dx + dz * dz < reach * reach) near.add(column);
             }
-            if (!nearVisible.isEmpty() && gpu.begin(pack, ShaderBlocks.voxyPatch(), modelView, projection, position, shade, frame, true)) {
+            if (!near.isEmpty() && gpu.begin(pack, ShaderBlocks.voxyPatch(), modelView, projection, position, shade, frame, true)) {
                 long timer = FarGpuTimers.begin("near opaque");
-                try { drawEach(gpu, nearVisible, position, true, reach); }
+                try { drawEach(gpu, near, position); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
             }
             FarLod.beginDraw(modelView, position.x, position.y, position.z);
         }
         if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false)) {
             long timer = FarGpuTimers.begin("far opaque");
-            try { drawEach(gpu, visible, position, false, 0); }
+            try { drawEach(gpu, visible, position); }
             finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
             drawCount.submitted(gpu.ranges);
         }
         if (own) FarLod.endDraw();
-        boolean batchedDeepen = false;
-        if (own && FarWaterBatch.ENABLED && FarLod.batchWaterDepthReady()) {
-            waterDeepen.begin();
-            for (Column column : FAST_WATER ? waterSurfaces : visible) {
-                if (column.water == null || column.fade == FarGpu.FADE_IN) continue;
-                waterDeepen.add(column.water, (float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
-            }
-            batchedDeepen = waterDeepen.end();
-        }
         long deepenTimer = own ? FarGpuTimers.begin("water deepen") : 0;
-        if (own && FarLod.beginDeepen(modelView, batchedDeepen)) {
-            if (batchedDeepen) waterDeepen.draw();
-            else for (Column column : FAST_WATER ? waterSurfaces : visible) {
+        if (own && FarLod.beginDeepen(modelView)) {
+            for (Column column : FAST_WATER ? waterSurfaces : visible) {
                 if (column.water == null || column.fade == FarGpu.FADE_IN) continue;
                 FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 column.water.draw();
@@ -904,7 +875,6 @@ public final class FarRenderer {
 
     /** Rebuilds selection only when its inputs change; timed fades keep visiting on every frame. */
     private void pickColumns(Vec3 position, Frustum frustum, int bx, int bz, boolean band) {
-        selectionVersion++;
         drawn.clear();
         pickAnimating = false;
         // The dithered ring between levels only blends where a pack's TAA moves the dither every frame
@@ -977,22 +947,7 @@ public final class FarRenderer {
     }
 
     /** Draws columns: whole ones first, then those fading out, then those fading in, each with its own program. */
-    private void drawEach(FarGpu gpu, List<Column> columns, Vec3 position, boolean near, float reach) {
-        if (CACHE_COMMANDS) {
-            FarGpu.Commands commands = near ? nearCommands : fullCommands;
-            if (commands == null) {
-                commands = gpu.commands();
-                if (near) nearCommands = commands; else fullCommands = commands;
-            }
-            if (!commands.matches(selectionVersion, reach)) {
-                commands.begin();
-                for (Column column : columns)
-                    commands.add(column.fade, column.faces, CACHE_PICK ? column.groups : faceGroups(column, position));
-                commands.finish(selectionVersion, reach);
-            }
-            commands.draw();
-            return;
-        }
+    private void drawEach(FarGpu gpu, List<Column> columns, Vec3 position) {
         boolean[] fades = new boolean[3];
         for (Column column : columns) fades[column.fade] = true;
         for (int fade = FarGpu.NO_FADE; fade <= FarGpu.FADE_IN; fade++) {
@@ -1145,25 +1100,8 @@ public final class FarRenderer {
         FarGpuTimers.end(colourTimer);
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
         if (view != null) view.set(modelView);
-        boolean batchedRestore = false;
-        if (own && FarWaterBatch.ENABLED && FarLod.batchWaterDepthReady()) {
-            waterRestore.begin();
+        if (own) FarLod.endWater(modelView, () -> {
             for (Column column : FAST_WATER ? waterVisible : visible) {
-                if (!FAST_WATER && (column.fade == FarGpu.FADE_IN || column.water == null && !column.hasWaterWalls())) continue;
-                float x = (float) (column.x0 - position.x), y = (float) (column.baseY() - position.y), z = (float) (column.z0 - position.z);
-                if (column.water != null) waterRestore.add(column.water, x, y, z);
-                for (int side = 0; side < 4; side++) {
-                    CubeBuffer wall = column.waterWalls[side];
-                    if (FAST_WATER ? (column.waterSides & 1 << side) == 0 : wall == null || waterDrawn(column.neighbour(side))) continue;
-                    waterRestore.add(wall, x, y, z);
-                }
-            }
-            batchedRestore = waterRestore.end();
-        }
-        final boolean drawBatch = batchedRestore;
-        if (own) FarLod.endWater(modelView, drawBatch, () -> {
-            if (drawBatch) waterRestore.draw();
-            else for (Column column : FAST_WATER ? waterVisible : visible) {
                 if (!FAST_WATER && (column.fade == FarGpu.FADE_IN || column.water == null && !column.hasWaterWalls())) continue;
                 FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 if (column.water != null) {
@@ -1371,9 +1309,6 @@ public final class FarRenderer {
         waterVisible.clear();
         waterSurfaces.clear();
         waterEdges.clear();
-        nearVisible = List.of();
-        waterDeepen.close();
-        waterRestore.close();
         dueColumns.clear();
         if (gpu != null) { gpu.close(); gpu = null; }
     }
