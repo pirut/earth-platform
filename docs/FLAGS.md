@@ -59,6 +59,7 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.view.behind` | 4 | How many times as far ground straight behind the player counts as | `ViewOrder` |
 | `earthplatform.cubic.buried` | `false` | Make every buried cube instead of skipping rock out of sight | `ServerCubeWorld` |
 | `earthplatform.cubic.bytesPerTick` | 262144 | Terrain bytes a remote player is sent per tick | `Throttle` |
+| `earthplatform.cubic.lightmapRing` | on | In cubic worlds without a shader pack, uploads the game's lightmap to three textures in turn, so an upload never waits on frames still drawing with the last one; the same pixels are drawn. `false` always uploads to the one texture, for comparing | `CubicLightmapTexture` |
 
 ## Shaders, debugging and measuring
 

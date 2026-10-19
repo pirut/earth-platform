@@ -101,6 +101,7 @@
     "CubicFarPlaneMixin",
     "CubicLevelPassMixin",
     "CubicWorldThumbnailMixin",
+    "CubicLightmapTextureMixin",
     "CubicShaderFarMixin",
     "CubicIrisSourceNamesMixin",
     "CubicIrisProgramSetMixin",
