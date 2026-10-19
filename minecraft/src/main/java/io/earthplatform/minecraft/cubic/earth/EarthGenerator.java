@@ -2086,7 +2086,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         int best = DRY;
         double near = Math.max(3, voxel), far = Math.max(8, 2.5 * voxel);
         for (int k = 0; k < 8; k += 2) {
-            for (double r : new double[]{near, far}) {
+            for (int step = 0; step < 2; step++) {
+                double r = step == 0 ? near : far;
                 double px = x + RING_X[k] * r, pz = z + RING_Z[k] * r;
                 if (cover(memo, (int) px, (int) pz, voxel) == WorldCoverSource.WATER && !seaWater(px, pz)) best = Math.max(best, waterSurface(dem, px, pz, voxel));
             }

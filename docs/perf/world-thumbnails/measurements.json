@@ -1,0 +1,82 @@
+{
+  "source": "e67cf90bda4b86c3977da5250f49238161b2be1b",
+  "jar_sha256": "2c6d25be646f777a62e654d084dc033d5e40abcc7dc74fed6300870f1a0fbd74",
+  "tests": 158,
+  "failures": 0,
+  "skipped": 4,
+  "display": "Built-in Retina Display",
+  "gl": "4.1 Metal - 91.7",
+  "automatic_capture": true,
+  "worlds": {
+    "standard": {
+      "loaded": {
+        "icon_exists": true,
+        "width": 64,
+        "height": 64,
+        "sha256": "308730fa50c9617dc80a5865c98aff82e974cda837176a7b2b36f1e401b1a6d3",
+        "vanilla_rendered_sections": 0,
+        "vanilla_all_sections_ready": true,
+        "near_visible": 728,
+        "near_pending": 0,
+        "far_ranges": 26173,
+        "far_settled_in_view": 100
+      },
+      "returned_icon_same": true,
+      "world_list": {
+        "entries": 1,
+        "custom_icons": 1,
+        "compared_pixels": 4096
+      },
+      "screenshot_reviewed": true
+    },
+    "photon": {
+      "loaded": {
+        "icon_exists": true,
+        "width": 64,
+        "height": 64,
+        "sha256": "62f96a2753350fdf7fa739579629eceb176e9dcc45f45347705e91cf88d02013",
+        "vanilla_rendered_sections": 0,
+        "vanilla_all_sections_ready": true,
+        "near_visible": 833,
+        "near_pending": 0,
+        "far_ranges": 26815,
+        "far_settled_in_view": 100
+      },
+      "returned_icon_same": true,
+      "world_list": {
+        "entries": 1,
+        "custom_icons": 1,
+        "compared_pixels": 4096
+      },
+      "screenshot_reviewed": true
+    },
+    "vanilla": {
+      "loaded": {
+        "icon_exists": true,
+        "width": 64,
+        "height": 64,
+        "sha256": "86725c913056acedda7e600e97a36f69e86ea4fb66e66b11e24c3167d44a4ec9",
+        "vanilla_rendered_sections": 424,
+        "vanilla_all_sections_ready": true,
+        "near_visible": -1,
+        "near_pending": -1,
+        "far_ranges": -1,
+        "far_settled_in_view": -1
+      },
+      "returned_icon_same": true,
+      "world_list": {
+        "entries": 1,
+        "custom_icons": 1,
+        "compared_pixels": 4096
+      },
+      "screenshot_reviewed": true
+    }
+  },
+  "existing_icon_preserved_on_reopen": true,
+  "normal_save_exit_ms": [
+    577.7295,
+    382.447167,
+    590.763083,
+    782.373458
+  ]
+}

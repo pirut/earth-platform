@@ -25,7 +25,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import javax.annotation.Nullable;
@@ -129,7 +128,7 @@ public final class FarRenderer {
     private int wanted, settled, planSize, wantedInView, settledInView;
     /** Columns kept beyond what the plan wants, for going back over ground just left. */
     private static final int SPARE_COLUMNS = 4000;
-    private final ConcurrentLinkedQueue<FarMesher.Built> built = new ConcurrentLinkedQueue<>();
+    private final OwnedResultQueue<FarMesher.Built> built = new OwnedResultQueue<>(FarMesher.Built::free);
     private final List<Column> drawn = new ArrayList<>();
     private final LongOpenHashSet drawnKeys = new LongOpenHashSet();
     /** Drawn columns fading in over the finer level they give way to; they keep out of the water passes. */
@@ -315,7 +314,7 @@ public final class FarRenderer {
     static boolean commandCacheEnabled() { return CACHE_COMMANDS; }
     private long diagnosticReceivedColumns, diagnosticReceivedEstimatedBytes;
     record PerfState(int wanted,int settled,int wantedInView,int settledInView,int held,int visible,int requested,int meshing,long ownedBytes,int drawnRanges,int replacements,long receivedColumns,long receivedEstimatedBytes) {}
-    PerfState perfState() { return new PerfState(wanted,settled,wantedInView,settledInView,columns.size(),visible.size(),requested.size(),meshing,vertexBytes(),drawnRanges,replaced,diagnosticReceivedColumns,diagnosticReceivedEstimatedBytes); }
+    PerfState perfState() { return new PerfState(wanted,settled,wantedInView,settledInView,columns.size(),visible.size(),requested.size(),meshing,vertexBytes(),drawnRanges(),replaced,diagnosticReceivedColumns,diagnosticReceivedEstimatedBytes); }
 
     public int columnCount() { return columns.size(); }
 
@@ -328,9 +327,9 @@ public final class FarRenderer {
             if (column.top != Integer.MIN_VALUE) visitor.accept(column.x0, column.z0, Far.width(column.level), column.top);
     }
     /** Ranges of faces the last draw of far terrain asked the GPU for (see {@link FarGpu#add}). */
-    public int drawnRanges() { return drawnRanges; }
+    public int drawnRanges() { return drawCount.ranges(); }
 
-    private int drawnRanges;
+    private final FarDrawCount drawCount = new FarDrawCount();
     /** Maintained on the render thread so the debug overlay never walks every column. */
     private long vertexBytes;
     private static final boolean TRACK_BYTES = !"false".equals(System.getProperty("earthplatform.far.trackBytes"));
@@ -724,6 +723,7 @@ public final class FarRenderer {
                 ShaderBlocks.ids(), shade, white());
         meshing++;
         MESHER.execute(() -> {
+            if (built.isClosed()) return;
             long start = System.nanoTime();
             try {
                 built.add(FarMesher.build(job));
@@ -797,6 +797,7 @@ public final class FarRenderer {
     // Drawing ------------------------------------------------------------------------------------
 
     public void beginFrame() {
+        drawCount.begin();
         FarGpuTimers.frame();
         frame++;
         long now = System.nanoTime();
@@ -806,6 +807,8 @@ public final class FarRenderer {
 
     /** Draws the columns for the camera's squares, using a finer level only once all four of its columns are ready. */
     public void draw(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
+        // Invalidate before fluid, closed/GPU-null, empty-view or failed-submit returns.
+        drawCount.begin();
         // Under water, lava or powder snow the near fog hides everything far terrain would draw;
         // drawn anyway, the sea's surface far above showed through it from the deep sea floor.
         if (camera.getFluidInCamera() != net.minecraft.world.level.material.FogType.NONE) return;
@@ -871,7 +874,7 @@ public final class FarRenderer {
             long timer = FarGpuTimers.begin("far opaque");
             try { drawEach(gpu, visible, position, false, 0); }
             finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
-            drawnRanges = gpu.ranges;
+            drawCount.submitted(gpu.ranges);
         }
         if (own) FarLod.endDraw();
         boolean batchedDeepen = false;
@@ -1357,6 +1360,7 @@ public final class FarRenderer {
     void close() {
         FarGpuTimers.close();
         closed = true;
+        built.close();
         for (Column column : columns.values()) free(column);
         columns.clear();
         pick.invalidate();
@@ -1371,8 +1375,6 @@ public final class FarRenderer {
         waterDeepen.close();
         waterRestore.close();
         dueColumns.clear();
-        FarMesher.Built result;
-        while ((result = built.poll()) != null) result.free();
         if (gpu != null) { gpu.close(); gpu = null; }
     }
 }
