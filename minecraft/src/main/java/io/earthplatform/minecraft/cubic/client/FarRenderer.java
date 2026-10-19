@@ -327,6 +327,13 @@ public final class FarRenderer {
         for (Column column : columns.values())
             if (column.top != Integer.MIN_VALUE) visitor.accept(column.x0, column.z0, Far.width(column.level), column.top);
     }
+    private final CloudTerrainGrid cloudGrid = new CloudTerrainGrid();
+    private final CloudTerrainGrid.Source cloudColumns = visitor -> forEachTop(visitor::accept);
+
+    /** Exact cloud-corner heights, read-only until the next request; column mutations invalidate them. */
+    public int[] cloudCorners(int grid, double left, double near, double step) {
+        return cloudGrid.corners(columnsVersion, grid, left, near, step, cloudColumns);
+    }
     /** Ranges of faces the last draw of far terrain asked the GPU for (see {@link FarGpu#add}). */
     public int drawnRanges() { return drawnRanges; }
 
@@ -1359,6 +1366,7 @@ public final class FarRenderer {
         closed = true;
         for (Column column : columns.values()) free(column);
         columns.clear();
+        cloudGrid.invalidate();
         pick.invalidate();
         drawn.clear();
         drawnKeys.clear();
