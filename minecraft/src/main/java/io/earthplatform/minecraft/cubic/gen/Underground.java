@@ -330,8 +330,9 @@ final class Underground {
     }
 
     /**
-     * Blobs work out each sphere's row and layer terms once and leave blocks already the vein's alone, which
-     * changes nothing; {@code false} restores the per-block sums and writes, for comparisons.
+     * Blobs that cannot reach the cube skip their spheres, and the rest work out each sphere's row and layer terms
+     * once and leave blocks already the vein's alone, which changes nothing; {@code false} restores the full walk,
+     * per-block sums and writes, for comparisons.
      */
     private static final boolean FAST_BLOBS = !"false".equals(System.getProperty("earthplatform.cubes.fastBlobs"));
 
@@ -343,6 +344,17 @@ final class Underground {
         double z0 = z + Mth.cos(angle) * reach, z1 = z - Mth.cos(angle) * reach;
         double y0 = y + random.nextInt(3) - 2, y1 = y + random.nextInt(3) - 2;
         int bx = cx << 4, by = cy << 4, bz = cz << 4;
+        if (FAST_BLOBS) {
+            // Every sphere's centre lies between the line's ends, and its radius is under size / 16 + 1/2; a block
+            // more allows for rounding. A blob that cannot reach the cube draws its spheres' sizes and nothing else.
+            double most = size / 16.0 + 1.5;
+            if (Math.max(x0, x1) + most < bx || Math.min(x0, x1) - most >= bx + 16
+                    || Math.max(y0, y1) + most < by || Math.min(y0, y1) - most >= by + 16
+                    || Math.max(z0, z1) + most < bz || Math.min(z0, z1) - most >= bz + 16) {
+                for (int i = 0; i < size; i++) random.nextDouble();
+                return;
+            }
+        }
         for (int i = 0; i < size; i++) {
             float t = i / (float) size;
             double px = Mth.lerp(t, x0, x1), py = Mth.lerp(t, y0, y1), pz = Mth.lerp(t, z0, z1);
