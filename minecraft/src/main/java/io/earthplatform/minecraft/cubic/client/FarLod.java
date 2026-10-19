@@ -211,7 +211,7 @@ public final class FarLod {
         gameDepth = attached(GL30C.GL_DEPTH_ATTACHMENT);
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, framebuffer);
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, colour, 0);
-        GL20C.glDrawBuffers(new int[] {GL30C.GL_COLOR_ATTACHMENT0, GL30C.GL_COLOR_ATTACHMENT1});
+        GL20C.glDrawBuffers(targets(true, true));
         previousActive = GlStateManager._getActiveTexture();
         bind(VANILLA_UNIT, gameDepth);
         bind(SCRATCH_UNIT, shadows);
@@ -252,6 +252,26 @@ public final class FarLod {
 
     static int vanillaUnit() { return VANILLA_UNIT; }
 
+    private static int maxDrawBuffers;
+
+    /**
+     * Far terrain's draw buffers by fragment output location: the pack's first target at 0 (when
+     * {@code colour}), and far terrain's faces' own depth at the location the pack's Voxy code
+     * leaves free for it (when {@code faces}; see {@link FarShaders#faceDepthLocation}). The pack's
+     * other outputs, such as Complementary's second, go to no buffer, so they are dropped rather
+     * than written into a target of the pack's that they weren't meant for.
+     */
+    private static int[] targets(boolean colour, boolean faces) {
+        FarShaders.PackPatch patch = ShaderBlocks.voxyPatch();
+        if (maxDrawBuffers == 0) maxDrawBuffers = Math.max(2, GL11C.glGetInteger(GL20C.GL_MAX_DRAW_BUFFERS));
+        int location = Math.min(patch == null ? 1 : patch.faceDepthLocation(), maxDrawBuffers - 1);
+        int[] buffers = new int[location + 1];
+        java.util.Arrays.fill(buffers, GL11C.GL_NONE);
+        if (colour) buffers[0] = GL30C.GL_COLOR_ATTACHMENT0;
+        if (faces) buffers[location] = GL30C.GL_COLOR_ATTACHMENT1;
+        return buffers;
+    }
+
     // Depth pre-pass (see FarGpu#DEPTH_PREPASS) -------------------------------------------------
 
     @Nullable private static Program faceDepth;
@@ -273,7 +293,7 @@ public final class FarLod {
 
     /** After {@link #beginDraw}: the pre-pass writes far terrain's depth and faces' depth, but no colour. */
     static void beginPrepass() {
-        GL20C.glDrawBuffers(new int[] {GL11C.GL_NONE, GL30C.GL_COLOR_ATTACHMENT1});
+        GL20C.glDrawBuffers(targets(false, true));
     }
 
     /**
@@ -305,13 +325,13 @@ public final class FarLod {
         GL11C.glDepthMask(depthMask);
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, framebuffer);
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, scratch, 0);
-        GL20C.glDrawBuffers(new int[] {GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_NONE});
+        GL20C.glDrawBuffers(targets(true, false));
     }
 
     /** After the shading pass: far terrain's own depth and both targets back, as {@link #beginDraw} left them. */
     static void endShade() {
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, depth, 0);
-        GL20C.glDrawBuffers(new int[] {GL30C.GL_COLOR_ATTACHMENT0, GL30C.GL_COLOR_ATTACHMENT1});
+        GL20C.glDrawBuffers(targets(true, true));
     }
 
     static void endDraw() {

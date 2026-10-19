@@ -421,7 +421,7 @@ final class FarGpu {
         if (main == null || !packPatched || !packOwnDepth) return null;
         String jitter = main.jittered && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
         String header = version + FarShaders.fade(fade) + FarShaders.INVARIANT;
-        String fragment = phase == PREPASS ? FarShaders.packPrepassFragment(version, fade) : FarShaders.packShadeFragment(version, patch.fragment(), fade);
+        String fragment = phase == PREPASS ? FarShaders.packPrepassFragment(version, patch.fragment(), fade) : FarShaders.packShadeFragment(version, patch.fragment(), fade);
         Program built = linkPack(jitter, fragment, phase == PREPASS ? "far terrain depth pre-pass" : "far terrain after its pre-pass", header);
         if (built != null && built.jittered != main.jittered) {
             built.close();

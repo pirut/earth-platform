@@ -15,10 +15,56 @@ final class FarShaders {
     private FarShaders() {}
 
     /**
-     * A shader pack's Voxy code for one dimension: its fragment code, and the body of the GLSL
-     * function giving its temporal anti-aliasing jitter, or null when it asks for none.
+     * A shader pack's Voxy code for one dimension: its fragment code, the body of the GLSL
+     * function giving its temporal anti-aliasing jitter, or null when it asks for none, and the
+     * fragment output location far terrain's faces' own depth takes beside the pack's outputs
+     * (see {@link #faceDepthLocation}).
      */
-    record PackPatch(String fragment, @Nullable String taaOffset) {}
+    record PackPatch(String fragment, @Nullable String taaOffset, int faceDepthLocation) {
+        PackPatch(String fragment, @Nullable String taaOffset) { this(fragment, taaOffset, FarShaders.faceDepthLocation(fragment)); }
+    }
+
+    /** Where {@link #PACK_MAIN} puts the faces' own depth, for a pack that leaves location 1 free. */
+    private static final String FACE_DEPTH_OUTPUT = "layout(location = 1) out float earth_faceDepth;";
+    private static final Pattern COMMENTS = Pattern.compile("/\\*.*?\\*/|//[^\n]*", Pattern.DOTALL);
+    /** A fragment output declared at global scope: its layout qualifier's contents, and its array size. */
+    private static final Pattern OUTPUT = Pattern.compile(
+            "(?m)^\\s*(?:layout\\s*\\(([^)]*)\\)\\s*)?(?:(?:flat|smooth|noperspective|centroid|sample|invariant|precise|highp|mediump|lowp)\\s+)*"
+            + "out\\s+\\w+\\s+\\w+\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*;");
+    private static final Pattern LOCATION = Pattern.compile("\\blocation\\s*=\\s*(\\d+)");
+
+    /**
+     * The fragment output location for far terrain's faces' own depth with a pack's Voxy code: the
+     * first from 1 up that none of the pack's outputs takes. Outputs with a location take theirs
+     * (and an array's the ones after); those without one are counted as taking the lowest free
+     * locations, as drivers hand them out. Photon's single output at 0 leaves 1, as before;
+     * Complementary's and others' second output at 1 put it further up instead of clashing there,
+     * which failed to build and left far terrain in plain colours.
+     */
+    static int faceDepthLocation(@Nullable String patch) {
+        if (patch == null) return 1;
+        java.util.BitSet used = new java.util.BitSet();
+        int unlocated = 0;
+        Matcher output = OUTPUT.matcher(COMMENTS.matcher(patch).replaceAll(" "));
+        while (output.find()) {
+            int size = output.group(2) == null ? 1 : Math.max(1, Integer.parseInt(output.group(2)));
+            Matcher location = output.group(1) == null ? null : LOCATION.matcher(output.group(1));
+            if (location != null && location.find()) used.set(Integer.parseInt(location.group(1)), Integer.parseInt(location.group(1)) + size);
+            else unlocated += size;
+        }
+        for (int at = 0; unlocated > 0; at++) {
+            if (!used.get(at)) {
+                used.set(at);
+                unlocated--;
+            }
+        }
+        return used.nextClearBit(1);
+    }
+
+    /** A far terrain fragment shader with the faces' own depth at {@code location} rather than 1. */
+    private static String faceDepthAt(String source, int location) {
+        return location == 1 ? source : source.replace(FACE_DEPTH_OUTPUT, "layout(location = " + location + ") out float earth_faceDepth;");
+    }
 
     private static final Pattern TAA_OFFSET = Pattern.compile("\"taaOffset\"\\s*:\\s*\"([^\"]*)\"");
 
@@ -599,7 +645,8 @@ final class FarShaders {
             else if (!trimmed.startsWith("#version")) body.append(line).append('\n');
         }
         String patched = FACE_NORMAL.matcher(body).replaceFirst("$1\n    $2 = earth_packNormal($2);");
-        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + fade(fade) + VOXY_PARAMETERS + patched + PACK_MAIN;
+        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + fade(fade) + VOXY_PARAMETERS + patched
+                + (ownDepth ? faceDepthAt(PACK_MAIN, faceDepthLocation(patch)) : PACK_MAIN);
     }
 
     /** The same for far terrain inside the game's blocks' reach, drawn into the game's depth while far terrain otherwise has its own. */
@@ -664,16 +711,17 @@ final class FarShaders {
             uniform float earth_NearReach;
             """;
 
-    /** The depth pre-pass's fragment shader for a fade: no shader pack code at all. */
-    static String packPrepassFragment(String version, int fade) {
-        return version + "#define EARTH_OWN_DEPTH\n" + fade(fade) + VOXY_PARAMETERS + PACK_DECLARATIONS + PREPASS_MAIN;
+    /** The depth pre-pass's fragment shader for a fade: no shader pack code, but its faces' depth where the pack's program has it. */
+    static String packPrepassFragment(String version, String patch, int fade) {
+        return version + "#define EARTH_OWN_DEPTH\n" + fade(fade) + VOXY_PARAMETERS + faceDepthAt(PACK_DECLARATIONS, faceDepthLocation(patch)) + PREPASS_MAIN;
     }
 
     /** The shading pass's fragment shader for a fade: the pack's Voxy code, as {@link #packFragment} splices it, without the depth work. */
     static String packShadeFragment(String version, String patch, int fade) {
         String own = packFragment(version, patch, true, fade);
-        String declarations = PACK_DECLARATIONS.replace(SLOPE_DEPTH, SHADE_INPUTS);
-        return own.substring(0, own.length() - PACK_MAIN.length()) + declarations + SHADE_MAIN;
+        int location = faceDepthLocation(patch);
+        String declarations = faceDepthAt(PACK_DECLARATIONS.replace(SLOPE_DEPTH, SHADE_INPUTS), location);
+        return own.substring(0, own.length() - faceDepthAt(PACK_MAIN, location).length()) + declarations + SHADE_MAIN;
     }
 
     private static final Pattern BREAKS_PREPASS = Pattern.compile("\\bdiscard\\b|\\bgl_FragDepth\\b|\\bgl_SampleMask\\b|\\bdepth_(any|greater|less|unchanged)\\b");

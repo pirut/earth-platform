@@ -77,6 +77,31 @@ class FarShadersTest {
         assertTrue(!FarShaders.packFragment("#version 330 core\n", patch, false).contains("= earth_packNormal("));
     }
 
+    @Test void facesDepthTakesALocationThePackLeavesFree() {
+        String photon = "layout(location = 0) out vec4 gbuffer_data_0;\n" + PHOTON_NORMAL;
+        assertEquals(1, FarShaders.faceDepthLocation(photon));
+        assertEquals(1, FarShaders.faceDepthLocation(null));
+        // Complementary Reimagined r5.9.3 and TAA-Voxy 1.3 write a second (and third) target.
+        assertEquals(2, FarShaders.faceDepthLocation("layout(location = 0) out vec4 gbufferData0;\nlayout(location = 1) out vec4 gbufferData6;\n"));
+        assertEquals(3, FarShaders.faceDepthLocation(
+                "layout(location = 0) out vec4 voxy_colour0;\nlayout(location = 1) out vec4 auxDataOut;\nlayout(location = 2) out vec4 voxyMarkerOut; // colortex9\n"));
+        assertEquals(1, FarShaders.faceDepthLocation("out vec4 colour;\n"), "an output without a location takes 0");
+        assertEquals(3, FarShaders.faceDepthLocation("out vec4 a;\nout vec4 b;\nlayout(location = 1) out vec4 c;\n"));
+        assertEquals(2, FarShaders.faceDepthLocation("layout(location = 0) out vec4 data[2];\n"));
+        assertEquals(1, FarShaders.faceDepthLocation("layout(location = 0) out vec4 a;\n// layout(location = 1) out vec4 b;\n/* layout(location = 1) out vec4 c; */\n"));
+        assertEquals(1, FarShaders.faceDepthLocation("layout(location = 0) out vec4 a;\nvoid f(out vec3 n,\n        out float d) {}\n"));
+        assertEquals(1, FarShaders.faceDepthLocation("layout (location=0) flat out uvec4 a;\nlayout(location=3) out vec4 b;\n"));
+
+        String version = "#version 330 core\n";
+        String own = FarShaders.packFragment(version, photon, true, FarGpu.NO_FADE);
+        assertTrue(own.contains("layout(location = 1) out float earth_faceDepth;"), own);
+        String complementary = "layout(location = 0) out vec4 gbufferData0;\nlayout(location = 1) out vec4 gbufferData6;\n" + PHOTON_NORMAL;
+        for (String source : new String[] {FarShaders.packFragment(version, complementary, true, FarGpu.NO_FADE),
+                FarShaders.packPrepassFragment(version, complementary, FarGpu.NO_FADE), FarShaders.packShadeFragment(version, complementary, FarGpu.NO_FADE)}) {
+            assertTrue(source.contains("layout(location = 2) out float earth_faceDepth;") && !source.contains("layout(location = 1) out float earth_faceDepth;"), source);
+        }
+    }
+
     @Test void depthPrepassOnlyForPacksThatKeepEveryFragmentAndItsDepth() {
         assertTrue(FarShaders.prepassSafe(PHOTON_NORMAL));
         assertTrue(!FarShaders.prepassSafe(null));
@@ -89,7 +114,7 @@ class FarShadersTest {
 
     @Test void prepassDecidesDepthAndShadingPassOnlyShades() {
         String version = "#version 330 core\n";
-        String pre = FarShaders.packPrepassFragment(version, FarGpu.NO_FADE);
+        String pre = FarShaders.packPrepassFragment(version, PHOTON_NORMAL, FarGpu.NO_FADE);
         assertTrue(pre.contains("#define EARTH_OWN_DEPTH") && pre.contains("earth_slopeDepth();") && pre.contains("earth_faceDepth = gl_FragCoord.z;"), pre);
         assertTrue(pre.contains("texelFetch(earth_GameDepth") && !pre.contains("voxy_emitFragment("), pre);
         String shade = FarShaders.packShadeFragment(version, PHOTON_NORMAL, FarGpu.NO_FADE);
@@ -104,7 +129,7 @@ class FarShadersTest {
         int patchEnd = own.indexOf("encode_unit_vector(normal));");
         assertEquals(own.substring(0, patchEnd), faded.substring(0, patchEnd));
         assertTrue(faded.substring(faded.lastIndexOf("void main() {")).contains("earth_fade();"));
-        assertTrue(FarShaders.packPrepassFragment(version, FarGpu.FADE_OUT).contains("#define EARTH_FADE 1"));
+        assertTrue(FarShaders.packPrepassFragment(version, PHOTON_NORMAL, FarGpu.FADE_OUT).contains("#define EARTH_FADE 1"));
     }
 
     @Test void flatGroundPointsStraightUp() {
