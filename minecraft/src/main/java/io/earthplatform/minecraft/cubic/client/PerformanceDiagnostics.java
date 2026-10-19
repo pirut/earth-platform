@@ -59,8 +59,7 @@ public final class PerformanceDiagnostics {
             settings.addProperty("fps_limit",mc.options.framerateLimit().get());settings.addProperty("vsync",mc.options.enableVsync().get());
             settings.addProperty("shader_pack_active",ShaderBlocks.packInUse());settings.addProperty("own_far_depth",FarLod.active());
             settings.addProperty("integrated_server",mc.getSingleplayerServer()!=null);settings.addProperty("screen_open",mc.screen!=null);
-            settings.addProperty("command_cache",FarRenderer.commandCacheEnabled());settings.addProperty("automatic_run_mesher",FarMesher.automaticRuns());
-            settings.addProperty("shadow_hints",FarLod.shadowHintsConfigured());record.add("settings",settings);
+            settings.addProperty("automatic_run_mesher",FarMesher.automaticRuns());record.add("settings",settings);
             Runtime r=Runtime.getRuntime();record.addProperty("heap_used_mib",(r.totalMemory()-r.freeMemory())>>20);record.addProperty("heap_committed_mib",r.totalMemory()>>20);
             ClientCubeWorld world=ClientCubeWorld.current();record.addProperty("cubic_world_loaded",world!=null);
             if(world!=null) {

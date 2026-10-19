@@ -46,13 +46,9 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.trackBytes` | on | `false` sums every column for each memory query, for comparing | `FarRenderer` |
 | `earthplatform.far.cachePick` | on | `false` rebuilds selection, sorting and face groups every frame, for comparing | `FarRenderer` |
 | `earthplatform.far.fastWater` | on | `false` restores full water scans and uniform updates, for comparing | `FarRenderer`, `FarLod` |
-| `earthplatform.far.cacheCommands` | `false` | Experiment: reuses the draw list while the view doesn't change. Off because it made stationary frame times less even on the Mac | `FarRenderer`, `FarGpu` |
 | `earthplatform.far.indexedAllocator` | on | Finds free GPU space by size; `false` scans free ranges by address, for comparing | `FarGpu` |
 | `earthplatform.far.cacheCoverage` | on | Works out once per far column which parts near cubes cover; `false` looks them up per block, for comparing | `FarMesher`, `FarColumnMesh` |
 | `earthplatform.far.runMesher` | on | Meshes plain far columns (level 3 and coarser, one biome per column, no near cubes) from vertical runs of blocks, with the same faces in the same order; anything else uses the block-by-block mesher. `false` always uses the block-by-block mesher, for comparing | `FarMesher` |
-| `earthplatform.far.batchWaterDepth` | `false` | Experiment: draws far water depth in fewer batches | `FarWaterBatch`, `FarLod` |
-| `earthplatform.far.strictUpload` | `false` | Experiment: a fixed 3 ms and byte budget for far mesh uploads per frame instead of the adaptive one. Far terrain can take longer to fill in | `FarRenderer` |
-| `earthplatform.far.uploadBytes` | 4194304 | Bytes uploaded per frame with `strictUpload`; at least one mesh always goes up | `FarRenderer` |
 
 ## Cubes, loading and networking
 
@@ -69,7 +65,6 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | --- | --- | --- | --- |
 | `earthplatform.photon.compat` | `auto` | `on` or `off` overrides the check for running Photon on drivers it doesn't fit | `PhotonCompat` |
 | `earthplatform.far.surfacePackets` | `false` | Server prototype: generates plain far columns (levels 3 to 8) as vertical runs, then turns them back into normal sections, so nothing sent or saved changes. Not the client's `far.runMesher` | `SurfaceGenerator` |
-| `earthplatform.far.shadowHints` | `false` | Experiment: far sun shadows start from last frame's blocker and check it before trusting it. Off because it was slower on the Mac GPU | `FarLod`, `FarLodShaders` |
 | `earthplatform.far.gpuTimers` | `false` | Times far terrain GPU passes with OpenGL queries and adds them to the performance log. Off for players because the queries wrap other mods' and shader packs' draws | `FarGpuTimers` |
 | `earthplatform.far.gpuSampleEvery` | 120 | Frames between GPU timings with `gpuTimers` | `FarGpuTimers` |
 | `earthplatform.perfLog` | on | Writes a small local performance log (frame times, GPU and driver, graphics settings, terrain workload; no names, places or paths) to `earthplatform/perf/latest*.jsonl` in the game folder, at most three 4 MiB files. `false` turns it off | `BuildInfo`, `PerformanceDiagnostics` |

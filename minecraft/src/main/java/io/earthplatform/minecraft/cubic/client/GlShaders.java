@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import io.earthplatform.minecraft.diagnostics.PerfFailures;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL20C;
 
@@ -48,7 +49,7 @@ final class GlShaders {
 
     private static IllegalStateException failure(String details) {
         var failure=new IllegalStateException(details);
-        io.earthplatform.minecraft.diagnostics.PerfFailures.record(io.earthplatform.minecraft.diagnostics.PerfFailures.Stage.FAR_SHADER,failure);
+        PerfFailures.record(PerfFailures.Stage.FAR_SHADER,failure);
         return failure;
     }
 

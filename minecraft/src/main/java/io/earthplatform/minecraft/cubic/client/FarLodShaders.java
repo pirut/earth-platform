@@ -120,14 +120,6 @@ final class FarLodShaders {
             """;
 
     /**
-     * Identical arithmetic and float operands to the ordinary water depth vertex shader. Only
-     * the offset's source changes, from a per-column uniform to a repeated per-vertex attribute.
-     * The original full block-format buffers still draw the colour pass through Iris unchanged.
-     */
-    static final String BATCH_DEPTH_VERTEX = DEEPEN_VERTEX.replace("uniform vec3 earth_Offset;",
-            "layout(location = 1) in vec3 earth_Offset;");
-
-    /**
      * Far water's floor, where the water shows over far terrain: its bed's own depth, or the least
      * depth if that is nearer. It replaces the slope depth there, which across a narrow channel
      * can lie well off the bed.
@@ -230,41 +222,4 @@ final class FarLodShaders {
                 earth_shadow = vec2(earth_sun(start, distance, noise), earth_occlusion(start, distance, noise));
             }
             """;
-    /** Advisory indices only: all clipping along the ORIGINAL prefix is checked again this frame. */
-    static final String SUN_HINTS = SUN
-            .replace("out vec2 earth_shadow;", "layout(location = 0) out vec2 earth_shadow;\n"
-                    + "layout(location = 1) out float earth_hint;\n"
-                    + "uniform sampler2D earth_Hints;\n"
-                    + "uniform bool earth_HintsReady;")
-            .replace("for (int i = 0; i < 32; i++, t *= 1.3) {", """
-                    // A previous hit is just a proposed original sample index, never a cached answer.
-                    float cached = earth_HintsReady ? texelFetch(earth_Hints, ivec2(gl_FragCoord.xy), 0).r : 0.0;
-                    if (!isnan(cached) && !isinf(cached) && cached >= 1.0 && cached <= 32.0 && cached == floor(cached)) {
-                        int candidate = int(cached) - 1;
-                        float hintedT = t;
-                        for (int j = 0; j < 32; j++, hintedT *= 1.3) {
-                            vec3 hintedAt = start + earth_Sun * hintedT;
-                            vec4 hintedClip = earth_Projection * vec4(hintedAt, 1.0);
-                            // Any uncertain value takes the unchanged original loop below.
-                            if (any(isnan(hintedClip)) || any(isinf(hintedClip)) || hintedClip.w <= 0.0) break;
-                            vec2 hintedUv = hintedClip.xy / hintedClip.w * 0.5 + 0.5;
-                            if (any(isnan(hintedUv)) || any(isinf(hintedUv)) || any(lessThan(hintedUv, vec2(0.0))) || any(greaterThan(hintedUv, vec2(1.0)))) break;
-                            if (j != candidate) continue;
-                            float hintedOther = texture(earth_Game, hintedUv).r;
-                            float hintedBehind = -hintedAt.z, hintedFront = -earth_view(hintedUv, hintedOther).z;
-                            if (!isnan(hintedOther) && !isinf(hintedOther) && hintedOther < 1.0
-                                    && !isnan(hintedBehind) && !isinf(hintedBehind) && !isnan(hintedFront) && !isinf(hintedFront)
-                                    && hintedFront < hintedBehind - 0.5 - 0.001 * hintedBehind && hintedBehind - hintedFront < 30.0 + 0.3 * hintedT) {
-                                earth_hint = float(j + 1);
-                                return 1.0;
-                            }
-                            break;
-                        }
-                    }
-                    for (int i = 0; i < 32; i++, t *= 1.3) {
-                    """)
-            .replace("if (front < behind - 0.5 - 0.001 * behind && behind - front < 30.0 + 0.3 * t) return 1.0;",
-                    "if (front < behind - 0.5 - 0.001 * behind && behind - front < 30.0 + 0.3 * t) { earth_hint = float(i + 1); return 1.0; }")
-            .replace("earth_shadow = vec2(0.0);", "earth_shadow = vec2(0.0);\n    earth_hint = 0.0;");
-
 }
