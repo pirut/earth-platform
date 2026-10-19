@@ -348,9 +348,22 @@ public final class CopernicusSource implements AutoCloseable {
     }
 
     static double wrap(double longitude) {
-        double wrapped = ((longitude + 180) % 360 + 360) % 360 - 180;
+        double shifted = longitude + 180;
+        if (FAST_WRAP && shifted >= 0 && shifted < 360) {
+            // The remainders' own steps, which are exact here: x % 360 is x, and (x + 360) % 360 is (x + 360) - 360
+            // while x + 360 stays under 720. Each % costs a division loop, and a tile's weights wrap every pixel.
+            double up = shifted + 360;
+            if (up < 720) {
+                double wrapped = (up - 360) - 180;
+                return wrapped == 180 ? -180 : wrapped;
+            }
+        }
+        double wrapped = (shifted % 360 + 360) % 360 - 180;
         return wrapped == 180 ? -180 : wrapped;
     }
+
+    /** Wraps longitudes already in range without the remainders; the same values. Read with the fill's weight flag. */
+    private static final boolean FAST_WRAP = !"false".equals(System.getProperty("earthplatform.copernicus.fastWeight"));
 
     public Stats stats() {
         int resident;

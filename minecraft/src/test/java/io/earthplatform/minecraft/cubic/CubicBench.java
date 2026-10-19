@@ -150,6 +150,7 @@ class CubicBench {
             CubeOffsets offsets = CubeOffsets.of(Cubic.MAX_HORIZONTAL_RADIUS, Cubic.VERTICAL_RADIUS);
             ExecutorService pool = Executors.newFixedThreadPool(threads);
             List<Future<LevelChunkSection>> futures = new ArrayList<>();
+            java.util.concurrent.atomic.AtomicLong cubeCpu = new java.util.concurrent.atomic.AtomicLong();
             long[] took = new long[offsets.size()];
             long gc0 = gcMillis();
             t0 = System.nanoTime();
@@ -157,9 +158,10 @@ class CubicBench {
                 int x = cx + offsets.dx(i), y = cy + offsets.dy(i), z = cz + offsets.dz(i);
                 int index = i;
                 futures.add(pool.submit(() -> {
-                    long start = System.nanoTime();
+                    long start = System.nanoTime(), cpu0 = CPU.getCurrentThreadCpuTime();
                     LevelChunkSection section = gen.generate(x, y, z);
                     took[index] = System.nanoTime() - start;
+                    cubeCpu.addAndGet(CPU.getCurrentThreadCpuTime() - cpu0);
                     return section;
                 }));
             }
@@ -167,8 +169,8 @@ class CubicBench {
             for (Future<LevelChunkSection> future : futures) cubes.add(future.get());
             double wall = ms(t0);
             if (System.getenv("EARTH_BENCH_DEPTH") != null) depths(gen, offsets, cx, cy, cz, cubes, took);
-            System.out.printf(Locale.ROOT, "cubes: %d in %.0f ms on %d threads = %.0f cubes/s (%.3f ms per cube per thread), gc %d ms%n",
-                    cubes.size(), wall, threads, cubes.size() / wall * 1000, wall * threads / cubes.size(), gcMillis() - gc0);
+            System.out.printf(Locale.ROOT, "cubes: %d in %.0f ms on %d threads = %.0f cubes/s (%.3f ms per cube per thread, cpu %.3f ms), gc %d ms%n",
+                    cubes.size(), wall, threads, cubes.size() / wall * 1000, wall * threads / cubes.size(), cubeCpu.get() / 1e6 / cubes.size(), gcMillis() - gc0);
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             long bytes = 0, nonEmpty = 0;
             for (LevelChunkSection section : cubes) {
@@ -207,7 +209,7 @@ class CubicBench {
             MessageDigest farDigest = MessageDigest.getInstance("SHA-256");
             double farTotal = 0;
             long farCount = 0;
-            for (int level = Integer.parseInt(System.getenv().getOrDefault("EARTH_BENCH_LEVEL", "" + Far.MIN_LEVEL)); level <= Far.MAX_LEVEL; level++) {
+            for (int level = Integer.parseInt(System.getenv().getOrDefault("EARTH_BENCH_LEVEL", "" + Far.MIN_LEVEL)); level <= Integer.parseInt(System.getenv().getOrDefault("EARTH_BENCH_LEVEL_MAX", "" + Far.MAX_LEVEL)); level++) {
                 int lv = level;
                 LongArrayList keys = new LongArrayList();
                 Far.around(home[0], home[1], key -> { if (Far.level(key) == lv) keys.add(key); });
@@ -215,12 +217,15 @@ class CubicBench {
                 keys.sort((a, b) -> Long.compare(distance(a, px, pz), distance(b, px, pz)));
                 int n = Math.min(farPerLevel, keys.size());
                 List<Future<FarColumn>> made = new ArrayList<>();
+                java.util.concurrent.atomic.AtomicLong farCpu = new java.util.concurrent.atomic.AtomicLong();
                 t0 = System.nanoTime();
                 for (int i = 0; i < n; i++) {
                     long key = keys.getLong(i);
                     java.util.concurrent.Callable<FarColumn> job = () -> {
+                        long cpu0 = CPU.getCurrentThreadCpuTime();
                         FarColumn column = new FarColumn();
                         gen.farColumn(Far.level(key), Far.x(key), Far.z(key), column);
+                        farCpu.addAndGet(CPU.getCurrentThreadCpuTime() - cpu0);
                         return column;
                     };
                     if (farWorkers == null) made.add(pool.submit(job));
@@ -251,8 +256,8 @@ class CubicBench {
                 farTotal += levelWall / n * keys.size() * threads;
                 if (farWorkers != null) System.out.printf(Locale.ROOT, "far level %d: %.1f s, %d at once at the end%n", level, levelWall / 1000, farWorkers.allowed());
                 farCount += keys.size();
-                System.out.printf(Locale.ROOT, "far level %d: %d of %d columns, %.2f ms per column per thread, %.1f sections and %.0f bytes per column; fingerprint %s%n",
-                        level, n, keys.size(), levelWall * threads / n, sections / (double) n, farBytes / (double) n,
+                System.out.printf(Locale.ROOT, "far level %d: %d of %d columns, %.2f ms per column per thread (cpu %.2f ms), %.1f sections and %.0f bytes per column; fingerprint %s%n",
+                        level, n, keys.size(), levelWall * threads / n, farCpu.get() / 1e6 / n, sections / (double) n, farBytes / (double) n,
                         HexFormat.of().formatHex(levelDigest.digest(), 0, 8));
             }
             byte[] farHash = farDigest.digest();
@@ -350,6 +355,9 @@ class CubicBench {
         }
         return faces;
     }
+
+    /** CPU time of the thread doing the work, which other processes on a shared machine leave alone. */
+    private static final java.lang.management.ThreadMXBean CPU = java.lang.management.ManagementFactory.getThreadMXBean();
 
     private static double ms(long start) { return (System.nanoTime() - start) / 1e6; }
 

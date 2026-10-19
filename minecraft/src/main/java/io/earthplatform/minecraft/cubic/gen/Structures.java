@@ -116,7 +116,7 @@ final class Structures {
 
     /** Vanilla's rates: one try in 64 chunk columns each over vanilla heights 0 to 64, and -64 to -8 for the deep kind. */
     private Optional<Fossil> planFossil(int cx, int cy, int cz) {
-        RandomSource random = new LegacyRandomSource(seed ^ ground.mix(cx, cy, cz) ^ 0x464F5353494CL);
+        RandomSource random = Underground.random(seed ^ ground.mix(cx, cy, cz) ^ 0x464F5353494CL);
         if (random.nextInt(256) != 0) return Optional.empty();
         int x = (cx << 4) + random.nextInt(16), y = (cy << 4) + random.nextInt(16), z = (cz << 4) + random.nextInt(16);
         int vy = Underground.vanillaY(y, ground.floor(x, z));
@@ -157,7 +157,7 @@ final class Structures {
 
     /** Vanilla's rate: one try in 24 chunk columns, spread over vanilla heights -58 to 30. */
     private Optional<Geode> planGeode(int cx, int cy, int cz) {
-        RandomSource random = new LegacyRandomSource(seed ^ ground.mix(cx, cy, cz) ^ 0x47454F4445L);
+        RandomSource random = Underground.random(seed ^ ground.mix(cx, cy, cz) ^ 0x47454F4445L);
         if (random.nextInt(24 * 88) >= 16) return Optional.empty();
         int x = (cx << 4) + random.nextInt(16), y = (cy << 4) + random.nextInt(16), z = (cz << 4) + random.nextInt(16);
         int vy = Underground.vanillaY(y, ground.floor(x, z));
@@ -250,7 +250,7 @@ final class Structures {
      * solid floor and roof and one to five openings at floor level. As in vanilla, most tries fail.
      */
     private Optional<Dungeon> planDungeon(int cx, int cy, int cz) {
-        RandomSource random = new LegacyRandomSource(seed ^ ground.mix(cx, cy, cz) ^ 0x44554E47L);
+        RandomSource random = Underground.random(seed ^ ground.mix(cx, cy, cz) ^ 0x44554E47L);
         for (int attempt = 0; attempt < 3; attempt++) {
             int x = (cx << 4) + random.nextInt(16), y = (cy << 4) + random.nextInt(16), z = (cz << 4) + random.nextInt(16);
             int rx = 2 + random.nextInt(2), rz = 2 + random.nextInt(2);
