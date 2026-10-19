@@ -7,6 +7,42 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class LightmapRingTest {
+    @Test void activityHoldsOriginalWithoutAllocatingOrDeletingAcrossTransitions() {
+        LightmapRing ring = new LightmapRing();
+        AtomicInteger next = new AtomicInteger(11);
+        List<Integer> freed = new ArrayList<>();
+        int current = ring.select(10, false, next::getAndIncrement, freed::add);
+        assertEquals(10, current);
+        assertTrue(ring.active());
+        assertEquals(13, next.get());
+        for (int i = 0; i < 100; i++) {
+            current = ring.select(current, true, next::getAndIncrement, freed::add);
+            current = ring.select(current, false, next::getAndIncrement, freed::add);
+            assertEquals(10, current);
+        }
+        assertEquals(13, next.get());
+        assertTrue(freed.isEmpty());
+        assertEquals(11, ring.select(current, true, next::getAndIncrement, freed::add));
+        ring.release(freed::add);
+        assertEquals(List.of(11, 12), freed);
+    }
+
+    @Test void holdingOriginalRejectsExternalOwnersAndRollsBackPartialPreparation() {
+        LightmapRing ring = new LightmapRing();
+        List<Integer> freed = new ArrayList<>();
+        AtomicInteger calls = new AtomicInteger();
+        assertThrows(IllegalStateException.class, () -> ring.select(10, false, () -> {
+            if (calls.incrementAndGet() == 2) throw new IllegalStateException("second allocation");
+            return 11;
+        }, freed::add));
+        assertEquals(List.of(11), freed);
+        assertFalse(ring.active());
+        AtomicInteger next = new AtomicInteger(21);
+        assertEquals(20, ring.select(20, false, next::getAndIncrement, freed::add));
+        assertThrows(IllegalStateException.class, () -> ring.select(99, false, next::getAndIncrement, freed::add));
+        assertEquals(99, ring.original(99));
+    }
+
     @Test void rotatesThreeNamesWithoutAllocatingAgainAndDoesNotExposeOwnedArray() {
         LightmapRing ring = new LightmapRing();
         AtomicInteger next = new AtomicInteger(11);

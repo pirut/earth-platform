@@ -361,6 +361,10 @@ public final class FarRenderer {
     /** The same for the columns in view only, the ones within 60 degrees of where the player looks. */
     public int settledInViewPercent() { return wantedInView == 0 ? 0 : (int) (100L * settledInView / wantedInView); }
 
+    boolean idleForLightmap() {
+        return wanted > 0 && settled >= wanted && meshing == 0 && requested.isEmpty() && lastFrameHadTerrain;
+    }
+
     private boolean inView(long key, int bx, int bz) {
         int width = Far.width(Far.level(key));
         double cx = (Far.x(key) + 0.5) * width - bx, cz = (Far.z(key) + 0.5) * width - bz, length = Math.sqrt(cx * cx + cz * cz);
@@ -796,7 +800,11 @@ public final class FarRenderer {
 
     // Drawing ------------------------------------------------------------------------------------
 
+    // Performance policy only. Screenshot readiness still uses the current-pass draw counter.
+    private boolean lastFrameHadTerrain;
+
     public void beginFrame() {
+        lastFrameHadTerrain = drawCount.ranges() > 0;
         drawCount.begin();
         FarGpuTimers.frame();
         frame++;

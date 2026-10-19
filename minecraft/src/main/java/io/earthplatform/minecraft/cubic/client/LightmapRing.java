@@ -18,6 +18,11 @@ final class LightmapRing {
     int original(int current) { return owns(current) ? ids[0] : current; }
 
     int advance(int current, IntSupplier create, IntConsumer free) {
+        return select(current, true, create, free);
+    }
+
+    /** Hold the original during activity, retaining the bounded pool for a later quiet interval. */
+    int select(int current, boolean rotate, IntSupplier create, IntConsumer free) {
         if (ids == null) {
             if (!assigned(current)) throw new IllegalStateException("Missing original lightmap texture");
             int first = -1, second = -1;
@@ -35,6 +40,7 @@ final class LightmapRing {
                 throw failure;
             }
         } else if (!owns(current)) throw new IllegalStateException("Lightmap texture changed outside its owner");
+        if (!rotate) { cursor = 0; return ids[0]; }
         cursor = (cursor + 1) % ids.length;
         return ids[cursor];
     }

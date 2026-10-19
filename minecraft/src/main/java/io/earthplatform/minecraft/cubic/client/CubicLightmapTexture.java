@@ -8,6 +8,7 @@ import io.earthplatform.minecraft.diagnostics.PerfFailures;
 import java.util.function.IntConsumer;
 import java.util.function.IntSupplier;
 import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.client.Minecraft;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL12C;
@@ -24,13 +25,14 @@ public final class CubicLightmapTexture extends DynamicTexture {
     private static final int[] FLOAT_PARAMETERS = {GL12C.GL_TEXTURE_MIN_LOD, GL12C.GL_TEXTURE_MAX_LOD, GL14C.GL_TEXTURE_LOD_BIAS};
     // These initialize after DynamicTexture's constructor, which calls virtual getId().
     private final LightmapRing ring = new LightmapRing();
+    private final LightmapActivity activity = new LightmapActivity();
     private final IntSupplier allocate = this::allocate;
     private final IntConsumer discard = this::discard;
     private int[] intParameters;
     private float[] floatParameters, border;
     private int storageFormat;
     private float anisotropy = Float.NaN;
-    private boolean uploading, failed;
+    private boolean uploading, failed, rotating;
     private long allocations, releases, rotations, restores, uploads;
 
     public CubicLightmapTexture(int width, int height, boolean clear) { super(width, height, clear); }
@@ -40,6 +42,17 @@ public final class CubicLightmapTexture extends DynamicTexture {
         return ENABLED && !failed && pixels != null && pixels.getWidth() == 16 && pixels.getHeight() == 16
                 && pixels.format() == NativeImage.Format.RGBA && ClientCubeWorld.current() != null
                 && !ShaderBlocks.packInUse() && GL.getCapabilities().OpenGL33;
+    }
+
+    private boolean rotateNow() {
+        Minecraft minecraft = Minecraft.getInstance();
+        ClientCubeWorld world = ClientCubeWorld.current();
+        var camera = minecraft.gameRenderer.getMainCamera();
+        var position = camera.getPosition();
+        return activity.rotate(world, position.x, position.y, position.z, camera.getYRot(), camera.getXRot(),
+                minecraft.getWindow().getWidth(), minecraft.getWindow().getHeight(),
+                world != null && world.far().idleForLightmap() && world.renderer().pendingCount() == 0,
+                System.nanoTime());
     }
 
     private void captureParameters(int original) {
@@ -91,6 +104,8 @@ public final class CubicLightmapTexture extends DynamicTexture {
     private void discard(int texture) { TextureUtil.releaseTextureId(texture); releases++; }
 
     private void restore(boolean synchronizePixels) {
+        if (activity != null) activity.reset();
+        rotating = false;
         if (!ring.active()) return;
         int original = ring.original(id);
         if (ring.owns(RenderSystem.getShaderTexture(2))) RenderSystem.setShaderTexture(2, original);
@@ -107,9 +122,10 @@ public final class CubicLightmapTexture extends DynamicTexture {
                 try {
                     int current = super.getId();
                     if (!ring.active()) captureParameters(current);
-                    id = ring.advance(current, allocate, discard);
+                    rotating = rotateNow();
+                    id = ring.select(current, rotating, allocate, discard);
                     if (RenderSystem.getShaderTexture(2) == current) RenderSystem.setShaderTexture(2, id);
-                    rotations++;
+                    if (rotating) rotations++;
                 } catch (RuntimeException failure) {
                     failed = true;
                     PerfFailures.record(PerfFailures.Stage.LIGHTMAP_TEXTURE, failure);
@@ -133,6 +149,6 @@ public final class CubicLightmapTexture extends DynamicTexture {
     }
 
     record State(boolean active, int current, int[] ids, long allocations, long releases,
-                 long rotations, long restores, long uploads, boolean failed) {}
-    State state() { return new State(ring.active(), id, ring.snapshot(), allocations, releases, rotations, restores, uploads, failed); }
+                 long rotations, long restores, long uploads, boolean failed, boolean rotating) {}
+    State state() { return new State(ring.active(), id, ring.snapshot(), allocations, releases, rotations, restores, uploads, failed, rotating); }
 }
