@@ -16,9 +16,9 @@ Everything to paste into the two project pages. Nothing has been published. JR c
 | Categories / tags | Primary **Worldgen**; also **Adventure** and **Transportation** | **World Gen** (main), **Biomes**, **Adventure and RPG** |
 | License | LGPL-3.0-only ("GNU Lesser General Public License v3.0 only") | "GNU Lesser General Public License version 3 (LGPLv3)" |
 | Icon | [docs/images/icon.png](../images/icon.png) (256 × 256) | Same file as the logo |
-| Source | https://github.com/pirut/earth-cubic-platform | Same, under "Source" |
-| Issues | https://github.com/pirut/earth-cubic-platform/issues | Same, under "Issues" |
-| Wiki | https://github.com/pirut/earth-cubic-platform/blob/main/docs/PLAYING.md | Same |
+| Source | https://github.com/pirut/earth-platform | Same, under "Source" |
+| Issues | https://github.com/pirut/earth-platform/issues | Same, under "Issues" |
+| Wiki | https://github.com/pirut/earth-platform/blob/main/docs/PLAYING.md | Same |
 | Discord | None yet; leave blank | Leave blank |
 | Monetization | Creator rewards **off** for the first release. Turning them on later is fine with satellite imagery off by default, but ask EOX first if imagery ever becomes default ([LICENSING-AUDIT.md](LICENSING-AUDIT.md)) | Rewards program **off** for the first release, for the same reason |
 
@@ -85,11 +85,11 @@ The first visit to a place downloads its terrain, so you need an internet connec
 
 You don't need Distant Horizons: Earth Platform has its own far terrain, and Distant Horizons pauses itself in Earth worlds.
 
-[Install guide](https://github.com/pirut/earth-cubic-platform/blob/main/docs/INSTALL.md) · [Playing on the Earth](https://github.com/pirut/earth-cubic-platform/blob/main/docs/PLAYING.md) · [FAQ](https://github.com/pirut/earth-cubic-platform/blob/main/docs/FAQ.md) · [Report a problem](https://github.com/pirut/earth-cubic-platform/issues)
+[Install guide](https://github.com/pirut/earth-platform/blob/main/docs/INSTALL.md) · [Playing on the Earth](https://github.com/pirut/earth-platform/blob/main/docs/PLAYING.md) · [FAQ](https://github.com/pirut/earth-platform/blob/main/docs/FAQ.md) · [Report a problem](https://github.com/pirut/earth-platform/issues)
 
 ## Credits
 
-**Earth Platform would not be possible without open data.** Elevation from AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, NOAA ETOPO1, Copernicus EU-DEM, ArcticDEM and national mapping agencies), Copernicus DEM GLO-30 (produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved), USGS 3DEP (courtesy of the U.S. Geological Survey) and REMA (Polar Geospatial Center, University of Minnesota; DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685). Land cover © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium (CC BY 4.0). Climate from CHELSA V2.1 (Karger et al. 2017, CC0). Rivers from JRC Global Surface Water (Source: EC JRC/Google). Ecoregions from RESOLVE Ecoregions 2017 (Dinerstein et al. 2017, CC BY 4.0). Globe from NASA Blue Marble (NASA Earth Observatory, Reto Stöckli). Optional ground colors (off by default) from EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Full credits are in the mod (Mods → Earth Platform) and in [CREDITS.md](https://github.com/pirut/earth-cubic-platform/blob/main/CREDITS.md).
+**Earth Platform would not be possible without open data.** Elevation from AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, NOAA ETOPO1, Copernicus EU-DEM, ArcticDEM and national mapping agencies), Copernicus DEM GLO-30 (produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved), USGS 3DEP (courtesy of the U.S. Geological Survey) and REMA (Polar Geospatial Center, University of Minnesota; DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685). Land cover © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium (CC BY 4.0). Climate from CHELSA V2.1 (Karger et al. 2017, CC0). Rivers from JRC Global Surface Water (Source: EC JRC/Google). Ecoregions from RESOLVE Ecoregions 2017 (Dinerstein et al. 2017, CC BY 4.0). Globe from NASA Blue Marble (NASA Earth Observatory, Reto Stöckli). Optional ground colors (off by default) from EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016). Full credits are in the mod (Mods → Earth Platform) and in [CREDITS.md](https://github.com/pirut/earth-platform/blob/main/CREDITS.md).
 
 **Distant terrain: thank you, Voxy and Distant Horizons.** Our far terrain is built on ideas from Voxy by Cortex and Distant Horizons by James Seibel and contributors. We'd have recommended using them directly, but neither works with a cubic-chunks world, so we wrote our own renderer following their lead; it contains no code from either.
 
