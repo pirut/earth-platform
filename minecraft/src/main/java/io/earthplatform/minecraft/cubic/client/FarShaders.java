@@ -606,4 +606,85 @@ final class FarShaders {
     static String packNearFragment(String version, String patch, int fade) {
         return packFragment(version, patch, false, fade).replaceFirst("\n", "\n#define EARTH_NEAR\n");
     }
+
+    // Depth pre-pass (-Dearthplatform.far.depthPrepass=true; see FarGpu#DEPTH_PREPASS) ---------------
+
+    /**
+     * Put after the version and defines of both pre-pass vertex shaders, so the pre-pass and the
+     * shading pass place every corner, and so every fragment's window depth, bit for bit alike.
+     */
+    static final String INVARIANT = "invariant gl_Position;\n";
+
+    /** Everything of {@link #PACK_MAIN} before its main: the sample, the slope depth and the own-depth declarations. */
+    private static final String PACK_DECLARATIONS = PACK_MAIN.substring(0, PACK_MAIN.lastIndexOf("void main() {"));
+
+    /**
+     * The pre-pass: exactly the own-depth program's fragment-dropping and depth (the game's terrain,
+     * the game's blocks' reach, a fade's dither, the slope depth), and its faces' own depth into the
+     * second target, with no colour. Depth and that target then hold what the one-pass draw leaves.
+     */
+    private static final String PREPASS_MAIN = """
+            void main() {
+            #ifdef EARTH_FADE
+                earth_fade();
+            #endif
+                if (texelFetch(earth_GameDepth, ivec2(gl_FragCoord.xy), 0).r < 1.0) discard;
+                if (length(earth_position.xz) < earth_NearReach) discard;
+                earth_faceDepth = gl_FragCoord.z;
+                earth_slopeDepth();
+            }
+            """;
+
+    /**
+     * The shading pass after the pre-pass: the own-depth program's colour, with nothing that drops
+     * fragments (but a fade's dither) or writes depth, so the GPU tests depth before shading. It is
+     * drawn with depth test EQUAL against the pre-pass's faces' own depth, so only the face each
+     * pixel kept in the pre-pass is shaded.
+     */
+    private static final String SHADE_MAIN = """
+            void main() {
+            #ifdef EARTH_FADE
+                earth_fade();
+            #endif
+                vec4 colour = earth_sample();
+                vec2 levels = earth_levels();
+                vec3 tint = earth_tint;
+                vec2 lost = earth_sunShadow();
+                tint *= 1.0 - lost.x;
+                levels.y *= sqrt(1.0 - lost.y);
+                vec2 light = clamp(levels / 15.0 * (15.0 / 16.0) + 0.5 / 16.0, vec2(8.0 / 256.0), vec2(248.0 / 256.0));
+                voxy_emitFragment(VoxyFragmentParameters(colour, floor(earth_tile), earth_atlasUv(), earth_face, earth_look, light,
+                        vec4(tint, 1.0), earth_blockId));
+            }
+            """;
+
+    /** The slope depth's inputs the shading pass still reads, in place of the slope depth itself. */
+    private static final String SHADE_INPUTS = """
+            in vec3 earth_position;
+            uniform float earth_NearReach;
+            """;
+
+    /** The depth pre-pass's fragment shader for a fade: no shader pack code at all. */
+    static String packPrepassFragment(String version, int fade) {
+        return version + "#define EARTH_OWN_DEPTH\n" + fade(fade) + VOXY_PARAMETERS + PACK_DECLARATIONS + PREPASS_MAIN;
+    }
+
+    /** The shading pass's fragment shader for a fade: the pack's Voxy code, as {@link #packFragment} splices it, without the depth work. */
+    static String packShadeFragment(String version, String patch, int fade) {
+        String own = packFragment(version, patch, true, fade);
+        String declarations = PACK_DECLARATIONS.replace(SLOPE_DEPTH, SHADE_INPUTS);
+        return own.substring(0, own.length() - PACK_MAIN.length()) + declarations + SHADE_MAIN;
+    }
+
+    private static final Pattern BREAKS_PREPASS = Pattern.compile("\\bdiscard\\b|\\bgl_FragDepth\\b|\\bgl_SampleMask\\b|\\bdepth_(any|greater|less|unchanged)\\b");
+
+    /**
+     * Whether a pack's Voxy fragment code (as Iris preprocessed it, includes and all) leaves every
+     * fragment it is given and its depth alone, which the pre-pass relies on: it decides each
+     * pixel's face without the pack's code. Any mention of dropping fragments or writing depth,
+     * even in a comment, keeps the pack on the one-pass draw.
+     */
+    static boolean prepassSafe(@Nullable String patch) {
+        return patch != null && !BREAKS_PREPASS.matcher(patch).find();
+    }
 }

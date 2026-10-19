@@ -77,6 +77,36 @@ class FarShadersTest {
         assertTrue(!FarShaders.packFragment("#version 330 core\n", patch, false).contains("= earth_packNormal("));
     }
 
+    @Test void depthPrepassOnlyForPacksThatKeepEveryFragmentAndItsDepth() {
+        assertTrue(FarShaders.prepassSafe(PHOTON_NORMAL));
+        assertTrue(!FarShaders.prepassSafe(null));
+        assertTrue(!FarShaders.prepassSafe("void voxy_emitFragment(VoxyFragmentParameters p) { if (p.sampledColour.a < 0.1) discard; }"));
+        assertTrue(!FarShaders.prepassSafe("void voxy_emitFragment(VoxyFragmentParameters p) { gl_FragDepth = 0.5; }"));
+        assertTrue(!FarShaders.prepassSafe("layout(depth_greater) out float gl_FragDepth;"));
+        assertTrue(!FarShaders.prepassSafe("void voxy_emitFragment(VoxyFragmentParameters p) { gl_SampleMask[0] = 1; }"));
+        assertTrue(FarShaders.prepassSafe("float discarded; void voxy_emitFragment(VoxyFragmentParameters p) {}"));
+    }
+
+    @Test void prepassDecidesDepthAndShadingPassOnlyShades() {
+        String version = "#version 330 core\n";
+        String pre = FarShaders.packPrepassFragment(version, FarGpu.NO_FADE);
+        assertTrue(pre.contains("#define EARTH_OWN_DEPTH") && pre.contains("earth_slopeDepth();") && pre.contains("earth_faceDepth = gl_FragCoord.z;"), pre);
+        assertTrue(pre.contains("texelFetch(earth_GameDepth") && !pre.contains("voxy_emitFragment("), pre);
+        String shade = FarShaders.packShadeFragment(version, PHOTON_NORMAL, FarGpu.NO_FADE);
+        assertTrue(!shade.contains("gl_FragDepth"), shade);
+        assertTrue(!shade.contains("earth_faceDepth ="), shade);
+        String main = shade.substring(shade.lastIndexOf("void main() {"));
+        assertTrue(!main.contains("discard") && main.contains("earth_sunShadow()") && main.contains("voxy_emitFragment(VoxyFragmentParameters("), main);
+        assertTrue(shade.contains("normal = earth_packNormal(normal);"), shade);
+        // Everything up to the pack's code is the one-pass program's, so the colour is worked out alike.
+        String own = FarShaders.packFragment(version, PHOTON_NORMAL, true, FarGpu.FADE_IN);
+        String faded = FarShaders.packShadeFragment(version, PHOTON_NORMAL, FarGpu.FADE_IN);
+        int patchEnd = own.indexOf("encode_unit_vector(normal));");
+        assertEquals(own.substring(0, patchEnd), faded.substring(0, patchEnd));
+        assertTrue(faded.substring(faded.lastIndexOf("void main() {")).contains("earth_fade();"));
+        assertTrue(FarShaders.packPrepassFragment(version, FarGpu.FADE_OUT).contains("#define EARTH_FADE 1"));
+    }
+
     @Test void flatGroundPointsStraightUp() {
         assertEquals(32 | 32 << 6, FarMesher.normalCode(0.0F, 0.0F));
         int steep = FarMesher.normalCode(1.0F, 0.0F);

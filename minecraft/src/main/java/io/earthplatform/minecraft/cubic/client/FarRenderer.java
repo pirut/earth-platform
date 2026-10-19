@@ -851,7 +851,26 @@ public final class FarRenderer {
             }
             FarLod.beginDraw(modelView, position.x, position.y, position.z);
         }
-        if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false)) {
+        if (own && FarGpu.DEPTH_PREPASS && FarLod.prepassReady() && gpu.prepassReady(ShaderBlocks.voxyPatch())) {
+            // Depth first, then shading only the faces it kept (see FarGpu#DEPTH_PREPASS).
+            FarLod.beginPrepass();
+            gpu.phase(FarGpu.PREPASS);
+            if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false)) {
+                long timer = FarGpuTimers.begin("far depth prepass");
+                try { drawEach(gpu, visible, position); }
+                finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
+            }
+            FarLod.beginShade();
+            gpu.phase(FarGpu.SHADE);
+            if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false)) {
+                long timer = FarGpuTimers.begin("far opaque");
+                try { drawEach(gpu, visible, position); }
+                finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
+                drawCount.submitted(gpu.ranges);
+            }
+            gpu.phase(FarGpu.ONE_PASS);
+            FarLod.endShade();
+        } else if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false)) {
             long timer = FarGpuTimers.begin("far opaque");
             try { drawEach(gpu, visible, position); }
             finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
