@@ -24,6 +24,7 @@ Most are read once when the class that uses them loads, so set them on the comma
 | `earthplatform.earth.rema` | on | `false` leaves REMA (Antarctica) out of new worlds | `CubicSettings.elevation()` |
 | `earthplatform.earth.ign` | on | `false` leaves IGN RGE ALTI (France) out of new worlds | `CubicSettings.elevation()` |
 | `earthplatform.earth.gsi` | on | `false` leaves GSI (Japan) out of new worlds | `CubicSettings.elevation()` |
+| `earthplatform.cubes.fastBlobs` | on | `false` restores ore and rock blobs' per-block sphere sums and their writes of blocks that are already the vein's; the cubes are identical | `Underground` |
 
 A world pins its elevation layers when it is made, so the layer flags only change new worlds.
 

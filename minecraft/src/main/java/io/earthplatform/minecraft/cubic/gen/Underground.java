@@ -317,6 +317,12 @@ final class Underground {
         }
     }
 
+    /**
+     * Blobs work out each sphere's row and layer terms once and leave blocks already the vein's alone, which
+     * changes nothing; {@code false} restores the per-block sums and writes, for comparisons.
+     */
+    private static final boolean FAST_BLOBS = !"false".equals(System.getProperty("earthplatform.cubes.fastBlobs"));
+
     /** Vanilla's ore blob: spheres strung along a short random line, swelling in the middle. */
     private static void blob(LevelChunkSection section, int cx, int cy, int cz, Vein vein, RandomSource random, int x, int y, int z) {
         int size = vein.size;
@@ -333,12 +339,29 @@ final class Underground {
             int minX = Math.max(bx, Mth.floor(px - r)), maxX = Math.min(bx + 15, Mth.floor(px + r));
             int minY = Math.max(by, Mth.floor(py - r)), maxY = Math.min(by + 15, Mth.floor(py + r));
             int minZ = Math.max(bz, Mth.floor(pz - r)), maxZ = Math.min(bz + 15, Mth.floor(pz + r));
-            for (int qy = minY; qy <= maxY; qy++) for (int qz = minZ; qz <= maxZ; qz++) for (int qx = minX; qx <= maxX; qx++) {
-                double ex = (qx + 0.5 - px) / r, ey = (qy + 0.5 - py) / r, ez = (qz + 0.5 - pz) / r;
-                if (ex * ex + ey * ey + ez * ez >= 1) continue;
-                BlockState here = section.getBlockState(qx & 15, qy & 15, qz & 15);
-                BlockState next = replaced(vein, here);
-                if (next != null) section.setBlockState(qx & 15, qy & 15, qz & 15, next, false);
+            if (!FAST_BLOBS) {
+                for (int qy = minY; qy <= maxY; qy++) for (int qz = minZ; qz <= maxZ; qz++) for (int qx = minX; qx <= maxX; qx++) {
+                    double ex = (qx + 0.5 - px) / r, ey = (qy + 0.5 - py) / r, ez = (qz + 0.5 - pz) / r;
+                    if (ex * ex + ey * ey + ez * ez >= 1) continue;
+                    BlockState here = section.getBlockState(qx & 15, qy & 15, qz & 15);
+                    BlockState next = replaced(vein, here);
+                    if (next != null) section.setBlockState(qx & 15, qy & 15, qz & 15, next, false);
+                }
+                continue;
+            }
+            // The same sums with each row's and layer's terms worked out once; a block already the vein's is left be.
+            for (int qy = minY; qy <= maxY; qy++) {
+                double ey = (qy + 0.5 - py) / r, ey2 = ey * ey;
+                for (int qz = minZ; qz <= maxZ; qz++) {
+                    double ez = (qz + 0.5 - pz) / r, ez2 = ez * ez;
+                    for (int qx = minX; qx <= maxX; qx++) {
+                        double ex = (qx + 0.5 - px) / r;
+                        if (ex * ex + ey2 + ez2 >= 1) continue;
+                        BlockState here = section.getBlockState(qx & 15, qy & 15, qz & 15);
+                        BlockState next = replaced(vein, here);
+                        if (next != null && next != here) section.setBlockState(qx & 15, qy & 15, qz & 15, next, false);
+                    }
+                }
             }
         }
     }
