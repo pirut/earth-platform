@@ -11,7 +11,7 @@ The steps that only JR can take, in order, with the exact clicks. Everything els
 
 ## 2. Make the repository public (JR)
 
-1. **Update the description.** On https://github.com/pirut/earth-cubic-platform, click the gear next to **About** (right column). Set:
+1. **Update the description.** On https://github.com/pirut/earth-platform, click the gear next to **About** (right column). Set:
    - Description: `The real Earth in Minecraft at true scale: real heights, real climate and biomes, terrain to the horizon. NeoForge 1.21.1.`
    - Website: the Modrinth page once it exists (leave blank for now).
    - Topics: `minecraft`, `minecraft-mod`, `neoforge`, `earth`, `terrain-generation`, `cubic-chunks`, `gis`.
@@ -19,7 +19,7 @@ The steps that only JR can take, in order, with the exact clicks. Everything els
 2. **Turn on private vulnerability reports.** **Settings** → **Code security** (left sidebar; may be called "Advanced Security") → **Private vulnerability reporting** → **Enable**. SECURITY.md points people there.
 3. **Check outside pull requests need approval.** **Settings** → **Actions** → **General** → **Approval for running fork pull request workflows from contributors** → keep **Require approval for first-time contributors** (the default) → **Save** if you changed it.
 4. **Optional: protect main.** **Settings** → **Rules** → **Rulesets** → **New ruleset** → **New branch ruleset**. Name it `main`, set **Enforcement status** to Active, **Target branches** → **Add target** → **Include default branch**, tick **Restrict deletions**, **Block force pushes** and **Require a pull request before merging**, then **Create**.
-5. **Make it public.** **Settings** → **General** → scroll to **Danger Zone** → **Change repository visibility** → **Change to public** → read the warnings → type `pirut/earth-cubic-platform` → **I understand, change repository visibility**.
+5. **Make it public.** **Settings** → **General** → scroll to **Danger Zone** → **Change repository visibility** → **Change to public** → read the warnings → type `pirut/earth-platform` → **I understand, change repository visibility**.
 
 GitHub keeps every old commit when a repository goes public. Three things in that history become visible, none of them secret. Leaving them is the recommendation, because removing any of them means rewriting the whole history:
 
@@ -29,7 +29,7 @@ GitHub keeps every old commit when a repository goes public. Three things in tha
 
 ## 3. Test the release build (JR)
 
-The newest build is always on the [Releases page](https://github.com/pirut/earth-cubic-platform/releases), marked **Latest**.
+The newest build is always on the [Releases page](https://github.com/pirut/earth-platform/releases), marked **Latest**.
 
 1. Make a fresh NeoForge 21.1.259 instance (or 21.1.256 or newer) for Minecraft 1.21.1 with at least 6 GB of memory.
 2. Put only the release jar in `mods`, start the game and create a **new** Earth world.

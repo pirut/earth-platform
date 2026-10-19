@@ -4,13 +4,13 @@ Thanks for helping. Bug reports with a place (latitude and longitude) and a scre
 
 ## Reporting a problem
 
-Open an [issue](https://github.com/pirut/earth-cubic-platform/issues/new/choose) and fill in the form. Before you do:
+Open an [issue](https://github.com/pirut/earth-platform/issues/new/choose) and fill in the form. Before you do:
 
 - Try a **fresh world**. A world keeps the data choices it was made with, so fixes to terrain only show in new worlds.
 - Check the [FAQ](docs/FAQ.md) for memory, shader and first-visit questions.
 - Include `logs/latest.log` or the crash report.
 
-Security problems go to the private form on the [Security tab](https://github.com/pirut/earth-cubic-platform/security/advisories/new), not a public issue. See [SECURITY.md](SECURITY.md).
+Security problems go to the private form on the [Security tab](https://github.com/pirut/earth-platform/security/advisories/new), not a public issue. See [SECURITY.md](SECURITY.md).
 
 ## Changing the code
 

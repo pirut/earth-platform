@@ -4,7 +4,7 @@ Earth Platform downloads public Earth data (elevation, land cover, climate and w
 
 ## Reporting a problem
 
-Please report security problems privately through GitHub: open the [Security tab](https://github.com/pirut/earth-cubic-platform/security/advisories/new) and choose **Report a vulnerability**. Don't open a public issue for them.
+Please report security problems privately through GitHub: open the [Security tab](https://github.com/pirut/earth-platform/security/advisories/new) and choose **Report a vulnerability**. Don't open a public issue for them.
 
 Useful details: the Earth Platform version, what an attacker could do, and steps or a file that show it. You'll get an answer on the report, and the fix will be credited to you if you'd like.
 
