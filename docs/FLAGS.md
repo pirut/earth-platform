@@ -46,6 +46,7 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.trackBytes` | on | `false` sums every column for each memory query, for comparing | `FarRenderer` |
 | `earthplatform.far.cachePick` | on | `false` rebuilds selection, sorting and face groups every frame, for comparing | `FarRenderer` |
 | `earthplatform.far.fastWater` | on | `false` restores full water scans and uniform updates, for comparing | `FarRenderer`, `FarLod` |
+| `earthplatform.far.batchStamps` | on | Uploads the fade stamps selection writes once it ends, adjacent slots in one call; `false` uploads each stamp as it is written, for comparing | `FarGpu` |
 | `earthplatform.far.indexedAllocator` | on | Finds free GPU space by size; `false` scans free ranges by address, for comparing | `FarGpu` |
 | `earthplatform.far.cacheCoverage` | on | Works out once per far column which parts near cubes cover; `false` looks them up per block, for comparing | `FarMesher`, `FarColumnMesh` |
 | `earthplatform.far.runMesher` | on | Meshes plain far columns (level 3 and coarser, one biome per column, no near cubes) from vertical runs of blocks, with the same faces in the same order; anything else uses the block-by-block mesher. `false` always uses the block-by-block mesher, for comparing | `FarMesher` |

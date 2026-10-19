@@ -65,6 +65,13 @@ final class FarGpu {
     private final int arenaQuads;
     private final List<Arena> arenas = new ArrayList<>();
     private final TextureBuffer columns = new TextureBuffer(GL30C.GL_RGBA32I, 4096, true);
+    /**
+     * Uploads the fade stamps selection writes once it ends, adjacent slots in one call;
+     * -Dearthplatform.far.batchStamps=false uploads each stamp as it is written, as before build 61.
+     */
+    private static final boolean BATCH_STAMPS = !"false".equals(System.getProperty("earthplatform.far.batchStamps"));
+    private final DirtyTexels stamped = new DirtyTexels();
+    private boolean stamping;
     private final TextureBuffer looks = new TextureBuffer(GL30C.GL_RGBA32UI, 8192, true);
     private final it.unimi.dsi.fastutil.ints.IntArrayList freeSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
     private int nextSlot, looksUploaded;
@@ -150,9 +157,33 @@ final class FarGpu {
      */
     void stamp(int slot, int now, boolean merging) {
         if (slot < 0) return;
+        if (stamping) {
+            int at = slot * 4 + 3;
+            columns.contents[at] = columns.contents[at] & 15 | now << 4 | (merging && now != 0 ? MERGING : 0);
+            stamped.mark(slot);
+            return;
+        }
         int[] texel = columns.texel(slot);
         texel[3] = texel[3] & 15 | now << 4 | (merging && now != 0 ? MERGING : 0);
         columns.upload(slot, texel);
+    }
+
+    /**
+     * From here until {@link #endStamps}, {@link #stamp} only writes the column table's CPU mirror. Nothing draws
+     * with the table in between, so the GPU ends up with the same records as with one upload per stamp.
+     */
+    void beginStamps() {
+        if (!BATCH_STAMPS) return;
+        if (stamping) throw new IllegalStateException("Column stamp batch already open");
+        stamping = true;
+    }
+
+    /** Uploads the stamps written since {@link #beginStamps}, each run of adjacent slots in one call. */
+    void endStamps() {
+        if (!BATCH_STAMPS) return;
+        if (!stamping) throw new IllegalStateException("Column stamp batch not open");
+        stamping = false;
+        stamped.flush(columns::uploadRange);
     }
 
     /**
@@ -605,6 +636,19 @@ final class FarGpu {
                 if (contents != null) System.arraycopy(data, 0, contents, texel * 4, data.length);
                 GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, buffer);
                 GL15C.glBufferSubData(GL31C.GL_COPY_WRITE_BUFFER, texel * 16L, ints);
+                GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, 0);
+            } finally {
+                MemoryUtil.memFree(ints);
+            }
+        }
+
+        /** Uploads texels first up to end from what a buffer that grows holds. */
+        void uploadRange(int first, int end) {
+            IntBuffer ints = MemoryUtil.memAllocInt((end - first) * 4);
+            try {
+                ints.put(contents, first * 4, (end - first) * 4).flip();
+                GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, buffer);
+                GL15C.glBufferSubData(GL31C.GL_COPY_WRITE_BUFFER, first * 16L, ints);
                 GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, 0);
             } finally {
                 MemoryUtil.memFree(ints);
