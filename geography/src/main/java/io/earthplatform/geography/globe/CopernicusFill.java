@@ -54,6 +54,23 @@ public final class CopernicusFill implements ElevationLayer {
      */
     static final int CHECK_ZOOM = 11;
     static final int CHECK_OVERVIEW = 2;
+    /**
+     * A tile's weights keep the last degree square's check size and the last part at hand, rather than asking the
+     * shared caches for them at each of its 65,536 pixels; {@code false} asks every time, for comparisons. The
+     * weights are the same either way.
+     */
+    private static final boolean FAST_WEIGHT = !"false".equals(System.getProperty("earthplatform.copernicus.fastWeight"));
+
+    /** The last square's check size and the last part one tile's weights read. */
+    private static final class Memo {
+        boolean sized;
+        int south, west;
+        int[] dims;
+        long partKey = Long.MIN_VALUE;
+        Part part;
+        // The last check row and column asked about, with the side length it was over, and their parts.
+        int rowAt = -1, rowOf, partRow, columnAt = -1, columnOf, partColumn;
+    }
     /** Check pixels either side whose difference is averaged for a fill. */
     static final int SMOOTH = 2;
     /** Average height in metres above Copernicus, beside its relief, up to which the tiles stand, and from which Copernicus does. */
@@ -138,13 +155,14 @@ public final class CopernicusFill implements ElevationLayer {
         int overview = (int) Math.max(0, Math.min(CopernicusSource.MAX_OVERVIEW, Math.floor(Math.log(pixel / COPERNICUS_METRES) / Math.log(2))));
         double[] longitude = new double[TerrariumTileSource.TILE_SIZE];
         for (int px = 0; px < longitude.length; px++) longitude[px] = (tileX * 256L + px + 0.5) * 360.0 / size - 180;
+        Memo memo = FAST_WEIGHT ? new Memo() : null;
         for (int py = 0; py < TerrariumTileSource.TILE_SIZE; py++) {
             double latitude = latitude(tileY * 256L + py + 0.5, size);
             for (int px = 0; px < TerrariumTileSource.TILE_SIZE; px++) {
                 int i = py * TerrariumTileSource.TILE_SIZE + px;
                 float t = values[i];
                 if (t == 0f) continue;
-                double weight = weight(latitude, longitude[px]);
+                double weight = weight(latitude, longitude[px], memo);
                 if (weight <= 0) continue;
                 double c = dem.metres(latitude, longitude[px], overview);
                 if (Double.isNaN(c)) continue;
@@ -187,16 +205,51 @@ public final class CopernicusFill implements ElevationLayer {
     }
 
     /** The weight at a point, bilinear between check pixels, reaching into the squares around at the edges. */
-    double weight(double latitude, double longitude) {
+    double weight(double latitude, double longitude) { return weight(latitude, longitude, null); }
+
+    private double weight(double latitude, double longitude, Memo memo) {
         longitude = CopernicusSource.wrap(longitude);
         int south = Math.min(89, (int) Math.floor(latitude)), west = (int) Math.floor(longitude);
-        int[] dims = dem.size(latitude, longitude, CHECK_OVERVIEW);
+        int[] dims;
+        // The size names the square by the longitude wrapped once more, which moves it by far less than this margin.
+        if (memo != null && longitude - west >= 1e-9 && west + 1 - longitude >= 1e-9) {
+            if (!memo.sized || memo.south != south || memo.west != west) {
+                memo.dims = dem.size(latitude, longitude, CHECK_OVERVIEW);
+                memo.sized = true;
+                memo.south = south;
+                memo.west = west;
+            }
+            dims = memo.dims;
+        } else {
+            dims = dem.size(latitude, longitude, CHECK_OVERVIEW);
+        }
         if (dims == null) return 0;
         int width = dims[0], height = dims[1];
         double fy = (south + 1 - latitude) * height - 0.5, fx = (longitude - west) * width - 0.5;
         int y0 = (int) Math.floor(fy), x0 = (int) Math.floor(fx);
         double ty = fy - y0, tx = fx - x0;
-        Part here = part(south, west, width, height, part(Math.max(0, y0), height), part(Math.max(0, x0), width));
+        int partRow, partColumn;
+        if (memo != null) {
+            int r = Math.max(0, y0), c = Math.max(0, x0);
+            if (memo.rowAt != r || memo.rowOf != height) { memo.rowAt = r; memo.rowOf = height; memo.partRow = part(r, height); }
+            if (memo.columnAt != c || memo.columnOf != width) { memo.columnAt = c; memo.columnOf = width; memo.partColumn = part(c, width); }
+            partRow = memo.partRow;
+            partColumn = memo.partColumn;
+        } else {
+            partRow = part(Math.max(0, y0), height);
+            partColumn = part(Math.max(0, x0), width);
+        }
+        Part here;
+        if (memo != null) {
+            long key = partKey(south, west, partRow, partColumn);
+            if (memo.partKey != key) {
+                memo.part = part(south, west, width, height, partRow, partColumn);
+                memo.partKey = key;
+            }
+            here = memo.part;
+        } else {
+            here = part(south, west, width, height, partRow, partColumn);
+        }
         double v00 = at(here, south, west, y0, x0), v01 = at(here, south, west, y0, x0 + 1);
         double v10 = at(here, south, west, y0 + 1, x0), v11 = at(here, south, west, y0 + 1, x0 + 1);
         return ((v00 * (1 - tx) + v01 * tx) * (1 - ty) + (v10 * (1 - tx) + v11 * tx) * ty) / 255;
@@ -231,8 +284,12 @@ public final class CopernicusFill implements ElevationLayer {
         return here.weights == null ? 0 : here.weights[(row - here.row0) * here.columns + column - here.column0] & 0xFF;
     }
 
+    private static long partKey(int south, int west, int partRow, int partColumn) {
+        return ((long) (south + 90) * 1000 + west + 180) * PARTS * PARTS + partRow * PARTS + partColumn;
+    }
+
     Part part(int south, int west, int width, int height, int partRow, int partColumn) {
-        long key = ((long) (south + 90) * 1000 + west + 180) * PARTS * PARTS + partRow * PARTS + partColumn;
+        long key = partKey(south, west, partRow, partColumn);
         synchronized (parts) {
             Part hit = parts.get(key);
             if (hit != null) return hit;

@@ -15,6 +15,7 @@ Most are read once when the class that uses them loads, so set them on the comma
 | `earthplatform.rivers.fastSample` | on | `false` restores the allocating per-pixel strength sampler and per-cell nearby maxima lookups for exact-output/performance comparisons | `RiverMap` |
 | `earthplatform.cogs.fastRead` | on | `false` restores per-pixel block lookups and per-pixel overview shapes when 3DEP, REMA and HRDEM files are read; the values read are identical | `FloatCogs` |
 | `earthplatform.climate.rowChunks` | on | `false` keeps CHELSA climate rows in memory whole (320 of them) rather than as 2048-column chunks in the same memory; the far levels re-decoded whole rows thousands of times. Values are identical | `ClimateSource` |
+| `earthplatform.copernicus.fastWeight` | on | `false` makes the Copernicus fill ask the shared caches for each tile pixel's check size and part, and wraps longitudes with remainders only; the weights are identical | `CopernicusFill`, `CopernicusSource` |
 | `earthplatform.earth.offline` | `false` | Never download; only places already in the cache generate. Same as the `offline` setting | `CubicSettings`, `EarthStatus` |
 | `earthplatform.earth.imagery` | `false` | New worlds take ground colors from EOX satellite imagery. Same as the `satelliteImagery` setting | `CubicSettings`, `EarthConfig` |
 | `earthplatform.earth.home` | Yosemite Valley | Default home of new worlds, as `LAT,LON` | `EarthSettings` |
