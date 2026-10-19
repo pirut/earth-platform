@@ -1,9 +1,11 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import java.lang.ref.WeakReference;
+
 /** Rotation is useful only after a continuously settled view; this never skips an upload. */
 final class LightmapActivity {
     static final long QUIET_NANOS = 500_000_000L;
-    private Object world;
+    private WeakReference<Object> world;
     private double x, y, z;
     private float yaw, pitch;
     private int width, height;
@@ -18,10 +20,11 @@ final class LightmapActivity {
             reset();
             return false;
         }
-        boolean changed = !sampled || currentWorld != world || px != x || py != y || pz != z
+        boolean worldChanged = world == null || currentWorld != world.get();
+        boolean changed = !sampled || worldChanged || px != x || py != y || pz != z
                 || currentYaw != yaw || currentPitch != pitch || currentWidth != width || currentHeight != height
                 || now < previousTime;
-        world = currentWorld;
+        if (worldChanged) world = new WeakReference<>(currentWorld);
         x = px; y = py; z = pz; yaw = currentYaw; pitch = currentPitch;
         width = currentWidth; height = currentHeight; previousTime = now; sampled = true;
         if (changed || !settled) changedAt = now;
