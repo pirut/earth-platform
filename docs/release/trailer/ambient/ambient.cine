@@ -1,0 +1,31 @@
+out @OUT@
+fps 30
+
+# Relaxing landscape views from open vantage points, very slow drift (about 25-35 m over 40 s).
+# The camera sits 6-25 m above the ground so the landscape is the subject and grass is only a strip
+# along the bottom; look heights put the summit or ridgeline in the upper third.
+# Dropped after three preview tries: teton (flat meadow and village), fuji (tree canopy), glencoe (open moor).
+
+shot yosemite frames=1200 settle=35 warm=200 clear=1 ease=0 time=1500
+cam 0 37.8107 -119.4851 +25
+cam 1 37.8105 -119.4848 +25
+look 0 37.7459 -119.5332 =900
+look 1 37.7459 -119.5332 =900
+
+shot matterhorn frames=1200 settle=35 warm=200 clear=1 ease=0 time=12200
+cam 0 45.9869 7.7456 +25
+cam 1 45.9871 7.7452 +25
+look 0 45.9763 7.6586 =2700
+look 1 45.9763 7.6586 =2700
+
+shot rainier frames=1200 settle=35 warm=200 clear=1 ease=0 time=1000
+cam 0 46.804 -121.728 +6
+cam 1 46.804 -121.7284 +6
+look 0 46.8529 -121.7604 =3200
+look 1 46.8529 -121.7604 =3200
+
+shot lauterbrunnen frames=1200 settle=35 warm=200 clear=1 ease=0 time=2000
+cam 0 46.5935 7.909 +16
+cam 1 46.5933 7.9091 +16
+look 0 46.5368 7.9626 =2200
+look 1 46.5368 7.9626 =2200

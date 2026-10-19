@@ -155,7 +155,7 @@ public final class EarthFlight {
     // What the screen and camera show ---------------------------------------------------------------
 
     /** The flight's own clock, in milliseconds. */
-    private static long clock() { return (long) (Util.getMillis() / PACE); }
+    private static long clock() { return Cinema.active() ? Cinema.clock() : (long) (Util.getMillis() / PACE); }
 
     private long globeStart() { return start + RISE - FADE; }
 

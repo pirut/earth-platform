@@ -1,0 +1,74 @@
+out @OUT@
+fps 30
+time 1500
+
+# Store gallery and README stills on build 61. Each shot is a near-still: the last frame is the image.
+# Run once with Photon on and once with shaders off (K) for the no-shader images.
+
+shot s01-grand_canyon frames=12 settle=95 warm=600 clear=2 ease=0 time=1500 fov=55 hold=10
+cam 0 36.0585 -112.1076 +30
+cam 1 36.0586 -112.1076 +30
+look 0 36.1150 -112.0950 =1500
+look 1 36.1150 -112.0950 =1500
+
+shot s02-half_dome frames=12 settle=95 warm=600 clear=2 ease=0 time=2000 fov=55 hold=10
+cam 0 37.7280 -119.5760 =2400
+cam 1 37.7281 -119.5760 =2400
+look 0 37.7459 -119.5332 =2300
+look 1 37.7459 -119.5332 =2300
+
+shot s03-lauterbrunnen frames=12 settle=95 warm=600 clear=2 ease=0 time=2500 fov=55 hold=10
+cam 0 46.6050 7.9060 =1500
+cam 1 46.6049 7.9060 =1500
+look 0 46.5300 7.9050 =1500
+look 1 46.5300 7.9050 =1500
+
+shot s04-grand_canyon_sunset frames=12 settle=95 warm=600 clear=2 ease=0 time=12400 fov=55 hold=10
+cam 0 36.0660 -112.1170 +25
+cam 1 36.0661 -112.1170 +25
+look 0 36.1100 -112.1800 =1600
+look 1 36.1100 -112.1800 =1600
+
+shot s05-emerald_bay frames=12 settle=95 warm=600 clear=2 ease=0 time=2500 fov=55 hold=10
+cam 0 38.9420 -120.1150 =2350
+cam 1 38.9421 -120.1150 =2350
+look 0 38.9540 -120.0950 =1900
+look 1 38.9540 -120.0950 =1900
+
+shot s06-rainier frames=12 settle=95 warm=600 clear=2 ease=0 time=2000 fov=50 hold=10
+cam 0 46.7600 -121.7400 =2500
+cam 1 46.7601 -121.7400 =2500
+look 0 46.8523 -121.7603 =4300
+look 1 46.8523 -121.7603 =4300
+
+shot s07-matterhorn frames=12 settle=95 warm=600 clear=2 ease=0 time=12200 fov=50 hold=10
+cam 0 46.0030 7.6950 =5100
+cam 1 46.0031 7.6950 =5100
+look 0 45.9763 7.6586 =4250
+look 1 45.9763 7.6586 =4250
+
+shot s08-alps_far frames=12 settle=95 warm=600 clear=2 ease=0 time=2500 fov=65 hold=10
+cam 0 46.5600 7.9500 =5500
+cam 1 46.5601 7.9500 =5500
+look 0 46.2000 8.4000 =2500
+look 1 46.2000 8.4000 =2500
+
+shot s09-jet frames=40 settle=95 warm=600 clear=2 ease=0 time=3000 fov=70 hold=10 third=1 glide=1 back=6 up=1.5
+cam 0 27.8000 86.6000 =10500
+cam 1 27.8020 86.6040 =10500
+look 0 27.9881 86.9250 =8000
+look 1 27.9881 86.9250 =8000
+
+shot s10-geiranger frames=12 settle=95 warm=600 clear=2 ease=0 time=2000 fov=55 hold=10
+cam 0 62.1062 7.1350 =600
+cam 1 62.1063 7.1350 =600
+look 0 62.1000 7.0200 =250
+look 1 62.1000 7.0200 =250
+
+shot s11-everest frames=12 settle=95 warm=600 clear=2 ease=0 time=12000 fov=50 hold=10
+cam 0 27.9550 86.9000 =7600
+cam 1 27.9551 86.9000 =7600
+look 0 27.9881 86.9250 =8700
+look 1 27.9881 86.9250 =8700
+
+map s12-travel 46.5935 7.9090 37.7459 -119.5332 tail=45 warm=60
