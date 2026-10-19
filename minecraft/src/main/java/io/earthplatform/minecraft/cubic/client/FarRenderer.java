@@ -836,7 +836,11 @@ public final class FarRenderer {
                     view.earthplatform$camX(), view.earthplatform$camY(), view.earthplatform$camZ(),
                     columnsVersion, pickVersion, finest, Far.hole(), band);
         } else pick.invalidate();
-        if (changed || pickAnimating) pickColumns(position, frustum, bx, bz, band);
+        if (changed || pickAnimating) {
+            gpu.beginStamps();
+            try { pickColumns(position, frustum, bx, bz, band); }
+            finally { gpu.endStamps(); }
+        }
         List<Column> visible = this.visible;
         if (visible.isEmpty()) return;
         boolean pack = ShaderBlocks.packInUse();

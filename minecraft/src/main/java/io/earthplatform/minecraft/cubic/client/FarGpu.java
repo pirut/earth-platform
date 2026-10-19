@@ -67,6 +67,8 @@ final class FarGpu {
     private final List<Arena> arenas = new ArrayList<>();
     private final List<Commands> commandSets = new ArrayList<>();
     private final TextureBuffer columns = new TextureBuffer(GL30C.GL_RGBA32I, 4096, true);
+    private final DirtyTexels stamped = new DirtyTexels();
+    private boolean stamping;
     private final TextureBuffer looks = new TextureBuffer(GL30C.GL_RGBA32UI, 8192, true);
     private final it.unimi.dsi.fastutil.ints.IntArrayList freeSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
     private int nextSlot, looksUploaded;
@@ -154,9 +156,28 @@ final class FarGpu {
      */
     void stamp(int slot, int now, boolean merging) {
         if (slot < 0) return;
+        if (stamping) {
+            int at = slot * 4 + 3;
+            columns.contents[at] = columns.contents[at] & 15 | now << 4 | (merging && now != 0 ? MERGING : 0);
+            stamped.mark(slot);
+            return;
+        }
         int[] texel = columns.texel(slot);
         texel[3] = texel[3] & 15 | now << 4 | (merging && now != 0 ? MERGING : 0);
         columns.upload(slot, texel);
+    }
+
+    /** Selection only changes CPU stamps; no shader reads the column table until it finishes. */
+    void beginStamps() {
+        if (stamping) throw new IllegalStateException("Column stamp batch already open");
+        stamping = true;
+    }
+
+    /** Publish the exact final records before any draw, including when selection found no visible columns. */
+    void endStamps() {
+        if (!stamping) throw new IllegalStateException("Column stamp batch not open");
+        stamping = false;
+        stamped.flush(columns::uploadRange);
     }
 
     /**
@@ -714,6 +735,19 @@ final class FarGpu {
                 if (contents != null) System.arraycopy(data, 0, contents, texel * 4, data.length);
                 GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, buffer);
                 GL15C.glBufferSubData(GL31C.GL_COPY_WRITE_BUFFER, texel * 16L, ints);
+                GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, 0);
+            } finally {
+                MemoryUtil.memFree(ints);
+            }
+        }
+
+        /** Uploads an adjacent dirty range from the authoritative growing-buffer mirror. */
+        void uploadRange(int first, int end) {
+            IntBuffer ints = MemoryUtil.memAllocInt((end - first) * 4);
+            try {
+                ints.put(contents, first * 4, (end - first) * 4).flip();
+                GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, buffer);
+                GL15C.glBufferSubData(GL31C.GL_COPY_WRITE_BUFFER, first * 16L, ints);
                 GL15C.glBindBuffer(GL31C.GL_COPY_WRITE_BUFFER, 0);
             } finally {
                 MemoryUtil.memFree(ints);
