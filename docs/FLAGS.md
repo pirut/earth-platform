@@ -31,6 +31,7 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 
 | Flag | Default | What it does | Read in |
 | --- | --- | --- | --- |
+| `earthplatform.far.fastReach` | on | `false` restores the shrinking flood queue, a fresh mark array per flood and a land cover lookup per sample in the water reach windows (`reachLevels`); output is identical | `EarthGenerator` |
 | `earthplatform.far.detail` | 11 | How far fine far terrain reaches, 4 to 48 (past 24 is the extreme range). Same as the `detail` setting | `Far.DETAIL` |
 | `earthplatform.far.textured` | from settings | Far levels drawn with block textures; coarser ones use flat colors. Same as the `texturedLevels` setting | `FarRenderer` |
 | `earthplatform.far.threads` | (cores - 4) / 2, 2 to 8 | Server workers that make far columns | `FarServer.WORKERS` |

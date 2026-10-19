@@ -1335,6 +1335,35 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Cells each way whose water a reach's level is taken over, and the most two neighbouring water samples of one reach differ by. */
     private static final int REACH = 3;
     private static final double DROP = 8;
+    /**
+     * Reach windows are flooded with a queue that never shrinks and one set of marks cleared after each flood,
+     * and dry cells' sea samples come from one land cover mask lookup each; {@code false} restores the shrinking
+     * queue, a fresh mark array for every flood and a lookup per sample, for comparisons. Same output either way.
+     */
+    private static final boolean FAST_REACH = !"false".equals(System.getProperty("earthplatform.far.fastReach"));
+
+    /**
+     * A first-in first-out queue for floods that enqueue each sample at most once while it is not empty: an array
+     * as long as the window, read and written from its start, which starts again whenever the queue empties. The
+     * shrinking queue reallocated its array over and over as floods emptied and refilled it.
+     */
+    private static final class Flood extends it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue {
+        private final int[] items;
+        private int head, tail;
+
+        Flood(int capacity) { super(0); items = new int[capacity]; }
+
+        @Override public void enqueue(int x) { items[tail++] = x; }
+        @Override public int dequeueInt() {
+            if (head == tail) throw new java.util.NoSuchElementException();
+            int x = items[head++];
+            if (head == tail) head = tail = 0;
+            return x;
+        }
+        @Override public int size() { return tail - head; }
+        @Override public boolean isEmpty() { return head == tail; }
+        @Override public void clear() { head = tail = 0; }
+    }
     /** Reach levels as far as they have been found. */
     private final java.util.concurrent.ConcurrentHashMap<Long, Reaches> reaches = new java.util.concurrent.ConcurrentHashMap<>();
     /**
@@ -1774,10 +1803,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         for (int wj = 0; wj <= 2 * REACH; wj++) for (int wi = 0; wi <= 2 * REACH; wi++) {
             if (dry(cx - REACH + wi, cz - REACH + wj)) {
                 dryCells[wj * (2 * REACH + 1) + wi] = true;
+                long[] mask = FAST_REACH ? coverWater(cx - REACH + wi, cz - REACH + wj) : null;
                 for (int k = 0; k < WATER_SAMPLES * WATER_SAMPLES; k++) {
                     int at = (wj * WATER_SAMPLES + k / WATER_SAMPLES) * span + wi * WATER_SAMPLES + k % WATER_SAMPLES;
                     water[at] = ground[at] = Float.NaN;
-                    seaAt[at] = open(cx - REACH + wi, cz - REACH + wj, k);
+                    seaAt[at] = mask != null ? (mask[NO_SEA.length + (k >> 6)] >>> (k & 63) & 1) != 0 : open(cx - REACH + wi, cz - REACH + wj, k);
                 }
                 continue;
             }
@@ -1791,7 +1821,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 seaAt[at] = survey.kind[k] == OPEN || (sea[k >> 6] >>> (k & 63) & 1) != 0;
             }
         }
-        it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue = new it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue();
+        it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue = FAST_REACH ? new Flood(span * span) : new it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue();
         Runnable dryGround = () -> {
             for (int wj = 0; wj <= 2 * REACH; wj++) for (int wi = 0; wi <= 2 * REACH; wi++) {
                 if (!dryCells[wj * (2 * REACH + 1) + wi]) continue;
@@ -1812,6 +1842,9 @@ public final class EarthGenerator extends SurfaceGenerator {
         long[] drowned = new long[NO_SEA.length], falling = new long[NO_SEA.length];
         java.util.Arrays.fill(samples, Float.NaN);
         it.unimi.dsi.fastutil.ints.IntArrayList members = new it.unimi.dsi.fastutil.ints.IntArrayList();
+        // With FAST_REACH one set of marks serves every flood, cleared again from the list of what each one marked.
+        boolean[] marks = FAST_REACH ? new boolean[span * span] : null;
+        it.unimi.dsi.fastutil.ints.IntArrayList marked = FAST_REACH ? new it.unimi.dsi.fastutil.ints.IntArrayList() : null;
         for (int sj = first; sj < last; sj++) for (int si = first; si < last; si++) {
             int start = sj * span + si, k = (sj - first) * WATER_SAMPLES + si - first;
             if (sunk != null && !Float.isNaN(sunk[start])) {
@@ -1828,7 +1861,12 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
             if (reached[start] || Float.isNaN(water[start])) continue;
             // Each reach floods from a sample of the cell's own that no other reach has reached.
-            boolean[] joined = new boolean[span * span];
+            boolean[] joined = marks != null ? marks : new boolean[span * span];
+            if (marked != null) {
+                for (int m = 0; m < marked.size(); m++) joined[marked.getInt(m)] = false;
+                marked.clear();
+                marked.add(start);
+            }
             joined[start] = true;
             queue.enqueue(start);
             int count = 0, own = 0;
@@ -1844,6 +1882,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                     if (ni < 0 || nj < 0 || ni >= span || nj >= span || joined[n] || Float.isNaN(water[n])) continue;
                     if (Math.abs(water[n] - water[at]) > DROP || sunk != null && !Float.isNaN(sunk[n]) || falls != null && !Float.isNaN(falls[n])) continue;
                     joined[n] = true;
+                    if (marked != null) marked.add(n);
                     queue.enqueue(n);
                 }
             }
