@@ -1,0 +1,35 @@
+{
+  "source": "86ff8bc2bd252943d9ae06a46543791c5d95ca77",
+  "jar_sha256": "6b91b8924150d34dd320f380b7b437afc987a7b57972ff2238efcdff2229dee9",
+  "tests": {
+    "tests": 177,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 4
+  },
+  "default_enabled": false,
+  "label": "smoke",
+  "experiment_enabled_only_in_owned_instance": true,
+  "driver_sha256": "3a4d894e712c5b92d76810860011ce39ee0d1073660230d614db955dd2721916",
+  "max_extra_textures": 2,
+  "detailed_gc_log": true,
+  "native_oracle_checks": 8,
+  "rgba_pixels_compared": 5632,
+  "light_bindings": 48361,
+  "far_bindings": 7867,
+  "sampler_fields": 23,
+  "motion_checked_uploads": 597,
+  "motion_original_uploads": 600,
+  "motion_extra_uploads": 0,
+  "motion_extra_allocations": 0,
+  "motion_releases": 0,
+  "motion_restores": 0,
+  "pool_names_retained_during_motion": true,
+  "resumed_quiet": true,
+  "release_all_three_names": true,
+  "failure_counter": 0,
+  "normal_exit_ms": [
+    349.5655
+  ],
+  "exact_native_source_header": true
+}
