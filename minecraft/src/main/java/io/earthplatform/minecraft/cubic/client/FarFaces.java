@@ -41,13 +41,18 @@ final class FarFaces {
     private final ConcurrentHashMap<TextureAtlasSprite, Integer> averages = new ConcurrentHashMap<>();
 
     Face face(BlockState state, Direction direction) {
-        return faces.computeIfAbsent(state, this::bake)[direction.get3DDataValue()];
+        Face[] cached = faces.get(state);
+        if (cached == null) cached = faces.computeIfAbsent(state, this::bake);
+        return cached[direction.get3DDataValue()];
     }
 
     /** The RGB multiplier the block's colour handler gives this face in a biome; white when untinted. */
     int tint(BlockState state, Holder<Biome> biome, Face face) {
         if (face.tint == -1) return 0xFFFFFF;
-        return tints.computeIfAbsent(new TintKey(state, biome, face.tint), key -> {
+        TintKey lookup = new TintKey(state, biome, face.tint);
+        Integer cached = tints.get(lookup);
+        if (cached != null) return cached;
+        return tints.computeIfAbsent(lookup, key -> {
             BiomeView view = new BiomeView(biome);
             int color = key.index == -2
                     ? IClientFluidTypeExtensions.of(state.getFluidState()).getTintColor(state.getFluidState(), view, BlockPos.ZERO)
