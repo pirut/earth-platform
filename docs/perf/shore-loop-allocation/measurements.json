@@ -1,0 +1,1148 @@
+{
+  "code_source": "5b351cd51297f14e9a132913d9e2f6a2e455c32a",
+  "reference_source": "6ff363560ff5173740ec641c465c72caf59a1633",
+  "full_tests": {
+    "total": 163,
+    "passed": 159,
+    "optional_skips": 4,
+    "failures": 0,
+    "errors": 0
+  },
+  "hardware": "Apple M4 Pro, native OpenGL4.1 Metal91.7, built-in Retina",
+  "settings": {
+    "framebuffer": [
+      1708,
+      960
+    ],
+    "render_chunks": 12,
+    "simulation_chunks": 12,
+    "shaders": false,
+    "gamma": 0.5,
+    "seed": 20261013,
+    "gpu_observer_every_frames": 120,
+    "automatic_local_log": true,
+    "detailed_gc_log": true,
+    "disposable_test_random_tick_speed": 0
+  },
+  "all_four_near_and_far_hash_sets_equal": true,
+  "new_player_switches": false,
+  "fps_gain_claimed": false,
+  "whole_frame_gpu_time_measured": false,
+  "gc_overlap_is_correlation_not_full_attribution": true,
+  "runs": [
+    {
+      "label": "baseline-0",
+      "source": "6ff363560ff5173740ec641c465c72caf59a1633",
+      "jar_sha256": "45e227bb9d307ef2f1fdd08e8a6ed7c85759a1156cf706977c6f0b6473893b42",
+      "near_oracle": {
+        "voxel_states": 196608,
+        "cubes": 48,
+        "matches_reference": false
+      },
+      "far_oracle": {
+        "columns": 144,
+        "voxel_states_counted": 1101824,
+        "fine_tree_states": 32281,
+        "leaf_mushroom_states": 36609,
+        "pillar_states": 5139,
+        "matches_reference": false
+      },
+      "settle_seconds": [
+        30.994375125,
+        2.044800792,
+        2.748093167,
+        2.045064542
+      ],
+      "normal_exit_ms": 362.801875,
+      "phases": {
+        "stationary": {
+          "frames": {
+            "count": 2116,
+            "mean_ms": 21.28125700992436,
+            "p50_ms": 15.199833,
+            "p95_ms": 37.601208,
+            "p99_ms": 38.867375,
+            "max_ms": 39.78125,
+            "over40_pct": 0.0,
+            "over100_count": 0,
+            "fps": 46.989705520386146,
+            "trim_two_seconds_each_end": {
+              "count": 1927,
+              "mean_ms": 21.282167379865026,
+              "p50_ms": 15.224917,
+              "p95_ms": 37.524792,
+              "p99_ms": 38.860709,
+              "max_ms": 39.78125,
+              "over40_pct": 0.0,
+              "over100_count": 0,
+              "fps": 46.98769548002401
+            }
+          },
+          "allocation_gc": {
+            "allocation_interval_seconds": 45.142727916,
+            "thread_groups": {
+              "Earth cube worker": {
+                "allocated_mib_per_second": 0.0,
+                "cpu_cores": 0.0,
+                "threads": 4
+              },
+              "Earth far mesher": {
+                "allocated_mib_per_second": 0.0,
+                "cpu_cores": 0.0,
+                "threads": 3
+              },
+              "Earth far terrain": {
+                "allocated_mib_per_second": 0.0,
+                "cpu_cores": 0.0,
+                "threads": 12
+              },
+              "Earth performance log": {
+                "allocated_mib_per_second": 0.0005989574725980767,
+                "cpu_cores": 8.087681379808621e-05,
+                "threads": 1
+              },
+              "Render thread": {
+                "allocated_mib_per_second": 8.726437717394193,
+                "cpu_cores": 0.6399196356443778,
+                "threads": 1
+              },
+              "Server thread": {
+                "allocated_mib_per_second": 0.8279745408495289,
+                "cpu_cores": 0.047403936332379625,
+                "threads": 1
+              }
+            },
+            "gc_bean_deltas_in_bracket": {
+              "G1 Concurrent GC.count": 0,
+              "G1 Concurrent GC.ms": 0,
+              "G1 Old Generation.count": 0,
+              "G1 Old Generation.ms": 0,
+              "G1 Young Generation.count": 0,
+              "G1 Young Generation.ms": 0
+            },
+            "fully_contained_gc_pauses": {
+              "count": 0,
+              "sum_ms": 0,
+              "max_ms": 0
+            },
+            "max_logged_safepoint_ms": 0.087791,
+            "all_frames": {
+              "count": 2116,
+              "mean_ms": 21.28125700992436,
+              "p95_ms": 37.601208,
+              "p99_ms": 38.867375,
+              "max_ms": 39.78125
+            },
+            "diagnostic_frames_overlapping_gc": {
+              "count": 0
+            },
+            "diagnostic_frames_without_gc_overlap": {
+              "count": 2116,
+              "mean_ms": 21.28125700992436,
+              "p95_ms": 37.601208,
+              "p99_ms": 38.867375,
+              "max_ms": 39.78125
+            },
+            "all_over_100ms_frames": []
+          },
+          "gpu_passes": {
+            "far opaque": {
+              "samples": 16,
+              "gpu_ms_max": 20.983959,
+              "max_age_frames": 3,
+              "gpu_ms_mean": 19.619539,
+              "cpu_ms_mean": 7.194416437500001
+            },
+            "far water colour": {
+              "samples": 16,
+              "gpu_ms_max": 0.107459,
+              "max_age_frames": 3,
+              "gpu_ms_mean": 0.09665918750000001,
+              "cpu_ms_mean": 3.0608568125000004
+            }
+          },
+          "logger_windows": 8,
+          "unique_stationary_scenes": 1,
+          "unique_stationary_command_versions": 1,
+          "query_modes": [
+            "non_nested_elapsed"
+          ],
+          "query_dropped_max": 0,
+          "error_maps_empty": true
+        },
+        "moving": {
+          "frames": {
+            "count": 980,
+            "mean_ms": 31.228671597959167,
+            "p50_ms": 31.04075,
+            "p95_ms": 42.7105,
+            "p99_ms": 54.704625,
+            "max_ms": 75.272042,
+            "over40_pct": 8.775510204081632,
+            "over100_count": 0,
+            "fps": 32.0218552000576,
+            "trim_two_seconds_each_end": {
+              "count": 843,
+              "mean_ms": 31.524809954922894,
+              "p50_ms": 31.159917,
+              "p95_ms": 42.986625,
+              "p99_ms": 55.308708,
+              "max_ms": 75.272042,
+              "over40_pct": 9.134045077105576,
+              "over100_count": 0,
+              "fps": 31.72104769005407
+            }
+          },
+          "allocation_gc": {
+            "allocation_interval_seconds": 30.750994709,
+            "thread_groups": {
+              "Earth cube mesher": {
+                "allocated_mib_per_second": 276.68281183272137,
+                "cpu_cores": 0.42628575511293715,
+                "threads": 3
+              },
+              "Earth cube worker": {
+                "allocated_mib_per_second": 148.7435689878091,
+                "cpu_cores": 0.1515835518203822,
+                "threads": 4
+              },
+              "Earth cube writer": {
+                "allocated_mib_per_second": 0.0013037779311244441,
+                "cpu_cores": 5.912003878911662e-05,
+                "threads": 1
+              },
+              "Earth far mesher": {
+                "allocated_mib_per_second": 311.0245262305814,
+                "cpu_cores": 0.731771092705956,
+                "threads": 3
+              },
+              "Earth far terrain": {
+                "allocated_mib_per_second": 501.90962796753666,
+                "cpu_cores": 0.5938202055836463,
+                "threads": 12
+              },
+              "Earth performance log": {
+                "allocated_mib_per_second": 0.0010889212825319096,
+                "cpu_cores": 8.7444325799744e-05,
+                "threads": 1
+              },
+              "Render thread": {
+                "allocated_mib_per_second": 45.64628482128696,
+                "cpu_cores": 0.8558930938353341,
+                "threads": 1
+              },
+              "Server thread": {
+                "allocated_mib_per_second": 12.831158668779711,
+                "cpu_cores": 0.08813763670567577,
+                "threads": 1
+              }
+            },
+            "gc_bean_deltas_in_bracket": {
+              "G1 Concurrent GC.count": 26,
+              "G1 Concurrent GC.ms": 52,
+              "G1 Old Generation.count": 0,
+              "G1 Old Generation.ms": 0,
+              "G1 Young Generation.count": 40,
+              "G1 Young Generation.ms": 239
+            },
+            "fully_contained_gc_pauses": {
+              "count": 66,
+              "sum_ms": 293.07,
+              "max_ms": 16.225
+            },
+            "max_logged_safepoint_ms": 16.351708,
+            "all_frames": {
+              "count": 980,
+              "mean_ms": 31.228671597959167,
+              "p95_ms": 42.7105,
+              "p99_ms": 54.704625,
+              "max_ms": 75.272042
+            },
+            "diagnostic_frames_overlapping_gc": {
+              "count": 69,
+              "mean_ms": 37.51962201449275,
+              "p95_ms": 48.914209,
+              "p99_ms": 56.723583,
+              "max_ms": 56.723583
+            },
+            "diagnostic_frames_without_gc_overlap": {
+              "count": 911,
+              "mean_ms": 30.752189074643226,
+              "p95_ms": 41.637292,
+              "p99_ms": 53.551667,
+              "max_ms": 75.272042
+            },
+            "all_over_100ms_frames": []
+          },
+          "gpu_passes": {
+            "far opaque": {
+              "samples": 5,
+              "gpu_ms_max": 19.52775,
+              "max_age_frames": 2,
+              "gpu_ms_mean": 19.011024799999998,
+              "cpu_ms_mean": 6.3140582
+            },
+            "far water colour": {
+              "samples": 5,
+              "gpu_ms_max": 0.052375,
+              "max_age_frames": 2,
+              "gpu_ms_mean": 0.0122332,
+              "cpu_ms_mean": 2.7869754
+            }
+          },
+          "logger_windows": 4,
+          "unique_stationary_scenes": null,
+          "unique_stationary_command_versions": null,
+          "query_modes": [
+            "non_nested_elapsed"
+          ],
+          "query_dropped_max": 0,
+          "error_maps_empty": true
+        }
+      }
+    },
+    {
+      "label": "candidate-0",
+      "source": "5b351cd51297f14e9a132913d9e2f6a2e455c32a",
+      "jar_sha256": "a16adce44c809f2b0c62898897c8f3547f8c328aeb3f7d3997e7f33bd6f33f30",
+      "near_oracle": {
+        "cubes": 48,
+        "voxel_states": 196608,
+        "matches_reference": true
+      },
+      "far_oracle": {
+        "columns": 144,
+        "voxel_states_counted": 1101824,
+        "fine_tree_states": 32281,
+        "leaf_mushroom_states": 36609,
+        "pillar_states": 5139,
+        "matches_reference": true
+      },
+      "settle_seconds": [
+        29.504078834,
+        2.091534625,
+        2.896868083,
+        2.046568709
+      ],
+      "normal_exit_ms": 343.437625,
+      "phases": {
+        "stationary": {
+          "frames": {
+            "count": 2119,
+            "mean_ms": 21.26486976970269,
+            "p50_ms": 15.96525,
+            "p95_ms": 36.647375,
+            "p99_ms": 37.883958,
+            "max_ms": 39.858833,
+            "over40_pct": 0.0,
+            "over100_count": 0,
+            "fps": 47.02591696210436,
+            "trim_two_seconds_each_end": {
+              "count": 1929,
+              "mean_ms": 21.272273500777608,
+              "p50_ms": 15.960125,
+              "p95_ms": 36.655834,
+              "p99_ms": 37.93425,
+              "max_ms": 39.858833,
+              "over40_pct": 0.0,
+              "over100_count": 0,
+              "fps": 47.00954977677613
+            }
+          },
+          "allocation_gc": {
+            "allocation_interval_seconds": 45.202594958,
+            "thread_groups": {
+              "Earth cube worker": {
+                "allocated_mib_per_second": 0.0,
+                "cpu_cores": 0.0,
+                "threads": 4
+              },
+              "Earth far mesher": {
+                "allocated_mib_per_second": 0.0,
+                "cpu_cores": 0.0,
+                "threads": 3
+              },
+              "Earth far terrain": {
+                "allocated_mib_per_second": 0.0,
+                "cpu_cores": 0.0,
+                "threads": 12
+              },
+              "Earth performance log": {
+                "allocated_mib_per_second": 0.0005988393326096931,
+                "cpu_cores": 8.253950914691201e-05,
+                "threads": 1
+              },
+              "Render thread": {
+                "allocated_mib_per_second": 8.79648969569234,
+                "cpu_cores": 0.6622201673999744,
+                "threads": 1
+              },
+              "Server thread": {
+                "allocated_mib_per_second": 1.1004631419738407,
+                "cpu_cores": 0.04685921244052664,
+                "threads": 1
+              }
+            },
+            "gc_bean_deltas_in_bracket": {
+              "G1 Concurrent GC.count": 0,
+              "G1 Concurrent GC.ms": 0,
+              "G1 Old Generation.count": 0,
+              "G1 Old Generation.ms": 0,
+              "G1 Young Generation.count": 1,
+              "G1 Young Generation.ms": 8
+            },
+            "fully_contained_gc_pauses": {
+              "count": 1,
+              "sum_ms": 8.861,
+              "max_ms": 8.861
+            },
+            "max_logged_safepoint_ms": 8.946333,
+            "all_frames": {
+              "count": 2119,
+              "mean_ms": 21.26486976970269,
+              "p95_ms": 36.647375,
+              "p99_ms": 37.883958,
+              "max_ms": 39.858833
+            },
+            "diagnostic_frames_overlapping_gc": {
+              "count": 1,
+              "mean_ms": 28.364541,
+              "p95_ms": 28.364541,
+              "p99_ms": 28.364541,
+              "max_ms": 28.364541
+            },
+            "diagnostic_frames_without_gc_overlap": {
+              "count": 2118,
+              "mean_ms": 21.261517705854576,
+              "p95_ms": 36.647375,
+              "p99_ms": 37.883958,
+              "max_ms": 39.858833
+            },
+            "all_over_100ms_frames": []
+          },
+          "gpu_passes": {
+            "far opaque": {
+              "samples": 14,
+              "gpu_ms_max": 19.583625,
+              "max_age_frames": 3,
+              "gpu_ms_mean": 19.460518,
+              "cpu_ms_mean": 6.522300714285715
+            },
+            "far water colour": {
+              "samples": 14,
+              "gpu_ms_max": 0.108458,
+              "max_age_frames": 3,
+              "gpu_ms_mean": 0.09136885714285715,
+              "cpu_ms_mean": 2.988434642857143
+            }
+          },
+          "logger_windows": 7,
+          "unique_stationary_scenes": 1,
+          "unique_stationary_command_versions": 1,
+          "query_modes": [
+            "non_nested_elapsed"
+          ],
+          "query_dropped_max": 0,
+          "error_maps_empty": true
+        },
+        "moving": {
+          "frames": {
+            "count": 973,
+            "mean_ms": 31.475026164439882,
+            "p50_ms": 31.412042,
+            "p95_ms": 42.6395,
+            "p99_ms": 54.836208,
+            "max_ms": 85.525042,
+            "over40_pct": 7.708119218910586,
+            "over100_count": 0,
+            "fps": 31.771220610764352,
+            "trim_two_seconds_each_end": {
+              "count": 839,
+              "mean_ms": 31.712573797377853,
+              "p50_ms": 31.5265,
+              "p95_ms": 43.517833,
+              "p99_ms": 56.159,
+              "max_ms": 85.525042,
+              "over40_pct": 8.224076281287246,
+              "over100_count": 0,
+              "fps": 31.533233675365867
+            }
+          },
+          "allocation_gc": {
+            "allocation_interval_seconds": 30.771647,
+            "thread_groups": {
+              "Earth cube mesher": {
+                "allocated_mib_per_second": 276.0884895203433,
+                "cpu_cores": 0.39236567350457385,
+                "threads": 3
+              },
+              "Earth cube worker": {
+                "allocated_mib_per_second": 144.79124774129153,
+                "cpu_cores": 0.14462778024198703,
+                "threads": 4
+              },
+              "Earth cube writer": {
+                "allocated_mib_per_second": 0.0011119922983861166,
+                "cpu_cores": 7.201434489353137e-05,
+                "threads": 1
+              },
+              "Earth far mesher": {
+                "allocated_mib_per_second": 284.88226891464683,
+                "cpu_cores": 0.6826238777534397,
+                "threads": 3
+              },
+              "Earth far terrain": {
+                "allocated_mib_per_second": 460.91460804505397,
+                "cpu_cores": 0.5993371105550508,
+                "threads": 12
+              },
+              "Earth performance log": {
+                "allocated_mib_per_second": 0.0013319113995385102,
+                "cpu_cores": 7.94562604985037e-05,
+                "threads": 1
+              },
+              "Render thread": {
+                "allocated_mib_per_second": 45.34288110173583,
+                "cpu_cores": 0.8661687819309769,
+                "threads": 1
+              },
+              "Server thread": {
+                "allocated_mib_per_second": 12.908534455095976,
+                "cpu_cores": 0.08840131306588822,
+                "threads": 1
+              }
+            },
+            "gc_bean_deltas_in_bracket": {
+              "G1 Concurrent GC.count": 20,
+              "G1 Concurrent GC.ms": 34,
+              "G1 Old Generation.count": 0,
+              "G1 Old Generation.ms": 0,
+              "G1 Young Generation.count": 32,
+              "G1 Young Generation.ms": 222
+            },
+            "fully_contained_gc_pauses": {
+              "count": 52,
+              "sum_ms": 257.351,
+              "max_ms": 12.406
+            },
+            "max_logged_safepoint_ms": 12.607375,
+            "all_frames": {
+              "count": 973,
+              "mean_ms": 31.475026164439882,
+              "p95_ms": 42.6395,
+              "p99_ms": 54.836208,
+              "max_ms": 85.525042
+            },
+            "diagnostic_frames_overlapping_gc": {
+              "count": 54,
+              "mean_ms": 39.33453624074073,
+              "p95_ms": 56.159,
+              "p99_ms": 67.0765,
+              "max_ms": 67.0765
+            },
+            "diagnostic_frames_without_gc_overlap": {
+              "count": 919,
+              "mean_ms": 31.013205115342764,
+              "p95_ms": 40.63025,
+              "p99_ms": 52.48725,
+              "max_ms": 85.525042
+            },
+            "all_over_100ms_frames": []
+          },
+          "gpu_passes": {
+            "far opaque": {
+              "samples": 6,
+              "gpu_ms_max": 19.688834,
+              "max_age_frames": 2,
+              "gpu_ms_mean": 18.917091,
+              "cpu_ms_mean": 6.409506833333334
+            },
+            "far water colour": {
+              "samples": 6,
+              "gpu_ms_max": 0.083125,
+              "max_age_frames": 2,
+              "gpu_ms_mean": 0.03970133333333333,
+              "cpu_ms_mean": 2.7452358333333335
+            }
+          },
+          "logger_windows": 5,
+          "unique_stationary_scenes": null,
+          "unique_stationary_command_versions": null,
+          "query_modes": [
+            "non_nested_elapsed"
+          ],
+          "query_dropped_max": 0,
+          "error_maps_empty": true
+        }
+      }
+    },
+    {
+      "label": "candidate-1",
+      "source": "5b351cd51297f14e9a132913d9e2f6a2e455c32a",
+      "jar_sha256": "a16adce44c809f2b0c62898897c8f3547f8c328aeb3f7d3997e7f33bd6f33f30",
+      "near_oracle": {
+        "voxel_states": 196608,
+        "cubes": 48,
+        "matches_reference": true
+      },
+      "far_oracle": {
+        "columns": 144,
+        "voxel_states_counted": 1101824,
+        "fine_tree_states": 32281,
+        "leaf_mushroom_states": 36609,
+        "pillar_states": 5139,
+        "matches_reference": true
+      },
+      "settle_seconds": [
+        32.390696542,
+        2.097701209,
+        3.760817792,
+        2.057826916
+      ],
+      "normal_exit_ms": 371.692875,
+      "phases": {
+        "stationary": {
+          "frames": {
+            "count": 2102,
+            "mean_ms": 21.41731969552807,
+            "p50_ms": 15.143291,
+            "p95_ms": 37.737083,
+            "p99_ms": 39.115375,
+            "max_ms": 148.534708,
+            "over40_pct": 0.23786869647954328,
+            "over100_count": 2,
+            "fps": 46.691183314072724,
+            "trim_two_seconds_each_end": {
+              "count": 1913,
+              "mean_ms": 21.43347869837951,
+              "p50_ms": 15.151917,
+              "p95_ms": 37.687083,
+              "p99_ms": 39.149208,
+              "max_ms": 148.534708,
+              "over40_pct": 0.26136957658128596,
+              "over100_count": 2,
+              "fps": 46.65598217034211
+            }
+          },
+          "allocation_gc": {
+            "allocation_interval_seconds": 45.143777875,
+            "thread_groups": {
+              "Earth cube worker": {
+                "allocated_mib_per_second": 0.0,
+                "cpu_cores": 0.0,
+                "threads": 4
+              },
+              "Earth far mesher": {
+                "allocated_mib_per_second": 0.0,
+                "cpu_cores": 0.0,
+                "threads": 3
+              },
+              "Earth far terrain": {
+                "allocated_mib_per_second": 0.0,
+                "cpu_cores": 0.0,
+                "threads": 12
+              },
+              "Earth performance log": {
+                "allocated_mib_per_second": 0.000598943541978652,
+                "cpu_cores": 7.994457198493825e-05,
+                "threads": 1
+              },
+              "Render thread": {
+                "allocated_mib_per_second": 9.190795749751794,
+                "cpu_cores": 0.6324798088245954,
+                "threads": 1
+              },
+              "Server thread": {
+                "allocated_mib_per_second": 0.8129313325420542,
+                "cpu_cores": 0.04797473986330613,
+                "threads": 1
+              }
+            },
+            "gc_bean_deltas_in_bracket": {
+              "G1 Concurrent GC.count": 0,
+              "G1 Concurrent GC.ms": 0,
+              "G1 Old Generation.count": 0,
+              "G1 Old Generation.ms": 0,
+              "G1 Young Generation.count": 0,
+              "G1 Young Generation.ms": 0
+            },
+            "fully_contained_gc_pauses": {
+              "count": 0,
+              "sum_ms": 0,
+              "max_ms": 0
+            },
+            "max_logged_safepoint_ms": 0.26725,
+            "all_frames": {
+              "count": 2102,
+              "mean_ms": 21.41731969552807,
+              "p95_ms": 37.737083,
+              "p99_ms": 39.115375,
+              "max_ms": 148.534708
+            },
+            "diagnostic_frames_overlapping_gc": {
+              "count": 0
+            },
+            "diagnostic_frames_without_gc_overlap": {
+              "count": 2102,
+              "mean_ms": 21.41731969552807,
+              "p95_ms": 37.737083,
+              "p99_ms": 39.115375,
+              "max_ms": 148.534708
+            },
+            "all_over_100ms_frames": [
+              {
+                "frame_ms": 147.251417,
+                "end_uptime_seconds": 79.30165862499999,
+                "gc_pause_ids": []
+              },
+              {
+                "frame_ms": 148.534708,
+                "end_uptime_seconds": 95.350731666,
+                "gc_pause_ids": []
+              }
+            ]
+          },
+          "gpu_passes": {
+            "far opaque": {
+              "samples": 16,
+              "gpu_ms_max": 20.3955,
+              "max_age_frames": 3,
+              "gpu_ms_mean": 19.552437375,
+              "cpu_ms_mean": 7.113739687499999
+            },
+            "far water colour": {
+              "samples": 16,
+              "gpu_ms_max": 0.108458,
+              "max_age_frames": 3,
+              "gpu_ms_mean": 0.08708862500000002,
+              "cpu_ms_mean": 3.028005375
+            }
+          },
+          "logger_windows": 8,
+          "unique_stationary_scenes": 1,
+          "unique_stationary_command_versions": 1,
+          "query_modes": [
+            "non_nested_elapsed"
+          ],
+          "query_dropped_max": 0,
+          "error_maps_empty": true
+        },
+        "moving": {
+          "frames": {
+            "count": 991,
+            "mean_ms": 30.89915052169526,
+            "p50_ms": 30.723167,
+            "p95_ms": 42.360834,
+            "p99_ms": 50.465833,
+            "max_ms": 76.901709,
+            "over40_pct": 8.375378405650858,
+            "over100_count": 0,
+            "fps": 32.36334925446798,
+            "trim_two_seconds_each_end": {
+              "count": 856,
+              "mean_ms": 31.048208966121496,
+              "p50_ms": 30.738459,
+              "p95_ms": 42.360834,
+              "p99_ms": 51.459667,
+              "max_ms": 76.901709,
+              "over40_pct": 8.294392523364486,
+              "over100_count": 0,
+              "fps": 32.207976991238304
+            }
+          },
+          "allocation_gc": {
+            "allocation_interval_seconds": 30.748520375,
+            "thread_groups": {
+              "Earth cube mesher": {
+                "allocated_mib_per_second": 293.1452576754044,
+                "cpu_cores": 0.42569235333490424,
+                "threads": 3
+              },
+              "Earth cube worker": {
+                "allocated_mib_per_second": 144.4610623997631,
+                "cpu_cores": 0.15143112394395988,
+                "threads": 4
+              },
+              "Earth cube writer": {
+                "allocated_mib_per_second": 0.0012284536577223434,
+                "cpu_cores": 7.151563630319887e-05,
+                "threads": 1
+              },
+              "Earth far mesher": {
+                "allocated_mib_per_second": 283.3645619930291,
+                "cpu_cores": 0.7555372979471374,
+                "threads": 3
+              },
+              "Earth far terrain": {
+                "allocated_mib_per_second": 461.2329298360925,
+                "cpu_cores": 0.6178685597973265,
+                "threads": 12
+              },
+              "Earth performance log": {
+                "allocated_mib_per_second": 0.001092730743003272,
+                "cpu_cores": 8.273568838350974e-05,
+                "threads": 1
+              },
+              "Render thread": {
+                "allocated_mib_per_second": 45.79494255561115,
+                "cpu_cores": 0.8569068260410564,
+                "threads": 1
+              },
+              "Server thread": {
+                "allocated_mib_per_second": 12.686284592828788,
+                "cpu_cores": 0.08759767842975437,
+                "threads": 1
+              }
+            },
+            "gc_bean_deltas_in_bracket": {
+              "G1 Concurrent GC.count": 22,
+              "G1 Concurrent GC.ms": 42,
+              "G1 Old Generation.count": 0,
+              "G1 Old Generation.ms": 0,
+              "G1 Young Generation.count": 33,
+              "G1 Young Generation.ms": 247
+            },
+            "fully_contained_gc_pauses": {
+              "count": 55,
+              "sum_ms": 292.1359999999999,
+              "max_ms": 15.761
+            },
+            "max_logged_safepoint_ms": 15.959209,
+            "all_frames": {
+              "count": 991,
+              "mean_ms": 30.89915052169526,
+              "p95_ms": 42.360834,
+              "p99_ms": 50.465833,
+              "max_ms": 76.901709
+            },
+            "diagnostic_frames_overlapping_gc": {
+              "count": 58,
+              "mean_ms": 38.33113000000001,
+              "p95_ms": 49.427,
+              "p99_ms": 64.755833,
+              "max_ms": 64.755833
+            },
+            "diagnostic_frames_without_gc_overlap": {
+              "count": 933,
+              "mean_ms": 30.43714107931406,
+              "p95_ms": 41.767417,
+              "p99_ms": 48.730834,
+              "max_ms": 76.901709
+            },
+            "all_over_100ms_frames": []
+          },
+          "gpu_passes": {
+            "far opaque": {
+              "samples": 7,
+              "gpu_ms_max": 19.559249,
+              "max_age_frames": 2,
+              "gpu_ms_mean": 18.803024142857144,
+              "cpu_ms_mean": 6.173815571428571
+            },
+            "far water colour": {
+              "samples": 7,
+              "gpu_ms_max": 0.078334,
+              "max_age_frames": 2,
+              "gpu_ms_mean": 0.02683342857142857,
+              "cpu_ms_mean": 2.786535571428572
+            }
+          },
+          "logger_windows": 5,
+          "unique_stationary_scenes": null,
+          "unique_stationary_command_versions": null,
+          "query_modes": [
+            "non_nested_elapsed"
+          ],
+          "query_dropped_max": 0,
+          "error_maps_empty": true
+        }
+      }
+    },
+    {
+      "label": "baseline-1",
+      "source": "6ff363560ff5173740ec641c465c72caf59a1633",
+      "jar_sha256": "45e227bb9d307ef2f1fdd08e8a6ed7c85759a1156cf706977c6f0b6473893b42",
+      "near_oracle": {
+        "cubes": 48,
+        "matches_reference": false,
+        "voxel_states": 196608
+      },
+      "far_oracle": {
+        "columns": 144,
+        "voxel_states_counted": 1101824,
+        "fine_tree_states": 32281,
+        "leaf_mushroom_states": 36609,
+        "pillar_states": 5139,
+        "matches_reference": false
+      },
+      "settle_seconds": [
+        30.238302083,
+        2.095593459,
+        2.102611625,
+        2.102569834
+      ],
+      "normal_exit_ms": 405.547208,
+      "phases": {
+        "stationary": {
+          "frames": {
+            "count": 2109,
+            "mean_ms": 21.367652916073943,
+            "p50_ms": 14.969708,
+            "p95_ms": 37.88025,
+            "p99_ms": 39.154959,
+            "max_ms": 147.146125,
+            "over40_pct": 0.3319108582266477,
+            "over100_count": 2,
+            "fps": 46.7997118788719,
+            "trim_two_seconds_each_end": {
+              "count": 1920,
+              "mean_ms": 21.37930260416664,
+              "p50_ms": 14.941625,
+              "p95_ms": 37.947958,
+              "p99_ms": 39.154959,
+              "max_ms": 147.146125,
+              "over40_pct": 0.3645833333333333,
+              "over100_count": 2,
+              "fps": 46.774210483606005
+            }
+          },
+          "allocation_gc": {
+            "allocation_interval_seconds": 45.194607333,
+            "thread_groups": {
+              "Earth cube worker": {
+                "allocated_mib_per_second": 0.0,
+                "cpu_cores": 0.0,
+                "threads": 4
+              },
+              "Earth far mesher": {
+                "allocated_mib_per_second": 0.0,
+                "cpu_cores": 0.0,
+                "threads": 3
+              },
+              "Earth far terrain": {
+                "allocated_mib_per_second": 0.0,
+                "cpu_cores": 0.0,
+                "threads": 12
+              },
+              "Earth performance log": {
+                "allocated_mib_per_second": 0.0005992827946568123,
+                "cpu_cores": 7.686757790377725e-05,
+                "threads": 1
+              },
+              "Render thread": {
+                "allocated_mib_per_second": 8.709754487314113,
+                "cpu_cores": 0.6309152060976044,
+                "threads": 1
+              },
+              "Server thread": {
+                "allocated_mib_per_second": 0.8113578340902391,
+                "cpu_cores": 0.04785101868604833,
+                "threads": 1
+              }
+            },
+            "gc_bean_deltas_in_bracket": {
+              "G1 Concurrent GC.count": 0,
+              "G1 Concurrent GC.ms": 0,
+              "G1 Old Generation.count": 0,
+              "G1 Old Generation.ms": 0,
+              "G1 Young Generation.count": 1,
+              "G1 Young Generation.ms": 11
+            },
+            "fully_contained_gc_pauses": {
+              "count": 1,
+              "sum_ms": 10.536,
+              "max_ms": 10.536
+            },
+            "max_logged_safepoint_ms": 10.620583,
+            "all_frames": {
+              "count": 2109,
+              "mean_ms": 21.367652916073943,
+              "p95_ms": 37.88025,
+              "p99_ms": 39.154959,
+              "max_ms": 147.146125
+            },
+            "diagnostic_frames_overlapping_gc": {
+              "count": 1,
+              "mean_ms": 48.474458,
+              "p95_ms": 48.474458,
+              "p99_ms": 48.474458,
+              "max_ms": 48.474458
+            },
+            "diagnostic_frames_without_gc_overlap": {
+              "count": 2108,
+              "mean_ms": 21.354793900379484,
+              "p95_ms": 37.877459,
+              "p99_ms": 39.132291,
+              "max_ms": 147.146125
+            },
+            "all_over_100ms_frames": [
+              {
+                "frame_ms": 146.585125,
+                "end_uptime_seconds": 99.631118542,
+                "gc_pause_ids": []
+              },
+              {
+                "frame_ms": 147.146125,
+                "end_uptime_seconds": 113.677947125,
+                "gc_pause_ids": []
+              }
+            ]
+          },
+          "gpu_passes": {
+            "far opaque": {
+              "samples": 16,
+              "gpu_ms_max": 19.572375,
+              "max_age_frames": 3,
+              "gpu_ms_mean": 19.465724125,
+              "cpu_ms_mean": 6.4262968125
+            },
+            "far water colour": {
+              "samples": 16,
+              "gpu_ms_max": 0.107,
+              "max_age_frames": 3,
+              "gpu_ms_mean": 0.0890418125,
+              "cpu_ms_mean": 2.9504738125
+            }
+          },
+          "logger_windows": 8,
+          "unique_stationary_scenes": 1,
+          "unique_stationary_command_versions": 1,
+          "query_modes": [
+            "non_nested_elapsed"
+          ],
+          "query_dropped_max": 0,
+          "error_maps_empty": true
+        },
+        "moving": {
+          "frames": {
+            "count": 982,
+            "mean_ms": 31.17895014358454,
+            "p50_ms": 30.852375,
+            "p95_ms": 42.952209,
+            "p99_ms": 57.078,
+            "max_ms": 91.914333,
+            "over40_pct": 8.655804480651732,
+            "over100_count": 0,
+            "fps": 32.07292084546862,
+            "trim_two_seconds_each_end": {
+              "count": 848,
+              "mean_ms": 31.365160082547177,
+              "p50_ms": 31.013709,
+              "p95_ms": 43.14425,
+              "p99_ms": 57.08725,
+              "max_ms": 91.914333,
+              "over40_pct": 8.962264150943396,
+              "over100_count": 0,
+              "fps": 31.8825090440536
+            }
+          },
+          "allocation_gc": {
+            "allocation_interval_seconds": 30.758604166,
+            "thread_groups": {
+              "Earth cube mesher": {
+                "allocated_mib_per_second": 283.98328344391626,
+                "cpu_cores": 0.42476452863364955,
+                "threads": 3
+              },
+              "Earth cube worker": {
+                "allocated_mib_per_second": 148.55070078343203,
+                "cpu_cores": 0.1566302545459923,
+                "threads": 4
+              },
+              "Earth cube writer": {
+                "allocated_mib_per_second": 0.001178442728491425,
+                "cpu_cores": 7.669398738866036e-05,
+                "threads": 1
+              },
+              "Earth far mesher": {
+                "allocated_mib_per_second": 308.2969145622743,
+                "cpu_cores": 0.7682343409497095,
+                "threads": 3
+              },
+              "Earth far terrain": {
+                "allocated_mib_per_second": 503.1481948362025,
+                "cpu_cores": 0.6131644628024958,
+                "threads": 12
+              },
+              "Earth performance log": {
+                "allocated_mib_per_second": 0.001576548512374552,
+                "cpu_cores": 8.436663725034914e-05,
+                "threads": 1
+              },
+              "Render thread": {
+                "allocated_mib_per_second": 46.61421838888371,
+                "cpu_cores": 0.8590190847869049,
+                "threads": 1
+              },
+              "Server thread": {
+                "allocated_mib_per_second": 12.971010718593863,
+                "cpu_cores": 0.09147573748194253,
+                "threads": 1
+              }
+            },
+            "gc_bean_deltas_in_bracket": {
+              "G1 Concurrent GC.count": 24,
+              "G1 Concurrent GC.ms": 35,
+              "G1 Old Generation.count": 0,
+              "G1 Old Generation.ms": 0,
+              "G1 Young Generation.count": 37,
+              "G1 Young Generation.ms": 242
+            },
+            "fully_contained_gc_pauses": {
+              "count": 61,
+              "sum_ms": 279.76699999999994,
+              "max_ms": 12.75
+            },
+            "max_logged_safepoint_ms": 12.891208,
+            "all_frames": {
+              "count": 982,
+              "mean_ms": 31.17895014358454,
+              "p95_ms": 42.952209,
+              "p99_ms": 57.078,
+              "max_ms": 91.914333
+            },
+            "diagnostic_frames_overlapping_gc": {
+              "count": 61,
+              "mean_ms": 40.91031424590163,
+              "p95_ms": 59.798333,
+              "p99_ms": 91.914333,
+              "max_ms": 91.914333
+            },
+            "diagnostic_frames_without_gc_overlap": {
+              "count": 921,
+              "mean_ms": 30.534418970684044,
+              "p95_ms": 41.055208,
+              "p99_ms": 50.892542,
+              "max_ms": 72.537334
+            },
+            "all_over_100ms_frames": []
+          },
+          "gpu_passes": {
+            "far opaque": {
+              "samples": 6,
+              "gpu_ms_max": 19.15175,
+              "max_age_frames": 2,
+              "gpu_ms_mean": 18.662916833333334,
+              "cpu_ms_mean": 7.132805666666666
+            },
+            "far water colour": {
+              "samples": 6,
+              "gpu_ms_max": 0.082541,
+              "max_age_frames": 2,
+              "gpu_ms_mean": 0.04577766666666667,
+              "cpu_ms_mean": 2.918007166666667
+            }
+          },
+          "logger_windows": 4,
+          "unique_stationary_scenes": null,
+          "unique_stationary_command_versions": null,
+          "query_modes": [
+            "non_nested_elapsed"
+          ],
+          "query_dropped_max": 0,
+          "error_maps_empty": true
+        }
+      }
+    }
+  ]
+}
