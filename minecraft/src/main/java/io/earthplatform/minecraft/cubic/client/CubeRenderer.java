@@ -21,7 +21,6 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import net.minecraft.client.Camera;
@@ -65,7 +64,7 @@ public final class CubeRenderer {
     private final LongOpenHashSet building = new LongOpenHashSet();
     /** Cubes whose current contents have a mesh (or need none), so far terrain can leave them out. */
     private final LongOpenHashSet compiled = new LongOpenHashSet();
-    private final ConcurrentLinkedQueue<CubeMesher.Built> built = new ConcurrentLinkedQueue<>();
+    private final OwnedResultQueue<CubeMesher.Built> built = new OwnedResultQueue<>(CubeMesher.Built::free);
     /**
      * Meshes of cubes the server has taken back, still drawn until the far terrain under them has
      * filled the hole it left for them, and the tick each must go by at the latest. Dropped at
@@ -311,6 +310,7 @@ public final class CubeRenderer {
                 center.blockEntities().isEmpty() ? Map.of() : new HashMap<>(center.blockEntities()));
         building.add(key);
         POOL.execute(() -> {
+            if (built.isClosed()) return;
             long start = System.nanoTime();
             try {
                 built.add(CubeMesher.build(snapshot));
@@ -499,6 +499,7 @@ public final class CubeRenderer {
 
     void close() {
         closed = true;
+        built.close();
         for (Mesh mesh : meshes.values()) mesh.close();
         meshes.clear();
         for (Mesh mesh : retiring.values()) mesh.close();
@@ -508,7 +509,5 @@ public final class CubeRenderer {
         compiled.clear();
         compiledVersion++;
         dirty.clear();
-        CubeMesher.Built result;
-        while ((result = built.poll()) != null) result.free();
     }
 }

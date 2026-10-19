@@ -25,7 +25,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import javax.annotation.Nullable;
@@ -129,7 +128,7 @@ public final class FarRenderer {
     private int wanted, settled, planSize, wantedInView, settledInView;
     /** Columns kept beyond what the plan wants, for going back over ground just left. */
     private static final int SPARE_COLUMNS = 4000;
-    private final ConcurrentLinkedQueue<FarMesher.Built> built = new ConcurrentLinkedQueue<>();
+    private final OwnedResultQueue<FarMesher.Built> built = new OwnedResultQueue<>(FarMesher.Built::free);
     private final List<Column> drawn = new ArrayList<>();
     private final LongOpenHashSet drawnKeys = new LongOpenHashSet();
     /** Drawn columns fading in over the finer level they give way to; they keep out of the water passes. */
@@ -327,6 +326,7 @@ public final class FarRenderer {
         for (Column column : columns.values())
             if (column.top != Integer.MIN_VALUE) visitor.accept(column.x0, column.z0, Far.width(column.level), column.top);
     }
+
     private final CloudTerrainGrid cloudGrid = new CloudTerrainGrid();
     private final CloudTerrainGrid.Source cloudColumns = visitor -> forEachTop(visitor::accept);
 
@@ -731,6 +731,7 @@ public final class FarRenderer {
                 ShaderBlocks.ids(), shade, white());
         meshing++;
         MESHER.execute(() -> {
+            if (built.isClosed()) return;
             long start = System.nanoTime();
             try {
                 built.add(FarMesher.build(job));
@@ -1364,6 +1365,7 @@ public final class FarRenderer {
     void close() {
         FarGpuTimers.close();
         closed = true;
+        built.close();
         for (Column column : columns.values()) free(column);
         columns.clear();
         cloudGrid.invalidate();
@@ -1379,8 +1381,6 @@ public final class FarRenderer {
         waterDeepen.close();
         waterRestore.close();
         dueColumns.clear();
-        FarMesher.Built result;
-        while ((result = built.poll()) != null) result.free();
         if (gpu != null) { gpu.close(); gpu = null; }
     }
 }
