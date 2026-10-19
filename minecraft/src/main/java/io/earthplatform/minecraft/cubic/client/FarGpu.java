@@ -273,7 +273,7 @@ final class FarGpu {
         boolean built = program != null;
         if (program == null) program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
         if (program != null && program != current) {
-            if (current.irisUniforms != null) FarIrisUniforms.done();
+            if (current.irisUniforms != null) current.irisUniforms.done();
             use(program);
         }
         return built;
@@ -368,7 +368,7 @@ final class FarGpu {
         GlStateManager._activeTexture(previousActive);
         GL30C.glBindVertexArray(previousVao);
         BufferUploader.invalidate();
-        if (current.irisUniforms != null) FarIrisUniforms.done();
+        if (current.irisUniforms != null) current.irisUniforms.done();
         GlStateManager._glUseProgram(previousProgram);
         current = null;
         if (phase == SHADE) {
@@ -427,8 +427,9 @@ final class FarGpu {
         if (main == null || !packPatched || !packOwnDepth) return null;
         String jitter = main.jittered && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
         String header = version + FarShaders.fade(fade) + FarShaders.INVARIANT;
-        String fragment = phase == PREPASS ? FarShaders.packPrepassFragment(version, patch.fragment(), fade) : FarShaders.packShadeFragment(version, patch.fragment(), fade);
-        Program built = linkPack(jitter, fragment, phase == PREPASS ? "far terrain depth pre-pass" : "far terrain after its pre-pass", header);
+        String fragment = phase == PREPASS ? FarShaders.packPrepassFragment(version, packCode(patch), fade) : FarShaders.packShadeFragment(version, packCode(patch), fade);
+        Program built = linkPack(jitter, fragment, phase == PREPASS ? "far terrain depth pre-pass" : "far terrain after its pre-pass", header,
+                phase != PREPASS && packSamplers);
         if (built != null && built.jittered != main.jittered) {
             built.close();
             built = null;
@@ -521,6 +522,7 @@ final class FarGpu {
                 phasedFailed[i] = false;
             }
             packSource = patch;
+            packCode = null;
             packPipeline = pipeline;
             packOwnDepth = ownDepth;
             packPatched = patch != null;
@@ -533,7 +535,7 @@ final class FarGpu {
         String jitter = packJittered && patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
         String header = version + FarShaders.fade(fade);
         if (packPatched) {
-            pack[fade] = linkPack(jitter, FarShaders.packFragment(version, patch.fragment(), ownDepth, fade), "far terrain (shader pack)", header);
+            pack[fade] = linkPack(jitter, FarShaders.packFragment(version, packCode(patch), ownDepth, fade), "far terrain (shader pack)", header, packSamplers);
             if (pack[fade] != null) {
                 if (fade == NO_FADE) {
                     packJittered = pack[fade].jittered;
@@ -549,7 +551,7 @@ final class FarGpu {
             packPatched = false;
             EarthPlatformMod.LOGGER.warn("The shader pack's Voxy fragment code does not build for far terrain; using plain colors");
         }
-        pack[fade] = linkPack(jitter, header + FarShaders.PACK_FALLBACK, "far terrain (plain, shader pack)", header);
+        pack[fade] = linkPack(jitter, header + FarShaders.PACK_FALLBACK, "far terrain (plain, shader pack)", header, false);
         if (pack[fade] == null) {
             packFailed[fade] = true;
             if (fade == NO_FADE) EarthPlatformMod.LOGGER.error("Far terrain shader failed to build");
@@ -570,8 +572,8 @@ final class FarGpu {
         near = true;
         if (main == null || patch == null || !packPatched || !packOwnDepth) { packNearFailed[fade] = true; return null; }
         String jitter = main.jittered && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
-        packNear[fade] = linkPack(jitter, FarShaders.packNearFragment(version, patch.fragment(), fade), "far terrain near by (shader pack)",
-                version + FarShaders.fade(fade));
+        packNear[fade] = linkPack(jitter, FarShaders.packNearFragment(version, packCode(patch), fade), "far terrain near by (shader pack)",
+                version + FarShaders.fade(fade), packSamplers);
         if (packNear[fade] == null) {
             packNearFailed[fade] = true;
             EarthPlatformMod.LOGGER.warn("Far terrain near by does not build with the shader pack; it is left out until the game's blocks load");
@@ -583,7 +585,7 @@ final class FarGpu {
     private boolean packPatched;
 
     /** Links a pack program, jittered when {@code jitter} builds, and finds the pack's uniforms in it. */
-    @Nullable private Program linkPack(@Nullable String jitter, String fragment, String name, String header) {
+    @Nullable private Program linkPack(@Nullable String jitter, String fragment, String name, String header, boolean samplers) {
         Program program = null;
         if (jitter != null) {
             try { program = Program.link(FarShaders.packVertex(header, jitter), fragment, name); program.jittered = true; }
@@ -598,9 +600,39 @@ final class FarGpu {
                 return null;
             }
         }
-        if (ShaderBlocks.IRIS) program.irisUniforms = FarIrisUniforms.create(program.id, name);
+        if (ShaderBlocks.IRIS) {
+            try { program.irisUniforms = FarIrisUniforms.create(program.id, name, samplers); }
+            catch (FarIrisUniforms.TooManySamplers full) {
+                EarthPlatformMod.LOGGER.warn("Shader pack {}: its Voxy code reads more textures than are left for far terrain ({}); far terrain uses plain colours",
+                        net.irisshaders.iris.Iris.getCurrentPackName(), full.getMessage());
+                program.close();
+                return null;
+            }
+        }
         return program;
     }
+
+    /**
+     * The pack's Voxy code as it is spliced into far terrain's programs: with declarations of the
+     * uniforms and samplers its {@code voxy.json} lists that it reads without declaring, as Voxy
+     * declares them for it (see {@link FarShaders#voxyDeclarations}). Nothing is added to code
+     * that declares its own or reads none, such as Photon's. Worked out once per pack.
+     */
+    private String packCode(FarShaders.PackPatch patch) {
+        if (packCode != null) return packCode;
+        String declarations = "";
+        packSamplers = false;
+        if (ShaderBlocks.IRIS && (!patch.uniforms().isEmpty() || !patch.samplers().isEmpty())) {
+            declarations = FarShaders.voxyDeclarations(patch.fragment(), patch.uniforms(), FarIrisUniforms.types(patch.uniforms()), patch.samplers());
+            packSamplers = !FarShaders.declaredSamplers(patch.fragment(), patch.samplers()).isEmpty();
+        }
+        packCode = declarations + patch.fragment();
+        return packCode;
+    }
+
+    @Nullable private String packCode;
+    /** Whether {@link #packCode} declares samplers of the pack's, which its programs then bind as Iris does. */
+    private boolean packSamplers;
 
     void close() {
         RenderSystem.assertOnRenderThread();
