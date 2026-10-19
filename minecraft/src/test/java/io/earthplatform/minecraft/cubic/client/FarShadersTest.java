@@ -102,6 +102,53 @@ class FarShadersTest {
         }
     }
 
+    @Test void readsTheUniformsAndSamplersAVoxyPackAsksFor() {
+        assertEquals(java.util.List.of("taa_offset"), FarShaders.voxyUniforms(PHOTON));
+        String taaVoxy = """
+                {
+                	"version": 1,
+                	"opaqueDrawBuffers": [0,1,9],
+                	"uniforms": [
+                		"framemod8",
+                		"viewWidth",
+                		"vxViewProjInv",
+                "fogColor"
+                	],
+                	"samplers": {
+                		"lightmap": "sampler2D",
+                		"shadowtex0": "sampler2DShadow",
+                		"colortex4": null
+                	},
+                	"taaOffset": "{ return vec2(0.0); }"
+                }
+                """;
+        assertEquals(java.util.List.of("framemod8", "viewWidth", "vxViewProjInv", "fogColor"), FarShaders.voxyUniforms(taaVoxy));
+        assertEquals(java.util.Map.of("lightmap", "sampler2D", "shadowtex0", "sampler2DShadow", "colortex4", "sampler2D"), FarShaders.voxySamplers(taaVoxy));
+        assertEquals(java.util.Map.of("noisetex", "sampler2D", "depthtex0", "sampler2D"),
+                FarShaders.voxySamplers("{\"samplers\": [\"noisetex\", \"depthtex0\"]}"));
+        assertTrue(FarShaders.voxySamplers(null).isEmpty() && FarShaders.voxyUniforms("{}").isEmpty());
+    }
+
+    @Test void declaresOnlyWhatThePacksCodeReadsAndLeavesUndeclared() {
+        java.util.Map<String, String> types = java.util.Map.of("viewWidth", "float", "vxViewProjInv", "mat4", "framemod8", "int", "gbufferModelView", "mat4");
+        java.util.List<String> uniforms = java.util.List.of("framemod8", "viewWidth", "vxViewProjInv", "gbufferModelView", "fogColor");
+        java.util.Map<String, String> samplers = new java.util.LinkedHashMap<>();
+        samplers.put("lightmap", "sampler2D");
+        samplers.put("noisetex", "sampler2D");
+        // Photon's code reads none of its voxy.json's names: nothing is added.
+        assertEquals("", FarShaders.voxyDeclarations("layout(location = 0) out vec4 gbuffer_data_0;\n" + PHOTON_NORMAL, uniforms, types, samplers));
+        String code = """
+                uniform float viewWidth; // its own
+                vec3 at(vec2 p) { vec4 v = vxViewProjInv * vec4(p, 0.0, 1.0); return v.xyz / v.w + fogColor * 0.0; }
+                void voxy_emitFragment(VoxyFragmentParameters parameters) {
+                    vec3 c = texture(lightmap, parameters.lightMap).rgb * float(framemod8) / viewWidth; // noisetex is not read
+                }
+                """;
+        String declared = FarShaders.voxyDeclarations(code, uniforms, types, samplers);
+        assertEquals("uniform int framemod8;\nuniform mat4 vxViewProjInv;\nuniform sampler2D lightmap;\n", declared, "fogColor has no known type");
+        assertEquals(java.util.Set.of("lightmap"), FarShaders.declaredSamplers(code, samplers));
+    }
+
     @Test void depthPrepassOnlyForPacksThatKeepEveryFragmentAndItsDepth() {
         assertTrue(FarShaders.prepassSafe(PHOTON_NORMAL));
         assertTrue(!FarShaders.prepassSafe(null));

@@ -16,12 +16,95 @@ final class FarShaders {
 
     /**
      * A shader pack's Voxy code for one dimension: its fragment code, the body of the GLSL
-     * function giving its temporal anti-aliasing jitter, or null when it asks for none, and the
+     * function giving its temporal anti-aliasing jitter, or null when it asks for none, the
      * fragment output location far terrain's faces' own depth takes beside the pack's outputs
-     * (see {@link #faceDepthLocation}).
+     * (see {@link #faceDepthLocation}), and the uniforms and samplers (name to GLSL type) its
+     * {@code voxy.json} asks for, which Voxy declares for the code (see {@link #voxyDeclarations}).
      */
-    record PackPatch(String fragment, @Nullable String taaOffset, int faceDepthLocation) {
-        PackPatch(String fragment, @Nullable String taaOffset) { this(fragment, taaOffset, FarShaders.faceDepthLocation(fragment)); }
+    record PackPatch(String fragment, @Nullable String taaOffset, int faceDepthLocation, java.util.List<String> uniforms,
+            java.util.Map<String, String> samplers) {
+        PackPatch(String fragment, @Nullable String taaOffset) { this(fragment, taaOffset, java.util.List.of(), java.util.Map.of()); }
+
+        PackPatch(String fragment, @Nullable String taaOffset, java.util.List<String> uniforms, java.util.Map<String, String> samplers) {
+            this(fragment, taaOffset, FarShaders.faceDepthLocation(fragment), uniforms, samplers);
+        }
+    }
+
+    private static final Pattern UNIFORM_LIST = Pattern.compile("\"uniforms\"\\s*:\\s*\\[([^\\]]*)\\]");
+    private static final Pattern SAMPLER_LIST = Pattern.compile("\"samplers\"\\s*:\\s*(\\[[^\\]]*\\]|\\{[^}]*\\})");
+    private static final Pattern QUOTED = Pattern.compile("\"([A-Za-z_][A-Za-z0-9_]*)\"");
+    private static final Pattern SAMPLER_ENTRY = Pattern.compile("\"([A-Za-z_][A-Za-z0-9_]*)\"\\s*:\\s*(?:\"([A-Za-z_][A-Za-z0-9_]*)\"|null)");
+
+    /** The uniform names a Voxy {@code voxy.json} lists, in order; empty when it lists none. */
+    static java.util.List<String> voxyUniforms(@Nullable String settings) {
+        if (settings == null) return java.util.List.of();
+        Matcher list = UNIFORM_LIST.matcher(settings);
+        if (!list.find()) return java.util.List.of();
+        java.util.List<String> names = new java.util.ArrayList<>();
+        Matcher name = QUOTED.matcher(list.group(1));
+        while (name.find()) if (!names.contains(name.group(1))) names.add(name.group(1));
+        return java.util.List.copyOf(names);
+    }
+
+    /**
+     * The samplers a Voxy {@code voxy.json} lists, by name, with their GLSL types: a list of names
+     * (each a {@code sampler2D}), or an object of names to types (null for the default), read as
+     * Voxy reads them, where only a sampler named exactly {@code shadowtex} defaults to a shadow sampler.
+     */
+    static java.util.Map<String, String> voxySamplers(@Nullable String settings) {
+        if (settings == null) return java.util.Map.of();
+        Matcher list = SAMPLER_LIST.matcher(settings);
+        if (!list.find()) return java.util.Map.of();
+        java.util.Map<String, String> samplers = new java.util.LinkedHashMap<>();
+        String body = list.group(1);
+        if (body.startsWith("[")) {
+            Matcher name = QUOTED.matcher(body);
+            while (name.find()) samplers.putIfAbsent(name.group(1), defaultSampler(name.group(1)));
+        } else {
+            Matcher entry = SAMPLER_ENTRY.matcher(body);
+            while (entry.find()) samplers.putIfAbsent(entry.group(1), entry.group(2) != null ? entry.group(2) : defaultSampler(entry.group(1)));
+        }
+        return java.util.Collections.unmodifiableMap(samplers);
+    }
+
+    private static String defaultSampler(String name) { return name.equals("shadowtex") ? "sampler2DShadow" : "sampler2D"; }
+
+    /**
+     * Declarations for the uniforms and samplers a pack's {@code voxy.json} lists, which Voxy
+     * declares ahead of the pack's Voxy code and the code itself doesn't: only those the code
+     * reads and doesn't declare itself, so code that declares its own (or reads none, as Photon's)
+     * is left exactly as it was. A uniform whose type isn't in {@code types} is left out; if the
+     * code needs it, it then fails to build and far terrain falls back to plain colours.
+     */
+    static String voxyDeclarations(String patch, java.util.List<String> uniforms, java.util.Map<String, String> types,
+            java.util.Map<String, String> samplers) {
+        String code = COMMENTS.matcher(patch).replaceAll(" ");
+        StringBuilder out = new StringBuilder();
+        for (String name : uniforms) {
+            String type = types.get(name);
+            if (type != null && reads(code, name) && !declares(code, name)) out.append("uniform ").append(type).append(' ').append(name).append(";\n");
+        }
+        for (java.util.Map.Entry<String, String> sampler : samplers.entrySet()) {
+            String name = sampler.getKey();
+            if (reads(code, name) && !declares(code, name)) out.append("uniform ").append(sampler.getValue()).append(' ').append(name).append(";\n");
+        }
+        return out.toString();
+    }
+
+    /** The sampler names {@link #voxyDeclarations} declares for a patch. */
+    static java.util.Set<String> declaredSamplers(String patch, java.util.Map<String, String> samplers) {
+        String code = COMMENTS.matcher(patch).replaceAll(" ");
+        java.util.Set<String> names = new java.util.LinkedHashSet<>();
+        for (String name : samplers.keySet()) if (reads(code, name) && !declares(code, name)) names.add(name);
+        return names;
+    }
+
+    private static boolean reads(String code, String name) {
+        return Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(code).find();
+    }
+
+    private static boolean declares(String code, String name) {
+        return Pattern.compile("\\buniform\\s+[^;{}]*\\b" + Pattern.quote(name) + "\\b").matcher(code).find();
     }
 
     /** Where {@link #PACK_MAIN} puts the faces' own depth, for a pack that leaves location 1 free. */
