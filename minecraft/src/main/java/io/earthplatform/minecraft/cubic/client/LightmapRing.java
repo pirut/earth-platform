@@ -10,10 +10,10 @@ final class LightmapRing {
 
     boolean active() { return ids != null; }
     int[] snapshot() { return ids == null ? new int[0] : ids.clone(); }
-    private boolean contains(int id) {
+    boolean owns(int id) {
         return ids != null && (ids[0] == id || ids[1] == id || ids[2] == id);
     }
-    int original(int current) { return contains(current) ? ids[0] : current; }
+    int original(int current) { return owns(current) ? ids[0] : current; }
 
     int advance(int current, IntSupplier create, IntConsumer free) {
         if (ids == null) {
@@ -32,7 +32,7 @@ final class LightmapRing {
                 if (second > 0 && second != current && second != first) rollback(second, free, failure);
                 throw failure;
             }
-        } else if (!contains(current)) throw new IllegalStateException("Lightmap texture changed outside its owner");
+        } else if (!owns(current)) throw new IllegalStateException("Lightmap texture changed outside its owner");
         cursor = (cursor + 1) % ids.length;
         return ids[cursor];
     }

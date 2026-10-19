@@ -74,7 +74,9 @@ public final class CubicLightmapTexture extends DynamicTexture {
 
     private void restore(boolean synchronizePixels) {
         if (!ring.active()) return;
-        id = ring.original(id);
+        int original = ring.original(id);
+        if (ring.owns(RenderSystem.getShaderTexture(2))) RenderSystem.setShaderTexture(2, original);
+        id = original;
         try { ring.release(discard); }
         finally { intParameters = null; floatParameters = null; border = null; restores++; }
         if (synchronizePixels && getPixels() != null) { super.upload(); uploads++; }
@@ -88,6 +90,7 @@ public final class CubicLightmapTexture extends DynamicTexture {
                     int current = super.getId();
                     if (!ring.active()) captureParameters(current);
                     id = ring.advance(current, allocate, discard);
+                    if (RenderSystem.getShaderTexture(2) == current) RenderSystem.setShaderTexture(2, id);
                     rotations++;
                 } catch (RuntimeException failure) {
                     failed = true;

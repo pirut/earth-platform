@@ -15,6 +15,8 @@ class LightmapRingTest {
         for (int expected : new int[] {11, 12, 10, 11, 12, 10})
             assertEquals(expected, current = ring.advance(current, next::getAndIncrement, freed::add));
         assertEquals(13, next.get());
+        assertTrue(ring.owns(10)); assertTrue(ring.owns(11)); assertTrue(ring.owns(12));
+        assertFalse(ring.owns(0)); assertFalse(ring.owns(99));
         int[] copy = ring.snapshot(); copy[0] = 99;
         assertEquals(10, ring.original(current));
         ring.release(freed::add);
