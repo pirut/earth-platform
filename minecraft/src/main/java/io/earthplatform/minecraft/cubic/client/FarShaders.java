@@ -15,10 +15,56 @@ final class FarShaders {
     private FarShaders() {}
 
     /**
-     * A shader pack's Voxy code for one dimension: its fragment code, and the body of the GLSL
-     * function giving its temporal anti-aliasing jitter, or null when it asks for none.
+     * A shader pack's Voxy code for one dimension: its fragment code, the body of the GLSL
+     * function giving its temporal anti-aliasing jitter, or null when it asks for none, and the
+     * fragment output location far terrain's faces' own depth takes beside the pack's outputs
+     * (see {@link #faceDepthLocation}).
      */
-    record PackPatch(String fragment, @Nullable String taaOffset) {}
+    record PackPatch(String fragment, @Nullable String taaOffset, int faceDepthLocation) {
+        PackPatch(String fragment, @Nullable String taaOffset) { this(fragment, taaOffset, FarShaders.faceDepthLocation(fragment)); }
+    }
+
+    /** Where {@link #PACK_MAIN} puts the faces' own depth, for a pack that leaves location 1 free. */
+    private static final String FACE_DEPTH_OUTPUT = "layout(location = 1) out float earth_faceDepth;";
+    private static final Pattern COMMENTS = Pattern.compile("/\\*.*?\\*/|//[^\n]*", Pattern.DOTALL);
+    /** A fragment output declared at global scope: its layout qualifier's contents, and its array size. */
+    private static final Pattern OUTPUT = Pattern.compile(
+            "(?m)^\\s*(?:layout\\s*\\(([^)]*)\\)\\s*)?(?:(?:flat|smooth|noperspective|centroid|sample|invariant|precise|highp|mediump|lowp)\\s+)*"
+            + "out\\s+\\w+\\s+\\w+\\s*(?:\\[\\s*(\\d+)\\s*\\])?\\s*;");
+    private static final Pattern LOCATION = Pattern.compile("\\blocation\\s*=\\s*(\\d+)");
+
+    /**
+     * The fragment output location for far terrain's faces' own depth with a pack's Voxy code: the
+     * first from 1 up that none of the pack's outputs takes. Outputs with a location take theirs
+     * (and an array's the ones after); those without one are counted as taking the lowest free
+     * locations, as drivers hand them out. Photon's single output at 0 leaves 1, as before;
+     * Complementary's and others' second output at 1 put it further up instead of clashing there,
+     * which failed to build and left far terrain in plain colours.
+     */
+    static int faceDepthLocation(@Nullable String patch) {
+        if (patch == null) return 1;
+        java.util.BitSet used = new java.util.BitSet();
+        int unlocated = 0;
+        Matcher output = OUTPUT.matcher(COMMENTS.matcher(patch).replaceAll(" "));
+        while (output.find()) {
+            int size = output.group(2) == null ? 1 : Math.max(1, Integer.parseInt(output.group(2)));
+            Matcher location = output.group(1) == null ? null : LOCATION.matcher(output.group(1));
+            if (location != null && location.find()) used.set(Integer.parseInt(location.group(1)), Integer.parseInt(location.group(1)) + size);
+            else unlocated += size;
+        }
+        for (int at = 0; unlocated > 0; at++) {
+            if (!used.get(at)) {
+                used.set(at);
+                unlocated--;
+            }
+        }
+        return used.nextClearBit(1);
+    }
+
+    /** A far terrain fragment shader with the faces' own depth at {@code location} rather than 1. */
+    private static String faceDepthAt(String source, int location) {
+        return location == 1 ? source : source.replace(FACE_DEPTH_OUTPUT, "layout(location = " + location + ") out float earth_faceDepth;");
+    }
 
     private static final Pattern TAA_OFFSET = Pattern.compile("\"taaOffset\"\\s*:\\s*\"([^\"]*)\"");
 
@@ -599,11 +645,94 @@ final class FarShaders {
             else if (!trimmed.startsWith("#version")) body.append(line).append('\n');
         }
         String patched = FACE_NORMAL.matcher(body).replaceFirst("$1\n    $2 = earth_packNormal($2);");
-        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + fade(fade) + VOXY_PARAMETERS + patched + PACK_MAIN;
+        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + fade(fade) + VOXY_PARAMETERS + patched
+                + (ownDepth ? faceDepthAt(PACK_MAIN, faceDepthLocation(patch)) : PACK_MAIN);
     }
 
     /** The same for far terrain inside the game's blocks' reach, drawn into the game's depth while far terrain otherwise has its own. */
     static String packNearFragment(String version, String patch, int fade) {
         return packFragment(version, patch, false, fade).replaceFirst("\n", "\n#define EARTH_NEAR\n");
+    }
+
+    // Depth pre-pass (-Dearthplatform.far.depthPrepass=true; see FarGpu#DEPTH_PREPASS) ---------------
+
+    /**
+     * Put after the version and defines of both pre-pass vertex shaders, so the pre-pass and the
+     * shading pass place every corner, and so every fragment's window depth, bit for bit alike.
+     */
+    static final String INVARIANT = "invariant gl_Position;\n";
+
+    /** Everything of {@link #PACK_MAIN} before its main: the sample, the slope depth and the own-depth declarations. */
+    private static final String PACK_DECLARATIONS = PACK_MAIN.substring(0, PACK_MAIN.lastIndexOf("void main() {"));
+
+    /**
+     * The pre-pass: exactly the own-depth program's fragment-dropping and depth (the game's terrain,
+     * the game's blocks' reach, a fade's dither, the slope depth), and its faces' own depth into the
+     * second target, with no colour. Depth and that target then hold what the one-pass draw leaves.
+     */
+    private static final String PREPASS_MAIN = """
+            void main() {
+            #ifdef EARTH_FADE
+                earth_fade();
+            #endif
+                if (texelFetch(earth_GameDepth, ivec2(gl_FragCoord.xy), 0).r < 1.0) discard;
+                if (length(earth_position.xz) < earth_NearReach) discard;
+                earth_faceDepth = gl_FragCoord.z;
+                earth_slopeDepth();
+            }
+            """;
+
+    /**
+     * The shading pass after the pre-pass: the own-depth program's colour, with nothing that drops
+     * fragments (but a fade's dither) or writes depth, so the GPU tests depth before shading. It is
+     * drawn with depth test EQUAL against the pre-pass's faces' own depth, so only the face each
+     * pixel kept in the pre-pass is shaded.
+     */
+    private static final String SHADE_MAIN = """
+            void main() {
+            #ifdef EARTH_FADE
+                earth_fade();
+            #endif
+                vec4 colour = earth_sample();
+                vec2 levels = earth_levels();
+                vec3 tint = earth_tint;
+                vec2 lost = earth_sunShadow();
+                tint *= 1.0 - lost.x;
+                levels.y *= sqrt(1.0 - lost.y);
+                vec2 light = clamp(levels / 15.0 * (15.0 / 16.0) + 0.5 / 16.0, vec2(8.0 / 256.0), vec2(248.0 / 256.0));
+                voxy_emitFragment(VoxyFragmentParameters(colour, floor(earth_tile), earth_atlasUv(), earth_face, earth_look, light,
+                        vec4(tint, 1.0), earth_blockId));
+            }
+            """;
+
+    /** The slope depth's inputs the shading pass still reads, in place of the slope depth itself. */
+    private static final String SHADE_INPUTS = """
+            in vec3 earth_position;
+            uniform float earth_NearReach;
+            """;
+
+    /** The depth pre-pass's fragment shader for a fade: no shader pack code, but its faces' depth where the pack's program has it. */
+    static String packPrepassFragment(String version, String patch, int fade) {
+        return version + "#define EARTH_OWN_DEPTH\n" + fade(fade) + VOXY_PARAMETERS + faceDepthAt(PACK_DECLARATIONS, faceDepthLocation(patch)) + PREPASS_MAIN;
+    }
+
+    /** The shading pass's fragment shader for a fade: the pack's Voxy code, as {@link #packFragment} splices it, without the depth work. */
+    static String packShadeFragment(String version, String patch, int fade) {
+        String own = packFragment(version, patch, true, fade);
+        int location = faceDepthLocation(patch);
+        String declarations = faceDepthAt(PACK_DECLARATIONS.replace(SLOPE_DEPTH, SHADE_INPUTS), location);
+        return own.substring(0, own.length() - faceDepthAt(PACK_MAIN, location).length()) + declarations + SHADE_MAIN;
+    }
+
+    private static final Pattern BREAKS_PREPASS = Pattern.compile("\\bdiscard\\b|\\bgl_FragDepth\\b|\\bgl_SampleMask\\b|\\bdepth_(any|greater|less|unchanged)\\b");
+
+    /**
+     * Whether a pack's Voxy fragment code (as Iris preprocessed it, includes and all) leaves every
+     * fragment it is given and its depth alone, which the pre-pass relies on: it decides each
+     * pixel's face without the pack's code. Any mention of dropping fragments or writing depth,
+     * even in a comment, keeps the pack on the one-pass draw.
+     */
+    static boolean prepassSafe(@Nullable String patch) {
+        return patch != null && !BREAKS_PREPASS.matcher(patch).find();
     }
 }
