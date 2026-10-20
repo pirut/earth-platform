@@ -1,0 +1,37 @@
+out /home/user/film/frames
+fps 30
+# New launch Shorts, build 61, vertical 1080x1920 in the cloud.
+
+# 2. How far can you see: slow 360 from the Matterhorn summit. Starts facing Monte Rosa (east), turns clockwise.
+shot matterhorn-360 frames=600 settle=98 warm=1200 clear=3 ease=0 time=2500 fov=70 hold=1
+cam 0 45.97640 7.65860 =4484
+cam 1 45.97640 7.65862 =4484
+look 0 45.9764 7.8164 =2900
+look 0.125 45.8648 7.7702 =2900
+look 0.25 45.8186 7.6586 =2900
+look 0.375 45.8648 7.5470 =2900
+look 0.5 45.9764 7.5008 =2900
+look 0.625 46.0880 7.5470 =2900
+look 0.75 46.1342 7.6586 =2900
+look 0.875 46.0880 7.7702 =2900
+look 1 45.9764 7.8164 =2900
+
+# 1. Base jump off Everest: stand on the summit facing north, then dive down the North Face to the Rongbuk glacier.
+shot everest-jump frames=600 settle=95 warm=900 clear=60 ease=1 time=2500 fov=75 hold=2
+cam 0 27.98805 86.92500 +2.5
+cam 0.08 27.99050 86.92100 =8800
+cam 0.35 28.00500 86.90000 =7400
+cam 0.7 28.02500 86.87800 +250
+cam 1 28.05000 86.86500 +120
+look 0 28.0200 86.8900 =6800
+look 0.3 28.0400 86.8700 =5600
+look 1 28.1000 86.8500 =5100
+
+# 3. Fall from the jet stream: drop from Y 9000 straight down into Yosemite Valley, level out facing Half Dome.
+shot yosemite-plunge frames=540 settle=95 warm=1200 clear=30 ease=1 time=2500 fov=72 hold=2
+cam 0 37.7300 -119.6000 =9000
+cam 0.55 37.7250 -119.6250 =3600
+cam 1 37.7170 -119.6600 =1700
+look 0 37.7310 -119.5950 =1200
+look 0.5 37.7400 -119.5600 =1300
+look 1 37.7459 -119.5332 =1950

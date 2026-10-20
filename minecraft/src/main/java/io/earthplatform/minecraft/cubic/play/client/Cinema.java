@@ -46,9 +46,11 @@ import net.neoforged.neoforge.client.event.ViewportEvent;
  * map NAME FROMLAT FROMLON TOLAT TOLON tail=FRAMES
  *   at NAME LAT LON     (a ground anchor for run lines: {NAME} or {NAME:DX:DY:DZ} becomes block X Y Z)
  *   run COMMAND         (server command, run once while the shot warms, e.g. to build a set)
+ *   mark NAME LAT LON H (a place to label in the edit: H the absolute height, or 0 for the ground there;
+ *                        saved with the shot's poses as NAME.marks and NAME.poses next to its frames)
  * </pre>
  * Shots also take fov=DEGREES and hold=RENDERS (extra renders per pose before saving, so far
- * terrain keeps up with a fast move).
+ * terrain keeps up with a fast move) and even=1 (constant speed along the path, shaped only by ease).
  * <p>third=1 films the player's body in creative instead of a spectator camera: cam keys are then
  * the body's eye path, look keys where it faces, and the camera sits back=M behind (easing to
  * back2=M over the shot), up=M above the eyes and side=M to the right, aimed at the look point
@@ -63,7 +65,9 @@ public final class Cinema {
     private static final class Shot {
         String name; boolean map; int frames = 150, tail = 45; long time = -1; double settle = 25, warm = 150, clear = 40, ease = 1, fov = -1;
         int hold;
-        boolean third, glide, type;
+        boolean third, glide, type, even;
+        final List<double[]> marks = new ArrayList<>();
+        final List<String> markNames = new ArrayList<>();
         double back = 5, back2 = Double.NaN, up = 1.2, side, aimy;
         boolean built;
         final java.util.Map<String, double[]> at = new java.util.HashMap<>();
@@ -143,6 +147,7 @@ public final class Cinema {
                                 case "third" -> shot.third = v != 0;
                                 case "glide" -> shot.glide = v != 0;
                                 case "type" -> shot.type = v != 0;
+                                case "even" -> shot.even = v != 0;
                                 case "back" -> shot.back = v;
                                 case "back2" -> shot.back2 = v;
                                 case "up" -> shot.up = v;
@@ -161,6 +166,7 @@ public final class Cinema {
                     }
                     case "at" -> shot.at.put(p[1], new double[]{Double.parseDouble(p[2]), Double.parseDouble(p[3])});
                     case "run" -> shot.run.add(line.substring(4).trim());
+                    case "mark" -> { shot.markNames.add(p[1]); shot.marks.add(new double[]{Double.parseDouble(p[2]), Double.parseDouble(p[3]), Double.parseDouble(p[4])}); }
                     default -> throw new IllegalArgumentException("unknown line " + line);
                 }
             }
@@ -260,8 +266,29 @@ public final class Cinema {
         int n = shot.frames;
         double[][] pos = new double[n][];
         double[] floor = new double[n];
+        // even=1: move along the camera path at a speed set only by the ease, not by how the keys are spaced.
+        double[] tOf = new double[n];
+        if (shot.even && n > 1 && cams.size() > 1) {
+            int m = n * 20;
+            double[] len = new double[m + 1];
+            double[] prev = along(shot.cam, cams, 0);
+            for (int i = 1; i <= m; i++) {
+                double[] c = along(shot.cam, cams, i / (double) m);
+                len[i] = len[i - 1] + Math.sqrt((c[0] - prev[0]) * (c[0] - prev[0]) + (c[1] - prev[1]) * (c[1] - prev[1]) + (c[2] - prev[2]) * (c[2] - prev[2]));
+                prev = c;
+            }
+            for (int f = 0; f < n; f++) {
+                double want = eased(f / (double) (n - 1), shot.ease) * len[m];
+                int i = 0;
+                while (i < m && len[i + 1] < want) i++;
+                double seg = len[i + 1] - len[i];
+                tOf[f] = (i + (seg > 0 ? (want - len[i]) / seg : 0)) / m;
+            }
+        } else {
+            for (int f = 0; f < n; f++) tOf[f] = eased(n == 1 ? 0 : f / (double) (n - 1), shot.ease);
+        }
         for (int f = 0; f < n; f++) {
-            double t = eased(n == 1 ? 0 : f / (double) (n - 1), shot.ease);
+            double t = tOf[f];
             pos[f] = along(shot.cam, cams, t);
             floor[f] = earth.surfaceY(Mth.floor(pos[f][0]), Mth.floor(pos[f][2])) + shot.clear;
         }
@@ -278,7 +305,7 @@ public final class Cinema {
         }
         double[][] poses = new double[n][];
         for (int f = 0; f < n; f++) {
-            double t = eased(n == 1 ? 0 : f / (double) (n - 1), shot.ease);
+            double t = tOf[f];
             double[] c = pos[f];
             c[1] += lift[f];
             double[] l = along(shot.look, looks, t);
@@ -305,6 +332,20 @@ public final class Cinema {
             while (poses[f][3] - poses[f - 1][3] < -180) poses[f][3] += 360;
         }
         log("planned {}: {} frames from {} to {}", shot.name, n, fmt(poses[0]), fmt(poses[n - 1]));
+        // Poses and marked places in block space, so an edit can pin labels to exactly where things are on screen.
+        try {
+            StringBuilder sb = new StringBuilder();
+            for (double[] q : poses) sb.append(String.format(Locale.ROOT, "%.3f %.3f %.3f %.4f %.4f%n", q[0], q[1], q[2], q[3], q[4]));
+            Files.writeString(out.resolve(shot.name + ".poses"), sb);
+            StringBuilder mk = new StringBuilder();
+            for (int i = 0; i < shot.marks.size(); i++) {
+                double[] m = shot.marks.get(i);
+                double[] b = point(earth, new Key(0, m[0], m[1], m[2], m[2] > 0, false));
+                if (m[2] <= 0) b[1] = earth.surfaceY(Mth.floor(b[0]), Mth.floor(b[2]));
+                mk.append(String.format(Locale.ROOT, "%s %.3f %.3f %.3f%n", shot.markNames.get(i), b[0], b[1], b[2]));
+            }
+            if (!shot.marks.isEmpty()) Files.writeString(out.resolve(shot.name + ".marks"), mk);
+        } catch (IOException e) { log("could not save poses ({})", e.toString()); }
         return poses;
     }
 
