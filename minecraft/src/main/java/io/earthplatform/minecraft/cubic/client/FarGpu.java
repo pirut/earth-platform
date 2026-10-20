@@ -164,6 +164,7 @@ final class FarGpu {
 
     /** Now on the fade clock: hundredths of a second, wrapping in 27 bits; never 0, which stands for "not fading". */
     static int now() {
+        if (Flawless.active()) return Flawless.clock();
         int now = (int) (System.nanoTime() / 10_000_000L) & 0x7FFFFFF;
         return now == 0 ? 1 : now;
     }

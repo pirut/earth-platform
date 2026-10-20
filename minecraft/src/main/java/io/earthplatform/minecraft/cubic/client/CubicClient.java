@@ -61,6 +61,28 @@ public final class CubicClient {
         return player.getClass().getName().startsWith("com.replaymod.");
     }
 
+    /** Whether a replay is playing: no server is there to send terrain again. */
+    public static boolean inReplay() {
+        var player = Minecraft.getInstance().player;
+        return player != null && inReplay(player);
+    }
+
+    /** Whether this frame began through {@link RenderFrameEvent.Pre}; a video renderer draws frames without it. */
+    private static boolean framed;
+
+    /**
+     * The level is about to be drawn. A video renderer (Replay Mod's) draws each frame itself, without
+     * the frame event that starts ours, so nothing new ever reached the GPU and its videos lost the far
+     * terrain: there, the frame starts here. A flawless frame then finishes the terrain before drawing.
+     */
+    public static void levelPass() {
+        boolean flawless = Flawless.active();
+        if (!framed && (flawless || inReplay())) startFrame();
+        framed = false;
+        ClientCubeWorld world = ClientCubeWorld.current();
+        if (flawless && world != null) Flawless.settle(world);
+    }
+
     /**
      * Holds a player in place until the cubes around them arrive, as vanilla does in an unloaded
      * chunk, so a teleport into unloaded sky does not fall through it. A player gliding or in
@@ -106,6 +128,11 @@ public final class CubicClient {
     }
 
     @SubscribeEvent public static void frame(RenderFrameEvent.Pre event) {
+        startFrame();
+        framed = true;
+    }
+
+    private static void startFrame() {
         LevelPasses.beginFrame();
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world != null) { world.renderer().beginFrame(); world.far().beginFrame(); }

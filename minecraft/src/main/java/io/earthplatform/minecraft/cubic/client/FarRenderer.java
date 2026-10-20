@@ -559,7 +559,8 @@ public final class FarRenderer {
         // left no room for the columns just behind: every one went at once and came back by download.
         int excess = columns.size() - Math.max(MAX_COLUMNS, planSize + SPARE_COLUMNS);
         for (Column column : old) {
-            if (excess <= 0 && ticks - column.lastWanted <= KEEP_TICKS) break;
+            // A replay cannot ask for a column again, so there only the count limit lets one go.
+            if (excess <= 0 && (CubicClient.inReplay() || ticks - column.lastWanted <= KEEP_TICKS)) break;
             columns.remove(column.key);
             columnsVersion++;
             dueColumns.remove(column);
@@ -662,10 +663,13 @@ public final class FarRenderer {
      * the workers: with every due column queued at once, in no order, a backlog (after a teleport
      * or a shader reload) left coarse stand-ins near the player until it had all drained.
      */
-    private void submitDue(int bx, int bz) {
+    private void submitDue(int bx, int bz) { submitDue(bx, bz, false); }
+
+    /** Starts the due meshes, or with {@code now} every waiting one, without the few ticks' wait for neighbours. */
+    private void submitDue(int bx, int bz, boolean now) {
         List<Column> due = new ArrayList<>(), building = new ArrayList<>();
         for (Column column : dueColumns) {
-            if (column.due > ticks) continue;
+            if (!now && column.due > ticks) continue;
             if (column.building) building.add(column);
             else due.add(column);
         }
@@ -730,9 +734,11 @@ public final class FarRenderer {
     }
 
     /** Uploads finished meshes: a few every frame, and more while a small part of the last frame's time lasts. */
-    private void upload(FarGpu gpu) {
+    private void upload(FarGpu gpu) { upload(gpu, false); }
+
+    private void upload(FarGpu gpu, boolean all) {
         long deadline = System.nanoTime() + Math.max(UPLOAD_NANOS, frameNanos / 8);
-        for (int n = 0; n < UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
+        for (int n = 0; all || n < UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
             FarMesher.Built result = built.poll();
             if (result == null) return;
             meshing--;
@@ -779,6 +785,15 @@ public final class FarRenderer {
     }
 
     // Drawing ------------------------------------------------------------------------------------
+
+    /** For a flawless frame: starts every waiting mesh and uploads every finished one; returns how many are left. */
+    int settle(int bx, int bz) {
+        FarGpu gpu = closed ? null : gpu();
+        if (gpu == null) return 0;
+        submitDue(bx, bz, true);
+        upload(gpu, true);
+        return meshing + dueColumns.size();
+    }
 
     public void beginFrame() {
         drawCount.begin();

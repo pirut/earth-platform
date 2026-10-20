@@ -326,9 +326,11 @@ public final class CubeRenderer {
     }
 
     /** Uploads finished meshes: a few every frame, and more while an eighth of the last frame's time lasts. */
-    private void upload() {
+    private void upload() { upload(false); }
+
+    private void upload(boolean all) {
         long deadline = System.nanoTime() + frameNanos / 8;
-        for (int n = 0; n < MIN_UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
+        for (int n = 0; all || n < MIN_UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
             CubeMesher.Built result = built.poll();
             if (result == null) return;
             building.remove(result.key());
@@ -383,6 +385,13 @@ public final class CubeRenderer {
         double dx = mesh.x + 8 - position.x, dy = mesh.y + 8 - position.y, dz = mesh.z + 8 - position.z;
         mesh.distance = dx * dx + dy * dy + dz * dz;
         visible.add(mesh);
+    }
+
+    /** For a flawless frame: uploads every finished mesh and starts more; returns how many are still being meshed. */
+    int settle(Vec3 camera, float yaw) {
+        upload(true);
+        schedule(camera, yaw);
+        return building.size();
     }
 
     public void beginFrame() {
