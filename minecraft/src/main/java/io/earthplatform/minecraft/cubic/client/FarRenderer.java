@@ -129,9 +129,18 @@ public final class FarRenderer {
     private static final int SPARE_COLUMNS = 4000;
     private final OwnedResultQueue<FarMesher.Built> built = new OwnedResultQueue<>(FarMesher.Built::free);
     private final List<Column> drawn = new ArrayList<>();
-    private final LongOpenHashSet drawnKeys = new LongOpenHashSet();
-    /** Drawn columns fading in over the finer level they give way to; they keep out of the water passes. */
-    private final LongOpenHashSet fadingIn = new LongOpenHashSet();
+    /**
+     * Each pick's number: a column drawn in it carries it (see {@link Column#drawnPick}), as a set
+     * of drawn keys did, which every pick filled and every column's neighbours looked up.
+     */
+    private int pickSerial = 1;
+    /**
+     * Whether a pick finds a column's kids and sides through the links kept on it (see
+     * {@link Column#kids}) rather than a hash lookup for each, which while the view moved was a
+     * quarter of the render thread's time. Off with {@code -Dearthplatform.far.linkColumns=false},
+     * for comparing; the pick is the same either way.
+     */
+    private static final boolean LINK_COLUMNS = !"false".equals(System.getProperty("earthplatform.far.linkColumns"));
     /** This pass's drawn columns in view, nearest first, for the water pass. */
     private List<Column> visible = List.of();
     /** Off with {@code -Dearthplatform.far.cullTree=false}: every drawn column is tested against the view on its own. */
@@ -205,6 +214,14 @@ public final class FarRenderer {
         int stamp;
         /** Whether it is fading back in over its children, the camera having moved off (see {@link FarRenderer#visit}). */
         boolean merging;
+        /** The last pick that drew it (see {@link FarRenderer#pickSerial}). */
+        int drawnPick;
+        /**
+         * The held columns a level finer under it (north-west, north-east, south-west, south-east)
+         * and beside it (north, south, west, east), kept as columns come and go (see
+         * {@link FarRenderer#link}), so a pick walks the pyramid without a hash lookup per step.
+         */
+        final Column[] kids = new Column[4], sides = new Column[4];
 
         Column(long key, int bottom, LevelChunkSection[] sections, char[] drops) {
             this.key = key;
@@ -376,8 +393,10 @@ public final class FarRenderer {
         column.lastWanted = ticks;
         Column old = columns.put(column.key, column);
         columnsVersion++;
+        link(column);
         if (old != null) {
             replaced++;
+            column.drawnPick = old.drawnPick;
             dueColumns.remove(old);
             if (old.meshed) column.takeOver(old, gpu);
             else { column.drawnCubes = old.drawnCubes; free(old); }
@@ -563,6 +582,7 @@ public final class FarRenderer {
         for (Column column : old) {
             if (excess <= 0 && (replay || ticks - column.lastWanted <= KEEP_TICKS)) break;
             columns.remove(column.key);
+            unlink(column);
             columnsVersion++;
             dueColumns.remove(column);
             free(column);
@@ -644,14 +664,14 @@ public final class FarRenderer {
             // A cube gone from under a drawn column leaves a hole until it remeshes: that comes first.
             boolean lost = column.drawnCubes != null && (set == null || !set.containsAll(column.drawnCubes));
             column.drawnCubes = set;
-            if (lost && drawnKeys.contains(column.key)) {
+            if (lost && column.drawnPick == pickSerial) {
                 due(column, ticks);
                 continue;
             }
             // Coarse columns under the finer ones near the player see every cube that compiles there;
             // remeshing each at once kept the far meshers busy with columns nobody sees, so hidden
             // ones gather their changes into one remesh a while later.
-            if (drawnKeys.contains(column.key) || !column.meshed) schedule(column);
+            if (column.drawnPick == pickSerial || !column.meshed) schedule(column);
             else {
                 column.maskStale = true;
                 if (column.due < 0) due(column, ticks + HIDDEN_SETTLE_TICKS);
@@ -677,7 +697,7 @@ public final class FarRenderer {
         for (Column column : building) submit(column);
         if (due.isEmpty()) return;
         Map<Column, Long> order = new HashMap<>(due.size() * 2);
-        for (Column column : due) order.put(column, (drawnKeys.contains(column.key) ? 0 : 1L << 40) + priority(column.key, bx, bz));
+        for (Column column : due) order.put(column, (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz));
         due.sort(Comparator.comparingLong(order::get));
         for (Column column : due) {
             if (meshing >= MESHES_IN_FLIGHT) break;
@@ -874,7 +894,7 @@ public final class FarRenderer {
             }
             FarLod.beginDraw(modelView, position.x, position.y, position.z);
         }
-        if (own && FarGpu.DEPTH_PREPASS && FarLod.prepassReady() && gpu.prepassReady(ShaderBlocks.voxyPatch())) {
+        if (own && gpu.depthPrepass && FarLod.prepassReady() && gpu.prepassReady(ShaderBlocks.voxyPatch())) {
             // Depth first, then shading only the faces it kept (see FarGpu#DEPTH_PREPASS).
             List<Column> far = FarNearSkip.ENABLED ? beyondReach(visible, position) : visible;
             FarLod.beginPrepass();
@@ -888,7 +908,7 @@ public final class FarRenderer {
             gpu.phase(FarGpu.SHADE);
             if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false)) {
                 long timer = FarGpuTimers.begin("far opaque");
-                try { drawEach(gpu, far, position); }
+                try { if (!gpu.replay()) drawEach(gpu, far, position); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
                 drawCount.submitted(gpu.ranges);
             }
@@ -935,6 +955,7 @@ public final class FarRenderer {
     /** Rebuilds selection only when its inputs change; timed fades keep visiting on every frame. */
     private void pickColumns(Vec3 position, Frustum frustum, int bx, int bz, boolean band) {
         drawn.clear();
+        pickSerial++;
         pickAnimating = false;
         // The dithered ring between levels only blends where a pack's TAA moves the dither every frame
         // and averages it; without one it stays put, and where the two levels' outlines differ, as at
@@ -945,18 +966,12 @@ public final class FarRenderer {
         cullTree.clear(tree);
         for (int z = pz - Far.OUTER; z <= pz + Far.OUTER; z++) for (int x = px - Far.OUTER; x <= px + Far.OUTER; x++) {
             int parent = cullTree.open();
-            visit(Far.MAX_LEVEL, x, z, bx, bz, false);
+            visit(columns.get(Far.key(Far.MAX_LEVEL, x, z)), Far.MAX_LEVEL, x, z, bx, bz, false);
             cullTree.close(parent);
         }
         if (tree) {
             FrustumAccess view = (FrustumAccess) frustum;
             cullTree.classify(view.earthplatform$intersection(), view.earthplatform$camX(), view.earthplatform$camY(), view.earthplatform$camZ());
-        }
-        drawnKeys.clear();
-        fadingIn.clear();
-        for (Column column : drawn) {
-            drawnKeys.add(column.key);
-            if (column.fade == FarGpu.FADE_IN) fadingIn.add(column.key);
         }
         List<Column> visible = new ArrayList<>(drawn.size());
         for (int i = 0; i < drawn.size(); i++) {
@@ -987,6 +1002,7 @@ public final class FarRenderer {
     private void addDrawn(Column column) {
         cullTree.own(drawn.size(), column.box);
         drawn.add(column);
+        column.drawnPick = pickSerial;
     }
 
     /** Water uses the same sorted pick and neighbor coverage in every pass. */
@@ -998,7 +1014,7 @@ public final class FarRenderer {
             column.waterSides = 0;
             if (column.fade == FarGpu.FADE_IN) continue;
             for (int side = 0; side < 4; side++)
-                if (column.waterWalls[side] != null && !waterDrawn(column.neighbour(side))) column.waterSides |= 1 << side;
+                if (column.waterWalls[side] != null && !waterDrawn(beside(column, side))) column.waterSides |= 1 << side;
             if (column.water != null) waterSurfaces.add(column);
             if (column.waterSides != 0) waterEdges.add(column);
             if (column.water != null || column.waterSides != 0) waterVisible.add(column);
@@ -1037,7 +1053,7 @@ public final class FarRenderer {
         if (position.x < box.maxX) groups |= 1 << 4;
         if (position.x > box.minX) groups |= 1 << 5;
         for (int side = 0; side < 4; side++) {
-            if (drawnKeys.contains(column.neighbour(side))) continue;
+            if (drawn(beside(column, side))) continue;
             boolean facing = switch (side) {
                 case 0 -> position.z < box.minZ + 1;
                 case 1 -> position.z > box.maxZ - 1;
@@ -1151,7 +1167,7 @@ public final class FarRenderer {
                 }
                 for (int side = 0; side < 4; side++) {
                     CubeBuffer wall = column.waterWalls[side];
-                    if (FAST_WATER ? (column.waterSides & 1 << side) == 0 : wall == null || waterDrawn(column.neighbour(side))) continue;
+                    if (FAST_WATER ? (column.waterSides & 1 << side) == 0 : wall == null || waterDrawn(beside(column, side))) continue;
                     wall.draw();
                 }
             }
@@ -1168,7 +1184,7 @@ public final class FarRenderer {
                 }
                 for (int side = 0; side < 4; side++) {
                     CubeBuffer wall = column.waterWalls[side];
-                    if (FAST_WATER ? (column.waterSides & 1 << side) == 0 : wall == null || waterDrawn(column.neighbour(side))) continue;
+                    if (FAST_WATER ? (column.waterSides & 1 << side) == 0 : wall == null || waterDrawn(beside(column, side))) continue;
                     wall.draw();
                 }
             }
@@ -1184,14 +1200,13 @@ public final class FarRenderer {
      * goto it usually has none, and waiting for every child down to the finest level left the
      * ground around the player empty until the whole tree under it had arrived.
      */
-    private void visit(int level, int x, int z, int bx, int bz, boolean fading) {
-        Column column = columns.get(Far.key(level, x, z));
+    private void visit(@Nullable Column column, int level, int x, int z, int bx, int bz, boolean fading) {
         if (CACHE_PICK && FADE && column != null && age(column, FarGpu.now()) < FarShaders.FADE_TICKS) pickAnimating = true;
         boolean meshed = column != null && column.meshed;
         // Rising into the jet stream layer makes a coarser level the finest: until its columns
         // arrive, the finer ones already here keep standing in for them.
         boolean refined = Far.refined(level, x, z, bx, bz, finest) || !meshed && Far.refined(level, x, z, bx, bz);
-        if (refined && (!meshed || childrenReady(level, x, z, bx, bz))) {
+        if (refined && (!meshed || childrenReady(column, level, x, z, bx, bz))) {
             // The outer ring of a level's middle: drawn under its children too, fading in as they fade out.
             // The shader puts the ring at the shared hole, so where the coarsest level keeps a narrower
             // middle (an extreme sharpness) the two levels meet at a plain seam instead.
@@ -1208,7 +1223,7 @@ public final class FarRenderer {
                     column.split = true;
                     stamp(column, start == 0 ? 1 : start);
                     for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
-                        Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+                        Column child = kid(column, level, x, z, dx, dz);
                         if (child != null && child.meshed) stamp(child, column.stamp);
                     }
                 }
@@ -1223,7 +1238,7 @@ public final class FarRenderer {
                     column.split = true;
                     stamp(column, now);
                     for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
-                        Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+                        Column child = kid(column, level, x, z, dx, dz);
                         if (child != null && child.meshed) stamp(child, now);
                     }
                 }
@@ -1234,7 +1249,8 @@ public final class FarRenderer {
                 addDrawn(column);
             }
             int parent = cullTree.open();
-            for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) visit(level - 1, 2 * x + dx, 2 * z + dz, bx, bz, band || arriving);
+            for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++)
+                visit(kid(column, level, x, z, dx, dz), level - 1, 2 * x + dx, 2 * z + dz, bx, bz, band || arriving);
             cullTree.close(parent);
             return;
         }
@@ -1257,7 +1273,7 @@ public final class FarRenderer {
         // With a child already gone, the column would fade in over a hole: it is drawn whole instead.
         boolean whole = true;
         for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
-            Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+            Column child = kid(column, level, x, z, dx, dz);
             if (child == null || !child.meshed) whole = false;
         }
         if (starting && whole) {
@@ -1267,7 +1283,7 @@ public final class FarRenderer {
             column.merging = true;
             stamp(column, start == 0 ? 1 : start, true);
             for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
-                Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+                Column child = kid(column, level, x, z, dx, dz);
                 if (child != null && child.meshed) stamp(child, column.stamp, true);
             }
         }
@@ -1275,7 +1291,7 @@ public final class FarRenderer {
             column.fade = FarGpu.FADE_IN;
             addDrawn(column);
             for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
-                Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+                Column child = kid(column, level, x, z, dx, dz);
                 child.fade = FarGpu.FADE_OUT;
                 addDrawn(child);
             }
@@ -1287,7 +1303,7 @@ public final class FarRenderer {
         column.merging = false;
         stamp(column, 0, false);
         for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
-            Column child = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+            Column child = kid(column, level, x, z, dx, dz);
             if (child != null && child.stamp == stamp) stamp(child, 0, false);
         }
         return false;
@@ -1304,9 +1320,8 @@ public final class FarRenderer {
             for (int x = Far.column(bx - v, level); x <= Far.column(bx + 15 + v, level); x++) {
                 for (int z = Far.column(bz - v, level); z <= Far.column(bz + 15 + v, level); z++) {
                     long key = Far.key(level, x, z);
-                    if (!drawnKeys.contains(key)) continue;
                     Column column = columns.get(key);
-                    if (column != null && column.meshedCubes != null && column.meshedCubes.contains(cube)) return true;
+                    if (column != null && column.drawnPick == pickSerial && column.meshedCubes != null && column.meshedCubes.contains(cube)) return true;
                 }
             }
         }
@@ -1332,19 +1347,67 @@ public final class FarRenderer {
     }
 
     /** True when a column's water is drawn this frame: drawn, and not fading in over finer water. */
-    private boolean waterDrawn(long key) { return drawnKeys.contains(key) && !fadingIn.contains(key); }
+    /** Whether the last pick drew a column, which may be missing. */
+    private boolean drawn(@Nullable Column column) { return column != null && column.drawnPick == pickSerial; }
 
-    private boolean ready(int level, int x, int z, int bx, int bz) {
-        Column column = columns.get(Far.key(level, x, z));
+    /** Whether the last pick drew a column's water: drawn, and not fading in over the finer level. */
+    private boolean waterDrawn(@Nullable Column column) { return drawn(column) && column.fade != FarGpu.FADE_IN; }
+
+    private boolean ready(@Nullable Column column, int level, int x, int z, int bx, int bz) {
         if (column != null && column.meshed) return true;
-        return Far.refined(level, x, z, bx, bz, finest) && childrenReady(level, x, z, bx, bz);
+        return Far.refined(level, x, z, bx, bz, finest) && childrenReady(column, level, x, z, bx, bz);
     }
 
     private boolean childrenReady(int level, int x, int z, int bx, int bz) {
+        return childrenReady(columns.get(Far.key(level, x, z)), level, x, z, bx, bz);
+    }
+
+    /** The same for a column already looked up, or null where none is held. */
+    private boolean childrenReady(@Nullable Column column, int level, int x, int z, int bx, int bz) {
         for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
-            if (!ready(level - 1, 2 * x + dx, 2 * z + dz, bx, bz)) return false;
+            if (!ready(kid(column, level, x, z, dx, dz), level - 1, 2 * x + dx, 2 * z + dz, bx, bz)) return false;
         }
         return true;
+    }
+
+    /** A column's kid from its links when the column is held, or else from the map: kids can be held under a missing column. */
+    @Nullable private Column kid(@Nullable Column column, int level, int x, int z, int dx, int dz) {
+        return LINK_COLUMNS && column != null ? column.kids[dz * 2 + dx] : columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+    }
+
+    /** The held column beside one (north, south, west, east), or null. */
+    @Nullable private Column beside(Column column, int side) {
+        return LINK_COLUMNS ? column.sides[side] : columns.get(column.neighbour(side));
+    }
+
+    /** Links a column just put in the map with its parent, kids and sides (see {@link Column#kids}). */
+    private void link(Column column) {
+        int level = column.level, x = Far.x(column.key), z = Far.z(column.key);
+        if (level > Far.MIN_LEVEL)
+            for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) column.kids[dz * 2 + dx] = columns.get(Far.key(level - 1, 2 * x + dx, 2 * z + dz));
+        if (level < Far.MAX_LEVEL) {
+            Column parent = columns.get(Far.key(level + 1, x >> 1, z >> 1));
+            if (parent != null) parent.kids[(z & 1) * 2 + (x & 1)] = column;
+        }
+        for (int side = 0; side < 4; side++) {
+            Column beside = columns.get(column.neighbour(side));
+            column.sides[side] = beside;
+            if (beside != null) beside.sides[side ^ 1] = column;
+        }
+    }
+
+    /** Unlinks a column just taken out of the map. */
+    private void unlink(Column column) {
+        int level = column.level, x = Far.x(column.key), z = Far.z(column.key);
+        if (level < Far.MAX_LEVEL) {
+            Column parent = columns.get(Far.key(level + 1, x >> 1, z >> 1));
+            int at = (z & 1) * 2 + (x & 1);
+            if (parent != null && parent.kids[at] == column) parent.kids[at] = null;
+        }
+        for (int side = 0; side < 4; side++) {
+            Column beside = column.sides[side];
+            if (beside != null && beside.sides[side ^ 1] == column) beside.sides[side ^ 1] = null;
+        }
     }
 
     /** Releases the bytes once; replacement columns transfer ownership without changing the total. */
@@ -1362,8 +1425,6 @@ public final class FarRenderer {
         columns.clear();
         pick.invalidate();
         drawn.clear();
-        drawnKeys.clear();
-        fadingIn.clear();
         visible = List.of();
         waterVisible.clear();
         waterSurfaces.clear();
