@@ -557,10 +557,11 @@ public final class FarRenderer {
         old.sort(Comparator.comparingInt(column -> column.lastWanted));
         // The plan alone can want more than MAX_COLUMNS (about 17,000 at the default detail), which
         // left no room for the columns just behind: every one went at once and came back by download.
-        int excess = columns.size() - Math.max(MAX_COLUMNS, planSize + SPARE_COLUMNS);
+        // A replay cannot ask for a column again, so there it keeps several times as many, and none for age alone.
+        boolean replay = CubicClient.inReplay();
+        int excess = columns.size() - Math.max(MAX_COLUMNS, planSize + SPARE_COLUMNS) * (replay ? 4 : 1);
         for (Column column : old) {
-            // A replay cannot ask for a column again, so there only the count limit lets one go.
-            if (excess <= 0 && (CubicClient.inReplay() || ticks - column.lastWanted <= KEEP_TICKS)) break;
+            if (excess <= 0 && (replay || ticks - column.lastWanted <= KEEP_TICKS)) break;
             columns.remove(column.key);
             columnsVersion++;
             dueColumns.remove(column);

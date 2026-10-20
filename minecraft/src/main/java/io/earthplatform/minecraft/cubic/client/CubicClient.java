@@ -76,10 +76,16 @@ public final class CubicClient {
      * terrain: there, the frame starts here. A flawless frame then finishes the terrain before drawing.
      */
     public static void levelPass() {
-        boolean flawless = Flawless.active();
-        if (!framed && (flawless || inReplay())) startFrame();
+        boolean flawless = Flawless.active(), replay = inReplay();
+        if (!framed && (flawless || replay)) startFrame();
         framed = false;
         ClientCubeWorld world = ClientCubeWorld.current();
+        // A paused replay doesn't tick, so after a seek nothing was ever meshed: there the renderers tick from frames.
+        if (replay && !flawless && world != null && System.nanoTime() - tickedAt > 100_000_000L) {
+            tickedAt = System.nanoTime();
+            world.renderer().tick();
+            world.far().tick();
+        }
         if (flawless && world != null) Flawless.settle(world);
     }
 
@@ -104,7 +110,11 @@ public final class CubicClient {
 
     @SubscribeEvent public static void tickStart(ClientTickEvent.Pre event) { hold(); }
 
+    /** When the client last ticked; a paused replay stops ticking, and with it all meshing. */
+    private static long tickedAt;
+
     @SubscribeEvent public static void tick(ClientTickEvent.Post event) {
+        tickedAt = System.nanoTime();
         hold();
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world != null) { world.checkShaders(); world.renderer().tick(); world.far().tick(); }
