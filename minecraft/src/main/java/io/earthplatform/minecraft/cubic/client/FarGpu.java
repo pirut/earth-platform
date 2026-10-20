@@ -90,9 +90,12 @@ final class FarGpu {
      * against the depth of the faces the pre-pass kept, with nothing in it that stops the GPU
      * testing depth before shading. The one-pass program drops fragments and writes depth, so
      * every face under a pixel was shaded, pack code and all, however many lay behind.
-     * {@code -Dearthplatform.far.depthPrepass=true}; off by default until measured.
+     * {@code -Dearthplatform.far.depthPrepass} is {@code true}, {@code false}, or by default
+     * {@code auto}: on except on Apple's GPUs (see {@link #prepassByDefault}).
      */
-    static final boolean DEPTH_PREPASS = Boolean.getBoolean("earthplatform.far.depthPrepass");
+    private static final String DEPTH_PREPASS = System.getProperty("earthplatform.far.depthPrepass", "auto");
+    /** Whether this GL draws the depth pre-pass (see {@link #DEPTH_PREPASS}). */
+    final boolean depthPrepass;
     /** What {@link #begin} draws: the one-pass draw, the depth pre-pass, or the shading after it. */
     static final int ONE_PASS = 0, PREPASS = 1, SHADE = 2;
     private int phase = ONE_PASS;
@@ -113,6 +116,7 @@ final class FarGpu {
 
     FarGpu() {
         RenderSystem.assertOnRenderThread();
+        depthPrepass = prepassByDefault(DEPTH_PREPASS, GL11C.glGetString(GL11C.GL_VENDOR), GL11C.glGetString(GL11C.GL_RENDERER));
         vao = GL30C.glGenVertexArrays();
         if (INDEXED) {
             indices = GL15C.glGenBuffers();
@@ -133,6 +137,22 @@ final class FarGpu {
         int max = GL11C.glGetInteger(GL31C.GL_MAX_TEXTURE_BUFFER_SIZE);
         arenaQuads = Math.max(1 << 16, Math.min(ARENA_QUADS, max));
         version = glslVersion() + (INDEXED ? "#define EARTH_INDEXED\n" : "");
+    }
+
+    /**
+     * Whether to draw the depth pre-pass, from the flag and the GL's vendor and renderer. Measured
+     * at Sharpest under Photon over Yosemite, it took an RTX 2080 Ti from 51.4 to 62.6 fps (far
+     * terrain 13.5 to 10.4 ms of GPU time), while in build 61 it measured about 20% slower on an M4
+     * Pro Mac. So {@code auto} leaves it off on Apple's GPUs.
+     */
+    static boolean prepassByDefault(String setting, @Nullable String vendor, @Nullable String renderer) {
+        if ("true".equals(setting)) return true;
+        if ("false".equals(setting)) return false;
+        return !mentionsApple(vendor) && !mentionsApple(renderer);
+    }
+
+    private static boolean mentionsApple(@Nullable String text) {
+        return text != null && text.toLowerCase(java.util.Locale.ROOT).contains("apple");
     }
 
     /** True when this GL can draw far terrain at all (OpenGL 3.3). */
@@ -164,6 +184,7 @@ final class FarGpu {
 
     /** Now on the fade clock: hundredths of a second, wrapping in 27 bits; never 0, which stands for "not fading". */
     static int now() {
+        if (Flawless.active()) return Flawless.clock();
         int now = (int) (System.nanoTime() / 10_000_000L) & 0x7FFFFFF;
         return now == 0 ? 1 : now;
     }
@@ -254,6 +275,8 @@ final class FarGpu {
     boolean begin(boolean packMode, @Nullable FarShaders.PackPatch patch, Matrix4f modelView, Matrix4f projection, Vec3 camera, float[] shade,
             int frame, boolean near) {
         this.near = near;
+        // A pre-pass keeps only what it draws itself, never an earlier frame's ranges.
+        if (phase == PREPASS) kept = 0;
         Program program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
         if (program == null) return false;
         uploadLooks();
@@ -290,6 +313,7 @@ final class FarGpu {
         }
         for (Arena arena : arenas) arena.clearDraws();
         ranges = 0;
+        drawingFade = NO_FADE;
         return true;
     }
 
@@ -300,6 +324,7 @@ final class FarGpu {
      */
     boolean fade(int fade) {
         flush();
+        drawingFade = fade;
         Program program = packMode ? packProgram(patch, fade) : vanillaProgram(fade);
         boolean built = program != null;
         if (program == null) program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
@@ -417,7 +442,10 @@ final class FarGpu {
     /** Sets what the next {@link #begin} draws; back to {@link #ONE_PASS} after the shading pass. */
     void phase(int phase) {
         this.phase = phase;
-        if (phase == ONE_PASS) frozenNow = 0;
+        if (phase == ONE_PASS) {
+            frozenNow = 0;
+            kept = 0;
+        }
     }
 
     /**
@@ -426,7 +454,7 @@ final class FarGpu {
      * has a program for has both passes' programs too, and nothing blends.
      */
     boolean prepassReady(@Nullable FarShaders.PackPatch patch) {
-        if (!DEPTH_PREPASS || patch == null || !FarShaders.prepassSafe(patch.fragment()) || GL11C.glIsEnabled(GL11C.GL_BLEND)) return false;
+        if (!depthPrepass || patch == null || !FarShaders.prepassSafe(patch.fragment()) || GL11C.glIsEnabled(GL11C.GL_BLEND)) return false;
         boolean wasNear = near;
         int was = phase;
         near = false;
@@ -477,6 +505,7 @@ final class FarGpu {
     private void flush() {
         for (Arena arena : arenas) {
             if (arena.draws == 0) continue;
+            if (phase == PREPASS && REPLAY) keep(arena);
             GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + QUAD_UNIT);
             GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, arena.buffer.texture);
             GlStateManager._activeTexture(previousActive);
@@ -484,6 +513,71 @@ final class FarGpu {
             ranges += arena.draws;
             arena.clearDraws();
         }
+    }
+
+    /**
+     * The shading pass after a depth pre-pass draws the very ranges the pre-pass drew, in the same
+     * order and with the same fades' programs: {@link #replay} draws what the pre-pass kept, rather
+     * than the caller queueing every column's face groups a second time, which while the view moves
+     * cost the render thread as much as the pre-pass did. {@code -Dearthplatform.far.replayPrepass=false}
+     * queues them again, for comparing.
+     */
+    static final boolean REPLAY = !"false".equals(System.getProperty("earthplatform.far.replayPrepass"));
+    /** The fade whose program draws what is queued now. */
+    private int drawingFade;
+    /** What the pre-pass drew, multi-draw by multi-draw: {@link #kept} of them this frame. */
+    private final List<Kept> keptDraws = new ArrayList<>();
+    private int kept;
+
+    private static final class Kept {
+        Arena arena;
+        int fade, draws;
+        IntBuffer firsts = MemoryUtil.memAllocInt(256), counts = MemoryUtil.memAllocInt(256);
+
+        void free() {
+            MemoryUtil.memFree(firsts);
+            MemoryUtil.memFree(counts);
+        }
+    }
+
+    private void keep(Arena arena) {
+        if (kept == keptDraws.size()) keptDraws.add(new Kept());
+        Kept draw = keptDraws.get(kept++);
+        if (draw.firsts.capacity() < arena.draws) {
+            draw.firsts = MemoryUtil.memRealloc(draw.firsts, arena.draws);
+            draw.counts = MemoryUtil.memRealloc(draw.counts, arena.draws);
+        }
+        MemoryUtil.memCopy(MemoryUtil.memAddress(arena.firsts, 0), MemoryUtil.memAddress(draw.firsts, 0), 4L * arena.draws);
+        MemoryUtil.memCopy(MemoryUtil.memAddress(arena.counts, 0), MemoryUtil.memAddress(draw.counts, 0), 4L * arena.draws);
+        draw.arena = arena;
+        draw.fade = drawingFade;
+        draw.draws = arena.draws;
+    }
+
+    /**
+     * After {@link #begin} for the shading pass: draws what this frame's pre-pass drew, switching
+     * fades where it did, then ends as {@link #end} does. False, drawing nothing, when nothing was
+     * kept (the caller then queues the columns itself).
+     */
+    boolean replay() {
+        if (!REPLAY || phase != SHADE || kept == 0) return false;
+        for (int i = 0; i < kept; i++) {
+            Kept draw = keptDraws.get(i);
+            if (draw.fade != drawingFade) fade(draw.fade);
+            Arena arena = draw.arena;
+            arena.clearDraws();
+            if (arena.firsts.capacity() < draw.draws) {
+                arena.firsts = MemoryUtil.memRealloc(arena.firsts, draw.draws).clear();
+                arena.counts = MemoryUtil.memRealloc(arena.counts, draw.draws).clear();
+            }
+            MemoryUtil.memCopy(MemoryUtil.memAddress(draw.firsts, 0), MemoryUtil.memAddress(arena.firsts, 0), 4L * draw.draws);
+            MemoryUtil.memCopy(MemoryUtil.memAddress(draw.counts, 0), MemoryUtil.memAddress(arena.counts, 0), 4L * draw.draws);
+            arena.draws = draw.draws;
+            flush();
+        }
+        kept = 0;
+        end();
+        return true;
     }
 
     private void bind2d(int unit, int texture, boolean packMode) {
@@ -675,6 +769,8 @@ final class FarGpu {
         for (Program program : pack) if (program != null) program.close();
         for (Program program : prepass) if (program != null) program.close();
         for (Program program : shading) if (program != null) program.close();
+        for (Kept draw : keptDraws) draw.free();
+        keptDraws.clear();
         GL30C.glDeleteVertexArrays(vao);
         if (indices != 0) GL15C.glDeleteBuffers(indices);
     }

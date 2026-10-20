@@ -13,6 +13,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class CubicLevelPassMixin {
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void earthplatform$levelPass(DeltaTracker deltaTracker, CallbackInfo info) {
+        io.earthplatform.minecraft.cubic.client.CubicClient.levelPass();
         LevelPasses.begin();
     }
 }

@@ -56,6 +56,39 @@ public final class CubicClient {
                 || world.cubeAtBlock(player.getBlockX(), player.getBlockY() - 2, player.getBlockZ()) == null;
     }
 
+    /** Replay Mod (and its NeoForge ports) plays back through its own camera entity, which must never be held or captioned. */
+    private static boolean inReplay(net.minecraft.world.entity.player.Player player) {
+        return player.getClass().getName().startsWith("com.replaymod.");
+    }
+
+    /** Whether a replay is playing: no server is there to send terrain again. */
+    public static boolean inReplay() {
+        var player = Minecraft.getInstance().player;
+        return player != null && inReplay(player);
+    }
+
+    /** Whether this frame began through {@link RenderFrameEvent.Pre}; a video renderer draws frames without it. */
+    private static boolean framed;
+
+    /**
+     * The level is about to be drawn. A video renderer (Replay Mod's) draws each frame itself, without
+     * the frame event that starts ours, so nothing new ever reached the GPU and its videos lost the far
+     * terrain: there, the frame starts here. A flawless frame then finishes the terrain before drawing.
+     */
+    public static void levelPass() {
+        boolean flawless = Flawless.active(), replay = inReplay();
+        if (!framed && (flawless || replay)) startFrame();
+        framed = false;
+        ClientCubeWorld world = ClientCubeWorld.current();
+        // A paused replay doesn't tick, so after a seek nothing was ever meshed: there the renderers tick from frames.
+        if (replay && !flawless && world != null && System.nanoTime() - tickedAt > 100_000_000L) {
+            tickedAt = System.nanoTime();
+            world.renderer().tick();
+            world.far().tick();
+        }
+        if (flawless && world != null) Flawless.settle(world);
+    }
+
     /**
      * Holds a player in place until the cubes around them arrive, as vanilla does in an unloaded
      * chunk, so a teleport into unloaded sky does not fall through it. A player gliding or in
@@ -64,7 +97,7 @@ public final class CubicClient {
     private static void hold() {
         var player = Minecraft.getInstance().player;
         ClientCubeWorld world = ClientCubeWorld.current();
-        if (world == null || player == null || player.isSpectator() || player.isFallFlying() || player.isPassenger()
+        if (world == null || player == null || player.isSpectator() || inReplay(player) || player.isFallFlying() || player.isPassenger()
                 || io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(player) || !waitingForCubes(world, player)) {
             held = null;
             return;
@@ -77,7 +110,11 @@ public final class CubicClient {
 
     @SubscribeEvent public static void tickStart(ClientTickEvent.Pre event) { hold(); }
 
+    /** When the client last ticked; a paused replay stops ticking, and with it all meshing. */
+    private static long tickedAt;
+
     @SubscribeEvent public static void tick(ClientTickEvent.Post event) {
+        tickedAt = System.nanoTime();
         hold();
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world != null) { world.checkShaders(); world.renderer().tick(); world.far().tick(); }
@@ -101,6 +138,11 @@ public final class CubicClient {
     }
 
     @SubscribeEvent public static void frame(RenderFrameEvent.Pre event) {
+        startFrame();
+        framed = true;
+    }
+
+    private static void startFrame() {
         LevelPasses.beginFrame();
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world != null) { world.renderer().beginFrame(); world.far().beginFrame(); }
@@ -198,7 +240,8 @@ public final class CubicClient {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null || minecraft.player == null) return;
         var player = minecraft.player;
-        if (io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(player)) return;
+        // Spectators are never held, and a replay camera must stay clean for rendered videos.
+        if (player.isSpectator() || inReplay(player) || io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(player)) return;
         if (!waitingForCubes(world, player)) return;
         var gui = event.getGuiGraphics();
         Component text = Component.literal("Loading terrain at Y " + player.getBlockY() + "...");
