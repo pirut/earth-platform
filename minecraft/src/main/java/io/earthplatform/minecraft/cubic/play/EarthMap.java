@@ -33,7 +33,7 @@ public final class EarthMap {
     public static final byte PICK_SPAWN = 3;
     /** Open the globe for a new player to choose where they start. */
     public static final byte PICK_START = 4;
-    /** Open the globe for a GeoGuessr guess: the whole world, with no dot where the player is. */
+    /** Open the globe for a Where on Earth guess: the whole world, with no dot where the player is. */
     public static final byte PICK_GUESS = 5;
 
     public record Payload(byte kind, double latitude, double longitude) implements CustomPacketPayload {
@@ -88,7 +88,7 @@ public final class EarthMap {
     static int open(CommandSourceStack source) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
         if (EarthGuess.playing(player)) {
-            source.sendFailure(Component.literal("No travel map during a GeoGuessr round: use /earth guess."));
+            source.sendFailure(Component.literal("No travel map during a Where on Earth round: use /earth guess."));
             return 0;
         }
         if (!mayOpen(source)) {

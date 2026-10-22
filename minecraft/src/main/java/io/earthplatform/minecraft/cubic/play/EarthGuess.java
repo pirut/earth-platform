@@ -28,7 +28,7 @@ import net.minecraft.util.RandomSource;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
- * A GeoGuessr round: everyone playing is dropped at the same random spot on land, looks around,
+ * A Where on Earth round, a guessing game in the style of GeoGuessr: everyone playing is dropped at the same random spot on land, looks around,
  * and marks on the globe where they think they are. Points by distance, as GeoGuessr gives them:
  * 5000 for a perfect guess, about half at 1400 km. While a round is on, the players' own
  * {@code /earth where}, travel map and country names stay quiet.
@@ -90,7 +90,7 @@ final class EarthGuess {
                 .whenComplete((spot, failure) -> server.execute(() -> {
                     if (failure != null || spot == null) {
                         source.sendFailure(Component.literal("Could not find a spot for the round. Try again in a minute."));
-                        if (failure != null) EarthPlatformMod.LOGGER.warn("GeoGuessr round: {}", failure.toString());
+                        if (failure != null) EarthPlatformMod.LOGGER.warn("Where on Earth round: {}", failure.toString());
                         return;
                     }
                     List<UUID> ids = new ArrayList<>();
@@ -101,7 +101,7 @@ final class EarthGuess {
                         ids.add(player.getUUID());
                         NAMES.put(player.getUUID(), player.getGameProfile().getName());
                         EarthCommands.wander(quiet, player, spot);
-                        player.sendSystemMessage(Component.literal("GeoGuessr! You're off to somewhere on Earth. Look around, then ")
+                        player.sendSystemMessage(Component.literal("Where on Earth? You're off to a random spot. Look around, then ")
                                 .append(Component.literal("[Make your guess]").withStyle(style -> style.withColor(ChatFormatting.AQUA)
                                         .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/earth guess"))
                                         .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("Opens the globe")))))
@@ -114,7 +114,7 @@ final class EarthGuess {
 
     private static int open(CommandSourceStack source) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
-        if (!playing(player)) { source.sendFailure(Component.literal("You're not in a GeoGuessr round.")); return 0; }
+        if (!playing(player)) { source.sendFailure(Component.literal("You're not in a Where on Earth round.")); return 0; }
         // NaN: the globe opens on the whole world, with no dot where the player is.
         PacketDistributor.sendToPlayer(player, new EarthMap.Payload(EarthMap.PICK_GUESS, Double.NaN, Double.NaN));
         return 1;
@@ -123,7 +123,7 @@ final class EarthGuess {
     private static int guess(CommandSourceStack source, double latitude, double longitude) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
         Round current = round;
-        if (current == null || !playing(player)) { source.sendFailure(Component.literal("You're not in a GeoGuessr round, or you've guessed.")); return 0; }
+        if (current == null || !playing(player)) { source.sendFailure(Component.literal("You're not in a Where on Earth round, or you've guessed.")); return 0; }
         current.guesses.put(player.getUUID(), new double[]{latitude, longitude});
         double km = EarthRules.kilometers(latitude, longitude, current.answer.latitude(), current.answer.longitude());
         source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT, "Guess in: %,.0f km off, %d points. Wait for the others.", km, points(km)))
@@ -167,7 +167,7 @@ final class EarthGuess {
 
     private static int scores(CommandSourceStack source) {
         if (TOTALS.isEmpty()) { source.sendFailure(Component.literal("No rounds played yet.")); return 0; }
-        source.sendSuccess(() -> Component.literal("GeoGuessr points:").withStyle(ChatFormatting.GOLD), false);
+        source.sendSuccess(() -> Component.literal("Where on Earth points:").withStyle(ChatFormatting.GOLD), false);
         TOTALS.entrySet().stream().sorted(Map.Entry.<UUID, Integer>comparingByValue().reversed()).forEach(entry ->
                 source.sendSuccess(() -> Component.literal("  " + NAMES.getOrDefault(entry.getKey(), "?") + ": " + entry.getValue()), false));
         return TOTALS.size();
@@ -178,7 +178,7 @@ final class EarthGuess {
         if (current != null && Util.getMillis() - current.started > ROUND) reveal(server);
     }
 
-    /** GeoGuessr was switched off: a round that is on ends with the guesses in. */
+    /** The rounds were switched off: a round that is on ends with the guesses in. */
     static void end(MinecraftServer server) { if (round != null) reveal(server); }
 
     static void stopped() { round = null; TOTALS.clear(); NAMES.clear(); }

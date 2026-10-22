@@ -22,7 +22,7 @@
 | `/earth warps`, `/earth warp <name>` | List the server's warps (click one to go), or go to one |
 | `/earth tpa <player>`, `/earth tpahere <player>` | Ask to go to another player, or ask them to come to you; they click **Accept** or **Deny** (or `/earth tpaccept`, `/earth tpdeny`). Requests last two minutes |
 | `/earth race` | During a race, how far the finish is and which way |
-| `/earth guess` | During a GeoGuessr round, opens the globe to mark where you think you are |
+| `/earth guess` | During a Where on Earth round, opens the globe to mark where you think you are |
 
 Crossing into another country shows its name on screen, as "Now entering France".
 
@@ -94,18 +94,18 @@ These are for operators, and all of them work from the server console too. Where
 | `/earth border country <name>` | Keeps players inside one country, e.g. `/earth border country Switzerland` |
 | `/earth border reset` | No border |
 | `/earth race start [place]` | A race to a famous place (a random one unless named). The first player to get within 250 meters wins the prize; a travel command takes a player out. `/earth race stop` calls it off |
-| `/earth guess start [players]` | A GeoGuessr round: everyone is dropped at the same random spot and marks on the globe where they think they are. Points by distance, up to 5000. `/earth guess end` reveals early; `/earth guess scores` totals the rounds |
+| `/earth guess start [players]` | A Where on Earth round, a guessing game: everyone is dropped at the same random spot and marks on the globe where they think they are. Points by distance, up to 5000. `/earth guess end` reveals early; `/earth guess scores` totals the rounds |
 | `/earth preload <km>` | Downloads the Earth data within that many kilometers of the server spawn ahead of time, nearest first. `/earth preload stop` ends it |
 | `/earth settings` | Lists every feature below with clickable **[ON]** / **[OFF]** buttons. `/earth settings <feature> on` or `off` switches one, `/earth settings travelCost 3` sets a number. Saved to the config file and in effect at once, no restart |
 | `/earth admin` | Server status: TPS, memory, downloads, cache size, border, warps, web map and who is online (click a name to go there) |
 
-**The border.** Trips past the border are refused, whoever sends them, and players who walk out are put back. Operators in creative can cross it. Random trips, team starts and GeoGuessr spots stay inside it.
+**The border.** Trips past the border are refused, whoever sends them, and players who walk out are put back. Operators in creative can cross it. Random trips, team starts and Where on Earth spots stay inside it.
 
 **The players' globe.** When an operator picks a spawn on the globe, other players show as green dots (`showPlayersOnMap`).
 
 **The web map.** With `webMap` on, the server serves a live world map at `http://<your server>:8123/` with everyone online, the spawn and the warps, updating every few seconds. Open the port in your firewall to share it.
 
-**Turning features on and off.** Every feature is optional. Operators switch them in game with `/earth settings` (or edit `config/earthplatform-common.toml`; a running server picks up the edit). A feature switched off disappears from players' commands at once; a race or GeoGuessr round that is on ends. Operators keep their own tools (spawn, send, warps, border, preload) whatever the switches say.
+**Turning features on and off.** Every feature is optional. Operators switch them in game with `/earth settings` (or edit `config/earthplatform-common.toml`; a running server picks up the edit). A feature switched off disappears from players' commands at once; a race or Where on Earth round that is on ends. Operators keep their own tools (spawn, send, warps, border, preload) whatever the switches say.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -117,7 +117,7 @@ These are for operators, and all of them work from the server console too. Where
 | `chooseStart` (`playersChooseStart`) | off | New players get a **Choose on the map** button and pick, once, where they start (`/earth start`); they respawn there without a bed |
 | `countryNames` | on | "Now entering ..." when a player crosses a border |
 | `playersOnMap` (`showPlayersOnMap`) | on | Other players as dots on the globe and the web map |
-| `geoguessr` | on | GeoGuessr rounds |
+| `geoguessr` | on | Where on Earth guessing rounds |
 | `races` | on | Races |
 | `dailyRace` | off | A race to a random famous place each day (UTC) |
 | `webMap` | off | The live web map |

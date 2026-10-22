@@ -32,7 +32,7 @@ final class EarthToggles {
             new Toggle("chooseStart", EarthConfig.PLAYERS_CHOOSE_START, "new players choose their start on the globe"),
             new Toggle("countryNames", EarthConfig.COUNTRY_NAMES, "\"Now entering <country>\" on screen"),
             new Toggle("playersOnMap", EarthConfig.SHOW_PLAYERS_ON_MAP, "other players as dots on the globe"),
-            new Toggle("geoguessr", EarthConfig.GEOGUESSR, "GeoGuessr rounds (/earth guess)"),
+            new Toggle("geoguessr", EarthConfig.GEOGUESSR, "Where on Earth guessing rounds (/earth guess)"),
             new Toggle("races", EarthConfig.RACES, "races to famous places (/earth race)"),
             new Toggle("dailyRace", EarthConfig.DAILY_RACE, "a race every day"),
             new Toggle("webMap", EarthConfig.WEB_MAP, "the live web map"));

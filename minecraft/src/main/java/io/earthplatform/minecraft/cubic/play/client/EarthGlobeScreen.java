@@ -90,7 +90,7 @@ public final class EarthGlobeScreen extends Screen {
 
     /** A globe for picking a spot on a server, such as its spawn, opened where the player stands; {@code keys} name its texts. */
     static EarthGlobeScreen pick(String keys, double lat, double lon, BiConsumer<Double, Double> picked) {
-        // NaN: nowhere in particular (a GeoGuessr guess), so the whole globe and no dot for the player.
+        // NaN: nowhere in particular (a Where on Earth guess), so the whole globe and no dot for the player.
         boolean somewhere = lat == lat && lon == lon;
         EarthGlobeScreen screen = new EarthGlobeScreen(Component.translatable(keys + ".title"), null, somewhere ? lat : 20, somewhere ? lon : 0, picked);
         screen.keys = keys;
