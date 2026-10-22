@@ -33,7 +33,7 @@ The jar is `minecraft/build/libs/earthplatform-<version>.jar` (for example `eart
 ./gradlew --no-daemon test --continue
 ```
 
-The unit tests run in a couple of minutes, and all should pass. They include `GlobeTest`, a harness for the Earth data code that serves synthetic tiles from a local HTTP server. GitHub runs the same build and tests on every pull request (`.github/workflows/ci.yml`), and every merge into `main` publishes the newest build as a GitHub release (`.github/workflows/release.yml`).
+The unit tests run in a couple of minutes, and all should pass. They include `GlobeTest`, a harness for the Earth data code that serves synthetic tiles from a local HTTP server. GitHub runs the same build and tests on every pull request (`.github/workflows/ci.yml`), and every merge into `main` publishes the newest build as a GitHub release and, when the repository has a `MODRINTH_TOKEN` secret, uploads the same jar to Modrinth (`.github/workflows/release.yml`).
 
 ## Try it in game
 
