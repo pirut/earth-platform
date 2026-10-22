@@ -129,3 +129,40 @@ jobs:
           prerelease: false
           make_latest: 'true'
           files: dist/*
+
+      # Uploads the same jar to Modrinth (project earth-platform) as an alpha for NeoForge on Minecraft
+      # 1.21.1, with the build's notes as the changelog. One jar runs on both client and server.
+      # Needs the MODRINTH_TOKEN secret (a Modrinth personal access token with "Create versions");
+      # without it the step says so and the GitHub release stands on its own. A version already on
+      # Modrinth is left alone, so re-running a release never uploads twice. To retry a failed upload,
+      # run this workflow from the Actions tab with the tag (for example combined-63).
+      - name: Upload to Modrinth
+        if: steps.tag.outputs.skip != 'true'
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          MODRINTH_PROJECT: YnuWHcwC
+        run: |
+          if [ -z "$MODRINTH_TOKEN" ]; then
+            echo "::notice::No MODRINTH_TOKEN secret, so $TAG was not uploaded to Modrinth."
+            exit 0
+          fi
+          api=https://api.modrinth.com/v2
+          agent="$GITHUB_REPOSITORY release workflow"
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -A "$agent" -H "Authorization: $MODRINTH_TOKEN" \
+            "$api/project/$MODRINTH_PROJECT/version/$VERSION")
+          if [ "$status" = 200 ]; then echo "$VERSION is already on Modrinth; nothing to upload."; exit 0; fi
+          notes="docs/release/notes/$TAG.md"
+          if [ -f "$notes" ]; then changelog=$(cat "$notes"); else changelog="Earth Platform $TAG"; fi
+          case "$VERSION" in *-beta.*) type=beta ;; *-alpha.*|*prototype*) type=alpha ;; *) type=release ;; esac
+          jar="earthplatform-$TAG.jar"
+          jq -n --arg project "$MODRINTH_PROJECT" --arg name "$TITLE" --arg number "$VERSION" \
+            --arg changelog "$changelog" --arg type "$type" \
+            '{project_id: $project, name: $name, version_number: $number, changelog: $changelog,
+              version_type: $type, loaders: ["neoforge"], game_versions: ["1.21.1"], dependencies: [],
+              featured: false, status: "listed", file_parts: ["jar"], primary_file: "jar"}' > modrinth-version.json
+          curl -sS --fail-with-body -A "$agent" -H "Authorization: $MODRINTH_TOKEN" \
+            -F "data=<modrinth-version.json;type=application/json" \
+            -F "jar=@dist/$jar;type=application/java-archive" \
+            "$api/version" > modrinth-response.json \
+            || { cat modrinth-response.json; echo; echo "::error::Modrinth upload of $VERSION failed."; exit 1; }
+          echo "Uploaded $VERSION to Modrinth: https://modrinth.com/mod/earth-platform/version/$(jq -r .id modrinth-response.json)"
