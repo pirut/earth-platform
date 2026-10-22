@@ -33,6 +33,21 @@ class FarOrderTest {
         assertDoesNotThrow(order::sort);
     }
 
+    @Test void firstMatchesAStableSortOfTheWholeList() {
+        Random random = new Random(42);
+        long[] values = new long[46_000];
+        for (int i = 0; i < values.length; i++) values[i] = (random.nextBoolean() ? 1L << 40 : 0) + random.nextInt(500);
+        Integer[] sorted = new Integer[values.length];
+        for (int i = 0; i < sorted.length; i++) sorted[i] = i;
+        Arrays.sort(sorted, Comparator.comparingLong(i -> values[i]));
+        for (int wanted : new int[] {0, 1, 7, 128, values.length, values.length + 5}) {
+            int[] first = FarOrder.first(values, wanted);
+            assertEquals(Math.min(wanted, values.length), first.length);
+            for (int i = 0; i < first.length; i++) assertEquals(sorted[i], first[i], "wanted " + wanted + " at " + i);
+        }
+        assertEquals(0, FarOrder.first(new long[0], 5).length);
+    }
+
     private static void check(double[] distances) {
         Integer[] expected = new Integer[distances.length];
         FarOrder order = new FarOrder();

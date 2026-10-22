@@ -185,7 +185,7 @@ final class FarSmoothGround {
         if (job.textured()) {
             for (int cz = 0; cz < 16; cz++) for (int cx = 0; cx < 16; cx++) {
                 int at = cell(cx, cz);
-                grid[((cz + 1) * POINTS + cx + 1) * 4 + 3] = job.looks().id(job.faces(), state[at], Direction.UP, biome[at], true, job.shaderIds()) + 1;
+                grid[((cz + 1) * POINTS + cx + 1) * 4 + 3] = job.looks().id(job.faces(), state[at], Direction.UP, biome[at], true) + 1;
             }
         }
         return grid;
@@ -206,7 +206,7 @@ final class FarSmoothGround {
         float surface = builder.surface[own];
         int sky = Mth.clamp(15 - (int) (surface - height[best] / (float) UNIT), 0, 15);
         Holder<Biome> holder = biome[best];
-        int id = job.looks().id(job.faces(), state[best], Direction.UP, holder, job.textured(), job.shaderIds());
+        int id = job.looks().id(job.faces(), state[best], Direction.UP, holder, job.textured());
         return (long) id << 8 | sky;
     }
 

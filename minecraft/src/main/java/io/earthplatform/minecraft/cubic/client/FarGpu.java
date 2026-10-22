@@ -74,7 +74,7 @@ final class FarGpu {
     private boolean stamping;
     private final TextureBuffer looks = new TextureBuffer(GL30C.GL_RGBA32UI, 8192, true);
     private final it.unimi.dsi.fastutil.ints.IntArrayList freeSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
-    private int nextSlot, looksUploaded;
+    private int nextSlot, looksUploaded, looksRebinds;
     private final String version;
     /** Programs by fade ({@link #NO_FADE}, {@link #FADE_OUT}, {@link #FADE_IN}); a fade's program is built when first asked for. */
     private final Program[] vanilla = new Program[3], pack = new Program[3], packNear = new Program[3];
@@ -599,10 +599,14 @@ final class FarGpu {
     }
 
     private void uploadLooks(FarLooks source) {
+        // After a rebind every look's pack block id may differ, so all of them go up again. One that
+        // lands while this copies leaves looksRebinds behind, and the next frame uploads them all.
+        int rebinds = source.rebinds(), from = rebinds == looksRebinds ? looksUploaded : 0;
         int count = source.count();
-        if (count == looksUploaded) return;
+        looksRebinds = rebinds;
+        if (count == from) return;
         looks.ensure(count * 2);
-        looks.upload(looksUploaded * 2, source.copy(looksUploaded, count));
+        looks.upload(from * 2, source.copy(from, count));
         looksUploaded = count;
     }
 
