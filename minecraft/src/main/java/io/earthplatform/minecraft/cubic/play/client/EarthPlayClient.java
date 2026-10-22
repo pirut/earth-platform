@@ -46,6 +46,7 @@ public final class EarthPlayClient {
         @SubscribeEvent public static void setup(FMLClientSetupEvent event) {
             ModList.get().getModContainerById(EarthPlatformMod.MOD_ID).orElseThrow()
                     .registerExtensionPoint(IConfigScreenFactory.class, (IConfigScreenFactory) ConfigurationScreen::new);
+            event.enqueueWork(io.earthplatform.minecraft.cubic.client.Flawless::offer);
         }
 
         @SubscribeEvent public static void presetEditors(RegisterPresetEditorsEvent event) {

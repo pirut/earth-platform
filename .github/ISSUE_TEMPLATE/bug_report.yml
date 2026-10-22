@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. Please check the [FAQ](https://github.com/pirut/earth-cubic-platform/blob/main/docs/FAQ.md) first, and try a **fresh world**: worlds keep the terrain choices they were made with.
+        Thanks for reporting. Please check the [FAQ](https://github.com/pirut/earth-platform/blob/main/docs/FAQ.md) first, and try a **fresh world**: worlds keep the terrain choices they were made with.
   - type: input
     id: version
     attributes:

@@ -8,7 +8,7 @@ Earth Platform is playable. You can start anywhere on Earth at one block per met
 
 Right now we are only fixing bugs, regressions and speed until we have a build we trust. New features wait until then. Once that build exists, it goes out as the first public alpha on GitHub, Modrinth and CurseForge (see [docs/release](docs/release/GO-PUBLIC.md)).
 
-Every merge to `main` builds a numbered release on the [Releases page](https://github.com/pirut/earth-cubic-platform/releases). Public versions will be `0.1.0-alpha.N`, where N is the build number.
+Every merge to `main` builds a numbered release on the [Releases page](https://github.com/pirut/earth-platform/releases). Public versions will be `0.1.0-alpha.N`, where N is the build number.
 
 ## Done
 
