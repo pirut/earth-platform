@@ -2,6 +2,7 @@
   "required": true,
   "minVersion": "0.8",
   "package": "io.earthplatform.minecraft.cubic.mixin",
+  "plugin": "io.earthplatform.minecraft.cubic.compat.OptionalMixins",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
     "CubicBlockPosWireMixin",
