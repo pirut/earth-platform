@@ -1,8 +1,8 @@
 package io.earthplatform.minecraft.cubic.jet;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
-import io.earthplatform.minecraft.cubic.Cubic;
-import io.earthplatform.minecraft.cubic.compat.SableCompat;
+import io.github.pirut.chunks3.Cubic;
+import io.github.pirut.chunks3.compat.SableCompat;
 import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.IdentityHashMap;

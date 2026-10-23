@@ -2,8 +2,8 @@ package io.earthplatform.minecraft.cubic.play;
 
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.minecraft.EarthPlatformMod;
-import io.earthplatform.minecraft.cubic.CubicLevel;
-import io.earthplatform.minecraft.cubic.ServerCubeWorld;
+import io.github.pirut.chunks3.CubicLevel;
+import io.github.pirut.chunks3.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import java.util.HashMap;
 import java.util.Map;

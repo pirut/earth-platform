@@ -1,8 +1,8 @@
 package io.earthplatform.minecraft.cubic.earth;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
-import io.earthplatform.minecraft.cubic.Cubic;
-import io.earthplatform.minecraft.cubic.CubicArrivalEvent;
+import io.github.pirut.chunks3.Cubic;
+import io.github.pirut.chunks3.CubicArrivalEvent;
 import io.earthplatform.minecraft.cubic.jet.JetStream;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
 import io.earthplatform.minecraft.cubic.play.EarthMap;

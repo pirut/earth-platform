@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic.earth.mixin;
 
-import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
+import io.github.pirut.chunks3.client.ClientCubeWorld;
 import io.earthplatform.minecraft.cubic.jet.JetStream;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.level.Level;

@@ -180,6 +180,17 @@ dependencies {
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
 }
 
+// The cubic engine. It is bundled inside the jar (jar-in-jar), so players still install one file;
+// a newer Chunks3 another mod ships wins, within chunks3_version_range.
+dependencies {
+    jarJar(implementation("io.github.pirut:chunks3")) {
+        version {
+            strictly project.chunks3_version_range
+            prefer project.chunks3_version
+        }
+    }
+}
+
 // Exact, independently installed shader inputs. Nothing is resolved from a Maven
 // coordinate, downloaded, extracted, installed, shaded, or added to localRuntime.
 def officialIrisJar = providers.gradleProperty('installedIrisJar')
@@ -245,6 +256,7 @@ var generateModMetadata = tasks.register("generateModMetadata", ProcessResources
             mod_name               : mod_name,
             mod_license            : mod_license,
             mod_version            : mod_version,
+            chunks3_version_range  : chunks3_version_range,
     ]
     inputs.properties replaceProperties
     expand replaceProperties

@@ -2,7 +2,7 @@ package io.earthplatform.minecraft.cubic.earth.mixin;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
-import io.earthplatform.minecraft.cubic.CubicLevel;
+import io.github.pirut.chunks3.CubicLevel;
 import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;

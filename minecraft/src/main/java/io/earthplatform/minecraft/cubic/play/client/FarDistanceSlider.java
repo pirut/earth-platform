@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic.play.client;
 
-import io.earthplatform.minecraft.cubic.far.Far;
+import io.github.pirut.chunks3.far.Far;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Tooltip;

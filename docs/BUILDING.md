@@ -1,10 +1,11 @@
 # Building and testing
 
-The mod is one Gradle project in `minecraft/`. It also compiles the pure Java code in `geography/` as an extra source folder, so there is a single jar.
+The mod is one Gradle project in `minecraft/`. It also compiles the pure Java code in `geography/` as an extra source folder. The cubic engine is its own library mod, [Chunks3](https://github.com/pirut/chunks3), checked out as the `chunks3/` submodule and built with the mod; its jar is bundled inside Earth Platform's (jar-in-jar), so there is still a single jar to install.
 
 ## What you need
 
 - JDK 21. Set `JAVA_HOME` to it.
+- The `chunks3/` submodule: clone with `git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone.
 - Gradle 9.2.1, through the wrapper in `minecraft/` or your own install. A fresh clone has no `gradle-wrapper.jar` (the `*.jar` ignore rule catches it), so run `gradle wrapper` once in `minecraft/` or call an installed Gradle 9.2.1 directly.
 - Network access to Maven Central, `maven.neoforged.net` and Mojang's download hosts. Gradle fetches Minecraft 1.21.1 and NeoForge 21.1.259.
 - Three files you download yourself, because the mod builds against them but never bundles them. Every build task checks their SHA-256 first:
@@ -46,18 +47,16 @@ Start with the `package-info.java` in each package: it says what the package doe
 | Path | What it is |
 | --- | --- |
 | `minecraft/src/main/java/io/earthplatform/minecraft/EarthPlatformMod.java` | The NeoForge entry point. Everything else registers itself with `@EventBusSubscriber` |
-| `.../minecraft/cubic` | The cubic world engine: cubes from Y -16384 to 16383, how they are made, saved, lit and sent (`ServerCubeWorld`, `CubeWorld`, `CubeStorage`, `CubicEvents`) |
-| `.../minecraft/cubic/gen` | Terrain shared by every cubic world: `SurfaceGenerator` turns column heights into cubes; caves, rock layers, plants, trees and vanilla structures |
-| `.../minecraft/cubic/earth` | The real Earth: `EarthGenerator` decides every column's height, water and surface from the Earth data |
-| `.../minecraft/cubic/far` | Far terrain on the server: the voxel pyramid (`Far`) and the workers that make its columns (`FarServer`) |
-| `.../minecraft/cubic/client` | Drawing: near cubes (`CubeRenderer`), far terrain (`FarRenderer`, `FarMesher` and `FarColumnMesh`, `FarGpu`, `FarShaders`) and shader pack support (`FarLod`, `PhotonCompat`) |
-| `.../minecraft/cubic/net` | Cube and far column traffic, and the pacing for remote players |
-| `.../minecraft/cubic/play` | What players and operators use: the Earth world type, settings, `/earth` commands, spawns, the travel map, games. Screens are in `play/client` |
-| `.../minecraft/cubic/mixin` | Hooks into vanilla, NeoForge, Iris and Sodium, listed in `src/main/resources/earthplatform.cubic.mixins.json`; `mixin/compat` hooks into optional mods |
-| `.../minecraft/cubic/compat`, `portal`, `jet` | Other mods, Nether and End travel, the jet stream |
+| `chunks3/src/main/java/io/github/pirut/chunks3` | The cubic world engine (the Chunks3 library): cubes from Y -16384 to 16383, how they are made, saved, lit and sent (`ServerCubeWorld`, `CubeWorld`, `CubeStorage`, `CubicEvents`); `Cubic.register` makes a dimension cubic |
+| `.../chunks3/gen` | Terrain shared by every cubic world: `SurfaceGenerator` turns column heights into cubes; caves, rock layers, plants, trees and vanilla structures |
+| `.../chunks3/far`, `client`, `net` | Far terrain on the server (`Far`, `FarServer`), drawing near cubes and far terrain with shader pack support (`CubeRenderer`, `FarRenderer`, `FarGpu`, `FarShaders`, `FarLod`, `PhotonCompat`), and cube traffic |
+| `.../chunks3/mixin`, `compat`, `portal` | Hooks into vanilla, NeoForge, Iris and Sodium (`chunks3.mixins.json`), other mods, and Nether and End travel |
+| `.../minecraft/cubic/earth` | The real Earth: `EarthWorld` registers the Earth's cubic dimension, `EarthGenerator` decides every column's height, water and surface from the Earth data; the Earth's own mixins are in `earth/mixin` (`earthplatform.earth.mixins.json`) |
+| `.../minecraft/cubic/play` | What players and operators use: the Earth world type, settings, `/earth` commands, spawns, travel (`EarthTravel`), the travel map, games. Screens are in `play/client` |
+| `.../minecraft/cubic/jet` | The jet stream |
 | `geography/src/main/java/io/earthplatform/geography/globe` | The Earth data, with no Minecraft code: elevation tiles and national layers, land cover, climate, rivers, imagery, and their download and cache code |
 | `minecraft/src/test` | Unit tests, and `GlobeTest`, which runs the Earth data code against a local tile server. `CubicBench` (opt-in, set `EARTH_BENCH`) prints a world fingerprint for checking that a change leaves generation alone |
-| [docs/FLAGS.md](FLAGS.md) | Every `-Dearthplatform.*` developer flag |
+| [docs/FLAGS.md](FLAGS.md) | Every `-Dearthplatform.*` developer flag (the engine reads them as `-Dchunks3.*`; the Earth spelling still works) |
 | [ROADMAP.md](../ROADMAP.md) | How the engine works and what comes next |
 
 ### Changing things safely

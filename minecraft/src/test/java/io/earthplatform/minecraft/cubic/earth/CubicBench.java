@@ -1,10 +1,10 @@
 package io.earthplatform.minecraft.cubic.earth;
 
-import io.earthplatform.minecraft.cubic.Cube;
-import io.earthplatform.minecraft.cubic.CubeOffsets;
-import io.earthplatform.minecraft.cubic.Cubic;
-import io.earthplatform.minecraft.cubic.CubicEvents;
-import io.earthplatform.minecraft.cubic.CubeCodec;
+import io.github.pirut.chunks3.Cube;
+import io.github.pirut.chunks3.CubeOffsets;
+import io.github.pirut.chunks3.Cubic;
+import io.github.pirut.chunks3.CubicEvents;
+import io.github.pirut.chunks3.CubeCodec;
 import com.mojang.serialization.Lifecycle;
 import io.earthplatform.geography.globe.BareEarth;
 import io.earthplatform.geography.globe.ClimateSource;
@@ -20,8 +20,8 @@ import io.earthplatform.geography.globe.UsgsElevation;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
-import io.earthplatform.minecraft.cubic.far.Far;
-import io.earthplatform.minecraft.cubic.gen.FarColumn;
+import io.github.pirut.chunks3.far.Far;
+import io.github.pirut.chunks3.gen.FarColumn;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -134,7 +134,7 @@ class CubicBench {
                     io.earthplatform.geography.globe.Downloads.since(fetched));
             fetched = io.earthplatform.geography.globe.Downloads.totals();
             // The rest of a /cubes goto's wait: the search for a landing spot, as for a famous place.
-            var landing = CubicEvents.class.getDeclaredMethod("landing", io.earthplatform.minecraft.cubic.gen.CubeGenerator.class, int[].class, int.class, boolean.class);
+            var landing = CubicEvents.class.getDeclaredMethod("landing", io.github.pirut.chunks3.gen.CubeGenerator.class, int[].class, int.class, boolean.class);
             landing.setAccessible(true);
             t0 = System.nanoTime();
             int[] spot = (int[]) landing.invoke(null, warm, home, 2048, true);
@@ -209,8 +209,8 @@ class CubicBench {
 
             // Far columns, nearest first at each level, as a client asks for them. EARTH_BENCH_FAR_WORKERS=1 makes them
             // as the server does, more at once while they wait on downloads.
-            io.earthplatform.minecraft.cubic.far.FarWorkers farWorkers = "1".equals(System.getenv("EARTH_BENCH_FAR_WORKERS"))
-                    ? new io.earthplatform.minecraft.cubic.far.FarWorkers("bench far", threads, 4 * threads) : null;
+            io.github.pirut.chunks3.far.FarWorkers farWorkers = "1".equals(System.getenv("EARTH_BENCH_FAR_WORKERS"))
+                    ? new io.github.pirut.chunks3.far.FarWorkers("bench far", threads, 4 * threads) : null;
             MessageDigest farDigest = MessageDigest.getInstance("SHA-256");
             double farTotal = 0;
             long farCount = 0;

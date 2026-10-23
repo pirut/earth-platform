@@ -13,12 +13,6 @@ loaderVersion="${loader_version_range}" #mandatory
 # The mod's license as an SPDX id, from mod_license in gradle.properties (LGPL-3.0-only).
 license="${mod_license}"
 
-# Lithium speeds these up by reading LevelChunk sections directly. In the Earth world those carrier
-# chunks are 16 blocks tall and empty (blocks live in cubes), so players and mobs fell through the
-# ground, and rays, explosions, redstone, hoppers and block patterns would miss blocks. Lithium reads
-# this from every installed mod and turns these features off; everything else in Lithium stays on.
-"lithium:options" = { "mixin.entity.collisions.movement" = false, "mixin.entity.collisions.intersection" = false, "mixin.world.raycast" = false, "mixin.world.explosions.block_raycast" = false, "mixin.world.inline_block_access" = false, "mixin.block.redstone_wire" = false, "mixin.block_pattern_matching" = false, "mixin.ai.non_poi_block_search" = false, "mixin.ai.poi.fast_portals" = false, "mixin.entity.inactive_navigations" = false, "mixin.util.block_entity_retrieval" = false }
-
 # A URL to refer people to when problems occur with this mod
 issueTrackerURL="https://github.com/pirut/earth-platform/issues" #optional
 
@@ -72,10 +66,6 @@ The real Earth in Minecraft at true scale: every mountain at its real height, re
 Choose the Earth world type in Create World and pick where to start. Travel anywhere with /earth visit <place> or /earth goto <latitude> <longitude>.
 '''
 
-# One cubic core: true-height cube storage behind the vanilla Level API.
-[[mixins]]
-config="${mod_id}.cubic.mixins.json"
-
 # The Earth's own hooks: the jet stream, the Create World screen, clouds, horizon, fog and flight camera.
 [[mixins]]
 config="${mod_id}.earth.mixins.json"
@@ -102,6 +92,15 @@ config="${mod_id}.earth.mixins.json"
     # AFTER - This mod is loaded AFTER the dependency
     ordering="NONE"
     # Side this dependency is applied on - BOTH, CLIENT, or SERVER
+    side="BOTH"
+
+# The cubic engine, bundled inside this jar (jar-in-jar): true-height cube storage behind the vanilla
+# Level API, and the distant terrain renderer.
+[[dependencies.${mod_id}]]
+    modId="chunks3"
+    type="required"
+    versionRange="${chunks3_version_range}"
+    ordering="AFTER"
     side="BOTH"
 
 # Here's another dependency
