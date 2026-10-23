@@ -18,7 +18,6 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -84,8 +83,8 @@ public final class FarServer {
             Math.min(4 * WORKERS, Runtime.getRuntime().availableProcessors() - 2)), WORKERS, 16);
     private final FarWorkers workers = new FarWorkers("Earth far terrain", WORKERS, MOST_WORKERS);
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> cache = new ConcurrentHashMap<>();
-    /** What edited columns looked like before, so a remade one that came out the same is not sent again. */
-    private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> before = new ConcurrentHashMap<>();
+    /** What columns looked like, so an edited one remade the same is not sent again. */
+    private final FarPrints prints = new FarPrints();
     private final ConcurrentLinkedQueue<Made> made = new ConcurrentLinkedQueue<>();
     /** Columns that could not be made, or were skipped as their player had moved away; players may ask for them again. */
     private final ConcurrentLinkedQueue<Long> failed = new ConcurrentLinkedQueue<>();
@@ -164,9 +163,8 @@ public final class FarServer {
             long start = System.nanoTime();
             try {
                 CubePayloads.FarColumnData column = make(key, player != null);
-                CubePayloads.FarColumnData old = player == null ? before.remove(key) : null;
                 // Most saved edits (grass spreading, a placed torch) change nothing at a voxel's size.
-                if (old == null || !same(old, column)) made.add(new Made(player, column));
+                if (player != null || !prints.remadeSame(key)) made.add(new Made(player, column));
                 else unchanged.incrementAndGet();
                 Timings.FAR_MAKE.since(start);
             }
@@ -189,16 +187,10 @@ public final class FarServer {
     public void edited(int cubeX, int cubeZ) {
         for (int level = Far.MIN_LEVEL; level <= Far.EDIT_LEVELS; level++) {
             long key = Far.key(level, cubeX >> level, cubeZ >> level);
-            CubePayloads.FarColumnData old = cache.remove(key);
-            if (old != null && before.size() < CACHE) before.putIfAbsent(key, old);
+            cache.remove(key);
+            prints.edited(key);
             stale.add(key);
         }
-    }
-
-    private static boolean same(CubePayloads.FarColumnData a, CubePayloads.FarColumnData b) {
-        if (a.bottom() != b.bottom() || !Arrays.equals(a.drops(), b.drops()) || a.sections().size() != b.sections().size()) return false;
-        for (int i = 0; i < a.sections().size(); i++) if (!Arrays.equals(a.sections().get(i), b.sections().get(i))) return false;
-        return true;
     }
 
     private CubePayloads.FarColumnData make(long key, boolean useCache) throws IOException {
@@ -214,6 +206,7 @@ public final class FarServer {
         List<byte[]> sections = new ArrayList<>(column.sections.size());
         for (LevelChunkSection section : column.sections) sections.add(section == null ? new byte[0] : CubeCodec.sectionBytes(section));
         CubePayloads.FarColumnData data = new CubePayloads.FarColumnData(key, column.bottom, sections, column.drops);
+        prints.made(key, FarPrints.of(column.bottom, sections, column.drops));
         if (cache.size() > CACHE) cache.clear();
         cache.put(key, data);
         return data;
@@ -367,8 +360,8 @@ public final class FarServer {
             int cubeX = CubeKey.x(cube), cubeZ = CubeKey.z(cube);
             for (int level = Far.EDIT_LEVELS + 1; level <= Far.MAX_LEVEL; level++) {
                 long key = Far.key(level, cubeX >> level, cubeZ >> level);
-                CubePayloads.FarColumnData old = cache.remove(key);
-                if (old != null && before.size() < CACHE) before.putIfAbsent(key, old);
+                cache.remove(key);
+                prints.edited(key);
                 stale.add(key);
             }
         }
@@ -386,7 +379,7 @@ public final class FarServer {
                 boolean held = false;
                 for (Session session : sessions.values()) held |= session.sent.contains(key);
                 if (held) submit(null, null, key);
-                else before.remove(key);
+                else prints.dropped(key);
             }
             stale.clear();
         }
