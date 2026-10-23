@@ -108,13 +108,13 @@ public final class ClientCubeWorld extends CubeWorld {
         CubicMaps.columnChanged(client, payload.cubeX(), payload.cubeZ());
     }
 
-    /** Remeshes everything when a shader pack comes, goes or remaps its blocks, since meshes carry its format and ids. */
+    /** Remeshes what carries a shader pack's format and ids when the pack comes, goes or remaps its blocks. */
     public void checkShaders() {
-        Object ids = ShaderBlocks.ids();
+        var ids = ShaderBlocks.ids();
         if (ids == shaderIds) return;
         shaderIds = ids;
         renderer.remeshAll();
-        far.remeshAll();
+        far.shadersChanged(ids);
     }
 
     /** Drops every cube; the server streams them again, for example after a respawn. */

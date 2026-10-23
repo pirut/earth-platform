@@ -116,7 +116,7 @@ public final class EarthConfig {
                 .translation(key("warps")).define("warps", true);
         RANDOM_TRIPS = common.comment("Let players take random trips to land with /earth random.")
                 .translation(key("randomTrips")).define("randomTrips", true);
-        GEOGUESSR = common.comment("Allow GeoGuessr rounds (/earth guess).")
+        GEOGUESSR = common.comment("Allow Where on Earth guessing rounds (/earth guess).")
                 .translation(key("geoguessr")).define("geoguessr", true);
         RACES = common.comment("Allow races to famous places (/earth race).")
                 .translation(key("races")).define("races", true);

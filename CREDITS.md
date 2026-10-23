@@ -167,7 +167,7 @@ The globe on the Customize screen shows NASA's Blue Marble: NASA Earth Observato
 
 ## Country borders (bundled)
 
-**What it gives Earth Platform:** The country names shown as you cross a border, `/earth border country`, and the country in `/earth where`, GeoGuessr reveals and the web map.
+**What it gives Earth Platform:** The country names shown as you cross a border, `/earth border country`, and the country in `/earth where`, Where on Earth reveals and the web map.
 
 **Thank you** to Natural Earth and its volunteers for free, public domain map data.
 

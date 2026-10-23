@@ -247,7 +247,7 @@ final class FarColumnMesh {
      * Foliage and undersides keep their own face's normal.
      */
     private long look(BlockState state, Holder<Biome> biome, Direction direction, int sky, int cell) {
-        int id = job.looks().id(job.faces(), state, direction, biome, job.textured(), job.shaderIds());
+        int id = job.looks().id(job.faces(), state, direction, biome, job.textured());
         int normal = direction == Direction.DOWN || foliage(state) ? 0 : normals[cell];
         return (long) normal << 40 | (long) id << 8 | sky;
     }

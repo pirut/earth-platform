@@ -21,11 +21,10 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -41,6 +40,7 @@ import net.minecraft.core.Registry;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -416,9 +416,16 @@ public final class FarRenderer {
         }
     }
 
-    /** Rebuilds every column, as when a shader pack comes or goes and changes the vertex format and block ids. */
-    void remeshAll() {
-        for (Column column : columns.values()) schedule(column);
+    /**
+     * Takes a shader pack coming, going or remapping its blocks. Far faces only carry look ids, and
+     * the looks take the new block ids in place, so only water, which is built in the pack's vertex
+     * format, is meshed again. Rebuilding every column cost about a minute at a few frames a second.
+     */
+    void shadersChanged(@Nullable Object2IntMap<BlockState> ids) {
+        looks.rebind(ids);
+        for (Column column : columns.values()) {
+            if (column.building || column.water != null || column.hasWaterWalls()) schedule(column);
+        }
     }
 
     /** Meshes a column a few ticks from now, so neighbours arriving together cost one mesh each. */
@@ -695,14 +702,17 @@ public final class FarRenderer {
             else due.add(column);
         }
         for (Column column : building) submit(column);
-        if (due.isEmpty()) return;
-        Map<Column, Long> order = new HashMap<>(due.size() * 2);
-        for (Column column : due) order.put(column, (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz));
-        due.sort(Comparator.comparingLong(order::get));
-        for (Column column : due) {
-            if (meshing >= MESHES_IN_FLIGHT) break;
-            submit(column);
+        // Only the first few can start. Ordering every waiting column each tick, as after a long
+        // teleport with tens of thousands of them, took the render thread longer than the meshing.
+        int free = MESHES_IN_FLIGHT - meshing;
+        if (due.isEmpty() || free <= 0) return;
+        int count = due.size();
+        long[] order = new long[count];
+        for (int i = 0; i < count; i++) {
+            Column column = due.get(i);
+            order[i] = (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz);
         }
+        for (int i : FarOrder.first(order, free)) submit(due.get(i));
     }
 
     /** Sets when a column is next meshed, keeping {@link #dueColumns} to the columns with a time. */

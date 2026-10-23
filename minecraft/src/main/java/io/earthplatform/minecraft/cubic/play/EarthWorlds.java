@@ -488,7 +488,7 @@ public final class EarthWorlds {
         if (running != null) running.moved();
     }
 
-    /** Where the player is, with the country, unless that would give a GeoGuessr round away. */
+    /** Where the player is, with the country, unless that would give a Where on Earth round away. */
     private static int where(CommandSourceStack source) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
         if (EarthGuess.playing(player)) { source.sendFailure(Component.literal("Nice try! Make your guess with /earth guess.")); return 0; }
