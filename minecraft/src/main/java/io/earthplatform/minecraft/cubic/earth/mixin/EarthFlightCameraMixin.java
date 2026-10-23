@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.cubic.mixin;
+package io.earthplatform.minecraft.cubic.earth.mixin;
 
 import io.earthplatform.minecraft.cubic.play.client.EarthFlight;
 import net.minecraft.client.Camera;

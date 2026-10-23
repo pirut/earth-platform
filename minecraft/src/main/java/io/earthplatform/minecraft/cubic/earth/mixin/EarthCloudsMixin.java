@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.cubic.mixin;
+package io.earthplatform.minecraft.cubic.earth.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import io.earthplatform.minecraft.cubic.play.client.EarthClouds;

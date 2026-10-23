@@ -1,16 +1,10 @@
 package io.earthplatform.minecraft.cubic;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
-import io.earthplatform.geography.globe.Downloads;
-import com.mojang.brigadier.arguments.DoubleArgumentType;
-import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import javax.annotation.Nullable;
-import java.util.concurrent.CompletableFuture;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
 import net.minecraft.ChatFormatting;
 import net.minecraft.Util;
@@ -32,12 +26,12 @@ import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 
-/** Server-side lifecycle of cubic levels, respawning and the travel commands. */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
+/** Server-side lifecycle of cubic levels, arrivals and the /cubes debug commands. */
+@EventBusSubscriber(modid = Cubic.MOD_ID)
 public final class CubicEvents {
     private CubicEvents() {}
 
-    @EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
+    @EventBusSubscriber(modid = Cubic.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
     public static final class Registration {
         private Registration() {}
         @SubscribeEvent public static void payloads(RegisterPayloadHandlersEvent event) { CubePayloads.register(event); }
@@ -46,7 +40,7 @@ public final class CubicEvents {
     @SubscribeEvent public static void load(LevelEvent.Load event) {
         if (!(event.getLevel() instanceof ServerLevel level) || !Cubic.isCubic(level.dimension())) return;
         var folder = DimensionType.getStorageFolder(level.dimension(), level.getServer().getWorldPath(LevelResource.ROOT));
-        CubeGenerator generator = CubicSettings.open(folder, level.getSeed(), level.registryAccess().registryOrThrow(Registries.BIOME));
+        CubeGenerator generator = Cubic.open(level, folder);
         ((CubicLevel) level).earthplatform$setCubes(new ServerCubeWorld(level, generator));
         // Fetch the data around the arrival point now, so the first visit does not wait on it.
         int[] home = generator.arrival();
@@ -101,7 +95,7 @@ public final class CubicEvents {
             Vec3 stand = standOn(cubes, arrival.x, arrival.z);
             float yaw = lookOut(cubes, stand, facing(stand, arrival.view, arrival.player.getYRot()));
             arrival.player.teleportTo(level, stand.x, stand.y, stand.z, yaw, 0.0F);
-            io.earthplatform.minecraft.cubic.play.EarthMap.arrived(arrival.player);
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(new CubicArrivalEvent(arrival.player));
             tellPlace(arrival.source, cubes, BlockPos.containing(stand));
         }
     }
@@ -281,9 +275,6 @@ public final class CubicEvents {
         }));
         root.then(Commands.literal("find").then(Commands.argument("block", net.minecraft.commands.arguments.ResourceLocationArgument.id())
                 .executes(context -> approach(context.getSource(), net.minecraft.commands.arguments.ResourceLocationArgument.getId(context, "block")))));
-        root.then(Commands.literal("goto").then(Commands.argument("latitude", DoubleArgumentType.doubleArg(-85, 85))
-                .then(Commands.argument("longitude", DoubleArgumentType.doubleArg(-180, 180)).executes(context -> travel(context.getSource(),
-                        DoubleArgumentType.getDouble(context, "latitude"), DoubleArgumentType.getDouble(context, "longitude"))))));
         root.then(Commands.literal("locate").then(Commands.argument("structure", net.minecraft.commands.arguments.ResourceLocationArgument.id())
                 .executes(context -> locate(context.getSource(), net.minecraft.commands.arguments.ResourceLocationArgument.getId(context, "structure")))));
         root.then(Commands.literal("structures").executes(context -> {
@@ -306,7 +297,7 @@ public final class CubicEvents {
             return 1;
         }));
         root.then(Commands.literal("status").executes(context -> {
-            ServerLevel level = context.getSource().getServer().getLevel(Cubic.LEVEL);
+            ServerLevel level = home(context.getSource());
             String text = level != null && CubicLevel.of(level) instanceof ServerCubeWorld cubes
                     ? "Cubic world: " + cubes.describe() : "Cubic world is not loaded.";
             context.getSource().sendSuccess(() -> Component.literal(text), false);
@@ -315,9 +306,15 @@ public final class CubicEvents {
         event.getDispatcher().register(root);
     }
 
+    /** The home cubic level, or null when none is registered or loaded. */
+    private static @Nullable ServerLevel home(CommandSourceStack source) {
+        var key = Cubic.home();
+        return key == null ? null : source.getServer().getLevel(key);
+    }
+
     private static int enter(CommandSourceStack source) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
-        ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
+        ServerLevel level = home(source);
         if (level == null || !(CubicLevel.of(level) instanceof ServerCubeWorld cubes)) {
             source.sendFailure(Component.literal("The cubic world is missing from this save."));
             return 0;
@@ -330,13 +327,10 @@ public final class CubicEvents {
         return 1;
     }
 
-    /** Says where a position is: latitude and longitude with real height on the Earth, else just its Y. */
+    /** Says where a position is, in the generator's own terms when it has them, else just its Y. */
     private static void tellPlace(CommandSourceStack source, ServerCubeWorld cubes, BlockPos feet) {
-        CubeGenerator generator = cubes.generator();
-        String place = generator.place(feet.getX(), feet.getZ());
-        String text = place.isEmpty() ? "Cubic world: standing at Y " + feet.getY() + "."
-                : "Earth " + place + ": ground " + (generator.surfaceY(feet.getX(), feet.getZ()) - generator.seaLevel()) + " m, standing at Y "
-                        + feet.getY() + " (" + (feet.getY() - generator.seaLevel() - 1) + " m).";
+        String place = cubes.generator().describe(feet);
+        String text = place.isEmpty() ? "Cubic world: standing at Y " + feet.getY() + "." : place;
         source.sendSuccess(() -> Component.literal(text), false);
     }
 
@@ -365,78 +359,14 @@ public final class CubicEvents {
     }
 
     /**
-     * Travels to a latitude and longitude on the Earth: terrain there is fetched off the server
-     * thread, then the player lands on the nearest gentle dry spot, or on the water when there is
-     * none close by.
+     * Moves a player to a block column once the workers have its cubes, landing on the ground there
+     * facing {@code view} (a block column, or null). Replies go to {@code source}; a newer request for
+     * the same player replaces this one. A {@link CubicArrivalEvent} follows the move. Server thread.
      */
-    public static int travel(CommandSourceStack source, double latitude, double longitude) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
-        return travel(source, source.getPlayerOrException(), latitude, longitude);
-    }
-
-    /** Sends {@code player} there; the replies go to {@code source}, which may be the console. */
-    public static int travel(CommandSourceStack source, ServerPlayer player, double latitude, double longitude) {
-        return travel(source, player, latitude, longitude, Double.NaN, Double.NaN);
-    }
-
-    /**
-     * Travels there and faces a sight, such as the peak a famous place is known for (NaN for none).
-     * A famous place may land farther from its point than a bare latitude and longitude does, as a
-     * new world's start does, to find good ground.
-     */
-    public static int travel(CommandSourceStack source, ServerPlayer player, double latitude, double longitude, double viewLatitude, double viewLongitude) {
-        ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
-        if (level == null || !(CubicLevel.of(level) instanceof ServerCubeWorld cubes) || !(cubes.generator() instanceof EarthGenerator earth)) {
-            source.sendFailure(Component.literal("This save's cubic world is not the Earth."));
-            return 0;
-        }
-        // The server's rules, such as a region border, may refuse the trip.
-        String refused = io.earthplatform.minecraft.cubic.play.EarthRules.refuse(player, latitude, longitude);
-        if (refused != null) {
-            source.sendFailure(Component.literal(refused));
-            io.earthplatform.minecraft.cubic.play.EarthMap.failed(player);
-            return 0;
-        }
-        int[] target = earth.block(latitude, longitude);
-        int[] view = Double.isNaN(viewLatitude) ? null : earth.block(viewLatitude, viewLongitude);
-        source.sendSuccess(() -> Component.literal("Fetching terrain around " + earth.place(target[0], target[1]) + "...").withStyle(ChatFormatting.GRAY), false);
-        CompletableFuture.supplyAsync(() -> {
-            // How long each part takes and what it downloads, so a slow first visit shows whether the network is why.
-            Map<String, long[]> before = Downloads.totals();
-            long start = System.nanoTime();
-            // Only the data about the landing first; the far levels' data comes in after the player arrives.
-            // A famous place lands within sight of its view, which may stand kilometres off the point: fetch about there.
-            boolean famous = !Double.isNaN(viewLatitude);
-            int[] centre = famous ? withinSight(target, view) : target;
-            earth.prepareNear(centre[0], centre[1]);
-            long prepared = System.nanoTime();
-            String fetched = Downloads.since(before);
-            before = Downloads.totals();
-            int[] spot = landing(earth, centre, famous ? 2048 : 256, famous);
-            long landed = System.nanoTime();
-            EarthPlatformMod.LOGGER.info("Travel to {}, {}: data {} ms ({}); landing {} ms ({})", latitude, longitude,
-                    (prepared - start) / 1_000_000, fetched, (landed - prepared) / 1_000_000, Downloads.since(before));
-            Map<String, long[]> far = Downloads.totals();
-            Util.ioPool().execute(() -> {
-                earth.prepare(centre[0], centre[1]);
-                EarthPlatformMod.LOGGER.info("Travel to {}, {}: far data {} ms after landing ({})", latitude, longitude,
-                        (System.nanoTime() - landed) / 1_000_000, Downloads.since(far));
-            });
-            return spot;
-        }, Util.ioPool()).whenComplete((spot, failure) -> source.getServer().execute(() -> {
-            if (failure != null) {
-                // The data's own words, without the exception's class names: most often a data server can't be reached.
-                Throwable cause = failure instanceof java.util.concurrent.CompletionException && failure.getCause() != null ? failure.getCause() : failure;
-                source.sendFailure(Component.literal(cause instanceof io.earthplatform.geography.MissingTerrainException
-                        ? "Could not load terrain there yet: " + cause.getMessage() + ". Try again in a minute."
-                        : "Could not load terrain there: " + cause));
-                if (!player.isRemoved()) io.earthplatform.minecraft.cubic.play.EarthMap.failed(player);
-                return;
-            }
-            if (player.isRemoved()) return;
-            ARRIVALS.removeIf(waiting -> waiting.player == player);
-            ARRIVALS.add(new Arrival(source, player, spot[0], spot[1], 0, view));
-        }));
-        return 1;
+    public static void arriveWhenReady(CommandSourceStack source, ServerPlayer player, int x, int z, @Nullable int[] view) {
+        if (player.isRemoved()) return;
+        ARRIVALS.removeIf(waiting -> waiting.player == player);
+        ARRIVALS.add(new Arrival(source, player, x, z, 0, view));
     }
 
     /** Test helper: stand next to the nearest loaded block of a kind, facing it. */
@@ -501,14 +431,18 @@ public final class CubicEvents {
      * the landmark is known by (Kilimanjaro's from Amboseli, 45 km off), so a start farther than
      * {@link #SIGHT} moves toward the landmark until it is {@link #SIGHT_STANDOFF} away.
      */
-    private static int[] withinSight(int[] start, @Nullable int[] view) {
+    public static int[] withinSight(int[] start, @Nullable int[] view) {
         if (view == null) return start;
         double dx = start[0] - view[0], dz = start[1] - view[1], distance = Math.sqrt(dx * dx + dz * dz);
         if (distance <= SIGHT) return start;
         return new int[]{view[0] + (int) Math.round(dx / distance * SIGHT_STANDOFF), view[1] + (int) Math.round(dz / distance * SIGHT_STANDOFF)};
     }
 
-    private static int[] landing(CubeGenerator generator, int[] centre, int maxRadius, boolean welcoming) {
+    /**
+     * The landing spot nearest a block column: a dry, gentle spot within {@code maxRadius} blocks (low ground
+     * near a coast, open ground over forest when {@code welcoming}), or the column itself. Slow; call off-thread.
+     */
+    public static int[] landing(CubeGenerator generator, int[] centre, int maxRadius, boolean welcoming) {
         // Open ground (a beach, a meadow, a clearing) beats a start inside a forest with no view.
         SurfaceGenerator unwooded = welcoming && generator instanceof SurfaceGenerator surface ? surface : null;
         if (nearSea(generator, centre))

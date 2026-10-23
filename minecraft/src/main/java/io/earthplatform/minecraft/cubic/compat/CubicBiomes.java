@@ -20,10 +20,10 @@ import net.minecraft.world.level.biome.Biome;
  * /locate biome and biome compasses that ask its biome source only ever found plains. These ask the
  * Earth generator instead, which knows the biome anywhere without generating cubes.
  */
-public final class EarthBiomes {
+public final class CubicBiomes {
     private static final int REACH = 256;
 
-    private EarthBiomes() {}
+    private CubicBiomes() {}
 
     @Nullable
     public static CubeGenerator generator(Level level) {

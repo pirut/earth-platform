@@ -1,11 +1,10 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import io.earthplatform.minecraft.cubic.Cubic;
 import com.mojang.blaze3d.shaders.Uniform;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import io.earthplatform.geography.globe.MercatorGrid;
-import io.earthplatform.geography.globe.NamedThreads;
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.util.NamedThreads;
 import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.Timings;
@@ -13,8 +12,8 @@ import io.earthplatform.minecraft.cubic.ViewOrder;
 import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.mixin.FrustumAccess;
-import io.earthplatform.minecraft.diagnostics.BuildInfo;
-import io.earthplatform.minecraft.diagnostics.PerfFailures;
+import io.earthplatform.minecraft.cubic.diagnostics.BuildInfo;
+import io.earthplatform.minecraft.cubic.diagnostics.PerfFailures;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -89,7 +88,7 @@ public final class FarRenderer {
     private static final boolean FADE = !"false".equals(System.getProperty("earthplatform.far.fade"));
     /** Whether this frame's levels fade into each other over a ring, or meet at a seam (see {@link #drawColumns}). */
     private boolean bandFade;
-    private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "block/far_white");
+    private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(Cubic.MOD_ID, "block/far_white");
     private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
             SETTLE_TICKS = 3, HIDDEN_SETTLE_TICKS = 40, UPLOADS_PER_FRAME = 8, MESHES_IN_FLIGHT = 128;
     /** Speeds only elytra and the jet stream reach, in blocks a second. */
@@ -356,7 +355,7 @@ public final class FarRenderer {
         if (gpu == null && !unsupported) {
             if (!FarGpu.supported()) {
                 unsupported = true;
-                EarthPlatformMod.LOGGER.warn("Far terrain needs OpenGL 3.3; it is off");
+                Cubic.LOGGER.warn("Far terrain needs OpenGL 3.3; it is off");
                 return null;
             }
             gpu = new FarGpu();
@@ -758,7 +757,7 @@ public final class FarRenderer {
             }
             catch (Throwable failure) {
                 PerfFailures.record(PerfFailures.Stage.FAR_MESH,failure);
-                EarthPlatformMod.LOGGER.error("Far column mesh failed", failure);
+                Cubic.LOGGER.error("Far column mesh failed", failure);
                 built.add(new FarMesher.Built(job.key(), -job.version(), new int[0], new int[FarMesher.GROUPS], null, null, new FarMesher.Part[4]));
             }
         });
@@ -1085,7 +1084,10 @@ public final class FarRenderer {
         return out;
     }
 
-    /** Sets an Earth world's metres per block at the equator, from the server. */
+    /** Radius in metres of the sphere a Mercator world is projected from: Web Mercator's, the Earth's equator. */
+    private static final double SPHERE_RADIUS = 6_378_137.0;
+
+    /** Sets a Mercator world's metres per block at the equator, from the server. */
     public void scale(double metresPerBlock) { this.metresPerBlock = metresPerBlock; }
 
     /**
@@ -1096,7 +1098,7 @@ public final class FarRenderer {
     public float hazeScale(double z) {
         // A world's scale makes a block a metre at home: metres per block there is sec(home latitude).
         double scale = metresPerBlock;
-        return scale > 0 ? (float) (Math.cosh(z * scale / MercatorGrid.RADIUS) / scale) : 1.0F;
+        return scale > 0 ? (float) (Math.cosh(z * scale / SPHERE_RADIUS) / scale) : 1.0F;
     }
 
     /** Draws the visible columns' water see-through, farthest first, before the near cubes' own water. */

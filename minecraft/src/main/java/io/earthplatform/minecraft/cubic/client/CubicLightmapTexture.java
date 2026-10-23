@@ -4,7 +4,7 @@ import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.platform.TextureUtil;
 import com.mojang.blaze3d.systems.RenderSystem;
-import io.earthplatform.minecraft.diagnostics.PerfFailures;
+import io.earthplatform.minecraft.cubic.diagnostics.PerfFailures;
 import java.util.function.IntConsumer;
 import java.util.function.IntSupplier;
 import net.minecraft.client.renderer.texture.DynamicTexture;

@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.cubic;
+package io.earthplatform.minecraft.cubic.earth;
 
 import io.earthplatform.geography.globe.BareEarth;
 import io.earthplatform.geography.globe.ClimateSource;

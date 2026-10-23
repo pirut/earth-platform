@@ -1,7 +1,6 @@
 package io.earthplatform.minecraft.cubic;
 
 import com.mojang.serialization.Codec;
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.netty.buffer.Unpooled;
 import java.util.ArrayList;
 import java.util.List;
@@ -101,7 +100,7 @@ public final class CubeCodec {
     }
 
     private static void missing(CompoundTag tag, String error) {
-        EarthPlatformMod.LOGGER.warn("Saved cube [{},{},{}]: {}", tag.getInt("x"), tag.getInt("y"), tag.getInt("z"), error);
+        Cubic.LOGGER.warn("Saved cube [{},{},{}]: {}", tag.getInt("x"), tag.getInt("y"), tag.getInt("z"), error);
     }
 
     public static byte[] sectionBytes(LevelChunkSection section) {

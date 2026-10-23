@@ -1,7 +1,7 @@
 package io.earthplatform.minecraft.cubic.mixin;
 
 import com.mojang.datafixers.util.Pair;
-import io.earthplatform.minecraft.cubic.compat.EarthBiomes;
+import io.earthplatform.minecraft.cubic.compat.CubicBiomes;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
@@ -19,7 +19,7 @@ abstract class CubicBiomeSearchMixin {
     @Inject(method = "findClosestBiome3d", at = @At("HEAD"), cancellable = true)
     private void earthplatform$earthBiomes(Predicate<Holder<Biome>> filter, BlockPos origin, int radius, int horizontalStep, int verticalStep,
             CallbackInfoReturnable<Pair<BlockPos, Holder<Biome>>> result) {
-        CubeGenerator generator = EarthBiomes.generator((ServerLevel) (Object) this);
-        if (generator != null) result.setReturnValue(EarthBiomes.closest(generator, filter, origin, radius, horizontalStep, verticalStep));
+        CubeGenerator generator = CubicBiomes.generator((ServerLevel) (Object) this);
+        if (generator != null) result.setReturnValue(CubicBiomes.closest(generator, filter, origin, radius, horizontalStep, verticalStep));
     }
 }

@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic.compat;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.Cubic;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
@@ -48,7 +48,7 @@ public final class JourneyMapCompat {
             found = handles = new Handles(make, wrap, snapshotOf, minBuild, levelChunk);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
             failed = true;
-            EarthPlatformMod.LOGGER.warn("JourneyMap changed in a way the Earth map support does not know; its map stays blank in the Earth world", e);
+            Cubic.LOGGER.warn("JourneyMap changed in a way the Earth map support does not know; its map stays blank in the Earth world", e);
         }
         return found;
     }
@@ -108,6 +108,6 @@ public final class JourneyMapCompat {
     private static void fail(Throwable e) {
         if (failed) return;
         failed = true;
-        EarthPlatformMod.LOGGER.warn("JourneyMap could not take Earth terrain; its map stays blank in the Earth world", e);
+        Cubic.LOGGER.warn("JourneyMap could not take Earth terrain; its map stays blank in the Earth world", e);
     }
 }

@@ -1,8 +1,8 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import io.earthplatform.minecraft.cubic.Cubic;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
-import io.earthplatform.minecraft.EarthPlatformMod;
 import java.nio.FloatBuffer;
 import java.util.function.ToIntFunction;
 import javax.annotation.Nullable;
@@ -286,7 +286,7 @@ public final class FarLod {
             return true;
         } catch (IllegalStateException failure) {
             faceDepthFailed = true;
-            EarthPlatformMod.LOGGER.warn("Far terrain's depth pre-pass can't copy its depth; far terrain draws in one pass", failure);
+            Cubic.LOGGER.warn("Far terrain's depth pre-pass can't copy its depth; far terrain draws in one pass", failure);
             return false;
         }
     }
@@ -639,7 +639,7 @@ public final class FarLod {
             return true;
         } catch (IllegalStateException failure) {
             failed = true;
-            EarthPlatformMod.LOGGER.error("Far water can't be hidden behind far terrain under shaders; far water may show through far hills", failure);
+            Cubic.LOGGER.error("Far water can't be hidden behind far terrain under shaders; far water may show through far hills", failure);
             return false;
         }
     }

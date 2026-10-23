@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic.client;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.Cubic;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -98,7 +98,7 @@ final class FarIrisUniforms {
                 if (type != null) types.put(name, type);
             }
         } catch (RuntimeException failure) {
-            EarthPlatformMod.LOGGER.warn("Could not work out the shader pack's uniform types for far terrain", failure);
+            Cubic.LOGGER.warn("Could not work out the shader pack's uniform types for far terrain", failure);
         }
         return types;
     }
@@ -184,7 +184,7 @@ final class FarIrisUniforms {
         } catch (TooManySamplers full) {
             throw full;
         } catch (RuntimeException failure) {
-            EarthPlatformMod.LOGGER.warn("Could not give far terrain the shader pack's uniforms", failure);
+            Cubic.LOGGER.warn("Could not give far terrain the shader pack's uniforms", failure);
             return null;
         }
     }

@@ -1,6 +1,5 @@
 package io.earthplatform.minecraft.cubic;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
 import java.util.List;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
@@ -21,7 +20,7 @@ import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
  * when a cube's points are rebuilt and when a villager joins the level. Without this a village
  * left and revisited, or reloaded, reads as empty (no raids) and its beds can be claimed twice.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
+@EventBusSubscriber(modid = Cubic.MOD_ID)
 public final class CubicPoiClaims {
     private CubicPoiClaims() {}
 

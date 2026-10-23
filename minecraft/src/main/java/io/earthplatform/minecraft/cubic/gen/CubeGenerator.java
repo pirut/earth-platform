@@ -68,6 +68,23 @@ public interface CubeGenerator {
     default int[] arrival() { return new int[]{0, 0}; }
     /** Where a block column is in the generator's own terms (such as latitude and longitude), or empty. */
     default String place(int x, int z) { return ""; }
+    /**
+     * Where a player standing at {@code feet} is, in the generator's own words (such as latitude,
+     * longitude and height above the sea), for the /cubes where reply; empty for the engine's plain answer.
+     */
+    default String describe(net.minecraft.core.BlockPos feet) { return ""; }
+    /**
+     * Whether a failure while generating was the generator's data not being at hand yet, such as a
+     * download server not answering: the engine then asks again a little later rather than giving up.
+     */
+    default boolean missingData(Throwable failure) { return false; }
+    /** Highest Y anything is generated at: above it every unedited cube is air and is never made. */
+    default int highestGenerated() { return io.earthplatform.minecraft.cubic.CubeWorld.MAX_Y; }
+    /**
+     * For a world projected onto a sphere with Web Mercator (as the Earth is), its metres per block at
+     * its home latitude; the far terrain then scales its haze to ground distance. 0 for a flat world.
+     */
+    default double mercatorMetresPerBlock() { return 0; }
     /** Credits for the data the world is made from, shown to players entering it, or empty. */
     default String credits() { return ""; }
     /** Loads whatever generating near a point will need, so the server thread never waits on it. Blocks; call off-thread. */

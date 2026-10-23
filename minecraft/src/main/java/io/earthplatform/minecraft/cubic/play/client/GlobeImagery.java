@@ -2,7 +2,7 @@ package io.earthplatform.minecraft.cubic.play.client;
 
 import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.geography.globe.WorldCoverSource;
-import io.earthplatform.minecraft.cubic.CubicSettings;
+import io.earthplatform.minecraft.cubic.earth.CubicSettings;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;

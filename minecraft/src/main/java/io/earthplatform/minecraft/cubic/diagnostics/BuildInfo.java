@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.diagnostics;
+package io.earthplatform.minecraft.cubic.diagnostics;
 
 import java.io.InputStream;
 import java.util.Properties;

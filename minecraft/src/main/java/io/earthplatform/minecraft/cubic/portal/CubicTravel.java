@@ -1,6 +1,5 @@
 package io.earthplatform.minecraft.cubic.portal;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicEvents;
 import io.earthplatform.minecraft.cubic.CubicLevel;
@@ -19,7 +18,7 @@ import net.neoforged.neoforge.event.entity.player.PlayerRespawnPositionEvent;
  * Remembers which overworld each player lives in, so trips to the Nether and the End, and deaths
  * there, bring them back to the cubic Earth when that is where they came from.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
+@EventBusSubscriber(modid = Cubic.MOD_ID)
 public final class CubicTravel {
     private CubicTravel() {}
 

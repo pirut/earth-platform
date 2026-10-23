@@ -5,7 +5,6 @@ import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.CubeWorld;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
-import io.earthplatform.minecraft.cubic.jet.JetStream;
 import javax.annotation.Nullable;
 import java.util.function.Consumer;
 import net.minecraft.core.registries.Registries;
@@ -43,9 +42,9 @@ public final class CubeSections {
         }
         int x = chunk.getPos().x, z = chunk.getPos().z;
         Cube cube = cubes.cube(CubeKey.pack(x, sectionY, z));
-        // Nothing generated reaches the clear sky, so there a missing cube is just air: no need to
-        // build it for a ship racing along the jet stream.
-        if (cube == null && sectionY << 4 < JetStream.CLEAR_SKY && cubes instanceof ServerCubeWorld server && server.isOwnerThread()) {
+        // Above the highest generated block a missing cube is just air: no need to build it for a
+        // ship racing along high up.
+        if (cube == null && cubes instanceof ServerCubeWorld server && sectionY << 4 <= server.generator().highestGenerated() && server.isOwnerThread()) {
             cube = server.loadNow(x, sectionY, z);
         }
         if (cube == null) return empty(level);

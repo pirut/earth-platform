@@ -1,7 +1,7 @@
 package io.earthplatform.minecraft.cubic.compat;
 
-import io.earthplatform.geography.globe.NamedThreads;
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.Cubic;
+import io.earthplatform.minecraft.cubic.util.NamedThreads;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
@@ -65,7 +65,7 @@ public final class ChunkyCompat {
             int failures = FAILURES.incrementAndGet();
             long now = System.currentTimeMillis(), last = LAST_WARNING.get();
             if (now - last > 30_000 && LAST_WARNING.compareAndSet(last, now)) {
-                EarthPlatformMod.LOGGER.warn("Chunky: could not generate Earth chunk {}, {} ({} chunks so far); those places generate when visited",
+                Cubic.LOGGER.warn("Chunky: could not generate Earth chunk {}, {} ({} chunks so far); those places generate when visited",
                         chunkX, chunkZ, failures, failure);
             }
         }

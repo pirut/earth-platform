@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.play;
 
+import io.earthplatform.minecraft.cubic.earth.EarthWorld;
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cubic;
@@ -109,7 +110,7 @@ public final class EarthMap {
     private static GeoPoint where(CommandSourceStack source, ServerPlayer player) {
         if (CubicLevel.of(player.level()) instanceof ServerCubeWorld cubes && cubes.generator() instanceof EarthGenerator earth)
             return earth.grid().geographic(player.getX(), player.getZ());
-        ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
+        ServerLevel level = source.getServer().getLevel(EarthWorld.LEVEL);
         if (level != null && CubicLevel.of(level) instanceof ServerCubeWorld cubes && cubes.generator() instanceof EarthGenerator earth)
             return new GeoPoint(earth.settings().latitude(), earth.settings().longitude());
         return null;

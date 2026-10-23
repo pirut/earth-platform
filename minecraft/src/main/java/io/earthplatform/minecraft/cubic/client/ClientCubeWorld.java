@@ -89,7 +89,7 @@ public final class ClientCubeWorld extends CubeWorld {
     public void apply(CubePayloads.BlockChanges payload) {
         for (CubePayloads.Change change : payload.changes()) {
             BlockPos pos = new BlockPos(change.x(), change.y(), change.z());
-            if (Cubic.TRACE) io.earthplatform.minecraft.EarthPlatformMod.LOGGER.info("cubic: client change at {} -> {} (cube present: {})",
+            if (Cubic.TRACE) Cubic.LOGGER.info("cubic: client change at {} -> {} (cube present: {})",
                     pos, Block.stateById(change.state()), cube(CubeKey.ofBlock(pos)) != null);
             if (cube(CubeKey.ofBlock(pos)) == null) continue;
             client.setServerVerifiedBlockState(pos, Block.stateById(change.state()), 19);

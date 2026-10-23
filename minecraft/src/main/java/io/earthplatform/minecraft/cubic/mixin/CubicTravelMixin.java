@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic.mixin;
 
 import io.earthplatform.minecraft.cubic.CubeWorld;
+import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.Vec3;
@@ -17,7 +18,7 @@ abstract class CubicTravelMixin {
         LivingEntity self = (LivingEntity) (Object) this;
         int x = self.getBlockX(), y = self.getBlockY(), z = self.getBlockZ();
         CubeWorld cubes = CubicLevel.at(self.level(), x, z);
-        if (cubes == null || io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(self)) return;
+        if (cubes == null || Cubic.inTransit(self)) return;
         if (cubes.cubeAtBlock(x, y, z) != null && cubes.cubeAtBlock(x, y - 2, z) != null) return;
         self.setDeltaMovement(Vec3.ZERO);
         info.cancel();

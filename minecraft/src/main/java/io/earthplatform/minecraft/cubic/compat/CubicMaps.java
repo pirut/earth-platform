@@ -1,6 +1,5 @@
 package io.earthplatform.minecraft.cubic.compat;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.CubeWorld;
@@ -263,7 +262,7 @@ public final class CubicMaps {
         try {
             field.setBoolean(chunk, false);
         } catch (ReflectiveOperationException | RuntimeException e) {
-            EarthPlatformMod.LOGGER.debug("cubic maps: cannot mark chunk dirty for {}", field.getName(), e);
+            Cubic.LOGGER.debug("cubic maps: cannot mark chunk dirty for {}", field.getName(), e);
         }
     }
 }

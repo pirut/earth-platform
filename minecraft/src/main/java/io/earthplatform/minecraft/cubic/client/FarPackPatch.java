@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic.client;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.Cubic;
 import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -33,10 +33,10 @@ public final class FarPackPatch {
             String settings = sources.apply(directory.resolve("voxy.json"));
             String jitter = FarShaders.taaOffset(settings);
             PATCHES.put(programs, new FarShaders.PackPatch(patch, jitter, FarShaders.voxyUniforms(settings), FarShaders.voxySamplers(settings)));
-            EarthPlatformMod.LOGGER.info("Shader pack folder {} has Voxy fragment code ({} characters) for far terrain{}",
+            Cubic.LOGGER.info("Shader pack folder {} has Voxy fragment code ({} characters) for far terrain{}",
                     directory.getPathString(), patch.length(), jitter == null ? "" : ", with its TAA jitter");
         } catch (RuntimeException failure) {
-            EarthPlatformMod.LOGGER.warn("Could not read the shader pack's Voxy fragment code in {}", directory.getPathString(), failure);
+            Cubic.LOGGER.warn("Could not read the shader pack's Voxy fragment code in {}", directory.getPathString(), failure);
         }
     }
 

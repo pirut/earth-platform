@@ -1,9 +1,9 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import io.earthplatform.minecraft.cubic.Cubic;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferUploader;
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.far.Far;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
@@ -495,7 +495,7 @@ final class FarGpu {
         }
         if (built == null) {
             phasedFailed[fade] = true;
-            EarthPlatformMod.LOGGER.warn("Far terrain's depth pre-pass does not build with the shader pack; it draws in one pass");
+            Cubic.LOGGER.warn("Far terrain's depth pre-pass does not build with the shader pack; it draws in one pass");
         }
         programs[fade] = built;
         return built;
@@ -624,8 +624,8 @@ final class FarGpu {
             try { vanilla[fade] = Program.link(header + FarShaders.VERTEX, header + FarShaders.FRAGMENT, "far terrain"); }
             catch (IllegalStateException failure) {
                 vanillaFailed[fade] = true;
-                if (fade == NO_FADE) EarthPlatformMod.LOGGER.error("Far terrain shader failed to build; far terrain is off", failure);
-                else EarthPlatformMod.LOGGER.warn("Far terrain's fade between levels failed to build; levels meet without it", failure);
+                if (fade == NO_FADE) Cubic.LOGGER.error("Far terrain shader failed to build; far terrain is off", failure);
+                else Cubic.LOGGER.warn("Far terrain's fade between levels failed to build; levels meet without it", failure);
             }
         }
         return vanilla[fade];
@@ -668,22 +668,22 @@ final class FarGpu {
             if (pack[fade] != null) {
                 if (fade == NO_FADE) {
                     packJittered = pack[fade].jittered;
-                    EarthPlatformMod.LOGGER.info("Far terrain uses the shader pack's Voxy fragment code{}", packJittered ? ", jittered for its TAA" : "");
+                    Cubic.LOGGER.info("Far terrain uses the shader pack's Voxy fragment code{}", packJittered ? ", jittered for its TAA" : "");
                 }
                 return pack[fade];
             }
             if (fade != NO_FADE) {
                 packFailed[fade] = true;
-                EarthPlatformMod.LOGGER.warn("Far terrain's fade between levels does not build with the shader pack; levels meet without it");
+                Cubic.LOGGER.warn("Far terrain's fade between levels does not build with the shader pack; levels meet without it");
                 return null;
             }
             packPatched = false;
-            EarthPlatformMod.LOGGER.warn("The shader pack's Voxy fragment code does not build for far terrain; using plain colors");
+            Cubic.LOGGER.warn("The shader pack's Voxy fragment code does not build for far terrain; using plain colors");
         }
         pack[fade] = linkPack(jitter, header + FarShaders.PACK_FALLBACK, "far terrain (plain, shader pack)", header, false);
         if (pack[fade] == null) {
             packFailed[fade] = true;
-            if (fade == NO_FADE) EarthPlatformMod.LOGGER.error("Far terrain shader failed to build");
+            if (fade == NO_FADE) Cubic.LOGGER.error("Far terrain shader failed to build");
         } else if (fade == NO_FADE) {
             packJittered = pack[fade].jittered;
         }
@@ -705,7 +705,7 @@ final class FarGpu {
                 version + FarShaders.fade(fade), packSamplers);
         if (packNear[fade] == null) {
             packNearFailed[fade] = true;
-            EarthPlatformMod.LOGGER.warn("Far terrain near by does not build with the shader pack; it is left out until the game's blocks load");
+            Cubic.LOGGER.warn("Far terrain near by does not build with the shader pack; it is left out until the game's blocks load");
         }
         return packNear[fade];
     }
@@ -719,20 +719,20 @@ final class FarGpu {
         if (jitter != null) {
             try { program = Program.link(FarShaders.packVertex(header, jitter), fragment, name); program.jittered = true; }
             catch (IllegalStateException failure) {
-                EarthPlatformMod.LOGGER.warn("The shader pack's TAA jitter does not build for far terrain; far terrain goes without it", failure);
+                Cubic.LOGGER.warn("The shader pack's TAA jitter does not build for far terrain; far terrain goes without it", failure);
             }
         }
         if (program == null) {
             try { program = Program.link(FarShaders.packVertex(header, null), fragment, name); }
             catch (IllegalStateException failure) {
-                EarthPlatformMod.LOGGER.warn("Could not build {}", name, failure);
+                Cubic.LOGGER.warn("Could not build {}", name, failure);
                 return null;
             }
         }
         if (ShaderBlocks.IRIS) {
             try { program.irisUniforms = FarIrisUniforms.create(program.id, name, samplers); }
             catch (FarIrisUniforms.TooManySamplers full) {
-                EarthPlatformMod.LOGGER.warn("Shader pack {}: its Voxy code reads more textures than are left for far terrain ({}); far terrain uses plain colours",
+                Cubic.LOGGER.warn("Shader pack {}: its Voxy code reads more textures than are left for far terrain ({}); far terrain uses plain colours",
                         net.irisshaders.iris.Iris.getCurrentPackName(), full.getMessage());
                 program.close();
                 return null;

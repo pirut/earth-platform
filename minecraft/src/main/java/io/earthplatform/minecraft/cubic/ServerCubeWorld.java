@@ -1,8 +1,7 @@
 package io.earthplatform.minecraft.cubic;
 
-import io.earthplatform.geography.globe.NamedThreads;
-import io.earthplatform.geography.globe.TickShare;
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.util.NamedThreads;
+import io.earthplatform.minecraft.cubic.util.TickShare;
 import io.earthplatform.minecraft.cubic.far.FarServer;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
@@ -165,7 +164,10 @@ public final class ServerCubeWorld extends CubeWorld {
      */
     @Override protected int baselineTop(int x, int z) {
         try { return generator.skyTopY(x, z); }
-        catch (io.earthplatform.geography.MissingTerrainException missing) { return UNKNOWN_TOP; }
+        catch (RuntimeException failure) {
+            if (generator.missingData(failure)) return UNKNOWN_TOP;
+            throw failure;
+        }
     }
 
     @Override protected void topChanged(int x, int z, int oldTop, int top) {
@@ -197,7 +199,7 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     @Override public void blockChanged(BlockPos pos) {
-        if (Cubic.TRACE) EarthPlatformMod.LOGGER.info("cubic: server change at {} (cube loaded: {})", pos, cubes.containsKey(CubeKey.ofBlock(pos)));
+        if (Cubic.TRACE) Cubic.LOGGER.info("cubic: server change at {} (cube loaded: {})", pos, cubes.containsKey(CubeKey.ofBlock(pos)));
         if (cubes.containsKey(CubeKey.ofBlock(pos))) changed.add(pos.immutable());
     }
 
@@ -241,7 +243,7 @@ public final class ServerCubeWorld extends CubeWorld {
                         !saved.getBoolean(CubeCodec.UNTOUCHED), saved.getBoolean(CubeCodec.UNPOPULATED), false, null, openFaces(decoded.section()));
             }
         } catch (IOException | RuntimeException failure) {
-            EarthPlatformMod.LOGGER.error("Could not read saved cube {}; regenerating it", CubeKey.toString(key), failure);
+            Cubic.LOGGER.error("Could not read saved cube {}; regenerating it", CubeKey.toString(key), failure);
         }
         try {
             List<CompoundTag> blockEntities = new ArrayList<>(), entities = new ArrayList<>();
@@ -330,7 +332,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 // A cube loaded meanwhile is saved from its own state when it unloads.
                 if (cubes.containsKey(key)) continue;
                 try { storage.put(key, tags.get(i)); }
-                catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure); }
+                catch (IOException failure) { Cubic.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure); }
             }
             // Written as it goes, so a long run does not hold every region in memory until the next save.
             if ((pregenerated += tags.size()) >= 2048) {
@@ -350,7 +352,7 @@ public final class ServerCubeWorld extends CubeWorld {
             failures++;
             if (ticks - lastFailureLog > 200) {
                 lastFailureLog = ticks;
-                EarthPlatformMod.LOGGER.warn("Could not generate cube {} ({} failures so far); retrying", CubeKey.toString(result.key), failures, result.failure);
+                Cubic.LOGGER.warn("Could not generate cube {} ({} failures so far); retrying", CubeKey.toString(result.key), failures, result.failure);
             }
             return;
         }
@@ -428,7 +430,7 @@ public final class ServerCubeWorld extends CubeWorld {
         for (Watcher watcher : order) {
             int cx = watcher.player.getBlockX() >> 4, cy = watcher.player.getBlockY() >> 4, cz = watcher.player.getBlockZ() >> 4;
             // A glider high above all terrain sees only far terrain and may be crossing a cube a tick: stream nothing.
-            if (io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(watcher.player)) {
+            if (Cubic.inTransit(watcher.player)) {
                 if (ticks % 10 == 0) unsend(watcher, 1, 1, cx, cy, cz);
                 continue;
             }
@@ -474,7 +476,7 @@ public final class ServerCubeWorld extends CubeWorld {
         int[] at = new int[watchers.size() * 3];
         int i = 0;
         for (Watcher watcher : watchers.values()) {
-            if (io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(watcher.player)) continue;
+            if (Cubic.inTransit(watcher.player)) continue;
             at[i++] = watcher.player.getBlockX() >> 4; at[i++] = watcher.player.getBlockY() >> 4; at[i++] = watcher.player.getBlockZ() >> 4;
         }
         wantedH = h;
@@ -661,7 +663,7 @@ public final class ServerCubeWorld extends CubeWorld {
             changed.clear();
             for (Watcher watcher : watchers.values()) {
                 if (watcher.changes.isEmpty()) continue;
-                if (Cubic.TRACE) EarthPlatformMod.LOGGER.info("cubic: sending {} block changes to {}", watcher.changes.size(), watcher.player.getScoreboardName());
+                if (Cubic.TRACE) Cubic.LOGGER.info("cubic: sending {} block changes to {}", watcher.changes.size(), watcher.player.getScoreboardName());
                 PacketDistributor.sendToPlayer(watcher.player, new CubePayloads.BlockChanges(List.copyOf(watcher.changes)));
                 watcher.changes.clear();
             }
@@ -858,7 +860,7 @@ public final class ServerCubeWorld extends CubeWorld {
             workers.execute(() -> {
                 byte[] values = null;
                 try { values = CubeLight.centre(CubeLight.light(states, columns, cy)); }
-                catch (RuntimeException failure) { EarthPlatformMod.LOGGER.error("Could not light cube {}", CubeKey.toString(key), failure); }
+                catch (RuntimeException failure) { Cubic.LOGGER.error("Could not light cube {}", CubeKey.toString(key), failure); }
                 finally { lit.add(new Lit(key, stamp, values)); }
             });
             budget--;
@@ -894,7 +896,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 far.summarize(cube.key, cube.section.getStates().copy());
             }
         } catch (IOException | RuntimeException failure) {
-            EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(cube.key), failure);
+            Cubic.LOGGER.error("Could not store cube {}", CubeKey.toString(cube.key), failure);
         }
     }
 
@@ -927,7 +929,7 @@ public final class ServerCubeWorld extends CubeWorld {
                     tag.put(CubeCodec.ENTITIES, list);
                 }
             } catch (RuntimeException failure) {
-                EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure);
+                Cubic.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure);
                 return;
             }
             server.getServer().execute(() -> {
@@ -935,14 +937,14 @@ public final class ServerCubeWorld extends CubeWorld {
                 Cube now = cubes.get(key);
                 if (closed || cube.edited || now != null && now != cube) return;
                 try { storage.put(key, tag); }
-                catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure); }
+                catch (IOException failure) { Cubic.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure); }
             });
         });
     }
 
     private void flushStorage() {
         try { storage.flush(); }
-        catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not write cube regions", failure); }
+        catch (IOException failure) { Cubic.LOGGER.error("Could not write cube regions", failure); }
     }
 
     public void save() {
@@ -955,7 +957,7 @@ public final class ServerCubeWorld extends CubeWorld {
         if (closed) return;
         for (Cube cube : cubes.values()) store(cube, true);
         try { storage.close(); }
-        catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not write cube regions", failure); }
+        catch (IOException failure) { Cubic.LOGGER.error("Could not write cube regions", failure); }
         closed = true;
         workers.shutdownNow();
         far.close();

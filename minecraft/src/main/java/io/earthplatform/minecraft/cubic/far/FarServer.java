@@ -1,18 +1,16 @@
 package io.earthplatform.minecraft.cubic.far;
 
-import io.earthplatform.geography.MissingTerrainException;
-import io.earthplatform.geography.globe.NamedThreads;
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.Cubic;
+import io.earthplatform.minecraft.cubic.util.NamedThreads;
 import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.CubeStorage;
 import io.earthplatform.minecraft.cubic.Timings;
-import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.FarColumn;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.net.Throttle;
-import io.earthplatform.minecraft.diagnostics.PerfFailures;
+import io.earthplatform.minecraft.cubic.diagnostics.PerfFailures;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
@@ -136,7 +134,8 @@ public final class FarServer {
         Session session = sessions.get(id);
         if (session == null) {
             sessions.put(id, session = new Session());
-            if (generator instanceof EarthGenerator earth) PacketDistributor.sendToPlayer(player, new CubePayloads.EarthScale(earth.grid().metresPerBlock()));
+            double scale = generator.mercatorMetresPerBlock();
+            if (scale > 0) PacketDistributor.sendToPlayer(player, new CubePayloads.FarScale(scale));
         }
         int bx = player.getBlockX(), bz = player.getBlockZ();
         session.bx = bx;
@@ -170,14 +169,14 @@ public final class FarServer {
             }
             catch (RuntimeException | IOException failure) {
                 // Missing data is asked for again a few seconds on, not at once: with a data server down it fails at once again.
-                if (failure instanceof MissingTerrainException) missing.add(key);
+                if (generator.missingData(failure)) missing.add(key);
                 else failed.add(key);
                 failures.incrementAndGet();
                 PerfFailures.record(PerfFailures.Stage.FAR_GENERATION,failure);
                 long now = System.currentTimeMillis();
                 if (now - lastFailureLog > 10_000) {
                     lastFailureLog = now;
-                    EarthPlatformMod.LOGGER.warn("Could not make far column {} ({} failures so far)", key, failures.get(), failure);
+                    Cubic.LOGGER.warn("Could not make far column {} ({} failures so far)", key, failures.get(), failure);
                 }
             }
         });
@@ -272,7 +271,7 @@ public final class FarServer {
                 int x = CubeKey.x(cubeKey), y = CubeKey.y(cubeKey), z = CubeKey.z(cubeKey);
                 if (builds.put(cubeKey, FarBuilds.summarize(states, x, y, z, generator::surfaceY))) rebuilt.add(cubeKey);
             } catch (RuntimeException failure) {
-                EarthPlatformMod.LOGGER.warn("Could not summarize the build in cube {}", CubeKey.toString(cubeKey), failure);
+                Cubic.LOGGER.warn("Could not summarize the build in cube {}", CubeKey.toString(cubeKey), failure);
             }
         });
     }
@@ -292,12 +291,12 @@ public final class FarServer {
             });
             builds.flush();
             builds.markScanned();
-            if (counts[0] > 0) EarthPlatformMod.LOGGER.info("Far terrain: read {} builds in {} edited cubes saved before, in {} ms",
+            if (counts[0] > 0) Cubic.LOGGER.info("Far terrain: read {} builds in {} edited cubes saved before, in {} ms",
                     counts[1], counts[0], (System.nanoTime() - start) / 1_000_000);
         } catch (java.util.concurrent.CancellationException stopped) {
             // The world closed first; the next opening reads them again.
         } catch (IOException | RuntimeException failure) {
-            EarthPlatformMod.LOGGER.warn("Could not read the builds of older saves for far terrain", failure);
+            Cubic.LOGGER.warn("Could not read the builds of older saves for far terrain", failure);
         }
     }
 

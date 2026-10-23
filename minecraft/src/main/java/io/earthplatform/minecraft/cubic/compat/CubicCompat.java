@@ -1,6 +1,5 @@
 package io.earthplatform.minecraft.cubic.compat;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
 import net.minecraft.ChatFormatting;
@@ -13,7 +12,7 @@ import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 
 /** Client side of other mods' support in the cubic world: map snapshots, and pausing Distant Horizons there. */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, value = Dist.CLIENT)
+@EventBusSubscriber(modid = Cubic.MOD_ID, value = Dist.CLIENT)
 public final class CubicCompat {
     private static final boolean DH = CubicMaps.loaded("distanthorizons");
     private static boolean inCubic, dhSettled = true, toldAboutDh;

@@ -1,11 +1,11 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import io.earthplatform.minecraft.cubic.Cubic;
 import com.mojang.blaze3d.shaders.Uniform;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import io.earthplatform.geography.globe.NamedThreads;
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.util.NamedThreads;
 import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.Timings;
@@ -319,7 +319,7 @@ public final class CubeRenderer {
                 Timings.CUBE_MESH.since(start);
             }
             catch (Throwable failure) {
-                EarthPlatformMod.LOGGER.error("Cube mesh build failed for {}", CubeKey.toString(key), failure);
+                Cubic.LOGGER.error("Cube mesh build failed for {}", CubeKey.toString(key), failure);
                 built.add(new CubeMesher.Built(key, -1, List.of(), null));
             }
         });

@@ -1,7 +1,7 @@
 package io.earthplatform.minecraft.cubic.far;
 
-import io.earthplatform.geography.globe.NamedThreads;
-import io.earthplatform.geography.globe.TickShare;
+import io.earthplatform.minecraft.cubic.util.NamedThreads;
+import io.earthplatform.minecraft.cubic.util.TickShare;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
 import java.util.concurrent.ExecutorService;

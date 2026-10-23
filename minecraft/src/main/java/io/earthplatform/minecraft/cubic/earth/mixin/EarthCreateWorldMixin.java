@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.cubic.mixin;
+package io.earthplatform.minecraft.cubic.earth.mixin;
 
 import io.earthplatform.minecraft.cubic.play.EarthWorlds;
 import net.minecraft.client.gui.screens.worldselection.CreateWorldScreen;

@@ -9,6 +9,6 @@ final class CubicClientReceiver {
     static void unload(CubePayloads.CubeUnload payload) { ClientCubeWorld world = ClientCubeWorld.current(); if (world != null) world.unload(payload.keys()); }
     static void changes(CubePayloads.BlockChanges payload) { ClientCubeWorld world = ClientCubeWorld.current(); if (world != null) world.apply(payload); }
     static void far(CubePayloads.FarColumnData payload) { ClientCubeWorld world = ClientCubeWorld.current(); if (world != null) world.far().receive(payload); }
-    static void scale(CubePayloads.EarthScale payload) { ClientCubeWorld world = ClientCubeWorld.current(); if (world != null) world.far().scale(payload.metresPerBlock()); }
+    static void scale(CubePayloads.FarScale payload) { ClientCubeWorld world = ClientCubeWorld.current(); if (world != null) world.far().scale(payload.metresPerBlock()); }
     static void tops(CubePayloads.ColumnTops payload) { ClientCubeWorld world = ClientCubeWorld.current(); if (world != null) world.tops(payload); }
 }

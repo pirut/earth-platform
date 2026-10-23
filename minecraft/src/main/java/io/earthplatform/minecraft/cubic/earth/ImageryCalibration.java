@@ -6,7 +6,7 @@ import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
-import io.earthplatform.minecraft.cubic.CubicSettings;
+import io.earthplatform.minecraft.cubic.earth.CubicSettings;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Surface;
@@ -74,7 +74,7 @@ public final class ImageryCalibration {
 
     private static int calibrate(CommandSourceStack source, int size) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
-        ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
+        ServerLevel level = source.getServer().getLevel(EarthWorld.LEVEL);
         if (level == null || !(CubicLevel.of(level) instanceof ServerCubeWorld cubes) || !(cubes.generator() instanceof EarthGenerator earth)) {
             source.sendFailure(Component.literal("This save's cubic world is not the Earth."));
             return 0;

@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic.compat;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.Cubic;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
@@ -33,11 +33,11 @@ final class DhCompat {
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             unsupported = true;
-            EarthPlatformMod.LOGGER.warn("This Distant Horizons version can't be paused through its API, so it keeps drawing in the Earth world", failure);
+            Cubic.LOGGER.warn("This Distant Horizons version can't be paused through its API, so it keeps drawing in the Earth world", failure);
             return true;
         }
         paused = inCubicWorld;
-        EarthPlatformMod.LOGGER.info("Distant Horizons {} for the Earth world", inCubicWorld ? "paused" : "resumed");
+        Cubic.LOGGER.info("Distant Horizons {} for the Earth world", inCubicWorld ? "paused" : "resumed");
         return true;
     }
 

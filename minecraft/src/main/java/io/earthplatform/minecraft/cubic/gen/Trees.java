@@ -1,10 +1,10 @@
 package io.earthplatform.minecraft.cubic.gen;
 
+import io.earthplatform.minecraft.cubic.Cubic;
 import static io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.DRY;
 
 import com.google.gson.JsonElement;
 import com.mojang.serialization.JsonOps;
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Surface;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Tree;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -265,7 +265,7 @@ final class Trees {
             Additions here = additions(biome);
             most = Math.max(most, here.perChunk * (here.scaled ? 1.5f : 1));
         }
-        if (most > 0) EarthPlatformMod.LOGGER.info("Earth trees: other mods add trees to {} biomes", additions.values().stream().filter(a -> a.trees.length > 0).count());
+        if (most > 0) Cubic.LOGGER.info("Earth trees: other mods add trees to {} biomes", additions.values().stream().filter(a -> a.trees.length > 0).count());
         return mostAdded = Math.min(most, 64);
     }
 
@@ -322,7 +322,7 @@ final class Trees {
         int step = GenerationStep.Decoration.VEGETAL_DECORATION.ordinal();
         if (steps.size() > step) for (Holder<PlacedFeature> placed : steps.get(step)) {
             String namespace = placed.unwrapKey().map(k -> k.location().getNamespace()).orElse("");
-            if (namespace.equals("minecraft") || namespace.equals(EarthPlatformMod.MOD_ID)) continue;
+            if (namespace.equals("minecraft") || namespace.equals(Cubic.MOD_ID)) continue;
             ConfiguredFeature<?, ?> feature = placed.value().feature().value();
             if (feature.getFeatures().noneMatch(Trees::treeLike)) continue;
             Added tree = added(placed.value());
@@ -515,7 +515,7 @@ final class Trees {
             try {
                 if (!feature.place(level, null, random, BlockPos.ZERO)) continue;
             } catch (RuntimeException failure) {
-                EarthPlatformMod.LOGGER.warn("Could not grow tree feature {}", feature, failure);
+                Cubic.LOGGER.warn("Could not grow tree feature {}", feature, failure);
                 break;
             }
             Long2ObjectOpenHashMap<BlockState> kept = new Long2ObjectOpenHashMap<>();

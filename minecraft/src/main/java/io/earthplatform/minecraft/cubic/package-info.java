@@ -8,7 +8,7 @@
  *       {@link io.earthplatform.minecraft.cubic.ServerCubeWorld} makes, loads, saves and sends them
  *       around players, and {@link io.earthplatform.minecraft.cubic.CubeStorage} keeps edited cubes on disk.</li>
  *   <li>{@link io.earthplatform.minecraft.cubic.CubicEvents} wires the engine into the game's events;
- *       {@link io.earthplatform.minecraft.cubic.CubicSettings} picks and pins a world's generator and data sources.</li>
+ *       {@link io.earthplatform.minecraft.cubic.Cubic} registers the cubic dimensions and the generators their cubes come from.</li>
  *   <li>{@link io.earthplatform.minecraft.cubic.CubeLight}, {@link io.earthplatform.minecraft.cubic.CubicSpawns},
  *       {@link io.earthplatform.minecraft.cubic.CubicWeather} and the point-of-interest classes give vanilla
  *       rules their meaning at cubic heights.</li>

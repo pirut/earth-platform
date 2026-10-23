@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic.client;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.Cubic;
 import java.util.List;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL15C;
@@ -32,7 +32,7 @@ final class FarGpuTimers {
             var caps = GL.getCapabilities();
             if (!(caps.OpenGL33 || caps.GL_ARB_timer_query) || caps.glQueryCounter == 0
                     || caps.glGetQueryObjectui64v == 0) {
-                EarthPlatformMod.LOGGER.info("Far GPU timestamps unavailable on this context");
+                Cubic.LOGGER.info("Far GPU timestamps unavailable on this context");
                 return;
             }
             int timestampBits = GL15C.glGetQueryi(GL33C.GL_TIMESTAMP, GL15C.GL_QUERY_COUNTER_BITS);
@@ -40,7 +40,7 @@ final class FarGpuTimers {
             boolean timestamp = timestampBits > 0 && timestampBits <= 64;
             int bits = timestamp ? timestampBits : elapsedBits;
             if (bits <= 0 || bits > 64) {
-                EarthPlatformMod.LOGGER.info("Far GPU queries unavailable: timestamp={} elapsed={} counter bits", timestampBits, elapsedBits);
+                Cubic.LOGGER.info("Far GPU queries unavailable: timestamp={} elapsed={} counter bits", timestampBits, elapsedBits);
                 return;
             }
             mode=timestamp?"timestamp_pairs":"non_nested_elapsed";
@@ -75,7 +75,7 @@ final class FarGpuTimers {
                     GL15C.glDeleteQueries(q);
                 }
             }, System::nanoTime, 128, 120, bits);
-            EarthPlatformMod.LOGGER.info("Far GPU diagnostics enabled: {} {} bits, 128 pairs, 120-frame age cap; occupied elapsed-query targets are skipped",
+            Cubic.LOGGER.info("Far GPU diagnostics enabled: {} {} bits, 128 pairs, 120-frame age cap; occupied elapsed-query targets are skipped",
                     timestamp ? "timestamp pairs" : "non-nested TIME_ELAPSED", bits);
         }
         if (ring != null) ring.poll(frame);

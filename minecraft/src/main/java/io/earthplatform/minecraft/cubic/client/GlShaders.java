@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic.client;
 
-import io.earthplatform.minecraft.diagnostics.PerfFailures;
+import io.earthplatform.minecraft.cubic.diagnostics.PerfFailures;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL20C;
 

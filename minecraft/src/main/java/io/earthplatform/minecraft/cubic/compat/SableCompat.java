@@ -1,6 +1,5 @@
 package io.earthplatform.minecraft.cubic.compat;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeWorld;
 import io.earthplatform.minecraft.cubic.Cubic;
@@ -68,7 +67,7 @@ public final class SableCompat {
         try {
             return Class.forName("dev.ryanhcode.sable.api.sublevel.SubLevelContainer").getField(field).getInt(null);
         } catch (ReflectiveOperationException | LinkageError failure) {
-            EarthPlatformMod.LOGGER.warn("Sable plot size {} not found; assuming {}", field, fallback);
+            Cubic.LOGGER.warn("Sable plot size {} not found; assuming {}", field, fallback);
             return fallback;
         }
     }
@@ -97,7 +96,7 @@ public final class SableCompat {
             Object system = physics.invoke(container.invoke(level));
             if (system != null) blockChange.invoke(system, SectionPos.of(pos), cube.section, pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15, old, state);
         } catch (Throwable failure) {
-            EarthPlatformMod.LOGGER.warn("Sable physics did not take a block change at {}", pos, failure);
+            Cubic.LOGGER.warn("Sable physics did not take a block change at {}", pos, failure);
             blockChange = null;
         }
     }
@@ -115,14 +114,14 @@ public final class SableCompat {
                         Class.forName("dev.ryanhcode.sable.mixinhelpers.entity.sublevels_block_sky.SubLevelsBlockSkyMixinHelper"),
                         "checkSkyWithSublevels", MethodType.methodType(boolean.class, Level.class, BlockPos.class));
             } catch (ReflectiveOperationException | LinkageError failure) {
-                EarthPlatformMod.LOGGER.warn("Sable ship shade check not found; ships won't shade mobs high up", failure);
+                Cubic.LOGGER.warn("Sable ship shade check not found; ships won't shade mobs high up", failure);
             }
         }
         if (shade == null) return false;
         try {
             return (boolean) shade.invokeExact(level, pos);
         } catch (Throwable failure) {
-            EarthPlatformMod.LOGGER.warn("Sable ship shade check failed at {}", pos, failure);
+            Cubic.LOGGER.warn("Sable ship shade check failed at {}", pos, failure);
             shade = null;
             return false;
         }
@@ -138,14 +137,14 @@ public final class SableCompat {
                 riding = MethodHandles.publicLookup().findVirtual(extension, "sable$getTrackingSubLevel",
                         MethodType.methodType(Class.forName("dev.ryanhcode.sable.sublevel.SubLevel"))).asType(MethodType.methodType(Object.class, Entity.class));
             } catch (ReflectiveOperationException | LinkageError failure) {
-                EarthPlatformMod.LOGGER.warn("Sable rider check not found; the jet stream won't slow ships for their riders", failure);
+                Cubic.LOGGER.warn("Sable rider check not found; the jet stream won't slow ships for their riders", failure);
             }
         }
         if (riding == null) return null;
         try {
             return (Object) riding.invokeExact(entity);
         } catch (Throwable failure) {
-            EarthPlatformMod.LOGGER.warn("Sable rider check failed", failure);
+            Cubic.LOGGER.warn("Sable rider check failed", failure);
             riding = null;
             return null;
         }
@@ -164,7 +163,7 @@ public final class SableCompat {
                 blockChange = lookup.findVirtual(system, "handleBlockChange", MethodType.methodType(void.class,
                         SectionPos.class, LevelChunkSection.class, int.class, int.class, int.class, BlockState.class, BlockState.class));
             } catch (ReflectiveOperationException | LinkageError failure) {
-                EarthPlatformMod.LOGGER.warn("Sable physics hooks not found; ships won't see terrain edits made after they arrive", failure);
+                Cubic.LOGGER.warn("Sable physics hooks not found; ships won't see terrain edits made after they arrive", failure);
             }
         }
         return blockChange != null;

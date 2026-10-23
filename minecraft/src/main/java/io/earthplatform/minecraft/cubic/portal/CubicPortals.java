@@ -54,7 +54,8 @@ public final class CubicPortals {
     }
 
     @Nullable public static ServerLevel cubicLevel(ServerLevel any) {
-        ServerLevel level = any.getServer().getLevel(Cubic.LEVEL);
+        var home = Cubic.home();
+        ServerLevel level = home == null ? null : any.getServer().getLevel(home);
         return level != null && CubicLevel.of(level) instanceof ServerCubeWorld ? level : null;
     }
 

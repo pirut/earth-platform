@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic.far;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.gen.FarColumn;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
@@ -151,7 +151,7 @@ public final class FarBuilds {
         return squares.computeIfAbsent(key, k -> {
             Square made = new Square(k, directory.resolve("b." + CubeKey.x(k) + "." + CubeKey.z(k) + ".nbt"));
             try { made.load(); }
-            catch (IOException | RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not read far builds {}", made.file, failure); }
+            catch (IOException | RuntimeException failure) { Cubic.LOGGER.warn("Could not read far builds {}", made.file, failure); }
             return made;
         });
     }
@@ -169,7 +169,7 @@ public final class FarBuilds {
                         catch (NumberFormatException ignored) {}
                     });
                 } catch (IOException failure) {
-                    EarthPlatformMod.LOGGER.warn("Could not list far builds in {}", directory, failure);
+                    Cubic.LOGGER.warn("Could not list far builds in {}", directory, failure);
                 }
             }
             listed = true;
@@ -190,7 +190,7 @@ public final class FarBuilds {
             try {
                 if (square.flush()) known.add(square.key);
             } catch (IOException | RuntimeException failure) {
-                EarthPlatformMod.LOGGER.error("Could not write far builds {}", square.file, failure);
+                Cubic.LOGGER.error("Could not write far builds {}", square.file, failure);
             }
         }
     }

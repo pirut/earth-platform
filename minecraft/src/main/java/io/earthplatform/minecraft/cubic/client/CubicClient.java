@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic.client;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.Timings;
 import net.minecraft.client.Minecraft;
@@ -21,7 +21,7 @@ import net.neoforged.neoforge.client.event.ViewportEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 
 /** Client hooks: attach the cube store, compile on ticks and draw at the vanilla terrain stages. */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, value = Dist.CLIENT)
+@EventBusSubscriber(modid = Cubic.MOD_ID, value = Dist.CLIENT)
 public final class CubicClient {
     private CubicClient() {}
 
@@ -98,7 +98,7 @@ public final class CubicClient {
         var player = Minecraft.getInstance().player;
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null || player == null || player.isSpectator() || inReplay(player) || player.isFallFlying() || player.isPassenger()
-                || io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(player) || !waitingForCubes(world, player)) {
+                || Cubic.inTransit(player) || !waitingForCubes(world, player)) {
             held = null;
             return;
         }
@@ -123,7 +123,7 @@ public final class CubicClient {
             Runtime runtime = Runtime.getRuntime();
             var camera = Minecraft.getInstance().gameRenderer.getMainCamera();
             int[] byView = world.renderer().meshesByView(camera.getPosition(), camera.getYRot());
-            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes ({} in view), {} to compile, far {}/{} columns {}% settled ({}% in view) {} MB {} draws, {} sent again; {}",
+            Cubic.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes ({} in view), {} to compile, far {}/{} columns {}% settled ({}% in view) {} MB {} draws, {} sent again; {}",
                     Minecraft.getInstance().getFps(), (runtime.totalMemory() - runtime.freeMemory()) >> 20, world.loadedCubes(),
                     world.renderer().meshCount(), byView[0], world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
                     world.far().settledPercent(), world.far().settledInViewPercent(), world.far().vertexBytes() >> 20, world.far().drawnRanges(), world.far().replacedCount(), timings(Timings.LOGGER));
@@ -241,7 +241,7 @@ public final class CubicClient {
         if (world == null || minecraft.player == null) return;
         var player = minecraft.player;
         // Spectators are never held, and a replay camera must stay clean for rendered videos.
-        if (player.isSpectator() || inReplay(player) || io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(player)) return;
+        if (player.isSpectator() || inReplay(player) || Cubic.inTransit(player)) return;
         if (!waitingForCubes(world, player)) return;
         var gui = event.getGuiGraphics();
         Component text = Component.literal("Loading terrain at Y " + player.getBlockY() + "...");

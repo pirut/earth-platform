@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.diagnostics;
+package io.earthplatform.minecraft.cubic.diagnostics;
 
 import static org.junit.jupiter.api.Assertions.*;
 import java.nio.file.*;

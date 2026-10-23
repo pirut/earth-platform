@@ -1,10 +1,10 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import io.earthplatform.minecraft.cubic.Cubic;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Timings;
-import io.earthplatform.minecraft.diagnostics.*;
+import io.earthplatform.minecraft.cubic.diagnostics.*;
 import java.time.Instant;
 import java.util.*;
 import net.minecraft.client.Minecraft;
@@ -15,7 +15,7 @@ import net.neoforged.neoforge.client.event.RenderFrameEvent;
 import org.lwjgl.opengl.*;
 
 /** Current build. Fixed-cost frame capture, bounded async local-only JSONL. */
-@EventBusSubscriber(modid=EarthPlatformMod.MOD_ID,value=Dist.CLIENT)
+@EventBusSubscriber(modid=Cubic.MOD_ID,value=Dist.CLIENT)
 public final class PerformanceDiagnostics {
     private static State state;
     private PerformanceDiagnostics() {}
@@ -48,7 +48,7 @@ public final class PerformanceDiagnostics {
             record.addProperty("log_max_files",3);record.addProperty("log_max_file_bytes",4<<20);
             log=new LocalPerfLog(mc.gameDirectory.toPath().resolve("earthplatform/perf"),record.toString());
             Runtime.getRuntime().addShutdownHook(new Thread(log::close,"Earth performance log close"));
-            EarthPlatformMod.LOGGER.info("Local performance logs: earthplatform/perf/latest.jsonl (local only)");
+            Cubic.LOGGER.info("Local performance logs: earthplatform/perf/latest.jsonl (local only)");
         }
         JsonObject base(String type) {JsonObject record=new JsonObject();record.addProperty("type",type);record.addProperty("utc",Instant.now().toString());return record;}
         void emit(Minecraft mc) {
@@ -86,7 +86,7 @@ public final class PerformanceDiagnostics {
             record.add("sampled_gpu_passes",passes);record.addProperty("gpu_query_mode",FarGpuTimers.mode());record.addProperty("gpu_query_dropped",FarGpuTimers.dropped());
             JsonObject errors=new JsonObject();for(var stage:PerfFailures.Stage.values())if(PerfFailures.count(stage)>0){JsonObject error=new JsonObject();error.addProperty("count",PerfFailures.count(stage));error.addProperty("exception_type",PerfFailures.type(stage));errors.add(stage.name(),error);}record.add("errors",errors);
             record.addProperty("log_dropped",log.dropped());log.offer(record.toString());
-            if(log.failed()&&!warned){warned=true;EarthPlatformMod.LOGGER.warn("Local performance log could not be written");}
+            if(log.failed()&&!warned){warned=true;Cubic.LOGGER.warn("Local performance log could not be written");}
         }
     }
     static String clean(String value) {return value==null?"unknown":value.replaceAll("[\\p{Cntrl}]"," ").substring(0,Math.min(256,value.length()));}

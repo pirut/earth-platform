@@ -76,6 +76,10 @@ Choose the Earth world type in Create World and pick where to start. Travel anyw
 [[mixins]]
 config="${mod_id}.cubic.mixins.json"
 
+# The Earth's own hooks: the jet stream, the Create World screen, clouds, horizon, fog and flight camera.
+[[mixins]]
+config="${mod_id}.earth.mixins.json"
+
 # The [[accessTransformers]] block allows you to declare where your AT file is.
 # If this block is omitted, a fallback attempt will be made to load an AT from META-INF/accesstransformer.cfg
 #[[accessTransformers]]

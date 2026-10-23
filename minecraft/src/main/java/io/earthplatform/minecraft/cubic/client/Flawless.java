@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic.client;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.Cubic;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.Set;
@@ -38,9 +38,9 @@ public final class Flawless {
             try {
                 MethodHandles.publicLookup().findStatic(Class.forName(handler), "acceptController",
                         MethodType.methodType(void.class, Function.class)).invoke(provider);
-                EarthPlatformMod.LOGGER.info("Earth terrain renders flawless frames for {}", mod.getModId());
+                Cubic.LOGGER.info("Earth terrain renders flawless frames for {}", mod.getModId());
             } catch (Throwable e) {
-                EarthPlatformMod.LOGGER.warn("Could not offer flawless frames to {} ({})", mod.getModId(), e.toString());
+                Cubic.LOGGER.warn("Could not offer flawless frames to {} ({})", mod.getModId(), e.toString());
             }
         }
     }
@@ -72,6 +72,6 @@ public final class Flawless {
             if (left == 0) return;
             java.util.concurrent.locks.LockSupport.parkNanos(2_000_000L);
         }
-        EarthPlatformMod.LOGGER.warn("Flawless frame drawn before terrain finished");
+        Cubic.LOGGER.warn("Flawless frame drawn before terrain finished");
     }
 }

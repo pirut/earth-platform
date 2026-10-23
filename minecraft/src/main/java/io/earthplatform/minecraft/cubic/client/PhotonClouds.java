@@ -1,8 +1,6 @@
 package io.earthplatform.minecraft.cubic.client;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cubic;
-import io.earthplatform.minecraft.cubic.play.EarthConfig;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -14,7 +12,7 @@ import net.minecraft.client.Minecraft;
  * is ten metres of cloud ({@code CLOUDS_SCALE} 10), so its cumulus deck at 1200 m sits about 120
  * blocks over sea level, on the lowlands and below every hill of a world at real height. In the
  * Earth the pack is loaded with its own options set to one metre a block and the cumulus base at
- * {@link EarthConfig#CLOUD_HEIGHT}, where the vanilla-style deck floats too. Nothing in the pack is
+ * the dimension's {@linkplain io.earthplatform.minecraft.cubic.CubicDimension#cloudHeight cloud height}, where the vanilla-style deck floats too. Nothing in the pack is
  * edited, the player's saved options are left as they were, and a player who set either option
  * keeps theirs. Other worlds and other packs are untouched; Iris reloads the pack when the player
  * moves between the Earth and another world.
@@ -32,7 +30,13 @@ final class PhotonClouds {
 
     private static boolean wanted() {
         var level = Minecraft.getInstance().level;
-        return level != null && Cubic.isCubic(level.dimension()) && EarthConfig.CLOUD_HEIGHT.get() > 0;
+        return level != null && cloudHeight(level.dimension()) > 0;
+    }
+
+    /** The cloud height a cubic dimension asks for, or 0 for none or any other dimension. */
+    private static int cloudHeight(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> key) {
+        var dimension = Cubic.dimension(key);
+        return dimension == null ? 0 : dimension.cloudHeight();
     }
 
     /** Iris's option changes for a pack it is about to load, with the Earth's clouds added in the Earth. */
@@ -44,7 +48,7 @@ final class PhotonClouds {
         if (!applied) return changed;
         Map<String, String> earth = new HashMap<>(changed);
         earth.put(SCALE, "1.0");
-        earth.put(ALTITUDE, altitude(EarthConfig.CLOUD_HEIGHT.get()));
+        earth.put(ALTITUDE, altitude(cloudHeight(Minecraft.getInstance().level.dimension())));
         return earth;
     }
 
@@ -76,7 +80,7 @@ final class PhotonClouds {
         try {
             Iris.reload();
         } catch (Exception failure) {
-            EarthPlatformMod.LOGGER.warn("Could not reload the shader pack for the Earth's clouds", failure);
+            Cubic.LOGGER.warn("Could not reload the shader pack for the Earth's clouds", failure);
         }
     }
 }

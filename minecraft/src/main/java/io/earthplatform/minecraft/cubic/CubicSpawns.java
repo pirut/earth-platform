@@ -1,6 +1,5 @@
 package io.earthplatform.minecraft.cubic;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.RandomSource;
@@ -21,7 +20,7 @@ import net.neoforged.neoforge.event.entity.RegisterSpawnPlacementsEvent;
  * height, and fish and squid swim in the top 13 blocks of any water, such as a mountain lake, not
  * only in the 13 blocks under Y 62. Vanilla's own rules still apply alongside.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
+@EventBusSubscriber(modid = Cubic.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
 public final class CubicSpawns {
     private CubicSpawns() {}
 

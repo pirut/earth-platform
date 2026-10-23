@@ -3,7 +3,7 @@ package io.earthplatform.minecraft.cubic.play;
 import io.earthplatform.geography.globe.HostBackoff;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
-import io.earthplatform.minecraft.cubic.CubicSettings;
+import io.earthplatform.minecraft.cubic.earth.CubicSettings;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;

@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.cubic.mixin;
+package io.earthplatform.minecraft.cubic.earth.mixin;
 
 import io.earthplatform.minecraft.cubic.play.client.EarthClouds;
 import net.minecraft.client.multiplayer.ClientLevel;

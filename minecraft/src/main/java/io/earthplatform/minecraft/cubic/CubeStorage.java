@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic;
 
-import io.earthplatform.geography.globe.NamedThreads;
+import io.earthplatform.minecraft.cubic.util.NamedThreads;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongList;
 import java.io.IOException;
@@ -16,7 +16,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
-import io.earthplatform.minecraft.EarthPlatformMod;
 import javax.annotation.Nullable;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
@@ -129,7 +128,7 @@ public final class CubeStorage {
         if (writing.compareAndSet(false, true)) {
             writer.execute(() -> {
                 try { writeAll(); }
-                catch (IOException | RuntimeException failure) { EarthPlatformMod.LOGGER.error("Could not write cube regions", failure); }
+                catch (IOException | RuntimeException failure) { Cubic.LOGGER.error("Could not write cube regions", failure); }
                 finally { writing.set(false); }
             });
         }

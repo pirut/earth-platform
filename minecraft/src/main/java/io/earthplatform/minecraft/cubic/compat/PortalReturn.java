@@ -1,6 +1,5 @@
 package io.earthplatform.minecraft.cubic.compat;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
@@ -24,7 +23,7 @@ import net.neoforged.neoforge.event.entity.EntityTravelToDimensionEvent;
  * world (its carrier is only 16 blocks tall). Instead the Earth portal a player used is remembered on
  * the way in, and the way out lands beside it.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
+@EventBusSubscriber(modid = Cubic.MOD_ID)
 public final class PortalReturn {
     public static final String AETHER_RETURN = "earthplatform:aether_return";
     private static final ResourceLocation AETHER = ResourceLocation.fromNamespaceAndPath("aether", "the_aether");
@@ -60,7 +59,7 @@ public final class PortalReturn {
     public static DimensionTransition back(String key, ServerLevel level, Entity entity) {
         CompoundTag data = entity.getPersistentData();
         if (!data.contains(key)) return null;
-        ServerLevel earth = level.getServer().getLevel(Cubic.LEVEL);
+        ServerLevel earth = Cubic.home() == null ? null : level.getServer().getLevel(Cubic.home());
         BlockPos portal = NbtUtils.readBlockPos(data, key).orElse(null);
         data.remove(key);
         if (earth == null || portal == null || !(CubicLevel.of(earth) instanceof ServerCubeWorld cubes)) return null;

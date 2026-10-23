@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.diagnostics;
+package io.earthplatform.minecraft.cubic.diagnostics;
 
 import java.io.BufferedWriter;
 import java.io.IOException;

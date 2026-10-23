@@ -1,5 +1,10 @@
-package io.earthplatform.minecraft.cubic;
+package io.earthplatform.minecraft.cubic.earth;
 
+import io.earthplatform.minecraft.cubic.Cube;
+import io.earthplatform.minecraft.cubic.CubeOffsets;
+import io.earthplatform.minecraft.cubic.Cubic;
+import io.earthplatform.minecraft.cubic.CubicEvents;
+import io.earthplatform.minecraft.cubic.CubeCodec;
 import com.mojang.serialization.Lifecycle;
 import io.earthplatform.geography.globe.BareEarth;
 import io.earthplatform.geography.globe.ClimateSource;
