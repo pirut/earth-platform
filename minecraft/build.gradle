@@ -414,26 +414,41 @@ tasks.register('verifyShimArtifact') {
                 }
             }
         }
+        // The one nested jar allowed is Chunks3, our own engine (jar-in-jar); its entries are checked too.
+        def ownNested = { String path -> path ==~ /meta-inf\/jarjar\/io\.github\.pirut\.chunks3-[0-9a-z.+-]+\.jar/ }
+        def inspect
+        inspect = { String name, boolean isDirectory, byte[] payload ->
+            entries++
+            def path = name.toLowerCase(java.util.Locale.ROOT).replaceFirst(/^.*!\//, '')
+            if (path.endsWith('.class') && path.contains(' ')) failures.add('invalid duplicate class filename: ' + name)
+            if (path.startsWith('net/neoforged/') || path.startsWith('net/minecraft/')
+                    || path.startsWith('com/mojang/') || path.startsWith('com/seibel/') || path.startsWith('com/distanthorizons/')
+                    || path.startsWith('net/irisshaders/') || path.startsWith('net/caffeinemc/')
+                    || path.startsWith('assets/distanthorizons/') || path.startsWith('distanthorizons/')
+                    || path.startsWith('assets/iris/') || path.startsWith('assets/sodium/')
+                    || path.startsWith('photon/') || path.startsWith('shaders/') || path.startsWith('shaderpacks/')
+                    || path.startsWith('runtime-inputs/') || (path.endsWith('.jar') && !(!name.contains('!/') && ownNested(path))) || path.endsWith('.zip')
+                    || path.endsWith('.java') && (path.contains('/seibel/') || path.contains('distanthorizons')
+                    || path.contains('/irisshaders/') || path.contains('/caffeinemc/') || path.contains('/photon/')))
+                failures.add(name)
+            if (!isDirectory && payload.length > 0) {
+                def digest = java.security.MessageDigest.getInstance('SHA-256').digest(payload).encodeHex().toString()
+                if (upstreamPayloads.containsKey(digest)) failures.add('copied upstream payload: ' + name + ' matches ' + upstreamPayloads[digest])
+            }
+            if (!name.contains('!/') && ownNested(path)) {
+                new java.util.zip.ZipInputStream(new ByteArrayInputStream(payload)).withCloseable { nested ->
+                    java.util.zip.ZipEntry inner
+                    while ((inner = nested.nextEntry) != null) {
+                        inspect(name + '!/' + inner.name, inner.directory, inner.directory ? new byte[0] : nested.readAllBytes())
+                        nested.closeEntry()
+                    }
+                }
+            }
+        }
         new java.util.zip.ZipFile(artifact).withCloseable { zip ->
             zip.entries().each { entry ->
-                entries++
-                def path = entry.name.toLowerCase(java.util.Locale.ROOT)
-                if (path.endsWith('.class') && path.contains(' ')) failures.add('invalid duplicate class filename: ' + entry.name)
-                if (path.startsWith('net/neoforged/') || path.startsWith('net/minecraft/')
-                        || path.startsWith('com/mojang/') || path.startsWith('com/seibel/') || path.startsWith('com/distanthorizons/')
-                        || path.startsWith('net/irisshaders/') || path.startsWith('net/caffeinemc/')
-                        || path.startsWith('assets/distanthorizons/') || path.startsWith('distanthorizons/')
-                        || path.startsWith('assets/iris/') || path.startsWith('assets/sodium/')
-                        || path.startsWith('photon/') || path.startsWith('shaders/') || path.startsWith('shaderpacks/')
-                        || path.startsWith('runtime-inputs/') || path.endsWith('.jar') || path.endsWith('.zip')
-                        || path.endsWith('.java') && (path.contains('/seibel/') || path.contains('distanthorizons')
-                        || path.contains('/irisshaders/') || path.contains('/caffeinemc/') || path.contains('/photon/')))
-                    failures.add(entry.name)
-                if (!entry.directory && entry.size > 0) zip.getInputStream(entry).withCloseable { input ->
-                    def payload = input.readAllBytes()
-                    def digest = java.security.MessageDigest.getInstance('SHA-256').digest(payload).encodeHex().toString()
-                    if (upstreamPayloads.containsKey(digest)) failures.add('copied upstream payload: ' + entry.name + ' matches ' + upstreamPayloads[digest])
-                }
+                byte[] payload = entry.directory ? new byte[0] : zip.getInputStream(entry).withCloseable { it.readAllBytes() }
+                inspect(entry.name, entry.directory, payload)
             }
         }
         sourceSets.main.allJava.files.each { source ->
