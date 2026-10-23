@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.play;
 
+import io.earthplatform.minecraft.cubic.earth.EarthWorld;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.ArgumentBuilder;
@@ -9,10 +10,10 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.minecraft.EarthPlatformMod;
-import io.earthplatform.minecraft.cubic.Cubic;
-import io.earthplatform.minecraft.cubic.CubicEvents;
-import io.earthplatform.minecraft.cubic.CubicLevel;
-import io.earthplatform.minecraft.cubic.ServerCubeWorld;
+import io.github.pirut.chunks3.Cubic;
+import io.github.pirut.chunks3.CubicEvents;
+import io.github.pirut.chunks3.CubicLevel;
+import io.github.pirut.chunks3.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import java.util.Collection;
 import java.util.List;
@@ -185,7 +186,7 @@ final class EarthCommands {
     }
 
     @Nullable static EarthGenerator earth(CommandSourceStack source) {
-        ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
+        ServerLevel level = source.getServer().getLevel(EarthWorld.LEVEL);
         return level != null && CubicLevel.of(level) instanceof ServerCubeWorld cubes && cubes.generator() instanceof EarthGenerator earth ? earth : null;
     }
 
@@ -199,7 +200,7 @@ final class EarthCommands {
     }
 
     private static int travel(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot) {
-        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), spot.viewLatitude(), spot.viewLongitude());
+        return EarthTravel.travel(source, player, spot.latitude(), spot.longitude(), spot.viewLatitude(), spot.viewLongitude());
     }
 
     /**
@@ -207,7 +208,7 @@ final class EarthCommands {
      * famous place's does, rather than landing on the nearest dry block or the water.
      */
     static int wander(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot) {
-        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), spot.latitude(), spot.longitude());
+        return EarthTravel.travel(source, player, spot.latitude(), spot.longitude(), spot.latitude(), spot.longitude());
     }
 
     // The server spawn ---------------------------------------------------------------------------

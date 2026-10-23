@@ -17,9 +17,9 @@ import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
-import io.earthplatform.minecraft.cubic.gen.Strata;
-import io.earthplatform.minecraft.cubic.gen.Towers;
-import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
+import io.github.pirut.chunks3.gen.Strata;
+import io.github.pirut.chunks3.gen.Towers;
+import io.github.pirut.chunks3.gen.SurfaceGenerator;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -263,6 +263,19 @@ public final class EarthGenerator extends SurfaceGenerator {
         GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
         return String.format(Locale.ROOT, "%.5f, %.5f", point.latitude(), point.longitude());
     }
+
+    @Override public String describe(net.minecraft.core.BlockPos feet) {
+        return "Earth " + place(feet.getX(), feet.getZ()) + ": ground " + (surfaceY(feet.getX(), feet.getZ()) - SEA) + " m, standing at Y "
+                + feet.getY() + " (" + (feet.getY() - SEA - 1) + " m).";
+    }
+
+    /** Terrain a data server has not given yet. */
+    @Override public boolean missingData(Throwable failure) { return failure instanceof io.earthplatform.geography.MissingTerrainException; }
+
+    /** Nothing on the Earth reaches the jet stream's clear sky. */
+    @Override public int highestGenerated() { return io.earthplatform.minecraft.cubic.jet.JetStream.CLEAR_SKY - 1; }
+
+    @Override public double mercatorMetresPerBlock() { return grid.metresPerBlock(); }
 
     @Override public String credits() {
         return "Elevation: AWS Terrain Tiles (USGS 3DEP, SRTM, GMTED2010, ETOPO1 and others)"

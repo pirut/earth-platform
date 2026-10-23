@@ -1,6 +1,6 @@
 package io.earthplatform.minecraft.cubic.jet;
 
-import io.earthplatform.minecraft.cubic.CubicLevel;
+import io.github.pirut.chunks3.CubicLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.Vec3;

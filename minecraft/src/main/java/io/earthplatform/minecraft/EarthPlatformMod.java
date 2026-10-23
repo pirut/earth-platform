@@ -15,6 +15,7 @@ public final class EarthPlatformMod {
     public static final Logger LOGGER = LogUtils.getLogger();
 
     public EarthPlatformMod() {
+        io.earthplatform.minecraft.cubic.earth.EarthWorld.register();
         LOGGER.info("Earth Platform loaded");
     }
 }

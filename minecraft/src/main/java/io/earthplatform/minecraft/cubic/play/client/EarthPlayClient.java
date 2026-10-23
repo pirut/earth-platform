@@ -7,7 +7,7 @@ import io.earthplatform.minecraft.cubic.play.EarthWorlds;
 import java.lang.ref.WeakReference;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
-import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
+import io.github.pirut.chunks3.client.ClientCubeWorld;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
@@ -46,7 +46,7 @@ public final class EarthPlayClient {
         @SubscribeEvent public static void setup(FMLClientSetupEvent event) {
             ModList.get().getModContainerById(EarthPlatformMod.MOD_ID).orElseThrow()
                     .registerExtensionPoint(IConfigScreenFactory.class, (IConfigScreenFactory) ConfigurationScreen::new);
-            event.enqueueWork(io.earthplatform.minecraft.cubic.client.Flawless::offer);
+            event.enqueueWork(io.github.pirut.chunks3.client.Flawless::offer);
         }
 
         @SubscribeEvent public static void presetEditors(RegisterPresetEditorsEvent event) {

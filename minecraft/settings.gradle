@@ -7,3 +7,6 @@ pluginManagement {
 plugins {
     id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
 }
+
+// The cubic engine, Chunks3, from the chunks3 submodule (git submodule update --init).
+includeBuild('../chunks3')

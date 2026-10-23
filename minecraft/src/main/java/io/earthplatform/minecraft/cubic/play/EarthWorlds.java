@@ -1,13 +1,14 @@
 package io.earthplatform.minecraft.cubic.play;
 
+import io.earthplatform.minecraft.cubic.earth.EarthWorld;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import io.earthplatform.minecraft.EarthPlatformMod;
-import io.earthplatform.minecraft.cubic.Cubic;
-import io.earthplatform.minecraft.cubic.CubicEvents;
-import io.earthplatform.minecraft.cubic.CubicLevel;
-import io.earthplatform.minecraft.cubic.CubicSettings;
-import io.earthplatform.minecraft.cubic.ServerCubeWorld;
+import io.github.pirut.chunks3.Cubic;
+import io.github.pirut.chunks3.CubicEvents;
+import io.github.pirut.chunks3.CubicLevel;
+import io.earthplatform.minecraft.cubic.earth.CubicSettings;
+import io.github.pirut.chunks3.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import java.nio.file.Path;
@@ -108,7 +109,7 @@ public final class EarthWorlds {
     }
 
     private static Path cubicFolder(MinecraftServer server) {
-        return DimensionType.getStorageFolder(Cubic.LEVEL, server.getWorldPath(LevelResource.ROOT));
+        return DimensionType.getStorageFolder(EarthWorld.LEVEL, server.getWorldPath(LevelResource.ROOT));
     }
 
     /** A new Earth world gets its home pinned before its levels load, and loads no overworld spawn area. */
@@ -185,7 +186,7 @@ public final class EarthWorlds {
         }
 
         @Nullable ServerCubeWorld cubes() {
-            ServerLevel level = server.getLevel(Cubic.LEVEL);
+            ServerLevel level = server.getLevel(EarthWorld.LEVEL);
             return level != null && CubicLevel.of(level) instanceof ServerCubeWorld cubes ? cubes : null;
         }
 
@@ -276,7 +277,7 @@ public final class EarthWorlds {
                     if (now >= sent.getOrDefault(id, 0L)) {
                         sent.put(id, now + 30_000);
                         EarthSpawns.Spot spot = own.get();
-                        CubicEvents.travel(server.createCommandSourceStack().withSuppressedOutput(), player,
+                        EarthTravel.travel(server.createCommandSourceStack().withSuppressedOutput(), player,
                                 spot.latitude(), spot.longitude(), spot.viewLatitude(), spot.viewLongitude());
                     }
                     status.send(player, status.payload(EarthStatus.PREPARING, EarthStatus.OK, (int) ((now - firstWait) / 1000), own.get().label()), now);
@@ -371,7 +372,7 @@ public final class EarthWorlds {
             int[] view = view(cubes);
             int[] found = landing;
             Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found) : CubicEvents.arrival(cubes, view);
-            ServerLevel level = server.getLevel(Cubic.LEVEL);
+            ServerLevel level = server.getLevel(EarthWorld.LEVEL);
             player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
             player.resetFallDistance();
             status.send(player, status.payload(EarthStatus.PLAYING, EarthStatus.OK, 0, ""), Util.getMillis());
@@ -420,11 +421,11 @@ public final class EarthWorlds {
                         .then(Commands.argument("longitude", DoubleArgumentType.doubleArg(-180, 180)).executes(context -> {
                                     double latitude = DoubleArgumentType.getDouble(context, "latitude"), longitude = DoubleArgumentType.getDouble(context, "longitude");
                                     if (!EarthRules.pay(context.getSource(), context.getSource().getPlayerOrException(), latitude, longitude)) return 0;
-                                    return CubicEvents.travel(context.getSource(), latitude, longitude);
+                                    return EarthTravel.travel(context.getSource(), latitude, longitude);
                                 })
                                 // Operators and the console can send someone else.
                                 .then(Commands.argument("player", EntityArgument.player()).requires(source -> source.hasPermission(2))
-                                        .executes(context -> CubicEvents.travel(context.getSource(), EntityArgument.getPlayer(context, "player"),
+                                        .executes(context -> EarthTravel.travel(context.getSource(), EntityArgument.getPlayer(context, "player"),
                                                 DoubleArgumentType.getDouble(context, "latitude"), DoubleArgumentType.getDouble(context, "longitude")))))));
         // The creative travel map: the client opens it with a key, through this command.
         root.then(Commands.literal("map").requires(EarthWorlds::mayTravel).executes(context -> EarthMap.open(context.getSource())));
@@ -455,13 +456,13 @@ public final class EarthWorlds {
         }
         if (!EarthRules.pay(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude())) return 0;
         source.sendSuccess(() -> Component.literal("Traveling to " + place.get().label() + ".").withStyle(ChatFormatting.GREEN), false);
-        return CubicEvents.travel(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude(),
+        return EarthTravel.travel(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude(),
                 place.get().viewLatitude(), place.get().viewLongitude());
     }
 
     /** Sends a player to the server spawn (the world's start unless operators moved it); replies go to {@code source}. */
     static int toSpawn(CommandSourceStack source, ServerPlayer player) {
-        ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
+        ServerLevel level = source.getServer().getLevel(EarthWorld.LEVEL);
         if (level == null || !(CubicLevel.of(level) instanceof ServerCubeWorld cubes)) {
             source.sendFailure(Component.literal("This world has no Earth."));
             return 0;
@@ -471,7 +472,7 @@ public final class EarthWorlds {
         Optional<EarthSpawns.Spot> spawn = Session.spawn(cubes);
         // A moved spawn whose landing is still being found: travel there like any trip.
         if (found == null && spawn.isPresent())
-            return CubicEvents.travel(source, player, spawn.get().latitude(), spawn.get().longitude(), spawn.get().viewLatitude(), spawn.get().viewLongitude());
+            return EarthTravel.travel(source, player, spawn.get().latitude(), spawn.get().longitude(), spawn.get().viewLatitude(), spawn.get().viewLongitude());
         int[] view = Session.view(cubes);
         Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found) : CubicEvents.arrival(cubes, view);
         player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);

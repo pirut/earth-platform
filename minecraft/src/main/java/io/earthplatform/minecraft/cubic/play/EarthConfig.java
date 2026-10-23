@@ -2,7 +2,7 @@ package io.earthplatform.minecraft.cubic.play;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
-import io.earthplatform.minecraft.cubic.far.Far;
+import io.github.pirut.chunks3.far.Far;
 import net.minecraft.network.chat.Component;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModList;

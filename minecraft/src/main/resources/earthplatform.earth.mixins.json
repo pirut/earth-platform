@@ -1,0 +1,27 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "io.earthplatform.minecraft.cubic.earth.mixin",
+  "plugin": "io.earthplatform.minecraft.cubic.earth.EarthMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "CubicJetFlightMixin",
+    "CubicJetElytraMixin",
+    "CubicJetMoveCheckMixin",
+    "CubicJetChunkLoadMixin",
+    "CubicJetTicketMixin",
+    "CubicJetRocketMixin"
+  ],
+  "client": [
+    "CubicJetWeatherMixin",
+    "EarthCreateWorldMixin",
+    "EarthCloudsMixin",
+    "EarthHorizonMixin",
+    "EarthFogColourMixin",
+    "EarthFlightCameraMixin",
+    "EarthWaterTintMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

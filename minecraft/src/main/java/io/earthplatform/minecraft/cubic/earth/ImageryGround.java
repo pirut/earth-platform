@@ -4,7 +4,7 @@ import io.earthplatform.geography.globe.GroundPalette;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.WorldCoverSource;
-import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Surface;
+import io.github.pirut.chunks3.gen.SurfaceGenerator.Surface;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.Blocks;

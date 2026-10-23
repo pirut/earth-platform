@@ -1,14 +1,15 @@
 package io.earthplatform.minecraft.cubic.play;
 
+import io.earthplatform.minecraft.cubic.earth.EarthWorld;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.globe.Downloads;
 import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.minecraft.EarthPlatformMod;
-import io.earthplatform.minecraft.cubic.Cubic;
-import io.earthplatform.minecraft.cubic.CubicLevel;
-import io.earthplatform.minecraft.cubic.ServerCubeWorld;
+import io.github.pirut.chunks3.Cubic;
+import io.github.pirut.chunks3.CubicLevel;
+import io.github.pirut.chunks3.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import java.io.IOException;
 import java.io.InputStream;
@@ -138,11 +139,11 @@ public final class EarthAdmin {
     private static int status(CommandSourceStack source) {
         MinecraftServer server = source.getServer();
         double mspt = server.getAverageTickTimeNanos() / 1e6;
-        long[] cubicTimes = server.getTickTime(Cubic.LEVEL);
+        long[] cubicTimes = server.getTickTime(EarthWorld.LEVEL);
         double cubicMspt = cubicTimes == null || cubicTimes.length == 0 ? 0 : java.util.Arrays.stream(cubicTimes).average().orElse(0) / 1e6;
         double tps = Math.min(20, 1000 / Math.max(1e-3, mspt));
         line(source, String.format(Locale.ROOT, "TPS %.1f, %.1f ms a tick (Earth %.1f ms)", tps, mspt, cubicMspt), mspt > 50 ? ChatFormatting.RED : ChatFormatting.GREEN);
-        ServerLevel level = server.getLevel(Cubic.LEVEL);
+        ServerLevel level = server.getLevel(EarthWorld.LEVEL);
         if (level != null && CubicLevel.of(level) instanceof ServerCubeWorld cubes) line(source, "Earth: " + cubes.describe(), ChatFormatting.GRAY);
         Runtime runtime = Runtime.getRuntime();
         line(source, String.format(Locale.ROOT, "Memory: %d of %d MB used", (runtime.totalMemory() - runtime.freeMemory()) >> 20, runtime.maxMemory() >> 20), ChatFormatting.GRAY);

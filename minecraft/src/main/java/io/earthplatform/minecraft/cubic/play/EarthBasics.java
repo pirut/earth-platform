@@ -1,13 +1,13 @@
 package io.earthplatform.minecraft.cubic.play;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
-import io.earthplatform.minecraft.cubic.Cubic;
+import io.github.pirut.chunks3.Cubic;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import io.earthplatform.minecraft.cubic.CubicLevel;
-import io.earthplatform.minecraft.cubic.ServerCubeWorld;
-import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
+import io.github.pirut.chunks3.CubicLevel;
+import io.github.pirut.chunks3.ServerCubeWorld;
+import io.github.pirut.chunks3.gen.SurfaceGenerator;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;

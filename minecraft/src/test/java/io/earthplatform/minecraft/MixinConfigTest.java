@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Mixin reserves each config's package, so no config may claim one that holds ordinary classes. */
 class MixinConfigTest {
-    private static final Set<String> CONFIGS = Set.of("earthplatform.cubic.mixins.json");
+    private static final Set<String> CONFIGS = Set.of("earthplatform.earth.mixins.json");
 
     @Test void metadataRegistersEachConfigOnce() throws Exception {
         String project = System.getProperty("earthplatform.test.projectDirectory");
@@ -27,7 +27,7 @@ class MixinConfigTest {
     }
 
     @Test void noConfigReservesApplicationPackages() throws Exception {
-        var applicationClasses = List.of("io.earthplatform.minecraft.cubic.compat.CubicCompat", "io.earthplatform.minecraft.EarthPlatformMod");
+        var applicationClasses = List.of("io.github.pirut.chunks3.compat.CubicCompat", "io.earthplatform.minecraft.EarthPlatformMod");
         for (String name : CONFIGS) {
             try (var input = getClass().getClassLoader().getResourceAsStream(name)) {
                 assertNotNull(input, name);

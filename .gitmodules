@@ -1,0 +1,3 @@
+[submodule "chunks3"]
+	path = chunks3
+	url = https://github.com/pirut/chunks3
