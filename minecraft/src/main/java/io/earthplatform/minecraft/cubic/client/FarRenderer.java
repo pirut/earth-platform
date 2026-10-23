@@ -105,7 +105,7 @@ public final class FarRenderer {
     /** Far mesher threads: two, or a quarter of the cores on bigger machines, so meshing keeps up with the server's workers. */
     private static final int MESH_THREADS = Math.clamp(Runtime.getRuntime().availableProcessors() / 4, 2, 4);
     private static final ExecutorService MESHER = Executors.newFixedThreadPool(MESH_THREADS,
-            NamedThreads.numbered("Earth far mesher", Thread.NORM_PRIORITY - 1));
+            NamedThreads.numbered("Far mesher", Thread.NORM_PRIORITY - 1));
 
     /** An Earth world's metres per block at the equator, or 0 until the server says. */
     private volatile double metresPerBlock;

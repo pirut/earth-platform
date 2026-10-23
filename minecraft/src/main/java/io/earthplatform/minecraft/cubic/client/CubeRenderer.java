@@ -50,7 +50,7 @@ import org.joml.Matrix4f;
 public final class CubeRenderer {
     private static final int THREAD_COUNT = Math.max(1, Math.min(3, Runtime.getRuntime().availableProcessors() / 2));
     private static final ExecutorService POOL = Executors.newFixedThreadPool(THREAD_COUNT,
-            NamedThreads.numbered("Earth cube mesher", Thread.NORM_PRIORITY - 1));
+            NamedThreads.numbered("Cube mesher", Thread.NORM_PRIORITY - 1));
     private static final int MIN_IN_FLIGHT = 48, MAX_IN_FLIGHT = 512, MIN_UPLOADS_PER_FRAME = 48, NEIGHBOUR_WAIT_TICKS = 20;
     /** About how long one mesh takes a worker, to keep the workers busy for a whole frame. */
     private static final long MESH_NANOS = 5_000_000L;

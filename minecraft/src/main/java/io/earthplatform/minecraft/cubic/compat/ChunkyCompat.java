@@ -27,7 +27,7 @@ public final class ChunkyCompat {
     /** Squares, in blocks, that the far terrain's data is fetched for once each. */
     static final int CELL = 2048;
     private static final ExecutorService WORKERS = Executors.newFixedThreadPool(Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 2)),
-            NamedThreads.numbered("Earth Chunky worker", Thread.MIN_PRIORITY));
+            NamedThreads.numbered("Cubic Chunky worker", Thread.MIN_PRIORITY));
     private static final Set<Long> CELLS = ConcurrentHashMap.newKeySet();
     private static final AtomicInteger FAILURES = new AtomicInteger();
     private static final AtomicLong LAST_WARNING = new AtomicLong();
@@ -65,7 +65,7 @@ public final class ChunkyCompat {
             int failures = FAILURES.incrementAndGet();
             long now = System.currentTimeMillis(), last = LAST_WARNING.get();
             if (now - last > 30_000 && LAST_WARNING.compareAndSet(last, now)) {
-                Cubic.LOGGER.warn("Chunky: could not generate Earth chunk {}, {} ({} chunks so far); those places generate when visited",
+                Cubic.LOGGER.warn("Chunky: could not generate cubic chunk {}, {} ({} chunks so far); those places generate when visited",
                         chunkX, chunkZ, failures, failure);
             }
         }

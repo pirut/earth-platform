@@ -33,11 +33,11 @@ final class DhCompat {
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             unsupported = true;
-            Cubic.LOGGER.warn("This Distant Horizons version can't be paused through its API, so it keeps drawing in the Earth world", failure);
+            Cubic.LOGGER.warn("This Distant Horizons version can't be paused through its API, so it keeps drawing in cubic worlds", failure);
             return true;
         }
         paused = inCubicWorld;
-        Cubic.LOGGER.info("Distant Horizons {} for the Earth world", inCubicWorld ? "paused" : "resumed");
+        Cubic.LOGGER.info("Distant Horizons {} for a cubic world", inCubicWorld ? "paused" : "resumed");
         return true;
     }
 

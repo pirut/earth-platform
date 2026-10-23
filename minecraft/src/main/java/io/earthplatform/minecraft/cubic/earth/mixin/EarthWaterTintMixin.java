@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.cubic.mixin;
+package io.earthplatform.minecraft.cubic.earth.mixin;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
@@ -16,13 +16,13 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
 /**
- * Deep and cold sea in the cubic world is the dark navy it is from above, not vanilla's bright
+ * Deep and cold sea in the Earth is the dark navy it is from above, not vanilla's bright
  * blue: open ocean, fjords and shelf seas read close to black navy from orbit. Warm shallows and
  * reefs, frozen seas, lakes and rivers keep vanilla's colours (glacial lakes are milky turquoise), and so does every other world. Near cubes and
  * far terrain both take water's tint from here.
  */
 @Mixin(BiomeColors.class)
-abstract class CubicWaterTintMixin {
+abstract class EarthWaterTintMixin {
     private static final Map<ResourceKey<Biome>, Integer> DARK = Map.of(
             // Halfway from the first tints toward the near-black navy satellites measure (#182B4C open sea, #1A2D37 fjord):
             // darker still reads as ink from a player's eye height.

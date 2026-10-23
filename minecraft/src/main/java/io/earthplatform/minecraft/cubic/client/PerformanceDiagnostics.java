@@ -46,9 +46,9 @@ public final class PerformanceDiagnostics {
             record.addProperty("gpu_sample_every_frames",FarGpuTimers.sampleEvery());record.addProperty("frame_quantile_precision_ms",1);
             record.addProperty("frame_quantile_cap_ms",2000);record.addProperty("local_only",true);
             record.addProperty("log_max_files",3);record.addProperty("log_max_file_bytes",4<<20);
-            log=new LocalPerfLog(mc.gameDirectory.toPath().resolve("earthplatform/perf"),record.toString());
-            Runtime.getRuntime().addShutdownHook(new Thread(log::close,"Earth performance log close"));
-            Cubic.LOGGER.info("Local performance logs: earthplatform/perf/latest.jsonl (local only)");
+            log=new LocalPerfLog(mc.gameDirectory.toPath().resolve(Cubic.MOD_ID).resolve("perf"),record.toString());
+            Runtime.getRuntime().addShutdownHook(new Thread(log::close,"Performance log close"));
+            Cubic.LOGGER.info("Local performance logs: {}/perf/latest.jsonl (local only)", Cubic.MOD_ID);
         }
         JsonObject base(String type) {JsonObject record=new JsonObject();record.addProperty("type",type);record.addProperty("utc",Instant.now().toString());return record;}
         void emit(Minecraft mc) {

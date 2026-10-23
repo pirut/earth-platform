@@ -265,7 +265,7 @@ final class Trees {
             Additions here = additions(biome);
             most = Math.max(most, here.perChunk * (here.scaled ? 1.5f : 1));
         }
-        if (most > 0) Cubic.LOGGER.info("Earth trees: other mods add trees to {} biomes", additions.values().stream().filter(a -> a.trees.length > 0).count());
+        if (most > 0) Cubic.LOGGER.info("Cubic trees: other mods add trees to {} biomes", additions.values().stream().filter(a -> a.trees.length > 0).count());
         return mostAdded = Math.min(most, 64);
     }
 

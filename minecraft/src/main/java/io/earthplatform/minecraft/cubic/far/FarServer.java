@@ -58,7 +58,7 @@ public final class FarServer {
     private final FarBuilds builds;
     /** Summarizes saved builds off the server thread, in the order they were saved. */
     private final java.util.concurrent.ExecutorService summarizer = java.util.concurrent.Executors.newSingleThreadExecutor(
-            NamedThreads.daemon("Earth far builds", Thread.MIN_PRIORITY));
+            NamedThreads.daemon("Far builds", Thread.MIN_PRIORITY));
     /** Coarse far columns made with a build showing, for diagnostics. */
     private final java.util.concurrent.atomic.AtomicIntegerArray builtColumns = new java.util.concurrent.atomic.AtomicIntegerArray(Far.MAX_LEVEL - Far.EDIT_LEVELS);
     /** Cube columns whose builds changed, so their coarse far columns are remade. */
@@ -79,7 +79,7 @@ public final class FarServer {
      */
     static final int MOST_WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.mostThreads",
             Math.min(4 * WORKERS, Runtime.getRuntime().availableProcessors() - 2)), WORKERS, 16);
-    private final FarWorkers workers = new FarWorkers("Earth far terrain", WORKERS, MOST_WORKERS);
+    private final FarWorkers workers = new FarWorkers("Far terrain", WORKERS, MOST_WORKERS);
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> cache = new ConcurrentHashMap<>();
     /** What columns looked like, so an edited one remade the same is not sent again. */
     private final FarPrints prints = new FarPrints();
@@ -114,7 +114,7 @@ public final class FarServer {
         this.biomeIds = biomes.asHolderIdMap();
         this.builds = new FarBuilds(storage.directory().resolveSibling("builds"));
         if (!builds.scanned()) {
-            Thread scan = new Thread(this::scanOldSaves, "Earth far builds scan");
+            Thread scan = new Thread(this::scanOldSaves, "Far builds scan");
             scan.setDaemon(true);
             scan.setPriority(Thread.MIN_PRIORITY);
             scan.start();

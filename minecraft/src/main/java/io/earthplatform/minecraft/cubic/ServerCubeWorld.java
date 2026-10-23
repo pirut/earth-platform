@@ -151,7 +151,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 level.getServer().getWorldPath(LevelResource.ROOT)).resolve("cubes"));
         this.far = new FarServer(generator, storage, codec, level.registryAccess().registryOrThrow(Registries.BIOME));
         int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 2));
-        this.workers = Executors.newFixedThreadPool(threads, NamedThreads.numbered("Earth cube worker", THREADS, Thread.NORM_PRIORITY - 1));
+        this.workers = Executors.newFixedThreadPool(threads, NamedThreads.numbered("Cube worker", THREADS, Thread.NORM_PRIORITY - 1));
     }
 
     public CubeGenerator generator() { return generator; }

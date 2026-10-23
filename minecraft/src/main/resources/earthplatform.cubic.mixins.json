@@ -101,7 +101,6 @@
     "CubicIrisSourceNamesMixin",
     "CubicIrisProgramSetMixin",
     "CubicRainRenderMixin",
-    "CubicWaterTintMixin",
     "CubicIrisPhotonCompatMixin",
     "CubicIrisCloudsMixin",
     "CubicIrisVoxyMixin",

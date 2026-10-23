@@ -27,7 +27,7 @@ public final class LocalPerfLog implements AutoCloseable {
         this.directory=directory;this.maxBytes=maxBytes;this.files=files;
         this.header=header;headerBytes=header==null?0:header.getBytes(StandardCharsets.UTF_8).length+1;
         if(headerBytes>Math.min(16384,maxBytes/4))throw new IllegalArgumentException("Log header exceeds bound");
-        worker=new Thread(this::writeLoop,"Earth performance log");worker.setDaemon(true);worker.start();
+        worker=new Thread(this::writeLoop,"Performance log");worker.setDaemon(true);worker.start();
     }
     public boolean offer(String json) {
         if(closed||failed||json.length()>Math.min(16384,maxBytes/4)||!queue.offer(json)){dropped.incrementAndGet();return false;}

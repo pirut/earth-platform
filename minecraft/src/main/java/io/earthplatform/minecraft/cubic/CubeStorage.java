@@ -37,7 +37,7 @@ public final class CubeStorage {
     private final Set<Long> known = ConcurrentHashMap.newKeySet();
     private volatile boolean listed;
     /** Compressing and writing a region takes tens of milliseconds, so it happens here, not on the server thread. */
-    private final ExecutorService writer = Executors.newSingleThreadExecutor(NamedThreads.daemon("Earth cube writer"));
+    private final ExecutorService writer = Executors.newSingleThreadExecutor(NamedThreads.daemon("Cube writer"));
     private final AtomicBoolean writing = new AtomicBoolean();
 
     public CubeStorage(Path directory) { this.directory = directory; }

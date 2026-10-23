@@ -9,7 +9,7 @@ public final class BuildInfo {
     private BuildInfo() {}
     private static Properties load() {
         Properties result = new Properties();
-        try (InputStream in = BuildInfo.class.getResourceAsStream("/META-INF/earthplatform-build.properties")) {
+        try (InputStream in = BuildInfo.class.getResourceAsStream("/META-INF/" + io.earthplatform.minecraft.cubic.Cubic.MOD_ID + "-build.properties")) {
             if (in != null) result.load(in);
         } catch (java.io.IOException ignored) { result.clear(); }
         return result;

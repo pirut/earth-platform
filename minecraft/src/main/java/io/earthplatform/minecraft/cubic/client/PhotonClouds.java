@@ -80,7 +80,7 @@ final class PhotonClouds {
         try {
             Iris.reload();
         } catch (Exception failure) {
-            Cubic.LOGGER.warn("Could not reload the shader pack for the Earth's clouds", failure);
+            Cubic.LOGGER.warn("Could not reload the shader pack for this world's clouds", failure);
         }
     }
 }

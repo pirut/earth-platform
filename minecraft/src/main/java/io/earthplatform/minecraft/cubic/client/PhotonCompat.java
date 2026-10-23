@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import io.earthplatform.minecraft.cubic.Cubic;
 import com.mojang.logging.LogUtils;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -47,7 +48,7 @@ public final class PhotonCompat {
         try {
             if (!isPhoton(root) || !needed(root)) return root;
             Path copy = Minecraft.getInstance().gameDirectory.toPath()
-                    .resolve("earthplatform").resolve("photon-compat").resolve(fingerprint(root)).resolve("shaders");
+                    .resolve(Cubic.MOD_ID).resolve("photon-compat").resolve(fingerprint(root)).resolve("shaders");
             if (!Files.isRegularFile(copy.resolve(DONE))) build(root, copy);
             LOGGER.info("Running Photon with the edits this OpenGL driver needs, from {}", copy);
             return copy;
@@ -101,7 +102,7 @@ public final class PhotonCompat {
         return most;
     }
 
-    private static final String DONE = ".earthplatform-compat";
+    private static final String DONE = "." + Cubic.MOD_ID + "-compat";
 
     /** Names the copy after the pack's contents and these edits, so a changed pack gets a fresh copy. */
     private static String fingerprint(Path root) throws IOException {
@@ -160,7 +161,7 @@ public final class PhotonCompat {
         Files.writeString(staging.resolve("program/earth_sky_sh.vsh"), SKY_SH_VERTEX);
         Files.writeString(staging.resolve("program/earth_sky_sh.fsh"),
                 skyShDeclarations(Files.readString(staging.resolve("program/d4a_generate_sky_sh.csh"))) + SKY_SH_MAIN);
-        Files.writeString(staging.resolve(DONE), "Photon adapted by Earth Platform for an OpenGL driver without compute shaders or with 16 texture units\n");
+        Files.writeString(staging.resolve(DONE), "Photon adapted by " + Cubic.MOD_ID + " for an OpenGL driver without compute shaders or with 16 texture units\n");
         deleteTree(copy);
         Files.createDirectories(copy.getParent());
         Files.move(staging, copy);

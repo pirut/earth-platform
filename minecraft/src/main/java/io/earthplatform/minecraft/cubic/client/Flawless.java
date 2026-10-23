@@ -38,7 +38,7 @@ public final class Flawless {
             try {
                 MethodHandles.publicLookup().findStatic(Class.forName(handler), "acceptController",
                         MethodType.methodType(void.class, Function.class)).invoke(provider);
-                Cubic.LOGGER.info("Earth terrain renders flawless frames for {}", mod.getModId());
+                Cubic.LOGGER.info("Cubic terrain renders flawless frames for {}", mod.getModId());
             } catch (Throwable e) {
                 Cubic.LOGGER.warn("Could not offer flawless frames to {} ({})", mod.getModId(), e.toString());
             }
