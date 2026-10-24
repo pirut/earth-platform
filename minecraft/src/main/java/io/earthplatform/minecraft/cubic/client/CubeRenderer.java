@@ -62,6 +62,12 @@ public final class CubeRenderer {
     private final Long2IntOpenHashMap dirtySince = new Long2IntOpenHashMap();
     private final Long2IntOpenHashMap versions = new Long2IntOpenHashMap();
     private final LongOpenHashSet building = new LongOpenHashSet();
+    /**
+     * Cubes being meshed when a shader pack came or went. Iris picks the vertex format when the
+     * mesher starts a buffer, so these come back in the old one: drawn with the new one, their
+     * vertices turned into huge dark slabs across the view. They are thrown away and meshed again.
+     */
+    private final LongOpenHashSet staleBuilds = new LongOpenHashSet();
     /** Cubes whose current contents have a mesh (or need none), so far terrain can leave them out. */
     private final LongOpenHashSet compiled = new LongOpenHashSet();
     private final OwnedResultQueue<CubeMesher.Built> built = new OwnedResultQueue<>(CubeMesher.Built::free);
@@ -137,6 +143,11 @@ public final class CubeRenderer {
     /** Rebuilds every mesh, as when a shader pack comes or goes and changes the vertex format and block ids. */
     void remeshAll() {
         for (long key : meshes.keySet()) markDirty(key);
+        for (long key : building) { markDirty(key); staleBuilds.add(key); }
+        // Retiring meshes are in the old format too, and nothing remeshes them.
+        for (Mesh mesh : retiring.values()) mesh.close();
+        retiring.clear();
+        retireBy.clear();
     }
 
     void cubeArrived(long key) { markAround(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), false); }
@@ -334,7 +345,8 @@ public final class CubeRenderer {
             CubeMesher.Built result = built.poll();
             if (result == null) return;
             building.remove(result.key());
-            if (closed || world.cube(result.key()) == null || result.version() < 0) { result.free(); continue; }
+            boolean stale = staleBuilds.remove(result.key());
+            if (stale || closed || world.cube(result.key()) == null || result.version() < 0) { result.free(); continue; }
             if (result.light() != null) light.put(result.key(), result.light());
             compiled.add(result.key());
             compiledVersion++;
