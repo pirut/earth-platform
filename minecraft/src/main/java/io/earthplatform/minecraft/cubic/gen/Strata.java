@@ -360,6 +360,12 @@ public final class Strata {
         return Math.sqrt(nx * nx + nz * nz) * cellMetres;
     }
 
+    /**
+     * How far from a block column, in blocks, its layers look for dry country: a zone's reach round
+     * each corner of the cell holding it.
+     */
+    public static double dryReach(double metresPerBlock) { return Math.ceil(REACH / (CELL * metresPerBlock)) * CELL + 2 * CELL; }
+
     /** The country around a datum cell corner. */
     Zone zone(long i, long j) {
         long key = it.unimi.dsi.fastutil.HashCommon.mix(i << 32 ^ (j & 0xFFFFFFFFL));

@@ -54,7 +54,7 @@ public final class CubicEvents {
         // The cubes' data first, which the first arrival waits on, then the far levels'.
         Util.ioPool().execute(() -> {
             generator.prepareNear(home[0], home[1]);
-            generator.prepare(home[0], home[1]);
+            generator.prepareFar(home[0], home[1]);
         });
     }
 
@@ -417,7 +417,7 @@ public final class CubicEvents {
                     (prepared - start) / 1_000_000, fetched, (landed - prepared) / 1_000_000, Downloads.since(before));
             Map<String, long[]> far = Downloads.totals();
             Util.ioPool().execute(() -> {
-                earth.prepare(centre[0], centre[1]);
+                earth.prepareFar(centre[0], centre[1]);
                 EarthPlatformMod.LOGGER.info("Travel to {}, {}: far data {} ms after landing ({})", latitude, longitude,
                         (System.nanoTime() - landed) / 1_000_000, Downloads.since(far));
             });

@@ -17,6 +17,7 @@ import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.cubic.gen.Strata;
 import io.earthplatform.minecraft.cubic.gen.Towers;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
@@ -3233,7 +3234,14 @@ public final class EarthGenerator extends SurfaceGenerator {
      * generator's own retries. Elevation tiles, climate and land cover all load at once rather
      * than one after another, as each spends most of its time waiting on the network.
      */
-    @Override public void prepare(int x, int z) { prepare(x, z, Double.MAX_VALUE); }
+    @Override public void prepare(int x, int z) { prepare(x, z, Double.MAX_VALUE, false); }
+
+    /**
+     * Fetches what {@link #prepare} does and the far levels' climate as far as they reach, for a
+     * player arriving: over a new place the far columns waited on it longer than on all their other
+     * data together, a row at a time.
+     */
+    @Override public void prepareFar(int x, int z) { prepare(x, z, Double.MAX_VALUE, true); }
 
     /** How far {@link #prepareNear} fetches: the cubes about a player and the far levels' first squares. */
     private static final double NEAR_REACH = 3500;
@@ -3244,9 +3252,9 @@ public final class EarthGenerator extends SurfaceGenerator {
      * Fetches only what the cubes about a point and the search for a landing there read, so a
      * traveller can arrive before the far levels' data is in; {@link #prepare} fetches the rest.
      */
-    @Override public void prepareNear(int x, int z) { prepare(x, z, NEAR_REACH); }
+    @Override public void prepareNear(int x, int z) { prepare(x, z, NEAR_REACH, false); }
 
-    private void prepare(int x, int z, double most) {
+    private void prepare(int x, int z, double most, boolean far) {
         record Tile(int zoom, int x, int y) {}
         List<Runnable> loads = new ArrayList<>();
         // Failures are told once for the whole fetch: with a data server down, each of hundreds of pieces fails.
@@ -3283,7 +3291,10 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         if (climate != null) {
             // All of it: the landing search reads climate this far, and piece by piece it comes in far smaller reads.
-            double reach = 24000;
+            // The far levels read it across their whole square, and their rock layers look for dry country a way past
+            // that: some 230 rows of each variable, which came in one request each as the columns needed them.
+            double reach = !far ? 24000
+                    : Math.max(24000, (Far.OUTER + 1) * (double) Far.width(Far.MAX_LEVEL) + Strata.dryReach(grid.groundMetresPerBlock(z)));
             GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
             loads.add(() -> {
                 try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }

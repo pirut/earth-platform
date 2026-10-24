@@ -74,4 +74,6 @@ public interface CubeGenerator {
     default void prepare(int x, int z) {}
     /** Loads only what the cubes about a point need, before {@link #prepare} loads the rest. Blocks; call off-thread. */
     default void prepareNear(int x, int z) { prepare(x, z); }
+    /** Loads what {@link #prepare} does and what the far levels read as far as they reach, for a player arriving. Blocks; call off-thread. */
+    default void prepareFar(int x, int z) { prepare(x, z); }
 }

@@ -129,7 +129,7 @@ public final class TerrariumTileSource implements AutoCloseable {
             shared = mine;
         }
         try {
-            return shared.get(timeout.toMillis() * 4, TimeUnit.MILLISECONDS);
+            return DataWaits.get(shared, timeout.toMillis() * 4, TimeUnit.MILLISECONDS);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new MissingTerrainException("Interrupted waiting for elevation tile " + zoom + "/" + x + "/" + y);
@@ -249,7 +249,7 @@ public final class TerrariumTileSource implements AutoCloseable {
             }
         }
         try {
-            return shared.get().clone();
+            return DataWaits.get(shared).clone();
         } catch (ExecutionException failed) {
             if (failed.getCause() instanceof IOException io) throw io;
             if (failed.getCause() instanceof RuntimeException runtime) throw runtime;
@@ -292,6 +292,12 @@ public final class TerrariumTileSource implements AutoCloseable {
     }
 
     private byte[] download(int zoom, int x, int y) throws IOException, InterruptedException {
+        DataWaits.before();
+        try { return transfer(zoom, x, y); }
+        finally { DataWaits.after(); }
+    }
+
+    private byte[] transfer(int zoom, int x, int y) throws IOException, InterruptedException {
         URI uri = base.resolve(zoom + "/" + x + "/" + y + ".png");
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(timeout).header("User-Agent", "earth-platform/terrarium-v1").GET().build();
         IOException last = null;

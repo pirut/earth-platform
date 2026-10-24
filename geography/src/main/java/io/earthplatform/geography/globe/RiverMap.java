@@ -271,7 +271,7 @@ public final class RiverMap {
                 }
                 shared = mine;
             }
-            traced = shared.join();
+            traced = DataWaits.join(shared);
         }
         recent.set(traced);
         return traced;
@@ -304,7 +304,7 @@ public final class RiverMap {
 
     private static float[] finished(java.util.concurrent.FutureTask<float[]> task) {
         try {
-            return task.get();
+            return DataWaits.get(task);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new MissingTerrainException("Interrupted while tracing streams");
