@@ -240,6 +240,28 @@ final class FarMesher {
         return tops;
     }
 
+    /**
+     * For each side (north, south, west, east) and place along it, the height of the top of
+     * whatever stands highest in the next column's facing edge, its water's surface or its ground,
+     * in 1/{@link #UNIT} blocks above this column's base, or {@link Integer#MIN_VALUE} where unknown.
+     */
+    static int[][] sideSurfaces(Job job) {
+        int[][] surfaces = new int[4][16];
+        int voxel = UNIT << job.level;
+        for (int side = 0; side < 4; side++) {
+            Side next = job.sides == null ? null : job.sides[side];
+            for (int along = 0; along < 16; along++) {
+                int x = side == 2 ? 15 : side == 3 ? 0 : along, z = side == 0 ? 15 : side == 1 ? 0 : along;
+                int row = next == null || next.sections == null && next.packet == null ? -1 : top(next, x, z, false);
+                if (row < 0) { surfaces[side][along] = Integer.MIN_VALUE; continue; }
+                BlockState state = next.packet == null ? at(next.sections, row, x, z) : packetAt(next.packet, row, x, z);
+                row += (next.bottom - job.bottom) * 16;
+                surfaces[side][along] = row * voxel + Math.round(voxel * Far.fill(state)) - next.drops[z * 16 + x];
+            }
+        }
+        return surfaces;
+    }
+
     /** The highest voxel row in a voxel column holding anything (or, when {@code solid}, anything but water); below the sections is ground. */
     static int top(@Nullable LevelChunkSection[] sections, int x, int z, boolean solid) {
         for (int si = sections.length - 1; si >= 0; si--) {
