@@ -310,7 +310,7 @@ public final class CopernicusFill implements ElevationLayer {
             shared = mine;
         }
         try {
-            return shared.get();
+            return DataWaits.get(shared);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new MissingTerrainException("Interrupted waiting for the elevation check of " + CopernicusSource.name(south, west));

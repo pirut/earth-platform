@@ -1,4 +1,4 @@
-Earth Platform build 64: no dark slabs after switching shaders, and a clean log when leaving a world.
+Earth Platform build 64: far terrain fills in about four times faster in new places, cleaner distant forests and marshes, and walls in the jet stream.
 
 Needs Minecraft 1.21.1 and NeoForge 21.1.256 or newer. For shaders, add Iris 1.8 and Sodium 0.8 and a Voxy-capable pack such as Photon v1.3b. Give the game about 6 GB of memory with shaders.
 
@@ -10,3 +10,4 @@ New since build 63:
 - Flying into a wall in the jet stream is now deadly, as hitting one at about 1,500 blocks a second should be: no armor or potion saves you, though a totem still can. Players in the jet stream could not be hurt at all before, and their hunger and potion timers stood still; both now work as anywhere else.
 - No more pale stone squares across forests for the first seconds after arriving, as in the Amazon, while the coarse far levels stand in. From 16-block voxels a forest's leaves lie on a stone voxel, and that hidden stone was taking over the grass of every clearing.
 - The known issue of dark far slabs in the Amazon for the first ~20 seconds is off the list. They matched a far mesh mix-up fixed in build 36, and fresh-world tests on this build with Photon show none.
+- First visits to places nobody has been fill in far terrain about four times faster. Far terrain waiting on a download now lets other far terrain be made in the meantime, and the climate data the far levels need comes in a few hundred larger reads instead of over a thousand small ones. On a four-core test machine, all the far terrain at Mount Shasta was done in 58 seconds instead of about 5 minutes (what you face in about 40 seconds instead of almost 3 minutes), and at the Matterhorn in 1 minute 44 instead of 7 minutes. The terrain is exactly the same, and places you have been before load as fast as they did.

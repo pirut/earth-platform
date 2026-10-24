@@ -38,7 +38,7 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.detail` | 11 | How far fine far terrain reaches, 4 to 48 (past 24 is the extreme range). Same as the `detail` setting | `Far.DETAIL` |
 | `earthplatform.far.textured` | from settings | Far levels drawn with block textures; coarser ones use flat colors. Same as the `texturedLevels` setting | `FarRenderer` |
 | `earthplatform.far.threads` | (cores - 4) / 2, 2 to 8 | Server workers that make far columns | `FarServer.WORKERS` |
-| `earthplatform.far.mostThreads` | up to 4x workers | Most far columns made at once while they wait on downloads | `FarServer.MOST_WORKERS` |
+| `earthplatform.far.mostThreads` | workers + 24, up to 64 | Most far columns made at once; only `far.threads` of them use the processor, the rest wait on downloads | `FarServer.MOST_WORKERS` |
 | `earthplatform.far.inFlight` | 192 | Far columns a client asks for before earlier ones arrive | `FarRenderer` |
 | `earthplatform.far.visibility` | edge of the far view | Haze distance in meters, as a real-world visibility | `FarRenderer` |
 | `earthplatform.far.fade` | on | `false` makes far levels meet at a seam instead of fading into each other | `FarRenderer` |

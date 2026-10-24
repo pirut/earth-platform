@@ -290,7 +290,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
             shared = mine;
         }
         try {
-            return shared.get();
+            return DataWaits.get(shared);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new MissingTerrainException("Interrupted working out the ground of tile " + ZOOM + "/" + x + "/" + y);
