@@ -82,8 +82,9 @@ class DataWaitsTest {
                 catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                 finally { DataWaits.after(); }
             });
-            workers.execute(second::countDown);
+            // The second goes in once the first is at work: on another pool thread it could otherwise take the place first.
             assertTrue(first.await(5, TimeUnit.SECONDS));
+            workers.execute(second::countDown);
             assertFalse(second.await(200, TimeUnit.MILLISECONDS), "near cubes come first: no second column starts");
             workers.hold(false);
             assertTrue(second.await(5, TimeUnit.SECONDS), "once they are made, a column waiting on data makes room for another");
