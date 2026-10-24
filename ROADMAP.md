@@ -38,7 +38,6 @@ Nothing here is promised. These are the known gaps, roughly in the order we expe
 - Fix the known issues in the [changelog](CHANGELOG.md#known-issues), most of all slow first loads in places nobody has visited.
 - Move from alpha to beta once a few releases go out with no serious bug reports.
 - Deeper lake beds (a patch exists and is parked until the freeze ends).
-- Faint seams where two far terrain levels meet on water.
 
 ## What we decided not to do
 

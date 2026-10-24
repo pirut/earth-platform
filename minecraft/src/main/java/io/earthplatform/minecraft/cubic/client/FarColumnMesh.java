@@ -22,6 +22,7 @@ import static io.earthplatform.minecraft.cubic.client.FarMesher.quad;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.seeThrough;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.shade;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.side;
+import static io.earthplatform.minecraft.cubic.client.FarMesher.sideSurfaces;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.sideTops;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.smooth;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.stack;
@@ -66,6 +67,8 @@ final class FarColumnMesh {
     @Nullable final FarCoverage coverage;
     final int[] tops;
     final int[][] sideTops;
+    /** The height of what stands highest along each side of the next columns (see {@link FarMesher#sideSurfaces}). */
+    final int[][] sideSurfaces;
     final float[] surface;
     /** Each voxel column's ground slope as a {@link FarMesher#normalCode}. */
     final int[] normals;
@@ -94,6 +97,7 @@ final class FarColumnMesh {
                 job.height(), job.drops(), job.drawn()) : null;
         tops = tops(job);
         sideTops = sideTops(job);
+        sideSurfaces = sideSurfaces(job);
         surface = surface(job, v);
         for (int cell = 0; cell < 256; cell++) groundRows[cell] = groundRow(job, cell & 15, cell >> 4);
         normals = normals(job, voxel);
@@ -202,8 +206,18 @@ final class FarColumnMesh {
                         // Where a coarser or finer level's water meets this, at a slightly different
                         // height, a wall of water closes the slit that showed the dark bed below.
                         if (vy < tops[cell] - WALL_DEPTH) continue;
+                        // It reaches only as far below what stands beside as the two differ, as the
+                        // other level's surface there lies near both: a level lake gets no wall at
+                        // all. Far off the depth buffer can't hide one under the other level's
+                        // water, and it showed as a line across the lake.
+                        int beside = sideSurfaces[wall][wall < 2 ? x : z], low = from;
+                        if (beside != Integer.MIN_VALUE) {
+                            int own = Math.round(surface[cell] * UNIT);
+                            low = Math.max(from, Math.min(own, beside) - Math.abs(own - beside));
+                        }
+                        if (to <= low) continue;
                         if (biome == null) biome = FarMesher.biome(job,x,vy,z);
-                        waterFace(waterWall(wall), state, biome, direction, x, z, from, to - from);
+                        waterFace(waterWall(wall), state, biome, direction, x, z, low, to - low);
                         continue;
                     }
                     if (vy < sideTops[wall][wall < 2 ? x : z] - WALL_DEPTH) continue;
