@@ -66,6 +66,14 @@ public final class JetStream {
                 velocity.z + (tz - velocity.z) * RESPONSE);
     }
 
+    /** Farther than any glider goes in a tick (cruise with a tailwind is under 83 blocks): a teleport, not flight. */
+    public static final double MAX_STEP = 2 * CRUISE * (1 + TAILWIND);
+
+    /** Vanilla elytra's damage for flying into a wall, from the horizontal speed before and after the hit in blocks per tick. */
+    public static float crash(double before, double after) {
+        return (float) ((before - after) * 10.0 - 3.0);
+    }
+
     /** Vanilla's rocket boost speed, and the climb a rocket gives pointed straight up in the cubic world. */
     private static final double ROCKET = 1.5, ROCKET_CLIMB = 10.0;
 
