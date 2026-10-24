@@ -7,5 +7,7 @@ New since build 63:
 - Quitting or leaving a world no longer logs "Could not make far column" with a stack trace for every far column still being made when the world closed.
 - Gliding in the jet stream (above Y 9000) no longer passes through blocks players built up there. A glider now gets the builds within about a kilometer around it and hits them like any wall.
 - Flying into a wall in the jet stream is now deadly, as hitting one at about 1,500 blocks a second should be: no armor or potion saves you, though a totem still can. Players in the jet stream could not be hurt at all before, and their hunger and potion timers stood still; both now work as anywhere else.
+- No more pale stone squares across forests for the first seconds after arriving, as in the Amazon, while the coarse far levels stand in. From 16-block voxels a forest's leaves lie on a stone voxel, and that hidden stone was taking over the grass of every clearing.
+- The known issue of dark far slabs in the Amazon for the first ~20 seconds is off the list. They matched a far mesh mix-up fixed in build 36, and fresh-world tests on this build with Photon show none.
 
-Known: dark far slabs can show in the Amazon for the first ~20 seconds; Everglades far water is still patchy.
+Known: Everglades far water is still patchy.
