@@ -19,6 +19,11 @@ class JetStreamTest {
         assertTrue(east > west, "the westerly wind helps flying east");
     }
 
+    @Test void hittingAWallAtJetSpeedIsFatal() {
+        assertTrue(JetStream.crash(JetStream.CRUISE, 0) > 700, "far past any armor or health");
+        assertTrue(JetStream.crash(0.2, 0) < 0, "a gentle bump does nothing");
+    }
+
     @Test void weatherStaysBelowTheClearSky() {
         assertEquals(1.0F, JetStream.weather(3000), 1e-6);
         assertEquals(0.0F, JetStream.weather(JetStream.CLEAR_SKY), 1e-6);
