@@ -5,6 +5,7 @@ import io.earthplatform.geography.globe.TickShare;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.far.FarServer;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
+import io.earthplatform.minecraft.cubic.jet.JetStream;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.net.Throttle;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
@@ -115,6 +116,19 @@ public final class ServerCubeWorld extends CubeWorld {
     /** Buried cubes behind an open face of a cube in the ground band (see {@link #openBehind}): made for real. */
     private final LongOpenHashSet opened = new LongOpenHashSet();
     private final byte[] standIn;
+    /**
+     * Cubes at or above this cube Y hold nothing the generator made (see {@link JetStream#CLEAR_SKY}), so only players
+     * build there. A glider in the jet stream gets no other cubes, so it gets these: they are few, and without them it
+     * would fly straight through a build.
+     */
+    static final int SKY_CUBE = (JetStream.CLEAR_SKY >> 4) - 2;
+    /**
+     * Cubes across and up or down around a glider that its sky builds are kept loaded and sent within. At cruise (72
+     * blocks a tick) 64 cubes is about 14 ticks of flight: time to read one from the save and send it before it is reached.
+     */
+    static final int SKY_REACH = 64, SKY_REACH_V = 8;
+    /** Server thread: saved or built cubes at {@link #SKY_CUBE} or above, from the save at startup and from play since. */
+    private final LongOpenHashSet skyBuilds = new LongOpenHashSet();
 
     /**
      * A loaded or generated cube; a null section means generating it failed. {@code surface} marks cubes holding the
@@ -153,6 +167,14 @@ public final class ServerCubeWorld extends CubeWorld {
         this.far = new FarServer(generator, storage, codec, level.registryAccess().registryOrThrow(Registries.BIOME));
         int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 2));
         this.workers = Executors.newFixedThreadPool(threads, NamedThreads.numbered("Earth cube worker", THREADS, Thread.NORM_PRIORITY - 1));
+        workers.execute(() -> {
+            try {
+                long[] found = storage.savedFrom(SKY_CUBE).toLongArray();
+                if (found.length > 0) server.getServer().execute(() -> skyBuilds.addAll(LongArrayList.wrap(found)));
+            } catch (IOException | RuntimeException failure) {
+                EarthPlatformMod.LOGGER.error("Could not list builds in the sky", failure);
+            }
+        });
     }
 
     public CubeGenerator generator() { return generator; }
@@ -178,6 +200,7 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     @Override protected void onStateStored(Cube cube, BlockPos pos, BlockState old, BlockState state) {
+        if (cube.y >= SKY_CUBE && !state.isAir()) skyBuilds.add(cube.key);
         if (old.getLightEmission() != state.getLightEmission() || CubeLight.opacity(old) != CubeLight.opacity(state)) staleLightAround(cube.x, cube.y, cube.z);
     }
 
@@ -427,9 +450,11 @@ public final class ServerCubeWorld extends CubeWorld {
         int share = Math.max(8, (MAX_PENDING - pending.size()) / Math.max(1, order.size()));
         for (Watcher watcher : order) {
             int cx = watcher.player.getBlockX() >> 4, cy = watcher.player.getBlockY() >> 4, cz = watcher.player.getBlockZ() >> 4;
-            // A glider high above all terrain sees only far terrain and may be crossing a cube a tick: stream nothing.
-            if (io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(watcher.player)) {
-                if (ticks % 10 == 0) unsend(watcher, 1, 1, cx, cy, cz);
+            // A glider high above all terrain sees only far terrain and may be crossing a cube a tick: it gets
+            // only what players built up there, so it hits a build rather than flying through it.
+            if (JetStream.aboveTerrain(watcher.player)) {
+                sendSkyBuilds(watcher, cx, cy, cz);
+                if (ticks % 10 == 0) unsend(watcher, 1, 1, cx, cy, cz, true);
                 continue;
             }
             watcher.deep = deep(watcher);
@@ -437,7 +462,7 @@ public final class ServerCubeWorld extends CubeWorld {
             CubeOffsets offsets = CubeOffsets.of(h, v, ViewOrder.sector(watcher.player.getYRot()));
             requestAround(watcher, offsets, cx, cy, cz, share);
             send(watcher, offsets, cx, cy, cz);
-            if (ticks % 10 == 0) unsend(watcher, h + 1, v + 1, cx, cy, cz);
+            if (ticks % 10 == 0) unsend(watcher, h + 1, v + 1, cx, cy, cz, false);
         }
         flushChanges();
         far.tick(server.players());
@@ -474,7 +499,7 @@ public final class ServerCubeWorld extends CubeWorld {
         int[] at = new int[watchers.size() * 3];
         int i = 0;
         for (Watcher watcher : watchers.values()) {
-            if (io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(watcher.player)) continue;
+            if (JetStream.aboveTerrain(watcher.player)) continue;
             at[i++] = watcher.player.getBlockX() >> 4; at[i++] = watcher.player.getBlockY() >> 4; at[i++] = watcher.player.getBlockZ() >> 4;
         }
         wantedH = h;
@@ -597,16 +622,39 @@ public final class ServerCubeWorld extends CubeWorld {
                 standIns--;
                 continue;
             }
-            long column = CubeKey.column(x, z);
-            if (watcher.columns.add(column)) {
-                PacketDistributor.sendToPlayer(watcher.player, new CubePayloads.ColumnTops(x, z, topsFor(x, z).clone()));
-            }
-            CubePayloads.CubeData data = data(cube);
-            PacketDistributor.sendToPlayer(watcher.player, data);
-            watcher.sent.add(key);
-            watcher.stood.remove(key);
-            bytes -= data.size();
+            bytes -= sendCube(watcher, cube);
             budget--;
+        }
+    }
+
+    /** Sends a loaded cube, and its column's tops if the player has not had them; the bytes sent. */
+    private int sendCube(Watcher watcher, Cube cube) {
+        if (watcher.columns.add(CubeKey.column(cube.x, cube.z))) {
+            PacketDistributor.sendToPlayer(watcher.player, new CubePayloads.ColumnTops(cube.x, cube.z, topsFor(cube.x, cube.z).clone()));
+        }
+        CubePayloads.CubeData data = data(cube);
+        PacketDistributor.sendToPlayer(watcher.player, data);
+        watcher.sent.add(cube.key);
+        watcher.stood.remove(cube.key);
+        return data.size();
+    }
+
+    private static boolean skyNear(long key, int cx, int cy, int cz, int slack) {
+        return CubeKey.y(key) >= SKY_CUBE
+                && CubeOffsets.within(CubeKey.x(key) - cx, CubeKey.y(key) - cy, CubeKey.z(key) - cz, SKY_REACH + slack, SKY_REACH_V + slack);
+    }
+
+    /** Loads and sends the sky builds around a glider, so it collides with them as with any block. */
+    private void sendSkyBuilds(Watcher watcher, int cx, int cy, int cz) {
+        if (skyBuilds.isEmpty()) return;
+        int bytes = Throttle.allowance(watcher.player);
+        for (LongIterator it = skyBuilds.iterator(); it.hasNext() && bytes > 0; ) {
+            long key = it.nextLong();
+            if (watcher.sent.contains(key) || !skyNear(key, cx, cy, cz, 0)) continue;
+            Cube cube = cubes.get(key);
+            // Gliders want nothing else, so the request is made whether or not it is still wanted when its turn comes.
+            if (cube == null) request(key, true);
+            else bytes -= sendCube(watcher, cube);
         }
     }
 
@@ -629,20 +677,23 @@ public final class ServerCubeWorld extends CubeWorld {
         return tag;
     }
 
-    private void unsend(Watcher watcher, int h, int v, int cx, int cy, int cz) {
+    /** Tells the player to drop the cubes it holds outside the reach; with {@code sky}, a glider keeps the sky builds around it. */
+    private void unsend(Watcher watcher, int h, int v, int cx, int cy, int cz, boolean sky) {
         LongArrayList dropped = new LongArrayList();
         for (LongIterator it = watcher.sent.iterator(); it.hasNext(); ) {
             long key = it.nextLong();
+            if (sky && skyNear(key, cx, cy, cz, 1)) continue;
             if (!CubeOffsets.within(CubeKey.x(key) - cx, CubeKey.y(key) - cy, CubeKey.z(key) - cz, h, v)) { dropped.add(key); it.remove(); }
         }
         for (LongIterator it = watcher.stood.iterator(); it.hasNext(); ) {
             long key = it.nextLong();
             if (!CubeOffsets.within(CubeKey.x(key) - cx, CubeKey.y(key) - cy, CubeKey.z(key) - cz, h, v)) { dropped.add(key); it.remove(); }
         }
+        int columns = sky ? Math.max(h, SKY_REACH + 1) : h;
         for (LongIterator it = watcher.columns.iterator(); it.hasNext(); ) {
             long column = it.nextLong();
             int dx = CubeKey.columnX(column) - cx, dz = CubeKey.columnZ(column) - cz;
-            if (dx * dx + dz * dz > (h + 1) * (h + 1)) it.remove();
+            if (dx * dx + dz * dz > (columns + 1) * (columns + 1)) it.remove();
         }
         if (!dropped.isEmpty()) PacketDistributor.sendToPlayer(watcher.player, new CubePayloads.CubeUnload(dropped.toLongArray()));
     }
@@ -685,6 +736,9 @@ public final class ServerCubeWorld extends CubeWorld {
         int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
         for (Watcher watcher : watchers.values()) {
             int dx = x - (watcher.player.getBlockX() >> 4), dz = z - (watcher.player.getBlockZ() >> 4);
+            // A glider's sky builds stay a little past where they are sent, so one is not read again on each pass.
+            if (y >= SKY_CUBE && CubeOffsets.within(dx, y - (watcher.player.getBlockY() >> 4), dz, SKY_REACH + 2, SKY_REACH_V + 2)
+                    && JetStream.aboveTerrain(watcher.player)) return true;
             if (!CubeOffsets.within(dx, y - (watcher.player.getBlockY() >> 4), dz, h, v)) continue;
             // Buried rock a surface player has walked away from goes, a little past where it would be made.
             if (watcher.deep || edited || near(dx, dz, NEAR + 2) || buried(x, y, z) != 1) return true;
