@@ -240,6 +240,28 @@ final class FarMesher {
         return tops;
     }
 
+    /**
+     * For each side (north, south, west, east) and place along it, the height of the top of
+     * whatever stands highest in the next column's facing edge, its water's surface or its ground,
+     * in 1/{@link #UNIT} blocks above this column's base, or {@link Integer#MIN_VALUE} where unknown.
+     */
+    static int[][] sideSurfaces(Job job) {
+        int[][] surfaces = new int[4][16];
+        int voxel = UNIT << job.level;
+        for (int side = 0; side < 4; side++) {
+            Side next = job.sides == null ? null : job.sides[side];
+            for (int along = 0; along < 16; along++) {
+                int x = side == 2 ? 15 : side == 3 ? 0 : along, z = side == 0 ? 15 : side == 1 ? 0 : along;
+                int row = next == null || next.sections == null && next.packet == null ? -1 : top(next, x, z, false);
+                if (row < 0) { surfaces[side][along] = Integer.MIN_VALUE; continue; }
+                BlockState state = next.packet == null ? at(next.sections, row, x, z) : packetAt(next.packet, row, x, z);
+                row += (next.bottom - job.bottom) * 16;
+                surfaces[side][along] = row * voxel + Math.round(voxel * Far.fill(state)) - next.drops[z * 16 + x];
+            }
+        }
+        return surfaces;
+    }
+
     /** The highest voxel row in a voxel column holding anything (or, when {@code solid}, anything but water); below the sections is ground. */
     static int top(@Nullable LevelChunkSection[] sections, int x, int z, boolean solid) {
         for (int si = sections.length - 1; si >= 0; si--) {
@@ -340,13 +362,16 @@ final class FarMesher {
      * between the two and a mountainside reads as salt and pepper rather than snowfields and
      * rock. A voxel whose neighbours clearly agree on something else takes that on instead, twice
      * over, so lone specks go and patches round off, the way a snowfield or a meadow looks from
-     * afar. Its shape and height stay as they are.
+     * afar. Its shape and height stay as they are. Ground under a tree top shows nothing and has
+     * no say: from 16-block voxels a forest's leaves lie on the stone voxel under them, and that
+     * hidden stone outvoted the grass of every clearing, which stood as pale stone squares in
+     * the forest while the coarse levels stood in after arriving.
      */
     @Nullable static BlockState[] evenCover(Job job, int[] groundRows) {
         BlockState[] cover = new BlockState[256];
         boolean any = false;
         for (int cell = 0; cell < 256; cell++) {
-            if (groundRows[cell] < 0) continue;
+            if (groundRows[cell] < 0 || foliage(at(job, cell & 15, groundRows[cell] + 1, cell >> 4))) continue;
             cover[cell] = at(job, cell & 15, groundRows[cell], cell >> 4);
             any = true;
         }

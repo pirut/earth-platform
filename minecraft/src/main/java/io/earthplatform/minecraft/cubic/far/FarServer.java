@@ -72,15 +72,22 @@ public final class FarServer {
      * cores idle while the far terrain took minutes to refine. They run at low priority behind the
      * cube workers. Set with {@code -Dearthplatform.far.threads}.
      */
-    static final int WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.threads",
-            (Runtime.getRuntime().availableProcessors() - 4) / 2), 2, 8);
+    static final int WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.threads", workersFor(Runtime.getRuntime().availableProcessors())), 2, 8);
     /**
-     * Most far columns made at once while they mostly wait on downloads, as over a new place; see
-     * {@link FarWorkers}. Two cores are left to the server tick and the cube workers, so on four
-     * cores it stays at {@link #WORKERS}, where more at once made the server answer late.
+     * Most far columns made at once while most of them wait on downloads, as over a new place; see
+     * {@link FarWorkers}. Only {@link #WORKERS} of them use the processor, so the rest need no cores:
+     * it was once the cores less two at most, when columns waiting could not be told from columns at
+     * work and more at once made a four-core server answer late. Set with
+     * {@code -Dearthplatform.far.mostThreads}.
      */
-    static final int MOST_WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.mostThreads",
-            Math.min(4 * WORKERS, Runtime.getRuntime().availableProcessors() - 2)), WORKERS, 16);
+    static final int MOST_WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.mostThreads", mostWorkersFor(WORKERS)), WORKERS, 64);
+
+    /** Far workers kept at work on a machine with {@code cores} processors, when nothing sets it. */
+    public static int workersFor(int cores) { return Math.clamp((cores - 4) / 2, 2, 8); }
+
+    /** Far columns made at once with {@code workers} of them at work, when nothing sets it. */
+    public static int mostWorkersFor(int workers) { return workers + 24; }
+
     private final FarWorkers workers = new FarWorkers("Earth far terrain", WORKERS, MOST_WORKERS);
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> cache = new ConcurrentHashMap<>();
     /** What columns looked like, so an edited one remade the same is not sent again. */
@@ -96,7 +103,8 @@ public final class FarServer {
     /** Columns whose saved cubes changed and that players hold, to remake and push again. */
     private final LongOpenHashSet stale = new LongOpenHashSet();
     private int ticks;
-    private boolean closed;
+    /** Set by {@link #close}; read by the far workers it interrupts. */
+    private volatile boolean closed;
 
     /** A finished column for one player, or for everyone holding it when {@code player} is null. */
     private record Made(@Nullable UUID player, CubePayloads.FarColumnData column) {}
@@ -169,6 +177,8 @@ public final class FarServer {
                 Timings.FAR_MAKE.since(start);
             }
             catch (RuntimeException | IOException failure) {
+                // Closing the world interrupts columns still being made: nothing failed, so nothing to retry or report.
+                if (closed) return;
                 // Missing data is asked for again a few seconds on, not at once: with a data server down it fails at once again.
                 if (failure instanceof MissingTerrainException) missing.add(key);
                 else failed.add(key);

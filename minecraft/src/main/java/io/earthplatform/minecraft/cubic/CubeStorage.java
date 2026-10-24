@@ -103,6 +103,20 @@ public final class CubeStorage {
         return found;
     }
 
+    /** Any thread: keys of saved cubes at cube Y {@code minY} or above, anywhere; reads only the regions that reach that high. */
+    public LongList savedFrom(int minY) throws IOException {
+        listRegions();
+        LongArrayList found = new LongArrayList();
+        for (long region : known) {
+            int rx = CubeKey.x(region), ry = CubeKey.y(region), rz = CubeKey.z(region);
+            if ((ry << REGION_SHIFT) + (1 << REGION_SHIFT) - 1 < minY) continue;
+            for (long key : region(CubeKey.pack(rx << REGION_SHIFT, ry << REGION_SHIFT, rz << REGION_SHIFT)).keys()) {
+                if (CubeKey.y(key) >= minY) found.add(key);
+            }
+        }
+        return found;
+    }
+
     private void listRegions() throws IOException {
         if (listed) return;
         synchronized (this) {

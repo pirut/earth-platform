@@ -187,7 +187,7 @@ public final class Drainage {
             }
             shared = mine;
         }
-        return shared.join();
+        return DataWaits.join(shared);
     }
 
     private Region drain(int tx, int ty) {
@@ -217,7 +217,7 @@ public final class Drainage {
         RangeFiles.all(loads);
         int[] down = new int[SIDE * SIDE], order = flood(height, down);
         try {
-            rained.get();
+            DataWaits.get(rained);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new MissingTerrainException("Interrupted while reading rain");

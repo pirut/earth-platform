@@ -72,6 +72,7 @@
     "CubicJetMoveCheckMixin",
     "CubicJetChunkLoadMixin",
     "CubicJetTicketMixin",
+    "CubicJetTickMixin",
     "CubicJetRocketMixin",
     "CubicPistonMixin",
     "CubicFallingBlockMixin",

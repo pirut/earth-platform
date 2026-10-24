@@ -40,6 +40,12 @@ final class RangeFiles implements AutoCloseable {
 
     /** The bytes of a file from offset, or null when the file does not exist. */
     byte[] fetch(URI uri, long offset, int length) throws IOException, InterruptedException {
+        DataWaits.before();
+        try { return transfer(uri, offset, length); }
+        finally { DataWaits.after(); }
+    }
+
+    private byte[] transfer(URI uri, long offset, int length) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(timeout).header("User-Agent", "earth-platform/" + agent)
                 .header("Range", "bytes=" + offset + "-" + (offset + length - 1)).GET().build();
         IOException last = null;
@@ -93,7 +99,7 @@ final class RangeFiles implements AutoCloseable {
             java.util.List<Future<?>> running = new java.util.ArrayList<>(loads.size());
             for (Runnable load : loads) running.add(threads.submit(load));
             for (Future<?> load : running) {
-                try { load.get(); }
+                try { DataWaits.get(load); }
                 catch (ExecutionException failed) {
                     if (first == null) first = failed.getCause() instanceof RuntimeException runtime ? runtime : new MissingTerrainException(String.valueOf(failed.getCause()));
                 } catch (InterruptedException interrupted) {
@@ -120,7 +126,7 @@ final class RangeFiles implements AutoCloseable {
 
     <T> T await(CompletableFuture<T> future, String piece) {
         try {
-            return future.get(timeout.toMillis() * 4, TimeUnit.MILLISECONDS);
+            return DataWaits.get(future, timeout.toMillis() * 4, TimeUnit.MILLISECONDS);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new MissingTerrainException("Interrupted waiting for " + piece);
