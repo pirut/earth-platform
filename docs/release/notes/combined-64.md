@@ -4,10 +4,9 @@ Needs Minecraft 1.21.1 and NeoForge 21.1.256 or newer. For shaders, add Iris 1.8
 
 New since build 63:
 - Turning a shader pack on or off right after a teleport no longer leaves huge dark slabs across the nearby ground with sky showing through it. Ground that was still being built when the pack changed came back in the old format and was never rebuilt; it is now thrown away and built again. Builds 62 and 63 had this too.
+- Distant marsh no longer looks patchy, as across the Everglades: its pools and sloughs broke up into single blocks of water scattered at random over the far terrain, which flickered in shader reflections. A far block is now water only where the pools cover most of the ground it stands for. Nearby terrain is unchanged. New worlds only.
 - Quitting or leaving a world no longer logs "Could not make far column" with a stack trace for every far column still being made when the world closed.
 - Gliding in the jet stream (above Y 9000) no longer passes through blocks players built up there. A glider now gets the builds within about a kilometer around it and hits them like any wall.
 - Flying into a wall in the jet stream is now deadly, as hitting one at about 1,500 blocks a second should be: no armor or potion saves you, though a totem still can. Players in the jet stream could not be hurt at all before, and their hunger and potion timers stood still; both now work as anywhere else.
 - No more pale stone squares across forests for the first seconds after arriving, as in the Amazon, while the coarse far levels stand in. From 16-block voxels a forest's leaves lie on a stone voxel, and that hidden stone was taking over the grass of every clearing.
 - The known issue of dark far slabs in the Amazon for the first ~20 seconds is off the list. They matched a far mesh mix-up fixed in build 36, and fresh-world tests on this build with Photon show none.
-
-Known: Everglades far water is still patchy.
