@@ -96,7 +96,8 @@ public final class FarServer {
     /** Columns whose saved cubes changed and that players hold, to remake and push again. */
     private final LongOpenHashSet stale = new LongOpenHashSet();
     private int ticks;
-    private boolean closed;
+    /** Set by {@link #close}; read by the far workers it interrupts. */
+    private volatile boolean closed;
 
     /** A finished column for one player, or for everyone holding it when {@code player} is null. */
     private record Made(@Nullable UUID player, CubePayloads.FarColumnData column) {}
@@ -169,6 +170,8 @@ public final class FarServer {
                 Timings.FAR_MAKE.since(start);
             }
             catch (RuntimeException | IOException failure) {
+                // Closing the world interrupts columns still being made: nothing failed, so nothing to retry or report.
+                if (closed) return;
                 // Missing data is asked for again a few seconds on, not at once: with a data server down it fails at once again.
                 if (failure instanceof MissingTerrainException) missing.add(key);
                 else failed.add(key);
