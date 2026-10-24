@@ -8,6 +8,7 @@ import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeKey;
+import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.ViewOrder;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
@@ -201,7 +202,7 @@ public final class CubeRenderer {
     }
 
     void topsChanged(int cubeX, int cubeZ, int[] old, int[] now) {
-        if (old == null) return;
+        if (old == null) { firstTops(cubeX, cubeZ); return; }
         int low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
         for (int i = 0; i < 256; i++) {
             if (old[i] == now[i]) continue;
@@ -211,6 +212,21 @@ public final class CubeRenderer {
         if (low > high) return;
         for (int cy = (low >> 4) - 1; cy <= (high >> 4) + 1; cy++) {
             for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) markDirty(CubeKey.pack(cubeX + dx, cy, cubeZ + dz));
+        }
+    }
+
+    /**
+     * A column's tops came for the first time. Cubes beside it meshed before then, as those with a neighbour slow to
+     * come are, took it for open sky at every height, and under water that lit the bed beside it in pale squares that
+     * stayed: they are meshed again. Only cubes meshed or meshing, in the band the player is sent.
+     */
+    private void firstTops(int cubeX, int cubeZ) {
+        var player = Minecraft.getInstance().player;
+        if (player == null) return;
+        int cy = player.getBlockY() >> 4, reach = Cubic.VERTICAL_RADIUS + 1;
+        for (int y = cy - reach; y <= cy + reach; y++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
+            long key = CubeKey.pack(cubeX + dx, y, cubeZ + dz);
+            if (light.containsKey(key) || building.contains(key)) markDirty(key);
         }
     }
 
