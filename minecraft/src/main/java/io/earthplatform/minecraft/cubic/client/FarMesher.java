@@ -340,13 +340,16 @@ final class FarMesher {
      * between the two and a mountainside reads as salt and pepper rather than snowfields and
      * rock. A voxel whose neighbours clearly agree on something else takes that on instead, twice
      * over, so lone specks go and patches round off, the way a snowfield or a meadow looks from
-     * afar. Its shape and height stay as they are.
+     * afar. Its shape and height stay as they are. Ground under a tree top shows nothing and has
+     * no say: from 16-block voxels a forest's leaves lie on the stone voxel under them, and that
+     * hidden stone outvoted the grass of every clearing, which stood as pale stone squares in
+     * the forest while the coarse levels stood in after arriving.
      */
     @Nullable static BlockState[] evenCover(Job job, int[] groundRows) {
         BlockState[] cover = new BlockState[256];
         boolean any = false;
         for (int cell = 0; cell < 256; cell++) {
-            if (groundRows[cell] < 0) continue;
+            if (groundRows[cell] < 0 || foliage(at(job, cell & 15, groundRows[cell] + 1, cell >> 4))) continue;
             cover[cell] = at(job, cell & 15, groundRows[cell], cell >> 4);
             any = true;
         }

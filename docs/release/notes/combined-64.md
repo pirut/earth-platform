@@ -5,5 +5,7 @@ Needs Minecraft 1.21.1 and NeoForge 21.1.256 or newer. For shaders, add Iris 1.8
 New since build 63:
 - Turning a shader pack on or off right after a teleport no longer leaves huge dark slabs across the nearby ground with sky showing through it. Ground that was still being built when the pack changed came back in the old format and was never rebuilt; it is now thrown away and built again. Builds 62 and 63 had this too.
 - Quitting or leaving a world no longer logs "Could not make far column" with a stack trace for every far column still being made when the world closed.
+- No more pale stone squares across forests for the first seconds after arriving, as in the Amazon, while the coarse far levels stand in. From 16-block voxels a forest's leaves lie on a stone voxel, and that hidden stone was taking over the grass of every clearing.
+- The known issue of dark far slabs in the Amazon for the first ~20 seconds is off the list. They matched a far mesh mix-up fixed in build 36, and fresh-world tests on this build with Photon show none.
 
-Known: dark far slabs can show in the Amazon for the first ~20 seconds; Everglades far water is still patchy.
+Known: Everglades far water is still patchy.
