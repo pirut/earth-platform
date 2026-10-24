@@ -221,8 +221,8 @@ final class FarShaders {
             out vec2 earth_cellAt;
             flat out int earth_grid;
 
-            // How far a face reaches past its edges, per block of distance: about half a pixel at 1080p.
-            const float EARTH_GROW = 0.0006;
+            // How far a face reaches past its edges, per block of distance: just under half a pixel (see FarGpu#grow).
+            uniform float earth_Grow;
 
             // Corners (along the face's width, along its height) per direction, counter-clockwise from outside.
             const ivec2 CORNERS[24] = ivec2[](
@@ -306,7 +306,7 @@ final class FarShaders {
                     // Faces merged to different lengths meet mid-edge, where rounding leaves pinholes
                     // that show the sky through the ground; each face reaches about half a pixel
                     // past its edges, which closes them.
-                    vec2 grow = (ab * 2.0 - 1.0) * (EARTH_GROW * length(origin + local));
+                    vec2 grow = (ab * 2.0 - 1.0) * (earth_Grow * length(origin + local));
                     if (face < 2u) local.xz += grow;
                     else if (face < 4u) local.xy += grow;
                     else local.zy += grow;

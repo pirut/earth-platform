@@ -342,6 +342,23 @@ final class FarGpu {
     private float[] shade;
     private int frame;
 
+    /** Pixels a far face reaches past its edges, enough to close the pinholes where merged faces meet mid-edge. */
+    static final double GROW_PIXELS = 0.46;
+
+    /**
+     * How far a far face reaches past its edges per block of distance: {@link #GROW_PIXELS} on screen,
+     * from the projection's field of view and the screen's height in pixels. A fixed share of the
+     * distance was half a pixel at a normal field of view, but a zoom (a narrow field of view) made it
+     * many pixels, so faces reached visibly through each other and flickered. Never more than
+     * {@link FarNearSkip#GROW}, which the near-reach skip counts on.
+     */
+    static float grow(Matrix4f projection) {
+        int height = Math.max(1, Minecraft.getInstance().getMainRenderTarget().height);
+        double focal = Math.abs(projection.m11());
+        if (!(focal > 0.0)) return (float) FarNearSkip.GROW;
+        return (float) Math.min(FarNearSkip.GROW, GROW_PIXELS * 2.0 / (focal * height));
+    }
+
     /** Puts a program in use with this draw's uniforms. */
     private void use(Program program) {
         GlStateManager._glUseProgram(program.id);
@@ -356,6 +373,7 @@ final class FarGpu {
         int bx = (int) Math.floor(camera.x), by = (int) Math.floor(camera.y), bz = (int) Math.floor(camera.z);
         GL20C.glUniform3i(program.location("earth_CameraBlock"), bx, by, bz);
         GL20C.glUniform3f(program.location("earth_CameraFraction"), (float) (camera.x - bx), (float) (camera.y - by), (float) (camera.z - bz));
+        GL20C.glUniform1f(program.location("earth_Grow"), grow(projection));
         GL20C.glUniform1i(program.location("earth_FogShape"), RenderSystem.getShaderFogShape().getIndex());
         GL20C.glUniform1f(program.location("earth_FogStart"), RenderSystem.getShaderFogStart());
         GL20C.glUniform1f(program.location("earth_FogEnd"), RenderSystem.getShaderFogEnd());

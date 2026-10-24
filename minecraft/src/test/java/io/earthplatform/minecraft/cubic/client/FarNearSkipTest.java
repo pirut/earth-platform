@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 
 class FarNearSkipTest {
     @Test void growMatchesTheShader() {
-        assertTrue(FarShaders.VERTEX.contains("const float EARTH_GROW = 0.0006;") && FarNearSkip.GROW == 0.0006, "EARTH_GROW changed; update FarNearSkip.GROW");
+        assertTrue(FarShaders.VERTEX.contains("(earth_Grow * length(origin + local))"), "faces grow by earth_Grow, which FarGpu#grow caps at FarNearSkip.GROW");
         assertTrue(FarShaders.PACK_MAIN.contains("if (length(earth_position.xz) < earth_NearReach) discard;"));
     }
 
@@ -35,7 +35,7 @@ class FarNearSkipTest {
             if (!FarNearSkip.dropped(x0, y0, z0, x0 + width, y1, z0 + width, cx, cy, cz, reach)) continue;
             dropped++;
             for (int point = 0; point < 50; point++) {
-                // A point on a face, grown along two directions by the shader's EARTH_GROW times its distance.
+                // A point on a face, grown along two directions by the most earth_Grow ever is times its distance.
                 double px = x0 + random.nextDouble() * width - cx, py = y0 + random.nextDouble() * (y1 - y0) - cy, pz = z0 + random.nextDouble() * width - cz;
                 double grow = FarNearSkip.GROW * Math.sqrt(px * px + py * py + pz * pz);
                 px += grow * (random.nextBoolean() ? 1 : -1);
