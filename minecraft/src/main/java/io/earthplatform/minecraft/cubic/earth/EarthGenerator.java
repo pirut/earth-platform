@@ -2530,9 +2530,9 @@ public final class EarthGenerator extends SurfaceGenerator {
                     return new Surface(mangroveSwamp, MUD, MUD, 45, 0, 0, 0, 0, false, Tree.MANGROVE);
                 // Sloughs and ponds: standing water among the sawgrass, the more of it the wetter the climate, so that the
                 // Everglades are a river of grass and water, the Pantanal less so, and the Okavango's dry edges little.
-                double wet = patches.getValue(x / 90.0 + 41.7, z / 90.0 - 8.3) + patches.getValue(x / 23.0 - 5.1, z / 23.0 + 17.9) * 0.3;
                 // About a fifth of the Everglades is open slough.
-                if (steep < 0.25 && wet > Mth.clamp(0.75 - (local.rain() - 800) / 2400, 0.5, 0.75))
+                if (steep < 0.25 && pooled(x, z, voxel, Mth.clamp(0.75 - (local.rain() - 800) / 2400, 0.5, 0.75), (px, pz) ->
+                        patches.getValue(px / 90.0 + 41.7, pz / 90.0 - 8.3) + patches.getValue(px / 23.0 - 5.1, pz / 23.0 + 17.9) * 0.3))
                     return new Surface(swamp, POOL, MUD, 0, 0, 0, 0, 0, false);
                 // Open marsh with tree islands where the map has trees.
                 if (code == WorldCoverSource.TREE_COVER) return new Surface(swamp, patch > 0.45 ? MUD : GRASS, DIRT, 12, 0, 0, 400, 420, false);
@@ -2550,7 +2550,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
         }
         // Boreal peatland, as the Hudson Bay Lowlands and the West Siberian mires: dark moss, peat and pools, a few small spruces.
-        if (!cliff && rocky == null && peatland(code, x, z, local)) return peat(code, x, z, patch);
+        if (!cliff && rocky == null && peatland(code, x, z, local)) return peat(code, x, z, patch, voxel);
         switch (code) {
             case WorldCoverSource.TREE_COVER -> {
                 // Forest climbs steep slopes, rooted in duff and stony soil; only the steepest faces are bare.
@@ -2690,8 +2690,9 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (t < 0) return new Surface(snowyPlains, patch > 0.25 ? MOSS : GRASS, DIRT, 2, 10, 0, 300, 310, true);
                 // Marshes, such as the Pantanal, the Mississippi's and the Danube's deltas, are open reed beds and sedge with a few
                 // pools and bare mud: trees stand only where the map has them, and tidal marsh by the sea has none at all.
-                double pool = patches.getValue(x / 40.0 - 17.3, z / 40.0 + 5.9) + patches.getValue(x / 11.0 + 2.2, z / 11.0 - 9.4) * 0.25;
-                if (steep < 0.25 && pool > 0.62) return new Surface(swamp, POOL, MUD, 0, 0, 0, 0, 0, false);
+                if (steep < 0.25 && pooled(x, z, voxel, 0.62, (px, pz) ->
+                        patches.getValue(px / 40.0 - 17.3, pz / 40.0 + 5.9) + patches.getValue(px / 11.0 + 2.2, pz / 11.0 - 9.4) * 0.25))
+                    return new Surface(swamp, POOL, MUD, 0, 0, 0, 0, 0, false);
                 int trees = y <= SEA + 3 ? 0 : t >= 18 ? 1 : 3;
                 return new Surface(swamp, patch > 0.4 ? MUD : GRASS, DIRT, trees, 0, 0, 520, 540, t < 18);
             }
@@ -2860,14 +2861,36 @@ public final class EarthGenerator extends SurfaceGenerator {
         return level;
     }
 
+    /** Points a side at which {@link #pooled} reads a far voxel. */
+    private static final int POOL_SAMPLES = 4;
+
+    /**
+     * Whether a column is a pool: whether the pool noise there, {@code noise} at a block's x and z, lies over
+     * {@code above}. Pools are a few dozen blocks across, and a far voxel read at its middle alone took the
+     * answer of one spot for ground up to 256 blocks wide: beyond a few kilometres the pools broke up into
+     * single voxels of water scattered at random over the marsh, as all across the Everglades, which shimmered
+     * and lit up one by one in a shader's reflections. A far voxel reads {@value #POOL_SAMPLES} points a side
+     * spread over its ground and is a pool where most of them are, as wide sloughs stay; cubes read their own
+     * spot as ever.
+     */
+    private static boolean pooled(int x, int z, int voxel, double above, java.util.function.DoubleBinaryOperator noise) {
+        if (voxel <= 1) return noise.applyAsDouble(x, z) > above;
+        int n = Math.min(voxel, POOL_SAMPLES), wet = 0;
+        double step = (double) voxel / n, from = -voxel / 2.0 + step / 2;
+        for (int j = 0; j < n; j++) for (int i = 0; i < n; i++)
+            if (noise.applyAsDouble(x + from + i * step, z + from + j * step) > above) wet++;
+        return 2 * wet > n * n;
+    }
+
     /**
      * Peat bog and fen: dark sphagnum and wet peat among sedge, with pools a few metres across, and a few small
      * black spruces on the drier hummocks. The map's wetland has the most pools and the fewest trees.
      */
-    private Surface peat(int code, int x, int z, double patch) {
+    private Surface peat(int code, int x, int z, double patch, int voxel) {
         boolean wet = code == WorldCoverSource.WETLAND;
-        double pool = patches.getValue(x / 37.0 + 61.3, z / 37.0 - 27.1) + patches.getValue(x / 13.0 - 4.4, z / 13.0 + 3.7) * 0.3;
-        if (pool > (wet ? 0.5 : 0.7)) return new Surface(swamp, POOL, MUD, 0, 0, 0, 0, 0, false);
+        if (pooled(x, z, voxel, wet ? 0.5 : 0.7, (px, pz) ->
+                patches.getValue(px / 37.0 + 61.3, pz / 37.0 - 27.1) + patches.getValue(px / 13.0 - 4.4, pz / 13.0 + 3.7) * 0.3))
+            return new Surface(swamp, POOL, MUD, 0, 0, 0, 0, 0, false);
         // Seen from above a mire is nearly black: wet peat and dark sedge, with only flecks of bright sphagnum and rusty podzol.
         int grain = (int) Math.floorMod(mix(x, 0x50454154L, z), 100);
         BlockState top = patch > -0.05 ? MUD : patch < -0.55 ? MOSS : grain < 4 ? PODZOL : GRASS;
