@@ -138,6 +138,7 @@ final class VanillaStructures {
     private final ConcurrentHashMap<Long, CompletableFuture<Long2ObjectOpenHashMap<Patch>>> overlays = new ConcurrentHashMap<>();
     /** Copies of deep starts moved to real heights, for vanilla's checks of what lies inside a structure. */
     private final ConcurrentHashMap<Long, StructureStart> realStarts = new ConcurrentHashMap<>();
+    @Nullable private Frame view;
 
     VanillaStructures(ServerLevel level, Host host, long seed) {
         this.level = level;
@@ -321,13 +322,48 @@ final class VanillaStructures {
         long key = startKey(start.kind, start.chunkX, start.chunkZ);
         StructureStart cached = realStarts.get(key);
         if (cached != null) return cached;
-        StructurePieceSerializationContext context = StructurePieceSerializationContext.fromLevel(level);
-        StructureStart copy = StructureStart.loadStaticStart(context, start.start.createTag(context, new ChunkPos(start.chunkX, start.chunkZ)), seed);
-        if (copy == null || !copy.isValid()) return start.start;
-        for (StructurePiece piece : copy.getPieces()) piece.move(0, start.frame.shift, 0);
+        StructureStart copy = moved(start.start, new ChunkPos(start.chunkX, start.chunkZ), start.frame.shift);
+        if (copy == null) return start.start;
         if (realStarts.size() > 4096) realStarts.clear();
         StructureStart raced = realStarts.putIfAbsent(key, copy);
         return raced != null ? raced : copy;
+    }
+
+    /** A copy of a start laid out in a frame, moved up by the frame's shift to real heights, or null. */
+    @Nullable private StructureStart moved(StructureStart start, ChunkPos chunk, int shift) {
+        StructurePieceSerializationContext context = StructurePieceSerializationContext.fromLevel(level);
+        StructureStart copy = StructureStart.loadStaticStart(context, start.createTag(context, chunk), seed);
+        if (copy == null || !copy.isValid()) return null;
+        for (StructurePiece piece : copy.getPieces()) piece.move(0, shift, 0);
+        return copy;
+    }
+
+    /**
+     * A start of a structure in a chunk made as /place structure makes one: whatever the biome and
+     * whether or not the placement grid has one there, laid out in the frame its structure set
+     * uses and returned at real heights. Null where it cannot start.
+     */
+    @Nullable StructureStart placed(Structure structure, ChunkPos chunk) {
+        Kind kind = null;
+        for (Kind k : kinds) {
+            if (k.set.value().structures().stream().anyMatch(e -> e.structure().value() == structure)) { kind = k; break; }
+        }
+        boolean deep = kind != null && kind.deep, relative = kind != null && kind.relative;
+        Frame frame = new Frame(deep || relative ? host.floor(chunk.getMiddleBlockX(), chunk.getMiddleBlockZ()) - 64 : 0, deep);
+        StructureStart made;
+        synchronized (STARTS) {
+            made = structure.generate(level.registryAccess(), frame, frame.getBiomeSource(), randomState, level.getStructureManager(),
+                    seed, chunk, 0, frame.heights, biome -> true);
+        }
+        if (!made.isValid()) return null;
+        return frame.shift == 0 ? made : moved(made, chunk, frame.shift);
+    }
+
+    /** The chunk generator vanilla structure code sees this world through, at real heights. */
+    ChunkGenerator view() {
+        Frame frame = view;
+        if (frame == null) view = frame = new Frame(0, false);
+        return frame;
     }
 
     /** The structures reaching a block column, with how many blocks each lays and how many in the cube at y. For checking. */

@@ -30,6 +30,9 @@ final class FarOrder {
 
     int index(int i) { return indices[i]; }
 
+    /** The value added {@code i}th. */
+    double value(int i) { return distances[i]; }
+
     /** The indices of the {@code wanted} smallest values, smallest first, in their list order among equals. */
     static int[] first(long[] values, int wanted) {
         int count = values.length, kept = Math.min(wanted, count);
