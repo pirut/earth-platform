@@ -57,12 +57,15 @@ final class FarCullTree {
     }
 
     /** Puts the column at this index of the pick in the branch open now. */
-    void own(int index, AABB column) {
+    void own(int index, AABB column) { own(index, column.minX, column.minY, column.minZ, column.maxX, column.maxY, column.maxZ); }
+
+    /** The same for a column's box given by its bounds. */
+    void own(int index, double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
         if (!enabled) return;
         if (index >= owner.length) owner = Arrays.copyOf(owner, Math.max(index + 1, owner.length * 2));
         owner[index] = current;
         columns = index + 1;
-        if (current >= 0) grow(current, column.minX, column.minY, column.minZ, column.maxX, column.maxY, column.maxZ);
+        if (current >= 0) grow(current, minX, minY, minZ, maxX, maxY, maxZ);
     }
 
     /**
