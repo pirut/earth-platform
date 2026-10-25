@@ -254,7 +254,9 @@ final class Vegetation {
                 replaceWater(section, lx, y, lz, tall);
                 replaceWater(section, lx, y + 1, lz, tall.setValue(DoublePlantBlock.HALF, DoubleBlockHalf.UPPER));
             } else replaceWater(section, lx, y, lz, SEAGRASS);
-        } else if ((warm || lukewarm) && depth >= 2 && roll < 380) {
+        } else if (warm && depth >= 2 && roll < 440 && Math.floorMod(gen.mix(x >> 4, 0x5049434BL, z >> 4), 16) == 0) {
+            // Sea pickles glow, so as in vanilla they grow only in warm seas and in a few clusters: one 16 by 16
+            // patch in sixteen. Strewn over every warm and lukewarm bed they lit it in pale blotches.
             replaceWater(section, lx, y, lz, state(Blocks.SEA_PICKLE).setValue(SeaPickleBlock.PICKLES, 1 + (int) (r >>> 20 & 3)));
         }
     }

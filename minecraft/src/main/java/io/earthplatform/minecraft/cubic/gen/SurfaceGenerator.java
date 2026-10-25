@@ -540,6 +540,16 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return structures == null ? null : structures.startOf(structure, chunkX, chunkZ);
     }
 
+    @Override public @Nullable net.minecraft.world.level.levelgen.structure.StructureStart placedStructure(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? null : structures.placed(structure, new net.minecraft.world.level.ChunkPos(chunkX, chunkZ));
+    }
+
+    @Override public @Nullable net.minecraft.world.level.chunk.ChunkGenerator structureView() {
+        VanillaStructures structures = vanilla;
+        return structures == null ? null : structures.view();
+    }
+
     /** Whether a structure clears the ground at a column around its buildings, so no tree grows there. */
     boolean cleared(int x, int z) {
         VanillaStructures structures = vanilla;

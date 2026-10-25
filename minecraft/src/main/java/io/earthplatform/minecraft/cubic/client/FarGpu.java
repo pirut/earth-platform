@@ -25,6 +25,8 @@ import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL30C;
 import org.lwjgl.opengl.GL31C;
 import org.lwjgl.opengl.GL32C;
+import org.lwjgl.opengl.GL40C;
+import org.lwjgl.opengl.GL43C;
 import org.lwjgl.opengl.GLCapabilities;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
@@ -275,8 +277,6 @@ final class FarGpu {
     boolean begin(boolean packMode, @Nullable FarShaders.PackPatch patch, Matrix4f modelView, Matrix4f projection, Vec3 camera, float[] shade,
             int frame, boolean near) {
         this.near = near;
-        // A pre-pass keeps only what it draws itself, never an earlier frame's ranges.
-        if (phase == PREPASS) kept = 0;
         Program program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
         if (program == null) return false;
         uploadLooks();
@@ -342,6 +342,23 @@ final class FarGpu {
     private float[] shade;
     private int frame;
 
+    /** Pixels a far face reaches past its edges, enough to close the pinholes where merged faces meet mid-edge. */
+    static final double GROW_PIXELS = 0.46;
+
+    /**
+     * How far a far face reaches past its edges per block of distance: {@link #GROW_PIXELS} on screen,
+     * from the projection's field of view and the screen's height in pixels. A fixed share of the
+     * distance was half a pixel at a normal field of view, but a zoom (a narrow field of view) made it
+     * many pixels, so faces reached visibly through each other and flickered. Never more than
+     * {@link FarNearSkip#GROW}, which the near-reach skip counts on.
+     */
+    static float grow(Matrix4f projection) {
+        int height = Math.max(1, Minecraft.getInstance().getMainRenderTarget().height);
+        double focal = Math.abs(projection.m11());
+        if (!(focal > 0.0)) return (float) FarNearSkip.GROW;
+        return (float) Math.min(FarNearSkip.GROW, GROW_PIXELS * 2.0 / (focal * height));
+    }
+
     /** Puts a program in use with this draw's uniforms. */
     private void use(Program program) {
         GlStateManager._glUseProgram(program.id);
@@ -356,6 +373,7 @@ final class FarGpu {
         int bx = (int) Math.floor(camera.x), by = (int) Math.floor(camera.y), bz = (int) Math.floor(camera.z);
         GL20C.glUniform3i(program.location("earth_CameraBlock"), bx, by, bz);
         GL20C.glUniform3f(program.location("earth_CameraFraction"), (float) (camera.x - bx), (float) (camera.y - by), (float) (camera.z - bz));
+        GL20C.glUniform1f(program.location("earth_Grow"), grow(projection));
         GL20C.glUniform1i(program.location("earth_FogShape"), RenderSystem.getShaderFogShape().getIndex());
         GL20C.glUniform1f(program.location("earth_FogStart"), RenderSystem.getShaderFogStart());
         GL20C.glUniform1f(program.location("earth_FogEnd"), RenderSystem.getShaderFogEnd());
@@ -392,32 +410,42 @@ final class FarGpu {
      * is a draw of its own in the multi-draw, and those cost the driver and the GPU more than the
      * faces in them at far terrain's sizes.
      */
-    void add(Allocation allocation, int groups) {
+    void add(Allocation allocation, int groups) { add(allocation, groups, 0, 0, 0, 0, 0, 0); }
+
+    /** The same with the column's box, from the camera, which {@link FarHiddenCull} tests its ranges by. */
+    void add(Allocation allocation, int groups, float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
+        Arena arena = allocation.arena;
+        arena.box(minX, minY, minZ, maxX, maxY, maxZ);
         if (SPLIT_RANGES) {
             for (int group = 0; group < FarMesher.GROUPS; group++) {
                 int size = allocation.counts[group];
-                if ((groups & 1 << group) != 0 && size > 0) allocation.arena.queue(allocation.firsts[group], size);
+                if ((groups & 1 << group) != 0 && size > 0) arena.queue(allocation.firsts[group], size);
             }
             return;
         }
-        int first = -1, count = 0;
+        // Each group starts where the ones stored before it end (see #upload): worked out here rather
+        // than read from the allocation's firsts, an object of its own for every column.
+        int first = -1, count = 0, at = allocation.start;
+        int[] counts = allocation.counts;
         for (int group : FarMesher.STORED) {
-            int size = allocation.counts[group];
+            int size = counts[group];
             if ((groups & 1 << group) != 0 || size == 0 && first >= 0) {
-                if (first < 0) first = allocation.firsts[group];
+                if (first < 0) first = at;
                 count += size;
             } else if (first >= 0) {
-                if (count > 0) allocation.arena.queue(first, count);
+                if (count > 0) arena.queue(first, count);
                 first = -1;
                 count = 0;
             }
+            at += size;
         }
-        if (first >= 0 && count > 0) allocation.arena.queue(first, count);
+        if (first >= 0 && count > 0) arena.queue(first, count);
     }
 
-    /** Draws everything queued and puts GL back as it was. */
+    /** Draws everything queued, ends any recording, and puts GL back as it was. */
     void end() {
         flush();
+        recording = null;
         for (int unit : new int[] {QUAD_UNIT, LOOK_UNIT, COLUMN_UNIT}) bindBuffer(unit, 0);
         restore2d(ATLAS_UNIT);
         restore2d(LIGHT_UNIT);
@@ -442,10 +470,7 @@ final class FarGpu {
     /** Sets what the next {@link #begin} draws; back to {@link #ONE_PASS} after the shading pass. */
     void phase(int phase) {
         this.phase = phase;
-        if (phase == ONE_PASS) {
-            frozenNow = 0;
-            kept = 0;
-        }
+        if (phase == ONE_PASS) frozenNow = 0;
     }
 
     /**
@@ -454,7 +479,7 @@ final class FarGpu {
      * has a program for has both passes' programs too, and nothing blends.
      */
     boolean prepassReady(@Nullable FarShaders.PackPatch patch) {
-        if (!depthPrepass || patch == null || !FarShaders.prepassSafe(patch.fragment()) || GL11C.glIsEnabled(GL11C.GL_BLEND)) return false;
+        if (!depthPrepass || patch == null || !prepassSafe(patch) || GL11C.glIsEnabled(GL11C.GL_BLEND)) return false;
         boolean wasNear = near;
         int was = phase;
         near = false;
@@ -474,6 +499,21 @@ final class FarGpu {
             phase = was;
         }
     }
+
+    /**
+     * {@link FarShaders#prepassSafe} for a patch, worked out once per patch: run over the pack's
+     * whole Voxy code every frame, it took a few percent of the render thread.
+     */
+    private boolean prepassSafe(FarShaders.PackPatch patch) {
+        if (patch != checkedPatch) {
+            checkedPatch = patch;
+            patchSafe = FarShaders.prepassSafe(patch.fragment());
+        }
+        return patchSafe;
+    }
+
+    @Nullable private FarShaders.PackPatch checkedPatch;
+    private boolean patchSafe;
 
     /** A pass of the pre-passed draw's program for a fade, built from the same patch as the one-pass program. */
     @Nullable private Program phasedProgram(FarShaders.PackPatch patch, int fade) {
@@ -505,7 +545,7 @@ final class FarGpu {
     private void flush() {
         for (Arena arena : arenas) {
             if (arena.draws == 0) continue;
-            if (phase == PREPASS && REPLAY) keep(arena);
+            if (recording != null) keep(recording, arena);
             GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + QUAD_UNIT);
             GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, arena.buffer.texture);
             GlStateManager._activeTexture(previousActive);
@@ -517,68 +557,181 @@ final class FarGpu {
 
     /**
      * The shading pass after a depth pre-pass draws the very ranges the pre-pass drew, in the same
-     * order and with the same fades' programs: {@link #replay} draws what the pre-pass kept, rather
-     * than the caller queueing every column's face groups a second time, which while the view moves
-     * cost the render thread as much as the pre-pass did. {@code -Dearthplatform.far.replayPrepass=false}
-     * queues them again, for comparing.
+     * order and with the same fades' programs: it plays what the pre-pass recorded (see
+     * {@link #record}), rather than the caller queueing every column's face groups a second time,
+     * which while the view moves cost the render thread as much as the pre-pass did.
+     * {@code -Dearthplatform.far.replayPrepass=false} queues them again, for comparing.
      */
     static final boolean REPLAY = !"false".equals(System.getProperty("earthplatform.far.replayPrepass"));
     /** The fade whose program draws what is queued now. */
     private int drawingFade;
-    /** What the pre-pass drew, multi-draw by multi-draw: {@link #kept} of them this frame. */
-    private final List<Kept> keptDraws = new ArrayList<>();
-    private int kept;
+    /** Where what is drawn now is recorded, until {@link #end}; null when nothing is. */
+    @Nullable private Recording recording;
+
+    /**
+     * What a pass drew, multi-draw by multi-draw, with the fade each was drawn with, for drawing it
+     * again (see {@link #play}), and what the caller drew it for (see {@link #drew}).
+     */
+    static final class Recording {
+        private final List<Kept> draws = new ArrayList<>();
+        private int count;
+        private int pick = -1;
+        private long setting;
+        /** Counts up with every recording made in it. */
+        private int version;
+
+        int version() { return version; }
+
+        /** How many ranges it draws, over all its multi-draws. */
+        int rangeCount() {
+            int ranges = 0;
+            for (int i = 0; i < count; i++) ranges += draws.get(i).draws;
+            return ranges;
+        }
+
+        /**
+         * Writes each range, in drawing order, as its box (two vec4s: the low corner, then the high
+         * one) and an indirect draw command (count, instances, first index, base vertex, base instance).
+         */
+        void writeRanges(FloatBuffer boxes, IntBuffer commands) {
+            for (int i = 0; i < count; i++) {
+                Kept draw = draws.get(i);
+                for (int r = 0; r < draw.draws; r++) {
+                    for (int k = 0; k < 6; k++) {
+                        boxes.put(draw.boxes.get(r * 6 + k));
+                        if (k == 2 || k == 5) boxes.put(0.0F);
+                    }
+                    commands.put(draw.counts.get(r) * 6).put(1).put(0).put(draw.firsts.get(r) * 4).put(0);
+                }
+            }
+        }
+
+        /** Notes what the pass now recorded was drawn for: the caller's pick and setting. */
+        void drew(int pick, long setting) {
+            this.pick = pick;
+            this.setting = setting;
+        }
+
+        /** Whether this holds a whole pass drawn for this pick and setting. */
+        boolean holds(int pick, long setting) { return pick != -1 && this.pick == pick && this.setting == setting; }
+
+        void close() {
+            for (Kept draw : draws) draw.free();
+            draws.clear();
+            count = 0;
+            pick = -1;
+        }
+    }
 
     private static final class Kept {
         Arena arena;
         int fade, draws;
         IntBuffer firsts = MemoryUtil.memAllocInt(256), counts = MemoryUtil.memAllocInt(256);
+        FloatBuffer boxes = MemoryUtil.memAllocFloat(256 * 6);
 
         void free() {
             MemoryUtil.memFree(firsts);
             MemoryUtil.memFree(counts);
+            MemoryUtil.memFree(boxes);
         }
     }
 
-    private void keep(Arena arena) {
-        if (kept == keptDraws.size()) keptDraws.add(new Kept());
-        Kept draw = keptDraws.get(kept++);
+    /** Records what is drawn from now until {@link #end}, in place of what the recording held. */
+    void record(Recording recording) {
+        recording.count = 0;
+        recording.pick = -1;
+        recording.version++;
+        this.recording = recording;
+    }
+
+    private void keep(Recording recording, Arena arena) {
+        if (recording.count == recording.draws.size()) recording.draws.add(new Kept());
+        Kept draw = recording.draws.get(recording.count++);
         if (draw.firsts.capacity() < arena.draws) {
             draw.firsts = MemoryUtil.memRealloc(draw.firsts, arena.draws);
             draw.counts = MemoryUtil.memRealloc(draw.counts, arena.draws);
+            draw.boxes = MemoryUtil.memRealloc(draw.boxes, arena.draws * 6);
         }
         MemoryUtil.memCopy(MemoryUtil.memAddress(arena.firsts, 0), MemoryUtil.memAddress(draw.firsts, 0), 4L * arena.draws);
         MemoryUtil.memCopy(MemoryUtil.memAddress(arena.counts, 0), MemoryUtil.memAddress(draw.counts, 0), 4L * arena.draws);
+        MemoryUtil.memCopy(MemoryUtil.memAddress(arena.boxes, 0), MemoryUtil.memAddress(draw.boxes, 0), 24L * arena.draws);
         draw.arena = arena;
         draw.fade = drawingFade;
         draw.draws = arena.draws;
     }
 
     /**
-     * After {@link #begin} for the shading pass: draws what this frame's pre-pass drew, switching
-     * fades where it did, then ends as {@link #end} does. False, drawing nothing, when nothing was
-     * kept (the caller then queues the columns itself).
+     * After {@link #begin}: draws what a recording holds, switching fades where it did, then ends as
+     * {@link #end} does. False, drawing nothing, when it holds nothing (the caller then queues the
+     * columns itself). The recording stays, to be drawn again.
      */
-    boolean replay() {
-        if (!REPLAY || phase != SHADE || kept == 0) return false;
-        for (int i = 0; i < kept; i++) {
-            Kept draw = keptDraws.get(i);
+    boolean play(Recording recording) {
+        if (recording.count == 0) return false;
+        int commands = phase == SHADE && hiddenCull != null ? hiddenCull.commandsFor(recording) : 0;
+        if (commands != 0) {
+            playCulled(recording, commands);
+            return true;
+        }
+        for (int i = 0; i < recording.count; i++) {
+            Kept draw = recording.draws.get(i);
             if (draw.fade != drawingFade) fade(draw.fade);
             Arena arena = draw.arena;
             arena.clearDraws();
             if (arena.firsts.capacity() < draw.draws) {
                 arena.firsts = MemoryUtil.memRealloc(arena.firsts, draw.draws).clear();
                 arena.counts = MemoryUtil.memRealloc(arena.counts, draw.draws).clear();
+                arena.boxes = MemoryUtil.memRealloc(arena.boxes, draw.draws * 6).clear();
             }
             MemoryUtil.memCopy(MemoryUtil.memAddress(draw.firsts, 0), MemoryUtil.memAddress(arena.firsts, 0), 4L * draw.draws);
             MemoryUtil.memCopy(MemoryUtil.memAddress(draw.counts, 0), MemoryUtil.memAddress(arena.counts, 0), 4L * draw.draws);
             arena.draws = draw.draws;
             flush();
         }
-        kept = 0;
         end();
         return true;
     }
+
+    /** Draws a recording through the indirect commands {@link FarHiddenCull} has culled, then ends as {@link #end} does. */
+    private void playCulled(Recording recording, int commands) {
+        int bound = GL11C.glGetInteger(GL40C.GL_DRAW_INDIRECT_BUFFER_BINDING);
+        GL15C.glBindBuffer(GL40C.GL_DRAW_INDIRECT_BUFFER, commands);
+        long offset = 0;
+        for (int i = 0; i < recording.count; i++) {
+            Kept draw = recording.draws.get(i);
+            if (draw.fade != drawingFade) fade(draw.fade);
+            GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + QUAD_UNIT);
+            GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, draw.arena.buffer.texture);
+            GlStateManager._activeTexture(previousActive);
+            GL43C.glMultiDrawElementsIndirect(GL11C.GL_TRIANGLES, GL11C.GL_UNSIGNED_INT, offset, draw.draws, 20);
+            offset += 20L * draw.draws;
+            ranges += draw.draws;
+        }
+        GL15C.glBindBuffer(GL40C.GL_DRAW_INDIRECT_BUFFER, bound);
+        end();
+    }
+
+    /**
+     * Far terrain's culling of ranges hidden behind others (see {@link FarHiddenCull}), where this GL
+     * has it, the faces are drawn by index and the pre-pass draws; null otherwise.
+     */
+    @Nullable private FarHiddenCull hiddenCull;
+    private boolean hiddenCullChecked;
+
+    /**
+     * After the depth pre-pass, before the shading pass: leaves out of that pass the ranges of
+     * the pre-pass's recording that lie wholly behind the faces it kept. False when it can't.
+     */
+    boolean cullHidden(Recording recording, int faces, int width, int height, Matrix4f modelView, Matrix4f projection) {
+        if (!hiddenCullChecked) {
+            hiddenCullChecked = true;
+            if (FarHiddenCull.ENABLED && INDEXED && FarHiddenCull.supported()) hiddenCull = new FarHiddenCull();
+        }
+        if (hiddenCull == null || recording.count == 0) return false;
+        return hiddenCull.cull(recording, faces, width, height, new Matrix4f(projection).mul(modelView), grow(projection));
+    }
+
+    /** After the shading pass: its culling was for that pass alone. */
+    void cullDone() { if (hiddenCull != null) hiddenCull.done(); }
 
     private void bind2d(int unit, int texture, boolean packMode) {
         GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + unit);
@@ -773,8 +926,7 @@ final class FarGpu {
         for (Program program : pack) if (program != null) program.close();
         for (Program program : prepass) if (program != null) program.close();
         for (Program program : shading) if (program != null) program.close();
-        for (Kept draw : keptDraws) draw.free();
-        keptDraws.clear();
+        if (hiddenCull != null) { hiddenCull.close(); hiddenCull = null; }
         GL30C.glDeleteVertexArrays(vao);
         if (indices != 0) GL15C.glDeleteBuffers(indices);
     }
@@ -896,8 +1048,11 @@ final class FarGpu {
     static final class Arena {
         final TextureBuffer buffer;
         private final FarArenaRanges free;
-        /** Queued ranges: first face and face count. */
+        /** Queued ranges: first face and face count, and the box of the columns in each (six floats, from the camera). */
         IntBuffer firsts = MemoryUtil.memAllocInt(1024), counts = MemoryUtil.memAllocInt(1024);
+        FloatBuffer boxes = MemoryUtil.memAllocFloat(1024 * 6);
+        /** The box of the column whose ranges are queued next (see {@link FarGpu#add}). */
+        private float boxMinX, boxMinY, boxMinZ, boxMaxX, boxMaxY, boxMaxZ;
         /** The same ranges as the multi-draw takes them: corner counts, and where each range starts. */
         private IntBuffer drawCounts = MemoryUtil.memAllocInt(1024), drawStarts = MemoryUtil.memAllocInt(1024);
         private PointerBuffer offsets = MemoryUtil.memAllocPointer(1024);
@@ -914,12 +1069,21 @@ final class FarGpu {
 
         void clearDraws() { draws = 0; firsts.clear(); counts.clear(); }
 
+        void box(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
+            boxMinX = minX; boxMinY = minY; boxMinZ = minZ;
+            boxMaxX = maxX; boxMaxY = maxY; boxMaxZ = maxZ;
+        }
+
         /** Queues a range of faces. */
         void queue(int first, int count) {
             // Right after the last range, as the next column's faces often are: one longer range.
             if (!SPLIT_RANGES && draws > 0 && firsts.get(draws - 1) + counts.get(draws - 1) == first
                     && (!INDEXED || counts.get(draws - 1) + count <= INDEX_QUADS)) {
                 counts.put(draws - 1, counts.get(draws - 1) + count);
+                int at = (draws - 1) * 6;
+                boxes.put(at, Math.min(boxes.get(at), boxMinX)).put(at + 1, Math.min(boxes.get(at + 1), boxMinY))
+                        .put(at + 2, Math.min(boxes.get(at + 2), boxMinZ)).put(at + 3, Math.max(boxes.get(at + 3), boxMaxX))
+                        .put(at + 4, Math.max(boxes.get(at + 4), boxMaxY)).put(at + 5, Math.max(boxes.get(at + 5), boxMaxZ));
                 return;
             }
             // An indexed range reaches only as far as the quad indices do.
@@ -931,9 +1095,12 @@ final class FarGpu {
             if (draws == firsts.capacity()) {
                 firsts = MemoryUtil.memRealloc(firsts, draws * 2).clear();
                 counts = MemoryUtil.memRealloc(counts, draws * 2).clear();
+                boxes = MemoryUtil.memRealloc(boxes, draws * 12).clear();
             }
             firsts.put(draws, first);
             counts.put(draws, count);
+            int at = draws * 6;
+            boxes.put(at, boxMinX).put(at + 1, boxMinY).put(at + 2, boxMinZ).put(at + 3, boxMaxX).put(at + 4, boxMaxY).put(at + 5, boxMaxZ);
             draws++;
         }
 
@@ -963,6 +1130,7 @@ final class FarGpu {
             buffer.close();
             MemoryUtil.memFree(firsts);
             MemoryUtil.memFree(counts);
+            MemoryUtil.memFree(boxes);
             MemoryUtil.memFree(drawCounts);
             MemoryUtil.memFree(drawStarts);
             MemoryUtil.memFree(offsets);

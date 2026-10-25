@@ -10,7 +10,7 @@ package io.earthplatform.minecraft.cubic.client;
  */
 final class FarNearSkip {
     static final boolean ENABLED = !"false".equals(System.getProperty("earthplatform.far.skipNear"));
-    /** {@code EARTH_GROW} in {@link FarShaders#VERTEX}: how far a face reaches past its edges per block of distance. */
+    /** The most {@code earth_Grow} in {@link FarShaders#VERTEX} ever is (see {@link FarGpu#grow}): how far a face reaches past its edges per block of distance. */
     static final double GROW = 0.0006;
     /** Blocks kept clear of the reach on top of that, for float rounding in the shader. */
     static final double MARGIN = 2.0;

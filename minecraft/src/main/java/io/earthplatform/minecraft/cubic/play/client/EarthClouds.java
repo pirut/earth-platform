@@ -48,7 +48,7 @@ public final class EarthClouds {
     private static final double CELL = 96;
     /** Wind, in metres per tick. */
     private static final double WIND = 0.5;
-    private static final int GRID = 32;
+    static final int GRID = 32;
     /** Least height of the deck over the player's ground, in metres. */
     private static final double ABOVE_GROUND = 1200;
     /** Seconds for the deck to settle after the ground under the player changes height. */
@@ -174,25 +174,31 @@ public final class EarthClouds {
     }
 
     /**
+     * The last clearance worked out and what it was worked out from: the far columns held, the deck,
+     * and the camera's place. Standing still it stays as it is, and working it out again from tens
+     * of thousands of far columns every frame took most of the render thread without a shader pack.
+     */
+    private static float[] lastClear;
+    private static Object lastFar;
+    private static int lastTops;
+    private static double lastDeck, lastX, lastZ, lastRadius;
+
+    /**
      * For each grid corner, how much cloud the ground lets through: 1 where the far terrain in the
      * cells around it stays well below the deck, down to 0 where it reaches the deck. Every held far
      * column counts toward each cell it overlaps, so no peak slips between samples.
      */
     private static float[] clearance(double deck, double camX, double camZ, double radius, double step) {
+        ClientCubeWorld world = ClientCubeWorld.current();
+        if (world != null && lastClear != null && lastFar == world.far() && lastTops == world.far().topsVersion()
+                && lastDeck == deck && lastX == camX && lastZ == camZ && lastRadius == radius) return lastClear;
         float[] clear = new float[(GRID + 1) * (GRID + 1)];
         Arrays.fill(clear, 1);
-        ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null) return clear;
         int[] high = new int[GRID * GRID];
         Arrays.fill(high, Integer.MIN_VALUE);
         double left = camX - radius, near = camZ - radius;
-        world.far().forEachTop((x0, z0, width, top) -> {
-            int i0 = Math.max(0, (int) Math.floor((x0 - left) / step)), i1 = Math.min(GRID - 1, (int) Math.floor((x0 + width - left) / step));
-            int j0 = Math.max(0, (int) Math.floor((z0 - near) / step)), j1 = Math.min(GRID - 1, (int) Math.floor((z0 + width - near) / step));
-            for (int i = i0; i <= i1; i++)
-                for (int j = j0; j <= j1; j++)
-                    if (top > high[i * GRID + j]) high[i * GRID + j] = top;
-        });
+        world.far().forEachTop((x0, z0, width, top) -> Cells.raise(high, left, near, step, x0, z0, width, top));
         for (int i = 0; i <= GRID; i++) {
             for (int j = 0; j <= GRID; j++) {
                 int top = Integer.MIN_VALUE;
@@ -202,7 +208,35 @@ public final class EarthClouds {
                 if (top != Integer.MIN_VALUE) clear[i * (GRID + 1) + j] = (float) smooth((deck - top - CLEAR) / CLEAR_FADE);
             }
         }
+        lastClear = clear;
+        lastFar = world.far();
+        lastTops = world.far().topsVersion();
+        lastDeck = deck;
+        lastX = camX;
+        lastZ = camZ;
+        lastRadius = radius;
         return clear;
+    }
+
+    /** The deck's grid of cells as far columns raise them; apart, so it loads without the game. */
+    static final class Cells {
+        private Cells() {}
+
+        /**
+         * Raises the grid cells a far column overlaps (its square from x0, z0, the grid's corner at
+         * left, near) to its top, where it stands higher.
+         */
+        static void raise(int[] high, double left, double near, double step, int x0, int z0, int width, int top) {
+            // A column wholly off the grid overlaps no cell, as the floors below would find: most of the
+            // coarser levels' columns are, and skipping them skips their divisions.
+            double past = (GRID + 1) * step;
+            if (x0 + width - left < 0 || x0 - left >= past || z0 + width - near < 0 || z0 - near >= past) return;
+            int i0 = Math.max(0, (int) Math.floor((x0 - left) / step)), i1 = Math.min(GRID - 1, (int) Math.floor((x0 + width - left) / step));
+            int j0 = Math.max(0, (int) Math.floor((z0 - near) / step)), j1 = Math.min(GRID - 1, (int) Math.floor((z0 + width - near) / step));
+            for (int i = i0; i <= i1; i++)
+                for (int j = j0; j <= j1; j++)
+                    if (top > high[i * GRID + j]) high[i * GRID + j] = top;
+        }
     }
 
     /**

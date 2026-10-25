@@ -186,7 +186,6 @@ final class FarShaders {
             "const float earth_HazeHeight = %.1f;\nconst float earth_Edge = %.1f;\n", HAZE_HEIGHT, 0.95F * io.earthplatform.minecraft.cubic.far.Far.reach()) + """
             uniform usamplerBuffer earth_Quads;
             uniform isamplerBuffer earth_Columns;
-            uniform usamplerBuffer earth_Looks;
             uniform mat4 earth_ModelView;
             uniform mat4 earth_Projection;
             uniform ivec3 earth_CameraBlock;
@@ -196,11 +195,6 @@ final class FarShaders {
             out vec2 earth_tile;
             out float earth_distance;
             out float earth_edge;
-            flat out vec4 earth_sprite;
-            flat out vec3 earth_average;
-            flat out vec3 earth_tint;
-            flat out uint earth_blockId;
-            flat out uint earth_flags;
             flat out uint earth_face;
             flat out uint earth_light;
             flat out uint earth_look;
@@ -221,8 +215,8 @@ final class FarShaders {
             out vec2 earth_cellAt;
             flat out int earth_grid;
 
-            // How far a face reaches past its edges, per block of distance: about half a pixel at 1080p.
-            const float EARTH_GROW = 0.0006;
+            // How far a face reaches past its edges, per block of distance: just under half a pixel (see FarGpu#grow).
+            uniform float earth_Grow;
 
             // Corners (along the face's width, along its height) per direction, counter-clockwise from outside.
             const ivec2 CORNERS[24] = ivec2[](
@@ -306,7 +300,7 @@ final class FarShaders {
                     // Faces merged to different lengths meet mid-edge, where rounding leaves pinholes
                     // that show the sky through the ground; each face reaches about half a pixel
                     // past its edges, which closes them.
-                    vec2 grow = (ab * 2.0 - 1.0) * (EARTH_GROW * length(origin + local));
+                    vec2 grow = (ab * 2.0 - 1.0) * (earth_Grow * length(origin + local));
                     if (face < 2u) local.xz += grow;
                     else if (face < 4u) local.xy += grow;
                     else local.zy += grow;
@@ -354,14 +348,6 @@ final class FarShaders {
 
                 uint look = q.w & 0xFFFFFu;
                 earth_normal = earth_smooth > 0.5 ? 0u : q.w >> 20;
-                uvec4 a = texelFetch(earth_Looks, int(look) * 2);
-                uvec4 b = texelFetch(earth_Looks, int(look) * 2 + 1);
-                earth_sprite = uintBitsToFloat(a);
-                earth_average = earth_rgb(b.x);
-                // Smooth ground's colours come tinted.
-                earth_tint = earth_smooth > 0.5 ? vec3(1.0) : earth_rgb(b.y);
-                earth_blockId = b.z;
-                earth_flags = b.w;
                 earth_face = face;
                 earth_light = (q.x >> 17) & 255u;
                 earth_look = look;
@@ -388,11 +374,6 @@ final class FarShaders {
             in vec2 earth_tile;
             #endif
             in float earth_distance;
-            flat in vec4 earth_sprite;
-            flat in vec3 earth_average;
-            flat in vec3 earth_tint;
-            flat in uint earth_blockId;
-            flat in uint earth_flags;
             flat in uint earth_face;
             flat in uint earth_light;
             flat in uint earth_look;
@@ -400,6 +381,31 @@ final class FarShaders {
             uniform sampler2D earth_Atlas;
             uniform usamplerBuffer earth_Quads;
             uniform usamplerBuffer earth_Looks;
+
+            // The face's look (see FarLooks), read by each pixel shaded rather than by each of the
+            // face's four corners and handed on: the shading pass after the depth pre-pass shades
+            // only the pixels it keeps, but runs the vertex shader for every face.
+            vec4 earth_sprite;
+            vec3 earth_average;
+            vec3 earth_tint;
+            uint earth_blockId;
+            uint earth_flags;
+
+            vec3 earth_lookRgb(uint colour) {
+                return vec3(float((colour >> 16) & 255u), float((colour >> 8) & 255u), float(colour & 255u)) / 255.0;
+            }
+
+            // Reads the face's look; done first by every main that shades.
+            void earth_readLook() {
+                uvec4 a = texelFetch(earth_Looks, int(earth_look) * 2);
+                uvec4 b = texelFetch(earth_Looks, int(earth_look) * 2 + 1);
+                earth_sprite = uintBitsToFloat(a);
+                earth_average = earth_lookRgb(b.x);
+                // Smooth ground's colours come tinted.
+                earth_tint = earth_smooth > 0.5 ? vec3(1.0) : earth_lookRgb(b.y);
+                earth_blockId = b.z;
+                earth_flags = b.w;
+            }
 
             // The texture this pixel shows: the face's own, or on textured smooth ground the block of
             // the voxel column under the pixel, laid from above on gentle slopes and from the side on steep ones.
@@ -538,6 +544,7 @@ final class FarShaders {
             #ifdef EARTH_FADE
                 earth_fade();
             #endif
+                earth_readLook();
                 vec4 colour = earth_sample();
                 colour.rgb *= earth_tint * earth_shade();
                 vec2 light = clamp(earth_levels() / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0));
@@ -671,6 +678,7 @@ final class FarShaders {
                 earth_faceDepth = gl_FragCoord.z;
                 earth_slopeDepth();
             #endif
+                earth_readLook();
                 vec4 colour = earth_sample();
                 vec2 levels = earth_levels();
                 vec3 tint = earth_tint;
@@ -696,6 +704,7 @@ final class FarShaders {
             #ifdef EARTH_FADE
                 earth_fade();
             #endif
+                earth_readLook();
                 vec4 colour = earth_sample();
                 colour.rgb *= earth_tint * earth_shade();
                 colour *= texture(earth_Lightmap, clamp(earth_levels() / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
@@ -776,6 +785,7 @@ final class FarShaders {
             #ifdef EARTH_FADE
                 earth_fade();
             #endif
+                earth_readLook();
                 vec4 colour = earth_sample();
                 vec2 levels = earth_levels();
                 vec3 tint = earth_tint;
