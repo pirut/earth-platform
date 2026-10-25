@@ -252,6 +252,11 @@ public final class FarLod {
 
     static int vanillaUnit() { return VANILLA_UNIT; }
 
+    /** The faces' own depth the depth pre-pass leaves (see {@link #beginPrepass}), and its size. */
+    static int facesTexture() { return faces; }
+    static int width() { return width; }
+    static int height() { return height; }
+
     private static int maxDrawBuffers;
 
     /**
