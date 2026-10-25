@@ -98,7 +98,8 @@
     "CubicMapStructureMixin",
     "CubicBiomeLocateMixin",
     "CubicStructureManagerMixin",
-    "CubicLocateMixin"
+    "CubicLocateMixin",
+    "EarthCompassReequipMixin"
   ],
   "client": [
     "FrustumAccess",
@@ -133,7 +134,9 @@
     "compat.JourneyMapDataCacheMixin",
     "compat.JourneyMapSnapshotMixin",
     "compat.JourneyMapChunkMixin",
-    "CubicVoidFogMixin"
+    "CubicVoidFogMixin",
+    "GuiOverlayAccess",
+    "EarthCompassSpinMixin"
   ],
   "injectors": {
     "defaultRequire": 1

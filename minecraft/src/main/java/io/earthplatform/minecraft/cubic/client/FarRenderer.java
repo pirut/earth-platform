@@ -1285,6 +1285,9 @@ public final class FarRenderer {
     /** Sets an Earth world's metres per block at the equator, from the server. */
     public void scale(double metresPerBlock) { this.metresPerBlock = metresPerBlock; }
 
+    /** An Earth world's metres per block at the equator, or 0 before the server says or outside Earth worlds. */
+    public double metresPerBlock() { return metresPerBlock; }
+
     /**
      * Blocks per ground metre at a block Z, relative to the world's home latitude, where a block
      * is a metre: the map stretches toward the poles, so haze that is 22 km deep at home spans

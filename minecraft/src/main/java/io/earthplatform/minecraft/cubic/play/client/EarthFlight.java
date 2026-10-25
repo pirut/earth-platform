@@ -21,11 +21,11 @@ import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import org.lwjgl.glfw.GLFW;
 
 /**
- * The creative travel map and the flight that goes with a trip: the camera pulls up off the
- * player until the world gives way to the globe, the globe swings out and round to the
+ * The map key, the creative travel map and the flight that goes with a trip: the camera pulls up
+ * off the player until the world gives way to the globe, the globe swings out and round to the
  * destination and closes in on it while the terrain there loads, and once the player has landed
  * the camera drops back down onto them. All of it is camera work on this client; the trip itself
- * is the server's /earth goto.
+ * is the server's /earth goto. Outside creative the same key opens the survival map.
  */
 @EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, value = Dist.CLIENT)
 public final class EarthFlight {
@@ -103,6 +103,11 @@ public final class EarthFlight {
                                 (lat, lon) -> minecraft.player.connection.sendCommand(String.format(Locale.ROOT, command, lat, lon))));
                     }
                 }
+                case EarthMap.LOOK -> {
+                    if (current == null && minecraft.player != null && minecraft.screen == null)
+                        minecraft.setScreen(EarthGlobeScreen.look(payload.latitude(), payload.longitude()));
+                }
+                case EarthMap.HIDE_COMPASS, EarthMap.SHOW_COMPASS -> EarthCompassHud.round(payload.kind() == EarthMap.HIDE_COMPASS);
                 case EarthMap.ARRIVED -> { if (current != null && current.landedAt < 0) current.landedAt = clock(); }
                 case EarthMap.FAILED -> { if (current != null) current.skip(); }
                 default -> {}
@@ -227,7 +232,9 @@ public final class EarthFlight {
         while (KEY.consumeClick()) {
             LocalPlayer player = minecraft.player;
             if (player == null || minecraft.screen != null || current != null) continue;
-            if (!player.isCreative() && !player.hasPermissions(2)) {
+            // The server opens the travel map or the survival map, whichever this player gets; with neither it sends no such command.
+            var earth = player.connection.getCommands().getRoot().getChild("earth");
+            if (earth == null || earth.getChild("map") == null) {
                 player.displayClientMessage(Component.translatable("earthplatform.map.creativeOnly"), true);
                 continue;
             }

@@ -52,6 +52,7 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue GEOGUESSR;
     public static final ModConfigSpec.BooleanValue RACES;
     public static final ModConfigSpec.BooleanValue WEB_MAP;
+    public static final ModConfigSpec.BooleanValue SURVIVAL_MAP;
 
     static {
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
@@ -125,6 +126,9 @@ public final class EarthConfig {
                 .translation(key("webMap")).define("webMap", false);
         WEB_MAP_PORT = common.comment("The web map's port.")
                 .translation(key("webMapPort")).defineInRange("webMapPort", 8123, 1, 65_535);
+        SURVIVAL_MAP = common.comment("Let players who can't use the travel map open the map (N) anyway, to look around and point a compass",
+                        "at a spot, a famous place, their home or another player (/earth compass). It never moves anyone.")
+                .translation(key("survivalMap")).define("survivalMap", true);
         COMMON_SPEC = common.build();
 
         var container = ModList.get().getModContainerById(EarthPlatformMod.MOD_ID).orElseThrow();

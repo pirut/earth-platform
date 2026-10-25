@@ -129,6 +129,7 @@ public final class EarthRules {
         }
         EarthRace.second(server);
         EarthGuess.second(server);
+        EarthCompass.second(server);
         EarthTeleports.second(server);
         EarthAdmin.second(server);
     }

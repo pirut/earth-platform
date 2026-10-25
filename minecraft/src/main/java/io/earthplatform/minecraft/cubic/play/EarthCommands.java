@@ -140,15 +140,15 @@ final class EarthCommands {
     }
 
     /** Reads a spot from the command being run. */
-    private interface SpotArgument { EarthSpawns.Spot apply(CommandContext<CommandSourceStack> context) throws CommandSyntaxException; }
+    interface SpotArgument { EarthSpawns.Spot apply(CommandContext<CommandSourceStack> context) throws CommandSyntaxException; }
 
-    private interface Run { int run(CommandContext<CommandSourceStack> context) throws CommandSyntaxException; }
+    interface Run { int run(CommandContext<CommandSourceStack> context) throws CommandSyntaxException; }
 
     /**
      * Adds to {@code parent} the three ways to name a spot, each running {@code then} with it: {@code <latitude> <longitude>},
      * {@code place <famous place>} and {@code here}, where the one running the command stands.
      */
-    private static <T extends ArgumentBuilder<CommandSourceStack, T>> T spots(T parent, Function<SpotArgument, Run> then) {
+    static <T extends ArgumentBuilder<CommandSourceStack, T>> T spots(T parent, Function<SpotArgument, Run> then) {
         Run coordinates = then.apply(context -> EarthSpawns.Spot.at(DoubleArgumentType.getDouble(context, "latitude"), DoubleArgumentType.getDouble(context, "longitude")));
         Run place = then.apply(context -> {
             String query = StringArgumentType.getString(context, "place");
@@ -216,6 +216,7 @@ final class EarthCommands {
         if (earth(source) == null) { source.sendFailure(Component.literal("This world has no Earth.")); return 0; }
         EarthSpawns.of(source.getServer()).setSpawn(spot);
         EarthWorlds.spawnMoved();
+        EarthCompass.spawnsChanged(source.getServer());
         source.sendSuccess(() -> Component.literal(spot == null ? "The server spawn is the world's start again."
                 : "Server spawn set to " + spot.label() + ". New players and respawns without a bed land there.").withStyle(ChatFormatting.GREEN), true);
         return 1;
@@ -223,7 +224,10 @@ final class EarthCommands {
 
     private static int setSpawn(CommandSourceStack source, Collection<ServerPlayer> players, @Nullable EarthSpawns.Spot spot) {
         EarthSpawns spawns = EarthSpawns.of(source.getServer());
-        for (ServerPlayer player : players) spawns.setSpawn(player.getUUID(), spot);
+        for (ServerPlayer player : players) {
+            spawns.setSpawn(player.getUUID(), spot);
+            EarthCompass.tellSpawn(player);
+        }
         String who = players.size() == 1 ? players.iterator().next().getGameProfile().getName() : players.size() + " players";
         source.sendSuccess(() -> Component.literal(spot == null ? who + " will spawn at the server spawn again."
                 : who + " will spawn at " + spot.label() + " when they have no bed.").withStyle(ChatFormatting.GREEN), true);
@@ -426,6 +430,7 @@ final class EarthCommands {
 
     private static int setTeam(CommandSourceStack source, PlayerTeam team, @Nullable EarthSpawns.Spot spot) {
         EarthSpawns.of(source.getServer()).setTeam(team.getName(), spot);
+        EarthCompass.spawnsChanged(source.getServer());
         source.sendSuccess(() -> Component.literal(spot == null ? "Team " + team.getName() + " spawns at the server spawn again."
                 : "Team " + team.getName() + " spawns at " + spot.label() + " (players without their own spawn or a bed).").withStyle(ChatFormatting.GREEN), true);
         return 1;
@@ -465,6 +470,7 @@ final class EarthCommands {
                 spawns.setTeam(team.getName(), named);
                 source.sendSuccess(() -> Component.literal("Team " + team.getName() + " starts in " + named.label() + ".").withStyle(ChatFormatting.GREEN), true);
             }
+            EarthCompass.spawnsChanged(source.getServer());
         }));
         return teams.size();
     }
@@ -523,6 +529,7 @@ final class EarthCommands {
         }
         if (earth(source) == null) { source.sendFailure(Component.literal("This world has no Earth.")); return 0; }
         EarthSpawns.of(source.getServer()).start(player.getUUID(), spot);
+        EarthCompass.tellSpawn(player);
         source.sendSuccess(() -> Component.literal("You'll start at " + spot.label() + ", and respawn there when you have no bed.")
                 .withStyle(ChatFormatting.GREEN), false);
         return travel(source, player, spot);

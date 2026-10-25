@@ -30,6 +30,22 @@ Crossing into another country shows its name on screen, as "Now entering France"
 
 In creative mode, press **N** (or run `/earth map`) to open a globe centered on you. Click where you want to go and press **Travel here**: the camera climbs out to the globe, swings across the planet and comes back down at the new place while its terrain loads. The key can be changed under Controls → Earth Platform.
 
+### The map and compasses
+
+Players who can't use the travel map, such as survival players on a server, get a map instead: **N** (or `/earth map`) opens the same globe, centered on you, but it never moves anyone. It shows where you are, the other players and where your compass points. Click a spot, a famous place or a player and press **Point compass here** to point a compass you carry there.
+
+On the Earth a plain compass points to your spawn (your own, your team's or the server's) and a recovery compass to where you died. A compass in your hand says on the action bar what it points to and how far away that is. A pointed compass works like a lodestone compass with no lodestone, and one pointed at a player follows them while they're on the Earth. During a Where on Earth round every compass spins and shows no distance.
+
+| Command | What it does |
+| --- | --- |
+| `/earth compass` | Where the compass in your hand points, how far and which way |
+| `/earth compass to <latitude> <longitude>` | Points a compass at a spot: the one in your hand, or else one you carry (one off a stack) |
+| `/earth compass place <place>` | Points it at a famous place (tab completes) |
+| `/earth compass here` | Points it at where you stand, to find your way back |
+| `/earth compass player <player>` | Follows a player; they're told |
+| `/earth compass home` | Points it at your home |
+| `/earth compass spawn` | Makes the compass in your hand a plain one again |
+
 ### The jet stream
 
 For survival travel, climb high and glide. With an elytra, the wind above about Y 9,200 carries you along your heading at over 1,000 blocks a second, a little faster eastward and a little slower westward, so a continent takes under an hour. Fireworks pointed steeply up climb fast (about 30 take you from the ground into the wind); in the wind they add nothing, and your elytra doesn't wear. Tip your nose down to leave the wind; you slow over a few kilometers before landing. The terrain below stays drawn as far terrain the whole way.
@@ -116,7 +132,8 @@ These are for operators, and all of them work from the server console too. Where
 | `anyoneCanTravel` | off | Players can use `/earth visit`, `/earth goto` and the travel map |
 | `chooseStart` (`playersChooseStart`) | off | New players get a **Choose on the map** button and pick, once, where they start (`/earth start`); they respawn there without a bed |
 | `countryNames` | on | "Now entering ..." when a player crosses a border |
-| `playersOnMap` (`showPlayersOnMap`) | on | Other players as dots on the globe and the web map |
+| `playersOnMap` (`showPlayersOnMap`) | on | Other players as dots on the globe and the web map; compasses can follow them |
+| `survivalMap` | on | Players without the travel map open the map with **N** and point compasses with it (`/earth compass`) |
 | `geoguessr` | on | Where on Earth guessing rounds |
 | `races` | on | Races |
 | `dailyRace` | off | A race to a random famous place each day (UTC) |
