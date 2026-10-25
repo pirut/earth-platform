@@ -80,6 +80,7 @@
     "CubicPistonMixin",
     "CubicFallingBlockMixin",
     "CubicFallingEntityMixin",
+    "CubicFireworkSpeedMixin",
     "CubicScaffoldingMixin",
     "CubicTreeGrowthMixin",
     "CubicMushroomGrowthMixin",
