@@ -188,6 +188,8 @@ public final class CubicClient {
         event.getLeft().add(at + 1, "Far: " + world.far().drawnCount() + "/" + world.far().columnCount() + " columns, "
                 + world.far().settledPercent() + "% settled (" + world.far().settledInViewPercent() + "% in view), "
                 + world.far().vertexBytes() / (1 << 20) + " MB, " + world.far().drawnRanges() + " draws");
+        String reports = PerformanceDiagnostics.reportsLine();
+        if (reports != null) event.getLeft().add(at + 2, reports);
         // The debug screen redraws every frame; read the timings about twice a second so they can be read.
         long now = System.nanoTime();
         if (now - timingsAt > 500_000_000L) { timingsAt = now; timingLines = timings(Timings.SCREEN).split(", "); }

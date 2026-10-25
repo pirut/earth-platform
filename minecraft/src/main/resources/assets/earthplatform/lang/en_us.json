@@ -57,6 +57,8 @@
   "earthplatform.configuration.farTexturedLevels.tooltip": "How many far levels are drawn with block textures; further ones use flat colors. Default 8, all of them.",
   "earthplatform.configuration.showDownloads": "Show download status",
   "earthplatform.configuration.showDownloads.tooltip": "A small note while Earth data downloads, and a warning when it can't be reached.",
+  "earthplatform.configuration.sendPerformanceReports": "Send performance reports",
+  "earthplatform.configuration.sendPerformanceReports.tooltip": "Off by default. Sends frame times, far terrain counts, settings, GPU, OS and mod version every five minutes, with a random id made fresh each launch. Never names, coordinates, worlds, servers, chat or other mods.",
   "earthplatform.configuration.preselectEarth": "Start Create World on Earth",
   "earthplatform.configuration.preselectEarth.tooltip": "Choose the Earth world type when you open Create World.",
   "earthplatform.configuration.cloudHeight": "Cloud height (m)",

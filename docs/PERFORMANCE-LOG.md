@@ -15,4 +15,10 @@ The game writes a line every few seconds: the exact build, the GPU and driver, g
 - Start the game with `-Dearthplatform.perfLog=false` to turn the log off.
 - Start it with `-Dearthplatform.far.gpuTimers=true` to add GPU timings of the far terrain passes. They are off by default because the timing queries wrap other mods' and shader packs' draws.
 
+## Sending reports (opt-in)
+
+The **Send performance reports** setting (`sendPerformanceReports` in `config/earthplatform-client.toml`) is off by default. While it is on, the game sends the lines above, batched every five minutes, with a random id made fresh each launch. F3 shows "Performance reports: on" and that id while it is on. Turning it off stops sending at once and throws away anything not yet sent. [PRIVACY.md](PRIVACY.md) lists exactly what is and isn't sent.
+
+This build has no receiver set, so nothing is sent even with the setting on. To try it on one computer, run `python3 minecraft/scripts/perf-receiver.py` and start the game with `-Dearthplatform.perfReports.url=http://127.0.0.1:8787/report`.
+
 See [FLAGS.md](FLAGS.md) for the other developer flags.

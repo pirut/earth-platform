@@ -29,6 +29,7 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue SHOW_DOWNLOADS;
     public static final ModConfigSpec.BooleanValue PRESELECT_EARTH;
     public static final ModConfigSpec.IntValue CLOUD_HEIGHT;
+    public static final ModConfigSpec.BooleanValue SEND_PERFORMANCE_REPORTS;
 
     // Common --------------------------------------------------------------------------------------
     public static final ModConfigSpec COMMON_SPEC;
@@ -75,6 +76,12 @@ public final class EarthConfig {
         CLOUD_HEIGHT = client.comment("Height of the clouds in Earth worlds, in meters above sea level; they also stay at least 1200 m over",
                         "the ground you stand on. 0 keeps vanilla clouds at Y 192. Shader packs draw their own clouds. Default 2500.")
                 .translation(key("cloudHeight")).defineInRange("cloudHeight", 2500, 0, 9000);
+        SEND_PERFORMANCE_REPORTS = client.comment("Send anonymous performance reports to help make Earth Platform faster. Off by default.",
+                        "Every five minutes this sends what earthplatform/perf/latest.jsonl already holds: the mod version, Java, OS,",
+                        "CPU thread count, GPU and driver, graphics and distance settings, shader pack on or off, frame times and",
+                        "far terrain counts, with a random id made fresh each launch. Never player names, coordinates, worlds,",
+                        "server addresses, chat, file paths or other mods. Turning it off stops sending at once. See docs/PRIVACY.md.")
+                .translation(key("sendPerformanceReports")).define("sendPerformanceReports", false);
         CLIENT_SPEC = client.build();
 
         ModConfigSpec.Builder common = new ModConfigSpec.Builder();
