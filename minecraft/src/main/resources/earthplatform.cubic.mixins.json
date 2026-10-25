@@ -44,6 +44,8 @@
     "CubicRandomPosMixin",
     "CubicGoalLimitsMixin",
     "CubicSpreadPlayersMixin",
+    "CubicPlaceCommandMixin",
+    "CubicJigsawPlaceMixin",
     "CubicFloatingKickMixin",
     "CubicFallSpeedMixin",
     "compat.SableCarrierMixin",
