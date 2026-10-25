@@ -7,11 +7,11 @@
 - **The whole planet, at real height.** Worlds run from Y -16384 to 16383, so Everest's summit is 8,848 blocks above the sea and you can climb it, mine it and build on it.
 - **Real ground.** Elevation, land cover and climate come from open satellite and survey data, with the best survey for each place where one is open to all: about 10 m across the United States, lidar across much of Canada, France's 1 to 5 m national model, Japan's 5 to 10 m model and REMA in Antarctica. Forests, deserts, glaciers, wetlands, lakes and rivers sit where they are on Earth, and the Grand Canyon shows its real rock layers.
 - **Minecraft's own world, placed by the real climate.** The Amazon grows vanilla jungle, the Serengeti acacia savanna, Siberia snowy taiga. Giant sequoias stand at their real 70 to 90 m in the Sierra Nevada groves.
-- **See for kilometers.** Distant terrain is drawn as textured voxels out to about 94 km (58 miles), so you see the far side of the valley and the ranges beyond it, not fog.
+- **See for kilometers.** Distant terrain is drawn as textured voxels out to about 94 km (58 miles), so you see the far side of the valley and the ranges beyond it, not fog. The pause menu takes it from 37 to 201 km, and extreme settings for very powerful computers reach 397 km.
 - **Fly anywhere.** In creative, press **N** for the travel map: click a spot on the globe and the camera climbs out over the planet and comes back down there. In survival, use `/earth visit` and `/earth goto`, or glide an elytra above Y 9,200 and let the jet stream carry you across a continent in under an hour.
 - **Ordinary survival.** Mine, craft, build and die as usual. Caves, ores, villages and other vanilla structures generate, and the Nether and the End work through normal portals.
-- **Shaders.** Works with Iris and the stock Photon download, which light near blocks and far terrain alike, Macs included.
-- **Servers and other mods.** Runs on a dedicated server where everyone shares the same Earth. Create, Mekanism, Waystones, the Twilight Forest and the popular map mods work in the Earth world; see the [FAQ](docs/FAQ.md#which-other-mods-work).
+- **Shaders.** Works with Iris and shader packs made for Voxy, such as the stock Photon download, which light near blocks and far terrain alike, Macs included.
+- **Servers and other mods.** Runs on a dedicated server where everyone shares the same Earth. Create, Mekanism, Waystones, the Twilight Forest, Replay Mod and the popular map mods work in the Earth world; see the [FAQ](docs/FAQ.md#which-other-mods-work).
 
 There are no cities: built-up land becomes the wild land around it. Vanilla villages and structures still appear.
 
@@ -21,11 +21,12 @@ There are no cities: built-up land becomes the wild land around it. Vanilla vill
 | ![Emerald Bay, Lake Tahoe](docs/images/lake-tahoe-emerald-bay.jpg) | ![The Grand Canyon without shaders](docs/images/grand-canyon.jpg) |
 | ![The travel map](docs/images/travel-map.jpg) | ![Flying down to Lauterbrunnen from the travel map](docs/images/travel-map-flight.jpg) |
 | ![Choosing where to start on the globe](docs/images/spawn-globe.jpg) | ![Choosing where to start from the list of places](docs/images/spawn-picker.jpg) |
+| ![Riding the jet stream on an elytra, with Photon](docs/images/jet-stream-elytra-photon.jpg) | ![Geirangerfjord, Norway, with Photon](docs/images/geirangerfjord-photon.jpg) |
 
 ## Get started
 
 1. Install [NeoForge 21.1.259](https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.259/neoforge-21.1.259-installer.jar) (any 21.1.256 or newer works) for Minecraft 1.21.1.
-2. Put the Earth Platform jar in your `mods` folder. Give the game at least 4 GB of memory, or at least 6 GB with shaders such as Photon.
+2. Download the newest Earth Platform jar from [Releases](https://github.com/pirut/earth-platform/releases/latest) and put it in your `mods` folder. Give the game at least 4 GB of memory, or at least 6 GB with shaders such as Photon.
 3. Singleplayer → Create New World. The world type is already **Earth**; press **Customize** to choose where you start from a list of famous places, a globe, or any latitude and longitude.
 
 The first visit to a place downloads its terrain, so you need an internet connection. Places you have been stay on your computer (up to 8 GB by default) and work offline afterwards.
