@@ -36,9 +36,9 @@ import org.lwjgl.system.MemoryStack;
  * terrain's own depth shows them. (In the game's depth a far lake's surface and its bed fall on the
  * same value, so telling where the water drew by comparing the two missed every other row, and
  * Photon then left clouds over far water out on those rows.) Packs judge
- * how deep water is from far terrain's depth, so {@link #beginDeepen} first gives far water a
- * floor at least {@link #WATER_DEPTH} blocks below its surface there, and further at kilometres
- * off, so the game's coarse depth there still puts the surface in front of it.
+ * how deep water is from far terrain's depth, so {@link #beginDeepen} first lays far water's bed
+ * in there as its floor, as the pack finds it under its own water up close, and pushes it back
+ * at kilometres off, so the game's coarse depth there still puts the surface in front of it.
  *
  * <p>Everything here runs on the render thread; Iris reads it through {@link FarLodIris}.
  */
@@ -62,8 +62,6 @@ public final class FarLod {
     private static boolean failed;
     private static int drawnFrom, gameDepth, waterFrom, waterDepth, previousActive;
     private static final State saved = new State();
-    /** The least depth, in blocks along the view, packs are given for far water: enough to read as water from afar. */
-    private static final float WATER_DEPTH = 24.0F;
     private static final int[] previous2d = new int[8];
 
     private static final Matrix4f projection = new Matrix4f(), inverse = new Matrix4f(), previous = new Matrix4f(), vanilla = new Matrix4f();
@@ -428,11 +426,12 @@ public final class FarLod {
 
     /**
      * After far terrain and before the pack lights it, sets up drawing far water's surfaces into
-     * far terrain's depth as a floor at least {@link #WATER_DEPTH} blocks below them along the
-     * view. Far river beds lie about a block under the water, and a pack measures water's depth
-     * from this buffer: at the game's coarse depth far rivers read deep by chance, and at this
-     * fine one they turned clear and showed only their sand. The caller draws the water, setting
-     * {@link #offset} per column, then calls {@link #endDeepen}.
+     * far terrain's depth as a floor: the bed under them, or a few depth steps of the game's
+     * projection behind them where that lies nearer. A pack measures water's depth from this
+     * buffer, so far water reads as deep as the same water does up close. (A least depth of 24
+     * blocks once kept shallow far rivers dark, but then a shallow sea seen from above was a dark
+     * ring around the blocks' lighter disk.) The caller draws the water, setting {@link #offset}
+     * per column, then calls {@link #endDeepen}.
      */
     static boolean beginDeepen(Matrix4fc modelView) {
         if (!programs()) return false;
@@ -452,7 +451,6 @@ public final class FarLod {
             GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(deepen.id, "earth_ModelView"), false, modelView.get(matrix));
             GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(deepen.id, "earth_Projection"), false, projection.get(matrix));
         }
-        GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_Least"), WATER_DEPTH);
         GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_GameNear"), vanilla.m32() / (vanilla.m22() - 1.0F));
         GL20C.glUniform2f(GL20C.glGetUniformLocation(deepen.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
         return true;
