@@ -118,6 +118,8 @@
     "CubicIrisLodSamplersMixin",
     "CubicIrisLodUniformsMixin",
     "CubicJetWeatherMixin",
+    "CubicJetLerpMixin",
+    "CubicJetRenderDistanceMixin",
     "EarthCreateWorldMixin",
     "EarthCloudsMixin",
     "EarthHorizonMixin",

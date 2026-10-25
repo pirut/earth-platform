@@ -50,6 +50,27 @@ public final class JetStream {
         return entity.isFallFlying() && entity.getY() >= FLOOR && inCubic(entity);
     }
 
+    /** Whether another client's copy of this entity is a glider in the cubic world. */
+    public static boolean remoteGlider(LivingEntity entity) {
+        return entity.level().isClientSide && entity.isFallFlying() && inCubic(entity);
+    }
+
+    /**
+     * How many ticks a glider seen from another client eases toward a position update: no more than the
+     * ticks since its last one, so it never falls behind (vanilla always takes three).
+     */
+    public static int easeSteps(int steps, int ticksSinceLast) {
+        return Mth.clamp(ticksSinceLast, 1, steps);
+    }
+
+    /** Ticks of travel a fast glider stays drawn within, however far that is. */
+    private static final int DRAWN_TICKS = 4;
+
+    /** The squared distance a glider moving this far a tick stays drawn within. */
+    public static double drawReachSqr(double dx, double dy, double dz) {
+        return (dx * dx + dy * dy + dz * dz) * DRAWN_TICKS * DRAWN_TICKS;
+    }
+
     /** Wind strength at a height, 0 at the floor rising smoothly to 1. */
     public static double strength(double y) {
         double t = Mth.clamp((y - FLOOR) / FULL_DEPTH, 0.0, 1.0);
