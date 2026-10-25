@@ -4,7 +4,6 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Timings;
-import io.earthplatform.minecraft.cubic.play.EarthConfig;
 import io.earthplatform.minecraft.diagnostics.*;
 import java.time.Instant;
 import java.util.*;
@@ -24,7 +23,6 @@ public final class PerformanceDiagnostics {
         final Gson gson=new Gson();
         final FrameWindow frames=new FrameWindow();
         final LocalPerfLog log;
-        final PerfReports reports;
         long lastFrame,nextLog,windowStart;
         boolean warned;
         final Map<Timings,Timings.Total> previous=new IdentityHashMap<>();
@@ -50,9 +48,6 @@ public final class PerformanceDiagnostics {
             record.addProperty("log_max_files",3);record.addProperty("log_max_file_bytes",4<<20);
             log=new LocalPerfLog(mc.gameDirectory.toPath().resolve("earthplatform/perf"),record.toString());
             Runtime.getRuntime().addShutdownHook(new Thread(log::close,"Earth performance log close"));
-            var endpoint=PerfReports.endpoint();
-            reports=endpoint==null?null:new PerfReports(endpoint,EarthConfig.SEND_PERFORMANCE_REPORTS::get,record.toString(),300_000L);
-            if(reports!=null)Runtime.getRuntime().addShutdownHook(new Thread(reports::close,"Earth performance reports close"));
             EarthPlatformMod.LOGGER.info("Local performance logs: earthplatform/perf/latest.jsonl (local only)");
         }
         JsonObject base(String type) {JsonObject record=new JsonObject();record.addProperty("type",type);record.addProperty("utc",Instant.now().toString());return record;}
@@ -90,14 +85,9 @@ public final class PerformanceDiagnostics {
             JsonObject passes=new JsonObject();gpu.forEach((name,a)->{JsonObject pass=new JsonObject();pass.addProperty("samples",a[0]);pass.addProperty("gpu_ms_mean",a[1]/1e6/a[0]);pass.addProperty("cpu_ms_mean",a[2]/1e6/a[0]);pass.addProperty("gpu_ms_max",a[3]/1e6);pass.addProperty("max_age_frames",a[4]);pass.addProperty("max_ranges",a[5]);passes.add(name,pass);});
             record.add("sampled_gpu_passes",passes);record.addProperty("gpu_query_mode",FarGpuTimers.mode());record.addProperty("gpu_query_dropped",FarGpuTimers.dropped());
             JsonObject errors=new JsonObject();for(var stage:PerfFailures.Stage.values())if(PerfFailures.count(stage)>0){JsonObject error=new JsonObject();error.addProperty("count",PerfFailures.count(stage));error.addProperty("exception_type",PerfFailures.type(stage));errors.add(stage.name(),error);}record.add("errors",errors);
-            record.addProperty("log_dropped",log.dropped());String line=record.toString();log.offer(line);if(reports!=null)reports.offer(line);
+            record.addProperty("log_dropped",log.dropped());log.offer(record.toString());
             if(log.failed()&&!warned){warned=true;EarthPlatformMod.LOGGER.warn("Local performance log could not be written");}
         }
-    }
-    /** The F3 line while reports are on, or null: a player can always see that they are. */
-    public static String reportsLine() {
-        var reports=state==null?null:state.reports;
-        return reports==null||!reports.on()?null:"Performance reports: on, id "+reports.session().substring(0,8)+", "+reports.sent()+" sent";
     }
     static String clean(String value) {return value==null?"unknown":value.replaceAll("[\\p{Cntrl}]"," ").substring(0,Math.min(256,value.length()));}
     @SubscribeEvent public static void frame(RenderFrameEvent.Post event) {

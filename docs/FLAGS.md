@@ -82,8 +82,6 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.gpuTimers` | `false` | Times far terrain GPU passes with OpenGL queries and adds them to the performance log. Off for players because the queries wrap other mods' and shader packs' draws | `FarGpuTimers` |
 | `earthplatform.far.gpuSampleEvery` | 120 | Frames between GPU timings with `gpuTimers` | `FarGpuTimers` |
 | `earthplatform.perfLog` | on | Writes a small local performance log (frame times, GPU and driver, graphics settings, terrain workload; no names, places or paths) to `earthplatform/perf/latest*.jsonl` in the game folder, at most three 4 MiB files. `false` turns it off | `BuildInfo`, `PerformanceDiagnostics` |
-| `earthplatform.perfReports` | on | `false` forces opt-in performance reports off whatever the "Send performance reports" setting says. With `perfLog=false` they are off too | `PerfReports` |
-| `earthplatform.perfReports.url` | none | Where opt-in performance reports go: an `https` address, or `http` on this computer only (see `minecraft/scripts/perf-receiver.py`). With no address nothing is sent | `PerfReports` |
 | `earthplatform.cubic.perf` | `false` | Logs every timing every few seconds | `Timings` |
 | `earthplatform.cubic.perfTicks` | 100 | Ticks between perf log lines | `CubicClient` |
 | `earthplatform.cubic.trace` | `false` | Logs cube traffic | `Cubic` |

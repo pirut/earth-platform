@@ -2,15 +2,13 @@
 
 Earth Platform downloads map data (elevation, climate, land cover, rivers and, if you turn it on, satellite imagery) from the hosts listed in [CREDITS.md](../CREDITS.md). Those requests ask for map tiles by area, as any map viewer does; they carry no account or player data.
 
-Everything else stays on your computer unless you turn on **Send performance reports**.
+Nothing else leaves your computer. The mod sends no reports, analytics or crash data anywhere.
 
-## Performance reports
+## Performance log and export
 
-Off by default. The setting is `sendPerformanceReports` in `config/earthplatform-client.toml`, also on the mod's config screen. Starting the game with `-Dearthplatform.perfReports=false` forces it off.
+The game keeps a small local performance log in `earthplatform/perf/` (see [PERFORMANCE-LOG.md](PERFORMANCE-LOG.md)). `/earthperf export` packs it into one zip under `earthplatform/perf/exports/`. It only saves the file; you decide whether to attach it to a bug report.
 
-While it is on, every five minutes the game sends the lines it already writes to `earthplatform/perf/latest.jsonl` (see [PERFORMANCE-LOG.md](PERFORMANCE-LOG.md)). You can open that file to see exactly what goes out.
-
-| Sent | Never sent |
+| In the log | Never in the log |
 | --- | --- |
 | Mod version and commit | Player name, UUID or skin |
 | Java version, OS name and version, CPU thread count, maximum memory | Coordinates, place names, world names or seeds |
@@ -18,8 +16,5 @@ While it is on, every five minutes the game sends the lines it already writes to
 | Window size, render and simulation distance, frame limit, vsync | File paths or folder names |
 | Whether a shader pack is on (not which one), far detail and sharpness | Other mods or resource packs |
 | Frame times, memory use, far terrain and cube counts, timings of each stage in milliseconds | Error messages (only the kind of error, such as `java.lang.OutOfMemoryError`) |
-| A random id made fresh each time the game starts | Anything at all while the setting is off |
 
-The receiver does not keep your IP address. F3 shows the id while reports are on; to have the reports from a session deleted, open an issue with that id.
-
-Where reports go and how long they are kept will be listed here before any build sends them. The current build has no receiver set, so nothing is sent even with the setting on.
+Start the game with `-Dearthplatform.perfLog=false` to turn the log off.
