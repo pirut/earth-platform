@@ -132,16 +132,16 @@ final class FarLodShaders {
             """;
 
     /**
-     * Far water's floor, where the water shows over far terrain: its bed's own depth, or the least
-     * depth if that is nearer. It replaces the slope depth there, which across a narrow channel
-     * can lie well off the bed.
+     * Far water's floor, where the water shows over far terrain: its bed's own depth, as the pack
+     * finds under its own water up close, or a few depth steps behind the surface if that is
+     * further. It replaces the slope depth there, which across a narrow channel can lie well off
+     * the bed.
      */
     static final String DEEPEN = """
             #version 330 core
             uniform sampler2D earth_Game;
             uniform sampler2D earth_Far;
             uniform mat4 earth_Projection;
-            uniform float earth_Least;
             uniform float earth_GameNear;
             uniform vec2 earth_NearFar;
             in vec3 earth_view;
@@ -157,9 +157,11 @@ final class FarLodShaders {
                 // beginWater), where one step of a float depth spans z * z * 2^-24 / near blocks: a
                 // hundred at 10 km. Within a few steps the surface and floor round alike and the
                 // water drew on alternate rows and flickered as the camera moved.
+                // A least depth of its own read shallow seas deeper far off than near by, a darker
+                // ring around the blocks' lighter disk.
                 float distance = length(earth_view);
                 float step = distance * distance * 5.96e-8 / earth_GameNear;
-                vec4 clip = earth_Projection * vec4(earth_view * ((distance + max(earth_Least, 4.0 * step)) / distance), 1.0);
+                vec4 clip = earth_Projection * vec4(earth_view * ((distance + 4.0 * step) / distance), 1.0);
                 gl_FragDepth = max(clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0), bed);
             }
             """;
