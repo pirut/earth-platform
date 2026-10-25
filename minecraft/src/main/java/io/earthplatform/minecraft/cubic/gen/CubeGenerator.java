@@ -26,6 +26,10 @@ public interface CubeGenerator {
     default List<net.minecraft.world.level.levelgen.structure.StructureStart> structureStarts(int chunkX, int chunkZ) { return List.of(); }
     /** One structure's start in a chunk at real heights, or null. */
     default @javax.annotation.Nullable net.minecraft.world.level.levelgen.structure.StructureStart structureStart(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) { return null; }
+    /** A start of a structure in a chunk as /place structure makes one, in any biome, at real heights; null where it cannot start. */
+    default @javax.annotation.Nullable net.minecraft.world.level.levelgen.structure.StructureStart placedStructure(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) { return null; }
+    /** The chunk generator vanilla structure code sees this world through, at real heights, or null where it has none. */
+    default @javax.annotation.Nullable net.minecraft.world.level.chunk.ChunkGenerator structureView() { return null; }
     /**
      * The nearest biome passing a test, searched as vanilla's /locate biome does: columns every {@code step} blocks
      * spiralling out to {@code radius}, the ground's biome first, then the caves under it. Null where there is none.
