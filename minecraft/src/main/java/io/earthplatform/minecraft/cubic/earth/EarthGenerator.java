@@ -458,11 +458,14 @@ public final class EarthGenerator extends SurfaceGenerator {
         return seaWater(x, z) ? SEA : waterSurface(dem, x, z, voxel);
     }
 
-    /** Ring radii, in voxels, for how far a low bank is from its water. */
-    private static final int[] BANK_RINGS = {1, 2, 3, 4, 6, 8, 11, 15};
+    /** Ring radii, in voxels, for how far a low bank is from its water; the wider ones only for {@link #CANOPY_BANK}'s. */
+    private static final int[] BANK_RINGS = {1, 2, 3, 4, 6, 8, 11, 15, 20, 27, 36, 48, 64, 80};
+    private static final int LOW_RINGS = 8;
     /** Rise of a low bank per block across, and the heights over its water up to which ground eases fully, and at all. */
     private static final double BANK_SLOPE = 0.5;
     private static final int LOW_BANK = 6, HIGH_BANK = 14;
+    /** Blocks a forest's canopy stands over its ground in the surface surveys, which a forested bank eases down further. */
+    private static final int CANOPY_BANK = 24;
 
     /**
      * A land column's height eased down toward the water just beside it. The elevation tiles blur a
@@ -472,26 +475,48 @@ public final class EarthGenerator extends SurfaceGenerator {
      * {@value #LOW_BANK} blocks over the water nearest it now climbs from the water's edge by one
      * block in two; higher ground eases less, and from {@value #HIGH_BANK} up, as a cliff, not at
      * all. Mountain country, where water lies in steep valleys, keeps its shores as they are.
+     *
+     * <p>Outside the few countries with bare-earth surveys the elevation is a surface model, which
+     * reads a forest's canopy as its ground, so a forested bank stands a canopy's height over the
+     * water beside it. Along the Amazon's rivers that was a grey wall of 12 to 26 blocks between the
+     * water and the trees for hundreds of kilometres, near and far alike, where the real banks are a
+     * few metres high. Forested ground eases from {@value #CANOPY_BANK} blocks higher up, so such
+     * banks slope from the water up to the forest instead. Where the survey is bare earth a
+     * forested bank has no canopy's step to lose, and only a real bluff that high in level country
+     * slopes the same way.
      */
     private int bank(GlobalElevation dem, int x, int z, int y, int voxel) {
         int cx = Math.floorDiv(x, WATER_CELL), cz = Math.floorDiv(z, WATER_CELL);
         // High ground in a cell the land cover maps no water in leads down to no water, and voxels this wide
         // take no river's: known without surveying the cell, which the far levels did for every cell some
         // hundred kilometres round.
-        if (voxel > RIVER_VOXEL && y > SEA + HIGH_BANK && dry(cx, cz)) return y;
+        boolean wide = voxel > RIVER_VOXEL;
+        if (wide && y > SEA + HIGH_BANK && (y > SEA + HIGH_BANK + CANOPY_BANK || !forested(x, z, voxel)) && dry(cx, cz)) return y;
         WaterCell cell = waterCell(cx, cz);
         if (cell.relief > MOUNTAINS) return y;
-        // The lowest water a bank here could lead down to: the sea, or this cell's lakes and rivers.
-        int lowest = y <= SEA + HIGH_BANK ? SEA : cell.samples > 0 ? Mth.floor(SEA + 0.5 + cell.level) - BANK : DRY;
-        if (lowest == DRY) lowest = riverBank(x, z, voxel);
-        if (lowest == DRY || y - lowest >= HIGH_BANK) return y;
-        for (int r : BANK_RINGS) {
-            double radius = (double) r * voxel;
+        int lowest = lowestWater(cell, x, z, y, HIGH_BANK, voxel), canopy = 0;
+        // Only ground standing a low bank's height over its water or more can take the forest's: the land cover is
+        // read round every column that might, and no other.
+        if ((lowest == DRY || y - lowest >= LOW_BANK) && forested(x, z, voxel)) {
+            canopy = CANOPY_BANK;
+            lowest = lowestWater(cell, x, z, y, HIGH_BANK + canopy, voxel);
+        }
+        int low = LOW_BANK + canopy, high = HIGH_BANK + canopy;
+        if (lowest == DRY || y - lowest >= high) return y;
+        int rings = canopy > 0 ? BANK_RINGS.length : LOW_RINGS;
+        for (int i = 0; i < rings; i++) {
+            double radius = (double) BANK_RINGS[i] * voxel;
             if (lowest + radius * BANK_SLOPE >= y) return y;
             // The first water found on the ring sets the level: reading every one's costs more than it changes.
-            int level = DRY;
-            for (int k = 0; k < 8 && level == DRY; k++) {
-                int px = x + (int) Math.round(RING_X[k] * radius), pz = z + (int) Math.round(RING_Z[k] * radius);
+            int level = DRY, k = 0;
+            // A forest's rings keep to a lattice coarser the wider they are, so that the columns round about share
+            // their land cover reads: every forest column on a water cell's ground now looks for its water.
+            // Each point is read a little outside its ring, never inside it, so water at the ring's reach is not missed;
+            // the search between the rings below then finds how far it is.
+            int lattice = canopy == 0 ? 1 : Math.max(voxel, Math.min(BANK_LATTICE, Integer.highestOneBit((int) radius / 3 + 1)));
+            double reach = lattice == 1 ? radius : radius + 0.5 * lattice;
+            for (; k < 8 && level == DRY; k++) {
+                int px = snap(x + (int) Math.round(RING_X[k] * reach), lattice), pz = snap(z + (int) Math.round(RING_Z[k] * reach), lattice);
                 int code = cover(px, pz, voxel);
                 if (code != WorldCoverSource.NO_DATA && code != WorldCoverSource.WATER) continue;
                 int water = code == WorldCoverSource.NO_DATA || seaWater(px, pz) ? SEA : waterSurface(dem, px, pz, voxel);
@@ -499,13 +524,52 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (water < y) level = water;
             }
             if (level == DRY) continue;
+            // The wide rings lie far apart: the water's edge is found between the last two, or the forest's bank rose
+            // in steps of up to eight blocks, a ring's width apart.
+            if (canopy > 0 && i > 0) {
+                double inside = (double) BANK_RINGS[i - 1] * voxel, dx = RING_X[k - 1], dz = RING_Z[k - 1];
+                radius = reach;
+                for (int step = 0; step < 3 && radius - inside > voxel; step++) {
+                    double middle = (inside + radius) / 2;
+                    int code = cover(x + (int) Math.round(dx * middle), z + (int) Math.round(dz * middle), voxel);
+                    if (code == WorldCoverSource.NO_DATA || code == WorldCoverSource.WATER) radius = middle; else inside = middle;
+                }
+            }
             int rise = y - level;
-            double ease = Mth.clamp((double) (HIGH_BANK - rise) / (HIGH_BANK - LOW_BANK), 0, 1);
+            double ease = Mth.clamp((double) (high - rise) / (high - low), 0, 1);
             int cap = level + Mth.floor(radius * BANK_SLOPE);
             return cap >= y ? y : y - (int) Math.round((y - cap) * ease);
         }
         return y;
     }
+
+    /** The lowest water a bank as high as {@code high} could lead down to: the sea, or a cell's lakes and rivers, or {@link #DRY}. */
+    private int lowestWater(WaterCell cell, int x, int z, int y, int high, int voxel) {
+        int lowest = y <= SEA + high ? SEA : cell.samples > 0 ? Mth.floor(SEA + 0.5 + cell.level) - BANK : DRY;
+        return lowest == DRY ? riverBank(x, z, voxel) : lowest;
+    }
+
+    /** Blocks round a column within which forest raises its survey: about a pixel of the coarsest surface surveys. */
+    private static final int CANOPY_REACH = 24;
+
+    /**
+     * Whether a column's survey may read a forest's canopy: forest or mangroves there or a pixel or so
+     * round it. Clearings and grass a few pixels across among the trees read high too, the survey
+     * being blurred over them, and taken alone they stood as pillars on a bank eased round them.
+     */
+    private boolean forested(int x, int z, int voxel) {
+        if (treeCover(cover(x, z, voxel))) return true;
+        int r = Math.max(CANOPY_REACH, voxel), g = Math.max(voxel, BANK_LATTICE), sx = snap(x, g), sz = snap(z, g);
+        return treeCover(cover(sx + r, sz, voxel)) || treeCover(cover(sx - r, sz, voxel))
+                || treeCover(cover(sx, sz + r, voxel)) || treeCover(cover(sx, sz - r, voxel));
+    }
+
+    /** Blocks apart of the lattice the wider land cover reads round a bank keep to. */
+    private static final int BANK_LATTICE = 8;
+
+    private static int snap(int v, int lattice) { return lattice == 1 ? v : Math.floorDiv(v + (lattice >> 1), lattice) * lattice; }
+
+    private static boolean treeCover(int code) { return code == WorldCoverSource.TREE_COVER || code == WorldCoverSource.MANGROVES; }
 
     /** Whether a dry column is a speck of land on {@link #coarse} ground with the sea on most sides. */
     private boolean speck(GlobalElevation dem, int x, int z, double metres, int voxel) {
