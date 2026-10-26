@@ -430,8 +430,21 @@ public final class EarthGenerator extends SurfaceGenerator {
     private static final double CLIFF_SLOPE = 1.5, CLIFF_COVE = 7, CLIFF_REACH = 36;
     /** Farthest, in blocks, a cliff's face reaches back from the sea: past it the face stands above any ground. */
     private static final int CLIFF_MARGIN = (int) CLIFF_REACH + (int) CLIFF_COVE + 5;
+    /** Metres up to which land by the sea is a cliff's foot, as a beach or a shore platform is. */
+    private static final double CLIFF_FOOT = 3;
     /** Points across a tile of the distance to the sea, and the fewest blocks between them. */
     private static final int CLIFF_TILE = 32, CLIFF_SPACING = 4;
+    /**
+     * Blocks a tile reads round itself: as far as a sharpened cliff's foot and top may lie from a column, and as far
+     * as the land behind its top is looked over.
+     */
+    private static final int CLIFF_LOOK = 96;
+    /** Metres a cliff's flat top must stand at least, and at most, to be sharpened; and up to which its face is chalk. */
+    private static final double SHARP_LOW = 20, SHARP_HIGH = 150, CHALK_HIGH = 120;
+    /** Steepest rise per run of a cliff's flat top, as the chalk downs dipping to the sea behind Dover. */
+    private static final double SHARP_FLAT = 0.5;
+    /** The planes of a cliff tile: blocks to a foot, whether that foot is the sea, how sharp, its top's metres, and how chalky. */
+    private static final int CLIFF_FOOT_D = 0, CLIFF_WET = 1, CLIFF_SHARP = 2, CLIFF_TOP = 3, CLIFF_CHALK = 4, CLIFF_PLANES = 5;
 
     /**
      * A land column's ground by the sea, cut back to a sea cliff's face. The land cover draws the
@@ -442,12 +455,22 @@ public final class EarthGenerator extends SurfaceGenerator {
      * sheer, in ledges a few blocks high, and its foot wanders in and out in coves and headlands.
      * Only ground steeper than the face is cut: beaches and gentle shores keep their ground, and a
      * cliff taller than the face climbs in {@value #CLIFF_REACH} blocks takes a steeper face.
+     * <p>
+     * A sheer cliff under a flat top, as the white cliffs of Dover, the Seven Sisters or the Twelve
+     * Apostles, the survey blurs into a smooth ramp forty-odd blocks wide; such a ramp is first
+     * sharpened back into a sheer face ({@link #sharpen}).
      */
     private void seaCliff(GlobalElevation dem, int x, int z, int y, int voxel, int[] out) {
         out[0] = y;
         out[1] = DRY;
-        if (!besideSea(x, z)) return;
-        double rise = y - SEA, d = seaDistance(dem, x, z, voxel);
+        double[] cliff = new double[CLIFF_PLANES];
+        if (!cliffAt(dem, x, z, voxel, cliff)) return;
+        if (cliff[CLIFF_SHARP] > 0 && y < SEA + cliff[CLIFF_TOP]) out[0] = y = sharpen(dem, x, z, y, cliff[CLIFF_SHARP], cliff[CLIFF_TOP]);
+        if (y <= SEA + 1) return;
+        boolean wet = cliff[CLIFF_WET] >= 0.5;
+        double d = cliff[CLIFF_FOOT_D];
+        // A face over a low shore climbs from the shore's height, so the shore itself keeps its ground.
+        double foot = wet ? 0 : CLIFF_FOOT, rise = y - SEA - foot;
         // Past this the face stands above the ground whatever its slope and the cove do.
         if (d >= rise / CLIFF_SLOPE + CLIFF_COVE) return;
         double slope = Math.max(CLIFF_SLOPE + 2.5 * (1 + relief.getValue(x / 83.0 + 17.3, z / 83.0 - 4.1)), rise / CLIFF_REACH);
@@ -461,76 +484,176 @@ public final class EarthGenerator extends SurfaceGenerator {
         double ledge = 4 + 2.5 * (1 + relief.getValue(x / 47.0 - 31.9, z / 47.0 + 12.7));
         double steps = face / ledge, fraction = steps - Math.floor(steps);
         if (face > 0) face = ledge * (Math.floor(steps) + fraction * fraction * fraction);
-        int top = Mth.floor(SEA + face);
-        if (top < SEA) {
+        int top = Mth.floor(SEA + foot + face);
+        if (!wet) out[0] = Math.min(y, Math.max(top, Mth.floor(SEA + foot)));
+        else if (top < SEA) {
             // A cove: the sea comes in over a shallow floor.
             out[0] = Math.max(top, SEA - 3);
             out[1] = SEA;
         } else out[0] = Math.min(y, top);
     }
 
+    /**
+     * A blurred cliff's ground, sharpened: the ramp's upper part raised to the flat top and its lower part cut
+     * to the shore, along a face that wanders back and forth across the ramp, in bays and buttresses tens of
+     * blocks across and flutes a few across, read from the survey a little aside of the column.
+     */
+    private int sharpen(GlobalElevation dem, int x, int z, int y, double sharp, double top) {
+        double wx = x + 0.5 + 9 * warpX.getValue(x / 43.0 + 11.7, z / 43.0 - 5.3) + 2.5 * crags.getValue(x / 7.0 + 5.1, z / 7.0 - 2.3);
+        double wz = z + 0.5 + 9 * warpZ.getValue(x / 43.0 + 11.7, z / 43.0 - 5.3) + 2.5 * crags.getValue(x / 7.0 - 9.4, z / 7.0 + 1.7);
+        double t = dem.metres(wx, wz) / top, edge = 0.45 + 0.1 * relief.getValue(x / 24.0 - 3.3, z / 24.0 + 7.9);
+        double up = Mth.clamp((t - edge) / 0.04 + 0.5, 0, 1);
+        double target = up * Math.max(y, SEA + 0.5 + top) + (1 - up) * Math.min(y, SEA + 2);
+        return Mth.floor(y + (target - y) * sharp + 0.5);
+    }
+
+    /** Whether a column's rock is a chalk cliff's face, white as Dover's and the Seven Sisters'. */
+    private boolean chalk(int x, int z, int voxel) {
+        if (voxel > CLIFF_VOXEL) return false;
+        double[] cliff = new double[CLIFF_PLANES];
+        return cliffAt(elevation(zoom(Math.max(1, Integer.numberOfTrailingZeros(voxel))), voxel), x, z, voxel, cliff)
+                && cliff[CLIFF_SHARP] * cliff[CLIFF_CHALK] >= 0.5;
+    }
+
     private record CliffTile(int x, int z, int voxel) {}
     private final java.util.concurrent.ConcurrentHashMap<CliffTile, float[]> cliffTiles = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
-     * Blocks from a column to the nearest sea, up to about {@value #CLIFF_MARGIN}, blended from a
-     * tile of points a voxel or {@value #CLIFF_SPACING} blocks apart. Each tile reads the sea once
-     * at every point over it and a margin round it and spreads the distance across them, which
-     * every column on it then shares: searching rings round each column took many times as long
-     * on the Cliffs of Moher, and missed inlets a few blocks across, so the face stood in spikes.
+     * A column's cliff, blended from a tile of points a voxel or {@value #CLIFF_SPACING} blocks
+     * apart: the blocks to the nearest foot, up to about {@value #CLIFF_MARGIN}, and the other
+     * planes. Each tile reads the sea and the ground once at every point over it and a margin
+     * round it and spreads them across the points, which every column on it then shares:
+     * searching rings round each column took many times as long on the Cliffs of Moher, and
+     * missed inlets a few blocks across, so the face stood in spikes.
      */
-    private double seaDistance(GlobalElevation dem, int x, int z, int voxel) {
+    private boolean cliffAt(GlobalElevation dem, int x, int z, int voxel, double[] out) {
         int spacing = Math.max(CLIFF_SPACING, voxel);
         double gx = (x + 0.5) / spacing - 0.5, gz = (z + 0.5) / spacing - 0.5;
         int ix = Mth.floor(gx), iz = Mth.floor(gz);
         double tx = gx - ix, tz = gz - iz;
         // A tile holds one point more each way, so the blend never leaves it.
         float[] tile = cliffTile(dem, Math.floorDiv(ix, CLIFF_TILE), Math.floorDiv(iz, CLIFF_TILE), voxel);
-        int i = Math.floorMod(ix, CLIFF_TILE), j = Math.floorMod(iz, CLIFF_TILE), w = CLIFF_TILE + 1;
-        double a = tile[j * w + i], b = tile[j * w + i + 1], c = tile[(j + 1) * w + i], e = tile[(j + 1) * w + i + 1];
-        return Mth.lerp(tz, Mth.lerp(tx, a, b), Mth.lerp(tx, c, e));
+        if (tile == NO_CLIFF) return false;
+        int w = CLIFF_TILE + 1;
+        for (int p = 0; p < CLIFF_PLANES; p++) {
+            int k = p * w * w + Math.floorMod(iz, CLIFF_TILE) * w + Math.floorMod(ix, CLIFF_TILE);
+            out[p] = Mth.lerp(tz, Mth.lerp(tx, tile[k], tile[k + 1]), Mth.lerp(tx, tile[k + w], tile[k + w + 1]));
+        }
+        return true;
     }
 
+    /** A tile with no sea over it or its margin, so no cliff. */
+    private static final float[] NO_CLIFF = new float[0];
+
+    /**
+     * A tile's planes. A cliff's foot is the sea, or land at most {@value #CLIFF_FOOT} m up near
+     * it, as a beach or a shore platform. A blurred cliff is a ramp from a foot to a flat top of
+     * {@value #SHARP_LOW} to {@value #SHARP_HIGH} m, a short way from both, with no higher ground
+     * close behind: so the chalk downs' cliffs, and not mountainsides, as Big Sur's or Amalfi's,
+     * nor tall slopes, as Slieve League's, nor any ground without such a top, as the Rif's.
+     */
     private float[] cliffTile(GlobalElevation dem, int tx, int tz, int voxel) {
         CliffTile key = new CliffTile(tx, tz, voxel);
         int spacing = Math.max(CLIFF_SPACING, voxel);
         float[] known = cliffTiles.get(key);
         if (known != null) return known;
-        int margin = (CLIFF_MARGIN + spacing - 1) / spacing, n = CLIFF_TILE + 1 + 2 * margin;
+        int margin = (CLIFF_LOOK + spacing - 1) / spacing, n = CLIFF_TILE + 1 + 2 * margin;
         int ox = tx * CLIFF_TILE - margin, oz = tz * CLIFF_TILE - margin;
-        float far = 2f * CLIFF_MARGIN;
-        float[] grid = new float[n * n];
         double[] sample = new double[3];
-        for (int j = 0; j < n; j++) for (int i = 0; i < n; i++)
-            grid[j * n + i] = sea(dem, (ox + i + 0.5) * spacing, (oz + j + 0.5) * spacing, voxel, sample) ? 0 : far;
-        // Two sweeps of the eight neighbours' steps: within a twelfth of the straight distance.
-        float side = spacing, corner = (float) (spacing * Math.sqrt(2));
-        for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) {
-            float v = grid[j * n + i];
-            if (i > 0) v = Math.min(v, grid[j * n + i - 1] + side);
-            if (j > 0) {
-                v = Math.min(v, grid[(j - 1) * n + i] + side);
-                if (i > 0) v = Math.min(v, grid[(j - 1) * n + i - 1] + corner);
-                if (i < n - 1) v = Math.min(v, grid[(j - 1) * n + i + 1] + corner);
-            }
-            grid[j * n + i] = v;
+        // Most tiles lie inland: a look at every fourth point finds no sea, and spares reading the rest.
+        boolean coast = false;
+        for (int j = 0; j < n && !coast; j += 4) for (int i = 0; i < n && !coast; i += 4)
+            coast = sea(dem, (ox + i + 0.5) * spacing, (oz + j + 0.5) * spacing, voxel, sample);
+        if (!coast) {
+            if (cliffTiles.size() > 4096) cliffTiles.clear();
+            cliffTiles.putIfAbsent(key, NO_CLIFF);
+            return NO_CLIFF;
         }
-        for (int j = n - 1; j >= 0; j--) for (int i = n - 1; i >= 0; i--) {
-            float v = grid[j * n + i];
-            if (i < n - 1) v = Math.min(v, grid[j * n + i + 1] + side);
-            if (j < n - 1) {
-                v = Math.min(v, grid[(j + 1) * n + i] + side);
-                if (i < n - 1) v = Math.min(v, grid[(j + 1) * n + i + 1] + corner);
-                if (i > 0) v = Math.min(v, grid[(j + 1) * n + i - 1] + corner);
+        float far = 4f * CLIFF_LOOK;
+        float[] sea = new float[n * n], foot = new float[n * n], wet = new float[n * n], plateau = new float[n * n], top = new float[n * n];
+        float[] metres = new float[n * n];
+        boolean[] water = new boolean[n * n];
+        for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) {
+            double px = (ox + i + 0.5) * spacing, pz = (oz + j + 0.5) * spacing;
+            int at = j * n + i;
+            water[at] = sea(dem, px, pz, voxel, sample);
+            metres[at] = (float) dem.metres(px, pz);
+            sea[at] = water[at] ? 0 : far;
+        }
+        float side = spacing, corner = (float) (spacing * Math.sqrt(2));
+        sweep(sea, null, n, side, corner);
+        // Low land is a foot only near the sea: a pit on a clifftop at sea level, as on the Cliffs of Moher's, is not.
+        for (int at = 0; at < n * n; at++) {
+            foot[at] = water[at] || metres[at] <= CLIFF_FOOT && sea[at] < CLIFF_MARGIN ? 0 : far;
+            wet[at] = water[at] ? 1 : 0;
+        }
+        sweep(foot, wet, n, side, corner);
+        // Flat tops: gentle over a couple of points each way, carrying their height. Blocks span fewer metres the
+        // farther a place lies from the home's latitude, so slopes and distances are reckoned in metres.
+        double across = grid.groundMetresPerBlock((tz + 0.5) * CLIFF_TILE * spacing), run = 2.0 * spacing * across;
+        for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) {
+            int at = j * n + i;
+            boolean flat = false;
+            if (i > 0 && i < n - 1 && j > 0 && j < n - 1 && !water[at] && metres[at] > SHARP_LOW) {
+                double dx = (metres[at + 1] - metres[at - 1]) / run, dz = (metres[at + n] - metres[at - n]) / run;
+                flat = dx * dx + dz * dz < SHARP_FLAT * SHARP_FLAT;
             }
-            grid[j * n + i] = v;
+            plateau[at] = flat ? 0 : far;
+            top[at] = flat ? metres[at] : 0;
+        }
+        sweep(plateau, top, n, side, corner);
+        // The highest ground within the look each way, by rows then columns.
+        int r = margin;
+        float[] rows = new float[n * n];
+        for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) {
+            float m = Float.NEGATIVE_INFINITY;
+            for (int k = Math.max(0, i - r); k <= Math.min(n - 1, i + r); k++) m = Math.max(m, metres[j * n + k]);
+            rows[j * n + i] = m;
         }
         int w = CLIFF_TILE + 1;
-        float[] tile = new float[w * w];
-        for (int j = 0; j < w; j++) System.arraycopy(grid, (j + margin) * n + margin, tile, j * w, w);
+        float[] tile = new float[CLIFF_PLANES * w * w];
+        for (int j = 0; j < w; j++) for (int i = 0; i < w; i++) {
+            int at = (j + margin) * n + i + margin, k = j * w + i;
+            float m = Float.NEGATIVE_INFINITY;
+            for (int q = j; q <= j + 2 * margin; q++) m = Math.max(m, rows[q * n + i + margin]);
+            double t = top[at], path = (foot[at] + plateau[at]) * across;
+            double sharp = water[at] ? 0 : Mth.clamp((0.6 * t + 20 - path) / 10, 0, 1)
+                    * Mth.clamp((t - SHARP_LOW) / 10, 0, 1) * Mth.clamp((SHARP_HIGH - t) / 30, 0, 1)
+                    * Mth.clamp((1.9 - m / Math.max(1, t)) / 0.3, 0, 1);
+            tile[CLIFF_FOOT_D * w * w + k] = foot[at];
+            tile[CLIFF_WET * w * w + k] = wet[at];
+            tile[CLIFF_SHARP * w * w + k] = (float) sharp;
+            tile[CLIFF_TOP * w * w + k] = (float) t;
+            tile[CLIFF_CHALK * w * w + k] = (float) Mth.clamp((CHALK_HIGH - t) / 20, 0, 1);
+        }
         if (cliffTiles.size() > 4096) cliffTiles.clear();
         cliffTiles.putIfAbsent(key, tile);
         return tile;
+    }
+
+    /**
+     * Distances spread from the zeros of {@code grid} by two sweeps of the eight neighbours' steps, within a twelfth of
+     * the straight distance; each point takes {@code carry}, if any, from its nearest zero.
+     */
+    private static void sweep(float[] grid, @Nullable float[] carry, int n, float side, float corner) {
+        for (int pass = 0; pass < 2; pass++) {
+            int step = pass == 0 ? 1 : -1;
+            for (int j = pass == 0 ? 0 : n - 1; j >= 0 && j < n; j += step) for (int i = pass == 0 ? 0 : n - 1; i >= 0 && i < n; i += step) {
+                int at = j * n + i, back = j - step;
+                spread(grid, carry, at, i - step >= 0 && i - step < n ? at - step : -1, side);
+                if (back < 0 || back >= n) continue;
+                spread(grid, carry, at, back * n + i, side);
+                if (i - 1 >= 0) spread(grid, carry, at, back * n + i - 1, corner);
+                if (i + 1 < n) spread(grid, carry, at, back * n + i + 1, corner);
+            }
+        }
+    }
+
+    private static void spread(float[] grid, @Nullable float[] carry, int at, int from, float step) {
+        if (from >= 0 && grid[from] + step < grid[at]) {
+            grid[at] = grid[from] + step;
+            if (carry != null) carry[at] = carry[from];
+        }
     }
 
     /**
@@ -541,9 +664,12 @@ public final class EarthGenerator extends SurfaceGenerator {
     private boolean sea(GlobalElevation dem, double x, double z, int voxel, double[] sample) {
         int code = cover(x, z, voxel);
         if (code == WorldCoverSource.NO_DATA) return true;
-        if (code != WorldCoverSource.WATER || !seaWater(x, z, voxel)) return false;
+        if (code != WorldCoverSource.WATER) return false;
         int bx = Mth.floor(x), bz = Mth.floor(z);
         double metres = dem.sample(bx + 0.5, bz + 0.5, sample);
+        // Water about the sea's level that joins the open sea is the sea, though its cell's samples miss it, as across
+        // the Strait of Dover.
+        if (!seaWater(x, z, voxel) && !(metres <= 2 * TIDAL && joinsOpenSea(bx, bz))) return false;
         return sample[2] > 0.5 || seaGround(dem, bx, bz, metres, Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1])), voxel);
     }
 
@@ -2548,6 +2674,13 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** A column's surface with the given imagery, or none, having the last word; for {@link ImageryCalibration}. */
     Surface surface(int x, int z, int y, int water, int slope, int voxel, @Nullable ImageryGround imageryGround) {
+        Surface s = natural(x, z, y, water, slope, voxel, imageryGround);
+        if (water != DRY || y <= SEA + 2 || slope / 2.4 <= 1.15 || !chalk(x, z, voxel)) return s;
+        // Chalk shows white down a sharpened cliff's whole face, flecked grey with flint.
+        return new Surface(s.biome(), Math.floorMod(mix(x, 0x43484BL, z), 100) < 10 ? DIORITE : CALCITE, CALCITE, 0, 0, 0, 0, 0, false);
+    }
+
+    private Surface natural(int x, int z, int y, int water, int slope, int voxel, @Nullable ImageryGround imageryGround) {
         Local local = cover == null ? null : local(x, z, y);
         double t = local == null ? temperature(x, z, y) : local.temperature();
         if (water != DRY && water != SEA && cover != null) return lake(x, z, y, water, t, voxel);
