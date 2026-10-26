@@ -261,6 +261,8 @@ public final class FarRenderer {
         boolean building, stale, meshed;
         /** Its mask changed while a finer level drew over it, so its remesh waits unless it is drawn. */
         boolean maskStale;
+        /** Received since the last mask, which works its cubes out whole rather than from what changed (see {@link FarRenderer#maskChanges}). */
+        boolean unmasked;
         @Nullable FarGpu.Allocation faces;
         @Nullable FarWaterBuffers.Mesh water;
         /** Water walls by side (north, south, west, east), drawn where that side's column is not. */
@@ -521,6 +523,8 @@ public final class FarRenderer {
         columnsVersion++;
         places.add(column);
         link(column);
+        column.unmasked = true;
+        unmasked.add(column);
         if (old != null) {
             replaced++;
             if (listed(old)) walkStale = true;
@@ -810,8 +814,42 @@ public final class FarRenderer {
         if (compiledVersion == maskedCompiled && columnsVersion == maskedColumns) return;
         maskedCompiled = compiledVersion;
         maskedColumns = columnsVersion;
-        Long2ObjectOpenHashMap<LongOpenHashSet> sets = new Long2ObjectOpenHashMap<>();
         LongOpenHashSet compiled = world.renderer().compiledCubes(), sunk = sunk(compiled);
+        if (MASK_CHANGES && handedOut != null) maskChanges(compiled, sunk);
+        else maskWhole(compiled, sunk);
+        for (Column column : unmasked) column.unmasked = false;
+        unmasked.clear();
+        if (CHECK_MASK) checkMask(compiled, sunk);
+    }
+
+    /** Every column's cubes worked out afresh (see {@link #mask}). */
+    private void maskWhole(LongOpenHashSet compiled, LongOpenHashSet sunk) {
+        Long2ObjectOpenHashMap<LongOpenHashSet> sets = cubesByColumn(compiled, sunk);
+        // Only the columns with drawn cubes in them, now or before, can change: going over every
+        // column held for them took as long as working out the sets.
+        List<Column> touched = new ArrayList<>(masked);
+        for (LongIterator it = sets.keySet().iterator(); it.hasNext(); ) {
+            Column column = held(it.nextLong());
+            if (column != null && column.drawnCubes == null) touched.add(column);
+        }
+        for (Column column : touched) {
+            LongOpenHashSet set = sets.get(column.key);
+            if (Objects.equals(set, column.drawnCubes)) continue;
+            // A cube gone from under a drawn column leaves a hole until it remeshes: that comes first.
+            hand(column, set, column.drawnCubes != null && (set == null || !set.containsAll(column.drawnCubes)));
+        }
+        if (!MASK_CHANGES) return;
+        // What was handed out, for the next mask to start from.
+        handedOut = new LongOpenHashSet(compiled.size());
+        for (LongIterator it = compiled.iterator(); it.hasNext(); ) {
+            long cube = it.nextLong();
+            if (!sunk.contains(cube)) handedOut.add(cube);
+        }
+    }
+
+    /** The drawn cubes not sunk, by the held columns they are inside (plus a voxel's margin). */
+    private Long2ObjectOpenHashMap<LongOpenHashSet> cubesByColumn(LongOpenHashSet compiled, LongOpenHashSet sunk) {
+        Long2ObjectOpenHashMap<LongOpenHashSet> sets = new Long2ObjectOpenHashMap<>();
         for (LongIterator it = compiled.iterator(); it.hasNext(); ) {
             long cube = it.nextLong();
             if (sunk.contains(cube)) continue;
@@ -825,36 +863,122 @@ public final class FarRenderer {
                 }
             }
         }
-        // Only the columns with drawn cubes in them, now or before, can change: going over every
-        // column held for them took as long as working out the sets.
-        List<Column> touched = new ArrayList<>(masked);
-        for (LongIterator it = sets.keySet().iterator(); it.hasNext(); ) {
-            Column column = held(it.nextLong());
-            if (column != null && column.drawnCubes == null) touched.add(column);
+        return sets;
+    }
+
+    /**
+     * The same as {@link #maskWhole}, from what changed since the last mask: the cubes drawn, gone
+     * or sunk since change the columns they are inside, and the columns received since have their
+     * cubes worked out whole. Every other column's cubes are as that mask handed them out. Flying,
+     * cubes come and go only at the edges of what is loaded, but working every column's cubes out
+     * afresh, the coarse ones over all of them included, took a sixth of the render thread's time.
+     */
+    private void maskChanges(LongOpenHashSet compiled, LongOpenHashSet sunk) {
+        LongOpenHashSet earlier = handedOut;
+        LongArrayList gone = new LongArrayList(), come = new LongArrayList();
+        for (LongIterator it = earlier.iterator(); it.hasNext(); ) {
+            long cube = it.nextLong();
+            if (!compiled.contains(cube) || sunk.contains(cube)) gone.add(cube);
         }
-        for (Column column : touched) {
-            LongOpenHashSet set = sets.get(column.key);
-            if (Objects.equals(set, column.drawnCubes)) continue;
-            // A cube gone from under a drawn column leaves a hole until it remeshes: that comes first.
-            boolean lost = column.drawnCubes != null && (set == null || !set.containsAll(column.drawnCubes));
-            column.drawnCubes = set;
-            if (set != null) masked.add(column);
-            else masked.remove(column);
-            if (lost && column.drawnPick == pickSerial) {
-                due(column, ticks);
-                continue;
+        for (LongIterator it = compiled.iterator(); it.hasNext(); ) {
+            long cube = it.nextLong();
+            if (!sunk.contains(cube) && !earlier.contains(cube)) come.add(cube);
+        }
+        for (int i = 0; i < gone.size(); i++) earlier.remove(gone.getLong(i));
+        for (int i = 0; i < come.size(); i++) earlier.add(come.getLong(i));
+        Long2ObjectOpenHashMap<LongArrayList> added = new Long2ObjectOpenHashMap<>(), removed = new Long2ObjectOpenHashMap<>();
+        for (int i = 0; i < come.size(); i++) byColumn(come.getLong(i), added);
+        for (int i = 0; i < gone.size(); i++) byColumn(gone.getLong(i), removed);
+        LongOpenHashSet changed = new LongOpenHashSet(added.keySet());
+        changed.addAll(removed.keySet());
+        for (LongIterator it = changed.iterator(); it.hasNext(); ) {
+            long key = it.nextLong();
+            Column column = held(key);
+            if (column == null || column.unmasked) continue;
+            // A new set rather than the old one changed: a mesh under way may be reading that.
+            LongOpenHashSet set = column.drawnCubes == null ? new LongOpenHashSet() : column.drawnCubes.clone();
+            LongArrayList in = added.get(key), out = removed.get(key);
+            if (in != null) for (int i = 0; i < in.size(); i++) set.add(in.getLong(i));
+            if (out != null) for (int i = 0; i < out.size(); i++) set.remove(out.getLong(i));
+            hand(column, set.isEmpty() ? null : set, out != null);
+        }
+        if (unmasked.isEmpty()) return;
+        // The columns received since: only those over the cubes' ground can have any.
+        int minX = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        for (LongIterator it = earlier.iterator(); it.hasNext(); ) {
+            long cube = it.nextLong();
+            int bx = CubeKey.x(cube) << 4, bz = CubeKey.z(cube) << 4;
+            minX = Math.min(minX, bx); maxX = Math.max(maxX, bx);
+            minZ = Math.min(minZ, bz); maxZ = Math.max(maxZ, bz);
+        }
+        for (Column column : unmasked) {
+            if (columns.get(column.key) != column) continue;
+            LongOpenHashSet set = null;
+            int level = column.level, x = Far.x(column.key), z = Far.z(column.key), width = Far.width(level), v = Far.voxel(level);
+            // A cube at block x bx is inside it when its x is between column(bx - v) and column(bx + 15 + v), as in cubesByColumn.
+            if ((long) x * width - 15 - v <= maxX && (long) (x + 1) * width + v - 1 >= minX && (long) z * width - 15 - v <= maxZ && (long) (z + 1) * width + v - 1 >= minZ) {
+                for (LongIterator it = earlier.iterator(); it.hasNext(); ) {
+                    long cube = it.nextLong();
+                    int bx = CubeKey.x(cube) << 4, bz = CubeKey.z(cube) << 4;
+                    if (x < Far.column(bx - v, level) || x > Far.column(bx + 15 + v, level) || z < Far.column(bz - v, level) || z > Far.column(bz + 15 + v, level)) continue;
+                    if (set == null) set = new LongOpenHashSet();
+                    set.add(cube);
+                }
             }
-            // Coarse columns under the finer ones near the player see every cube that compiles there;
-            // remeshing each at once kept the far meshers busy with columns nobody sees, so hidden
-            // ones gather their changes into one remesh a while later.
-            if (column.drawnPick == pickSerial || !column.meshed) schedule(column);
-            else {
-                column.maskStale = true;
-                staleMasks.add(column);
-                if (column.due < 0) due(column, ticks + HIDDEN_SETTLE_TICKS);
+            if (Objects.equals(set, column.drawnCubes)) continue;
+            hand(column, set, column.drawnCubes != null && (set == null || !set.containsAll(column.drawnCubes)));
+        }
+    }
+
+    /** Notes a cube under every held column it is inside, as {@link #cubesByColumn} goes over them. */
+    private void byColumn(long cube, Long2ObjectOpenHashMap<LongArrayList> lists) {
+        int bx = CubeKey.x(cube) << 4, bz = CubeKey.z(cube) << 4;
+        for (int level = Far.MIN_LEVEL; level <= Far.MAX_LEVEL; level++) {
+            int v = Far.voxel(level);
+            for (int x = Far.column(bx - v, level); x <= Far.column(bx + 15 + v, level); x++) {
+                for (int z = Far.column(bz - v, level); z <= Far.column(bz + 15 + v, level); z++) {
+                    if (places.has(level, x, z)) lists.computeIfAbsent(Far.key(level, x, z), unused -> new LongArrayList()).add(cube);
+                }
             }
         }
     }
+
+    /** Gives a column its new cubes, remeshing it as soon as it needs; {@code lost} when some it had are gone. */
+    private void hand(Column column, @Nullable LongOpenHashSet set, boolean lost) {
+        column.drawnCubes = set;
+        if (set != null) masked.add(column);
+        else masked.remove(column);
+        if (lost && column.drawnPick == pickSerial) {
+            due(column, ticks);
+            return;
+        }
+        // Coarse columns under the finer ones near the player see every cube that compiles there;
+        // remeshing each at once kept the far meshers busy with columns nobody sees, so hidden
+        // ones gather their changes into one remesh a while later.
+        if (column.drawnPick == pickSerial || !column.meshed) schedule(column);
+        else {
+            column.maskStale = true;
+            staleMasks.add(column);
+            if (column.due < 0) due(column, ticks + HIDDEN_SETTLE_TICKS);
+        }
+    }
+
+    /** For {@link #CHECK_MASK}: works every column's cubes out afresh and logs where they differ from what a mask handed out. */
+    private void checkMask(LongOpenHashSet compiled, LongOpenHashSet sunk) {
+        Long2ObjectOpenHashMap<LongOpenHashSet> sets = cubesByColumn(compiled, sunk);
+        int wrong = 0;
+        StringBuilder differ = new StringBuilder();
+        for (Column column : columns.values()) {
+            LongOpenHashSet set = sets.get(column.key);
+            if (Objects.equals(set, column.drawnCubes)) continue;
+            if (wrong++ < 6) differ.append(" [L").append(column.level).append(' ').append(Far.x(column.key)).append(',').append(Far.z(column.key))
+                    .append(" has ").append(column.drawnCubes == null ? 0 : column.drawnCubes.size()).append(" of ").append(set == null ? 0 : set.size()).append(']');
+        }
+        if (wrong > 0) EarthPlatformMod.LOGGER.warn("Far mask check: {} columns differ from a whole mask (after {} masks that matched):{}", wrong, masksMatched, differ);
+        else if (++masksMatched % 100 == 1) EarthPlatformMod.LOGGER.info("Far mask check: {} masks matched", masksMatched);
+    }
+
+    private int masksMatched;
 
     /**
      * Starts due meshes, the drawn columns nearest the player first, keeping only a short queue at
@@ -901,6 +1025,18 @@ public final class FarRenderer {
     private final java.util.Set<Column> staleMasks = new java.util.HashSet<>();
     /** The columns with cubes drawn in them (see {@link Column#drawnCubes}), the only ones {@link #mask} can change. */
     private final java.util.Set<Column> masked = new java.util.HashSet<>();
+    /** The columns received since the last mask (see {@link Column#unmasked}). */
+    private final List<Column> unmasked = new ArrayList<>();
+    /** The cubes the last mask handed out, drawn and not sunk, for the next one to start from (see {@link #maskChanges}); null before the first. */
+    @Nullable private LongOpenHashSet handedOut;
+    /**
+     * Whether a mask works from what changed since the last one (see {@link #maskChanges});
+     * {@code -Dearthplatform.far.maskChanges=false} works every column's cubes out afresh each time,
+     * for comparing. The same cubes for every column either way.
+     */
+    private static final boolean MASK_CHANGES = !"false".equals(System.getProperty("earthplatform.far.maskChanges"));
+    /** With {@code -Dearthplatform.far.checkMask=true}, every mask also works every column's cubes out afresh and logs any that differ, which none should. */
+    private static final boolean CHECK_MASK = Boolean.getBoolean("earthplatform.far.checkMask");
 
     private void submit(Column column) {
         column.due = -1;
@@ -964,6 +1100,8 @@ public final class FarRenderer {
                 int before = ask ? walkPath(column) : 0;
                 column.meshed = true;
                 places.meshed(column);
+                // Meshed again it changes nothing the walk sees: whether it is meshed is all the walk reads of its mesh.
+                if (!listed && !walkBehind && (ask ? changesWalk(column, before) : !QUIET_MESHES || !walked)) walkBehind = true;
                 vertexBytes += result.bytes() - column.bytes;
                 column.bytes = result.bytes();
                 gpu.free(column.faces);
@@ -1100,8 +1238,6 @@ public final class FarRenderer {
         if (own && gpu.depthPrepass && FarLod.prepassReady() && gpu.prepassReady(ShaderBlocks.voxyPatch())) {
             // Depth first, then shading only the faces it kept (see FarGpu#DEPTH_PREPASS).
             long setting = Float.floatToIntBits(FarLod.nearReach()) & 0xFFFFFFFFL | PREPASSED;
-                // Meshed again it changes nothing the walk sees: whether it is meshed is all the walk reads of its mesh.
-                if (!listed && !walkBehind && (ask ? changesWalk(column, before) : !QUIET_MESHES || !walked)) walkBehind = true;
             // The shading pass draws again what the pre-pass drew, so without that it needs the columns.
             boolean again = REUSE_DRAWS && FarGpu.REPLAY && farDraws.holds(viewSerial, setting);
             IntArrayList far = again ? NONE : FarNearSkip.ENABLED ? beyondReach(position) : allShown();
@@ -1238,6 +1374,50 @@ public final class FarRenderer {
         return walkBehind || walkLeft != Integer.MAX_VALUE && (now - walkNow & 0x7FFFFFF) >= walkLeft;
     }
 
+    /**
+     * How far a walk from the last walk's camera goes down toward a column (see {@link #visit}): a
+     * bit for each level above the column whose column there it goes down through, from the top
+     * until the first it stops at; all of them set when it reaches the column itself. -1 when the
+     * walk starts nowhere over it. Worked out from the places' tags, as {@link #childrenReady} is.
+     */
+    private int walkPath(Column column) {
+        int level = column.level, x = Far.x(column.key), z = Far.z(column.key), bx = walkBx, bz = walkBz;
+        // The walk starts at the top level's columns around the camera's.
+        int top = Far.MAX_LEVEL - level;
+        if (Math.abs((x >> top) - Far.column(bx, Far.MAX_LEVEL)) > Far.OUTER || Math.abs((z >> top) - Far.column(bz, Far.MAX_LEVEL)) > Far.OUTER) return -1;
+        int path = 0;
+        for (int at = Far.MAX_LEVEL; at > level; at--) {
+            int ax = x >> (at - level), az = z >> (at - level);
+            boolean meshed = places.meshed(at, ax, az);
+            boolean refined = Far.refined(at, ax, az, bx, bz, finest) || !meshed && Far.refined(at, ax, az, bx, bz);
+            if (!refined || meshed && !childrenReady(at, ax, az, bx, bz)) break;
+            path |= 1 << at;
+        }
+        return path;
+    }
+
+    /**
+     * Whether a column the walk does not draw, just meshed for the first time, changes what a walk
+     * would draw now; {@code before} is its {@link #walkPath} from just before it was meshed. The
+     * walk reads nothing of it but whether it is meshed, where it reaches it; and above it, where a
+     * column's children are all ready, which it may have just made so. Where the walk stops above
+     * it, at a column that draws in its place, nothing under that column is looked at, unless that
+     * column is fading back in over its children (see {@link #merge}), when whether they are all
+     * meshed counts.
+     */
+    private boolean changesWalk(Column column, int before) {
+        int after = walkPath(column);
+        if (after != before) return true;
+        if (after < 0) return false;
+        int above = (1 << Far.MAX_LEVEL + 1) - (1 << column.level + 1);
+        if (after == above) return true;
+        // The level it stops at: the highest one above the column it does not go down through.
+        int stop = 31 - Integer.numberOfLeadingZeros(above & ~after);
+        if (stop != column.level + 1) return false;
+        Column parent = held(stop, Far.x(column.key) >> 1, Far.z(column.key) >> 1);
+        return parent != null && (parent.merging || parent.split);
+    }
+
     /** Whether the kept walk draws this column (see {@link #drawn}), at its place in {@link #drawn}. */
     private boolean listed(Column column) {
         int at = column.drawnAt;
@@ -1328,6 +1508,8 @@ public final class FarRenderer {
         }
         java.util.Arrays.fill(drawnInfo, 0, count, -1);
         walked = true;
+        walkBx = bx;
+        walkBz = bz;
         walkX = Far.column(bx, WALK_LEVEL);
         walkZ = Far.column(bz, WALK_LEVEL);
         walkFinest = finest;
@@ -1374,50 +1556,6 @@ public final class FarRenderer {
         }
         // Nearest first, and in the walk's order where two are as near: from the last view's order
         // while the walk stands, which the camera moving a little changes only here and there.
-    /**
-     * How far a walk from the last walk's camera goes down toward a column (see {@link #visit}): a
-     * bit for each level above the column whose column there it goes down through, from the top
-     * until the first it stops at; all of them set when it reaches the column itself. -1 when the
-     * walk starts nowhere over it. Worked out from the places' tags, as {@link #childrenReady} is.
-     */
-    private int walkPath(Column column) {
-        int level = column.level, x = Far.x(column.key), z = Far.z(column.key), bx = walkBx, bz = walkBz;
-        // The walk starts at the top level's columns around the camera's.
-        int top = Far.MAX_LEVEL - level;
-        if (Math.abs((x >> top) - Far.column(bx, Far.MAX_LEVEL)) > Far.OUTER || Math.abs((z >> top) - Far.column(bz, Far.MAX_LEVEL)) > Far.OUTER) return -1;
-        int path = 0;
-        for (int at = Far.MAX_LEVEL; at > level; at--) {
-            int ax = x >> (at - level), az = z >> (at - level);
-            boolean meshed = places.meshed(at, ax, az);
-            boolean refined = Far.refined(at, ax, az, bx, bz, finest) || !meshed && Far.refined(at, ax, az, bx, bz);
-            if (!refined || meshed && !childrenReady(at, ax, az, bx, bz)) break;
-            path |= 1 << at;
-        }
-        return path;
-    }
-
-    /**
-     * Whether a column the walk does not draw, just meshed for the first time, changes what a walk
-     * would draw now; {@code before} is its {@link #walkPath} from just before it was meshed. The
-     * walk reads nothing of it but whether it is meshed, where it reaches it; and above it, where a
-     * column's children are all ready, which it may have just made so. Where the walk stops above
-     * it, at a column that draws in its place, nothing under that column is looked at, unless that
-     * column is fading back in over its children (see {@link #merge}), when whether they are all
-     * meshed counts.
-     */
-    private boolean changesWalk(Column column, int before) {
-        int after = walkPath(column);
-        if (after != before) return true;
-        if (after < 0) return false;
-        int above = (1 << Far.MAX_LEVEL + 1) - (1 << column.level + 1);
-        if (after == above) return true;
-        // The level it stops at: the highest one above the column it does not go down through.
-        int stop = 31 - Integer.numberOfLeadingZeros(above & ~after);
-        if (stop != column.level + 1) return false;
-        Column parent = held(stop, Far.x(column.key) >> 1, Far.z(column.key) >> 1);
-        return parent != null && (parent.merging || parent.split);
-    }
-
         if (REUSE_ORDER) order.sortFrom(pickSerial, count);
         else order.sort();
         if (shownDrawn.length < kept) {
@@ -1508,8 +1646,6 @@ public final class FarRenderer {
             int[] counts = faces.counts();
             for (int k = 0; k < FarMesher.GROUPS; k++) drawnCounts[index * FarMesher.GROUPS + k] = counts[FarMesher.STORED[k]];
         } else drawnArena[index] = null;
-        walkBx = bx;
-        walkBz = bz;
         if (column.water != null) info |= WATER;
         for (int side = 0; side < 4; side++) {
             Column beside = beside(column, side);
@@ -1996,6 +2132,8 @@ public final class FarRenderer {
         topsVersion++;
         staleMasks.clear();
         masked.clear();
+        unmasked.clear();
+        handedOut = null;
         nearDraws.close();
         farDraws.close();
         pick.invalidate();
