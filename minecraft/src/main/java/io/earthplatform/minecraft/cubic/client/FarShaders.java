@@ -173,10 +173,13 @@ final class FarShaders {
      * seam. Only those few columns are drawn twice, and only their programs discard fragments.
      */
     static String fade(int fade) {
-        return fade == 0 ? "" : "#define EARTH_FADE " + fade + "\n#define EARTH_FADE_TICKS " + FADE_TICKS + ".0\n";
+        return fade == 0 ? "" : "#define EARTH_FADE " + fade + "\n";
     }
 
-    /** How long a finer level takes to fade in over the coarser one when its columns arrive, in hundredths of a second. */
+    /**
+     * How long a finer level takes to fade in over the coarser one when its columns arrive, in
+     * hundredths of a second, when the camera is slow; faster, {@link FarFade} draws it out.
+     */
     static final int FADE_TICKS = 60;
 
     /**
@@ -213,6 +216,8 @@ final class FarShaders {
             flat out float earth_reach;
             #ifdef EARTH_FADE
             uniform uint earth_Now;
+            // Each level's fade length in hundredths of a second, by the coarser level's number (see FarFade).
+            uniform float earth_FadeTicks[10];
             out vec2 earth_band;
             flat out float earth_arrived;
             flat out float earth_merging;
@@ -328,7 +333,7 @@ final class FarShaders {
                 // How far a finer level that has just arrived is through taking over from the coarser one.
                 // Where the camera has moved off, a merge runs it the other way, the coarser level taking back over.
                 uint stamp = (uint(column.w) >> 4) & 0x7FFFFFFu;
-                float since = clamp(float((earth_Now - stamp) & 0x7FFFFFFu) / EARTH_FADE_TICKS, 0.0, 1.0);
+                float since = clamp(float((earth_Now - stamp) & 0x7FFFFFFu) / earth_FadeTicks[shift - 4], 0.0, 1.0);
                 earth_merging = stamp != 0u && (uint(column.w) & 0x80000000u) != 0u ? 1.0 : 0.0;
                 earth_arrived = stamp == 0u ? 1.0 : earth_merging > 0.5 ? 1.0 - since : since;
             #endif
