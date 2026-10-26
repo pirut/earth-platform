@@ -665,7 +665,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      */
     private boolean sea(GlobalElevation dem, double x, double z, int voxel, double[] sample) {
         int code = cover(x, z, voxel);
-        if (code == WorldCoverSource.NO_DATA) return true;
+        if (code == WorldCoverSource.NO_DATA) return unmappedSea(dem, x, z, sample);
         if (code != WorldCoverSource.WATER) return false;
         int bx = Mth.floor(x), bz = Mth.floor(z);
         double metres = dem.sample(bx + 0.5, bz + 0.5, sample);
@@ -696,10 +696,22 @@ public final class EarthGenerator extends SurfaceGenerator {
         return false;
     }
 
+    /**
+     * Whether a point the land cover has no data for is the open sea. WorldCover leaves the open sea
+     * without files, but it also stops at 60 degrees south: all of Antarctica reads as no data, and
+     * taken for the sea there, every column within a cliff's reach of the "coast", which is all of
+     * it, was cut down to the water, so Vinson's summit stood as an icy cove at sea level under the
+     * far terrain's 4,900 m ice. Unmapped ground is the sea only where the survey has it at or under
+     * sea level, or its samples read mostly sea.
+     */
+    private static boolean unmappedSea(GlobalElevation dem, double x, double z, double[] sample) {
+        return dem.sample(Math.floor(x) + 0.5, Math.floor(z) + 0.5, sample) <= 0 || sample[2] > 0.5;
+    }
+
     /** Whether a point is open sea, or water the sea's samples reach on a gentle survey. */
     private boolean gentleSea(GlobalElevation dem, double x, double z, int voxel, double[] sample) {
         int code = cover(x, z, voxel);
-        if (code == WorldCoverSource.NO_DATA) return true;
+        if (code == WorldCoverSource.NO_DATA) return unmappedSea(dem, x, z, sample);
         if (code != WorldCoverSource.WATER || !seaWater(x, z, voxel)) return false;
         dem.sample(Math.floor(x) + 0.5, Math.floor(z) + 0.5, sample);
         return sample[0] * sample[0] + sample[1] * sample[1] <= 0.49;
