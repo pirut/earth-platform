@@ -8,6 +8,7 @@ import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeKey;
+import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.ViewOrder;
 import io.earthplatform.minecraft.cubic.far.Far;
@@ -1374,14 +1375,15 @@ public final class FarRenderer {
         shader.apply();
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = world.client().getShade(direction, true);
+        float reach = FarLod.nearReach();
+        reachLists(position, reach);
+        // While the ground near the player loads, far terrain inside the reach leaves the game's blocks alone.
+        boolean ground = NEAR_GROUND && !near.isEmpty() && settling(now) && FarBlockDepth.copy();
         if (own) {
             // Far terrain inside the game's blocks' reach goes in the game's own depth, as without a pack's Voxy support.
-            float reach = FarLod.nearReach();
             long setting = Float.floatToIntBits(reach) & 0xFFFFFFFFL;
             boolean again = REUSE_DRAWS && nearDraws.holds(viewSerial, setting);
-            IntArrayList near = again ? NONE : nearReach(position, reach);
-            // A pass drawn again was begun for columns it found, as finding them again would.
-            if ((again || !near.isEmpty()) && gpu.begin(pack, ShaderBlocks.voxyPatch(), modelView, projection, position, shade, frame, true)) {
+            if (!near.isEmpty() && gpu.begin(pack, ShaderBlocks.voxyPatch(), modelView, projection, position, shade, frame, true, ground)) {
                 long timer = FarGpuTimers.begin("near opaque");
                 try { drawEach(gpu, nearDraws, again, near, position, setting); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
@@ -1390,13 +1392,13 @@ public final class FarRenderer {
         }
         if (own && gpu.depthPrepass && FarLod.prepassReady() && gpu.prepassReady(ShaderBlocks.voxyPatch())) {
             // Depth first, then shading only the faces it kept (see FarGpu#DEPTH_PREPASS).
-            long setting = Float.floatToIntBits(FarLod.nearReach()) & 0xFFFFFFFFL | PREPASSED;
+            long setting = Float.floatToIntBits(reach) & 0xFFFFFFFFL | PREPASSED;
             // The shading pass draws again what the pre-pass drew, so without that it needs the columns.
             boolean again = REUSE_DRAWS && FarGpu.REPLAY && farDraws.holds(viewSerial, setting);
             IntArrayList far = again ? NONE : FarNearSkip.ENABLED ? beyondReach(position) : allShown();
             FarLod.beginPrepass();
             gpu.phase(FarGpu.PREPASS);
-            if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false)) {
+            if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false, false)) {
                 long timer = FarGpuTimers.begin("far depth prepass");
                 try { drawEach(gpu, farDraws, again, far, position, setting); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
@@ -1409,7 +1411,7 @@ public final class FarRenderer {
                 finally { FarGpuTimers.end(timer); }
             }
             gpu.phase(FarGpu.SHADE);
-            if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false)) {
+            if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false, false)) {
                 long timer = FarGpuTimers.begin("far opaque");
                 try { if (!FarGpu.REPLAY || !farDraws.holds(viewSerial, setting) || !gpu.play(farDraws)) drawEach(gpu, far, position); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
@@ -1418,16 +1420,33 @@ public final class FarRenderer {
             gpu.cullDone();
             gpu.phase(FarGpu.ONE_PASS);
             FarLod.endShade();
-        } else if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false)) {
-            long timer = FarGpuTimers.begin("far opaque");
-            // Under a pack's own depth, columns wholly inside the game's blocks' reach draw no pixel there.
-            boolean skipNear = own && FarNearSkip.ENABLED && gpu.dropsNearReach();
-            long setting = (skipNear ? Float.floatToIntBits(FarLod.nearReach()) & 0xFFFFFFFFL | SKIPS_NEAR : 0) | (pack ? PACK : 0);
-            boolean again = REUSE_DRAWS && farDraws.holds(viewSerial, setting);
-            IntArrayList far = again ? NONE : skipNear ? beyondReach(position) : allShown();
-            try { drawEach(gpu, farDraws, again, far, position, setting); }
-            finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
-            drawCount.submitted(gpu.ranges);
+        } else {
+            // Without far terrain's own depth, the columns inside the reach go first and on their own
+            // while they leave the game's blocks alone; the rest draw as ever.
+            boolean apart = ground && !own;
+            int ranges = 0;
+            if (apart) {
+                long setting = Float.floatToIntBits(reach) & 0xFFFFFFFFL;
+                boolean again = REUSE_DRAWS && nearDraws.holds(viewSerial, setting);
+                if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false, true)) {
+                    long timer = FarGpuTimers.begin("near opaque");
+                    try { drawEach(gpu, nearDraws, again, near, position, setting); }
+                    finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
+                    ranges = gpu.ranges;
+                }
+            }
+            if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false, false)) {
+                long timer = FarGpuTimers.begin("far opaque");
+                // Under a pack's own depth, columns wholly inside the game's blocks' reach draw no pixel there.
+                boolean skipNear = own && FarNearSkip.ENABLED && gpu.dropsNearReach();
+                long setting = (skipNear ? Float.floatToIntBits(reach) & 0xFFFFFFFFL | SKIPS_NEAR
+                        : apart ? Float.floatToIntBits(reach) & 0xFFFFFFFFL | AFTER_NEAR : 0) | (pack ? PACK : 0);
+                boolean again = REUSE_DRAWS && farDraws.holds(viewSerial, setting);
+                IntArrayList far = again ? NONE : skipNear ? beyondReach(position) : apart ? outsideReach() : allShown();
+                try { drawEach(gpu, farDraws, again, far, position, setting); }
+                finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
+                drawCount.submitted(ranges + gpu.ranges);
+            }
         }
         if (own) FarLod.endDraw();
         long deepenTimer = own ? FarGpuTimers.begin("water deepen") : 0;
@@ -1447,17 +1466,92 @@ public final class FarRenderer {
         type.clearRenderState();
     }
 
-    /** The columns in view, in order, that reach inside the game's blocks' reach somewhere: their places in {@link #shownDrawn}. */
-    private IntArrayList nearReach(Vec3 position, float reach) {
+    /**
+     * Lists the columns in view, in order, that reach inside the game's blocks' reach somewhere
+     * ({@link #near}), and those of them that come near the player's ground ({@link #inner}): their
+     * places in {@link #shownDrawn}, once per view and reach. The view has them nearest first by
+     * their middles, so the search stops at the first whose middle lies too far off for any column
+     * to reach in.
+     */
+    private void reachLists(Vec3 position, float reach) {
+        if (reachSerial == viewSerial && reachFor == reach) return;
+        reachSerial = viewSerial;
+        reachFor = reach;
         near.clear();
-        for (int i = 0; i < shown; i++) {
+        inner.clear();
+        double within = Math.max(reach * 0.5, reach - INNER_MARGIN), last = reach + Far.width(Far.MAX_LEVEL) * 0.7072;
+        for (int i = 0; i < shown && shownDistance[i] < last * last; i++) {
             int at = shownDrawn[i] * 6;
             double dx = Math.max(0.0, Math.max(drawnBoxes[at] - position.x, position.x - drawnBoxes[at + 3]));
             double dz = Math.max(0.0, Math.max(drawnBoxes[at + 2] - position.z, position.z - drawnBoxes[at + 5]));
-            if (dx * dx + dz * dz < reach * reach) near.add(i);
+            double distance = dx * dx + dz * dz;
+            if (distance >= reach * reach) continue;
+            near.add(i);
+            // The game's blocks lie only so far above and below the player: in the jet stream, nowhere near the ground.
+            if (distance < within * within && drawnBoxes[at + 1] < position.y + NEAR_HEIGHT && drawnBoxes[at + 4] > position.y - NEAR_HEIGHT) inner.add(i);
         }
-        return near;
     }
+
+    /** The view and reach {@link #near} and {@link #inner} were listed for. */
+    private int reachSerial;
+    private float reachFor;
+    /**
+     * How far inside the reach's edge the ground near the player ends (see {@link #settling}): at the
+     * edge, blocks come and go as the player walks, and far terrain there has always waited a moment
+     * to be cut away from under them.
+     */
+    private static final double INNER_MARGIN = 64.0;
+    /** How far above and below the player the game's blocks can lie, with a cube to spare (see {@link CubeRenderer}). */
+    private static final double NEAR_HEIGHT = (Cubic.VERTICAL_RADIUS + 2) * 16.0;
+
+    /** The columns in view, in order, left out of {@link #near}: the rest of a pass that draws those apart. */
+    private IntArrayList outsideReach() {
+        rest.clear();
+        for (int i = 0, j = 0; i < shown; i++) {
+            if (j < near.size() && near.getInt(j) == i) j++;
+            else rest.add(i);
+        }
+        return rest;
+    }
+
+    /**
+     * Whether the ground near the player is still loading, or was a moment ago (see {@link #GROUND_LINGER}):
+     * a column drawn near the player ({@link #inner}) stands in for finer ones not all here yet, or
+     * still draws voxels where blocks the game draws have come since its mesh, or came since the
+     * last mask and so has not been told of any yet.
+     */
+    private boolean settling(int now) {
+        for (int i = 0, count = inner.size(); i < count; i++) {
+            Column column = shownColumn(inner.getInt(i));
+            if (column.unmasked || column.drawnCubes != column.meshedCubes
+                    || !column.split && Far.refined(column.level, Far.x(column.key), Far.z(column.key), walkBx, walkBz, walkFinest)) {
+                groundAt = now;
+                groundSeen = true;
+                return true;
+            }
+        }
+        return groundSeen && (now - groundAt & 0x7FFFFFF) < GROUND_LINGER;
+    }
+
+    /**
+     * Whether far terrain inside the game's blocks' reach leaves those blocks alone while the ground
+     * near the player loads (see {@link #settling}): it draws only where the game drew none of its
+     * blocks, from a copy of the game's depth (see {@link FarBlockDepth}). Joining a world or arriving
+     * somewhere new, coarse far voxels standing in under the player for finer columns on their way,
+     * and far voxels not cut away yet where blocks had come, covered the blocks at the player's feet
+     * for seconds. Once the ground has loaded far terrain is cut away under every block and draws
+     * as before, with no copy. {@code -Dearthplatform.far.nearGround=false} always draws it as before.
+     */
+    private static final boolean NEAR_GROUND = !"false".equals(System.getProperty("earthplatform.far.nearGround"));
+    /**
+     * Hundredths of a second far terrain goes on leaving the blocks alone after the ground near the
+     * player last loaded: a block the game draws waits for the next mask, up to a fifth of a second,
+     * before its far column learns of it (see {@link #mask}).
+     */
+    private static final int GROUND_LINGER = 200;
+    /** When the ground near the player last loaded, on the fade clock (see {@link FarGpu#now}), once it has. */
+    private int groundAt;
+    private boolean groundSeen;
 
     /** The columns in view, in order, that reach past the game's blocks' reach somewhere (see {@link FarNearSkip}). */
     private IntArrayList beyondReach(Vec3 position) {
@@ -1481,7 +1575,8 @@ public final class FarRenderer {
     }
 
     /** The lists of columns in view the passes draw, made once rather than every frame. */
-    private final IntArrayList near = new IntArrayList(), beyond = new IntArrayList(), all = new IntArrayList();
+    private final IntArrayList near = new IntArrayList(), inner = new IntArrayList(), beyond = new IntArrayList(), rest = new IntArrayList(),
+            all = new IntArrayList();
     private static final IntArrayList NONE = new IntArrayList();
 
     /**
@@ -1493,8 +1588,11 @@ public final class FarRenderer {
      */
     private static final boolean REUSE_DRAWS = !"false".equals(System.getProperty("earthplatform.far.reuseDraws"));
     private final FarGpu.Recording nearDraws = new FarGpu.Recording(), farDraws = new FarGpu.Recording();
-    /** A far pass's setting, besides the near reach: drawn after a pre-pass, leaving out what lies inside the reach, under a pack. */
-    private static final long PREPASSED = 1L << 32, SKIPS_NEAR = 1L << 33, PACK = 1L << 34;
+    /**
+     * A far pass's setting, besides the near reach: drawn after a pre-pass, leaving out what lies
+     * inside the reach, under a pack, or after the columns inside the reach were drawn apart.
+     */
+    private static final long PREPASSED = 1L << 32, SKIPS_NEAR = 1L << 33, PACK = 1L << 34, AFTER_NEAR = 1L << 35;
 
     /**
      * Draws a pass's columns, keeping what it queued, or with {@code again} what it queued for this
