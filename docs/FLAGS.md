@@ -26,7 +26,8 @@ Most are read once when the class that uses them loads, so set them on the comma
 | `earthplatform.earth.ign` | on | `false` leaves IGN RGE ALTI (France) out of new worlds | `CubicSettings.elevation()` |
 | `earthplatform.earth.gsi` | on | `false` leaves GSI (Japan) out of new worlds | `CubicSettings.elevation()` |
 | `earthplatform.cubes.fastBlobs` | on | `false` restores ore and rock blobs' per-block sphere sums, their writes of blocks that are already the vein's, and the walk through the spheres of blobs that cannot reach the cube; the cubes are identical | `Underground` |
-| `earthplatform.cubes.plainRandom` | on | `false` draws each cube's veins, cave plants and structure plans from vanilla's legacy random source (an atomic seed) instead of the plain one; both give the same numbers | `Underground`, `Structures` |
+| `earthplatform.cubes.plainRandom` | on | `false` draws each cube's veins, cave plants and structure plans, and the random numbers block models ask for when near cubes are meshed, from vanilla's legacy random source (an atomic seed) instead of the plain one; both give the same numbers | `Underground`, `Structures`, `CubeMesher` |
+| `earthplatform.cubes.fastLight` | on | Lights a cube's 48-block neighborhood filling cubes of one state at once, starting the skylight's spread from each column's lowest sky and its neighbors' instead of looking at every block for a darker neighbor, and looking for light sources only in cubes whose palette holds one; `false` goes over every block, for comparing. The same light, on the server and in near cube meshes | `CubeLight` |
 
 A world pins its elevation layers when it is made, so the layer flags only change new worlds.
 
@@ -71,6 +72,7 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.indexedAllocator` | on | Finds free GPU space by size; `false` scans free ranges by address, for comparing | `FarGpu` |
 | `earthplatform.far.cacheCoverage` | on | Works out once per far column which parts near cubes cover; `false` looks them up per block, for comparing | `FarMesher`, `FarColumnMesh` |
 | `earthplatform.far.runMesher` | on | Meshes plain far columns (level 3 and coarser, one biome per column, no near cubes) from vertical runs of blocks, with the same faces in the same order; anything else uses the block-by-block mesher. `false` always uses the block-by-block mesher, for comparing | `FarMesher` |
+| `earthplatform.far.recentLooks` | on | Each far mesher thread remembers the last few hundred looks (sprite, color and tint id) it was given for a block, side and biome, and asks the table every mesher shares, under its lock, only for ones it has not seen. A look and its id never change once given, so the faces are the same; `false` asks the table for every face, for comparing | `FarLooks`, `FarColumnMesh` |
 
 ## Cubes, loading and networking
 
@@ -80,6 +82,9 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.view.behind` | 4 | How many times as far ground straight behind the player counts as | `ViewOrder` |
 | `earthplatform.cubic.buried` | `false` | Make every buried cube instead of skipping rock out of sight | `ServerCubeWorld` |
 | `earthplatform.cubic.bytesPerTick` | 262144 | Terrain bytes a remote player is sent per tick | `Throttle` |
+| `earthplatform.cubes.skipBuried` | on | Meshing a near cube leaves out, before the model pass, blocks whose six faces vanilla's own face check hides and whose model is one of vanilla's plain kinds with no faces that are never hidden: the model pass would draw nothing for them, after asking the model for each face's quads. Below the ground that is nearly every block. Models of other kinds, such as a mod's connected textures, always go through the model pass. `false` sends every block through it, for comparing. The same vertices | `CubeMesher` |
+| `earthplatform.cubes.reusePose` | on | Meshing a near cube draws each block with one pose set to its place, the same matrices as a copy of the identity pose pushed and moved there; `false` pushes a copy for every block, for comparing | `CubeMesher` |
+| `earthplatform.cubes.checkMesh` | `false` | Also meshes and lights every near cube the plain way (`cubes.skipBuried`, `cubes.reusePose`, `cubes.plainRandom` and `cubes.fastLight` off) and logs a warning naming any cube whose light or vertices differ, with a count every 1,000 cubes, for testing them. Under a shader pack, vertex normals are counted apart: Iris works a quad's normal out again only while the render thread is drawing the level, so a mesh made twice can differ there either way | `CubeMesher` |
 | `earthplatform.cubic.lightmapRing` | on | In cubic worlds without a shader pack, uploads the game's lightmap to three textures in turn, so an upload never waits on frames still drawing with the last one; the same pixels are drawn. `false` always uploads to the one texture, for comparing | `CubicLightmapTexture` |
 
 ## Shaders, debugging and measuring

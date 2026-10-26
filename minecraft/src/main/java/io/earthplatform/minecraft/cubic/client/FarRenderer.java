@@ -1891,7 +1891,8 @@ public final class FarRenderer {
                     // off, and a lake's bed a few blocks under its water showed through it in dark
                     // stripes. Drawn shrunk toward the camera the water covers the same pixels, at a
                     // depth nearer by a couple of those steps.
-                    double distance = Math.sqrt(shownDistance[at] + square(column.box.getCenter().y - position.y));
+                    // The box's center as AABB.getCenter() works it out, without making a Vec3 for each column.
+                    double distance = Math.sqrt(shownDistance[at] + square(column.box.minY + 0.5 * (column.box.maxY - column.box.minY) - position.y));
                     float scale = (float) Math.max(0.8, 1.0 - distance * lift);
                     if (!FAST_WATER || scale != lastScale) {
                         view.set(nearer.set(modelView).scale(scale));

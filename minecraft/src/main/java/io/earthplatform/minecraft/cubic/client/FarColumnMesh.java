@@ -86,9 +86,12 @@ final class FarColumnMesh {
     final BufferBuilder[] waterWalls = new BufferBuilder[4];
     /** Water shows its texture only near by: drawn face by face, textured oceans would cost far more faces than merged flat ones. */
     final boolean texturedWater;
+    /** The looks this thread asked for last (see {@link FarLooks.Recent}). */
+    private final FarLooks.Recent recent;
 
     FarColumnMesh(Job job) {
         this.job = job;
+        recent = FarLooks.Recent.of(job.looks(), job.faces());
         texturedWater = job.textured() && job.level() <= TEXTURED_WATER_LEVELS;
         v = 1 << job.level();
         voxel = v * UNIT;
@@ -261,7 +264,7 @@ final class FarColumnMesh {
      * Foliage and undersides keep their own face's normal.
      */
     private long look(BlockState state, Holder<Biome> biome, Direction direction, int sky, int cell) {
-        int id = job.looks().id(job.faces(), state, direction, biome, job.textured());
+        int id = recent.id(state, direction, biome, job.textured());
         int normal = direction == Direction.DOWN || foliage(state) ? 0 : normals[cell];
         return (long) normal << 40 | (long) id << 8 | sky;
     }

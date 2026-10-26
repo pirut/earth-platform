@@ -632,10 +632,10 @@ final class FarGpu {
                 Kept draw = draws.get(i);
                 for (int r = 0; r < draw.draws; r++) {
                     for (int k = 0; k < 6; k++) {
-                        boxes.put(draw.boxes.get(r * 6 + k));
+                        boxes.put(draw.boxes[r * 6 + k]);
                         if (k == 2 || k == 5) boxes.put(0.0F);
                     }
-                    commands.put(draw.counts.get(r) * 6).put(1).put(0).put(draw.firsts.get(r) * 4).put(0);
+                    commands.put(draw.counts[r] * 6).put(1).put(0).put(draw.firsts[r] * 4).put(0);
                 }
             }
         }
@@ -650,7 +650,6 @@ final class FarGpu {
         boolean holds(int pick, long setting) { return pick != -1 && this.pick == pick && this.setting == setting; }
 
         void close() {
-            for (Kept draw : draws) draw.free();
             draws.clear();
             count = 0;
             pick = -1;
@@ -660,14 +659,8 @@ final class FarGpu {
     private static final class Kept {
         Arena arena;
         int fade, draws;
-        IntBuffer firsts = MemoryUtil.memAllocInt(256), counts = MemoryUtil.memAllocInt(256);
-        FloatBuffer boxes = MemoryUtil.memAllocFloat(256 * 6);
-
-        void free() {
-            MemoryUtil.memFree(firsts);
-            MemoryUtil.memFree(counts);
-            MemoryUtil.memFree(boxes);
-        }
+        int[] firsts = new int[256], counts = new int[256];
+        float[] boxes = new float[256 * 6];
     }
 
     /** Records what is drawn from now until {@link #end}, in place of what the recording held. */
@@ -681,14 +674,14 @@ final class FarGpu {
     private void keep(Recording recording, Arena arena) {
         if (recording.count == recording.draws.size()) recording.draws.add(new Kept());
         Kept draw = recording.draws.get(recording.count++);
-        if (draw.firsts.capacity() < arena.draws) {
-            draw.firsts = MemoryUtil.memRealloc(draw.firsts, arena.draws);
-            draw.counts = MemoryUtil.memRealloc(draw.counts, arena.draws);
-            draw.boxes = MemoryUtil.memRealloc(draw.boxes, arena.draws * 6);
+        if (draw.firsts.length < arena.draws) {
+            draw.firsts = new int[arena.draws];
+            draw.counts = new int[arena.draws];
+            draw.boxes = new float[arena.draws * 6];
         }
-        MemoryUtil.memCopy(MemoryUtil.memAddress(arena.firsts, 0), MemoryUtil.memAddress(draw.firsts, 0), 4L * arena.draws);
-        MemoryUtil.memCopy(MemoryUtil.memAddress(arena.counts, 0), MemoryUtil.memAddress(draw.counts, 0), 4L * arena.draws);
-        MemoryUtil.memCopy(MemoryUtil.memAddress(arena.boxes, 0), MemoryUtil.memAddress(draw.boxes, 0), 24L * arena.draws);
+        System.arraycopy(arena.firsts, 0, draw.firsts, 0, arena.draws);
+        System.arraycopy(arena.counts, 0, draw.counts, 0, arena.draws);
+        System.arraycopy(arena.boxes, 0, draw.boxes, 0, arena.draws * 6);
         draw.arena = arena;
         draw.fade = drawingFade;
         draw.draws = arena.draws;
@@ -711,13 +704,13 @@ final class FarGpu {
             if (draw.fade != drawingFade) fade(draw.fade);
             Arena arena = draw.arena;
             arena.clearDraws();
-            if (arena.firsts.capacity() < draw.draws) {
-                arena.firsts = MemoryUtil.memRealloc(arena.firsts, draw.draws).clear();
-                arena.counts = MemoryUtil.memRealloc(arena.counts, draw.draws).clear();
-                arena.boxes = MemoryUtil.memRealloc(arena.boxes, draw.draws * 6).clear();
+            if (arena.firsts.length < draw.draws) {
+                arena.firsts = new int[draw.draws];
+                arena.counts = new int[draw.draws];
+                arena.boxes = new float[draw.draws * 6];
             }
-            MemoryUtil.memCopy(MemoryUtil.memAddress(draw.firsts, 0), MemoryUtil.memAddress(arena.firsts, 0), 4L * draw.draws);
-            MemoryUtil.memCopy(MemoryUtil.memAddress(draw.counts, 0), MemoryUtil.memAddress(arena.counts, 0), 4L * draw.draws);
+            System.arraycopy(draw.firsts, 0, arena.firsts, 0, draw.draws);
+            System.arraycopy(draw.counts, 0, arena.counts, 0, draw.draws);
             arena.draws = draw.draws;
             flush();
         }
@@ -1082,9 +1075,12 @@ final class FarGpu {
     static final class Arena {
         final TextureBuffer buffer;
         private final FarArenaRanges free;
-        /** Queued ranges: first face and face count, and the box of the columns in each (six floats, from the camera). */
-        IntBuffer firsts = MemoryUtil.memAllocInt(1024), counts = MemoryUtil.memAllocInt(1024);
-        FloatBuffer boxes = MemoryUtil.memAllocFloat(1024 * 6);
+        /**
+         * Queued ranges: first face and face count, and the box of the columns in each (six floats, from the camera). Plain
+         * arrays: a direct buffer checked its bounds and memory session on every one of the many reads and writes a frame.
+         */
+        int[] firsts = new int[1024], counts = new int[1024];
+        float[] boxes = new float[1024 * 6];
         /** The box of the column whose ranges are queued next (see {@link FarGpu#add}). */
         private float boxMinX, boxMinY, boxMinZ, boxMaxX, boxMaxY, boxMaxZ;
         /** The same ranges as the multi-draw takes them: corner counts, and where each range starts. */
@@ -1101,7 +1097,7 @@ final class FarGpu {
 
         void release(FarArenaRanges.Allocation range) { free.release(range); }
 
-        void clearDraws() { draws = 0; firsts.clear(); counts.clear(); }
+        void clearDraws() { draws = 0; }
 
         void box(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
             boxMinX = minX; boxMinY = minY; boxMinZ = minZ;
@@ -1111,13 +1107,17 @@ final class FarGpu {
         /** Queues a range of faces. */
         void queue(int first, int count) {
             // Right after the last range, as the next column's faces often are: one longer range.
-            if (!SPLIT_RANGES && draws > 0 && firsts.get(draws - 1) + counts.get(draws - 1) == first
-                    && (!INDEXED || counts.get(draws - 1) + count <= INDEX_QUADS)) {
-                counts.put(draws - 1, counts.get(draws - 1) + count);
+            if (!SPLIT_RANGES && draws > 0 && firsts[draws - 1] + counts[draws - 1] == first
+                    && (!INDEXED || counts[draws - 1] + count <= INDEX_QUADS)) {
+                counts[draws - 1] += count;
                 int at = (draws - 1) * 6;
-                boxes.put(at, Math.min(boxes.get(at), boxMinX)).put(at + 1, Math.min(boxes.get(at + 1), boxMinY))
-                        .put(at + 2, Math.min(boxes.get(at + 2), boxMinZ)).put(at + 3, Math.max(boxes.get(at + 3), boxMaxX))
-                        .put(at + 4, Math.max(boxes.get(at + 4), boxMaxY)).put(at + 5, Math.max(boxes.get(at + 5), boxMaxZ));
+                float[] box = boxes;
+                box[at] = Math.min(box[at], boxMinX);
+                box[at + 1] = Math.min(box[at + 1], boxMinY);
+                box[at + 2] = Math.min(box[at + 2], boxMinZ);
+                box[at + 3] = Math.max(box[at + 3], boxMaxX);
+                box[at + 4] = Math.max(box[at + 4], boxMaxY);
+                box[at + 5] = Math.max(box[at + 5], boxMaxZ);
                 return;
             }
             // An indexed range reaches only as far as the quad indices do.
@@ -1126,31 +1126,37 @@ final class FarGpu {
                 first += INDEX_QUADS;
                 count -= INDEX_QUADS;
             }
-            if (draws == firsts.capacity()) {
-                firsts = MemoryUtil.memRealloc(firsts, draws * 2).clear();
-                counts = MemoryUtil.memRealloc(counts, draws * 2).clear();
-                boxes = MemoryUtil.memRealloc(boxes, draws * 12).clear();
+            if (draws == firsts.length) {
+                firsts = java.util.Arrays.copyOf(firsts, draws * 2);
+                counts = java.util.Arrays.copyOf(counts, draws * 2);
+                boxes = java.util.Arrays.copyOf(boxes, draws * 12);
             }
-            firsts.put(draws, first);
-            counts.put(draws, count);
+            firsts[draws] = first;
+            counts[draws] = count;
             int at = draws * 6;
-            boxes.put(at, boxMinX).put(at + 1, boxMinY).put(at + 2, boxMinZ).put(at + 3, boxMaxX).put(at + 4, boxMaxY).put(at + 5, boxMaxZ);
+            float[] box = boxes;
+            box[at] = boxMinX;
+            box[at + 1] = boxMinY;
+            box[at + 2] = boxMinZ;
+            box[at + 3] = boxMaxX;
+            box[at + 4] = boxMaxY;
+            box[at + 5] = boxMaxZ;
             draws++;
         }
 
         /** Draws the queued ranges in one multi-draw, with the far program and this arena's faces bound. */
         void draw() {
             if (drawCounts.capacity() < draws) {
-                drawCounts = MemoryUtil.memRealloc(drawCounts, firsts.capacity());
-                drawStarts = MemoryUtil.memRealloc(drawStarts, firsts.capacity());
-                offsets = MemoryUtil.memRealloc(offsets, firsts.capacity());
+                drawCounts = MemoryUtil.memRealloc(drawCounts, firsts.length);
+                drawStarts = MemoryUtil.memRealloc(drawStarts, firsts.length);
+                offsets = MemoryUtil.memRealloc(offsets, firsts.length);
             }
             drawCounts.clear().limit(draws);
             drawStarts.clear().limit(draws);
             for (int i = 0; i < draws; i++) {
-                drawCounts.put(i, counts.get(i) * 6);
+                drawCounts.put(i, counts[i] * 6);
                 // Indexed, a range's corners count from its first face's (gl_VertexID adds the base); else its six per face.
-                drawStarts.put(i, INDEXED ? firsts.get(i) * 4 : firsts.get(i) * 6);
+                drawStarts.put(i, INDEXED ? firsts[i] * 4 : firsts[i] * 6);
             }
             if (INDEXED) {
                 offsets.clear().limit(draws);
@@ -1162,9 +1168,6 @@ final class FarGpu {
 
         void close() {
             buffer.close();
-            MemoryUtil.memFree(firsts);
-            MemoryUtil.memFree(counts);
-            MemoryUtil.memFree(boxes);
             MemoryUtil.memFree(drawCounts);
             MemoryUtil.memFree(drawStarts);
             MemoryUtil.memFree(offsets);
