@@ -3,6 +3,7 @@ package io.earthplatform.minecraft.cubic.play;
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
+import io.earthplatform.minecraft.cubic.jet.OceanCurrent;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -29,7 +30,7 @@ import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 /**
  * The Earth's own tab of advancements, for going places on it: high ground and low, the deep sea,
  * the equator, the date line and the polar circles, countries, the far side of the world from your
- * spawn and the whole way round it. The tab's files are in {@code data/earthplatform/advancement/earth};
+ * spawn and the whole way round it, and the ocean current. The tab's files are in {@code data/earthplatform/advancement/earth};
  * all but its root are awarded from here, as the server looks at its players each second. Heights
  * are the generated ground's, so a tower or a mine shaft doesn't count. Nothing is awarded during a
  * Where on Earth round, where a toast for the Arctic Circle would give the answer away.
@@ -78,6 +79,7 @@ public final class EarthExplorer {
         if (EarthRules.kilometers(spawn.latitude(), spawn.longitude(), here.latitude(), here.longitude()) >= FAR_KM) award(player, "far_from_home");
         if (EarthRules.kilometers(-spawn.latitude(), spawn.longitude() + 180, here.latitude(), here.longitude()) <= ANTIPODE_KM) award(player, "antipodes");
         heights(player, earth);
+        if (OceanCurrent.carried(player)) award(player, "ocean_current");
     }
 
     /** A player left the Earth or stopped playing on it for now: whatever they do next is a fresh start. */

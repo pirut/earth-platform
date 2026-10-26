@@ -241,7 +241,7 @@ public final class CubicClient {
         if (world == null || minecraft.player == null) return;
         var player = minecraft.player;
         // Spectators are never held, and a replay camera must stay clean for rendered videos.
-        if (player.isSpectator() || inReplay(player) || io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(player)) return;
+        if (player.isSpectator() || inReplay(player) || io.earthplatform.minecraft.cubic.jet.JetStream.outrunsTerrain(player)) return;
         if (!waitingForCubes(world, player)) return;
         var gui = event.getGuiGraphics();
         Component text = Component.literal("Loading terrain at Y " + player.getBlockY() + "...");
