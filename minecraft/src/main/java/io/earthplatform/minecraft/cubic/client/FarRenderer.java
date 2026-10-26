@@ -15,6 +15,7 @@ import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.mixin.FrustumAccess;
 import io.earthplatform.minecraft.diagnostics.BuildInfo;
 import io.earthplatform.minecraft.diagnostics.PerfFailures;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -152,9 +153,48 @@ public final class FarRenderer {
     /** Uploads and fade stamps also invalidate a pick when no column has come or gone. */
     private int pickVersion;
     private boolean pickAnimating;
+    /**
+     * Whether a pick walks the pyramid again only when what the walk depends on has changed (see
+     * {@link #walkDue}), not every frame the camera moves: flying, the walk was most of the render
+     * thread's time, though what it found changed only every second or so. In between the camera
+     * only looks again at the columns it found (see {@link #view}).
+     * {@code -Dearthplatform.far.reuseWalk=false} walks whenever the view changes, as before;
+     * the picture is the same either way.
+     */
+    private static final boolean REUSE_WALK = CACHE_PICK && !"false".equals(System.getProperty("earthplatform.far.reuseWalk"));
+    /**
+     * With {@code -Dearthplatform.far.checkWalk=true}, every frame that keeps the last walk walks
+     * again anyway and logs where the two differ, which they never should.
+     */
+    private static final boolean CHECK_WALK = Boolean.getBoolean("earthplatform.far.checkWalk");
+    /** What the last walk depended on (see {@link #walkDue}): the camera's column at {@link #WALK_LEVEL}, and the settings it saw. */
+    private int walkX, walkZ, walkFinest, walkHole;
+    /**
+     * The finest level whose column under the camera a walk asks for: only a level above the finest
+     * one drawn, level 1 at the least, is ever split (see {@link Far#refined}).
+     */
+    private static final int WALK_LEVEL = Far.MIN_LEVEL + 1;
+    private boolean walkBand, walked;
+    /** The fade clock when the last walk ran, and how long after that the first fade it saw under way ends, or MAX_VALUE. */
+    private int walkNow, walkLeft = Integer.MAX_VALUE;
+    /**
+     * Since the last walk: a column it draws was taken away or replaced, so it is walked again at
+     * once; or a column was meshed that it does not draw yet, which it will walk for soon (see
+     * {@link #WALK_EVERY}).
+     */
+    private boolean walkStale, walkBehind;
+    /**
+     * Hundredths of a second the walk waits after the last one for changes that only add to what it
+     * draws: columns meshed, which then fade in that much later at most, and fades ending, whose
+     * last step the shaders show anyway. Flying over new ground, meshes came up nearly every
+     * frame, and so did the walk.
+     */
+    private static final int WALK_EVERY = 10;
+    /** Counts up with every look at the walked columns from the camera (see {@link #view}), which the recorded passes are kept for. */
+    private int viewSerial = 1;
     static final boolean FAST_WATER = !"false".equals(System.getProperty("earthplatform.far.fastWater"));
-    /** Preserve water order while skipping dry columns and walls hidden by a drawn neighbor. */
-    private final List<Column> waterVisible = new ArrayList<>(), waterSurfaces = new ArrayList<>(), waterEdges = new ArrayList<>();
+    /** Preserve water order while skipping dry columns and walls hidden by a drawn neighbor: places in {@link #shownDrawn}. */
+    private final IntArrayList waterVisible = new IntArrayList(), waterSurfaces = new IntArrayList(), waterEdges = new IntArrayList();
     /** The level pass (see {@link LevelPasses}) whose water is drawn; a VR mod's second eye needs its own. */
     private int waterPass = -1;
     private int ticks, frame, uploadedFrame = -1, replaced;
@@ -206,9 +246,6 @@ public final class FarRenderer {
         @Nullable CubeBuffer[] waterWalls = new CubeBuffer[4];
         /** Face and water bytes uploaded for this column, for the debug screen. */
         long bytes;
-        double distance;
-        int groups;
-        int waterSides;
         /** How this frame draws it: whole, fading out at its level's edge, or fading in over its children (see {@link FarGpu#NO_FADE}). */
         int fade;
         /** Whether its children were drawn in its place last frame, and when it last began to fade (see {@link FarGpu#now}), or 0. */
@@ -216,8 +253,8 @@ public final class FarRenderer {
         int stamp;
         /** Whether it is fading back in over its children, the camera having moved off (see {@link FarRenderer#visit}). */
         boolean merging;
-        /** The last pick that drew it (see {@link FarRenderer#pickSerial}). */
-        int drawnPick;
+        /** The last pick that drew it (see {@link FarRenderer#pickSerial}), and its place in {@link FarRenderer#drawn} then. */
+        int drawnPick, drawnAt = -1;
         /**
          * The held columns a level finer under it (north-west, north-east, south-west, south-east)
          * and beside it (north, south, west, east), kept as columns come and go (see
@@ -337,7 +374,7 @@ public final class FarRenderer {
 
     private long diagnosticReceivedColumns, diagnosticReceivedEstimatedBytes;
     record PerfState(int wanted,int settled,int wantedInView,int settledInView,int held,int visible,int requested,int meshing,long ownedBytes,int drawnRanges,int replacements,long receivedColumns,long receivedEstimatedBytes) {}
-    PerfState perfState() { return new PerfState(wanted,settled,wantedInView,settledInView,columns.size(),visible.size(),requested.size(),meshing,vertexBytes(),drawnRanges(),replaced,diagnosticReceivedColumns,diagnosticReceivedEstimatedBytes); }
+    PerfState perfState() { return new PerfState(wanted,settled,wantedInView,settledInView,columns.size(),shown,requested.size(),meshing,vertexBytes(),drawnRanges(),replaced,diagnosticReceivedColumns,diagnosticReceivedEstimatedBytes); }
 
     public int columnCount() { return columns.size(); }
 
@@ -460,6 +497,7 @@ public final class FarRenderer {
         link(column);
         if (old != null) {
             replaced++;
+            if (listed(old)) walkStale = true;
             column.drawnPick = old.drawnPick;
             dueColumns.remove(old);
             forget(old);
@@ -669,6 +707,7 @@ public final class FarRenderer {
             places.remove(column);
             unlink(column);
             columnsVersion++;
+            if (listed(column)) walkStale = true;
             dueColumns.remove(column);
             forget(column);
             free(column);
@@ -877,6 +916,9 @@ public final class FarRenderer {
             column.building = false;
             if (result.version() > 0) {
                 pickVersion++;
+                // A column the walk draws is drawn as before, from its new mesh; one it does not, it may draw now.
+                boolean listed = listed(column);
+                if (!listed) walkBehind = true;
                 column.meshed = true;
                 places.meshed(column);
                 vertexBytes += result.bytes() - column.bytes;
@@ -887,6 +929,12 @@ public final class FarRenderer {
                 column.water = upload(column.water, result.water());
                 for (int side = 0; side < 4; side++) column.waterWalls[side] = upload(column.waterWalls[side], result.waterWalls()[side]);
                 column.freeOldSlots(gpu);
+                if (listed) {
+                    // What the view noted of its faces and water is worked out again, and the view looked at again.
+                    drawnInfo[column.drawnAt] = -1;
+                    drawnAny[column.drawnAt] = column.faces != null || column.water != null;
+                    pick.invalidate();
+                }
             }
             if (column.stale) schedule(column);
         }
@@ -960,22 +1008,34 @@ public final class FarRenderer {
         int bx = (int) Math.floor(position.x), bz = (int) Math.floor(position.z);
         // Spatial dither still runs in the shaders every frame; only timed arrivals need a new pick.
         boolean band = FADE && ShaderBlocks.packInUse() && gpu.jittered();
-        boolean changed = true;
-        if (CACHE_PICK && frustum.getClass() == Frustum.class && frustum instanceof FrustumAccess view) {
-            changed = pick.changed(position.x, position.y, position.z, camera.rotation(), view.earthplatform$matrix(),
-                    view.earthplatform$camX(), view.earthplatform$camY(), view.earthplatform$camZ(),
-                    columnsVersion, pickVersion, finest, Far.hole(), band);
-        } else pick.invalidate();
-        if (changed || pickAnimating) {
-            gpu.beginStamps();
-            try {
-                pickColumns(position, frustum, bx, bz, band);
-            } finally {
-                gpu.endStamps();
+        FrustumAccess plain = frustum.getClass() == Frustum.class && frustum instanceof FrustumAccess view ? view : null;
+        // The fade clock, read once for the frame: a walk is due, and is walked, by the same time.
+        int now = FarGpu.now();
+        if (REUSE_WALK) {
+            boolean due = walkDue(bx, bz, band, now);
+            if (due) walk(gpu, bx, bz, band, now);
+            // A camera moving or turning within the walk's ground only sees the same columns from elsewhere.
+            if (plain == null) pick.invalidate();
+            if (plain == null || pick.changed(position.x, position.y, position.z, camera.rotation(), plain.earthplatform$matrix(),
+                    plain.earthplatform$camX(), plain.earthplatform$camY(), plain.earthplatform$camZ(), pickSerial, 0, 0, 0, false)
+                    || CHECK_WALK) {
+                view(position, frustum);
+            }
+            // Only a walk with nothing waiting draws all a fresh one would.
+            if (CHECK_WALK && !due && !walkBehind(now)) checkWalk(gpu, position, frustum, bx, bz, band, now);
+        } else {
+            boolean changed = true;
+            if (CACHE_PICK && plain != null) {
+                changed = pick.changed(position.x, position.y, position.z, camera.rotation(), plain.earthplatform$matrix(),
+                        plain.earthplatform$camX(), plain.earthplatform$camY(), plain.earthplatform$camZ(),
+                        columnsVersion, pickVersion, finest, Far.hole(), band);
+            } else pick.invalidate();
+            if (changed || pickAnimating) {
+                walk(gpu, bx, bz, band, now);
+                view(position, frustum);
             }
         }
-        List<Column> visible = this.visible;
-        if (visible.isEmpty()) return;
+        if (shown == 0) return;
         boolean pack = ShaderBlocks.packInUse();
         // Under a pack with Voxy support far terrain keeps its own, finer depth (see FarLod).
         boolean own = pack && FarLod.active();
@@ -992,8 +1052,8 @@ public final class FarRenderer {
             // Far terrain inside the game's blocks' reach goes in the game's own depth, as without a pack's Voxy support.
             float reach = FarLod.nearReach();
             long setting = Float.floatToIntBits(reach) & 0xFFFFFFFFL;
-            boolean again = REUSE_DRAWS && nearDraws.holds(pickSerial, setting);
-            List<Column> near = again ? List.of() : nearReach(visible, position, reach);
+            boolean again = REUSE_DRAWS && nearDraws.holds(viewSerial, setting);
+            IntArrayList near = again ? NONE : nearReach(position, reach);
             // A pass drawn again was begun for columns it found, as finding them again would.
             if ((again || !near.isEmpty()) && gpu.begin(pack, ShaderBlocks.voxyPatch(), modelView, projection, position, shade, frame, true)) {
                 long timer = FarGpuTimers.begin("near opaque");
@@ -1006,8 +1066,8 @@ public final class FarRenderer {
             // Depth first, then shading only the faces it kept (see FarGpu#DEPTH_PREPASS).
             long setting = Float.floatToIntBits(FarLod.nearReach()) & 0xFFFFFFFFL | PREPASSED;
             // The shading pass draws again what the pre-pass drew, so without that it needs the columns.
-            boolean again = REUSE_DRAWS && FarGpu.REPLAY && farDraws.holds(pickSerial, setting);
-            List<Column> far = again ? List.of() : FarNearSkip.ENABLED ? beyondReach(visible, position) : visible;
+            boolean again = REUSE_DRAWS && FarGpu.REPLAY && farDraws.holds(viewSerial, setting);
+            IntArrayList far = again ? NONE : FarNearSkip.ENABLED ? beyondReach(position) : allShown();
             FarLod.beginPrepass();
             gpu.phase(FarGpu.PREPASS);
             if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false)) {
@@ -1017,7 +1077,7 @@ public final class FarRenderer {
             }
             FarLod.beginShade();
             // Ranges the pre-pass shows wholly hidden are left out of the shading pass (see FarHiddenCull).
-            if (FarGpu.REPLAY && farDraws.holds(pickSerial, setting)) {
+            if (FarGpu.REPLAY && farDraws.holds(viewSerial, setting)) {
                 long timer = FarGpuTimers.begin("far hidden cull");
                 try { gpu.cullHidden(farDraws, FarLod.facesTexture(), FarLod.width(), FarLod.height(), modelView, farProjection); }
                 finally { FarGpuTimers.end(timer); }
@@ -1025,7 +1085,7 @@ public final class FarRenderer {
             gpu.phase(FarGpu.SHADE);
             if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false)) {
                 long timer = FarGpuTimers.begin("far opaque");
-                try { if (!FarGpu.REPLAY || !farDraws.holds(pickSerial, setting) || !gpu.play(farDraws)) drawEach(gpu, far, position); }
+                try { if (!FarGpu.REPLAY || !farDraws.holds(viewSerial, setting) || !gpu.play(farDraws)) drawEach(gpu, far, position); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
                 drawCount.submitted(gpu.ranges);
             }
@@ -1037,8 +1097,8 @@ public final class FarRenderer {
             // Under a pack's own depth, columns wholly inside the game's blocks' reach draw no pixel there.
             boolean skipNear = own && FarNearSkip.ENABLED && gpu.dropsNearReach();
             long setting = (skipNear ? Float.floatToIntBits(FarLod.nearReach()) & 0xFFFFFFFFL | SKIPS_NEAR : 0) | (pack ? PACK : 0);
-            boolean again = REUSE_DRAWS && farDraws.holds(pickSerial, setting);
-            List<Column> far = again ? List.of() : skipNear ? beyondReach(visible, position) : visible;
+            boolean again = REUSE_DRAWS && farDraws.holds(viewSerial, setting);
+            IntArrayList far = again ? NONE : skipNear ? beyondReach(position) : allShown();
             try { drawEach(gpu, farDraws, again, far, position, setting); }
             finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
             drawCount.submitted(gpu.ranges);
@@ -1046,7 +1106,8 @@ public final class FarRenderer {
         if (own) FarLod.endDraw();
         long deepenTimer = own ? FarGpuTimers.begin("water deepen") : 0;
         if (own && FarLod.beginDeepen(modelView)) {
-            for (Column column : FAST_WATER ? waterSurfaces : visible) {
+            for (int i = 0, count = FAST_WATER ? waterSurfaces.size() : shown; i < count; i++) {
+                Column column = visible.get(FAST_WATER ? waterSurfaces.getInt(i) : i);
                 if (column.water == null || column.fade == FarGpu.FADE_IN) continue;
                 FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 column.water.draw();
@@ -1059,30 +1120,42 @@ public final class FarRenderer {
         type.clearRenderState();
     }
 
-    /** The columns, in order, that reach inside the game's blocks' reach somewhere. */
-    private static List<Column> nearReach(List<Column> columns, Vec3 position, float reach) {
-        List<Column> near = new ArrayList<>();
-        for (Column column : columns) {
-            double dx = Math.max(0.0, Math.max(column.minX() - position.x, position.x - column.maxX()));
-            double dz = Math.max(0.0, Math.max(column.minZ() - position.z, position.z - column.maxZ()));
-            if (dx * dx + dz * dz < reach * reach) near.add(column);
+    /** The columns in view, in order, that reach inside the game's blocks' reach somewhere: their places in {@link #shownDrawn}. */
+    private IntArrayList nearReach(Vec3 position, float reach) {
+        near.clear();
+        for (int i = 0; i < shown; i++) {
+            int at = shownDrawn[i] * 6;
+            double dx = Math.max(0.0, Math.max(drawnBoxes[at] - position.x, position.x - drawnBoxes[at + 3]));
+            double dz = Math.max(0.0, Math.max(drawnBoxes[at + 2] - position.z, position.z - drawnBoxes[at + 5]));
+            if (dx * dx + dz * dz < reach * reach) near.add(i);
         }
         return near;
     }
 
-    /** The columns, in order, that reach past the game's blocks' reach somewhere (see {@link FarNearSkip}). */
-    private List<Column> beyondReach(List<Column> columns, Vec3 position) {
+    /** The columns in view, in order, that reach past the game's blocks' reach somewhere (see {@link FarNearSkip}). */
+    private IntArrayList beyondReach(Vec3 position) {
         double reach = FarLod.nearReach();
         beyond.clear();
-        for (Column column : columns) {
-            if (!FarNearSkip.dropped(column.minX(), column.minY(), column.minZ(), column.maxX(), column.maxY(), column.maxZ(),
-                    position.x, position.y, position.z, reach)) beyond.add(column);
+        for (int i = 0; i < shown; i++) {
+            int at = shownDrawn[i] * 6;
+            if (!FarNearSkip.dropped(drawnBoxes[at], drawnBoxes[at + 1], drawnBoxes[at + 2], drawnBoxes[at + 3], drawnBoxes[at + 4], drawnBoxes[at + 5],
+                    position.x, position.y, position.z, reach)) beyond.add(i);
         }
-        return beyond.size() == columns.size() ? columns : beyond;
+        return beyond;
     }
 
-    /** {@link #beyondReach}'s list, made once rather than copied out every frame. */
-    private final List<Column> beyond = new ArrayList<>();
+    /** Every column in view, in order. */
+    private IntArrayList allShown() {
+        if (all.size() != shown) {
+            all.clear();
+            for (int i = 0; i < shown; i++) all.add(i);
+        }
+        return all;
+    }
+
+    /** The lists of columns in view the passes draw, made once rather than every frame. */
+    private final IntArrayList near = new IntArrayList(), beyond = new IntArrayList(), all = new IntArrayList();
+    private static final IntArrayList NONE = new IntArrayList();
 
     /**
      * What the near pass and the far pass (the depth pre-pass, or the one pass) last queued, and the
@@ -1100,31 +1173,140 @@ public final class FarRenderer {
      * Draws a pass's columns, keeping what it queued, or with {@code again} what it queued for this
      * pick and setting before; the columns are then not needed.
      */
-    private void drawEach(FarGpu gpu, FarGpu.Recording recording, boolean again, List<Column> columns, Vec3 position, long setting) {
+    private void drawEach(FarGpu gpu, FarGpu.Recording recording, boolean again, IntArrayList columns, Vec3 position, long setting) {
         if (again && gpu.play(recording)) return;
         gpu.record(recording);
         drawEach(gpu, columns, position);
-        recording.drew(pickSerial, setting);
+        recording.drew(viewSerial, setting);
     }
 
-    /** Rebuilds selection only when its inputs change; timed fades keep visiting on every frame. */
-    private void pickColumns(Vec3 position, Frustum frustum, int bx, int bz, boolean band) {
+    /**
+     * Whether the walk must run again (see {@link #REUSE_WALK}). It depends on the camera only
+     * through the column it is in at {@link #WALK_LEVEL}, as every coarser level's column follows
+     * from that one, and otherwise on the finest level, the sharpness, the band, the columns held
+     * and meshed, and the fades it saw under way: what it draws changes when the first of them ends.
+     * A column it draws taken away walks it at once; a column meshed or a fade ended waits for
+     * {@link #WALK_EVERY} to pass since the last walk. A column it draws meshed again only has
+     * what the view noted of it worked out again (see {@link #upload}).
+     */
+    private boolean walkDue(int bx, int bz, boolean band, int now) {
+        if (!walked || walkStale || Far.column(bx, WALK_LEVEL) != walkX || Far.column(bz, WALK_LEVEL) != walkZ || finest != walkFinest
+                || Far.hole() != walkHole || band != walkBand) return true;
+        return walkBehind(now) && (now - walkNow & 0x7FFFFFF) >= WALK_EVERY;
+    }
+
+    /** Whether something the kept walk does not draw yet has changed: a column meshed, or a fade it saw ended. */
+    private boolean walkBehind(int now) {
+        return walkBehind || walkLeft != Integer.MAX_VALUE && (now - walkNow & 0x7FFFFFF) >= walkLeft;
+    }
+
+    /** Whether the kept walk draws this column (see {@link #drawn}), at its place in {@link #drawn}. */
+    private boolean listed(Column column) {
+        int at = column.drawnAt;
+        return column.drawnPick == pickSerial && at >= 0 && at < drawn.size() && drawn.get(at) == column;
+    }
+
+    /** Walks the pyramid for the columns to draw and how (see {@link #visit}), with the fades it starts written to the GPU together. */
+    private void walk(FarGpu gpu, int bx, int bz, boolean band, int now) {
+        long start = System.nanoTime();
+        gpu.beginStamps();
+        try {
+            walk(bx, bz, band, now);
+        } finally {
+            gpu.endStamps();
+            Timings.FAR_WALK.since(start);
+        }
+    }
+
+    /**
+     * For {@link #CHECK_WALK}, on a frame that kept the last walk and has just looked at it again:
+     * walks and looks afresh, and logs anything the two draw differently.
+     */
+    private void checkWalk(FarGpu gpu, Vec3 position, Frustum frustum, int bx, int bz, boolean band, int now) {
+        List<Column> columns = new ArrayList<>(shownColumns), waters = new ArrayList<>(), edges = new ArrayList<>();
+        int[] groups = java.util.Arrays.copyOf(shownGroups, shown), infos = new int[shown];
+        for (int i = 0; i < shown; i++) infos[i] = drawnInfo[shownDrawn[i]];
+        for (int i = 0; i < waterSurfaces.size(); i++) waters.add(shownColumns.get(waterSurfaces.getInt(i)));
+        for (int i = 0; i < waterEdges.size(); i++) edges.add(shownColumns.get(waterEdges.getInt(i)));
+        int left = walkLeft, since = now - walkNow & 0x7FFFFFF;
+        walk(gpu, bx, bz, band, now);
+        view(position, frustum);
+        boolean same = columns.equals(shownColumns) && java.util.Arrays.equals(groups, java.util.Arrays.copyOf(shownGroups, shown));
+        for (int i = 0; same && i < shown; i++) {
+            same = infos[i] == drawnInfo[shownDrawn[i]];
+        }
+        for (int i = 0; same && i < waterSurfaces.size(); i++) same = i < waters.size() && waters.get(i) == shownColumns.get(waterSurfaces.getInt(i));
+        for (int i = 0; same && i < waterEdges.size(); i++) same = i < edges.size() && edges.get(i) == shownColumns.get(waterEdges.getInt(i));
+        same &= waters.size() == waterSurfaces.size() && edges.size() == waterEdges.size();
+        if (same) checksPassed++;
+        else {
+            EarthPlatformMod.LOGGER.warn("Far walk check: the kept walk drew {} columns in view where a fresh one draws {} (after {} frames that matched; fades left {}, since {})",
+                    columns.size(), shown, checksPassed, left, since);
+            java.util.Set<Column> kept = new java.util.HashSet<>(columns), fresh = new java.util.HashSet<>(shownColumns);
+            StringBuilder differ = new StringBuilder();
+            int listed = 0;
+            for (Column column : columns) if (!fresh.contains(column) && listed++ < 6) differ.append(" kept-only ").append(describe(column));
+            for (Column column : shownColumns) if (!kept.contains(column) && listed++ < 12) differ.append(" fresh-only ").append(describe(column));
+            EarthPlatformMod.LOGGER.warn("Far walk check:{}", differ);
+        }
+        if (checksPassed % 1000 == 1) EarthPlatformMod.LOGGER.info("Far walk check: {} frames matched", checksPassed);
+    }
+
+    private int checksPassed;
+
+    private String describe(Column column) {
+        Column parent = column.level < Far.MAX_LEVEL ? held(column.level + 1, Far.x(column.key) >> 1, Far.z(column.key) >> 1) : null;
+        return "[L" + column.level + " " + Far.x(column.key) + "," + Far.z(column.key) + " meshed " + column.meshed + " split " + column.split
+                + " merging " + column.merging + " age " + age(column, pickNow) + " fade " + column.fade + " faces " + (column.faces != null)
+                + " water " + (column.water != null) + (parent == null ? " no parent" : " parent split " + parent.split + " merging " + parent.merging
+                + " age " + age(parent, pickNow) + " meshed " + parent.meshed + " drawn " + drawn(parent)) + "]";
+    }
+
+    private void walk(int bx, int bz, boolean band, int now) {
         drawn.clear();
         pickSerial++;
         pickAnimating = false;
-        pickNow = FarGpu.now();
+        pickNow = now;
+        walkLeft = Integer.MAX_VALUE;
         // The dithered ring between levels only blends where a pack's TAA moves the dither every frame
         // and averages it; without one it stays put, and where the two levels' outlines differ, as at
         // cliff edges, it left fixed specks of sky. There levels meet at a plain seam.
         bandFade = band;
         int px = Far.column(bx, Far.MAX_LEVEL), pz = Far.column(bz, Far.MAX_LEVEL);
-        boolean tree = CULL_TREE && frustum.getClass() == Frustum.class && frustum instanceof FrustumAccess;
-        cullTree.clear(tree);
+        cullTree.clear(CULL_TREE);
         for (int z = pz - Far.OUTER; z <= pz + Far.OUTER; z++) for (int x = px - Far.OUTER; x <= px + Far.OUTER; x++) {
             int parent = cullTree.open();
             visit(held(Far.MAX_LEVEL, x, z), Far.MAX_LEVEL, x, z, bx, bz, false);
             cullTree.close(parent);
         }
+        int count = drawn.size();
+        if (drawnInfo.length < count) {
+            int size = Math.max(count, drawnInfo.length * 2);
+            drawnInfo = new int[size];
+            drawnArena = new FarGpu.Arena[size];
+            drawnStart = new int[size];
+            drawnCounts = new int[size * FarMesher.GROUPS];
+        }
+        java.util.Arrays.fill(drawnInfo, 0, count, -1);
+        walked = true;
+        walkX = Far.column(bx, WALK_LEVEL);
+        walkZ = Far.column(bz, WALK_LEVEL);
+        walkFinest = finest;
+        walkHole = Far.hole();
+        walkBand = band;
+        walkStale = false;
+        walkBehind = false;
+        walkNow = pickNow;
+    }
+
+    /**
+     * Looks at the walked columns from the camera: which are in view, nearest first, which of their
+     * faces turn to it, and which water shows. Only flat tables are read for most of them, never
+     * the columns themselves, spread over the heap.
+     */
+    private void view(Vec3 position, Frustum frustum) {
+        viewSerial++;
+        boolean tree = CULL_TREE && frustum.getClass() == Frustum.class && frustum instanceof FrustumAccess;
         if (tree) {
             FrustumAccess view = (FrustumAccess) frustum;
             cullTree.classify(view.earthplatform$intersection(), view.earthplatform$camX(), view.earthplatform$camY(), view.earthplatform$camZ());
@@ -1151,27 +1333,32 @@ public final class FarRenderer {
             if (kept == keptDrawn.length) keptDrawn = java.util.Arrays.copyOf(keptDrawn, kept * 2);
             keptDrawn[kept++] = i;
         }
-        List<Column> visible = new ArrayList<>(kept);
-        if (CACHE_PICK) {
-            order.sort();
-            for (int i = 0; i < kept; i++) {
-                int at = order.index(i);
-                Column column = drawn.get(keptDrawn[at]);
-                column.distance = order.value(at);
-                visible.add(column);
-            }
-        } else {
-            for (int i = 0; i < kept; i++) {
-                Column column = drawn.get(keptDrawn[i]);
-                column.distance = order.value(i);
-                visible.add(column);
-            }
-            visible.sort(Comparator.comparingDouble(column -> column.distance));
+        // Nearest first, and in the walk's order where two are as near.
+        order.sort();
+        if (shownDrawn.length < kept) {
+            int size = Math.max(kept, shownDrawn.length * 2);
+            shownDrawn = new int[size];
+            shownGroups = new int[size];
+            shownDistance = new double[size];
         }
-        this.visible = visible;
-        if (CACHE_PICK) for (Column column : visible) column.groups = faceGroups(column, position);
+        shownColumns.clear();
+        for (int i = 0; i < kept; i++) {
+            int at = order.index(i), index = keptDrawn[at];
+            shownDrawn[i] = index;
+            shownDistance[i] = order.value(at);
+            shownColumns.add(drawn.get(index));
+            shownGroups[i] = faceGroups(index, info(index), position);
+        }
+        shown = kept;
+        visible = shownColumns;
         if (FAST_WATER) pickWater();
     }
+
+    /** The columns in view, nearest first; their places in {@link #drawn}, distances squared and face groups; and how many there are. */
+    private int[] shownDrawn = new int[4096], shownGroups = new int[4096];
+    private double[] shownDistance = new double[4096];
+    private int shown;
+    private final List<Column> shownColumns = new ArrayList<>();
 
     /**
      * The fade clock (see {@link FarGpu#now}) for the whole of a pick, read once: read for every
@@ -1189,6 +1376,52 @@ public final class FarRenderer {
     private boolean[] drawnAny = new boolean[4096];
     /** The drawn columns kept in view, by their place in {@link #drawn}, in their order there. */
     private int[] keptDrawn = new int[4096];
+
+    /**
+     * What a view needs of a drawn column besides its box (see {@link #info}), by its place in
+     * {@link #drawn}, worked out the first time the column is in view after a walk and kept until
+     * the next, as the columns in view change little from frame to frame; -1 until then. With its
+     * faces' arena (null when it has none), their first face, and their counts per group in the
+     * order they are stored (see {@link FarGpu#add(FarGpu.Arena, int, int[], int, int, float, float, float, float, float, float)}).
+     */
+    private int[] drawnInfo = new int[4096], drawnStart = new int[4096], drawnCounts = new int[4096 * FarMesher.GROUPS];
+    private FarGpu.Arena[] drawnArena = new FarGpu.Arena[4096];
+    /**
+     * A drawn column's info: its fade in the low bits, then whether it has faces, smooth ones, and
+     * water, the sides with no drawn column beside them (where its walls can show), and the sides
+     * whose water walls are drawn.
+     */
+    private static final int FADES = 3, FACES = 1 << 2, SMOOTH = 1 << 3, WATER = 1 << 4, OPEN = 8, WATER_SIDES = 12;
+
+    /** A drawn column's info (see {@link #FADES}), worked out from the column and its sides when not yet known since the walk. */
+    private int info(int index) {
+        int info = drawnInfo[index];
+        if (info >= 0) return info;
+        info = infoOf(index);
+        drawnInfo[index] = info;
+        return info;
+    }
+
+    private int infoOf(int index) {
+        Column column = drawn.get(index);
+        int info = column.fade;
+        FarGpu.Allocation faces = column.faces;
+        if (faces != null) {
+            info |= FACES | (faces.smooth() ? SMOOTH : 0);
+            drawnArena[index] = faces.arena();
+            drawnStart[index] = faces.start();
+            int[] counts = faces.counts();
+            for (int k = 0; k < FarMesher.GROUPS; k++) drawnCounts[index * FarMesher.GROUPS + k] = counts[FarMesher.STORED[k]];
+        } else drawnArena[index] = null;
+        if (column.water != null) info |= WATER;
+        for (int side = 0; side < 4; side++) {
+            Column beside = beside(column, side);
+            if (!drawn(beside)) info |= 1 << OPEN + side;
+            // Water stays with the finer level where two levels fade into each other.
+            if (column.fade != FarGpu.FADE_IN && column.waterWalls[side] != null && !waterDrawn(beside)) info |= 1 << WATER_SIDES + side;
+        }
+        return info;
+    }
 
     /** Adds a column to this pick's drawn ones, in the view-culling node that is open (see {@link FarCullTree}). */
     private void addDrawn(Column column) {
@@ -1209,6 +1442,7 @@ public final class FarRenderer {
         drawnAny[index] = column.faces != null || column.water != null;
         drawn.add(column);
         column.drawnPick = pickSerial;
+        column.drawnAt = index;
     }
 
     /** Water uses the same sorted pick and neighbor coverage in every pass. */
@@ -1216,59 +1450,63 @@ public final class FarRenderer {
         waterVisible.clear();
         waterSurfaces.clear();
         waterEdges.clear();
-        for (Column column : visible) {
-            column.waterSides = 0;
-            if (column.fade == FarGpu.FADE_IN) continue;
-            for (int side = 0; side < 4; side++)
-                if (column.waterWalls[side] != null && !waterDrawn(beside(column, side))) column.waterSides |= 1 << side;
-            if (column.water != null) waterSurfaces.add(column);
-            if (column.waterSides != 0) waterEdges.add(column);
-            if (column.water != null || column.waterSides != 0) waterVisible.add(column);
+        for (int i = 0; i < shown; i++) {
+            int info = drawnInfo[shownDrawn[i]];
+            if ((info & FADES) == FarGpu.FADE_IN) continue;
+            boolean surface = (info & WATER) != 0, edge = (info >> WATER_SIDES & 15) != 0;
+            if (surface) waterSurfaces.add(i);
+            if (edge) waterEdges.add(i);
+            if (surface || edge) waterVisible.add(i);
         }
     }
 
-    /** Draws columns: whole ones first, then those fading out, then those fading in, each with its own program. */
-    private void drawEach(FarGpu gpu, List<Column> columns, Vec3 position) {
-        boolean[] fades = new boolean[3];
-        for (Column column : columns) fades[column.fade] = true;
+    /** The water sides of a column in view to draw walls on: those where no column of its water is drawn beside it. */
+    private int waterSides(int at) { return drawnInfo[shownDrawn[at]] >> WATER_SIDES & 15; }
+
+    /** Draws columns in view: whole ones first, then those fading out, then those fading in, each with its own program. */
+    private void drawEach(FarGpu gpu, IntArrayList columns, Vec3 position) {
+        int[] list = columns.elements();
+        int count = columns.size(), fades = 0;
+        for (int i = 0; i < count; i++) fades |= 1 << (drawnInfo[shownDrawn[list[i]]] & FADES);
         for (int fade = FarGpu.NO_FADE; fade <= FarGpu.FADE_IN; fade++) {
-            if (!fades[fade]) continue;
+            if ((fades & 1 << fade) == 0) continue;
             if (fade != FarGpu.NO_FADE && !gpu.fade(fade) && fade == FarGpu.FADE_IN) break;
-            for (Column column : columns) if (column.fade == fade) queue(gpu, column, position);
+            for (int i = 0; i < count; i++) if ((drawnInfo[shownDrawn[list[i]]] & FADES) == fade) queue(gpu, list[i], position);
         }
         gpu.end();
     }
 
-    /** Queues a column's faces that can face the camera, and its walls where its neighbours are not drawn. */
-    private void queue(FarGpu gpu, Column column, Vec3 position) {
-        if (column.faces != null) gpu.add(column.faces, CACHE_PICK ? column.groups : faceGroups(column, position),
-                (float) (column.minX() - position.x), (float) (column.minY() - position.y), (float) (column.minZ() - position.z),
-                (float) (column.maxX() - position.x), (float) (column.maxY() - position.y), (float) (column.maxZ() - position.z));
+    /** Queues the faces of a column in view (by its place in {@link #shownDrawn}) that can face the camera, and its walls where its neighbours are not drawn. */
+    private void queue(FarGpu gpu, int at, Vec3 position) {
+        int index = shownDrawn[at];
+        FarGpu.Arena arena = drawnArena[index];
+        if (arena == null) return;
+        int box = index * 6;
+        gpu.add(arena, drawnStart[index], drawnCounts, index * FarMesher.GROUPS, shownGroups[at],
+                (float) (drawnBoxes[box] - position.x), (float) (drawnBoxes[box + 1] - position.y), (float) (drawnBoxes[box + 2] - position.z),
+                (float) (drawnBoxes[box + 3] - position.x), (float) (drawnBoxes[box + 4] - position.y), (float) (drawnBoxes[box + 5] - position.z));
     }
 
-    /** Facing and neighbor coverage stay fixed for the lifetime of the exact camera pick. */
-    private int faceGroups(Column column, Vec3 position) {
-        FarGpu.Allocation faces = column.faces;
-        if (faces == null) return 0;
+    /** The face groups of a drawn column that can show from where the camera is, from its box and info alone. */
+    private int faceGroups(int index, int info, Vec3 position) {
+        if ((info & FACES) == 0) return 0;
+        int at = index * 6;
+        double minX = drawnBoxes[at], minY = drawnBoxes[at + 1], minZ = drawnBoxes[at + 2];
+        double maxX = drawnBoxes[at + 3], maxY = drawnBoxes[at + 4], maxZ = drawnBoxes[at + 5];
         // Only face groups turned toward the camera can show. Smooth ground's slopes, cliffs among them,
         // face sideways too, so it shows from below its column as well.
         int groups = 0;
-        if (position.y < column.maxY()) groups |= 1;
-        if (position.y > column.minY() || faces.smooth()) groups |= 1 << 1;
-        if (position.z < column.maxZ()) groups |= 1 << 2;
-        if (position.z > column.minZ()) groups |= 1 << 3;
-        if (position.x < column.maxX()) groups |= 1 << 4;
-        if (position.x > column.minX()) groups |= 1 << 5;
-        for (int side = 0; side < 4; side++) {
-            if (drawn(beside(column, side))) continue;
-            boolean facing = switch (side) {
-                case 0 -> position.z < column.minZ() + 1;
-                case 1 -> position.z > column.maxZ() - 1;
-                case 2 -> position.x < column.minX() + 1;
-                default -> position.x > column.maxX() - 1;
-            };
-            if (facing) groups |= 1 << FarMesher.FIRST_WALL + side;
-        }
+        if (position.y < maxY) groups |= 1;
+        if (position.y > minY || (info & SMOOTH) != 0) groups |= 1 << 1;
+        if (position.z < maxZ) groups |= 1 << 2;
+        if (position.z > minZ) groups |= 1 << 3;
+        if (position.x < maxX) groups |= 1 << 4;
+        if (position.x > minX) groups |= 1 << 5;
+        // Walls only where no drawn column stands beside it.
+        if ((info & 1 << OPEN) != 0 && position.z < minZ + 1) groups |= 1 << FarMesher.FIRST_WALL;
+        if ((info & 1 << OPEN + 1) != 0 && position.z > maxZ - 1) groups |= 1 << FarMesher.FIRST_WALL + 1;
+        if ((info & 1 << OPEN + 2) != 0 && position.x < minX + 1) groups |= 1 << FarMesher.FIRST_WALL + 2;
+        if ((info & 1 << OPEN + 3) != 0 && position.x > maxX - 1) groups |= 1 << FarMesher.FIRST_WALL + 3;
         return groups;
     }
 
@@ -1345,9 +1583,10 @@ public final class FarRenderer {
         for (int pass = 0; pass < 2; pass++) {
             // Water walls go last: where the next level's water stands as high, its surface is
             // already in the depth buffer and hides them, so they only show across a step.
-            List<Column> water = FAST_WATER ? (pass == 0 ? waterSurfaces : waterEdges) : visible;
-            for (int i = water.size() - 1; i >= 0; i--) {
-                Column column = water.get(i);
+            IntArrayList water = pass == 0 ? waterSurfaces : waterEdges;
+            for (int i = (FAST_WATER ? water.size() : shown) - 1; i >= 0; i--) {
+                int at = FAST_WATER ? water.getInt(i) : i;
+                Column column = visible.get(at);
                 // Water stays with the finer level where two levels fade into each other.
                 if (!FAST_WATER && (column.fade == FarGpu.FADE_IN || (pass == 0 ? column.water == null : !column.hasWaterWalls()))) continue;
                 if (offset != null) {
@@ -1363,7 +1602,7 @@ public final class FarRenderer {
                     // off, and a lake's bed a few blocks under its water showed through it in dark
                     // stripes. Drawn shrunk toward the camera the water covers the same pixels, at a
                     // depth nearer by a couple of those steps.
-                    double distance = Math.sqrt(column.distance + square(column.box.getCenter().y - position.y));
+                    double distance = Math.sqrt(shownDistance[at] + square(column.box.getCenter().y - position.y));
                     float scale = (float) Math.max(0.8, 1.0 - distance * lift);
                     if (!FAST_WATER || scale != lastScale) {
                         view.set(nearer.set(modelView).scale(scale));
@@ -1377,7 +1616,7 @@ public final class FarRenderer {
                 }
                 for (int side = 0; side < 4; side++) {
                     CubeBuffer wall = column.waterWalls[side];
-                    if (FAST_WATER ? (column.waterSides & 1 << side) == 0 : wall == null || waterDrawn(beside(column, side))) continue;
+                    if (FAST_WATER ? (waterSides(at) & 1 << side) == 0 : wall == null || waterDrawn(beside(column, side))) continue;
                     wall.draw();
                 }
             }
@@ -1386,7 +1625,9 @@ public final class FarRenderer {
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
         if (view != null) view.set(modelView);
         if (own) FarLod.endWater(modelView, () -> {
-            for (Column column : FAST_WATER ? waterVisible : visible) {
+            for (int i = 0, count = FAST_WATER ? waterVisible.size() : shown; i < count; i++) {
+                int at = FAST_WATER ? waterVisible.getInt(i) : i;
+                Column column = visible.get(at);
                 if (!FAST_WATER && (column.fade == FarGpu.FADE_IN || column.water == null && !column.hasWaterWalls())) continue;
                 FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 if (column.water != null) {
@@ -1394,7 +1635,7 @@ public final class FarRenderer {
                 }
                 for (int side = 0; side < 4; side++) {
                     CubeBuffer wall = column.waterWalls[side];
-                    if (FAST_WATER ? (column.waterSides & 1 << side) == 0 : wall == null || waterDrawn(beside(column, side))) continue;
+                    if (FAST_WATER ? (waterSides(at) & 1 << side) == 0 : wall == null || waterDrawn(beside(column, side))) continue;
                     wall.draw();
                 }
             }
@@ -1411,7 +1652,7 @@ public final class FarRenderer {
      * ground around the player empty until the whole tree under it had arrived.
      */
     private void visit(@Nullable Column column, int level, int x, int z, int bx, int bz, boolean fading) {
-        if (CACHE_PICK && FADE && column != null && age(column, pickNow) < FarShaders.FADE_TICKS) pickAnimating = true;
+        if (FADE && column != null) running(column.stamp);
         boolean meshed = column != null && column.meshed;
         // Rising into the jet stream layer makes a coarser level the finest: until its columns
         // arrive, the finer ones already here keep standing in for them.
@@ -1542,13 +1783,28 @@ public final class FarRenderer {
         return column.stamp == 0 ? Integer.MAX_VALUE : now - column.stamp & 0x7FFFFFF;
     }
 
+    /**
+     * Notes a fade the walk sees, begun at a stamp (0 for none): while it runs, the walk needs
+     * doing again when it ends (see {@link #walkDue}), as then what the walk draws changes.
+     */
+    private void running(int stamp) {
+        if (stamp == 0) return;
+        int left = FarShaders.FADE_TICKS - (pickNow - stamp & 0x7FFFFFF);
+        if (left <= 0) return;
+        if (CACHE_PICK) pickAnimating = true;
+        if (left < walkLeft) walkLeft = left;
+    }
+
     /** Starts a column's fade now, in the slots its faces are drawn with. */
     private void stamp(Column column, int now) { stamp(column, now, false); }
 
     /** Starts a column's fade, or a merge's (see {@link #merge}), at a time, or with 0 clears it. */
     private void stamp(Column column, int now, boolean merging) {
         pickVersion++;
-        if (now != 0) pickAnimating = true;
+        if (now != 0) {
+            pickAnimating = true;
+            running(now);
+        }
         column.stamp = now;
         if (gpu == null) return;
         gpu.stamp(column.slot, now, merging);
@@ -1642,6 +1898,9 @@ public final class FarRenderer {
         pick.invalidate();
         drawn.clear();
         visible = List.of();
+        shownColumns.clear();
+        shown = 0;
+        all.clear();
         waterVisible.clear();
         waterSurfaces.clear();
         waterEdges.clear();

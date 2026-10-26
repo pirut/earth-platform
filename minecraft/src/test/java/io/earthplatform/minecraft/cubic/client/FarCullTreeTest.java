@@ -43,6 +43,44 @@ class FarCullTreeTest {
         }
     }
 
+    /**
+     * A kept walk classifies the same branches again for each new view: every view after the first must still
+     * give each column the answer testing it alone gives, with the branches' boxes grown only the first time.
+     */
+    @Test void keptBranchesSettleLaterViews() {
+        Random random = new Random(4417);
+        FarCullTree tree = new FarCullTree();
+        tree.clear(true);
+        List<AABB> columns = new ArrayList<>();
+        double camX = 1_234_567, camZ = -7_654_321;
+        for (int tile = 0; tile < 25; tile++) {
+            int outer = tree.open();
+            double size = 262_144;
+            double x = camX + (tile % 5 - 2) * size, z = camZ + (tile / 5 - 2) * size;
+            add(tree, columns, random, x - x % size, z - z % size, size, 7);
+            tree.close(outer);
+        }
+        for (int round = 0; round < 30; round++) {
+            Matrix4f view = new Matrix4f().perspective((float) Math.toRadians(50 + random.nextInt(60)), 16 / 9f, 0.05f, 400_000f)
+                    .rotateX((float) (random.nextDouble() - 0.5) * 3f).rotateY((float) (random.nextDouble() * 6.3));
+            FrustumIntersection frustum = new FrustumIntersection(view);
+            // Moving about within the walk's ground, as between walks.
+            double x = camX + random.nextDouble() * 64, y = random.nextDouble() * 3000, z = camZ + random.nextDouble() * 64;
+            tree.classify(frustum, x, y, z);
+            int settled = 0;
+            for (int i = 0; i < columns.size(); i++) {
+                AABB box = columns.get(i);
+                boolean alone = frustum.testAab((float) (box.minX - x), (float) (box.minY - y), (float) (box.minZ - z),
+                        (float) (box.maxX - x), (float) (box.maxY - y), (float) (box.maxZ - z));
+                byte state = tree.state(i);
+                if (state != FarCullTree.PARTLY) settled++;
+                if (state == FarCullTree.INSIDE) assertTrue(alone, "column " + i + " settled inside but tests outside in view " + round);
+                if (state == FarCullTree.OUTSIDE) assertFalse(alone, "column " + i + " settled outside but tests inside in view " + round);
+            }
+            assertTrue(settled > 0, "nothing settled in view " + round);
+        }
+    }
+
     /** A quadtree like the far pick: some columns drawn whole, some split into four, parents sometimes drawn too. */
     private static void add(FarCullTree tree, List<AABB> columns, Random random, double x, double z, double size, int depth) {
         if (depth == 0 || random.nextInt(4) == 0) {

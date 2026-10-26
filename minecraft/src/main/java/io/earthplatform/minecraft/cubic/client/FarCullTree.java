@@ -17,6 +17,8 @@ final class FarCullTree {
     static final byte PARTLY = 0, INSIDE = 1, OUTSIDE = 2;
 
     private boolean enabled;
+    /** Whether each branch's box has taken in its branches' (see {@link #classify}), which a walk needs only once. */
+    private boolean grown;
     private int nodes, current = -1, columns;
     private int[] parent = new int[64], start = new int[64], end = new int[64], owner = new int[1024];
     /** Each branch's combined box: min x, y, z, then max x, y, z. */
@@ -25,6 +27,7 @@ final class FarCullTree {
 
     void clear(boolean enabled) {
         this.enabled = enabled;
+        grown = false;
         nodes = 0;
         current = -1;
         columns = 0;
@@ -72,15 +75,17 @@ final class FarCullTree {
      * Settles each branch against the view, the camera at the given place: the same float
      * camera-relative corners {@code Frustum.isVisible} tests, so a settled column comes out as testing
      * it would. A box wholly inside every plane holds only boxes that are; one wholly outside a plane
-     * holds only boxes outside it.
+     * holds only boxes outside it. The branches stay as they are for the next view of the same
+     * columns, as from a camera moving within the walk's ground (see FarRenderer#walkDue).
      */
     void classify(FrustumIntersection view, double camX, double camY, double camZ) {
         if (!enabled) return;
         // Branches come after the ones holding them, so going backwards a branch is complete before its holder takes it in.
-        for (int n = nodes - 1; n >= 0; n--) {
+        for (int n = nodes - 1; n >= 0 && !grown; n--) {
             int p = parent[n];
             if (p >= 0) grow(p, box[n * 6], box[n * 6 + 1], box[n * 6 + 2], box[n * 6 + 3], box[n * 6 + 4], box[n * 6 + 5]);
         }
+        grown = true;
         if (state.length < columns) state = new byte[Math.max(columns, state.length * 2)];
         Arrays.fill(state, 0, columns, PARTLY);
         for (int n = 0; n < nodes; ) {

@@ -131,7 +131,7 @@ public final class CubicClient {
     }
 
     private static String timings(int reader) {
-        return String.join(", ", Timings.FRAME.read(reader), Timings.CUBE_DRAW.read(reader), Timings.FAR_DRAW.read(reader), Timings.FAR_WATER.read(reader),
+        return String.join(", ", Timings.FRAME.read(reader), Timings.CUBE_DRAW.read(reader), Timings.FAR_DRAW.read(reader), Timings.FAR_WALK.read(reader), Timings.FAR_WATER.read(reader),
                 Timings.CUBE_UPLOAD.read(reader), Timings.FAR_UPLOAD.read(reader), Timings.CUBE_MESH.read(reader),
                 Timings.FAR_MESH.read(reader), Timings.FAR_MAKE.read(reader),
                 Timings.SERVER_TICK.read(reader), Timings.CUBE_UNLOAD.read(reader), Timings.CUBE_FLUSH.read(reader));

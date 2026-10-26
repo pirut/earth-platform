@@ -442,6 +442,40 @@ final class FarGpu {
         if (first >= 0 && count > 0) arena.queue(first, count);
     }
 
+    /**
+     * The same for faces whose counts per group sit in a table, in the order the groups are stored
+     * (see {@link FarMesher#STORED}), from {@code at}: the pick keeps them so for the columns it
+     * draws (see FarRenderer#info), and queueing a column then reaches no objects of its own.
+     */
+    void add(Arena arena, int start, int[] stored, int at, int groups, float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
+        arena.box(minX, minY, minZ, maxX, maxY, maxZ);
+        if (SPLIT_RANGES) {
+            int[] firsts = new int[FarMesher.GROUPS], sizes = new int[FarMesher.GROUPS];
+            for (int k = 0, first = start; k < FarMesher.GROUPS; first += stored[at + k], k++) {
+                firsts[FarMesher.STORED[k]] = first;
+                sizes[FarMesher.STORED[k]] = stored[at + k];
+            }
+            for (int group = 0; group < FarMesher.GROUPS; group++) {
+                if ((groups & 1 << group) != 0 && sizes[group] > 0) arena.queue(firsts[group], sizes[group]);
+            }
+            return;
+        }
+        int first = -1, count = 0, from = start;
+        for (int k = 0; k < FarMesher.GROUPS; k++) {
+            int size = stored[at + k];
+            if ((groups & 1 << FarMesher.STORED[k]) != 0 || size == 0 && first >= 0) {
+                if (first < 0) first = from;
+                count += size;
+            } else if (first >= 0) {
+                if (count > 0) arena.queue(first, count);
+                first = -1;
+                count = 0;
+            }
+            from += size;
+        }
+        if (first >= 0 && count > 0) arena.queue(first, count);
+    }
+
     /** Draws everything queued, ends any recording, and puts GL back as it was. */
     void end() {
         flush();
