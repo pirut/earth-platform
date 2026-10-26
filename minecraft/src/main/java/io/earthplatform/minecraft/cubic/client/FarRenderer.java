@@ -181,8 +181,30 @@ public final class FarRenderer {
      * every one, as before; the picture is the same either way.
      */
     private static final boolean QUIET_MESHES = REUSE_WALK && !"false".equals(System.getProperty("earthplatform.far.quietMeshes"));
-    /** What the last walk depended on (see {@link #walkDue}): the camera's column at {@link #WALK_LEVEL}, and the settings it saw. */
+    /**
+     * Whether, while the finest level drawn is a coarser one (high up, or as fast as the jet stream
+     * or an ocean current), the walk waits for the camera to enter another column of the level above
+     * it rather than of level 2 (see {@link #walkLevel}). At an ocean current's 900 blocks a second
+     * the camera enters another level 2 column 14 times a second, and each walked the pyramid again,
+     * though with level 6 the finest the walk then depends only on the level 7 column, 2,048 blocks
+     * across. {@code -Dearthplatform.far.coarseWalks=false} walks at every level 2 column, as
+     * before; the picture is the same either way.
+     */
+    private static final boolean COARSE_WALKS = REUSE_WALK && !"false".equals(System.getProperty("earthplatform.far.coarseWalks"));
+    /** What the last walk depended on (see {@link #walkDue}): the camera's column at {@link #walkLevel}, and the settings it saw. */
     private int walkX, walkZ, walkFinest, walkHole;
+    /**
+     * The level whose column under the camera the last walk depends on: {@link #WALK_LEVEL}, or with
+     * {@link #COARSE_WALKS} the level above the finest one drawn, when the walk went through no column
+     * at or below the finest level that was not meshed (see {@link #walkFine}).
+     */
+    private int walkLevel = WALK_LEVEL;
+    /**
+     * Whether the walk under way has come to a column at or below the finest level that is not
+     * meshed. Only there does it ask where the camera is at a level that fine (see {@link #visit}):
+     * whether finer columns stand in for it.
+     */
+    private boolean walkFine;
     /** The camera's block x and z the last walk saw, which the walk then saw everything from. */
     private int walkBx, walkBz;
     /**
@@ -1382,7 +1404,7 @@ public final class FarRenderer {
 
     /**
      * Whether the walk must run again (see {@link #REUSE_WALK}). It depends on the camera only
-     * through the column it is in at {@link #WALK_LEVEL}, as every coarser level's column follows
+     * through the column it is in at {@link #walkLevel}, as every coarser level's column follows
      * from that one, and otherwise on the finest level, the sharpness, the band, the columns held
      * and meshed, and the fades it saw under way: what it draws changes when the first of them ends.
      * A column it draws taken away walks it at once; a column meshed or a fade ended waits for
@@ -1390,7 +1412,7 @@ public final class FarRenderer {
      * what the view noted of it worked out again (see {@link #upload}).
      */
     private boolean walkDue(int bx, int bz, boolean band, int now) {
-        if (!walked || walkStale || Far.column(bx, WALK_LEVEL) != walkX || Far.column(bz, WALK_LEVEL) != walkZ || finest != walkFinest
+        if (!walked || walkStale || Far.column(bx, walkLevel) != walkX || Far.column(bz, walkLevel) != walkZ || finest != walkFinest
                 || Far.hole() != walkHole || band != walkBand) return true;
         return walkBehind(now) && (now - walkNow & 0x7FFFFFF) >= WALK_EVERY;
     }
@@ -1513,6 +1535,7 @@ public final class FarRenderer {
         pickAnimating = false;
         pickNow = now;
         walkLeft = Integer.MAX_VALUE;
+        walkFine = false;
         // The dithered ring between levels only blends where a pack's TAA moves the dither every frame
         // and averages it; without one it stays put, and where the two levels' outlines differ, as at
         // cliff edges, it left fixed specks of sky. There levels meet at a plain seam.
@@ -1536,8 +1559,11 @@ public final class FarRenderer {
         walked = true;
         walkBx = bx;
         walkBz = bz;
-        walkX = Far.column(bx, WALK_LEVEL);
-        walkZ = Far.column(bz, WALK_LEVEL);
+        // Every column it came to at or below the finest level meshed, the walk asked where the camera
+        // is only at the levels above (see Far.refined), so only at the one above the finest.
+        walkLevel = COARSE_WALKS && !walkFine ? Math.min(Far.MAX_LEVEL, Math.max(WALK_LEVEL, finest + 1)) : WALK_LEVEL;
+        walkX = Far.column(bx, walkLevel);
+        walkZ = Far.column(bz, walkLevel);
         walkFinest = finest;
         walkHole = Far.hole();
         walkBand = band;
@@ -1918,6 +1944,7 @@ public final class FarRenderer {
     private void visit(@Nullable Column column, int level, int x, int z, int bx, int bz, boolean fading) {
         if (FADE && column != null) running(column.stamp);
         boolean meshed = column != null && column.meshed;
+        if (!meshed && level <= finest) walkFine = true;
         // Rising into the jet stream layer makes a coarser level the finest: until its columns
         // arrive, the finer ones already here keep standing in for them.
         boolean refined = Far.refined(level, x, z, bx, bz, finest) || !meshed && Far.refined(level, x, z, bx, bz);

@@ -88,6 +88,39 @@ class FarSharpnessTest {
     }
 
     /**
+     * With a coarser level the finest drawn, whether a column is replaced by finer ones asks where
+     * the camera is only at the column's own level, and never at or below the finest: anywhere in
+     * one column of the level above the finest, every column answers the same. The far walk relies
+     * on it to wait for the camera to leave that column (FarRenderer's far.coarseWalks).
+     */
+    @Test void refinedAboveTheFinestOnlyAsksTheColumnAboveIt() {
+        java.util.Random random = new java.util.Random(91);
+        try {
+            for (double scale : new double[] {0.7, 1.0, 2.0, 4.0}) {
+                Far.sharpness(scale);
+                for (int round = 0; round < 40; round++) {
+                    int finest = Far.MIN_LEVEL + random.nextInt(Far.MAX_LEVEL - Far.MIN_LEVEL);
+                    int width = Far.width(finest + 1);
+                    int bx = random.nextInt(4_000_000) - 2_000_000, bz = random.nextInt(4_000_000) - 2_000_000;
+                    // Elsewhere in the camera's column of the level above the finest, its corners included.
+                    int ox = Math.floorDiv(bx, width) * width + (round % 4 == 0 ? 0 : round % 4 == 1 ? width - 1 : random.nextInt(width));
+                    int oz = Math.floorDiv(bz, width) * width + (round % 4 == 2 ? 0 : round % 4 == 3 ? width - 1 : random.nextInt(width));
+                    for (int level = Far.MIN_LEVEL; level <= Far.MAX_LEVEL; level++) {
+                        int reach = Far.hole(level) + 3, cx = Far.column(bx, level), cz = Far.column(bz, level);
+                        for (int z = cz - reach; z <= cz + reach; z++) for (int x = cx - reach; x <= cx + reach; x++) {
+                            boolean refined = Far.refined(level, x, z, bx, bz, finest);
+                            assertEquals(refined, Far.refined(level, x, z, ox, oz, finest), "scale " + scale + " level " + level + " finest " + finest);
+                            if (level <= finest) assertTrue(!refined);
+                        }
+                    }
+                }
+            }
+        } finally {
+            Far.sharpness(1.0);
+        }
+    }
+
+    /**
      * At every choice, extreme ones included, the drawn columns (the ones no finer level replaces)
      * cover the coarsest square exactly once, each replaced column's four children are asked for,
      * and the coarsest level keeps its outer ring.
