@@ -364,6 +364,8 @@ public final class FarRenderer {
         int stamp;
         /** Whether it is fading back in over its children, the camera having moved off (see {@link FarRenderer#visit}). */
         boolean merging;
+        /** Come while the kept walk stood, with what a walk notes of it still to note (see {@link FarRenderer#noteWalk}). */
+        boolean unnoted;
         /** The last pick that drew it (see {@link FarRenderer#pickSerial}), and its place in {@link FarRenderer#drawn} then. */
         int drawnPick, drawnAt = -1;
         /**
@@ -640,9 +642,18 @@ public final class FarRenderer {
                 column.takeOver(old, gpu);
                 places.meshed(column);
             }
-            else { column.drawnCubes = old.drawnCubes; free(old); }
+            else {
+                column.drawnCubes = old.drawnCubes;
+                // As the walk left the one it replaces, where it visited that one (see noteWalk).
+                if (REUSE_WALK) column.split = old.split;
+                free(old);
+            }
             if (column.drawnCubes != null) masked.add(column);
             if (inPlace) drawInPlace(old, column);
+        }
+        if (REUSE_WALK && !column.meshed) {
+            column.unnoted = true;
+            unnoted.add(column.key);
         }
         addTop(column);
         schedule(column);
@@ -1225,6 +1236,7 @@ public final class FarRenderer {
             column.building = false;
             if (result.version() > 0) {
                 pickVersion++;
+                noteWalk(column);
                 // A column the walk draws is drawn as before, from its new mesh; one it does not, it may draw now.
                 boolean listed = listed(column), first = !column.meshed;
                 // Which way the walk goes toward it is worked out before it counts as meshed, and again
@@ -1323,6 +1335,11 @@ public final class FarRenderer {
         if (REUSE_WALK) {
             boolean due = walkDue(bx, bz, band, now);
             if (due) walk(gpu, bx, bz, band, now, PARTIAL_WALKS && walkKept(band));
+            for (int i = 0; i < unnoted.size(); i++) {
+                Column column = held(unnoted.getLong(i));
+                if (column != null) noteWalk(column);
+            }
+            unnoted.clear();
             // A camera moving or turning within the walk's ground only sees the same columns from elsewhere.
             if (plain == null) pick.invalidate();
             if (plain == null || pick.changed(position.x, position.y, position.z, camera.rotation(), plain.earthplatform$matrix(),
@@ -1562,6 +1579,30 @@ public final class FarRenderer {
         Column parent = held(stop, Far.x(column.key) >> 1, Far.z(column.key) >> 1);
         return parent != null && (parent.merging || parent.split);
     }
+
+    /**
+     * Notes on a column not meshed that came while the kept walk stood what a walk visiting it notes,
+     * where the walk comes down to its place (see {@link #walkPath}): whether the walk goes down
+     * through it to its children ({@link Column#split}), as it does where the column is in the middle
+     * of its level (see {@link #visit}). That counts once the column is meshed: its children were
+     * drawn in its place all along, so they do not fade in over it again. Walking every frame, the
+     * walk came by and noted it while the column was not meshed yet; the kept walk may not come by
+     * till after, and the column drew over its children for a moment as they faded in over it again:
+     * arriving at Yosemite, about one column meshed in twelve. Done once the walk is up to date for
+     * the frame (see {@link #drawColumns}), or before the column is meshed if that comes first.
+     */
+    private void noteWalk(Column column) {
+        if (!column.unnoted) return;
+        column.unnoted = false;
+        // A walk since that visited it noted it itself.
+        if (!walked || column.meshed || visited(column)) return;
+        int level = column.level;
+        if (walkPath(column) == (1 << Far.MAX_LEVEL + 1) - (1 << level + 1))
+            column.split = Far.refined(level, Far.x(column.key), Far.z(column.key), walkBx, walkBz);
+    }
+
+    /** The places of the columns come since the last frame (see {@link #noteWalk}), by key: one gone again is not kept. */
+    private final LongArrayList unnoted = new LongArrayList();
 
     /** Whether the kept walk draws this column (see {@link #drawn}), at its place in {@link #drawn}. */
     private boolean listed(Column column) {
@@ -2636,6 +2677,7 @@ public final class FarRenderer {
         fadeCount = 0;
         meshRoots.clear();
         patchedAt.clear();
+        unnoted.clear();
         visiting = null;
         shown = 0;
         all.clear();
