@@ -17,6 +17,13 @@ public final class CubeLight {
     public static final int SIZE = 48, AREA = SIZE * SIZE, VOLUME = AREA * SIZE;
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
     private static final ThreadLocal<Field> FIELDS = ThreadLocal.withInitial(Field::new);
+    /**
+     * Fills a cube whose palette holds one state at once instead of block by block, starts the skylight's spread from
+     * each column's lowest sky and its neighbors' instead of looking at every block for a darker neighbor, and looks
+     * for light sources only in cubes whose palette has one. Light spreads to the same levels in whatever order it
+     * starts. {@code false} goes over every block, for comparing. The same light
+     */
+    public static final boolean FAST_LIGHT = !"false".equals(System.getProperty("earthplatform.cubes.fastLight"));
 
     private CubeLight() {}
 
@@ -25,6 +32,8 @@ public final class CubeLight {
         public final BlockState[] states = new BlockState[VOLUME];
         public final byte[] sky = new byte[VOLUME], block = new byte[VOLUME];
         private int[] queue = new int[VOLUME];
+        /** Each column's lowest sky block, or {@link #SIZE} with none. */
+        private final int[] lowest = new int[AREA];
     }
 
     public static int index(int x, int y, int z) { return (y * SIZE + z) * SIZE + x; }
@@ -34,9 +43,19 @@ public final class CubeLight {
      * ordered y, then z, then x (missing cubes read as air); {@code tops} the 9 columns' sky tops.
      */
     public static Field light(@Nullable PalettedContainer<BlockState>[] states, @Nullable int[][] tops, int cy) {
+        return light(states, tops, cy, FAST_LIGHT);
+    }
+
+    /** As {@link #light(PalettedContainer[], int[][], int)}, the fast way or block by block. */
+    public static Field light(@Nullable PalettedContainer<BlockState>[] states, @Nullable int[][] tops, int cy, boolean fast) {
         Field field = FIELDS.get();
-        fill(field, states);
-        light(field, tops, cy);
+        if (fast) {
+            fillFast(field, states);
+            lightFast(field, states, tops, cy);
+        } else {
+            fill(field, states);
+            light(field, tops, cy);
+        }
         return field;
     }
 
@@ -58,6 +77,27 @@ public final class CubeLight {
             for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) {
                 int base = index(ox, oy + y, oz + z);
                 if (container == null) { Arrays.fill(states, base, base + 16, AIR); continue; }
+                for (int x = 0; x < 16; x++) states[base + x] = container.get(x, y, z);
+            }
+        }
+    }
+
+    private static void fillFast(Field field, @Nullable PalettedContainer<BlockState>[] containers) {
+        BlockState[] states = field.states;
+        for (int c = 0; c < 27; c++) {
+            PalettedContainer<BlockState> container = containers[c];
+            int ox = (c % 3) * 16, oz = (c / 3 % 3) * 16, oy = (c / 9) * 16;
+            BlockState only = container == null ? AIR : container.get(0, 0, 0);
+            // A palette with nothing but that state can only fill the cube with it.
+            if (container == null || !container.maybeHas(state -> state != only)) {
+                for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) {
+                    int base = index(ox, oy + y, oz + z);
+                    Arrays.fill(states, base, base + 16, only);
+                }
+                continue;
+            }
+            for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) {
+                int base = index(ox, oy + y, oz + z);
                 for (int x = 0; x < 16; x++) states[base + x] = container.get(x, y, z);
             }
         }
@@ -87,6 +127,54 @@ public final class CubeLight {
         for (int i = 0; i < VOLUME; i++) {
             int emission = field.states[i].getLightEmission();
             if (emission > 0) { block[i] = (byte) emission; field.queue[tail++] = i; }
+        }
+        spread(field, block, tail);
+    }
+
+    /**
+     * As {@link #light(Field, int[][], int)}. The sky reaches down each column from the top to its lowest sky block, so a
+     * sky block has a darker neighbor only at that lowest one (unless it is the bottom) or below a neighboring column's
+     * lowest sky: the spread starts from those, column by column. Light sources are looked for only in the cubes whose
+     * palette holds one.
+     */
+    private static void lightFast(Field field, @Nullable PalettedContainer<BlockState>[] containers, @Nullable int[][] tops, int cy) {
+        byte[] sky = field.sky, block = field.block;
+        Arrays.fill(sky, (byte) 0);
+        Arrays.fill(block, (byte) 0);
+        int baseY = (cy - 1) << 4;
+        int[] lowest = field.lowest;
+        for (int z = 0; z < SIZE; z++) for (int x = 0; x < SIZE; x++) {
+            int[] column = tops[(z >> 4) * 3 + (x >> 4)];
+            int top = column == null ? CubeWorld.MIN_Y - 1 : column[(z & 15) << 4 | (x & 15)];
+            int y = SIZE - 1;
+            for (; y >= 0 && baseY + y > top; y--) sky[index(x, y, z)] = 15;
+            lowest[z * SIZE + x] = y + 1;
+        }
+        int tail = 0;
+        for (int z = 0; z < SIZE; z++) for (int x = 0; x < SIZE; x++) {
+            int low = lowest[z * SIZE + x];
+            if (low == SIZE) continue;
+            // Sky blocks of this column beside a neighboring column's blocks under its sky.
+            int high = low > 0 ? low : -1;
+            if (x > 0) high = Math.max(high, lowest[z * SIZE + x - 1] - 1);
+            if (x < SIZE - 1) high = Math.max(high, lowest[z * SIZE + x + 1] - 1);
+            if (z > 0) high = Math.max(high, lowest[(z - 1) * SIZE + x] - 1);
+            if (z < SIZE - 1) high = Math.max(high, lowest[(z + 1) * SIZE + x] - 1);
+            for (int y = low, end = Math.min(high, SIZE - 1); y <= end; y++) field.queue[tail++] = index(x, y, z);
+        }
+        spread(field, sky, tail);
+        tail = 0;
+        for (int c = 0; c < 27; c++) {
+            PalettedContainer<BlockState> container = containers[c];
+            if (container == null || !container.maybeHas(state -> state.getLightEmission() > 0)) continue;
+            int ox = (c % 3) * 16, oz = (c / 3 % 3) * 16, oy = (c / 9) * 16;
+            for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) {
+                int base = index(ox, oy + y, oz + z);
+                for (int i = base; i < base + 16; i++) {
+                    int emission = field.states[i].getLightEmission();
+                    if (emission > 0) { block[i] = (byte) emission; field.queue[tail++] = i; }
+                }
+            }
         }
         spread(field, block, tail);
     }

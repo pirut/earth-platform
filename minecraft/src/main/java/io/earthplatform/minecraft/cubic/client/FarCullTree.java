@@ -59,6 +59,29 @@ final class FarCullTree {
         current = outer;
     }
 
+    /** The branch open now, which a column added now goes in. */
+    int current() { return current; }
+
+    /**
+     * Opens again a branch a walk closed, for a patch of the pick (see FarRenderer#patch). The columns
+     * added in it now come after all the others, outside its range, so the view tests each of them
+     * unless a branch opened in it now settles them; its box takes theirs in, and stays one around
+     * the columns in its range, which a settled branch settles as testing each would. Returns the
+     * branch open before, for {@link #closeAgain}.
+     */
+    int reopen(int node) {
+        int outer = current;
+        if (!enabled) return outer;
+        current = node;
+        grown = false;
+        return outer;
+    }
+
+    /** Closes a branch opened again (see {@link #reopen}), its range as the walk left it. */
+    void closeAgain(int outer) {
+        if (enabled) current = outer;
+    }
+
     /** Puts the column at this index of the pick in the branch open now. */
     void own(int index, AABB column) { own(index, column.minX, column.minY, column.minZ, column.maxX, column.maxY, column.maxZ); }
 
@@ -100,6 +123,16 @@ final class FarCullTree {
             n++;
             while (n < nodes && start[n] < last) n++;
         }
+    }
+
+    /**
+     * Takes in a new box for the column at this index of the pick, as when a column sent again takes
+     * its place: its branch's box at once, and the branches holding that with the next classify.
+     */
+    void regrow(int index, double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+        if (!enabled || index >= columns || owner[index] < 0) return;
+        grow(owner[index], minX, minY, minZ, maxX, maxY, maxZ);
+        grown = false;
     }
 
     /** How the column at this index of the pick stands against the view; {@link #PARTLY} means test it. */

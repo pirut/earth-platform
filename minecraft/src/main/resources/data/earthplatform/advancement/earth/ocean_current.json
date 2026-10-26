@@ -1,0 +1,28 @@
+{
+  "parent": "earthplatform:earth/root",
+  "criteria": {
+    "ocean_current": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:oak_boat",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.ocean_current.title",
+      "fallback": "Ocean Current"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.ocean_current.description",
+      "fallback": "Sprint and paddle a boat on the open sea, and let the current carry you across an ocean"
+    },
+    "frame": "goal"
+  },
+  "requirements": [
+    [
+      "ocean_current"
+    ]
+  ]
+}

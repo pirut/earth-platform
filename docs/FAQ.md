@@ -18,7 +18,7 @@ Mountains, valleys, coasts and lakes come from measured elevation (about 30 m ap
 Yes. Mining, crafting, mobs, beds, death and respawn, the Nether and the End all work as usual. Nether portals built on the Earth link to the Nether and back.
 
 **How do I travel long distances in survival?**
-Ride the jet stream: fly an elytra up above about Y 9,200 and the wind carries you at over 1,000 blocks a second. See [The jet stream](PLAYING.md#the-jet-stream).
+Ride the jet stream: fly an elytra up above about Y 9,200 and the wind carries you at over 1,000 blocks a second. At sea, ride an ocean current: sprint while you paddle a boat forward on the open sea and it carries you at about 900 blocks a second. See [The jet stream](PLAYING.md#the-jet-stream) and [Ocean currents](PLAYING.md#ocean-currents).
 
 **What does the satellite imagery option do?**
 When turned on with the **Satellite imagery** toggle on the Customize screen or `satelliteImagery = true` in `config/earthplatform-common.toml` (see [the install guide](INSTALL.md#satellite-ground-colours-optional)), Sentinel-2 cloudless imagery nudges the choice of ground blocks, such as sand, gravel, stone and dry soil, and how dense trees are, to match each place's real colors. Biomes and tree kinds don't change. It's off by default.
@@ -84,6 +84,7 @@ That was a bug in early test builds and is fixed. Update to the latest version.
 - **Ships in the jet stream:** a Create Aeronautics ship with players aboard rides the jet stream at 40 blocks a second; only an empty ship reaches elytra speed.
 - **AE2's meteorite compass** finds meteorites in the Earth world by map column only, and doesn't notice blocks changed after the meteorite generated. Everything else in AE2, spatial storage included, works normally.
 - **Gliding into builds above Y 9,000:** the jet stream layer streams no blocks around a gliding player, so you fly through anything built up there. Land before you reach it.
+- **Boats in an ocean current** see only far terrain around them, so they pass over islands less than about 60 blocks across and through anything built out on the open sea. Slow down before you reach a build. Other players see a boat in the current about 450 blocks behind where it really is.
 - **Iris and Sodium** must be Iris 1.8.14 or later 1.8, and Sodium 0.8.12 or later 0.8 (see the [install guide](INSTALL.md#shaders-optional)).
 - **First visits are slow:** a place nobody has visited loads slowly the first time while its elevation is cleaned up. Later visits are quick, and work offline.
 - **On a Mac**, Photon's Colored Lights, Colored Shadows and Cloud Shadows are unavailable.

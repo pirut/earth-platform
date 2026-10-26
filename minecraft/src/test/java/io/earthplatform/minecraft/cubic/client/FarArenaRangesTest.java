@@ -95,6 +95,33 @@ class FarArenaRangesTest {
         }
     }
 
+    @Test void growingJoinsTheNewUnitsToAFreeRangeAtTheEnd() {
+        for (boolean indexed : new boolean[] {true, false}) {
+            FarArenaRanges ranges = new FarArenaRanges(30, indexed);
+            FarArenaRanges.Allocation a = ranges.allocate(10), b = ranges.allocate(10), c = ranges.allocate(10);
+            assertNull(ranges.allocate(5));
+            // Nothing free at the end: the new units are a range of their own.
+            ranges.grow(40);
+            assertEquals(10, ranges.freeUnits());
+            assertEquals(1, ranges.freeRangeCount());
+            ranges.release(c);
+            assertEquals(1, ranges.freeRangeCount());
+            // A free range at the end takes the new units in.
+            ranges.grow(64);
+            assertEquals(1, ranges.freeRangeCount());
+            assertEquals(44, ranges.freeUnits());
+            FarArenaRanges.Allocation after = ranges.allocate(44);
+            assertEquals(20, after.start());
+            // Growing leaves what is allocated where it was.
+            ranges.release(a);
+            ranges.release(b);
+            ranges.release(after);
+            assertEquals(1, ranges.freeRangeCount());
+            assertEquals(0, ranges.allocate(64).start());
+            assertThrows(IllegalArgumentException.class, () -> ranges.grow(64));
+        }
+    }
+
     @Test void rejectsInvalidSizesWithoutChangingState() {
         assertThrows(IllegalArgumentException.class, () -> new FarArenaRanges(0));
         assertThrows(IllegalArgumentException.class, () -> new FarArenaRanges(-1));

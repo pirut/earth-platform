@@ -10,12 +10,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * A player riding the jet stream crosses dozens of carrier chunks a second high above any
- * terrain, so like a spectator it keeps no chunks loaded until it comes back down.
+ * terrain, so like a spectator it keeps no chunks loaded until it comes back down; so does one
+ * in a boat the ocean current carries, until it slows down.
  */
 @Mixin(ChunkMap.class)
 abstract class CubicJetTicketMixin {
     @Inject(method = "skipPlayer", at = @At("HEAD"), cancellable = true)
     private void earthplatform$skipJetRiders(ServerPlayer player, CallbackInfoReturnable<Boolean> info) {
-        if (JetStream.aboveTerrain(player)) info.setReturnValue(true);
+        if (JetStream.outrunsTerrain(player)) info.setReturnValue(true);
     }
 }

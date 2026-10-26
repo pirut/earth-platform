@@ -26,7 +26,7 @@ final class FarArenaRanges {
     /** The same immutable range is stored in both indexes; no per-size buckets are needed. */
     private record FreeRange(int start, int size) {}
 
-    private final int capacity;
+    private int capacity;
     private final TreeMap<Integer, FreeRange> freeByStart = new TreeMap<>();
     /** Null only for the address-first scan used by performance comparisons. */
     private final TreeSet<FreeRange> freeBySize;
@@ -93,6 +93,21 @@ final class FarArenaRanges {
             size += range.size;
         }
         addFree(start, size);
+    }
+
+    /** Makes the arena larger: the units from its old end to its new one are free, joined to a free range ending there. */
+    void grow(int capacity) {
+        if (capacity <= this.capacity) throw new IllegalArgumentException("An arena only grows");
+        int start = this.capacity, size = capacity - this.capacity;
+        Map.Entry<Integer, FreeRange> before = freeByStart.lowerEntry(start);
+        if (before != null && before.getValue().start + before.getValue().size == start) {
+            FreeRange range = before.getValue();
+            removeFree(range);
+            start = range.start;
+            size += range.size;
+        }
+        addFree(start, size);
+        this.capacity = capacity;
     }
 
     int allocatedUnits() { return allocated; }

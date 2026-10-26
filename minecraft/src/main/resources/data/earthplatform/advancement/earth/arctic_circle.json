@@ -1,0 +1,27 @@
+{
+  "parent": "earthplatform:earth/root",
+  "criteria": {
+    "arctic_circle": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:snow_block",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.arctic_circle.title",
+      "fallback": "Midnight Sun"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.arctic_circle.description",
+      "fallback": "Go north of the Arctic Circle"
+    }
+  },
+  "requirements": [
+    [
+      "arctic_circle"
+    ]
+  ]
+}

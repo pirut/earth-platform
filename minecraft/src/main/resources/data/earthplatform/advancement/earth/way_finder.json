@@ -1,0 +1,27 @@
+{
+  "parent": "earthplatform:earth/root",
+  "criteria": {
+    "way_finder": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:compass",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.way_finder.title",
+      "fallback": "Way Finder"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.way_finder.description",
+      "fallback": "Point a compass from the map, or with /earth compass"
+    }
+  },
+  "requirements": [
+    [
+      "way_finder"
+    ]
+  ]
+}
