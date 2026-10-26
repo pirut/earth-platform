@@ -635,17 +635,17 @@ public final class FarRenderer {
             boolean inPlace = SENT_IN_PLACE && old.meshed && listed(old);
             if (listed(old) && !inPlace) walkStale = true;
             column.drawnPick = old.drawnPick;
-            column.walkedAs(old);
             dueColumns.remove(old);
             forget(old);
             if (old.meshed) {
                 column.takeOver(old, gpu);
+                column.walkedAs(old);
                 places.meshed(column);
             }
             else {
+                // One not meshed starts afresh, as walking every frame, and is noted like any column come
+                // (see noteWalk): the walk may no longer come where it saw the one it replaces.
                 column.drawnCubes = old.drawnCubes;
-                // As the walk left the one it replaces, where it visited that one (see noteWalk).
-                if (REUSE_WALK) column.split = old.split;
                 free(old);
             }
             if (column.drawnCubes != null) masked.add(column);
