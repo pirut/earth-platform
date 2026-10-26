@@ -369,6 +369,11 @@ public final class EarthGenerator extends SurfaceGenerator {
                 out[1] = SEA;
                 return;
             }
+            // A pond on ground a sea cliff's face cuts away goes with the ground, rather than hanging on the face.
+            if (!shadow && surface > SEA + 1 && voxel <= CLIFF_VOXEL) {
+                seaCliff(dem, x, z, surface, voxel, out);
+                if (out[1] != DRY || out[0] < surface) return;
+            }
             if (!shadow) {
                 // Over drowned ground, as a reservoir newer than the survey, the bed is the survey's, far below.
                 int depth = lakeDepth(x, z, voxel);
@@ -412,9 +417,134 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (y > SEA + 1 && speck(dem, x, z, metres, voxel) && !towers.covers(x, z)) y = SEA + 1;
             // Low ground slopes down to the water beside it rather than standing over it in a wall.
             if (y > SEA) y = bank(dem, x, z, y, voxel);
+            // Sea cliffs break back from the water in ledges, coves and headlands rather than standing in a wall.
+            if (y > SEA + 1 && voxel <= CLIFF_VOXEL) { seaCliff(dem, x, z, y, voxel, out); return; }
         }
         out[0] = y;
         out[1] = DRY;
+    }
+
+    /** Widest voxels whose sea cliffs are broken up; wider ones show a cliff a voxel or two across. */
+    private static final int CLIFF_VOXEL = 8;
+    /** Least rise of a cliff's face per block back from the sea; blocks a cove may cut in or a headland stand out; blocks within which the whole face climbs. */
+    private static final double CLIFF_SLOPE = 1.5, CLIFF_COVE = 7, CLIFF_REACH = 36;
+    /** Farthest, in blocks, a cliff's face reaches back from the sea: past it the face stands above any ground. */
+    private static final int CLIFF_MARGIN = (int) CLIFF_REACH + (int) CLIFF_COVE + 5;
+    /** Points across a tile of the distance to the sea, and the fewest blocks between them. */
+    private static final int CLIFF_TILE = 32, CLIFF_SPACING = 4;
+
+    /**
+     * A land column's ground by the sea, cut back to a sea cliff's face. The land cover draws the
+     * coast and the survey the ground, and where the survey climbs out of the sea a little
+     * offshore, as along Morocco's Rif coast, or a real cliff stands at the water, the ground rose
+     * from the sea in one sheer wall along the coast's smooth line, the same height all along. Now
+     * the face climbs from the water's edge at a slope that wanders from broken and stepped to near
+     * sheer, in ledges a few blocks high, and its foot wanders in and out in coves and headlands.
+     * Only ground steeper than the face is cut: beaches and gentle shores keep their ground, and a
+     * cliff taller than the face climbs in {@value #CLIFF_REACH} blocks takes a steeper face.
+     */
+    private void seaCliff(GlobalElevation dem, int x, int z, int y, int voxel, int[] out) {
+        out[0] = y;
+        out[1] = DRY;
+        if (!besideSea(x, z)) return;
+        double rise = y - SEA, d = seaDistance(dem, x, z, voxel);
+        // Past this the face stands above the ground whatever its slope and the cove do.
+        if (d >= rise / CLIFF_SLOPE + CLIFF_COVE) return;
+        double slope = Math.max(CLIFF_SLOPE + 2.5 * (1 + relief.getValue(x / 83.0 + 17.3, z / 83.0 - 4.1)), rise / CLIFF_REACH);
+        if (d >= rise / slope + CLIFF_COVE) return;
+        double cove = CLIFF_COVE * (0.75 * crags.getValue(x / 31.0 - 8.7, z / 31.0 + 3.1) + 0.25 * crags.getValue(x / 9.0 + 2.9, z / 9.0 - 6.3));
+        // Coves and headlands only on ground steep as a cliff: low shores keep their line.
+        double steepness = Mth.clamp((rise / (d + 1) - CLIFF_SLOPE) / 2, 0, 1);
+        double face = slope * (d + steepness * cove);
+        if (face >= rise) return;
+        // Ledges: each step of the face climbs mostly in its last part, with a shelf before it.
+        double ledge = 4 + 2.5 * (1 + relief.getValue(x / 47.0 - 31.9, z / 47.0 + 12.7));
+        double steps = face / ledge, fraction = steps - Math.floor(steps);
+        if (face > 0) face = ledge * (Math.floor(steps) + fraction * fraction * fraction);
+        int top = Mth.floor(SEA + face);
+        if (top < SEA) {
+            // A cove: the sea comes in over a shallow floor.
+            out[0] = Math.max(top, SEA - 3);
+            out[1] = SEA;
+        } else out[0] = Math.min(y, top);
+    }
+
+    private record CliffTile(int x, int z, int voxel) {}
+    private final java.util.concurrent.ConcurrentHashMap<CliffTile, float[]> cliffTiles = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Blocks from a column to the nearest sea, up to about {@value #CLIFF_MARGIN}, blended from a
+     * tile of points a voxel or {@value #CLIFF_SPACING} blocks apart. Each tile reads the sea once
+     * at every point over it and a margin round it and spreads the distance across them, which
+     * every column on it then shares: searching rings round each column took many times as long
+     * on the Cliffs of Moher, and missed inlets a few blocks across, so the face stood in spikes.
+     */
+    private double seaDistance(GlobalElevation dem, int x, int z, int voxel) {
+        int spacing = Math.max(CLIFF_SPACING, voxel);
+        double gx = (x + 0.5) / spacing - 0.5, gz = (z + 0.5) / spacing - 0.5;
+        int ix = Mth.floor(gx), iz = Mth.floor(gz);
+        double tx = gx - ix, tz = gz - iz;
+        // A tile holds one point more each way, so the blend never leaves it.
+        float[] tile = cliffTile(dem, Math.floorDiv(ix, CLIFF_TILE), Math.floorDiv(iz, CLIFF_TILE), voxel);
+        int i = Math.floorMod(ix, CLIFF_TILE), j = Math.floorMod(iz, CLIFF_TILE), w = CLIFF_TILE + 1;
+        double a = tile[j * w + i], b = tile[j * w + i + 1], c = tile[(j + 1) * w + i], e = tile[(j + 1) * w + i + 1];
+        return Mth.lerp(tz, Mth.lerp(tx, a, b), Mth.lerp(tx, c, e));
+    }
+
+    private float[] cliffTile(GlobalElevation dem, int tx, int tz, int voxel) {
+        CliffTile key = new CliffTile(tx, tz, voxel);
+        int spacing = Math.max(CLIFF_SPACING, voxel);
+        float[] known = cliffTiles.get(key);
+        if (known != null) return known;
+        int margin = (CLIFF_MARGIN + spacing - 1) / spacing, n = CLIFF_TILE + 1 + 2 * margin;
+        int ox = tx * CLIFF_TILE - margin, oz = tz * CLIFF_TILE - margin;
+        float far = 2f * CLIFF_MARGIN;
+        float[] grid = new float[n * n];
+        double[] sample = new double[3];
+        for (int j = 0; j < n; j++) for (int i = 0; i < n; i++)
+            grid[j * n + i] = sea(dem, (ox + i + 0.5) * spacing, (oz + j + 0.5) * spacing, voxel, sample) ? 0 : far;
+        // Two sweeps of the eight neighbours' steps: within a twelfth of the straight distance.
+        float side = spacing, corner = (float) (spacing * Math.sqrt(2));
+        for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) {
+            float v = grid[j * n + i];
+            if (i > 0) v = Math.min(v, grid[j * n + i - 1] + side);
+            if (j > 0) {
+                v = Math.min(v, grid[(j - 1) * n + i] + side);
+                if (i > 0) v = Math.min(v, grid[(j - 1) * n + i - 1] + corner);
+                if (i < n - 1) v = Math.min(v, grid[(j - 1) * n + i + 1] + corner);
+            }
+            grid[j * n + i] = v;
+        }
+        for (int j = n - 1; j >= 0; j--) for (int i = n - 1; i >= 0; i--) {
+            float v = grid[j * n + i];
+            if (i < n - 1) v = Math.min(v, grid[j * n + i + 1] + side);
+            if (j < n - 1) {
+                v = Math.min(v, grid[(j + 1) * n + i] + side);
+                if (i < n - 1) v = Math.min(v, grid[(j + 1) * n + i + 1] + corner);
+                if (i > 0) v = Math.min(v, grid[(j + 1) * n + i - 1] + corner);
+            }
+            grid[j * n + i] = v;
+        }
+        int w = CLIFF_TILE + 1;
+        float[] tile = new float[w * w];
+        for (int j = 0; j < w; j++) System.arraycopy(grid, (j + margin) * n + margin, tile, j * w, w);
+        if (cliffTiles.size() > 4096) cliffTiles.clear();
+        cliffTiles.putIfAbsent(key, tile);
+        return tile;
+    }
+
+    /**
+     * Whether a point is the sea: its land cover's sea, unless that lies on the steep ground of a
+     * cliff's shadow, as {@link #surveyed} keeps it land. Taken as sea, the Cliffs of Moher's
+     * shadowed slopes were cut down to the water for a hundred blocks back.
+     */
+    private boolean sea(GlobalElevation dem, double x, double z, int voxel, double[] sample) {
+        int code = cover(x, z, voxel);
+        if (code == WorldCoverSource.NO_DATA) return true;
+        if (code != WorldCoverSource.WATER || !seaWater(x, z, voxel)) return false;
+        int bx = Mth.floor(x), bz = Mth.floor(z);
+        double metres = dem.sample(bx + 0.5, bz + 0.5, sample);
+        return sample[2] > 0.5 || seaGround(dem, bx, bz, metres, Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1])), voxel);
     }
 
     /**
