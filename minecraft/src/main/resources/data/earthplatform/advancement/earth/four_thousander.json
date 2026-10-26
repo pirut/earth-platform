@@ -1,0 +1,28 @@
+{
+  "parent": "earthplatform:earth/high_country",
+  "criteria": {
+    "four_thousander": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:powder_snow_bucket",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.four_thousander.title",
+      "fallback": "Four-Thousander"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.four_thousander.description",
+      "fallback": "Stand on ground 4,000 meters above the sea"
+    },
+    "frame": "goal"
+  },
+  "requirements": [
+    [
+      "four_thousander"
+    ]
+  ]
+}

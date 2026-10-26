@@ -1,0 +1,28 @@
+{
+  "parent": "earthplatform:earth/way_finder",
+  "criteria": {
+    "found_you": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:spyglass",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.found_you.title",
+      "fallback": "Found You"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.found_you.description",
+      "fallback": "Catch up with the player your compass follows"
+    },
+    "frame": "goal"
+  },
+  "requirements": [
+    [
+      "found_you"
+    ]
+  ]
+}

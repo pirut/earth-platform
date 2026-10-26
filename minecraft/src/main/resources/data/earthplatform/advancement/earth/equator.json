@@ -1,0 +1,27 @@
+{
+  "parent": "earthplatform:earth/root",
+  "criteria": {
+    "equator": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:trident",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.equator.title",
+      "fallback": "Crossing the Line"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.equator.description",
+      "fallback": "Cross the equator without teleporting"
+    }
+  },
+  "requirements": [
+    [
+      "equator"
+    ]
+  ]
+}

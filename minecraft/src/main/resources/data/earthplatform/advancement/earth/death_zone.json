@@ -1,0 +1,31 @@
+{
+  "parent": "earthplatform:earth/four_thousander",
+  "criteria": {
+    "death_zone": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:red_banner",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.death_zone.title",
+      "fallback": "Death Zone"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.death_zone.description",
+      "fallback": "Stand on ground 8,000 meters above the sea, as only the Himalaya and the Karakoram reach"
+    },
+    "frame": "challenge"
+  },
+  "requirements": [
+    [
+      "death_zone"
+    ]
+  ],
+  "rewards": {
+    "experience": 100
+  }
+}

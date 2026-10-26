@@ -77,6 +77,8 @@
     "CubicJetTicketMixin",
     "CubicJetTickMixin",
     "CubicJetRocketMixin",
+    "CubicBoatMixin",
+    "CubicCurrentMoveMixin",
     "CubicPistonMixin",
     "CubicFallingBlockMixin",
     "CubicFallingEntityMixin",
