@@ -222,6 +222,27 @@ def verifyOfficialShaderInputs = tasks.register('verifyOfficialShaderInputs') {
         }
     }
 }
+// Sodium's classes, its config API among them, sit in a jar nested inside the published jar. The Earth
+// page in Sodium's Video Settings compiles against that inner jar; it stays compile-only like the rest.
+def sodiumApiJar = layout.buildDirectory.file('sodium-api/sodium-mod.jar')
+def extractSodiumApi = tasks.register('extractSodiumApi') {
+    dependsOn verifyOfficialShaderInputs
+    inputs.files(officialSodiumFiles)
+    outputs.file(sodiumApiJar)
+    doLast {
+        def out = sodiumApiJar.get().asFile
+        out.parentFile.mkdirs()
+        new java.util.zip.ZipFile(file(officialSodiumJar.get())).withCloseable { outer ->
+            def inner = outer.entries().find { it.name ==~ /META-INF\/jarjar\/net\.caffeinemc\.sodium-neoforge-.*-mod\.jar/ }
+            if (inner == null) throw new GradleException('The Sodium jar has no nested mod jar to compile the Sodium options page against.')
+            out.bytes = outer.getInputStream(inner).bytes
+        }
+    }
+}
+dependencies {
+    compileOnly files(sodiumApiJar) { builtBy extractSodiumApi }
+}
+
 dependencies {
     compileOnly officialIrisFiles
     compileOnly officialSodiumFiles
