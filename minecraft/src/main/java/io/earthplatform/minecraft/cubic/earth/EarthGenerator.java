@@ -342,7 +342,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             // Water joined through water to the open sea at sea level is the sea, though the survey under it reads far
             // above it, as where a coarse ocean grid fills a lagoon with its island's slopes; but water mapped on a
             // steep slope of real ground, as a cliff's shadow, is not.
-            if (seaWater(x, z) && (steep <= 0.7 || coarse(dem, x + 0.5, z + 0.5, metres, Math.max(24, 3.0 * voxel)))) {
+            if (seaWater(x, z, voxel) && seaGround(dem, x, z, metres, steep, voxel)) {
                 out[0] = lagoonBed(x, z, metres, voxel);
                 out[1] = SEA;
                 return;
@@ -359,8 +359,12 @@ public final class EarthGenerator extends SurfaceGenerator {
             // falls a few blocks above and below the sea. And water below the sea's level that the sea's own samples
             // reach is the sea: on a steep step in the survey of a shallow bank, as in the Exumas, it read as a lake
             // ten blocks under the sea round it, in a straight walled trench.
+            // Water standing well above the sea right beside it, which the sea's samples just failed to reach, is
+            // the sea's edge too: the survey climbs out of the sea a little offshore along steep coasts, and the
+            // shore's last few blocks of water took a lake's level up that slope, on the cliff's top.
             if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && joinsOpenSea(x, z)
-                    || Math.abs(surface - SEA) <= TIDAL && besideSea(x, z) || surface < SEA && seaWater(x, z))) {
+                    || Math.abs(surface - SEA) <= TIDAL && besideSea(x, z) || surface <= SEA + 2 * TIDAL && seaWater(x, z, voxel)
+                    || surface > SEA + TIDAL && besideSea(x, z) && seaBeside(x, z, voxel) && seaGround(dem, x, z, metres, steep, voxel))) {
                 out[0] = lagoonBed(x, z, metres, voxel);
                 out[1] = SEA;
                 return;
@@ -413,6 +417,49 @@ public final class EarthGenerator extends SurfaceGenerator {
         out[1] = DRY;
     }
 
+    /**
+     * Whether the survey under water the sea joins may be the sea's floor rather than real ground
+     * above it: gentle, or flat blocks of coarse data ({@link #coarse}), or a steep step with the
+     * sea's gentle floor on either side of it. A cliff's shadow mapped as water lies on a steep
+     * slope with land above it, and stays out of the sea. Where the survey climbs out of the sea
+     * offshore, as along Morocco's Rif coast, its steps a block or two across read as steep as a
+     * cliff, and stood as stone walls thirty blocks high a hundred metres out to sea.
+     */
+    private boolean seaGround(GlobalElevation dem, int x, int z, double metres, double steep, int voxel) {
+        if (steep <= 0.7 || coarse(dem, x + 0.5, z + 0.5, metres, Math.max(24, 3.0 * voxel))) return true;
+        double[] sample = new double[3];
+        for (int step = 1; step <= 2; step++) {
+            double r = step * Math.max(4, voxel);
+            for (int k = 0; k < 4; k++) {
+                if (gentleSea(dem, x + RING_X[k] * r, z + RING_Z[k] * r, voxel, sample)
+                        && gentleSea(dem, x - RING_X[k] * r, z - RING_Z[k] * r, voxel, sample)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether a point is open sea, or water the sea's samples reach on a gentle survey. */
+    private boolean gentleSea(GlobalElevation dem, double x, double z, int voxel, double[] sample) {
+        int code = cover(x, z, voxel);
+        if (code == WorldCoverSource.NO_DATA) return true;
+        if (code != WorldCoverSource.WATER || !seaWater(x, z, voxel)) return false;
+        dem.sample(Math.floor(x) + 0.5, Math.floor(z) + 0.5, sample);
+        return sample[0] * sample[0] + sample[1] * sample[1] <= 0.49;
+    }
+
+    /** Whether the sea lies a step or two from a column, as open sea or as water the sea's samples reach ({@link #seaWater}). */
+    private boolean seaBeside(int x, int z, int voxel) {
+        for (int step = 1; step <= 2; step++) {
+            double r = step * Math.max(4, voxel);
+            for (int k = 0; k < 8; k += 2) {
+                double px = x + RING_X[k] * r, pz = z + RING_Z[k] * r;
+                int code = cover(px, pz, voxel);
+                if (code == WorldCoverSource.NO_DATA || code == WorldCoverSource.WATER && seaWater(px, pz, voxel)) return true;
+            }
+        }
+        return false;
+    }
+
     /** Narrowest far voxel that reads a bridge's deck as the water under it, and blocks a deck's voxels may reach to either side. */
     private static final int BRIDGE_VOXEL = 8, BRIDGE_REACH = 32;
 
@@ -455,7 +502,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         int code = cover(memo, x, z, voxel);
         if (code == WorldCoverSource.NO_DATA) return SEA;
         if (code != WorldCoverSource.WATER) return DRY;
-        return seaWater(x, z) ? SEA : waterSurface(dem, x, z, voxel);
+        return seaWater(x, z, voxel) ? SEA : waterSurface(dem, x, z, voxel);
     }
 
     /** Ring radii, in voxels, for how far a low bank is from its water; the wider ones only for {@link #CANOPY_BANK}'s. */
@@ -519,7 +566,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 int px = snap(x + (int) Math.round(RING_X[k] * reach), lattice), pz = snap(z + (int) Math.round(RING_Z[k] * reach), lattice);
                 int code = cover(px, pz, voxel);
                 if (code != WorldCoverSource.NO_DATA && code != WorldCoverSource.WATER) continue;
-                int water = code == WorldCoverSource.NO_DATA || seaWater(px, pz) ? SEA : waterSurface(dem, px, pz, voxel);
+                int water = code == WorldCoverSource.NO_DATA || seaWater(px, pz, voxel) ? SEA : waterSurface(dem, px, pz, voxel);
                 if (water > SEA && water <= SEA + 2 && joinsOpenSea(px, pz)) water = SEA;
                 if (water < y) level = water;
             }
@@ -581,7 +628,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         for (int k = 0; k < 8; k++) {
             double px = x + RING_X[k] * r, pz = z + RING_Z[k] * r;
             int code = cover(px, pz, voxel);
-            if (code == WorldCoverSource.NO_DATA || code == WorldCoverSource.WATER && seaWater(px, pz)) sea++;
+            if (code == WorldCoverSource.NO_DATA || code == WorldCoverSource.WATER && seaWater(px, pz, voxel)) sea++;
         }
         return sea >= 5 && coarse(dem, x + 0.5, z + 0.5, metres, Math.max(24, 3.0 * voxel));
     }
@@ -824,6 +871,13 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
     private final ThreadLocal<CoverMemo> coverMemo = ThreadLocal.withInitial(CoverMemo::new);
 
+    /** The land cover overview a voxel's cover is read at: its pixels no bigger than the voxel. */
+    private int coverOverview(double z, int voxel) { return overview(grid.groundMetresPerBlock(z), voxel); }
+
+    private static int overview(double metresPerBlock, int voxel) {
+        return Mth.clamp(Mth.floor(Math.log(voxel * metresPerBlock / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
+    }
+
     private int coverAt(double x, double z, int voxel) {
         double metresPerBlock = grid.groundMetresPerBlock(z);
         if (voxel <= 8) {
@@ -832,7 +886,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             x += (warpX.getValue(nx, nz) + 0.5 * warpX.getValue(nx * 2.7, nz * 2.7)) * amplitude;
             z += (warpZ.getValue(nx, nz) + 0.5 * warpZ.getValue(nx * 2.7, nz * 2.7)) * amplitude;
         }
-        int overview = Mth.clamp(Mth.floor(Math.log(voxel * metresPerBlock / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
+        int overview = overview(metresPerBlock, voxel);
         GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
         int code = cover.code(point.latitude(), point.longitude(), overview);
         if (code == WorldCoverSource.WATER) {
@@ -2159,10 +2213,12 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** Whether the land cover between two neighbouring water samples is all water, so no reef islet or dam parts them. */
-    private boolean waterBetween(double x0, double z0, double x1, double z1) {
+    private boolean waterBetween(double x0, double z0, double x1, double z1) { return waterBetween(x0, z0, x1, z1, WATER_OVERVIEW); }
+
+    private boolean waterBetween(double x0, double z0, double x1, double z1, int overview) {
         for (int step = 1; step < 4; step++) {
             GeoPoint point = grid.geographic(x0 + (x1 - x0) * step / 4, z0 + (z1 - z0) * step / 4);
-            int code = cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW);
+            int code = cover.code(point.latitude(), point.longitude(), overview);
             if (code != WorldCoverSource.WATER && code != WorldCoverSource.NO_DATA) return false;
         }
         return true;
@@ -2171,16 +2227,28 @@ public final class EarthGenerator extends SurfaceGenerator {
     /**
      * Whether a column's water joins one of the four water samples around it that is the sea
      * ({@link #seaSamples}), so a lake behind a beach beside a lagoon stays a lake.
+     *
+     * <p>The way to the sample is read in the coarse overview the samples are, and where that
+     * finds land, again as finely as the column's own cover is read. The coarse overview draws the
+     * coast up to a pixel off the fine one, so a strip of water along the shore, the fine cover's
+     * sea, could find only land between it and the sea a few blocks off. Where the survey climbs
+     * out of the sea a little offshore, as it does along steep coasts, that strip took a lake's
+     * level up the survey's slope and stood as a shelf of water on the cliff top, pouring down the
+     * cliff's face: on Morocco's Rif coast, a box of water thirty blocks high beside the sea.
      */
-    private boolean seaWater(double x, double z) {
+    private boolean seaWater(double x, double z, int voxel) {
         double spacing = (double) WATER_CELL / WATER_SAMPLES;
-        int ix = Mth.floor(x / spacing - 0.5), iz = Mth.floor(z / spacing - 0.5);
+        int ix = Mth.floor(x / spacing - 0.5), iz = Mth.floor(z / spacing - 0.5), fine = -1;
         for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
             int sx = ix + i, sz = iz + j;
             long[] sea = seaOf(Math.floorDiv(sx, WATER_SAMPLES), Math.floorDiv(sz, WATER_SAMPLES));
             if (sea == NO_SEA) continue;
             int k = Math.floorMod(sz, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(sx, WATER_SAMPLES);
-            if ((sea[k >> 6] >>> (k & 63) & 1) != 0 && waterBetween(x + 0.5, z + 0.5, (sx + 0.5) * spacing, (sz + 0.5) * spacing)) return true;
+            if ((sea[k >> 6] >>> (k & 63) & 1) == 0) continue;
+            double x1 = (sx + 0.5) * spacing, z1 = (sz + 0.5) * spacing;
+            if (waterBetween(x + 0.5, z + 0.5, x1, z1)) return true;
+            if (fine < 0) fine = coverOverview(z, voxel);
+            if (fine < WATER_OVERVIEW && waterBetween(x + 0.5, z + 0.5, x1, z1, fine)) return true;
         }
         return false;
     }
@@ -2240,7 +2308,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             for (int step = 0; step < 2; step++) {
                 double r = step == 0 ? near : far;
                 double px = x + RING_X[k] * r, pz = z + RING_Z[k] * r;
-                if (cover(memo, (int) px, (int) pz, voxel) == WorldCoverSource.WATER && !seaWater(px, pz)) best = Math.max(best, waterSurface(dem, px, pz, voxel));
+                if (cover(memo, (int) px, (int) pz, voxel) == WorldCoverSource.WATER && !seaWater(px, pz, voxel)) best = Math.max(best, waterSurface(dem, px, pz, voxel));
             }
         }
         return best;
