@@ -173,8 +173,18 @@ public final class FarRenderer {
      * again anyway and logs where the two differ, which they never should.
      */
     private static final boolean CHECK_WALK = Boolean.getBoolean("earthplatform.far.checkWalk");
+    /**
+     * Whether a column meshed that the walk does not draw walks it again only when that changes what
+     * it draws (see {@link #changesWalk}): a column meshed again, or the first of a parent's children
+     * to come while the parent stands in for them, does not. Flying, most meshes were these, and
+     * each walked the pyramid again. {@code -Dearthplatform.far.quietMeshes=false} walks again for
+     * every one, as before; the picture is the same either way.
+     */
+    private static final boolean QUIET_MESHES = REUSE_WALK && !"false".equals(System.getProperty("earthplatform.far.quietMeshes"));
     /** What the last walk depended on (see {@link #walkDue}): the camera's column at {@link #WALK_LEVEL}, and the settings it saw. */
     private int walkX, walkZ, walkFinest, walkHole;
+    /** The camera's block x and z the last walk saw, which the walk then saw everything from. */
+    private int walkBx, walkBz;
     /**
      * The finest level whose column under the camera a walk asks for: only a level above the finest
      * one drawn, level 1 at the least, is ever split (see {@link Far#refined}).
@@ -948,8 +958,10 @@ public final class FarRenderer {
             if (result.version() > 0) {
                 pickVersion++;
                 // A column the walk draws is drawn as before, from its new mesh; one it does not, it may draw now.
-                boolean listed = listed(column);
-                if (!listed) walkBehind = true;
+                boolean listed = listed(column), first = !column.meshed;
+                // Which way the walk goes toward it is worked out before it counts as meshed, and again after.
+                boolean ask = QUIET_MESHES && walked && !listed && !walkBehind && first;
+                int before = ask ? walkPath(column) : 0;
                 column.meshed = true;
                 places.meshed(column);
                 vertexBytes += result.bytes() - column.bytes;
@@ -1088,6 +1100,8 @@ public final class FarRenderer {
         if (own && gpu.depthPrepass && FarLod.prepassReady() && gpu.prepassReady(ShaderBlocks.voxyPatch())) {
             // Depth first, then shading only the faces it kept (see FarGpu#DEPTH_PREPASS).
             long setting = Float.floatToIntBits(FarLod.nearReach()) & 0xFFFFFFFFL | PREPASSED;
+                // Meshed again it changes nothing the walk sees: whether it is meshed is all the walk reads of its mesh.
+                if (!listed && !walkBehind && (ask ? changesWalk(column, before) : !QUIET_MESHES || !walked)) walkBehind = true;
             // The shading pass draws again what the pre-pass drew, so without that it needs the columns.
             boolean again = REUSE_DRAWS && FarGpu.REPLAY && farDraws.holds(viewSerial, setting);
             IntArrayList far = again ? NONE : FarNearSkip.ENABLED ? beyondReach(position) : allShown();
@@ -1360,6 +1374,50 @@ public final class FarRenderer {
         }
         // Nearest first, and in the walk's order where two are as near: from the last view's order
         // while the walk stands, which the camera moving a little changes only here and there.
+    /**
+     * How far a walk from the last walk's camera goes down toward a column (see {@link #visit}): a
+     * bit for each level above the column whose column there it goes down through, from the top
+     * until the first it stops at; all of them set when it reaches the column itself. -1 when the
+     * walk starts nowhere over it. Worked out from the places' tags, as {@link #childrenReady} is.
+     */
+    private int walkPath(Column column) {
+        int level = column.level, x = Far.x(column.key), z = Far.z(column.key), bx = walkBx, bz = walkBz;
+        // The walk starts at the top level's columns around the camera's.
+        int top = Far.MAX_LEVEL - level;
+        if (Math.abs((x >> top) - Far.column(bx, Far.MAX_LEVEL)) > Far.OUTER || Math.abs((z >> top) - Far.column(bz, Far.MAX_LEVEL)) > Far.OUTER) return -1;
+        int path = 0;
+        for (int at = Far.MAX_LEVEL; at > level; at--) {
+            int ax = x >> (at - level), az = z >> (at - level);
+            boolean meshed = places.meshed(at, ax, az);
+            boolean refined = Far.refined(at, ax, az, bx, bz, finest) || !meshed && Far.refined(at, ax, az, bx, bz);
+            if (!refined || meshed && !childrenReady(at, ax, az, bx, bz)) break;
+            path |= 1 << at;
+        }
+        return path;
+    }
+
+    /**
+     * Whether a column the walk does not draw, just meshed for the first time, changes what a walk
+     * would draw now; {@code before} is its {@link #walkPath} from just before it was meshed. The
+     * walk reads nothing of it but whether it is meshed, where it reaches it; and above it, where a
+     * column's children are all ready, which it may have just made so. Where the walk stops above
+     * it, at a column that draws in its place, nothing under that column is looked at, unless that
+     * column is fading back in over its children (see {@link #merge}), when whether they are all
+     * meshed counts.
+     */
+    private boolean changesWalk(Column column, int before) {
+        int after = walkPath(column);
+        if (after != before) return true;
+        if (after < 0) return false;
+        int above = (1 << Far.MAX_LEVEL + 1) - (1 << column.level + 1);
+        if (after == above) return true;
+        // The level it stops at: the highest one above the column it does not go down through.
+        int stop = 31 - Integer.numberOfLeadingZeros(above & ~after);
+        if (stop != column.level + 1) return false;
+        Column parent = held(stop, Far.x(column.key) >> 1, Far.z(column.key) >> 1);
+        return parent != null && (parent.merging || parent.split);
+    }
+
         if (REUSE_ORDER) order.sortFrom(pickSerial, count);
         else order.sort();
         if (shownDrawn.length < kept) {
@@ -1450,6 +1508,8 @@ public final class FarRenderer {
             int[] counts = faces.counts();
             for (int k = 0; k < FarMesher.GROUPS; k++) drawnCounts[index * FarMesher.GROUPS + k] = counts[FarMesher.STORED[k]];
         } else drawnArena[index] = null;
+        walkBx = bx;
+        walkBz = bz;
         if (column.water != null) info |= WATER;
         for (int side = 0; side < 4; side++) {
             Column beside = beside(column, side);
