@@ -39,6 +39,14 @@ public final class JetStream {
         return entity.getY() >= CLEAR_SKY && (entity.isFallFlying() || carried(entity)) && inCubic(entity);
     }
 
+    /**
+     * Needs no near terrain: gliding or carried high above it (see {@link #aboveTerrain}), or in a boat the ocean
+     * current carries faster than terrain could be sent (see {@link OceanCurrent#carried}).
+     */
+    public static boolean outrunsTerrain(LivingEntity entity) {
+        return aboveTerrain(entity) || OceanCurrent.carried(entity);
+    }
+
     /** Moved faster than any elytra flight below the wind since last tick, as a rider on a ship in the jet stream does. */
     private static boolean carried(LivingEntity entity) {
         double dx = entity.getX() - entity.xo, dz = entity.getZ() - entity.zo;

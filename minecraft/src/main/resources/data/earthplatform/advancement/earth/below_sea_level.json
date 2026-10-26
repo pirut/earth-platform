@@ -1,0 +1,28 @@
+{
+  "parent": "earthplatform:earth/root",
+  "criteria": {
+    "below_sea_level": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:dead_bush",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.below_sea_level.title",
+      "fallback": "Lower Than the Sea"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.below_sea_level.description",
+      "fallback": "Stand in the open 50 meters below sea level, as in Death Valley or by the Dead Sea"
+    },
+    "frame": "goal"
+  },
+  "requirements": [
+    [
+      "below_sea_level"
+    ]
+  ]
+}

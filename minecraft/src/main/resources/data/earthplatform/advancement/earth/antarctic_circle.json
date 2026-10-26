@@ -1,0 +1,28 @@
+{
+  "parent": "earthplatform:earth/arctic_circle",
+  "criteria": {
+    "antarctic_circle": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:blue_ice",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.antarctic_circle.title",
+      "fallback": "Far South"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.antarctic_circle.description",
+      "fallback": "Go south of the Antarctic Circle"
+    },
+    "frame": "goal"
+  },
+  "requirements": [
+    [
+      "antarctic_circle"
+    ]
+  ]
+}

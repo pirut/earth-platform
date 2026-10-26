@@ -583,8 +583,9 @@ public final class FarRenderer {
         ticks++;
         var player = Minecraft.getInstance().player;
         if (closed || player == null) return;
+        // A rider's own velocity stays at nothing; its boat's is how fast it goes.
         finest = finest(player.getY() - ground(player.getBlockX(), player.getBlockZ(), player.getY()),
-                player.getDeltaMovement().horizontalDistance() * 20.0, finest);
+                player.getRootVehicle().getDeltaMovement().horizontalDistance() * 20.0, finest);
         if (ticks % MASK_TICKS == 0) mask();
         for (Column column : staleMasks) if (column.drawnPick == pickSerial && column.due >= 0) due(column, Math.min(column.due, ticks + SETTLE_TICKS));
         double yaw = Math.toRadians(player.getYRot());
@@ -722,6 +723,31 @@ public final class FarRenderer {
             return column.baseY();
         }
         return fallback;
+    }
+
+    /**
+     * Whether the far terrain has open sea at a block column: the top of the finest column held there is water whose
+     * top voxel holds the sea's top block Y {@code surface}, not land, ice or a lake above the sea. 1 for sea, 0 for
+     * anything else, -1 while no column is held there.
+     */
+    public int sea(int bx, int bz, int surface) {
+        for (int level = Far.MIN_LEVEL; level <= Far.MAX_LEVEL; level++) {
+            Column column = held(level, Far.column(bx, level), Far.column(bz, level));
+            if (column == null) continue;
+            int x = (bx - column.x0) >> level, z = (bz - column.z0) >> level, voxel = Far.voxel(level);
+            for (int si = column.sections.length - 1; si >= 0; si--) {
+                LevelChunkSection section = column.sections[si];
+                if (section == null || section.hasOnlyAir()) continue;
+                for (int y = 15; y >= 0; y--) {
+                    BlockState state = section.getBlockState(x, y, z);
+                    if (state.isAir()) continue;
+                    int bottom = column.baseY() + (si * 16 + y) * voxel;
+                    return state.getBlock() == net.minecraft.world.level.block.Blocks.WATER && surface >= bottom && surface < bottom + voxel ? 1 : 0;
+                }
+            }
+            return 0;
+        }
+        return -1;
     }
 
     private void evict() {

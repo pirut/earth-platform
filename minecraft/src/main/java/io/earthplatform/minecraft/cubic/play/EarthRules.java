@@ -28,7 +28,8 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 /**
  * The server's rules for getting about the Earth, and what it watches each second: the region
  * border (trips past it are refused, and players who walk out are put back), what travel costs in
- * survival, and the country each player is in, named on screen as they cross into it.
+ * survival, and the country each player is in, named on screen as they cross into it. It hands
+ * each player's whereabouts on to the explorer advancements too ({@link EarthExplorer}).
  */
 @EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
 public final class EarthRules {
@@ -122,10 +123,12 @@ public final class EarthRules {
         EarthSpawns spawns = null;
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             GeoPoint point = where(player);
-            if (point == null) continue;
+            if (point == null) { EarthExplorer.away(player); continue; }
             if (spawns == null) spawns = EarthSpawns.of(server);
             border(player, point, spawns.border().orElse(null));
-            country(player, point);
+            EarthCountries.Country country = EarthCountries.at(point.latitude(), point.longitude());
+            country(player, country);
+            EarthExplorer.step(player, point, country);
         }
         EarthRace.second(server);
         EarthGuess.second(server);
@@ -150,9 +153,8 @@ public final class EarthRules {
     }
 
     /** Names the country a player has just crossed into, on screen. */
-    private static void country(ServerPlayer player, GeoPoint point) {
+    private static void country(ServerPlayer player, @Nullable EarthCountries.Country country) {
         if (!EarthConfig.COUNTRY_NAMES.get() || EarthGuess.playing(player)) return;
-        EarthCountries.Country country = EarthCountries.at(point.latitude(), point.longitude());
         String name = country == null ? "" : country.name();
         String was = COUNTRY.put(player.getUUID(), name);
         if (name.isEmpty() || name.equals(was)) return;

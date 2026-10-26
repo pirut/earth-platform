@@ -1,0 +1,27 @@
+{
+  "parent": "earthplatform:earth/root",
+  "criteria": {
+    "high_country": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:goat_horn",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.high_country.title",
+      "fallback": "High Country"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.high_country.description",
+      "fallback": "Stand on ground 2,000 meters above the sea"
+    }
+  },
+  "requirements": [
+    [
+      "high_country"
+    ]
+  ]
+}

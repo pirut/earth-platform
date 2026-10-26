@@ -1,0 +1,31 @@
+{
+  "parent": "earthplatform:earth/far_from_home",
+  "criteria": {
+    "antipodes": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:ender_eye",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.antipodes.title",
+      "fallback": "The Other Side"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.antipodes.description",
+      "fallback": "Come within 100 kilometers of the point on the Earth opposite your spawn"
+    },
+    "frame": "challenge"
+  },
+  "requirements": [
+    [
+      "antipodes"
+    ]
+  ],
+  "rewards": {
+    "experience": 100
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "parent": "earthplatform:earth/root",
+  "criteria": {
+    "far_from_home": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:leather_boots",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.far_from_home.title",
+      "fallback": "Far From Home"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.far_from_home.description",
+      "fallback": "Be 5,000 kilometers from your spawn"
+    }
+  },
+  "requirements": [
+    [
+      "far_from_home"
+    ]
+  ]
+}
