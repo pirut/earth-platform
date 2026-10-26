@@ -48,6 +48,46 @@ class FarSharpnessTest {
     }
 
     /**
+     * Whether a column is kept around a position answers as going over them all does, for every
+     * sharpness, finest level and position, near every edge of every level's square.
+     */
+    @Test void keptAnswersAsAroundGives() {
+        java.util.Random random = new java.util.Random(77);
+        try {
+            for (double scale : new double[] {0.7, 1.0, 1.6, 2.0, 3.0, 4.0}) {
+                Far.sharpness(scale);
+                int hole = Far.hole();
+                for (int round = 0; round < 6; round++) {
+                    int bx = random.nextInt(4_000_000) - 2_000_000, bz = random.nextInt(4_000_000) - 2_000_000;
+                    int finest = Far.MIN_LEVEL + random.nextInt(Far.MAX_LEVEL - Far.MIN_LEVEL + 1);
+                    LongOpenHashSet planned = new LongOpenHashSet();
+                    int[] count = new int[1];
+                    Far.around(bx, bz, finest, hole, key -> { planned.add(key); count[0]++; });
+                    // No column twice, so a count of them is the plan's size.
+                    assertEquals(planned.size(), count[0]);
+                    for (long key : planned) assertTrue(Far.kept(key, bx, bz, finest, hole));
+                    // Every column of each level's square and of a margin two columns wide round it,
+                    // and round the player's column for the levels below the finest.
+                    for (int level = Far.MIN_LEVEL - 1; level <= Far.MAX_LEVEL; level++) {
+                        int minX = Far.column(bx, level), maxX = minX, minZ = Far.column(bz, level), maxZ = minZ;
+                        for (long key : planned) {
+                            if (Far.level(key) != level) continue;
+                            minX = Math.min(minX, Far.x(key)); maxX = Math.max(maxX, Far.x(key));
+                            minZ = Math.min(minZ, Far.z(key)); maxZ = Math.max(maxZ, Far.z(key));
+                        }
+                        for (int z = minZ - 2; z <= maxZ + 2; z++) for (int x = minX - 2; x <= maxX + 2; x++) {
+                            long key = Far.key(level, x, z);
+                            assertEquals(planned.contains(key), Far.kept(key, bx, bz, finest, hole), "scale " + scale + " level " + level);
+                        }
+                    }
+                }
+            }
+        } finally {
+            Far.sharpness(1.0);
+        }
+    }
+
+    /**
      * At every choice, extreme ones included, the drawn columns (the ones no finer level replaces)
      * cover the coarsest square exactly once, each replaced column's four children are asked for,
      * and the coarsest level keeps its outer ring.

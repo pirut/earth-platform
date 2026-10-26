@@ -130,8 +130,10 @@ public final class Far {
     public static void around(int bx, int bz, LongConsumer out) { around(bx, bz, MIN_LEVEL, out); }
 
     /** The same down to level {@code finest} only, as for a player too high or fast for the finer ones to matter or keep up. */
-    public static void around(int bx, int bz, int finest, LongConsumer out) {
-        int hole = Far.hole;
+    public static void around(int bx, int bz, int finest, LongConsumer out) { around(bx, bz, finest, Far.hole, out); }
+
+    /** The same with the middles {@code hole} (see {@link #hole()}) leaves, read once by a caller that also asks {@link #kept}. */
+    public static void around(int bx, int bz, int finest, int hole, LongConsumer out) {
         int minX = 0, minZ = 0, maxX = 0, maxZ = 0;
         for (int level = MAX_LEVEL; level >= finest; level--) {
             if (level == MAX_LEVEL) {
@@ -145,6 +147,28 @@ public final class Far {
             }
             for (int z = minZ; z <= maxZ; z++) for (int x = minX; x <= maxX; x++) out.accept(key(level, x, z));
         }
+    }
+
+    /**
+     * Whether {@link #around(int, int, int, int, LongConsumer)} gives a key: its level's square
+     * worked out as that does, without going over the columns.
+     */
+    public static boolean kept(long key, int bx, int bz, int finest, int hole) {
+        int at = level(key);
+        if (at < finest || at > MAX_LEVEL) return false;
+        int minX = 0, minZ = 0, maxX = 0, maxZ = 0;
+        for (int level = MAX_LEVEL; level >= at; level--) {
+            if (level == MAX_LEVEL) {
+                int px = column(bx, level), pz = column(bz, level);
+                minX = px - OUTER; maxX = px + OUTER; minZ = pz - OUTER; maxZ = pz + OUTER;
+            } else {
+                int h = hole(level + 1, hole), px = column(bx, level + 1), pz = column(bz, level + 1);
+                minX = 2 * Math.max(minX, px - h); maxX = 2 * Math.min(maxX, px + h) + 1;
+                minZ = 2 * Math.max(minZ, pz - h); maxZ = 2 * Math.min(maxZ, pz + h) + 1;
+            }
+        }
+        int x = x(key), z = z(key);
+        return x >= minX && x <= maxX && z >= minZ && z <= maxZ;
     }
 
     /** The middle a level gives the next finer one, in its own columns. */

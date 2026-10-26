@@ -116,6 +116,8 @@ public final class FarRenderer {
     private final FarFaces faces = new FarFaces();
     private final FarLooks looks = new FarLooks();
     @Nullable private FarGpu gpu;
+    /** Every column's water, in shared buffers (see {@link FarWaterBuffers}). */
+    private final FarWaterBuffers waterBuffers = new FarWaterBuffers();
     private boolean unsupported;
     private final Long2ObjectOpenHashMap<Column> columns = new Long2ObjectOpenHashMap<>();
     private final Long2IntOpenHashMap requested = new Long2IntOpenHashMap();
@@ -142,14 +144,18 @@ public final class FarRenderer {
      * for comparing; the pick is the same either way.
      */
     private static final boolean LINK_COLUMNS = !"false".equals(System.getProperty("earthplatform.far.linkColumns"));
-    /** This pass's drawn columns in view, nearest first, for the water pass. */
-    private List<Column> visible = List.of();
     /** Off with {@code -Dearthplatform.far.cullTree=false}: every drawn column is tested against the view on its own. */
     private static final boolean CULL_TREE = !"false".equals(System.getProperty("earthplatform.far.cullTree"));
     private final FarCullTree cullTree = new FarCullTree();
     private static final boolean CACHE_PICK = !"false".equals(System.getProperty("earthplatform.far.cachePick"));
     private final FarPickState pick = new FarPickState();
     private final FarOrder order = new FarOrder();
+    /**
+     * Whether a view puts the columns in order starting from the last view's order (see {@link
+     * FarOrder#sortFrom}); {@code -Dearthplatform.far.reuseOrder=false} sorts them afresh every
+     * time, for comparing. The same order either way.
+     */
+    private static final boolean REUSE_ORDER = !"false".equals(System.getProperty("earthplatform.far.reuseOrder"));
     /** Uploads and fade stamps also invalidate a pick when no column has come or gone. */
     private int pickVersion;
     private boolean pickAnimating;
@@ -234,16 +240,23 @@ public final class FarRenderer {
         @Nullable LongOpenHashSet drawnCubes;
         /** The cubes left out of the faces it draws now, and of the mesh being built (see {@link FarRenderer#holeFor}). */
         @Nullable LongOpenHashSet meshedCubes, buildingCubes;
-        int lastWanted, version, due = -1, slot = -1;
+        /**
+         * The tick the plan last wanted it, while its place is crowded; otherwise the places keep it
+         * (see {@link FarPlaces#lastWanted}), and this is only what they take in when it is placed.
+         */
+        int lastWanted;
+        int version, due = -1, slot = -1;
         /** The slot of a replaced column's faces still drawn here, freed once this column's own faces are up. */
         int oldSlot = -1;
         boolean building, stale, meshed;
         /** Its mask changed while a finer level drew over it, so its remesh waits unless it is drawn. */
         boolean maskStale;
         @Nullable FarGpu.Allocation faces;
-        @Nullable CubeBuffer water;
+        @Nullable FarWaterBuffers.Mesh water;
         /** Water walls by side (north, south, west, east), drawn where that side's column is not. */
-        @Nullable CubeBuffer[] waterWalls = new CubeBuffer[4];
+        @Nullable FarWaterBuffers.Mesh[] waterWalls = new FarWaterBuffers.Mesh[4];
+        /** The sides it has water walls on, a bit each, which a view reads rather than reaching {@link #waterWalls}. */
+        int wallSides;
         /** Face and water bytes uploaded for this column, for the debug screen. */
         long bytes;
         /** How this frame draws it: whole, fading out at its level's edge, or fading in over its children (see {@link FarGpu#NO_FADE}). */
@@ -303,8 +316,7 @@ public final class FarRenderer {
         double maxZ() { return z0 + Far.width(level); }
 
         boolean hasWaterWalls() {
-            for (CubeBuffer wall : waterWalls) if (wall != null) return true;
-            return false;
+            return wallSides != 0;
         }
 
         /**
@@ -318,6 +330,7 @@ public final class FarRenderer {
             faces = old.faces;
             water = old.water;
             waterWalls = old.waterWalls;
+            wallSides = old.wallSides;
             bytes = old.bytes;
             old.bytes = 0;
             meshed = true;
@@ -348,9 +361,11 @@ public final class FarRenderer {
             };
         }
 
-        void close(@Nullable FarGpu gpu) {
-            if (water != null) { water.close(); water = null; }
-            for (int side = 0; side < 4; side++) if (waterWalls[side] != null) { waterWalls[side].close(); waterWalls[side] = null; }
+        void close(@Nullable FarGpu gpu, FarWaterBuffers waterBuffers) {
+            waterBuffers.free(water);
+            water = null;
+            for (int side = 0; side < 4; side++) { waterBuffers.free(waterWalls[side]); waterWalls[side] = null; }
+            wallSides = 0;
             if (gpu != null) {
                 gpu.free(faces);
                 if (slot >= 0) gpu.freeSlot(slot);
@@ -430,7 +445,8 @@ public final class FarRenderer {
     }
 
     /** Held columns by place, for finding one, or that none is held, without a hash lookup (see {@link FarPlaces}). */
-    private final FarPlaces<Column> places = new FarPlaces<>(column -> column.key, columns::get, column -> column.meshed);
+    private final FarPlaces<Column> places = new FarPlaces<>(column -> column.key, columns::get, column -> column.meshed,
+            column -> column.lastWanted, (column, tick) -> column.lastWanted = tick);
 
     @Nullable private Column held(int level, int x, int z) { return places.get(level, x, z); }
 
@@ -572,13 +588,16 @@ public final class FarRenderer {
     /** Lists the missing columns, the ones a player would see change most first, and forgets requests no longer wanted. */
     private void plan(int bx, int bz) {
         LongArrayList missing = new LongArrayList();
-        LongOpenHashSet all = new LongOpenHashSet(requested.size() * 2 + 16);
-        int[] counts = new int[4];
-        Far.around(bx, bz, finest, key -> {
-            all.add(key);
-            Column column = held(key);
-            if (!Far.refined(Far.level(key), Far.x(key), Far.z(key), bx, bz, finest)) {
-                boolean meshed = column != null && column.meshed;
+        // Read once, so the plan and the requests it keeps agree on the columns wanted.
+        int hole = Far.hole(), finest = this.finest;
+        int[] counts = new int[5];
+        Far.around(bx, bz, finest, hole, key -> {
+            counts[4]++;
+            int level = Far.level(key), x = Far.x(key), z = Far.z(key);
+            // Noted and answered by the places alone, never reaching the columns themselves.
+            boolean held = places.want(level, x, z, ticks);
+            if (!Far.refined(level, x, z, bx, bz, finest)) {
+                boolean meshed = held && places.meshed(level, x, z);
                 counts[0]++;
                 if (meshed) counts[1]++;
                 if (inView(key, bx, bz)) {
@@ -586,17 +605,16 @@ public final class FarRenderer {
                     if (meshed) counts[3]++;
                 }
             }
-            if (column != null) column.lastWanted = ticks;
-            else missing.add(key);
+            if (!held) missing.add(key);
         });
         wanted = counts[0];
-        planSize = all.size();
+        planSize = counts[4];
         settled = counts[1];
         wantedInView = counts[2];
         settledInView = counts[3];
         // A request the server dropped (its player had moved on) or one for a place left behind
         // frees its place for the columns wanted now; one still wanted is asked for again later.
-        requested.long2IntEntrySet().removeIf(entry -> !all.contains(entry.getLongKey()) || ticks - entry.getIntValue() > RETRY_TICKS);
+        requested.long2IntEntrySet().removeIf(entry -> !Far.kept(entry.getLongKey(), bx, bz, finest, hole) || ticks - entry.getIntValue() > RETRY_TICKS);
         Long2LongOpenHashMap order = new Long2LongOpenHashMap(missing.size());
         for (int i = 0; i < missing.size(); i++) order.put(missing.getLong(i), priority(missing.getLong(i), bx, bz));
         missing.unstableSort((a, b) -> Long.compare(order.get(a), order.get(b)));
@@ -693,16 +711,20 @@ public final class FarRenderer {
     }
 
     private void evict() {
-        List<Column> old = new ArrayList<>();
-        for (Column column : columns.values()) if (column.lastWanted != ticks) old.add(column);
-        old.sort(Comparator.comparingInt(column -> column.lastWanted));
         // The plan alone can want more than MAX_COLUMNS (about 17,000 at the default detail), which
         // left no room for the columns just behind: every one went at once and came back by download.
         // A replay cannot ask for a column again, so there it keeps several times as many, and none for age alone.
         boolean replay = CubicClient.inReplay();
         int excess = columns.size() - Math.max(MAX_COLUMNS, planSize + SPARE_COLUMNS) * (replay ? 4 : 1);
+        // With room to spare and no column left unwanted long enough to go, none would: going over
+        // every column for the unwanted ones, each reached on the heap, twice a second even standing still.
+        if (excess <= 0 && (replay || ticks - oldestUnwanted <= KEEP_TICKS)) return;
+        List<Column> old = new ArrayList<>();
+        for (Column column : columns.values()) if (places.lastWanted(column) != ticks) old.add(column);
+        old.sort(Comparator.comparingInt(places::lastWanted));
+        int gone = 0;
         for (Column column : old) {
-            if (excess <= 0 && (replay || ticks - column.lastWanted <= KEEP_TICKS)) break;
+            if (excess <= 0 && (replay || ticks - places.lastWanted(column) <= KEEP_TICKS)) break;
             columns.remove(column.key);
             places.remove(column);
             unlink(column);
@@ -712,10 +734,19 @@ public final class FarRenderer {
             forget(column);
             free(column);
             excess--;
+            gone++;
         }
+        // Columns stop being wanted only from now on, so none of them will have been wanted last before this.
+        oldestUnwanted = gone < old.size() ? places.lastWanted(old.get(gone)) : ticks;
         // Places a column left crowded may be free again: look them up directly once more.
         if (places.crowdedLeft()) places.placeAll(columns.values());
     }
+
+    /**
+     * No column held but no longer wanted was last wanted before this tick (see {@link #evict}): the
+     * oldest left by the last look for them, or that look's tick if none was left.
+     */
+    private int oldestUnwanted;
 
     /** Counts up whenever a column comes or goes; with {@link CubeRenderer#compiledVersion}, what {@link #mask} last saw. */
     private int columnsVersion, maskedColumns = -1, maskedCompiled = -1;
@@ -779,7 +810,7 @@ public final class FarRenderer {
                 int v = Far.voxel(level);
                 for (int x = Far.column(bx - v, level); x <= Far.column(bx + 15 + v, level); x++) {
                     for (int z = Far.column(bz - v, level); z <= Far.column(bz + 15 + v, level); z++) {
-                        if (held(level, x, z) != null) sets.computeIfAbsent(Far.key(level, x, z), unused -> new LongOpenHashSet()).add(cube);
+                        if (places.has(level, x, z)) sets.computeIfAbsent(Far.key(level, x, z), unused -> new LongOpenHashSet()).add(cube);
                     }
                 }
             }
@@ -926,8 +957,12 @@ public final class FarRenderer {
                 gpu.free(column.faces);
                 column.faces = gpu.upload(result.quads(), result.counts(), result.grid());
                 column.meshedCubes = column.buildingCubes;
-                column.water = upload(column.water, result.water());
-                for (int side = 0; side < 4; side++) column.waterWalls[side] = upload(column.waterWalls[side], result.waterWalls()[side]);
+                column.water = waterBuffers.upload(column.water, result.water());
+                column.wallSides = 0;
+                for (int side = 0; side < 4; side++) {
+                    column.waterWalls[side] = waterBuffers.upload(column.waterWalls[side], result.waterWalls()[side]);
+                    if (column.waterWalls[side] != null) column.wallSides |= 1 << side;
+                }
                 column.freeOldSlots(gpu);
                 if (listed) {
                     // What the view noted of its faces and water is worked out again, and the view looked at again.
@@ -949,18 +984,6 @@ public final class FarRenderer {
         float du = (white.getU1() - white.getU0()) / 16.0F, dv = (white.getV1() - white.getV0()) / 16.0F;
         float u = (white.getU0() + white.getU1()) / 2, v = (white.getV0() + white.getV1()) / 2;
         return new float[] {u - du, v - dv, u + du, v + dv};
-    }
-
-    /** Puts a built water mesh into a buffer, making or freeing the buffer as needed. */
-    @Nullable private static CubeBuffer upload(@Nullable CubeBuffer buffer, @Nullable FarMesher.Part part) {
-        if (part == null) {
-            if (buffer != null) buffer.close();
-            return null;
-        }
-        if (buffer == null) buffer = new CubeBuffer();
-        buffer.upload(part.mesh());
-        part.memory().close();
-        return buffer;
     }
 
     // Drawing ------------------------------------------------------------------------------------
@@ -1106,13 +1129,14 @@ public final class FarRenderer {
         if (own) FarLod.endDraw();
         long deepenTimer = own ? FarGpuTimers.begin("water deepen") : 0;
         if (own && FarLod.beginDeepen(modelView)) {
+            waterBuffers.begin();
             for (int i = 0, count = FAST_WATER ? waterSurfaces.size() : shown; i < count; i++) {
-                Column column = visible.get(FAST_WATER ? waterSurfaces.getInt(i) : i);
+                Column column = shownColumn(FAST_WATER ? waterSurfaces.getInt(i) : i);
                 if (column.water == null || column.fade == FarGpu.FADE_IN) continue;
                 FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
-                column.water.draw();
+                waterBuffers.draw(column.water);
             }
-            CubeBuffer.unbind();
+            waterBuffers.end();
             FarLod.endDeepen();
         }
         FarGpuTimers.end(deepenTimer);
@@ -1223,30 +1247,31 @@ public final class FarRenderer {
      * walks and looks afresh, and logs anything the two draw differently.
      */
     private void checkWalk(FarGpu gpu, Vec3 position, Frustum frustum, int bx, int bz, boolean band, int now) {
-        List<Column> columns = new ArrayList<>(shownColumns), waters = new ArrayList<>(), edges = new ArrayList<>();
+        List<Column> columns = shownColumns(), waters = new ArrayList<>(), edges = new ArrayList<>();
         int[] groups = java.util.Arrays.copyOf(shownGroups, shown), infos = new int[shown];
         for (int i = 0; i < shown; i++) infos[i] = drawnInfo[shownDrawn[i]];
-        for (int i = 0; i < waterSurfaces.size(); i++) waters.add(shownColumns.get(waterSurfaces.getInt(i)));
-        for (int i = 0; i < waterEdges.size(); i++) edges.add(shownColumns.get(waterEdges.getInt(i)));
+        for (int i = 0; i < waterSurfaces.size(); i++) waters.add(shownColumn(waterSurfaces.getInt(i)));
+        for (int i = 0; i < waterEdges.size(); i++) edges.add(shownColumn(waterEdges.getInt(i)));
         int left = walkLeft, since = now - walkNow & 0x7FFFFFF;
         walk(gpu, bx, bz, band, now);
         view(position, frustum);
-        boolean same = columns.equals(shownColumns) && java.util.Arrays.equals(groups, java.util.Arrays.copyOf(shownGroups, shown));
+        List<Column> fresh = shownColumns();
+        boolean same = columns.equals(fresh) && java.util.Arrays.equals(groups, java.util.Arrays.copyOf(shownGroups, shown));
         for (int i = 0; same && i < shown; i++) {
             same = infos[i] == drawnInfo[shownDrawn[i]];
         }
-        for (int i = 0; same && i < waterSurfaces.size(); i++) same = i < waters.size() && waters.get(i) == shownColumns.get(waterSurfaces.getInt(i));
-        for (int i = 0; same && i < waterEdges.size(); i++) same = i < edges.size() && edges.get(i) == shownColumns.get(waterEdges.getInt(i));
+        for (int i = 0; same && i < waterSurfaces.size(); i++) same = i < waters.size() && waters.get(i) == shownColumn(waterSurfaces.getInt(i));
+        for (int i = 0; same && i < waterEdges.size(); i++) same = i < edges.size() && edges.get(i) == shownColumn(waterEdges.getInt(i));
         same &= waters.size() == waterSurfaces.size() && edges.size() == waterEdges.size();
         if (same) checksPassed++;
         else {
             EarthPlatformMod.LOGGER.warn("Far walk check: the kept walk drew {} columns in view where a fresh one draws {} (after {} frames that matched; fades left {}, since {})",
                     columns.size(), shown, checksPassed, left, since);
-            java.util.Set<Column> kept = new java.util.HashSet<>(columns), fresh = new java.util.HashSet<>(shownColumns);
+            java.util.Set<Column> kept = new java.util.HashSet<>(columns), walked = new java.util.HashSet<>(fresh);
             StringBuilder differ = new StringBuilder();
             int listed = 0;
-            for (Column column : columns) if (!fresh.contains(column) && listed++ < 6) differ.append(" kept-only ").append(describe(column));
-            for (Column column : shownColumns) if (!kept.contains(column) && listed++ < 12) differ.append(" fresh-only ").append(describe(column));
+            for (Column column : columns) if (!walked.contains(column) && listed++ < 6) differ.append(" kept-only ").append(describe(column));
+            for (Column column : fresh) if (!kept.contains(column) && listed++ < 12) differ.append(" fresh-only ").append(describe(column));
             EarthPlatformMod.LOGGER.warn("Far walk check:{}", differ);
         }
         if (checksPassed % 1000 == 1) EarthPlatformMod.LOGGER.info("Far walk check: {} frames matched", checksPassed);
@@ -1329,28 +1354,27 @@ public final class FarRenderer {
                     : frustum.isVisible(drawn.get(i).box))) continue;
             // As AABB.getCenter() works it out, without making a Vec3 for each column.
             double dx = minX + 0.5 * (maxX - minX) - position.x, dz = minZ + 0.5 * (maxZ - minZ) - position.z;
-            order.add(dx * dx + dz * dz);
+            order.add(dx * dx + dz * dz, i);
             if (kept == keptDrawn.length) keptDrawn = java.util.Arrays.copyOf(keptDrawn, kept * 2);
             keptDrawn[kept++] = i;
         }
-        // Nearest first, and in the walk's order where two are as near.
-        order.sort();
+        // Nearest first, and in the walk's order where two are as near: from the last view's order
+        // while the walk stands, which the camera moving a little changes only here and there.
+        if (REUSE_ORDER) order.sortFrom(pickSerial, count);
+        else order.sort();
         if (shownDrawn.length < kept) {
             int size = Math.max(kept, shownDrawn.length * 2);
             shownDrawn = new int[size];
             shownGroups = new int[size];
             shownDistance = new double[size];
         }
-        shownColumns.clear();
         for (int i = 0; i < kept; i++) {
             int at = order.index(i), index = keptDrawn[at];
             shownDrawn[i] = index;
             shownDistance[i] = order.value(at);
-            shownColumns.add(drawn.get(index));
             shownGroups[i] = faceGroups(index, info(index), position);
         }
         shown = kept;
-        visible = shownColumns;
         if (FAST_WATER) pickWater();
     }
 
@@ -1358,7 +1382,20 @@ public final class FarRenderer {
     private int[] shownDrawn = new int[4096], shownGroups = new int[4096];
     private double[] shownDistance = new double[4096];
     private int shown;
-    private final List<Column> shownColumns = new ArrayList<>();
+
+    /**
+     * A column in view by its place in {@link #shownDrawn}. Listing the columns themselves for each
+     * view, every one a reference stored into a list the collector keeps track of, took as long as
+     * all the rest of putting them in order while flying.
+     */
+    private Column shownColumn(int at) { return drawn.get(shownDrawn[at]); }
+
+    /** The columns in view, nearest first, as a list (for {@link #checkWalk}). */
+    private List<Column> shownColumns() {
+        List<Column> columns = new ArrayList<>(shown);
+        for (int i = 0; i < shown; i++) columns.add(shownColumn(i));
+        return columns;
+    }
 
     /**
      * The fade clock (see {@link FarGpu#now}) for the whole of a pick, read once: read for every
@@ -1418,7 +1455,7 @@ public final class FarRenderer {
             Column beside = beside(column, side);
             if (!drawn(beside)) info |= 1 << OPEN + side;
             // Water stays with the finer level where two levels fade into each other.
-            if (column.fade != FarGpu.FADE_IN && column.waterWalls[side] != null && !waterDrawn(beside)) info |= 1 << WATER_SIDES + side;
+            if (column.fade != FarGpu.FADE_IN && (column.wallSides & 1 << side) != 0 && !waterDrawn(beside)) info |= 1 << WATER_SIDES + side;
         }
         return info;
     }
@@ -1559,7 +1596,10 @@ public final class FarRenderer {
         waterPass = LevelPasses.current();
         boolean any = FAST_WATER && !waterVisible.isEmpty();
         if (!FAST_WATER)
-            for (Column column : visible) if (column.fade != FarGpu.FADE_IN && (column.water != null || column.hasWaterWalls())) { any = true; break; }
+            for (int i = 0; i < shown && !any; i++) {
+                Column column = shownColumn(i);
+                any = column.fade != FarGpu.FADE_IN && (column.water != null || column.hasWaterWalls());
+            }
         if (!any) return;
         long start = System.nanoTime();
         try { drawWaterColumns(camera, modelView, projection); }
@@ -1580,13 +1620,14 @@ public final class FarRenderer {
         Matrix4f nearer = new Matrix4f();
         double lift = WATER_LIFT / nearPlane(projection);
         float lastX = Float.NaN, lastY = Float.NaN, lastZ = Float.NaN, lastScale = Float.NaN;
+        waterBuffers.begin();
         for (int pass = 0; pass < 2; pass++) {
             // Water walls go last: where the next level's water stands as high, its surface is
             // already in the depth buffer and hides them, so they only show across a step.
             IntArrayList water = pass == 0 ? waterSurfaces : waterEdges;
             for (int i = (FAST_WATER ? water.size() : shown) - 1; i >= 0; i--) {
                 int at = FAST_WATER ? water.getInt(i) : i;
-                Column column = visible.get(at);
+                Column column = shownColumn(at);
                 // Water stays with the finer level where two levels fade into each other.
                 if (!FAST_WATER && (column.fade == FarGpu.FADE_IN || (pass == 0 ? column.water == null : !column.hasWaterWalls()))) continue;
                 if (offset != null) {
@@ -1611,13 +1652,13 @@ public final class FarRenderer {
                     }
                 }
                 if (pass == 0) {
-                    column.water.draw();
+                    waterBuffers.draw(column.water);
                     continue;
                 }
                 for (int side = 0; side < 4; side++) {
-                    CubeBuffer wall = column.waterWalls[side];
+                    FarWaterBuffers.Mesh wall = column.waterWalls[side];
                     if (FAST_WATER ? (waterSides(at) & 1 << side) == 0 : wall == null || waterDrawn(beside(column, side))) continue;
-                    wall.draw();
+                    waterBuffers.draw(wall);
                 }
             }
         }
@@ -1625,23 +1666,24 @@ public final class FarRenderer {
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
         if (view != null) view.set(modelView);
         if (own) FarLod.endWater(modelView, () -> {
+            waterBuffers.begin();
             for (int i = 0, count = FAST_WATER ? waterVisible.size() : shown; i < count; i++) {
                 int at = FAST_WATER ? waterVisible.getInt(i) : i;
-                Column column = visible.get(at);
+                Column column = shownColumn(at);
                 if (!FAST_WATER && (column.fade == FarGpu.FADE_IN || column.water == null && !column.hasWaterWalls())) continue;
                 FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
                 if (column.water != null) {
-                    column.water.draw();
+                    waterBuffers.draw(column.water);
                 }
                 for (int side = 0; side < 4; side++) {
-                    CubeBuffer wall = column.waterWalls[side];
+                    FarWaterBuffers.Mesh wall = column.waterWalls[side];
                     if (FAST_WATER ? (waterSides(at) & 1 << side) == 0 : wall == null || waterDrawn(beside(column, side))) continue;
-                    wall.draw();
+                    waterBuffers.draw(wall);
                 }
             }
         });
         shader.clear();
-        CubeBuffer.unbind();
+        waterBuffers.end();
         type.clearRenderState();
     }
 
@@ -1878,7 +1920,7 @@ public final class FarRenderer {
     private void free(Column column) {
         vertexBytes -= column.bytes;
         column.bytes = 0;
-        column.close(gpu);
+        column.close(gpu, waterBuffers);
     }
 
     void close() {
@@ -1887,6 +1929,7 @@ public final class FarRenderer {
         built.close();
         for (Column column : columns.values()) free(column);
         columns.clear();
+        waterBuffers.close();
         places.clear();
         java.util.Arrays.fill(topColumns, null);
         topCount = 0;
@@ -1897,8 +1940,6 @@ public final class FarRenderer {
         farDraws.close();
         pick.invalidate();
         drawn.clear();
-        visible = List.of();
-        shownColumns.clear();
         shown = 0;
         all.clear();
         waterVisible.clear();
