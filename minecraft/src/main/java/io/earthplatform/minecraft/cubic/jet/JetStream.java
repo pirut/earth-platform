@@ -39,6 +39,14 @@ public final class JetStream {
         return entity.getY() >= CLEAR_SKY && (entity.isFallFlying() || carried(entity)) && inCubic(entity);
     }
 
+    /**
+     * Needs no near terrain: gliding or carried high above it (see {@link #aboveTerrain}), or in a boat the ocean
+     * current carries faster than terrain could be sent (see {@link OceanCurrent#carried}).
+     */
+    public static boolean outrunsTerrain(LivingEntity entity) {
+        return aboveTerrain(entity) || OceanCurrent.carried(entity);
+    }
+
     /** Moved faster than any elytra flight below the wind since last tick, as a rider on a ship in the jet stream does. */
     private static boolean carried(LivingEntity entity) {
         double dx = entity.getX() - entity.xo, dz = entity.getZ() - entity.zo;
@@ -48,6 +56,27 @@ public final class JetStream {
     /** Gliding in the wind layer. */
     public static boolean riding(LivingEntity entity) {
         return entity.isFallFlying() && entity.getY() >= FLOOR && inCubic(entity);
+    }
+
+    /** Whether another client's copy of this entity is a glider in the cubic world. */
+    public static boolean remoteGlider(LivingEntity entity) {
+        return entity.level().isClientSide && entity.isFallFlying() && inCubic(entity);
+    }
+
+    /**
+     * How many ticks a glider seen from another client eases toward a position update: no more than the
+     * ticks since its last one, so it never falls behind (vanilla always takes three).
+     */
+    public static int easeSteps(int steps, int ticksSinceLast) {
+        return Mth.clamp(ticksSinceLast, 1, steps);
+    }
+
+    /** Ticks of travel a fast glider stays drawn within, however far that is. */
+    private static final int DRAWN_TICKS = 4;
+
+    /** The squared distance a glider moving this far a tick stays drawn within. */
+    public static double drawReachSqr(double dx, double dy, double dz) {
+        return (dx * dx + dy * dy + dz * dz) * DRAWN_TICKS * DRAWN_TICKS;
     }
 
     /** Wind strength at a height, 0 at the floor rising smoothly to 1. */

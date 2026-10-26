@@ -33,6 +33,49 @@ class FarOrderTest {
         assertDoesNotThrow(order::sort);
     }
 
+    /**
+     * Frame after frame, as a camera moves (a little, now and then a lot), points come into view and
+     * leave, distances tie and epochs change, sorting from the last order gives what a whole sort gives.
+     */
+    @Test void sortingFromTheLastOrderMatchesAWholeSort() {
+        Random random = new Random(1234);
+        int count = 4000;
+        int[] px = new int[count], pz = new int[count];
+        boolean[] in = new boolean[count];
+        for (int e = 0; e < count; e++) {
+            px[e] = random.nextInt(200) - 100;
+            pz[e] = random.nextInt(200) - 100;
+            in[e] = random.nextBoolean();
+        }
+        FarOrder order = new FarOrder(), whole = new FarOrder();
+        double cx = 0, cz = 0;
+        int epoch = 0;
+        for (int frame = 0; frame < 400; frame++) {
+            if (random.nextInt(50) == 0) epoch++;
+            double step = random.nextInt(20) == 0 ? 60 : 0.7;
+            cx += (random.nextDouble() - 0.5) * step;
+            cz += (random.nextDouble() - 0.5) * step;
+            for (int k = random.nextInt(count / 8); k > 0; k--) {
+                int e = random.nextInt(count);
+                in[e] = !in[e];
+            }
+            order.clear(count);
+            whole.clear(count);
+            int added = 0;
+            for (int e = 0; e < count; e++) {
+                if (!in[e]) continue;
+                // From a whole-number spot now and then, so that many distances tie.
+                double x = px[e] - (frame % 7 == 0 ? Math.round(cx) : cx), z = pz[e] - (frame % 7 == 0 ? Math.round(cz) : cz);
+                order.add(x * x + z * z, e);
+                whole.add(x * x + z * z);
+                added++;
+            }
+            order.sortFrom(epoch, count);
+            whole.sort();
+            for (int i = 0; i < added; i++) assertEquals(whole.index(i), order.index(i), "frame " + frame + " at " + i);
+        }
+    }
+
     @Test void firstMatchesAStableSortOfTheWholeList() {
         Random random = new Random(42);
         long[] values = new long[46_000];

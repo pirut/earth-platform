@@ -77,9 +77,12 @@
     "CubicJetTicketMixin",
     "CubicJetTickMixin",
     "CubicJetRocketMixin",
+    "CubicBoatMixin",
+    "CubicCurrentMoveMixin",
     "CubicPistonMixin",
     "CubicFallingBlockMixin",
     "CubicFallingEntityMixin",
+    "CubicFireworkSpeedMixin",
     "CubicScaffoldingMixin",
     "CubicTreeGrowthMixin",
     "CubicMushroomGrowthMixin",
@@ -97,7 +100,8 @@
     "CubicMapStructureMixin",
     "CubicBiomeLocateMixin",
     "CubicStructureManagerMixin",
-    "CubicLocateMixin"
+    "CubicLocateMixin",
+    "EarthCompassReequipMixin"
   ],
   "client": [
     "FrustumAccess",
@@ -118,6 +122,8 @@
     "CubicIrisLodSamplersMixin",
     "CubicIrisLodUniformsMixin",
     "CubicJetWeatherMixin",
+    "CubicJetLerpMixin", "GliderTurnMixin",
+    "CubicJetRenderDistanceMixin",
     "EarthCreateWorldMixin",
     "EarthCloudsMixin",
     "EarthHorizonMixin",
@@ -130,7 +136,9 @@
     "compat.JourneyMapDataCacheMixin",
     "compat.JourneyMapSnapshotMixin",
     "compat.JourneyMapChunkMixin",
-    "CubicVoidFogMixin"
+    "CubicVoidFogMixin",
+    "GuiOverlayAccess",
+    "EarthCompassSpinMixin"
   ],
   "injectors": {
     "defaultRequire": 1

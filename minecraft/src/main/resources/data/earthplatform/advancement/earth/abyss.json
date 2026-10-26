@@ -1,0 +1,31 @@
+{
+  "parent": "earthplatform:earth/deep_diver",
+  "criteria": {
+    "abyss": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:heart_of_the_sea",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.abyss.title",
+      "fallback": "Into the Abyss"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.abyss.description",
+      "fallback": "Dive 1,000 meters below the surface of the sea"
+    },
+    "frame": "challenge"
+  },
+  "requirements": [
+    [
+      "abyss"
+    ]
+  ],
+  "rewards": {
+    "experience": 100
+  }
+}

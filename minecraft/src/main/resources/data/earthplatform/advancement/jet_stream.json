@@ -1,5 +1,5 @@
 {
-  "parent": "minecraft:end/elytra",
+  "parent": "earthplatform:earth/root",
   "criteria": {
     "ride_the_jet_stream": {
       "trigger": "minecraft:location",

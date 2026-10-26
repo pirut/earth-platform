@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.play.client;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.RenderSystem;
+import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.minecraft.cubic.play.EarthMap;
 import io.earthplatform.minecraft.cubic.play.EarthPlaces;
 import java.util.ArrayList;
@@ -9,8 +10,10 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import javax.annotation.Nullable;
 import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
@@ -18,12 +21,14 @@ import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
+import net.minecraft.world.item.Items;
 import org.lwjgl.glfw.GLFW;
 
 /**
  * A globe to choose where an Earth world begins: drag to spin it, scroll to zoom from space down to single valleys,
  * click to put the pin down. Famous places are marked and can be clicked too. Close up, the real terrain loads in.
  * In a creative world the same globe is the travel map, and it is also what a trip flies over (see {@link EarthFlight}).
+ * Outside creative it is the survival map, which moves nobody but points the player's compass.
  */
 public final class EarthGlobeScreen extends Screen {
     /** The generator only covers latitudes up to this far from the equator. */
@@ -31,6 +36,8 @@ public final class EarthGlobeScreen extends Screen {
     private static final double MAX_ZOOM = 12.5;
     private static final int TOP = 24, BOTTOM = 56;
     private static final ResourceLocation TEXTURE = ResourceLocation.fromNamespaceAndPath("earthplatform", "dynamic/globe_picker");
+    /** Translation keys of the survival map. */
+    static final String LOOK = "earthplatform.map.look";
 
     private final Screen parent;
     private final BiConsumer<Double, Double> picked;
@@ -60,6 +67,13 @@ public final class EarthGlobeScreen extends Screen {
     private int top = TOP, bottom = BOTTOM;
     /** Detail tiles a trip will need at both ends, asked for from the start so they are there when the globe gets to them. */
     private List<Long> ahead = List.of();
+    /** What the survival map does with a player picked on it rather than a spot: a compass follows them. */
+    @Nullable private Consumer<String> pickedPlayer;
+    /** Where the survival map's player's compass points now, or NaN. */
+    private double targetLat = Double.NaN, targetLon = Double.NaN;
+    @Nullable private Button done;
+    /** Whether the mouse is over the compass's target. */
+    private boolean overTarget;
 
     EarthGlobeScreen(Screen parent, double lat, double lon, BiConsumer<Double, Double> picked) {
         this(Component.translatable("earthplatform.globe.title"), parent, lat, lon, picked);
@@ -103,6 +117,34 @@ public final class EarthGlobeScreen extends Screen {
         return screen;
     }
 
+    /**
+     * The survival map, opened where the player stands: it shows where they are, the other players and
+     * where their compass points, and a spot or player picked on it is where the compass points next.
+     */
+    static EarthGlobeScreen look(double lat, double lon) {
+        Minecraft minecraft = Minecraft.getInstance();
+        EarthGlobeScreen screen = pick(LOOK, lat, lon,
+                (toLat, toLon) -> command(String.format(Locale.ROOT, "earth compass to %.6f %.6f", toLat, toLon)));
+        screen.pickedPlayer = name -> command("earth compass player " + name);
+        screen.zoom = 6;
+        GeoPoint target = minecraft.player == null ? null : EarthCompassHud.carriedTarget(minecraft.player);
+        if (target != null) {
+            screen.targetLat = target.latitude();
+            screen.targetLon = target.longitude();
+        }
+        return screen;
+    }
+
+    private static void command(String command) {
+        var player = Minecraft.getInstance().player;
+        if (player != null) player.connection.sendCommand(command);
+    }
+
+    private boolean look() { return LOOK.equals(keys); }
+
+    /** Whether the player has a compass for the survival map to point. */
+    private boolean compass() { return minecraft.player != null && minecraft.player.getInventory().contains(stack -> stack.is(Items.COMPASS)); }
+
     /** The globe a trip flies over; it fades in over the world and back out again. */
     static EarthGlobeScreen flight(EarthFlight flight) {
         EarthGlobeScreen screen = new EarthGlobeScreen(Component.empty(), null, flight.toLatitude(), flight.toLongitude(), (a, b) -> {});
@@ -117,7 +159,8 @@ public final class EarthGlobeScreen extends Screen {
     /** The server's list of where the other players are, for the next map that opens. */
     static void others(List<EarthMap.Other> players) { others = List.copyOf(players); }
 
-    @Override public boolean isPauseScreen() { return flight == null && super.isPauseScreen(); }
+    // The survival map is looked at while playing, like the inventory: the game goes on.
+    @Override public boolean isPauseScreen() { return flight == null && !look() && super.isPauseScreen(); }
 
     @Override public boolean shouldCloseOnEsc() { return flight == null; }
 
@@ -128,7 +171,7 @@ public final class EarthGlobeScreen extends Screen {
         int y = height - 28;
         addRenderableWidget(Button.builder(Component.literal("-"), b -> zoomBy(-1, width / 2.0, centreY())).bounds(width / 2 - 155, y, 20, 20).build());
         addRenderableWidget(Button.builder(Component.literal("+"), b -> zoomBy(1, width / 2.0, centreY())).bounds(width / 2 - 133, y, 20, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable(keys != null ? keys + ".button" : hereLat == hereLat ? "earthplatform.map.travel" : "earthplatform.globe.choose"), b -> finish()).bounds(width / 2 - 108, y, 130, 20).build());
+        done = addRenderableWidget(Button.builder(Component.translatable(keys != null ? keys + ".button" : hereLat == hereLat ? "earthplatform.map.travel" : "earthplatform.globe.choose"), b -> finish()).bounds(width / 2 - 108, y, 130, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), b -> onClose()).bounds(width / 2 + 27, y, 128, 20).build());
         dirty = true;
     }
@@ -145,10 +188,12 @@ public final class EarthGlobeScreen extends Screen {
             renderBackground(gui, mouseX, mouseY, partialTick);
             return;
         }
+        if (done != null && look()) done.active = pinned && compass();
         super.render(gui, mouseX, mouseY, partialTick);
         gui.drawCenteredString(font, title, width / 2, 8, 0xFFFFFF);
         gui.drawCenteredString(font, status(), width / 2, height - 48, 0x9FD7FF);
         if (hover != null) gui.renderTooltip(font, Component.literal(hover.place.label()), hover.x, hover.y);
+        else if (overTarget) gui.renderTooltip(font, Component.translatable(LOOK + ".target"), mouseX, mouseY);
     }
 
     /** The globe, its markers and the bars behind the buttons; widgets draw over this. */
@@ -185,6 +230,15 @@ public final class EarthGlobeScreen extends Screen {
             gui.fill(px - 3, py - 3, px + 3, py + 3, 0xFF000000);
             gui.fill(px - 2, py - 2, px + 2, py + 2, 0xFF5CFF8A);
             gui.drawString(font, other.name(), px + 5, py - 4, 0xFFB8FFC8);
+        }
+        overTarget = false;
+        if (targetLat == targetLat) {
+            double[] at = project(targetLat, targetLon, cx, cy, r);
+            if (at != null) {
+                int px = (int) Math.round(at[0]), py = (int) Math.round(at[1]);
+                drawTarget(gui, px, py);
+                overTarget = Math.abs(mouseX - px) <= 5 && Math.abs(mouseY - py) <= 5;
+            }
         }
         if (hereLat == hereLat) {
             double[] at = project(hereLat, hereLon, cx, cy, r);
@@ -250,6 +304,12 @@ public final class EarthGlobeScreen extends Screen {
     private Component status() {
         if (warning != null && Util.getMillis() < warningUntil) return warning;
         boolean travel = hereLat == hereLat;
+        if (look()) {
+            if (!compass()) return Component.translatable(LOOK + ".noCompass");
+            if (!pinned) return Component.translatable(LOOK + ".hint");
+            return Component.translatable(LOOK + ".at", pinnedPlayer != null ? pinnedPlayer
+                    : EarthPlaces.near(pinLat, pinLon).map(EarthPlaces.Place::label).orElse(String.format(Locale.ROOT, "%.4f, %.4f", pinLat, pinLon)));
+        }
         if (pinned && pinnedPlayer != null && keys == null && travel) return Component.translatable("earthplatform.map.travelTo", pinnedPlayer);
         if (keys != null) return pinned ? Component.translatable(keys + ".at", EarthPlaces.near(pinLat, pinLon).map(EarthPlaces.Place::label)
                 .orElse(String.format(Locale.ROOT, "%.4f, %.4f", pinLat, pinLon))) : Component.translatable(keys + ".hint");
@@ -277,6 +337,14 @@ public final class EarthGlobeScreen extends Screen {
         gui.fill(x - 4, y - 4, x + 4, y + 4, 0xFF000000);
         gui.fill(x - 3, y - 3, x + 3, y + 3, 0xFFFFFFFF);
         gui.fill(x - 2, y - 2, x + 2, y + 2, 0xFF2F7DF6);
+    }
+
+    /** A red ring with a white heart where the player's compass points now. */
+    private void drawTarget(GuiGraphics gui, int x, int y) {
+        gui.fill(x - 5, y - 5, x + 5, y + 5, 0xFF000000);
+        gui.fill(x - 4, y - 4, x + 4, y + 4, 0xFFE8322E);
+        gui.fill(x - 2, y - 2, x + 2, y + 2, 0xFF000000);
+        gui.fill(x - 1, y - 1, x + 1, y + 1, 0xFFFFFFFF);
     }
 
     private void drawPin(GuiGraphics gui, int x, int y) {
@@ -562,8 +630,9 @@ public final class EarthGlobeScreen extends Screen {
     }
 
     private void finish() {
-        if (!pinned) return;
-        picked.accept(pinLat, pinLon);
+        if (!pinned || look() && !compass()) return;
+        if (pinnedPlayer != null && pickedPlayer != null) pickedPlayer.accept(pinnedPlayer);
+        else picked.accept(pinLat, pinLon);
         // The travel map hands over to the trip's own screen.
         if (minecraft.screen == this) onClose();
     }

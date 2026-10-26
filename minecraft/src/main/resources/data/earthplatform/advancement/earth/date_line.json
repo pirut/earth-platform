@@ -1,0 +1,28 @@
+{
+  "parent": "earthplatform:earth/equator",
+  "criteria": {
+    "date_line": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:clock",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.date_line.title",
+      "fallback": "Tomorrow, Today"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.date_line.description",
+      "fallback": "Cross the 180th meridian, where the date changes, without teleporting"
+    },
+    "frame": "goal"
+  },
+  "requirements": [
+    [
+      "date_line"
+    ]
+  ]
+}

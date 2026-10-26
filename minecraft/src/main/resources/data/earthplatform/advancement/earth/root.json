@@ -1,0 +1,42 @@
+{
+  "criteria": {
+    "on_the_earth": {
+      "trigger": "minecraft:location",
+      "conditions": {
+        "player": [
+          {
+            "condition": "minecraft:entity_properties",
+            "entity": "this",
+            "predicate": {
+              "location": {
+                "dimension": "earthplatform:cubic"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:grass_block",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.root.title",
+      "fallback": "The Earth"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.root.description",
+      "fallback": "Set foot on the real Earth, at true scale"
+    },
+    "background": "minecraft:textures/block/moss_block.png",
+    "show_toast": false,
+    "announce_to_chat": false
+  },
+  "requirements": [
+    [
+      "on_the_earth"
+    ]
+  ]
+}

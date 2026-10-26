@@ -426,9 +426,10 @@ public final class EarthWorlds {
                                 .then(Commands.argument("player", EntityArgument.player()).requires(source -> source.hasPermission(2))
                                         .executes(context -> CubicEvents.travel(context.getSource(), EntityArgument.getPlayer(context, "player"),
                                                 DoubleArgumentType.getDouble(context, "latitude"), DoubleArgumentType.getDouble(context, "longitude")))))));
-        // The creative travel map: the client opens it with a key, through this command.
-        root.then(Commands.literal("map").requires(EarthWorlds::mayTravel).executes(context -> EarthMap.open(context.getSource())));
+        // The travel map in creative, the survival map otherwise: the client opens it with a key, through this command.
+        root.then(Commands.literal("map").requires(EarthMap::mayUse).executes(context -> EarthMap.open(context.getSource())));
         EarthCommands.register(root);
+        EarthCompass.register(root);
         EarthTeleports.register(root);
         EarthRace.register(root);
         EarthGuess.register(root);

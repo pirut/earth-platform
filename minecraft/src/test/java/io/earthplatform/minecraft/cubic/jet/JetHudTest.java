@@ -14,4 +14,12 @@ class JetHudTest {
         assertTrue(JetHud.message(10000, 1300, 0, 180).getString().contains("north"));
         assertTrue(JetHud.message(5000, 800, -1, 0).getString().contains("slowing down"));
     }
+
+    @Test void tellsABoatAboutTheOceanCurrent() {
+        assertNull(JetHud.current(CurrentRide.State.NONE, 6, 0));
+        assertTrue(JetHud.current(CurrentRide.State.OPEN, 6, 0).getString().contains("Sprint"));
+        String riding = JetHud.current(CurrentRide.State.RIDING, 1027.4, -90).getString();
+        assertTrue(riding.contains("1,027") && riding.contains("east"), riding);
+        assertTrue(JetHud.current(CurrentRide.State.SLOWING, 300, 0).getString().contains("slowing down"));
+    }
 }

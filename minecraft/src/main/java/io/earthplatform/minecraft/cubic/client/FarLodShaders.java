@@ -57,17 +57,33 @@ final class FarLodShaders {
             }
             """;
 
+    /**
+     * Far water's surface in the game's depth: the value {@link #DEEPEN} laid its floor behind, as
+     * the game's depth buffer holds it (see {@link #GAME_DEPTH}).
+     */
+    static final String GAME_DEPTH = """
+            uniform mat4 earth_GameProjection;
+            uniform float earth_GameSteps;
+            float earth_gameDepth(vec3 view) {
+                vec4 clip = earth_GameProjection * vec4(view, 1.0);
+                float depth = clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0);
+                return earth_GameSteps > 0.0 ? min(ceil(depth * earth_GameSteps) / earth_GameSteps, 1.0) : depth;
+            }
+            """;
+
     /** Far water's surface, in the game's depth, unless far terrain stands in front of it. */
     static final String SURFACE = """
             #version 330 core
             uniform sampler2D earth_Far;
             uniform vec2 earth_NearFar;
             in vec3 earth_view;
+            """ + GAME_DEPTH + """
             void main() {
                 float far = texelFetch(earth_Far, ivec2(gl_FragCoord.xy), 0).r;
                 float n = earth_NearFar.x, f = earth_NearFar.y;
                 float front = 2.0 * n * f / (f + n - (far * 2.0 - 1.0) * (f - n));
                 if (far < 1.0 && -earth_view.z > front + 2.0) discard;
+                gl_FragDepth = earth_gameDepth(earth_view);
             }
             """;
 
@@ -136,6 +152,12 @@ final class FarLodShaders {
      * finds under its own water up close, or a few depth steps behind the surface if that is
      * further. It replaces the slope depth there, which across a narrow channel can lie well off
      * the bed.
+     *
+     * <p>Packs measure the water from its surface in the game's depth, which kilometres off is
+     * hundreds of blocks coarse, to this floor. Laid behind the true surface, that span jumped by a
+     * whole depth step every few rows, and Photon's fog under far seas showed as horizontal bands.
+     * So the floor lies its depth behind the surface as the game's depth holds it, which {@link
+     * #SURFACE} then writes there.
      */
     static final String DEEPEN = """
             #version 330 core
@@ -145,6 +167,7 @@ final class FarLodShaders {
             uniform float earth_GameNear;
             uniform vec2 earth_NearFar;
             in vec3 earth_view;
+            """ + GAME_DEPTH + """
             void main() {
                 ivec2 texel = ivec2(gl_FragCoord.xy);
                 float bed = texelFetch(earth_Far, texel, 0).r;
@@ -160,8 +183,12 @@ final class FarLodShaders {
                 // A least depth of its own read shallow seas deeper far off than near by, a darker
                 // ring around the blocks' lighter disk.
                 float distance = length(earth_view);
+                float surface = -earth_view.z;
                 float step = distance * distance * 5.96e-8 / earth_GameNear;
-                vec4 clip = earth_Projection * vec4(earth_view * ((distance + 4.0 * step) / distance), 1.0);
+                float deep = max(4.0 * step * surface / distance, behind - surface);
+                float game = earth_gameDepth(earth_view) * 2.0 - 1.0;
+                float front = earth_GameProjection[3][2] / (game + earth_GameProjection[2][2]);
+                vec4 clip = earth_Projection * vec4(earth_view * ((front + deep) / surface), 1.0);
                 gl_FragDepth = max(clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0), bed);
             }
             """;

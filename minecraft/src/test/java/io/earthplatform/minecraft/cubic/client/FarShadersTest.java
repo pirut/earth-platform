@@ -179,6 +179,23 @@ class FarShadersTest {
         assertTrue(FarShaders.packPrepassFragment(version, PHOTON_NORMAL, FarGpu.FADE_OUT).contains("#define EARTH_FADE 1"));
     }
 
+    @Test void farTerrainUnderTheGamesBlocksDrawsOnlyWhereTheyAreNot() {
+        String version = "#version 330 core\n";
+        String near = FarShaders.packNearFragment(version, PHOTON_NORMAL, FarGpu.FADE_IN, true);
+        assertTrue(near.contains("#define EARTH_NEAR") && near.contains(FarShaders.GROUND) && !near.contains("#define EARTH_OWN_DEPTH"), near);
+        String main = near.substring(near.lastIndexOf("void main() {"));
+        int ground = main.indexOf("earth_ground();");
+        assertTrue(ground > main.indexOf("earth_fade();") && ground < main.indexOf("voxy_emitFragment("), main);
+        assertTrue(FarShaders.packFragment(version, PHOTON_NORMAL, false, FarGpu.NO_FADE, true).contains(FarShaders.GROUND));
+        // Without it the programs are as they were.
+        assertEquals(FarShaders.packNearFragment(version, PHOTON_NORMAL, FarGpu.NO_FADE), FarShaders.packNearFragment(version, PHOTON_NORMAL, FarGpu.NO_FADE, false));
+        assertTrue(!FarShaders.packFragment(version, PHOTON_NORMAL, true, FarGpu.NO_FADE).contains(FarShaders.GROUND));
+        for (String plain : new String[] {FarShaders.FRAGMENT, FarShaders.PACK_FALLBACK}) {
+            String body = plain.substring(plain.lastIndexOf("void main() {"));
+            assertTrue(body.contains("#ifdef EARTH_GROUND\n    earth_ground();"), body);
+        }
+    }
+
     @Test void flatGroundPointsStraightUp() {
         assertEquals(32 | 32 << 6, FarMesher.normalCode(0.0F, 0.0F));
         int steep = FarMesher.normalCode(1.0F, 0.0F);

@@ -17,6 +17,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -24,9 +25,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
@@ -35,6 +38,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.TicketType;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -305,6 +309,43 @@ public final class ServerCubeWorld extends CubeWorld {
         return ready;
     }
 
+    /** How far round a block column {@link #readyGround} readies the ground, in blocks: the chunks loaded about a player, where mobs spawn. */
+    private static final int READY_REACH = 128;
+    /** Longest {@link #readyGround} is waited for, in seconds, before the server thread asks for the ground anyway. */
+    private static final int READY_SECONDS = 30;
+
+    /**
+     * Any thread. Makes the generator's ground round a block column on the IO pool, for a player who stops where
+     * nothing was made yet (see {@link io.earthplatform.minecraft.cubic.jet.OceanCurrent}): asked for on the server
+     * thread, as streaming cubes and spawning mobs about them asks, a new place's map data held the whole server up
+     * for seconds. Done when it is ready, when it can't be had, or after {@link #READY_SECONDS} regardless.
+     */
+    public CompletableFuture<Void> readyGround(int x, int z) {
+        CompletableFuture<?>[] parts = new CompletableFuture<?>[9];
+        for (int i = 0; i < parts.length; i++) {
+            int px = x + (i % 3 - 1) * READY_REACH, pz = z + (i / 3 - 1) * READY_REACH;
+            parts[i] = CompletableFuture.runAsync(() -> generator.surfaceY(px, pz), net.minecraft.Util.ioPool());
+        }
+        return CompletableFuture.allOf(parts).handle((ready, missing) -> (Void) null).completeOnTimeout(null, READY_SECONDS, TimeUnit.SECONDS);
+    }
+
+    /** Keeps a chunk {@link #chunkLoaded} asked for loading; lapses five seconds after it was last asked for. */
+    private static final TicketType<ChunkPos> LANDING = TicketType.create("earthplatform_landing", Comparator.comparingLong(ChunkPos::toLong), 100);
+
+    /**
+     * Server thread. Whether the chunk holding a block column is loaded; until it is, asks the workers for it and those
+     * round it. For a player who stops where nothing was loaded (see {@link io.earthplatform.minecraft.cubic.jet.OceanCurrent}):
+     * loaded as they moved, the chunk under them was made while the server thread waited, and the moves that queued up
+     * meanwhile all came in at once, too fast for vanilla's vehicle speed check.
+     */
+    public boolean chunkLoaded(int x, int z) {
+        int cx = SectionPos.blockToSectionCoord(x), cz = SectionPos.blockToSectionCoord(z);
+        if (server.getChunkSource().getChunkNow(cx, cz) != null) return true;
+        ChunkPos chunk = new ChunkPos(cx, cz);
+        server.getChunkSource().addRegionTicket(LANDING, chunk, 1, chunk);
+        return false;
+    }
+
     /**
      * Cubes under the ground that are saved untouched with it. Below them, and above the treetops, untouched
      * cubes are rock and air remade from the generator when needed; edited ones are always saved.
@@ -451,8 +492,9 @@ public final class ServerCubeWorld extends CubeWorld {
         for (Watcher watcher : order) {
             int cx = watcher.player.getBlockX() >> 4, cy = watcher.player.getBlockY() >> 4, cz = watcher.player.getBlockZ() >> 4;
             // A glider high above all terrain sees only far terrain and may be crossing a cube a tick: it gets
-            // only what players built up there, so it hits a build rather than flying through it.
-            if (JetStream.aboveTerrain(watcher.player)) {
+            // only what players built up there, so it hits a build rather than flying through it. So does a boat
+            // the ocean current carries, which has no sky builds near it.
+            if (JetStream.outrunsTerrain(watcher.player)) {
                 sendSkyBuilds(watcher, cx, cy, cz);
                 if (ticks % 10 == 0) unsend(watcher, 1, 1, cx, cy, cz, true);
                 continue;
@@ -493,13 +535,13 @@ public final class ServerCubeWorld extends CubeWorld {
 
     /**
      * Shares where players are with the workers; the reach matches what {@link #unloadUnwatched}
-     * keeps. Gliders above all terrain stream no cubes, so nothing queued is wanted for them.
+     * keeps. Gliders above all terrain and boats in the ocean current stream no cubes, so nothing queued is wanted for them.
      */
     private void publishWanted(int h, int v) {
         int[] at = new int[watchers.size() * 3];
         int i = 0;
         for (Watcher watcher : watchers.values()) {
-            if (JetStream.aboveTerrain(watcher.player)) continue;
+            if (JetStream.outrunsTerrain(watcher.player)) continue;
             at[i++] = watcher.player.getBlockX() >> 4; at[i++] = watcher.player.getBlockY() >> 4; at[i++] = watcher.player.getBlockZ() >> 4;
         }
         wantedH = h;
@@ -823,6 +865,9 @@ public final class ServerCubeWorld extends CubeWorld {
             if (distance < best) { best = distance; nearest = watcher.player; }
         }
         if (nearest == null) return null;
+        // A column with no cube in yet has nowhere to spawn: working out its ground here, for every chunk round a
+        // player who had just stopped somewhere new, held the server up for seconds.
+        if (columnTops(x >> 4, z >> 4) == null) return null;
         int low = nearest.getBlockY() - SPAWN_BAND, high = Math.min(nearest.getBlockY() + SPAWN_BAND, skyTop(x, z) + 1);
         if (high < low) return null;
         BlockPos pos = new BlockPos(x, low + random.nextInt(high - low + 1), z);

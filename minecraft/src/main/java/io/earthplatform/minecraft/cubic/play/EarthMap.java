@@ -18,9 +18,10 @@ import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
- * The creative travel map: the server tells a player's client where on the Earth they stand so the
- * map opens there, and when a trip they started lands or fails, so the client's camera flight can
- * come down.
+ * The travel map in creative, and the map in survival: the server tells a player's client where on
+ * the Earth they stand so the map opens there, and when a trip they started lands or fails, so the
+ * client's camera flight can come down. The survival map never moves anyone; it points compasses
+ * (see {@link EarthCompass}).
  */
 public final class EarthMap {
     /** Open the map, centred on the player. */
@@ -35,6 +36,12 @@ public final class EarthMap {
     public static final byte PICK_START = 4;
     /** Open the globe for a Where on Earth guess: the whole world, with no dot where the player is. */
     public static final byte PICK_GUESS = 5;
+    /** Open the survival map, centred on the player: look around and point a compass, but no travel. */
+    public static final byte LOOK = 6;
+    /** A Where on Earth round started for the player: compasses spin and show no distances until it ends. */
+    public static final byte HIDE_COMPASS = 7;
+    /** The player's round ended (or they guessed): compasses show distances again. */
+    public static final byte SHOW_COMPASS = 8;
 
     public record Payload(byte kind, double latitude, double longitude) implements CustomPacketPayload {
         public static final Type<Payload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "earth_map"));
@@ -79,11 +86,14 @@ public final class EarthMap {
 
     private EarthMap() {}
 
-    /** The map is for players who may travel and are in creative mode, or operators. */
+    /** The travel map is for players who may travel and are in creative mode, or operators. */
     static boolean mayOpen(CommandSourceStack source) {
         ServerPlayer player = source.getPlayer();
-        return player != null && (player.isCreative() || source.hasPermission(2));
+        return player != null && (player.isCreative() || source.hasPermission(2)) && EarthWorlds.mayTravel(source);
     }
+
+    /** Who has a map at all: the travel map's players, and everyone else while the server allows the survival map. */
+    static boolean mayUse(CommandSourceStack source) { return EarthWorlds.mayTravel(source) || EarthConfig.SURVIVAL_MAP.get(); }
 
     static int open(CommandSourceStack source) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
@@ -91,7 +101,8 @@ public final class EarthMap {
             source.sendFailure(Component.literal("No travel map during a Where on Earth round: use /earth guess."));
             return 0;
         }
-        if (!mayOpen(source)) {
+        boolean travel = mayOpen(source);
+        if (!travel && !EarthConfig.SURVIVAL_MAP.get()) {
             source.sendFailure(Component.translatable("earthplatform.map.creativeOnly"));
             return 0;
         }
@@ -101,7 +112,7 @@ public final class EarthMap {
             return 0;
         }
         sendOthers(player);
-        PacketDistributor.sendToPlayer(player, new Payload(OPEN, here.latitude(), here.longitude()));
+        PacketDistributor.sendToPlayer(player, new Payload(travel ? OPEN : LOOK, here.latitude(), here.longitude()));
         return 1;
     }
 

@@ -67,4 +67,17 @@ class JetStreamTest {
         Vec3 riding = new Vec3(60, 0, 0);
         assertEquals(riding, JetStream.rocket(riding, level, JetStream.FLOOR + 100));
     }
+
+    @Test void othersGlidersKeepUpWithTheirUpdates() {
+        assertEquals(1, JetStream.easeSteps(3, 1), "an update every tick is followed at once");
+        assertEquals(2, JetStream.easeSteps(3, 2), "updates every other tick ease over two");
+        assertEquals(1, JetStream.easeSteps(3, 0), "two updates in one tick");
+        assertEquals(3, JetStream.easeSteps(3, 40), "never slower than vanilla");
+    }
+
+    @Test void aJetRiderStaysDrawnAFewTicksOfTravelAway() {
+        double cruise = JetStream.CRUISE;
+        assertTrue(JetStream.drawReachSqr(cruise, 0, 0) > 200 * 200, "a rider a few ticks away is still drawn");
+        assertTrue(JetStream.drawReachSqr(1.5, 0, 0) < 38 * 38, "ordinary elytra flight keeps vanilla's distance");
+    }
 }

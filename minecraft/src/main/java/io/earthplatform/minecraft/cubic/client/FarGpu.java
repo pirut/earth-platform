@@ -49,7 +49,7 @@ import org.lwjgl.system.MemoryUtil;
  * A column slot holds the column's origin and level. Everything here runs on the render thread.
  */
 final class FarGpu {
-    private static final int QUAD_UNIT = 3, LOOK_UNIT = 4, COLUMN_UNIT = 5, ATLAS_UNIT = 0, LIGHT_UNIT = 2;
+    private static final int QUAD_UNIT = 3, LOOK_UNIT = 4, COLUMN_UNIT = 5, ATLAS_UNIT = 0, LIGHT_UNIT = 2, BLOCKS_UNIT = 1;
     /** Faces per buffer texture: 64 MB each. */
     private static final int ARENA_QUADS = 1 << 22;
 
@@ -81,6 +81,9 @@ final class FarGpu {
     /** Programs by fade ({@link #NO_FADE}, {@link #FADE_OUT}, {@link #FADE_IN}); a fade's program is built when first asked for. */
     private final Program[] vanilla = new Program[3], pack = new Program[3], packNear = new Program[3];
     private final boolean[] vanillaFailed = new boolean[3], packFailed = new boolean[3], packNearFailed = new boolean[3];
+    /** The same three, drawing only where the game drew none of its blocks (see {@link FarShaders#GROUND}). */
+    private final Program[] vanillaGround = new Program[3], packGround = new Program[3], packNearGround = new Program[3];
+    private final boolean[] vanillaGroundFailed = new boolean[3], packGroundFailed = new boolean[3], packNearGroundFailed = new boolean[3];
     @Nullable private FarShaders.PackPatch packSource;
     @Nullable private Object packPipeline;
     private boolean packOwnDepth, packJittered;
@@ -272,12 +275,19 @@ final class FarGpu {
      * When far terrain has its own depth ({@link FarLod}), the pack program drops fragments where
      * the game's depth (on {@link FarLod#vanillaUnit()}) already holds terrain, and those inside the
      * game's blocks' reach, which a {@code near} draw puts in the game's own depth beforehand.
+     * With {@code ground} it draws only where the game drew none of its blocks, from the copy of
+     * its depth {@link FarBlockDepth} made this frame, or as before if that program does not build.
      * Returns false when there is nothing usable to draw with.
      */
     boolean begin(boolean packMode, @Nullable FarShaders.PackPatch patch, Matrix4f modelView, Matrix4f projection, Vec3 camera, float[] shade,
-            int frame, boolean near) {
+            int frame, boolean near, boolean ground) {
         this.near = near;
+        this.ground = ground;
         Program program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
+        if (program == null && ground) {
+            this.ground = false;
+            program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
+        }
         if (program == null) return false;
         uploadLooks();
         this.packMode = packMode;
@@ -295,6 +305,7 @@ final class FarGpu {
         previousActive = GlStateManager._getActiveTexture();
         bind2d(ATLAS_UNIT, atlas, packMode);
         bind2d(LIGHT_UNIT, lightmap, packMode);
+        if (this.ground) bind2d(BLOCKS_UNIT, FarBlockDepth.texture(), packMode);
         bindBuffer(LOOK_UNIT, looks.texture);
         bindBuffer(COLUMN_UNIT, columns.texture);
         GlStateManager._activeTexture(previousActive);
@@ -335,7 +346,7 @@ final class FarGpu {
         return built;
     }
 
-    private boolean packMode, near;
+    private boolean packMode, near, ground;
     @Nullable private FarShaders.PackPatch patch;
     private Matrix4f modelView, projection;
     private Vec3 camera;
@@ -386,6 +397,7 @@ final class FarGpu {
         GL20C.glUniform1i(program.location("earth_Atlas"), ATLAS_UNIT);
         GL20C.glUniform1i(program.location("earth_Lightmap"), LIGHT_UNIT);
         GL20C.glUniform1i(program.location("earth_GameDepth"), FarLod.vanillaUnit());
+        GL20C.glUniform1i(program.location("earth_Blocks"), BLOCKS_UNIT);
         if (packMode && packOwnDepth && !near) FarLod.shadowUniforms(program::location);
         GL20C.glUniform1f(program.location("earth_FadeHole"), Far.hole());
         GL20C.glUniform1f(program.location("earth_NearReach"), FarLod.nearReach());
@@ -442,6 +454,40 @@ final class FarGpu {
         if (first >= 0 && count > 0) arena.queue(first, count);
     }
 
+    /**
+     * The same for faces whose counts per group sit in a table, in the order the groups are stored
+     * (see {@link FarMesher#STORED}), from {@code at}: the pick keeps them so for the columns it
+     * draws (see FarRenderer#info), and queueing a column then reaches no objects of its own.
+     */
+    void add(Arena arena, int start, int[] stored, int at, int groups, float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
+        arena.box(minX, minY, minZ, maxX, maxY, maxZ);
+        if (SPLIT_RANGES) {
+            int[] firsts = new int[FarMesher.GROUPS], sizes = new int[FarMesher.GROUPS];
+            for (int k = 0, first = start; k < FarMesher.GROUPS; first += stored[at + k], k++) {
+                firsts[FarMesher.STORED[k]] = first;
+                sizes[FarMesher.STORED[k]] = stored[at + k];
+            }
+            for (int group = 0; group < FarMesher.GROUPS; group++) {
+                if ((groups & 1 << group) != 0 && sizes[group] > 0) arena.queue(firsts[group], sizes[group]);
+            }
+            return;
+        }
+        int first = -1, count = 0, from = start;
+        for (int k = 0; k < FarMesher.GROUPS; k++) {
+            int size = stored[at + k];
+            if ((groups & 1 << FarMesher.STORED[k]) != 0 || size == 0 && first >= 0) {
+                if (first < 0) first = from;
+                count += size;
+            } else if (first >= 0) {
+                if (count > 0) arena.queue(first, count);
+                first = -1;
+                count = 0;
+            }
+            from += size;
+        }
+        if (first >= 0 && count > 0) arena.queue(first, count);
+    }
+
     /** Draws everything queued, ends any recording, and puts GL back as it was. */
     void end() {
         flush();
@@ -449,6 +495,7 @@ final class FarGpu {
         for (int unit : new int[] {QUAD_UNIT, LOOK_UNIT, COLUMN_UNIT}) bindBuffer(unit, 0);
         restore2d(ATLAS_UNIT);
         restore2d(LIGHT_UNIT);
+        if (ground) restore2d(BLOCKS_UNIT);
         GlStateManager._activeTexture(previousActive);
         GL30C.glBindVertexArray(previousVao);
         BufferUploader.invalidate();
@@ -480,9 +527,9 @@ final class FarGpu {
      */
     boolean prepassReady(@Nullable FarShaders.PackPatch patch) {
         if (!depthPrepass || patch == null || !prepassSafe(patch) || GL11C.glIsEnabled(GL11C.GL_BLEND)) return false;
-        boolean wasNear = near;
+        boolean wasNear = near, wasGround = ground;
         int was = phase;
-        near = false;
+        near = ground = false;
         try {
             for (int fade = NO_FADE; fade <= FADE_IN; fade++) {
                 phase = ONE_PASS;
@@ -496,6 +543,7 @@ final class FarGpu {
             return true;
         } finally {
             near = wasNear;
+            ground = wasGround;
             phase = was;
         }
     }
@@ -598,10 +646,10 @@ final class FarGpu {
                 Kept draw = draws.get(i);
                 for (int r = 0; r < draw.draws; r++) {
                     for (int k = 0; k < 6; k++) {
-                        boxes.put(draw.boxes.get(r * 6 + k));
+                        boxes.put(draw.boxes[r * 6 + k]);
                         if (k == 2 || k == 5) boxes.put(0.0F);
                     }
-                    commands.put(draw.counts.get(r) * 6).put(1).put(0).put(draw.firsts.get(r) * 4).put(0);
+                    commands.put(draw.counts[r] * 6).put(1).put(0).put(draw.firsts[r] * 4).put(0);
                 }
             }
         }
@@ -616,7 +664,6 @@ final class FarGpu {
         boolean holds(int pick, long setting) { return pick != -1 && this.pick == pick && this.setting == setting; }
 
         void close() {
-            for (Kept draw : draws) draw.free();
             draws.clear();
             count = 0;
             pick = -1;
@@ -626,14 +673,8 @@ final class FarGpu {
     private static final class Kept {
         Arena arena;
         int fade, draws;
-        IntBuffer firsts = MemoryUtil.memAllocInt(256), counts = MemoryUtil.memAllocInt(256);
-        FloatBuffer boxes = MemoryUtil.memAllocFloat(256 * 6);
-
-        void free() {
-            MemoryUtil.memFree(firsts);
-            MemoryUtil.memFree(counts);
-            MemoryUtil.memFree(boxes);
-        }
+        int[] firsts = new int[256], counts = new int[256];
+        float[] boxes = new float[256 * 6];
     }
 
     /** Records what is drawn from now until {@link #end}, in place of what the recording held. */
@@ -647,14 +688,14 @@ final class FarGpu {
     private void keep(Recording recording, Arena arena) {
         if (recording.count == recording.draws.size()) recording.draws.add(new Kept());
         Kept draw = recording.draws.get(recording.count++);
-        if (draw.firsts.capacity() < arena.draws) {
-            draw.firsts = MemoryUtil.memRealloc(draw.firsts, arena.draws);
-            draw.counts = MemoryUtil.memRealloc(draw.counts, arena.draws);
-            draw.boxes = MemoryUtil.memRealloc(draw.boxes, arena.draws * 6);
+        if (draw.firsts.length < arena.draws) {
+            draw.firsts = new int[arena.draws];
+            draw.counts = new int[arena.draws];
+            draw.boxes = new float[arena.draws * 6];
         }
-        MemoryUtil.memCopy(MemoryUtil.memAddress(arena.firsts, 0), MemoryUtil.memAddress(draw.firsts, 0), 4L * arena.draws);
-        MemoryUtil.memCopy(MemoryUtil.memAddress(arena.counts, 0), MemoryUtil.memAddress(draw.counts, 0), 4L * arena.draws);
-        MemoryUtil.memCopy(MemoryUtil.memAddress(arena.boxes, 0), MemoryUtil.memAddress(draw.boxes, 0), 24L * arena.draws);
+        System.arraycopy(arena.firsts, 0, draw.firsts, 0, arena.draws);
+        System.arraycopy(arena.counts, 0, draw.counts, 0, arena.draws);
+        System.arraycopy(arena.boxes, 0, draw.boxes, 0, arena.draws * 6);
         draw.arena = arena;
         draw.fade = drawingFade;
         draw.draws = arena.draws;
@@ -677,13 +718,13 @@ final class FarGpu {
             if (draw.fade != drawingFade) fade(draw.fade);
             Arena arena = draw.arena;
             arena.clearDraws();
-            if (arena.firsts.capacity() < draw.draws) {
-                arena.firsts = MemoryUtil.memRealloc(arena.firsts, draw.draws).clear();
-                arena.counts = MemoryUtil.memRealloc(arena.counts, draw.draws).clear();
-                arena.boxes = MemoryUtil.memRealloc(arena.boxes, draw.draws * 6).clear();
+            if (arena.firsts.length < draw.draws) {
+                arena.firsts = new int[draw.draws];
+                arena.counts = new int[draw.draws];
+                arena.boxes = new float[draw.draws * 6];
             }
-            MemoryUtil.memCopy(MemoryUtil.memAddress(draw.firsts, 0), MemoryUtil.memAddress(arena.firsts, 0), 4L * draw.draws);
-            MemoryUtil.memCopy(MemoryUtil.memAddress(draw.counts, 0), MemoryUtil.memAddress(arena.counts, 0), 4L * draw.draws);
+            System.arraycopy(draw.firsts, 0, arena.firsts, 0, draw.draws);
+            System.arraycopy(draw.counts, 0, arena.counts, 0, draw.draws);
             arena.draws = draw.draws;
             flush();
         }
@@ -772,6 +813,7 @@ final class FarGpu {
     // Programs -----------------------------------------------------------------------------------
 
     @Nullable private Program vanillaProgram(int fade) {
+        if (ground) return vanillaGroundProgram(fade);
         if (vanilla[fade] == null && !vanillaFailed[fade]) {
             String header = version + FarShaders.fade(fade);
             try { vanilla[fade] = Program.link(header + FarShaders.VERTEX, header + FarShaders.FRAGMENT, "far terrain"); }
@@ -784,6 +826,19 @@ final class FarGpu {
         return vanilla[fade];
     }
 
+    /** The vanilla program drawing only where the game drew none of its blocks (see {@link FarShaders#GROUND}). */
+    @Nullable private Program vanillaGroundProgram(int fade) {
+        if (vanillaGround[fade] == null && !vanillaGroundFailed[fade]) {
+            String header = version + FarShaders.GROUND + FarShaders.fade(fade);
+            try { vanillaGround[fade] = Program.link(header + FarShaders.VERTEX, header + FarShaders.FRAGMENT, "far terrain under the game's blocks"); }
+            catch (IllegalStateException failure) {
+                vanillaGroundFailed[fade] = true;
+                if (fade == NO_FADE) EarthPlatformMod.LOGGER.warn("Far terrain that leaves the game's blocks alone failed to build; it may cover them while they load", failure);
+            }
+        }
+        return vanillaGround[fade];
+    }
+
     /**
      * The program for the active pack: its Voxy patch when it has one that builds, else the generic
      * one, jittered for the pack's TAA when it asks for that, and given the pack's uniforms. Rebuilt
@@ -794,10 +849,11 @@ final class FarGpu {
         boolean ownDepth = FarLod.active();
         if (!java.util.Objects.equals(patch, packSource) || pipeline != packPipeline || ownDepth != packOwnDepth) {
             for (int i = 0; i < pack.length; i++) {
-                if (pack[i] != null) pack[i].close();
-                if (packNear[i] != null) packNear[i].close();
-                pack[i] = packNear[i] = null;
-                packFailed[i] = packNearFailed[i] = false;
+                for (Program[] programs : new Program[][] {pack, packNear, packGround, packNearGround}) {
+                    if (programs[i] != null) programs[i].close();
+                    programs[i] = null;
+                }
+                packFailed[i] = packNearFailed[i] = packGroundFailed[i] = packNearGroundFailed[i] = false;
                 if (prepass[i] != null) prepass[i].close();
                 if (shading[i] != null) shading[i].close();
                 prepass[i] = shading[i] = null;
@@ -812,6 +868,7 @@ final class FarGpu {
         }
         if (near) return nearProgram(patch, fade);
         if (phase != ONE_PASS) return patch == null ? null : phasedProgram(patch, fade);
+        if (ground) return groundProgram(patch, fade);
         if (pack[fade] != null || packFailed[fade]) return pack[fade];
         // Every fade builds as the plain program did: the same patch, jittered or not.
         String jitter = packJittered && patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
@@ -848,19 +905,48 @@ final class FarGpu {
      * (see {@link FarShaders#packFragment}): built only once the main one is, from the same patch.
      */
     @Nullable private Program nearProgram(@Nullable FarShaders.PackPatch patch, int fade) {
-        if (packNear[fade] != null || packNearFailed[fade]) return packNear[fade];
-        near = false;
+        Program[] programs = ground ? packNearGround : packNear;
+        boolean[] failed = ground ? packNearGroundFailed : packNearFailed;
+        if (programs[fade] != null || failed[fade]) return programs[fade];
+        boolean keep = ground;
+        near = ground = false;
         Program main = packProgram(patch, fade);
         near = true;
-        if (main == null || patch == null || !packPatched || !packOwnDepth) { packNearFailed[fade] = true; return null; }
+        ground = keep;
+        if (main == null || patch == null || !packPatched || !packOwnDepth) { failed[fade] = true; return null; }
         String jitter = main.jittered && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
-        packNear[fade] = linkPack(jitter, FarShaders.packNearFragment(version, packCode(patch), fade), "far terrain near by (shader pack)",
-                version + FarShaders.fade(fade), packSamplers);
-        if (packNear[fade] == null) {
-            packNearFailed[fade] = true;
-            EarthPlatformMod.LOGGER.warn("Far terrain near by does not build with the shader pack; it is left out until the game's blocks load");
+        programs[fade] = linkPack(jitter, FarShaders.packNearFragment(version, packCode(patch), fade, ground),
+                ground ? "far terrain near by, under the game's blocks (shader pack)" : "far terrain near by (shader pack)", version + FarShaders.fade(fade), packSamplers);
+        if (programs[fade] == null) {
+            failed[fade] = true;
+            if (ground) EarthPlatformMod.LOGGER.warn("Far terrain near by that leaves the game's blocks alone does not build with the shader pack; it may cover them while they load");
+            else EarthPlatformMod.LOGGER.warn("Far terrain near by does not build with the shader pack; it is left out until the game's blocks load");
         }
-        return packNear[fade];
+        return programs[fade];
+    }
+
+    /**
+     * The one-pass program drawing only where the game drew none of its blocks (see
+     * {@link FarShaders#GROUND}), for far terrain in the game's own depth: built once the plain one
+     * is, from the same patch or the same plain colours, and jittered alike.
+     */
+    @Nullable private Program groundProgram(@Nullable FarShaders.PackPatch patch, int fade) {
+        if (packGround[fade] != null || packGroundFailed[fade]) return packGround[fade];
+        ground = false;
+        Program main = packProgram(patch, fade);
+        ground = true;
+        if (main == null) { packGroundFailed[fade] = true; return null; }
+        String jitter = main.jittered && patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
+        String header = version + FarShaders.GROUND + FarShaders.fade(fade);
+        packGround[fade] = packPatched && patch != null
+                ? linkPack(jitter, FarShaders.packFragment(version, packCode(patch), packOwnDepth, fade, true), "far terrain under the game's blocks (shader pack)",
+                        header, packSamplers)
+                : linkPack(jitter, header + FarShaders.PACK_FALLBACK, "far terrain under the game's blocks (plain, shader pack)", header, false);
+        if (packGround[fade] == null) {
+            packGroundFailed[fade] = true;
+            if (fade == NO_FADE) EarthPlatformMod.LOGGER.warn("Far terrain that leaves the game's blocks alone does not build with the shader pack; it may cover them while they load");
+        }
+        return packGround[fade];
     }
 
     /** Whether the pack's Voxy code builds; once it fails, every fade uses the plain colours too. */
@@ -922,8 +1008,8 @@ final class FarGpu {
         arenas.clear();
         columns.close();
         looks.close();
-        for (Program program : vanilla) if (program != null) program.close();
-        for (Program program : pack) if (program != null) program.close();
+        for (Program[] programs : new Program[][] {vanilla, pack, packNear, vanillaGround, packGround, packNearGround})
+            for (Program program : programs) if (program != null) program.close();
         for (Program program : prepass) if (program != null) program.close();
         for (Program program : shading) if (program != null) program.close();
         if (hiddenCull != null) { hiddenCull.close(); hiddenCull = null; }
@@ -1048,9 +1134,12 @@ final class FarGpu {
     static final class Arena {
         final TextureBuffer buffer;
         private final FarArenaRanges free;
-        /** Queued ranges: first face and face count, and the box of the columns in each (six floats, from the camera). */
-        IntBuffer firsts = MemoryUtil.memAllocInt(1024), counts = MemoryUtil.memAllocInt(1024);
-        FloatBuffer boxes = MemoryUtil.memAllocFloat(1024 * 6);
+        /**
+         * Queued ranges: first face and face count, and the box of the columns in each (six floats, from the camera). Plain
+         * arrays: a direct buffer checked its bounds and memory session on every one of the many reads and writes a frame.
+         */
+        int[] firsts = new int[1024], counts = new int[1024];
+        float[] boxes = new float[1024 * 6];
         /** The box of the column whose ranges are queued next (see {@link FarGpu#add}). */
         private float boxMinX, boxMinY, boxMinZ, boxMaxX, boxMaxY, boxMaxZ;
         /** The same ranges as the multi-draw takes them: corner counts, and where each range starts. */
@@ -1067,7 +1156,7 @@ final class FarGpu {
 
         void release(FarArenaRanges.Allocation range) { free.release(range); }
 
-        void clearDraws() { draws = 0; firsts.clear(); counts.clear(); }
+        void clearDraws() { draws = 0; }
 
         void box(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
             boxMinX = minX; boxMinY = minY; boxMinZ = minZ;
@@ -1077,13 +1166,17 @@ final class FarGpu {
         /** Queues a range of faces. */
         void queue(int first, int count) {
             // Right after the last range, as the next column's faces often are: one longer range.
-            if (!SPLIT_RANGES && draws > 0 && firsts.get(draws - 1) + counts.get(draws - 1) == first
-                    && (!INDEXED || counts.get(draws - 1) + count <= INDEX_QUADS)) {
-                counts.put(draws - 1, counts.get(draws - 1) + count);
+            if (!SPLIT_RANGES && draws > 0 && firsts[draws - 1] + counts[draws - 1] == first
+                    && (!INDEXED || counts[draws - 1] + count <= INDEX_QUADS)) {
+                counts[draws - 1] += count;
                 int at = (draws - 1) * 6;
-                boxes.put(at, Math.min(boxes.get(at), boxMinX)).put(at + 1, Math.min(boxes.get(at + 1), boxMinY))
-                        .put(at + 2, Math.min(boxes.get(at + 2), boxMinZ)).put(at + 3, Math.max(boxes.get(at + 3), boxMaxX))
-                        .put(at + 4, Math.max(boxes.get(at + 4), boxMaxY)).put(at + 5, Math.max(boxes.get(at + 5), boxMaxZ));
+                float[] box = boxes;
+                box[at] = Math.min(box[at], boxMinX);
+                box[at + 1] = Math.min(box[at + 1], boxMinY);
+                box[at + 2] = Math.min(box[at + 2], boxMinZ);
+                box[at + 3] = Math.max(box[at + 3], boxMaxX);
+                box[at + 4] = Math.max(box[at + 4], boxMaxY);
+                box[at + 5] = Math.max(box[at + 5], boxMaxZ);
                 return;
             }
             // An indexed range reaches only as far as the quad indices do.
@@ -1092,31 +1185,37 @@ final class FarGpu {
                 first += INDEX_QUADS;
                 count -= INDEX_QUADS;
             }
-            if (draws == firsts.capacity()) {
-                firsts = MemoryUtil.memRealloc(firsts, draws * 2).clear();
-                counts = MemoryUtil.memRealloc(counts, draws * 2).clear();
-                boxes = MemoryUtil.memRealloc(boxes, draws * 12).clear();
+            if (draws == firsts.length) {
+                firsts = java.util.Arrays.copyOf(firsts, draws * 2);
+                counts = java.util.Arrays.copyOf(counts, draws * 2);
+                boxes = java.util.Arrays.copyOf(boxes, draws * 12);
             }
-            firsts.put(draws, first);
-            counts.put(draws, count);
+            firsts[draws] = first;
+            counts[draws] = count;
             int at = draws * 6;
-            boxes.put(at, boxMinX).put(at + 1, boxMinY).put(at + 2, boxMinZ).put(at + 3, boxMaxX).put(at + 4, boxMaxY).put(at + 5, boxMaxZ);
+            float[] box = boxes;
+            box[at] = boxMinX;
+            box[at + 1] = boxMinY;
+            box[at + 2] = boxMinZ;
+            box[at + 3] = boxMaxX;
+            box[at + 4] = boxMaxY;
+            box[at + 5] = boxMaxZ;
             draws++;
         }
 
         /** Draws the queued ranges in one multi-draw, with the far program and this arena's faces bound. */
         void draw() {
             if (drawCounts.capacity() < draws) {
-                drawCounts = MemoryUtil.memRealloc(drawCounts, firsts.capacity());
-                drawStarts = MemoryUtil.memRealloc(drawStarts, firsts.capacity());
-                offsets = MemoryUtil.memRealloc(offsets, firsts.capacity());
+                drawCounts = MemoryUtil.memRealloc(drawCounts, firsts.length);
+                drawStarts = MemoryUtil.memRealloc(drawStarts, firsts.length);
+                offsets = MemoryUtil.memRealloc(offsets, firsts.length);
             }
             drawCounts.clear().limit(draws);
             drawStarts.clear().limit(draws);
             for (int i = 0; i < draws; i++) {
-                drawCounts.put(i, counts.get(i) * 6);
+                drawCounts.put(i, counts[i] * 6);
                 // Indexed, a range's corners count from its first face's (gl_VertexID adds the base); else its six per face.
-                drawStarts.put(i, INDEXED ? firsts.get(i) * 4 : firsts.get(i) * 6);
+                drawStarts.put(i, INDEXED ? firsts[i] * 4 : firsts[i] * 6);
             }
             if (INDEXED) {
                 offsets.clear().limit(draws);
@@ -1128,9 +1227,6 @@ final class FarGpu {
 
         void close() {
             buffer.close();
-            MemoryUtil.memFree(firsts);
-            MemoryUtil.memFree(counts);
-            MemoryUtil.memFree(boxes);
             MemoryUtil.memFree(drawCounts);
             MemoryUtil.memFree(drawStarts);
             MemoryUtil.memFree(offsets);

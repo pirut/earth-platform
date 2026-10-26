@@ -17,6 +17,8 @@ final class FarCullTree {
     static final byte PARTLY = 0, INSIDE = 1, OUTSIDE = 2;
 
     private boolean enabled;
+    /** Whether each branch's box has taken in its branches' (see {@link #classify}), which a walk needs only once. */
+    private boolean grown;
     private int nodes, current = -1, columns;
     private int[] parent = new int[64], start = new int[64], end = new int[64], owner = new int[1024];
     /** Each branch's combined box: min x, y, z, then max x, y, z. */
@@ -25,6 +27,7 @@ final class FarCullTree {
 
     void clear(boolean enabled) {
         this.enabled = enabled;
+        grown = false;
         nodes = 0;
         current = -1;
         columns = 0;
@@ -56,6 +59,29 @@ final class FarCullTree {
         current = outer;
     }
 
+    /** The branch open now, which a column added now goes in. */
+    int current() { return current; }
+
+    /**
+     * Opens again a branch a walk closed, for a patch of the pick (see FarRenderer#patch). The columns
+     * added in it now come after all the others, outside its range, so the view tests each of them
+     * unless a branch opened in it now settles them; its box takes theirs in, and stays one around
+     * the columns in its range, which a settled branch settles as testing each would. Returns the
+     * branch open before, for {@link #closeAgain}.
+     */
+    int reopen(int node) {
+        int outer = current;
+        if (!enabled) return outer;
+        current = node;
+        grown = false;
+        return outer;
+    }
+
+    /** Closes a branch opened again (see {@link #reopen}), its range as the walk left it. */
+    void closeAgain(int outer) {
+        if (enabled) current = outer;
+    }
+
     /** Puts the column at this index of the pick in the branch open now. */
     void own(int index, AABB column) { own(index, column.minX, column.minY, column.minZ, column.maxX, column.maxY, column.maxZ); }
 
@@ -72,15 +98,17 @@ final class FarCullTree {
      * Settles each branch against the view, the camera at the given place: the same float
      * camera-relative corners {@code Frustum.isVisible} tests, so a settled column comes out as testing
      * it would. A box wholly inside every plane holds only boxes that are; one wholly outside a plane
-     * holds only boxes outside it.
+     * holds only boxes outside it. The branches stay as they are for the next view of the same
+     * columns, as from a camera moving within the walk's ground (see FarRenderer#walkDue).
      */
     void classify(FrustumIntersection view, double camX, double camY, double camZ) {
         if (!enabled) return;
         // Branches come after the ones holding them, so going backwards a branch is complete before its holder takes it in.
-        for (int n = nodes - 1; n >= 0; n--) {
+        for (int n = nodes - 1; n >= 0 && !grown; n--) {
             int p = parent[n];
             if (p >= 0) grow(p, box[n * 6], box[n * 6 + 1], box[n * 6 + 2], box[n * 6 + 3], box[n * 6 + 4], box[n * 6 + 5]);
         }
+        grown = true;
         if (state.length < columns) state = new byte[Math.max(columns, state.length * 2)];
         Arrays.fill(state, 0, columns, PARTLY);
         for (int n = 0; n < nodes; ) {
@@ -95,6 +123,16 @@ final class FarCullTree {
             n++;
             while (n < nodes && start[n] < last) n++;
         }
+    }
+
+    /**
+     * Takes in a new box for the column at this index of the pick, as when a column sent again takes
+     * its place: its branch's box at once, and the branches holding that with the next classify.
+     */
+    void regrow(int index, double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+        if (!enabled || index >= columns || owner[index] < 0) return;
+        grow(owner[index], minX, minY, minZ, maxX, maxY, maxZ);
+        grown = false;
     }
 
     /** How the column at this index of the pick stands against the view; {@link #PARTLY} means test it. */

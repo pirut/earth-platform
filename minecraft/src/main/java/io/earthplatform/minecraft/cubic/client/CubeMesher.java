@@ -7,6 +7,8 @@ import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexSorting;
+import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.CubeLight;
 import io.earthplatform.minecraft.cubic.CubeWorld;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
@@ -19,6 +21,8 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.block.BlockRenderDispatcher;
 import net.minecraft.client.renderer.block.ModelBlockRenderer;
 import net.minecraft.client.resources.model.BakedModel;
+import net.minecraft.client.resources.model.SimpleBakedModel;
+import net.minecraft.client.resources.model.WeightedBakedModel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
@@ -28,6 +32,7 @@ import net.minecraft.world.level.BlockAndTintGetter;
 import net.minecraft.world.level.ColorResolver;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -59,28 +64,130 @@ final class CubeMesher {
         void free() { for (Layer layer : layers) { layer.mesh.close(); layer.memory.close(); } }
     }
 
+    /**
+     * A block whose six faces vanilla's own face check ({@link Block#shouldRenderFace}) hides, and whose model is one of
+     * vanilla's plain kinds with no faces that are never hidden, draws nothing: it is left out before the model pass, which
+     * asked its model for every face's quads first. Below the ground that is nearly every block. {@code false} sends every
+     * block through the model pass, for comparing. The same vertices.
+     */
+    private static final boolean SKIP_BURIED = !"false".equals(System.getProperty("earthplatform.cubes.skipBuried"));
+    /**
+     * Each block is drawn with one pose set to its place, the same matrices as a copy of the identity pose pushed and
+     * moved there, which made two new matrices a block. {@code false} pushes a copy for every block, for comparing.
+     */
+    private static final boolean REUSE_POSE = !"false".equals(System.getProperty("earthplatform.cubes.reusePose"));
+    /**
+     * Models draw their random numbers from a plain LCG, the same numbers as vanilla's legacy source without its atomic
+     * seed, which every draw updated with a compare-and-set: a block's model reseeds it seven times. {@code false} keeps
+     * the legacy source, for comparing (as for generation, the flag {@code cubes.plainRandom}).
+     */
+    private static final boolean PLAIN_RANDOM = !"false".equals(System.getProperty("earthplatform.cubes.plainRandom"));
+    /**
+     * With {@code -Dearthplatform.cubes.checkMesh=true}, every cube is also meshed and lit the plain way, every speedup
+     * off, and a warning names any cube whose light or vertices differ.
+     */
+    private static final boolean CHECK_MESH = Boolean.getBoolean("earthplatform.cubes.checkMesh");
+
+    /** Which speedups a mesh uses: the flags', or none, for {@link #CHECK_MESH}. */
+    private record Mode(boolean skipBuried, boolean reusePose, boolean plainRandom, boolean fastLight) {}
+    private static final Mode FLAGS = new Mode(SKIP_BURIED, REUSE_POSE, PLAIN_RANDOM, CubeLight.FAST_LIGHT);
+    private static final Mode PLAIN = new Mode(false, false, false, false);
+    private static final java.util.concurrent.atomic.AtomicInteger CHECKED = new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicInteger DIFFERENT = new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicInteger NORMALS = new java.util.concurrent.atomic.AtomicInteger();
+
     private static final ThreadLocal<Work> WORK = ThreadLocal.withInitial(Work::new);
 
     private static final class Work {
-        final PoseStack pose = new PoseStack();
-        final RandomSource random = RandomSource.create();
+        final PoseStack pose = new PoseStack(), placed = new PoseStack();
+        final RandomSource random = RandomSource.create(), plain = RandomSource.createNewThreadLocalInstance();
+        final BlockPos.MutableBlockPos near = new BlockPos.MutableBlockPos();
     }
 
     static Built build(Snapshot s) {
         Work work = WORK.get();
-        CubeLight.Field field = CubeLight.light(s.states, s.tops, s.cy);
+        Built built = build(s, work, FLAGS);
+        if (CHECK_MESH) check(s, work, built, build(s, work, PLAIN));
+        return built;
+    }
+
+    private static Built build(Snapshot s, Work work, Mode mode) {
+        CubeLight.Field field = CubeLight.light(s.states, s.tops, s.cy, mode.fastLight);
         View view = new View(s, field);
-        List<Layer> layers = mesh(s, work, field, view);
+        List<Layer> layers = mesh(s, work, field, view, mode);
         return new Built(s.key, s.version, layers, CubeLight.centre(field));
     }
 
-    private static List<Layer> mesh(Snapshot s, Work work, CubeLight.Field field, View view) {
+    /**
+     * For {@link #CHECK_MESH}: compares a cube's mesh with the one made the plain way, and frees that one. Where they
+     * differ, it meshes the cube again with each speedup alone to name the ones that change it.
+     */
+    private static void check(Snapshot s, Work work, Built built, Built plain) {
+        try {
+            String differ = differ(built, plain, false);
+            int checked = CHECKED.incrementAndGet();
+            if (differ == null && differ(built, plain, true) != null) NORMALS.incrementAndGet();
+            if (differ != null) {
+                StringBuilder culprits = new StringBuilder();
+                Mode[] alone = {new Mode(true, false, false, false), new Mode(false, true, false, false),
+                        new Mode(false, false, true, false), new Mode(false, false, false, true)};
+                String[] names = {"skipBuried", "reusePose", "plainRandom", "fastLight"};
+                for (int i = 0; i < alone.length; i++) {
+                    Built one = build(s, work, alone[i]);
+                    if (differ(one, plain, false) != null) culprits.append(' ').append(names[i]);
+                    one.free();
+                }
+                EarthPlatformMod.LOGGER.warn("Cube mesh check: cube {} differs from the plain mesh in its {}, with{} alone ({} of {} differ)",
+                        CubeKey.toString(built.key), differ, culprits, DIFFERENT.incrementAndGet(), checked);
+            }
+            if (checked % 1000 == 0) EarthPlatformMod.LOGGER.info("Cube mesh check: {} meshes compared, {} differ, {} more in a shader pack's normals alone",
+                    checked, DIFFERENT.get(), NORMALS.get());
+        } finally {
+            plain.free();
+        }
+    }
+
+    /**
+     * Where a mesh differs from the plain one, or null. Under a shader pack, Iris works a quad's normal out again only while
+     * the render thread is drawing the level (a flag it shares between threads), so the same mesh made twice can differ in
+     * normals alone; {@code normals} false leaves those out of the vertices compared.
+     */
+    @Nullable private static String differ(Built built, Built plain, boolean normals) {
+        if (!java.util.Arrays.equals(built.light, plain.light)) return "light";
+        if (built.layers.size() != plain.layers.size()) return "layers " + built.layers.size() + " against " + plain.layers.size();
+        for (int i = 0; i < built.layers.size(); i++) {
+            Layer a = built.layers.get(i), b = plain.layers.get(i);
+            if (a.index != b.index) return "layer " + a.index + " against " + b.index;
+            if (!a.mesh.drawState().equals(b.mesh.drawState())) return "layer " + a.index + " draw state " + a.mesh.drawState() + " against " + b.mesh.drawState();
+            // Element by element: a format's padding is never written, so it holds whatever the memory held.
+            java.nio.ByteBuffer va = a.mesh.vertexBuffer(), vb = b.mesh.vertexBuffer();
+            VertexFormat format = a.mesh.drawState().format();
+            int size = format.getVertexSize(), vertices = a.mesh.drawState().vertexCount();
+            boolean skipNormals = !normals && format != DefaultVertexFormat.BLOCK;
+            for (int vertex = 0; vertex < vertices; vertex++) {
+                for (com.mojang.blaze3d.vertex.VertexFormatElement element : format.getElements()) {
+                    if (skipNormals && element == com.mojang.blaze3d.vertex.VertexFormatElement.NORMAL) continue;
+                    int from = vertex * size + format.getOffset(element);
+                    for (int k = from; k < from + element.byteSize(); k++) {
+                        if (va.get(k) == vb.get(k)) continue;
+                        StringBuilder bytes = new StringBuilder();
+                        for (int j = vertex * size; j < (vertex + 1) * size; j++) bytes.append(String.format(" %02x/%02x", va.get(j), vb.get(j)));
+                        return "layer " + a.index + " vertices, first at byte " + k + " (vertex " + vertex + " of " + vertices + ", " + element + "):" + bytes;
+                    }
+                }
+            }
+            if (!java.util.Objects.equals(a.mesh.indexBuffer(), b.mesh.indexBuffer())) return "layer " + a.index + " indices";
+        }
+        return null;
+    }
+
+    private static List<Layer> mesh(Snapshot s, Work work, CubeLight.Field field, View view, Mode mode) {
         Minecraft minecraft = Minecraft.getInstance();
         BlockRenderDispatcher blocks = minecraft.getBlockRenderer();
         BufferBuilder[] builders = new BufferBuilder[LAYERS.size()];
         ByteBufferBuilder[] memory = new ByteBufferBuilder[LAYERS.size()];
-        PoseStack pose = work.pose;
-        RandomSource random = work.random;
+        PoseStack pose = mode.reusePose ? work.placed : work.pose;
+        RandomSource random = mode.plainRandom ? work.plain : work.random;
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int x0 = s.cx << 4, y0 = s.cy << 4, z0 = s.cz << 4;
         ModelBlockRenderer.enableCaching();
@@ -99,17 +206,28 @@ final class CubeMesher {
                 if (state.getRenderShape() != RenderShape.MODEL) continue;
                 BakedModel model = blocks.getBlockModel(state);
                 ModelData data = model.getModelData(view, pos, state, s.modelData.getOrDefault(pos, ModelData.EMPTY));
-                random.setSeed(state.getSeed(pos));
+                long seed = state.getSeed(pos);
+                random.setSeed(seed);
+                boolean buried = mode.skipBuried && plain(model) && buried(state, view, pos, work.near);
                 for (RenderType type : model.getRenderTypes(state, random, data)) {
                     int layer = LAYERS.indexOf(type);
                     if (layer < 0) continue;
+                    if (buried) {
+                        // Every face is hidden, so it draws only the quads no face hides, asked for as the model pass does.
+                        random.setSeed(seed);
+                        if (model.getQuads(state, null, random, data, type).isEmpty()) continue;
+                    }
                     BufferBuilder builder = builder(builders, memory, layer);
-                    pose.pushPose();
+                    if (mode.reusePose) {
+                        pose.setIdentity();
+                    } else {
+                        pose.pushPose();
+                    }
                     pose.translate(x, y, z);
                     ShaderBlocks.begin(builder, s.shaderIds, state, false, x, y, z);
                     blocks.renderBatched(state, pos, view, pose, builder, true, random, data, type);
                     ShaderBlocks.end(builder, s.shaderIds);
-                    pose.popPose();
+                    if (!mode.reusePose) pose.popPose();
                 }
             }
         } finally {
@@ -126,6 +244,27 @@ final class CubeMesher {
             layers.add(new Layer(i, mesh, memory[i]));
         }
         return layers;
+    }
+
+    /**
+     * Models of vanilla's plain kinds: their model pass draws a face's quads only where {@link Block#shouldRenderFace}
+     * says, and the quads no face hides. A model of any other kind, such as a mod's connected textures, always goes
+     * through the model pass.
+     */
+    private static boolean plain(BakedModel model) {
+        Class<?> kind = model.getClass();
+        return kind == SimpleBakedModel.class || kind == WeightedBakedModel.class;
+    }
+
+    /** Faces in the order most likely to show, so a block in sight is found out at once. */
+    private static final Direction[] FACES = {Direction.UP, Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST, Direction.DOWN};
+
+    /** Whether vanilla's face check hides all six faces of the block, as the model pass asks it. */
+    private static boolean buried(BlockState state, View view, BlockPos pos, BlockPos.MutableBlockPos near) {
+        for (Direction face : FACES) {
+            if (Block.shouldRenderFace(state, view, pos, face, near.setWithOffset(pos, face))) return false;
+        }
+        return true;
     }
 
     private static BufferBuilder builder(BufferBuilder[] builders, ByteBufferBuilder[] memory, int layer) {

@@ -94,8 +94,8 @@ final class CubeBuffer implements AutoCloseable {
         array = vertices = indices = -1;
     }
 
-    /** Indices 0 1 2 2 3 0 for every quad, as 32-bit ints, shared by every opaque layer. */
-    private static final class QuadIndices {
+    /** Indices 0 1 2 2 3 0 for every quad, as 32-bit ints, shared by every opaque layer and by far water ({@link FarWaterBuffers}). */
+    static final class QuadIndices {
         static int name;
         static int capacity;
 

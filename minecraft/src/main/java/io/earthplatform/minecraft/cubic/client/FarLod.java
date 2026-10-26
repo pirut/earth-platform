@@ -443,6 +443,7 @@ public final class FarLod {
         GL11C.glDepthMask(true);
         GL11C.glDisable(GL11C.GL_CULL_FACE);
         bind(VANILLA_UNIT, gameDepth);
+        float steps = depthSteps(gameDepth);
         bind(SCRATCH_UNIT, faces);
         GL20C.glUseProgram(deepen.id);
         drawing = deepen;
@@ -450,7 +451,9 @@ public final class FarLod {
             FloatBuffer matrix = stack.mallocFloat(16);
             GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(deepen.id, "earth_ModelView"), false, modelView.get(matrix));
             GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(deepen.id, "earth_Projection"), false, projection.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(deepen.id, "earth_GameProjection"), false, vanilla.get(matrix));
         }
+        GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_GameSteps"), steps);
         GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_GameNear"), vanilla.m32() / (vanilla.m22() - 1.0F));
         GL20C.glUniform2f(GL20C.glGetUniformLocation(deepen.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
         return true;
@@ -490,6 +493,7 @@ public final class FarLod {
         GL11C.glDepthFunc(GL11C.GL_ALWAYS);
         GL11C.glDepthMask(true);
         bind(VANILLA_UNIT, waterDepth);
+        waterSteps = depthSteps(waterDepth);
         // Far terrain's depth with the water floors laid in, so far water always lies in front.
         bind(SCRATCH_UNIT, depth);
         GL20C.glUseProgram(merge.id);
@@ -535,7 +539,9 @@ public final class FarLod {
             FloatBuffer matrix = stack.mallocFloat(16);
             GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(surface.id, "earth_ModelView"), false, modelView.get(matrix));
             GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(surface.id, "earth_Projection"), false, vanilla.get(matrix));
+            GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(surface.id, "earth_GameProjection"), false, vanilla.get(matrix));
         }
+        GL20C.glUniform1f(GL20C.glGetUniformLocation(surface.id, "earth_GameSteps"), waterSteps);
         GL20C.glUniform2f(GL20C.glGetUniformLocation(surface.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
         long timer = FarGpuTimers.begin("water depth restore");
         try { water.run(); } finally { FarGpuTimers.end(timer); }
@@ -547,6 +553,23 @@ public final class FarLod {
     }
 
     // GL -----------------------------------------------------------------------------------------
+
+    private static int stepsOf = -1;
+    private static float stepsFound, waterSteps;
+
+    /**
+     * How many steps a fixed-point depth texture splits 0 to 1 into, or 0 for a float one, which
+     * keeps a written depth as it is. Asked of the texture bound on the active unit.
+     */
+    private static float depthSteps(int texture) {
+        if (texture != stepsOf) {
+            stepsOf = texture;
+            int type = GL11C.glGetTexLevelParameteri(GL11C.GL_TEXTURE_2D, 0, GL30C.GL_TEXTURE_DEPTH_TYPE);
+            int bits = GL11C.glGetTexLevelParameteri(GL11C.GL_TEXTURE_2D, 0, GL14C.GL_TEXTURE_DEPTH_SIZE);
+            stepsFound = type == GL30C.GL_UNSIGNED_NORMALIZED && bits > 0 && bits <= 24 ? (float) ((1 << bits) - 1) : 0.0F;
+        }
+        return stepsFound;
+    }
 
     private static int attached(int attachment) {
         if (attachment == GL11C.GL_NONE) return 0;
