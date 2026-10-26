@@ -1706,6 +1706,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         double spacing = (double) WATER_CELL / WATER_SAMPLES;
         int sx = Mth.floor(x / spacing - 0.5), sz = Mth.floor(z / spacing - 0.5);
         if (!mayDrown(Math.floorDiv(sx, WATER_SAMPLES), Math.floorDiv(sz, WATER_SAMPLES))) return Double.NaN;
+        if (FAST_DROWNED && !mayBeDrowned(sx, sz)) return Double.NaN;
         if (reachLevels(Math.floorDiv(sx, WATER_SAMPLES), Math.floorDiv(sz, WATER_SAMPLES)).drownedLand == null) return Double.NaN;
         int under = 0, banks = 0;
         double level = Double.NaN;
@@ -1724,6 +1725,52 @@ public final class EarthGenerator extends SurfaceGenerator {
         for (int c = 0; c < 4 && under > 0; c++) if (!Float.isNaN(heights[c]) && heights[c] >= level) banks++;
         if (under > 0 && under + banks == 4 && banks > 0) under = 4;
         return under == 4 ? Math.max(1e-3, level) : under > 0 ? -Math.max(1e-3, level) : Double.NaN;
+    }
+
+    /**
+     * Columns ask a cell's reaches for drowned water only where one of the four samples round them could be
+     * drowned water or drowned land ({@link #mayBeDrowned}); {@code false} asks them for every column of a cell
+     * that {@link #mayDrown}, for comparisons. Same output either way.
+     */
+    private static final boolean FAST_DROWNED = !"false".equals(System.getProperty("earthplatform.far.fastDrowned"));
+
+    /**
+     * Whether one of the four samples from this one on could be drowned water or drowned land, read from the
+     * land cover alone: drowned water is water it maps, and drowned land is land it maps with such water within
+     * {@value #ENCLOSED} samples two of its four ways, past land only ({@link #drownedLand}). Most columns of a
+     * cell that may drown lie away from its water, and for those the coarsest far levels surveyed the 49 cells
+     * of its reach window, which cost them more than all the rest of their work.
+     */
+    private boolean mayBeDrowned(int sx, int sz) {
+        // The samples looked at span two cells each way at most.
+        int bx = Math.floorDiv(sx - ENCLOSED, WATER_SAMPLES), bz = Math.floorDiv(sz - ENCLOSED, WATER_SAMPLES);
+        long[][] masks = new long[4][];
+        for (int c = 0; c < 4; c++) {
+            int nx = sx + (c & 1), nz = sz + (c >> 1);
+            byte kind = coverKind(masks, bx, bz, nx, nz);
+            if (kind == WET) return true;
+            if (kind == OPEN) continue;
+            int ways = 0;
+            for (int d = 0; d < 4 && ways < 2; d++) {
+                for (int step = 1; step <= ENCLOSED; step++) {
+                    byte along = coverKind(masks, bx, bz, nx + (int) RING_X[2 * d] * step, nz + (int) RING_Z[2 * d] * step);
+                    if (along == WET) { ways++; break; }
+                    if (along == OPEN) break;
+                }
+            }
+            if (ways >= 2) return true;
+        }
+        return false;
+    }
+
+    /** A sample's kind as {@link #survey} has it from the land cover alone: water as {@link #WET}, no data as {@link #OPEN}, or {@link #DRY_LAND}. */
+    private byte coverKind(long[][] masks, int bx, int bz, int sx, int sz) {
+        int cx = Math.floorDiv(sx, WATER_SAMPLES), cz = Math.floorDiv(sz, WATER_SAMPLES), m = (cz - bz) * 2 + cx - bx;
+        long[] mask = masks[m];
+        if (mask == null) mask = masks[m] = coverWater(cx, cz);
+        int k = Math.floorMod(sz, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(sx, WATER_SAMPLES);
+        if ((mask[k >> 6] >>> (k & 63) & 1) != 0) return WET;
+        return (mask[NO_SEA.length + (k >> 6)] >>> (k & 63) & 1) != 0 ? OPEN : DRY_LAND;
     }
 
     /** {@link #mayDrown} by cell, and each cell's samples that the land cover maps as water. */
