@@ -439,12 +439,12 @@ public final class EarthGenerator extends SurfaceGenerator {
      * as the land behind its top is looked over.
      */
     private static final int CLIFF_LOOK = 96;
-    /** Metres a cliff's flat top must stand at least, and at most, to be sharpened; and up to which its face is chalk. */
-    private static final double SHARP_LOW = 20, SHARP_HIGH = 150, CHALK_HIGH = 120;
+    /** Metres a cliff's flat top must stand at least, and at most, to be sharpened. */
+    private static final double SHARP_LOW = 20, SHARP_HIGH = 150;
     /** Steepest rise per run of a cliff's flat top, as the chalk downs dipping to the sea behind Dover. */
     private static final double SHARP_FLAT = 0.5;
-    /** The planes of a cliff tile: blocks to a foot, whether that foot is the sea, how sharp, its top's metres, and how chalky. */
-    private static final int CLIFF_FOOT_D = 0, CLIFF_WET = 1, CLIFF_SHARP = 2, CLIFF_TOP = 3, CLIFF_CHALK = 4, CLIFF_PLANES = 5;
+    /** The planes of a cliff tile: blocks to a foot, whether that foot is the sea, how sharp, and its top's metres. */
+    private static final int CLIFF_FOOT_D = 0, CLIFF_WET = 1, CLIFF_SHARP = 2, CLIFF_TOP = 3, CLIFF_PLANES = 4;
 
     /**
      * A land column's ground by the sea, cut back to a sea cliff's face. The land cover draws the
@@ -494,25 +494,28 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /**
-     * A blurred cliff's ground, sharpened: the ramp's upper part raised to the flat top and its lower part cut
-     * to the shore, along a face that wanders back and forth across the ramp, in bays and buttresses tens of
-     * blocks across and flutes a few across, read from the survey a little aside of the column.
+     * A blurred cliff's ground, sharpened: the ramp's lower part cut to the shore and its upper part raised to the
+     * brink, along a face that wanders back and forth across the ramp, in bays and buttresses tens of blocks across
+     * and flutes a few across, read from the survey a little aside of the column. The brink follows the land behind
+     * it, the highest ground a few tens of blocks uphill, so the face dips with the valleys that reach the sea and
+     * dies out with them; raised to the flat top's height all along, it stood in level-topped blocks. Its edge
+     * rounds over in the last few blocks.
      */
     private int sharpen(GlobalElevation dem, int x, int z, int y, double sharp, double top) {
         double wx = x + 0.5 + 9 * warpX.getValue(x / 43.0 + 11.7, z / 43.0 - 5.3) + 2.5 * crags.getValue(x / 7.0 + 5.1, z / 7.0 - 2.3);
         double wz = z + 0.5 + 9 * warpZ.getValue(x / 43.0 + 11.7, z / 43.0 - 5.3) + 2.5 * crags.getValue(x / 7.0 - 9.4, z / 7.0 + 1.7);
-        double t = dem.metres(wx, wz) / top, edge = 0.45 + 0.1 * relief.getValue(x / 24.0 - 3.3, z / 24.0 + 7.9);
+        double here = dem.metres(wx, wz), t = here / top, edge = 0.45 + 0.1 * relief.getValue(x / 24.0 - 3.3, z / 24.0 + 7.9);
         double up = Mth.clamp((t - edge) / 0.04 + 0.5, 0, 1);
-        double target = up * Math.max(y, SEA + 0.5 + top) + (1 - up) * Math.min(y, SEA + 2);
+        double target;
+        if (up > 0) {
+            double gx = dem.metres(wx + 4, wz) - dem.metres(wx - 4, wz), gz = dem.metres(wx, wz + 4) - dem.metres(wx, wz - 4);
+            double g = Math.sqrt(gx * gx + gz * gz), brink = here;
+            if (g > 1e-6) for (int k = 1; k <= 4; k++) brink = Math.max(brink, dem.metres(wx + gx / g * 10 * k, wz + gz / g * 10 * k));
+            double back = 1 - Mth.clamp((t - edge) / 0.2, 0, 1);
+            double high = SEA + 0.5 + Math.min(brink, top) - 3 * back * back;
+            target = up * Math.max(y, high) + (1 - up) * Math.min(y, SEA + 2);
+        } else target = Math.min(y, SEA + 2);
         return Mth.floor(y + (target - y) * sharp + 0.5);
-    }
-
-    /** Whether a column's rock is a chalk cliff's face, white as Dover's and the Seven Sisters'. */
-    private boolean chalk(int x, int z, int voxel) {
-        if (voxel > CLIFF_VOXEL) return false;
-        double[] cliff = new double[CLIFF_PLANES];
-        return cliffAt(elevation(zoom(Math.max(1, Integer.numberOfTrailingZeros(voxel))), voxel), x, z, voxel, cliff)
-                && cliff[CLIFF_SHARP] * cliff[CLIFF_CHALK] >= 0.5;
     }
 
     private record CliffTile(int x, int z, int voxel) {}
@@ -624,7 +627,6 @@ public final class EarthGenerator extends SurfaceGenerator {
             tile[CLIFF_WET * w * w + k] = wet[at];
             tile[CLIFF_SHARP * w * w + k] = (float) sharp;
             tile[CLIFF_TOP * w * w + k] = (float) t;
-            tile[CLIFF_CHALK * w * w + k] = (float) Mth.clamp((CHALK_HIGH - t) / 20, 0, 1);
         }
         if (cliffTiles.size() > 4096) cliffTiles.clear();
         cliffTiles.putIfAbsent(key, tile);
@@ -2674,13 +2676,6 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** A column's surface with the given imagery, or none, having the last word; for {@link ImageryCalibration}. */
     Surface surface(int x, int z, int y, int water, int slope, int voxel, @Nullable ImageryGround imageryGround) {
-        Surface s = natural(x, z, y, water, slope, voxel, imageryGround);
-        if (water != DRY || y <= SEA + 2 || slope / 2.4 <= 1.15 || !chalk(x, z, voxel)) return s;
-        // Chalk shows white down a sharpened cliff's whole face, flecked grey with flint.
-        return new Surface(s.biome(), Math.floorMod(mix(x, 0x43484BL, z), 100) < 10 ? DIORITE : CALCITE, CALCITE, 0, 0, 0, 0, 0, false);
-    }
-
-    private Surface natural(int x, int z, int y, int water, int slope, int voxel, @Nullable ImageryGround imageryGround) {
         Local local = cover == null ? null : local(x, z, y);
         double t = local == null ? temperature(x, z, y) : local.temperature();
         if (water != DRY && water != SEA && cover != null) return lake(x, z, y, water, t, voxel);

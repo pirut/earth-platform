@@ -134,12 +134,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     }
 
     /**
-     * Whether a column's under block is the country rock itself, as sandstone, terracotta and chalk are,
+     * Whether a column's under block is the country rock itself, as sandstone and terracotta are,
      * so its cliff faces show it rather than plain stone: desert cliffs and monoliths such as Uluru
      * otherwise stood as grey stone walls under a few blocks of red.
      */
     private static boolean bedrock(BlockState under) {
-        return under.is(Blocks.SANDSTONE) || under.is(Blocks.RED_SANDSTONE) || under.is(BlockTags.TERRACOTTA) || under.is(Blocks.CALCITE);
+        return under.is(Blocks.SANDSTONE) || under.is(Blocks.RED_SANDSTONE) || under.is(BlockTags.TERRACOTTA);
     }
 
     // Columns ------------------------------------------------------------------------------------
