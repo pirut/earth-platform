@@ -14,6 +14,7 @@ import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.net.Throttle;
 import io.earthplatform.minecraft.diagnostics.PerfFailures;
 import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
 import java.util.ArrayDeque;
@@ -56,6 +57,9 @@ public final class FarServer {
     private final CubeStorage storage;
     private final CubeCodec codec;
     private final IdMap<Holder<Biome>> biomeIds;
+    private final Registry<Biome> biomes;
+    /** Columns as the generator made them, kept on disk between sessions; null when off. */
+    @Nullable private final FarStore store;
     /** What players built, for the coarse levels whose voxels cover several cubes. */
     private final FarBuilds builds;
     /** Summarizes saved builds off the server thread, in the order they were saved. */
@@ -122,7 +126,9 @@ public final class FarServer {
         this.storage = storage;
         this.codec = codec;
         this.biomeIds = biomes.asHolderIdMap();
+        this.biomes = biomes;
         this.builds = new FarBuilds(storage.directory().resolveSibling("builds"));
+        this.store = FarStore.open(storage.directory().resolveSibling("far"), storeToken(biomes));
         if (!builds.scanned()) {
             Thread scan = new Thread(this::scanOldSaves, "Earth far builds scan");
             scan.setDaemon(true);
@@ -208,27 +214,80 @@ public final class FarServer {
             CubePayloads.FarColumnData cached = cache.get(key);
             if (cached != null) return cached;
         }
-        int level = Far.level(key);
-        FarColumn column = new FarColumn();
-        generator.farColumn(level, Far.x(key), Far.z(key), column);
-        if (level <= Far.EDIT_LEVELS) foldSavedCubes(level, Far.x(key), Far.z(key), column);
-        else foldBuilds(level, Far.x(key), Far.z(key), column);
-        List<byte[]> sections = new ArrayList<>(column.sections.size());
-        for (LevelChunkSection section : column.sections) sections.add(section == null ? new byte[0] : CubeCodec.sectionBytes(section));
-        CubePayloads.FarColumnData data = new CubePayloads.FarColumnData(key, column.bottom, sections, column.drops);
-        prints.made(key, FarPrints.of(column.bottom, sections, column.drops));
+        int level = Far.level(key), columnX = Far.x(key), columnZ = Far.z(key);
+        FarStore.Stored stored = store == null ? null : store.get(key);
+        FarColumn column = null;
+        List<byte[]> sections;
+        int bottom;
+        short[] drops;
+        if (stored != null) {
+            sections = stored.sections();
+            bottom = stored.bottom();
+            drops = stored.drops();
+        } else {
+            column = new FarColumn();
+            generator.farColumn(level, columnX, columnZ, column);
+            sections = bytes(column);
+            bottom = column.bottom;
+            drops = column.drops;
+            if (store != null) store.put(key, bottom, sections, drops);
+        }
+        // Saved cubes and builds go on top of the generated column every time, so the store never holds them.
+        int cubes = 1 << level, minX = columnX * cubes, minZ = columnZ * cubes;
+        LongList saved = level <= Far.EDIT_LEVELS ? storage.savedIn(minX, minX + cubes - 1, minZ, minZ + cubes - 1) : null;
+        var built = level <= Far.EDIT_LEVELS ? null : builds.in(minX, minX + cubes - 1, minZ, minZ + cubes - 1);
+        if (saved != null && !saved.isEmpty() || built != null && !built.isEmpty()) {
+            if (column == null) column = column(bottom, sections, drops);
+            if (saved != null) foldSavedCubes(level, saved, column);
+            else foldBuilds(level, columnX, columnZ, built, column);
+            sections = bytes(column);
+        }
+        CubePayloads.FarColumnData data = new CubePayloads.FarColumnData(key, bottom, sections, drops);
+        prints.made(key, FarPrints.of(bottom, sections, drops));
         if (cache.size() > CACHE) cache.clear();
         cache.put(key, data);
         return data;
     }
 
+    private static List<byte[]> bytes(FarColumn column) {
+        List<byte[]> sections = new ArrayList<>(column.sections.size());
+        for (LevelChunkSection section : column.sections) sections.add(section == null ? new byte[0] : CubeCodec.sectionBytes(section));
+        return sections;
+    }
+
+    /** A stored column as the generator would have filled it, for saved cubes and builds to fold into. */
+    private FarColumn column(int bottom, List<byte[]> sections, short[] drops) {
+        FarColumn column = new FarColumn();
+        column.bottom = bottom;
+        for (byte[] section : sections) column.sections.add(section.length == 0 ? null : CubeCodec.readSection(section, biomes));
+        System.arraycopy(drops, 0, column.drops, 0, column.drops.length);
+        return column;
+    }
+
+    /**
+     * What a stored column was made by: this build of the mod, and the block and biome ids its
+     * bytes hold, which other mods change. A store with another token is started afresh.
+     */
+    public static String storeToken(Registry<Biome> biomes) {
+        long blocks = 1;
+        for (BlockState state : Block.BLOCK_STATE_REGISTRY) blocks = blocks * 31 + state.toString().hashCode();
+        long biomeHash = 1;
+        for (int id = 0; id < biomes.size(); id++) {
+            Biome biome = biomes.byId(id);
+            var name = biome == null ? null : biomes.getKey(biome);
+            biomeHash = biomeHash * 31 + (name == null ? 0 : name.toString().hashCode());
+        }
+        return io.earthplatform.minecraft.diagnostics.BuildInfo.version() + " " + io.earthplatform.minecraft.diagnostics.BuildInfo.commit()
+                + " blocks " + Block.BLOCK_STATE_REGISTRY.size() + ":" + Long.toHexString(blocks)
+                + " biomes " + biomes.size() + ":" + Long.toHexString(biomeHash);
+    }
+
     // Saved cubes --------------------------------------------------------------------------------
 
     /** Overwrites the voxels each saved cube covers with that cube's own blocks, downsampled. */
-    private void foldSavedCubes(int level, int columnX, int columnZ, FarColumn column) throws IOException {
+    private void foldSavedCubes(int level, LongList saved, FarColumn column) throws IOException {
         int perCube = 16 >> level, cubes = 1 << level;
-        int minX = columnX * cubes, minZ = columnZ * cubes;
-        for (long key : storage.savedIn(minX, minX + cubes - 1, minZ, minZ + cubes - 1)) {
+        for (long key : saved) {
             CompoundTag tag = storage.read(key);
             // Cubes saved just as generated already match the far terrain made from the generator.
             if (tag == null || tag.getBoolean(CubeCodec.UNTOUCHED)) continue;
@@ -237,7 +296,7 @@ public final class FarServer {
             // Edits below the column's ground are out of sight from afar.
             if (sectionIndex < 0 || sectionIndex >= Far.MAX_SECTIONS) continue;
             LevelChunkSection target = section(column, sectionIndex);
-            int baseX = (CubeKey.x(key) - minX) * perCube, baseY = voxelY & 15, baseZ = (CubeKey.z(key) - minZ) * perCube;
+            int baseX = (CubeKey.x(key) & cubes - 1) * perCube, baseY = voxelY & 15, baseZ = (CubeKey.z(key) & cubes - 1) * perCube;
             for (int y = 0; y < perCube; y++) for (int z = 0; z < perCube; z++) for (int x = 0; x < perCube; x++) {
                 BlockState state = downsample(cube, x << level, y << level, z << level, 1 << level);
                 BlockState here = target.getBlockState(baseX + x, baseY + y, baseZ + z);
@@ -257,10 +316,7 @@ public final class FarServer {
     }
 
     /** Stands the summarized builds under a coarse column on its ground. */
-    private void foldBuilds(int level, int columnX, int columnZ, FarColumn column) {
-        int cubes = 1 << level, minX = columnX * cubes, minZ = columnZ * cubes;
-        var found = builds.in(minX, minX + cubes - 1, minZ, minZ + cubes - 1);
-        if (found.isEmpty()) return;
+    private void foldBuilds(int level, int columnX, int columnZ, it.unimi.dsi.fastutil.longs.Long2ObjectMap<FarBuilds.Summary> found, FarColumn column) {
         if (FarBuilds.fold(level, columnX, columnZ, found, column, this::section) > 0) builtColumns.incrementAndGet(level - Far.EDIT_LEVELS - 1);
         for (int i = 0; i < column.sections.size(); i++) {
             LevelChunkSection section = column.sections.get(i);
@@ -437,5 +493,7 @@ public final class FarServer {
         try { summarizer.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS); }
         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         sessions.clear();
+        // Columns still being made find it closed and keep nothing.
+        if (store != null) store.close();
     }
 }

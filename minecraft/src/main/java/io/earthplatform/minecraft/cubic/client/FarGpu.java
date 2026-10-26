@@ -338,6 +338,7 @@ final class FarGpu {
         drawingFade = fade;
         Program program = packMode ? packProgram(patch, fade) : vanillaProgram(fade);
         boolean built = program != null;
+        if (dry) return built;
         if (program == null) program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
         if (program != null && program != current) {
             if (current.irisUniforms != null) current.irisUniforms.done();
@@ -347,6 +348,27 @@ final class FarGpu {
     }
 
     private boolean packMode, near, ground;
+    /** Between {@link #beginRecording} and {@link #end}: what is queued is only recorded, not drawn. */
+    private boolean dry;
+
+    /**
+     * Starts recording a far terrain draw as {@link #begin} with the same {@code packMode} and
+     * {@code patch} would draw it, without drawing anything or touching GL, so it can be culled
+     * (see {@link #cullBlocked}) and then drawn with {@link #play}; the caller records it (see
+     * {@link #record}). False when there is no program to draw it with.
+     */
+    boolean beginRecording(boolean packMode, @Nullable FarShaders.PackPatch patch) {
+        near = ground = false;
+        Program program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
+        if (program == null) return false;
+        this.packMode = packMode;
+        this.patch = patch;
+        for (Arena arena : arenas) arena.clearDraws();
+        ranges = 0;
+        drawingFade = NO_FADE;
+        dry = true;
+        return true;
+    }
     @Nullable private FarShaders.PackPatch patch;
     private Matrix4f modelView, projection;
     private Vec3 camera;
@@ -492,6 +514,11 @@ final class FarGpu {
     void end() {
         flush();
         recording = null;
+        if (dry) {
+            dry = false;
+            ranges = 0;
+            return;
+        }
         for (int unit : new int[] {QUAD_UNIT, LOOK_UNIT, COLUMN_UNIT}) bindBuffer(unit, 0);
         restore2d(ATLAS_UNIT);
         restore2d(LIGHT_UNIT);
@@ -594,6 +621,10 @@ final class FarGpu {
         for (Arena arena : arenas) {
             if (arena.draws == 0) continue;
             if (recording != null) keep(recording, arena);
+            if (dry) {
+                arena.clearDraws();
+                continue;
+            }
             GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + QUAD_UNIT);
             GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, arena.buffer.texture);
             GlStateManager._activeTexture(previousActive);
@@ -708,7 +739,7 @@ final class FarGpu {
      */
     boolean play(Recording recording) {
         if (recording.count == 0) return false;
-        int commands = phase == SHADE && hiddenCull != null ? hiddenCull.commandsFor(recording) : 0;
+        int commands = hiddenCull != null ? hiddenCull.commandsFor(recording) : 0;
         if (commands != 0) {
             playCulled(recording, commands);
             return true;
@@ -763,15 +794,30 @@ final class FarGpu {
      * the pre-pass's recording that lie wholly behind the faces it kept. False when it can't.
      */
     boolean cullHidden(Recording recording, int faces, int width, int height, Matrix4f modelView, Matrix4f projection) {
-        if (!hiddenCullChecked) {
-            hiddenCullChecked = true;
-            if (FarHiddenCull.ENABLED && INDEXED && FarHiddenCull.supported()) hiddenCull = new FarHiddenCull();
-        }
-        if (hiddenCull == null || recording.count == 0) return false;
+        if (!FarHiddenCull.ENABLED || !cullable() || recording.count == 0) return false;
         return hiddenCull.cull(recording, faces, width, height, new Matrix4f(projection).mul(modelView), grow(projection));
     }
 
-    /** After the shading pass: its culling was for that pass alone. */
+    /**
+     * Before far terrain draws a recording: leaves out of its passes the ranges the game's blocks
+     * hide (see {@link FarHiddenCull#cullBlocked}), from the game's depth texture {@code depth}; with
+     * {@code covered} where the blocks cover them, as under far terrain's own depth. False when it can't.
+     */
+    boolean cullBlocked(Recording recording, int depth, Matrix4f modelView, Matrix4f projection, boolean covered) {
+        if (!cullable() || recording.count == 0 || depth == 0) return false;
+        return hiddenCull.cullBlocked(recording, depth, new Matrix4f(projection).mul(modelView), grow(projection), covered);
+    }
+
+    /** Whether this GL culls far ranges on the GPU (see {@link FarHiddenCull}). */
+    boolean cullable() {
+        if (!hiddenCullChecked) {
+            hiddenCullChecked = true;
+            if (INDEXED && FarHiddenCull.supported()) hiddenCull = new FarHiddenCull();
+        }
+        return hiddenCull != null;
+    }
+
+    /** After the passes of a culled recording: its culling was for this frame alone. */
     void cullDone() { if (hiddenCull != null) hiddenCull.done(); }
 
     private void bind2d(int unit, int texture, boolean packMode) {

@@ -195,6 +195,10 @@ From **Distant Horizons** we took:
 - how Iris hands a shader pack's uniforms to Distant Horizons' programs, which we follow for our own far programs;
 - years of showing players what "render distance" can mean.
 
+From **[FarPlaneTwo](https://github.com/PorkStudios/FarPlaneTwo)** by DaPorkchop_, the level-of-detail renderer built for Cubic Chunks, we took (from build 67; written afresh, no code copied):
+- keeping far terrain on disk in the world's folder, marked with what made it and started afresh when that changes, so a world opened again has its far terrain at once instead of making it all again;
+- testing far terrain against the depth the game's own blocks left before drawing it, on the GPU, so far terrain behind nearby hills is never drawn at all.
+
 ## Earlier Earth and cubic-chunks projects
 
 The [Cubic Chunks](https://github.com/OpenCubicChunks) mods, [Terrarium](https://github.com/gegy/terrarium) and [Terra++](https://github.com/BuildTheEarth/terraplusplus) (Build The Earth) proved that tall worlds and a real-scale Earth in Minecraft are possible. Earth Platform contains no code from them.

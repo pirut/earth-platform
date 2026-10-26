@@ -88,7 +88,9 @@ class FirstVisitBench {
         Bootstrap.bootStrap();
         HolderLookup.Provider lookup = VanillaRegistries.createLookup();
         MappedRegistry<Biome> biomes = new MappedRegistry<>(Registries.BIOME, Lifecycle.stable());
-        lookup.lookupOrThrow(Registries.BIOME).listElements().forEach(holder -> biomes.register(holder.key(), holder.value(), RegistrationInfo.BUILT_IN));
+        // In name order, as the game's are: the far store's bytes hold biome ids, so another order would misread a store a run before made.
+        lookup.lookupOrThrow(Registries.BIOME).listElements().sorted(java.util.Comparator.comparing(holder -> holder.key().location().toString()))
+                .forEach(holder -> biomes.register(holder.key(), holder.value(), RegistrationInfo.BUILT_IN));
         for (String biome : List.of("glacial_lake")) {
             try (var in = FirstVisitBench.class.getResourceAsStream("/data/earthplatform/worldgen/biome/" + biome + ".json")) {
                 var json = com.google.gson.JsonParser.parseReader(new java.io.InputStreamReader(in));
@@ -214,6 +216,12 @@ class FirstVisitBench {
             }
         });
         Map<Long, FarColumn> columns = new ConcurrentHashMap<>();
+        // EARTH_VISIT_STORE: far columns kept on disk there, as FarServer keeps them (FarStore); a second run reads them back.
+        String storeDir = System.getenv("EARTH_VISIT_STORE");
+        io.earthplatform.minecraft.cubic.far.FarStore store = storeDir == null ? null
+                : io.earthplatform.minecraft.cubic.far.FarStore.open(Path.of(storeDir), FarServer.storeToken(biomes));
+        Map<Long, io.earthplatform.minecraft.cubic.far.FarStore.Stored> stored = new ConcurrentHashMap<>();
+        int[] fromStore = {0};
         LongOpenHashSet asked = new LongOpenHashSet();
         AtomicInteger inFlight = new AtomicInteger(), failures = new AtomicInteger();
         long[] levelNanos = new long[Far.MAX_LEVEL + 1];
@@ -247,9 +255,17 @@ class FirstVisitBench {
                 farWorkers.execute(() -> {
                     long start = System.nanoTime();
                     try {
+                        var kept = store == null ? null : store.get(key);
                         FarColumn column = new FarColumn();
-                        earth.farColumn(Far.level(key), Far.x(key), Far.z(key), column);
-                        for (LevelChunkSection section : column.sections) if (section != null) CubeCodec.sectionBytes(section);
+                        if (kept != null) {
+                            stored.put(key, kept);
+                            synchronized (fromStore) { fromStore[0]++; }
+                        } else {
+                            earth.farColumn(Far.level(key), Far.x(key), Far.z(key), column);
+                            List<byte[]> bytes = new ArrayList<>();
+                            for (LevelChunkSection section : column.sections) bytes.add(section == null ? new byte[0] : CubeCodec.sectionBytes(section));
+                            if (store != null) store.put(key, column.bottom, bytes, column.drops);
+                        }
                         columns.put(key, column);
                         synchronized (levelNanos) { levelNanos[Far.level(key)] += System.nanoTime() - start; levelCount[Far.level(key)]++; }
                     } catch (RuntimeException failure) {
@@ -287,6 +303,18 @@ class FirstVisitBench {
             System.out.printf(Locale.ROOT, "level %d: %5d columns, %.1f ms each (wall, waits included)%n", level, levelCount[level], levelNanos[level] / 1e6 / Math.max(1, levelCount[level]));
         System.out.println(tick);
         System.out.println("far data: " + farDataText[0]);
+        if (store != null) {
+            System.out.println("far store: " + fromStore[0] + " columns read back; " + store.stats());
+            store.close();
+            // Fingerprinted as the generator would have made them.
+            for (var entry : stored.entrySet()) {
+                FarColumn column = new FarColumn();
+                column.bottom = entry.getValue().bottom();
+                for (byte[] bytes : entry.getValue().sections()) column.sections.add(bytes.length == 0 ? null : CubeCodec.readSection(bytes, biomes));
+                System.arraycopy(entry.getValue().drops(), 0, column.drops, 0, 256);
+                columns.put(entry.getKey(), column);
+            }
+        }
         System.out.println("all downloads: " + Downloads.since(before));
 
         // Fingerprints, in key order, so they compare between runs whatever order the workers made things in.

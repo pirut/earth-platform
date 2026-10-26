@@ -250,6 +250,12 @@ public final class FarLod {
 
     static int vanillaUnit() { return VANILLA_UNIT; }
 
+    /** The game's depth texture far terrain's own-depth programs read this frame (see {@link #beginDraw}). */
+    static int gameDepth() { return gameDepth; }
+
+    /** The depth texture of the framebuffer bound for drawing, or 0 when it has none or a renderbuffer. */
+    static int boundDepth() { return attached(GL30C.GL_DEPTH_ATTACHMENT); }
+
     /** The faces' own depth the depth pre-pass leaves (see {@link #beginPrepass}), and its size. */
     static int facesTexture() { return faces; }
     static int width() { return width; }
