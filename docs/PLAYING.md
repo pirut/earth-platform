@@ -50,6 +50,10 @@ On the Earth a plain compass points to your spawn (your own, your team's or the 
 
 For survival travel, climb high and glide. With an elytra, the wind above about Y 9,200 carries you along your heading at over 1,000 blocks a second, a little faster eastward and a little slower westward, so a continent takes under an hour. Fireworks pointed steeply up climb fast (about 30 take you from the ground into the wind); in the wind they add nothing, and your elytra doesn't wear. Tip your nose down to leave the wind; you slow over a few kilometers before landing. The terrain below stays drawn as far terrain the whole way.
 
+### Earth advancements
+
+Setting foot on the Earth opens an Earth tab on the advancements screen (**L**), with goals for going places: stand on ground 2,000, 4,000 and 8,000 meters up; stand 50 meters below sea level in the open, as in Death Valley or by the Dead Sea; dive 100 and 1,000 meters down in the sea; cross the equator and the date line; go past the Arctic and Antarctic Circles; visit 2, 10 and 50 countries; get 5,000 km from your spawn, and then to the far side of the Earth from it; ride the jet stream; point a compass, and catch up with the player it follows. Around the World takes the whole way round the Earth in one trip: its progress counts each 10 degrees of longitude, and teleporting or respawning starts the trip over. Heights and depths go by the ground itself, so towers and mine shafts don't count, and nothing is awarded during a Where on Earth round.
+
 ### Commands
 
 In singleplayer you can always travel. On servers only operators can, unless `anyoneCanTravel` is on. Operators and the server console can send someone else: `/earth goto <latitude> <longitude> <player>`.

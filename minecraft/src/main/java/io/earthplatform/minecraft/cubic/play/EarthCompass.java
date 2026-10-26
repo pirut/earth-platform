@@ -54,6 +54,8 @@ public final class EarthCompass {
     public static final double THERE = 0.02;
     /** A followed player has to move this far, or a hundredth of the way to them, before the needle is moved. */
     private static final double FOLLOW_STEP = 8;
+    /** This close to the player a compass follows, its holder has caught up with them. */
+    private static final double CAUGHT_UP = 16;
     /** Players in a Where on Earth round, whose clients were told to show no distances. */
     private static final Set<UUID> QUIET = new HashSet<>();
 
@@ -118,6 +120,7 @@ public final class EarthCompass {
         String said = (follows != null ? "Your compass follows " : "Your compass points to ") + label(name, latitude, longitude)
                 + (here == null ? "" : ": " + way(here, latitude, longitude)) + ".";
         source.sendSuccess(() -> Component.literal(said).withStyle(ChatFormatting.GREEN), false);
+        EarthExplorer.award(player, "way_finder");
         return 1;
     }
 
@@ -329,6 +332,7 @@ public final class EarthCompass {
             LodestoneTracker tracker = stack.get(DataComponents.LODESTONE_TRACKER);
             BlockPos needle = tracker == null ? null : tracker.target().map(GlobalPos::pos).orElse(null);
             double gap = Math.hypot(there[0] - player.getX(), there[1] - player.getZ());
+            if (gap <= CAUGHT_UP && Math.abs(other.getY() - player.getY()) <= CAUGHT_UP) EarthExplorer.award(player, "found_you");
             if (needle != null && Math.hypot(there[0] - needle.getX(), there[1] - needle.getZ()) < Math.max(FOLLOW_STEP, gap / 100)) continue;
             retarget(stack, player, earth, at.latitude(), at.longitude());
             CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {

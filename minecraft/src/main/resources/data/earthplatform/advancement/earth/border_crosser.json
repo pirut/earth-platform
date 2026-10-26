@@ -1,0 +1,27 @@
+{
+  "parent": "earthplatform:earth/root",
+  "criteria": {
+    "border_crosser": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:paper",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.border_crosser.title",
+      "fallback": "Border Crossing"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.border_crosser.description",
+      "fallback": "Enter a second country"
+    }
+  },
+  "requirements": [
+    [
+      "border_crosser"
+    ]
+  ]
+}

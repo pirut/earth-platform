@@ -1,0 +1,27 @@
+{
+  "parent": "earthplatform:earth/below_sea_level",
+  "criteria": {
+    "deep_diver": {
+      "trigger": "minecraft:impossible"
+    }
+  },
+  "display": {
+    "icon": {
+      "id": "minecraft:turtle_helmet",
+      "count": 1
+    },
+    "title": {
+      "translate": "advancements.earthplatform.earth.deep_diver.title",
+      "fallback": "Deep Diver"
+    },
+    "description": {
+      "translate": "advancements.earthplatform.earth.deep_diver.description",
+      "fallback": "Swim 100 meters down in the open sea"
+    }
+  },
+  "requirements": [
+    [
+      "deep_diver"
+    ]
+  ]
+}
