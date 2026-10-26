@@ -179,6 +179,15 @@ final class FarShaders {
     /** How long a finer level takes to fade in over the coarser one when its columns arrive, in hundredths of a second. */
     static final int FADE_TICKS = 60;
 
+    /**
+     * The define for a program that draws far terrain only where the game drew none of its own
+     * blocks, from a copy of the game's depth before any far terrain ({@link FarBlockDepth}). While
+     * the ground near the player settles, far columns inside the blocks' reach are drawn with it:
+     * coarse voxels standing in under the player for finer columns still on their way, and voxels
+     * not cut away yet where cubes have come since their mesh, otherwise covered the blocks there.
+     */
+    static final String GROUND = "#define EARTH_GROUND\n";
+
     /** Blocks of height over which the haze thins to about a third (1/e): roughly how deep the hazy lower air is. */
     private static final float HAZE_HEIGHT = 1000.0F;
 
@@ -382,6 +391,17 @@ final class FarShaders {
             uniform usamplerBuffer earth_Quads;
             uniform usamplerBuffer earth_Looks;
 
+            #ifdef EARTH_GROUND
+            // The game's depth as its own blocks left it, before any far terrain (see FarBlockDepth).
+            uniform sampler2D earth_Blocks;
+
+            // Drops the fragment where the game drew one of its own blocks: far terrain inside their
+            // reach only fills in for blocks still loading, never covers the ones already there.
+            void earth_ground() {
+                if (texelFetch(earth_Blocks, ivec2(gl_FragCoord.xy), 0).r < 1.0) discard;
+            }
+            #endif
+
             // The face's look (see FarLooks), read by each pixel shaded rather than by each of the
             // face's four corners and handed on: the shading pass after the depth pre-pass shades
             // only the pixels it keeps, but runs the vertex shader for every face.
@@ -544,6 +564,9 @@ final class FarShaders {
             #ifdef EARTH_FADE
                 earth_fade();
             #endif
+            #ifdef EARTH_GROUND
+                earth_ground();
+            #endif
                 earth_readLook();
                 vec4 colour = earth_sample();
                 colour.rgb *= earth_tint * earth_shade();
@@ -665,6 +688,9 @@ final class FarShaders {
             #ifdef EARTH_FADE
                 earth_fade();
             #endif
+            #ifdef EARTH_GROUND
+                earth_ground();
+            #endif
             #ifdef EARTH_NEAR
                 if (length(earth_position.xz) >= earth_NearReach) discard;
             #endif
@@ -704,6 +730,9 @@ final class FarShaders {
             #ifdef EARTH_FADE
                 earth_fade();
             #endif
+            #ifdef EARTH_GROUND
+                earth_ground();
+            #endif
                 earth_readLook();
                 vec4 colour = earth_sample();
                 colour.rgb *= earth_tint * earth_shade();
@@ -729,7 +758,10 @@ final class FarShaders {
     static String packFragment(String version, String patch, boolean ownDepth) { return packFragment(version, patch, ownDepth, 0); }
 
     /** The same for a fade (see {@link #fade}). */
-    static String packFragment(String version, String patch, boolean ownDepth, int fade) {
+    static String packFragment(String version, String patch, boolean ownDepth, int fade) { return packFragment(version, patch, ownDepth, fade, false); }
+
+    /** The same, drawing only where the game drew none of its blocks with {@code ground} (see {@link #GROUND}). */
+    static String packFragment(String version, String patch, boolean ownDepth, int fade, boolean ground) {
         StringBuilder extensions = new StringBuilder(), body = new StringBuilder();
         for (String line : patch.split("\n", -1)) {
             String trimmed = line.trim();
@@ -737,13 +769,16 @@ final class FarShaders {
             else if (!trimmed.startsWith("#version")) body.append(line).append('\n');
         }
         String patched = FACE_NORMAL.matcher(body).replaceFirst("$1\n    $2 = earth_packNormal($2);");
-        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + fade(fade) + VOXY_PARAMETERS + patched
+        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + (ground ? GROUND : "") + fade(fade) + VOXY_PARAMETERS + patched
                 + (ownDepth ? faceDepthAt(PACK_MAIN, faceDepthLocation(patch)) : PACK_MAIN);
     }
 
     /** The same for far terrain inside the game's blocks' reach, drawn into the game's depth while far terrain otherwise has its own. */
-    static String packNearFragment(String version, String patch, int fade) {
-        return packFragment(version, patch, false, fade).replaceFirst("\n", "\n#define EARTH_NEAR\n");
+    static String packNearFragment(String version, String patch, int fade) { return packNearFragment(version, patch, fade, false); }
+
+    /** The same, drawing only where the game drew none of its blocks with {@code ground} (see {@link #GROUND}). */
+    static String packNearFragment(String version, String patch, int fade, boolean ground) {
+        return packFragment(version, patch, false, fade, ground).replaceFirst("\n", "\n#define EARTH_NEAR\n");
     }
 
     // Depth pre-pass (-Dearthplatform.far.depthPrepass=true; see FarGpu#DEPTH_PREPASS) ---------------

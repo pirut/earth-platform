@@ -49,7 +49,7 @@ import org.lwjgl.system.MemoryUtil;
  * A column slot holds the column's origin and level. Everything here runs on the render thread.
  */
 final class FarGpu {
-    private static final int QUAD_UNIT = 3, LOOK_UNIT = 4, COLUMN_UNIT = 5, ATLAS_UNIT = 0, LIGHT_UNIT = 2;
+    private static final int QUAD_UNIT = 3, LOOK_UNIT = 4, COLUMN_UNIT = 5, ATLAS_UNIT = 0, LIGHT_UNIT = 2, BLOCKS_UNIT = 1;
     /** Faces per buffer texture: 64 MB each. */
     private static final int ARENA_QUADS = 1 << 22;
 
@@ -81,6 +81,9 @@ final class FarGpu {
     /** Programs by fade ({@link #NO_FADE}, {@link #FADE_OUT}, {@link #FADE_IN}); a fade's program is built when first asked for. */
     private final Program[] vanilla = new Program[3], pack = new Program[3], packNear = new Program[3];
     private final boolean[] vanillaFailed = new boolean[3], packFailed = new boolean[3], packNearFailed = new boolean[3];
+    /** The same three, drawing only where the game drew none of its blocks (see {@link FarShaders#GROUND}). */
+    private final Program[] vanillaGround = new Program[3], packGround = new Program[3], packNearGround = new Program[3];
+    private final boolean[] vanillaGroundFailed = new boolean[3], packGroundFailed = new boolean[3], packNearGroundFailed = new boolean[3];
     @Nullable private FarShaders.PackPatch packSource;
     @Nullable private Object packPipeline;
     private boolean packOwnDepth, packJittered;
@@ -272,12 +275,19 @@ final class FarGpu {
      * When far terrain has its own depth ({@link FarLod}), the pack program drops fragments where
      * the game's depth (on {@link FarLod#vanillaUnit()}) already holds terrain, and those inside the
      * game's blocks' reach, which a {@code near} draw puts in the game's own depth beforehand.
+     * With {@code ground} it draws only where the game drew none of its blocks, from the copy of
+     * its depth {@link FarBlockDepth} made this frame, or as before if that program does not build.
      * Returns false when there is nothing usable to draw with.
      */
     boolean begin(boolean packMode, @Nullable FarShaders.PackPatch patch, Matrix4f modelView, Matrix4f projection, Vec3 camera, float[] shade,
-            int frame, boolean near) {
+            int frame, boolean near, boolean ground) {
         this.near = near;
+        this.ground = ground;
         Program program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
+        if (program == null && ground) {
+            this.ground = false;
+            program = packMode ? packProgram(patch, NO_FADE) : vanillaProgram(NO_FADE);
+        }
         if (program == null) return false;
         uploadLooks();
         this.packMode = packMode;
@@ -295,6 +305,7 @@ final class FarGpu {
         previousActive = GlStateManager._getActiveTexture();
         bind2d(ATLAS_UNIT, atlas, packMode);
         bind2d(LIGHT_UNIT, lightmap, packMode);
+        if (this.ground) bind2d(BLOCKS_UNIT, FarBlockDepth.texture(), packMode);
         bindBuffer(LOOK_UNIT, looks.texture);
         bindBuffer(COLUMN_UNIT, columns.texture);
         GlStateManager._activeTexture(previousActive);
@@ -335,7 +346,7 @@ final class FarGpu {
         return built;
     }
 
-    private boolean packMode, near;
+    private boolean packMode, near, ground;
     @Nullable private FarShaders.PackPatch patch;
     private Matrix4f modelView, projection;
     private Vec3 camera;
@@ -386,6 +397,7 @@ final class FarGpu {
         GL20C.glUniform1i(program.location("earth_Atlas"), ATLAS_UNIT);
         GL20C.glUniform1i(program.location("earth_Lightmap"), LIGHT_UNIT);
         GL20C.glUniform1i(program.location("earth_GameDepth"), FarLod.vanillaUnit());
+        GL20C.glUniform1i(program.location("earth_Blocks"), BLOCKS_UNIT);
         if (packMode && packOwnDepth && !near) FarLod.shadowUniforms(program::location);
         GL20C.glUniform1f(program.location("earth_FadeHole"), Far.hole());
         GL20C.glUniform1f(program.location("earth_NearReach"), FarLod.nearReach());
@@ -483,6 +495,7 @@ final class FarGpu {
         for (int unit : new int[] {QUAD_UNIT, LOOK_UNIT, COLUMN_UNIT}) bindBuffer(unit, 0);
         restore2d(ATLAS_UNIT);
         restore2d(LIGHT_UNIT);
+        if (ground) restore2d(BLOCKS_UNIT);
         GlStateManager._activeTexture(previousActive);
         GL30C.glBindVertexArray(previousVao);
         BufferUploader.invalidate();
@@ -514,9 +527,9 @@ final class FarGpu {
      */
     boolean prepassReady(@Nullable FarShaders.PackPatch patch) {
         if (!depthPrepass || patch == null || !prepassSafe(patch) || GL11C.glIsEnabled(GL11C.GL_BLEND)) return false;
-        boolean wasNear = near;
+        boolean wasNear = near, wasGround = ground;
         int was = phase;
-        near = false;
+        near = ground = false;
         try {
             for (int fade = NO_FADE; fade <= FADE_IN; fade++) {
                 phase = ONE_PASS;
@@ -530,6 +543,7 @@ final class FarGpu {
             return true;
         } finally {
             near = wasNear;
+            ground = wasGround;
             phase = was;
         }
     }
@@ -799,6 +813,7 @@ final class FarGpu {
     // Programs -----------------------------------------------------------------------------------
 
     @Nullable private Program vanillaProgram(int fade) {
+        if (ground) return vanillaGroundProgram(fade);
         if (vanilla[fade] == null && !vanillaFailed[fade]) {
             String header = version + FarShaders.fade(fade);
             try { vanilla[fade] = Program.link(header + FarShaders.VERTEX, header + FarShaders.FRAGMENT, "far terrain"); }
@@ -811,6 +826,19 @@ final class FarGpu {
         return vanilla[fade];
     }
 
+    /** The vanilla program drawing only where the game drew none of its blocks (see {@link FarShaders#GROUND}). */
+    @Nullable private Program vanillaGroundProgram(int fade) {
+        if (vanillaGround[fade] == null && !vanillaGroundFailed[fade]) {
+            String header = version + FarShaders.GROUND + FarShaders.fade(fade);
+            try { vanillaGround[fade] = Program.link(header + FarShaders.VERTEX, header + FarShaders.FRAGMENT, "far terrain under the game's blocks"); }
+            catch (IllegalStateException failure) {
+                vanillaGroundFailed[fade] = true;
+                if (fade == NO_FADE) EarthPlatformMod.LOGGER.warn("Far terrain that leaves the game's blocks alone failed to build; it may cover them while they load", failure);
+            }
+        }
+        return vanillaGround[fade];
+    }
+
     /**
      * The program for the active pack: its Voxy patch when it has one that builds, else the generic
      * one, jittered for the pack's TAA when it asks for that, and given the pack's uniforms. Rebuilt
@@ -821,10 +849,11 @@ final class FarGpu {
         boolean ownDepth = FarLod.active();
         if (!java.util.Objects.equals(patch, packSource) || pipeline != packPipeline || ownDepth != packOwnDepth) {
             for (int i = 0; i < pack.length; i++) {
-                if (pack[i] != null) pack[i].close();
-                if (packNear[i] != null) packNear[i].close();
-                pack[i] = packNear[i] = null;
-                packFailed[i] = packNearFailed[i] = false;
+                for (Program[] programs : new Program[][] {pack, packNear, packGround, packNearGround}) {
+                    if (programs[i] != null) programs[i].close();
+                    programs[i] = null;
+                }
+                packFailed[i] = packNearFailed[i] = packGroundFailed[i] = packNearGroundFailed[i] = false;
                 if (prepass[i] != null) prepass[i].close();
                 if (shading[i] != null) shading[i].close();
                 prepass[i] = shading[i] = null;
@@ -839,6 +868,7 @@ final class FarGpu {
         }
         if (near) return nearProgram(patch, fade);
         if (phase != ONE_PASS) return patch == null ? null : phasedProgram(patch, fade);
+        if (ground) return groundProgram(patch, fade);
         if (pack[fade] != null || packFailed[fade]) return pack[fade];
         // Every fade builds as the plain program did: the same patch, jittered or not.
         String jitter = packJittered && patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
@@ -875,19 +905,48 @@ final class FarGpu {
      * (see {@link FarShaders#packFragment}): built only once the main one is, from the same patch.
      */
     @Nullable private Program nearProgram(@Nullable FarShaders.PackPatch patch, int fade) {
-        if (packNear[fade] != null || packNearFailed[fade]) return packNear[fade];
-        near = false;
+        Program[] programs = ground ? packNearGround : packNear;
+        boolean[] failed = ground ? packNearGroundFailed : packNearFailed;
+        if (programs[fade] != null || failed[fade]) return programs[fade];
+        boolean keep = ground;
+        near = ground = false;
         Program main = packProgram(patch, fade);
         near = true;
-        if (main == null || patch == null || !packPatched || !packOwnDepth) { packNearFailed[fade] = true; return null; }
+        ground = keep;
+        if (main == null || patch == null || !packPatched || !packOwnDepth) { failed[fade] = true; return null; }
         String jitter = main.jittered && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
-        packNear[fade] = linkPack(jitter, FarShaders.packNearFragment(version, packCode(patch), fade), "far terrain near by (shader pack)",
-                version + FarShaders.fade(fade), packSamplers);
-        if (packNear[fade] == null) {
-            packNearFailed[fade] = true;
-            EarthPlatformMod.LOGGER.warn("Far terrain near by does not build with the shader pack; it is left out until the game's blocks load");
+        programs[fade] = linkPack(jitter, FarShaders.packNearFragment(version, packCode(patch), fade, ground),
+                ground ? "far terrain near by, under the game's blocks (shader pack)" : "far terrain near by (shader pack)", version + FarShaders.fade(fade), packSamplers);
+        if (programs[fade] == null) {
+            failed[fade] = true;
+            if (ground) EarthPlatformMod.LOGGER.warn("Far terrain near by that leaves the game's blocks alone does not build with the shader pack; it may cover them while they load");
+            else EarthPlatformMod.LOGGER.warn("Far terrain near by does not build with the shader pack; it is left out until the game's blocks load");
         }
-        return packNear[fade];
+        return programs[fade];
+    }
+
+    /**
+     * The one-pass program drawing only where the game drew none of its blocks (see
+     * {@link FarShaders#GROUND}), for far terrain in the game's own depth: built once the plain one
+     * is, from the same patch or the same plain colours, and jittered alike.
+     */
+    @Nullable private Program groundProgram(@Nullable FarShaders.PackPatch patch, int fade) {
+        if (packGround[fade] != null || packGroundFailed[fade]) return packGround[fade];
+        ground = false;
+        Program main = packProgram(patch, fade);
+        ground = true;
+        if (main == null) { packGroundFailed[fade] = true; return null; }
+        String jitter = main.jittered && patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
+        String header = version + FarShaders.GROUND + FarShaders.fade(fade);
+        packGround[fade] = packPatched && patch != null
+                ? linkPack(jitter, FarShaders.packFragment(version, packCode(patch), packOwnDepth, fade, true), "far terrain under the game's blocks (shader pack)",
+                        header, packSamplers)
+                : linkPack(jitter, header + FarShaders.PACK_FALLBACK, "far terrain under the game's blocks (plain, shader pack)", header, false);
+        if (packGround[fade] == null) {
+            packGroundFailed[fade] = true;
+            if (fade == NO_FADE) EarthPlatformMod.LOGGER.warn("Far terrain that leaves the game's blocks alone does not build with the shader pack; it may cover them while they load");
+        }
+        return packGround[fade];
     }
 
     /** Whether the pack's Voxy code builds; once it fails, every fade uses the plain colours too. */
@@ -949,8 +1008,8 @@ final class FarGpu {
         arenas.clear();
         columns.close();
         looks.close();
-        for (Program program : vanilla) if (program != null) program.close();
-        for (Program program : pack) if (program != null) program.close();
+        for (Program[] programs : new Program[][] {vanilla, pack, packNear, vanillaGround, packGround, packNearGround})
+            for (Program program : programs) if (program != null) program.close();
         for (Program program : prepass) if (program != null) program.close();
         for (Program program : shading) if (program != null) program.close();
         if (hiddenCull != null) { hiddenCull.close(); hiddenCull = null; }
