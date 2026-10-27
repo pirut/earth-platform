@@ -1,12 +1,20 @@
 # Third-party notices
 
-Earth Platform is licensed LGPL-3.0-only (see LICENSE and COPYING). This file lists the third-party data, documents and build files in the repository and the mod jar, and the services the mod reads at runtime. Player-facing credits are in [CREDITS.md](CREDITS.md); the license audit is in [docs/release/LICENSING-AUDIT.md](docs/release/LICENSING-AUDIT.md). The mod jar contains no third-party code: only `io/earthplatform` classes, our own resources and the data listed below.
+Earth Platform is licensed LGPL-3.0-only (see LICENSE and COPYING). This file lists the third-party data, documents and build files in the repository and the mod jar, and the services the mod reads at runtime. Player-facing credits are in [CREDITS.md](CREDITS.md); the license audit is in [docs/release/LICENSING-AUDIT.md](docs/release/LICENSING-AUDIT.md). The NeoForge mod jar contains no third-party code: only `io/earthplatform` classes, our own resources and the data listed below. The Fabric jar adds the bundled libraries under [Fabric jar](#fabric-jar).
 
 ## Build files
 
 - The Gradle build in `minecraft/` started from the NeoForged MDK template, © 2023 NeoForged project, MIT License; the license text is in `minecraft/TEMPLATE_LICENSE.txt`.
 - `minecraft/gradlew` and `minecraft/gradlew.bat` are the Gradle wrapper scripts, © the original authors (Gradle), Apache License 2.0, as stated in their headers.
 - Neither is part of the mod jar, apart from the layout of `neoforge.mods.toml`, which follows the template.
+- `fabric/gradlew` and `fabric/gradlew.bat` are the same Gradle wrapper scripts, Apache License 2.0. The Fabric build uses Fabric Loom (MIT) and Mojang's official mappings with Parchment parameter names (CC0); none of it is in the jar.
+
+## Fabric jar
+
+The Fabric jar nests, unmodified and with their own licenses, as Fabric's jar-in-jar libraries in `META-INF/jars`:
+
+- [Forge Config API Port](https://github.com/Fuzss/forgeconfigapiport) 21.1.6 by Fuzs, Mozilla Public License 2.0 (https://mozilla.org/MPL/2.0/). Its source is at that address. It gives Fabric NeoForge's config classes, so Earth Platform's settings files and screen are the same on both loaders.
+- [NightConfig](https://github.com/TheElectronWill/night-config) core and toml 3.8.0 by TheElectronWill, nested inside Forge Config API Port, GNU Lesser General Public License 3.0.
 
 ## Distant Horizons
 

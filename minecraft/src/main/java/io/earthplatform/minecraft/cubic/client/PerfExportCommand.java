@@ -1,30 +1,27 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.diagnostics.PerfExport;
 import java.nio.file.NoSuchFileException;
 import java.time.Instant;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
-import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 
 /**
  * {@code /earthperf export}: saves the local performance log as one zip and links its folder in
  * chat. A client command, so it works in singleplayer and on any server, and sends nothing.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, value = Dist.CLIENT)
 public final class PerfExportCommand {
     private PerfExportCommand() {}
 
-    @SubscribeEvent public static void register(RegisterClientCommandsEvent event) {
-        event.getDispatcher().register(Commands.literal("earthperf").then(Commands.literal("export").executes(context -> {
+    /** Adds the command to a client command dispatcher, whatever its source type (NeoForge's and Fabric's differ). */
+    public static <S> void register(CommandDispatcher<S> dispatcher) {
+        dispatcher.register(LiteralArgumentBuilder.<S>literal("earthperf").then(LiteralArgumentBuilder.<S>literal("export").executes(context -> {
             Minecraft mc = Minecraft.getInstance();
             var perf = mc.gameDirectory.toPath().resolve("earthplatform/perf");
             // Off the render thread: the log can be up to 12 MiB.

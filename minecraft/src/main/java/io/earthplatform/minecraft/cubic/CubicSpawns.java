@@ -1,19 +1,17 @@
 package io.earthplatform.minecraft.cubic;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MobSpawnType;
+import net.minecraft.world.entity.SpawnPlacements;
 import net.minecraft.world.entity.ambient.Bat;
 import net.minecraft.world.entity.animal.WaterAnimal;
 import net.minecraft.world.level.ServerLevelAccessor;
 import net.minecraft.world.level.block.Blocks;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.entity.RegisterSpawnPlacementsEvent;
 
 /**
  * Spawn rules vanilla ties to sea level, given their meaning in a cubic world, where the ground
@@ -21,22 +19,26 @@ import net.neoforged.neoforge.event.entity.RegisterSpawnPlacementsEvent;
  * height, and fish and squid swim in the top 13 blocks of any water, such as a mountain lake, not
  * only in the 13 blocks under Y 62. Vanilla's own rules still apply alongside.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
 public final class CubicSpawns {
     private CubicSpawns() {}
 
-    @SubscribeEvent public static void placements(RegisterSpawnPlacementsEvent event) {
-        event.register(EntityType.BAT, CubicSpawns::bat, RegisterSpawnPlacementsEvent.Operation.OR);
-        surfaceWater(event, EntityType.COD);
-        surfaceWater(event, EntityType.SALMON);
-        surfaceWater(event, EntityType.PUFFERFISH);
-        surfaceWater(event, EntityType.TROPICAL_FISH);
-        surfaceWater(event, EntityType.SQUID);
-        surfaceWater(event, EntityType.DOLPHIN);
+    /** Where the loader adds a spawn rule that lets a mob spawn when vanilla's or this one allows it. */
+    public interface Rules {
+        <T extends Entity> void or(EntityType<T> type, SpawnPlacements.SpawnPredicate<T> rule);
     }
 
-    private static <T extends WaterAnimal> void surfaceWater(RegisterSpawnPlacementsEvent event, EntityType<T> type) {
-        event.register(type, CubicSpawns::nearWaterTop, RegisterSpawnPlacementsEvent.Operation.OR);
+    public static void placements(Rules rules) {
+        rules.or(EntityType.BAT, CubicSpawns::bat);
+        surfaceWater(rules, EntityType.COD);
+        surfaceWater(rules, EntityType.SALMON);
+        surfaceWater(rules, EntityType.PUFFERFISH);
+        surfaceWater(rules, EntityType.TROPICAL_FISH);
+        surfaceWater(rules, EntityType.SQUID);
+        surfaceWater(rules, EntityType.DOLPHIN);
+    }
+
+    private static <T extends WaterAnimal> void surfaceWater(Rules rules, EntityType<T> type) {
+        rules.or(type, CubicSpawns::nearWaterTop);
     }
 
     /** As vanilla's bats, but under the column's ground instead of under sea level. */

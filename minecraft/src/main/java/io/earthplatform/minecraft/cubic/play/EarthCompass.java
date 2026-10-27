@@ -3,8 +3,8 @@ package io.earthplatform.minecraft.cubic.play;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import io.earthplatform.geography.GeoPoint;
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
+import io.earthplatform.minecraft.platform.Platform;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -27,16 +27,12 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.item.component.LodestoneTracker;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.entity.player.PlayerEvent;
-import net.neoforged.neoforge.event.server.ServerStoppedEvent;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
  * Compasses on the Earth. A plain compass points to where its holder spawns on the Earth; vanilla
@@ -46,7 +42,6 @@ import net.neoforged.neoforge.network.PacketDistributor;
  * pointed at a player follows them while they are on the Earth. The distance shows on the action
  * bar while it is in hand (see {@code play.client.EarthCompassHud}).
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
 public final class EarthCompass {
     /** Where a pointed compass keeps its target in its custom data: latitude, longitude, a name and whom it follows. */
     public static final String TAG = "earthplatform_compass";
@@ -290,16 +285,16 @@ public final class EarthCompass {
     }
 
     // The vanilla spawn packets go out as a player joins, respawns or changes dimension, before these events.
-    @SubscribeEvent public static void loggedIn(PlayerEvent.PlayerLoggedInEvent event) {
-        if (event.getEntity() instanceof ServerPlayer player) tellSpawn(player);
+    public static void loggedIn(Player entity) {
+        if (entity instanceof ServerPlayer player) tellSpawn(player);
     }
 
-    @SubscribeEvent public static void respawned(PlayerEvent.PlayerRespawnEvent event) {
-        if (event.getEntity() instanceof ServerPlayer player) tellSpawn(player);
+    public static void respawned(Player entity) {
+        if (entity instanceof ServerPlayer player) tellSpawn(player);
     }
 
-    @SubscribeEvent public static void changedDimension(PlayerEvent.PlayerChangedDimensionEvent event) {
-        if (event.getEntity() instanceof ServerPlayer player) tellSpawn(player);
+    public static void changedDimension(Player entity) {
+        if (entity instanceof ServerPlayer player) tellSpawn(player);
     }
 
     // Each second ---------------------------------------------------------------------------------
@@ -309,7 +304,7 @@ public final class EarthCompass {
             // A Where on Earth round: a distance to a known spot would give the answer away.
             boolean quiet = EarthGuess.playing(player);
             if (quiet ? QUIET.add(player.getUUID()) : QUIET.remove(player.getUUID()))
-                PacketDistributor.sendToPlayer(player, new EarthMap.Payload(quiet ? EarthMap.HIDE_COMPASS : EarthMap.SHOW_COMPASS, 0, 0));
+                Platform.INSTANCE.sendToPlayer(player, new EarthMap.Payload(quiet ? EarthMap.HIDE_COMPASS : EarthMap.SHOW_COMPASS, 0, 0));
             follow(server, player);
         }
     }
@@ -344,7 +339,7 @@ public final class EarthCompass {
         }
     }
 
-    @SubscribeEvent public static void loggedOut(PlayerEvent.PlayerLoggedOutEvent event) { QUIET.remove(event.getEntity().getUUID()); }
+    public static void loggedOut(Player entity) { QUIET.remove(entity.getUUID()); }
 
-    @SubscribeEvent public static void stopped(ServerStoppedEvent event) { QUIET.clear(); }
+    public static void stopped() { QUIET.clear(); }
 }

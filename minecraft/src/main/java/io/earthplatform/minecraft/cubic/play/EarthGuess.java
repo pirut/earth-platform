@@ -4,6 +4,7 @@ import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
+import io.earthplatform.minecraft.platform.Platform;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -25,7 +26,6 @@ import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
  * A Where on Earth round, a guessing game in the style of GeoGuessr: everyone playing is dropped at the same random spot on land, looks around,
@@ -116,7 +116,7 @@ final class EarthGuess {
         ServerPlayer player = source.getPlayerOrException();
         if (!playing(player)) { source.sendFailure(Component.literal("You're not in a Where on Earth round.")); return 0; }
         // NaN: the globe opens on the whole world, with no dot where the player is.
-        PacketDistributor.sendToPlayer(player, new EarthMap.Payload(EarthMap.PICK_GUESS, Double.NaN, Double.NaN));
+        Platform.INSTANCE.sendToPlayer(player, new EarthMap.Payload(EarthMap.PICK_GUESS, Double.NaN, Double.NaN));
         return 1;
     }
 

@@ -11,7 +11,6 @@ import net.caffeinemc.mods.sodium.api.config.structure.ConfigBuilder;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 
 /**
  * An Earth Platform page in Sodium's Video Settings, beside Sodium's own pages, with the client settings
@@ -79,7 +78,7 @@ public final class SodiumOptions implements ConfigEntryPoint {
                 .setName(Component.translatable("earthplatform.sodium.allSettings"))
                 .setTooltip(Component.translatable("earthplatform.sodium.allSettings.tooltip"))
                 .setScreenConsumer(parent -> Minecraft.getInstance().setScreen(
-                        new ConfigurationScreen(modContainer(), parent)));
+                        io.earthplatform.minecraft.platform.ClientPlatform.INSTANCE.configScreen(parent)));
 
         builder.registerOwnModOptions()
                 .setName("Earth Platform")
@@ -98,10 +97,6 @@ public final class SodiumOptions implements ConfigEntryPoint {
                                 .addOption(downloads)
                                 .addOption(preselect)
                                 .addOption(allSettings)));
-    }
-
-    private static net.neoforged.fml.ModContainer modContainer() {
-        return net.neoforged.fml.ModList.get().getModContainerById(EarthPlatformMod.MOD_ID).orElseThrow();
     }
 
     /** The far distance as the pause-menu slider shows it: kilometers, with miles beside them. */

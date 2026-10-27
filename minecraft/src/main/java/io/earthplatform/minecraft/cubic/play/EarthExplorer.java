@@ -20,12 +20,9 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.saveddata.SavedData;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.entity.player.PlayerEvent;
-import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 
 /**
  * The Earth's own tab of advancements, for going places on it: high ground and low, the deep sea,
@@ -35,7 +32,6 @@ import net.neoforged.neoforge.event.server.ServerStoppedEvent;
  * are the generated ground's, so a tower or a mine shaft doesn't count. Nothing is awarded during a
  * Where on Earth round, where a toast for the Arctic Circle would give the answer away.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
 public final class EarthExplorer {
     /** Farther than anyone travels in a second (a glider in the jet stream goes under 1,700 blocks): a teleport. */
     private static final double STEP = 4000;
@@ -135,9 +131,9 @@ public final class EarthExplorer {
         for (int i = 1; i <= Math.min(count, of); i++) award(player, name, Integer.toString(i));
     }
 
-    @SubscribeEvent public static void loggedOut(PlayerEvent.PlayerLoggedOutEvent event) { LAST.remove(event.getEntity().getUUID()); }
+    public static void loggedOut(Player entity) { LAST.remove(entity.getUUID()); }
 
-    @SubscribeEvent public static void stopped(ServerStoppedEvent event) { LAST.clear(); }
+    public static void stopped() { LAST.clear(); }
 
     /** One player's journeys: the countries they've been to, how far east this trip has gone (west is negative) and the farthest any trip went round, in degrees. */
     private static final class Journey {

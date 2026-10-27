@@ -1,0 +1,154 @@
+plugins {
+    id 'fabric-loom' version '1.17.21'
+    id 'java'
+}
+
+// The Fabric jar is built from the same game code as the NeoForge one in ../minecraft: only the
+// loader glue in src/main/java here differs. Version, ids and Minecraft version come from there.
+def shared = new Properties()
+file('../minecraft/gradle.properties').withInputStream { shared.load(it) }
+shared.each { key, value -> if (!project.hasProperty(key)) project.ext.set(key, value) }
+
+layout.buildDirectory = file(providers.gradleProperty('earthBuildDirectory').getOrElse('build'))
+
+version = mod_version
+group = mod_group_id
+base { archivesName = mod_id + '-fabric' }
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+sourceSets.main {
+    java.srcDirs = ['src/main/java', '../minecraft/src/main/java', '../geography/src/main/java']
+    resources.srcDirs = ['src/main/resources', '../minecraft/src/main/resources', '../geography/src/main/resources']
+}
+
+repositories {
+    // Forge Config API Port: NeoForge's config classes on Fabric.
+    maven {
+        url = 'https://raw.githubusercontent.com/Fuzss/modresources/main/maven/'
+        content { includeGroup 'fuzs.forgeconfigapiport' }
+    }
+    maven { url = 'https://maven.parchmentmc.org/' ; content { includeGroup 'org.parchmentmc.data' } }
+}
+
+loom {
+    mixin {
+        // tiny-remapper's mixin remapping writes @Redirect's single @At as an array, which MixinExtras
+        // can't read; the annotation processor's refmap keeps the annotations as written.
+        useLegacyMixinAp = true
+        defaultRefmapName = 'earthplatform.refmap.json'
+    }
+    runs {
+        client {
+            client()
+            vmArg '-Xmx4G'
+            runDir 'run'
+        }
+        server {
+            server()
+            runDir 'run-server'
+        }
+    }
+}
+
+// Exact, separately downloaded Iris and Sodium (Fabric builds), compile-only like on NeoForge.
+def fabricIrisJar = providers.gradleProperty('installedFabricIrisJar').orElse(providers.environmentVariable('EARTH_INSTALLED_FABRIC_IRIS_JAR'))
+def fabricSodiumJar = providers.gradleProperty('installedFabricSodiumJar').orElse(providers.environmentVariable('EARTH_INSTALLED_FABRIC_SODIUM_JAR'))
+
+// The build reads them by SHA-256 only, as the NeoForge build does with its own copies (docs/BUILDING.md).
+def fabricInputs = [
+        (fabricIrisJar): '0ceb694040b4628bf3fa02286cfe5f0db833195669ab07f8caa4001359763eff',
+        (fabricSodiumJar): '3d43c14985a4deb19c654aad3393b454cf57e1ebcbba86c4ae6a98dfc60eca2d',
+]
+def verifyFabricInputs = tasks.register('verifyFabricInputs') {
+    def files = fabricInputs.collectEntries { path, sum -> [(path.getOrNull()): sum] }
+    inputs.property('sums', files.collectEntries { path, sum -> [(String.valueOf(path)): sum] })
+    doLast {
+        files.each { path, expected ->
+            if (path == null) throw new GradleException('Set EARTH_INSTALLED_FABRIC_IRIS_JAR and EARTH_INSTALLED_FABRIC_SODIUM_JAR (see docs/BUILDING.md).')
+            def actual = java.security.MessageDigest.getInstance('SHA-256').digest(file(path).bytes).encodeHex().toString()
+            if (actual != expected) throw new GradleException("${path} has SHA-256 ${actual}, expected ${expected}")
+        }
+    }
+}
+tasks.named('compileJava') { dependsOn verifyFabricInputs }
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    mappings loom.layered {
+        officialMojangMappings()
+        parchment("org.parchmentmc.data:parchment-${parchment_minecraft_version}:${parchment_mappings_version}@zip")
+    }
+    modImplementation "net.fabricmc:fabric-loader:${loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"
+    modImplementation "fuzs.forgeconfigapiport:forgeconfigapiport-fabric:${forge_config_api_port_version}"
+    include "fuzs.forgeconfigapiport:forgeconfigapiport-fabric:${forge_config_api_port_version}"
+
+    // NeoForge's classpath carries these annotations; vanilla Fabric does not.
+    compileOnly 'com.google.code.findbugs:jsr305:3.0.2'
+
+    modCompileOnly files(fabricIrisJar.map { file(it) })
+    modCompileOnly files(fabricSodiumJar.map { file(it) })
+}
+
+processResources {
+    // NeoForge's metadata template stays in ../minecraft/src/main/templates and is not a resource.
+    def props = [mod_id: mod_id, mod_name: mod_name, mod_license: mod_license, mod_version: mod_version,
+                 minecraft_version: minecraft_version, loader_version_range: loader_version_range,
+                 fabric_api_version_range: fabric_api_version_range]
+    inputs.properties props
+    filesMatching('fabric.mod.json') { expand props }
+}
+
+// LGPL-3.0 section 4 asks that the jar carry the LGPL and the GPL it refers to.
+def licenceNotice = tasks.register('licenceNotice') {
+    def lgpl = file('../LICENSE')
+    def gpl = file('../COPYING')
+    def out = layout.buildDirectory.file('generated/licence/earthplatform-LICENSE.txt')
+    inputs.files(lgpl, gpl)
+    outputs.file(out)
+    doLast {
+        out.get().asFile.text = 'Earth Platform is free software: you can redistribute it and/or modify it under the terms of\n' +
+                'the GNU Lesser General Public License version 3 (LGPL-3.0-only), which follows, together with\n' +
+                'the GNU General Public License version 3 it builds on. The Earth data it downloads or bundles\n' +
+                'keeps its own terms, credited in CREDITS.md and on the mod\'s Mods screen.\n\n' +
+                lgpl.getText('UTF-8') + '\n\n' + gpl.getText('UTF-8')
+    }
+}
+
+// The jar records the commit it was built from, for the local performance log.
+def sourceCommit = providers.gradleProperty('earthBuildCommit').getOrNull()
+if (sourceCommit == null) {
+    try {
+        sourceCommit = providers.exec {
+            commandLine 'git', 'rev-parse', 'HEAD'
+            ignoreExitValue = true
+        }.standardOutput.asText.get().trim()
+    } catch (Exception ignored) {
+        sourceCommit = 'unknown'
+    }
+}
+if (!(sourceCommit ==~ /[a-f0-9]{40}/)) sourceCommit = 'unknown'
+def generateBuildIdentity = tasks.register('generateBuildIdentity') {
+    def out = layout.buildDirectory.file('generated/buildIdentity/META-INF/earthplatform-build.properties')
+    inputs.property('commit', sourceCommit)
+    inputs.property('version', project.version.toString())
+    outputs.file(out)
+    doLast {
+        def target = out.get().asFile
+        target.parentFile.mkdirs()
+        target.text = 'commit=' + sourceCommit + '\nversion=' + project.version +
+                '\nflavor=current\ndiagnostics=true\nloader=fabric\n'
+    }
+}
+sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/buildIdentity')
+tasks.named('processResources') { dependsOn generateBuildIdentity }
+
+tasks.named('jar', Jar) {
+    from(licenceNotice) { into 'META-INF' }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}

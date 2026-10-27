@@ -1,0 +1,28 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "io.earthplatform.minecraft.fabric.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "ConnectionAccess",
+    "ElytraWearMixin",
+    "PacketListenerAccess",
+    "PlayerListRespawnMixin",
+    "ServerLevelHooksMixin",
+    "SpawnPlacementsMixin"
+  ],
+  "client": [
+    "ClientLevelLoadMixin",
+    "ClientRespawnMixin",
+    "DebugScreenMixin",
+    "EarthOpenWorldMixin",
+    "FogRendererHooksMixin",
+    "LevelRendererStagesMixin",
+    "MinecraftHooksMixin",
+    "PresetEditorMixin",
+    "SpriteContentsAccess"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

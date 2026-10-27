@@ -21,9 +21,6 @@ import net.minecraft.world.level.block.DoublePlantBlock;
 import net.minecraft.world.RandomizableContainer;
 import net.minecraft.world.level.storage.loot.BuiltInLootTables;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.level.SleepFinishedTimeEvent;
 
 /**
  * Survival basics the Earth's level would otherwise miss because it is not the overworld: its time
@@ -31,17 +28,16 @@ import net.neoforged.neoforge.event.level.SleepFinishedTimeEvent;
  * night slept through has to be skipped there; and vanilla's bonus chest is placed beside the
  * overworld spawn, which nobody in an Earth world ever sees; treeless starts get it too.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
 public final class EarthBasics {
     private static final String BONUS_CHEST_MARK = "bonus_chest_placed";
 
     private EarthBasics() {}
 
     /** Sleeping in the Earth moves the shared clock and clears the shared weather, as sleeping in the overworld does. */
-    @SubscribeEvent public static void sleptThrough(SleepFinishedTimeEvent event) {
-        if (!(event.getLevel() instanceof ServerLevel level) || !Cubic.isCubic(level.dimension())) return;
+    public static void sleptThrough(net.minecraft.world.level.LevelAccessor sleptIn, long newTime) {
+        if (!(sleptIn instanceof ServerLevel level) || !Cubic.isCubic(level.dimension())) return;
         ServerLevel overworld = level.getServer().overworld();
-        if (level.getGameRules().getBoolean(GameRules.RULE_DAYLIGHT)) overworld.setDayTime(event.getNewTime());
+        if (level.getGameRules().getBoolean(GameRules.RULE_DAYLIGHT)) overworld.setDayTime(newTime);
         if (level.getGameRules().getBoolean(GameRules.RULE_WEATHER_CYCLE) && overworld.isRaining()) overworld.resetWeatherCycle();
     }
 

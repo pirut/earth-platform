@@ -11,6 +11,7 @@ import com.mojang.blaze3d.vertex.VertexSorting;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
+import io.earthplatform.minecraft.platform.Loader;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -19,7 +20,6 @@ import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.material.FogType;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.fml.ModList;
 import java.util.Arrays;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
@@ -41,7 +41,7 @@ public final class EarthClouds {
     /** Vanilla's cloud texture made white throughout, so blurring it doesn't darken the edges (its clear pixels are black). */
     private static final ResourceLocation SOFT = ResourceLocation.fromNamespaceAndPath("earthplatform", "earth_clouds");
     private static ResourceLocation softTexture;
-    private static final boolean IRIS = ModList.get().isLoaded("iris");
+    private static final boolean IRIS = Loader.INSTANCE.isModLoaded("iris");
     /** Sea level: 0 m is the water surface at Y 63. */
     private static final double SEA = 63;
     /** One cloud texture pixel, in metres (vanilla's is 12 blocks). */

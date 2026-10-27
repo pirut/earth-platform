@@ -8,14 +8,9 @@ import io.earthplatform.minecraft.diagnostics.*;
 import java.time.Instant;
 import java.util.*;
 import net.minecraft.client.Minecraft;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.neoforge.client.event.RenderFrameEvent;
 import org.lwjgl.opengl.*;
 
 /** Current build. Fixed-cost frame capture, bounded async local-only JSONL. */
-@EventBusSubscriber(modid=EarthPlatformMod.MOD_ID,value=Dist.CLIENT)
 public final class PerformanceDiagnostics {
     private static State state;
     private PerformanceDiagnostics() {}
@@ -90,7 +85,7 @@ public final class PerformanceDiagnostics {
         }
     }
     static String clean(String value) {return value==null?"unknown":value.replaceAll("[\\p{Cntrl}]"," ").substring(0,Math.min(256,value.length()));}
-    @SubscribeEvent public static void frame(RenderFrameEvent.Post event) {
+    public static void frame() {
         if(!BuildInfo.diagnostics())return;
         long now=System.nanoTime();Minecraft mc=Minecraft.getInstance();
         if(state==null)state=new State(mc,now);

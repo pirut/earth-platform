@@ -22,6 +22,7 @@ import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.HighlandsGenerator;
+import io.earthplatform.minecraft.platform.Loader;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.UncheckedIOException;
@@ -40,7 +41,6 @@ import java.util.Properties;
 import java.util.stream.Stream;
 import net.minecraft.core.Registry;
 import net.minecraft.world.level.biome.Biome;
-import net.neoforged.fml.loading.FMLPaths;
 
 /**
  * Which generator a cubic world was made with, pinned in its folder the first time it loads so
@@ -345,7 +345,7 @@ public final class CubicSettings {
         return gsi;
     }
 
-    private static Path cacheFolder() { return FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache"); }
+    private static Path cacheFolder() { return Loader.INSTANCE.gameDir().resolve("earthplatform").resolve("cache"); }
 
     /** Bare-earth ground shared by every Earth world in this game, its worked-out fields cached on disk beside the elevation tiles. */
     public static synchronized BareEarth bareEarth() {

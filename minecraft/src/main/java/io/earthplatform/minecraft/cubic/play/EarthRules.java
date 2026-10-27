@@ -1,7 +1,6 @@
 package io.earthplatform.minecraft.cubic.play;
 
 import io.earthplatform.geography.GeoPoint;
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
@@ -18,12 +17,8 @@ import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.entity.player.PlayerEvent;
-import net.neoforged.neoforge.event.server.ServerStoppedEvent;
-import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 /**
  * The server's rules for getting about the Earth, and what it watches each second: the region
@@ -31,7 +26,6 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
  * survival, and the country each player is in, named on screen as they cross into it. It hands
  * each player's whereabouts on to the explorer advancements too ({@link EarthExplorer}).
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
 public final class EarthRules {
     /** Where each player last stood inside the border, to put them back when they walk out. */
     private static final Map<UUID, Vec3> INSIDE = new HashMap<>();
@@ -117,8 +111,7 @@ public final class EarthRules {
 
     // Each second -------------------------------------------------------------------------------
 
-    @SubscribeEvent public static void tick(ServerTickEvent.Post event) {
-        MinecraftServer server = event.getServer();
+    public static void tick(MinecraftServer server) {
         if (server.getTickCount() % 20 != 0) return;
         EarthSpawns spawns = null;
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -171,13 +164,13 @@ public final class EarthRules {
         return country == null ? "" : country.name();
     }
 
-    @SubscribeEvent public static void loggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
-        UUID id = event.getEntity().getUUID();
+    public static void loggedOut(Player entity) {
+        UUID id = entity.getUUID();
         INSIDE.remove(id);
         COUNTRY.remove(id);
     }
 
-    @SubscribeEvent public static void stopped(ServerStoppedEvent event) {
+    public static void stopped() {
         INSIDE.clear();
         COUNTRY.clear();
         NEXT_TRIP.clear();

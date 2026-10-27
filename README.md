@@ -25,8 +25,8 @@ There are no cities: built-up land becomes the wild land around it. Vanilla vill
 
 ## Get started
 
-1. Install [NeoForge 21.1.259](https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.259/neoforge-21.1.259-installer.jar) (any 21.1.256 or newer works) for Minecraft 1.21.1.
-2. Download the newest Earth Platform jar from [Releases](https://github.com/pirut/earth-platform/releases/latest) and put it in your `mods` folder. Give the game at least 4 GB of memory, or at least 6 GB with shaders such as Photon.
+1. Install [NeoForge 21.1.259](https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.259/neoforge-21.1.259-installer.jar) (any 21.1.256 or newer works) for Minecraft 1.21.1, or [Fabric](https://fabricmc.net/use/installer/) with [Fabric API](https://modrinth.com/mod/fabric-api).
+2. Download the newest Earth Platform jar from [Releases](https://github.com/pirut/earth-platform/releases/latest) (`earthplatform-fabric-…` for Fabric) and put it in your `mods` folder. Give the game at least 4 GB of memory, or at least 6 GB with shaders such as Photon.
 3. Singleplayer → Create New World. The world type is already **Earth**; press **Customize** to choose where you start from a list of famous places, a globe, or any latitude and longitude.
 
 The first visit to a place downloads its terrain, so you need an internet connection. Places you have been stay on your computer (up to 8 GB by default) and work offline afterwards.

@@ -7,6 +7,7 @@ import io.earthplatform.minecraft.cubic.CubeWorld;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
+import io.earthplatform.minecraft.platform.Loader;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import java.lang.reflect.Field;
@@ -23,7 +24,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
-import net.neoforged.fml.ModList;
 
 /**
  * What map mods see of the cubic world. Their chunk readers look at the carrier chunk, which is
@@ -77,8 +77,7 @@ public final class CubicMaps {
     }
 
     static boolean loaded(String mod) {
-        ModList mods = ModList.get();
-        return mods != null && mods.isLoaded(mod);
+        return Loader.INSTANCE.isModLoaded(mod);
     }
 
     // Render-thread readers --------------------------------------------------------------------------

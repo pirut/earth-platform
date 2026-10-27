@@ -6,10 +6,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.vehicle.Boat;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
 
 /**
  * Tells a glider about the jet stream above the action bar: a hint when it climbs toward the wind,
@@ -17,7 +13,6 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
  * the same of the ocean current (see {@link CurrentRide}). A compass in hand adds what it points to
  * and how far, so a rider sees the distance to where they're going.
  */
-@EventBusSubscriber(modid = "earthplatform", value = Dist.CLIENT)
 public final class JetHud {
     /** Gliders this high hear about the wind above. */
     public static final int HINT_FROM = 8000;
@@ -28,7 +23,7 @@ public final class JetHud {
 
     private JetHud() {}
 
-    @SubscribeEvent public static void tick(ClientTickEvent.Post event) {
+    public static void tick() {
         if (++ticks % 10 != 0) return;
         showing = false;
         var player = Minecraft.getInstance().player;

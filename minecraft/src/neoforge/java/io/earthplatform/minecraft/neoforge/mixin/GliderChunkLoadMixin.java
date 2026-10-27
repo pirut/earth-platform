@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.cubic.mixin;
+package io.earthplatform.minecraft.neoforge.mixin;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
@@ -18,7 +18,7 @@ import org.spongepowered.asm.mixin.injection.At;
  * do a boat the ocean current carries and its riders.
  */
 @Mixin(Entity.class)
-abstract class CubicJetChunkLoadMixin {
+abstract class GliderChunkLoadMixin {
     @WrapOperation(method = "setPosRaw(DDD)V", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/world/level/Level;getChunk(II)Lnet/minecraft/world/level/chunk/LevelChunk;"))
     private LevelChunk earthplatform$skipForGliders(Level level, int x, int z, Operation<LevelChunk> original) {

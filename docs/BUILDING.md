@@ -1,6 +1,6 @@
 # Building and testing
 
-The mod is one Gradle project in `minecraft/`. It also compiles the pure Java code in `geography/` as an extra source folder, so there is a single jar.
+The mod is one Gradle project in `minecraft/`, which builds the NeoForge jar. It also compiles the pure Java code in `geography/` as an extra source folder, so there is a single jar. A second project in `fabric/` builds the Fabric jar from the same sources plus a little Fabric glue; see [Fabric](#fabric).
 
 ## What you need
 
@@ -39,13 +39,30 @@ The unit tests run in a couple of minutes, and all should pass. They include `Gl
 
 Install the jar into a NeoForge 21.1.256 or newer instance for Minecraft 1.21.1 and create a new Earth world. Use a fresh world after any change to terrain generation, because a world keeps the data choices it was made with. Downloaded Earth data lands in `earthplatform/cache` inside the game folder.
 
+## Fabric
+
+`fabric/` builds `fabric/build/libs/earthplatform-fabric-<version>.jar` with Fabric Loom. It compiles `minecraft/src/main` and `geography/` as they are, with the Fabric glue in `fabric/src/main/java`, and takes its version from `minecraft/gradle.properties`. It needs Gradle 9.5 or newer (CI uses 9.8.2) and the Fabric builds of Iris and Sodium, checked by SHA-256 like the NeoForge ones:
+
+| Environment variable | File | SHA-256 |
+| --- | --- | --- |
+| `EARTH_INSTALLED_FABRIC_IRIS_JAR` | [iris-fabric-1.8.14-beta.1+mc1.21.1.jar](https://cdn.modrinth.com/data/YL57xq9U/versions/bAo1Qhte/iris-fabric-1.8.14-beta.1%2Bmc1.21.1.jar) | `0ceb694040b4628bf3fa02286cfe5f0db833195669ab07f8caa4001359763eff` |
+| `EARTH_INSTALLED_FABRIC_SODIUM_JAR` | [sodium-fabric-0.8.13+mc1.21.1.jar](https://cdn.modrinth.com/data/AANobbMI/versions/SMxNOGZ6/sodium-fabric-0.8.13%2Bmc1.21.1.jar) | `3d43c14985a4deb19c654aad3393b454cf57e1ebcbba86c4ae6a98dfc60eca2d` |
+
+```sh
+cd fabric && gradle --no-daemon build
+```
+
+Shared code reaches the loader only through `io.earthplatform.minecraft.platform` (`Loader`, `Platform`, `ClientPlatform`, `Payloads`), which each loader fills in through `META-INF/services`. The NeoForge side lives in `minecraft/src/neoforge` (event subscribers, payload registration, NeoForge-only mixins in `earthplatform.neoforge.mixins.json`); the Fabric side in `fabric/src/main` (Fabric API callbacks and the mixins Fabric needs for hooks NeoForge provides as events, in `earthplatform.fabric.mixins.json`). Config files use NeoForge's config classes on both, through [Forge Config API Port](https://github.com/Fuzss/forgeconfigapiport) bundled in the Fabric jar. Compatibility mixins for other mods (`mixin/compat`) are NeoForge-only for now. Shared mixins that target a lambda list both its NeoForge name and its Fabric intermediary name, and build against the oldest Fabric Loader the jar accepts (newer Mixin versions write annotations older loaders can't read).
+
 ## Where things are
 
 Start with the `package-info.java` in each package: it says what the package does and which classes to read first.
 
 | Path | What it is |
 | --- | --- |
-| `minecraft/src/main/java/io/earthplatform/minecraft/EarthPlatformMod.java` | The NeoForge entry point. Everything else registers itself with `@EventBusSubscriber` |
+| `minecraft/src/neoforge/java/io/earthplatform/minecraft/neoforge` | The NeoForge entry point (`EarthPlatformNeoForge`) and every NeoForge event the mod listens to (`NeoForgeEvents`, `NeoForgeClientEvents`) |
+| `fabric/src/main/java/io/earthplatform/minecraft/fabric` | The Fabric entry points (`EarthPlatformFabric`, `EarthPlatformFabricClient`) and their mixins |
+| `minecraft/src/main/java/io/earthplatform/minecraft/platform` | What shared code asks of the loader |
 | `.../minecraft/cubic` | The cubic world engine: cubes from Y -16384 to 16383, how they are made, saved, lit and sent (`ServerCubeWorld`, `CubeWorld`, `CubeStorage`, `CubicEvents`) |
 | `.../minecraft/cubic/gen` | Terrain shared by every cubic world: `SurfaceGenerator` turns column heights into cubes; caves, rock layers, plants, trees and vanilla structures |
 | `.../minecraft/cubic/earth` | The real Earth: `EarthGenerator` decides every column's height, water and surface from the Earth data |

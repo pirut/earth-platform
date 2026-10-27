@@ -13,6 +13,7 @@ import io.earthplatform.minecraft.cubic.gen.FarColumn;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.net.Throttle;
 import io.earthplatform.minecraft.diagnostics.PerfFailures;
+import io.earthplatform.minecraft.platform.Platform;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.IOException;
@@ -41,7 +42,6 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
  * Makes far-terrain columns for players on low-priority workers, so they never hold up the cubes
@@ -144,7 +144,7 @@ public final class FarServer {
         Session session = sessions.get(id);
         if (session == null) {
             sessions.put(id, session = new Session());
-            if (generator instanceof EarthGenerator earth) PacketDistributor.sendToPlayer(player, new CubePayloads.EarthScale(earth.grid().metresPerBlock()));
+            if (generator instanceof EarthGenerator earth) Platform.INSTANCE.sendToPlayer(player, new CubePayloads.EarthScale(earth.grid().metresPerBlock()));
         }
         int bx = player.getBlockX(), bz = player.getBlockZ();
         session.bx = bx;
@@ -405,7 +405,7 @@ public final class FarServer {
                 CubePayloads.FarColumnData column = session.outgoing.poll();
                 session.queued.remove(column.key());
                 session.sent.add(column.key());
-                PacketDistributor.sendToPlayer(player, column);
+                Platform.INSTANCE.sendToPlayer(player, column);
                 bytes -= column.size();
             }
             if (ticks % 200 == 0) {

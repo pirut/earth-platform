@@ -2,7 +2,6 @@ package io.earthplatform.minecraft.cubic.play.client;
 
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.globe.MercatorGrid;
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
 import io.earthplatform.minecraft.cubic.jet.JetHud;
 import io.earthplatform.minecraft.cubic.mixin.GuiOverlayAccess;
@@ -20,11 +19,6 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.LodestoneTracker;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
 
 /**
  * While a compass is in hand on the Earth, the action bar says what it points to and how far that
@@ -33,7 +27,6 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
  * quiet during a Where on Earth round, where a distance to a known spot would give the answer away
  * (and the needles spin, see {@code mixin.EarthCompassSpinMixin}).
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, value = Dist.CLIENT)
 public final class EarthCompassHud {
     /** Whether this player is in a Where on Earth round. */
     private static boolean round;
@@ -48,9 +41,9 @@ public final class EarthCompassHud {
 
     public static boolean inRound() { return round; }
 
-    @SubscribeEvent public static void loggedOut(ClientPlayerNetworkEvent.LoggingOut event) { round = false; shown = null; }
+    public static void loggedOut() { round = false; shown = null; }
 
-    @SubscribeEvent public static void tick(ClientTickEvent.Post event) {
+    public static void tick() {
         if (++ticks % 10 != 0) return;
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;

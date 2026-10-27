@@ -4,6 +4,8 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.far.Far;
+import io.earthplatform.minecraft.platform.Loader;
+import io.earthplatform.minecraft.platform.Payloads;
 import java.util.ArrayList;
 import java.util.List;
 import javax.annotation.Nullable;
@@ -13,8 +15,6 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.fml.loading.FMLEnvironment;
-import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 
 /**
  * Cube traffic. Positions travel as separate ints, never BlockPos.asLong, whose 12-bit Y would
@@ -138,16 +138,18 @@ public final class CubePayloads {
         @Override public Type<EarthScale> type() { return TYPE; }
     }
 
-    public static void register(RegisterPayloadHandlersEvent event) {
-        var registrar = event.registrar("cubic-2");
-        registrar.playToClient(CubeData.TYPE, CubeData.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.cube(p); });
-        registrar.playToClient(CubeUnload.TYPE, CubeUnload.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.unload(p); });
-        registrar.playToClient(BlockChanges.TYPE, BlockChanges.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.changes(p); });
-        registrar.playToClient(ColumnTops.TYPE, ColumnTops.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.tops(p); });
-        registrar.playToClient(FarColumnData.TYPE, FarColumnData.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.far(p); });
-        registrar.playToClient(EarthScale.TYPE, EarthScale.CODEC, (p, c) -> { if (FMLEnvironment.dist.isClient()) CubicClientReceiver.scale(p); });
-        registrar.playToServer(FarRequest.TYPE, FarRequest.CODEC, (p, c) -> {
-            if (c.player() instanceof ServerPlayer player && CubicLevel.of(player.serverLevel()) instanceof ServerCubeWorld world) world.far().request(player, p.keys());
+    /** Version of this group of payloads; NeoForge refuses a connection whose two sides differ. */
+    public static final String VERSION = "cubic-2";
+
+    public static void register(Payloads registrar) {
+        registrar.toClient(CubeData.TYPE, CubeData.CODEC, p -> { if (Loader.INSTANCE.isClient()) CubicClientReceiver.cube(p); });
+        registrar.toClient(CubeUnload.TYPE, CubeUnload.CODEC, p -> { if (Loader.INSTANCE.isClient()) CubicClientReceiver.unload(p); });
+        registrar.toClient(BlockChanges.TYPE, BlockChanges.CODEC, p -> { if (Loader.INSTANCE.isClient()) CubicClientReceiver.changes(p); });
+        registrar.toClient(ColumnTops.TYPE, ColumnTops.CODEC, p -> { if (Loader.INSTANCE.isClient()) CubicClientReceiver.tops(p); });
+        registrar.toClient(FarColumnData.TYPE, FarColumnData.CODEC, p -> { if (Loader.INSTANCE.isClient()) CubicClientReceiver.far(p); });
+        registrar.toClient(EarthScale.TYPE, EarthScale.CODEC, p -> { if (Loader.INSTANCE.isClient()) CubicClientReceiver.scale(p); });
+        registrar.toServer(FarRequest.TYPE, FarRequest.CODEC, (p, player) -> {
+            if (CubicLevel.of(player.serverLevel()) instanceof ServerCubeWorld world) world.far().request(player, p.keys());
         });
     }
 }

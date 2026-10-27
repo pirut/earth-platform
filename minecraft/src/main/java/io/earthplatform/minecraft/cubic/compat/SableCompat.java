@@ -6,6 +6,7 @@ import io.earthplatform.minecraft.cubic.CubeWorld;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
+import io.earthplatform.minecraft.platform.Loader;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
@@ -17,7 +18,6 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
-import net.neoforged.fml.loading.FMLLoader;
 
 /**
  * Sable (the physics library under Create Aeronautics) in the cubic Earth world.
@@ -36,7 +36,7 @@ import net.neoforged.fml.loading.FMLLoader;
  */
 public final class SableCompat {
     /** Read once at class load; the mixins that call in here only apply when Sable is present. */
-    public static final boolean LOADED = FMLLoader.getLoadingModList() != null && FMLLoader.getLoadingModList().getModFileById("sable") != null;
+    public static final boolean LOADED = Loader.INSTANCE.isModLoaded("sable");
     /** The carrier's build range while Sable is installed: the Overworld's. */
     public static final int CARRIER_MIN_Y = -64, CARRIER_HEIGHT = 384;
     /** What the altitude sensor spans in Earth: sea level to 10 km up. */

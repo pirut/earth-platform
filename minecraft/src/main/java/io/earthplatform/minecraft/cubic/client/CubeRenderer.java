@@ -11,6 +11,7 @@ import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.ViewOrder;
+import io.earthplatform.minecraft.platform.ClientPlatform;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -41,7 +42,6 @@ import net.minecraft.world.level.chunk.PalettedContainer;
 import net.minecraft.world.level.chunk.PalettedContainerRO;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.client.model.data.ModelData;
 import org.joml.Matrix4f;
 
 /**
@@ -300,12 +300,12 @@ public final class CubeRenderer {
      * vanilla's render region does), connected and multiblock models such as Immersive Engineering's
      * formed machines draw the right parts.
      */
-    private static Map<BlockPos, ModelData> modelData(Cube cube) {
+    private static Map<BlockPos, Object> modelData(Cube cube) {
         if (cube.blockEntities().isEmpty()) return Map.of();
-        Map<BlockPos, ModelData> data = new HashMap<>();
+        Map<BlockPos, Object> data = new HashMap<>();
         for (BlockEntity entity : cube.blockEntities().values()) {
-            ModelData model = entity.getModelData();
-            if (model != ModelData.EMPTY) data.put(entity.getBlockPos().immutable(), model);
+            Object model = ClientPlatform.INSTANCE.blockEntityModelData(entity);
+            if (model != null) data.put(entity.getBlockPos().immutable(), model);
         }
         return data;
     }

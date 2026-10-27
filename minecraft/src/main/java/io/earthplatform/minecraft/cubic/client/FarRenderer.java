@@ -16,6 +16,7 @@ import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.mixin.FrustumAccess;
 import io.earthplatform.minecraft.diagnostics.BuildInfo;
 import io.earthplatform.minecraft.diagnostics.PerfFailures;
+import io.earthplatform.minecraft.platform.Platform;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
@@ -46,7 +47,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.network.PacketDistributor;
 import org.joml.Matrix4f;
 
 /**
@@ -766,7 +766,7 @@ public final class FarRenderer {
             requested.put(key, ticks);
             keys.add(key);
         }
-        if (!keys.isEmpty()) PacketDistributor.sendToServer(new CubePayloads.FarRequest(keys.toLongArray()));
+        if (!keys.isEmpty()) Platform.INSTANCE.sendToServer(new CubePayloads.FarRequest(keys.toLongArray()));
     }
 
     /**

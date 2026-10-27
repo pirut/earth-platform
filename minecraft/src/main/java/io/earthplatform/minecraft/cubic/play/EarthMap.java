@@ -6,6 +6,7 @@ import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
+import io.earthplatform.minecraft.platform.Platform;
 import net.minecraft.commands.CommandSourceStack;
 import java.util.List;
 import net.minecraft.network.FriendlyByteBuf;
@@ -15,7 +16,6 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
  * The travel map in creative, and the map in survival: the server tells a player's client where on
@@ -81,7 +81,7 @@ public final class EarthMap {
                 if (point != null) others.add(new Other(other.getGameProfile().getName(), point.latitude(), point.longitude()));
             }
         }
-        PacketDistributor.sendToPlayer(player, new Players(others));
+        Platform.INSTANCE.sendToPlayer(player, new Players(others));
     }
 
     private EarthMap() {}
@@ -112,7 +112,7 @@ public final class EarthMap {
             return 0;
         }
         sendOthers(player);
-        PacketDistributor.sendToPlayer(player, new Payload(travel ? OPEN : LOOK, here.latitude(), here.longitude()));
+        Platform.INSTANCE.sendToPlayer(player, new Payload(travel ? OPEN : LOOK, here.latitude(), here.longitude()));
         return 1;
     }
 
@@ -126,7 +126,7 @@ public final class EarthMap {
         return null;
     }
 
-    public static void arrived(ServerPlayer player) { PacketDistributor.sendToPlayer(player, new Payload(ARRIVED, 0, 0)); }
+    public static void arrived(ServerPlayer player) { Platform.INSTANCE.sendToPlayer(player, new Payload(ARRIVED, 0, 0)); }
 
-    public static void failed(ServerPlayer player) { PacketDistributor.sendToPlayer(player, new Payload(FAILED, 0, 0)); }
+    public static void failed(ServerPlayer player) { Platform.INSTANCE.sendToPlayer(player, new Payload(FAILED, 0, 0)); }
 }

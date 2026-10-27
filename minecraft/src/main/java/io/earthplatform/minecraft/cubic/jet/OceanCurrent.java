@@ -5,6 +5,7 @@ import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
+import io.earthplatform.minecraft.platform.Loader;
 import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -15,7 +16,6 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.vehicle.Boat;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.fml.loading.FMLEnvironment;
 
 /**
  * Ocean currents of the cubic Earth. On the open sea a boat whose rider sprints and paddles forward
@@ -203,7 +203,7 @@ public final class OceanCurrent {
             return null;
         }
         Vec3 velocity = boat.getDeltaMovement(), next = null;
-        if (FMLEnvironment.dist.isClient() && boat.level().isClientSide && boat.getControllingPassenger() instanceof Player player && player.isLocalPlayer()) {
+        if (Loader.INSTANCE.isClient() && boat.level().isClientSide && boat.getControllingPassenger() instanceof Player player && player.isLocalPlayer()) {
             next = CurrentRide.steer(boat);
         } else {
             ride.earthplatform$setRiding(false);

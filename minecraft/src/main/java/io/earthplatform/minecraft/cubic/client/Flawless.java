@@ -1,21 +1,20 @@
 package io.earthplatform.minecraft.cubic.client;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
+import io.earthplatform.minecraft.platform.Loader;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import net.minecraft.client.Minecraft;
-import net.neoforged.fml.ModList;
 
 /**
  * "Flawless frames": a video renderer such as Replay Mod asks every renderer to finish each frame
  * completely, however long it takes, instead of streaming terrain in over later frames. This is the
- * FREX convention Sodium follows on NeoForge: a mod names a handler class under the mod property
- * {@code frex:flawless_frames_handler}, and each renderer hands that class's static
- * {@code acceptController(Function<String, Consumer<Boolean>>)} a way to switch it on and off.
+ * FREX convention Sodium follows: each renderer hands every asking mod a
+ * {@code Function<String, Consumer<Boolean>>} to switch it on and off. On NeoForge the asking mod
+ * names a handler class under the mod property {@code frex:flawless_frames_handler}; on Fabric it
+ * declares a {@code frex_flawless_frames} entrypoint (see {@link Loader#flawlessFrameRequesters}).
  * <p>
  * Our near and far terrain draw outside Sodium, so they need their own controller: without it a
  * Replay Mod render drew only a patch of near cubes and empty sky where the far terrain should be.
@@ -33,14 +32,12 @@ public final class Flawless {
             Object token = new Object();
             return on -> { if (on) ACTIVE.add(token); else ACTIVE.remove(token); };
         };
-        for (var mod : ModList.get().getMods()) {
-            if (!(mod.getModProperties().get("frex:flawless_frames_handler") instanceof String handler)) continue;
+        for (var mod : Loader.INSTANCE.flawlessFrameRequesters()) {
             try {
-                MethodHandles.publicLookup().findStatic(Class.forName(handler), "acceptController",
-                        MethodType.methodType(void.class, Function.class)).invoke(provider);
-                EarthPlatformMod.LOGGER.info("Earth terrain renders flawless frames for {}", mod.getModId());
+                mod.accept().accept(provider);
+                EarthPlatformMod.LOGGER.info("Earth terrain renders flawless frames for {}", mod.modId());
             } catch (Throwable e) {
-                EarthPlatformMod.LOGGER.warn("Could not offer flawless frames to {} ({})", mod.getModId(), e.toString());
+                EarthPlatformMod.LOGGER.warn("Could not offer flawless frames to {} ({})", mod.modId(), e.toString());
             }
         }
     }
