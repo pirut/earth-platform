@@ -347,11 +347,16 @@ public final class EarthGenerator extends SurfaceGenerator {
                 out[1] = SEA;
                 return;
             }
-            int surface = rivers != null && rawCover(memo, x, z, voxel) == RIVER ? riverSurface(x, z) : lakeSurface(dem, x, z, voxel);
+            boolean river = rivers != null && rawCover(memo, x, z, voxel) == RIVER;
+            int surface = river ? riverSurface(x, z) : lakeSurface(dem, x, z, voxel);
             // Shadowed cliffs can map as water; water never lies on a steep slope well above its own level. Only
             // mountains cast such shadows: in flat country a steep rise under water is a seam between surveys, and
             // keeping it as land stood thin stone walls in rivers.
             boolean shadow = steep > 0.7 && SEA + 0.5 + metres - surface > 4 && relief(x, z) > MOUNTAINS;
+            // Nor does a narrow river run over a mountain's top. The surface water record sees shadows, melt and late snow
+            // on bare summits, and the river map traced them across Fuji's crater rim as ragged pools; a river's level is
+            // the lowest ground round it, down the slope beyond the rim, so they sank into pits with pillars standing in them.
+            if (!shadow && river && relief(x, z) > MOUNTAINS && crest(x, z)) shadow = true;
             // Water by the coast is the sea, and so is water at sea level that joins it, as estuaries and lagoons do,
             // which otherwise stood a block above the sea around it wherever the survey read a little over 0 m.
             // So is water within a few metres of sea level right beside the sea, as the ponds and creeks among
@@ -974,6 +979,40 @@ public final class EarthGenerator extends SurfaceGenerator {
      * how far round it, in blocks, the ground its water must keep under then is read.
      */
     private static final int RIVER_STEEP = 6, RIVER_BANK = 6;
+    /**
+     * Distance in metres of the ring {@link #crest} reads round a river, how far below a river's ground
+     * the ring's ground must lie, and how many of its {@value #CREST_POINTS} points: a river's
+     * valley rises on most sides of it within a kilometre and a half, falling away only downstream.
+     */
+    private static final double CREST_METRES = 1500, CREST_DROP = 30;
+    private static final int CREST_POINTS = 16, CREST_LOWER = 13;
+    /** Cells, in blocks, {@link #crest} reads once for. */
+    private static final int CREST_CELL = 64;
+    /** Crest cells, keyed as {@link #riverNodes}, as far as they have been read. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> crests = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Whether a column lies on a summit or ridge top, where no river runs: the ground on nearly all
+     * of a ring {@value #CREST_METRES} metres round it lies well below it.
+     */
+    private boolean crest(double x, double z) {
+        int i = Math.floorDiv(Mth.floor(x), CREST_CELL), j = Math.floorDiv(Mth.floor(z), CREST_CELL);
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) i << 32 | j & 0xFFFFFFFFL);
+        Boolean known = crests.get(key);
+        if (known != null) return known;
+        GlobalElevation dem = elevation[TerrariumTileSource.MAX_ZOOM];
+        double cx = (i + 0.5) * CREST_CELL, cz = (j + 0.5) * CREST_CELL, here = dem.metres(cx, cz);
+        double r = CREST_METRES / grid.groundMetresPerBlock(cz);
+        int lower = 0;
+        for (int k = 0; k < CREST_POINTS; k++) {
+            double a = k * 2 * Math.PI / CREST_POINTS;
+            if (dem.metres(cx + Math.cos(a) * r, cz + Math.sin(a) * r) < here - CREST_DROP) lower++;
+        }
+        boolean crest = lower >= CREST_LOWER;
+        if (crests.size() > 1 << 20) crests.clear();
+        crests.putIfAbsent(key, crest);
+        return crest;
+    }
     /** Fall per block across a river's reach from which its level is read against the slope ({@link #channel}). */
     private static final double RIVER_SLOPE = 0.1;
     /** River levels at their points, in metres, as far as they have been read. */
@@ -1375,6 +1414,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Rings round water, in metres, that {@link #iceWater} looks along, out past a pond's far shore; none nearer than a pixel. */
     private static final double[] ICE_RINGS = {15, 30, 60, 120};
+    /** Least ratio of snow to water on those rings for water among ice to be more of the ice. */
+    private static final int ICE_SHARE = 2;
     /** Water cells, keyed as {@link #waterCell}'s, as far as {@link #icyCell} has found whether they hold snow or ice. */
     private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> icyCells = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -1383,23 +1424,26 @@ public final class EarthGenerator extends SurfaceGenerator {
      * shadowed crevasses, slush and ponds on glaciers as water, where the elevation, older than the
      * map, still has the ice's sloping surface: they stood as dark blue pools all over ones such as
      * the Khumbu, and up close as stairs of ice down the slope. It is when rings round it, out past
-     * a pond's far shore, find snow and ice, and three times more of it than of any land. A lake
-     * beside a glacier has moraine or rock along most of its other shores, and a big one has water
-     * all round, so they stay.
+     * a pond's far shore, find snow and ice, three times more of it than of any land and twice as
+     * much as of water. A lake beside a glacier has moraine or rock along most of its other shores,
+     * and a big one has water all round, so they stay; so does the lake under a glacier's front,
+     * which found the ice behind it and the lake before it, and when water came to count as ice
+     * the front's water turned to ice, leaving Perito Moreno's cliff standing back from a beach.
      */
     private boolean iceWater(double x, double z, int overview, double metresPerBlock) {
         if (!icyCell(Math.floorDiv(Mth.floor(x), WATER_CELL), Math.floorDiv(Mth.floor(z), WATER_CELL))) return false;
-        int snow = 0, other = 0;
+        int snow = 0, other = 0, water = 0;
         for (double ring : ICE_RINGS) {
             double r = Math.max(ring, PIXEL_METRES * (1 << overview)) / metresPerBlock;
             for (int i = 0; i < 8; i++) {
                 GeoPoint point = grid.geographic(x + 0.5 + RING_X[i] * r, z + 0.5 + RING_Z[i] * r);
                 int code = cover.code(point.latitude(), point.longitude(), overview);
                 if (code == WorldCoverSource.SNOW_AND_ICE) snow++;
-                else if (code != WorldCoverSource.WATER) other++;
+                else if (code == WorldCoverSource.WATER) water++;
+                else other++;
             }
         }
-        return snow >= 4 && snow >= 3 * other;
+        return snow >= 4 && snow >= 3 * other && snow >= ICE_SHARE * water;
     }
 
     /** Whether a water cell holds any snow or ice, read on a coarse grid at the water survey's overview. */
@@ -3133,6 +3177,14 @@ public final class EarthGenerator extends SurfaceGenerator {
                 // A snowfield's edge is ragged, melting back into the rock around it in tongues and patches rather than
                 // following the map's 10 m pixels.
                 if (patch < 0.1 && snowEdge(x, z, voxel, 6) || patch < -0.3 && snowEdge(x, z, voxel, 16)) return covered(WorldCoverSource.BARE, x, z, y, local, steep, roll, slope, voxel);
+                // Below the snowline summer melts the winter's snow off a glacier's tongue, baring its ice: pale blue, with
+                // deep blue where it is cleanest and patches of old snow, as Perito Moreno's and Greenland's
+                // edges are, where all snow stood as one flat white. The line frays over the patches rather than
+                // following the climate's contour.
+                if (local.warmest() + 2 * patch > ICE_MELT) {
+                    BlockState ice = patch > 0.55 ? BLUE_ICE : patch > ICE_SNOW ? PACKED_ICE : SNOW_BLOCK;
+                    return new Surface(frozenPeaks, ice, PACKED_ICE, 0, 0, 0, 0, 0, false);
+                }
                 BlockState top = steep < 0.5 && patch > 0.5 ? POWDER_SNOW : SNOW_BLOCK;
                 return new Surface(steep > 0.75 ? frozenPeaks : snowySlopes, top, PACKED_ICE, 0, 0, 0, 0, 0, false);
             }
@@ -3176,6 +3228,12 @@ public final class EarthGenerator extends SurfaceGenerator {
                 || zone == ClimateZone.MEDITERRANEAN || zone == ClimateZone.RAINFOREST;
         return humid && local.warmest() >= ClimateZone.TUNDRA_WARMEST && local.warmest() < 14 && local.temperature() < 6 && (y < 0 || y > SEA + 1000);
     }
+
+    /**
+     * Mean of the warmest quarter, in degrees, above which a glacier's surface is bare ice rather than
+     * snow, and the patch value under which old snow lies on that ice.
+     */
+    private static final double ICE_MELT = 3, ICE_SNOW = -0.4;
 
     /** Whether a snow and ice column lies within some metres of ground the map does not show as snow and ice. */
     private boolean snowEdge(int x, int z, int voxel, int metres) {

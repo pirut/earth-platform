@@ -19,6 +19,10 @@ import java.util.concurrent.*;
  *       ArcticDEM, whose heights stand 60 to 70 m too high in Iceland and the Faroes, 60 m in
  *       eastern Greenland, 30 m on Svalbard and 20 to 25 m in Lapland and Kola, so every coast
  *       there ends in a cliff.</li>
+ *   <li>Glaciers sunk under their ice, in worlds pinned to {@value #ICE_ID}. Radar lost much of
+ *       the ice in 2000, and the composite filled the gaps from the ground round them in smooth
+ *       dips with straight edges, tens of metres under the ice the land cover maps: by Perito
+ *       Moreno's front a trench twenty blocks deep zigzagged across the tongue.</li>
  * </ul>
  *
  * <p>Each degree square is checked once, a sixteenth at a time: Terrarium at zoom {@value #CHECK_ZOOM}, as it was, against
@@ -36,7 +40,10 @@ import java.util.concurrent.*;
  *
  * <p>Only Terrarium standing above counts. Where it lies below, it is mostly bare-earth lidar
  * under forest, which Copernicus, a surface model, tops with the canopy; pits are {@code
- * repair}'s. Open sea in Terrarium counts as agreeing where Copernicus has sea too, and is never
+ * repair}'s. On snow and ice no canopy stands, and given where the ice is, the fill also takes
+ * Copernicus wherever Terrarium lies under it there, from {@value #AGREE} m to wholly by
+ * {@value #DISAGREE} m, check pixel by check pixel: such dips are a few hundred metres across,
+ * and the windows' averages missed them. Open sea in Terrarium counts as agreeing where Copernicus has sea too, and is never
  * weighed against Copernicus land, so no land is made out of sea. A tile then moves each pixel
  * that far toward Copernicus, read at the overview nearest its own pixel size. The weights are one
  * smooth field whatever the zoom, so near and far terrain agree, and where they are 0, nearly
@@ -46,6 +53,8 @@ import java.util.concurrent.*;
 public final class CopernicusFill implements ElevationLayer {
     /** Pinned in a world's {@code earth.elevation}; reads {@link CopernicusSource#DATASET_ID}. */
     public static final String DATASET_ID = "glo30-fill-v1";
+    /** The fill that also lifts Terrarium sunk under snow and ice; reads {@link CopernicusSource#DATASET_ID} too. */
+    public static final String ICE_ID = "glo30-fill-v2";
     /** Coarsest zoom filled. Coarser zooms carry the bathymetry and stay as they are. */
     static final int MIN_ZOOM = 11;
     /**
@@ -90,6 +99,9 @@ public final class CopernicusFill implements ElevationLayer {
     /** The composite's tiles as they were before any layer, such as {@link TerrariumTileSource#cleaned}. */
     public interface Tiles { float[] tile(int zoom, int x, int y); }
 
+    /** Whether the land cover maps snow or ice at a latitude and longitude, read at about the check's pixels. */
+    public interface Ice { boolean at(double latitude, double longitude); }
+
     /** Parts a degree square is checked in, along each side, so a place's first tiles wait on a sixteenth of it. */
     static final int PARTS = 4;
     /** Bands of a part's rows read together on a check: about as many as the tiles and blocks a part's margin crosses. */
@@ -106,17 +118,22 @@ public final class CopernicusFill implements ElevationLayer {
 
     private final CopernicusSource dem;
     private final Tiles tiles;
+    private final Ice ice;
     private final int maxParts;
     private final LruMap<Long, Part> parts = new LruMap<>(64);
     private final Map<Long, CompletableFuture<Part>> inFlight = new ConcurrentHashMap<>();
 
-    public CopernicusFill(CopernicusSource dem, Tiles tiles, int maxParts) {
+    public CopernicusFill(CopernicusSource dem, Tiles tiles, int maxParts) { this(dem, tiles, null, maxParts); }
+
+    /** @param ice where the land cover has snow and ice, for {@value #ICE_ID}; null for {@value #DATASET_ID} */
+    public CopernicusFill(CopernicusSource dem, Tiles tiles, Ice ice, int maxParts) {
         this.dem = dem;
         this.tiles = tiles;
+        this.ice = ice;
         this.maxParts = maxParts;
     }
 
-    @Override public String id() { return DATASET_ID; }
+    @Override public String id() { return ice == null ? DATASET_ID : ICE_ID; }
 
     @Override public void refine(int zoom, int x, int y, float[] values) { apply(values, zoom, x, y); }
 
@@ -327,6 +344,8 @@ public final class CopernicusFill implements ElevationLayer {
         int m = WIDE, across = columns + 2 * m, down = rows + 2 * m;
         // The difference and Copernicus over the part and a margin round it, NaN where unknown.
         float[] difference = new float[across * down], copernicus = new float[across * down];
+        // How far Terrarium lies under Copernicus on snow and ice, check pixel by check pixel; 0 elsewhere.
+        float[] sunk = new float[across * down];
         // Bands of rows read at once: on a first visit each reads its own tiles and blocks from the network, which
         // one after another kept a place's first tiles waiting seconds on this check.
         int bands = Math.min(CHECK_BANDS, down);
@@ -359,6 +378,7 @@ public final class CopernicusFill implements ElevationLayer {
                         double t = terrarium.metres(latitude, longitude);
                         if (t > 0) difference[i] = (float) (t - cop);
                         else if (cop < SEA_CRUMB) difference[i] = 0;
+                        if (t > 0 && cop - t > AGREE && ice != null && ice.at(latitude, longitude)) sunk[i] = (float) (cop - t);
                     }
                 }
             });
@@ -382,6 +402,7 @@ public final class CopernicusFill implements ElevationLayer {
                     double allow = high >= low ? RELIEF_SHARE * (high - low) : 0;
                     weight = Math.max(weight, ramp(fill, AGREE + allow, DISAGREE + allow));
                 }
+                weight = Math.max(weight, ramp(sunk[pr * across + pc], AGREE, DISAGREE));
             }
             int quantised = (int) Math.round(weight * 255);
             weights[r * columns + c] = (byte) quantised;
