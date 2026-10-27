@@ -1396,15 +1396,6 @@ public final class FarRenderer {
             // The shading pass draws again what the pre-pass drew, so without that it needs the columns.
             boolean again = REUSE_DRAWS && FarGpu.REPLAY && farDraws.holds(viewSerial, setting);
             IntArrayList far = again ? NONE : FarNearSkip.ENABLED ? beyondReach(position) : allShown();
-            // Ranges wholly over the game's blocks draw no pixel in either pass: left out of both (see FarHiddenCull#cullBlocked).
-            if (BLOCKED_CULL && gpu.cullable()) {
-                gpu.phase(FarGpu.PREPASS);
-                if (!again && gpu.beginRecording(true, ShaderBlocks.voxyPatch())) {
-                    drawEach(gpu, farDraws, false, far, position, setting);
-                    again = farDraws.holds(viewSerial, setting);
-                }
-                if (again) cullBlocked(gpu, FarLod.gameDepth(), modelView, farProjection, true);
-            }
             FarLod.beginPrepass();
             gpu.phase(FarGpu.PREPASS);
             if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false, false)) {
@@ -1444,21 +1435,6 @@ public final class FarRenderer {
                     ranges = gpu.ranges;
                 }
             }
-            // Ranges the game's blocks hide draw no pixel: left out (see FarHiddenCull#cullBlocked). Only
-            // without a pack, or under far terrain's own depth, is it known how the far program meets the blocks.
-            boolean blocked = false;
-            if (BLOCKED_CULL && (own || !pack) && gpu.cullable() && gpu.beginRecording(pack, pack ? ShaderBlocks.voxyPatch() : null)) {
-                boolean skipNear = own && FarNearSkip.ENABLED && gpu.dropsNearReach();
-                long setting = (skipNear ? Float.floatToIntBits(reach) & 0xFFFFFFFFL | SKIPS_NEAR
-                        : apart ? Float.floatToIntBits(reach) & 0xFFFFFFFFL | AFTER_NEAR : 0) | (pack ? PACK : 0);
-                boolean again = REUSE_DRAWS && farDraws.holds(viewSerial, setting);
-                if (again) gpu.end();
-                else {
-                    drawEach(gpu, farDraws, false, skipNear ? beyondReach(position) : apart ? outsideReach() : allShown(), position, setting);
-                    again = farDraws.holds(viewSerial, setting);
-                }
-                blocked = again && cullBlocked(gpu, own ? FarLod.gameDepth() : FarLod.boundDepth(), modelView, farProjection, own);
-            }
             if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false, false)) {
                 long timer = FarGpuTimers.begin("far opaque");
                 // Under a pack's own depth, columns wholly inside the game's blocks' reach draw no pixel there.
@@ -1471,7 +1447,6 @@ public final class FarRenderer {
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
                 drawCount.submitted(ranges + gpu.ranges);
             }
-            if (blocked) gpu.cullDone();
         }
         if (own) FarLod.endDraw();
         long deepenTimer = own ? FarGpuTimers.begin("water deepen") : 0;
@@ -1528,23 +1503,6 @@ public final class FarRenderer {
     private static final double INNER_MARGIN = 64.0;
     /** How far above and below the player the game's blocks can lie, with a cube to spare (see {@link CubeRenderer}). */
     private static final double NEAR_HEIGHT = (Cubic.VERTICAL_RADIUS + 2) * 16.0;
-
-    /**
-     * Leaves out of far terrain's opaque passes the ranges of faces the game's blocks hide, tested on
-     * the GPU against the depth those blocks left (see {@link FarHiddenCull#cullBlocked}): from a
-     * valley floor or among hills, most of the far terrain in view lies behind the slopes round the
-     * player, and every one of its faces still went through the vertex shader and the rasterizer,
-     * in both passes under a shader pack. What is left out would have drawn no pixel. Needs OpenGL
-     * 4.3; {@code -Dearthplatform.far.blockedCull=false} draws them, for comparing.
-     */
-    private static final boolean BLOCKED_CULL = !"false".equals(System.getProperty("earthplatform.far.blockedCull"));
-
-    private boolean cullBlocked(FarGpu gpu, int depth, Matrix4f modelView, Matrix4f projection, boolean covered) {
-        if (depth == 0) return false;
-        long timer = FarGpuTimers.begin("far blocked cull");
-        try { return gpu.cullBlocked(farDraws, depth, modelView, projection, covered); }
-        finally { FarGpuTimers.end(timer); }
-    }
 
     /** The columns in view, in order, left out of {@link #near}: the rest of a pass that draws those apart. */
     private IntArrayList outsideReach() {

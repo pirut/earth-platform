@@ -72,15 +72,10 @@ final class FarHiddenCull {
             uniform float earth_Grow;
             uniform float earth_Margin;
             uniform sampler2D earth_Pyramid;
-            // 0: behind far faces' depth; 1: wholly over the game's blocks; 2: behind the game's blocks' depth.
-            uniform int earth_Mode;
-            // A range already left out this frame stays out.
-            uniform int earth_Keep;
 
             void main() {
                 uint i = gl_GlobalInvocationID.x;
                 if (i >= uint(earth_Ranges)) return;
-                if (earth_Keep != 0 && earth_commands[i * 5u + 1u] == 0u) return;
                 vec3 low = earth_boxes[i * 2u].xyz, high = earth_boxes[i * 2u + 1u].xyz;
                 // Faces reach past their columns' edges by a share of their distance (see FarGpu#grow).
                 float grow = earth_Grow * 1.5 * length(max(abs(low), abs(high))) + 1.0;
@@ -121,8 +116,7 @@ final class FarHiddenCull {
                                 for (int x = t0.x; x <= t1.x; x++)
                                     farthest = max(farthest, texelFetch(earth_Pyramid, ivec2(x, y), at).r);
                         }
-                        // Over the game's blocks the far program drops every fragment (depth below 1 there).
-                        shown = earth_Mode == 1 ? farthest >= 1.0 : nearest * 0.5 + 0.5 <= farthest + earth_Margin;
+                        shown = nearest * 0.5 + 0.5 <= farthest + earth_Margin;
                     }
                 }
                 earth_commands[i * 5u + 1u] = shown ? 1u : 0u;
@@ -147,38 +141,6 @@ final class FarHiddenCull {
      * and the shading pass then draws every range.
      */
     boolean cull(FarGpu.Recording recording, int faces, int faceWidth, int faceHeight, Matrix4f viewProjection, float grow) {
-        boolean keep = ready && blocked && uploaded == recording && uploadedVersion == recording.version();
-        return cull(recording, faces, faceWidth, faceHeight, viewProjection, grow, FACES, keep);
-    }
-
-    /**
-     * Before far terrain draws: leaves out of every pass of a recording the ranges the game's
-     * blocks already hide, tested against a pyramid of the game's depth ({@code depth}, the depth
-     * its blocks left, which far terrain does not write): with {@code covered} (far terrain's own
-     * depth, whose programs drop every fragment wherever the game drew a block) the ranges whose
-     * every pixel the blocks cover, else the ranges lying wholly behind them. The draws it leaves out
-     * would have drawn no pixel. This is FarPlaneTwo's occlusion culling against the depth the game's
-     * own terrain left (DaPorkchop_, https://github.com/PorkStudios/FarPlaneTwo), written afresh.
-     */
-    boolean cullBlocked(FarGpu.Recording recording, int depth, Matrix4f viewProjection, float grow, boolean covered) {
-        int active = GlStateManager._getActiveTexture();
-        GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + Bindings.TEXTURE_UNIT);
-        int bound = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
-        GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, depth);
-        int depthWidth = GL11C.glGetTexLevelParameteri(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_TEXTURE_WIDTH);
-        int depthHeight = GL11C.glGetTexLevelParameteri(GL11C.GL_TEXTURE_2D, 0, GL11C.GL_TEXTURE_HEIGHT);
-        GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, bound);
-        GlStateManager._activeTexture(active);
-        boolean done = cull(recording, depth, depthWidth, depthHeight, viewProjection, grow, covered ? COVERED : BEHIND, false);
-        blocked = done;
-        return done;
-    }
-
-    private static final int FACES = 0, COVERED = 1, BEHIND = 2;
-    /** Whether the culling now ready came from {@link #cullBlocked}, so a later {@link #cull} keeps what it left out. */
-    private boolean blocked;
-
-    private boolean cull(FarGpu.Recording recording, int faces, int faceWidth, int faceHeight, Matrix4f viewProjection, float grow, int mode, boolean keep) {
         ready = false;
         if (failed || recording.rangeCount() == 0 || faceWidth < 2 || faceHeight < 2) return false;
         if (!programs()) return false;
@@ -189,7 +151,7 @@ final class FarHiddenCull {
             if (width != faceWidth || height != faceHeight) resize(faceWidth, faceHeight);
             if (uploaded != recording || uploadedVersion != recording.version()) upload(recording);
             build(faces);
-            test(viewProjection, grow, mode, keep);
+            test(viewProjection, grow);
             ready = true;
             return true;
         } finally {
@@ -205,7 +167,7 @@ final class FarHiddenCull {
     }
 
     /** Ends this frame's culling: the next shading pass draws every range unless {@link #cull} runs again. */
-    void done() { ready = blocked = false; }
+    void done() { ready = false; }
 
     private void upload(FarGpu.Recording recording) {
         ranges = recording.rangeCount();
@@ -248,7 +210,7 @@ final class FarHiddenCull {
         }
     }
 
-    private void test(Matrix4f viewProjection, float grow, int mode, boolean keep) {
+    private void test(Matrix4f viewProjection, float grow) {
         GL20C.glUseProgram(cull);
         GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + Bindings.TEXTURE_UNIT);
         GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, pyramid);
@@ -262,8 +224,6 @@ final class FarHiddenCull {
         GL20C.glUniform1i(GL20C.glGetUniformLocation(cull, "earth_Levels"), levels);
         GL20C.glUniform1f(GL20C.glGetUniformLocation(cull, "earth_Grow"), grow);
         GL20C.glUniform1f(GL20C.glGetUniformLocation(cull, "earth_Margin"), DEPTH_MARGIN);
-        GL20C.glUniform1i(GL20C.glGetUniformLocation(cull, "earth_Mode"), mode);
-        GL20C.glUniform1i(GL20C.glGetUniformLocation(cull, "earth_Keep"), keep ? 1 : 0);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, Bindings.boxBinding(), boxes);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, Bindings.commandBinding(), commands);
         GL43C.glShaderStorageBlockBinding(cull, GL43C.glGetProgramResourceIndex(cull, GL43C.GL_SHADER_STORAGE_BLOCK, "EarthBoxes"), Bindings.boxBinding());
