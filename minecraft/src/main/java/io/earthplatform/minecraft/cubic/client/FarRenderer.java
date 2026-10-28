@@ -129,6 +129,17 @@ public final class FarRenderer {
     private int planned;
     /** The player's horizontal look direction, so columns in view come before those behind. */
     private double lookX, lookZ = 1;
+    /**
+     * The zoomed view's eye (see {@link FarZoom}), or null unzoomed; and the one the kept walk drew
+     * for. The projection's focal length and the tangent of the angle to its corners, from the last
+     * frame drawn.
+     */
+    @Nullable private FarZoom zoom, walkZoom;
+    private float focal;
+    private int zoomWanted, zoomSeen;
+    private double spread;
+    /** Where the zoomed view looks from and along, for the plan to pick the columns in it. */
+    private double zoomX, zoomY, zoomZ, zoomDx, zoomDy, zoomDz;
     /** Columns the view wants at their own level, and how many of them are drawn: how settled the far terrain is. */
     private int wanted, settled, planSize, wantedInView, settledInView;
     /** Columns kept beyond what the plan wants, for going back over ground just left. */
@@ -608,6 +619,11 @@ public final class FarRenderer {
         return gpu;
     }
     public int drawnCount() { return walkCount; }
+    /** For the debug screen: the zoomed view's finest level, its eye and the columns it wants of those in view, or nothing unzoomed. */
+    public String zoomInfo() {
+        FarZoom zoom = this.zoom;
+        return zoom == null ? "" : "Far zoom: level " + zoom.finest() + " from " + zoom.ex() + " " + zoom.ez() + ", " + zoomWanted + "/" + zoomSeen + " columns";
+    }
     /** Share of the columns wanted at their own level that are meshed, in percent: 100 once the view has fully refined. */
     public int settledPercent() { return wanted == 0 ? 0 : (int) (100L * settled / wanted); }
     /** The same for the columns in view only, the ones within 60 degrees of where the player looks. */
@@ -721,6 +737,7 @@ public final class FarRenderer {
         lookX = -Math.sin(yaw);
         lookZ = Math.cos(yaw);
         int bx = player.getBlockX(), bz = player.getBlockZ();
+        zoom(player);
         submitDue(bx, bz);
         if (ticks % PLAN_TICKS == 0) {
             plan(bx, bz, FarLead.at(bx, bz, motion.x * 20.0, motion.z * 20.0));
@@ -728,6 +745,31 @@ public final class FarRenderer {
         }
         request();
     }
+
+    /**
+     * Works out the zoomed view's eye (see {@link FarZoom}) from the last frame's projection and where
+     * the player looks. Zoom counts against the game's field of view, or the default 70 degrees when
+     * that is wider: a field of view set narrow in the options shows the far ground bigger too.
+     */
+    private void zoom(net.minecraft.world.entity.player.Player player) {
+        double normal = 1 / Math.tan(Math.toRadians(Math.max(Minecraft.getInstance().options.fov().get(), 70)) / 2);
+        var eye = player.getEyePosition();
+        var look = player.getViewVector(1);
+        zoomX = eye.x;
+        zoomY = eye.y;
+        zoomZ = eye.z;
+        zoomDx = look.x;
+        zoomDy = look.y;
+        zoomDz = look.z;
+        zoom = ZOOM ? FarZoom.at(focal / normal, eye.x, eye.y, eye.z, look.x, look.y, look.z,
+                (double) Far.OUTER * Far.width(Far.MAX_LEVEL), this::ground, zoom) : null;
+    }
+
+    /**
+     * Whether a zoomed view sharpens the far terrain it looks at (see {@link FarZoom}).
+     * {@code -Dearthplatform.far.zoom=false} keeps the levels round the player alone, as before.
+     */
+    private static final boolean ZOOM = !"false".equals(System.getProperty("earthplatform.far.zoom"));
 
     /** Lists the missing columns, the ones a player would see change most first, and forgets requests no longer wanted. */
     private void plan(int bx, int bz, @Nullable int[] lead) {
@@ -757,6 +799,28 @@ public final class FarRenderer {
             counts[4]++;
             if (!places.want(Far.level(key), Far.x(key), Far.z(key), ticks)) missing.add(key);
         });
+        // Zoomed, the columns in the view the zoomed view's eye would draw too, after the player's own,
+        // the nearest the eye in their own widths first, as many as FarZoom.MAX_COLUMNS of them.
+        FarZoom zoom = this.zoom;
+        LongOpenHashSet zoomed = new LongOpenHashSet();
+        LongArrayList zoomMissing = new LongArrayList();
+        if (zoom != null) {
+            LongArrayList seen = new LongArrayList();
+            Far.around(zoom.ex(), zoom.ez(), zoom.finest(), hole, key -> {
+                if (!Far.kept(key, bx, bz, finest, hole) && FarZoom.inView(key, zoomX, zoomY, zoomZ, zoomDx, zoomDy, zoomDz, spread, this::ground)) seen.add(key);
+            });
+            Long2LongOpenHashMap near = new Long2LongOpenHashMap(seen.size());
+            for (int i = 0; i < seen.size(); i++) near.put(seen.getLong(i), priority(seen.getLong(i), zoom.ex(), zoom.ez()));
+            seen.unstableSort((a, b) -> Long.compare(near.get(a), near.get(b)));
+            for (int i = 0; i < Math.min(seen.size(), FarZoom.MAX_COLUMNS); i++) {
+                long key = seen.getLong(i);
+                zoomed.add(key);
+                counts[4]++;
+                if (!places.want(Far.level(key), Far.x(key), Far.z(key), ticks)) zoomMissing.add(key);
+            }
+            zoomSeen = seen.size();
+        }
+        zoomWanted = zoomed.size();
         wanted = counts[0];
         planSize = counts[4];
         settled = counts[1];
@@ -765,10 +829,13 @@ public final class FarRenderer {
         // A request the server dropped (its player had moved on) or one for a place left behind
         // frees its place for the columns wanted now; one still wanted is asked for again later.
         requested.long2IntEntrySet().removeIf(entry -> !Far.kept(entry.getLongKey(), bx, bz, finest, hole)
-                && (lead == null || !Far.kept(entry.getLongKey(), lead[0], lead[1], finest, hole)) || ticks - entry.getIntValue() > RETRY_TICKS);
+                && (lead == null || !Far.kept(entry.getLongKey(), lead[0], lead[1], finest, hole)) && !zoomed.contains(entry.getLongKey())
+                || ticks - entry.getIntValue() > RETRY_TICKS);
         Long2LongOpenHashMap order = new Long2LongOpenHashMap(missing.size());
         for (int i = 0; i < missing.size(); i++) order.put(missing.getLong(i), priority(missing.getLong(i), bx, bz));
         missing.unstableSort((a, b) -> Long.compare(order.get(a), order.get(b)));
+        // Already in order.
+        missing.addAll(zoomMissing);
         plan.clear();
         plan.addAll(missing);
         planned = 0;
@@ -1346,6 +1413,8 @@ public final class FarRenderer {
     private void drawColumns(FarGpu gpu, Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
         Vec3 position = camera.getPosition();
         int bx = (int) Math.floor(position.x), bz = (int) Math.floor(position.z);
+        focal = Math.abs(projection.m11());
+        spread = Math.hypot(1 / projection.m00(), 1 / projection.m11());
         gpu.fadeTicks(fadeLength.table());
         // Spatial dither still runs in the shaders every frame; only timed arrivals need a new pick.
         boolean band = FADE && ShaderBlocks.packInUse() && gpu.jittered();
@@ -1645,7 +1714,7 @@ public final class FarRenderer {
 
     /** The same but for the camera's column, which a patch can follow (see {@link #moveRoots}). */
     private boolean walkKept(boolean band) {
-        return walked && !walkStale && finest == walkFinest && Far.hole() == walkHole && band == walkBand;
+        return walked && !walkStale && finest == walkFinest && Far.hole() == walkHole && band == walkBand && Objects.equals(zoom, walkZoom);
     }
 
     /** Whether something the kept walk does not draw yet has changed: a column meshed, or a fade it saw ended. */
@@ -1668,7 +1737,7 @@ public final class FarRenderer {
         for (int at = Far.MAX_LEVEL; at > level; at--) {
             int ax = x >> (at - level), az = z >> (at - level);
             boolean meshed = places.meshed(at, ax, az);
-            boolean refined = Far.refined(at, ax, az, bx, bz, finest) || !meshed && Far.refined(at, ax, az, bx, bz);
+            boolean refined = Far.refined(at, ax, az, bx, bz, finest) || zoomed(at, ax, az) || !meshed && Far.refined(at, ax, az, bx, bz);
             if (!refined || meshed && !childrenReady(at, ax, az, bx, bz)) break;
             path |= 1 << at;
         }
@@ -1715,7 +1784,7 @@ public final class FarRenderer {
         if (!walked || column.meshed || visited(column)) return;
         int level = column.level;
         if (walkPath(column) == (1 << Far.MAX_LEVEL + 1) - (1 << level + 1))
-            column.split = Far.refined(level, Far.x(column.key), Far.z(column.key), walkBx, walkBz);
+            column.split = Far.refined(level, Far.x(column.key), Far.z(column.key), walkBx, walkBz) || zoomed(level, Far.x(column.key), Far.z(column.key));
     }
 
     /** The places of the columns come since the last frame (see {@link #noteWalk}), by key: one gone again is not kept. */
@@ -2084,6 +2153,7 @@ public final class FarRenderer {
     }
 
     private void walk(int bx, int bz, boolean band, int now) {
+        walkZoom = zoom;
         drawn.clear();
         pickSerial++;
         pickAnimating = false;
@@ -2535,7 +2605,7 @@ public final class FarRenderer {
         if (!meshed && level <= finest) walkFine = true;
         // Rising into the jet stream layer makes a coarser level the finest: until its columns
         // arrive, the finer ones already here keep standing in for them.
-        boolean refined = Far.refined(level, x, z, bx, bz, finest) || !meshed && Far.refined(level, x, z, bx, bz);
+        boolean refined = Far.refined(level, x, z, bx, bz, finest) || zoomed(level, x, z) || !meshed && Far.refined(level, x, z, bx, bz);
         if (refined && (!meshed || childrenReady(level, x, z, bx, bz))) {
             // The outer ring of a level's middle: drawn under its children too, fading in as they fade out.
             // The shader puts the ring at the shared hole, so where the coarsest level keeps a narrower
@@ -2722,7 +2792,13 @@ public final class FarRenderer {
      */
     private boolean ready(int level, int x, int z, int bx, int bz) {
         if (places.meshed(level, x, z)) return true;
-        return Far.refined(level, x, z, bx, bz, finest) && childrenReady(level, x, z, bx, bz);
+        return (Far.refined(level, x, z, bx, bz, finest) || zoomed(level, x, z)) && childrenReady(level, x, z, bx, bz);
+    }
+
+    /** Whether the kept walk's zoomed view (see {@link FarZoom}) draws a level's column x, z with its next finer level. */
+    private boolean zoomed(int level, int x, int z) {
+        FarZoom zoom = walkZoom;
+        return zoom != null && zoom.refined(level, x, z);
     }
 
     private boolean childrenReady(int level, int x, int z, int bx, int bz) {
