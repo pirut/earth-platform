@@ -19,13 +19,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /**
  * Block cracks are keyed by BlockPos.asLong, whose 12-bit Y wraps above Y 2047, so the overlay
  * landed thousands of blocks away. Remember the real position for each key and draw it there.
+ * Remembered at TAIL: each new stage first removes the old entry (which forgets the key) and
+ * then adds it back, so a HEAD record was dropped after the first stage.
  */
 @Mixin(LevelRenderer.class)
 abstract class CubicDestroyProgressMixin {
     @Shadow @Final private Long2ObjectMap<SortedSet<BlockDestructionProgress>> destructionProgress;
     @Unique private final Long2ObjectOpenHashMap<BlockPos> earthplatform$crackPositions = new Long2ObjectOpenHashMap<>();
 
-    @Inject(method = "destroyBlockProgress", at = @At("HEAD"))
+    @Inject(method = "destroyBlockProgress", at = @At("TAIL"))
     private void earthplatform$remember(int breakerId, BlockPos pos, int progress, CallbackInfo info) {
         if (progress >= 0 && progress < 10) earthplatform$crackPositions.put(pos.asLong(), pos.immutable());
     }
