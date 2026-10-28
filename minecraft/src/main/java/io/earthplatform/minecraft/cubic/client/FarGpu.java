@@ -352,6 +352,11 @@ final class FarGpu {
     private Vec3 camera;
     private float[] shade;
     private int frame;
+    /** Each level's fade length this frame, in hundredths of a second (see {@link FarFade}). */
+    private float[] fadeTicks = new FarFade().table();
+
+    /** Sets the fade lengths the next programs put in use draw with. */
+    void fadeTicks(float[] ticks) { fadeTicks = ticks; }
 
     /** Pixels a far face reaches past its edges, enough to close the pinholes where merged faces meet mid-edge. */
     static final double GROW_PIXELS = 0.46;
@@ -402,6 +407,7 @@ final class FarGpu {
         GL20C.glUniform1f(program.location("earth_FadeHole"), Far.hole());
         GL20C.glUniform1f(program.location("earth_NearReach"), FarLod.nearReach());
         GL30C.glUniform1ui(program.location("earth_Now"), frozenNow != 0 ? frozenNow : now());
+        GL20C.glUniform1fv(program.location("earth_FadeTicks"), fadeTicks);
         // Under a pack's TAA the dither moves every frame and blends into a smooth fade; without it, it holds still.
         GL20C.glUniform1f(program.location("earth_DitherFrame"), program.jittered ? frame & 63 : 0);
     }

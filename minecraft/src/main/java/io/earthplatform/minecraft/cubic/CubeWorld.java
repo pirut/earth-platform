@@ -188,7 +188,10 @@ public abstract class CubeWorld {
     }
 
     /** Mirrors LevelChunk.setBlockState. Returns the replaced state, or null when nothing changed. */
-    @Nullable public BlockState setBlockState(BlockPos pos, BlockState state, boolean moving) {
+    @Nullable public BlockState setBlockState(BlockPos pos, BlockState state, boolean moving) { return setBlockState(pos, state, moving, true); }
+
+    /** As above; {@code place} false skips the new state's onPlace, as WorldEdit asks with block updates off. */
+    @Nullable public BlockState setBlockState(BlockPos pos, BlockState state, boolean moving, boolean place) {
         Cube cube = cubeAtBlock(pos.getX(), pos.getY(), pos.getZ());
         if (cube == null) return null;
         int lx = pos.getX() & 15, ly = pos.getY() & 15, lz = pos.getZ() & 15;
@@ -203,7 +206,7 @@ public abstract class CubeWorld {
         if (!level.isClientSide) old.onRemove(level, pos, state, moving);
         else if (!old.is(block) && hadEntity) removeBlockEntity(pos);
         if (!cube.section.getBlockState(lx, ly, lz).is(block)) return null;
-        if (!level.isClientSide && !Platform.INSTANCE.capturingSnapshots(level)) state.onPlace(level, pos, old, moving);
+        if (place && !level.isClientSide && !Platform.INSTANCE.capturingSnapshots(level)) state.onPlace(level, pos, old, moving);
         if (state.hasBlockEntity()) {
             BlockEntity existing = getBlockEntity(pos, false);
             if (existing != null && !existing.isValidBlockState(state)) { removeBlockEntity(pos); existing = null; }

@@ -939,7 +939,8 @@ public final class GlobeTest {
     /**
      * The fill against synthetic Copernicus ground: Terrarium tiles that agree stay exactly as they
      * are; tiles 65 m too high everywhere, and tiles with the sea band filled in at 240 m, take
-     * Copernicus, with its sea as open sea.
+     * Copernicus, with its sea as open sea. Tiles 50 m too low stay as they are, unless the land
+     * cover maps snow and ice over them and the fill is {@value CopernicusFill#ICE_ID}'s.
      */
     private static void copernicusFill() throws Exception {
         Map<String, byte[]> files = new HashMap<>();
@@ -954,7 +955,7 @@ public final class GlobeTest {
         java.util.function.DoubleUnaryOperator row = lat -> (1 - Math.log(Math.tan(Math.toRadians(lat)) + 1 / Math.cos(Math.toRadians(lat))) / Math.PI) / 2 * (1 << zoom);
         int landY = (int) row.applyAsDouble(10.7), seaY = (int) row.applyAsDouble(10.5);
         try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
-            for (String kind : List.of("agree", "offset", "filled")) {
+            for (String kind : List.of("agree", "offset", "filled", "sunk", "sunk-ice")) {
                 // Terrarium as the check zoom sees it, made from the same ground with this kind of fault.
                 CopernicusFill.Tiles tiles = (z, x, y) -> {
                     float[] t = new float[256 * 256];
@@ -965,7 +966,8 @@ public final class GlobeTest {
                     }
                     return t;
                 };
-                var fill = new CopernicusFill(dem, tiles, 16);
+                var fill = kind.startsWith("sunk") ? new CopernicusFill(dem, tiles, (lat, lon) -> kind.equals("sunk-ice"), 16) : new CopernicusFill(dem, tiles, 16);
+                if (kind.startsWith("sunk")) equal(CopernicusFill.ICE_ID, fill.id(), "ice fill's pin");
                 for (int ty : new int[]{landY, seaY}) {
                     float[] before = tiles.tile(zoom, tx, ty), after = before.clone();
                     fill.apply(after, zoom, tx, ty);
@@ -980,13 +982,15 @@ public final class GlobeTest {
                         }
                     }
                     String where = ty == landY ? "land" : "sea band";
-                    if (kind.equals("agree")) check(Arrays.equals(before, after), "agreeing tiles left exactly as they were (" + where + ")");
+                    if (kind.equals("agree") || kind.equals("sunk")) check(Arrays.equals(before, after), kind + " tiles left exactly as they were (" + where + ")");
+                    else if (kind.equals("sunk-ice")) { if (ty == landY) check(worst < 1, "sunk ice takes Copernicus, worst " + worst + " m off"); }
                     else {
                         check(worst < 1, kind + " tile takes Copernicus (" + where + "), worst " + worst + " m off");
                         if (ty == seaY) check(sea > 256 * 128, kind + " sea band becomes open sea (" + sea + " pixels)");
                     }
                 }
-                check(kind.equals("agree") ? fill.weight(10.7, 20.3) == 0 : fill.weight(10.7, 20.3) == 1, kind + " weight");
+                boolean kept = kind.equals("agree") || kind.equals("sunk");
+                check(kept ? fill.weight(10.7, 20.3) == 0 : fill.weight(10.7, 20.3) == 1, kind + " weight");
             }
         } finally {
             server.stop(0);
@@ -994,12 +998,13 @@ public final class GlobeTest {
         }
     }
 
-    /** Synthetic Terrarium for {@link #copernicusFill}: the ground as it is, 65 m high, or with the sea filled in at 240 m. */
+    /** Synthetic Terrarium for {@link #copernicusFill}: the ground as it is, 65 m high, 50 m low, or with the sea filled in at 240 m. */
     private static float terrarium(String kind, double lat, double lon) {
         float ground = copernicusGround(lat, lon);
         return switch (kind) {
             case "offset" -> ground == 0 ? 0 : ground + 65;
             case "filled" -> ground == 0 ? 240 : ground;
+            case "sunk", "sunk-ice" -> ground < 60 ? ground : ground - 50;
             default -> ground == 0 ? 0 : ground;
         };
     }

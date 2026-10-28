@@ -181,6 +181,9 @@ public final class CubicSettings {
         try (Stream<Path> files = Files.list(cubes)) { return files.findAny().isPresent(); }
     }
 
+    /** Land cover overview the Copernicus fill finds snow and ice at: pixels about 75 m across, near its check's 120 m. */
+    private static final int ICE_OVERVIEW = 3;
+
     /**
      * The elevation pin for new worlds: the Terrarium composite, then the layers laid over it, joined
      * by '+'. The Copernicus fill, Canada from HRDEM, the United States from 3DEP, Antarctica from REMA,
@@ -193,7 +196,7 @@ public final class CubicSettings {
      */
     public static String elevation() {
         String pin = TerrariumTileSource.DATASET_ID;
-        if (!"false".equals(System.getProperty("earthplatform.earth.copernicus"))) pin += "+" + CopernicusFill.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.copernicus"))) pin += "+" + CopernicusFill.ICE_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.hrdem"))) pin += "+" + HrdemElevation.DATASET_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.3dep"))) pin += "+" + UsgsElevation.GRADED_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.rema"))) pin += "+" + RemaElevation.DATASET_ID;
@@ -221,6 +224,11 @@ public final class CubicSettings {
         TerrariumTileSource[] made = new TerrariumTileSource[1];
         for (int i = 1; i < ids.length; i++) {
             if (CopernicusFill.DATASET_ID.equals(ids[i])) layers.add(new CopernicusFill(copernicus(), (zoom, x, y) -> made[0].cleaned(zoom, x, y), 512));
+            else if (CopernicusFill.ICE_ID.equals(ids[i])) {
+                WorldCoverSource cover = cover();
+                layers.add(new CopernicusFill(copernicus(), (zoom, x, y) -> made[0].cleaned(zoom, x, y),
+                        (latitude, longitude) -> cover.code(latitude, longitude, ICE_OVERVIEW) == WorldCoverSource.SNOW_AND_ICE, 512));
+            }
             else if (UsgsElevation.Reading.of(ids[i]) != null) layers.add(usgs(UsgsElevation.Reading.of(ids[i])));
             else if (RemaElevation.DATASET_ID.equals(ids[i])) layers.add(rema());
             else if (HrdemElevation.DATASET_ID.equals(ids[i])) layers.add(hrdem());
