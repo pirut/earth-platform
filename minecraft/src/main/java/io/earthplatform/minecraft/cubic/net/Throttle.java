@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic.net;
 
-import net.minecraft.network.Connection;
+import io.earthplatform.minecraft.platform.Platform;
+import io.netty.channel.Channel;
 import net.minecraft.server.level.ServerPlayer;
 
 /**
@@ -16,8 +17,8 @@ public final class Throttle {
 
     /** Bytes of terrain that may go to this player this tick: none while its connection is still sending earlier ones. */
     public static int allowance(ServerPlayer player) {
-        Connection connection = player.connection == null ? null : player.connection.getConnection();
-        if (connection == null || connection.isMemoryConnection()) return Integer.MAX_VALUE;
-        return connection.channel() != null && connection.channel().isWritable() ? BYTES_PER_TICK : 0;
+        Channel channel = Platform.INSTANCE.channel(player);
+        if (channel == null) return Integer.MAX_VALUE;
+        return channel.isWritable() ? BYTES_PER_TICK : 0;
     }
 }

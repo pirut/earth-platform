@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+  "name": "${mod_name}",
+  "description": "The real Earth in Minecraft at true scale: every mountain at its real height, real climate and biomes, and terrain all the way to the horizon.\nChoose the Earth world type in Create World and pick where to start. Travel anywhere with /earth visit <place> or /earth goto <latitude> <longitude>.",
+  "authors": [
+    "pirut"
+  ],
+  "contributors": [],
+  "contact": {
+    "homepage": "https://github.com/pirut/earth-platform",
+    "sources": "https://github.com/pirut/earth-platform",
+    "issues": "https://github.com/pirut/earth-platform/issues"
+  },
+  "license": "${mod_license}",
+  "icon": "earthplatform_logo.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "io.earthplatform.minecraft.fabric.EarthPlatformFabric"
+    ],
+    "client": [
+      "io.earthplatform.minecraft.fabric.EarthPlatformFabricClient"
+    ],
+    "sodium:config_api_user": [
+      "io.earthplatform.minecraft.cubic.play.client.SodiumOptions"
+    ]
+  },
+  "mixins": [
+    "${mod_id}.cubic.mixins.json",
+    "${mod_id}.fabric.mixins.json",
+    "${mod_id}.axiom.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": "${loader_version_range}",
+    "fabric-api": "${fabric_api_version_range}",
+    "minecraft": "${minecraft_version}",
+    "java": ">=21"
+  },
+  "suggests": {
+    "sodium": "*",
+    "iris": "*"
+  },
+  "breaks": {
+    "sodium": "<0.8.12-beta.1",
+    "iris": "<1.8.14-beta.1"
+  },
+  "custom": {
+    "earthplatform:credits": "Earth Platform would not be possible without the open data below. Thank you to every agency, scientist and team who collected it and shared it.\nEarth data, downloaded while you play and kept on your computer:\nElevation: AWS Terrain Tiles (Mapzen/Tilezen terrain on the Registry of Open Data on AWS). Sources and credits: ArcticDEM (DigitalGlobe imagery, NSF awards 1043681, 1559691, 1542736); Australia © Commonwealth of Australia (Geoscience Australia) 2017; Austria © offene Daten Österreichs, Digitales Geländemodell (DGM) Österreich; Canada, contains information licensed under the Open Government Licence – Canada; Europe, produced using Copernicus data and information funded by the European Union, EU-DEM layers; global ETOPO1, U.S. National Oceanic and Atmospheric Administration; Mexico, INEGI Continental relief 2016; New Zealand, Copyright 2011 Crown copyright (c) Land Information New Zealand and the New Zealand Government (All rights reserved); Norway © Kartverket; United Kingdom © Environment Agency copyright and/or database right 2015, all rights reserved; United States 3DEP (formerly NED) and global GMTED2010 and SRTM, courtesy of the U.S. Geological Survey.\nElevation fill: produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.\nUnited States: USGS 3D Elevation Program 1/3 arc-second DEM (public domain), courtesy of the U.S. Geological Survey.\nAntarctica: Reference Elevation Model of Antarctica (REMA) v2.0, Polar Geospatial Center, University of Minnesota (CC BY 4.0); Howat, I., et al. (2022), The Reference Elevation Model of Antarctica - Mosaics, Version 2, Harvard Dataverse, https://doi.org/10.7910/DVN/EBW8UC. DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685. Geoid: EGM96 (NGA, public domain), shipped as a half-degree grid south of 50 S in geography/src/main/resources.\nCanada: High Resolution Digital Elevation Model (HRDEM), Natural Resources Canada; contains information licensed under the Open Government Licence – Canada.\nFrance: IGN, RGE ALTI (Licence Ouverte / Open Licence 2.0, Etalab).\nJapan: source, Geospatial Information Authority of Japan website (出典：国土地理院ウェブサイト), elevation tiles, processed by Earth Platform (Public Data License 1.0).\nLand cover: © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium. Zanaga, D. et al. (2022), ESA WorldCover 10 m 2021 v200, doi:10.5281/zenodo.7254221. CC BY 4.0.\nClimate: CHELSA V2.1 climatologies 1981-2010. Karger, D.N. et al. (2017) Climatologies at high resolution for the earth's land surface areas, Scientific Data 4:170122; Karger et al. (2021) EnviDat, doi:10.16904/envidat.228. CC0 1.0.\nRivers: JRC Global Surface Water v1.4 (Source: EC JRC/Google; Pekel et al. 2016, Nature 540, 418-422), Copernicus Programme. The European Union and the organisations in charge of the Copernicus programme do not incur any liability for any use of these data.\nEcoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm, BioScience 67(6):534-545, CC BY 4.0; derived 0.05 degree raster.\nGround colors (optional, off by default): Sentinel-2 cloudless 2016, EOxCloudless - https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016).\nSpawn picker globe (bundled): NASA Earth Observatory, Reto Stöckli, Blue Marble Next Generation (July 2004), public domain.\nDistant terrain: built on ideas from Voxy by Cortex (MCRcortex) and Distant Horizons by James Seibel and contributors: the voxel level pyramid, detail by on-screen size, compact GPU faces and Voxy's shader-pack interface from Voxy; exact far heights and server-built far terrain from Distant Horizons. Thank you to both. We'd have recommended using them directly, but neither works with a cubic-chunks world, so Earth Platform has its own renderer. It contains no code from either.\nEarth Platform changes these data (resampling, block choices, procedural detail); it is not a survey and not for navigation. Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.",
+    "lithium:options": {
+      "mixin.entity.collisions.movement": false,
+      "mixin.entity.collisions.intersection": false,
+      "mixin.world.raycast": false,
+      "mixin.world.explosions.block_raycast": false,
+      "mixin.world.inline_block_access": false,
+      "mixin.block.redstone_wire": false,
+      "mixin.block_pattern_matching": false,
+      "mixin.ai.non_poi_block_search": false,
+      "mixin.ai.poi.fast_portals": false,
+      "mixin.entity.inactive_navigations": false,
+      "mixin.util.block_entity_retrieval": false
+    }
+  }
+}

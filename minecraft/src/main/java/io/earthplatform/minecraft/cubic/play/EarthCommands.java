@@ -14,6 +14,7 @@ import io.earthplatform.minecraft.cubic.CubicEvents;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
+import io.earthplatform.minecraft.platform.Platform;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -32,7 +33,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
  * Commands for running an Earth server: where players spawn (the server spawn, picked on the globe
@@ -252,7 +252,7 @@ final class EarthCommands {
         GeoPoint at = where(player);
         if (at == null) at = spawnPoint(source, earth);
         EarthMap.sendOthers(player);
-        PacketDistributor.sendToPlayer(player, new EarthMap.Payload(kind, at.latitude(), at.longitude()));
+        Platform.INSTANCE.sendToPlayer(player, new EarthMap.Payload(kind, at.latitude(), at.longitude()));
         return 1;
     }
 

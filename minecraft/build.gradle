@@ -321,6 +321,9 @@ neoForge {
 
 sourceSets.main.java.srcDir '../geography/src/main/java'
 sourceSets.main.resources.srcDir '../geography/src/main/resources'
+// NeoForge's half of the loader glue; the game code in src/main is shared with ../fabric.
+sourceSets.main.java.srcDir 'src/neoforge/java'
+sourceSets.main.resources.srcDir 'src/neoforge/resources'
 
 // Resolve supported dev-client dependencies without opening a window or starting a server.
 // Useful when the native desktop terminal is offline but the managed build executor can fetch artifacts.

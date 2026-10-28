@@ -1,6 +1,5 @@
 package io.earthplatform.minecraft.cubic;
 
-import io.earthplatform.minecraft.EarthPlatformMod;
 import java.util.List;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.GlobalPos;
@@ -10,9 +9,6 @@ import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.world.entity.ai.village.poi.PoiManager;
 import net.minecraft.world.entity.npc.Villager;
 import net.minecraft.world.phys.AABB;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 
 /**
  * Villagers' claims on beds, job sites and bells at cubic heights. Those points of interest live
@@ -21,7 +17,6 @@ import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
  * when a cube's points are rebuilt and when a villager joins the level. Without this a village
  * left and revisited, or reloaded, reads as empty (no raids) and its beds can be claimed twice.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
 public final class CubicPoiClaims {
     private CubicPoiClaims() {}
 
@@ -37,8 +32,9 @@ public final class CubicPoiClaims {
         for (Villager villager : level.getEntitiesOfClass(Villager.class, around)) reclaim(level, villager, cube.asLong());
     }
 
-    @SubscribeEvent public static void join(EntityJoinLevelEvent event) {
-        if (event.loadedFromDisk() && event.getEntity() instanceof Villager villager && event.getLevel() instanceof ServerLevel level
+    /** An entity loaded from the save joined a level. */
+    public static void join(net.minecraft.world.entity.Entity entity, net.minecraft.world.level.Level joined) {
+        if (entity instanceof Villager villager && joined instanceof ServerLevel level
                 && CubicLevel.of(level) instanceof ServerCubeWorld) reclaim(level, villager, Long.MIN_VALUE);
     }
 

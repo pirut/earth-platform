@@ -8,6 +8,7 @@ import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.jet.JetStream;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.net.Throttle;
+import io.earthplatform.minecraft.platform.Platform;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -54,7 +55,6 @@ import net.minecraft.world.level.chunk.PalettedContainer;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.storage.LevelResource;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
  * Server cube authority: generates or loads cubes around players on worker threads, adopts them
@@ -658,7 +658,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 // Buried rock not made yet goes as a stand-in, replaced by the real cube once it is made.
                 if (standIns <= 0 || watcher.stood.contains(key) || near(dx, dz, NEAR) || buried(x, y, z) != 1) continue;
                 CubePayloads.CubeData data = new CubePayloads.CubeData(x, y, z, standIn, List.of());
-                PacketDistributor.sendToPlayer(watcher.player, data);
+                Platform.INSTANCE.sendToPlayer(watcher.player, data);
                 watcher.stood.add(key);
                 bytes -= data.size();
                 standIns--;
@@ -672,10 +672,10 @@ public final class ServerCubeWorld extends CubeWorld {
     /** Sends a loaded cube, and its column's tops if the player has not had them; the bytes sent. */
     private int sendCube(Watcher watcher, Cube cube) {
         if (watcher.columns.add(CubeKey.column(cube.x, cube.z))) {
-            PacketDistributor.sendToPlayer(watcher.player, new CubePayloads.ColumnTops(cube.x, cube.z, topsFor(cube.x, cube.z).clone()));
+            Platform.INSTANCE.sendToPlayer(watcher.player, new CubePayloads.ColumnTops(cube.x, cube.z, topsFor(cube.x, cube.z).clone()));
         }
         CubePayloads.CubeData data = data(cube);
-        PacketDistributor.sendToPlayer(watcher.player, data);
+        Platform.INSTANCE.sendToPlayer(watcher.player, data);
         watcher.sent.add(cube.key);
         watcher.stood.remove(cube.key);
         return data.size();
@@ -737,7 +737,7 @@ public final class ServerCubeWorld extends CubeWorld {
             int dx = CubeKey.columnX(column) - cx, dz = CubeKey.columnZ(column) - cz;
             if (dx * dx + dz * dz > (columns + 1) * (columns + 1)) it.remove();
         }
-        if (!dropped.isEmpty()) PacketDistributor.sendToPlayer(watcher.player, new CubePayloads.CubeUnload(dropped.toLongArray()));
+        if (!dropped.isEmpty()) Platform.INSTANCE.sendToPlayer(watcher.player, new CubePayloads.CubeUnload(dropped.toLongArray()));
     }
 
     private void flushChanges() {
@@ -755,7 +755,7 @@ public final class ServerCubeWorld extends CubeWorld {
             for (Watcher watcher : watchers.values()) {
                 if (watcher.changes.isEmpty()) continue;
                 if (Cubic.TRACE) EarthPlatformMod.LOGGER.info("cubic: sending {} block changes to {}", watcher.changes.size(), watcher.player.getScoreboardName());
-                PacketDistributor.sendToPlayer(watcher.player, new CubePayloads.BlockChanges(List.copyOf(watcher.changes)));
+                Platform.INSTANCE.sendToPlayer(watcher.player, new CubePayloads.BlockChanges(List.copyOf(watcher.changes)));
                 watcher.changes.clear();
             }
         }
@@ -765,7 +765,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 int[] values = tops.get(column);
                 if (values == null) continue;
                 CubePayloads.ColumnTops payload = new CubePayloads.ColumnTops(CubeKey.columnX(column), CubeKey.columnZ(column), values.clone());
-                for (Watcher watcher : watchers.values()) if (watcher.columns.contains(column)) PacketDistributor.sendToPlayer(watcher.player, payload);
+                for (Watcher watcher : watchers.values()) if (watcher.columns.contains(column)) Platform.INSTANCE.sendToPlayer(watcher.player, payload);
             }
             changedColumns.clear();
         }

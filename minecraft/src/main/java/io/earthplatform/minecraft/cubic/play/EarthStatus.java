@@ -4,6 +4,7 @@ import io.earthplatform.geography.globe.HostBackoff;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubicSettings;
+import io.earthplatform.minecraft.platform.Platform;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -18,7 +19,6 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
  * What the Earth's data downloads are doing, told to each player so their screen can say so:
@@ -125,7 +125,7 @@ public final class EarthStatus {
         if (payload.equals(sent.get(id)) && now - sentAt.getOrDefault(id, 0L) < 5_000) return;
         sent.put(id, payload);
         sentAt.put(id, now);
-        PacketDistributor.sendToPlayer(player, payload);
+        Platform.INSTANCE.sendToPlayer(player, payload);
     }
 
     void forget(UUID player) { sent.remove(player); sentAt.remove(player); }

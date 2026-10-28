@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.mixin;
 
 import io.earthplatform.minecraft.cubic.CubeWorld;
 import io.earthplatform.minecraft.cubic.CubicLevel;
+import io.earthplatform.minecraft.platform.Platform;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -11,7 +12,6 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.FluidState;
 import org.spongepowered.asm.mixin.Mixin;
@@ -66,7 +66,7 @@ public abstract class CubicLevelMixin implements CubicLevel {
         if (cubes != null) result.setReturnValue(cubes.getFluidState(pos));
     }
 
-    /** Mirrors NeoForge's Level.setBlock, including block snapshot capture for place events. */
+    /** Mirrors NeoForge's Level.setBlock, including block snapshot capture for place events (none on Fabric). */
     @Inject(method = "setBlock(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;II)Z", at = @At("HEAD"), cancellable = true)
     private void earthplatform$cubeSet(BlockPos pos, BlockState state, int flags, int depth, CallbackInfoReturnable<Boolean> result) {
         CubeWorld cubes = earthplatform$cubesAt(pos);
@@ -74,27 +74,15 @@ public abstract class CubicLevelMixin implements CubicLevel {
         Level level = earthplatform$self();
         if (!CubeWorld.inRange(pos.getY()) || !cubes.isLoaded(pos)) { result.setReturnValue(false); return; }
         pos = pos.immutable();
-        net.neoforged.neoforge.common.util.BlockSnapshot snapshot = null;
-        if (level.captureBlockSnapshots && !level.isClientSide) {
-            snapshot = net.neoforged.neoforge.common.util.BlockSnapshot.create(level.dimension(), level, pos, flags);
-            level.capturedBlockSnapshots.add(snapshot);
-        }
+        Object snapshot = Platform.INSTANCE.captureSnapshot(level, pos, flags);
         BlockState old = cubes.setBlockState(pos, state, (flags & 64) != 0);
         if (old == null) {
-            if (snapshot != null) level.capturedBlockSnapshots.remove(snapshot);
+            if (snapshot != null) Platform.INSTANCE.dropSnapshot(level, snapshot);
             result.setReturnValue(false);
             return;
         }
         if (snapshot == null) cubes.markAndNotify(pos, old, state, flags, depth);
         result.setReturnValue(true);
-    }
-
-    @Inject(method = "markAndNotifyBlock", at = @At("HEAD"), cancellable = true)
-    private void earthplatform$cubeNotify(BlockPos pos, @Nullable LevelChunk chunk, BlockState old, BlockState state, int flags, int depth, CallbackInfo info) {
-        CubeWorld cubes = earthplatform$cubesAt(pos);
-        if (cubes == null) return;
-        cubes.markAndNotify(pos, old, state, flags, depth);
-        info.cancel();
     }
 
     @Inject(method = "getBlockEntity(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/block/entity/BlockEntity;", at = @At("HEAD"), cancellable = true)

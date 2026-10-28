@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "io.earthplatform.minecraft.fabric.axiom.mixin",
+  "plugin": "io.earthplatform.minecraft.fabric.axiom.AxiomMixins",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "AxiomTargetsMixin",
+    "HeightmapAccess",
+    "LightEngineAccess"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

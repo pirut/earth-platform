@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.cubic.mixin;
+package io.earthplatform.minecraft.neoforge.mixin;
 
 import io.earthplatform.minecraft.cubic.jet.JetStream;
 import net.minecraft.world.entity.LivingEntity;
@@ -9,9 +9,9 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/** The wind does the work in the jet stream, so elytra don't wear while riding it. */
+/** The wind does the work in the jet stream, so elytra don't wear while riding it. NeoForge wears them in its own elytraFlightTick. */
 @Mixin(ElytraItem.class)
-abstract class CubicJetElytraMixin {
+abstract class ElytraFlightMixin {
     @Inject(method = "elytraFlightTick", at = @At("HEAD"), cancellable = true, remap = false)
     private void earthplatform$noWear(ItemStack stack, LivingEntity entity, int flightTicks, CallbackInfoReturnable<Boolean> result) {
         if (JetStream.riding(entity)) result.setReturnValue(true);

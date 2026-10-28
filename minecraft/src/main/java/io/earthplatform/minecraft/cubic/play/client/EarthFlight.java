@@ -1,7 +1,6 @@
 package io.earthplatform.minecraft.cubic.play.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
-import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.play.EarthMap;
 import java.util.Locale;
 import javax.annotation.Nullable;
@@ -13,11 +12,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -27,7 +21,6 @@ import org.lwjgl.glfw.GLFW;
  * the camera drops back down onto them. All of it is camera work on this client; the trip itself
  * is the server's /earth goto. Outside creative the same key opens the survival map.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, value = Dist.CLIENT)
 public final class EarthFlight {
     public static final KeyMapping KEY = new KeyMapping("key.earthplatform.map", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_N, "key.categories.earthplatform");
 
@@ -50,12 +43,6 @@ public final class EarthFlight {
     private long landedAt = -1, descendAt = -1;
     /** Where the climb began: the camera keeps rising from there even if the trip lands early. */
     @Nullable private Vec3 origin;
-
-    @EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.MOD)
-    public static final class Registration {
-        private Registration() {}
-        @SubscribeEvent public static void keys(RegisterKeyMappingsEvent event) { event.register(KEY); }
-    }
 
     private EarthFlight(LocalPlayer player, double fromLat, double fromLon, double toLat, double toLon) {
         this.fromLat = fromLat;
@@ -227,7 +214,7 @@ public final class EarthFlight {
 
     // The key ---------------------------------------------------------------------------------------
 
-    @SubscribeEvent public static void tick(ClientTickEvent.Post event) {
+    public static void clientTick() {
         Minecraft minecraft = Minecraft.getInstance();
         while (KEY.consumeClick()) {
             LocalPlayer player = minecraft.player;

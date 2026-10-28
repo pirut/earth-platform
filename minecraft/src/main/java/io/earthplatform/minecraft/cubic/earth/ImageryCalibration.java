@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.earth;
 
+import com.mojang.brigadier.CommandDispatcher;
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.globe.GroundPalette;
 import io.earthplatform.geography.globe.ImagerySource;
@@ -11,6 +12,7 @@ import io.earthplatform.minecraft.cubic.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Surface;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import io.earthplatform.minecraft.platform.Loader;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -33,10 +35,6 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.fml.loading.FMLPaths;
-import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
 /**
  * A developer tool for tuning generation against the real Earth: {@code /cubes calibrate [size]}
@@ -52,7 +50,6 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
  * out of the statistics, while shade and dense forest, too dark to match a block, still count in
  * the colour gap.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
 public final class ImageryCalibration {
     private static final int PIXELS = 384;
     /** Colour distance (CIELAB, lightness weighted as in matching) above which a group is reported as off. */
@@ -65,8 +62,8 @@ public final class ImageryCalibration {
 
     private ImageryCalibration() {}
 
-    @SubscribeEvent static void commands(RegisterCommandsEvent event) {
-        event.getDispatcher().register(Commands.literal("cubes").then(Commands.literal("calibrate").requires(source -> source.hasPermission(2))
+    public static void commands(CommandDispatcher<CommandSourceStack> dispatcher) {
+        dispatcher.register(Commands.literal("cubes").then(Commands.literal("calibrate").requires(source -> source.hasPermission(2))
                 .executes(context -> calibrate(context.getSource(), 2048))
                 .then(Commands.argument("size", IntegerArgumentType.integer(64, 65536))
                         .executes(context -> calibrate(context.getSource(), IntegerArgumentType.getInteger(context, "size"))))));
@@ -99,7 +96,7 @@ public final class ImageryCalibration {
 
     /** Renders and reports one square; returns a one-line summary. */
     static String run(EarthGenerator earth, int cx, int cz, int size) throws IOException {
-        return run(earth, CubicSettings.imagery(), FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("calibration"), null, cx, cz, size);
+        return run(earth, CubicSettings.imagery(), Loader.INSTANCE.gameDir().resolve("earthplatform").resolve("calibration"), null, cx, cz, size);
     }
 
     /** Renders and reports one square into a folder, named after its centre unless a name is given; also used without a game. */

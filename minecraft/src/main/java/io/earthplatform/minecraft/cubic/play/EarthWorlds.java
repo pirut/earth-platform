@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.play;
 
+import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import io.earthplatform.minecraft.EarthPlatformMod;
@@ -10,6 +11,8 @@ import io.earthplatform.minecraft.cubic.CubicSettings;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
+import io.earthplatform.minecraft.platform.Loader;
+import io.earthplatform.minecraft.platform.Payloads;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -37,6 +40,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.TagKey;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.dimension.DimensionType;
@@ -46,17 +50,6 @@ import net.minecraft.world.level.levelgen.presets.WorldPreset;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.bus.api.EventPriority;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.fml.loading.FMLEnvironment;
-import net.neoforged.neoforge.event.RegisterCommandsEvent;
-import net.neoforged.neoforge.event.entity.player.PlayerEvent;
-import net.neoforged.neoforge.event.server.ServerAboutToStartEvent;
-import net.neoforged.neoforge.event.server.ServerStartedEvent;
-import net.neoforged.neoforge.event.server.ServerStoppedEvent;
-import net.neoforged.neoforge.event.tick.ServerTickEvent;
-import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 
 /**
  * Earth worlds: saves made with the "Earth" world type, where the cubic Earth is home. Their
@@ -64,7 +57,6 @@ import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
  * after a respawn, through a portal) go to the Earth instead. The first arrival waits, with a
  * message on screen, until the data around the world's home is downloaded.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
 public final class EarthWorlds {
     public static final ResourceKey<WorldPreset> PRESET =
             ResourceKey.create(Registries.WORLD_PRESET, ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "earth"));
@@ -75,17 +67,16 @@ public final class EarthWorlds {
     /** Where players wait in the stand-in overworld, above everything. */
     private static final Vec3 HOLD = new Vec3(0.5, 300, 0.5);
 
-    @EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
-    public static final class Registration {
-        private Registration() {}
-        @SubscribeEvent public static void payloads(RegisterPayloadHandlersEvent event) {
-            event.registrar("earth-1").playToClient(EarthStatus.Payload.TYPE, EarthStatus.Payload.CODEC,
-                    (payload, context) -> { if (FMLEnvironment.dist.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthPlayClient.status(payload); })
-                    .playToClient(EarthMap.Payload.TYPE, EarthMap.Payload.CODEC,
-                    (payload, context) -> { if (FMLEnvironment.dist.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.received(payload); })
-                    .playToClient(EarthMap.Players.TYPE, EarthMap.Players.CODEC,
-                    (payload, context) -> { if (FMLEnvironment.dist.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.others(payload); });
-        }
+    /** Version of the Earth payloads; NeoForge refuses a connection whose two sides differ. */
+    public static final String PAYLOADS_VERSION = "earth-1";
+
+    public static void payloads(Payloads registrar) {
+        registrar.toClient(EarthStatus.Payload.TYPE, EarthStatus.Payload.CODEC,
+                        payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthPlayClient.status(payload); })
+                .toClient(EarthMap.Payload.TYPE, EarthMap.Payload.CODEC,
+                        payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.received(payload); })
+                .toClient(EarthMap.Players.TYPE, EarthMap.Players.CODEC,
+                        payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.others(payload); });
     }
 
     /** A home picked on the Create World screen, for the next new Earth world this game makes. */
@@ -112,8 +103,7 @@ public final class EarthWorlds {
     }
 
     /** A new Earth world gets its home pinned before its levels load, and loads no overworld spawn area. */
-    @SubscribeEvent public static void aboutToStart(ServerAboutToStartEvent event) {
-        MinecraftServer server = event.getServer();
+    public static void aboutToStart(MinecraftServer server) {
         Choice choice = chosen;
         chosen = null;
         if (!isEarth(server) || server.getWorldData().overworldData().isInitialized()) return;
@@ -131,33 +121,32 @@ public final class EarthWorlds {
         EarthPlatformMod.LOGGER.info("New Earth world, home {} {}, {}", choice.settings.latitude(), choice.settings.longitude(), choice.name);
     }
 
-    @SubscribeEvent public static void started(ServerStartedEvent event) {
-        MinecraftServer server = event.getServer();
+    public static void started(MinecraftServer server) {
         session = isEarth(server) ? new Session(server) : null;
     }
 
-    @SubscribeEvent public static void stopped(ServerStoppedEvent event) { session = null; chosen = null; }
+    public static void stopped() { session = null; chosen = null; }
 
-    @SubscribeEvent public static void loggedIn(PlayerEvent.PlayerLoggedInEvent event) {
-        if (session != null && event.getEntity() instanceof ServerPlayer player) session.check(player);
+    public static void loggedIn(Player entity) {
+        if (session != null && entity instanceof ServerPlayer player) session.check(player);
     }
 
-    @SubscribeEvent public static void respawned(PlayerEvent.PlayerRespawnEvent event) {
-        if (session != null && event.getEntity() instanceof ServerPlayer player) session.check(player);
+    public static void respawned(Player entity) {
+        if (session != null && entity instanceof ServerPlayer player) session.check(player);
     }
 
-    @SubscribeEvent public static void changedDimension(PlayerEvent.PlayerChangedDimensionEvent event) {
-        if (session != null && event.getEntity() instanceof ServerPlayer player) session.check(player);
+    public static void changedDimension(Player entity) {
+        if (session != null && entity instanceof ServerPlayer player) session.check(player);
     }
 
-    @SubscribeEvent public static void loggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+    public static void loggedOut(Player entity) {
         if (session == null) return;
-        if (event.getEntity() instanceof ServerPlayer player) session.release(player);
-        session.forget(event.getEntity().getUUID());
+        if (entity instanceof ServerPlayer player) session.release(player);
+        session.forget(entity.getUUID());
     }
 
-    @SubscribeEvent public static void tick(ServerTickEvent.Post event) {
-        if (session != null && session.server == event.getServer()) session.tick();
+    public static void tick(MinecraftServer server) {
+        if (session != null && session.server == server) session.tick();
     }
 
     /** One running Earth world: players waiting to arrive, the readiness of its home, download status. */
@@ -408,8 +397,7 @@ public final class EarthWorlds {
     // Commands ------------------------------------------------------------------------------------
 
     /** The player's /earth. */
-    @SubscribeEvent(priority = EventPriority.LOWEST) public static void commands(RegisterCommandsEvent event) {
-        var dispatcher = event.getDispatcher();
+    public static void commands(CommandDispatcher<CommandSourceStack> dispatcher) {
         var root = Commands.literal("earth");
         root.then(Commands.literal("visit").requires(EarthWorlds::mayTravel)
                 .then(Commands.argument("place", StringArgumentType.greedyString())

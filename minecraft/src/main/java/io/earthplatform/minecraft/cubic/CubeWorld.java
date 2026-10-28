@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic;
 
+import io.earthplatform.minecraft.platform.Platform;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -187,7 +188,10 @@ public abstract class CubeWorld {
     }
 
     /** Mirrors LevelChunk.setBlockState. Returns the replaced state, or null when nothing changed. */
-    @Nullable public BlockState setBlockState(BlockPos pos, BlockState state, boolean moving) {
+    @Nullable public BlockState setBlockState(BlockPos pos, BlockState state, boolean moving) { return setBlockState(pos, state, moving, true); }
+
+    /** As above; {@code place} false skips the new state's onPlace, as WorldEdit asks with block updates off. */
+    @Nullable public BlockState setBlockState(BlockPos pos, BlockState state, boolean moving, boolean place) {
         Cube cube = cubeAtBlock(pos.getX(), pos.getY(), pos.getZ());
         if (cube == null) return null;
         int lx = pos.getX() & 15, ly = pos.getY() & 15, lz = pos.getZ() & 15;
@@ -202,7 +206,7 @@ public abstract class CubeWorld {
         if (!level.isClientSide) old.onRemove(level, pos, state, moving);
         else if (!old.is(block) && hadEntity) removeBlockEntity(pos);
         if (!cube.section.getBlockState(lx, ly, lz).is(block)) return null;
-        if (!level.isClientSide && !level.captureBlockSnapshots) state.onPlace(level, pos, old, moving);
+        if (place && !level.isClientSide && !Platform.INSTANCE.capturingSnapshots(level)) state.onPlace(level, pos, old, moving);
         if (state.hasBlockEntity()) {
             BlockEntity existing = getBlockEntity(pos, false);
             if (existing != null && !existing.isValidBlockState(state)) { removeBlockEntity(pos); existing = null; }
@@ -240,7 +244,7 @@ public abstract class CubeWorld {
             state.updateIndirectNeighbourShapes(level, pos, neighbourFlags, depth - 1);
         }
         level.onBlockStateChange(pos, old, now);
-        state.onBlockStateChange(level, pos, old);
+        Platform.INSTANCE.onBlockStateChange(state, level, pos, old);
     }
 
     /**
@@ -280,7 +284,7 @@ public abstract class CubeWorld {
     public void addAndRegisterBlockEntity(BlockEntity entity) {
         if (!setBlockEntity(entity)) return;
         updateTicker(entity);
-        level.addFreshBlockEntities(List.of(entity));
+        Platform.INSTANCE.addFreshBlockEntities(level, List.of(entity));
     }
 
     /** Mirrors LevelChunk.setBlockEntity. */
@@ -337,7 +341,7 @@ public abstract class CubeWorld {
         for (BlockEntity entity : new ArrayList<>(cube.blockEntities.values())) {
             CubeTicker ticker = tickers.remove(entity.getBlockPos());
             if (ticker != null) ticker.retired = true;
-            entity.onChunkUnloaded();
+            Platform.INSTANCE.onChunkUnloaded(entity);
             entity.setRemoved();
         }
     }
@@ -350,7 +354,7 @@ public abstract class CubeWorld {
         last = null;
         List<BlockEntity> fresh = new ArrayList<>(cube.blockEntities.values());
         for (BlockEntity entity : fresh) { entity.setLevel(level); entity.clearRemoved(); updateTicker(entity); }
-        if (!fresh.isEmpty()) level.addFreshBlockEntities(fresh);
+        if (!fresh.isEmpty()) Platform.INSTANCE.addFreshBlockEntities(level, fresh);
     }
 
     final class CubeTicker implements TickingBlockEntity {

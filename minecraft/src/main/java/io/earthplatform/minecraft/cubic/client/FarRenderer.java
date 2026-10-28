@@ -16,6 +16,7 @@ import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.mixin.FrustumAccess;
 import io.earthplatform.minecraft.diagnostics.BuildInfo;
 import io.earthplatform.minecraft.diagnostics.PerfFailures;
+import io.earthplatform.minecraft.platform.Platform;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
@@ -46,7 +47,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.network.PacketDistributor;
 import org.joml.Matrix4f;
 
 /**
@@ -91,11 +91,13 @@ public final class FarRenderer {
     private static final boolean FADE = !"false".equals(System.getProperty("earthplatform.far.fade"));
     /** Whether this frame's levels fade into each other over a ring, or meet at a seam (see {@link #drawColumns}). */
     private boolean bandFade;
+    /** How long each level's fades last at the camera's speed. */
+    private final FarFade fadeLength = new FarFade();
     private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "block/far_white");
     private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
             SETTLE_TICKS = 3, HIDDEN_SETTLE_TICKS = 40, UPLOADS_PER_FRAME = 8, MESHES_IN_FLIGHT = 128;
     /** Speeds only elytra and the jet stream reach, in blocks a second. */
-    private static final double FAST_BLOCKS_PER_SECOND = 200, JET_BLOCKS_PER_SECOND = 800;
+    static final double FAST_BLOCKS_PER_SECOND = 200, JET_BLOCKS_PER_SECOND = 800;
     /** The finest level at jet stream speed: 64-block voxels, as before the far levels reached farther. */
     private static final int JET_LEVEL = 6;
     private static final long UPLOAD_NANOS = 3_000_000L;
@@ -282,10 +284,11 @@ public final class FarRenderer {
     /** The walk's order being made again by a patch, swapped with {@link #walkOrder} once it is. */
     private int[] spareOrder = new int[0];
     /**
-     * The fades the kept walk saw under way (see {@link #running}): when each began, and the column
-     * it was seen at, by place and walk key, whose branch is walked again once the fade ends.
+     * The fades the kept walk saw under way (see {@link #running}): when each began and the level
+     * whose fade length it runs on, and the column it was seen at, by place and walk key, whose
+     * branch is walked again once the fade ends.
      */
-    private int[] fadeStamps = new int[256];
+    private int[] fadeStamps = new int[256], fadeLevels = new int[256];
     private long[] fadeKeys = new long[256], fadeColumns = new long[256];
     private int fadeCount;
     /** The places whose branches are walked again for the columns meshed since the last walk (see {@link #meshRoot}). */
@@ -363,6 +366,11 @@ public final class FarRenderer {
         /** Whether its children were drawn in its place last frame, and when it last began to fade (see {@link FarGpu#now}), or 0. */
         boolean split;
         int stamp;
+        /**
+         * The level whose fade length (see {@link FarFade}) its stamp runs on: its own when it splits
+         * or merges, its parent's when it fades in or out under it.
+         */
+        int fadeLevel;
         /** Whether it is fading back in over its children, the camera having moved off (see {@link FarRenderer#visit}). */
         boolean merging;
         /** Come while the kept walk stood, with what a walk notes of it still to note (see {@link FarRenderer#noteWalk}). */
@@ -445,6 +453,7 @@ public final class FarRenderer {
             meshed = true;
             split = old.split;
             stamp = old.stamp;
+            fadeLevel = old.fadeLevel;
             merging = old.merging;
             // Meshes of the old column still in flight no longer match.
             version = nextVersion();
@@ -702,8 +711,10 @@ public final class FarRenderer {
         var player = Minecraft.getInstance().player;
         if (closed || player == null) return;
         // A rider's own velocity stays at nothing; its boat's is how fast it goes.
-        finest = finest(player.getY() - ground(player.getBlockX(), player.getBlockZ(), player.getY()),
-                player.getRootVehicle().getDeltaMovement().horizontalDistance() * 20.0, finest);
+        var motion = player.getRootVehicle().getDeltaMovement();
+        double blocksPerSecond = motion.horizontalDistance() * 20.0;
+        finest = finest(player.getY() - ground(player.getBlockX(), player.getBlockZ(), player.getY()), blocksPerSecond, finest);
+        fadeLength.tick(blocksPerSecond);
         if (ticks % MASK_TICKS == 0) mask();
         for (Column column : staleMasks) if (column.drawnPick == pickSerial && column.due >= 0) due(column, Math.min(column.due, ticks + SETTLE_TICKS));
         double yaw = Math.toRadians(player.getYRot());
@@ -712,14 +723,14 @@ public final class FarRenderer {
         int bx = player.getBlockX(), bz = player.getBlockZ();
         submitDue(bx, bz);
         if (ticks % PLAN_TICKS == 0) {
-            plan(bx, bz);
+            plan(bx, bz, FarLead.at(bx, bz, motion.x * 20.0, motion.z * 20.0));
             evict();
         }
         request();
     }
 
     /** Lists the missing columns, the ones a player would see change most first, and forgets requests no longer wanted. */
-    private void plan(int bx, int bz) {
+    private void plan(int bx, int bz, @Nullable int[] lead) {
         LongArrayList missing = new LongArrayList();
         // Read once, so the plan and the requests it keeps agree on the columns wanted.
         int hole = Far.hole(), finest = this.finest;
@@ -740,6 +751,12 @@ public final class FarRenderer {
             }
             if (!held) missing.add(key);
         });
+        // Flying fast, the columns the levels will want a few seconds on too, ordered from where the player is now.
+        if (lead != null) Far.around(lead[0], lead[1], finest, hole, key -> {
+            if (Far.kept(key, bx, bz, finest, hole)) return;
+            counts[4]++;
+            if (!places.want(Far.level(key), Far.x(key), Far.z(key), ticks)) missing.add(key);
+        });
         wanted = counts[0];
         planSize = counts[4];
         settled = counts[1];
@@ -747,7 +764,8 @@ public final class FarRenderer {
         settledInView = counts[3];
         // A request the server dropped (its player had moved on) or one for a place left behind
         // frees its place for the columns wanted now; one still wanted is asked for again later.
-        requested.long2IntEntrySet().removeIf(entry -> !Far.kept(entry.getLongKey(), bx, bz, finest, hole) || ticks - entry.getIntValue() > RETRY_TICKS);
+        requested.long2IntEntrySet().removeIf(entry -> !Far.kept(entry.getLongKey(), bx, bz, finest, hole)
+                && (lead == null || !Far.kept(entry.getLongKey(), lead[0], lead[1], finest, hole)) || ticks - entry.getIntValue() > RETRY_TICKS);
         Long2LongOpenHashMap order = new Long2LongOpenHashMap(missing.size());
         for (int i = 0; i < missing.size(); i++) order.put(missing.getLong(i), priority(missing.getLong(i), bx, bz));
         missing.unstableSort((a, b) -> Long.compare(order.get(a), order.get(b)));
@@ -766,7 +784,7 @@ public final class FarRenderer {
             requested.put(key, ticks);
             keys.add(key);
         }
-        if (!keys.isEmpty()) PacketDistributor.sendToServer(new CubePayloads.FarRequest(keys.toLongArray()));
+        if (!keys.isEmpty()) Platform.INSTANCE.sendToServer(new CubePayloads.FarRequest(keys.toLongArray()));
     }
 
     /**
@@ -1328,6 +1346,7 @@ public final class FarRenderer {
     private void drawColumns(FarGpu gpu, Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
         Vec3 position = camera.getPosition();
         int bx = (int) Math.floor(position.x), bz = (int) Math.floor(position.z);
+        gpu.fadeTicks(fadeLength.table());
         // Spatial dither still runs in the shaders every frame; only timed arrivals need a new pick.
         boolean band = FADE && ShaderBlocks.packInUse() && gpu.jittered();
         FrustumAccess plain = frustum.getClass() == Frustum.class && frustum instanceof FrustumAccess view ? view : null;
@@ -1788,7 +1807,7 @@ public final class FarRenderer {
         if (moved && (!MOVE_PATCHES || !moveRoots(bx, bz, changes))) return false;
         for (int i = 0; i < meshRoots.size(); i++) changes.add(patchPlace(meshRoots.getLong(i)));
         for (int i = 0; i < fadeCount; i++) {
-            if ((now - fadeStamps[i] & 0x7FFFFFF) >= FarShaders.FADE_TICKS) changes.add(patchPlace(fadeColumns[i]));
+            if ((now - fadeStamps[i] & 0x7FFFFFF) >= fadeLength.ticks(fadeLevels[i])) changes.add(patchPlace(fadeColumns[i]));
         }
         int count = changes.size();
         long[] keys = new long[count];
@@ -1830,7 +1849,7 @@ public final class FarRenderer {
         walkBehind = false;
         walkNow = now;
         walkLeft = Integer.MAX_VALUE;
-        for (int i = 0; i < fadeCount; i++) walkLeft = Math.min(walkLeft, FarShaders.FADE_TICKS - (now - fadeStamps[i] & 0x7FFFFFF));
+        for (int i = 0; i < fadeCount; i++) walkLeft = Math.min(walkLeft, fadeLength.ticks(fadeLevels[i]) - (now - fadeStamps[i] & 0x7FFFFFF));
         pick.invalidate();
         return true;
     }
@@ -1860,6 +1879,7 @@ public final class FarRenderer {
         for (int i = 0; i < fadeCount; i++) {
             if (within(keys, lasts, count, fadeKeys[i])) continue;
             fadeStamps[kept] = fadeStamps[i];
+            fadeLevels[kept] = fadeLevels[i];
             fadeKeys[kept] = fadeKeys[i];
             fadeColumns[kept++] = fadeColumns[i];
         }
@@ -2509,7 +2529,7 @@ public final class FarRenderer {
                 visiting = column;
                 visitingKey = key;
             }
-            if (FADE) running(column.stamp);
+            if (FADE) running(column.stamp, column.fadeLevel);
         }
         boolean meshed = column != null && column.meshed;
         if (!meshed && level <= finest) walkFine = true;
@@ -2528,31 +2548,31 @@ public final class FarRenderer {
                 int now = pickNow;
                 if (column.merging) {
                     // The camera has come back mid-merge: the children turn round and fade back in from where they got to.
-                    int start = now - Math.max(0, FarShaders.FADE_TICKS - age(column, now)) & 0x7FFFFFF;
+                    int start = now - Math.max(0, fadeLength.ticks(level) - age(column, now)) & 0x7FFFFFF;
                     column.merging = false;
                     column.split = true;
-                    stamp(column, start == 0 ? 1 : start);
+                    stamp(column, start == 0 ? 1 : start, level);
                     for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
                         Column child = kid(column, level, x, z, dx, dz);
-                        if (child != null && child.meshed) stamp(child, column.stamp);
+                        if (child != null && child.meshed) stamp(child, column.stamp, level);
                     }
                 }
                 if (!column.split) {
                     // Its children have just all arrived: they fade in over it rather than pop in, once
                     // its own fade in over its parent is done, so levels sharpen one after another.
-                    if (age(column, now) < FarShaders.FADE_TICKS) {
+                    if (age(column, now) < fadeLength.ticks(level + 1)) {
                         column.fade = fading ? FarGpu.FADE_OUT : FarGpu.NO_FADE;
                         addDrawn(column, key);
                         return;
                     }
                     column.split = true;
-                    stamp(column, now);
+                    stamp(column, now, level);
                     for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
                         Column child = kid(column, level, x, z, dx, dz);
-                        if (child != null && child.meshed) stamp(child, now);
+                        if (child != null && child.meshed) stamp(child, now, level);
                     }
                 }
-                arriving = age(column, now) < FarShaders.FADE_TICKS;
+                arriving = age(column, now) < fadeLength.ticks(level);
             } else if (column != null) column.split = true;
             if (band || arriving) {
                 column.fade = FarGpu.FADE_IN;
@@ -2588,16 +2608,16 @@ public final class FarRenderer {
         }
         if (starting && whole) {
             // Mid-way through fading in over it, the children go no further and turn back from there.
-            int left = column.merging ? 0 : Math.max(0, FarShaders.FADE_TICKS - age(column, now));
+            int left = column.merging ? 0 : Math.max(0, fadeLength.ticks(level) - age(column, now));
             int start = now - left & 0x7FFFFFF;
             column.merging = true;
-            stamp(column, start == 0 ? 1 : start, true);
+            stamp(column, start == 0 ? 1 : start, true, level);
             for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
                 Column child = kid(column, level, x, z, dx, dz);
-                if (child != null && child.meshed) stamp(child, column.stamp, true);
+                if (child != null && child.meshed) stamp(child, column.stamp, true, level);
             }
         }
-        if (whole && column.merging && age(column, now) < FarShaders.FADE_TICKS) {
+        if (whole && column.merging && age(column, now) < fadeLength.ticks(level)) {
             column.fade = FarGpu.FADE_IN;
             addDrawn(column, key);
             for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
@@ -2611,10 +2631,10 @@ public final class FarRenderer {
         // Done: no stale merge left on any of them for the next fade to start from.
         int stamp = column.stamp;
         column.merging = false;
-        stamp(column, 0, false);
+        stamp(column, 0, false, level);
         for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
             Column child = kid(column, level, x, z, dx, dz);
-            if (child != null && child.stamp == stamp) stamp(child, 0, false);
+            if (child != null && child.stamp == stamp) stamp(child, 0, false, level);
         }
         return false;
     }
@@ -2643,12 +2663,13 @@ public final class FarRenderer {
     }
 
     /**
-     * Notes a fade the walk sees, begun at a stamp (0 for none): while it runs, the walk needs
-     * doing again when it ends (see {@link #walkDue}), as then what the walk draws changes.
+     * Notes a fade the walk sees, begun at a stamp (0 for none) and running on a level's fade length
+     * (see {@link Column#fadeLevel}): while it runs, the walk needs doing again when it ends (see
+     * {@link #walkDue}), as then what the walk draws changes.
      */
-    private void running(int stamp) {
+    private void running(int stamp, int level) {
         if (stamp == 0) return;
-        int left = FarShaders.FADE_TICKS - (pickNow - stamp & 0x7FFFFFF);
+        int left = fadeLength.ticks(level) - (pickNow - stamp & 0x7FFFFFF);
         if (left <= 0) return;
         if (CACHE_PICK) pickAnimating = true;
         if (left < walkLeft) walkLeft = left;
@@ -2657,26 +2678,32 @@ public final class FarRenderer {
             if (fadeCount == fadeStamps.length) {
                 int size = fadeCount * 2;
                 fadeStamps = java.util.Arrays.copyOf(fadeStamps, size);
+                fadeLevels = java.util.Arrays.copyOf(fadeLevels, size);
                 fadeKeys = java.util.Arrays.copyOf(fadeKeys, size);
                 fadeColumns = java.util.Arrays.copyOf(fadeColumns, size);
             }
             fadeStamps[fadeCount] = stamp;
+            fadeLevels[fadeCount] = level;
             fadeKeys[fadeCount] = visitingKey;
             fadeColumns[fadeCount++] = visiting.key;
         }
     }
 
-    /** Starts a column's fade now, in the slots its faces are drawn with. */
-    private void stamp(Column column, int now) { stamp(column, now, false); }
+    /** Starts a column's fade now on a level's fade length, in the slots its faces are drawn with. */
+    private void stamp(Column column, int now, int level) { stamp(column, now, false, level); }
 
-    /** Starts a column's fade, or a merge's (see {@link #merge}), at a time, or with 0 clears it. */
-    private void stamp(Column column, int now, boolean merging) {
+    /**
+     * Starts a column's fade, or a merge's (see {@link #merge}), at a time, or with 0 clears it. The
+     * fade runs on {@code level}'s length: the coarser of the two levels taking over from each other.
+     */
+    private void stamp(Column column, int now, boolean merging, int level) {
         pickVersion++;
         if (now != 0) {
             pickAnimating = true;
-            running(now);
+            running(now, level);
         }
         column.stamp = now;
+        column.fadeLevel = level;
         if (gpu == null) return;
         gpu.stamp(column.slot, now, merging);
         gpu.stamp(column.oldSlot, now, merging);

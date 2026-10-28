@@ -12,9 +12,7 @@ import java.util.Set;
 import java.util.WeakHashMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.tick.LevelTickEvent;
+import net.minecraft.world.level.LevelAccessor;
 import org.joml.Vector3d;
 import org.joml.Vector3dc;
 
@@ -27,7 +25,6 @@ import org.joml.Vector3dc;
  * so while it is slower than the wind, the speed Sable's air drag takes off it eastward each tick is
  * given back; propellers still add speed as usual.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
 public final class SableWind {
     /** Same as a glider's: fraction of the gap to the wind's speed closed each tick. */
     private static final double RESPONSE = 0.03;
@@ -44,9 +41,8 @@ public final class SableWind {
 
     private SableWind() {}
 
-    @SubscribeEvent
-    public static void tick(LevelTickEvent.Post event) {
-        if (!SableCompat.LOADED || broken || !(event.getLevel() instanceof ServerLevel level) || !Cubic.isCubic(level.dimension())) return;
+    public static void tick(LevelAccessor levelAccessor) {
+        if (!SableCompat.LOADED || broken || !(levelAccessor instanceof ServerLevel level) || !Cubic.isCubic(level.dimension())) return;
         if (!tried && !lookUp()) return;
         try {
             Object ships = container.invoke(null, level);

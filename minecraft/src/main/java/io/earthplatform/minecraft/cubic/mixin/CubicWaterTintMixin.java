@@ -31,7 +31,8 @@ abstract class CubicWaterTintMixin {
             // Lakes fed by glaciers are milky turquoise with rock flour, as Lake Louise and Moraine Lake are.
             ResourceKey.create(Registries.BIOME, ResourceLocation.fromNamespaceAndPath("earthplatform", "glacial_lake")), 0x52B8BE);
 
-    @WrapOperation(method = "lambda$static$1", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/biome/Biome;getWaterColor()I"))
+    // The water colour resolver lambda: NeoForge keeps its source name, Fabric's named jar its intermediary one.
+    @WrapOperation(method = {"lambda$static$1(Lnet/minecraft/world/level/biome/Biome;DD)I", "method_23790(Lnet/minecraft/world/level/biome/Biome;DD)I"}, at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/biome/Biome;getWaterColor()I"))
     private static int earthplatform$darkSea(Biome biome, Operation<Integer> original) {
         ClientLevel level = Minecraft.getInstance().level;
         if (level == null || CubicLevel.of(level) == null) return original.call(biome);

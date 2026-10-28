@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.At;
  * Vanilla fades fog to black as the camera nears the bottom of the world. The cubic world's
  * carrier bottom is Y 0, so every ocean deeper than about 30 m went black under water; the fade
  * now starts at the cubic world's true bottom instead, and the deep sea darkens with depth in
- * {@link io.earthplatform.minecraft.cubic.client.CubicClient#fogColour}. Applied after
+ * {@link io.earthplatform.minecraft.cubic.client.CubicClient#waterFogLight}. Applied after
  * {@link EarthFogColourMixin}, whose floor 1,000 m under the sea still blacked out the trenches.
  */
 @Mixin(value = FogRenderer.class, priority = 500)

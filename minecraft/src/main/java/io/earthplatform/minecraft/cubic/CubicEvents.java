@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic;
 
+import com.mojang.brigadier.CommandDispatcher;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.geography.globe.Downloads;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
@@ -22,29 +23,17 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.RegisterCommandsEvent;
-import net.neoforged.neoforge.event.level.LevelEvent;
-import net.neoforged.neoforge.event.tick.LevelTickEvent;
-import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 
 /** Server-side lifecycle of cubic levels, respawning and the travel commands. */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
 public final class CubicEvents {
     private CubicEvents() {}
 
-    @EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
-    public static final class Registration {
-        private Registration() {}
-        @SubscribeEvent public static void payloads(RegisterPayloadHandlersEvent event) { CubePayloads.register(event); }
-    }
-
-    @SubscribeEvent public static void load(LevelEvent.Load event) {
-        if (!(event.getLevel() instanceof ServerLevel level) || !Cubic.isCubic(level.dimension())) return;
+    public static void load(LevelAccessor levelAccessor) {
+        if (!(levelAccessor instanceof ServerLevel level) || !Cubic.isCubic(level.dimension())) return;
         var folder = DimensionType.getStorageFolder(level.dimension(), level.getServer().getWorldPath(LevelResource.ROOT));
         CubeGenerator generator = CubicSettings.open(folder, level.getSeed(), level.registryAccess().registryOrThrow(Registries.BIOME));
         ((CubicLevel) level).earthplatform$setCubes(new ServerCubeWorld(level, generator));
@@ -58,19 +47,19 @@ public final class CubicEvents {
         });
     }
 
-    @SubscribeEvent public static void save(LevelEvent.Save event) {
-        if (event.getLevel() instanceof ServerLevel level && CubicLevel.of(level) instanceof ServerCubeWorld cubes) cubes.save();
+    public static void save(LevelAccessor levelAccessor) {
+        if (levelAccessor instanceof ServerLevel level && CubicLevel.of(level) instanceof ServerCubeWorld cubes) cubes.save();
     }
 
-    @SubscribeEvent public static void unload(LevelEvent.Unload event) {
-        if (event.getLevel() instanceof ServerLevel level && CubicLevel.of(level) instanceof ServerCubeWorld cubes) {
+    public static void unload(LevelAccessor levelAccessor) {
+        if (levelAccessor instanceof ServerLevel level && CubicLevel.of(level) instanceof ServerCubeWorld cubes) {
             cubes.close();
             ((CubicLevel) level).earthplatform$setCubes(null);
         }
     }
 
-    @SubscribeEvent public static void tick(LevelTickEvent.Post event) {
-        if (event.getLevel() instanceof ServerLevel level && CubicLevel.of(level) instanceof ServerCubeWorld cubes) {
+    public static void tick(LevelAccessor levelAccessor) {
+        if (levelAccessor instanceof ServerLevel level && CubicLevel.of(level) instanceof ServerCubeWorld cubes) {
             cubes.tick();
             arrive(level, cubes);
         }
@@ -269,7 +258,7 @@ public final class CubicEvents {
         return state.isAir() || state.canBeReplaced() && state.getFluidState().isEmpty();
     }
 
-    @SubscribeEvent public static void commands(RegisterCommandsEvent event) {
+    public static void commands(CommandDispatcher<CommandSourceStack> dispatcher) {
         var root = Commands.literal("cubes");
         root.then(Commands.literal("enter").executes(context -> enter(context.getSource())));
         root.then(Commands.literal("leave").executes(context -> {
@@ -312,7 +301,7 @@ public final class CubicEvents {
             context.getSource().sendSuccess(() -> Component.literal(text), false);
             return 1;
         }));
-        event.getDispatcher().register(root);
+        dispatcher.register(root);
     }
 
     private static int enter(CommandSourceStack source) throws com.mojang.brigadier.exceptions.CommandSyntaxException {

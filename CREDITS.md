@@ -177,7 +177,7 @@ Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com.
 
 ## Software
 
-Earth Platform runs on [NeoForge](https://neoforged.net/) and contains no third-party code. Optional companions are installed separately and keep their own licenses: [Sodium](https://modrinth.com/mod/sodium) (PolyForm Shield 1.0.0), [Iris](https://modrinth.com/mod/iris) (LGPL-3.0) and [Photon](https://github.com/sixthsurge/photon) by Benjamin Stott (SixthSurge), under the Photon Shaders License Agreement. Earth Platform's own code was written for this project; see [Originality](docs/release/LICENSING-AUDIT.md#originality-check) for how that was checked.
+Earth Platform runs on [NeoForge](https://neoforged.net/) and on [Fabric](https://fabricmc.net/) with [Fabric API](https://modrinth.com/mod/fabric-api). The NeoForge jar contains no third-party code; the Fabric jar bundles [Forge Config API Port](https://github.com/Fuzss/forgeconfigapiport) by Fuzs (MPL-2.0) with [NightConfig](https://github.com/TheElectronWill/night-config) (LGPL-3.0), so settings files work the same on both. Optional companions are installed separately and keep their own licenses: [Sodium](https://modrinth.com/mod/sodium) (PolyForm Shield 1.0.0), [Iris](https://modrinth.com/mod/iris) (LGPL-3.0) and [Photon](https://github.com/sixthsurge/photon) by Benjamin Stott (SixthSurge), under the Photon Shaders License Agreement. Earth Platform's own code was written for this project; see [Originality](docs/release/LICENSING-AUDIT.md#originality-check) for how that was checked.
 
 ## Distant terrain: thank you, Voxy and Distant Horizons
 

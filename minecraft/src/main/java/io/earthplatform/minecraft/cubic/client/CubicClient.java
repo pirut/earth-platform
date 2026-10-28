@@ -1,27 +1,22 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import com.mojang.blaze3d.vertex.PoseStack;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.Timings;
+import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.FogRenderer;
+import net.minecraft.client.renderer.culling.Frustum;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.material.FogType;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.CustomizeGuiOverlayEvent;
-import net.neoforged.neoforge.client.event.RenderFrameEvent;
-import net.neoforged.neoforge.client.event.RenderGuiEvent;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
-import net.neoforged.neoforge.client.event.ViewportEvent;
-import net.neoforged.neoforge.event.level.LevelEvent;
+import org.joml.Matrix4f;
 
 /** Client hooks: attach the cube store, compile on ticks and draw at the vanilla terrain stages. */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, value = Dist.CLIENT)
 public final class CubicClient {
     private CubicClient() {}
 
@@ -30,19 +25,19 @@ public final class CubicClient {
     /** Ticks between perf log lines, with {@code -Dearthplatform.cubic.perf=true}. */
     private static final int PERF_TICKS = Math.max(1, Integer.getInteger("earthplatform.cubic.perfTicks", 100));
 
-    @SubscribeEvent public static void load(LevelEvent.Load event) {
-        if (event.getLevel() instanceof ClientLevel level) ClientCubeWorld.attach(level);
+    public static void load(LevelAccessor levelAccessor) {
+        if (levelAccessor instanceof ClientLevel level) ClientCubeWorld.attach(level);
     }
 
-    @SubscribeEvent public static void unload(LevelEvent.Unload event) {
-        if (event.getLevel() instanceof ClientLevel level && CubicLevel.of(level) instanceof ClientCubeWorld world) {
+    public static void unload(LevelAccessor levelAccessor) {
+        if (levelAccessor instanceof ClientLevel level && CubicLevel.of(level) instanceof ClientCubeWorld world) {
             world.close();
             ((CubicLevel) level).earthplatform$setCubes(null);
         }
     }
 
     /** A respawn keeps the level but starts a fresh stream of cubes around the new position. */
-    @SubscribeEvent public static void respawn(ClientPlayerNetworkEvent.Clone event) {
+    public static void respawn() {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world != null) world.reset();
     }
@@ -51,13 +46,13 @@ public final class CubicClient {
     private static net.minecraft.world.phys.Vec3 held;
 
     /** Whether the cubes at a player's feet and just below have not arrived yet. */
-    private static boolean waitingForCubes(ClientCubeWorld world, net.minecraft.world.entity.player.Player player) {
+    private static boolean waitingForCubes(ClientCubeWorld world, Player player) {
         return world.cubeAtBlock(player.getBlockX(), player.getBlockY(), player.getBlockZ()) == null
                 || world.cubeAtBlock(player.getBlockX(), player.getBlockY() - 2, player.getBlockZ()) == null;
     }
 
     /** Replay Mod (and its NeoForge ports) plays back through its own camera entity, which must never be held or captioned. */
-    private static boolean inReplay(net.minecraft.world.entity.player.Player player) {
+    private static boolean inReplay(Player player) {
         return player.getClass().getName().startsWith("com.replaymod.");
     }
 
@@ -67,7 +62,7 @@ public final class CubicClient {
         return player != null && inReplay(player);
     }
 
-    /** Whether this frame began through {@link RenderFrameEvent.Pre}; a video renderer draws frames without it. */
+    /** Whether this frame began through {@link #frame}; a video renderer draws frames without it. */
     private static boolean framed;
 
     /**
@@ -108,12 +103,12 @@ public final class CubicClient {
         player.resetFallDistance();
     }
 
-    @SubscribeEvent public static void tickStart(ClientTickEvent.Pre event) { hold(); }
+    public static void tickStart() { hold(); }
 
     /** When the client last ticked; a paused replay stops ticking, and with it all meshing. */
     private static long tickedAt;
 
-    @SubscribeEvent public static void tick(ClientTickEvent.Post event) {
+    public static void tick() {
         tickedAt = System.nanoTime();
         hold();
         ClientCubeWorld world = ClientCubeWorld.current();
@@ -137,7 +132,7 @@ public final class CubicClient {
                 Timings.SERVER_TICK.read(reader), Timings.CUBE_UNLOAD.read(reader), Timings.CUBE_FLUSH.read(reader));
     }
 
-    @SubscribeEvent public static void frame(RenderFrameEvent.Pre event) {
+    public static void frame() {
         startFrame();
         framed = true;
     }
@@ -151,48 +146,51 @@ public final class CubicClient {
         lastFrame = now;
     }
 
-    @SubscribeEvent public static void render(RenderLevelStageEvent event) {
+    /** The points in drawing the level where the cubes and far terrain draw, as NeoForge names them. */
+    public enum Stage { AFTER_CUTOUT_BLOCKS, AFTER_ENTITIES, AFTER_BLOCK_ENTITIES, AFTER_TRANSLUCENT_BLOCKS, AFTER_PARTICLES }
+
+    /** Draws at one stage of the level (or of a shader pack's shadow map), with that pass's camera and matrices. */
+    public static void render(Stage stage, Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection, PoseStack pose, float partialTick) {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null) return;
         CubeRenderer renderer = world.renderer();
-        var stage = event.getStage();
         if (ShaderBlocks.shadowPass()) {
             // A shader pack's shadow map: near terrain casts shadows; far terrain lies past the shadow distance.
-            if (stage == RenderLevelStageEvent.Stage.AFTER_CUTOUT_BLOCKS)
-                renderer.drawShadow(event.getCamera(), event.getModelViewMatrix(), event.getProjectionMatrix());
+            if (stage == Stage.AFTER_CUTOUT_BLOCKS)
+                renderer.drawShadow(camera, modelView, projection);
             return;
         }
-        if (stage == RenderLevelStageEvent.Stage.AFTER_CUTOUT_BLOCKS
-                || (stage == RenderLevelStageEvent.Stage.AFTER_ENTITIES && !renderer.drewOpaqueThisPass())) {
-            renderer.drawOpaque(event.getCamera(), event.getFrustum(), event.getModelViewMatrix(), event.getProjectionMatrix());
-            world.far().draw(event.getCamera(), event.getFrustum(), event.getModelViewMatrix(), event.getProjectionMatrix());
-        } else if (stage == RenderLevelStageEvent.Stage.AFTER_BLOCK_ENTITIES) {
-            renderer.drawBlockEntities(event.getCamera(), event.getFrustum(), event.getPoseStack(),
-                    event.getPartialTick().getGameTimeDeltaPartialTick(false));
-        } else if (stage == RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS || stage == RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
-            world.far().drawWater(event.getCamera(), event.getModelViewMatrix(), event.getProjectionMatrix());
-            renderer.drawTranslucent(event.getCamera(), event.getFrustum(), event.getModelViewMatrix(), event.getProjectionMatrix());
+        if (stage == Stage.AFTER_CUTOUT_BLOCKS
+                || (stage == Stage.AFTER_ENTITIES && !renderer.drewOpaqueThisPass())) {
+            renderer.drawOpaque(camera, frustum, modelView, projection);
+            world.far().draw(camera, frustum, modelView, projection);
+        } else if (stage == Stage.AFTER_BLOCK_ENTITIES) {
+            renderer.drawBlockEntities(camera, frustum, pose, partialTick);
+        } else if (stage == Stage.AFTER_TRANSLUCENT_BLOCKS || stage == Stage.AFTER_PARTICLES) {
+            world.far().drawWater(camera, modelView, projection);
+            renderer.drawTranslucent(camera, frustum, modelView, projection);
         }
     }
 
     private static long timingsAt;
     private static String[] timingLines = new String[0];
 
-    @SubscribeEvent public static void debugText(CustomizeGuiOverlayEvent.DebugText event) {
+    /** Adds the cube and far terrain lines to the left side of the debug screen. */
+    public static void debugText(java.util.List<String> left) {
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null) return;
         // Near the top, where small windows still show it.
-        int at = Math.min(3, event.getLeft().size());
-        event.getLeft().add(at, "Cubic: " + world.loadedCubes() + " cubes, " + world.renderer().meshCount() + " meshes, "
+        int at = Math.min(3, left.size());
+        left.add(at, "Cubic: " + world.loadedCubes() + " cubes, " + world.renderer().meshCount() + " meshes, "
                 + world.renderer().pendingCount() + " to compile");
-        event.getLeft().add(at + 1, "Far: " + world.far().drawnCount() + "/" + world.far().columnCount() + " columns, "
+        left.add(at + 1, "Far: " + world.far().drawnCount() + "/" + world.far().columnCount() + " columns, "
                 + world.far().settledPercent() + "% settled (" + world.far().settledInViewPercent() + "% in view), "
                 + world.far().vertexBytes() / (1 << 20) + " MB, " + world.far().drawnRanges() + " draws");
         // The debug screen redraws every frame; read the timings about twice a second so they can be read.
         long now = System.nanoTime();
         if (now - timingsAt > 500_000_000L) { timingsAt = now; timingLines = timings(Timings.SCREEN).split(", "); }
         for (int i = 0; i < timingLines.length; i += 2) {
-            event.getLeft().add(at + 2 + i / 2, i + 1 < timingLines.length ? timingLines[i] + ", " + timingLines[i + 1] : timingLines[i]);
+            left.add(at + 2 + i / 2, i + 1 < timingLines.length ? timingLines[i] + ", " + timingLines[i + 1] : timingLines[i]);
         }
     }
 
@@ -204,38 +202,34 @@ public final class CubicClient {
      * only darkens fog near the bottom of the world, and its underwater vision then brightens the
      * fog back to full strength, so the trench floors were a bright sky blue 10 km down.
      */
-    @SubscribeEvent public static void fogColour(ViewportEvent.ComputeFogColor event) {
-        if (ClientCubeWorld.current() == null || event.getCamera().getFluidInCamera() != FogType.WATER) return;
+    public static float waterFogLight(Camera camera) {
+        if (ClientCubeWorld.current() == null || camera.getFluidInCamera() != FogType.WATER) return 1.0F;
         ClientLevel level = Minecraft.getInstance().level;
-        if (level == null) return;
-        double depth = level.getSeaLevel() - event.getCamera().getPosition().y;
-        if (depth <= LIT_DEPTH) return;
-        float light = (float) Math.max(DARKEST, Math.exp(-(depth - LIT_DEPTH) / FADE_DEPTH));
-        event.setRed(event.getRed() * light);
-        event.setGreen(event.getGreen() * light);
-        event.setBlue(event.getBlue() * light);
+        if (level == null) return 1.0F;
+        double depth = level.getSeaLevel() - camera.getPosition().y;
+        if (depth <= LIT_DEPTH) return 1.0F;
+        return (float) Math.max(DARKEST, Math.exp(-(depth - LIT_DEPTH) / FADE_DEPTH));
     }
 
     /**
      * Pushes terrain fog out to the far terrain's reach, measured in ground metres; effect and
-     * fluid fog stay as they are.
+     * fluid fog stay as they are. Returns the fog's start and end, or null to leave vanilla's.
      */
-    @SubscribeEvent public static void fog(ViewportEvent.RenderFog event) {
-        if (ClientCubeWorld.current() == null || event.getMode() != FogRenderer.FogMode.FOG_TERRAIN || event.getType() != FogType.NONE) return;
-        if (event.getFarPlaneDistance() < Minecraft.getInstance().gameRenderer.getRenderDistance() - 1.0F) return;
+    @javax.annotation.Nullable
+    public static float[] fog(FogRenderer.FogMode mode, FogType type, Camera view, float farPlaneDistance) {
+        if (ClientCubeWorld.current() == null || mode != FogRenderer.FogMode.FOG_TERRAIN || type != FogType.NONE) return null;
+        if (farPlaneDistance < Minecraft.getInstance().gameRenderer.getRenderDistance() - 1.0F) return null;
         // High up, the ground below is as far away as the horizon is at ground level: start the fog
         // beyond it, so terrain under a player in the jet stream is clear rather than a pale haze.
-        var camera = event.getCamera().getPosition();
+        var camera = view.getPosition();
         ClientCubeWorld world = ClientCubeWorld.current();
         float height = (float) camera.y - world.skyTop(net.minecraft.util.Mth.floor(camera.x), net.minecraft.util.Mth.floor(camera.z));
         float scale = FarRenderer.HAZE_AT_EDGE ? 1.0F : world.far().hazeScale(camera.z), end = FarRenderer.FOG_END * scale;
         float start = Math.min(Math.max(FarRenderer.FOG_START * scale, height * 1.25F), 0.8F * end);
-        event.setNearPlaneDistance(start);
-        event.setFarPlaneDistance(end);
-        event.setCanceled(true);
+        return new float[] {start, end};
     }
 
-    @SubscribeEvent public static void waiting(RenderGuiEvent.Post event) {
+    public static void waiting(GuiGraphics graphics) {
         Minecraft minecraft = Minecraft.getInstance();
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null || minecraft.player == null) return;
@@ -243,7 +237,7 @@ public final class CubicClient {
         // Spectators are never held, and a replay camera must stay clean for rendered videos.
         if (player.isSpectator() || inReplay(player) || io.earthplatform.minecraft.cubic.jet.JetStream.outrunsTerrain(player)) return;
         if (!waitingForCubes(world, player)) return;
-        var gui = event.getGuiGraphics();
+        var gui = graphics;
         Component text = Component.literal("Loading terrain at Y " + player.getBlockY() + "...");
         gui.drawCenteredString(minecraft.font, text, gui.guiWidth() / 2, gui.guiHeight() / 2 - 20, 0xFFFFFF);
     }

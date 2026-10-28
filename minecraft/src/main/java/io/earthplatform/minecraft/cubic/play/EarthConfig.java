@@ -3,23 +3,20 @@ package io.earthplatform.minecraft.cubic.play;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.far.Far;
+import io.earthplatform.minecraft.platform.Loader;
+import io.earthplatform.minecraft.platform.Platform;
 import net.minecraft.network.chat.Component;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.ModList;
-import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.config.ModConfig;
-import net.neoforged.fml.event.config.ModConfigEvent;
-import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
-import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.common.ModConfigSpec;
 import net.neoforged.neoforge.common.TranslatableEnum;
 
 /**
  * The player-facing settings, in config/earthplatform-client.toml and earthplatform-common.toml
  * and on the mod's config screen. Engine settings still read their {@code -D} system properties;
- * a property given on the command line wins over the file.
+ * a property given on the command line wins over the file. NeoForge's config system runs them on
+ * both loaders: on Fabric it is Forge Config API Port's copy, bundled in the jar, so the files and
+ * the screen are the same. The loader registers the two specs and calls {@link #apply} as they load.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
 public final class EarthConfig {
     // Client --------------------------------------------------------------------------------------
     public static final ModConfigSpec CLIENT_SPEC;
@@ -130,10 +127,6 @@ public final class EarthConfig {
                         "at a spot, a famous place, their home or another player (/earth compass). It never moves anyone.")
                 .translation(key("survivalMap")).define("survivalMap", true);
         COMMON_SPEC = common.build();
-
-        var container = ModList.get().getModContainerById(EarthPlatformMod.MOD_ID).orElseThrow();
-        container.registerConfig(ModConfig.Type.CLIENT, CLIENT_SPEC);
-        container.registerConfig(ModConfig.Type.COMMON, COMMON_SPEC);
     }
 
     private EarthConfig() {}
@@ -187,11 +180,8 @@ public final class EarthConfig {
         catch (RuntimeException invalid) { return null; }
     }
 
-    @SubscribeEvent static void loaded(ModConfigEvent.Loading event) { apply(event.getConfig()); }
-    @SubscribeEvent static void reloaded(ModConfigEvent.Reloading event) { apply(event.getConfig()); }
-
-    /** Hands the file's values to the engine through its system properties, unless the command line set them. */
-    private static void apply(ModConfig config) {
+    /** Hands the file's values to the engine through its system properties, unless the command line set them. Runs on loading and reloading. */
+    public static void apply(ModConfig config) {
         if (config.getSpec() == CLIENT_SPEC) {
             property("earthplatform.far.detail", Integer.toString(FAR_DETAIL.get()));
             property("earthplatform.far.textured", Integer.toString(FAR_TEXTURED_LEVELS.get()));
@@ -200,7 +190,7 @@ public final class EarthConfig {
             property("earthplatform.earth.offline", Boolean.toString(OFFLINE.get()));
             property("earthplatform.earth.imagery", Boolean.toString(SATELLITE_IMAGERY.get()));
             // An edited file takes effect on a running server at once, as /earth settings does.
-            var server = net.neoforged.neoforge.server.ServerLifecycleHooks.getCurrentServer();
+            var server = Platform.INSTANCE.currentServer();
             if (server != null) server.execute(() -> EarthToggles.changed(server));
         }
     }
@@ -224,8 +214,9 @@ public final class EarthConfig {
         if (!FROM_COMMAND_LINE.contains(key)) System.setProperty(key, value);
     }
 
-    @SubscribeEvent static void setup(FMLCommonSetupEvent event) {
+    /** Common setup, once the config has loaded. */
+    public static void setup() {
         io.earthplatform.geography.globe.DiskCache.log = EarthPlatformMod.LOGGER::info;
-        io.earthplatform.geography.globe.DiskCache.limit(FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache"), (long) CACHE_LIMIT_GB.get() << 30);
+        io.earthplatform.geography.globe.DiskCache.limit(Loader.INSTANCE.gameDir().resolve("earthplatform").resolve("cache"), (long) CACHE_LIMIT_GB.get() << 30);
     }
 }

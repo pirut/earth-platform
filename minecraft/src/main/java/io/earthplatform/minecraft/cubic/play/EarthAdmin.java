@@ -10,6 +10,8 @@ import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
+import io.earthplatform.minecraft.platform.Loader;
+import io.earthplatform.minecraft.platform.Platform;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -36,17 +38,11 @@ import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.fml.loading.FMLPaths;
-import net.neoforged.neoforge.event.server.ServerStartedEvent;
-import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 
 /**
  * Tools for whoever runs the server: downloading an area ahead of time, a status page in chat,
  * and a live web map of the players over the globe for sharing outside the game.
  */
-@EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
 public final class EarthAdmin {
     /** How far apart preloaded points are, in blocks: each fetches what the cubes within 3.5 km read. */
     private static final int PRELOAD_STEP = 6000;
@@ -138,7 +134,7 @@ public final class EarthAdmin {
     private static int status(CommandSourceStack source) {
         MinecraftServer server = source.getServer();
         double mspt = server.getAverageTickTimeNanos() / 1e6;
-        long[] cubicTimes = server.getTickTime(Cubic.LEVEL);
+        long[] cubicTimes = Platform.INSTANCE.tickTimes(server, Cubic.LEVEL);
         double cubicMspt = cubicTimes == null || cubicTimes.length == 0 ? 0 : java.util.Arrays.stream(cubicTimes).average().orElse(0) / 1e6;
         double tps = Math.min(20, 1000 / Math.max(1e-3, mspt));
         line(source, String.format(Locale.ROOT, "TPS %.1f, %.1f ms a tick (Earth %.1f ms)", tps, mspt, cubicMspt), mspt > 50 ? ChatFormatting.RED : ChatFormatting.GREEN);
@@ -155,7 +151,7 @@ public final class EarthAdmin {
                 + "; preload: " + (preloading != null ? "running" : "idle"), ChatFormatting.GRAY);
         if (EarthConfig.WEB_MAP.get()) line(source, "Web map on port " + EarthConfig.WEB_MAP_PORT.get() + (web == null ? " (not running)" : ""), ChatFormatting.GRAY);
         // The cache size walks the whole folder, so it comes in after.
-        Path cache = FMLPaths.GAMEDIR.get().resolve("earthplatform").resolve("cache");
+        Path cache = Loader.INSTANCE.gameDir().resolve("earthplatform").resolve("cache");
         CompletableFuture.supplyAsync(() -> size(cache), Util.ioPool()).thenAcceptAsync(size -> line(source,
                 String.format(Locale.ROOT, "Data cache: %.2f GB (limit %d GB)", size / 1e9, EarthConfig.CACHE_LIMIT_GB.get()), ChatFormatting.GRAY), server);
         List<ServerPlayer> players = server.getPlayerList().getPlayers();
@@ -197,7 +193,7 @@ public final class EarthAdmin {
     /** What the web map shows, made on the server thread each second and served from the web map's own thread. */
     private static volatile String snapshot = "{\"players\":[]}";
 
-    @SubscribeEvent public static void started(ServerStartedEvent event) { webMap(event.getServer()); }
+    public static void started(MinecraftServer server) { webMap(server); }
 
     /** Starts or stops the web map as the settings say, or moves it to a new port. */
     static void webMap(MinecraftServer minecraft) {
@@ -232,7 +228,7 @@ public final class EarthAdmin {
         }
     }
 
-    @SubscribeEvent public static void stopping(ServerStoppingEvent event) {
+    public static void stopping() {
         AtomicBoolean running = preloading;
         if (running != null) running.set(false);
         preloading = null;

@@ -76,6 +76,10 @@ Choose the Earth world type in Create World and pick where to start. Travel anyw
 [[mixins]]
 config="${mod_id}.cubic.mixins.json"
 
+# NeoForge-only hooks; the Fabric jar has its own.
+[[mixins]]
+config="${mod_id}.neoforge.mixins.json"
+
 # The [[accessTransformers]] block allows you to declare where your AT file is.
 # If this block is omitted, a fallback attempt will be made to load an AT from META-INF/accesstransformer.cfg
 #[[accessTransformers]]

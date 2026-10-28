@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "io.earthplatform.minecraft.neoforge.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "ElytraFlightMixin",
+    "GliderChunkLoadMixin",
+    "MarkAndNotifyMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

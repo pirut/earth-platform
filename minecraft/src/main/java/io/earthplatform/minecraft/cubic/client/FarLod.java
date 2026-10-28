@@ -3,11 +3,11 @@ package io.earthplatform.minecraft.cubic.client;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.platform.Loader;
 import java.nio.FloatBuffer;
 import java.util.function.ToIntFunction;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
-import net.neoforged.fml.loading.LoadingModList;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.joml.Vector3f;
@@ -96,7 +96,7 @@ public final class FarLod {
      */
     public static boolean defineVoxy() {
         // Iris loads its pack before the mod list is up, so ask the loader.
-        defined = ENABLED && LoadingModList.get().getModFileById("distanthorizons") == null;
+        defined = ENABLED && !Loader.INSTANCE.isModLoaded("distanthorizons");
         return defined;
     }
 

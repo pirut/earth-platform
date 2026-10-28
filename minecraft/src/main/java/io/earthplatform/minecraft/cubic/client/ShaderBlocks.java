@@ -1,10 +1,10 @@
 package io.earthplatform.minecraft.cubic.client;
 
 import com.mojang.blaze3d.vertex.BufferBuilder;
+import io.earthplatform.minecraft.platform.Loader;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import javax.annotation.Nullable;
 import net.minecraft.world.level.block.state.BlockState;
-import net.neoforged.fml.ModList;
 
 /**
  * Tells an active shader pack which block each vertex belongs to, as Iris does for its own chunk
@@ -13,7 +13,7 @@ import net.neoforged.fml.ModList;
  * Does nothing without Iris or with no pack in use.
  */
 final class ShaderBlocks {
-    static final boolean IRIS = ModList.get() != null && ModList.get().isLoaded("iris");
+    static final boolean IRIS = Loader.INSTANCE.isModLoaded("iris");
 
     private ShaderBlocks() {}
 

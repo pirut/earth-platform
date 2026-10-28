@@ -8,6 +8,7 @@ import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.compat.CubicMaps;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
+import io.earthplatform.minecraft.platform.Platform;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -58,6 +59,9 @@ public final class ClientCubeWorld extends CubeWorld {
 
     @Override public void blockChanged(BlockPos pos) {}
 
+    /** A cube a mod rewrote in place, such as an Axiom edit, is meshed again. */
+    @Override protected void onRewritten(Cube cube) { renderer.cubeArrived(cube.key); }
+
     @Override protected void onStateStored(Cube cube, BlockPos pos, BlockState old, BlockState state) {
         renderer.blockChanged(pos, old, state);
     }
@@ -72,7 +76,7 @@ public final class ClientCubeWorld extends CubeWorld {
         adopt(cube);
         for (CompoundTag tag : payload.blockEntities()) {
             BlockEntity entity = getBlockEntity(new BlockPos(tag.getInt("x"), tag.getInt("y"), tag.getInt("z")), true);
-            if (entity != null) entity.handleUpdateTag(tag, client.registryAccess());
+            if (entity != null) Platform.INSTANCE.handleUpdateTag(entity, tag, client.registryAccess());
         }
         renderer.cubeArrived(cube.key);
         CubicMaps.columnChanged(client, cube.x, cube.z);
@@ -96,7 +100,7 @@ public final class ClientCubeWorld extends CubeWorld {
             CubicMaps.columnChanged(client, pos.getX() >> 4, pos.getZ() >> 4);
             if (change.blockEntity() != null) {
                 BlockEntity entity = getBlockEntity(pos, true);
-                if (entity != null) entity.handleUpdateTag(change.blockEntity(), client.registryAccess());
+                if (entity != null) Platform.INSTANCE.handleUpdateTag(entity, change.blockEntity(), client.registryAccess());
             }
         }
     }

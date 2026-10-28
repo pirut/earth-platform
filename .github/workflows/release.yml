@@ -107,17 +107,40 @@ jobs:
           CI: 'false'
         run: gradle --no-daemon --console=plain jar test
 
+      # The Fabric jar is the same game code with the Fabric loader glue; Loom needs Gradle 9.5+.
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        if: steps.tag.outputs.skip != 'true'
+        with:
+          gradle-version: '9.8.2'
+
+      - name: Build the Fabric jar
+        if: steps.tag.outputs.skip != 'true'
+        working-directory: fabric
+        run: |
+          mkdir -p "$RUNNER_TEMP/inputs" && cd "$RUNNER_TEMP/inputs"
+          curl -fsSLo iris-fabric.jar 'https://cdn.modrinth.com/data/YL57xq9U/versions/bAo1Qhte/iris-fabric-1.8.14-beta.1%2Bmc1.21.1.jar'
+          curl -fsSLo sodium-fabric.jar 'https://cdn.modrinth.com/data/AANobbMI/versions/SMxNOGZ6/sodium-fabric-0.8.13%2Bmc1.21.1.jar'
+          sha256sum -c - <<'SUMS'
+          0ceb694040b4628bf3fa02286cfe5f0db833195669ab07f8caa4001359763eff  iris-fabric.jar
+          3d43c14985a4deb19c654aad3393b454cf57e1ebcbba86c4ae6a98dfc60eca2d  sodium-fabric.jar
+          SUMS
+          export EARTH_INSTALLED_FABRIC_IRIS_JAR="$PWD/iris-fabric.jar" EARTH_INSTALLED_FABRIC_SODIUM_JAR="$PWD/sodium-fabric.jar"
+          cd "$GITHUB_WORKSPACE/fabric"
+          gradle --no-daemon --console=plain build "-PearthBuildCommit=$(git rev-parse HEAD)"
+
       - name: Collect the release files
         if: steps.tag.outputs.skip != 'true'
         run: |
           mkdir dist
           version="$VERSION"
           cp "minecraft/build/libs/earthplatform-$version.jar" "dist/earthplatform-$TAG.jar"
+          cp "fabric/build/libs/earthplatform-fabric-$version.jar" "dist/earthplatform-fabric-$TAG.jar"
           cp LICENSE COPYING THIRD_PARTY_NOTICES.md CREDITS.md dist/
-          ( cd dist && sha256sum "earthplatform-$TAG.jar" > "earthplatform-$TAG.jar.sha256" )
+          ( cd dist && sha256sum "earthplatform-$TAG.jar" > "earthplatform-$TAG.jar.sha256" \
+            && sha256sum "earthplatform-fabric-$TAG.jar" > "earthplatform-fabric-$TAG.jar.sha256" )
           notes="docs/release/notes/$TAG.md"
           if [ -f "$notes" ]; then cp "$notes" release-notes.md; else echo "Earth Platform $TAG" > release-notes.md; fi
-          { echo; echo "Mod version $version, for Minecraft 1.21.1 with NeoForge. Built from $(git rev-parse --short HEAD)."; echo; echo '```'; cat "dist/earthplatform-$TAG.jar.sha256"; echo '```'; } >> release-notes.md
+          { echo; echo "Mod version $version, for Minecraft 1.21.1: \`earthplatform-$TAG.jar\` for NeoForge, \`earthplatform-fabric-$TAG.jar\` for Fabric (with Fabric API). Built from $(git rev-parse --short HEAD)."; echo; echo '```'; cat dist/*.jar.sha256; echo '```'; } >> release-notes.md
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         if: steps.tag.outputs.skip != 'true'
@@ -130,8 +153,9 @@ jobs:
           make_latest: 'true'
           files: dist/*
 
-      # Uploads the same jar to Modrinth (project earth-platform) as an alpha for NeoForge on Minecraft
-      # 1.21.1, with the build's notes as the changelog. One jar runs on both client and server.
+      # Uploads the jars to Modrinth (project earth-platform) as alphas for Minecraft 1.21.1, with the
+      # build's notes as the changelog: the NeoForge jar as version N, the Fabric jar as N+fabric
+      # (needing Fabric API). Each jar runs on both client and server.
       # Needs the MODRINTH_TOKEN secret (a Modrinth personal access token with "Create versions");
       # without it the step says so and the GitHub release stands on its own. A version already on
       # Modrinth is left alone, so re-running a release never uploads twice. To retry a failed upload,
@@ -148,21 +172,26 @@ jobs:
           fi
           api=https://api.modrinth.com/v2
           agent="$GITHUB_REPOSITORY release workflow"
-          status=$(curl -sS -o /dev/null -w '%{http_code}' -A "$agent" -H "Authorization: $MODRINTH_TOKEN" \
-            "$api/project/$MODRINTH_PROJECT/version/$VERSION")
-          if [ "$status" = 200 ]; then echo "$VERSION is already on Modrinth; nothing to upload."; exit 0; fi
           notes="docs/release/notes/$TAG.md"
           if [ -f "$notes" ]; then changelog=$(cat "$notes"); else changelog="Earth Platform $TAG"; fi
           case "$VERSION" in *-beta.*) type=beta ;; *-alpha.*|*prototype*) type=alpha ;; *) type=release ;; esac
-          jar="earthplatform-$TAG.jar"
-          jq -n --arg project "$MODRINTH_PROJECT" --arg name "$TITLE" --arg number "$VERSION" \
-            --arg changelog "$changelog" --arg type "$type" \
-            '{project_id: $project, name: $name, version_number: $number, changelog: $changelog,
-              version_type: $type, loaders: ["neoforge"], game_versions: ["1.21.1"], dependencies: [],
-              featured: false, status: "listed", file_parts: ["jar"], primary_file: "jar"}' > modrinth-version.json
-          curl -sS --fail-with-body -A "$agent" -H "Authorization: $MODRINTH_TOKEN" \
-            -F "data=<modrinth-version.json;type=application/json" \
-            -F "jar=@dist/$jar;type=application/java-archive" \
-            "$api/version" > modrinth-response.json \
-            || { cat modrinth-response.json; echo; echo "::error::Modrinth upload of $VERSION failed."; exit 1; }
-          echo "Uploaded $VERSION to Modrinth: https://modrinth.com/mod/earth-platform/version/$(jq -r .id modrinth-response.json)"
+          upload() { # version-number name jar loaders-json dependencies-json
+            status=$(curl -sS -o /dev/null -w '%{http_code}' -A "$agent" -H "Authorization: $MODRINTH_TOKEN" \
+              "$api/project/$MODRINTH_PROJECT/version/$1")
+            if [ "$status" = 200 ]; then echo "$1 is already on Modrinth; nothing to upload."; return 0; fi
+            jq -n --arg project "$MODRINTH_PROJECT" --arg name "$2" --arg number "$1" \
+              --arg changelog "$changelog" --arg type "$type" --argjson loaders "$4" --argjson deps "$5" \
+              '{project_id: $project, name: $name, version_number: $number, changelog: $changelog,
+                version_type: $type, loaders: $loaders, game_versions: ["1.21.1"], dependencies: $deps,
+                featured: false, status: "listed", file_parts: ["jar"], primary_file: "jar"}' > modrinth-version.json
+            curl -sS --fail-with-body -A "$agent" -H "Authorization: $MODRINTH_TOKEN" \
+              -F "data=<modrinth-version.json;type=application/json" \
+              -F "jar=@dist/$3;type=application/java-archive" \
+              "$api/version" > modrinth-response.json \
+              || { cat modrinth-response.json; echo; echo "::error::Modrinth upload of $1 failed."; exit 1; }
+            echo "Uploaded $1 to Modrinth: https://modrinth.com/mod/earth-platform/version/$(jq -r .id modrinth-response.json)"
+          }
+          upload "$VERSION" "$TITLE" "earthplatform-$TAG.jar" '["neoforge"]' '[]'
+          # Fabric API's Modrinth project id is P7dR8mSH.
+          upload "$VERSION+fabric" "$TITLE for Fabric" "earthplatform-fabric-$TAG.jar" '["fabric", "quilt"]' \
+            '[{"project_id": "P7dR8mSH", "dependency_type": "required"}]'

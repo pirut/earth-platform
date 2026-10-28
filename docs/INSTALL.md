@@ -3,7 +3,7 @@
 ## What you need
 
 - Minecraft: Java Edition **1.21.1**
-- **NeoForge 21.1.256** (later 21.1.x builds should work but are untested)
+- **NeoForge 21.1.256** (later 21.1.x builds should work but are untested), or **Fabric Loader 0.16.14** or newer with **Fabric API** 0.116 or newer (see [Fabric](#fabric))
 - At least **4 GB** of memory for the game; at least **6 GB** if you use shaders such as Photon or raise the far terrain detail (on an M4 Pro Mac with Photon, 4 GB gave 8 to 18 fps where 6 GB gave 36 to 60)
 - An internet connection the first time you visit each place
 - A few GB of free disk space for downloaded Earth data (the limit is a setting)
@@ -20,6 +20,16 @@
 5. Start the game. Singleplayer → Create New World: the world type is already **Earth**. Press **Customize** to pick a starting place.
 
 Other launchers (Prism, Modrinth App, CurseForge App, MultiMC): make a NeoForge 21.1.256 instance for 1.21.1, add the jar, and set the memory to 4 GB or more (6 GB or more with shaders). Prism defaults to 4 GB, so raise it if you use Photon.
+
+## Fabric
+
+The Fabric jar is the same mod for the Fabric loader; worlds, settings and servers work the same way. It is named `earthplatform-fabric-<version>.jar` on the Releases page.
+
+1. Run the [Fabric installer](https://fabricmc.net/use/installer/) for Minecraft 1.21.1, or make a Fabric 1.21.1 instance in Prism, the Modrinth App or MultiMC.
+2. Put [Fabric API](https://modrinth.com/mod/fabric-api) (0.116 or newer for 1.21.1) and the Earth Platform Fabric jar in `mods`, and give the game 4 GB or more (6 GB or more with shaders).
+3. For shaders, use the Fabric builds of [Sodium](https://modrinth.com/mod/sodium/version/mc1.21.1-0.8.13-fabric) and [Iris](https://modrinth.com/mod/iris/version/1.8.14-beta.1%2B1.21.1-fabric) with the same version rules as below.
+
+The settings screen is under Options → Video Settings → Earth Platform with Sodium, or in [Mod Menu](https://modrinth.com/mod/modmenu) if you have it. A Fabric server takes the same steps as a NeoForge one below, with the Fabric server launcher and Fabric API in its `mods` folder; players and the server need the same loader.
 
 ## Shaders (optional)
 

@@ -11,6 +11,7 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.CubeLight;
 import io.earthplatform.minecraft.cubic.CubeWorld;
+import io.earthplatform.minecraft.platform.ClientPlatform;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +42,6 @@ import net.minecraft.world.level.chunk.PalettedContainer;
 import net.minecraft.world.level.chunk.PalettedContainerRO;
 import net.minecraft.world.level.lighting.LevelLightEngine;
 import net.minecraft.world.level.material.FluidState;
-import net.neoforged.neoforge.client.model.data.ModelData;
 
 /**
  * Off-thread cube compile: lights the 48-block neighbourhood with {@link CubeLight} and
@@ -56,7 +56,7 @@ final class CubeMesher {
     record Snapshot(long key, int version, int cx, int cy, int cz,
                     @Nullable PalettedContainer<BlockState>[] states, @Nullable PalettedContainerRO<Holder<Biome>>[] biomes,
                     @Nullable int[][] tops, float camX, float camY, float camZ, boolean constantAmbient,
-                    @Nullable Object2IntMap<BlockState> shaderIds, Map<BlockPos, ModelData> modelData,
+                    @Nullable Object2IntMap<BlockState> shaderIds, Map<BlockPos, Object> modelData,
                     Map<BlockPos, BlockEntity> blockEntities) {}
 
     record Layer(int index, MeshData mesh, ByteBufferBuilder memory) {}
@@ -205,17 +205,17 @@ final class CubeMesher {
                 }
                 if (state.getRenderShape() != RenderShape.MODEL) continue;
                 BakedModel model = blocks.getBlockModel(state);
-                ModelData data = model.getModelData(view, pos, state, s.modelData.getOrDefault(pos, ModelData.EMPTY));
+                Object data = ClientPlatform.INSTANCE.modelData(model, view, pos, state, s.modelData.get(pos));
                 long seed = state.getSeed(pos);
                 random.setSeed(seed);
                 boolean buried = mode.skipBuried && plain(model) && buried(state, view, pos, work.near);
-                for (RenderType type : model.getRenderTypes(state, random, data)) {
+                for (RenderType type : ClientPlatform.INSTANCE.renderTypes(model, state, random, data)) {
                     int layer = LAYERS.indexOf(type);
                     if (layer < 0) continue;
                     if (buried) {
                         // Every face is hidden, so it draws only the quads no face hides, asked for as the model pass does.
                         random.setSeed(seed);
-                        if (model.getQuads(state, null, random, data, type).isEmpty()) continue;
+                        if (ClientPlatform.INSTANCE.quads(model, state, null, random, data, type).isEmpty()) continue;
                     }
                     BufferBuilder builder = builder(builders, memory, layer);
                     if (mode.reusePose) {
@@ -225,7 +225,7 @@ final class CubeMesher {
                     }
                     pose.translate(x, y, z);
                     ShaderBlocks.begin(builder, s.shaderIds, state, false, x, y, z);
-                    blocks.renderBatched(state, pos, view, pose, builder, true, random, data, type);
+                    ClientPlatform.INSTANCE.renderBatched(blocks, state, pos, view, pose, builder, random, data, type);
                     ShaderBlocks.end(builder, s.shaderIds);
                     if (!mode.reusePose) pose.popPose();
                 }
