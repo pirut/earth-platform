@@ -8,6 +8,7 @@ import io.earthplatform.minecraft.cubic.jet.JetHud;
 import io.earthplatform.minecraft.cubic.play.client.EarthCompassHud;
 import io.earthplatform.minecraft.cubic.play.client.EarthFlight;
 import io.earthplatform.minecraft.cubic.play.client.EarthPlayClient;
+import io.earthplatform.minecraft.fabric.axiom.AxiomCubes;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
@@ -17,6 +18,7 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
+import net.fabricmc.loader.api.FabricLoader;
 
 /**
  * The Fabric client entry point. Level loading, frames, the level's draw stages, fog and the
@@ -38,6 +40,7 @@ public final class EarthPlatformFabricClient implements ClientModInitializer {
             EarthCompassHud.tick();
             JetHud.tick();
         });
+        if (FabricLoader.getInstance().isModLoaded("axiom")) ClientTickEvents.END_CLIENT_TICK.register(client -> AxiomCubes.flush(true));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             EarthPlayClient.loggedOut();
             EarthCompassHud.loggedOut();

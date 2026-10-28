@@ -59,6 +59,9 @@ public final class ClientCubeWorld extends CubeWorld {
 
     @Override public void blockChanged(BlockPos pos) {}
 
+    /** A cube a mod rewrote in place, such as an Axiom edit, is meshed again. */
+    @Override protected void onRewritten(Cube cube) { renderer.cubeArrived(cube.key); }
+
     @Override protected void onStateStored(Cube cube, BlockPos pos, BlockState old, BlockState state) {
         renderer.blockChanged(pos, old, state);
     }

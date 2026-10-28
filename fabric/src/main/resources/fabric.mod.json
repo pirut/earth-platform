@@ -29,7 +29,8 @@
   },
   "mixins": [
     "${mod_id}.cubic.mixins.json",
-    "${mod_id}.fabric.mixins.json"
+    "${mod_id}.fabric.mixins.json",
+    "${mod_id}.axiom.mixins.json"
   ],
   "depends": {
     "fabricloader": "${loader_version_range}",

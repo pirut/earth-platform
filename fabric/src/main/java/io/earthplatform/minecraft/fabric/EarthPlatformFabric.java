@@ -16,6 +16,7 @@ import io.earthplatform.minecraft.cubic.play.EarthExplorer;
 import io.earthplatform.minecraft.cubic.play.EarthRules;
 import io.earthplatform.minecraft.cubic.play.EarthWorlds;
 import io.earthplatform.minecraft.cubic.portal.CubicTravel;
+import io.earthplatform.minecraft.fabric.axiom.AxiomCubes;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import net.fabricmc.api.ModInitializer;
@@ -28,6 +29,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -98,6 +100,7 @@ public final class EarthPlatformFabric implements ModInitializer {
             EarthWorlds.tick(server);
             EarthRules.tick(server);
         });
+        if (FabricLoader.getInstance().isModLoaded("axiom")) ServerTickEvents.END_SERVER_TICK.register(server -> AxiomCubes.flush(false));
 
         // Players
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
