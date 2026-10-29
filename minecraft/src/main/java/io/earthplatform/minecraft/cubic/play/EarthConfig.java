@@ -44,9 +44,10 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue DAILY_RACE;
     public static final ModConfigSpec.ConfigValue<String> RACE_REWARD;
     public static final ModConfigSpec.IntValue WEB_MAP_PORT;
+    public static final ModConfigSpec.ConfigValue<String> WEB_MAP_ADDRESS;
     public static final ModConfigSpec.BooleanValue WARPS;
     public static final ModConfigSpec.BooleanValue RANDOM_TRIPS;
-    public static final ModConfigSpec.BooleanValue GEOGUESSR;
+    public static final ModConfigSpec.BooleanValue WHERE_ON_EARTH;
     public static final ModConfigSpec.BooleanValue RACES;
     public static final ModConfigSpec.BooleanValue WEB_MAP;
     public static final ModConfigSpec.BooleanValue SURVIVAL_MAP;
@@ -114,8 +115,8 @@ public final class EarthConfig {
                 .translation(key("warps")).define("warps", true);
         RANDOM_TRIPS = common.comment("Let players take random trips to land with /earth random.")
                 .translation(key("randomTrips")).define("randomTrips", true);
-        GEOGUESSR = common.comment("Allow Where on Earth guessing rounds (/earth guess).")
-                .translation(key("geoguessr")).define("geoguessr", true);
+        WHERE_ON_EARTH = common.comment("Allow Where on Earth guessing rounds (/earth guess).")
+                .translation(key("whereOnEarth")).define("whereOnEarth", true);
         RACES = common.comment("Allow races to famous places (/earth race).")
                 .translation(key("races")).define("races", true);
         WEB_MAP = common.comment("Serve a live web map of the players at http://<server>:<webMapPort>/ for sharing outside the game.",
@@ -123,6 +124,9 @@ public final class EarthConfig {
                 .translation(key("webMap")).define("webMap", false);
         WEB_MAP_PORT = common.comment("The web map's port.")
                 .translation(key("webMapPort")).defineInRange("webMapPort", 8123, 1, 65_535);
+        WEB_MAP_ADDRESS = common.comment("The address the web map answers on: 0.0.0.0 for every network the server is on,",
+                        "127.0.0.1 for this computer only, or one of the server's own IP addresses.")
+                .translation(key("webMapAddress")).define("webMapAddress", "0.0.0.0");
         SURVIVAL_MAP = common.comment("Let players who can't use the travel map open the map (N) anyway, to look around and point a compass",
                         "at a spot, a famous place, their home or another player (/earth compass). It never moves anyone.")
                 .translation(key("survivalMap")).define("survivalMap", true);

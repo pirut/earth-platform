@@ -28,8 +28,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
 
 /**
- * A Where on Earth round, a guessing game in the style of GeoGuessr: everyone playing is dropped at the same random spot on land, looks around,
- * and marks on the globe where they think they are. Points by distance, as GeoGuessr gives them:
+ * A Where on Earth round, a geography guessing game: everyone playing is dropped at the same random spot on land, looks around,
+ * and marks on the globe where they think they are. Points by distance:
  * 5000 for a perfect guess, about half at 1400 km. While a round is on, the players' own
  * {@code /earth where}, travel map and country names stay quiet.
  */
@@ -54,7 +54,7 @@ final class EarthGuess {
     private EarthGuess() {}
 
     static void register(LiteralArgumentBuilder<CommandSourceStack> root) {
-        root.then(Commands.literal("guess").requires(source -> EarthConfig.GEOGUESSR.get())
+        root.then(Commands.literal("guess").requires(source -> EarthConfig.WHERE_ON_EARTH.get())
                 .executes(context -> open(context.getSource()))
                 .then(Commands.argument("latitude", DoubleArgumentType.doubleArg(-90, 90))
                         .then(Commands.argument("longitude", DoubleArgumentType.doubleArg(-180, 180))
@@ -133,7 +133,7 @@ final class EarthGuess {
         return 1;
     }
 
-    /** GeoGuessr's scoring: 5000 at the spot, falling off with distance. */
+    /** The score: 5000 at the spot, falling off with distance. */
     static int points(double km) { return (int) Math.round(5000 * Math.exp(-km / 2000)); }
 
     private static void reveal(MinecraftServer server) {

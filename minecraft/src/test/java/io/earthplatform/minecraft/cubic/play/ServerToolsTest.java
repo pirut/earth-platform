@@ -73,9 +73,21 @@ class ServerToolsTest {
         assertEquals("west", EarthRules.heading(0, 10, 0, 0));
     }
 
-    @Test void guessesScoreLikeGeoGuessr() {
+    @Test void guessesScoreByDistance() {
         assertEquals(5000, EarthGuess.points(0));
         assertTrue(EarthGuess.points(1400) > 2400 && EarthGuess.points(1400) < 2600);
         assertTrue(EarthGuess.points(20_000) < 1);
+    }
+
+    @Test void webMapAddressIsAnIpAddressOrNothing() {
+        assertTrue(EarthAdmin.webMapAddress("0.0.0.0").isAnyLocalAddress());
+        assertTrue(EarthAdmin.webMapAddress("").isAnyLocalAddress(), "blank answers on every network");
+        assertTrue(EarthAdmin.webMapAddress(" 127.0.0.1 ").isLoopbackAddress());
+        assertTrue(EarthAdmin.webMapAddress("localhost").isLoopbackAddress());
+        assertTrue(EarthAdmin.webMapAddress("[::1]").isLoopbackAddress());
+        assertEquals("192.168.1.20", EarthAdmin.webMapAddress("192.168.1.20").getHostAddress());
+        assertNull(EarthAdmin.webMapAddress("not an address!"));
+        assertNull(EarthAdmin.webMapAddress("example.com"), "host names are not looked up");
+        assertNull(EarthAdmin.webMapAddress("300.1.1.1"));
     }
 }

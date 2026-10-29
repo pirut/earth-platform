@@ -58,6 +58,8 @@ tasks.named('jar', Jar) {
     manifest.attributes('Earth-Platform-Artifact': 'original-shader-compatibility-shim',
             'Earth-Platform-Upstream-Bundled': 'false')
     from(licenceNotice) { into 'META-INF' }
+    // The data credits and third-party notices travel with the jar, next to the licence.
+    from(files('../CREDITS.md', '../THIRD_PARTY_NOTICES.md')) { into 'META-INF' }
 }
 
 // The jar records the commit it was built from, for the local performance log. A source download
