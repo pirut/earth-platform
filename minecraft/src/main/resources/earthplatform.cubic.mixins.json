@@ -66,6 +66,8 @@
     "compat.SpatialPlaneMixin",
     "compat.SpatialColumnMixin",
     "compat.AeCompassMixin",
+    "compat.ComputerCraftTurtleMoveMixin",
+    "compat.ComputerCraftModemRangeMixin",
     "CubicWeatherMixin",
     "CubicServerWeatherMixin",
     "CubicPortalFireMixin",

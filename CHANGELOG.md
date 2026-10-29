@@ -61,6 +61,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - Create Aeronautics ships assemble, fly and save in the Earth world, with air pressure from the real atmosphere. The jet stream carries ships east too, the altitude sensor reads from sea level to 10 km, and ships shade mobs at any height.
 - AE2 spatial storage captures and places Earth blocks, and AE2 meteorites generate in the Earth world.
 - Create's mechanical arm, pulley, scaffolding and elevators, Waystones, Mekanism (Digital Miner, multiblocks and pipes), Immersive Engineering's multiblocks and the Twilight Forest portal work in the Earth world.
+- CC: Tweaked computers, turtles, monitors, modems, rednet, GPS and pocket computers work at any height in the Earth world, on NeoForge and Fabric.
 - Cobblemon spawns Pokémon in the Earth world; Aether and Twilight Forest portals take you there and back.
 - Chunky pre-generates the Earth world: the ground in the area you give it is generated and saved, so arriving there later loads it from the save.
 - `/locate biome` and Nature's Compass find the Earth's biomes; Quark and Handcrafted work at any height; Lithium no longer drops players through the ground.
