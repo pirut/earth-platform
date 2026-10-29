@@ -50,6 +50,9 @@ public final class NeoForgePlatform implements Platform {
 
     @Override public void onChunkUnloaded(BlockEntity entity) { entity.onChunkUnloaded(); }
 
+    /** NeoForge's BlockEntity.setRemoved already drops the capabilities cached for it. */
+    @Override public void removedBlockEntity(BlockEntity entity) {}
+
     @Override public void handleUpdateTag(BlockEntity entity, CompoundTag tag, HolderLookup.Provider registries) { entity.handleUpdateTag(tag, registries); }
 
     @Override public CompoundTag persistentData(net.minecraft.world.entity.Entity entity) { return entity.getPersistentData(); }

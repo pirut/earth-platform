@@ -38,6 +38,7 @@
     "compat.WorldEditAccessMixin",
     "compat.WorldEditWorldMixin",
     "compat.WorldEditConfigMixin",
+    "compat.WorldEditRegenMixin",
     "compat.QuarkBuildHeightMixin",
     "CubicBiomeSearchMixin",
     "CubicPathRegionMixin",
@@ -66,6 +67,8 @@
     "compat.SpatialPlaneMixin",
     "compat.SpatialColumnMixin",
     "compat.AeCompassMixin",
+    "compat.ComputerCraftTurtleMoveMixin",
+    "compat.ComputerCraftModemRangeMixin",
     "CubicWeatherMixin",
     "CubicServerWeatherMixin",
     "CubicPortalFireMixin",
@@ -139,7 +142,8 @@
     "compat.JourneyMapChunkMixin",
     "CubicVoidFogMixin",
     "GuiOverlayAccess",
-    "EarthCompassSpinMixin"
+    "EarthCompassSpinMixin",
+    "CubicAnimateTickMixin"
   ],
   "injectors": {
     "defaultRequire": 1

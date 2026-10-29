@@ -27,9 +27,17 @@ public final class OptionalMixins implements IMixinConfigPlugin {
      */
     private static final boolean FABRIC = "fabric".equals(Loader.INSTANCE.name());
 
+    /**
+     * Mixins into other mods tested on Fabric too. Their targets are that mod's own code, named the
+     * same in its NeoForge and Fabric builds, and the Minecraft methods they look for are remapped
+     * like the rest of ours.
+     */
+    private static final Set<String> ON_FABRIC = Set.of("ComputerCraftTurtleMoveMixin", "ComputerCraftModemRangeMixin");
+
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
-        if (FABRIC && mixinClassName.contains(".mixin.compat.")) return false;
+        if (FABRIC && mixinClassName.contains(".mixin.compat.")
+                && !ON_FABRIC.contains(mixinClassName.substring(mixinClassName.lastIndexOf('.') + 1))) return false;
         for (String prefix : ALWAYS_THERE) if (targetClassName.startsWith(prefix)) return true;
         return present.computeIfAbsent(targetClassName, Loader.INSTANCE::hasClass);
     }

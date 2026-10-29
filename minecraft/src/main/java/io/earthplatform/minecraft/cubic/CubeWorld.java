@@ -301,7 +301,7 @@ public abstract class CubeWorld {
         entity.setLevel(level);
         entity.clearRemoved();
         BlockEntity previous = cube.blockEntities.put(pos.immutable(), entity);
-        if (previous != null && previous != entity) previous.setRemoved();
+        if (previous != null && previous != entity) { previous.setRemoved(); Platform.INSTANCE.removedBlockEntity(previous); }
         cube.markModified();
         return true;
     }
@@ -310,7 +310,7 @@ public abstract class CubeWorld {
         Cube cube = cubeAtBlock(pos.getX(), pos.getY(), pos.getZ());
         if (cube != null) {
             BlockEntity removed = cube.blockEntities.remove(pos);
-            if (removed != null) { removed.setRemoved(); cube.markModified(); }
+            if (removed != null) { removed.setRemoved(); Platform.INSTANCE.removedBlockEntity(removed); cube.markModified(); }
         }
         CubeTicker ticker = tickers.remove(pos);
         if (ticker != null) ticker.retired = true;

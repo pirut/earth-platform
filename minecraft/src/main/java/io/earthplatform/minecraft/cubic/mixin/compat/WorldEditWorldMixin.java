@@ -25,8 +25,9 @@ import org.spongepowered.asm.mixin.injection.At;
 
 /**
  * WorldEdit's world: its height is the cubic world's, not the carrier's, so selections, //up and
- * pastes reach any Y; block, block entity and biome reads and //setbiome go to the cubes. //regen
- * would rebuild the region from the carrier's flat generator, wiping it to air, so it is refused.
+ * pastes reach any Y; block, block entity and biome reads and //setbiome go to the cubes. //regen is
+ * {@link WorldEditRegenMixin}'s; should that miss, rebuilding the region from the carrier's flat
+ * generator would wipe it to air, so it is refused.
  */
 @Pseudo
 @Mixin(targets = {"com.sk89q.worldedit.neoforge.NeoForgeWorld", "com.sk89q.worldedit.neoforge.internal.NeoForgeServerLevelDelegateProxy"}, remap = false)

@@ -51,6 +51,9 @@ public interface Platform {
     /** A block entity whose cube is unloading, for NeoForge's onChunkUnloaded. */
     void onChunkUnloaded(BlockEntity entity);
 
+    /** A block entity taken out of the level for good, its block broken or replaced. */
+    void removedBlockEntity(BlockEntity entity);
+
     /** Applies a block entity's update tag from the server. */
     void handleUpdateTag(BlockEntity entity, CompoundTag tag, HolderLookup.Provider registries);
 

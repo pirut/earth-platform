@@ -11,7 +11,7 @@
 - **Fly anywhere.** In creative, press **N** for the travel map: click a spot on the globe and the camera climbs out over the planet and comes back down there. In survival, **N** opens a map that points your compass at any spot, famous place or friend; use `/earth visit` and `/earth goto`, glide an elytra above Y 9,200 and let the jet stream carry you across a continent in under an hour, or sprint a boat out on the open sea and ride an ocean current across an ocean in an hour or two.
 - **Ordinary survival.** Mine, craft, build and die as usual. Caves, ores, villages and other vanilla structures generate, and the Nether and the End work through normal portals. An Earth tab of advancements adds goals for going places, from Death Valley and the date line to the top of Everest and all the way round the world.
 - **Shaders.** Works with Iris and shader packs made for Voxy, such as the stock Photon download, which light near blocks and far terrain alike, Macs included.
-- **Servers and other mods.** Runs on a dedicated server where everyone shares the same Earth. Create, Mekanism, Waystones, the Twilight Forest, Replay Mod and the popular map mods work in the Earth world; see the [FAQ](docs/FAQ.md#which-other-mods-work).
+- **Servers and other mods.** Runs on a dedicated server where everyone shares the same Earth. Create, Mekanism, Waystones, CC: Tweaked, the Twilight Forest, Replay Mod and the popular map mods work in the Earth world; see the [FAQ](docs/FAQ.md#which-other-mods-work).
 
 There are no cities: built-up land becomes the wild land around it. Vanilla villages and structures still appear.
 
