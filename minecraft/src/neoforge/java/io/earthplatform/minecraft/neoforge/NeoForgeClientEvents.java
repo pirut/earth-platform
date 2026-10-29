@@ -11,7 +11,9 @@ import io.earthplatform.minecraft.cubic.play.EarthWorlds;
 import io.earthplatform.minecraft.cubic.play.client.EarthCompassHud;
 import io.earthplatform.minecraft.cubic.play.client.EarthFlight;
 import io.earthplatform.minecraft.cubic.play.client.EarthPlayClient;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModList;
@@ -69,6 +71,14 @@ public final class NeoForgeClientEvents {
     }
 
     @SubscribeEvent public static void respawn(ClientPlayerNetworkEvent.Clone event) { CubicClient.respawn(); }
+
+    @SubscribeEvent public static void loggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
+        var connection = event.getPlayer().connection;
+        boolean earthServer = !Minecraft.getInstance().isLocalServer() && connection.hasChannel(NeoForgeBuildCheck.earthChannel());
+        Component tooOld = NeoForgeBuildCheck.tooOld(connection.getConnection(), earthServer);
+        // After the login packet is handled, so the disconnect screen shows the reason.
+        if (tooOld != null) Minecraft.getInstance().tell(() -> connection.getConnection().disconnect(tooOld));
+    }
 
     @SubscribeEvent public static void loggedOut(ClientPlayerNetworkEvent.LoggingOut event) {
         EarthPlayClient.loggedOut();
