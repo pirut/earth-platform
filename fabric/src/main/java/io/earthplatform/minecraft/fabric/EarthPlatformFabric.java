@@ -13,6 +13,7 @@ import io.earthplatform.minecraft.cubic.play.EarthAdmin;
 import io.earthplatform.minecraft.cubic.play.EarthCompass;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
 import io.earthplatform.minecraft.cubic.play.EarthExplorer;
+import io.earthplatform.minecraft.cubic.play.EarthMemory;
 import io.earthplatform.minecraft.cubic.play.EarthRules;
 import io.earthplatform.minecraft.cubic.play.EarthWorlds;
 import io.earthplatform.minecraft.cubic.portal.CubicTravel;
@@ -87,6 +88,7 @@ public final class EarthPlatformFabric implements ModInitializer {
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             EarthWorlds.started(server);
             EarthAdmin.started(server);
+            EarthMemory.started(server);
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> EarthAdmin.stopping());
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
@@ -106,6 +108,7 @@ public final class EarthPlatformFabric implements ModInitializer {
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             EarthWorlds.loggedIn(handler.player);
             EarthCompass.loggedIn(handler.player);
+            EarthMemory.loggedIn(handler.player);
         });
         ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, player, alive) -> {
             EarthWorlds.respawned(player);
