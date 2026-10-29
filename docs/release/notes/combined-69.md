@@ -1,4 +1,4 @@
-Earth Platform build 69: ComputerCraft works in the Earth world. Turtles move at any height, GPS finds you again, and on Fabric computers see the modems and drives beside them.
+Earth Platform build 69: ComputerCraft works in the Earth world. Turtles move at any height, GPS finds you again, and on Fabric computers see the modems and drives beside them. Also: WorldEdit's `//regen` rebuilds the real Earth, a little less work every tick near the ground, and a far view slider label that fits.
 
 Needs Minecraft 1.21.1 and either NeoForge 21.1.256 or newer, or Fabric Loader 0.16.14 or newer with Fabric API. For shaders, add Iris 1.8 and Sodium 0.8 and a Voxy-capable pack such as Photon v1.3b. Give the game about 6 GB of memory with shaders.
 
