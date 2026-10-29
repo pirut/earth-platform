@@ -33,10 +33,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Nullable;
+import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.TicketType;
@@ -168,6 +170,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 new PalettedContainer<>(biomes.asHolderIdMap(), biomes.getHolderOrThrow(net.minecraft.world.level.biome.Biomes.PLAINS), PalettedContainer.Strategy.SECTION_BIOMES)));
         this.storage = new CubeStorage(DimensionType.getStorageFolder(level.dimension(),
                 level.getServer().getWorldPath(LevelResource.ROOT)).resolve("cubes"));
+        storage.onProblem(problem -> problemNotes.add(problemNote(problem)));
         this.far = new FarServer(generator, storage, codec, level.registryAccess().registryOrThrow(Registries.BIOME));
         int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 2));
         this.workers = Executors.newFixedThreadPool(threads, NamedThreads.numbered("Earth cube worker", THREADS, Thread.NORM_PRIORITY - 1));
@@ -446,8 +449,34 @@ public final class ServerCubeWorld extends CubeWorld {
         return Math.max(2, Math.min(Cubic.MAX_HORIZONTAL_RADIUS, server.getServer().getPlayerList().getViewDistance()));
     }
 
+    /** Lines about bad region files, waiting for an operator (or a singleplayer world's owner) to be online. */
+    private final ConcurrentLinkedQueue<Component> problemNotes = new ConcurrentLinkedQueue<>();
+
+    private static Component problemNote(CubeStorage.Problem problem) {
+        String name = problem.file().getFileName().toString();
+        String text = problem.keptAs() != null
+                ? "Earth Platform: the save file " + name + " was damaged. It was kept as " + problem.keptAs().getFileName()
+                        + " and its area is being generated again; see the log."
+                : "Earth Platform: could not read the save file " + name + ". It was left as it is, and edits in its area"
+                        + " are not saved until the game restarts; see the log.";
+        return Component.literal(text).withStyle(ChatFormatting.RED);
+    }
+
+    private void tellProblems() {
+        var host = server.getServer();
+        List<ServerPlayer> told = new ArrayList<>();
+        for (ServerPlayer player : host.getPlayerList().getPlayers()) {
+            if (player.hasPermissions(2) || host.isSingleplayerOwner(player.getGameProfile())) told.add(player);
+        }
+        if (told.isEmpty()) return;
+        for (Component note; (note = problemNotes.poll()) != null; ) {
+            for (ServerPlayer player : told) player.sendSystemMessage(note);
+        }
+    }
+
     public void tick() {
         if (closed) return;
+        if (!problemNotes.isEmpty()) tellProblems();
         noteLateness();
         long start = System.nanoTime();
         try { tickCubes(); }
