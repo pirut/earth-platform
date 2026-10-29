@@ -38,6 +38,7 @@
     "compat.WorldEditAccessMixin",
     "compat.WorldEditWorldMixin",
     "compat.WorldEditConfigMixin",
+    "compat.WorldEditRegenMixin",
     "compat.QuarkBuildHeightMixin",
     "CubicBiomeSearchMixin",
     "CubicPathRegionMixin",
