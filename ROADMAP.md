@@ -1,14 +1,12 @@
 # Roadmap
 
-Last updated October 14, 2026, at build 37.
+Last updated October 29, 2026, at build 69.
 
 ## Where things stand
 
-Earth Platform is playable. You can start anywhere on Earth at one block per meter, play ordinary survival, and see terrain out to about 94 km. It has not had a public release yet.
+Earth Platform is playable and public. You can start anywhere on Earth at one block per meter, play ordinary survival, and see terrain out to about 94 km. It runs on NeoForge and Fabric for Minecraft 1.21.1.
 
-Right now we are only fixing bugs, regressions and speed until we have a build we trust. New features wait until then. Once that build exists, it goes out as the first public alpha on GitHub, Modrinth and CurseForge (see [docs/release](docs/release/GO-PUBLIC.md)).
-
-Every merge to `main` builds a numbered release on the [Releases page](https://github.com/pirut/earth-platform/releases). Public versions will be `0.1.0-alpha.N`, where N is the build number.
+Releases are public alphas on [Modrinth](https://modrinth.com/mod/YnuWHcwC) and the [Releases page](https://github.com/pirut/earth-platform/releases). Every merge to `main` builds one, numbered `0.1.0-alpha.N`, where N is the build number. Each release batches several fixes rather than shipping them one at a time.
 
 ## Done
 
@@ -21,17 +19,17 @@ Every merge to `main` builds a numbered release on the [Releases page](https://g
 - **Getting around.** Spawn picker with a list of places and a globe, `/earth` commands, a travel map in creative (N), and a jet stream for elytra above Y 9,200.
 - **Shaders.** Iris with the stock Photon download, including on Macs.
 - **Servers and other mods.** Dedicated servers with several players, and a long list of popular mods tested in the Earth world (see the [FAQ](docs/FAQ.md#which-other-mods-work)).
-- **Releases.** CI on pull requests, an automatic release on every merge, and the docs and store page text for going public.
+- **Releases.** CI on pull requests, and an automatic release on every merge that goes up on GitHub and Modrinth for both loaders.
+- **Fabric.** A Fabric build alongside the NeoForge one, from build 67.
 
 ## Now
 
-- **Build 38** (waiting to merge): far terrain on Macs, gray walls around the Spanish Peaks in Colorado, and the switch to `0.1.0-alpha` version numbers.
-- **Build 39**: a setting for how sharp far terrain is, so people can trade detail for speed themselves.
-- **Mac with shaders**: terrain still breaks up on some Macs with Photon. Build 38 has the latest fix and still needs testing on a real Mac.
-- **Small streams**: they work, but make far terrain in places like the Amazon slower to load. They need to get faster.
-- **Going public**: the remaining steps (making the repository public, creating the Modrinth and CurseForge pages) are JR's to do, listed in [GO-PUBLIC.md](docs/release/GO-PUBLIC.md).
+We are still mostly fixing bugs, regressions and speed, plus a few features players asked for.
 
-## After the first public alpha
+- **Speed.** Far terrain while flying, and the first visit to a place nobody has been, are the slowest parts. Each build tries to make them faster without losing detail.
+- **Other mods.** Mods that check the world's height themselves need a small fix each. Tell us about any that misbehave in the Earth world.
+
+## Later
 
 Nothing here is promised. These are the known gaps, roughly in the order we expect to look at them.
 
@@ -43,7 +41,7 @@ Nothing here is promised. These are the known gaps, roughly in the order we expe
 
 - **No cities or roads.** Built-up land becomes the wild land around it. Vanilla villages and structures still generate.
 - **No OpenStreetMap data.** Everything comes from elevation, land cover, climate and water surveys.
-- **Speed over sharpness.** When a change makes the game noticeably faster at a small cost in detail, we take the speed.
+- **Looks and speed together.** A speed-up must not cost visible detail. Where detail and speed do trade off, the player chooses, with the far detail setting.
 - **Our own far renderer.** Voxy and Distant Horizons don't work with cubic worlds, so we wrote our own. If Distant Horizons is installed it is paused in Earth worlds. We don't plan to add support for either.
 - **Fixes should be general.** We fix terrain problems by reading the data better, not with lists of special places.
 
