@@ -142,7 +142,8 @@
     "compat.JourneyMapChunkMixin",
     "CubicVoidFogMixin",
     "GuiOverlayAccess",
-    "EarthCompassSpinMixin"
+    "EarthCompassSpinMixin",
+    "CubicAnimateTickMixin"
   ],
   "injectors": {
     "defaultRequire": 1
