@@ -190,6 +190,15 @@ public final class Far {
         return level > finest && Math.abs(x - column(bx, level)) <= hole && Math.abs(z - column(bz, level)) <= hole;
     }
 
+    /**
+     * True when a column is within the far terrain's reach of a position at all, at any level: a
+     * zoomed view asks for finer columns where it looks than the player's own levels hold there.
+     */
+    public static boolean inReach(long key, int bx, int bz) {
+        int shift = MAX_LEVEL - level(key);
+        return Math.abs((x(key) >> shift) - column(bx, MAX_LEVEL)) <= OUTER + 1 && Math.abs((z(key) >> shift) - column(bz, MAX_LEVEL)) <= OUTER + 1;
+    }
+
     /** True when a column is close enough to a position to be worth making for it. */
     public static boolean near(long key, int bx, int bz) {
         int level = level(key);

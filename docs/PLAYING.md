@@ -127,7 +127,7 @@ These are for operators, and all of them work from the server console too. Where
 
 **The players' globe.** When an operator picks a spawn on the globe, other players show as green dots (`showPlayersOnMap`).
 
-**The web map.** With `webMap` on, the server serves a live world map at `http://<your server>:8123/` with everyone online, the spawn and the warps, updating every few seconds. Open the port in your firewall to share it.
+**The web map.** With `webMap` on, the server serves a live world map at `http://<your server>:8123/` with everyone online, the spawn and the warps, updating every few seconds. Open the port in your firewall to share it, or set `webMapAddress` to `127.0.0.1` to keep it on the server's own computer.
 
 **Turning features on and off.** Every feature is optional. Operators switch them in game with `/earth settings` (or edit `config/earthplatform-common.toml`; a running server picks up the edit). A feature switched off disappears from players' commands at once; a race or Where on Earth round that is on ends. Operators keep their own tools (spawn, send, warps, border, preload) whatever the switches say.
 
@@ -142,13 +142,14 @@ These are for operators, and all of them work from the server console too. Where
 | `countryNames` | on | "Now entering ..." when a player crosses a border |
 | `playersOnMap` (`showPlayersOnMap`) | on | Other players as dots on the globe and the web map; compasses can follow them |
 | `survivalMap` | on | Players without the travel map open the map with **N** and point compasses with it (`/earth compass`) |
-| `geoguessr` | on | Where on Earth guessing rounds |
+| `whereOnEarth` | on | Where on Earth guessing rounds |
 | `races` | on | Races |
 | `dailyRace` | off | A race to a random famous place each day (UTC) |
 | `webMap` | off | The live web map |
 | `travelCost` (`travelLevelsPer1000Km`) | 0 | In survival, trips players start themselves cost this many experience levels per 1000 km (at least one). Operators and creative players go free |
 | `travelCooldown` (`travelCooldownSeconds`) | 0 | In survival, seconds a player waits between their own trips |
 | `webMapPort` | 8123 | The web map's port |
+| `webMapAddress` | `0.0.0.0` | Where the web map answers: `0.0.0.0` for every network, `127.0.0.1` for this computer only, or one of the server's own IP addresses |
 | `raceReward` (file only) | `minecraft:diamond 5` | The race prize as `item count`; empty for none |
 
 Console commands run in the overworld, but these `/earth` commands always act on the Earth, so you don't need `execute in`.

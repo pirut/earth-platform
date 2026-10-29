@@ -113,6 +113,16 @@ public final class FarServer {
         final LongOpenHashSet queued = new LongOpenHashSet();
         final LongOpenHashSet sent = new LongOpenHashSet();
         final ArrayDeque<CubePayloads.FarColumnData> outgoing = new ArrayDeque<>();
+        /**
+         * Columns queued that are farther off than the player's own levels reach (see {@link Far#near}),
+         * which a zoomed view asked for where it looks; at most {@link FarServer#ZOOMED} at once.
+         */
+        final LongOpenHashSet zoomed = new LongOpenHashSet();
+        void unqueue(long key) {
+            queued.remove(key);
+            zoomed.remove(key);
+        }
+
         /** Where the player stands, so workers can skip columns asked for before the player moved far away. */
         volatile int bx, bz;
     }
@@ -137,7 +147,10 @@ public final class FarServer {
         return session == null ? 0 : session.queued.size();
     }
 
-    /** Queues the columns a player asked for; ones outside that player's squares are ignored. */
+    /** The most columns a player's zoomed view can have queued past its own levels (see {@link Session#zoomed}). */
+    private static final int ZOOMED = 4096;
+
+    /** Queues the columns a player asked for; ones outside that player's squares are ignored, but for a zoomed view's few. */
     public void request(ServerPlayer player, long[] keys) {
         if (closed) return;
         UUID id = player.getUUID();
@@ -150,20 +163,29 @@ public final class FarServer {
         session.bx = bx;
         session.bz = bz;
         for (long key : keys) {
-            if (!Far.valid(key) || !Far.near(key, bx, bz) || !session.queued.add(key)) continue;
+            if (!Far.valid(key) || session.queued.contains(key)) continue;
+            boolean zoomed = !Far.near(key, bx, bz);
+            if (zoomed) {
+                if (session.zoomed.size() >= ZOOMED || !Far.inReach(key, bx, bz)) continue;
+                session.zoomed.add(key);
+            }
+            session.queued.add(key);
             CubePayloads.FarColumnData cached = cache.get(key);
             if (cached != null) session.outgoing.add(cached);
-            else submit(id, session, key);
+            else submit(id, session, key, zoomed);
         }
     }
 
     /** Whether cubes near players are waiting to be made; far columns then run no more than {@link #WORKERS} at once. */
     public void nearWaiting(boolean waiting) { workers.hold(waiting); }
 
-    private void submit(@Nullable UUID player, @Nullable Session session, long key) {
+    private void submit(@Nullable UUID player, @Nullable Session session, long key) { submit(player, session, key, false); }
+
+    /** {@code zoomed} for a column a zoomed view asked for, which is made while the player stays within its reach. */
+    private void submit(@Nullable UUID player, @Nullable Session session, long key, boolean zoomed) {
         workers.execute(() -> {
             // After a teleport the old place's columns can be thousands deep in the queue: skip them.
-            if (session != null && !Far.near(key, session.bx, session.bz)) {
+            if (session != null && !(zoomed ? Far.inReach(key, session.bx, session.bz) : Far.near(key, session.bx, session.bz))) {
                 skipped.incrementAndGet();
                 failed.add(key);
                 return;
@@ -364,8 +386,8 @@ public final class FarServer {
     /** Sends finished columns, a few per player per tick, remakes edited ones and forgets players who left. */
     public void tick(Iterable<ServerPlayer> players) {
         ticks++;
-        for (Long key; (key = failed.poll()) != null; ) for (Session session : sessions.values()) session.queued.remove(key.longValue());
-        if (ticks % 100 == 0) for (Long key; (key = missing.poll()) != null; ) for (Session session : sessions.values()) session.queued.remove(key.longValue());
+        for (Long key; (key = failed.poll()) != null; ) for (Session session : sessions.values()) session.unqueue(key);
+        if (ticks % 100 == 0) for (Long key; (key = missing.poll()) != null; ) for (Session session : sessions.values()) session.unqueue(key);
         for (Long cube; (cube = rebuilt.poll()) != null; ) {
             int cubeX = CubeKey.x(cube), cubeZ = CubeKey.z(cube);
             for (int level = Far.EDIT_LEVELS + 1; level <= Far.MAX_LEVEL; level++) {
@@ -403,7 +425,7 @@ public final class FarServer {
             int bytes = Throttle.allowance(player);
             for (int n = 0; n < SEND_PER_TICK && bytes > 0 && !session.outgoing.isEmpty(); n++) {
                 CubePayloads.FarColumnData column = session.outgoing.poll();
-                session.queued.remove(column.key());
+                session.unqueue(column.key());
                 session.sent.add(column.key());
                 Platform.INSTANCE.sendToPlayer(player, column);
                 bytes -= column.size();

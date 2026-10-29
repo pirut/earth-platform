@@ -13,6 +13,7 @@ import io.earthplatform.minecraft.cubic.play.EarthBasics;
 import io.earthplatform.minecraft.cubic.play.EarthCompass;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
 import io.earthplatform.minecraft.cubic.play.EarthExplorer;
+import io.earthplatform.minecraft.cubic.play.EarthMemory;
 import io.earthplatform.minecraft.cubic.play.EarthRules;
 import io.earthplatform.minecraft.cubic.play.EarthWorlds;
 import io.earthplatform.minecraft.cubic.portal.CubicTravel;
@@ -39,6 +40,7 @@ import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.network.event.RegisterConfigurationTasksEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 
 /** NeoForge's events, on both sides, handed to the game code. */
@@ -54,7 +56,10 @@ public final class NeoForgeEvents {
         @SubscribeEvent public static void payloads(RegisterPayloadHandlersEvent event) {
             CubePayloads.register(new NeoForgePayloads(event.registrar(CubePayloads.VERSION)));
             EarthWorlds.payloads(new NeoForgePayloads(event.registrar(EarthWorlds.PAYLOADS_VERSION)));
+            NeoForgeBuildCheck.register(event.registrar("1"));
         }
+
+        @SubscribeEvent public static void configurationTasks(RegisterConfigurationTasksEvent event) { NeoForgeBuildCheck.tasks(event); }
 
         @SubscribeEvent public static void configLoaded(ModConfigEvent.Loading event) { EarthConfig.apply(event.getConfig()); }
         @SubscribeEvent public static void configReloaded(ModConfigEvent.Reloading event) { EarthConfig.apply(event.getConfig()); }
@@ -109,6 +114,7 @@ public final class NeoForgeEvents {
     @SubscribeEvent public static void started(ServerStartedEvent event) {
         EarthWorlds.started(event.getServer());
         EarthAdmin.started(event.getServer());
+        EarthMemory.started(event.getServer());
     }
 
     @SubscribeEvent public static void stopping(ServerStoppingEvent event) { EarthAdmin.stopping(); }
@@ -130,6 +136,7 @@ public final class NeoForgeEvents {
     @SubscribeEvent public static void loggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         EarthWorlds.loggedIn(event.getEntity());
         EarthCompass.loggedIn(event.getEntity());
+        if (event.getEntity() instanceof ServerPlayer player) EarthMemory.loggedIn(player);
     }
 
     @SubscribeEvent public static void respawned(PlayerEvent.PlayerRespawnEvent event) {

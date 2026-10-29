@@ -146,6 +146,8 @@ tasks.named('processResources') { dependsOn generateBuildIdentity }
 
 tasks.named('jar', Jar) {
     from(licenceNotice) { into 'META-INF' }
+    // The data credits and third-party notices travel with the jar, next to the licence.
+    from(files('../CREDITS.md', '../THIRD_PARTY_NOTICES.md')) { into 'META-INF' }
 }
 
 tasks.withType(JavaCompile).configureEach {

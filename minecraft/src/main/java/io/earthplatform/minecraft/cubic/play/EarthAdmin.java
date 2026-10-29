@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.play;
 
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.google.common.net.InetAddresses;
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.globe.Downloads;
 import io.earthplatform.geography.globe.NamedThreads;
@@ -15,6 +16,7 @@ import io.earthplatform.minecraft.platform.Platform;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -149,7 +151,7 @@ public final class EarthAdmin {
         EarthSpawns spawns = EarthSpawns.of(server);
         line(source, "Border: " + spawns.border().map(EarthSpawns.Border::label).orElse("none") + "; warps: " + spawns.warps().size()
                 + "; preload: " + (preloading != null ? "running" : "idle"), ChatFormatting.GRAY);
-        if (EarthConfig.WEB_MAP.get()) line(source, "Web map on port " + EarthConfig.WEB_MAP_PORT.get() + (web == null ? " (not running)" : ""), ChatFormatting.GRAY);
+        if (EarthConfig.WEB_MAP.get()) line(source, "Web map on port " + EarthConfig.WEB_MAP_PORT.get() + ", address " + EarthConfig.WEB_MAP_ADDRESS.get().trim() + (web == null ? " (not running)" : ""), ChatFormatting.GRAY);
         // The cache size walks the whole folder, so it comes in after.
         Path cache = Loader.INSTANCE.gameDir().resolve("earthplatform").resolve("cache");
         CompletableFuture.supplyAsync(() -> size(cache), Util.ioPool()).thenAcceptAsync(size -> line(source,
@@ -188,25 +190,37 @@ public final class EarthAdmin {
     // The web map --------------------------------------------------------------------------------
 
     @Nullable private static com.sun.net.httpserver.HttpServer web;
-    /** The port the running web map listens on. */
+    /** The port and address the running web map listens on. */
     private static int webPort;
+    private static String webAddress = "";
+    /** The last address setting that could not be read, so the warning about it is logged once. */
+    @Nullable private static String badWebAddress;
     /** What the web map shows, made on the server thread each second and served from the web map's own thread. */
     private static volatile String snapshot = "{\"players\":[]}";
 
     public static void started(MinecraftServer server) { webMap(server); }
 
-    /** Starts or stops the web map as the settings say, or moves it to a new port. */
+    /** Starts or stops the web map as the settings say, or moves it to a new port or address. */
     static void webMap(MinecraftServer minecraft) {
         int port = EarthConfig.WEB_MAP_PORT.get();
+        String address = EarthConfig.WEB_MAP_ADDRESS.get().trim();
         boolean wanted = EarthConfig.WEB_MAP.get() && EarthWorlds.isEarth(minecraft);
-        if (web != null && (!wanted || webPort != port)) {
+        if (web != null && (!wanted || webPort != port || !webAddress.equals(address))) {
             web.stop(0);
             web = null;
             EarthPlatformMod.LOGGER.info("Earth web map stopped");
         }
         if (!wanted || web != null) return;
+        InetAddress bind = webMapAddress(address);
+        if (bind == null) {
+            if (!address.equals(badWebAddress)) EarthPlatformMod.LOGGER.warn("The Earth web map is off: webMapAddress \"{}\" in earthplatform-common.toml"
+                    + " is not an IP address. Use 0.0.0.0 for every network, 127.0.0.1 for this computer only, or one of the server's own IP addresses.", address);
+            badWebAddress = address;
+            return;
+        }
+        badWebAddress = null;
         try {
-            var server = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress(port), 16);
+            var server = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress(bind, port), 16);
             server.createContext("/", exchange -> {
                 String path = exchange.getRequestURI().getPath();
                 try (exchange) {
@@ -222,9 +236,27 @@ public final class EarthAdmin {
             server.start();
             web = server;
             webPort = port;
-            EarthPlatformMod.LOGGER.info("Earth web map at http://localhost:{}/", port);
+            webAddress = address;
+            EarthPlatformMod.LOGGER.info("Earth web map at http://{}:{}/ (answering on {})",
+                    bind.isAnyLocalAddress() ? "localhost" : InetAddresses.toUriString(bind), port, bind.isAnyLocalAddress() ? "every network" : bind.getHostAddress());
         } catch (IOException | RuntimeException | LinkageError failure) {
-            EarthPlatformMod.LOGGER.warn("The Earth web map could not start on port {}: {}", port, failure.toString());
+            EarthPlatformMod.LOGGER.warn("The Earth web map could not start on {} port {}: {}", bind.getHostAddress(), port, failure.toString());
+        }
+    }
+
+    /**
+     * The address the web map answers on, from the webMapAddress setting: an IP address (blank means every
+     * network, as 0.0.0.0 does) or "localhost". Null for anything else; host names are not looked up.
+     */
+    @Nullable static InetAddress webMapAddress(String setting) {
+        String address = setting.trim();
+        if (address.isEmpty()) address = "0.0.0.0";
+        if (address.equalsIgnoreCase("localhost")) return InetAddress.getLoopbackAddress();
+        if (address.startsWith("[") && address.endsWith("]")) address = address.substring(1, address.length() - 1);
+        try {
+            return InetAddresses.forString(address);
+        } catch (IllegalArgumentException notAnAddress) {
+            return null;
         }
     }
 

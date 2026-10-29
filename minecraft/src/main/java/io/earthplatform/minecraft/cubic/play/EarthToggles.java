@@ -2,8 +2,10 @@ package io.earthplatform.minecraft.cubic.play;
 
 import com.mojang.brigadier.arguments.BoolArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import java.util.List;
+import java.util.function.Predicate;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -22,6 +24,7 @@ import net.neoforged.neoforge.common.ModConfigSpec;
 final class EarthToggles {
     private record Toggle(String name, ModConfigSpec.BooleanValue value, String what) {}
     private record Number(String name, ModConfigSpec.IntValue value, int min, int max, String what) {}
+    private record Text(String name, ModConfigSpec.ConfigValue<String> value, Predicate<String> valid, String rule, String what) {}
 
     private static final List<Toggle> TOGGLES = List.of(
             new Toggle("homes", EarthConfig.ANYONE_CAN_USE_HOMES, "players use /earth sethome, home and spawn"),
@@ -33,7 +36,7 @@ final class EarthToggles {
             new Toggle("countryNames", EarthConfig.COUNTRY_NAMES, "\"Now entering <country>\" on screen"),
             new Toggle("playersOnMap", EarthConfig.SHOW_PLAYERS_ON_MAP, "other players as dots on the globe"),
             new Toggle("survivalMap", EarthConfig.SURVIVAL_MAP, "players open the map (N) and point compasses with it (/earth compass)"),
-            new Toggle("geoguessr", EarthConfig.GEOGUESSR, "Where on Earth guessing rounds (/earth guess)"),
+            new Toggle("whereOnEarth", EarthConfig.WHERE_ON_EARTH, "Where on Earth guessing rounds (/earth guess)"),
             new Toggle("races", EarthConfig.RACES, "races to famous places (/earth race)"),
             new Toggle("dailyRace", EarthConfig.DAILY_RACE, "a race every day"),
             new Toggle("webMap", EarthConfig.WEB_MAP, "the live web map"));
@@ -41,6 +44,10 @@ final class EarthToggles {
             new Number("travelCost", EarthConfig.TRAVEL_LEVELS_PER_1000_KM, 0, 1000, "experience levels per 1000 km in survival"),
             new Number("travelCooldown", EarthConfig.TRAVEL_COOLDOWN, 0, 86_400, "seconds between a survival player's trips"),
             new Number("webMapPort", EarthConfig.WEB_MAP_PORT, 1, 65_535, "the web map's port"));
+    private static final List<Text> TEXTS = List.of(
+            new Text("webMapAddress", EarthConfig.WEB_MAP_ADDRESS, address -> EarthAdmin.webMapAddress(address) != null,
+                    "0.0.0.0 for every network, 127.0.0.1 for this computer only, or one of the server's own IP addresses",
+                    "where the web map answers (0.0.0.0 every network, 127.0.0.1 this computer only)"));
 
     private EarthToggles() {}
 
@@ -59,6 +66,12 @@ final class EarthToggles {
                     .executes(context -> list(context.getSource()))
                     .then(Commands.argument("value", IntegerArgumentType.integer(0))
                             .executes(context -> set(context.getSource(), number, IntegerArgumentType.getInteger(context, "value")))));
+        }
+        for (Text text : TEXTS) {
+            settings.then(Commands.literal(text.name)
+                    .executes(context -> list(context.getSource()))
+                    .then(Commands.argument("value", StringArgumentType.greedyString())
+                            .executes(context -> set(context.getSource(), text, StringArgumentType.getString(context, "value")))));
         }
         root.then(settings);
     }
@@ -82,6 +95,14 @@ final class EarthToggles {
                             .withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, command))
                             .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("Click to change"))))
                     .append(Component.literal(": " + number.what).withStyle(ChatFormatting.GRAY));
+            source.sendSuccess(() -> line, false);
+        }
+        for (Text text : TEXTS) {
+            String command = "/earth settings " + text.name + " ";
+            Component line = Component.literal("  " + text.name + " = " + text.value.get()).withStyle(style -> style.withColor(ChatFormatting.WHITE)
+                            .withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, command))
+                            .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("Click to change"))))
+                    .append(Component.literal(": " + text.what).withStyle(ChatFormatting.GRAY));
             source.sendSuccess(() -> line, false);
         }
         return TOGGLES.size();
@@ -111,6 +132,17 @@ final class EarthToggles {
         return 1;
     }
 
+    private static int set(CommandSourceStack source, Text text, String value) {
+        value = value.trim();
+        if (!text.valid.test(value)) {
+            source.sendFailure(Component.literal(text.name + " must be " + text.rule + "."));
+            return 0;
+        }
+        text.value.set(value);
+        saved(source, text.name + " is " + value + ".");
+        return 1;
+    }
+
     private static void saved(CommandSourceStack source, String message) {
         EarthConfig.COMMON_SPEC.save();
         try {
@@ -124,7 +156,7 @@ final class EarthToggles {
     /** The settings changed, from a command or the file: features switched off stop, and players' commands match. */
     static void changed(MinecraftServer server) {
         if (!EarthConfig.RACES.get()) EarthRace.off(server);
-        if (!EarthConfig.GEOGUESSR.get()) EarthGuess.end(server);
+        if (!EarthConfig.WHERE_ON_EARTH.get()) EarthGuess.end(server);
         EarthAdmin.webMap(server);
         // Each player's command list hides what they may not use, so it is sent again.
         for (ServerPlayer player : server.getPlayerList().getPlayers()) server.getCommands().sendCommands(player);
