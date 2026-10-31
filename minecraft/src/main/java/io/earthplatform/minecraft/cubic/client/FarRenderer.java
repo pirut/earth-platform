@@ -47,6 +47,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
 
 /**
@@ -1446,10 +1447,10 @@ public final class FarRenderer {
                 gpu.free(column.faces);
                 column.faces = gpu.upload(result.quads(), result.counts(), result.grid());
                 column.meshedCubes = column.buildingCubes;
-                column.water = waterBuffers.upload(column.water, result.water());
+                column.water = waterBuffers.upload(column.water, result.water(), column.x0, column.baseY(), column.z0);
                 column.wallSides = 0;
                 for (int side = 0; side < 4; side++) {
-                    column.waterWalls[side] = waterBuffers.upload(column.waterWalls[side], result.waterWalls()[side]);
+                    column.waterWalls[side] = waterBuffers.upload(column.waterWalls[side], result.waterWalls()[side], column.x0, column.baseY(), column.z0);
                     if (column.waterWalls[side] != null) column.wallSides |= 1 << side;
                 }
                 column.freeOldSlots(gpu);
@@ -1539,11 +1540,12 @@ public final class FarRenderer {
             if (plain == null || pick.changed(position.x, position.y, position.z, camera.rotation(), plain.earthplatform$matrix(),
                     plain.earthplatform$camX(), plain.earthplatform$camY(), plain.earthplatform$camZ(), pickSerial, 0, 0, 0, false)
                     || CHECK_WALK) {
-                view(position, frustum);
+                if (CHECK_WALK || !viewHolds(plain)) view(position, frustum);
             }
             // Only a walk with nothing waiting draws all a fresh one would.
             if (CHECK_WALK && !due && !walkBehind(now)) checkWalk(gpu, position, frustum, bx, bz, band, now);
         } else {
+            viewHeld = false;
             boolean changed = true;
             if (CACHE_PICK && plain != null) {
                 changed = pick.changed(position.x, position.y, position.z, camera.rotation(), plain.earthplatform$matrix(),
@@ -1556,6 +1558,8 @@ public final class FarRenderer {
             }
         }
         if (shown == 0) return;
+        // Where the view was worked out from: what the passes queue is placed from there (see VIEW_MARGIN).
+        Vec3 seen = viewHeld ? viewPosition : position;
         boolean pack = ShaderBlocks.packInUse();
         // Under a pack with Voxy support far terrain keeps its own, finer depth (see FarLod).
         boolean own = pack && FarLod.active();
@@ -1569,7 +1573,7 @@ public final class FarRenderer {
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = world.client().getShade(direction, true);
         float reach = FarLod.nearReach();
-        reachLists(position, reach);
+        reachLists(seen, reach);
         // While the ground near the player loads, far terrain inside the reach leaves the game's blocks alone.
         boolean ground = NEAR_GROUND && !near.isEmpty() && settling(now) && FarBlockDepth.copy();
         if (own) {
@@ -1578,7 +1582,7 @@ public final class FarRenderer {
             boolean again = REUSE_DRAWS && nearDraws.holds(viewSerial, setting);
             if (!near.isEmpty() && gpu.begin(pack, ShaderBlocks.voxyPatch(), modelView, projection, position, shade, frame, true, ground)) {
                 long timer = FarGpuTimers.begin("near opaque");
-                try { drawEach(gpu, nearDraws, again, near, position, setting); }
+                try { drawEach(gpu, nearDraws, again, near, seen, setting); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
             }
             FarLod.beginDraw(modelView, position.x, position.y, position.z);
@@ -1588,25 +1592,28 @@ public final class FarRenderer {
             long setting = Float.floatToIntBits(reach) & 0xFFFFFFFFL | PREPASSED;
             // The shading pass draws again what the pre-pass drew, so without that it needs the columns.
             boolean again = REUSE_DRAWS && FarGpu.REPLAY && farDraws.holds(viewSerial, setting);
-            IntArrayList far = again ? NONE : FarNearSkip.ENABLED ? beyondReach(position) : allShown();
+            IntArrayList far = again ? NONE : FarNearSkip.ENABLED ? beyondReach(seen) : allShown();
             FarLod.beginPrepass();
             gpu.phase(FarGpu.PREPASS);
             if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false, false)) {
                 long timer = FarGpuTimers.begin("far depth prepass");
-                try { drawEach(gpu, farDraws, again, far, position, setting); }
+                try { drawEach(gpu, farDraws, again, far, seen, setting); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
             }
             FarLod.beginShade();
             // Ranges the pre-pass shows wholly hidden are left out of the shading pass (see FarHiddenCull).
             if (FarGpu.REPLAY && farDraws.holds(viewSerial, setting)) {
                 long timer = FarGpuTimers.begin("far hidden cull");
-                try { gpu.cullHidden(farDraws, FarLod.facesTexture(), FarLod.width(), FarLod.height(), modelView, farProjection); }
+                try {
+                    gpu.cullHidden(farDraws, FarLod.facesTexture(), FarLod.width(), FarLod.height(), modelView, farProjection,
+                            (float) (seen.x - position.x), (float) (seen.y - position.y), (float) (seen.z - position.z));
+                }
                 finally { FarGpuTimers.end(timer); }
             }
             gpu.phase(FarGpu.SHADE);
             if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false, false)) {
                 long timer = FarGpuTimers.begin("far opaque");
-                try { if (!FarGpu.REPLAY || !farDraws.holds(viewSerial, setting) || !gpu.play(farDraws)) drawEach(gpu, far, position); }
+                try { if (!FarGpu.REPLAY || !farDraws.holds(viewSerial, setting) || !gpu.play(farDraws)) drawEach(gpu, far, seen); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
                 drawCount.submitted(gpu.ranges);
             }
@@ -1623,7 +1630,7 @@ public final class FarRenderer {
                 boolean again = REUSE_DRAWS && nearDraws.holds(viewSerial, setting);
                 if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false, true)) {
                     long timer = FarGpuTimers.begin("near opaque");
-                    try { drawEach(gpu, nearDraws, again, near, position, setting); }
+                    try { drawEach(gpu, nearDraws, again, near, seen, setting); }
                     finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
                     ranges = gpu.ranges;
                 }
@@ -1635,8 +1642,8 @@ public final class FarRenderer {
                 long setting = (skipNear ? Float.floatToIntBits(reach) & 0xFFFFFFFFL | SKIPS_NEAR
                         : apart ? Float.floatToIntBits(reach) & 0xFFFFFFFFL | AFTER_NEAR : 0) | (pack ? PACK : 0);
                 boolean again = REUSE_DRAWS && farDraws.holds(viewSerial, setting);
-                IntArrayList far = again ? NONE : skipNear ? beyondReach(position) : apart ? outsideReach() : allShown();
-                try { drawEach(gpu, farDraws, again, far, position, setting); }
+                IntArrayList far = again ? NONE : skipNear ? beyondReach(seen) : apart ? outsideReach() : allShown();
+                try { drawEach(gpu, farDraws, again, far, seen, setting); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
                 drawCount.submitted(ranges + gpu.ranges);
             }
@@ -1645,10 +1652,11 @@ public final class FarRenderer {
         long deepenTimer = own ? FarGpuTimers.begin("water deepen") : 0;
         if (own && FarLod.beginDeepen(modelView)) {
             waterBuffers.begin();
+            long place = NO_PLACE;
             for (int i = 0, count = FAST_WATER ? waterSurfaces.size() : shown; i < count; i++) {
                 Column column = shownColumn(FAST_WATER ? waterSurfaces.getInt(i) : i);
                 if (column.water == null || column.fade == FarGpu.FADE_IN) continue;
-                FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
+                place = waterPlace(column, position, place, FarLod::offset);
                 waterBuffers.draw(column.water);
             }
             waterBuffers.end();
@@ -1672,7 +1680,10 @@ public final class FarRenderer {
         reachFor = reach;
         near.clear();
         inner.clear();
-        double within = Math.max(reach * 0.5, reach - INNER_MARGIN), last = reach + Far.width(Far.MAX_LEVEL) * 0.7072;
+        // A view held while the camera moves (see VIEW_MARGIN) lists every column that comes as near from anywhere it may be.
+        double move = viewHeld ? VIEW_MOVE : 0.0;
+        double within = Math.max(reach * 0.5, reach - INNER_MARGIN) + move, last = reach + move + Far.width(Far.MAX_LEVEL) * 0.7072;
+        reach += (float) move;
         for (int i = 0; i < shown && shownDistance[i] < last * last; i++) {
             int at = shownDrawn[i] * 6;
             double dx = Math.max(0.0, Math.max(drawnBoxes[at] - position.x, position.x - drawnBoxes[at + 3]));
@@ -1681,7 +1692,7 @@ public final class FarRenderer {
             if (distance >= reach * reach) continue;
             near.add(i);
             // The game's blocks lie only so far above and below the player: in the jet stream, nowhere near the ground.
-            if (distance < within * within && drawnBoxes[at + 1] < position.y + NEAR_HEIGHT && drawnBoxes[at + 4] > position.y - NEAR_HEIGHT) inner.add(i);
+            if (distance < within * within && drawnBoxes[at + 1] < position.y + NEAR_HEIGHT + move && drawnBoxes[at + 4] > position.y - NEAR_HEIGHT - move) inner.add(i);
         }
     }
 
@@ -1748,7 +1759,8 @@ public final class FarRenderer {
 
     /** The columns in view, in order, that reach past the game's blocks' reach somewhere (see {@link FarNearSkip}). */
     private IntArrayList beyondReach(Vec3 position) {
-        double reach = FarLod.nearReach();
+        // Left out only where it would be from anywhere the camera may be while a view is held (see VIEW_MARGIN).
+        double reach = FarLod.nearReach() - (viewHeld ? VIEW_MOVE : 0.0);
         beyond.clear();
         for (int i = 0; i < shown; i++) {
             int at = shownDrawn[i] * 6;
@@ -2314,9 +2326,24 @@ public final class FarRenderer {
     private void view(Vec3 position, Frustum frustum) {
         viewSerial++;
         boolean tree = CULL_TREE && frustum.getClass() == Frustum.class && frustum instanceof FrustumAccess;
+        // Held while the camera moves a little (see VIEW_MARGIN): every column in a wider view, each grown by the move.
+        viewHeld = VIEW_MARGIN && tree;
+        double grow = viewHeld ? VIEW_MOVE : 0.0;
+        FrustumIntersection test = null;
         if (tree) {
             FrustumAccess view = (FrustumAccess) frustum;
-            cullTree.classify(view.earthplatform$intersection(), view.earthplatform$camX(), view.earthplatform$camY(), view.earthplatform$camZ());
+            test = view.earthplatform$intersection();
+            if (viewHeld) {
+                viewMatrix.set(view.earthplatform$matrix());
+                test = viewWide.set(viewWider.scaling(1.0F / VIEW_WIDEN, 1.0F / VIEW_WIDEN, 1.0F).mul(viewMatrix), false);
+                viewPosition = position;
+                viewCamX = view.earthplatform$camX();
+                viewCamY = view.earthplatform$camY();
+                viewCamZ = view.earthplatform$camZ();
+                viewPick = pickSerial;
+                viewInvalidations = pick.invalidations();
+            }
+            cullTree.classify(test, view.earthplatform$camX(), view.earthplatform$camY(), view.earthplatform$camZ(), grow);
         }
         // The columns in view, from what addDrawn noted of each: only those are looked at again.
         FrustumAccess view = tree ? (FrustumAccess) frustum : null;
@@ -2332,9 +2359,9 @@ public final class FarRenderer {
             double maxX = drawnBoxes[at + 3], maxY = drawnBoxes[at + 4], maxZ = drawnBoxes[at + 5];
             if (seen == FarCullTree.OUTSIDE || seen == FarCullTree.PARTLY && !(view != null
                     // As Frustum.isVisible tests a box: its corners as floats from the frustum's camera.
-                    ? view.earthplatform$intersection().testAab((float) (minX - view.earthplatform$camX()), (float) (minY - view.earthplatform$camY()),
-                            (float) (minZ - view.earthplatform$camZ()), (float) (maxX - view.earthplatform$camX()),
-                            (float) (maxY - view.earthplatform$camY()), (float) (maxZ - view.earthplatform$camZ()))
+                    ? test.testAab((float) (minX - grow - view.earthplatform$camX()), (float) (minY - grow - view.earthplatform$camY()),
+                            (float) (minZ - grow - view.earthplatform$camZ()), (float) (maxX + grow - view.earthplatform$camX()),
+                            (float) (maxY + grow - view.earthplatform$camY()), (float) (maxZ + grow - view.earthplatform$camZ()))
                     : frustum.isVisible(drawn.get(i).box))) continue;
             // As AABB.getCenter() works it out, without making a Vec3 for each column.
             double dx = minX + 0.5 * (maxX - minX) - position.x, dz = minZ + 0.5 * (maxZ - minZ) - position.z;
@@ -2356,10 +2383,64 @@ public final class FarRenderer {
             int at = order.index(i), index = keptDrawn[at];
             shownDrawn[i] = index;
             shownDistance[i] = order.value(at);
-            shownGroups[i] = faceGroups(index, info(index), position);
+            shownGroups[i] = faceGroups(index, info(index), position, grow);
         }
         shown = kept;
         if (FAST_WATER) pickWater();
+    }
+
+    /**
+     * While the camera only moves a few blocks or turns a little, the far columns in view stay as the
+     * last view found them, and every pass draws again what it drew: flying, the view and the queueing
+     * of tens of thousands of columns were most of far terrain's own work on the render thread, every
+     * frame. So a view takes in every column it would from anywhere within {@link #VIEW_MOVE} blocks,
+     * turned up to the slack of a view {@link #VIEW_WIDEN} times as wide, with the faces each could
+     * turn toward the camera from there, and holds while the camera stays in that room. Columns it
+     * takes in that the camera does not see draw no pixel, and nothing it draws inside the game's
+     * blocks' reach changes (see {@link #reachLists}), so the picture is the same; the hidden-range
+     * test is told where the camera has moved since. {@code -Dearthplatform.far.viewMargin=false}
+     * works the view out whenever the camera moves or turns, for comparing.
+     */
+    static final boolean VIEW_MARGIN = !"false".equals(System.getProperty("earthplatform.far.viewMargin"));
+    /** How far the camera may move from where a held view was worked out (see {@link #VIEW_MARGIN}). */
+    static final double VIEW_MOVE = 16.0;
+    /** How much wider a held view is than the camera's, across: its slack for turning (see {@link #VIEW_MARGIN}). */
+    static final float VIEW_WIDEN = 1.15F;
+    /** Whether the last view may be held (see {@link #VIEW_MARGIN}), and where it was worked out from. */
+    private boolean viewHeld;
+    private Vec3 viewPosition = Vec3.ZERO;
+    private double viewCamX, viewCamY, viewCamZ;
+    private int viewPick, viewInvalidations;
+    private final Matrix4f viewMatrix = new Matrix4f(), viewWider = new Matrix4f(), viewCheck = new Matrix4f();
+    private final FrustumIntersection viewWide = new FrustumIntersection();
+    private final org.joml.Vector4f viewCorner = new org.joml.Vector4f();
+
+    /**
+     * Whether the last view still holds for the camera's frustum: worked out with room to move
+     * (see {@link #VIEW_MARGIN}), nothing it shows changed since, the camera within {@link
+     * #VIEW_MOVE} of where it was, and every corner of its frustum within the wider view's, as the
+     * frustum seen from where the view was worked out.
+     */
+    private boolean viewHolds(@Nullable FrustumAccess frustum) {
+        if (!viewHeld || frustum == null || viewPick != pickSerial || viewInvalidations != pick.invalidations()) return false;
+        double dx = frustum.earthplatform$camX() - viewCamX, dy = frustum.earthplatform$camY() - viewCamY, dz = frustum.earthplatform$camZ() - viewCamZ;
+        // The grown boxes take in a move of up to VIEW_MOVE each way; a little is kept for rounding.
+        double most = VIEW_MOVE - 0.5;
+        if (Math.abs(dx) > most || Math.abs(dy) > most || Math.abs(dz) > most) return false;
+        // The frustum's corners, from its camera, as the wider view sees them.
+        viewCheck.set(frustum.earthplatform$matrix()).invert();
+        viewWider.scaling(1.0F / VIEW_WIDEN, 1.0F / VIEW_WIDEN, 1.0F).mul(viewMatrix);
+        for (int corner = 0; corner < 8; corner++) {
+            viewCorner.set((corner & 1) != 0 ? 1.0F : -1.0F, (corner & 2) != 0 ? 1.0F : -1.0F, (corner & 4) != 0 ? 1.0F : -1.0F, 1.0F);
+            viewCheck.transform(viewCorner);
+            if (!(viewCorner.w != 0.0F)) return false;
+            viewCorner.div(viewCorner.w);
+            viewCorner.w = 1.0F;
+            viewWider.transform(viewCorner);
+            float w = viewCorner.w * 0.999F;
+            if (!(w > 0.0F) || Math.abs(viewCorner.x) > w || Math.abs(viewCorner.y) > w || viewCorner.z > viewCorner.w * 1.001F) return false;
+        }
+        return true;
     }
 
     /** The columns in view, nearest first; their places in {@link #drawn}, distances squared and face groups; and how many there are. */
@@ -2522,12 +2603,15 @@ public final class FarRenderer {
                 (float) (drawnBoxes[box + 3] - position.x), (float) (drawnBoxes[box + 4] - position.y), (float) (drawnBoxes[box + 5] - position.z));
     }
 
-    /** The face groups of a drawn column that can show from where the camera is, from its box and info alone. */
-    private int faceGroups(int index, int info, Vec3 position) {
+    /**
+     * The face groups of a drawn column that can show from where the camera is, from its box and info
+     * alone, or from anywhere within {@code grow} blocks of it.
+     */
+    private int faceGroups(int index, int info, Vec3 position, double grow) {
         if ((info & FACES) == 0) return 0;
         int at = index * 6;
-        double minX = drawnBoxes[at], minY = drawnBoxes[at + 1], minZ = drawnBoxes[at + 2];
-        double maxX = drawnBoxes[at + 3], maxY = drawnBoxes[at + 4], maxZ = drawnBoxes[at + 5];
+        double minX = drawnBoxes[at] - grow, minY = drawnBoxes[at + 1] - grow, minZ = drawnBoxes[at + 2] - grow;
+        double maxX = drawnBoxes[at + 3] + grow, maxY = drawnBoxes[at + 4] + grow, maxZ = drawnBoxes[at + 5] + grow;
         // Only face groups turned toward the camera can show. Smooth ground's slopes, cliffs among them,
         // face sideways too, so it shows from below its column as well.
         int groups = 0;
@@ -2538,10 +2622,10 @@ public final class FarRenderer {
         if (position.x < maxX) groups |= 1 << 4;
         if (position.x > minX) groups |= 1 << 5;
         // Walls only where no drawn column stands beside it.
-        if ((info & 1 << OPEN) != 0 && position.z < minZ + 1) groups |= 1 << FarMesher.FIRST_WALL;
-        if ((info & 1 << OPEN + 1) != 0 && position.z > maxZ - 1) groups |= 1 << FarMesher.FIRST_WALL + 1;
-        if ((info & 1 << OPEN + 2) != 0 && position.x < minX + 1) groups |= 1 << FarMesher.FIRST_WALL + 2;
-        if ((info & 1 << OPEN + 3) != 0 && position.x > maxX - 1) groups |= 1 << FarMesher.FIRST_WALL + 3;
+        if ((info & 1 << OPEN) != 0 && position.z < minZ + 2 * grow + 1) groups |= 1 << FarMesher.FIRST_WALL;
+        if ((info & 1 << OPEN + 1) != 0 && position.z > maxZ - 2 * grow - 1) groups |= 1 << FarMesher.FIRST_WALL + 1;
+        if ((info & 1 << OPEN + 2) != 0 && position.x < minX + 2 * grow + 1) groups |= 1 << FarMesher.FIRST_WALL + 2;
+        if ((info & 1 << OPEN + 3) != 0 && position.x > maxX - 2 * grow - 1) groups |= 1 << FarMesher.FIRST_WALL + 3;
         return groups;
     }
 
@@ -2589,6 +2673,33 @@ public final class FarRenderer {
         return near > 1.0E-4 && near < 16.0 ? near : 0.05;
     }
 
+    /** How a water pass sets where the meshes it draws next are drawn from, relative to the camera. */
+    private interface WaterOffset { void set(float x, float y, float z); }
+
+    /** No place yet (see {@link #waterPlace}). */
+    private static final long NO_PLACE = Long.MIN_VALUE;
+    private static final double LN2 = Math.log(2.0);
+
+    /**
+     * Before a column's water is drawn in a pass: sets where its meshes are drawn from, unless
+     * they are drawn from where the last column's were ({@code last}, or {@link #NO_PLACE}), and
+     * returns that place. With {@link FarWaterBuffers#BATCH} that is the cube they are placed in,
+     * which the columns before may share, drawn in one multi-draw with them; otherwise the column.
+     */
+    private long waterPlace(Column column, Vec3 position, long last, WaterOffset offset) {
+        if (!FarWaterBuffers.BATCH) {
+            offset.set((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
+            return NO_PLACE;
+        }
+        int x = FarWaterBuffers.region(column.x0), y = FarWaterBuffers.region(column.baseY()), z = FarWaterBuffers.region(column.z0);
+        int shift = Integer.numberOfTrailingZeros(FarWaterBuffers.REGION);
+        long place = ((long) (x >> shift) & 0x1FFFFF) << 42 | ((long) (y >> shift) & 0x1FFFFF) << 21 | (long) (z >> shift) & 0x1FFFFF;
+        if (place == last) return place;
+        waterBuffers.flush();
+        offset.set((float) (x - position.x), (float) (y - position.y), (float) (z - position.z));
+        return place;
+    }
+
     public void drawWater(Camera camera, Matrix4f modelView, Matrix4f projection) {
         if (closed || waterPass == LevelPasses.current() || camera.getFluidInCamera() != net.minecraft.world.level.material.FogType.NONE) return;
         waterPass = LevelPasses.current();
@@ -2618,6 +2729,7 @@ public final class FarRenderer {
         Matrix4f nearer = new Matrix4f();
         double lift = WATER_LIFT / nearPlane(projection);
         float lastX = Float.NaN, lastY = Float.NaN, lastZ = Float.NaN, lastScale = Float.NaN;
+        long place = NO_PLACE;
         waterBuffers.begin();
         for (int pass = 0; pass < 2; pass++) {
             // Water walls go last: where the next level's water stands as high, its surface is
@@ -2628,7 +2740,12 @@ public final class FarRenderer {
                 Column column = shownColumn(at);
                 // Water stays with the finer level where two levels fade into each other.
                 if (!FAST_WATER && (column.fade == FarGpu.FADE_IN || (pass == 0 ? column.water == null : !column.hasWaterWalls()))) continue;
-                if (offset != null) {
+                if (offset != null && FarWaterBuffers.BATCH) {
+                    place = waterPlace(column, position, place, (x, y, z) -> {
+                        offset.set(x, y, z);
+                        offset.upload();
+                    });
+                } else if (offset != null) {
                     float x = (float) (column.x0 - position.x), y = (float) (column.baseY() - position.y), z = (float) (column.z0 - position.z);
                     if (!FAST_WATER || x != lastX || y != lastY || z != lastZ) {
                         offset.set(x, y, z);
@@ -2643,8 +2760,12 @@ public final class FarRenderer {
                     // depth nearer by a couple of those steps.
                     // The box's center as AABB.getCenter() works it out, without making a Vec3 for each column.
                     double distance = Math.sqrt(shownDistance[at] + square(column.box.minY + 0.5 * (column.box.maxY - column.box.minY) - position.y));
+                    // Batched, columns about as far away share a scale, so they can share a draw: the farthest
+                    // of their sixteenth of an octave of distance, two depth steps nearer at most 4% more.
+                    if (FarWaterBuffers.BATCH) distance = Math.pow(2.0, Math.ceil(Math.log(Math.max(distance, 1.0)) / LN2 * 16.0) / 16.0);
                     float scale = (float) Math.max(0.8, 1.0 - distance * lift);
                     if (!FAST_WATER || scale != lastScale) {
+                        waterBuffers.flush();
                         view.set(nearer.set(modelView).scale(scale));
                         view.upload();
                         lastScale = scale;
@@ -2661,16 +2782,18 @@ public final class FarRenderer {
                 }
             }
         }
+        waterBuffers.flush();
         FarGpuTimers.end(colourTimer);
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
         if (view != null) view.set(modelView);
         if (own) FarLod.endWater(modelView, () -> {
             waterBuffers.begin();
+            long at0 = NO_PLACE;
             for (int i = 0, count = FAST_WATER ? waterVisible.size() : shown; i < count; i++) {
                 int at = FAST_WATER ? waterVisible.getInt(i) : i;
                 Column column = shownColumn(at);
                 if (!FAST_WATER && (column.fade == FarGpu.FADE_IN || column.water == null && !column.hasWaterWalls())) continue;
-                FarLod.offset((float) (column.x0 - position.x), (float) (column.baseY() - position.y), (float) (column.z0 - position.z));
+                at0 = waterPlace(column, position, at0, FarLod::offset);
                 if (column.water != null) {
                     waterBuffers.draw(column.water);
                 }
@@ -2680,6 +2803,7 @@ public final class FarRenderer {
                     waterBuffers.draw(wall);
                 }
             }
+            waterBuffers.flush();
         });
         shader.clear();
         waterBuffers.end();

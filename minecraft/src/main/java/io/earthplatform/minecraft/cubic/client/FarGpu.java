@@ -769,12 +769,21 @@ final class FarGpu {
      * the pre-pass's recording that lie wholly behind the faces it kept. False when it can't.
      */
     boolean cullHidden(Recording recording, int faces, int width, int height, Matrix4f modelView, Matrix4f projection) {
+        return cullHidden(recording, faces, width, height, modelView, projection, 0, 0, 0);
+    }
+
+    /**
+     * The same, for a recording whose boxes are relative to a point (shiftX, shiftY, shiftZ) away
+     * from the camera: where the view was last worked out, when it still holds (see FarRenderer).
+     */
+    boolean cullHidden(Recording recording, int faces, int width, int height, Matrix4f modelView, Matrix4f projection,
+            float shiftX, float shiftY, float shiftZ) {
         if (!hiddenCullChecked) {
             hiddenCullChecked = true;
             if (FarHiddenCull.ENABLED && INDEXED && FarHiddenCull.supported()) hiddenCull = new FarHiddenCull();
         }
         if (hiddenCull == null || recording.count == 0) return false;
-        return hiddenCull.cull(recording, faces, width, height, new Matrix4f(projection).mul(modelView), grow(projection));
+        return hiddenCull.cull(recording, faces, width, height, new Matrix4f(projection).mul(modelView).translate(shiftX, shiftY, shiftZ), grow(projection));
     }
 
     /** After the shading pass: its culling was for that pass alone. */

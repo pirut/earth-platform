@@ -5,6 +5,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferUploader;
 import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormatElement;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -13,6 +14,7 @@ import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL15C;
 import org.lwjgl.opengl.GL31C;
 import org.lwjgl.opengl.GL32C;
+import org.lwjgl.system.MemoryUtil;
 
 /**
  * Far water's meshes, every column's surface and walls, in one vertex buffer per vertex format,
@@ -28,6 +30,21 @@ import org.lwjgl.opengl.GL32C;
  */
 final class FarWaterBuffers {
     static final boolean SHARED = !"false".equals(System.getProperty("earthplatform.far.sharedWater"));
+    /**
+     * Far water's meshes are kept placed in a cube of {@link #REGION} blocks (their corners from
+     * its corner) rather than in their own column, so every column in a cube is drawn from the
+     * same place: a pass sets that once and draws the columns after one
+     * another in a single multi-draw, where it set the place and drew each column on its own, three
+     * passes a frame under a shader pack. The same triangles, drawn in the same order; their corners
+     * are now rounded to about a 1,000th of a block. {@code -Dearthplatform.far.batchWater=false} places
+     * each mesh in its column and draws them one by one, for comparing.
+     */
+    static final boolean BATCH = SHARED && !"false".equals(System.getProperty("earthplatform.far.batchWater"));
+    /** The side of the cubes far water is placed in (see {@link #BATCH}): 16,384 blocks, so a corner is never more than that from its cube's. */
+    static final int REGION = 1 << 14;
+
+    /** The corner of the cube (see {@link #REGION}) a block coordinate lies in. */
+    static int region(int block) { return block & -REGION; }
     /** A shared buffer's room at first, in quads; it doubles as it fills. */
     private static final int FIRST_QUADS = 1 << 14;
 
@@ -53,18 +70,21 @@ final class FarWaterBuffers {
     /** The buffer whose array the pass under way has bound, or null before its first draw. */
     @Nullable private Buffer bound;
 
-    /** Puts a built mesh in a buffer of its format, letting go of the one it replaces; null for none. */
-    @Nullable Mesh upload(@Nullable Mesh old, @Nullable FarMesher.Part part) {
+    /**
+     * Puts a built mesh in a buffer of its format, letting go of the one it replaces; null for none.
+     * The mesh is built from its column's corner at x0, y0, z0, and is kept placed as {@link #BATCH} says.
+     */
+    @Nullable Mesh upload(@Nullable Mesh old, @Nullable FarMesher.Part part, int x0, int y0, int z0) {
         free(old);
         if (part == null) return null;
         try {
-            return add(part.mesh());
+            return add(part.mesh(), BATCH ? x0 - region(x0) : 0, BATCH ? y0 - region(y0) : 0, BATCH ? z0 - region(z0) : 0);
         } finally {
             part.memory().close();
         }
     }
 
-    private Mesh add(MeshData mesh) {
+    private Mesh add(MeshData mesh, int dx, int dy, int dz) {
         try (mesh) {
             RenderSystem.assertOnRenderThread();
             MeshData.DrawState state = mesh.drawState();
@@ -81,6 +101,7 @@ final class FarWaterBuffers {
             ByteBuffer vertices = mesh.vertexBuffer();
             // A builder given no quads gives no mesh, so not met in practice; drawn as nothing, as CubeBuffer drew it.
             if (quads == 0 || vertices == null) return new Mesh(null, null, 0);
+            if ((dx | dy | dz) != 0) move(vertices, format, state.vertexCount(), dx, dy, dz);
             Buffer buffer = null;
             if (SHARED) for (Buffer candidate : buffers) if (candidate.format.equals(format)) { buffer = candidate; break; }
             if (buffer == null) {
@@ -88,6 +109,17 @@ final class FarWaterBuffers {
                 buffers.add(buffer);
             }
             return buffer.add(vertices, quads, state.indexCount());
+        }
+    }
+
+    /** Moves every corner of a mesh's vertices by whole blocks, in place. */
+    private static void move(ByteBuffer vertices, VertexFormat format, int count, int dx, int dy, int dz) {
+        int stride = format.getVertexSize(), position = format.getOffset(VertexFormatElement.POSITION);
+        long address = MemoryUtil.memAddress(vertices) + position;
+        for (int i = 0; i < count; i++, address += stride) {
+            MemoryUtil.memPutFloat(address, MemoryUtil.memGetFloat(address) + dx);
+            MemoryUtil.memPutFloat(address + 4, MemoryUtil.memGetFloat(address + 4) + dy);
+            MemoryUtil.memPutFloat(address + 8, MemoryUtil.memGetFloat(address + 8) + dz);
         }
     }
 
@@ -107,22 +139,72 @@ final class FarWaterBuffers {
     }
 
     /** Starts a pass: its first draw binds its buffer's array, whatever was bound before. */
-    void begin() { bound = null; }
+    void begin() {
+        bound = null;
+        queued = 0;
+    }
 
-    /** Draws a mesh with the program in use, binding its buffer's array if the pass's last draw used another. */
+    /**
+     * Draws a mesh with the program in use, binding its buffer's array if the pass's last draw used
+     * another. With {@link #BATCH} the draw waits in a multi-draw with the meshes after it, until
+     * {@link #flush}: call that before changing anything the draws use, as the place they are drawn from.
+     */
     void draw(Mesh mesh) {
         if (mesh.indexCount == 0) return;
         if (mesh.buffer != bound) {
+            flush();
             bound = mesh.buffer;
             GlStateManager._glBindVertexArray(bound.array);
             // Bound again into the array before drawing, as CubeBuffer does, so nothing outside changes the indices used.
             GlStateManager._glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, CubeBuffer.QuadIndices.name);
         }
-        GL32C.glDrawElementsBaseVertex(GL11C.GL_TRIANGLES, mesh.indexCount, GL11C.GL_UNSIGNED_INT, 0L, mesh.baseVertex);
+        if (!BATCH) {
+            GL32C.glDrawElementsBaseVertex(GL11C.GL_TRIANGLES, mesh.indexCount, GL11C.GL_UNSIGNED_INT, 0L, mesh.baseVertex);
+            return;
+        }
+        if (counts == null) {
+            counts = MemoryUtil.memAllocInt(256);
+            bases = MemoryUtil.memAllocInt(256);
+            offsets = MemoryUtil.memCallocPointer(256);
+        }
+        if (queued == counts.capacity()) {
+            int size = queued * 2;
+            counts = MemoryUtil.memRealloc(counts, size);
+            bases = MemoryUtil.memRealloc(bases, size);
+            MemoryUtil.memFree(offsets);
+            offsets = MemoryUtil.memCallocPointer(size);
+        }
+        counts.put(queued, mesh.indexCount);
+        bases.put(queued, mesh.baseVertex);
+        queued++;
     }
 
-    /** Ends a pass, leaving no vertex array bound. */
+    /** Draws the meshes waiting since the last flush (see {@link #draw}), from the buffer bound. */
+    void flush() {
+        if (queued == 0) return;
+        int count = queued;
+        queued = 0;
+        if (count == 1) {
+            GL32C.glDrawElementsBaseVertex(GL11C.GL_TRIANGLES, counts.get(0), GL11C.GL_UNSIGNED_INT, 0L, bases.get(0));
+            return;
+        }
+        counts.limit(count);
+        bases.limit(count);
+        offsets.limit(count);
+        GL32C.glMultiDrawElementsBaseVertex(GL11C.GL_TRIANGLES, counts, GL11C.GL_UNSIGNED_INT, offsets, bases);
+        counts.limit(counts.capacity());
+        bases.limit(bases.capacity());
+        offsets.limit(offsets.capacity());
+    }
+
+    /** Draws waiting in a multi-draw (see {@link #draw}): their index counts and base vertices, and every draw's index offset, 0. */
+    @Nullable private java.nio.IntBuffer counts, bases;
+    @Nullable private org.lwjgl.PointerBuffer offsets;
+    private int queued;
+
+    /** Ends a pass, drawing what waits and leaving no vertex array bound. */
     void end() {
+        flush();
         bound = null;
         CubeBuffer.unbind();
     }
@@ -132,6 +214,14 @@ final class FarWaterBuffers {
         buffers.clear();
         bound = null;
         latest = null;
+        queued = 0;
+        if (counts != null) {
+            MemoryUtil.memFree(counts);
+            MemoryUtil.memFree(bases);
+            MemoryUtil.memFree(offsets);
+            counts = bases = null;
+            offsets = null;
+        }
     }
 
     /** One vertex buffer of meshes of one format, and the vertex array reading it with the shared quad indices. */
