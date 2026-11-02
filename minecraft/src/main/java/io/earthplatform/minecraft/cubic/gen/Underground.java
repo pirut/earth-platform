@@ -53,6 +53,12 @@ final class Underground {
     private final Holder<Biome> lushCaves, dripstoneCaves, deepDarkCaves;
     private final ConcurrentHashMap<Long, Integer> floorNodes = new ConcurrentHashMap<>();
     final Structures structures;
+    /** Vanilla's caves, or null for the caves worlds made before build 70 carry on with. */
+    @Nullable private volatile VanillaCaves vanillaCaves;
+    /** Vanilla cave fields of recent cubes (about 3 KB each), by cube: structures test blocks of the cubes around theirs, which then reuse them. */
+    private volatile ConcurrentHashMap<Long, double[]> caveFields = new ConcurrentHashMap<>(), olderCaveFields = new ConcurrentHashMap<>();
+    /** Fields kept per generation of the cache: when one fills, the older one is dropped, so the fields in use stay. */
+    private static final int CAVE_FIELDS = 1024;
 
     /**
      * The first four noises come from the world's shared random in the order caves always drew
@@ -72,7 +78,15 @@ final class Underground {
         dripstoneCaves = biomes.getHolderOrThrow(Biomes.DRIPSTONE_CAVES);
         deepDarkCaves = biomes.getHolderOrThrow(Biomes.DEEP_DARK);
         structures = new Structures(this, seed);
+        vanillaCaves = new VanillaCaves(seed);
     }
+
+    /** Switches between vanilla's caves (new worlds) and the caves of worlds made before them; set before any cube is made. */
+    void vanillaCaves(boolean on) {
+        vanillaCaves = on ? new VanillaCaves(seed) : null;
+        caveFields = new ConcurrentHashMap<>(); olderCaveFields = new ConcurrentHashMap<>();
+    }
+    boolean vanillaCaves() { return vanillaCaves != null; }
 
     // Floor ---------------------------------------------------------------------------------------
 
@@ -157,15 +171,44 @@ final class Underground {
         return value;
     }
 
-    /** Cave noise on the 4-block grid of one cube, 5³ nodes. */
+    /** Cave noise over one cube: vanilla's cells, or the older caves' 4-block grid of 5³ nodes. */
     double[] caveField(int x0, int y0, int z0) {
+        VanillaCaves caves = vanillaCaves;
+        if (caves != null) {
+            long key = it.unimi.dsi.fastutil.HashCommon.mix(((long) (x0 >> 4) & 0x1FFFFF) << 42 | ((long) (y0 >> 4) & 0x1FFFFF) << 21 | (z0 >> 4) & 0x1FFFFF);
+            ConcurrentHashMap<Long, double[]> fields = caveFields;
+            double[] cached = fields.get(key);
+            if (cached != null) return cached;
+            cached = olderCaveFields.get(key);
+            double[] made = cached != null ? cached : vanillaField(caves, x0, y0, z0);
+            if (fields.size() >= CAVE_FIELDS) {
+                synchronized (this) {
+                    if (caveFields == fields) { olderCaveFields = fields; caveFields = new ConcurrentHashMap<>(); }
+                }
+            }
+            caveFields.putIfAbsent(key, made);
+            return made;
+        }
         double[] field = new double[5 * 5 * 5];
         for (int iy = 0; iy < 5; iy++) for (int iz = 0; iz < 5; iz++) for (int ix = 0; ix < 5; ix++)
             field[(iy * 5 + iz) * 5 + ix] = caveNode(x0 + ix * 4, y0 + iy * 4, z0 + iz * 4);
         return field;
     }
 
+    private double[] vanillaField(VanillaCaves caves, int x0, int y0, int z0) {
+        double[] field = new double[VanillaCaves.NODES * VanillaCaves.VALUES];
+        for (int iz = 0; iz < VanillaCaves.NZ; iz++) for (int ix = 0; ix < VanillaCaves.NX; ix++) {
+            int x = x0 + ix * 4, z = z0 + iz * 4, ground = terrain.surfaceY(x, z), floor = floor(x, z, ground);
+            for (int iy = 0; iy < VanillaCaves.NY; iy++) {
+                int y = y0 + iy * 8;
+                caves.corner(field, ((iy * VanillaCaves.NZ + iz) * VanillaCaves.NX + ix) * VanillaCaves.VALUES, x, vanillaY(y, floor), z, ground - y);
+            }
+        }
+        return field;
+    }
+
     static boolean cave(double[] f, int lx, int ly, int lz) {
+        if (f.length == VanillaCaves.NODES * VanillaCaves.VALUES) return VanillaCaves.carved(f, lx, ly, lz);
         int ix = lx >> 2, iy = ly >> 2, iz = lz >> 2;
         double tx = (lx & 3) / 4.0, ty = (ly & 3) / 4.0, tz = (lz & 3) / 4.0;
         double c000 = f[(iy * 5 + iz) * 5 + ix], c100 = f[(iy * 5 + iz) * 5 + ix + 1];
@@ -177,6 +220,7 @@ final class Underground {
 
     /** The same test at one block, exactly as a cube's field gives it. */
     private boolean cave(int x, int y, int z) {
+        if (vanillaCaves != null) return cave(caveField(x & ~15, y & ~15, z & ~15), x & 15, y & 15, z & 15);
         int gx = x & ~3, gy = y & ~3, gz = z & ~3;
         double tx = (x - gx) / 4.0, ty = (y - gy) / 4.0, tz = (z - gz) / 4.0;
         return Mth.lerp3(tx, ty, tz, caveNode(gx, gy, gz), caveNode(gx + 4, gy, gz), caveNode(gx, gy + 4, gz), caveNode(gx + 4, gy + 4, gz),

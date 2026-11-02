@@ -22,6 +22,7 @@ import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.HighlandsGenerator;
+import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
 import io.earthplatform.minecraft.platform.Loader;
 import java.io.IOException;
 import java.io.Reader;
@@ -115,9 +116,15 @@ public final class CubicSettings {
                     throw new IllegalStateException("Unsupported ground '" + groundId + "' in " + file);
                 // Worlds made before elevation layers read the composite alone.
                 String elevationId = properties.getProperty("earth.elevation", TerrariumTileSource.DATASET_ID);
-                yield new EarthGenerator(seed, biomes, settings, tiles(elevationId), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
+                // Worlds made before vanilla's caves keep the caves they had, so new cubes meet saved ones.
+                String cavesId = properties.getProperty("earth.caves", "");
+                if (!cavesId.isEmpty() && !SurfaceGenerator.VANILLA_CAVES.equals(cavesId))
+                    throw new IllegalStateException("Unsupported caves '" + cavesId + "' in " + file);
+                EarthGenerator earth = new EarthGenerator(seed, biomes, settings, tiles(elevationId), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
                         coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : streamsId.isEmpty() ? rivers() : riversAndStreams(),
                         coverId.isEmpty() || groundId.isEmpty() ? null : bareEarth());
+                if (cavesId.isEmpty()) earth.legacyCaves();
+                yield earth;
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
         };
@@ -157,6 +164,7 @@ public final class CubicSettings {
         properties.setProperty("earth.rivers", SurfaceWaterSource.DATASET_ID);
         properties.setProperty("earth.streams", Drainage.ID);
         properties.setProperty("earth.ground", BareEarth.ID);
+        properties.setProperty("earth.caves", SurfaceGenerator.VANILLA_CAVES);
         if (imageryEnabled()) properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
         if (!name.isEmpty()) properties.setProperty("earth.homeName", name);
     }

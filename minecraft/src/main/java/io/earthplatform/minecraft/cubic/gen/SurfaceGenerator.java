@@ -87,6 +87,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         below = new Underground(this, seed, biomes, random);
     }
     Underground underground() { return below; }
+
+    /** Pinned in a new Earth world's settings when it is made with vanilla's caves. */
+    public static final String VANILLA_CAVES = "vanilla-1.21";
+
+    /** Keeps the caves worlds made before vanilla's caves were made with; call before any cube is made. */
+    public final void legacyCaves() { below.vanillaCaves(false); }
     protected static Holder<Biome> holder(Registry<Biome> registry, ResourceKey<Biome> key) { return registry.getHolderOrThrow(key); }
 
     /** Fractal noise: {@code octaves} layers of {@code noise}, each half as strong and 2.03x as fine, averaged by weight. */
