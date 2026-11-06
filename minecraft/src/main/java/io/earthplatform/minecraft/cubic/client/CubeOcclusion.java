@@ -21,7 +21,8 @@ import org.lwjgl.system.MemoryStack;
  * they left, the box of each other cube in view is drawn under a query, with no colour or depth written, and that
  * cube's layers are drawn on condition that some of its box passed the depth test: the GPU decides, in the same frame,
  * so nothing pops in a frame late. The boxes are the cubes' grown by a block (the farthest a block's model reaches out
- * of its cell) and drawn from both sides, so a cube is left out only where every fragment of it would have failed the
+ * of its cell), and only their sides facing the camera are drawn: those lie in front of everything in the box, and
+ * the camera is never inside a box tested, so a cube is left out only where every fragment of it would have failed the
  * depth test against depth that the rest of the frame only brings nearer: the picture is the one without culling.
  * Cubes phase one drew are tested now and then too (a share each frame), to notice when they go out of sight.
  *
@@ -34,6 +35,8 @@ final class CubeOcclusion {
     static final int RECHECK_EVERY = 4;
     /** Blocks the boxes are grown by. */
     static final float GROW = 1.0F;
+    /** Test only the box's sides facing the camera, half the fill; {@code -Dearthplatform.cubes.occlusionFront=false} draws both. */
+    static final boolean FRONT_ONLY = !"false".equals(System.getProperty("earthplatform.cubes.occlusionFront"));
 
     private static final String VERTEX = """
             #version 150
@@ -78,14 +81,21 @@ final class CubeOcclusion {
         }
     }
 
-    /** Sets up drawing boxes: no colour, no depth written, both sides, the depth test as terrain has it. */
+    /** Sets up drawing boxes: no colour, no depth written, sides facing the camera, the depth test as terrain has it. */
     State begin(Matrix4f modelView, Matrix4f projection) {
         State state = new State();
         GlStateManager._colorMask(false, false, false, false);
         GlStateManager._depthMask(false);
         GlStateManager._enableDepthTest();
         GlStateManager._depthFunc(GL11C.GL_LEQUAL);
-        GlStateManager._disableCull();
+        if (FRONT_ONLY) {
+            // The table's triangles wind counter-clockwise seen from inside the box: culling those leaves the sides
+            // facing the camera, which lie in front of everything in the box, so the test is as safe with half the fill.
+            GlStateManager._enableCull();
+            GL11C.glCullFace(GL11C.GL_FRONT);
+        } else {
+            GlStateManager._disableCull();
+        }
         GlStateManager._disableBlend();
         GlStateManager._glUseProgram(program);
         GL30C.glBindVertexArray(array);
@@ -121,7 +131,7 @@ final class CubeOcclusion {
         private final boolean[] colour = new boolean[4];
         private final boolean depthMask = GL11C.glGetBoolean(GL11C.GL_DEPTH_WRITEMASK), depthTest = GL11C.glIsEnabled(GL11C.GL_DEPTH_TEST),
                 cull = GL11C.glIsEnabled(GL11C.GL_CULL_FACE), blend = GL11C.glIsEnabled(GL11C.GL_BLEND);
-        private final int depthFunc = GL11C.glGetInteger(GL11C.GL_DEPTH_FUNC);
+        private final int depthFunc = GL11C.glGetInteger(GL11C.GL_DEPTH_FUNC), cullFace = GL11C.glGetInteger(GL11C.GL_CULL_FACE_MODE);
 
         State() {
             try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -138,6 +148,7 @@ final class CubeOcclusion {
             GlStateManager._depthMask(depthMask);
             if (depthTest) GlStateManager._enableDepthTest(); else GlStateManager._disableDepthTest();
             GlStateManager._depthFunc(depthFunc);
+            GL11C.glCullFace(cullFace);
             if (cull) GlStateManager._enableCull(); else GlStateManager._disableCull();
             if (blend) GlStateManager._enableBlend(); else GlStateManager._disableBlend();
         }
