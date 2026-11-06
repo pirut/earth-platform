@@ -195,6 +195,10 @@ From **Distant Horizons** we took:
 - how Iris hands a shader pack's uniforms to Distant Horizons' programs, which we follow for our own far programs;
 - years of showing players what "render distance" can mean.
 
+## Culling ideas: thank you, Horizon
+
+[Horizon](https://github.com/horizon-rust/horizon), an open-source (MIT) rewrite of Minecraft: Java Edition in Rust, showed how to leave out terrain the camera can't see: culling near terrain by which faces of each section its open space joins, as Minecraft does, and occlusion culling in two phases, drawing what was seen last frame first and then testing everything else against the depth it left, in the same frame. Earth Platform's near cubes and far terrain's depth pre-pass now cull this way. It contains no code from Horizon.
+
 ## Earlier Earth and cubic-chunks projects
 
 The [Cubic Chunks](https://github.com/OpenCubicChunks) mods, [Terrarium](https://github.com/gegy/terrarium) and [Terra++](https://github.com/BuildTheEarth/terraplusplus) (Build The Earth) proved that tall worlds and a real-scale Earth in Minecraft are possible. Earth Platform contains no code from them.
