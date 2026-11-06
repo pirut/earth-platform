@@ -113,11 +113,32 @@ final class FarHiddenCull {
                         shown = nearest * 0.5 + 0.5 <= farthest + earth_Margin;
                     }
                 }
-                earth_commands[i * 5u + 1u] = shown ? 1u : 0u;
+                WRITE
             }
             """;
+    /** The plain test: every range shown or not, for the shading pass and as the next frame's first pass. */
+    private static final String WRITE_SHOWN = "earth_commands[i * 5u + 1u] = shown ? 1u : 0u;";
+    /**
+     * The test between a two-phase pre-pass's passes (see {@link #TWO_PHASE}): the ranges shown now that the first pass
+     * left out, into the second pass's commands. A range the first pass drew is never drawn again.
+     */
+    private static final String WRITE_REST = "earth_rest[i * 5u + 1u] = shown && earth_commands[i * 5u + 1u] == 0u ? 1u : 0u;";
+    private static final String REST_BUFFER = "layout(std430, binding = 2) buffer EarthRest { uint earth_rest[]; };\n";
 
-    private int reduce, cull, pyramid, boxes, commands;
+    /**
+     * The depth pre-pass in two passes, as Horizon (a Rust rewrite of the game) culls its terrain: first the ranges the
+     * last frame's test showed, then, tested against the depth those left, only the ones they don't hide. A range the
+     * second test leaves out has every fragment behind faces already drawn, which the rest of the pass only brings
+     * nearer, so the depth the pre-pass leaves is the same as drawing every range, and so is every pixel after it; the
+     * ranges hidden behind far terrain no longer go through the pre-pass's vertex shader and rasterizer either. Only while
+     * the far view is drawn again as it was recorded (the recording the last test ran for). {@code
+     * -Dearthplatform.far.twoPhase=false} draws every range in the pre-pass, for comparing.
+     */
+    static final boolean TWO_PHASE = !"false".equals(System.getProperty("earthplatform.far.twoPhase"));
+
+    private int reduce, cull, cullRest, pyramid, boxes, commands, rest;
+    /** Whether {@link #commands} holds a finished test of the recording now uploaded, from the last frame or this one. */
+    private boolean tested;
     private int width, height, levels;
     private boolean failed;
     /** The recording and version whose ranges the buffers hold, and how many. */
@@ -145,9 +166,39 @@ final class FarHiddenCull {
             if (width != faceWidth || height != faceHeight) resize(faceWidth, faceHeight);
             if (uploaded != recording || uploadedVersion != recording.version()) upload(recording);
             build(faces);
-            test(viewProjection, grow);
+            test(cull, viewProjection, grow);
             ready = true;
+            tested = true;
             return true;
+        } finally {
+            bindings.restore();
+            GL20C.glUseProgram(program);
+            GlStateManager._activeTexture(active);
+        }
+    }
+
+    /**
+     * The commands of the last finished test, the last frame's, for the first pass of a two-phase pre-pass: 0 unless
+     * that test ran for this very recording, as it now is.
+     */
+    int lastShown(FarGpu.Recording recording) {
+        return TWO_PHASE && tested && !failed && uploaded == recording && uploadedVersion == recording.version() ? commands : 0;
+    }
+
+    /**
+     * Between a two-phase pre-pass's passes (after {@link #lastShown}'s ranges are drawn): tests the ranges against the
+     * faces' depth they left, and returns the commands of those the first pass left out that may show, or 0 when it
+     * can't (the caller then draws every range).
+     */
+    int rest(FarGpu.Recording recording, int faces, int faceWidth, int faceHeight, Matrix4f viewProjection, float grow) {
+        if (lastShown(recording) == 0 || faceWidth != width || faceHeight != height) return 0;
+        int program = GL11C.glGetInteger(GL20C.GL_CURRENT_PROGRAM);
+        int active = GlStateManager._getActiveTexture();
+        Bindings bindings = Bindings.save();
+        try {
+            build(faces);
+            test(cullRest, viewProjection, grow);
+            return rest;
         } finally {
             bindings.restore();
             GL20C.glUseProgram(program);
@@ -172,6 +223,8 @@ final class FarHiddenCull {
             GL15C.glBufferData(GL43C.GL_SHADER_STORAGE_BUFFER, boxData, GL15C.GL_DYNAMIC_DRAW);
             GL15C.glBindBuffer(GL43C.GL_SHADER_STORAGE_BUFFER, commands);
             GL15C.glBufferData(GL43C.GL_SHADER_STORAGE_BUFFER, commandData, GL15C.GL_DYNAMIC_DRAW);
+            GL15C.glBindBuffer(GL43C.GL_SHADER_STORAGE_BUFFER, rest);
+            GL15C.glBufferData(GL43C.GL_SHADER_STORAGE_BUFFER, commandData, GL15C.GL_DYNAMIC_DRAW);
             GL15C.glBindBuffer(GL43C.GL_SHADER_STORAGE_BUFFER, 0);
         } finally {
             MemoryUtil.memFree(boxData);
@@ -179,6 +232,7 @@ final class FarHiddenCull {
         }
         uploaded = recording;
         uploadedVersion = recording.version();
+        tested = false;
     }
 
     /** Folds the faces' depth into the pyramid: level 0 is half size, each level half the last. */
@@ -204,7 +258,7 @@ final class FarHiddenCull {
         }
     }
 
-    private void test(Matrix4f viewProjection, float grow) {
+    private void test(int cull, Matrix4f viewProjection, float grow) {
         GL20C.glUseProgram(cull);
         GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + Bindings.TEXTURE_UNIT);
         GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, pyramid);
@@ -222,6 +276,10 @@ final class FarHiddenCull {
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, Bindings.commandBinding(), commands);
         GL43C.glShaderStorageBlockBinding(cull, GL43C.glGetProgramResourceIndex(cull, GL43C.GL_SHADER_STORAGE_BLOCK, "EarthBoxes"), Bindings.boxBinding());
         GL43C.glShaderStorageBlockBinding(cull, GL43C.glGetProgramResourceIndex(cull, GL43C.GL_SHADER_STORAGE_BLOCK, "EarthCommands"), Bindings.commandBinding());
+        if (cull == cullRest) {
+            GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, Bindings.restBinding(), rest);
+            GL43C.glShaderStorageBlockBinding(cull, GL43C.glGetProgramResourceIndex(cull, GL43C.GL_SHADER_STORAGE_BLOCK, "EarthRest"), Bindings.restBinding());
+        }
         GL43C.glDispatchCompute((ranges + 63) / 64, 1, 1);
         GL42C.glMemoryBarrier(GL42C.GL_COMMAND_BARRIER_BIT);
     }
@@ -245,13 +303,17 @@ final class FarHiddenCull {
         if (reduce != 0) return true;
         try {
             reduce = compute(REDUCE, "far depth pyramid");
-            cull = compute(CULL, "far hidden ranges");
+            cull = compute(CULL.replace("WRITE", WRITE_SHOWN), "far hidden ranges");
+            cullRest = compute(CULL.replace("uniform sampler2D earth_Pyramid;", REST_BUFFER + "uniform sampler2D earth_Pyramid;")
+                    .replace("WRITE", WRITE_REST), "far ranges a first pass left out");
             boxes = GL15C.glGenBuffers();
             commands = GL15C.glGenBuffers();
+            rest = GL15C.glGenBuffers();
             return true;
         } catch (IllegalStateException failure) {
             failed = true;
             if (reduce != 0) { GL20C.glDeleteProgram(reduce); reduce = 0; }
+            if (cull != 0) { GL20C.glDeleteProgram(cull); cull = 0; }
             EarthPlatformMod.LOGGER.warn("Far terrain can't leave hidden faces out of its shading pass; it shades them all", failure);
             return false;
         }
@@ -282,10 +344,13 @@ final class FarHiddenCull {
     void close() {
         if (reduce != 0) GL20C.glDeleteProgram(reduce);
         if (cull != 0) GL20C.glDeleteProgram(cull);
+        if (cullRest != 0) GL20C.glDeleteProgram(cullRest);
+        if (rest != 0) GL15C.glDeleteBuffers(rest);
         if (pyramid != 0) GL11C.glDeleteTextures(pyramid);
         if (boxes != 0) GL15C.glDeleteBuffers(boxes);
         if (commands != 0) GL15C.glDeleteBuffers(commands);
-        reduce = cull = pyramid = boxes = commands = 0;
+        reduce = cull = cullRest = pyramid = boxes = commands = rest = 0;
+        tested = false;
     }
 
     /**
@@ -299,12 +364,14 @@ final class FarHiddenCull {
         private static int buffers = -1;
         private final int texture, image, imageLevel, imageLayer, imageAccess, imageFormat;
         private final boolean imageLayered;
-        private final int[] buffer = new int[2];
-        private final long[] start = new long[2], size = new long[2];
+        private final int[] buffer = new int[3];
+        private final long[] start = new long[3], size = new long[3];
 
-        static int boxBinding() { return buffers - 2; }
+        static int boxBinding() { return buffers - 3; }
 
-        static int commandBinding() { return buffers - 1; }
+        static int commandBinding() { return buffers - 2; }
+
+        static int restBinding() { return buffers - 1; }
 
         private Bindings() {
             if (buffers < 0) {
@@ -319,8 +386,8 @@ final class FarHiddenCull {
             imageLayer = GL30C.glGetIntegeri(GL42C.GL_IMAGE_BINDING_LAYER, IMAGE_UNIT);
             imageAccess = GL30C.glGetIntegeri(GL42C.GL_IMAGE_BINDING_ACCESS, IMAGE_UNIT);
             imageFormat = GL30C.glGetIntegeri(GL42C.GL_IMAGE_BINDING_FORMAT, IMAGE_UNIT);
-            for (int i = 0; i < 2; i++) {
-                int binding = buffers - 2 + i;
+            for (int i = 0; i < 3; i++) {
+                int binding = buffers - 3 + i;
                 buffer[i] = GL30C.glGetIntegeri(GL43C.GL_SHADER_STORAGE_BUFFER_BINDING, binding);
                 start[i] = GL40C.glGetInteger64i(GL43C.GL_SHADER_STORAGE_BUFFER_START, binding);
                 size[i] = GL40C.glGetInteger64i(GL43C.GL_SHADER_STORAGE_BUFFER_SIZE, binding);
@@ -334,8 +401,8 @@ final class FarHiddenCull {
             GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, texture);
             GL42C.glBindImageTexture(IMAGE_UNIT, image, imageLevel, imageLayered, imageLayer,
                     imageAccess == 0 ? GL15C.GL_READ_ONLY : imageAccess, imageFormat == 0 ? GL30C.GL_R32F : imageFormat);
-            for (int i = 0; i < 2; i++) {
-                int binding = buffers - 2 + i;
+            for (int i = 0; i < 3; i++) {
+                int binding = buffers - 3 + i;
                 if (buffer[i] != 0 && size[i] > 0) GL30C.glBindBufferRange(GL43C.GL_SHADER_STORAGE_BUFFER, binding, buffer[i], start[i], size[i]);
                 else GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, binding, buffer[i]);
             }

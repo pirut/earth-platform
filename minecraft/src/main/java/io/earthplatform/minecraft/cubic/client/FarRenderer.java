@@ -1597,7 +1597,18 @@ public final class FarRenderer {
             gpu.phase(FarGpu.PREPASS);
             if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false, false)) {
                 long timer = FarGpuTimers.begin("far depth prepass");
-                try { drawEach(gpu, farDraws, again, far, seen, setting); }
+                try {
+                    // In two passes where the last frame's test of this recording stands (see FarHiddenCull#TWO_PHASE).
+                    if (again && gpu.playLastShown(farDraws)) {
+                        int rest = gpu.restAfterFirst(farDraws, FarLod.facesTexture(), FarLod.width(), FarLod.height(), modelView, farProjection,
+                                (float) (seen.x - position.x), (float) (seen.y - position.y), (float) (seen.z - position.z));
+                        if (gpu.begin(true, ShaderBlocks.voxyPatch(), modelView, farProjection, position, shade, frame, false, false)) {
+                            if (rest != 0) gpu.playCommands(farDraws, rest);
+                            else drawEach(gpu, farDraws, true, far, seen, setting);
+                        }
+                        twoPhaseFrames++;
+                    } else drawEach(gpu, farDraws, again, far, seen, setting);
+                }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
             }
             FarLod.beginShade();
@@ -1797,6 +1808,10 @@ public final class FarRenderer {
      * A far pass's setting, besides the near reach: drawn after a pre-pass, leaving out what lies
      * inside the reach, under a pack, or after the columns inside the reach were drawn apart.
      */
+    /** Frames whose depth pre-pass went in two passes (see FarHiddenCull#TWO_PHASE), for the performance log. */
+    private int twoPhaseFrames;
+    int twoPhaseFrames() { return twoPhaseFrames; }
+
     private static final long PREPASSED = 1L << 32, SKIPS_NEAR = 1L << 33, PACK = 1L << 34, AFTER_NEAR = 1L << 35;
 
     /**

@@ -108,6 +108,8 @@ final class FarGpu {
     private final boolean[] phasedFailed = new boolean[3];
     /** The fade clock both passes of a pre-passed draw read, so a fade's dither drops the same fragments in both; 0 when not. */
     private int frozenNow;
+    /** The next {@link #begin} is a two-phase pre-pass's second pass (see {@link #restAfterFirst}). */
+    private boolean secondPass;
     private int shadeDepthFunc;
 
     /** Faces drawn whole; faces fading out over the outer ring of their level; faces of the coarser level fading in there. */
@@ -316,7 +318,10 @@ final class FarGpu {
         RenderSystem.enableDepthTest();
         RenderSystem.depthMask(true);
         RenderSystem.enableCull();
-        if (phase == PREPASS) frozenNow = now();
+        // A two-phase pre-pass's second pass keeps the first's clock: fades dither by it, and the shading pass must
+        // meet every face at the depth the pre-pass left.
+        if (phase == PREPASS && !secondPass) frozenNow = now();
+        secondPass = false;
         if (phase == SHADE) {
             shadeDepthFunc = GL11C.glGetInteger(GL11C.GL_DEPTH_FUNC);
             RenderSystem.depthMask(false);
@@ -737,6 +742,32 @@ final class FarGpu {
         end();
         return true;
     }
+
+    /**
+     * The first pass of a two-phase depth pre-pass (see {@link FarHiddenCull#TWO_PHASE}), after {@link #begin}: draws
+     * the ranges of the recording the last frame's test showed, then ends as {@link #end} does. False, drawing nothing,
+     * when there is no such test of this recording; the caller then draws the pre-pass whole.
+     */
+    boolean playLastShown(Recording recording) {
+        int commands = phase == PREPASS && hiddenCull != null && recording.count != 0 ? hiddenCull.lastShown(recording) : 0;
+        if (commands == 0) return false;
+        playCulled(recording, commands);
+        return true;
+    }
+
+    /**
+     * Between a two-phase pre-pass's passes: the commands of the ranges the first pass left out that the faces it drew
+     * don't hide, or 0 when they can't be worked out (the caller then draws every range again: the same depth).
+     */
+    int restAfterFirst(Recording recording, int faces, int width, int height, Matrix4f modelView, Matrix4f projection,
+            float shiftX, float shiftY, float shiftZ) {
+        if (hiddenCull == null) return 0;
+        secondPass = true;
+        return hiddenCull.rest(recording, faces, width, height, new Matrix4f(projection).mul(modelView).translate(shiftX, shiftY, shiftZ), grow(projection));
+    }
+
+    /** After {@link #begin}: draws a recording through the indirect commands in {@code commands}, then ends as {@link #end} does. */
+    void playCommands(Recording recording, int commands) { playCulled(recording, commands); }
 
     /** Draws a recording through the indirect commands {@link FarHiddenCull} has culled, then ends as {@link #end} does. */
     private void playCulled(Recording recording, int commands) {

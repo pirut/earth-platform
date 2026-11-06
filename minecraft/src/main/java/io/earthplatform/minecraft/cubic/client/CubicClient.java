@@ -118,9 +118,9 @@ public final class CubicClient {
             Runtime runtime = Runtime.getRuntime();
             var camera = Minecraft.getInstance().gameRenderer.getMainCamera();
             int[] byView = world.renderer().meshesByView(camera.getPosition(), camera.getYRot());
-            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes ({} in view, {} drawn, {} behind rock), {} to compile, far {}/{} columns {}% settled ({}% in view) {} MB {} draws, {} sent again; {}",
+            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes ({} in view, {} drawn, {} behind rock, {} tested hidden), {} to compile, far {}/{} columns {}% settled ({}% in view) {} MB {} draws, {} sent again; {}",
                     Minecraft.getInstance().getFps(), (runtime.totalMemory() - runtime.freeMemory()) >> 20, world.loadedCubes(),
-                    world.renderer().meshCount(), byView[0], world.renderer().visibleMeshCount(), world.renderer().caveCulledCount(), world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
+                    world.renderer().meshCount(), byView[0], world.renderer().visibleMeshCount(), world.renderer().caveCulledCount(), world.renderer().occlusionTestedCount(), world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
                     world.far().settledPercent(), world.far().settledInViewPercent(), world.far().vertexBytes() >> 20, world.far().drawnRanges(), world.far().replacedCount(), timings(Timings.LOGGER));
         }
     }
