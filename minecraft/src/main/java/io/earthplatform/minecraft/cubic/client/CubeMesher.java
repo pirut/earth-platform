@@ -60,7 +60,8 @@ final class CubeMesher {
                     Map<BlockPos, BlockEntity> blockEntities) {}
 
     record Layer(int index, MeshData mesh, ByteBufferBuilder memory) {}
-    record Built(long key, int version, List<Layer> layers, byte[] light) {
+    /** {@code visibility}: which faces the cube's air joins ({@link CubeCaves#of}). */
+    record Built(long key, int version, List<Layer> layers, byte[] light, long visibility) {
         void free() { for (Layer layer : layers) { layer.mesh.close(); layer.memory.close(); } }
     }
 
@@ -115,7 +116,22 @@ final class CubeMesher {
         CubeLight.Field field = CubeLight.light(s.states, s.tops, s.cy, mode.fastLight);
         View view = new View(s, field);
         List<Layer> layers = mesh(s, work, field, view, mode);
-        return new Built(s.key, s.version, layers, CubeLight.centre(field));
+        return new Built(s.key, s.version, layers, CubeLight.centre(field), visibility(field, view));
+    }
+
+    /** Which of the cube's faces its air joins, as vanilla works it out for a section: full opaque blocks close it. */
+    private static long visibility(CubeLight.Field field, View view) {
+        net.minecraft.client.renderer.chunk.VisGraph graph = new net.minecraft.client.renderer.chunk.VisGraph();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        int x0 = view.baseX + 16, y0 = view.baseY + 16, z0 = view.baseZ + 16;
+        boolean any = false;
+        for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+            BlockState state = field.states[CubeLight.index(x + 16, y + 16, z + 16)];
+            if (state.isAir()) continue;
+            pos.set(x0 + x, y0 + y, z0 + z);
+            if (state.isSolidRender(view, pos)) { graph.setOpaque(pos); any = true; }
+        }
+        return any ? CubeCaves.of(graph.resolve()) : CubeCaves.OPEN;
     }
 
     /**
@@ -279,7 +295,7 @@ final class CubeMesher {
     private static final class View implements BlockAndTintGetter {
         private final Snapshot s;
         private final CubeLight.Field field;
-        private final int baseX, baseY, baseZ;
+        final int baseX, baseY, baseZ;
 
         View(Snapshot s, CubeLight.Field field) {
             this.s = s; this.field = field;

@@ -118,15 +118,15 @@ public final class CubicClient {
             Runtime runtime = Runtime.getRuntime();
             var camera = Minecraft.getInstance().gameRenderer.getMainCamera();
             int[] byView = world.renderer().meshesByView(camera.getPosition(), camera.getYRot());
-            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes ({} in view), {} to compile, far {}/{} columns {}% settled ({}% in view) {} MB {} draws, {} sent again; {}",
+            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes ({} in view, {} drawn, {} behind rock), {} to compile, far {}/{} columns {}% settled ({}% in view) {} MB {} draws, {} sent again; {}",
                     Minecraft.getInstance().getFps(), (runtime.totalMemory() - runtime.freeMemory()) >> 20, world.loadedCubes(),
-                    world.renderer().meshCount(), byView[0], world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
+                    world.renderer().meshCount(), byView[0], world.renderer().visibleMeshCount(), world.renderer().caveCulledCount(), world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
                     world.far().settledPercent(), world.far().settledInViewPercent(), world.far().vertexBytes() >> 20, world.far().drawnRanges(), world.far().replacedCount(), timings(Timings.LOGGER));
         }
     }
 
     private static String timings(int reader) {
-        return String.join(", ", Timings.FRAME.read(reader), Timings.CUBE_DRAW.read(reader), Timings.FAR_DRAW.read(reader), Timings.FAR_WALK.read(reader), Timings.FAR_WATER.read(reader),
+        return String.join(", ", Timings.FRAME.read(reader), Timings.CUBE_DRAW.read(reader), Timings.CUBE_CAVES.read(reader), Timings.FAR_DRAW.read(reader), Timings.FAR_WALK.read(reader), Timings.FAR_WATER.read(reader),
                 Timings.CUBE_UPLOAD.read(reader), Timings.FAR_UPLOAD.read(reader), Timings.CUBE_MESH.read(reader),
                 Timings.FAR_MESH.read(reader), Timings.FAR_MAKE.read(reader),
                 Timings.SERVER_TICK.read(reader), Timings.CUBE_UNLOAD.read(reader), Timings.CUBE_FLUSH.read(reader));

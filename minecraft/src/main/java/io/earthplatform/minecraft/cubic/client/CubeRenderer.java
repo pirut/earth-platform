@@ -82,6 +82,16 @@ public final class CubeRenderer {
     private final Long2IntOpenHashMap retireBy = new Long2IntOpenHashMap();
     private static final int RETIRE_TICKS = 100;
     private final List<Mesh> visible = new ArrayList<>();
+    /**
+     * Which faces each meshed cube's air joins, for cave culling ({@link CubeCaves}); cubes not in it count as open.
+     * {@link #reached} is the last search's answer, made from {@link #reachedFrom} with {@link #visibilityVersion}.
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap visibility = new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    private int visibilityVersion, reachedVersion = -1;
+    private long reachedFrom = Long.MIN_VALUE;
+    @org.jetbrains.annotations.Nullable private LongOpenHashSet reached;
+    /** Meshes in the frustum that cave culling left out of the last view, for the performance log. */
+    private int caveCulled;
     private int ticks, drawnFrame = -1, frame;
     /** The level passes (see {@link LevelPasses}) this renderer last culled for, drew the opaque layers in and drew the translucent ones in. */
     private int culledPass = -1, opaquePass = -1, translucentPass = -1;
@@ -103,7 +113,10 @@ public final class CubeRenderer {
         boolean empty() { for (CubeBuffer buffer : buffers) if (buffer != null) return false; return true; }
     }
 
-    CubeRenderer(ClientCubeWorld world) { this.world = world; }
+    CubeRenderer(ClientCubeWorld world) {
+        this.world = world;
+        visibility.defaultReturnValue(CubeCaves.OPEN);
+    }
 
     public int meshCount() { return meshes.size(); }
     /** Cube meshes in the most recently rendered view, including retained transition meshes. */
@@ -160,6 +173,7 @@ public final class CubeRenderer {
         light.remove(key);
         compiled.remove(key);
         compiledVersion++;
+        setVisibility(key, CubeCaves.OPEN);
         Mesh mesh = meshes.remove(key);
         if (mesh == null) return;
         Mesh older = retiring.put(key, mesh);
@@ -285,8 +299,15 @@ public final class CubeRenderer {
         for (int i = 0; i < count; i++) submit(ready.getLong((int) (sorted[i] & ((1 << 22) - 1))), camera);
     }
 
+    /** Notes the faces a cube's air joins; {@link CubeCaves#OPEN} forgets it, as for a cube not meshed. */
+    private void setVisibility(long key, long faces) {
+        long old = faces == CubeCaves.OPEN ? visibility.remove(key) : visibility.put(key, faces);
+        if (old != faces) visibilityVersion++;
+    }
+
     private void compileEmpty(long key) {
         unretire(key);
+        setVisibility(key, CubeCaves.OPEN);
         Mesh mesh = meshes.remove(key);
         if (mesh != null) mesh.close();
         light.remove(key);
@@ -347,7 +368,7 @@ public final class CubeRenderer {
             }
             catch (Throwable failure) {
                 EarthPlatformMod.LOGGER.error("Cube mesh build failed for {}", CubeKey.toString(key), failure);
-                built.add(new CubeMesher.Built(key, -1, List.of(), null));
+                built.add(new CubeMesher.Built(key, -1, List.of(), null, CubeCaves.OPEN));
             }
         });
     }
@@ -364,6 +385,7 @@ public final class CubeRenderer {
             boolean stale = staleBuilds.remove(result.key());
             if (stale || closed || world.cube(result.key()) == null || result.version() < 0) { result.free(); continue; }
             if (result.light() != null) light.put(result.key(), result.light());
+            setVisibility(result.key(), result.visibility());
             compiled.add(result.key());
             compiledVersion++;
             unretire(result.key());
@@ -403,13 +425,42 @@ public final class CubeRenderer {
         if (culledPass == LevelPasses.current()) return;
         culledPass = LevelPasses.current();
         visible.clear();
-        for (Mesh mesh : meshes.values()) see(mesh, frustum, position);
-        for (Mesh mesh : retiring.values()) see(mesh, frustum, position);
+        LongOpenHashSet seen = CubeCaves.ON ? reach(position) : null;
+        caveCulled = 0;
+        for (Mesh mesh : meshes.values()) see(mesh, frustum, position, seen);
+        // Retiring meshes stand in for far terrain still coming: always drawn while they last.
+        for (Mesh mesh : retiring.values()) see(mesh, frustum, position, null);
         visible.sort(Comparator.comparingDouble(mesh -> mesh.distance));
     }
 
-    private void see(Mesh mesh, Frustum frustum, Vec3 position) {
+    /**
+     * The cubes cave culling lets the camera see ({@link CubeCaves#reach}), searched again only when the camera enters
+     * another cube or a cube's faces change; null where nothing is culled.
+     */
+    @org.jetbrains.annotations.Nullable private LongOpenHashSet reach(Vec3 position) {
+        long from = CubeKey.ofBlock(BlockPos.containing(position));
+        if (from == reachedFrom && reachedVersion == visibilityVersion) return reached;
+        long start = System.nanoTime();
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        for (long key : meshes.keySet()) {
+            int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
+            minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+            maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+        }
+        reached = meshes.isEmpty() ? null : CubeCaves.reach(position.x, position.y, position.z, visibility, minX, minY, minZ, maxX, maxY, maxZ);
+        reachedFrom = from;
+        reachedVersion = visibilityVersion;
+        Timings.CUBE_CAVES.since(start);
+        return reached;
+    }
+
+    /** Meshes in the frustum that cave culling left out of the last view. */
+    public int caveCulledCount() { return caveCulled; }
+
+    private void see(Mesh mesh, Frustum frustum, Vec3 position, @org.jetbrains.annotations.Nullable LongOpenHashSet seen) {
         if (!frustum.isVisible(mesh.box)) return;
+        if (seen != null && !seen.contains(mesh.key)) { caveCulled++; return; }
         double dx = mesh.x + 8 - position.x, dy = mesh.y + 8 - position.y, dz = mesh.z + 8 - position.z;
         mesh.distance = dx * dx + dy * dy + dz * dz;
         visible.add(mesh);
@@ -545,6 +596,8 @@ public final class CubeRenderer {
         retiring.clear();
         retireBy.clear();
         light.clear();
+        visibility.clear();
+        reached = null;
         compiled.clear();
         compiledVersion++;
         dirty.clear();

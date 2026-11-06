@@ -59,12 +59,12 @@ public final class PerformanceDiagnostics {
             ClientCubeWorld world=ClientCubeWorld.current();record.addProperty("cubic_world_loaded",world!=null);
             if(world!=null) {
                 record.add("far",gson.toJsonTree(world.far().perfState()));
-                JsonObject cubes=new JsonObject();cubes.addProperty("loaded",world.loadedCubes());cubes.addProperty("meshes",world.renderer().meshCount());cubes.addProperty("pending_meshes",world.renderer().pendingCount());record.add("cubes",cubes);
+                JsonObject cubes=new JsonObject();cubes.addProperty("loaded",world.loadedCubes());cubes.addProperty("meshes",world.renderer().meshCount());cubes.addProperty("pending_meshes",world.renderer().pendingCount());cubes.addProperty("visible_meshes",world.renderer().visibleMeshCount());cubes.addProperty("cave_culled_meshes",world.renderer().caveCulledCount());record.add("cubes",cubes);
             }
             record.add("run_mesher",gson.toJsonTree(FarMesher.runStats()));
             JsonObject stages=new JsonObject();
-            Timings[] timers={Timings.FRAME,Timings.FAR_MAKE,Timings.FAR_MESH,Timings.FAR_UPLOAD,Timings.FAR_DRAW,Timings.FAR_WATER,Timings.CUBE_MESH,Timings.CUBE_UPLOAD,Timings.CUBE_DRAW,Timings.SERVER_TICK,Timings.CUBE_UNLOAD,Timings.CUBE_FLUSH};
-            String[] names={"frame","far_generation","far_mesh","far_upload","far_draw","far_water","cube_mesh","cube_upload","cube_draw","server_cubes","cube_unload","cube_flush"};
+            Timings[] timers={Timings.FRAME,Timings.FAR_MAKE,Timings.FAR_MESH,Timings.FAR_UPLOAD,Timings.FAR_DRAW,Timings.FAR_WATER,Timings.CUBE_MESH,Timings.CUBE_UPLOAD,Timings.CUBE_DRAW,Timings.CUBE_CAVES,Timings.SERVER_TICK,Timings.CUBE_UNLOAD,Timings.CUBE_FLUSH};
+            String[] names={"frame","far_generation","far_mesh","far_upload","far_draw","far_water","cube_mesh","cube_upload","cube_draw","cube_caves","server_cubes","cube_unload","cube_flush"};
             for(int i=0;i<timers.length;i++) {
                 var total=timers[i].total();var before=previous.put(timers[i],total);
                 long count=before==null?total.calls():Math.max(0,total.calls()-before.calls());
