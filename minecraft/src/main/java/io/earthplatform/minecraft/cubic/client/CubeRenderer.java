@@ -99,6 +99,8 @@ public final class CubeRenderer {
     @org.jetbrains.annotations.Nullable private LongOpenHashSet reached;
     /** Meshes in the frustum that cave culling left out of the last view, for the performance log. */
     private int caveCulled;
+    /** The cubes the last cave search reached, or null when it culled nothing; block entities use it too. */
+    private @org.jetbrains.annotations.Nullable LongOpenHashSet caveSeen;
     private int ticks, drawnFrame = -1, frame;
     /** The level passes (see {@link LevelPasses}) this renderer last culled for, drew the opaque layers in and drew the translucent ones in. */
     private int culledPass = -1, opaquePass = -1, translucentPass = -1;
@@ -450,6 +452,7 @@ public final class CubeRenderer {
         culledPass = LevelPasses.current();
         visible.clear();
         LongOpenHashSet seen = CubeCaves.ON ? reach(position) : null;
+        caveSeen = seen;
         caveCulled = 0;
         for (Mesh mesh : meshes.values()) see(mesh, frustum, position, seen);
         // Retiring meshes stand in for far terrain still coming: always drawn while they last.
@@ -661,10 +664,15 @@ public final class CubeRenderer {
         MultiBufferSource.BufferSource buffers = minecraft.renderBuffers().bufferSource();
         Vec3 position = camera.getPosition();
         boolean any = false;
+        LongOpenHashSet caves = caveSeen;
         for (Cube cube : world.cubes()) {
             if (cube.blockEntities().isEmpty()) continue;
+            // In a cube behind rock, as its terrain is, unless the renderer reaches out of it (a beacon's beam).
+            boolean hidden = caves != null && !caves.contains(cube.key);
             for (BlockEntity entity : cube.blockEntities().values()) {
-                if (dispatcher.getRenderer(entity) == null) continue;
+                var renderer = dispatcher.getRenderer(entity);
+                if (renderer == null) continue;
+                if (hidden && !renderer.shouldRenderOffScreen(entity)) continue;
                 BlockPos pos = entity.getBlockPos();
                 if (!frustum.isVisible(new AABB(pos).inflate(1.0))) continue;
                 pose.pushPose();
