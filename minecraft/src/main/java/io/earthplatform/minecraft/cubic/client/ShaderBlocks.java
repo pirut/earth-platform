@@ -31,6 +31,22 @@ final class ShaderBlocks {
         return IRIS && net.irisshaders.iris.api.v0.IrisApi.getInstance().isRenderingShadowPass();
     }
 
+    /**
+     * Iris's own frustum for terrain in the shadow map this pass, or null without Iris. With the pack's leave (its
+     * {@code shadow.culling}), Iris culls there what can cast no shadow into the view; with a pack that needs every
+     * caster (one that voxelizes the world, say) it culls only by the map's box and distance, as for vanilla sections.
+     */
+    @Nullable static net.minecraft.client.renderer.culling.Frustum shadowFrustum() {
+        return IRIS ? IrisShadow.frustum() : null;
+    }
+
+    /** Only loaded when Iris is installed. */
+    private static final class IrisShadow {
+        @Nullable static net.minecraft.client.renderer.culling.Frustum frustum() {
+            return net.irisshaders.iris.shadows.ShadowRenderer.FRUSTUM;
+        }
+    }
+
     /** Marks the quads written next as the given block's, until {@link #end}. */
     static void begin(BufferBuilder builder, @Nullable Object2IntMap<BlockState> ids, BlockState state, boolean fluid,
                       int x, int y, int z) {

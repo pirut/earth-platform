@@ -491,6 +491,13 @@ public final class CubeRenderer {
     /** Meshes in the frustum that cave culling left out of the last view. */
     public int caveCulledCount() { return caveCulled; }
 
+    /** Meshes the last shadow map pass drew. */
+    public int shadowDrawnCount() { return shadowDrawn; }
+
+    /** {@code -Dearthplatform.cubes.shadowCull=false} culls the shadow map by its own box only, as before. */
+    static final boolean SHADOW_CULL = !"false".equals(System.getProperty("earthplatform.cubes.shadowCull"));
+    private int shadowDrawn;
+
     private void see(Mesh mesh, Frustum frustum, Vec3 position, @org.jetbrains.annotations.Nullable LongOpenHashSet seen) {
         if (!frustum.isVisible(mesh.box)) return;
         if (seen != null && !seen.contains(mesh.key)) { caveCulled++; return; }
@@ -614,11 +621,18 @@ public final class CubeRenderer {
     public void drawShadow(Camera camera, Matrix4f modelView, Matrix4f projection) {
         upload();
         Vec3 position = camera.getPosition();
-        Frustum shadow = new Frustum(modelView, projection);
-        shadow.prepare(position.x, position.y, position.z);
+        // Iris's own shadow frustum, as its own sections are culled by: past drawing only what lies in the map, it
+        // leaves out what can cast no shadow into the view, where the pack allows (see ShaderBlocks#shadowFrustum).
+        Frustum iris = SHADOW_CULL ? ShaderBlocks.shadowFrustum() : null;
+        Frustum shadow = iris;
+        if (shadow == null) {
+            shadow = new Frustum(modelView, projection);
+            shadow.prepare(position.x, position.y, position.z);
+        }
         List<Mesh> all = new ArrayList<>(meshes.size());
         for (Mesh mesh : meshes.values()) if (shadow.isVisible(mesh.box)) all.add(mesh);
         for (Mesh mesh : retiring.values()) if (shadow.isVisible(mesh.box)) all.add(mesh);
+        shadowDrawn = all.size();
         for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {
             RenderType type = CubeMesher.LAYERS.get(i);
             if (type == RenderType.translucent() || type == RenderType.tripwire()) continue;
