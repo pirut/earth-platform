@@ -49,7 +49,7 @@ import net.minecraft.world.level.chunk.PalettedContainer;
  * remade and pushed again when a player's edits are saved, so builds show from afar.
  */
 public final class FarServer {
-    private static final int SEND_PER_TICK = 64, CACHE = 8192;
+    private static final int SEND_PER_TICK = 64;
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
     private final CubeGenerator generator;
@@ -89,7 +89,41 @@ public final class FarServer {
     public static int mostWorkersFor(int workers) { return workers + 24; }
 
     private final FarWorkers workers = new FarWorkers("Earth far terrain", WORKERS, MOST_WORKERS);
-    private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> cache = new ConcurrentHashMap<>();
+    /**
+     * Columns made or read this session, the ones used longest ago going first once they pass {@link #CACHE_BYTES}.
+     * It was 8,192 columns emptied whenever it filled, less than half of one player's far view.
+     */
+    private final Recent cache = new Recent();
+    /** The columns kept on disk with the world (see {@link FarStore}), or null when they are not kept. */
+    @Nullable private final FarStore store;
+    /**
+     * Whether far columns are kept on disk with the world. On in a released build; a development build, which has no
+     * build number to tell its columns from the next one's, keeps them only with {@code -Dearthplatform.far.store=true}.
+     */
+    private static final String STORE = System.getProperty("earthplatform.far.store", "auto");
+    /** Most megabytes of far columns kept on disk per world; {@code -Dearthplatform.far.storeMb}, 0 for no limit. */
+    private static final long STORE_BYTES = Math.max(0, Long.getLong("earthplatform.far.storeMb", 2048)) << 20;
+    private static final long CACHE_BYTES = 96L << 20;
+
+    /** Any thread. Finished columns by key, least recently used first out. */
+    private static final class Recent {
+        private final java.util.LinkedHashMap<Long, CubePayloads.FarColumnData> columns = new java.util.LinkedHashMap<>(1024, 0.75F, true);
+        private long bytes;
+        synchronized CubePayloads.FarColumnData get(long key) { return columns.get(key); }
+        synchronized void put(long key, CubePayloads.FarColumnData column) {
+            CubePayloads.FarColumnData old = columns.put(key, column);
+            bytes += column.size() - (old == null ? 0 : old.size());
+            for (var it = columns.values().iterator(); bytes > CACHE_BYTES && columns.size() > 1; ) {
+                bytes -= it.next().size();
+                it.remove();
+            }
+        }
+        synchronized void remove(long key) {
+            CubePayloads.FarColumnData old = columns.remove(key);
+            if (old != null) bytes -= old.size();
+        }
+        synchronized int size() { return columns.size(); }
+    }
     /** What columns looked like, so an edited one remade the same is not sent again. */
     private final FarPrints prints = new FarPrints();
     private final ConcurrentLinkedQueue<Made> made = new ConcurrentLinkedQueue<>();
@@ -133,12 +167,63 @@ public final class FarServer {
         this.codec = codec;
         this.biomeIds = biomes.asHolderIdMap();
         this.builds = new FarBuilds(storage.directory().resolveSibling("builds"));
+        this.store = openStore(storage.directory().resolveSibling("far"), generator, biomes);
         if (!builds.scanned()) {
             Thread scan = new Thread(this::scanOldSaves, "Earth far builds scan");
             scan.setDaemon(true);
             scan.setPriority(Thread.MIN_PRIORITY);
             scan.start();
         }
+    }
+
+    @Nullable private static FarStore openStore(java.nio.file.Path directory, CubeGenerator generator, Registry<Biome> biomes) {
+        String version = io.earthplatform.minecraft.diagnostics.BuildInfo.version(), commit = io.earthplatform.minecraft.diagnostics.BuildInfo.commit();
+        boolean released = !version.equals("development") || !commit.equals("unknown");
+        if (STORE.equals("false") || !released && !STORE.equals("true")) return null;
+        return new FarStore(directory, version + "|" + commit + "|" + generator.id() + "|" + Long.toHexString(registryPrint(biomes)),
+                STORE_BYTES, EarthPlatformMod.LOGGER::info);
+    }
+
+    /**
+     * A number that changes when block states or biomes get other ids, as when a mod is added or removed: kept
+     * columns hold those ids, so they are only good for the registries they were made with.
+     */
+    private static long registryPrint(Registry<Biome> biomes) {
+        long print = Block.BLOCK_STATE_REGISTRY.size();
+        for (Block block : net.minecraft.core.registries.BuiltInRegistries.BLOCK) {
+            print = print * 1_000_003L + net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(block).hashCode();
+            print = print * 31 + block.getStateDefinition().getPossibleStates().size();
+        }
+        for (Biome biome : biomes) print = print * 1_000_003L + String.valueOf(biomes.getKey(biome)).hashCode();
+        return print;
+    }
+
+    /** A column as {@link FarStore} keeps it: everything but its key. */
+    static byte[] stored(CubePayloads.FarColumnData column) {
+        int size = 8 + 512;
+        for (byte[] section : column.sections()) size += 4 + section.length;
+        java.nio.ByteBuffer out = java.nio.ByteBuffer.allocate(size);
+        out.putInt(column.bottom()).putInt(column.sections().size());
+        for (byte[] section : column.sections()) out.putInt(section.length).put(section);
+        for (short drop : column.drops()) out.putShort(drop);
+        return out.array();
+    }
+
+    /** The column {@link #stored} wrote for a key; fails on bytes it did not write. */
+    static CubePayloads.FarColumnData stored(long key, byte[] bytes) {
+        java.nio.ByteBuffer in = java.nio.ByteBuffer.wrap(bytes);
+        int bottom = in.getInt(), count = in.getInt();
+        if (count < 0 || count > Far.MAX_SECTIONS) throw new IllegalArgumentException("Far column of " + count + " sections");
+        List<byte[]> sections = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            byte[] section = new byte[in.getInt()];
+            in.get(section);
+            sections.add(section);
+        }
+        short[] drops = new short[256];
+        for (int i = 0; i < 256; i++) drops[i] = in.getShort();
+        if (in.hasRemaining()) throw new IllegalArgumentException("Far column with bytes left over");
+        return new CubePayloads.FarColumnData(key, bottom, sections, drops);
     }
 
     /** Far columns a player asked for that have not been sent yet: its own terrain is still on its way. */
@@ -149,6 +234,17 @@ public final class FarServer {
 
     /** The most columns a player's zoomed view can have queued past its own levels (see {@link Session#zoomed}). */
     private static final int ZOOMED = 4096;
+
+    /**
+     * The most columns one player can have asked for and not yet been sent. A client keeps a few hundred outstanding
+     * (see {@code earthplatform.far.inFlight}); without a limit a changed client could queue every column within
+     * {@link Far#SLACK} of it at every level, over a million, and keep the far workers busy for hours. What is asked
+     * past the limit is dropped, and a client asks again for what never comes.
+     */
+    static final int QUEUED = 4096;
+
+    /** Whether a player with {@code queued} columns waiting may queue another. */
+    static boolean mayQueue(int queued) { return queued < QUEUED; }
 
     /** Queues the columns a player asked for; ones outside that player's squares are ignored, but for a zoomed view's few. */
     public void request(ServerPlayer player, long[] keys) {
@@ -163,6 +259,7 @@ public final class FarServer {
         session.bx = bx;
         session.bz = bz;
         for (long key : keys) {
+            if (!mayQueue(session.queued.size())) break;
             if (!Far.valid(key) || session.queued.contains(key)) continue;
             boolean zoomed = !Far.near(key, bx, bz);
             if (zoomed) {
@@ -219,17 +316,30 @@ public final class FarServer {
     public void edited(int cubeX, int cubeZ) {
         for (int level = Far.MIN_LEVEL; level <= Far.EDIT_LEVELS; level++) {
             long key = Far.key(level, cubeX >> level, cubeZ >> level);
-            cache.remove(key);
+            forget(key);
             prints.edited(key);
             stale.add(key);
         }
+    }
+
+    /** A damaged save file was set aside: what was built there is gone from the ground, so from the far columns kept too. */
+    public void savesLost() { if (store != null) store.empty(); }
+
+    /** The ground under a column changed: it is made again when next wanted, not taken from memory or the disk. */
+    private void forget(long key) {
+        cache.remove(key);
+        if (store != null) store.remove(key);
     }
 
     private CubePayloads.FarColumnData make(long key, boolean useCache) throws IOException {
         if (useCache) {
             CubePayloads.FarColumnData cached = cache.get(key);
             if (cached != null) return cached;
+            CubePayloads.FarColumnData kept = kept(key);
+            if (kept != null) return kept;
         }
+        // Read before the ground is: a column whose ground changes while it is made is then not kept.
+        int epoch = store == null ? 0 : store.epoch(key);
         int level = Far.level(key);
         FarColumn column = new FarColumn();
         generator.farColumn(level, Far.x(key), Far.z(key), column);
@@ -239,7 +349,23 @@ public final class FarServer {
         for (LevelChunkSection section : column.sections) sections.add(section == null ? new byte[0] : CubeCodec.sectionBytes(section));
         CubePayloads.FarColumnData data = new CubePayloads.FarColumnData(key, column.bottom, sections, column.drops);
         prints.made(key, FarPrints.of(column.bottom, sections, column.drops));
-        if (cache.size() > CACHE) cache.clear();
+        cache.put(key, data);
+        if (store != null) store.put(key, epoch, stored(data));
+        return data;
+    }
+
+    /** The column kept on disk for a key, or null; one that can't be read back is made again. */
+    @Nullable private CubePayloads.FarColumnData kept(long key) {
+        if (store == null) return null;
+        byte[] bytes = store.get(key);
+        if (bytes == null) return null;
+        CubePayloads.FarColumnData data;
+        try { data = stored(key, bytes); }
+        catch (RuntimeException damaged) {
+            store.remove(key);
+            return null;
+        }
+        prints.made(key, FarPrints.of(data.bottom(), data.sections(), data.drops()));
         cache.put(key, data);
         return data;
     }
@@ -392,7 +518,7 @@ public final class FarServer {
             int cubeX = CubeKey.x(cube), cubeZ = CubeKey.z(cube);
             for (int level = Far.EDIT_LEVELS + 1; level <= Far.MAX_LEVEL; level++) {
                 long key = Far.key(level, cubeX >> level, cubeZ >> level);
-                cache.remove(key);
+                forget(key);
                 prints.edited(key);
                 stale.add(key);
             }
@@ -439,6 +565,8 @@ public final class FarServer {
     }
 
     public int cached() { return cache.size(); }
+    /** What the columns kept on disk have saved so far, for diagnostics. */
+    public String stored() { return store == null ? "far columns not kept on disk" : store.describe(); }
     /** Builds kept for the coarse levels, and how many coarse columns have shown one. */
     public String builds() {
         StringBuilder levels = new StringBuilder();
@@ -459,5 +587,6 @@ public final class FarServer {
         try { summarizer.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS); }
         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         sessions.clear();
+        if (store != null) store.close();
     }
 }

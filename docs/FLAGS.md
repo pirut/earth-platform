@@ -41,6 +41,8 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.textured` | from settings | Far levels drawn with block textures; coarser ones use flat colors. Same as the `texturedLevels` setting | `FarRenderer` |
 | `earthplatform.far.threads` | (cores - 4) / 2, 2 to 8 | Server workers that make far columns | `FarServer.WORKERS` |
 | `earthplatform.far.mostThreads` | workers + 24, up to 64 | Most far columns made at once; only `far.threads` of them use the processor, the rest wait on downloads | `FarServer.MOST_WORKERS` |
+| `earthplatform.far.store` | `auto` | Keeps far columns on disk with the world (the `far` folder beside `cubes`), so far terrain seen before is read back when the world opens again instead of being made again. They are emptied when the mod's build, the generator or the block and biome ids change, and a column is taken out when ground under it is saved changed. `auto` keeps them in a released build and not in a development build, which has no build number to tell its columns from the next one's; `true` or `false` forces it | `FarServer`, `FarStore` |
+| `earthplatform.far.storeMb` | 2048 | Most megabytes of far columns kept on disk per world; the files used longest ago go first when the world opens. 0 for no limit | `FarServer`, `FarStore` |
 | `earthplatform.far.inFlight` | 192 | Far columns a client asks for before earlier ones arrive | `FarRenderer` |
 | `earthplatform.far.visibility` | edge of the far view | Haze distance in meters, as a real-world visibility | `FarRenderer` |
 | `earthplatform.far.fade` | on | `false` makes far levels meet at a seam instead of fading into each other | `FarRenderer` |
