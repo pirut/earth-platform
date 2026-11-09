@@ -146,14 +146,15 @@ final class EarthCommands {
 
     /**
      * Adds to {@code parent} the three ways to name a spot, each running {@code then} with it: {@code <latitude> <longitude>},
-     * {@code place <famous place>} and {@code here}, where the one running the command stands.
+     * {@code place <famous place or town>} and {@code here}, where the one running the command stands.
      */
     static <T extends ArgumentBuilder<CommandSourceStack, T>> T spots(T parent, Function<SpotArgument, Run> then) {
         Run coordinates = then.apply(context -> EarthSpawns.Spot.at(DoubleArgumentType.getDouble(context, "latitude"), DoubleArgumentType.getDouble(context, "longitude")));
         Run place = then.apply(context -> {
             String query = StringArgumentType.getString(context, "place");
-            return EarthPlaces.find(query).map(EarthSpawns.Spot::of).orElseThrow(() -> 
-                    new SimpleCommandExceptionType(Component.literal("No famous place called '" + query + "'. Try /earth places.")).create());
+            return EarthPlaces.find(query).map(EarthSpawns.Spot::of)
+                    .or(() -> EarthTowns.search(query, 1).stream().findFirst().map(town -> EarthSpawns.Spot.at(town.latitude(), town.longitude())))
+                    .orElseThrow(() -> new SimpleCommandExceptionType(Component.literal("No place called '" + query + "'. Try /earth find <name> or /earth places.")).create());
         });
         Run here = then.apply(context -> {
             GeoPoint point = where(context.getSource().getPlayerOrException());

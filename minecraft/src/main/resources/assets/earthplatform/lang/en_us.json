@@ -128,6 +128,7 @@
   "earthplatform.globe.credit": "NASA Blue Marble, AWS Terrain Tiles, ESA WorldCover",
   "earthplatform.globe.offline": "Offline: showing the built-in map only",
   "earthplatform.globe.loading": "Loading terrain%s",
+  "earthplatform.globe.search": "Search a place or town",
   "earthplatform.globe.controls": "Drag to spin, scroll to zoom, click to place the pin",
   "earthplatform.map.title": "Where to?",
   "earthplatform.map.travel": "Travel here",
@@ -162,5 +163,9 @@
   "item.earthplatform.compass": "Compass to %s",
   "item.earthplatform.compass.follows": "Follows %s while they're on the Earth",
   "key.earthplatform.map": "Map",
+  "key.earthplatform.postcard": "Take a postcard",
+  "earthplatform.postcard.saved": "Postcard saved as %s. Place code %s: anyone can come here with /earth code.",
+  "earthplatform.postcard.copy": "Click to copy",
+  "earthplatform.postcard.failed": "The postcard could not be saved: %s",
   "key.categories.earthplatform": "Earth Platform"
 }

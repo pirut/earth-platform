@@ -54,7 +54,7 @@ public final class NeoForgeClientEvents {
             event.register(EarthWorlds.PRESET, (parent, context) -> EarthPlayClient.presetEditor(parent));
         }
 
-        @SubscribeEvent public static void keys(RegisterKeyMappingsEvent event) { event.register(EarthFlight.KEY); }
+        @SubscribeEvent public static void keys(RegisterKeyMappingsEvent event) { event.register(EarthFlight.KEY); event.register(io.earthplatform.minecraft.cubic.play.client.EarthPostcardScreen.KEY); }
     }
 
     @SubscribeEvent public static void load(LevelEvent.Load event) { CubicClient.load(event.getLevel()); }
@@ -66,6 +66,7 @@ public final class NeoForgeClientEvents {
         CubicClient.tick();
         CubicCompat.tick();
         EarthFlight.clientTick();
+        io.earthplatform.minecraft.cubic.play.client.EarthPostcardScreen.clientTick();
         EarthCompassHud.tick();
         JetHud.tick();
     }
