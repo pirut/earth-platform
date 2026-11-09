@@ -28,6 +28,9 @@ import net.minecraft.world.level.EmptyBlockGetter;
  * tree grown on flat ground sits on any slope. Above it, trunks (logs, stems, roots) replace what
  * is there and crowns (leaves, vines, cocoa, propagules, nests) only fill open space. In cold
  * places a layer of snow lies on each column's top, as vanilla's freezing leaves it on trees.
+ *
+ * <p>A tree can be placed taller than it grew, where the real forest stands taller: its crown is
+ * lifted and the upright trunk under its lowest leaves is carried on up to meet it.
  */
 final class TreeShape {
     static final byte GROUND = 0, TRUNK = 1, CROWN = 2;
@@ -50,6 +53,13 @@ final class TreeShape {
     private final int[][] nests = new int[4][];
     /** The packed top of each column the tree covers, where snow can settle on a full top face. */
     private final int[] tops;
+    /**
+     * The layer a taller tree parts at, its lowest with leaves: everything from there up is lifted, and
+     * {@link #bole}, the upright trunk blocks of the layer below, fills the gap. 0 for a shape that cannot
+     * be made taller (no leaves, leaves down to the ground, or no upright trunk under them).
+     */
+    private final int split;
+    private final int[] bole;
 
     private static int pack(int dx, int dy, int dz) { return (dx + 512) | (dz + 512) << 10 | (dy + 512) << 20; }
     private static int dx(int p) { return (p & 1023) - 512; }
@@ -91,6 +101,14 @@ final class TreeShape {
             else if (state.getBlock() instanceof RotatedPillarBlock) { lowestLog = Math.min(lowestLog, y); logs.add(pack(x, y, z)); }
         }
         minY = lowY; maxY = highY + 1;
+        IntArrayList upright = new IntArrayList();
+        if (lowestLeaf != Integer.MAX_VALUE && lowestLeaf >= 1) for (int j = 0; j < at.length; j++) {
+            if (dy(at[j]) != lowestLeaf - 1) continue;
+            BlockState state = states.get(look[j]);
+            if (state.getBlock() instanceof RotatedPillarBlock && state.getValue(RotatedPillarBlock.AXIS) == Direction.Axis.Y) upright.add(j);
+        }
+        split = upright.isEmpty() ? 0 : lowestLeaf;
+        bole = upright.toIntArray();
         IntArrayList settled = new IntArrayList();
         for (var entry : top.int2IntEntrySet()) {
             BlockState state = topState.get(entry.getIntKey());
@@ -133,16 +151,30 @@ final class TreeShape {
 
     int blocks() { return at.length; }
 
+    /** How many blocks the tree stands above its origin. */
+    int height() { return maxY; }
+
+    /** Whether the tree can be placed taller than it grew. */
+    boolean stretches() { return split > 0; }
+
     /**
      * Writes the blocks that fall in the box (x0..x1, y0..y1, z0..z1) for a tree whose origin is
      * at (ox, oy, oz), turned {@code turn} quarters; {@code ground} gives a column's ground height.
-     * {@code seed} decides the bee nest; with {@code snow}, snow lies on the tree.
+     * {@code seed} decides the bee nest; with {@code snow}, snow lies on the tree. {@code lift} blocks of
+     * trunk are added under the crown of a tree that {@link #stretches}.
      */
-    void place(int ox, int oy, int oz, int turn, long seed, boolean snow, int x0, int y0, int z0, int x1, int y1, int z1,
+    void place(int ox, int oy, int oz, int turn, long seed, boolean snow, int lift, int x0, int y0, int z0, int x1, int y1, int z1,
                IntBinaryOperator ground, Sink sink) {
         if (ox + maxX[turn] < x0 || ox + minX[turn] > x1 || oz + maxZ[turn] < z0 || oz + minZ[turn] > z1) return;
-        if (oy + maxY < y0 || oy + minY - 8 > y1) return;
+        if (split == 0) lift = 0;
+        if (oy + maxY + lift < y0 || oy + minY - 8 > y1) return;
         BlockState[] states = palette[turn];
+        if (lift > 0) for (int i : bole) {
+            int p = at[i], dx = dx(p), dz = dz(p);
+            int x = ox + turnX(turn, dx, dz), z = oz + turnZ(turn, dx, dz);
+            if (x < x0 || x > x1 || z < z0 || z > z1) continue;
+            for (int y = Math.max(y0, oy + split); y <= Math.min(y1, oy + split + lift - 1); y++) sink.put(x, y, z, states[look[i]], TRUNK);
+        }
         for (int i = 0; i < at.length; i++) {
             int p = at[i], dx = dx(p), dy = dy(p), dz = dz(p);
             int x = ox + turnX(turn, dx, dz), z = oz + turnZ(turn, dx, dz);
@@ -156,7 +188,7 @@ final class TreeShape {
                 if (Math.abs(y - (oy + dy)) > 3) continue;
             } else {
                 kind = kinds[look[i]];
-                y = oy + dy;
+                y = oy + dy + (dy >= split ? lift : 0);
             }
             if (y >= y0 && y <= y1) sink.put(x, y, z, states[look[i]], kind);
         }
@@ -167,7 +199,7 @@ final class TreeShape {
             if (x >= x0 && x <= x1 && y >= y0 && y <= y1 && z >= z0 && z <= z1) sink.put(x, y, z, NEST, CROWN);
         }
         if (snow) for (int p : tops) {
-            int x = ox + turnX(turn, dx(p), dz(p)), y = oy + dy(p), z = oz + turnZ(turn, dx(p), dz(p));
+            int x = ox + turnX(turn, dx(p), dz(p)), y = oy + dy(p) + (dy(p) >= split ? lift : 0), z = oz + turnZ(turn, dx(p), dz(p));
             if (x >= x0 && x <= x1 && y >= y0 && y <= y1 && z >= z0 && z <= z1) sink.put(x, y, z, SNOW, CROWN);
         }
     }

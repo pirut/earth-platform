@@ -3,6 +3,7 @@ package io.earthplatform.minecraft.cubic.earth;
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.BareEarth;
+import io.earthplatform.geography.globe.CanopySource;
 import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
 import io.earthplatform.geography.globe.GlobalElevation;
@@ -121,6 +122,12 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Nullable private final ImageryGround imageryGround;
     /** Narrow rivers the land cover misses, or null in worlds made before them. */
     @Nullable private final RiverMap rivers;
+    /** How tall the trees stand, or null in worlds made before trees followed the canopy height map. */
+    @Nullable private CanopySource canopy;
+    /** Rock, red ground and soil maps, or null in worlds made before the ground followed them. */
+    @Nullable private EarthMaps maps;
+    /** Whether cacti, bamboo and cherries grow by ecoregion realm and climate; worlds made before keep {@link OldRegions}. */
+    private boolean realms;
     private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth, warpX, warpZ, patches;
     private final Holder<Biome> ocean, deepOcean, coldOcean, deepColdOcean, frozenOcean, lukewarmOcean, deepLukewarmOcean, warmOcean,
             beach, snowyBeach, stonyShore, snowySlopes, frozenPeaks, stonyPeaks, meadow, taiga, oldTaiga, forest,
@@ -260,6 +267,20 @@ public final class EarthGenerator extends SurfaceGenerator {
         return new int[]{Mth.floor(grid.blockX(point)), Mth.floor(grid.blockZ(point))};
     }
 
+    /**
+     * What worlds made since build 70 read from data in place of {@link OldRegions}' boxes of latitude and
+     * longitude; call before any cube is made.
+     *
+     * @param canopy tree heights and giant groves from the canopy height map, or null to keep the old groves
+     * @param maps   whether rock, lava, red ground and soil follow {@link EarthMaps}
+     * @param realms whether cacti, bamboo and cherries follow ecoregion realms and climate
+     */
+    public void data(@Nullable CanopySource canopy, boolean maps, boolean realms) {
+        this.canopy = cover == null ? null : canopy;
+        this.maps = cover != null && maps ? EarthMaps.get() : null;
+        this.realms = cover != null && realms && Ecoregions.get() != null;
+    }
+
     @Override public String place(int x, int z) {
         GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
         return String.format(Locale.ROOT, "%.5f, %.5f", point.latitude(), point.longitude());
@@ -277,6 +298,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                 + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION)
                 + (imagery == null ? "" : ". Imagery: " + ImagerySource.ATTRIBUTION)
                 + (cover == null ? "" : ". " + Ecoregions.ATTRIBUTION)
+                + (canopy == null ? "" : ". " + CanopySource.ATTRIBUTION)
+                + (maps == null ? "" : ". " + EarthMaps.ATTRIBUTION)
                 + (rivers == null ? "" : ". Rivers: " + io.earthplatform.geography.globe.SurfaceWaterSource.ATTRIBUTION);
     }
 
@@ -2641,7 +2664,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** A column's climate at height y: its zone, mean and warmest-quarter temperatures (°C) and rainfall (mm a year). */
-    private record Local(ClimateZone zone, double temperature, double warmest, double rain) {}
+    private record Local(ClimateZone zone, double temperature, double warmest, double rain, int koppen) {}
 
     /** The real climate at a column and height, or one from latitude and height where there is none. */
     private Local local(int x, int z, int y) {
@@ -2657,10 +2680,10 @@ public final class EarthGenerator extends SurfaceGenerator {
                             + warpZ.getValue(x / 37.0 - 5.2, z / 37.0 + 1.7) * 16) * perBlock + grain(x, z, 0x434C5AL) * 3);
             ClimateSource.Climate c = climate.at(point.latitude(), point.longitude(), metres);
             if (c != null) return new Local(ClimateZone.of(c.koppen(), c.meanTemperature(), c.warmestQuarter()),
-                    c.meanTemperature(), c.warmestQuarter(), c.precipitation());
+                    c.meanTemperature(), c.warmestQuarter(), c.precipitation(), c.koppen());
         }
         double t = temperature(x, z, y);
-        return new Local(ClimateZone.of(ClimateSource.NO_DATA, t, t + 10), t, t + 10, 800);
+        return new Local(ClimateZone.of(ClimateSource.NO_DATA, t, t + 10), t, t + 10, 800, ClimateSource.NO_DATA);
     }
 
     private double wetness(int x, int z) { return fbm(wetBroad, x / 9000.0, z / 9000.0, 2) * 0.7 + wetLocal.getValue(x / 1400.0, z / 1400.0) * 0.3; }
@@ -2978,7 +3001,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Heather moorland where summers are cool and the rain never stops, as in Scotland, Ireland and Norway's coast.
         boolean moor = (zone == ClimateZone.OCEANIC || zone == ClimateZone.SUBPOLAR_OCEANIC) && local.warmest() < 14 && local.rain() > 800;
         // Young lava: black basalt flows and cinders, as on Hawaii and Iceland, where WorldCover maps bare ground.
-        if (code == WorldCoverSource.MOSS_AND_LICHEN && volcanic(x, z) && !(patch > 0.3)) {
+        if (code == WorldCoverSource.MOSS_AND_LICHEN && mossyLava(x, z, local) && !(patch > 0.3)) {
             // Moss on old lava: grey-green moss only in its hollows, black cinders and brown tuff between.
             BlockState cinder = !weathered(x, z, t) && roll < 50 ? BLACKSTONE : roll < 75 ? COARSE_DIRT : BASALT;
             return new Surface(stonyPeaks, patch > 0 ? MOSS : patch < -0.4 ? TUFF : cinder, BASALT, 0, 0, 0, 0, 0, false);
@@ -3073,7 +3096,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                     case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 15 * trees, 0, 0, 320, 340, true, Tree.JUNGLE);
                     case TROPICAL_DRY, HOT_STEPPE -> new Surface(patch > 0.5 ? windsweptSavanna : savanna, top, DIRT, 7 * trees, 0, 0, 320, 330, false, Tree.ACACIA);
                     // Desert scrub: bare sand and gravel with dead bushes, and cacti where they grow wild, in the Americas.
-                    case HOT_DESERT -> new Surface(desert, rocky != null ? rocky : patch > 0.2 ? COARSE_DIRT : SAND, SANDSTONE, 0, 0, 0, 25, americas(x, z) ? 31 : 25, false);
+                    case HOT_DESERT -> new Surface(desert, rocky != null ? rocky : patch > 0.2 ? COARSE_DIRT : SAND, SANDSTONE, 0, 0, 0, 25, cacti(x, z) ? 31 : 25, false);
                     // Sagebrush and saltbush: mostly bare tan ground with low grey shrubs, grass only in patches.
                     case COLD_DESERT, COLD_STEPPE -> t < -3 ? new Surface(snowyPlains, top, DIRT, 0, 0, 0, 200, 210, false)
                             : sagebrush(rocky != null ? rocky : patch > 0.3 || roll < 55 ? scrubGround(x, z) : GRASS, trees);
@@ -3468,17 +3491,29 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /**
-     * The world's great young lava fields, which are broad and low and so not told by their shape: Hawaii, Iceland,
-     * the Canaries, the Galápagos, Etna and Réunion. Volcanic cones anywhere are found by their shape instead.
+     * Whether a column's rock is lava or ash. Lava fields are broad and low and so not told by their shape: the rock
+     * map names them, wherever it shows basalt, andesite or their ash (Hawaii, Iceland, the Canaries, the Galápagos,
+     * Arabia's harrats, the Snake River Plain). Volcanic cones anywhere are found by their shape besides.
      */
-    private static final double[][] LAVA = {
-            {18.8, 22.3, -160.5, -154.7}, {63.2, 66.6, -24.6, -13.4}, {27.6, 29.5, -18.2, -13.3},
-            {-1.5, 0.7, -92.0, -89.0}, {37.6, 37.9, 14.8, 15.2}, {-21.4, -20.8, 55.2, 55.9}};
-
     private boolean volcanic(int x, int z) {
-        GeoPoint p = grid.geographic(x, z);
-        for (double[] box : LAVA) if (p.latitude() > box[0] && p.latitude() < box[1] && p.longitude() > box[2] && p.longitude() < box[3]) return true;
+        if (maps == null ? OldRegions.lava(grid.geographic(x, z)) : EarthMaps.volcanic(rock(x, z))) return true;
         return cone(x, z);
+    }
+
+    /**
+     * Whether moss and lichen at a column grow on a lava field, as Iceland's do, rather than on tundra. The rock map
+     * shows lava of any age, and on the old basalt of cold, dry plateaus, such as Siberia's, tundra has long since
+     * covered it: only where 900 mm of rain a year keeps moss thick on young rock, or on a cone.
+     */
+    private boolean mossyLava(int x, int z, Local local) {
+        if (maps == null) return volcanic(x, z);
+        return cone(x, z) || local.rain() > 900 && EarthMaps.volcanic(rock(x, z));
+    }
+
+    /** The rock map's class under a column, its borders wandering as the ecoregions' do. */
+    private int rock(int x, int z) {
+        GeoPoint p = frayed(x, z);
+        return maps.rock(p.latitude(), p.longitude());
     }
 
     /** Summits of volcanic cones, by 1024-block cell: x, z and the mean height of the ring round them, or none. */
@@ -3533,15 +3568,22 @@ public final class EarthGenerator extends SurfaceGenerator {
     private int ecoregion(int x, int z) {
         Ecoregions map = cover == null ? null : Ecoregions.get();
         if (map == null) return 0;
-        // The map's cells are 5 km squares: read through a warp of a few hundred metres, with finer layers down to a
-        // few blocks, its borders wander and fray like a real change of country rather than running dead straight.
+        GeoPoint p = frayed(x, z);
+        return map.ecoregion(p.latitude(), p.longitude());
+    }
+
+    /**
+     * Where a column reads the maps whose cells are 5 km squares: through a warp of a few hundred metres, with finer
+     * layers down to a few blocks, so their borders wander and fray like a real change of country rather than
+     * running dead straight.
+     */
+    private GeoPoint frayed(int x, int z) {
         double perBlock = 1 / grid.groundMetresPerBlock(z);
         double dx = (warpX.getValue(x / 1700.0 + 31.7, z / 1700.0 - 4.1) * 600 + warpX.getValue(x / 310.0 - 8.3, z / 310.0 + 17.2) * 140
                 + warpX.getValue(x / 47.0 + 2.9, z / 47.0 - 6.6) * 24) * perBlock + grain(x, z, 0x45434FL) * 3;
         double dz = (warpZ.getValue(x / 1700.0 + 31.7, z / 1700.0 - 4.1) * 600 + warpZ.getValue(x / 310.0 - 8.3, z / 310.0 + 17.2) * 140
                 + warpZ.getValue(x / 47.0 + 2.9, z / 47.0 - 6.6) * 24) * perBlock + grain(x, z, 0x45435AL) * 3;
-        GeoPoint p = grid.geographic(x + dx, z + dz);
-        return map.ecoregion(p.latitude(), p.longitude());
+        return grid.geographic(x + dx, z + dz);
     }
 
     /** Whether a column's ecoregion is tropical forest, or unknown. */
@@ -3592,45 +3634,59 @@ public final class EarthGenerator extends SurfaceGenerator {
      * near glaciers and snowfields, where the rock is fresh and unweathered rather than dark with lichen and stain.
      */
     private boolean paleRock(int x, int z) {
-        return glacierFed(x, z);
+        // And where the rock map says the country is granite, as the Sierra Nevada's domes are, ice or no ice.
+        return glacierFed(x, z) || maps != null && EarthMaps.granitic(rock(x, z));
     }
 
-    /** Whether a column is in Australia's arid interior, the red centre. */
+    /** Whether a hot, dry column's ground is red sand under its scrub and red rock where it stands bare, as Australia's centre is. */
     private boolean outback(int x, int z) {
-        GeoPoint p = grid.geographic(x, z);
-        return p.latitude() > -32 && p.latitude() < -14 && p.longitude() > 114 && p.longitude() < 150;
+        return maps == null ? OldRegions.outback(grid.geographic(x, z)) : redCountry(x, z);
     }
 
-    /** Whether a column is on the Colorado Plateau, whose bare ground is red rock and red sand. */
+    /** Whether a dry column's bare ground is red rock and red sand, as the Colorado Plateau's is. */
     private boolean redRock(int x, int z) {
-        GeoPoint p = grid.geographic(x, z);
-        // The Grand Canyon and its rims keep the canyon strata's own colours.
-        if (p.latitude() > 35.8 && p.latitude() < 36.7 && p.longitude() < -111.5) return false;
-        return p.latitude() > 35 && p.latitude() < 38.5 && p.longitude() > -113 && p.longitude() < -108;
+        return maps == null ? OldRegions.redRock(grid.geographic(x, z)) : redCountry(x, z);
     }
 
-    /** About how much of a hot desert's sand is orange: most in Australia, much in the Sahara and Arabia, little in the Americas. */
-    private double redShare(int x, int z) {
+    /** How red a column's bare ground is from orbit, 0 for pale sand and grey rock to 1 for the red of Australia's centre. */
+    private double redness(int x, int z) {
         GeoPoint p = grid.geographic(x, z);
-        double lat = p.latitude(), lon = p.longitude();
-        if (lon > 110 && lon < 155 && lat < -10) return 0.7;
-        // Orange ergs: Morocco's and the western Sahara's, the Namib's and Arabia's. Algeria's and Libya's are pale.
-        if (lon > -20 && lon < 0 && lat > 10) return 0.5;
-        if (lon > 10 && lon < 20 && lat < -15) return 0.5;
-        if (lon > 35 && lon < 60 && lat < 32) return 0.5;
-        return 0.05;
+        return maps.red(p.latitude(), p.longitude());
+    }
+
+    /**
+     * Whether a column lies in red country, where the land is red from orbit: Australia's centre and the Pilbara, the
+     * Namib and the Kalahari's red sands, Monument Valley. The map's cells are 10 km across and blended, and the line
+     * is drawn through noise a few hundred metres and a few dozen blocks across, so red country ends in tongues and
+     * patches, never along a cell's edge.
+     */
+    private boolean redCountry(int x, int z) {
+        double red = redness(x, z);
+        if (red < 0.3) return false;
+        return red + 0.11 * patches.getValue(x / 600.0 - 41.3, z / 600.0 + 12.9) + 0.05 * patches.getValue(x / 70.0 + 3.1, z / 70.0 - 27.4)
+                + ((mix(x, 0x524544L, z) & 1023) / 511.5 - 1) * 0.03 > 0.55;
+    }
+
+    /**
+     * About how much of a hot desert's sand is orange: a few grains anywhere, a quarter where the land is tan with
+     * a red cast from orbit, as the Libyan Desert and the Nafud are, and most of it where the land is red.
+     */
+    private double redShare(int x, int z) {
+        if (maps == null) return OldRegions.redShare(grid.geographic(x, z));
+        double t = Mth.clamp((redness(x, z) - 0.1) / 0.6, 0, 1);
+        return Math.max(0.03, 0.85 * t * t * (3 - 2 * t));
     }
 
     /**
      * Temperate broadleaf woods: mostly the given forest, with birch stands, flowery glades and dark,
      * dense old groves, and cherry groves where cherries grow wild, in East Asia and the Himalaya.
      */
-    private Surface groves(double patch, int x, int z, Surface usual) {
+    private Surface groves(double patch, int x, int z, Local local, Surface usual) {
         if (patch > 0.35) return new Surface(birchForest, GRASS, DIRT, 82, 0, 8, 90, 130, false);
         if (patch > 0.22) return new Surface(flowerForest, GRASS, DIRT, 45, 0, 1, 100, 320, false);
         if (patch < -0.45) return new Surface(darkForest, GRASS, DIRT, 92, 0, 1, 80, 100, false, Tree.DARK_OAK);
         // Cherry groves stand together in a few large stands, with clearings, not speckled through every wood.
-        if (patch < 0 && cherries(x, z) && patches.getValue(x / 450.0 + 13.7, z / 450.0 - 71.3) > 0.6) return new Surface(cherryGrove, GRASS, DIRT, 35, 0, 0, 200, 420, false, Tree.CHERRY);
+        if (patch < 0 && patches.getValue(x / 450.0 + 13.7, z / 450.0 - 71.3) > 0.6 && cherries(x, z, local)) return new Surface(cherryGrove, GRASS, DIRT, 35, 0, 0, 200, 420, false, Tree.CHERRY);
         return usual;
     }
 
@@ -3639,17 +3695,44 @@ public final class EarthGenerator extends SurfaceGenerator {
         return new Surface(bambooJungle, patch < -0.6 ? PODZOL : GRASS, DIRT, 25, 0, 0, 160, 170, true, Tree.JUNGLE);
     }
 
-    /** Whether a column is where bamboo forests grow, in South and East Asia. */
-    private boolean bamboo(int x, int z) {
+    /** Organic carbon in a column's topsoil, 0 for none to 1 for peat and deep forest litter. */
+    private double soilCarbon(int x, int z) {
         GeoPoint p = grid.geographic(x, z);
-        return p.longitude() > 68 && p.longitude() < 150 && p.latitude() > -10 && p.latitude() < 40;
+        return maps.carbon(p.latitude(), p.longitude());
     }
 
-    /** Whether a column is where cherries grow wild: Japan, Korea, China and the Himalaya. */
-    private boolean cherries(int x, int z) {
-        GeoPoint p = grid.geographic(x, z);
-        double lat = p.latitude(), lon = p.longitude();
-        return lon > 100 && lon < 146 && lat > 24 && lat < 46 || lon > 74 && lon <= 100 && lat > 25 && lat < 36;
+    /** The realm a column's ecoregion lies in, or {@link Ecoregions#NO_REALM} at sea, on ice and where the map has none. */
+    private int realm(int x, int z) {
+        int eco = ecoregion(x, z);
+        return eco == 0 ? Ecoregions.NO_REALM : Ecoregions.get().realm(eco);
+    }
+
+    /**
+     * Whether a warm, wet column is where bamboo forests grow: anywhere in the Indomalayan realm (India to Borneo and
+     * south China), and in the Palearctic where summers are hot and a metre of rain falls, as in central China and
+     * the south of Japan and Korea, but nowhere in Europe.
+     */
+    private boolean bamboo(int x, int z, Local local) {
+        if (!realms) return OldRegions.bamboo(grid.geographic(x, z));
+        int realm = realm(x, z);
+        return realm == Ecoregions.INDOMALAYAN || realm == Ecoregions.PALEARCTIC && local.rain() > 1000 && local.warmest() >= 24.5;
+    }
+
+    /**
+     * Whether a temperate column is where cherries blossom wild: in the Palearctic and Indomalayan realms under the
+     * East Asian monsoon, which Köppen marks by a dry winter (Korea, north and south-west China, the Himalaya) or,
+     * where winters are wet too, by hot summers with more than 1,100 mm of rain a year (Japan, east China).
+     */
+    private boolean cherries(int x, int z, Local local) {
+        if (!realms) return OldRegions.cherries(grid.geographic(x, z));
+        boolean monsoon = switch (local.koppen()) {
+            case ClimateSource.CWA, ClimateSource.CWB, ClimateSource.CWC, ClimateSource.DWA, ClimateSource.DWB, ClimateSource.DWC -> true;
+            case ClimateSource.CFA, ClimateSource.DFA, ClimateSource.DFB -> local.rain() > 1100 && local.warmest() >= 23.5;
+            default -> false;
+        };
+        if (!monsoon) return false;
+        int realm = realm(x, z);
+        return realm == Ecoregions.PALEARCTIC || realm == Ecoregions.INDOMALAYAN;
     }
 
     /** Badlands rock in level bands a few blocks thick, one colour all along a cliff. */
@@ -3658,51 +3741,123 @@ public final class EarthGenerator extends SurfaceGenerator {
         return BANDS[k < 35 ? 0 : k < 55 ? 1 : k < 65 ? 2 : k < 75 ? 3 : k < 85 ? 4 : k < 93 ? 5 : 6];
     }
 
-    /** Whether a column is in the Americas, the only place cacti grow wild. */
-    private boolean americas(int x, int z) {
-        double longitude = grid.geographic(x, z).longitude();
-        return longitude < -30 && longitude > -170;
+    /** Whether cacti grow wild at a column: only in the Americas, the Nearctic and Neotropic realms. */
+    private boolean cacti(int x, int z) {
+        if (!realms) return OldRegions.americas(grid.geographic(x, z));
+        int realm = realm(x, z);
+        return realm == Ecoregions.NEARCTIC || realm == Ecoregions.NEOTROPIC;
+    }
+
+    // How tall the trees stand ------------------------------------------------------------------
+
+    /**
+     * The canopy height above which a conifer forest's trees are giants, in metres. The map reads the tallest
+     * forests low (a sequoia grove's 80 m as 45 to 60), and at this height it picks out the Sierra Nevada's
+     * sequoia groves, the coast redwoods and the old firs and spruces of the Olympics and the Cascades, and
+     * next to nothing else: not Yosemite Valley's pines or Lake Tahoe's, none of the Alps or the Rockies.
+     */
+    private static final int GIANT_CANOPY = 45;
+    /** The canopy map's overview trees are read at: pixels about 19 m across at the equator. */
+    private static final int CANOPY_OVERVIEW = 1;
+    /** Giant country cells, in blocks as a power of two, and how far past its edge a cell looks, in 16-block columns. */
+    private static final int GIANT_CELL_BITS = 8, GIANT_MARGIN = 4;
+    /**
+     * A grove is where at least {@link #GROVE_GIANTS} of the 16-block columns within {@link #GROVE_REACH} columns
+     * read giant height: the map's giants come as crowns scattered a few to the hectare, and a grove is the
+     * ground between them too, while one tall pine alone on a ridge makes none.
+     */
+    private static final int GROVE_REACH = 3, GROVE_GIANTS = 3;
+    /** Canopy heights by 16-block column, a byte each with 0 for unknown, and whether each giant country cell holds giants. */
+    private final RecentCache<Byte> canopyColumns = new RecentCache<>(1 << 16);
+    private final RecentCache<Boolean> giantCells = new RecentCache<>(1 << 14);
+    private final RecentCache<Byte> groveColumns = new RecentCache<>(1 << 16);
+
+    /** The canopy map's height in metres at the middle of a 16-block column, or -1 where it has no reading. */
+    private int canopyColumn(int cx, int cz) {
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
+        Byte known = canopyColumns.get(key);
+        if (known == null) {
+            GeoPoint p = grid.geographic((cx << 4) + 8, (cz << 4) + 8);
+            int metres = canopy.metres(p.latitude(), p.longitude(), CANOPY_OVERVIEW);
+            known = (byte) (metres < 0 ? 0 : Math.min(126, metres) + 1);
+            canopyColumns.put(key, known);
+        }
+        return known - 1;
     }
 
     /**
-     * Giant sequoia groves: the larger real groves on the Sierra Nevada's western slope, as
-     * latitude, longitude and radius in metres (centres and sizes approximate).
+     * How tall the trees round a column stand, in metres: the tallest of the canopy map's readings at the middles of
+     * the nine 16-block columns round it, since the map reads the gaps between crowns as well as the crowns, and a
+     * tree beside a gap is as tall as its neighbours. -1 where there is no map or it has no reading.
      */
-    private static final double[][] GROVES = {
-            {38.2777, -120.3080, 500},   // Calaveras North Grove
-            {38.2460, -120.2480, 1200},  // Calaveras South Grove
-            {37.7590, -119.8060, 400},   // Tuolumne Grove
-            {37.7480, -119.8410, 400},   // Merced Grove
-            {37.5110, -119.6000, 1100},  // Mariposa Grove
-            {37.4300, -119.5850, 900},   // Nelder Grove
-            {37.0230, -119.1080, 400},   // McKinley Grove
-            {36.8150, -118.9550, 1500},  // Converse Basin
-            {36.7470, -118.9720, 700},   // Grant Grove
-            {36.6950, -118.9200, 1900},  // Redwood Mountain Grove
-            {36.6380, -118.8170, 500},   // Muir Grove
-            {36.5700, -118.7600, 2000},  // Giant Forest
-            {36.4650, -118.6750, 1300},  // Atwell Grove
-            {36.2400, -118.6750, 2000},  // Mountain Home Grove
-            {36.1350, -118.5150, 1500},  // Freeman Creek Grove
-    };
-
-    /** The Sierra Nevada's sequoia belt, round all the groves. */
-    @Override protected boolean giants(int x, int z) {
-        GeoPoint p = grid.geographic(x, z);
-        return p.latitude() > 36.05 && p.latitude() < 38.33 && p.longitude() > -120.36 && p.longitude() < -118.45;
+    @Override protected int canopy(int x, int z) {
+        if (canopy == null) return -1;
+        int cx = x >> 4, cz = z >> 4, tallest = -1;
+        for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) tallest = Math.max(tallest, canopyColumn(cx + i, cz + j));
+        return tallest;
     }
 
-    /** Whether a forest column is in a giant sequoia grove: inside a real grove, between 1,200 and 2,600 m up. */
-    private boolean sequoias(int x, int z, int y) {
-        int metres = y - SEA;
-        if (metres < 1200 || metres > 2600 || !giants(x, z)) return false;
-        GeoPoint p = grid.geographic(x, z);
-        double east = 111320 * Math.cos(Math.toRadians(p.latitude()));
-        for (double[] grove : GROVES) {
-            double dx = (p.longitude() - grove[1]) * east, dz = (p.latitude() - grove[0]) * 110540;
-            if (dx * dx + dz * dz < grove[2] * grove[2]) return true;
+    /**
+     * Whether giant trees may stand near a column: in worlds that read the canopy map, where its 256-block cell or
+     * the four columns past its edge hold a reading of giant height, in conifer country. Elsewhere no forest
+     * column asks the map twice. Older worlds keep the Sierra Nevada's sequoia belt.
+     */
+    @Override protected boolean giants(int x, int z) {
+        if (canopy == null) return OldRegions.sequoiaBelt(grid.geographic(x, z));
+        int gx = x >> GIANT_CELL_BITS, gz = z >> GIANT_CELL_BITS;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) gx << 32 | gz & 0xFFFFFFFFL);
+        Boolean known = giantCells.get(key);
+        if (known == null) {
+            known = giantCell(gx, gz);
+            giantCells.put(key, known);
         }
+        return known;
+    }
+
+    private boolean giantCell(int gx, int gz) {
+        // Conifer country first, which costs no download: at the cell's corners, middle and the middles of its sides.
+        int x0 = gx << GIANT_CELL_BITS, z0 = gz << GIANT_CELL_BITS, half = 1 << GIANT_CELL_BITS - 1;
+        boolean conifers = false;
+        for (int j = 0; j <= 2 && !conifers; j++) for (int i = 0; i <= 2 && !conifers; i++) conifers = coniferCountry(x0 + i * half, z0 + j * half);
+        if (!conifers) return false;
+        int columns = 1 << GIANT_CELL_BITS - 4, cx0 = x0 >> 4, cz0 = z0 >> 4;
+        for (int j = -GIANT_MARGIN; j < columns + GIANT_MARGIN; j++) for (int i = -GIANT_MARGIN; i < columns + GIANT_MARGIN; i++)
+            if (canopyColumn(cx0 + i, cz0 + j) >= GIANT_CANOPY) return true;
         return false;
+    }
+
+    /** Whether a column's ecoregion is temperate conifer forest, as the Sierra Nevada's, the redwood coast's and the Cascades' are. */
+    private boolean coniferCountry(int x, int z) {
+        int eco = ecoregion(x, z);
+        return eco != 0 && Ecoregions.get().biome(eco) == Ecoregions.TEMPERATE_CONIFER;
+    }
+
+    /**
+     * Whether a forest column is in a grove of giant trees: where the canopy map shows conifers standing at giant
+     * height, wherever on Earth that is. Worlds made before the map keep the Sierra Nevada's real sequoia groves.
+     */
+    private boolean sequoias(int x, int z, int y) {
+        if (canopy == null) return OldRegions.grove(grid.geographic(x, z), y - SEA);
+        if (!giants(x, z) || !coniferCountry(x, z)) return false;
+        // Blended between the columns round it, so a grove's edge is a curve and not a staircase of 16-block squares.
+        int ix = x - 8 >> 4, iz = z - 8 >> 4;
+        double tx = (x - 8 - (ix << 4)) / 16.0, tz = (z - 8 - (iz << 4)) / 16.0;
+        double north = groveColumn(ix, iz) * (1 - tx) + groveColumn(ix + 1, iz) * tx, south = groveColumn(ix, iz + 1) * (1 - tx) + groveColumn(ix + 1, iz + 1) * tx;
+        return north * (1 - tz) + south * tz + 1.5 * patches.getValue(x / 48.0 + 17.7, z / 48.0 - 5.3) >= GROVE_GIANTS;
+    }
+
+    /** How many of the 16-block columns within {@link #GROVE_REACH} of one read giant height on the canopy map. */
+    private int groveColumn(int cx, int cz) {
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
+        Byte known = groveColumns.get(key);
+        if (known == null) {
+            int count = 0;
+            for (int j = -GROVE_REACH; j <= GROVE_REACH; j++) for (int i = -GROVE_REACH; i <= GROVE_REACH; i++)
+                if (canopyColumn(cx + i, cz + j) >= GIANT_CANOPY) count++;
+            known = (byte) count;
+            groveColumns.put(key, known);
+        }
+        return known;
     }
 
     /** The forest of a climate: rainforest, bamboo, dry tropical woodland, pine, oak, birch, dark oak, cherry or taiga. */
@@ -3718,7 +3873,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 return new Surface(forest, GRASS, DIRT, 70, 4, 0, 180, 200, false);
         }
         return switch (local.zone()) {
-            case RAINFOREST -> patch < -0.5 && bamboo(x, z) ? bambooForest(patch) : new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true, Tree.JUNGLE);
+            case RAINFOREST -> patch < -0.5 && bamboo(x, z, local) ? bambooForest(patch) : new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true, Tree.JUNGLE);
             // Monsoon forest where the wet season is long; open woodland with grass between the trees, as in the
             // cerrado and the Pantanal's tree islands, where it is not; acacia savanna woodland where drier still.
             case TROPICAL_DRY -> local.rain() > 1800 ? new Surface(sparseJungle, GRASS, DIRT, 70, 0, 0, 150, 160, true, Tree.JUNGLE)
@@ -3733,24 +3888,29 @@ public final class EarthGenerator extends SurfaceGenerator {
                     // Where summers are parched, holm oak and pine woods are open, with dry dust and leaf litter between.
                     : parched(local) ? new Surface(forest, patch > 0.3 ? COARSE_DIRT : GRASS, DIRT, 55, 1, 0, 140, 170, false)
                     : new Surface(forest, GRASS, DIRT, 70, 1, 0, 140, 170, false);
-            case SUBTROPICAL -> patch < -0.62 && bamboo(x, z) ? bambooForest(patch)
+            case SUBTROPICAL -> patch < -0.62 && bamboo(x, z, local) ? bambooForest(patch)
                     // Jungle only where the ecoregion is tropical forest, as in south China; Florida's warm woods are oak and pine.
                     // Humid subtropical forest, where winters are cool, is evergreen broadleaf and laurel rather than jungle: dense,
                     // dark groves among broadleaf woods, as on south China's hills.
                     : t > 20 && tropicalForest(x, z) ? patch < 0 ? new Surface(darkForest, GRASS, DIRT, 90, 0, 0, 80, 100, false, Tree.DARK_OAK)
                             : new Surface(forest, GRASS, DIRT, 88, 0, 0, 100, 130, true)
                     : t > 20 ? new Surface(forest, GRASS, DIRT, 70, 4, 0, 180, 200, false)
-                    : groves(patch, x, z, new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false));
-            case OCEANIC -> groves(patch, x, z, new Surface(forest, GRASS, DIRT, 82, t < 8 ? 3 : 0, 2, 90, 130, true));
+                    : groves(patch, x, z, local, new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false));
+            case OCEANIC -> groves(patch, x, z, local, new Surface(forest, GRASS, DIRT, 82, t < 8 ? 3 : 0, 2, 90, 130, true));
             case SUBPOLAR_OCEANIC -> new Surface(taiga, GRASS, DIRT, 70, 10, 0, 110, 120, true);
             // Broadleaf in the warmer continental interiors, mixed with birch and spruce further north.
-            case CONTINENTAL -> t > 7 ? groves(patch, x, z, new Surface(forest, GRASS, DIRT, 85, 0, 2, 90, 130, false))
+            case CONTINENTAL -> t > 7 ? groves(patch, x, z, local, new Surface(forest, GRASS, DIRT, 85, 0, 2, 90, 130, false))
                     : patch > 0.25 ? new Surface(birchForest, GRASS, DIRT, 82, 1, 8, 90, 130, false)
                     : patch < -0.25 ? new Surface(taiga, GRASS, DIRT, 82, 10, 0, 110, 120, true)
                     : new Surface(forest, GRASS, DIRT, 82, 5, 2, 90, 120, true);
             // Snowy taiga only where the cold is extreme, so summer taiga is not dotted with snow-field patches.
-            case SUBARCTIC -> t < -10 ? new Surface(snowyTaiga, GRASS, DIRT, 65, 10, 0, 90, 100, true)
-                    : new Surface(patch > 0.45 && local.rain() > 500 ? oldTaiga : taiga, patch > 0.45 ? PODZOL : GRASS, DIRT, 75, 9, 1, 110, 120, true);
+            case SUBARCTIC -> {
+                if (t < -10) yield new Surface(snowyTaiga, GRASS, DIRT, 65, 10, 0, 90, 100, true);
+                // Podzol where the patches say, and more of it the more humus the soil map shows under the trees:
+                // most of the floor in Finland's and Quebec's wet spruce woods, little in the dry larch taiga of Yakutia.
+                double podzol = maps == null ? 0.45 : 0.45 - (soilCarbon(x, z) - 0.5) * 0.7;
+                yield new Surface(patch > podzol && local.rain() > 500 ? oldTaiga : taiga, patch > podzol ? PODZOL : GRASS, DIRT, 75, 9, 1, 110, 120, true);
+            }
             // Stunted trees at the treeline.
             case TUNDRA, ICE -> new Surface(t < -5 ? snowyTaiga : grove, GRASS, DIRT, 30, 10, 0, 60, 70, false);
         };
@@ -3829,6 +3989,15 @@ public final class EarthGenerator extends SurfaceGenerator {
             loads.add(() -> {
                 try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
                 catch (RuntimeException failure) { missed.accept("climate", failure); }
+            });
+        }
+        if (canopy != null) {
+            // Tree heights for the trees that stand near by; further out the far levels draw no trees.
+            double reach = Math.min(most, 3500);
+            GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
+            loads.add(() -> {
+                try { canopy.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), CANOPY_OVERVIEW); }
+                catch (RuntimeException failure) { missed.accept("canopy height", failure); }
             });
         }
         if (rivers != null) {

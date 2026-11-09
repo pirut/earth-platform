@@ -50,7 +50,10 @@ More: [Install guide](docs/INSTALL.md) (shaders, Macs, servers) · [Playing on t
 | [CHELSA](https://chelsa-climate.org/) | The real climate, which picks every biome | Karger et al., WSL | CC0 1.0 |
 | [JRC Global Surface Water](https://global-surface-water.appspot.com/) | Rivers and streams carved where water flows | European Commission JRC, Google, Copernicus | Free, without restriction |
 | [RESOLVE Ecoregions 2017](https://ecoregions.appspot.com/) | Each region's character, such as swamps and mangroves | RESOLVE, Dinerstein et al. | CC BY 4.0 |
-| [NASA Blue Marble](https://visibleearth.nasa.gov/collection/1484/blue-marble) | The globe on the start and travel maps | NASA Earth Observatory, Reto Stöckli | Public domain |
+| [High Resolution Canopy Height Maps](https://registry.opendata.aws/dataforgood-fb-forests/) | How tall the trees stand, and where the giants grow | Meta and World Resources Institute | CC BY 4.0 |
+| [Global Lithological Map](https://doi.org/10.1029/2012GC004370) via [HydroATLAS](https://www.hydrosheds.org/hydroatlas) | The rock under each place: basalt, granite and the rest | Hartmann and Moosdorf; Linke et al. | CC BY 3.0 / CC BY 4.0 |
+| [ISRIC SoilGrids 2.0](https://soilgrids.org/) | Peat and humus in northern forest soils | ISRIC - World Soil Information, Poggio et al. | CC BY 4.0 |
+| [NASA Blue Marble](https://visibleearth.nasa.gov/collection/1484/blue-marble) | The globe on the start and travel maps, and where bare ground is red | NASA Earth Observatory, Reto Stöckli | Public domain |
 | [Sentinel-2 cloudless](https://cloudless.eox.at) (optional, off by default) | Ground colors that match the view from space | EOX IT Services | See [CREDITS.md](CREDITS.md#ground-colours-optional-sentinel-2-cloudless) |
 
 The full attribution each source asks for, and how we changed its data, is in [CREDITS.md](CREDITS.md) and in game under Mods → Earth Platform. Earth Platform resamples these data, picks blocks and adds small procedural detail the data is too coarse for, so it is not a survey and is not for navigation.

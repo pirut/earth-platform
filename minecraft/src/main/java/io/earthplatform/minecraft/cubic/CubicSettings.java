@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic;
 
 import io.earthplatform.geography.globe.BareEarth;
+import io.earthplatform.geography.globe.CanopySource;
 import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
@@ -19,6 +20,7 @@ import io.earthplatform.geography.globe.Drainage;
 import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.SurfaceWaterSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
+import io.earthplatform.minecraft.cubic.earth.EarthMaps;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.HighlandsGenerator;
@@ -60,6 +62,9 @@ public final class CubicSettings {
     /** 3DEP by each way of reading it a world may pin. */
     private static final UsgsElevation[] usgs = new UsgsElevation[UsgsElevation.Reading.values().length];
     private static WorldCoverSource cover;
+    private static CanopySource canopy;
+    /** The {@code earth.plants} pin of worlds whose cacti, bamboo and cherries grow by ecoregion realm and climate. */
+    public static final String PLANT_REALMS = "realms-v1";
     private static BareEarth bareEarth;
     private static ClimateSource climate;
     private static SurfaceWaterSource surfaceWater;
@@ -124,6 +129,18 @@ public final class CubicSettings {
                         coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : streamsId.isEmpty() ? rivers() : riversAndStreams(),
                         coverId.isEmpty() || groundId.isEmpty() ? null : bareEarth());
                 if (cavesId.isEmpty()) earth.legacyCaves();
+                // Worlds made before build 70 keep the boxes of latitude and longitude that placed their giant trees, red
+                // deserts, lava fields, cacti, bamboo and cherries, so new ground matches what they have saved.
+                String canopyId = properties.getProperty("earth.canopy", "");
+                if (!canopyId.isEmpty() && !CanopySource.DATASET_ID.equals(canopyId))
+                    throw new IllegalStateException("Unsupported canopy heights '" + canopyId + "' in " + file);
+                String mapsId = properties.getProperty("earth.maps", "");
+                if (!mapsId.isEmpty() && !EarthMaps.ID.equals(mapsId))
+                    throw new IllegalStateException("Unsupported rock and soil maps '" + mapsId + "' in " + file);
+                String plantsId = properties.getProperty("earth.plants", "");
+                if (!plantsId.isEmpty() && !PLANT_REALMS.equals(plantsId))
+                    throw new IllegalStateException("Unsupported plant ranges '" + plantsId + "' in " + file);
+                earth.data(coverId.isEmpty() || canopyId.isEmpty() ? null : canopy(), !mapsId.isEmpty(), !plantsId.isEmpty());
                 yield earth;
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
@@ -165,6 +182,9 @@ public final class CubicSettings {
         properties.setProperty("earth.streams", Drainage.ID);
         properties.setProperty("earth.ground", BareEarth.ID);
         properties.setProperty("earth.caves", SurfaceGenerator.VANILLA_CAVES);
+        if (!"false".equals(System.getProperty("earthplatform.earth.canopy"))) properties.setProperty("earth.canopy", CanopySource.DATASET_ID);
+        if (!"false".equals(System.getProperty("earthplatform.earth.maps"))) properties.setProperty("earth.maps", EarthMaps.ID);
+        if (!"false".equals(System.getProperty("earthplatform.earth.realms"))) properties.setProperty("earth.plants", PLANT_REALMS);
         if (imageryEnabled()) properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
         if (!name.isEmpty()) properties.setProperty("earth.homeName", name);
     }
@@ -368,6 +388,21 @@ public final class CubicSettings {
         if (bareEarth == null)
             bareEarth = new BareEarth(tiles(), cover(), cacheFolder().resolve(BareEarth.ID));
         return bareEarth;
+    }
+
+    /** Canopy heights shared by every Earth world in this game, cached on disk beside the elevation tiles. */
+    public static synchronized CanopySource canopy() {
+        if (canopy == null) {
+            Path cache = cacheFolder().resolve(CanopySource.DATASET_ID);
+            try {
+                // Each block is 256 KiB and covers 10 km of trees at the detail they are read at.
+                canopy = new CanopySource(CanopySource.AWS_CANOPY, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        24, 4, Duration.ofSeconds(30));
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the canopy height cache at " + cache, failure);
+            }
+        }
+        return canopy;
     }
 
     /** Land cover shared by every Earth world in this game, cached on disk beside the elevation tiles. */

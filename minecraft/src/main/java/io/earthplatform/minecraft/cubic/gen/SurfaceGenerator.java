@@ -125,6 +125,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     /** Whether giant sequoia groves may be near a column; their trees stand far taller than any other. */
     protected boolean giants(int x, int z) { return false; }
 
+    /**
+     * How tall the real trees round a column stand, in metres, where the generator knows; -1 where it does not,
+     * and trees grow to the heights vanilla gives them.
+     */
+    protected int canopy(int x, int z) { return -1; }
+
     /** Whether the water over a column is iced over: by default wherever its biome freezes. */
     protected boolean iced(Surface surface, int x, int z) { return surface.biome().value().getBaseTemperature() < 0.15f; }
     /** The rock layers a column shows in its cliff faces, or null for plain stone. */

@@ -35,7 +35,7 @@ Only the first time you visit a place. The mod downloads that area's elevation, 
 It depends how much of the planet you explore. Downloaded data lives in `earthplatform/cache` inside your game folder. It is limited to 8 GB by default: the files you used least recently are removed when the game starts and as the cache grows. Change the limit in Mods → Earth Platform → Config (or `cacheLimitGb` in `config/earthplatform-common.toml`). Deleting the folder is safe: it downloads again when needed.
 
 **Stuck on "Preparing your Earth"?**
-The starting place has not finished downloading. Check your connection; the screen keeps retrying and enters the world as soon as the ground has arrived. Behind a firewall, allow `s3.amazonaws.com`, `esa-worldcover.s3.eu-central-1.amazonaws.com` and `os.zhdk.cloud.switch.ch` (plus `tiles.maps.eox.at` if you turned satellite imagery on).
+The starting place has not finished downloading. Check your connection; the screen keeps retrying and enters the world as soon as the ground has arrived. Behind a firewall, allow `s3.amazonaws.com`, `esa-worldcover.s3.eu-central-1.amazonaws.com`, `dataforgood-fb-data.s3.amazonaws.com` and `os.zhdk.cloud.switch.ch` (plus `tiles.maps.eox.at` if you turned satellite imagery on).
 
 ## Performance
 

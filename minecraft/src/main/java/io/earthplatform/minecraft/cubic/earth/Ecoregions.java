@@ -14,7 +14,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The world's ecoregions (RESOLVE Ecoregions 2017), baked to a 0.05 degree grid of ecoregion numbers that ships
- * with the mod, with each ecoregion's biome. Rows are held as runs, so the whole map takes a few megabytes.
+ * with the mod, with each ecoregion's biome and the biogeographic realm it lies in. Rows are held as runs, so
+ * the whole map takes a few megabytes.
  */
 public final class Ecoregions {
     public static final String ATTRIBUTION = "Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, BioScience 67:534-545 (CC BY 4.0)";
@@ -22,6 +23,15 @@ public final class Ecoregions {
     public static final int NONE = 0, TROPICAL_MOIST = 1, TROPICAL_DRY = 2, TROPICAL_CONIFER = 3, TEMPERATE_BROADLEAF = 4,
             TEMPERATE_CONIFER = 5, BOREAL = 6, TROPICAL_GRASSLAND = 7, TEMPERATE_GRASSLAND = 8, FLOODED_GRASSLAND = 9,
             MONTANE_GRASSLAND = 10, TUNDRA = 11, MEDITERRANEAN = 12, DESERT = 13, MANGROVE = 14;
+    /**
+     * RESOLVE realms, the great regions whose plants and animals share a history: North America, Central and
+     * South America, Europe with north Asia and north Africa, south and south-east Asia, Africa south of the
+     * Sahara, Australia with New Guinea, the Pacific islands and Antarctica.
+     */
+    public static final int NO_REALM = 0, NEARCTIC = 1, NEOTROPIC = 2, PALEARCTIC = 3, INDOMALAYAN = 4, AFROTROPIC = 5,
+            AUSTRALASIA = 6, OCEANIA = 7, ANTARCTICA = 8;
+    private static final java.util.Map<String, Integer> REALM_CODES = java.util.Map.of("NA", NEARCTIC, "NT", NEOTROPIC, "PA", PALEARCTIC,
+            "IM", INDOMALAYAN, "AT", AFROTROPIC, "AA", AUSTRALASIA, "OC", OCEANIA, "AN", ANTARCTICA);
 
     private static final Logger LOG = LoggerFactory.getLogger(Ecoregions.class);
     private static final int WIDTH = 7200, HEIGHT = 3600, PER_DEGREE = 20;
@@ -29,9 +39,11 @@ public final class Ecoregions {
     private static volatile boolean failed;
 
     private final short[][] starts, values;
-    private final byte[] biomes;
+    private final byte[] biomes, realms;
 
-    private Ecoregions(short[][] starts, short[][] values, byte[] biomes) { this.starts = starts; this.values = values; this.biomes = biomes; }
+    private Ecoregions(short[][] starts, short[][] values, byte[] biomes, byte[] realms) {
+        this.starts = starts; this.values = values; this.biomes = biomes; this.realms = realms;
+    }
 
     /** The map, read once from the mod's resources; null if it could not be read. */
     public static Ecoregions get() {
@@ -70,17 +82,19 @@ public final class Ecoregions {
             starts[y] = Arrays.copyOf(s, runs);
             values[y] = Arrays.copyOf(v, runs);
         }
-        byte[] biomes = new byte[1 << 12];
+        byte[] biomes = new byte[1 << 12], realms = new byte[1 << 12];
         try (InputStream in = Ecoregions.class.getResourceAsStream("/earthplatform/ecoregions.tsv")) {
             if (in == null) throw new IOException("missing /earthplatform/ecoregions.tsv");
             BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
             for (String line; (line = reader.readLine()) != null; ) {
                 String[] cells = line.split("\t");
                 int id = Integer.parseInt(cells[0]);
-                if (id > 0 && id < biomes.length) biomes[id] = (byte) Integer.parseInt(cells[1]);
+                if (id <= 0 || id >= biomes.length) continue;
+                biomes[id] = (byte) Integer.parseInt(cells[1]);
+                if (cells.length > 3) realms[id] = (byte) (int) REALM_CODES.getOrDefault(cells[3], NO_REALM);
             }
         }
-        return new Ecoregions(starts, values, biomes);
+        return new Ecoregions(starts, values, biomes, realms);
     }
 
     /** The ecoregion at a place, or 0 where there is none (sea, rock and ice). */
@@ -95,4 +109,7 @@ public final class Ecoregions {
 
     /** The RESOLVE biome of an ecoregion. */
     public int biome(int ecoregion) { return ecoregion > 0 && ecoregion < biomes.length ? biomes[ecoregion] : NONE; }
+
+    /** The realm an ecoregion lies in, or {@link #NO_REALM}. */
+    public int realm(int ecoregion) { return ecoregion > 0 && ecoregion < realms.length ? realms[ecoregion] : NO_REALM; }
 }
