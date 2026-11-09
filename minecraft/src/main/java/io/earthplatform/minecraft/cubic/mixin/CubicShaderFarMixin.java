@@ -20,6 +20,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 abstract class CubicShaderFarMixin {
     @Inject(method = "getRenderDistanceInBlocks", at = @At("RETURN"), cancellable = true, require = 0, remap = false)
     private static void earthplatform$farTerrainReach(CallbackInfoReturnable<Integer> result) {
-        if (ClientCubeWorld.current() != null && !FarLod.replacesFar()) result.setReturnValue(Math.max(result.getReturnValueI(), (int) FarRenderer.FOG_END));
+        if (ClientCubeWorld.current() == null) return;
+        if (!FarLod.replacesFar()) result.setReturnValue(Math.max(result.getReturnValueI(), (int) FarRenderer.FOG_END));
+        // A pack's Distant Horizons program drops what it draws inside the game's own terrain's reach, which here may end short of the render distance.
+        else if (FarLod.dhActive()) result.setReturnValue(Math.min(result.getReturnValueI(), (int) FarLod.nearReach()));
     }
 }

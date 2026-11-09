@@ -203,4 +203,93 @@ class FarShadersTest {
         assertEquals(32, steep >> 6);
         assertTrue(FarMesher.normalCode(1000.0F, -1000.0F) != 0, "0 stays free for the face's own normal");
     }
+
+    /** A Distant Horizons terrain vertex shader in the form Iris's patcher leaves it. */
+    private static final String DH_VERTEX = """
+            #version 330 core
+            #extension GL_ARB_explicit_attrib_location : enable
+            uniform mat4 iris_ProjectionMatrix;
+            uniform mat4 iris_ModelViewMatrix;
+            in uvec4 vPosition;
+            in vec4 iris_color;
+            in uvec4 irisExtra;
+            vec3 _vert_position;
+            vec2 _vert_tex_light_coord;
+            int dhMaterialId;
+            vec4 _vert_color;
+            vec3 _vert_normal;
+            uniform vec3 modelOffset;
+            void _vert_init() {
+                uint meta = vPosition.a;
+                if (meta > 0u) { _vert_position = vec3(vPosition.xyz); }
+                _vert_color = iris_color;
+            }
+            vec4 getVertexPosition() { return vec4(modelOffset + _vert_position, 1.0); }
+            out vec4 tint;
+            void main() {
+                _vert_init();
+                tint = _vert_color;
+                gl_Position = iris_ProjectionMatrix * iris_ModelViewMatrix * getVertexPosition();
+            }
+            """;
+
+    private static final String DH_FRAGMENT = """
+            #version 430 core
+            in vec4 tint;
+            layout (location = 0) out vec4 iris_FragData0;
+            layout (location = 1) out vec4 iris_FragData1;
+            layout (location = 2) out vec4 iris_FragData2;
+            void main() {
+                if (tint.a < 0.1) discard;
+                iris_FragData0 = tint;
+                iris_FragData1 = vec4(1.0);
+                iris_FragData2 = vec4(0.0);
+            }
+            """;
+
+    @Test void aDistantHorizonsProgramTakesFarFacesAsItsVertices() {
+        FarShaders.PackPatch patch = FarShaders.dhPatch(DH_VERTEX, DH_FRAGMENT, 3);
+        assertTrue(patch.dh());
+        assertEquals(3, patch.outputs());
+        // The faces' own depth goes after the pack's three outputs.
+        assertEquals(3, patch.faceDepthLocation());
+        String vertex = FarShaders.dhVertex("#version 330 core\n", patch);
+        // Distant Horizons' own unpacking is gone, braces and all, and far terrain's stands in.
+        assertTrue(!vertex.contains("vPosition.a") && !vertex.contains("meta > 0u"), vertex);
+        assertTrue(vertex.contains("_vert_position = earth_dhPosition;") && vertex.contains("dhMaterialId = earth_dhMaterial;"), vertex);
+        assertTrue(vertex.contains("vec4 getVertexPosition()"), vertex);
+        // One main, which runs far terrain's then the pack's; extensions follow the version line.
+        assertEquals(1, count(vertex, "void main()"));
+        assertTrue(vertex.contains("void earth_main()") && vertex.contains("void earth_dhMain()"), vertex);
+        assertTrue(vertex.startsWith("#version 330 core\n#extension GL_ARB_explicit_attrib_location : enable\n"), vertex);
+        assertEquals(1, count(vertex, "#version"));
+    }
+
+    @Test void aDistantHorizonsFragmentShaderRunsAfterFarTerrainsOwnPart() {
+        FarShaders.PackPatch patch = FarShaders.dhPatch(DH_VERTEX, DH_FRAGMENT, 3);
+        String fragment = FarShaders.dhFragment("#version 330 core\n", patch, true, 0, false);
+        // The pack asks for a newer GLSL than far terrain's own, and gets it.
+        assertTrue(fragment.startsWith("#version 430 core\n#define EARTH_OWN_DEPTH\n"), fragment);
+        assertEquals(1, count(fragment, "#version"));
+        assertEquals(1, count(fragment, "void main()"));
+        assertTrue(fragment.contains("layout(location = 3) out float earth_faceDepth;"), fragment);
+        assertTrue(fragment.indexOf("void earth_dhBefore()") < fragment.indexOf("void earth_dhMain()"), fragment);
+        assertTrue(fragment.indexOf("earth_dhBefore();\n    earth_dhMain();") > fragment.indexOf("void earth_dhMain()"), fragment);
+    }
+
+    @Test void aVertexShaderIrisDidNotPatchForDistantHorizonsIsLeftAlone() {
+        assertNull(FarShaders.dhPatch("#version 330 core\nvoid main() { gl_Position = vec4(0.0); }\n", DH_FRAGMENT, 3));
+    }
+
+    @Test void nearFarTerrainUnderADistantHorizonsPackStopsAtTheBlocksReach() {
+        String near = FarShaders.dhNearFragment("#version 330 core\n");
+        assertEquals(1, count(near, "void main()"));
+        assertTrue(near.contains("if (length(earth_position.xz) >= earth_NearReach) discard;"), near);
+    }
+
+    private static int count(String text, String part) {
+        int count = 0;
+        for (int at = text.indexOf(part); at >= 0; at = text.indexOf(part, at + 1)) count++;
+        return count;
+    }
 }

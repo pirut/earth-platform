@@ -40,11 +40,14 @@ public final class FarPackPatch {
         }
     }
 
-    /** The active pack's Voxy code for the current dimension, or null when it has none. */
+    /** The active pack's Voxy code for the current dimension, or what stands in for it, or null when it has none. */
     @Nullable static FarShaders.PackPatch current() {
         ShaderPack pack = Iris.getCurrentPack().orElse(null);
         if (pack == null) return null;
         ProgramSet programs = pack.getProgramSet(Iris.getCurrentDimension());
-        return programs == null ? null : PATCHES.get(programs);
+        if (programs == null) return null;
+        FarShaders.PackPatch voxy = PATCHES.get(programs);
+        // A pack with a Distant Horizons terrain program and no Voxy code is drawn with that (see FarDhPack).
+        return voxy != null || !FarLod.dhDefined() ? voxy : FarDhPack.patch(programs);
     }
 }
