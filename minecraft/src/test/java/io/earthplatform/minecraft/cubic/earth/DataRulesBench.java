@@ -99,6 +99,8 @@ class DataRulesBench {
                             .append(slice(both[k], at[0], at[1], image, PIXELS + 8 + k * (SLICE_HIGH + 8))).append('\n');
                 }
                 ImageIO.write(image, "png", out.resolve(part[0] + ".png").toFile());
+                int dump = Integer.parseInt(System.getenv().getOrDefault("EARTH_DATA_DUMP", "0"));
+                if (dump > 0) for (int k = 0; k < 2; k++) dump(both[k], at[0], at[1], dump, out.resolve(part[0] + (k == 0 ? "-boxes" : "-data") + ".vox"));
             } catch (RuntimeException failure) {
                 text.append("  failed: ").append(failure).append('\n');
                 failure.printStackTrace();
@@ -223,6 +225,37 @@ class DataRulesBench {
             }
         }
         return columns == 0 ? "none" : String.format(Locale.ROOT, "crowns %.1f blocks up on average, the tallest %d", sum / (double) columns, tallest);
+    }
+
+    /** Writes the blocks of a square as colours, for a 3D picture: sizes and base height, then 3 bytes a block (0 for air), x fastest, then z, then y. */
+    private static void dump(EarthGenerator earth, int cx, int cz, int size, Path file) throws java.io.IOException {
+        int x0 = cx - size / 2 & ~15, z0 = cz - size / 2 & ~15, low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
+        for (int x = x0; x < x0 + size; x += 4) for (int z = z0; z < z0 + size; z += 4) {
+            low = Math.min(low, earth.surfaceY(x, z));
+            high = Math.max(high, earth.surfaceY(x, z));
+        }
+        int cy0 = Math.floorDiv(low - 8, 16), cy1 = Math.floorDiv(high + 104, 16), ny = (cy1 - cy0 + 1) * 16;
+        byte[] rgb = new byte[size * size * ny * 3];
+        for (int scx = x0 >> 4; scx < x0 + size >> 4; scx++) for (int scz = z0 >> 4; scz < z0 + size >> 4; scz++) for (int cy = cy0; cy <= cy1; cy++) {
+            LevelChunkSection section = earth.generate(scx, cy, scz);
+            for (int ly = 0; ly < 16; ly++) for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
+                BlockState state = section.getBlockState(lx, ly, lz);
+                if (state.isAir()) continue;
+                String name = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+                int colour = name.equals("spruce_leaves") ? 0x3A5F3A : name.equals("birch_leaves") ? 0x6E9A4E : name.equals("jungle_leaves") ? 0x3F8A22
+                        : state.getBlock() instanceof LeavesBlock ? 0x4C8A2C : name.equals("mangrove_log") ? 0x7A3B2E : name.equals("spruce_log") ? 0x4A3520
+                        : name.equals("birch_log") ? 0xD8D8D0 : state.is(BlockTags.LOGS) ? 0x6B5030 : name.equals("grass_block") ? 0x6FA24A
+                        : name.equals("podzol") ? 0x6A4A1E : name.equals("water") ? 0x3A62B0 : name.equals("snow") ? 0xF4F8F8
+                        : state.getMapColor(net.minecraft.world.level.EmptyBlockGetter.INSTANCE, net.minecraft.core.BlockPos.ZERO).col;
+                if (colour == 0) colour = 0x010101;
+                int i = ((((cy - cy0) * 16 + ly) * size + (scz << 4) + lz - z0) * size + (scx << 4) + lx - x0) * 3;
+                rgb[i] = (byte) (colour >> 16); rgb[i + 1] = (byte) (colour >> 8); rgb[i + 2] = (byte) colour;
+            }
+        }
+        try (var data = new java.io.DataOutputStream(new java.io.BufferedOutputStream(Files.newOutputStream(file)))) {
+            data.writeInt(size); data.writeInt(ny); data.writeInt(cy0 * 16);
+            data.write(rgb);
+        }
     }
 
     private static int shade(int rgb, double factor) {

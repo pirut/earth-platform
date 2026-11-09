@@ -3760,17 +3760,20 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** The canopy map's overview trees are read at: pixels about 19 m across at the equator. */
     private static final int CANOPY_OVERVIEW = 1;
     /** Giant country cells, in blocks as a power of two, and how far past its edge a cell looks, in 16-block columns. */
-    private static final int GIANT_CELL_BITS = 8, GIANT_MARGIN = 4;
+    private static final int GIANT_CELL_BITS = 8, GIANT_MARGIN = 9;
     /**
-     * A grove is where at least {@link #GROVE_GIANTS} of the 16-block columns within {@link #GROVE_REACH} columns
+     * A grove is where at least {@link #GROVE_GIANTS} of the 16-block columns within {@link #GROVE_REACH} columns (81 of them)
      * read giant height: the map's giants come as crowns scattered a few to the hectare, and a grove is the
      * ground between them too, while one tall pine alone on a ridge makes none.
      */
-    private static final int GROVE_REACH = 3, GROVE_GIANTS = 3;
+    private static final int GROVE_REACH = 4;
+    private static final double GROVE_GIANTS = 5;
+    /** The stand height from which conifer country's forest is old growth, in metres. */
+    private static final int OLD_GROWTH = 33;
     /** Canopy heights by 16-block column, a byte each with 0 for unknown, and whether each giant country cell holds giants. */
     private final RecentCache<Byte> canopyColumns = new RecentCache<>(1 << 16);
     private final RecentCache<Boolean> giantCells = new RecentCache<>(1 << 14);
-    private final RecentCache<Byte> groveColumns = new RecentCache<>(1 << 16);
+    private final RecentCache<Byte> groveColumns = new RecentCache<>(1 << 16), standColumns = new RecentCache<>(1 << 16);
 
     /** The canopy map's height in metres at the middle of a 16-block column, or -1 where it has no reading. */
     private int canopyColumn(int cx, int cz) {
@@ -3786,20 +3789,54 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /**
-     * How tall the trees round a column stand, in metres: the tallest of the canopy map's readings at the middles of
-     * the nine 16-block columns round it, since the map reads the gaps between crowns as well as the crowns, and a
-     * tree beside a gap is as tall as its neighbours. -1 where there is no map or it has no reading.
+     * How tall the stand at a 16-block column is, in metres: the tallest of the canopy map's readings at the middles
+     * of the nine columns round it, since the map reads the gaps between crowns as well as the crowns, and a tree
+     * beside a gap is as tall as its neighbours. -1 where the map has no reading.
      */
+    private int standColumn(int cx, int cz) {
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
+        Byte known = standColumns.get(key);
+        if (known == null) {
+            int tallest = -1;
+            for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) tallest = Math.max(tallest, canopyColumn(cx + i, cz + j));
+            known = (byte) (tallest + 1);
+            standColumns.put(key, known);
+        }
+        return known - 1;
+    }
+
+    /** How tall the stand round a block column is, in metres, blended between the columns round it; -1 where unknown. */
+    private double stand(int x, int z) {
+        int ix = x - 8 >> 4, iz = z - 8 >> 4;
+        double tx = (x - 8 - (ix << 4)) / 16.0, tz = (z - 8 - (iz << 4)) / 16.0, sum = 0, weight = 0;
+        for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
+            int metres = standColumn(ix + i, iz + j);
+            if (metres < 0) continue;
+            double w = (i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - tz : tz);
+            sum += metres * w;
+            weight += w;
+        }
+        return weight < 0.25 ? -1 : sum / weight;
+    }
+
+    /** How tall the trees round a column stand, in metres; -1 where there is no map or it has no reading. */
     @Override protected int canopy(int x, int z) {
-        if (canopy == null) return -1;
-        int cx = x >> 4, cz = z >> 4, tallest = -1;
-        for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) tallest = Math.max(tallest, canopyColumn(cx + i, cz + j));
-        return tallest;
+        return canopy == null ? -1 : (int) Math.round(stand(x, z));
+    }
+
+    /**
+     * Whether a forest column in conifer country is old growth: where the stand is {@link #OLD_GROWTH} metres tall
+     * and more, as in the Olympics' and the Cascades' rainforests and the Sierra Nevada's sugar pine and fir belt.
+     * Such forest is big conifers whatever the climate alone would grow, and it is what giant groves stand in.
+     */
+    private boolean oldGrowth(int x, int z) {
+        if (canopy == null) return false;
+        return coniferCountry(x, z) && stand(x + sway(x, z, 2), z + sway(x, z, 3)) >= OLD_GROWTH;
     }
 
     /**
      * Whether giant trees may stand near a column: in worlds that read the canopy map, where its 256-block cell or
-     * the four columns past its edge hold a reading of giant height, in conifer country. Elsewhere no forest
+     * the nine columns past its edge hold a reading of giant height, in conifer country. Elsewhere no forest
      * column asks the map twice. Older worlds keep the Sierra Nevada's sequoia belt.
      */
     @Override protected boolean giants(int x, int z) {
@@ -3839,11 +3876,21 @@ public final class EarthGenerator extends SurfaceGenerator {
     private boolean sequoias(int x, int z, int y) {
         if (canopy == null) return OldRegions.grove(grid.geographic(x, z), y - SEA);
         if (!giants(x, z) || !coniferCountry(x, z)) return false;
-        // Blended between the columns round it, so a grove's edge is a curve and not a staircase of 16-block squares.
+        // Read a few dozen blocks aside, by broad noise: the map is stitched from strips of imagery that read heights
+        // a little differently, and a grove must not end along a strip's straight edge. Then blended between the
+        // columns round it, so a grove's edge is a curve and not a staircase of 16-block squares.
+        int wx = x + sway(x, z, 0), wz = z + sway(x, z, 1);
+        x = wx; z = wz;
         int ix = x - 8 >> 4, iz = z - 8 >> 4;
         double tx = (x - 8 - (ix << 4)) / 16.0, tz = (z - 8 - (iz << 4)) / 16.0;
         double north = groveColumn(ix, iz) * (1 - tx) + groveColumn(ix + 1, iz) * tx, south = groveColumn(ix, iz + 1) * (1 - tx) + groveColumn(ix + 1, iz + 1) * tx;
-        return north * (1 - tz) + south * tz + 1.5 * patches.getValue(x / 48.0 + 17.7, z / 48.0 - 5.3) >= GROVE_GIANTS;
+        return north * (1 - tz) + south * tz >= GROVE_GIANTS;
+    }
+
+    /** How far aside a column reads the canopy map's groves and old growth, in blocks: up to about 50, changing over a few hundred. */
+    private int sway(int x, int z, int which) {
+        return (int) Math.round(36 * patches.getValue(x / 260.0 + 51.3 + which * 19.1, z / 260.0 - 77.9 - which * 7.3)
+                + 12 * patches.getValue(x / 70.0 - 3.7 - which * 11.9, z / 70.0 + 9.2 + which * 23.3));
     }
 
     /** How many of the 16-block columns within {@link #GROVE_REACH} of one read giant height on the canopy map. */
@@ -3864,6 +3911,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private Surface forest(Local local, double patch, int x, int z, int y) {
         // Giant sequoias among old conifers, on duff, in the real groves.
         if (sequoias(x, z, y)) return new Surface(oldTaiga, patch > -0.2 ? PODZOL : GRASS, DIRT, 70, 7, 0, 90, 100, true, Tree.SEQUOIA);
+        if (oldGrowth(x, z) && local.zone() != ClimateZone.RAINFOREST && local.zone() != ClimateZone.TROPICAL_DRY)
+            return new Surface(oldTaiga, patch > 0.3 ? PODZOL : GRASS, DIRT, 80, 8, 0, 110, 120, true);
         double t = local.temperature();
         // A tropical climate over an ecoregion that is not tropical forest, as in south Florida: no jungle there.
         if (local.zone() == ClimateZone.RAINFOREST || local.zone() == ClimateZone.TROPICAL_DRY) {
