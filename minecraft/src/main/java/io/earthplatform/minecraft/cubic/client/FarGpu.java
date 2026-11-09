@@ -631,7 +631,30 @@ final class FarGpu {
      * What a pass drew, multi-draw by multi-draw, with the fade each was drawn with, for drawing it
      * again (see {@link #play}), and what the caller drew it for (see {@link #drew}).
      */
-    static final class Recording {
+    /** A recording's ranges as {@link FarQueryCull} reads them: by multi-draw, then by range in it. */
+    interface RangeSource {
+        int draws();
+        int ranges(int draw);
+        /** Faces in the range, and its first face. */
+        int count(int draw, int range);
+        int first(int draw, int range);
+        /** Writes the range's box at {@code at}: its low corner, the widest column in it, its high corner, 0. */
+        void box(int draw, int range, FloatBuffer into, int at);
+    }
+
+    static final class Recording implements RangeSource {
+        @Override public int draws() { return count; }
+        @Override public int ranges(int draw) { return draws.get(draw).draws; }
+        @Override public int count(int draw, int range) { return draws.get(draw).counts[range]; }
+        @Override public int first(int draw, int range) { return draws.get(draw).firsts[range]; }
+        @Override public void box(int draw, int range, FloatBuffer into, int at) {
+            Kept kept = draws.get(draw);
+            float[] boxes = kept.boxes;
+            int from = range * 6;
+            into.put(at, boxes[from]).put(at + 1, boxes[from + 1]).put(at + 2, boxes[from + 2]).put(at + 3, kept.reaches[range]);
+            into.put(at + 4, boxes[from + 3]).put(at + 5, boxes[from + 4]).put(at + 6, boxes[from + 5]).put(at + 7, 0.0F);
+        }
+
         private final List<Kept> draws = new ArrayList<>();
         private int count;
         private int pick = -1;
@@ -686,6 +709,7 @@ final class FarGpu {
         int fade, draws;
         int[] firsts = new int[256], counts = new int[256];
         float[] boxes = new float[256 * 6];
+        float[] reaches = new float[256];
     }
 
     /** Records what is drawn from now until {@link #end}, in place of what the recording held. */
@@ -703,7 +727,9 @@ final class FarGpu {
             draw.firsts = new int[arena.draws];
             draw.counts = new int[arena.draws];
             draw.boxes = new float[arena.draws * 6];
+            draw.reaches = new float[arena.draws];
         }
+        System.arraycopy(arena.reaches, 0, draw.reaches, 0, arena.draws);
         System.arraycopy(arena.firsts, 0, draw.firsts, 0, arena.draws);
         System.arraycopy(arena.counts, 0, draw.counts, 0, arena.draws);
         System.arraycopy(arena.boxes, 0, draw.boxes, 0, arena.draws * 6);
@@ -733,6 +759,7 @@ final class FarGpu {
                 arena.firsts = new int[draw.draws];
                 arena.counts = new int[draw.draws];
                 arena.boxes = new float[draw.draws * 6];
+                arena.reaches = new float[draw.draws];
             }
             System.arraycopy(draw.firsts, 0, arena.firsts, 0, draw.draws);
             System.arraycopy(draw.counts, 0, arena.counts, 0, draw.draws);
@@ -741,6 +768,59 @@ final class FarGpu {
         }
         end();
         return true;
+    }
+
+    /** Where {@link FarQueryCull} binds its boxes while it tests: the faces' unit, bound again before every draw. */
+    static final int QUERY_BOX_UNIT = QUAD_UNIT;
+    @Nullable private FarQueryCull queryCull;
+    private boolean queryCullChecked;
+
+    /** Ranges the last one-pass draw left out or drew only on condition (see {@link FarQueryCull}). */
+    int queryHidden() { return queryCull == null ? 0 : queryCull.hiddenCount(); }
+
+    /**
+     * After {@link #begin} for a one-pass draw: draws what a recording holds with the ranges hidden behind others left
+     * out by occlusion queries (see {@link FarQueryCull}), then ends as {@link #end} does. The recording's boxes are
+     * measured from a point (shiftX, shiftY, shiftZ) away from the camera. False, drawing nothing, when it can't.
+     */
+    boolean playQueried(Recording recording, float shiftX, float shiftY, float shiftZ) {
+        if (phase != ONE_PASS || !INDEXED || recording.count == 0) return false;
+        if (!queryCullChecked) {
+            queryCullChecked = true;
+            if (FarQueryCull.ENABLED && FarQueryCull.supported()) queryCull = new FarQueryCull();
+        }
+        FarQueryCull cull = queryCull;
+        if (cull == null || !cull.prepare(recording, recording)) return false;
+        for (int i = 0; i < recording.count; i++) {
+            if (cull.seenRanges(i) == 0) continue;
+            Kept draw = recording.draws.get(i);
+            if (draw.fade != drawingFade) fade(draw.fade);
+            faces(draw.arena);
+            cull.drawSeen(i);
+            ranges += cull.seenRanges(i);
+        }
+        // Two pixels' worth of distance for the pack's jitter, with the faces' own reach past their columns.
+        int height = Math.max(1, Minecraft.getInstance().getMainRenderTarget().height);
+        double focal = Math.abs(projection.m11());
+        float share = grow(projection) * 1.5F + (focal > 0.0 ? (float) (4.0 / (focal * height)) : 0.0F);
+        cull.test(new Matrix4f(projection).mul(modelView).translate(shiftX, shiftY, shiftZ), share,
+                (float) Math.sqrt(shiftX * shiftX + shiftY * shiftY + shiftZ * shiftZ), dropsNearReach());
+        for (int i = 0; i < recording.count; i++) {
+            int groups = cull.groups(i);
+            if (groups == 0) continue;
+            Kept draw = recording.draws.get(i);
+            if (draw.fade != drawingFade) fade(draw.fade);
+            faces(draw.arena);
+            for (int group = 0; group < groups; group++) ranges += cull.drawGroup(i, group);
+        }
+        end();
+        return true;
+    }
+
+    private void faces(Arena arena) {
+        GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + QUAD_UNIT);
+        GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, arena.buffer.texture);
+        GlStateManager._activeTexture(previousActive);
     }
 
     /**
@@ -1059,6 +1139,7 @@ final class FarGpu {
         for (Program program : prepass) if (program != null) program.close();
         for (Program program : shading) if (program != null) program.close();
         if (hiddenCull != null) { hiddenCull.close(); hiddenCull = null; }
+        if (queryCull != null) { queryCull.close(); queryCull = null; }
         GL30C.glDeleteVertexArrays(vao);
         if (indices != 0) GL15C.glDeleteBuffers(indices);
     }
@@ -1186,8 +1267,10 @@ final class FarGpu {
          */
         int[] firsts = new int[1024], counts = new int[1024];
         float[] boxes = new float[1024 * 6];
+        /** The widest column in each queued range, in blocks, which {@link FarQueryCull} grows its box by. */
+        float[] reaches = new float[1024];
         /** The box of the column whose ranges are queued next (see {@link FarGpu#add}). */
-        private float boxMinX, boxMinY, boxMinZ, boxMaxX, boxMaxY, boxMaxZ;
+        private float boxMinX, boxMinY, boxMinZ, boxMaxX, boxMaxY, boxMaxZ, boxReach;
         /** The same ranges as the multi-draw takes them: corner counts, and where each range starts. */
         private IntBuffer drawCounts = MemoryUtil.memAllocInt(1024), drawStarts = MemoryUtil.memAllocInt(1024);
         private PointerBuffer offsets = MemoryUtil.memAllocPointer(1024);
@@ -1207,6 +1290,7 @@ final class FarGpu {
         void box(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
             boxMinX = minX; boxMinY = minY; boxMinZ = minZ;
             boxMaxX = maxX; boxMaxY = maxY; boxMaxZ = maxZ;
+            boxReach = Math.max(maxX - minX, maxZ - minZ);
         }
 
         /** Queues a range of faces. */
@@ -1223,6 +1307,7 @@ final class FarGpu {
                 box[at + 3] = Math.max(box[at + 3], boxMaxX);
                 box[at + 4] = Math.max(box[at + 4], boxMaxY);
                 box[at + 5] = Math.max(box[at + 5], boxMaxZ);
+                reaches[draws - 1] = Math.max(reaches[draws - 1], boxReach);
                 return;
             }
             // An indexed range reaches only as far as the quad indices do.
@@ -1235,6 +1320,7 @@ final class FarGpu {
                 firsts = java.util.Arrays.copyOf(firsts, draws * 2);
                 counts = java.util.Arrays.copyOf(counts, draws * 2);
                 boxes = java.util.Arrays.copyOf(boxes, draws * 12);
+                reaches = java.util.Arrays.copyOf(reaches, draws * 2);
             }
             firsts[draws] = first;
             counts[draws] = count;
@@ -1246,6 +1332,7 @@ final class FarGpu {
             box[at + 3] = boxMaxX;
             box[at + 4] = boxMaxY;
             box[at + 5] = boxMaxZ;
+            reaches[draws] = boxReach;
             draws++;
         }
 
