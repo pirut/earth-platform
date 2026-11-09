@@ -35,21 +35,43 @@ public final class Far {
     /** Widest middle any sharpness gives a level, in its own columns. */
     public static final int MAX_HOLE = 48;
     /**
-     * The detail set at start-up, which fixes how far the coarsest level reaches. Set with
-     * {@code -Dearthplatform.far.detail} (4 to 48, default 11; past 24 is the extreme range).
+     * The detail: how far the coarsest level reaches. It starts from
+     * {@code -Dearthplatform.far.detail} (4 to 48, default 11; past 24 is the extreme range) and
+     * changes while playing (see {@link #detail(int)}).
      */
-    public static final int DETAIL = Math.clamp(Integer.getInteger("earthplatform.far.detail", DEFAULT_DETAIL), 4, MAX_DETAIL);
-    /** Half-width of the coarsest level's square. */
-    public static final int OUTER = 2 * DETAIL + 1;
+    private static volatile int detail = Math.clamp(Integer.getInteger("earthplatform.far.detail", DEFAULT_DETAIL), 4, MAX_DETAIL);
+    /** The sharpness last set (see {@link #sharpness}), kept so a new detail scales the same way. */
+    private static volatile double scale = 1.0;
     /**
      * Half-width, in columns, of the middle of each level that the next finer level takes over:
      * how many voxels each level keeps before coarser ones take over, so how many pixels a voxel
-     * covers on screen. Starts at {@link #DETAIL}; the sharpness setting changes it while playing
-     * (see {@link #sharpness}), which leaves the reach as it is.
+     * covers on screen. Starts at the detail; the sharpness setting scales it (see
+     * {@link #sharpness}), which leaves the reach as it is.
      */
-    private static volatile int hole = Math.min(DETAIL, NORMAL_DETAIL);
+    private static volatile int hole = Math.min(detail, NORMAL_DETAIL);
+
+    public static int detail() { return detail; }
+
+    /** Half-width of the coarsest level's square, in its columns. */
+    public static int outer() { return outer(detail); }
+
+    private static int outer(int detail) { return 2 * detail + 1; }
+
+    /** The widest {@link #outer} any detail gives. */
+    public static final int MAX_OUTER = 2 * MAX_DETAIL + 1;
 
     public static int hole() { return hole; }
+
+    /**
+     * Sets the detail while playing: the coarsest level's square grows or shrinks at once and the
+     * levels inside it follow as the sharpness last set scales them. Whoever keeps columns asks
+     * {@link #outer} again as it goes (the client's renderer every plan and walk), so a change
+     * shows as columns coming in or dropping away, as when the player moves.
+     */
+    public static synchronized void detail(int value) {
+        detail = Math.clamp(value, 4, MAX_DETAIL);
+        sharpness(scale);
+    }
 
     /** The sharpness choices past this scale are the extreme ones (see {@link #sharpness}). */
     public static final double EXTREME_SCALE = 2.0;
@@ -57,25 +79,31 @@ public final class Far {
     /**
      * Scales the detail by {@code scale}: below 1 coarser levels take over closer, for speed, above
      * 1 every finer level keeps more columns, so the land looks sharper further out. The normal
-     * choices scale the start-up detail, up to {@link #NORMAL_DETAIL}, and keep the coarsest level
-     * at least one ring of its own, so an extreme distance only adds rings to the coarsest level.
-     * The extreme ones, past {@link #EXTREME_SCALE}, scale the default detail instead, for the same
+     * choices scale the detail, up to {@link #NORMAL_DETAIL}, and keep the coarsest level at least
+     * one ring of its own, so an extreme distance only adds rings to the coarsest level. The
+     * extreme ones, past {@link #EXTREME_SCALE}, scale the default detail instead, for the same
      * voxel size on screen at every distance; a level's square is then cut to its parent's middle,
      * and the coarsest level still keeps its outer ring (see {@link #hole(int)}). The server's
      * slack covers every value.
      */
-    public static void sharpness(double scale) {
-        hole = scale > EXTREME_SCALE
+    public static synchronized void sharpness(double scale) {
+        Far.scale = scale;
+        hole = hole(scale, detail);
+    }
+
+    /** The {@link #hole} a sharpness scale gives at a detail. */
+    public static int hole(double scale, int detail) {
+        return scale > EXTREME_SCALE
                 ? Math.clamp(Math.round(DEFAULT_DETAIL * scale), NORMAL_DETAIL + 1, MAX_HOLE)
-                : Math.clamp(Math.round(Math.min(DETAIL, NORMAL_DETAIL) * scale), 4, Math.min(OUTER - 1, NORMAL_DETAIL));
+                : Math.clamp(Math.round(Math.min(detail, NORMAL_DETAIL) * scale), 4, Math.min(outer(detail) - 1, NORMAL_DETAIL));
     }
 
     /**
      * How far a request may stray from the player, in columns of its level, before the server
      * ignores it; covers every detail and sharpness setting, including a level 7 square up to
-     * 2 * {@link #OUTER} columns across. It was 51 before the extreme settings.
+     * 2 * {@link #MAX_OUTER} columns across. It was 51 before the extreme settings.
      */
-    public static final int SLACK = 2 * Math.max(MAX_HOLE, 2 * MAX_DETAIL + 1) + 3;
+    public static final int SLACK = 2 * Math.max(MAX_HOLE, MAX_OUTER) + 3;
     /** Drops are kept in 1/256ths of a block. */
     public static final int DROP_UNIT = 256;
     /** Levels whose voxels are small enough (16 blocks or less) to show what players built. */
@@ -86,7 +114,7 @@ public final class Far {
     private Far() {}
 
     /** Distance to the nearest edge of the coarsest level's square, in blocks. */
-    public static float reach() { return OUTER * (float) width(MAX_LEVEL); }
+    public static float reach() { return outer() * (float) width(MAX_LEVEL); }
 
     public static int voxel(int level) { return 1 << level; }
     public static int width(int level) { return SIZE << level; }
@@ -133,15 +161,18 @@ public final class Far {
     public static void around(int bx, int bz, int finest, LongConsumer out) { around(bx, bz, finest, Far.hole, out); }
 
     /** The same with the middles {@code hole} (see {@link #hole()}) leaves, read once by a caller that also asks {@link #kept}. */
-    public static void around(int bx, int bz, int finest, int hole, LongConsumer out) {
+    public static void around(int bx, int bz, int finest, int hole, LongConsumer out) { around(bx, bz, finest, hole, outer(), out); }
+
+    /** The same with the coarsest level's half-width (see {@link #outer()}) read once by the caller too. */
+    public static void around(int bx, int bz, int finest, int hole, int outer, LongConsumer out) {
         int minX = 0, minZ = 0, maxX = 0, maxZ = 0;
         for (int level = MAX_LEVEL; level >= finest; level--) {
             if (level == MAX_LEVEL) {
                 int px = column(bx, level), pz = column(bz, level);
-                minX = px - OUTER; maxX = px + OUTER; minZ = pz - OUTER; maxZ = pz + OUTER;
+                minX = px - outer; maxX = px + outer; minZ = pz - outer; maxZ = pz + outer;
             } else {
                 // The children of the coarser level's middle, as far as the coarser level reaches.
-                int h = hole(level + 1, hole), px = column(bx, level + 1), pz = column(bz, level + 1);
+                int h = hole(level + 1, hole, outer), px = column(bx, level + 1), pz = column(bz, level + 1);
                 minX = 2 * Math.max(minX, px - h); maxX = 2 * Math.min(maxX, px + h) + 1;
                 minZ = 2 * Math.max(minZ, pz - h); maxZ = 2 * Math.min(maxZ, pz + h) + 1;
             }
@@ -153,16 +184,18 @@ public final class Far {
      * Whether {@link #around(int, int, int, int, LongConsumer)} gives a key: its level's square
      * worked out as that does, without going over the columns.
      */
-    public static boolean kept(long key, int bx, int bz, int finest, int hole) {
+    public static boolean kept(long key, int bx, int bz, int finest, int hole) { return kept(key, bx, bz, finest, hole, outer()); }
+
+    public static boolean kept(long key, int bx, int bz, int finest, int hole, int outer) {
         int at = level(key);
         if (at < finest || at > MAX_LEVEL) return false;
         int minX = 0, minZ = 0, maxX = 0, maxZ = 0;
         for (int level = MAX_LEVEL; level >= at; level--) {
             if (level == MAX_LEVEL) {
                 int px = column(bx, level), pz = column(bz, level);
-                minX = px - OUTER; maxX = px + OUTER; minZ = pz - OUTER; maxZ = pz + OUTER;
+                minX = px - outer; maxX = px + outer; minZ = pz - outer; maxZ = pz + outer;
             } else {
-                int h = hole(level + 1, hole), px = column(bx, level + 1), pz = column(bz, level + 1);
+                int h = hole(level + 1, hole, outer), px = column(bx, level + 1), pz = column(bz, level + 1);
                 minX = 2 * Math.max(minX, px - h); maxX = 2 * Math.min(maxX, px + h) + 1;
                 minZ = 2 * Math.max(minZ, pz - h); maxZ = 2 * Math.min(maxZ, pz + h) + 1;
             }
@@ -172,14 +205,14 @@ public final class Far {
     }
 
     /** The middle a level gives the next finer one, in its own columns. */
-    public static int hole(int level) { return hole(level, Far.hole); }
+    public static int hole(int level) { return hole(level, Far.hole, outer()); }
 
     /**
      * The coarsest level always keeps its outer ring: with an extreme sharpness the finer levels
      * would otherwise cover it all, and while their many columns came in, the horizon and the
      * square's corners stood empty.
      */
-    private static int hole(int level, int hole) { return level == MAX_LEVEL ? Math.min(hole, OUTER - 1) : hole; }
+    private static int hole(int level, int hole, int outer) { return level == MAX_LEVEL ? Math.min(hole, outer - 1) : hole; }
 
     /** True for the middle columns of a level around a position, which the next finer level draws instead. */
     public static boolean refined(int level, int x, int z, int bx, int bz) { return refined(level, x, z, bx, bz, MIN_LEVEL); }
@@ -191,12 +224,13 @@ public final class Far {
     }
 
     /**
-     * True when a column is within the far terrain's reach of a position at all, at any level: a
-     * zoomed view asks for finer columns where it looks than the player's own levels hold there.
+     * True when a column is within the far terrain's farthest reach of a position at all, at any
+     * level: a zoomed view asks for finer columns where it looks than the player's own levels hold
+     * there. The server asks this, and each player sets their own distance, so it allows the most.
      */
     public static boolean inReach(long key, int bx, int bz) {
         int shift = MAX_LEVEL - level(key);
-        return Math.abs((x(key) >> shift) - column(bx, MAX_LEVEL)) <= OUTER + 1 && Math.abs((z(key) >> shift) - column(bz, MAX_LEVEL)) <= OUTER + 1;
+        return Math.abs((x(key) >> shift) - column(bx, MAX_LEVEL)) <= MAX_OUTER + 1 && Math.abs((z(key) >> shift) - column(bz, MAX_LEVEL)) <= MAX_OUTER + 1;
     }
 
     /** True when a column is close enough to a position to be worth making for it. */

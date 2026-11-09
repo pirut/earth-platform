@@ -191,7 +191,9 @@ public final class EarthGlobeScreen extends Screen {
         if (done != null && look()) done.active = pinned && compass();
         super.render(gui, mouseX, mouseY, partialTick);
         gui.drawCenteredString(font, title, width / 2, 8, 0xFFFFFF);
-        gui.drawCenteredString(font, status(), width / 2, height - 48, 0x9FD7FF);
+        Component stretch = stretch();
+        gui.drawCenteredString(font, status(), width / 2, height - (stretch != null ? 51 : 48), 0x9FD7FF);
+        if (stretch != null) gui.drawCenteredString(font, stretch, width / 2, height - 40, 0xA0A0A0);
         if (hover != null) gui.renderTooltip(font, Component.literal(hover.place.label()), hover.x, hover.y);
         else if (overTarget) gui.renderTooltip(font, Component.translatable(LOOK + ".target"), mouseX, mouseY);
     }
@@ -300,6 +302,17 @@ public final class EarthGlobeScreen extends Screen {
     }
 
     private record Hover(EarthPlaces.Place place, int x, int y) {}
+
+    /**
+     * How stretched the map is where the pin stands (see {@link io.earthplatform.minecraft.cubic.play.EarthStretch}),
+     * or null with nothing to say: in a world, by that world's scale; for a new world, whose home the
+     * pin sets, how the rest of the map stretches from there.
+     */
+    @Nullable private Component stretch() {
+        if (!pinned || look() || warning != null && Util.getMillis() < warningUntil || Math.abs(pinLat) > 80) return null;
+        var world = io.earthplatform.minecraft.cubic.client.ClientCubeWorld.current();
+        return EarthPlayClient.stretch(world != null ? world.far().metresPerBlock() : 0, pinLat);
+    }
 
     private Component status() {
         if (warning != null && Util.getMillis() < warningUntil) return warning;

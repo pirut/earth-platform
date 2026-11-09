@@ -11,9 +11,9 @@ import net.minecraft.network.chat.Component;
 /**
  * The far terrain's distance on the pause menu, in kilometers and miles, through every detail
  * setting from 4 (37 km) to 48 (397 km), past 24 (201 km) marked as extreme; a narrow slider
- * leaves out the miles, then the words, so the label never runs past its edges. The reach is fixed
- * when the game starts (see {@link Far#DETAIL}), so a new distance is saved at once and says it
- * takes a restart.
+ * leaves out the miles, then the words, so the label never runs past its edges. A new distance is
+ * saved and in effect at once (see {@link Far#detail(int)}): when the mouse lets go of a drag, so
+ * the far terrain is asked for once, not at every step on the way.
  */
 final class FarDistanceSlider extends AbstractSliderButton {
     private static final int MIN = 4, MAX = Far.MAX_DETAIL;
@@ -37,11 +37,25 @@ final class FarDistanceSlider extends AbstractSliderButton {
         Font font = Minecraft.getInstance().font;
         Component message = null;
         for (Component label : labels) {
-            message = detail == Far.DETAIL ? label : Component.translatable("earthplatform.pause.distance.restart", label);
+            message = label;
             if (font.width(message) <= getWidth() - 8) break;
         }
         setMessage(message);
     }
 
-    @Override protected void applyValue() { EarthConfig.setDetail(detail()); }
+    private boolean held;
+
+    @Override public void onClick(double mouseX, double mouseY) {
+        held = true;
+        super.onClick(mouseX, mouseY);
+    }
+
+    @Override public void onRelease(double mouseX, double mouseY) {
+        held = false;
+        super.onRelease(mouseX, mouseY);
+        EarthConfig.setDetail(detail());
+    }
+
+    /** The keyboard's steps take effect as they come; a drag when it ends. */
+    @Override protected void applyValue() { if (!held) EarthConfig.setDetail(detail()); }
 }

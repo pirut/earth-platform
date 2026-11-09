@@ -14,7 +14,7 @@
 | `/earth visit <place>` | Go to a famous place, e.g. `/earth visit everest` (tab completes) |
 | `/earth goto <latitude> <longitude>` | Go anywhere, e.g. `/earth goto 46.5935 7.9090` |
 | `/earth places` | List famous places; click one to go there |
-| `/earth where` | Your latitude, longitude, real height and country |
+| `/earth where` | Your latitude, longitude, real height and country, and how stretched the map is there (blocks are 1 m wide only at the world's home latitude) |
 | `/earth random` | A random trip to somewhere on land; `/earth random <km>` stays within that distance |
 | `/earth sethome` | Save where you stand as your home |
 | `/earth home` | Back to your home, or to your spawn if you haven't set one |
@@ -68,8 +68,9 @@ Mods → Earth Platform → Config, or the files in `config/`.
 
 | Setting | File | Default | What it does |
 | --- | --- | --- | --- |
-| `detail` | client | 11 (4 to 48) | How far fine far terrain reaches. Lower helps weaker GPUs; higher needs more memory, and past 24 is the extreme range for very powerful computers. Restart to apply |
+| `detail` | client | 11 (4 to 48) | How far fine far terrain reaches. Lower helps weaker GPUs; higher needs more memory, and past 24 is the extreme range for very powerful computers. Changes at once (also the far view slider on the pause menu) |
 | `sharpness` | client | Balanced | How close coarser far levels take over: Fast, Balanced, Sharp, Sharpest, Extreme or Ultra. Changes at once (also on the pause menu) |
+| `targetFrameRate` | client | 0 (off; up to 240) | A frame rate to hold. Far terrain sharpness steps down a choice at a time, no lower than Fast, while the game runs slower than this, and back up to your `sharpness` when there is room again. Never sharper than your choice; the far distance is left alone. F3 shows when it is holding the sharpness down |
 | `texturedFarLevels` | client | 8 (0 to 8) | How many far levels use block textures; further ones use flat colors. Restart to apply |
 | `showDownloadStatus` | client | on | The small note while Earth data downloads or can't be reached |
 | `preselectEarth` | client | on | Create World starts with the Earth world type |

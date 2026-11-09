@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic.play.client;
 
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
+import io.earthplatform.minecraft.cubic.play.EarthStretch;
 import io.earthplatform.minecraft.cubic.play.EarthStatus;
 import io.earthplatform.minecraft.cubic.play.EarthWorlds;
 import java.lang.ref.WeakReference;
@@ -87,6 +88,23 @@ public final class EarthPlayClient {
             add.accept(new FarDistanceSlider(mods.getX(), mods.getY() + row, full, mods.getHeight()));
             return;
         }
+    }
+
+    /**
+     * A line for a screen that picks a spot at a latitude, on how stretched the map is there: in a
+     * world of {@code metresPerBlock} at the equator, how wide land there is drawn; with 0, for a new
+     * world that will have its home there, how the map stretches away from it. Null in a world that
+     * is not the Earth's.
+     */
+    @javax.annotation.Nullable static Component stretch(double metresPerBlock, double latitude) {
+        if (metresPerBlock > 0) {
+            double stretch = EarthStretch.at(metresPerBlock, latitude);
+            return EarthStretch.close(stretch) ? Component.translatable("earthplatform.stretch.true")
+                    : Component.translatable("earthplatform.stretch.there", EarthStretch.text(stretch));
+        }
+        if (ClientCubeWorld.current() != null) return null;
+        int far = EarthStretch.farLatitude(latitude);
+        return Component.translatable("earthplatform.stretch.home", EarthStretch.text(EarthStretch.from(latitude, 0)), EarthStretch.text(EarthStretch.from(latitude, far)), far);
     }
 
     /** A quiet note while Earth data downloads, and a clear one when it can't be reached. */

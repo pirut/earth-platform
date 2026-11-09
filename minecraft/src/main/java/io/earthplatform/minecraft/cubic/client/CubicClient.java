@@ -186,8 +186,10 @@ public final class CubicClient {
         left.add(at + 1, "Far: " + world.far().drawnCount() + "/" + world.far().columnCount() + " columns, "
                 + world.far().settledPercent() + "% settled (" + world.far().settledInViewPercent() + "% in view), "
                 + world.far().vertexBytes() / (1 << 20) + " MB, " + world.far().drawnRanges() + " draws");
+        int held = io.earthplatform.minecraft.cubic.play.EarthConfig.sharpnessSteps();
+        if (held > 0) left.add(at + 2, "Far sharpness held " + held + " lower to hold " + io.earthplatform.minecraft.cubic.play.EarthConfig.FAR_TARGET_FPS.get() + " fps");
         String zoom = world.far().zoomInfo();
-        if (!zoom.isEmpty()) left.add(at + 2, zoom);
+        if (!zoom.isEmpty()) left.add(at + (held > 0 ? 3 : 2), zoom);
         // The debug screen redraws every frame; read the timings about twice a second so they can be read.
         long now = System.nanoTime();
         if (now - timingsAt > 500_000_000L) { timingsAt = now; timingLines = timings(Timings.SCREEN).split(", "); }
@@ -226,8 +228,8 @@ public final class CubicClient {
         var camera = view.getPosition();
         ClientCubeWorld world = ClientCubeWorld.current();
         float height = (float) camera.y - world.skyTop(net.minecraft.util.Mth.floor(camera.x), net.minecraft.util.Mth.floor(camera.z));
-        float scale = FarRenderer.HAZE_AT_EDGE ? 1.0F : world.far().hazeScale(camera.z), end = FarRenderer.FOG_END * scale;
-        float start = Math.min(Math.max(FarRenderer.FOG_START * scale, height * 1.25F), 0.8F * end);
+        float scale = FarRenderer.hazeAtEdge() ? 1.0F : world.far().hazeScale(camera.z), end = FarRenderer.fogEnd() * scale;
+        float start = Math.min(Math.max(FarRenderer.fogStart() * scale, height * 1.25F), 0.8F * end);
         return new float[] {start, end};
     }
 

@@ -143,7 +143,13 @@ public final class EarthSetupScreen extends Screen {
             var selected = list.getSelected();
             Component where = selected != null ? Component.translatable("earthplatform.setup.startAt", selected.place.label())
                     : Component.translatable("earthplatform.setup.startAtPoint", latitude.getValue().trim(), longitude.getValue().trim());
-            gui.drawCenteredString(font, where, width / 2, height - 48, 0x9FD7FF);
+            Component stretch = null;
+            try {
+                double at = selected != null ? selected.place.latitude() : Double.parseDouble(latitude.getValue().trim());
+                if (Math.abs(at) <= 80) stretch = EarthPlayClient.stretch(0, at);
+            } catch (NumberFormatException unreadable) {}
+            gui.drawCenteredString(font, where, width / 2, height - (stretch != null ? 51 : 48), 0x9FD7FF);
+            if (stretch != null) gui.drawCenteredString(font, stretch, width / 2, height - 40, 0xA0A0A0);
         }
     }
 

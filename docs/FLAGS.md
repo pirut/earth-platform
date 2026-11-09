@@ -4,7 +4,8 @@ Earth Platform reads a few Java system properties, given as JVM arguments such a
 Players never need them: the settings files and menus cover everything a player changes (see [PLAYING.md](PLAYING.md#settings)).
 They are for testing, measuring and comparing against older behavior.
 
-Most are read once when the class that uses them loads, so set them on the command line, not at runtime. Four of them
+Most are read once when the class that uses them loads, so set them on the command line, not at runtime.
+The frame rate to hold (`targetFrameRate` in the client settings file, off by default) is a setting, not a flag: see [PLAYING.md](PLAYING.md#settings). Four of them
 (`far.detail`, `far.textured`, `earth.offline`, `earth.imagery`) are also set by the settings files through
 `EarthConfig`; a value given on the command line wins over the file.
 
@@ -37,7 +38,7 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | --- | --- | --- | --- |
 | `earthplatform.far.fastReach` | on | `false` restores the shrinking flood queue, a fresh mark array per flood and a land cover lookup per sample in the water reach windows (`reachLevels`); output is identical | `EarthGenerator` |
 | `earthplatform.far.fastDrowned` | on | Columns ask the water reach windows for reservoirs (drowned ground) only where one of the four water samples round them is mapped as water by the land cover, or is land with water mapped within six samples two of its four ways; nowhere else can one be found. `false` asks for every column of a cell near a reservoir-sized patch of water, for comparing; output is identical | `EarthGenerator` |
-| `earthplatform.far.detail` | 11 | How far fine far terrain reaches, 4 to 48 (past 24 is the extreme range). Same as the `detail` setting | `Far.DETAIL` |
+| `earthplatform.far.detail` | 11 | How far fine far terrain reaches, 4 to 48 (past 24 is the extreme range). Same as the `detail` setting. It is the value the game starts with: the settings file never overrides it, but the pause menu's far view slider and Sodium's Distance option still change it while playing | `Far.detail()` |
 | `earthplatform.far.textured` | from settings | Far levels drawn with block textures; coarser ones use flat colors. Same as the `texturedLevels` setting | `FarRenderer` |
 | `earthplatform.far.threads` | (cores - 4) / 2, 2 to 8 | Server workers that make far columns | `FarServer.WORKERS` |
 | `earthplatform.far.mostThreads` | workers + 24, up to 64 | Most far columns made at once; only `far.threads` of them use the processor, the rest wait on downloads | `FarServer.MOST_WORKERS` |

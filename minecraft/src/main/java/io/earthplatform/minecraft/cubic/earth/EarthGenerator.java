@@ -3824,7 +3824,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             // The far levels read it across their whole square, and their rock layers look for dry country a way past
             // that: some 230 rows of each variable, which came in one request each as the columns needed them.
             double reach = !far ? 24000
-                    : Math.max(24000, (Far.OUTER + 1) * (double) Far.width(Far.MAX_LEVEL) + Strata.dryReach(grid.groundMetresPerBlock(z)));
+                    : Math.max(24000, (Far.outer() + 1) * (double) Far.width(Far.MAX_LEVEL) + Strata.dryReach(grid.groundMetresPerBlock(z)));
             GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
             loads.add(() -> {
                 try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }

@@ -20,6 +20,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 abstract class CubicShaderFarMixin {
     @Inject(method = "getRenderDistanceInBlocks", at = @At("RETURN"), cancellable = true, require = 0, remap = false)
     private static void earthplatform$farTerrainReach(CallbackInfoReturnable<Integer> result) {
-        if (ClientCubeWorld.current() != null && !FarLod.replacesFar()) result.setReturnValue(Math.max(result.getReturnValueI(), (int) FarRenderer.FOG_END));
+        if (ClientCubeWorld.current() != null && !FarLod.replacesFar()) result.setReturnValue(Math.max(result.getReturnValueI(), (int) FarRenderer.fogEnd()));
     }
 }
