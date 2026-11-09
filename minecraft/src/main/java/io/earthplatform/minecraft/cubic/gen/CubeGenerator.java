@@ -64,6 +64,12 @@ public interface CubeGenerator {
      */
     void farColumn(int level, int columnX, int columnZ, FarColumn out);
 
+    /**
+     * The same column, which a generator that can may leave as runs alone: {@link FarColumn#packet} set and
+     * no sections. The runs then hold exactly what {@link #farColumn} would have filled.
+     */
+    default void farColumnCompact(int level, int columnX, int columnZ, FarColumn out) { farColumn(level, columnX, columnZ, out); }
+
     /** Top block of the sea: players arrive on ground above it. */
     int seaLevel();
     /** Ground too cold or high for a new arrival to start on. */

@@ -44,7 +44,12 @@ final class FarPrints {
     /** An edited column no one holds is not remade. */
     synchronized void dropped(long key) { before.remove(key); }
 
-    /** A 64-bit fingerprint of a column's contents. */
+    /** A 64-bit fingerprint of a column's contents, in whichever form it is sent. */
+    static long of(io.earthplatform.minecraft.cubic.net.CubePayloads.FarColumnData column) {
+        return column.compact() ? of(column.bottom(), List.of(column.packet()), column.drops()) ^ 0x52554E53L
+                : of(column.bottom(), column.sections(), column.drops());
+    }
+
     static long of(int bottom, List<byte[]> sections, short[] drops) {
         long h = mix(0x9E3779B97F4A7C15L ^ bottom);
         h = mix(h ^ sections.size());

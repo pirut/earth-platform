@@ -247,26 +247,32 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     // Far terrain: voxel columns sampled from the same height, cover and tree rules -------------
 
-    private static final boolean SURFACE_PACKETS = Boolean.getBoolean("earthplatform.far.surfacePackets");
-
     @Override public void farColumn(int level, int columnX, int columnZ, FarColumn out) {
-        farColumn(level, columnX, columnZ, out, SURFACE_PACKETS);
+        farColumn(level, columnX, columnZ, out, false, true, true);
+    }
+
+    /**
+     * Where the column is only ground, water and cover, it comes as runs alone ({@link FarColumn#packet}, no
+     * sections), which is far less to make, send and keep; anywhere else as {@link #farColumn} makes it.
+     */
+    @Override public void farColumnCompact(int level, int columnX, int columnZ, FarColumn out) {
+        farColumn(level, columnX, columnZ, out, true, false, true);
     }
 
     /** Explicit control for the dense oracle; never changes near cube generation. */
     final void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets) {
-        farColumn(level, columnX, columnZ, out, packets, true);
+        farColumn(level, columnX, columnZ, out, packets, true, true);
     }
 
-    /** Bounded direct prototype: null requires the caller to use the existing dense path. */
+    /** The column as runs, or null where only the dense form can hold it. */
     @Nullable public final FarSurfacePacket surfacePacket(int level, int columnX, int columnZ) {
         if (level < Far.MIN_LEVEL || level > Far.MAX_LEVEL) throw new IllegalArgumentException("Unsupported far level");
         FarColumn out = new FarColumn();
-        farColumn(level, columnX, columnZ, out, true, false);
+        farColumn(level, columnX, columnZ, out, true, false, false);
         return out.packet;
     }
 
-    private void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets, boolean materialize) {
+    private void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets, boolean materialize, boolean dense) {
         out.packet = null;
         int v = 1 << level, width = 16 * v, x0 = columnX * width, z0 = columnZ * width, half = v >> 1;
         int[] ground = new int[18 * 18], water = new int[18 * 18], sample = new int[2];
@@ -368,11 +374,10 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             java.util.List<Holder<Biome>> quarts = new java.util.ArrayList<>(16);
             for (int qz = 0; qz < 4; qz++) for (int qx = 0; qx < 4; qx++) quarts.add(biome[(qz * 4 + 1) * 16 + qx * 4 + 1]);
             out.packet = FarSurfacePacket.generated(level, bottom, rows, out.drops, biome[8 * 16 + 8], quarts, runOffsets, packedRuns);
-            // Legacy adapter preserves current wire/mesh/edit ordering until a direct consumer is validated.
             if (materialize) out.sections.addAll(out.packet.materialize(biomeIds));
             return;
         }
-        if (!materialize) return; // Unsupported direct request: caller retains the dense fallback.
+        if (!dense) return;
         LevelChunkSection[] stack = new LevelChunkSection[sections];
         for (int si = 0; si < sections; si++) {
             LevelChunkSection section = new LevelChunkSection(

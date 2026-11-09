@@ -99,27 +99,40 @@ public final class CubePayloads {
      * One far-terrain column: its lowest section's Y in level units, then each section's vanilla
      * section bytes (voxels as blocks, plus biomes) from the bottom up, empty for an all-air
      * section, then each voxel column's drop (see {@link io.earthplatform.minecraft.cubic.gen.FarColumn#drops}).
+     * A column sent as runs has no sections and its runs in {@code packet} (see
+     * {@link io.earthplatform.minecraft.cubic.gen.FarSurfacePacket#encode}), which is empty otherwise.
      */
-    public record FarColumnData(long key, int bottom, List<byte[]> sections, short[] drops) implements CustomPacketPayload {
+    public record FarColumnData(long key, int bottom, List<byte[]> sections, short[] drops, byte[] packet) implements CustomPacketPayload {
+        private static final byte[] NONE = new byte[0];
+        /** In place of the section count, which never passes {@link Far#MAX_SECTIONS}: runs follow, not sections. */
+        private static final int RUNS = 0x7FFF;
+        public FarColumnData(long key, int bottom, List<byte[]> sections, short[] drops) { this(key, bottom, sections, drops, NONE); }
+        public boolean compact() { return packet.length > 0; }
         public static final Type<FarColumnData> TYPE = new Type<>(id("far_column"));
         public static final StreamCodec<RegistryFriendlyByteBuf, FarColumnData> CODEC = StreamCodec.of((buf, p) -> {
             buf.writeLong(p.key);
             buf.writeInt(p.bottom);
-            buf.writeVarInt(p.sections.size());
-            for (byte[] section : p.sections) buf.writeByteArray(section);
+            if (p.compact()) {
+                buf.writeVarInt(RUNS);
+                buf.writeByteArray(p.packet);
+            } else {
+                buf.writeVarInt(p.sections.size());
+                for (byte[] section : p.sections) buf.writeByteArray(section);
+            }
             for (short drop : p.drops) buf.writeShort(drop);
         }, buf -> {
             long key = buf.readLong();
-            int bottom = buf.readInt(), count = Math.min(buf.readVarInt(), Far.MAX_SECTIONS);
+            int bottom = buf.readInt(), sent = buf.readVarInt(), count = sent == RUNS ? 0 : Math.min(sent, Far.MAX_SECTIONS);
+            byte[] packet = sent == RUNS ? buf.readByteArray(io.earthplatform.minecraft.cubic.gen.FarSurfacePacket.MAX_BYTES) : NONE;
             List<byte[]> sections = new ArrayList<>(count);
             for (int i = 0; i < count; i++) sections.add(buf.readByteArray(1 << 20));
             short[] drops = new short[256];
             for (int i = 0; i < 256; i++) drops[i] = buf.readShort();
-            return new FarColumnData(key, bottom, sections, drops);
+            return new FarColumnData(key, bottom, sections, drops, packet);
         });
         /** Rough size on the wire, for pacing. */
         public int size() {
-            int size = 528;
+            int size = 528 + packet.length;
             for (byte[] section : sections) size += 4 + section.length;
             return size;
         }

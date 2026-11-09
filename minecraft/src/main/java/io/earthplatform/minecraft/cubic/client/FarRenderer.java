@@ -15,6 +15,7 @@ import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.mixin.FrustumAccess;
 import io.earthplatform.minecraft.diagnostics.BuildInfo;
+import io.earthplatform.minecraft.cubic.gen.FarSurfacePacket;
 import io.earthplatform.minecraft.diagnostics.PerfFailures;
 import io.earthplatform.minecraft.platform.Platform;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -343,7 +344,9 @@ public final class FarRenderer {
     private static final class Column implements FarZoom.Box {
         final long key;
         final int level, x0, z0, bottom;
-        final LevelChunkSection[] sections;
+        /** Its voxels as sections, or null for a column that came as runs, which are then in {@link #packet}. */
+        @Nullable final LevelChunkSection[] sections;
+        @Nullable final FarSurfacePacket packet;
         final char[] drops;
         final AABB box;
         /** Block Y just above the column's highest voxel, or MIN_VALUE when it holds only air. */
@@ -407,31 +410,39 @@ public final class FarRenderer {
         /** Where its square and top are in {@link FarRenderer#tops}, or -1 when it holds only air. */
         int topIndex = -1;
 
-        Column(long key, int bottom, LevelChunkSection[] sections, char[] drops) {
+        Column(long key, int bottom, @Nullable LevelChunkSection[] sections, char[] drops, @Nullable FarSurfacePacket packet) {
             this.key = key;
             this.level = Far.level(key);
             this.bottom = bottom;
             this.sections = sections;
+            this.packet = packet;
             this.drops = drops;
             int width = Far.width(level);
             x0 = Far.x(key) * width; z0 = Far.z(key) * width;
             // Drops lower a column by up to a voxel.
-            ceiling = bottom + Math.max(1, sections.length);
+            ceiling = bottom + Math.max(1, rows() / 16);
             box = new AABB(x0, (double) bottom * width - Far.voxel(level), z0, x0 + width, (double) ceiling * width, z0 + width);
-            top = top(bottom, sections, level);
+            int highest = -1;
+            for (int cell = 0; cell < 256; cell++) highest = Math.max(highest, topRow(cell & 15, cell >> 4));
+            top = highest < 0 ? Integer.MIN_VALUE : bottom * width + (highest + 1) * Far.voxel(level);
         }
 
-        private static int top(int bottom, LevelChunkSection[] sections, int level) {
-            int width = Far.width(level), voxel = Far.voxel(level);
-            for (int si = sections.length - 1; si >= 0; si--) {
-                LevelChunkSection section = sections[si];
-                if (section == null || section.hasOnlyAir()) continue;
-                for (int y = 15; y >= 0; y--)
-                    for (int i = 0; i < 256; i++)
-                        if (!section.getBlockState(i & 15, y, i >> 4).isAir()) return (bottom + si) * width + (y + 1) * voxel;
-            }
-            return Integer.MIN_VALUE;
+        /** How many voxel rows it holds. */
+        int rows() { return packet != null ? packet.height() : sections.length * 16; }
+
+        /** The highest row of a voxel column that is not air, or -1. */
+        int topRow(int x, int z) {
+            return packet != null ? packet.top(z * 16 + x, state -> !state.isAir()) : FarMesher.top(sections, x, z, false);
         }
+
+        /** The block of a voxel within its rows. */
+        BlockState state(int x, int row, int z) {
+            if (packet != null) return packet.block(x, row, z);
+            LevelChunkSection section = sections[row >> 4];
+            return section == null ? net.minecraft.world.level.block.Blocks.AIR.defaultBlockState() : section.getBlockState(x, row & 15, z);
+        }
+
+        FarMesher.Side side() { return new FarMesher.Side(sections, bottom, drops, packet); }
 
         int baseY() { return bottom * Far.width(level); }
 
@@ -448,7 +459,7 @@ public final class FarRenderer {
             for (int i = 0; i < 10; i += 2) { found[i] = Integer.MAX_VALUE; found[i + 1] = Integer.MIN_VALUE; }
             int voxel = Far.voxel(level), base = baseY();
             for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
-                int row = FarMesher.top(sections, x, z, false);
+                int row = topRow(x, z);
                 if (row < 0) continue;
                 int at = base + (row + 1) * voxel, quarter = 2 + 2 * ((z >> 3) * 2 + (x >> 3));
                 found[0] = Math.min(found[0], at);
@@ -686,12 +697,24 @@ public final class FarRenderer {
         if (closed || !Far.valid(payload.key())) return;
         if(BuildInfo.diagnostics()){diagnosticReceivedColumns++;diagnosticReceivedEstimatedBytes+=payload.size();}
         requested.remove(payload.key());
-        LevelChunkSection[] sections = new LevelChunkSection[payload.sections().size()];
-        for (int i = 0; i < sections.length; i++) {
-            byte[] bytes = payload.sections().get(i);
-            if (bytes.length > 0) sections[i] = CubeCodec.readSection(bytes, biomes);
+        Column column = null;
+        if (payload.compact()) {
+            try {
+                FarSurfacePacket packet = FarSurfacePacket.decode(payload.packet(), biomes.asHolderIdMap());
+                if (packet.level() == Far.level(payload.key())) column = new Column(payload.key(), packet.bottom(), null, unsigned(payload.drops()), packet);
+            } catch (java.io.IOException unreadable) {
+                PerfFailures.record(PerfFailures.Stage.PACKET_DECODE, unreadable);
+            }
+            // One that can't be read is left out and asked for again like any column that never came.
+            if (column == null) return;
+        } else {
+            LevelChunkSection[] sections = new LevelChunkSection[payload.sections().size()];
+            for (int i = 0; i < sections.length; i++) {
+                byte[] bytes = payload.sections().get(i);
+                if (bytes.length > 0) sections[i] = CubeCodec.readSection(bytes, biomes);
+            }
+            column = new Column(payload.key(), payload.bottom(), sections, unsigned(payload.drops()), null);
         }
-        Column column = new Column(payload.key(), payload.bottom(), sections, unsigned(payload.drops()));
         column.lastWanted = ticks;
         Column old = columns.put(column.key, column);
         columnsVersion++;
@@ -1021,14 +1044,8 @@ public final class FarRenderer {
         for (int level = Far.MIN_LEVEL; level <= Far.MAX_LEVEL; level++) {
             Column column = held(level, Far.column(bx, level), Far.column(bz, level));
             if (column == null) continue;
-            int x = (bx - column.x0) >> level, z = (bz - column.z0) >> level;
-            for (int si = column.sections.length - 1; si >= 0; si--) {
-                LevelChunkSection section = column.sections[si];
-                if (section == null || section.hasOnlyAir()) continue;
-                for (int y = 15; y >= 0; y--) {
-                    if (!section.getBlockState(x, y, z).isAir()) return column.baseY() + (si * 16 + y + 1) * (double) Far.voxel(level);
-                }
-            }
+            int row = column.topRow((bx - column.x0) >> level, (bz - column.z0) >> level);
+            if (row >= 0) return column.baseY() + (row + 1) * (double) Far.voxel(level);
             return column.baseY();
         }
         return fallback;
@@ -1044,15 +1061,10 @@ public final class FarRenderer {
             Column column = held(level, Far.column(bx, level), Far.column(bz, level));
             if (column == null) continue;
             int x = (bx - column.x0) >> level, z = (bz - column.z0) >> level, voxel = Far.voxel(level);
-            for (int si = column.sections.length - 1; si >= 0; si--) {
-                LevelChunkSection section = column.sections[si];
-                if (section == null || section.hasOnlyAir()) continue;
-                for (int y = 15; y >= 0; y--) {
-                    BlockState state = section.getBlockState(x, y, z);
-                    if (state.isAir()) continue;
-                    int bottom = column.baseY() + (si * 16 + y) * voxel;
-                    return state.getBlock() == net.minecraft.world.level.block.Blocks.WATER && surface >= bottom && surface < bottom + voxel ? 1 : 0;
-                }
+            int row = column.topRow(x, z);
+            if (row >= 0) {
+                int bottom = column.baseY() + row * voxel;
+                return column.state(x, row, z).getBlock() == net.minecraft.world.level.block.Blocks.WATER && surface >= bottom && surface < bottom + voxel ? 1 : 0;
             }
             return 0;
         }
@@ -1388,16 +1400,16 @@ public final class FarRenderer {
         FarMesher.Side[] sides = new FarMesher.Side[4], diagonals = new FarMesher.Side[4];
         for (int i = 0; i < 4; i++) {
             Column side = held(column.neighbour(i));
-            if (side != null) sides[i] = new FarMesher.Side(side.sections, side.bottom, side.drops);
+            if (side != null) sides[i] = side.side();
             Column diagonal = held(column.diagonal(i));
-            if (diagonal != null) diagonals[i] = new FarMesher.Side(diagonal.sections, diagonal.bottom, diagonal.drops);
+            if (diagonal != null) diagonals[i] = diagonal.side();
         }
         var level = world.client();
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = level.getShade(direction, true);
         FarMesher.Job job = new FarMesher.Job(column.key, column.version = nextVersion(), column.level, column.slot, column.x0, column.z0, column.bottom,
                 column.sections, column.drops, sides, diagonals, column.drawnCubes, column.level <= TEXTURED_LEVELS, looks, faces,
-                ShaderBlocks.ids(), shade, white());
+                ShaderBlocks.ids(), shade, white(), column.packet);
         meshing++;
         MESHER.execute(() -> {
             if (built.isClosed()) return;

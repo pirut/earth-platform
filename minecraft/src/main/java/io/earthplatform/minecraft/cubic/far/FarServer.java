@@ -10,6 +10,7 @@ import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.FarColumn;
+import io.earthplatform.minecraft.cubic.gen.FarSurfacePacket;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.net.Throttle;
 import io.earthplatform.minecraft.diagnostics.PerfFailures;
@@ -101,6 +102,13 @@ public final class FarServer {
      * build number to tell its columns from the next one's, keeps them only with {@code -Dearthplatform.far.store=true}.
      */
     private static final String STORE = System.getProperty("earthplatform.far.store", "auto");
+    /**
+     * Columns that are only ground, water and cover (most of those at 8-block voxels and wider) are made, sent
+     * and kept as vertical runs rather than filled voxel sections; the client meshes the runs as they are.
+     */
+    private static final boolean PACKETS = Boolean.parseBoolean(System.getProperty("earthplatform.far.surfacePackets", "true"));
+    /** For checking: each column of runs is also made as sections and compared; one that differs is logged and sent as sections. */
+    private static final boolean CHECK_PACKETS = Boolean.getBoolean("earthplatform.far.checkPackets");
     /** Most megabytes of far columns kept on disk per world; {@code -Dearthplatform.far.storeMb}, 0 for no limit. */
     private static final long STORE_BYTES = Math.max(0, Long.getLong("earthplatform.far.storeMb", 2048)) << 20;
     private static final long CACHE_BYTES = 96L << 20;
@@ -132,6 +140,7 @@ public final class FarServer {
     /** Columns whose data could not be had, given back to be asked for again every few seconds. */
     private final ConcurrentLinkedQueue<Long> missing = new ConcurrentLinkedQueue<>();
     private final AtomicInteger failures = new AtomicInteger(), skipped = new AtomicInteger(), unchanged = new AtomicInteger();
+    private final AtomicInteger madeRuns = new AtomicInteger(), madeDense = new AtomicInteger(), wrongRuns = new AtomicInteger();
     private volatile long lastFailureLog;
     private final Map<UUID, Session> sessions = new HashMap<>();
     /** Columns whose saved cubes changed and that players hold, to remake and push again. */
@@ -200,11 +209,15 @@ public final class FarServer {
 
     /** A column as {@link FarStore} keeps it: everything but its key. */
     static byte[] stored(CubePayloads.FarColumnData column) {
-        int size = 8 + 512;
+        int size = 8 + 512 + column.packet().length;
         for (byte[] section : column.sections()) size += 4 + section.length;
         java.nio.ByteBuffer out = java.nio.ByteBuffer.allocate(size);
-        out.putInt(column.bottom()).putInt(column.sections().size());
-        for (byte[] section : column.sections()) out.putInt(section.length).put(section);
+        // A column of runs is told from one of sections by a count no column of sections has.
+        if (column.compact()) out.putInt(column.bottom()).putInt(-column.packet().length).put(column.packet());
+        else {
+            out.putInt(column.bottom()).putInt(column.sections().size());
+            for (byte[] section : column.sections()) out.putInt(section.length).put(section);
+        }
         for (short drop : column.drops()) out.putShort(drop);
         return out.array();
     }
@@ -213,8 +226,10 @@ public final class FarServer {
     static CubePayloads.FarColumnData stored(long key, byte[] bytes) {
         java.nio.ByteBuffer in = java.nio.ByteBuffer.wrap(bytes);
         int bottom = in.getInt(), count = in.getInt();
-        if (count < 0 || count > Far.MAX_SECTIONS) throw new IllegalArgumentException("Far column of " + count + " sections");
-        List<byte[]> sections = new ArrayList<>(count);
+        if (count < -FarSurfacePacket.MAX_BYTES || count > Far.MAX_SECTIONS) throw new IllegalArgumentException("Far column of " + count + " sections");
+        byte[] packet = new byte[Math.max(0, -count)];
+        in.get(packet);
+        List<byte[]> sections = new ArrayList<>(Math.max(0, count));
         for (int i = 0; i < count; i++) {
             byte[] section = new byte[in.getInt()];
             in.get(section);
@@ -223,7 +238,7 @@ public final class FarServer {
         short[] drops = new short[256];
         for (int i = 0; i < 256; i++) drops[i] = in.getShort();
         if (in.hasRemaining()) throw new IllegalArgumentException("Far column with bytes left over");
-        return new CubePayloads.FarColumnData(key, bottom, sections, drops);
+        return new CubePayloads.FarColumnData(key, bottom, sections, drops, packet);
     }
 
     /** Far columns a player asked for that have not been sent yet: its own terrain is still on its way. */
@@ -342,16 +357,69 @@ public final class FarServer {
         int epoch = store == null ? 0 : store.epoch(key);
         int level = Far.level(key);
         FarColumn column = new FarColumn();
-        generator.farColumn(level, Far.x(key), Far.z(key), column);
-        if (level <= Far.EDIT_LEVELS) foldSavedCubes(level, Far.x(key), Far.z(key), column);
-        else foldBuilds(level, Far.x(key), Far.z(key), column);
-        List<byte[]> sections = new ArrayList<>(column.sections.size());
-        for (LevelChunkSection section : column.sections) sections.add(section == null ? new byte[0] : CubeCodec.sectionBytes(section));
-        CubePayloads.FarColumnData data = new CubePayloads.FarColumnData(key, column.bottom, sections, column.drops);
-        prints.made(key, FarPrints.of(column.bottom, sections, column.drops));
+        if (PACKETS) generator.farColumnCompact(level, Far.x(key), Far.z(key), column);
+        else generator.farColumn(level, Far.x(key), Far.z(key), column);
+        byte[] runs = column.sections.isEmpty() && column.packet != null ? runs(level, Far.x(key), Far.z(key), column) : null;
+        CubePayloads.FarColumnData data;
+        if (runs != null) data = new CubePayloads.FarColumnData(key, column.bottom, List.of(), column.drops, runs);
+        else {
+            if (level <= Far.EDIT_LEVELS) foldSavedCubes(level, Far.x(key), Far.z(key), column);
+            else foldBuilds(level, Far.x(key), Far.z(key), column);
+            List<byte[]> sections = new ArrayList<>(column.sections.size());
+            for (LevelChunkSection section : column.sections) sections.add(section == null ? new byte[0] : CubeCodec.sectionBytes(section));
+            data = new CubePayloads.FarColumnData(key, column.bottom, sections, column.drops);
+        }
+        (runs != null ? madeRuns : madeDense).incrementAndGet();
+        prints.made(key, FarPrints.of(data));
         cache.put(key, data);
         if (store != null) store.put(key, epoch, stored(data));
         return data;
+    }
+
+    /**
+     * A column its generator left as runs alone, ready to send that way; or null once it has been filled into
+     * sections instead, because something built stands in it or (see {@link #CHECK_PACKETS}) the runs came out wrong.
+     */
+    @Nullable private byte[] runs(int level, int columnX, int columnZ, FarColumn column) throws IOException {
+        FarSurfacePacket packet = column.packet;
+        boolean built = level <= Far.EDIT_LEVELS ? edited(level, columnX, columnZ) : !builds.in(columnX << level,
+                (columnX << level) + (1 << level) - 1, columnZ << level, (columnZ << level) + (1 << level) - 1).isEmpty();
+        if (!built) {
+            try {
+                byte[] runs = packet.encode(biomeIds);
+                if (!CHECK_PACKETS || sameAsDense(level, columnX, columnZ, column)) return runs;
+            } catch (IOException tooLong) {
+                // Sent as sections below.
+            }
+        }
+        column.sections.addAll(packet.materialize(biomeIds));
+        return null;
+    }
+
+    /** Whether a saved cube that is no longer as generated stands over a column, so the column must show it. */
+    private boolean edited(int level, int columnX, int columnZ) throws IOException {
+        int cubes = 1 << level, minX = columnX * cubes, minZ = columnZ * cubes;
+        for (long cube : storage.savedIn(minX, minX + cubes - 1, minZ, minZ + cubes - 1)) {
+            CompoundTag tag = storage.read(cube);
+            if (tag != null && !tag.getBoolean(CubeCodec.UNTOUCHED)) return true;
+        }
+        return false;
+    }
+
+    /** The check behind {@code far.checkPackets}: the same column made the long way, compared voxel for voxel. */
+    private boolean sameAsDense(int level, int columnX, int columnZ, FarColumn column) {
+        FarColumn dense = new FarColumn();
+        generator.farColumn(level, columnX, columnZ, dense);
+        List<LevelChunkSection> filled = column.packet.materialize(biomeIds);
+        boolean same = dense.bottom == column.bottom && java.util.Arrays.equals(dense.drops, column.drops) && dense.sections.size() == filled.size();
+        for (int i = 0; same && i < filled.size(); i++) {
+            LevelChunkSection a = dense.sections.get(i), b = filled.get(i);
+            boolean emptyA = a == null || a.hasOnlyAir(), emptyB = b == null || b.hasOnlyAir();
+            same = emptyA == emptyB && (emptyA || java.util.Arrays.equals(CubeCodec.sectionBytes(a), CubeCodec.sectionBytes(b)));
+        }
+        if (!same && wrongRuns.getAndIncrement() < 20)
+            EarthPlatformMod.LOGGER.warn("Far column level {} at {}, {} came out differently as runs; sent as sections", level, columnX, columnZ);
+        return same;
     }
 
     /** The column kept on disk for a key, or null; one that can't be read back is made again. */
@@ -365,7 +433,7 @@ public final class FarServer {
             store.remove(key);
             return null;
         }
-        prints.made(key, FarPrints.of(data.bottom(), data.sections(), data.drops()));
+        prints.made(key, FarPrints.of(data));
         cache.put(key, data);
         return data;
     }
@@ -567,6 +635,11 @@ public final class FarServer {
     public int cached() { return cache.size(); }
     /** What the columns kept on disk have saved so far, for diagnostics. */
     public String stored() { return store == null ? "far columns not kept on disk" : store.describe(); }
+    /** How many far columns were made as runs and how many as sections, and with {@code far.checkPackets} how many runs came out wrong. */
+    public String made() {
+        return madeRuns.get() + " far columns made as runs, " + madeDense.get() + " as sections"
+                + (CHECK_PACKETS ? ", " + wrongRuns.get() + " runs differed from their sections" : "");
+    }
     /** Builds kept for the coarse levels, and how many coarse columns have shown one. */
     public String builds() {
         StringBuilder levels = new StringBuilder();

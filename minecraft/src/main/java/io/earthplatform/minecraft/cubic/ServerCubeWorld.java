@@ -1098,7 +1098,7 @@ public final class ServerCubeWorld extends CubeWorld {
         int standing = 0;
         for (Watcher watcher : watchers.values()) standing += watcher.stood.size();
         return generator.id() + ", " + cubes.size() + " cubes loaded, " + standing + " buried cubes stood in for, " + opened.size() + " opened by caves, " + pending.size() + " pending (" + generated + " made, " + dropped + " dropped as no longer wanted), " + light.size() + " lit, "
-                + watchers.size() + " watching, " + far.cached() + " far columns cached, " + far.stored() + ", " + far.builds() + (failures > 0 ? ", " + failures + " generation failures" : "");
+                + watchers.size() + " watching, " + far.cached() + " far columns cached, " + far.stored() + ", " + far.made() + ", " + far.builds() + (failures > 0 ? ", " + failures + " generation failures" : "");
     }
 
     /** Iterates loaded cubes; exposed for diagnostics. */

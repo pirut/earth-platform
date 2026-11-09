@@ -107,7 +107,8 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | Flag | Default | What it does | Read in |
 | --- | --- | --- | --- |
 | `earthplatform.photon.compat` | `auto` | `on` or `off` overrides the check for running Photon on drivers it doesn't fit | `PhotonCompat` |
-| `earthplatform.far.surfacePackets` | `false` | Server prototype: generates plain far columns (levels 3 to 8) as vertical runs, then turns them back into normal sections, so nothing sent or saved changes. Not the client's `far.runMesher` | `SurfaceGenerator` |
+| `earthplatform.far.surfacePackets` | `true` | Far columns that are only ground, water and cover (most of those at 8-block voxels and wider) are made, sent and kept on disk as vertical runs, not filled voxel sections; the client meshes the runs as they are. Columns with trees drawn as trees, giant groves, layered rock or builds stay sections. `false` sends every column as sections, as before build 70 | `FarServer` |
+| `earthplatform.far.checkPackets` | `false` | For checking the flag above: each column of runs is also made as sections and compared; one that differs is logged and sent as sections. The status command then counts them. Doubles the work of making far columns | `FarServer` |
 | `earthplatform.far.gpuTimers` | `false` | Times far terrain GPU passes with OpenGL queries and adds them to the performance log. Off for players because the queries wrap other mods' and shader packs' draws | `FarGpuTimers` |
 | `earthplatform.far.gpuSampleEvery` | 120 | Frames between GPU timings with `gpuTimers` | `FarGpuTimers` |
 | `earthplatform.perfLog` | on | Writes a small local performance log (frame times, GPU and driver, graphics settings, terrain workload; no names, places or paths) to `earthplatform/perf/latest*.jsonl` in the game folder, at most three 4 MiB files. `false` turns it off | `BuildInfo`, `PerformanceDiagnostics` |

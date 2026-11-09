@@ -13,10 +13,10 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
 
 /**
- * Experimental exact vertical runs, before dense sections or a wire palette are built. The base
- * and revisioned sparse block overlay are immutable. This format is NOT a saved/network payload:
- * the first integration deliberately materializes the existing sections at the legacy boundary.
- * Unsupported generators/features continue through their original dense generation path.
+ * A far column as exact vertical runs: for each of its 256 voxel columns, the few spans of one block
+ * from the bottom up. The base and its revisioned sparse block overlay are immutable. The server sends
+ * and keeps a column this way where its generator can make one (see {@link CubeGenerator#farColumnCompact});
+ * columns with trees, strata or builds standing in them stay dense sections.
  */
 public final class FarSurfacePacket {
     private static final int MAGIC = 0x45505231, VERSION = 2;
@@ -144,8 +144,15 @@ public final class FarSurfacePacket {
         for (int i=offsets[cell+1]-1;i>=offsets[cell];i--) if(included.test(runState(i))) return runEnd(i)-1;
         return -1;
     }
-    /** Transient client-mesher fallback only; registry wire encoding uses the caller's original id map. */
+    /** Filled the first time a mesh needs sections, and never changed after. */
+    private volatile List<LevelChunkSection> meshing;
+    /** The column as sections for the meshes that need them (masked or smooth ones); the same list each time, not to be changed. */
     public List<LevelChunkSection> materializeForMeshing() {
+        List<LevelChunkSection> made = meshing;
+        if (made == null) meshing = made = java.util.Collections.unmodifiableList(fillForMeshing());
+        return made;
+    }
+    private List<LevelChunkSection> fillForMeshing() {
         net.minecraft.core.IdMapper<Holder<Biome>> ids = new net.minecraft.core.IdMapper<>(32);
         ids.add(initialBiome);
         for (var biome:biomes) if(ids.getId(biome)<0) ids.add(biome);
