@@ -83,6 +83,10 @@ public final class CubeRenderer {
     private static final int RETIRE_TICKS = 100;
     private final List<Mesh> visible = new ArrayList<>();
     private final CubeOcclusion occlusion = new CubeOcclusion();
+    /** Where the meshes live on the GPU when cubes share buffers by region ({@link CubeRegions#ON}). */
+    private final CubeRegions regions = new CubeRegions();
+    /** Draw calls the last frame's near cubes took, every pass and the shadow map together, for the performance log. */
+    private int drawCalls, lastDrawCalls;
     /** A pass's meshes in view split for occlusion culling: drawn first, drawn on condition of their box, rechecked. */
     private final List<Mesh> first = new ArrayList<>(), rest = new ArrayList<>(), recheck = new ArrayList<>();
     /** Meshes in view that the last occlusion test hid (drawn on condition, and not drawn), for the performance log. */
@@ -112,7 +116,9 @@ public final class CubeRenderer {
         final long key;
         final int x, y, z;
         final AABB box;
+        /** Each layer's own buffer, or with {@link CubeRegions#ON} its place in its region's ({@link #slices}). */
         final CubeBuffer[] buffers = new CubeBuffer[CubeMesher.LAYERS.size()];
+        final CubeRegions.Slice[] slices = new CubeRegions.Slice[CubeMesher.LAYERS.size()];
         double distance;
         /**
          * Occlusion culling ({@link CubeOcclusion}): the mesh's query, whether its box was seen when last tested,
@@ -125,12 +131,16 @@ public final class CubeRenderer {
             this.key = key; x = CubeKey.x(key) << 4; y = CubeKey.y(key) << 4; z = CubeKey.z(key) << 4;
             box = new AABB(x, y, z, x + 16, y + 16, z + 16);
         }
-        void close() {
-            for (int i = 0; i < buffers.length; i++) if (buffers[i] != null) { buffers[i].close(); buffers[i] = null; }
+        void close(CubeRegions regions) {
+            for (int i = 0; i < buffers.length; i++) {
+                if (buffers[i] != null) { buffers[i].close(); buffers[i] = null; }
+                if (slices[i] != null) { regions.free(slices[i]); slices[i] = null; }
+            }
             CubeOcclusion.deleteQuery(query);
             query = 0;
         }
-        boolean empty() { for (CubeBuffer buffer : buffers) if (buffer != null) return false; return true; }
+        boolean has(int layer) { return buffers[layer] != null || slices[layer] != null; }
+        boolean empty() { for (int i = 0; i < buffers.length; i++) if (has(i)) return false; return true; }
     }
 
     CubeRenderer(ClientCubeWorld world) {
@@ -179,7 +189,7 @@ public final class CubeRenderer {
         for (long key : meshes.keySet()) markDirty(key);
         for (long key : building) { markDirty(key); staleBuilds.add(key); }
         // Retiring meshes are in the old format too, and nothing remeshes them.
-        for (Mesh mesh : retiring.values()) mesh.close();
+        for (Mesh mesh : retiring.values()) mesh.close(regions);
         retiring.clear();
         retireBy.clear();
     }
@@ -197,7 +207,7 @@ public final class CubeRenderer {
         Mesh mesh = meshes.remove(key);
         if (mesh == null) return;
         Mesh older = retiring.put(key, mesh);
-        if (older != null) older.close();
+        if (older != null) older.close(regions);
         retireBy.put(key, ticks + RETIRE_TICKS);
     }
 
@@ -209,7 +219,7 @@ public final class CubeRenderer {
             var entry = it.next();
             long key = entry.getLongKey();
             if (ticks <= retireBy.get(key) && far != null && far.holeFor(key)) continue;
-            entry.getValue().close();
+            entry.getValue().close(regions);
             it.remove();
             retireBy.remove(key);
         }
@@ -219,7 +229,7 @@ public final class CubeRenderer {
     private void unretire(long key) {
         Mesh mesh = retiring.remove(key);
         if (mesh == null) return;
-        mesh.close();
+        mesh.close(regions);
         retireBy.remove(key);
     }
 
@@ -277,6 +287,7 @@ public final class CubeRenderer {
     public void tick() {
         ticks++;
         retire();
+        if (ticks % 20 == 0) regions.sweep();
     }
 
     private boolean neighboursReady(long key) {
@@ -335,7 +346,7 @@ public final class CubeRenderer {
         unretire(key);
         setVisibility(key, CubeCaves.OPEN);
         Mesh mesh = meshes.remove(key);
-        if (mesh != null) mesh.close();
+        if (mesh != null) mesh.close(regions);
         light.remove(key);
         compiled.add(key);
         compiledVersion++;
@@ -419,14 +430,24 @@ public final class CubeRenderer {
             if (mesh == null) { mesh = new Mesh(result.key()); meshes.put(result.key(), mesh); }
             boolean[] present = new boolean[mesh.buffers.length];
             for (CubeMesher.Layer layer : result.layers()) {
-                CubeBuffer buffer = mesh.buffers[layer.index()];
-                if (buffer == null) buffer = mesh.buffers[layer.index()] = new CubeBuffer();
-                buffer.upload(layer.mesh());
+                int i = layer.index();
+                if (CubeRegions.ON) {
+                    // The old mesh's room first, so the new one can have it back.
+                    regions.free(mesh.slices[i]);
+                    mesh.slices[i] = regions.upload(result.key(), i, layer.mesh());
+                    present[i] = mesh.slices[i] != null;
+                } else {
+                    CubeBuffer buffer = mesh.buffers[i];
+                    if (buffer == null) buffer = mesh.buffers[i] = new CubeBuffer();
+                    buffer.upload(layer.mesh());
+                    present[i] = true;
+                }
                 layer.memory().close();
-                present[layer.index()] = true;
             }
             for (int i = 0; i < present.length; i++) {
-                if (!present[i] && mesh.buffers[i] != null) { mesh.buffers[i].close(); mesh.buffers[i] = null; }
+                if (present[i]) continue;
+                if (mesh.buffers[i] != null) { mesh.buffers[i].close(); mesh.buffers[i] = null; }
+                if (mesh.slices[i] != null) { regions.free(mesh.slices[i]); mesh.slices[i] = null; }
             }
             if (mesh.empty()) meshes.remove(result.key());
         }
@@ -513,7 +534,17 @@ public final class CubeRenderer {
         return building.size();
     }
 
+    /** Draw calls near cubes took in the last whole frame, the shadow map's among them. */
+    public int drawCallCount() { return lastDrawCalls; }
+
+    /** Buffers the meshes share by region, and the megabytes of GPU memory those take; 0 when every cube has its own. */
+    public int regionBufferCount() { return regions.bufferCount(); }
+    public int regionBufferMegabytes() { return (int) (regions.bytes() >> 20); }
+    public int regionUsedMegabytes() { return (int) (regions.usedBytes() >> 20); }
+
     public void beginFrame() {
+        lastDrawCalls = drawCalls;
+        drawCalls = 0;
         frame++;
         long now = System.nanoTime();
         frameNanos = Math.min(now - frameStart, 1_000_000_000L);
@@ -644,7 +675,7 @@ public final class CubeRenderer {
     private void draw(int layer, List<Mesh> visible, Vec3 camera, Matrix4f modelView, Matrix4f projection, boolean backToFront, boolean conditions) {
         RenderType type = CubeMesher.LAYERS.get(layer);
         boolean any = false;
-        for (Mesh mesh : visible) if (mesh.buffers[layer] != null) { any = true; break; }
+        for (Mesh mesh : visible) if (mesh.has(layer)) { any = true; break; }
         if (!any) return;
         type.setupRenderState();
         ShaderInstance shader = RenderSystem.getShader();
@@ -652,10 +683,19 @@ public final class CubeRenderer {
         shader.apply();
         Uniform offset = shader.CHUNK_OFFSET;
         int pass = LevelPasses.current();
+        // Meshes that share buffers by region: a call a buffer, or a run of cubes where the order matters.
+        if (CubeRegions.ON) regions.begin(offset, camera, backToFront);
         for (int n = 0; n < visible.size(); n++) {
             Mesh mesh = visible.get(backToFront ? visible.size() - 1 - n : n);
+            CubeRegions.Slice slice = mesh.slices[layer];
+            if (slice != null) {
+                if (conditions && mesh.conditionalPass == pass && mesh.query != 0) regions.drawOnCondition(slice, mesh.query);
+                else regions.draw(slice);
+                continue;
+            }
             CubeBuffer buffer = mesh.buffers[layer];
             if (buffer == null) continue;
+            drawCalls++;
             if (offset != null) {
                 offset.set((float) (mesh.x - camera.x), (float) (mesh.y - camera.y), (float) (mesh.z - camera.z));
                 offset.upload();
@@ -664,6 +704,10 @@ public final class CubeRenderer {
             if (conditional) CubeOcclusion.beginConditional(mesh.query);
             buffer.draw();
             if (conditional) CubeOcclusion.endConditional();
+        }
+        if (CubeRegions.ON) {
+            regions.end();
+            drawCalls += regions.takeCalls();
         }
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
         shader.clear();
@@ -703,9 +747,10 @@ public final class CubeRenderer {
         closed = true;
         occlusion.close();
         built.close();
-        for (Mesh mesh : meshes.values()) mesh.close();
+        regions.close();
+        for (Mesh mesh : meshes.values()) mesh.close(regions);
         meshes.clear();
-        for (Mesh mesh : retiring.values()) mesh.close();
+        for (Mesh mesh : retiring.values()) mesh.close(regions);
         retiring.clear();
         retireBy.clear();
         light.clear();

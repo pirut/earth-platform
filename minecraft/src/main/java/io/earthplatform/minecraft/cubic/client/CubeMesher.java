@@ -109,6 +109,8 @@ final class CubeMesher {
         Work work = WORK.get();
         Built built = build(s, work, FLAGS);
         if (CHECK_MESH) check(s, work, built, build(s, work, PLAIN));
+        // Last, once the translucent quads are sorted and the check has compared the meshes as built.
+        if (CubeRegions.ON) for (Layer layer : built.layers) CubeRegions.shift(layer.mesh, s.cx, s.cy, s.cz);
         return built;
     }
 
