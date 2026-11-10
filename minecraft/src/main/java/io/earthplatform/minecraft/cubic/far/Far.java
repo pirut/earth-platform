@@ -86,7 +86,7 @@ public final class Far {
      * The levels a generator may make quick stand-ins for, from this one up: the two coarsest, whose
      * rings are the horizon and whose columns take the longest to make over a place never seen.
      */
-    public static final int PREVIEW_LEVEL = 7;
+    public static final int PREVIEW_LEVEL = Math.clamp(Integer.getInteger("earthplatform.far.previewLevel", 7), 1, 8);
 
     private Far() {}
 
