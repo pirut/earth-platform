@@ -119,8 +119,8 @@ public final class FarLod {
 
     /** Far terrain's depth range and reach in blocks, as a pack reads Distant Horizons' ({@code dhNearPlane}, {@code dhFarPlane}, {@code dhRenderDistance}). */
     public static float dhNearPlane() { return NEAR; }
-    public static float dhFarPlane() { return FarRenderer.DEPTH_FAR; }
-    public static int dhRenderDistance() { return (int) (0.95F * 0.5F * FarRenderer.DEPTH_FAR); }
+    public static float dhFarPlane() { return FarRenderer.depthFar(); }
+    public static int dhRenderDistance() { return (int) (0.95F * 0.5F * FarRenderer.depthFar()); }
 
     /** True when far terrain draws into its own depth: a pack with Voxy support or a Distant Horizons program, compiled for it. */
     static boolean active() {

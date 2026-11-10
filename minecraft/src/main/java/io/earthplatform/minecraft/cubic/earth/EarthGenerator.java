@@ -2824,7 +2824,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
             ClimateSource.Climate c = Math.abs(point.latitude()) <= 90 ? climate.coarse(point.latitude(), point.longitude(), metres) : null;
             if (c != null) return new Local(ClimateZone.of(c.koppen(), c.meanTemperature(), c.warmestQuarter()),
-                    c.meanTemperature(), c.warmestQuarter(), c.precipitation());
+                    c.meanTemperature(), c.warmestQuarter(), c.precipitation(), c.koppen());
         } else if (climate != null) {
             // Zone borders follow the 1 km grid; a gentle warp of a few hundred metres bends them, and finer layers down
             // to a few blocks fray them, so forest gives way to taiga in tongues and patches rather than along a curve.
