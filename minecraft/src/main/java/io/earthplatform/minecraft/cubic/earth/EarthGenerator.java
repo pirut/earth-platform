@@ -3819,6 +3819,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         return weight < 0.25 ? -1 : sum / weight;
     }
 
+    @Override protected boolean cappedCrowns() { return canopy != null; }
+
     /** How tall the trees round a column stand, in metres; -1 where there is no map or it has no reading. */
     @Override protected int canopy(int x, int z) {
         return canopy == null ? -1 : (int) Math.round(stand(x, z));

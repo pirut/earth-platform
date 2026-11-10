@@ -131,6 +131,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
      */
     protected int canopy(int x, int z) { return -1; }
 
+    /** Whether trees' bare log ends at the top of their crowns are covered with leaves; worlds made before build 70 keep vanilla's. */
+    protected boolean cappedCrowns() { return false; }
+
     /** Whether the water over a column is iced over: by default wherever its biome freezes. */
     protected boolean iced(Surface surface, int x, int z) { return surface.biome().value().getBaseTemperature() < 0.15f; }
     /** The rock layers a column shows in its cliff faces, or null for plain stone. */

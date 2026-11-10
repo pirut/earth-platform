@@ -217,7 +217,7 @@ final class Trees {
             TreeShape other = grown[(int) Math.floorMod(more >>> 16 * k, grown.length)];
             if (Math.abs(other.height() - want) < Math.abs(best.height() - want)) best = other;
         }
-        int lift = best.stretches() ? Math.max(0, Math.min(want, TALLEST) - best.height()) : 0;
+        int lift = best.stretches() ? Math.max(0, Math.min(want, TALLEST - 1) - best.height()) : 0;
         return new Planted(x, y, z, best, turn, r, snow, Math.min(lift, Math.max(2, best.height() * 3 / 5)));
     }
 
@@ -532,6 +532,40 @@ final class Trees {
     }
 
     /**
+     * Fills a conifer's crown where vanilla leaves its trunk bare: the log ends on top (a 2x2 spruce gets one leaf
+     * over four logs) and the rings between a spruce's tiers. From above, and on far terrain most of all, those
+     * dot a conifer forest with brown squares; filled, each crown is one green cone.
+     */
+    private static void cap(Long2ObjectOpenHashMap<BlockState> kept) {
+        int lowestLeaf = Integer.MAX_VALUE;
+        BlockState needle = null;
+        for (var entry : kept.long2ObjectEntrySet()) {
+            if (!entry.getValue().is(Blocks.SPRUCE_LEAVES)) continue;
+            lowestLeaf = Math.min(lowestLeaf, BlockPos.getY(entry.getLongKey()));
+            needle = entry.getValue().setValue(net.minecraft.world.level.block.LeavesBlock.DISTANCE, 1);
+        }
+        if (needle == null) return;
+        Long2ObjectOpenHashMap<BlockState> added = new Long2ObjectOpenHashMap<>();
+        for (var entry : kept.long2ObjectEntrySet()) {
+            long key = entry.getLongKey();
+            int x = BlockPos.getX(key), y = BlockPos.getY(key), z = BlockPos.getZ(key);
+            if (y < lowestLeaf || !entry.getValue().is(BlockTags.LOGS)) continue;
+            if (!kept.containsKey(BlockPos.asLong(x, y + 1, z))) added.put(BlockPos.asLong(x, y + 1, z), needle);
+            boolean bare = true;
+            for (int side = 0; side < 4 && bare; side++) {
+                BlockState beside = kept.get(BlockPos.asLong(x + SIDE_X[side], y, z + SIDE_Z[side]));
+                bare = beside == null || beside.is(BlockTags.LOGS);
+            }
+            if (bare) for (int side = 0; side < 4; side++) {
+                long at = BlockPos.asLong(x + SIDE_X[side], y, z + SIDE_Z[side]);
+                if (!kept.containsKey(at)) added.put(at, needle);
+            }
+        }
+        kept.putAll(added);
+    }
+    private static final int[] SIDE_X = {1, -1, 0, 0}, SIDE_Z = {0, 0, 1, -1};
+
+    /**
      * Grows a vanilla tree feature on flat ground (mud for mangroves) until it has {@link #VARIANTS}
      * shapes. Bee nests are left out and added as the shape is placed, at the feature's own odds.
      * Huge mushrooms get a patch of mycelium under them.
@@ -563,6 +597,7 @@ final class Trees {
                     if (Math.abs(dx) + Math.abs(dz) <= 1 || Math.abs(dx) + Math.abs(dz) <= 3 && random.nextBoolean())
                         kept.put(BlockPos.asLong(dx, -1, dz), Blocks.MYCELIUM.defaultBlockState());
             if (kept.isEmpty()) continue;
+            if (gen.cappedCrowns()) cap(kept);
             // Other mods' trees must fit the reach cubes look for trees in, and must grow a tree, not a patch of flowers.
             if (soil != null && (!fits(kept) || kept.values().stream().noneMatch(Trees::woody))) continue;
             grown.add(new TreeShape(kept, bees));
