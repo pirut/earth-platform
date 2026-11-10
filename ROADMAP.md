@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated October 29, 2026, at build 69.
+Last updated November 10, 2026, at build 70.
 
 ## Where things stand
 
@@ -17,10 +17,12 @@ Releases are public alphas on [Modrinth](https://modrinth.com/mod/YnuWHcwC) and 
 - **Climate and biomes.** CHELSA climate and the RESOLVE ecoregion map pick the biome, and ESA WorldCover places forests, grass, rock, sand, snow, wetlands and water.
 - **Water.** Lakes and rivers sit level at their surveyed height. Narrow rivers come from JRC Global Surface Water, and small streams are traced from valleys in the elevation data.
 - **Getting around.** Spawn picker with a list of places and a globe, `/earth` commands, a travel map in creative (N), and a jet stream for elytra above Y 9,200.
-- **Shaders.** Iris with the stock Photon download, including on Macs.
+- **Shaders.** Iris with the stock Photon download, including on Macs, and Voxy- or Distant Horizons-capable packs.
 - **Servers and other mods.** Dedicated servers with several players, and a long list of popular mods tested in the Earth world (see the [FAQ](docs/FAQ.md#which-other-mods-work)).
 - **Releases.** CI on pull requests, and an automatic release on every merge that goes up on GitHub and Modrinth for both loaders.
 - **Fabric.** A Fabric build alongside the NeoForge one, from build 67.
+- **Finding and sharing places.** Town search on the globe and `/earth visit`, place codes (`/earth code`), F8 postcards, and one-click `.mrpack` install packs, from build 70.
+- **Arriving fast.** Quick stand-ins fill the whole far view within seconds of arriving, and far terrain is kept on disk with the world, from build 70.
 
 ## Now
 
