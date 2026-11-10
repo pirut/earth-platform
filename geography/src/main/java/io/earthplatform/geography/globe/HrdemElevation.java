@@ -118,6 +118,31 @@ public final class HrdemElevation implements ElevationLayer, AutoCloseable {
         int pixels = size * size;
         double[] px = new double[pixels], py = new double[pixels];
         int[] squares = new int[pixels];
+        List<Integer> touched = touched(zoom, x, y, px, py, squares);
+        if (touched.isEmpty()) return Readings.NONE;
+        // Read the levels at about the tile's pixel size, measured north-south at its centre, rounded to the coarser.
+        double centre = MercatorTileLayer.latitude(world, (y + 0.5) * size);
+        double pixel = 40_075_016.685578488 / world * Math.cos(Math.toRadians(centre));
+        int overview = Math.max(SKIPPED, Math.min(MAX_OVERVIEW, (int) Math.ceil(Math.log(pixel / RESOLUTION) / Math.log(2) - 1e-9) + COARSER));
+        int edge = Math.min(MAX_OVERVIEW, overview + 2);
+        // As UsgsElevation reads 3DEP: the files' headers, then the coarse level that gives each pixel's
+        // share of data, then the level read where that share is enough, each pass loaded all at once.
+        // And as there, the passes' loops are in methods of their own that never wait; this one waits between them.
+        files.headers(touched);
+        FloatCogs.Reader read = files.reader();
+        FloatCogs.Grid[] grids = new FloatCogs.Grid[pixels];
+        around(read, edge, px, py, squares, grids);
+        read.load();
+        double[] shares = new double[pixels];
+        if (!shares(read, overview, px, py, squares, grids, shares)) return Readings.NONE;
+        read.load();
+        return new Readings(shares, metres(read, overview, px, py, squares, grids, shares));
+    }
+
+    /** Each pixel's place in the model's own coordinates and the square holding it (-1 for none); the squares met. */
+    private static List<Integer> touched(int zoom, int x, int y, double[] px, double[] py, int[] squares) {
+        int size = TerrariumTileSource.TILE_SIZE;
+        double world = (double) size * (1L << zoom);
         List<Integer> touched = new ArrayList<>();
         int last = -1;
         double[] xy = new double[2];
@@ -136,28 +161,24 @@ public final class HrdemElevation implements ElevationLayer, AutoCloseable {
                 squares[at] = last;
             }
         }
-        if (touched.isEmpty()) return Readings.NONE;
-        // Read the levels at about the tile's pixel size, measured north-south at its centre, rounded to the coarser.
-        double centre = MercatorTileLayer.latitude(world, (y + 0.5) * size);
-        double pixel = 40_075_016.685578488 / world * Math.cos(Math.toRadians(centre));
-        int overview = Math.max(SKIPPED, Math.min(MAX_OVERVIEW, (int) Math.ceil(Math.log(pixel / RESOLUTION) / Math.log(2) - 1e-9) + COARSER));
-        int edge = Math.min(MAX_OVERVIEW, overview + 2);
-        // As UsgsElevation reads 3DEP: the files' headers, then the coarse level that gives each pixel's
-        // share of data, then the level read where that share is enough, each pass loaded all at once.
-        files.headers(touched);
-        FloatCogs.Reader read = files.reader();
-        FloatCogs.Grid[] grids = new FloatCogs.Grid[pixels];
-        for (int at = 0; at < pixels; at++) {
+        return touched;
+    }
+
+    /** First pass: the coarse level about each pixel, noted for {@link FloatCogs.Reader#load}. */
+    private static void around(FloatCogs.Reader read, int edge, double[] px, double[] py, int[] squares, FloatCogs.Grid[] grids) {
+        for (int at = 0; at < grids.length; at++) {
             if (squares[at] < 0) continue;
             FloatCogs.Grid around = read.grid(squares[at], edge, px[at], py[at]);
             if (around == null) continue;
             grids[at] = around;
             read.wantCoverage(around, px[at], py[at]);
         }
-        read.load();
-        double[] shares = new double[pixels];
+    }
+
+    /** Second pass: each pixel's share of data, and where it is over half the level its metres are read at, noted; false with none. */
+    private static boolean shares(FloatCogs.Reader read, int overview, double[] px, double[] py, int[] squares, FloatCogs.Grid[] grids, double[] shares) {
         boolean any = false;
-        for (int at = 0; at < pixels; at++) {
+        for (int at = 0; at < grids.length; at++) {
             if (grids[at] == null) continue;
             double share = read.coverage(grids[at], px[at], py[at]);
             shares[at] = share;
@@ -168,10 +189,13 @@ public final class HrdemElevation implements ElevationLayer, AutoCloseable {
             grids[at] = grid;
             if (grid != null) read.wantMetres(grid, px[at], py[at]);
         }
-        if (!any) return Readings.NONE;
-        read.load();
-        double[] metres = new double[pixels];
-        for (int at = 0; at < pixels; at++) {
+        return any;
+    }
+
+    /** Third pass: the metres of each pixel whose share is over half. */
+    private static double[] metres(FloatCogs.Reader read, int overview, double[] px, double[] py, int[] squares, FloatCogs.Grid[] grids, double[] shares) {
+        double[] metres = new double[grids.length];
+        for (int at = 0; at < grids.length; at++) {
             if (shares[at] <= 0.5) continue;
             double here = grids[at] == null ? Double.NaN : read.metres(grids[at], px[at], py[at]);
             // A gap at the finer level takes the coarser data around it.
@@ -181,7 +205,7 @@ public final class HrdemElevation implements ElevationLayer, AutoCloseable {
             }
             metres[at] = here;
         }
-        return new Readings(shares, metres);
+        return metres;
     }
 
     /** Canada Atlas Lambert (EPSG:3979) metres of a latitude and longitude, into {@code out} as {x, y}. */

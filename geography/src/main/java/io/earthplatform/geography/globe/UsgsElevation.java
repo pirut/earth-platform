@@ -102,9 +102,30 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
     @Override public String id() { return reading.id; }
 
     /** What 3DEP holds under a tile's pixels: each one's share of data around it, and its metres where that share is over half. */
-    private record Readings(double[] shares, double[] metres) {
+    private record Readings(double[] shares, double[] metres, boolean whole) {
         /** A tile 3DEP has nothing for. */
-        static final Readings NONE = new Readings(null, null);
+        static final Readings NONE = new Readings(null, null, false);
+    }
+
+    /** The weight 3DEP has over a tile's own value where its share of data is {@code share}, over half. */
+    private static double weight(double share) {
+        double s = Math.min(1, (share - 0.5) * 2);
+        return s * s * (3 - 2 * s);
+    }
+
+    /**
+     * Whether 3DEP alone decides every pixel: all of them at full weight and standing {@value #VOID_ABOVE_SEA} m
+     * or more above the sea, where {@link #refine} keeps neither the tile's bathymetry nor its open sea and
+     * writes 3DEP's metres whatever the tile held.
+     */
+    private static boolean whole(double[] shares, double[] metres) {
+        for (int at = 0; at < shares.length; at++)
+            if (!(shares[at] > 0.5 && weight(shares[at]) == 1 && metres[at] >= VOID_ABOVE_SEA)) return false;
+        return true;
+    }
+
+    @Override public boolean replaces(java.util.function.Supplier<Object> plan) {
+        return plan.get() instanceof Readings ahead && ahead.whole;
     }
 
     @Override public Object plan(int zoom, int x, int y) { return read(zoom, x, y); }
@@ -128,8 +149,10 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
             // deep in a mountainside or a lake, that this fills. 3DEP also covers bays and sounds at a few
             // metres, and a coarse pixel of sea under a bluff reads a few tens, so lower readings stay sea.
             if (own == 0 && (share < 1 - 1e-9 || metres < VOID_ABOVE_SEA)) continue;
-            double s = Math.min(1, (share - 0.5) * 2), weight = s * s * (3 - 2 * s);
-            float out = (float) (own + weight * (metres - own));
+            // At full weight 3DEP's own metres, to the bit whatever the tile held: the sum below gives them too but
+            // for a rounding in a double's last place, and a tile 3DEP decides alone skips the layers before (whole()).
+            double weight = weight(share);
+            float out = weight == 1 ? (float) metres : (float) (own + weight * (metres - own));
             // Exactly 0 means open sea to the generator.
             values[at] = out == 0 ? Float.MIN_VALUE : out;
         }
@@ -163,6 +186,25 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
         int[] cells = new int[pixels];
         FloatCogs.Grid[] grids = new FloatCogs.Grid[pixels];
         double[] longitudes = new double[size], latitudes = new double[size];
+        around(read, zoom, x, y, edge, longitudes, latitudes, cells, grids);
+        read.load();
+        double[] shares = new double[pixels];
+        if (!shares(read, overview, longitudes, latitudes, cells, grids, shares)) return Readings.NONE;
+        read.load();
+        double[] metres = metres(read, overview, longitudes, latitudes, cells, grids, shares);
+        return new Readings(shares, metres, whole(shares, metres));
+    }
+
+    // The three passes' loops, each in a method of its own that never waits on a download: read() waits between
+    // them, and holds no loop itself. A thread that waited inside a method whose loop Java had compiled while it
+    // ran (as these are, over a tile's 65,536 pixels) is what a crash of Java itself followed on a first visit,
+    // when the read ran on a virtual thread of its own beside the tile's download.
+
+    /** First pass: each pixel's centre, its cell and the coarse overview about it, noted for {@link FloatCogs.Reader#load}. */
+    private static void around(FloatCogs.Reader read, int zoom, int x, int y, int edge, double[] longitudes, double[] latitudes,
+                               int[] cells, FloatCogs.Grid[] grids) {
+        int size = TerrariumTileSource.TILE_SIZE, pixels = size * size;
+        double world = (double) size * (1L << zoom);
         for (int i = 0; i < size; i++) longitudes[i] = ((double) x * size + i + 0.5) / world * 360 - 180;
         for (int j = 0; j < size; j++) latitudes[j] = Mercator.latitude((double) y * size + j + 0.5, world);
         int lastCell = Integer.MIN_VALUE;
@@ -181,8 +223,12 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
             grids[at] = around;
             read.wantCoverage(around, lon, lat);
         }
-        read.load();
-        double[] shares = new double[pixels];
+    }
+
+    /** Second pass: each pixel's share of data, and where it is over half the overview its metres are read at, noted; false with none. */
+    private static boolean shares(FloatCogs.Reader read, int overview, double[] longitudes, double[] latitudes,
+                                  int[] cells, FloatCogs.Grid[] grids, double[] shares) {
+        int size = TerrariumTileSource.TILE_SIZE, pixels = size * size;
         boolean any = false;
         for (int at = 0; at < pixels; at++) {
             if (grids[at] == null) continue;
@@ -197,8 +243,13 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
             // A pixel outside the finer overview reads coarser ones below, one at a time.
             if (grid != null) read.wantMetres(grid, lon, lat);
         }
-        if (!any) return Readings.NONE;
-        read.load();
+        return any;
+    }
+
+    /** Third pass: the metres of each pixel whose share is over half. */
+    private static double[] metres(FloatCogs.Reader read, int overview, double[] longitudes, double[] latitudes,
+                                   int[] cells, FloatCogs.Grid[] grids, double[] shares) {
+        int size = TerrariumTileSource.TILE_SIZE, pixels = size * size;
         double[] metres = new double[pixels];
         for (int at = 0; at < pixels; at++) {
             if (shares[at] <= 0.5) continue;
@@ -211,7 +262,7 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
             }
             metres[at] = here;
         }
-        return new Readings(shares, metres);
+        return metres;
     }
 
     /** The listed cells that meet the box. */

@@ -127,6 +127,21 @@ class FirstVisitBench {
         System.out.printf(Locale.ROOT, "%n== First visit to %s (%.4f, %.4f), world home %s, %s; %d cores: %d cube workers, far %d to %d%n",
                 name, latitude, longitude, home[0] + "," + home[1], cache, cores, cubeThreads, farBusy, farMost);
 
+        // EARTH_VISIT_STRESS=n fetches the near data of n new places in a row instead of a visit, along one latitude
+        // (EARTH_VISIT_STRESS_LAT, from EARTH_VISIT_STRESS_LON eastward) so the climate rows are fetched once. It is
+        // how a fault in the many downloads at once shows: run it with a small young generation (-Xmn48m) and count
+        // the runs that end. See UsgsElevation's read for the Java crash it found.
+        if (System.getenv("EARTH_VISIT_STRESS") != null) {
+            int n = Integer.parseInt(System.getenv("EARTH_VISIT_STRESS"));
+            double lat = Double.parseDouble(System.getenv().getOrDefault("EARTH_VISIT_STRESS_LAT", "39.5")), lon0 = Double.parseDouble(System.getenv().getOrDefault("EARTH_VISIT_STRESS_LON", "-121.0"));
+            for (int i = 0; i < n; i++) {
+                int[] there = earth.block(lat, lon0 + i * 0.6);
+                long w0 = System.nanoTime();
+                earth.prepareNear(there[0], there[1]);
+                System.out.printf(Locale.ROOT, "STRESS %d at %.1f: %.1f s%n", i, lon0 + i * 0.6, seconds(w0));
+            }
+            return;
+        }
         // EARTH_VISIT_WARMUP=name,latitude,longitude fetches another place's near data first, so the visit is timed as
         // a travel in a game that has been running is, not with the first downloads of a new Java process; and
         // EARTH_VISIT_REST seconds of quiet after it lets the connections it opened close, as they have for a player
@@ -149,8 +164,9 @@ class FirstVisitBench {
         String[] previewDataText = {""};
         Thread previewPrepare = Thread.ofPlatform().daemon().name("visit stand-in data").start(() -> {
             if (!previews) return;
+            // As the game's travel: the backdrop's alone while the traveller waits; the finer levels' when the client asks.
             int[] at0 = earth.block(latitude, longitude);
-            earth.preparePreview(at0[0], at0[1]);
+            earth.preparePreview(at0[0], at0[1], Far.BACKDROP_LEVEL);
             previewData[0] = seconds(t0);
         });
         // A famous place's travel, as the spawn picker's: the data about the landing, then the search for it.
@@ -262,6 +278,8 @@ class FirstVisitBench {
             AtomicInteger viewLeft = new AtomicInteger(viewCount), left = standInsLeft;
             left.set(ask.size());
             System.out.printf(Locale.ROOT, "stand-ins: %d asked for at %.1f s, %d of them drawn and in view%n", ask.size(), seconds(t0), viewCount);
+            // The server fetches every level's stand-in data at once when a client first asks (FarServer.requestPreviews).
+            Thread.ofPlatform().daemon().name("visit stand-in data, all levels").start(() -> earth.preparePreview(bx, bz));
             for (long key : ask) previewWorkers.execute(() -> {
                 long start = System.nanoTime();
                 FarColumn column = new FarColumn();

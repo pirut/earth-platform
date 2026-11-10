@@ -4003,15 +4003,24 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
         }
         if (climate != null) {
-            // All of it: the landing search reads climate this far, and piece by piece it comes in far smaller reads.
-            // The far levels read it across their whole square, and their rock layers look for dry country a way past
-            // that: some 230 rows of each variable, which came in one request each as the columns needed them.
-            double reach = !far ? 24000
-                    : Math.max(24000, (Far.OUTER + 1) * (double) Far.width(Far.MAX_LEVEL) + Strata.dryReach(grid.groundMetresPerBlock(z)));
-            GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
+            // The cubes and the search for a landing read climate only where their rock layers look for dry country,
+            // a zone's reach past the ground they stand on: all of that at once, as piece by piece it comes in far
+            // smaller reads. No further for a traveller waiting to arrive: each row of the climate's elevation is a
+            // request of its own to a host that takes eight at a time, and the 24,000 blocks fetched here before were
+            // the last of a trip's data to come in, over half of them rows nothing read until the far levels did.
+            // The far levels read climate across their whole square, and their rock layers look a zone's reach past
+            // that: some 230 rows of each variable, which came in one request each as the columns needed them. The
+            // rows of the levels nearest the player first, which are made first.
+            double dry = Strata.dryReach(grid.groundMetresPerBlock(z));
+            double[] reaches = !far ? new double[] {Math.min(24000, NEAR_REACH + dry)}
+                    : new double[] {24000, Math.max(24000, (Far.OUTER + 1) * (double) Far.width(Far.MAX_LEVEL) + dry)};
             add.accept("climate", () -> {
-                try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
-                catch (RuntimeException failure) { missed.accept("climate", failure); }
+                try {
+                    for (double reach : reaches) {
+                        GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
+                        climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude());
+                    }
+                } catch (RuntimeException failure) { missed.accept("climate", failure); }
             });
         }
         if (rivers != null) {

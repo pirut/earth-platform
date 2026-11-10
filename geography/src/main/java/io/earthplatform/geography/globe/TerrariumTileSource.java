@@ -114,7 +114,7 @@ public final class TerrariumTileSource implements AutoCloseable {
             try {
                 java.util.List<CompletableFuture<Object>> plans = early(zoom, x, y);
                 float[] values = read(zoom, x, y);
-                for (int i = 0; i < layers.size(); i++) refine(layers.get(i), zoom, x, y, values, plans.get(i));
+                for (int i = first(plans); i < layers.size(); i++) refine(layers.get(i), zoom, x, y, values, plans.get(i));
                 if (zoom >= TileDespike.SPIKE_ZOOM) TileDespike.despike(values);
                 synchronized (memory) {
                     memory.putAndTrim(key, values, maxTilesInMemory);
@@ -237,6 +237,41 @@ public final class TerrariumTileSource implements AutoCloseable {
         }
         earlyNeighbours(zoom, x, y);
         return plans;
+    }
+
+    /**
+     * {@code -Dearthplatform.earth.everyLayer=true} lays every layer over every tile, as before: also those a later
+     * layer replaces whole ({@link ElevationLayer#replaces}). The tiles come out the same; for comparing the waits.
+     */
+    private static final boolean EVERY_LAYER = Boolean.getBoolean("earthplatform.earth.everyLayer");
+
+    /**
+     * The first layer worth laying over a tile: the last one that replaces the whole tile, whatever it held, or the
+     * first of all. Over most of the United States that is 3DEP, and the Copernicus fill before it, three downloads
+     * one after another, was what a tile of a new place waited on longest for values 3DEP then wrote over.
+     */
+    private int first(java.util.List<CompletableFuture<Object>> plans) {
+        if (EVERY_LAYER) return 0;
+        for (int i = layers.size() - 1; i > 0; i--) {
+            CompletableFuture<Object> plan = plans.get(i);
+            try {
+                if (layers.get(i).replaces(() -> ahead(plan))) return i;
+            } catch (RuntimeException unsure) {
+                // Its refine meets the failure and reports it; the layers before it run as they did.
+            }
+        }
+        return 0;
+    }
+
+    /** What a layer read ahead for a tile, waited for; null when it read nothing or failed. */
+    private static Object ahead(CompletableFuture<Object> plan) {
+        if (plan == null) return null;
+        try { return DataWaits.get(plan); }
+        catch (ExecutionException unreachable) { return null; }
+        catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
     }
 
     /**

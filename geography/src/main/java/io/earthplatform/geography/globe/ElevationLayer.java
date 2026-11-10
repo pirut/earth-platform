@@ -38,4 +38,13 @@ public interface ElevationLayer {
 
     /** {@link #refine(int, int, int, float[])} with what {@link #plan} read for the tile, or null: the values come out the same either way. */
     default void refine(int zoom, int x, int y, float[] values, Object plan) { refine(zoom, x, y, values); }
+
+    /**
+     * Whether {@link #refine(int, int, int, float[], Object)} with this plan sets every pixel of the tile from the
+     * layer's own data alone, whatever the tile held. The layers before this one are then left out for the tile:
+     * nothing they could do to it would show, and on a first visit their downloads were what it waited on.
+     *
+     * @param plan gives what {@link #plan} read for the tile, waiting for it if it is still on its way, or null
+     */
+    default boolean replaces(java.util.function.Supplier<Object> plan) { return false; }
 }

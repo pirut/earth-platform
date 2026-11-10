@@ -325,25 +325,18 @@ public final class BareEarth implements GlobalElevation.Tiles {
         }
     }
 
-    /** Works out a tile's field from the tiles and land cover round it. */
-    private Field compute(int tileX, int tileY) {
-        long size = (long) SIZE << ZOOM;
-        long gx0 = (long) tileX * SIZE - MARGIN, gy0 = (long) tileY * SIZE - MARGIN;
-        double[] latitude = new double[SPAN], longitude = new double[SPAN];
+    /** The latitude of each row and the longitude of each column of the window whose corner is at {@code gx0, gy0}. */
+    private static void centres(long size, long gx0, long gy0, double[] latitude, double[] longitude) {
         for (int k = 0; k < SPAN; k++) {
             double row = Math.max(0, Math.min(size - 1, gy0 + k)) + 0.5;
             latitude[k] = Mercator.latitude(row, size);
             double column = Math.floorMod(gx0 + k, size) + 0.5;
             longitude[k] = column / size * 360 - 180;
         }
-        // The cover's pieces under the window all at once: the first look below meets every one of them, and one
-        // after another they were most of what a new place's first tiles waited on. Not across the date line,
-        // where the window's west lies east of its east; there they come as they are met.
-        if (longitude[0] < longitude[SPAN - 1]) {
-            try { cover.prefetch(latitude[SPAN - 1], longitude[0], latitude[0], longitude[SPAN - 1]); }
-            catch (RuntimeException later) { /* the look below meets it */ }
-        }
-        // A first, sparse look: most of the world has no town within reach, and much no forest beside open land.
+    }
+
+    /** A sparse look at the window's land cover: how many samples are built up, forest and open land, and how many were taken. */
+    private int[] scout(double[] latitude, double[] longitude) {
         int built = 0, forest = 0, open = 0, samples = 0;
         for (int j = SCOUT / 2; j < SPAN; j += SCOUT)
             for (int i = SCOUT / 2; i < SPAN; i += SCOUT) {
@@ -354,14 +347,11 @@ public final class BareEarth implements GlobalElevation.Tiles {
                 else if (c == WorldCoverSource.GRASSLAND || c == WorldCoverSource.CROPLAND || c == WorldCoverSource.SHRUBLAND
                         || c == WorldCoverSource.BARE) open++;
             }
-        boolean towns = built >= 2, clearings = forest >= MIXED * samples && open >= MIXED * samples;
-        if (!towns && !clearings) return NONE;
+        return new int[] {built, forest, open, samples};
+    }
 
-        int n = SPAN * SPAN;
-        float[] dem = new float[n];
-        byte[] code = new byte[n];
-        cover.codes(latitude, longitude, code);
-        // The window's tiles, nine as a rule, read together rather than each as the rows below come to it.
+    /** A read of each tile the window lies over, in the order its rows meet them. */
+    private java.util.List<Runnable> windowTiles(long size, long gx0, long gy0) {
         java.util.Set<Long> wanted = new java.util.LinkedHashSet<>();
         for (int j = 0; j < SPAN; ) {
             long gy = Math.max(0, Math.min(size - 1, gy0 + j));
@@ -372,12 +362,13 @@ public final class BareEarth implements GlobalElevation.Tiles {
             }
             j += (int) Math.min(SPAN - j, SIZE - (gy & 255));
         }
-        if (wanted.size() > 1) {
-            java.util.List<Runnable> reads = new java.util.ArrayList<>(wanted.size());
-            for (long tile : wanted) reads.add(() -> tiles.tile(ZOOM, (int) (tile >> 32), (int) tile));
-            RangeFiles.all(reads);
-        }
-        // The window spans at most four tiles each way; each row is copied from them in runs.
+        java.util.List<Runnable> reads = new java.util.ArrayList<>(wanted.size());
+        for (long tile : wanted) reads.add(() -> tiles.tile(ZOOM, (int) (tile >> 32), (int) tile));
+        return reads;
+    }
+
+    /** Copies the window out of its tiles, each row in runs: it spans at most four tiles each way. */
+    private void copy(long size, long gx0, long gy0, float[] dem) {
         for (int j = 0; j < SPAN; j++) {
             long gy = Math.max(0, Math.min(size - 1, gy0 + j));
             for (int i = 0; i < SPAN; ) {
@@ -388,6 +379,37 @@ public final class BareEarth implements GlobalElevation.Tiles {
                 i += run;
             }
         }
+    }
+
+    /** Works out a tile's field from the tiles and land cover round it. */
+    private Field compute(int tileX, int tileY) {
+        long size = (long) SIZE << ZOOM;
+        long gx0 = (long) tileX * SIZE - MARGIN, gy0 = (long) tileY * SIZE - MARGIN;
+        // This method waits on downloads between its steps, and each step's loop is in a method of its own that
+        // does not (see UsgsElevation's read for why a loop and a wait keep apart).
+        double[] latitude = new double[SPAN], longitude = new double[SPAN];
+        centres(size, gx0, gy0, latitude, longitude);
+        // The cover's pieces under the window all at once: the first look below meets every one of them, and one
+        // after another they were most of what a new place's first tiles waited on. Not across the date line,
+        // where the window's west lies east of its east; there they come as they are met.
+        if (longitude[0] < longitude[SPAN - 1]) {
+            try { cover.prefetch(latitude[SPAN - 1], longitude[0], latitude[0], longitude[SPAN - 1]); }
+            catch (RuntimeException later) { /* the look below meets it */ }
+        }
+        // A first, sparse look: most of the world has no town within reach, and much no forest beside open land.
+        int[] seen = scout(latitude, longitude);
+        int built = seen[0], forest = seen[1], open = seen[2], samples = seen[3];
+        boolean towns = built >= 2, clearings = forest >= MIXED * samples && open >= MIXED * samples;
+        if (!towns && !clearings) return NONE;
+
+        int n = SPAN * SPAN;
+        float[] dem = new float[n];
+        byte[] code = new byte[n];
+        cover.codes(latitude, longitude, code);
+        // The window's tiles, nine as a rule, read together rather than each as the rows below come to it.
+        java.util.List<Runnable> reads = windowTiles(size, gx0, gy0);
+        if (reads.size() > 1) RangeFiles.all(reads);
+        copy(size, gx0, gy0, dem);
         double metres = 2 * Math.PI * EARTH_RADIUS * Math.cos(Math.toRadians(latitude[SPAN / 2])) / size;
         if (cacheRoot == null) return compute(dem, code, metres, towns, clearings);
         // Kept with a digest of what it was worked out from, so a field is never read back over changed tiles or cover.
