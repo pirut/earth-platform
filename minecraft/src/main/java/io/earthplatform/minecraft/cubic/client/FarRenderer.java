@@ -1691,7 +1691,12 @@ public final class FarRenderer {
                         : apart ? Float.floatToIntBits(reach) & 0xFFFFFFFFL | AFTER_NEAR : 0) | (pack ? PACK : 0);
                 boolean again = REUSE_DRAWS && farDraws.holds(viewSerial, setting);
                 IntArrayList far = again ? NONE : skipNear ? beyondReach(seen) : apart ? outsideReach() : allShown();
-                try { drawEach(gpu, farDraws, again, far, seen, setting); }
+                try {
+                    // Drawn again as recorded, the ranges hidden behind others are left out (see FarQueryCull).
+                    if (!again || !gpu.playQueried(farDraws, (float) (seen.x - position.x), (float) (seen.y - position.y), (float) (seen.z - position.z))) {
+                        drawEach(gpu, farDraws, again, far, seen, setting);
+                    }
+                }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
                 drawCount.submitted(ranges + gpu.ranges);
             }
@@ -1848,6 +1853,8 @@ public final class FarRenderer {
     /** Frames whose depth pre-pass went in two passes (see FarHiddenCull#TWO_PHASE), for the performance log. */
     private int twoPhaseFrames;
     int twoPhaseFrames() { return twoPhaseFrames; }
+    /** Ranges the last frame's far draw left out or drew only on condition of occlusion queries (see FarQueryCull). */
+    public int queryHiddenRanges() { return gpu == null ? 0 : gpu.queryHidden(); }
 
     private static final long PREPASSED = 1L << 32, SKIPS_NEAR = 1L << 33, PACK = 1L << 34, AFTER_NEAR = 1L << 35;
 

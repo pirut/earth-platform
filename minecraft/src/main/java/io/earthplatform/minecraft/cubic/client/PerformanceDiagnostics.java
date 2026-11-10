@@ -59,7 +59,7 @@ public final class PerformanceDiagnostics {
             ClientCubeWorld world=ClientCubeWorld.current();record.addProperty("cubic_world_loaded",world!=null);
             if(world!=null) {
                 record.add("far",gson.toJsonTree(world.far().perfState()));
-                JsonObject cubes=new JsonObject();cubes.addProperty("loaded",world.loadedCubes());cubes.addProperty("meshes",world.renderer().meshCount());cubes.addProperty("pending_meshes",world.renderer().pendingCount());cubes.addProperty("visible_meshes",world.renderer().visibleMeshCount());cubes.addProperty("cave_culled_meshes",world.renderer().caveCulledCount());cubes.addProperty("occlusion_tested_meshes",world.renderer().occlusionTestedCount());cubes.addProperty("far_two_phase_frames",world.far().twoPhaseFrames());record.add("cubes",cubes);
+                JsonObject cubes=new JsonObject();cubes.addProperty("loaded",world.loadedCubes());cubes.addProperty("meshes",world.renderer().meshCount());cubes.addProperty("pending_meshes",world.renderer().pendingCount());cubes.addProperty("visible_meshes",world.renderer().visibleMeshCount());cubes.addProperty("cave_culled_meshes",world.renderer().caveCulledCount());cubes.addProperty("occlusion_tested_meshes",world.renderer().occlusionTestedCount());cubes.addProperty("draw_calls",world.renderer().drawCallCount());cubes.addProperty("region_buffers",world.renderer().regionBufferCount());cubes.addProperty("far_two_phase_frames",world.far().twoPhaseFrames());record.add("cubes",cubes);
             }
             record.add("run_mesher",gson.toJsonTree(FarMesher.runStats()));
             JsonObject stages=new JsonObject();
