@@ -199,6 +199,10 @@ From **Distant Horizons** we took:
 
 [Horizon](https://github.com/horizon-rust/horizon), an open-source (MIT) rewrite of Minecraft: Java Edition in Rust, showed how to leave out terrain the camera can't see: culling near terrain by which faces of each section its open space joins, as Minecraft does, and occlusion culling in two phases, drawing what was seen last frame first and then testing everything else against the depth it left, in the same frame. Earth Platform's near cubes and far terrain's depth pre-pass now cull this way. It contains no code from Horizon.
 
+## Filling every level first: thank you, SeedGen
+
+[Voxy SeedGen](https://modrinth.com/mod/voxy-seedgen) and Distant Horizons SeedGen by MobiusMeansBusiness showed how fast a far view can stand when every ring is written straight at the detail it is drawn at and made finer as the player comes nearer. Our quick stand-ins for every far level follow that idea with Earth's map data in place of seed math. They contain no code from SeedGen, which is closed source.
+
 ## Earlier Earth and cubic-chunks projects
 
 The [Cubic Chunks](https://github.com/OpenCubicChunks) mods, [Terrarium](https://github.com/gegy/terrarium) and [Terra++](https://github.com/BuildTheEarth/terraplusplus) (Build The Earth) proved that tall worlds and a real-scale Earth in Minecraft are possible. Earth Platform contains no code from them.

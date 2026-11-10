@@ -46,10 +46,10 @@ class FarWireTest {
         }
     }
 
-    @Test void standInRequestHoldsBothCoarsestLevels() {
-        // The two coarsest levels at the sharpest normal setting, in one request each.
+    @Test void standInRequestHoldsAFullBatch() {
+        // As many keys as one request carries, of the two coarsest levels.
         long[] keys = new long[CubePayloads.FarPreviewRequest.MAX_KEYS];
-        for (int i = 0; i < keys.length; i++) keys[i] = Far.key(Far.PREVIEW_LEVEL + (i & 1), i - 2000, 7 * i);
+        for (int i = 0; i < keys.length; i++) keys[i] = Far.key(Far.MAX_LEVEL - 1 + (i & 1), i - 2000, 7 * i);
         var buffer = buffer();
         CubePayloads.FarPreviewRequest.CODEC.encode(buffer, new CubePayloads.FarPreviewRequest(keys));
         assertArrayEquals(keys, CubePayloads.FarPreviewRequest.CODEC.decode(buffer).keys());
