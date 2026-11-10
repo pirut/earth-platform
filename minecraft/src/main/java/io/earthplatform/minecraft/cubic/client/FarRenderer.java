@@ -1026,15 +1026,25 @@ public final class FarRenderer {
 
     /**
      * The order stand-ins are asked for and first meshed in: what is in view first; of that the
-     * backdrop, then the levels' own rings from the player outward, so the ground fills in as a
-     * wave toward the horizon and no far band hangs over a gap; the finer levels' middles last.
+     * backdrop, then the levels' own rings from the coarsest in, nearest first in each. The real
+     * columns come from the player outward, so the two meet in the middle, and the ground round
+     * the player, which the real columns reach in a second or two anyway, does not wait behind
+     * stand-ins for it. The finer levels' middles last.
      */
     private long standInOrder(long key, int bx, int bz) {
         int level = Far.level(key), width = Far.width(level);
         long x0 = (long) Far.x(key) * width, z0 = (long) Far.z(key) * width;
         long dx = Math.max(0, Math.max(x0 - bx, bx - (x0 + width))), dz = Math.max(0, Math.max(z0 - bz, bz - (z0 + width)));
         int tier = level >= BACKDROP_LEVEL ? 0 : Far.refined(level, Far.x(key), Far.z(key), bx, bz, finest) ? 2 : 1;
-        return (inView(key, bx, bz) ? 0 : 4L << 40) + ((long) tier << 40) + Math.max(dx, dz);
+        return (inView(key, bx, bz) ? 0 : 4L << 40) + ((long) tier << 40) + ((long) (Far.MAX_LEVEL - level) << 32) + Math.min(Math.max(dx, dz), (1L << 32) - 1);
+    }
+
+    /** The order real columns never meshed are first meshed in: in view first, from the player outward. */
+    private long firstMeshOrder(long key, int bx, int bz) {
+        int level = Far.level(key), width = Far.width(level);
+        long x0 = (long) Far.x(key) * width, z0 = (long) Far.z(key) * width;
+        long dx = Math.max(0, Math.max(x0 - bx, bx - (x0 + width))), dz = Math.max(0, Math.max(z0 - bz, bz - (z0 + width)));
+        return (inView(key, bx, bz) ? -1L << 40 : 4L << 40) + Math.max(dx, dz);
     }
 
     /** Stand-ins received and how many of them their real columns have replaced, for diagnostics. */
@@ -1434,9 +1444,9 @@ public final class FarRenderer {
         long[] order = new long[count];
         for (int i = 0; i < count; i++) {
             Column column = due.get(i);
-            // A column never meshed and in view fills a hole there, stand-in or real: before the remeshes of what is drawn
-            // already, from the player outward; one behind comes after them.
-            order[i] = !column.meshed ? standInOrder(column.key, bx, bz) - (4L << 40)
+            // A column never meshed and in view fills a hole there: before the remeshes of what is drawn already, the
+            // real ones first, then the stand-ins in their own order; one behind comes after the remeshes.
+            order[i] = !column.meshed ? (column.preview ? standInOrder(column.key, bx, bz) : firstMeshOrder(column.key, bx, bz)) - (4L << 40)
                     : (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz);
         }
         for (int i : FarOrder.first(order, free)) submit(due.get(i));
