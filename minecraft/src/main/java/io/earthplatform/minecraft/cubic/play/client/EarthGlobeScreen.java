@@ -208,12 +208,16 @@ public final class EarthGlobeScreen extends Screen {
         gui.drawCenteredString(font, status(), width / 2, height - 48, 0x9FD7FF);
         if (searching()) {
             int x = search.getX(), y = search.getY() + search.getHeight() + 3;
+            // Above everything else on the screen, as a tooltip is: the globe's own texts must not show through.
+            gui.pose().pushPose();
+            gui.pose().translate(0, 0, 300);
             gui.fill(x - 1, y - 1, x + SEARCH_WIDTH + 1, y + results.size() * ROW + 1, 0xFF101018);
             for (int row = 0; row < results.size(); row++) {
                 boolean over = mouseX >= x && mouseX < x + SEARCH_WIDTH && mouseY >= y + row * ROW && mouseY < y + (row + 1) * ROW;
                 if (over || row == 0) gui.fill(x, y + row * ROW, x + SEARCH_WIDTH, y + (row + 1) * ROW, over ? 0x60FFFFFF : 0x30FFFFFF);
                 gui.drawString(font, font.plainSubstrByWidth(results.get(row).label(), SEARCH_WIDTH - 6), x + 3, y + row * ROW + 2, 0xFFFFFF);
             }
+            gui.pose().popPose();
             return;
         }
         if (hover != null) gui.renderTooltip(font, Component.literal(hover.place.label()), hover.x, hover.y);
