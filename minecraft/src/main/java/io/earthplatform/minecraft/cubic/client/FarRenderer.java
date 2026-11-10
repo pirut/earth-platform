@@ -906,7 +906,8 @@ public final class FarRenderer {
             // Noted and answered by the places alone, never reaching the columns themselves.
             boolean held = places.want(level, x, z, ticks);
             if (previews && level >= Far.PREVIEW_LEVEL) {
-                if (!held) bare.add(key);
+                // The finer levels' middles are left out: the levels inside them have stand-ins of their own.
+                if (!held && (level >= BACKDROP_LEVEL || !Far.refined(level, x, z, bx, bz, finest))) bare.add(key);
                 // A stand-in is drawn as any column, and its real column is still to come.
                 else { Column column = held(key); if (column != null && column.preview) missing.add(key); }
             }
@@ -1011,19 +1012,29 @@ public final class FarRenderer {
         for (int i = 0; i < bare.size(); i++) if (!previewsAsked.containsKey(bare.getLong(i))) ask.add(bare.getLong(i));
         if (ask.isEmpty()) return;
         Long2LongOpenHashMap order = new Long2LongOpenHashMap(ask.size());
-        for (int i = 0; i < ask.size(); i++) {
-            long key = ask.getLong(i);
-            int level = Far.level(key), width = Far.width(level);
-            long x0 = (long) Far.x(key) * width, z0 = (long) Far.z(key) * width;
-            long dx = Math.max(0, Math.max(x0 - bx, bx - (x0 + width))), dz = Math.max(0, Math.max(z0 - bz, bz - (z0 + width)));
-            order.put(key, (inView(key, bx, bz) ? 0 : 2L << 40) + (Far.refined(level, Far.x(key), Far.z(key), bx, bz, finest) ? 1L << 40 : 0) + Math.max(dx, dz));
-        }
+        for (int i = 0; i < ask.size(); i++) order.put(ask.getLong(i), standInOrder(ask.getLong(i), bx, bz));
         ask.unstableSort((a, b) -> Long.compare(order.get(a), order.get(b)));
         for (int from = 0; from < ask.size(); from += CubePayloads.FarPreviewRequest.MAX_KEYS) {
             long[] keys = ask.subList(from, Math.min(ask.size(), from + CubePayloads.FarPreviewRequest.MAX_KEYS)).toLongArray();
             for (long key : keys) previewsAsked.put(key, ticks);
             Platform.INSTANCE.sendToServer(new CubePayloads.FarPreviewRequest(keys));
         }
+    }
+
+    /** The two coarsest levels, whose stand-ins come first and whole, middles too: a backdrop for the whole view within a second. */
+    private static final int BACKDROP_LEVEL = 7;
+
+    /**
+     * The order stand-ins are asked for and first meshed in: what is in view first; of that the
+     * backdrop, then the levels' own rings from the player outward, so the ground fills in as a
+     * wave toward the horizon and no far band hangs over a gap; the finer levels' middles last.
+     */
+    private long standInOrder(long key, int bx, int bz) {
+        int level = Far.level(key), width = Far.width(level);
+        long x0 = (long) Far.x(key) * width, z0 = (long) Far.z(key) * width;
+        long dx = Math.max(0, Math.max(x0 - bx, bx - (x0 + width))), dz = Math.max(0, Math.max(z0 - bz, bz - (z0 + width)));
+        int tier = level >= BACKDROP_LEVEL ? 0 : Far.refined(level, Far.x(key), Far.z(key), bx, bz, finest) ? 2 : 1;
+        return (inView(key, bx, bz) ? 0 : 4L << 40) + ((long) tier << 40) + Math.max(dx, dz);
     }
 
     /** Stand-ins received and how many of them their real columns have replaced, for diagnostics. */
@@ -1416,13 +1427,16 @@ public final class FarRenderer {
         for (Column column : building) submit(column);
         // Only the first few can start. Ordering every waiting column each tick, as after a long
         // teleport with tens of thousands of them, took the render thread longer than the meshing.
-        int free = MESHES_IN_FLIGHT - meshing;
+        // At a low frame rate the meshers finish far more than the short queue between two frames' uploads, and stood idle.
+        int free = Math.max(MESHES_IN_FLIGHT, (int) Math.min(2048, frameNanos / 1_000_000L * MESH_THREADS)) - meshing;
         if (due.isEmpty() || free <= 0) return;
         int count = due.size();
         long[] order = new long[count];
         for (int i = 0; i < count; i++) {
             Column column = due.get(i);
-            order[i] = (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz);
+            // A stand-in never meshed and in view fills a hole there: before the remeshes of what is drawn already, in the stand-ins' own order; one behind comes after them.
+            order[i] = column.preview && !column.meshed ? standInOrder(column.key, bx, bz) - (4L << 40)
+                    : (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz);
         }
         for (int i : FarOrder.first(order, free)) submit(due.get(i));
     }
