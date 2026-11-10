@@ -1459,9 +1459,13 @@ public final class FarRenderer {
         for (int i = 0; i < count; i++) {
             Column column = due.get(i);
             // A column never meshed and in view fills a hole there: before the remeshes of what is drawn already, the
-            // real ones first, then the stand-ins in their own order; one behind comes after the remeshes.
-            order[i] = FIRST_MESH_ORDER && !column.meshed ? (column.preview ? standInOrder(column.key, bx, bz) : firstMeshOrder(column.key, bx, bz)) - (4L << 40)
-                    : (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz);
+            // real ones first, then the stand-ins in their own order; one behind comes after the remeshes. Between
+            // the two go the remeshes of the two finest levels' drawn columns, the ground round the player: its
+            // first meshes are made before its neighbours and the cubes over it are known, and on a Mac, left
+            // behind some seventeen thousand stand-ins, it stood as slabs and steps for two seconds longer.
+            if (FIRST_MESH_ORDER && !column.meshed) order[i] = column.preview ? standInOrder(column.key, bx, bz) - (4L << 40) : firstMeshOrder(column.key, bx, bz) - (5L << 40);
+            else if (FIRST_MESH_ORDER && column.drawnPick == pickSerial && column.level <= finest + 1) order[i] = priority(column.key, bx, bz) - (5L << 40);
+            else order[i] = (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz);
         }
         for (int i : FarOrder.first(order, free)) submit(due.get(i));
     }
