@@ -154,6 +154,53 @@ public final class ClimateSource implements AutoCloseable {
         return new Climate(koppen, mean / weights - LAPSE_RATE * metres, warm / weights - LAPSE_RATE * metres, rain / weights);
     }
 
+    /** How many rows apart the rows {@link #coarse} reads lie: 32 rows are about 30 km of latitude. */
+    public static final int COARSE_ROWS = 32;
+
+    /** The row {@link #coarse} reads for a latitude: the nearest of every {@value #COARSE_ROWS}th. */
+    private static int coarseRow(double latitude) {
+        int row = (int) Math.floor((NORTH - latitude) * PIXELS_PER_DEGREE);
+        return Math.clamp((Math.floorDiv(row, COARSE_ROWS) * COARSE_ROWS) + COARSE_ROWS / 2, 0, HEIGHT - 1);
+    }
+
+    /**
+     * The climate about a latitude and longitude, {@code metres} above sea level, or null where the
+     * data has a gap: as {@link #at}'s, but read from a single pixel of the nearest of every
+     * {@value #COARSE_ROWS}th row, so a view two hundred kilometres across needs nine rows of each
+     * variable rather than all of its two hundred and sixty. For quick stand-ins of far terrain,
+     * shown until the terrain made from every row replaces them.
+     */
+    public Climate coarse(double latitude, double longitude, double metres) {
+        if (!(Math.abs(latitude) <= 90) || !Double.isFinite(longitude) || !Double.isFinite(metres)) throw new IllegalArgumentException("Invalid position " + latitude + ", " + longitude);
+        int row = coarseRow(latitude), column = Math.floorMod((int) Math.floor((wrap(longitude) - WEST) * PIXELS_PER_DEGREE), WIDTH);
+        int m = Short.toUnsignedInt(value(Layer.MEAN, row, column)), w = Short.toUnsignedInt(value(Layer.WARM, row, column)),
+                r = Short.toUnsignedInt(value(Layer.RAIN, row, column));
+        if (m == 0 || m == 0xFFFF || w == 0 || w == 0xFFFF || r == 0xFFFF) return null;
+        int koppen = Short.toUnsignedInt(value(Layer.KOPPEN, row, column));
+        if (koppen > EF) koppen = NO_DATA;
+        double lift = LAPSE_RATE * (height(row, column) - metres);
+        return new Climate(koppen, kelvin(m) + lift, kelvin(w) + lift, r * 0.1);
+    }
+
+    private short value(Layer layer, int row, int column) { return ROW_CHUNKS ? sample(layer, row, column) : row(layer, row)[column]; }
+
+    /** Loads the rows and elevation chunks {@link #coarse} reads over an area, all at once, so it never waits. */
+    public void prefetchCoarse(double south, double west, double north, double east) {
+        int top = coarseRow(Math.min(90, north)), bottom = coarseRow(Math.max(-90, south));
+        double span = Math.min(360, east - west);
+        int first = (int) Math.floor((wrap(west) - WEST) * PIXELS_PER_DEGREE) - 1, columns = (int) Math.ceil(span * PIXELS_PER_DEGREE) + 3;
+        java.util.Set<Integer> chunks = new java.util.TreeSet<>();
+        for (int c = 0; c < columns; c += DEM_CHUNK / 2) chunks.add(Math.floorMod(first + c, WIDTH) / DEM_CHUNK);
+        chunks.add(Math.floorMod(first + columns - 1, WIDTH) / DEM_CHUNK);
+        List<Runnable> loads = new ArrayList<>();
+        for (int row = top; row <= bottom; row += COARSE_ROWS) {
+            int r = row;
+            for (Layer layer : Layer.values()) loads.add(() -> { for (int chunk : chunks) value(layer, r, chunk * DEM_CHUNK); });
+            for (int chunk : chunks) loads.add(() -> demChunk(r, chunk));
+        }
+        RangeFiles.all(loads);
+    }
+
     /**
      * Yearly precipitation, mm, at a latitude and longitude, or NaN where the data has a gap: as
      * {@link #at}'s, reading the precipitation rows alone.

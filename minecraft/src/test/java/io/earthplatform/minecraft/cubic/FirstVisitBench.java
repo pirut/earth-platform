@@ -65,8 +65,11 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  * optional {@code EARTH_VISIT_AT} ({@code name,latitude,longitude}, Mount Shasta by default), {@code EARTH_VISIT_HOME}
  * ({@code latitude,longitude} of the world's home, the place itself by default), {@code EARTH_VISIT_SECONDS} (how long
  * to wait for the far terrain, 600 by default), {@code EARTH_VISIT_CORES} (size the workers as the game would on a
- * machine with that many cores) and {@code EARTH_VISIT_FAR_MOST} (most far columns made at once, as
- * {@code -Dearthplatform.far.mostThreads}).
+ * machine with that many cores), {@code EARTH_VISIT_FAR_MOST} (most far columns made at once, as
+ * {@code -Dearthplatform.far.mostThreads}) and {@code EARTH_VISIT_STAND_INS=false} (no quick stand-ins for the
+ * two coarsest levels, for comparing), {@code EARTH_VISIT_SEARCH} (how far the landing is searched for, 2048 as a
+ * famous place's; 256 is a plain latitude and longitude's) and {@code EARTH_VISIT_WARMUP} with {@code EARTH_VISIT_REST}
+ * (another place fetched first, and seconds of quiet after it, so the visit is timed in a process that has run a while).
  */
 class FirstVisitBench {
     @Test
@@ -100,19 +103,19 @@ class FirstVisitBench {
 
         // The sources a new world reads, as CubicSettings makes them.
         Duration thirty = Duration.ofSeconds(30);
-        CopernicusSource copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache.resolve(CopernicusSource.DATASET_ID), true, 12, 8, thirty);
+        CopernicusSource copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache.resolve(CopernicusSource.DATASET_ID), true, 12, CubicSettings.transfers(8, 16), thirty);
         TerrariumTileSource[] made = new TerrariumTileSource[1];
         List<ElevationLayer> layers = List.of(
                 new CopernicusFill(copernicus, (z, x, y) -> made[0].cleaned(z, x, y), 512),
-                new HrdemElevation(HrdemElevation.AWS_HRDEM, cache.resolve(HrdemElevation.DATASET_ID), true, CubicSettings.blocksKept(), 6, thirty),
-                new UsgsElevation(UsgsElevation.AWS_3DEP, cache.resolve(UsgsElevation.DATASET_ID), true, CubicSettings.blocksKept(), 6, thirty, UsgsElevation.Reading.GRADED),
-                new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache.resolve(RemaSource.DATASET_ID), true, CubicSettings.blocksKept(), 6, thirty)),
+                new HrdemElevation(HrdemElevation.AWS_HRDEM, cache.resolve(HrdemElevation.DATASET_ID), true, CubicSettings.blocksKept(), CubicSettings.transfers(6, 24), thirty),
+                new UsgsElevation(UsgsElevation.AWS_3DEP, cache.resolve(UsgsElevation.DATASET_ID), true, CubicSettings.blocksKept(), CubicSettings.transfers(6, 24), thirty, UsgsElevation.Reading.GRADED),
+                new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache.resolve(RemaSource.DATASET_ID), true, CubicSettings.blocksKept(), CubicSettings.transfers(6, 24), thirty)),
                 new IgnElevation(IgnElevation.IGN_WMS, cache.resolve(IgnElevation.DATASET_ID), true, 64, 12, thirty),
                 new GsiElevation(GsiElevation.GSI_TILES, cache.resolve(GsiElevation.DATASET_ID), true, 64, 16, thirty));
         Path tileCache = cache.resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
-        TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, tileCache, true, CubicSettings.tilesKept(), 16, Duration.ofSeconds(20), layers);
+        TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, tileCache, true, CubicSettings.tilesKept(), CubicSettings.transfers(16, 48), Duration.ofSeconds(20), layers);
         made[0] = tiles;
-        WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, 8, thirty);
+        WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, CubicSettings.transfers(8, 24), thirty);
         ClimateSource climate = new ClimateSource(ClimateSource.CHELSA, cache.resolve(ClimateSource.DATASET_ID), true, 320, 8, thirty);
         SurfaceWaterSource water = new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache.resolve(SurfaceWaterSource.DATASET_ID), true, 96, 4, thirty);
         RiverMap rivers = new RiverMap(water, new Drainage(new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, tileCache, true, 64, 16, Duration.ofSeconds(20)),
@@ -124,18 +127,59 @@ class FirstVisitBench {
         System.out.printf(Locale.ROOT, "%n== First visit to %s (%.4f, %.4f), world home %s, %s; %d cores: %d cube workers, far %d to %d%n",
                 name, latitude, longitude, home[0] + "," + home[1], cache, cores, cubeThreads, farBusy, farMost);
 
+        // EARTH_VISIT_STRESS=n fetches the near data of n new places in a row instead of a visit, along one latitude
+        // (EARTH_VISIT_STRESS_LAT, from EARTH_VISIT_STRESS_LON eastward) so the climate rows are fetched once. It is
+        // how a fault in the many downloads at once shows: run it with a small young generation (-Xmn48m) and count
+        // the runs that end. See UsgsElevation's read for the Java crash it found.
+        if (System.getenv("EARTH_VISIT_STRESS") != null) {
+            int n = Integer.parseInt(System.getenv("EARTH_VISIT_STRESS"));
+            double lat = Double.parseDouble(System.getenv().getOrDefault("EARTH_VISIT_STRESS_LAT", "39.5")), lon0 = Double.parseDouble(System.getenv().getOrDefault("EARTH_VISIT_STRESS_LON", "-121.0"));
+            for (int i = 0; i < n; i++) {
+                int[] there = earth.block(lat, lon0 + i * 0.6);
+                long w0 = System.nanoTime();
+                earth.prepareNear(there[0], there[1]);
+                System.out.printf(Locale.ROOT, "STRESS %d at %.1f: %.1f s%n", i, lon0 + i * 0.6, seconds(w0));
+            }
+            return;
+        }
+        // EARTH_VISIT_WARMUP=name,latitude,longitude fetches another place's near data first, so the visit is timed as
+        // a travel in a game that has been running is, not with the first downloads of a new Java process; and
+        // EARTH_VISIT_REST seconds of quiet after it lets the connections it opened close, as they have for a player
+        // who travels after standing a while.
+        String warmUp = System.getenv("EARTH_VISIT_WARMUP");
+        if (warmUp != null) {
+            String[] place = warmUp.split(",");
+            int[] there = earth.block(Double.parseDouble(place[1]), Double.parseDouble(place[2]));
+            long w0 = System.nanoTime();
+            earth.prepareNear(there[0], there[1]);
+            System.out.printf(Locale.ROOT, "warm-up at %s: %.1f s%n", place[0], seconds(w0));
+            Thread.sleep(1000L * Integer.parseInt(System.getenv().getOrDefault("EARTH_VISIT_REST", "0")));
+        }
         Tick tick = new Tick();
         long t0 = System.nanoTime();
         Map<String, long[]> before = Downloads.totals();
+        // The stand-ins' data is asked for as the travel starts, beside the landing's.
+        boolean previews = earth.farPreviews(Far.MAX_LEVEL) && !"false".equals(System.getenv("EARTH_VISIT_STAND_INS"));
+        double[] previewData = {-1};
+        String[] previewDataText = {""};
+        Thread previewPrepare = Thread.ofPlatform().daemon().name("visit stand-in data").start(() -> {
+            if (!previews) return;
+            // As the game's travel: the backdrop's alone while the traveller waits; the finer levels' when the client asks.
+            int[] at0 = earth.block(latitude, longitude);
+            earth.preparePreview(at0[0], at0[1], Far.BACKDROP_LEVEL);
+            previewData[0] = seconds(t0);
+        });
         // A famous place's travel, as the spawn picker's: the data about the landing, then the search for it.
         int[] centre = earth.block(latitude, longitude);
+        // EARTH_VISIT_SEARCH=256 is a plain latitude and longitude's travel (/cubes goto), whose search stays close by.
+        int search = Integer.parseInt(System.getenv().getOrDefault("EARTH_VISIT_SEARCH", "2048"));
         earth.prepareNear(centre[0], centre[1]);
         double prepared = seconds(t0);
         String nearData = Downloads.since(before);
         var landing = CubicEvents.class.getDeclaredMethod("landing", io.earthplatform.minecraft.cubic.gen.CubeGenerator.class, int[].class, int.class, boolean.class);
         landing.setAccessible(true);
         Map<String, long[]> beforeLanding = Downloads.totals();
-        int[] spot = (int[]) landing.invoke(null, earth, centre, 2048, true);
+        int[] spot = (int[]) landing.invoke(null, earth, centre, search, search > 256);
         double landed = seconds(t0);
         String landingData = Downloads.since(beforeLanding);
         tick.start();
@@ -213,12 +257,59 @@ class FirstVisitBench {
                 if (inView(key, bx, bz, lookX, lookZ)) inView.add(key);
             }
         });
+        AtomicInteger failures = new AtomicInteger();
+        // Quick stand-ins for every level, asked for at once as a client does: in view first, on the server's own threads, the real columns waiting for them.
+        Map<Long, FarColumn> standIns = new ConcurrentHashMap<>();
+        double[] standInsInView = {-1}, standInsAll = {-1};
+        java.util.concurrent.atomic.AtomicLong standInNanos = new java.util.concurrent.atomic.AtomicLong();
+        java.util.concurrent.atomic.AtomicLongArray standInLevelNanos = new java.util.concurrent.atomic.AtomicLongArray(Far.MAX_LEVEL + 1);
+        java.util.concurrent.atomic.AtomicIntegerArray standInLevelCount = new java.util.concurrent.atomic.AtomicIntegerArray(Far.MAX_LEVEL + 1);
+        double[] standInLevelDone = new double[Far.MAX_LEVEL + 1];
+        AtomicInteger standInsLeft = new AtomicInteger(), standInsAtWork = new AtomicInteger();
+        ExecutorService previewWorkers = Executors.newFixedThreadPool(Math.clamp(cores - 2, farBusy, 8), runnable -> { Thread t = new Thread(runnable, "visit stand-ins"); t.setDaemon(true); t.setPriority(Thread.MIN_PRIORITY); return t; });
+        if (previews) {
+            LongArrayList ask = new LongArrayList();
+            for (long key : all) if (Far.level(key) >= Far.PREVIEW_LEVEL) ask.add(key);
+            Long2LongOpenHashMap order = new Long2LongOpenHashMap();
+            for (long key : ask) order.put(key, (wanted.contains(key) ? 0 : 2L << 40) + (inView.contains(key) ? 0 : 1L << 40) + priority(key, bx, bz, lookX, lookZ, Map.of()));
+            ask.unstableSort((a, b) -> Long.compare(order.get(a), order.get(b)));
+            int viewCount = 0;
+            for (long key : ask) if (inView.contains(key)) viewCount++;
+            AtomicInteger viewLeft = new AtomicInteger(viewCount), left = standInsLeft;
+            left.set(ask.size());
+            System.out.printf(Locale.ROOT, "stand-ins: %d asked for at %.1f s, %d of them drawn and in view%n", ask.size(), seconds(t0), viewCount);
+            // The server fetches every level's stand-in data at once when a client first asks (FarServer.requestPreviews).
+            Thread.ofPlatform().daemon().name("visit stand-in data, all levels").start(() -> earth.preparePreview(bx, bz));
+            for (long key : ask) previewWorkers.execute(() -> {
+                long start = System.nanoTime();
+                FarColumn column = new FarColumn();
+                io.earthplatform.geography.globe.DataWaits.watch(waiting -> standInsAtWork.addAndGet(waiting ? -1 : 1));
+                standInsAtWork.incrementAndGet();
+                try {
+                    earth.farPreview(Far.level(key), Far.x(key), Far.z(key), column);
+                    for (LevelChunkSection section : column.sections) if (section != null) CubeCodec.sectionBytes(section);
+                    standIns.put(key, column);
+                } catch (RuntimeException failure) {
+                    if (failures.incrementAndGet() <= 3) failure.printStackTrace();
+                }
+                standInsAtWork.decrementAndGet();
+                io.earthplatform.geography.globe.DataWaits.watch(null);
+                standInNanos.addAndGet(System.nanoTime() - start);
+                standInLevelNanos.addAndGet(Far.level(key), System.nanoTime() - start);
+                standInLevelCount.incrementAndGet(Far.level(key));
+                synchronized (standInLevelDone) { standInLevelDone[Far.level(key)] = seconds(t0); }
+                if (inView.contains(key) && viewLeft.decrementAndGet() == 0) standInsInView[0] = seconds(t0);
+                if (left.decrementAndGet() == 0) { standInsAll[0] = seconds(t0); previewDataText[0] = Downloads.since(before); }
+            });
+        }
         Map<Long, FarColumn> columns = new ConcurrentHashMap<>();
         LongOpenHashSet asked = new LongOpenHashSet();
-        AtomicInteger inFlight = new AtomicInteger(), failures = new AtomicInteger();
+        AtomicInteger inFlight = new AtomicInteger();
         long[] levelNanos = new long[Far.MAX_LEVEL + 1];
         int[] levelCount = new int[Far.MAX_LEVEL + 1];
         double[] wantedAt = new double[101], inViewAt = new double[101];
+        double[] shownAt = new double[101];
+        java.util.Arrays.fill(shownAt, -1);
         java.util.Arrays.fill(wantedAt, -1);
         java.util.Arrays.fill(inViewAt, -1);
         int nextPrint = 0;
@@ -229,6 +320,7 @@ class FirstVisitBench {
         while (true) {
             long now = System.nanoTime();
             farWorkers.hold(nearPending.get() > 0);
+            farWorkers.giveWay(standInsAtWork.get());
             if (now - lastPlan > 500_000_000L || planned >= plan.size()) {
                 lastPlan = now;
                 plan.clear();
@@ -266,6 +358,10 @@ class FirstVisitBench {
             int share = (int) (100L * doneWanted / wanted.size()), viewShare = (int) (100L * doneInView / Math.max(1, inView.size()));
             for (int p = 0; p <= share; p++) if (wantedAt[p] < 0) wantedAt[p] = t;
             for (int p = 0; p <= viewShare; p++) if (inViewAt[p] < 0) inViewAt[p] = t;
+            int shown = 0;
+            for (long key : inView) if (columns.containsKey(key) || standIns.containsKey(key)) shown++;
+            int shownShare = (int) (100L * shown / Math.max(1, inView.size()));
+            for (int p = 0; p <= shownShare; p++) if (shownAt[p] < 0) shownAt[p] = t;
             if (t >= nextPrint) {
                 System.out.printf(Locale.ROOT, "t=%4.0f s: far %5d of %d made, %3d%% of the drawn ones (%3d%% in view), %d working; near %s; %s%n", t, columns.size(), all.size(),
                         share, viewShare, inFlight.get(), nearDone[0] >= 0 ? "done" : nearPending.get() + " waiting", Downloads.since(before).replaceAll(":.*", ""));
@@ -283,8 +379,15 @@ class FirstVisitBench {
                 name, arrived, prepared, landed - prepared, nearDone[0], farData[0], farDone, failures.get());
         for (int p : new int[] {25, 50, 75, 90, 95, 99, 100})
             System.out.printf(Locale.ROOT, "far drawn %3d%%: %6.1f s, in view %6.1f s%n", p, wantedAt[p], inViewAt[p]);
+        System.out.printf(Locale.ROOT, "in view with a column or a stand-in: 50%% %.1f s, 90%% %.1f s, 99%% %.1f s, 100%% %.1f s%n", shownAt[50], shownAt[90], shownAt[99], shownAt[100]);
         for (int level = Far.MIN_LEVEL; level <= Far.MAX_LEVEL; level++)
             System.out.printf(Locale.ROOT, "level %d: %5d columns, %.1f ms each (wall, waits included)%n", level, levelCount[level], levelNanos[level] / 1e6 / Math.max(1, levelCount[level]));
+        if (previews) System.out.printf(Locale.ROOT, "stand-ins: data fetched %.1f s; the ones in view all made %.1f s, all %d made %.1f s, %.1f ms each; downloads by then: %s%n",
+                previewData[0], standInsInView[0], standIns.size(), standInsAll[0], standInNanos.get() / 1e6 / Math.max(1, standIns.size()), previewDataText[0]);
+        if (previews) for (int level = Far.PREVIEW_LEVEL; level <= Far.MAX_LEVEL; level++)
+            System.out.printf(Locale.ROOT, "stand-ins level %d: %5d made, %.2f ms each, the last at %.1f s%n", level, standInLevelCount.get(level),
+                    standInLevelNanos.get(level) / 1e6 / Math.max(1, standInLevelCount.get(level)), standInLevelDone[level]);
+        if (previews) System.out.println("stand-ins against the columns that replace them: " + compare(standIns, columns));
         System.out.println(tick);
         System.out.println("far data: " + farDataText[0]);
         System.out.println("all downloads: " + Downloads.since(before));
@@ -316,6 +419,60 @@ class FirstVisitBench {
     }
 
     private static double seconds(long start) { return (System.nanoTime() - start) / 1e9; }
+
+    /** How far the stand-ins' tops lie from the real columns' and how many of their top voxels are the same block, by level. */
+    private static String compare(Map<Long, FarColumn> standIns, Map<Long, FarColumn> columns) {
+        StringBuilder text = new StringBuilder();
+        for (int level = Far.PREVIEW_LEVEL; level <= Far.MAX_LEVEL; level++) {
+            long cells = 0, sameBlock = 0, within1 = 0;
+            double sum = 0, worst = 0;
+            Map<String, Integer> pairs = new java.util.HashMap<>();
+            for (var entry : standIns.entrySet()) {
+                FarColumn real = columns.get(entry.getKey());
+                if (Far.level(entry.getKey()) != level || real == null) continue;
+                for (int cell = 0; cell < 256; cell++) {
+                    double a = top(entry.getValue(), cell, level), b = top(real, cell, level);
+                    if (Double.isNaN(a) || Double.isNaN(b)) continue;
+                    cells++;
+                    double off = Math.abs(a - b);
+                    sum += off;
+                    worst = Math.max(worst, off);
+                    if (off <= (1 << level)) within1++;
+                    if (topBlock(entry.getValue(), cell) == topBlock(real, cell)) sameBlock++;
+                    else pairs.merge(name(topBlock(entry.getValue(), cell)) + ">" + name(topBlock(real, cell)), 1, Integer::sum);
+                }
+            }
+            text.append(String.format(Locale.ROOT, "%sL%d tops %.1f blocks apart on average (worst %.0f, %.1f%% within one voxel), top block the same in %.1f%% of %d",
+                    level == Far.PREVIEW_LEVEL ? "" : "; ", level, sum / Math.max(1, cells), worst, 100.0 * within1 / Math.max(1, cells), 100.0 * sameBlock / Math.max(1, cells), cells));
+            long all = cells;
+            pairs.entrySet().stream().sorted((a, b) -> b.getValue() - a.getValue()).limit(8)
+                    .forEach(pair -> text.append(String.format(Locale.ROOT, " [%s %.1f%%]", pair.getKey(), 100.0 * pair.getValue() / Math.max(1, all))));
+        }
+        return text.toString();
+    }
+
+    private static String name(net.minecraft.world.level.block.state.BlockState state) {
+        return state == null ? "none" : net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+    }
+
+    private static int topVoxel(FarColumn column, int cell) {
+        for (int s = column.sections.size() - 1; s >= 0; s--) {
+            LevelChunkSection section = column.sections.get(s);
+            if (section == null) continue;
+            for (int y = 15; y >= 0; y--) if (!section.getBlockState(cell & 15, y, cell >> 4).isAir()) return s * 16 + y;
+        }
+        return -1;
+    }
+
+    private static double top(FarColumn column, int cell, int level) {
+        int voxel = topVoxel(column, cell);
+        return voxel < 0 ? Double.NaN : ((long) column.bottom * 16 + voxel + 1) * (1 << level) - Short.toUnsignedInt(column.drops[cell]) / (double) Far.DROP_UNIT;
+    }
+
+    private static net.minecraft.world.level.block.state.BlockState topBlock(FarColumn column, int cell) {
+        int voxel = topVoxel(column, cell);
+        return voxel < 0 ? null : column.sections.get(voxel >> 4).getBlockState(cell & 15, voxel & 15, cell >> 4);
+    }
 
     /**
      * A stand-in for the server's tick, at its priority: every 50 ms the same few milliseconds of

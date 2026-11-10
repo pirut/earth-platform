@@ -45,6 +45,21 @@ public final class CubicEvents {
             generator.prepareNear(home[0], home[1]);
             generator.prepareFar(home[0], home[1]);
         });
+        // Beside them, the little the horizon's quick stand-ins read, and the stand-ins themselves, ready for the first player.
+        if (CubicLevel.of(level) instanceof ServerCubeWorld cubes) standIns(generator, cubes, home[0], home[1]);
+    }
+
+    /** Fetches the data of the far stand-ins round a place and makes them ahead of a player arriving there, off-thread. */
+    private static void standIns(CubeGenerator generator, ServerCubeWorld cubes, int x, int z) {
+        if (!generator.farPreviews(io.earthplatform.minecraft.cubic.far.Far.MAX_LEVEL)) return;
+        Util.ioPool().execute(() -> {
+            try {
+                generator.preparePreview(x, z, io.earthplatform.minecraft.cubic.far.Far.BACKDROP_LEVEL);
+                cubes.far().warmPreviews(x, z);
+            } catch (RuntimeException failure) {
+                EarthPlatformMod.LOGGER.warn("Could not make the far stand-ins ahead", failure);
+            }
+        });
     }
 
     public static void save(LevelAccessor levelAccessor) {
@@ -401,6 +416,8 @@ public final class CubicEvents {
             // A famous place lands within sight of its view, which may stand kilometres off the point: fetch about there.
             boolean famous = !Double.isNaN(viewLatitude);
             int[] centre = famous ? withinSight(target, view) : target;
+            // The horizon's stand-ins meanwhile, so they are made by the time the player lands.
+            standIns(earth, cubes, centre[0], centre[1]);
             earth.prepareNear(centre[0], centre[1]);
             long prepared = System.nanoTime();
             String fetched = Downloads.since(before);

@@ -147,6 +147,16 @@ public final class FarRenderer {
     private boolean unsupported;
     private final Long2ObjectOpenHashMap<Column> columns = new Long2ObjectOpenHashMap<>();
     private final Long2IntOpenHashMap requested = new Long2IntOpenHashMap();
+    /**
+     * Whether the server sends quick stand-ins for the coarsest levels' columns (see
+     * {@link CubePayloads.FarPreviewRequest}), and when each was last asked for.
+     */
+    private boolean previewsOffered;
+    private final Long2IntOpenHashMap previewsAsked = new Long2IntOpenHashMap();
+    /** Set to plan at the next tick rather than the next turn of {@link #PLAN_TICKS}. */
+    private boolean planNow;
+    /** Stand-ins received, and how many the real column has replaced since. */
+    private int previewsReceived, previewsReplaced;
     /** Missing columns in the order to ask for them, from the last plan, and how many of them have been looked at. */
     private final LongArrayList plan = new LongArrayList();
     private int planned;
@@ -370,6 +380,8 @@ public final class FarRenderer {
         @Nullable final FarSurfacePacket packet;
         final char[] drops;
         final AABB box;
+        /** A quick stand-in, shown until the real column asked for in its place comes. */
+        final boolean preview;
         /** Block Y just above the column's highest voxel, or MIN_VALUE when it holds only air. */
         final int top;
         /** The section just above its box, so its box's top is this many widths up. */
@@ -431,8 +443,9 @@ public final class FarRenderer {
         /** Where its square and top are in {@link FarRenderer#tops}, or -1 when it holds only air. */
         int topIndex = -1;
 
-        Column(long key, int bottom, @Nullable LevelChunkSection[] sections, char[] drops, @Nullable FarSurfacePacket packet) {
+        Column(long key, int bottom, @Nullable LevelChunkSection[] sections, char[] drops, @Nullable FarSurfacePacket packet, boolean preview) {
             this.key = key;
+            this.preview = preview;
             this.level = Far.level(key);
             this.bottom = bottom;
             this.sections = sections;
@@ -598,6 +611,7 @@ public final class FarRenderer {
         this.world = world;
         this.biomes = world.client().registryAccess().registryOrThrow(Registries.BIOME);
         requested.defaultReturnValue(Integer.MIN_VALUE / 2);
+        previewsAsked.defaultReturnValue(Integer.MIN_VALUE / 2);
     }
 
     private long diagnosticReceivedColumns, diagnosticReceivedEstimatedBytes;
@@ -717,12 +731,18 @@ public final class FarRenderer {
     public void receive(CubePayloads.FarColumnData payload) {
         if (closed || !Far.valid(payload.key())) return;
         if(BuildInfo.diagnostics()){diagnosticReceivedColumns++;diagnosticReceivedEstimatedBytes+=payload.size();}
-        requested.remove(payload.key());
+        if (payload.preview()) {
+            // A stand-in that comes after the real column is of no use; and the real one stays asked for.
+            Column have = columns.get(payload.key());
+            if (have != null && !have.preview) return;
+            previewsReceived++;
+        }
+        else requested.remove(payload.key());
         Column column = null;
         if (payload.compact()) {
             try {
                 FarSurfacePacket packet = FarSurfacePacket.decode(payload.packet(), biomes.asHolderIdMap());
-                if (packet.level() == Far.level(payload.key())) column = new Column(payload.key(), packet.bottom(), null, unsigned(payload.drops()), packet);
+                if (packet.level() == Far.level(payload.key())) column = new Column(payload.key(), packet.bottom(), null, unsigned(payload.drops()), packet, payload.preview());
             } catch (java.io.IOException unreadable) {
                 PerfFailures.record(PerfFailures.Stage.PACKET_DECODE, unreadable);
             }
@@ -734,7 +754,7 @@ public final class FarRenderer {
                 byte[] bytes = payload.sections().get(i);
                 if (bytes.length > 0) sections[i] = CubeCodec.readSection(bytes, biomes);
             }
-            column = new Column(payload.key(), payload.bottom(), sections, unsigned(payload.drops()), null);
+            column = new Column(payload.key(), payload.bottom(), sections, unsigned(payload.drops()), null, payload.preview());
         }
         column.lastWanted = ticks;
         Column old = columns.put(column.key, column);
@@ -744,7 +764,8 @@ public final class FarRenderer {
         column.unmasked = true;
         unmasked.add(column);
         if (old != null) {
-            replaced++;
+            if (old.preview && !column.preview) previewsReplaced++;
+            else replaced++;
             boolean inPlace = SENT_IN_PLACE && old.meshed && listed(old);
             if (listed(old) && !inPlace) walkStale = true;
             column.drawnPick = old.drawnPick;
@@ -829,7 +850,8 @@ public final class FarRenderer {
         int bx = player.getBlockX(), bz = player.getBlockZ();
         zoom(player);
         submitDue(bx, bz);
-        if (ticks % PLAN_TICKS == 0) {
+        if (ticks % PLAN_TICKS == 0 || planNow) {
+            planNow = false;
             plan(bx, bz, FarLead.at(bx, bz, motion.x * 20.0, motion.z * 20.0));
             evict();
         }
@@ -845,8 +867,11 @@ public final class FarRenderer {
         double normal = 1 / Math.tan(Math.toRadians(Math.max(Minecraft.getInstance().options.fov().get(), 70)) / 2);
         var eye = player.getEyePosition();
         double height = eye.y - ground(player.getBlockX(), player.getBlockZ(), eye.y);
+        FarZoom before = zoomView;
         zoomView = ZOOM ? FarZoom.at(focal / normal, spread * focal / normal, eye.x, eye.y, eye.z, height,
                 player.getYRot(), player.getXRot(), zoomView) : null;
+        // A view that zooms in or turns is planned for at once, not at the next half second: what it looks at is asked for first.
+        if (zoomView != null && zoomView != before) planNow = true;
         // The plan works out how much of the zoom counts; unzoomed, the walk drops it at once.
         if (zoomView == null) zoom = null;
     }
@@ -916,6 +941,12 @@ public final class FarRenderer {
     /** Lists the missing columns, the ones a player would see change most first, and forgets requests no longer wanted. */
     private void plan(int bx, int bz, @Nullable int[] lead) {
         LongArrayList missing = new LongArrayList();
+        // The coarsest levels' columns with nothing held, to ask quick stand-ins for.
+        LongArrayList bare = new LongArrayList();
+        LongArrayList bareLater = new LongArrayList();
+        // The two finest levels' columns in view, and those of them not held yet.
+        int[] near = new int[2];
+        boolean previews = previewsOffered && PREVIEWS;
         // Read once, so the plan and the requests it keeps agree on the columns wanted.
         int hole = Far.hole(), finest = this.finest, outer = this.outer;
         int[] counts = new int[5];
@@ -924,7 +955,18 @@ public final class FarRenderer {
             int level = Far.level(key), x = Far.x(key), z = Far.z(key);
             // Noted and answered by the places alone, never reaching the columns themselves.
             boolean held = places.want(level, x, z, ticks);
+            if (previews && level >= Far.PREVIEW_LEVEL) {
+                // The finer levels' middles are left out: the levels inside them have stand-ins of their own. And the two
+                // finest levels have none: their real columns are the first to come, and the ground round the player is
+                // theirs. On a Mac the other levels' stand-ins, asked for at once, kept it a plain of coarse slabs for
+                // ten seconds where it had stood whole in three, so those wait until it is in.
+                if (!held && level >= BACKDROP_LEVEL) bare.add(key);
+                else if (!held && level > finest + 1 && !Far.refined(level, x, z, bx, bz, finest)) bareLater.add(key);
+                // A stand-in is drawn as any column, and its real column is still to come.
+                else { Column column = held(key); if (column != null && column.preview) missing.add(key); }
+            }
             if (!Far.refined(level, x, z, bx, bz, finest)) {
+                if (level <= finest + 1 && inView(key, bx, bz)) { near[0]++; if (!held) near[1]++; }
                 boolean meshed = held && places.meshed(level, x, z);
                 counts[0]++;
                 if (meshed) counts[1]++;
@@ -946,7 +988,7 @@ public final class FarRenderer {
         // the middle out. As much zoom counts as keeps them within FarZoom.MAX_COLUMNS: sharpening only
         // some of them left a patchwork of levels with walls between them all over the view.
         LongOpenHashSet zoomed = new LongOpenHashSet();
-        LongArrayList zoomMissing = new LongArrayList();
+        LongArrayList zoomMissing = new LongArrayList(), zoomBare = new LongArrayList();
         FarZoom view = zoomView, zoom = null;
         if (view != null) {
             FarZoom.Horizon horizon = horizon(view);
@@ -968,7 +1010,14 @@ public final class FarRenderer {
                 long key = seen.getLong(i);
                 zoomed.add(key);
                 counts[4]++;
-                if (!places.want(Far.level(key), Far.x(key), Far.z(key), ticks)) zoomMissing.add(key);
+                if (!places.want(Far.level(key), Far.x(key), Far.z(key), ticks)) {
+                    zoomMissing.add(key);
+                    if (previews && Far.level(key) >= Far.PREVIEW_LEVEL) zoomBare.add(key);
+                } else {
+                    // A stand-in is drawn as any column, and its real column is still to come.
+                    Column column = held(key);
+                    if (column != null && column.preview) zoomMissing.add(key);
+                }
             }
             zoomSeen = seen.size();
         }
@@ -987,12 +1036,80 @@ public final class FarRenderer {
         Long2LongOpenHashMap order = new Long2LongOpenHashMap(missing.size());
         for (int i = 0; i < missing.size(); i++) order.put(missing.getLong(i), priority(missing.getLong(i), bx, bz));
         missing.unstableSort((a, b) -> Long.compare(order.get(a), order.get(b)));
-        // Already in order.
-        missing.addAll(zoomMissing);
+        // What a zoomed view looks at comes first, already in order: the player is looking right at it, and behind
+        // everything else it sharpened only once the whole far view had loaded.
         plan.clear();
+        plan.addAll(zoomMissing);
         plan.addAll(missing);
         planned = 0;
+        if (previews) {
+            askPreviews(zoomBare, bx, bz);
+            askPreviews(bare, bx, bz);
+            // All but an eighth, so the few always missing at the edge while flying do not keep the rest waiting.
+            if (near[1] * 8 <= near[0]) askPreviews(bareLater, bx, bz);
+        }
     }
+
+    /**
+     * Whether to ask the server for quick stand-ins of the two coarsest levels' columns: on unless
+     * {@code -Dearthplatform.far.previews=false}, which shows the far terrain as it came before them.
+     */
+    private static final boolean PREVIEWS = !"false".equals(System.getProperty("earthplatform.far.previews"));
+
+    /**
+     * Asks for the stand-ins of the coarsest columns that hold nothing, all at once: they cost the
+     * server a millisecond or two each, so the horizon stands seconds after arriving somewhere
+     * new instead of the half minute and more its real columns take. The ones drawn at their own
+     * level and in view first, nearest first, then the middles in view, which stand in for the finer
+     * levels until those come; then the same behind.
+     */
+    private void askPreviews(LongArrayList bare, int bx, int bz) {
+        previewsAsked.long2IntEntrySet().removeIf(entry -> ticks - entry.getIntValue() > RETRY_TICKS);
+        LongArrayList ask = new LongArrayList();
+        for (int i = 0; i < bare.size(); i++) if (!previewsAsked.containsKey(bare.getLong(i))) ask.add(bare.getLong(i));
+        if (ask.isEmpty()) return;
+        Long2LongOpenHashMap order = new Long2LongOpenHashMap(ask.size());
+        for (int i = 0; i < ask.size(); i++) order.put(ask.getLong(i), standInOrder(ask.getLong(i), bx, bz));
+        ask.unstableSort((a, b) -> Long.compare(order.get(a), order.get(b)));
+        for (int from = 0; from < ask.size(); from += CubePayloads.FarPreviewRequest.MAX_KEYS) {
+            long[] keys = ask.subList(from, Math.min(ask.size(), from + CubePayloads.FarPreviewRequest.MAX_KEYS)).toLongArray();
+            for (long key : keys) previewsAsked.put(key, ticks);
+            Platform.INSTANCE.sendToServer(new CubePayloads.FarPreviewRequest(keys));
+        }
+    }
+
+    private static final int BACKDROP_LEVEL = Far.BACKDROP_LEVEL;
+
+    /**
+     * The order stand-ins are asked for and first meshed in: what is in view first; of that the
+     * backdrop, then the levels' own rings from the coarsest in, nearest first in each. The real
+     * columns come from the player outward, so the two meet in the middle, and the ground round
+     * the player, which the real columns reach in a second or two anyway, does not wait behind
+     * stand-ins for it. The finer levels' middles last.
+     */
+    private long standInOrder(long key, int bx, int bz) {
+        int level = Far.level(key), width = Far.width(level);
+        long x0 = (long) Far.x(key) * width, z0 = (long) Far.z(key) * width;
+        long dx = Math.max(0, Math.max(x0 - bx, bx - (x0 + width))), dz = Math.max(0, Math.max(z0 - bz, bz - (z0 + width)));
+        int tier = level >= BACKDROP_LEVEL ? 0 : Far.refined(level, Far.x(key), Far.z(key), bx, bz, finest) ? 2 : 1;
+        return (inView(key, bx, bz) ? 0 : 4L << 40) + ((long) tier << 40) + ((long) (Far.MAX_LEVEL - level) << 32) + Math.min(Math.max(dx, dz), (1L << 32) - 1);
+    }
+
+    /** Whether columns never meshed go ahead of remeshes, in their own order; {@code -Dearthplatform.far.firstMeshOrder=false} for comparing. */
+    private static final boolean FIRST_MESH_ORDER = !"false".equals(System.getProperty("earthplatform.far.firstMeshOrder"));
+    /** Whether the far meshers' queue grows with the frame time; {@code -Dearthplatform.far.meshQueue=false} for comparing. */
+    private static final boolean MESH_QUEUE = !"false".equals(System.getProperty("earthplatform.far.meshQueue"));
+
+    /** The order real columns never meshed are first meshed in: in view first, from the player outward. */
+    private long firstMeshOrder(long key, int bx, int bz) {
+        int level = Far.level(key), width = Far.width(level);
+        long x0 = (long) Far.x(key) * width, z0 = (long) Far.z(key) * width;
+        long dx = Math.max(0, Math.max(x0 - bx, bx - (x0 + width))), dz = Math.max(0, Math.max(z0 - bz, bz - (z0 + width)));
+        return (inView(key, bx, bz) ? -1L << 40 : 4L << 40) + Math.max(dx, dz);
+    }
+
+    /** Stand-ins received and how many of them their real columns have replaced, for diagnostics. */
+    public String previews() { return previewsOffered ? previewsReceived + " stand-ins, " + previewsReplaced + " replaced" : "no stand-ins"; }
 
     /** Tops the columns asked of the server back up to {@link #IN_FLIGHT}, in the plan's order; the server makes them in the order asked. */
     private void request() {
@@ -1000,7 +1117,8 @@ public final class FarRenderer {
         LongArrayList keys = new LongArrayList();
         while (planned < plan.size() && requested.size() < IN_FLIGHT && keys.size() < CubePayloads.FarRequest.MAX_KEYS) {
             long key = plan.getLong(planned++);
-            if (held(key) != null || requested.containsKey(key)) continue;
+            Column have = held(key);
+            if (have != null && !have.preview || requested.containsKey(key)) continue;
             requested.put(key, ticks);
             keys.add(key);
         }
@@ -1369,15 +1487,35 @@ public final class FarRenderer {
         for (Column column : building) submit(column);
         // Only the first few can start. Ordering every waiting column each tick, as after a long
         // teleport with tens of thousands of them, took the render thread longer than the meshing.
-        int free = MESHES_IN_FLIGHT - meshing;
+        // At a low frame rate the meshers finish far more than the short queue between two frames' uploads, and stood idle.
+        int free = Math.max(MESHES_IN_FLIGHT, MESH_QUEUE ? (int) Math.min(2048, frameNanos / 1_000_000L * MESH_THREADS) : 0) - meshing;
         if (due.isEmpty() || free <= 0) return;
         int count = due.size();
         long[] order = new long[count];
         for (int i = 0; i < count; i++) {
             Column column = due.get(i);
-            order[i] = (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz);
+            // A column never meshed and in view fills a hole there: before the remeshes of what is drawn already, the
+            // real ones first, then the stand-ins in their own order; one behind comes after the remeshes. Between
+            // the two go the remeshes of the two finest levels' drawn columns, the ground round the player: its
+            // first meshes are made before its neighbours and the cubes over it are known, and on a Mac, left
+            // behind some seventeen thousand stand-ins, it stood as slabs and steps for two seconds longer.
+            // A stand-in over the player's own ground is not hurried: meshed, the walk draws it whole over the finer levels
+            // until every finer column under it is in, a slab for the first seconds after a travel. The rest of the
+            // middles still come early, so no sky shows between the horizon and the near ground.
+            boolean overGround = column.preview && Far.refined(column.level, Far.x(column.key), Far.z(column.key), bx, bz, finest)
+                    && nearSquare(column, bx, bz);
+            if (FIRST_MESH_ORDER && !column.meshed && !overGround) order[i] = column.preview ? standInOrder(column.key, bx, bz) - (4L << 40) : firstMeshOrder(column.key, bx, bz) - (5L << 40);
+            else if (FIRST_MESH_ORDER && column.drawnPick == pickSerial && column.level <= finest + 1) order[i] = priority(column.key, bx, bz) - (5L << 40);
+            else order[i] = (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz);
         }
         for (int i : FarOrder.first(order, free)) submit(due.get(i));
+    }
+
+    /** Whether a column's square reaches within the two finest levels' rings round the player. */
+    private boolean nearSquare(Column column, int bx, int bz) {
+        int width = Far.width(column.level);
+        long dx = Math.max(0, Math.max(column.x0 - bx, bx - (column.x0 + width))), dz = Math.max(0, Math.max(column.z0 - bz, bz - (column.z0 + width)));
+        return Math.max(dx, dz) < 24L * Far.width(Math.min(Far.MAX_LEVEL, finest + 1));
     }
 
     /** Sets when a column is next meshed, keeping {@link #dueColumns} to the columns with a time. */
@@ -2700,7 +2838,12 @@ public final class FarRenderer {
     }
 
     /** Sets an Earth world's metres per block at the equator, from the server. */
-    public void scale(double metresPerBlock) { this.metresPerBlock = metresPerBlock; }
+    public void scale(double metresPerBlock, boolean previews) {
+        this.metresPerBlock = metresPerBlock;
+        // The first plan went out before the server said so: plan again now, to ask for the stand-ins at once.
+        if (previews && !previewsOffered) planNow = true;
+        previewsOffered = previews;
+    }
 
     /** An Earth world's metres per block at the equator, or 0 before the server says or outside Earth worlds. */
     public double metresPerBlock() { return metresPerBlock; }

@@ -263,7 +263,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     // Far terrain: voxel columns sampled from the same height, cover and tree rules -------------
 
     @Override public void farColumn(int level, int columnX, int columnZ, FarColumn out) {
-        farColumn(level, columnX, columnZ, out, false, true, true);
+        farColumn(level, columnX, columnZ, out, false, true, true, false);
     }
 
     /**
@@ -271,28 +271,49 @@ public abstract class SurfaceGenerator implements CubeGenerator {
      * sections), which is far less to make, send and keep; anywhere else as {@link #farColumn} makes it.
      */
     @Override public void farColumnCompact(int level, int columnX, int columnZ, FarColumn out) {
-        farColumn(level, columnX, columnZ, out, true, false, true);
+        farColumn(level, columnX, columnZ, out, true, false, true, false);
     }
 
     /** Explicit control for the dense oracle; never changes near cube generation. */
     final void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets) {
-        farColumn(level, columnX, columnZ, out, packets, true, true);
+        farColumn(level, columnX, columnZ, out, packets, true, true, false);
     }
 
     /** The column as runs, or null where only the dense form can hold it. */
     @Nullable public final FarSurfacePacket surfacePacket(int level, int columnX, int columnZ) {
         if (level < Far.MIN_LEVEL || level > Far.MAX_LEVEL) throw new IllegalArgumentException("Unsupported far level");
         FarColumn out = new FarColumn();
-        farColumn(level, columnX, columnZ, out, true, false, false);
+        farColumn(level, columnX, columnZ, out, true, false, false, false);
         return out.packet;
     }
 
-    private void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets, boolean materialize, boolean dense) {
+    /**
+     * A quick stand-in for a far column: the same voxels built from {@link #previewGround} and
+     * {@link #previewSurface} in place of the full ground and surface, with no rock layers.
+     */
+    @Override public void farPreview(int level, int columnX, int columnZ, FarColumn out) {
+        previewing(level);
+        try { farColumn(level, columnX, columnZ, out, false, true, true, true); }
+        finally { previewing(0); }
+    }
+
+    /** Told the level as this thread starts a quick stand-in and 0 as it ends, for rules that read less while one is made. */
+    protected void previewing(int level) {}
+    /** A column's ground and water for a quick stand-in, as {@link #farGround} gives them. */
+    protected void previewGround(int level, int x, int z, int[] out) { farGround(level, x, z, out); }
+    /** A column's surface for a quick stand-in, as {@link #farSurface} gives it. */
+    protected Surface previewSurface(int level, int x, int z, int ground, int water, int slope) { return farSurface(level, x, z, ground, water, slope); }
+
+    /** Blocks a forest's crowns stand above the ground where trees are not drawn one by one: a voxel of the 8-block level. */
+    private static final int CROWN = 8;
+
+    private void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets, boolean materialize, boolean dense, boolean preview) {
         out.packet = null;
         int v = 1 << level, width = 16 * v, x0 = columnX * width, z0 = columnZ * width, half = v >> 1;
         int[] ground = new int[18 * 18], water = new int[18 * 18], sample = new int[2];
         for (int j = 0; j < 18; j++) for (int i = 0; i < 18; i++) {
-            farGround(level, x0 + (i - 1) * v + half, z0 + (j - 1) * v + half, sample);
+            if (preview) previewGround(level, x0 + (i - 1) * v + half, z0 + (j - 1) * v + half, sample);
+            else farGround(level, x0 + (i - 1) * v + half, z0 + (j - 1) * v + half, sample);
             // Far below a water surface nothing shows, so deep seabeds are raised to save sections.
             int floor = sample[1] == DRY ? Integer.MIN_VALUE : sample[1] - width;
             ground[j * 18 + i] = Math.max(sample[0], floor);
@@ -309,7 +330,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             int g = (cz + 1) * 18 + cx + 1, h = ground[g], cell = cz * 16 + cx;
             int wx = x0 + cx * v + half, wz = z0 + cz * v + half;
             int slope = (Math.abs(ground[g + 1] - ground[g - 1]) + Math.abs(ground[g + 18] - ground[g - 18])) / v;
-            Surface surface = farSurface(level, wx, wz, h, water[g], slope);
+            Surface surface = preview ? previewSurface(level, wx, wz, h, water[g], slope) : farSurface(level, wx, wz, h, water[g], slope);
             biome[cell] = surface.biome();
             top[cell] = surface.top();
             ice[cell] = water[g] > h && iced(surface, wx, wz);
@@ -317,13 +338,17 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             if (water[g] <= h && Trees.snowy(surface) && !top[cell].is(Blocks.ICE) && !top[cell].is(Blocks.PACKED_ICE)
                     && !top[cell].is(Blocks.POWDER_SNOW)) top[cell] = SNOW_BLOCK;
             under[cell] = v > 2 && !bedrock(surface.under()) ? STONE : surface.under();
-            rock[cell] = layers(wx, wz);
+            rock[cell] = preview ? null : layers(wx, wz);
             // Voxels wider than a tree show forests as leaves: at 8 blocks a voxel above the ground, about a tree's
             // height, so they meet the rasterised trees nearer; wider voxels would stand too tall, so leaves lie on the ground voxel.
             if (v >= 8) {
                 BlockState leaves = water[g] > h ? null : canopy(surface, wx, wz, v);
                 if (leaves != null && v == 8) crown[cell] = leaves;
                 else if (leaves != null) top[cell] = leaves;
+            } else if (preview && water[g] <= h) {
+                // A quick stand-in rasterises no trees: forests stand as the crowns the 8-block level draws, one to
+                // each 8-block square, until the real column brings the trees themselves.
+                crown[cell] = canopy(surface, (wx & ~7) + 4, (wz & ~7) + 4, 8);
             }
             min = Math.min(min, h);
             max = Math.max(max, Math.max(h, water[g]));
@@ -336,9 +361,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             }
         }
         // Room for trees: drawn as they are out to 4-block voxels, sequoias out to 16.
-        boolean giants = v <= 16 && giants(x0 + width / 2, z0 + width / 2);
+        boolean giants = !preview && v <= 16 && giants(x0 + width / 2, z0 + width / 2);
         if (giants) max += Sequoia.TALLEST + 1;
-        else if (v <= 4) max += Trees.TALLEST + 1;
+        else if (v <= 4) max += preview ? CROWN : Trees.TALLEST + 1;
         else if (v == 8) max += v;
         int bottom = (min - v) >> (level + 4), highest = max >> (level + 4);
         // Columns taller than the section budget keep their top, where the view is.
@@ -408,14 +433,14 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                         if (rock[cz * 16 + cx] != null) state = rock[cz * 16 + cx].at(y0 + (v >> 1));
                         else if (state == STONE && bedrock(under[cz * 16 + cx])) state = under[cz * 16 + cx];
                     }
-                    if (state == AIR && crown[cz * 16 + cx] != null && ground[g] < y0 && ground[g] >= y0 - v) state = crown[cz * 16 + cx];
+                    if (state == AIR && crown[cz * 16 + cx] != null && ground[g] < y0 && ground[g] >= y0 - Math.max(v, CROWN)) state = crown[cz * 16 + cx];
                     if (state == AIR && y0 <= pours[cz * 16 + cx]) state = WATER;
                     if (state != AIR) section.setBlockState(cx, vy, cz, state, false);
                 }
             }
             stack[si] = section;
         }
-        if (v <= 4 || giants) farTrees(level, x0, z0, bottom, stack, v > 4);
+        if (!preview && (v <= 4 || giants)) farTrees(level, x0, z0, bottom, stack, v > 4);
         for (LevelChunkSection section : stack) {
             section.recalcBlockCounts();
             out.sections.add(section.hasOnlyAir() ? null : section);

@@ -28,6 +28,8 @@ public final class FarWorkers {
     private int running, waiting, turns;
     /** Set while cubes near players are waiting to be made: they come first, so no more than {@code busy} run. */
     private volatile boolean held;
+    /** Processors the quick stand-ins are using now, which come off {@code busy}: they are a few seconds' work and fill the view. */
+    private volatile int taken;
 
     public FarWorkers(String name, int busy, int most) {
         this.busy = busy;
@@ -45,7 +47,9 @@ public final class FarWorkers {
      */
     public int allowed() {
         synchronized (gate) {
-            return held ? busy : Math.min(most, busy + waiting - turns);
+            // Half stay at the real columns: the ground right round the player is theirs, and it came seconds later with none.
+        int atWork = Math.max((busy + 1) / 2, busy - taken);
+            return held ? atWork : Math.min(most, atWork + waiting - turns);
         }
     }
 
@@ -54,6 +58,17 @@ public final class FarWorkers {
         if (this.held == held) return;
         this.held = held;
         if (!held) synchronized (gate) { gate.notifyAll(); }
+    }
+
+    /**
+     * Leaves {@code taken} processors to the quick stand-ins being made: that many fewer columns are
+     * at work, down to half of them, so a view's worth of stand-ins is not shared with the real columns'
+     * far longer work. Stand-ins waiting on data take none, and columns under way finish.
+     */
+    public void giveWay(int taken) {
+        int before = this.taken;
+        this.taken = Math.max(0, taken);
+        if (this.taken < before) synchronized (gate) { gate.notifyAll(); }
     }
 
     private void waiting(boolean now) {

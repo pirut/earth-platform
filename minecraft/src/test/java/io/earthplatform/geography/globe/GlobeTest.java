@@ -1241,11 +1241,21 @@ public final class GlobeTest {
                         .toList();
                 equal(1, meanStrips.get(1).getValue().get(), "a row wanted by many threads is read once");
                 climate.prefetch(33.9, -121.8, 34.1, -121.5);
+                // The coarse reading: row 6000 is the middle one of the thirty-two from 5984 on and stands for them all, a pixel at a time.
+                double above = 84 - (5990 + 0.5) / 120;
+                var coarse = climate.coarse(above, lon, 1000);
+                near(20.05, coarse.meanTemperature(), 1e-6, "coarse climate reads its row's own pixel, unblended");
+                equal(ClimateSource.CSA, coarse.koppen(), "coarse zone from that row");
+                near(500, coarse.precipitation(), 1e-6, "coarse precipitation");
+                near(20.05 + 6.5, climate.coarse(above, lon, 0).meanTemperature(), 1e-6, "coarse climate warmer 1000 m lower");
+                near(10.05, climate.coarse(84 - (6015 + 0.5) / 120, lon + 1.0 / 120, 1000).meanTemperature(), 1e-6, "the last row of the thirty-two reads the same row");
+                climate.prefetchCoarse(33.0, -121.8, 34.5, -121.5);
             }
             try (var offline = new ClimateSource(base, cache, false, 64, 1, Duration.ofSeconds(5))) {
                 int before = hits.values().stream().mapToInt(AtomicInteger::get).sum();
                 near(17.55, offline.at(lat, lon + quarter, 1000).meanTemperature(), 1e-6, "disk cache offline");
                 equal(ClimateSource.CFB, offline.at(34.05, -121.6, 0).koppen(), "prefetched rows offline");
+                equal(ClimateSource.CFB, offline.coarse(33.2, -121.6, 0).koppen(), "coarse rows prefetched across an area read offline");
                 equal(before, hits.values().stream().mapToInt(AtomicInteger::get).sum(), "no transfer when cached");
                 fail(() -> offline.at(-40, 100, 0), MissingTerrainException.class, "uncached row offline");
             }

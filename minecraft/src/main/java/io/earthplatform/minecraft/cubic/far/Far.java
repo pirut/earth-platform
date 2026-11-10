@@ -110,6 +110,15 @@ public final class Far {
     public static final int EDIT_LEVELS = 4;
     /** Most sections one column may hold. */
     public static final int MAX_SECTIONS = 64;
+    /**
+     * The levels a generator may make quick stand-ins for, from this one up: all of them, so the
+     * whole far view stands seconds after arriving somewhere new, each ring at its own detail,
+     * and sharpens in place as the real columns come. {@code -Dearthplatform.far.previewLevel=7}
+     * keeps them to the two coarsest levels, the horizon, as they first were.
+     */
+    /** The two coarsest levels, whose stand-ins come first and whole, middles too: a backdrop for the whole view within a second. */
+    public static final int BACKDROP_LEVEL = MAX_LEVEL - 1;
+    public static final int PREVIEW_LEVEL = Math.clamp(Integer.getInteger("earthplatform.far.previewLevel", MIN_LEVEL), MIN_LEVEL, MAX_LEVEL);
 
     private Far() {}
 
