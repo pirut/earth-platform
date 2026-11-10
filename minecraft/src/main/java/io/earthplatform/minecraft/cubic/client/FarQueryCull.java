@@ -42,10 +42,16 @@ import org.lwjgl.system.MemoryUtil;
  * own blocks is left out too. So a range is left out only
  * where every fragment of it would have failed the depth test: the picture is the one without culling, except that
  * where two faces of different ranges lie at exactly the same depth, the one drawn first may differ for a frame.
- * {@code -Dearthplatform.far.queryCull=false} draws every range, for comparing.
+ * Off by default (see {@link #ENABLED}); {@code -Dearthplatform.far.queryCull=true} turns it on.
  */
 final class FarQueryCull {
-    static final boolean ENABLED = !"false".equals(System.getProperty("earthplatform.far.queryCull"));
+    /**
+     * Off unless asked for: on an RTX 2080 Ti it was slower wherever it ran. At Sharpest over Yosemite a view is some
+     * 24,000 ranges, 15,000 of them hidden, and the render thread's far draw went from 0.9 ms to 8.5 to 15 ms a frame
+     * (under Photon without the pre-pass 64 to 59 fps on the valley floor and 65 to 50 at the vista; without a pack
+     * 160 to 76 and 200 to 129). Not yet measured on a Mac, the one place it might pay.
+     */
+    static final boolean ENABLED = "true".equals(System.getProperty("earthplatform.far.queryCull"));
     /** Ranges tested as one. */
     private static final int GROUP = 32;
     /** Ranges tested on their own each frame, at most. */
