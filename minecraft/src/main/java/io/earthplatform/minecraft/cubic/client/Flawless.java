@@ -26,6 +26,11 @@ public final class Flawless {
 
     public static boolean active() { return !ACTIVE.isEmpty(); }
 
+    /** Asks for flawless frames ourselves, as a recorded camera shot does (see EarthCinema); {@code token} names the asker. */
+    public static void hold(Object token, boolean on) {
+        if (on) ACTIVE.add(token); else ACTIVE.remove(token);
+    }
+
     /** Offers our controller to every mod that asks for flawless frames. Runs once, at client setup. */
     public static void offer() {
         Function<String, Consumer<Boolean>> provider = name -> {

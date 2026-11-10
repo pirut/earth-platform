@@ -677,6 +677,16 @@ public final class FarRenderer {
         double cx = (Far.x(key) + 0.5) * width - bx, cz = (Far.z(key) + 0.5) * width - bz, length = Math.sqrt(cx * cx + cz * cz);
         return length < width || cx * lookX + cz * lookZ >= 0.5 * length;
     }
+    /**
+     * How much far terrain is still to come for where the player is: columns the plan wants and has
+     * not asked for, columns asked of the server, and columns waiting for or in the meshers. Nothing
+     * left means the far view is as complete as it gets until the player moves.
+     */
+    public int outstanding() { return closed ? 0 : Math.max(0, plan.size() - planned) + requested.size() + meshing + dueColumns.size(); }
+
+    /** The top of the far terrain at a block, from the finest column held there, or {@code unknown} where none is. */
+    public double groundAt(int bx, int bz, double unknown) { return ground(bx, bz, unknown); }
+
     /** Columns received again while already held, as when the server pushes an edit. */
     public int replacedCount() { return replaced; }
 

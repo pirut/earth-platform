@@ -76,7 +76,9 @@ public final class EarthWorlds {
                 .toClient(EarthMap.Payload.TYPE, EarthMap.Payload.CODEC,
                         payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.received(payload); })
                 .toClient(EarthMap.Players.TYPE, EarthMap.Players.CODEC,
-                        payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.others(payload); });
+                        payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.others(payload); })
+                .toClient(EarthShots.Shot.TYPE, EarthShots.Shot.CODEC,
+                        payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthCinema.received(payload); });
     }
 
     /** A home picked on the Create World screen, for the next new Earth world this game makes. */
@@ -423,6 +425,7 @@ public final class EarthWorlds {
         EarthGuess.register(root);
         EarthAdmin.register(root);
         EarthToggles.register(root);
+        EarthShots.register(root);
         root.then(Commands.literal("where").executes(context -> where(context.getSource())));
         root.then(Commands.literal("places").executes(context -> places(context.getSource())));
         dispatcher.register(root);

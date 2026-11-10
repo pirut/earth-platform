@@ -215,10 +215,11 @@ public final class EarthFlight {
     // The key ---------------------------------------------------------------------------------------
 
     public static void clientTick() {
+        EarthCinema.clientTick();
         Minecraft minecraft = Minecraft.getInstance();
         while (KEY.consumeClick()) {
             LocalPlayer player = minecraft.player;
-            if (player == null || minecraft.screen != null || current != null) continue;
+            if (player == null || minecraft.screen != null || current != null || EarthCinema.active()) continue;
             // The server opens the travel map or the survival map, whichever this player gets; with neither it sends no such command.
             var earth = player.connection.getCommands().getRoot().getChild("earth");
             if (earth == null || earth.getChild("map") == null) {

@@ -71,7 +71,13 @@ public final class ClientCubeWorld extends CubeWorld {
         return light >= 0 ? light : super.getBrightness(layer, pos);
     }
 
+    private volatile long lastArrival = System.nanoTime();
+
+    /** When the server last sent a cube, in {@link System#nanoTime}: a while ago means it has sent what it has for here. */
+    public long lastArrival() { return lastArrival; }
+
     public void receive(CubePayloads.CubeData payload) {
+        lastArrival = System.nanoTime();
         Cube cube = new Cube(payload.x(), payload.y(), payload.z(), CubeCodec.readSection(payload.section(), biomes));
         adopt(cube);
         for (CompoundTag tag : payload.blockEntities()) {

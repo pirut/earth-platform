@@ -82,6 +82,16 @@ public final class CubicClient {
             world.far().tick();
         }
         if (flawless && world != null) Flawless.settle(world);
+        if (world != null) io.earthplatform.minecraft.cubic.play.client.EarthCinema.drawing(world);
+    }
+
+    /** The terrain's own share of a client tick, for a recorded shot holding a frame while the game's clock stands still. */
+    public static void terrainTick() {
+        ClientCubeWorld world = ClientCubeWorld.current();
+        if (world == null) return;
+        tickedAt = System.nanoTime();
+        world.renderer().tick();
+        world.far().tick();
     }
 
     /**
@@ -93,6 +103,7 @@ public final class CubicClient {
         var player = Minecraft.getInstance().player;
         ClientCubeWorld world = ClientCubeWorld.current();
         if (world == null || player == null || player.isSpectator() || inReplay(player) || player.isFallFlying() || player.isPassenger()
+                || io.earthplatform.minecraft.cubic.play.client.EarthCinema.carrying()
                 || io.earthplatform.minecraft.cubic.jet.JetStream.aboveTerrain(player) || !waitingForCubes(world, player)) {
             held = null;
             return;
@@ -103,7 +114,10 @@ public final class CubicClient {
         player.resetFallDistance();
     }
 
-    public static void tickStart() { hold(); }
+    public static void tickStart() {
+        hold();
+        io.earthplatform.minecraft.cubic.play.client.EarthCinema.tickStart();
+    }
 
     /** When the client last ticked; a paused replay stops ticking, and with it all meshing. */
     private static long tickedAt;
@@ -237,7 +251,8 @@ public final class CubicClient {
         if (world == null || minecraft.player == null) return;
         var player = minecraft.player;
         // Spectators are never held, and a replay camera must stay clean for rendered videos.
-        if (player.isSpectator() || inReplay(player) || io.earthplatform.minecraft.cubic.jet.JetStream.outrunsTerrain(player)) return;
+        if (player.isSpectator() || inReplay(player) || io.earthplatform.minecraft.cubic.jet.JetStream.outrunsTerrain(player)
+                || io.earthplatform.minecraft.cubic.play.client.EarthCinema.carrying()) return;
         if (!waitingForCubes(world, player)) return;
         var gui = graphics;
         Component text = Component.literal("Loading terrain at Y " + player.getBlockY() + "...");

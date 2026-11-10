@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.mixin;
 
+import io.earthplatform.minecraft.cubic.play.client.EarthCinema;
 import io.earthplatform.minecraft.cubic.play.client.EarthFlight;
 import net.minecraft.client.Camera;
 import net.minecraft.world.entity.Entity;
@@ -11,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** During a trip from the travel map the camera leaves the player and flies; see {@link EarthFlight}. */
+/** During a trip from the travel map, or a camera shot, the camera leaves the player and flies; see {@link EarthFlight} and {@link EarthCinema}. */
 @Mixin(Camera.class)
 abstract class EarthFlightCameraMixin {
     @Shadow private boolean detached;
@@ -21,6 +22,7 @@ abstract class EarthFlightCameraMixin {
     @Inject(method = "setup", at = @At("TAIL"))
     private void earthplatform$flight(BlockGetter level, Entity entity, boolean detached, boolean mirrored, float partialTick, CallbackInfo info) {
         double[] view = EarthFlight.camera(entity, partialTick);
+        if (view == null) view = EarthCinema.camera(entity, partialTick);
         if (view == null) return;
         if (view[5] > 0) this.detached = true;
         setRotation((float) view[3], (float) view[4]);
