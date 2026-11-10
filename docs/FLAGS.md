@@ -103,6 +103,11 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 
 | Flag | Default | What it does | Read in |
 | --- | --- | --- | --- |
+| `earthplatform.shot.fps` | 60 | Frames to the second of a recorded camera shot (`/earth record ...`), 10 to 240 | `EarthCinema` |
+| `earthplatform.shot.hold` | on | A recorded shot takes each frame only once nothing is left to arrive or be meshed for where the camera is, waiting up to 10 seconds a frame. `false` takes every frame as soon as what has arrived is meshed, for comparing | `EarthCinema` |
+| `earthplatform.shot.pace` | on | A live flyover slows down, to a quarter speed at most, while under four fifths of the far terrain in view is at its final detail. `false` keeps its speed | `EarthCinema` |
+| `earthplatform.shot.ffmpeg` | none | Path of the FFmpeg program recorded shots are encoded with, when it is not on the PATH or in the game folder. `none` saves numbered PNG images even when FFmpeg is there | `ShotRecorder` |
+| `earthplatform.shot.crf` | 16 | Quality of a recorded shot's H.264 video, 0 to 40; lower is better and bigger | `ShotRecorder` |
 | `earthplatform.photon.compat` | `auto` | `on` or `off` overrides the check for running Photon on drivers it doesn't fit | `PhotonCompat` |
 | `earthplatform.far.surfacePackets` | `false` | Server prototype: generates plain far columns (levels 3 to 8) as vertical runs, then turns them back into normal sections, so nothing sent or saved changes. Not the client's `far.runMesher` | `SurfaceGenerator` |
 | `earthplatform.far.gpuTimers` | `false` | Times far terrain GPU passes with OpenGL queries and adds them to the performance log. Off for players because the queries wrap other mods' and shader packs' draws | `FarGpuTimers` |

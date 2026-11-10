@@ -49,6 +49,10 @@ public final class EarthCinema {
     private static final double LEAD_IN = 2.5, LEAD_OUT = 1.5;
     /** Below this distance from the player's eyes the camera stays in first person, as the travel map's flight does. */
     private static final double DETACH = 2;
+    /** Frames a recorded shot draws of its first view before it keeps one. */
+    private static final int WARM_UP = 12;
+    /** How eagerly a flyover's camera follows the height it should be at (see {@link ShotPath.Follower}). */
+    private static final double CLIMB = 1.2;
     /** A flyover on a server keeps under the speed the server lets a player move at, in blocks a second. */
     private static final double SERVER_SPEED = 160;
 
@@ -77,8 +81,9 @@ public final class EarthCinema {
 
     // A recording.
     @Nullable private ShotRecorder recorder;
-    private boolean drawn, complete;
-    private int misses, taken;
+    private boolean drawn, complete, holding;
+    private int misses, taken, holds, gaveUp, warmed;
+    private long dayStart, gameStart, rolledAt, heldNanos;
 
     private EarthCinema(EarthShots.Shot shot) {
         this.shot = shot;
@@ -110,12 +115,6 @@ public final class EarthCinema {
         return shot != null && !shot.orbiting && shot.phase == Phase.ROLL;
     }
 
-    /** Whether a shot is being recorded now: the game's clock is the recording's (see {@link #frameTicks}). */
-    public static boolean recording() {
-        EarthCinema shot = current;
-        return shot != null && shot.recorder != null;
-    }
-
     /** Stops the shot the gentle way: a live orbit swings back to the player first. */
     private void stop() {
         if (phase == Phase.ROLL && orbiting && recorder == null) {
@@ -135,7 +134,10 @@ public final class EarthCinema {
         Flawless.hold(flawless, false);
         ShotRecorder recording = recorder;
         recorder = null;
-        if (recording != null) finish(recording);
+        if (recording == null) return;
+        EarthPlatformMod.LOGGER.info("Recorded {} frames of {} in {} s; {} of them waited for terrain, {} s in all, and {} were taken without it",
+                recording.frames(), orbiting ? "an orbit" : "a flyover", (System.nanoTime() - rolledAt) / 1_000_000_000L, holds, heldNanos / 1_000_000_000L, gaveUp);
+        finish(recording);
     }
 
     /** Closes a recording off the render thread (FFmpeg may have frames to go) and tells the player where it is. */
@@ -208,6 +210,9 @@ public final class EarthCinema {
             try {
                 recorder = ShotRecorder.open(orbiting ? "orbit" : "flyover", FPS);
                 Flawless.hold(flawless, true);
+                dayStart = player.level().getDayTime();
+                gameStart = player.level().getGameTime();
+                rolledAt = System.nanoTime();
             } catch (IOException | RuntimeException e) {
                 say(Component.translatable("earthplatform.shot.failed", e.toString()).withStyle(ChatFormatting.RED));
                 EarthPlatformMod.LOGGER.warn("Could not start recording a shot", e);
@@ -236,7 +241,7 @@ public final class EarthCinema {
 
     private void startOrbit(ClientCubeWorld world, Vec3 eye, float yaw) {
         double radius = Double.isNaN(shot.a()) ? 200 : shot.a(), turn = Double.isNaN(shot.b()) ? 40 : shot.b();
-        double above = Double.isNaN(shot.c()) ? Math.max(12, radius * 0.45) : shot.c();
+        double above = Double.isNaN(shot.c()) ? Math.max(12, radius * 0.3) : shot.c();
         // One height all the way round, clear of the highest ground and treetops under the circle.
         double highest = Double.NEGATIVE_INFINITY;
         for (int i = 0; i < 96; i++) {
@@ -262,7 +267,7 @@ public final class EarthCinema {
         // A server puts back a player who moves faster than it allows; the singleplayer owner may go at any speed.
         if (!Minecraft.getInstance().isLocalServer()) seconds = Math.max(seconds, length / SERVER_SPEED + ramp);
         pathYaw = Math.toDegrees(Math.atan2(-(toX - fromX), toZ - fromZ));
-        altitude = new ShotPath.Follower(eye.y, 0.9);
+        altitude = new ShotPath.Follower(eye.y, CLIMB);
         pitch = new ShotPath.Follower(player.getXRot(), 1.5);
         profile(world);
     }
@@ -276,9 +281,17 @@ public final class EarthCinema {
         int samples = Mth.clamp((int) Math.ceil(length / 32) + 1, 2, 4097);
         spacing = length / (samples - 1);
         double[] ground = new double[samples];
+        // Half the flyover's height to either side counts too: a cliff beside the line is as much in the way as one on it.
+        double sideX = -(toZ - fromZ) / length, sideZ = (toX - fromX) / length, wide = Math.min(height, 128) / 2;
         for (int i = 0; i < samples; i++) {
-            double part = i / (double) (samples - 1);
-            ground[i] = ground(world, Mth.lerp(part, fromX, toX), Mth.lerp(part, fromZ, toZ), Double.NaN);
+            double part = i / (double) (samples - 1), x = Mth.lerp(part, fromX, toX), z = Mth.lerp(part, fromZ, toZ);
+            double top = ground(world, x, z, Double.NaN);
+            for (int side = -2; side <= 2; side++) {
+                if (side == 0) continue;
+                double beside = ground(world, x + sideX * wide * side / 2, z + sideZ * wide * side / 2, Double.NaN);
+                if (!Double.isNaN(beside)) top = Double.isNaN(top) ? beside : Math.max(top, beside);
+            }
+            ground[i] = top;
         }
         // Clear of everything within three seconds' flight, and never less than 256 blocks.
         double reach = Math.max(256, 3 * length / (seconds - ramp));
@@ -302,14 +315,16 @@ public final class EarthCinema {
     private void fly(ClientCubeWorld world, double dt) {
         double gone = along(), part = gone / length;
         double x = Mth.lerp(part, fromX, toX), z = Mth.lerp(part, fromZ, toZ);
-        altitude.step(ShotPath.sample(clearance, gone / spacing) + height, dt);
+        // The camera trails what it follows by about 2 / quickness seconds: it follows the height that far ahead, so it is level with the plan.
+        double lead = ShotPath.travelled(time + 2 / CLIMB, seconds, length, ramp) - gone;
+        altitude.step(ShotPath.sample(clearance, (gone + lead) / spacing) + height, dt);
         // Whatever the plan said, never into the ground that is really here.
         altitude.atLeast(ground(world, x, z, Double.NEGATIVE_INFINITY) + Math.min(height, 6));
         double y = altitude.value();
         // Looks at the ground a way ahead, so the horizon sits in the upper part of the picture and the camera looks up at a ridge.
         double ahead = Math.max(4 * height, 200);
         double target = ShotPath.sample(clearance, (gone + ahead) / spacing) + 0.3 * height;
-        pitch.step(Mth.clamp(Math.toDegrees(Math.atan2(y - target, ahead)), -25, 50), dt);
+        pitch.step(Mth.clamp(Math.toDegrees(Math.atan2(y - target, ahead)), -10, 50), dt);
         double yaw = startView.yaw() + ShotPath.wrap(pathYaw - startView.yaw()) * ShotPath.smooth(time / LEAD_IN);
         view = new ShotPath.View(x, y, z, yaw, pitch.value());
     }
@@ -373,10 +388,14 @@ public final class EarthCinema {
         // Nothing drawn since the clock last moved: the first frame, or a frame the game skipped.
         if (!drawn) return 0;
         drawn = false;
+        // The cut from the player's eyes to the shot's first view: a shader pack that blends each frame with the
+        // ones before it (TAA) needs a few frames of the new view before one is clean enough to keep.
+        if (warmed < WARM_UP) { warmed++; return 0; }
         boolean patience = now - heldSince > HOLD_NANOS;
         if (HOLD && misses < MISSES && !complete && !patience) {
             // Held: the same moment is drawn again once more has arrived. The game's clock stands still, so the
             // terrain's own ticking (what to ask the server for next, what to mesh) is done from here.
+            holding = true;
             if (now - pumped > 50_000_000L) {
                 pumped = now;
                 CubicClient.terrainTick();
@@ -384,6 +403,8 @@ public final class EarthCinema {
             return 0;
         }
         misses = complete ? 0 : misses + 1;
+        if (!complete) gaveUp++;
+        if (holding) { holds++; heldNanos += now - heldSince; holding = false; }
         if (!recording.capture()) {
             say(Component.translatable("earthplatform.shot.failed", String.valueOf(recording.failure())).withStyle(ChatFormatting.RED));
             end();
@@ -429,6 +450,17 @@ public final class EarthCinema {
         long now = shaderBase + shot.taken * (1_000_000_000L / FPS);
         behind = real - now;
         return now;
+    }
+
+    /**
+     * The level's time while a shot is recorded: where it stood when the recording began plus the
+     * frames taken since, whatever the server or the game's own ticking says. A time of day below
+     * zero means the daylight cycle is off, and stays as it is.
+     */
+    public static long videoTime(long time, boolean ofDay) {
+        EarthCinema shot = current;
+        if (shot == null || shot.recorder == null || ofDay && time < 0) return time;
+        return (ofDay ? shot.dayStart : shot.gameStart) + (long) (shot.taken * 20.0 / FPS);
     }
 
     /** Moves the shot's clock and view on. */

@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL21;
 import org.lwjgl.system.MemoryUtil;
 
 /**
@@ -36,7 +37,7 @@ import org.lwjgl.system.MemoryUtil;
  * costs time but no frames.
  */
 final class ShotRecorder {
-    /** Where FFmpeg is, when it is not somewhere we look anyway. */
+    /** Where FFmpeg is, when it is not somewhere we look anyway; {@code none} saves images even when it is there. */
     private static final String FFMPEG = System.getProperty("earthplatform.shot.ffmpeg", "");
     /** x264's quality: lower is better and bigger; 16 looks lossless at a glance. */
     private static final int CRF = Math.max(0, Math.min(40, Integer.getInteger("earthplatform.shot.crf", 16)));
@@ -107,6 +108,7 @@ final class ShotRecorder {
     @Nullable static String findFfmpeg() {
         boolean windows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
         String exe = windows ? "ffmpeg.exe" : "ffmpeg";
+        if (FFMPEG.equalsIgnoreCase("none")) return null;
         List<Path> places = new ArrayList<>();
         if (!FFMPEG.isEmpty()) places.add(Path.of(FFMPEG));
         Path game = Minecraft.getInstance().gameDirectory.toPath();
@@ -149,6 +151,8 @@ final class ShotRecorder {
         }
         ByteBuffer pixels = MemoryUtil.memAlloc(width * height * 4);
         RenderSystem.bindTexture(target.getColorTextureId());
+        // Into our memory, whatever buffer another mod may have left bound for reading pixels into.
+        GlStateManager._glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
         GlStateManager._pixelStore(GL11.GL_PACK_ALIGNMENT, 1);
         GL11.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels);
         int number = ++frames;

@@ -30,6 +30,24 @@ Crossing into another country shows its name on screen, as "Now entering France"
 
 In creative mode, press **N** (or run `/earth map`) to open a globe centered on you. Click where you want to go and press **Travel here**: the camera climbs out to the globe, swings across the planet and comes back down at the new place while its terrain loads. The key can be changed under Controls → Earth Platform.
 
+### Camera shots
+
+Two commands fly the camera for you, for a screenshot, a recording or just the view. The HUD hides while a shot runs, and **Sneak** (Left Shift) stops it.
+
+| Command | What it does |
+| --- | --- |
+| `/earth orbit` | Circles the camera round where you stand, looking at you, until you stop it. `/earth orbit <radius> <seconds> <height>` sets how wide the circle is in blocks (200), how long one turn takes (40) and how far above you the camera flies (a third of the radius); it always stays clear of the ground and trees under the circle |
+| `/earth flyover <latitude> <longitude>` | Flies you in a straight line to another place, 120 blocks above the ground, rising over ridges on the way. `/earth flyover <latitude> <longitude> <seconds> <height>` sets how long it takes and how high it flies. `/earth flyover place <place>` flies to a famous place |
+| `/earth record orbit ...`, `/earth record flyover ...` | The same shot, saved as a video. A recorded orbit is exactly one turn, so the video loops |
+
+A shot never shows terrain loading in. It first waits where you stand until everything in view has arrived. A flyover then slows down wherever the land ahead is still arriving.
+
+A recording goes further: it is drawn one frame at a time, 60 frames to the second of video, and each frame waits until all of its terrain is there before it is taken. The game runs on the video's clock while it records, so the picture may crawl or race on your screen, but the video plays at normal speed with water, clouds and the sun moving as they should. Recording works with shader packs, and the video is the size of the game window. Other players and animals keep their real speed, so they look fast in a video that took long to draw.
+
+Videos land in the `earth-shots` folder in the game folder as MP4 files, and the chat line that says so opens the file when clicked. Making the MP4 needs [FFmpeg](https://ffmpeg.org/download.html) on your computer: on the PATH, or as `ffmpeg` (`ffmpeg.exe` on Windows) in the game folder, the same places Replay Mod looks. Without FFmpeg the frames are saved as numbered PNG images in a folder instead, which a video editor opens as an image sequence.
+
+An orbit is for anyone who may travel, and for creative mode and spectators. A flyover takes you with it, so it needs creative or spectator mode and the right to travel, and it goes up to 1,000 km. On a server a flyover keeps under 160 blocks a second, the fastest a server lets a player move.
+
 ### The map and compasses
 
 Players who can't use the travel map, such as survival players on a server, get a map instead: **N** (or `/earth map`) opens the same globe, centered on you, but it never moves anyone. It shows where you are, the other players and where your compass points. Click a spot, a famous place or a player and press **Point compass here** to point a compass you carry there.
