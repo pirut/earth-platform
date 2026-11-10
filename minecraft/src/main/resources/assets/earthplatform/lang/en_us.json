@@ -2,7 +2,7 @@
   "generator.earthplatform.earth": "Earth",
   "generator.earthplatform.earth.info": "The real Earth at true scale and height",
   "earthplatform.setup.title": "Where on Earth do you want to start?",
-  "earthplatform.setup.hint": "Pick a famous place, choose a spot on the globe, or type any latitude and longitude. You can travel anywhere later with /earth.",
+  "earthplatform.setup.hint": "Pick a famous place, search for any town on the globe, or type any latitude and longitude. You can travel anywhere later with /earth.",
   "earthplatform.setup.latitude": "Latitude",
   "earthplatform.setup.longitude": "Longitude",
   "earthplatform.setup.random": "Surprise me",
@@ -133,6 +133,7 @@
   "earthplatform.globe.credit": "NASA Blue Marble, AWS Terrain Tiles, ESA WorldCover",
   "earthplatform.globe.offline": "Offline: showing the built-in map only",
   "earthplatform.globe.loading": "Loading terrain%s",
+  "earthplatform.globe.search": "Search a place or town",
   "earthplatform.globe.controls": "Drag to spin, scroll to zoom, click to place the pin",
   "earthplatform.map.title": "Where to?",
   "earthplatform.map.travel": "Travel here",
@@ -167,5 +168,9 @@
   "item.earthplatform.compass": "Compass to %s",
   "item.earthplatform.compass.follows": "Follows %s while they're on the Earth",
   "key.earthplatform.map": "Map",
+  "key.earthplatform.postcard": "Take a postcard",
+  "earthplatform.postcard.saved": "Postcard saved as %s. Place code %s: anyone can come here with /earth code.",
+  "earthplatform.postcard.copy": "Click to copy",
+  "earthplatform.postcard.failed": "The postcard could not be saved: %s",
   "key.categories.earthplatform": "Earth Platform"
 }

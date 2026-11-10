@@ -136,6 +136,9 @@ jobs:
           cp "minecraft/build/libs/earthplatform-$version.jar" "dist/earthplatform-$TAG.jar"
           cp "fabric/build/libs/earthplatform-fabric-$version.jar" "dist/earthplatform-fabric-$TAG.jar"
           cp LICENSE COPYING THIRD_PARTY_NOTICES.md CREDITS.md dist/
+          # One-click install packs (.mrpack) for launchers: this build's jar inside, and Sodium, Iris and
+          # Photon named by their own Modrinth downloads (see minecraft/scripts/modpack.py).
+          python3 minecraft/scripts/modpack.py "$version" "dist/earthplatform-$TAG.jar" "dist/earthplatform-fabric-$TAG.jar" dist "$TAG"
           ( cd dist && sha256sum "earthplatform-$TAG.jar" > "earthplatform-$TAG.jar.sha256" \
             && sha256sum "earthplatform-fabric-$TAG.jar" > "earthplatform-fabric-$TAG.jar.sha256" )
           notes="docs/release/notes/$TAG.md"

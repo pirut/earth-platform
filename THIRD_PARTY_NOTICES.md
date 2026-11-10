@@ -28,6 +28,8 @@ AWS Terrain Tiles (streamed at runtime by `geography/.../globe/TerrariumTileSour
 
 NASA Blue Marble Next Generation (bundled as `minecraft/src/main/resources/assets/earthplatform/textures/globe/blue_marble.jpg`, the July 2004 topography and bathymetry image downscaled to 4096x2048 for the spawn picker globe): NASA Earth Observatory, Reto Stöckli, Blue Marble Next Generation, https://visibleearth.nasa.gov/collection/1484/blue-marble . NASA imagery is not subject to copyright in the United States; credited as NASA asks. The globe also draws AWS Terrain Tiles and ESA WorldCover at runtime, with the attributions above.
 
+GeoNames towns of 1,000 people or more (bundled as `minecraft/src/main/resources/earthplatform/towns.bin`, converted by `minecraft/scripts/towns.py` from `cities1000`, `admin1CodesASCII` and `countryInfo`, for finding places by name): GeoNames, https://www.geonames.org/. Creative Commons Attribution 4.0, https://creativecommons.org/licenses/by/4.0/. Changes: only names, regions and positions are kept, positions rounded to 1/1000 degree.
+
 Natural Earth Admin 0 countries, 1:50m (bundled as `minecraft/src/main/resources/earthplatform/countries.bin`, converted by `minecraft/scripts/countries.py`, for country names and country borders on servers): Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com. Public domain.
 
 Regional relief and surface appearance are explicitly procedural heuristics layered on pinned measurements. They are not additional measured elevation, climate, biome or geology data.

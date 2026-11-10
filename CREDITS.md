@@ -219,6 +219,16 @@ The globe on the Customize screen shows NASA's Blue Marble: NASA Earth Observato
 
 Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com. Admin 0 countries at 1:50m, packed into `minecraft/src/main/resources/earthplatform/countries.bin` by `minecraft/scripts/countries.py`. Public domain.
 
+## Town names (bundled)
+
+**What it gives Earth Platform:** The search box on the globe, `/earth visit <town>`, `/earth find`, and the town named on a postcard: every town of 1,000 people or more, with its state or province, country and position.
+
+**Thank you** to GeoNames and its contributors for a free gazetteer of the whole world.
+
+**Attribution and license:**
+
+Town names and positions from [GeoNames](https://www.geonames.org/) (`cities1000`, `admin1CodesASCII` and `countryInfo` from https://download.geonames.org/export/dump/), packed into `minecraft/src/main/resources/earthplatform/towns.bin` by `minecraft/scripts/towns.py` (names, regions and positions rounded to 1/1000 degree; nothing else kept). Licensed under [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 ## Software
 
 Earth Platform runs on [NeoForge](https://neoforged.net/) and on [Fabric](https://fabricmc.net/) with [Fabric API](https://modrinth.com/mod/fabric-api). The NeoForge jar contains no third-party code; the Fabric jar bundles [Forge Config API Port](https://github.com/Fuzss/forgeconfigapiport) by Fuzs (MPL-2.0) with [NightConfig](https://github.com/TheElectronWill/night-config) (LGPL-3.0), so settings files work the same on both. Optional companions are installed separately and keep their own licenses: [Sodium](https://modrinth.com/mod/sodium) (PolyForm Shield 1.0.0), [Iris](https://modrinth.com/mod/iris) (LGPL-3.0) and [Photon](https://github.com/sixthsurge/photon) by Benjamin Stott (SixthSurge), under the Photon Shaders License Agreement. Earth Platform's own code was written for this project; see [Originality](docs/release/LICENSING-AUDIT.md#originality-check) for how that was checked.
