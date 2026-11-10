@@ -488,6 +488,60 @@ public final class CubeRenderer {
         return reached;
     }
 
+    /** Whether the last cave search's box held this cube. */
+    private boolean searched(long key) {
+        int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
+        return x >= searchedLow[0] && x <= searchedHigh[0] && y >= searchedLow[1] && y <= searchedHigh[1]
+                && z >= searchedLow[2] && z <= searchedHigh[2];
+    }
+
+    /**
+     * {@code -Dearthplatform.cubes.shadowCaves=false}: in a sealed cave the shadow map still takes every cube Iris's
+     * frustum lets through.
+     */
+    static final boolean SHADOW_CAVES = !"false".equals(System.getProperty("earthplatform.cubes.shadowCaves"));
+    /** Blocks the sealed cave's box is grown by: models and entities reaching out of it, and a pack's soft shadow edges. */
+    private static final double SHADOW_CAVE_GROW = 16.0;
+    private LongOpenHashSet sealedFor;
+    private boolean sealed;
+    private final double[] sealedBox = new double[6];
+    private int sealedMeshes;
+
+    /**
+     * Where the cave search shows the camera shut in (nothing it reached touches the edge of the box searched, so the
+     * view never leaves the near cubes: a cave with no way out in sight), the block box of all it reached, grown; null
+     * otherwise. Everything the view can show lies in that box, so only what casts a shadow into it matters to the
+     * shadow map.
+     */
+    @org.jetbrains.annotations.Nullable private double[] sealedCave(Vec3 position) {
+        // Retiring meshes are drawn wherever they stand, and a mesh newer than the search may lie outside it.
+        if (!SHADOW_CAVES || !CubeCaves.ON || !retiring.isEmpty()) return null;
+        LongOpenHashSet seen = reach(position);
+        if (seen == null) return null;
+        if (seen != sealedFor) {
+            sealedFor = seen;
+            sealedMeshes = meshes.size();
+            int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+            int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+            for (long key : seen) {
+                int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
+                minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+                maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+            }
+            sealed = minX > searchedLow[0] && minY > searchedLow[1] && minZ > searchedLow[2]
+                    && maxX < searchedHigh[0] && maxY < searchedHigh[1] && maxZ < searchedHigh[2];
+            sealedBox[0] = (minX << 4) - SHADOW_CAVE_GROW; sealedBox[1] = (minY << 4) - SHADOW_CAVE_GROW; sealedBox[2] = (minZ << 4) - SHADOW_CAVE_GROW;
+            sealedBox[3] = (maxX + 1 << 4) + SHADOW_CAVE_GROW; sealedBox[4] = (maxY + 1 << 4) + SHADOW_CAVE_GROW; sealedBox[5] = (maxZ + 1 << 4) + SHADOW_CAVE_GROW;
+        }
+        if (!sealed) return null;
+        if (meshes.size() != sealedMeshes) {
+            // Meshes have come or gone since: one outside the box searched is drawn though the search knows nothing of it.
+            for (long key : meshes.keySet()) if (!searched(key)) return null;
+            sealedMeshes = meshes.size();
+        }
+        return sealedBox;
+    }
+
     /** Meshes in the frustum that cave culling left out of the last view. */
     public int caveCulledCount() { return caveCulled; }
 
@@ -500,7 +554,12 @@ public final class CubeRenderer {
 
     private void see(Mesh mesh, Frustum frustum, Vec3 position, @org.jetbrains.annotations.Nullable LongOpenHashSet seen) {
         if (!frustum.isVisible(mesh.box)) return;
-        if (seen != null && !seen.contains(mesh.key)) { caveCulled++; return; }
+        if (seen != null && !seen.contains(mesh.key)) {
+            if (searched(mesh.key)) { caveCulled++; return; }
+            // Meshed since the search, outside the box it covered: the search knows nothing of it, so it is drawn,
+            // and the next frame searches again with it inside.
+            visibilityVersion++;
+        }
         double dx = mesh.x + 8 - position.x, dy = mesh.y + 8 - position.y, dz = mesh.z + 8 - position.z;
         mesh.distance = dx * dx + dy * dy + dz * dz;
         visible.add(mesh);
@@ -629,8 +688,16 @@ public final class CubeRenderer {
             shadow = new Frustum(modelView, projection);
             shadow.prepare(position.x, position.y, position.z);
         }
+        // In a sealed cave only what casts a shadow into the cave matters (see #sealedCave); where the pack lets Iris cull.
+        double[] cave = iris != null && ShaderBlocks.shadowCulls(iris) ? sealedCave(position) : null;
+        // Shadows fall away from the light, which looks down its own -z.
+        org.joml.Vector3f fall = cave == null ? null : new Matrix4f(modelView).invert().transformDirection(new org.joml.Vector3f(0.0F, 0.0F, -1.0F));
         List<Mesh> all = new ArrayList<>(meshes.size());
-        for (Mesh mesh : meshes.values()) if (shadow.isVisible(mesh.box)) all.add(mesh);
+        for (Mesh mesh : meshes.values()) {
+            if (!shadow.isVisible(mesh.box)) continue;
+            if (cave != null && !CubeCaves.shadowReaches(mesh.x, mesh.y, mesh.z, mesh.x + 16, mesh.y + 16, mesh.z + 16, fall.x, fall.y, fall.z, cave)) continue;
+            all.add(mesh);
+        }
         for (Mesh mesh : retiring.values()) if (shadow.isVisible(mesh.box)) all.add(mesh);
         shadowDrawn = all.size();
         for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {

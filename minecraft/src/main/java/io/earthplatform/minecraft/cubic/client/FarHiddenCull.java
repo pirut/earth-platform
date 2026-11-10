@@ -132,9 +132,10 @@ final class FarHiddenCull {
      * nearer, so the depth the pre-pass leaves is the same as drawing every range, and so is every pixel after it; the
      * ranges hidden behind far terrain no longer go through the pre-pass's vertex shader and rasterizer either. Only while
      * the far view is drawn again as it was recorded (the recording the last test ran for). {@code
-     * -Dearthplatform.far.twoPhase=false} draws every range in the pre-pass, for comparing.
+     * -Dearthplatform.far.twoPhase=true} turns it on; off by default.
      */
-    static final boolean TWO_PHASE = !"false".equals(System.getProperty("earthplatform.far.twoPhase"));
+    // Off unless -Dearthplatform.far.twoPhase=true: under Photon it left far cliffs hatched with holes (2026-11-10).
+    static final boolean TWO_PHASE = "true".equals(System.getProperty("earthplatform.far.twoPhase"));
 
     private int reduce, cull, cullRest, pyramid, boxes, commands, rest;
     /** Whether {@link #commands} holds a finished test of the recording now uploaded, from the last frame or this one. */

@@ -123,4 +123,23 @@ final class CubeCaves {
         }
         return true;
     }
+
+    /** Whether the box {@code [x0..x1] x [y0..y1] x [z0..z1]}, slid any distance along (sx, sy, sz), meets {@code into}. */
+    static boolean shadowReaches(double x0, double y0, double z0, double x1, double y1, double z1, double sx, double sy, double sz, double[] into) {
+        double from = 0.0, to = Double.POSITIVE_INFINITY;
+        double[] low = {x0, y0, z0}, high = {x1, y1, z1}, slide = {sx, sy, sz};
+        for (int axis = 0; axis < 3; axis++) {
+            // low + t * slide <= into's high, and high + t * slide >= into's low.
+            double a = into[axis + 3] - low[axis], b = into[axis] - high[axis], d = slide[axis];
+            if (Math.abs(d) < 1.0e-9) {
+                if (a < 0.0 || b > 0.0) return false;
+            } else {
+                double t0 = b / d, t1 = a / d;
+                from = Math.max(from, Math.min(t0, t1));
+                to = Math.min(to, Math.max(t0, t1));
+                if (from > to) return false;
+            }
+        }
+        return true;
+    }
 }
