@@ -27,10 +27,14 @@ import org.lwjgl.system.MemoryStack;
  * Cubes phase one drew are tested now and then too (a share each frame), to notice when they go out of sight.
  *
  * <p>Only in a frame's first pass of the level, not in the shadow map: a shadow sees what the camera doesn't.
- * {@code -Dearthplatform.cubes.occlusion=false} draws every cube in view, for comparing.
+ * Off by default (see {@link #ON}); {@code -Dearthplatform.cubes.occlusion=true} turns it on.
  */
 final class CubeOcclusion {
-    static final boolean ON = !"false".equals(System.getProperty("earthplatform.cubes.occlusion"));
+    /**
+     * Off unless {@code -Dearthplatform.cubes.occlusion=true}: on a 2080 Ti under Photon the tests cost more than they
+     * saved (valley floor 64 fps with them, 73 without), so the cave search alone culls near cubes by default.
+     */
+    static final boolean ON = "true".equals(System.getProperty("earthplatform.cubes.occlusion"));
     /** One in this many of the cubes phase one draws is tested each frame. */
     static final int RECHECK_EVERY = 4;
     /** Blocks the boxes are grown by. */
