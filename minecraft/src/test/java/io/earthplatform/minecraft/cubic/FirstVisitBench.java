@@ -391,6 +391,7 @@ class FirstVisitBench {
         for (int level = Far.PREVIEW_LEVEL; level <= Far.MAX_LEVEL; level++) {
             long cells = 0, sameBlock = 0, within1 = 0;
             double sum = 0, worst = 0;
+            Map<String, Integer> pairs = new java.util.HashMap<>();
             for (var entry : standIns.entrySet()) {
                 FarColumn real = columns.get(entry.getKey());
                 if (Far.level(entry.getKey()) != level || real == null) continue;
@@ -403,12 +404,20 @@ class FirstVisitBench {
                     worst = Math.max(worst, off);
                     if (off <= (1 << level)) within1++;
                     if (topBlock(entry.getValue(), cell) == topBlock(real, cell)) sameBlock++;
+                    else pairs.merge(name(topBlock(entry.getValue(), cell)) + ">" + name(topBlock(real, cell)), 1, Integer::sum);
                 }
             }
             text.append(String.format(Locale.ROOT, "%sL%d tops %.1f blocks apart on average (worst %.0f, %.1f%% within one voxel), top block the same in %.1f%% of %d",
                     level == Far.PREVIEW_LEVEL ? "" : "; ", level, sum / Math.max(1, cells), worst, 100.0 * within1 / Math.max(1, cells), 100.0 * sameBlock / Math.max(1, cells), cells));
+            long all = cells;
+            pairs.entrySet().stream().sorted((a, b) -> b.getValue() - a.getValue()).limit(8)
+                    .forEach(pair -> text.append(String.format(Locale.ROOT, " [%s %.1f%%]", pair.getKey(), 100.0 * pair.getValue() / Math.max(1, all))));
         }
         return text.toString();
+    }
+
+    private static String name(net.minecraft.world.level.block.state.BlockState state) {
+        return state == null ? "none" : net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
     }
 
     private static int topVoxel(FarColumn column, int cell) {

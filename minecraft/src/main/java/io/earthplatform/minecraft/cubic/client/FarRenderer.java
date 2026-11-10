@@ -1434,8 +1434,9 @@ public final class FarRenderer {
         long[] order = new long[count];
         for (int i = 0; i < count; i++) {
             Column column = due.get(i);
-            // A stand-in never meshed and in view fills a hole there: before the remeshes of what is drawn already, in the stand-ins' own order; one behind comes after them.
-            order[i] = column.preview && !column.meshed ? standInOrder(column.key, bx, bz) - (4L << 40)
+            // A column never meshed and in view fills a hole there, stand-in or real: before the remeshes of what is drawn
+            // already, from the player outward; one behind comes after them.
+            order[i] = !column.meshed ? standInOrder(column.key, bx, bz) - (4L << 40)
                     : (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz);
         }
         for (int i : FarOrder.first(order, free)) submit(due.get(i));

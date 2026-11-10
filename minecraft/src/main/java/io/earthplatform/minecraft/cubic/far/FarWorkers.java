@@ -47,7 +47,8 @@ public final class FarWorkers {
      */
     public int allowed() {
         synchronized (gate) {
-            int atWork = Math.max(0, busy - taken);
+            // Half stay at the real columns: the ground right round the player is theirs, and it came seconds later with none.
+        int atWork = Math.max((busy + 1) / 2, busy - taken);
             return held ? atWork : Math.min(most, atWork + waiting - turns);
         }
     }
@@ -61,7 +62,7 @@ public final class FarWorkers {
 
     /**
      * Leaves {@code taken} processors to the quick stand-ins being made: that many fewer columns are
-     * at work, down to none, so a view's worth of stand-ins is not shared with the real columns'
+     * at work, down to half of them, so a view's worth of stand-ins is not shared with the real columns'
      * far longer work. Stand-ins waiting on data take none, and columns under way finish.
      */
     public void giveWay(int taken) {

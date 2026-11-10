@@ -426,6 +426,21 @@ public final class EarthGenerator extends SurfaceGenerator {
                 catch (RuntimeException failure) { missed.accept("land cover", failure); }
             });
         }
+        // Volcanic cones are looked for on the coarsest tiles, up to some fifteen kilometres past a column.
+        {
+            int zoom = COARSEST_ZOOM, tilesAcross = 1 << zoom;
+            double far = outer + 16384;
+            int x0 = (int) Math.floor(grid.pixelX(x - far, zoom) / 256), x1 = (int) Math.floor(grid.pixelX(x + far, zoom) / 256);
+            int y0 = (int) Math.floor(grid.pixelY(z - far, zoom) / 256), y1 = (int) Math.floor(grid.pixelY(z + far, zoom) / 256);
+            for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) for (int tx = x0; tx <= x1; tx++) {
+                Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
+                if (!asked.add(tile)) continue;
+                loads.add(() -> {
+                    try { tiles.tile(tile.zoom, tile.x, tile.y); }
+                    catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
+                });
+            }
+        }
         GeoPoint a = grid.geographic(x - outer, z + outer), b = grid.geographic(x + outer, z - outer);
         loads.add(() -> {
             try { climate.prefetchCoarse(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
@@ -3622,12 +3637,13 @@ public final class EarthGenerator extends SurfaceGenerator {
     private boolean volcanic(int x, int z) {
         GeoPoint p = grid.geographic(x, z);
         for (double[] box : LAVA) if (p.latitude() > box[0] && p.latitude() < box[1] && p.longitude() > box[2] && p.longitude() < box[3]) return true;
-        // Cones are found on fine tiles: a quick stand-in leaves them the ground round them.
-        return !quick() && cone(x, z);
+        return cone(x, z);
     }
 
     /** Summits of volcanic cones, by 1024-block cell: x, z and the mean height of the ring round them, or none. */
     private final RecentCache<double[]> cones = new RecentCache<>(1 << 16);
+    /** The same as a quick stand-in finds them, on the coarsest tiles, which it has for the whole view: kept apart, as the two may differ at a cone's edge. */
+    private final RecentCache<double[]> quickCones = new RecentCache<>(1 << 16);
     private static final double[] NO_CONE = {};
 
     /**
@@ -3640,32 +3656,34 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Each cell finds its own summit, so a cone is looked for from the cells round about too: its edge then follows its
         // own ring and height, not the cells' square borders. The ring wanders a little, so it is no perfect circle either.
         double wx = x + warpX.getValue(x / 700.0, z / 700.0) * 600, wz = z + warpZ.getValue(x / 700.0, z / 700.0) * 600;
+        boolean quick = quick();
+        GlobalElevation dem = plain[quick ? COARSEST_ZOOM : FAR_ZOOM];
         for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
-            double[] c = coneOf((x >> 10) + i, (z >> 10) + j);
+            double[] c = coneOf((x >> 10) + i, (z >> 10) + j, dem, quick ? quickCones : cones);
             if (c.length == 0) continue;
             double dx = wx - c[0], dz = wz - c[1];
-            if (dx * dx + dz * dz < 5000.0 * 5000.0 && plain[FAR_ZOOM].metres(x, z) > c[2]) return true;
+            if (dx * dx + dz * dz < 5000.0 * 5000.0 && dem.metres(x, z) > c[2]) return true;
         }
         return false;
     }
 
     /** The volcanic cone a 1024-block cell's search finds: its summit's x and z and the mean height of the ring round it, or none. */
-    private double[] coneOf(int gx, int gz) {
+    private double[] coneOf(int gx, int gz, GlobalElevation dem, RecentCache<double[]> cones) {
         long key = it.unimi.dsi.fastutil.HashCommon.mix((long) gx << 32 | gz & 0xFFFFFFFFL);
         double[] c = cones.get(key);
         if (c == null) {
             double cx = gx * 1024.0 + 512, cz = gz * 1024.0 + 512, px = cx, pz = cz, top = -1e9;
             for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
-                double m = plain[FAR_ZOOM].metres(cx + i * 2000, cz + j * 2000);
+                double m = dem.metres(cx + i * 2000, cz + j * 2000);
                 if (m > top) { top = m; px = cx + i * 2000; pz = cz + j * 2000; }
             }
             double sum = 0, sq = 0, high = -1e9;
             int down = 0;
             for (int k = 0; k < 8; k++) {
-                double m = plain[FAR_ZOOM].metres(px + RING_X[k] * 5000, pz + RING_Z[k] * 5000);
+                double m = dem.metres(px + RING_X[k] * 5000, pz + RING_Z[k] * 5000);
                 sum += m; sq += m * m; high = Math.max(high, m);
                 // A cone's flanks go on falling to its foot; a range's peaks stand on ridges that rise again.
-                if (plain[FAR_ZOOM].metres(px + RING_X[k] * 10000, pz + RING_Z[k] * 10000) < m) down++;
+                if (dem.metres(px + RING_X[k] * 10000, pz + RING_Z[k] * 10000) < m) down++;
             }
             double mean = sum / 8, spread = Math.sqrt(Math.max(0, sq / 8 - mean * mean)), drop = top - mean;
             c = drop > 1000 && spread < 0.3 * drop && high < top - 600 && down == 8 ? new double[] {px, pz, mean} : NO_CONE;
