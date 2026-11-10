@@ -232,7 +232,7 @@ class FirstVisitBench {
         java.util.concurrent.atomic.AtomicLongArray standInLevelNanos = new java.util.concurrent.atomic.AtomicLongArray(Far.MAX_LEVEL + 1);
         java.util.concurrent.atomic.AtomicIntegerArray standInLevelCount = new java.util.concurrent.atomic.AtomicIntegerArray(Far.MAX_LEVEL + 1);
         double[] standInLevelDone = new double[Far.MAX_LEVEL + 1];
-        AtomicInteger standInsLeft = new AtomicInteger();
+        AtomicInteger standInsLeft = new AtomicInteger(), standInsAtWork = new AtomicInteger();
         ExecutorService previewWorkers = Executors.newFixedThreadPool(Math.clamp(cores - 2, farBusy, 8), runnable -> { Thread t = new Thread(runnable, "visit stand-ins"); t.setDaemon(true); t.setPriority(Thread.MIN_PRIORITY); return t; });
         if (previews) {
             LongArrayList ask = new LongArrayList();
@@ -248,6 +248,8 @@ class FirstVisitBench {
             for (long key : ask) previewWorkers.execute(() -> {
                 long start = System.nanoTime();
                 FarColumn column = new FarColumn();
+                io.earthplatform.geography.globe.DataWaits.watch(waiting -> standInsAtWork.addAndGet(waiting ? -1 : 1));
+                standInsAtWork.incrementAndGet();
                 try {
                     earth.farPreview(Far.level(key), Far.x(key), Far.z(key), column);
                     for (LevelChunkSection section : column.sections) if (section != null) CubeCodec.sectionBytes(section);
@@ -255,6 +257,8 @@ class FirstVisitBench {
                 } catch (RuntimeException failure) {
                     if (failures.incrementAndGet() <= 3) failure.printStackTrace();
                 }
+                standInsAtWork.decrementAndGet();
+                io.earthplatform.geography.globe.DataWaits.watch(null);
                 standInNanos.addAndGet(System.nanoTime() - start);
                 standInLevelNanos.addAndGet(Far.level(key), System.nanoTime() - start);
                 standInLevelCount.incrementAndGet(Far.level(key));
@@ -281,7 +285,7 @@ class FirstVisitBench {
         while (true) {
             long now = System.nanoTime();
             farWorkers.hold(nearPending.get() > 0);
-            farWorkers.pause(standInsLeft.get() > 0);
+            farWorkers.giveWay(standInsAtWork.get());
             if (now - lastPlan > 500_000_000L || planned >= plan.size()) {
                 lastPlan = now;
                 plan.clear();

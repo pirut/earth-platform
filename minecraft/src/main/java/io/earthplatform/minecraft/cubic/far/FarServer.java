@@ -70,11 +70,11 @@ public final class FarServer {
     /** Cubes summarized since the world opened, which the reading of old saves leaves alone. */
     private final Set<Long> summarized = ConcurrentHashMap.newKeySet();
     /**
-     * Far workers kept busy: two on four cores, and more on bigger machines, where two left most
+     * Far workers kept busy: two on four to seven cores and half the cores less one on bigger machines (five on twelve, eleven on twenty-four), where fewer left most
      * cores idle while the far terrain took minutes to refine. They run at low priority behind the
      * cube workers. Set with {@code -Dearthplatform.far.threads}.
      */
-    static final int WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.threads", workersFor(Runtime.getRuntime().availableProcessors())), 2, 8);
+    static final int WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.threads", workersFor(Runtime.getRuntime().availableProcessors())), 2, 12);
     /**
      * Most far columns made at once while most of them wait on downloads, as over a new place; see
      * {@link FarWorkers}. Only {@link #WORKERS} of them use the processor, so the rest need no cores:
@@ -85,7 +85,7 @@ public final class FarServer {
     static final int MOST_WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.mostThreads", mostWorkersFor(WORKERS)), WORKERS, 64);
 
     /** Far workers kept at work on a machine with {@code cores} processors, when nothing sets it. */
-    public static int workersFor(int cores) { return Math.clamp((cores - 4) / 2, 2, 8); }
+    public static int workersFor(int cores) { return Math.clamp((cores - 2) / 2, 2, 12); }
 
     /** Far columns made at once with {@code workers} of them at work, when nothing sets it. */
     public static int mostWorkersFor(int workers) { return workers + 24; }
@@ -101,12 +101,12 @@ public final class FarServer {
     private static final int PREVIEW_CACHE = 20480, PREVIEW_QUEUE = 40960;
     /**
      * Threads that make the stand-ins: more than the real columns' few at work, since a view's worth
-     * is a few seconds of work in all and the real columns wait for it (see {@link FarWorkers#pause}).
+     * is a few seconds of work in all and the real columns make way for it (see {@link FarWorkers#giveWay}).
      * Two cores are left to the game.
      */
     private static final int PREVIEW_WORKERS = Math.clamp(Runtime.getRuntime().availableProcessors() - 2, WORKERS, 8);
-    /** Stand-ins players asked for that are not made yet; the real columns start none while there are any. */
-    private final AtomicInteger previewsAwaited = new AtomicInteger();
+    /** Stand-ins being made and not waiting on data: the processors the real columns leave them (see {@link FarWorkers#giveWay}). */
+    private final AtomicInteger previewsAtWork = new AtomicInteger();
     /** How far a player moves, in blocks, before the stand-ins' data is fetched round the new place. */
     private static final int PREVIEW_MOVE = 4 * Far.SIZE << Far.MAX_LEVEL;
     /** Whether this world's generator makes quick stand-ins for the coarsest levels (see {@link CubeGenerator#farPreviews}). */
@@ -135,8 +135,11 @@ public final class FarServer {
         }
         @Override public int compareTo(PreviewJob other) { return Long.compare(order, other.order); }
         @Override public void run() {
+            if (closed || cache.containsKey(key) || previewCache.containsKey(key)) { previewMaking.remove(key); return; }
+            // One waiting on data uses no processor: the real columns, which mostly wait on data over a new place, start meanwhile.
+            io.earthplatform.geography.globe.DataWaits.watch(waiting -> previewsAtWork.addAndGet(waiting ? -1 : 1));
+            previewsAtWork.incrementAndGet();
             try {
-                if (closed || cache.containsKey(key) || previewCache.containsKey(key)) return;
                 FarColumn column = new FarColumn();
                 generator.farPreview(Far.level(key), Far.x(key), Far.z(key), column);
                 List<byte[]> sections = new ArrayList<>(column.sections.size());
@@ -155,7 +158,9 @@ public final class FarServer {
                     EarthPlatformMod.LOGGER.warn("Could not make the stand-in for far column {} ({} failures so far)", key, previewFailures.get(), failure);
                 }
             } finally {
-                if (Boolean.TRUE.equals(previewMaking.remove(key))) previewsAwaited.decrementAndGet();
+                previewsAtWork.decrementAndGet();
+                io.earthplatform.geography.globe.DataWaits.watch(null);
+                previewMaking.remove(key);
             }
         }
     }
@@ -163,7 +168,6 @@ public final class FarServer {
     private void submitPreview(long key, boolean asked) {
         Boolean before = asked ? previewMaking.put(key, true) : previewMaking.putIfAbsent(key, false);
         // One made ahead that a player now asks for moves up the queue; its first place then finds it made.
-        if (asked && (before == null || !before)) previewsAwaited.incrementAndGet();
         if (before == null || asked && !before) previewWorkers.execute(new PreviewJob(key, asked));
     }
 
@@ -197,7 +201,8 @@ public final class FarServer {
             });
         }
         for (long key : keys) {
-            if (!Far.valid(key) || !generator.farPreviews(Far.level(key)) || !Far.near(key, bx, bz) || session.sent.contains(key)) continue;
+            // Round the player, or anywhere in reach for the few a zoomed view asks where it looks.
+            if (!Far.valid(key) || !generator.farPreviews(Far.level(key)) || !Far.inReach(key, bx, bz) || session.sent.contains(key)) continue;
             CubePayloads.FarColumnData real = cache.get(key);
             if (real != null) {
                 // The real column is at hand: it goes in the stand-in's place.
@@ -538,7 +543,7 @@ public final class FarServer {
                 stale.add(key);
             }
         }
-        workers.pause(previewsAwaited.get() > 0);
+        workers.giveWay(previewsAtWork.get());
         for (CubePayloads.FarColumnData standIn; (standIn = previewsMade.poll()) != null; )
             for (Session session : sessions.values()) if (session.previewsWanted.remove(standIn.key())) session.queue(standIn);
         for (Made done; (done = made.poll()) != null; ) {
@@ -587,7 +592,7 @@ public final class FarServer {
             if (ticks % 200 == 0) {
                 int bx = player.getBlockX(), bz = player.getBlockZ();
                 session.sent.removeIf(key -> !Far.near(key, bx, bz));
-                session.previewsWanted.removeIf(key -> !Far.near(key, bx, bz));
+                session.previewsWanted.removeIf(key -> !Far.inReach(key, bx, bz));
             }
         }
         sessions.keySet().retainAll(present);

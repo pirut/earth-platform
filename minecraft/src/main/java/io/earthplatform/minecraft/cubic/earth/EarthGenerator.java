@@ -343,6 +343,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private static final double PREVIEW_SEA = 1.5;
     /** Blocks past the far levels' squares that the stand-ins' land cover is fetched, for the rules that look round a column. */
     private static final double PREVIEW_AROUND = 3 * 4096;
+    /** Blocks past a level's square that its stand-ins' rules survey the elevation, for floodplains and slopes. */
+    private static final double PREVIEW_SURVEY = 3072;
     /** Blocks of water a quick stand-in gives a lake, and the sea where the tiles carry no depth. */
     private static final int PREVIEW_DEPTH = 4;
 
@@ -389,6 +391,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (!farPreviews(Far.MAX_LEVEL)) return;
         record Tile(int zoom, int x, int y) {}
         List<Runnable> loads = new ArrayList<>();
+        java.util.Set<Tile> asked = new java.util.HashSet<>();
         java.util.concurrent.atomic.AtomicInteger failed = new java.util.concurrent.atomic.AtomicInteger();
         java.util.concurrent.atomic.AtomicReference<String> first = new java.util.concurrent.atomic.AtomicReference<>();
         java.util.function.BiConsumer<String, RuntimeException> missed = (piece, failure) -> {
@@ -399,15 +402,20 @@ public final class EarthGenerator extends SurfaceGenerator {
         for (int level = Far.PREVIEW_LEVEL; level <= Far.MAX_LEVEL; level++) {
             // A level's square is the middle of the next coarser one's, and the coarsest reaches all the way.
             double reach = level == Far.MAX_LEVEL ? outer : Math.min(outer, (Far.hole(level + 1) + 2) * (double) Far.width(level + 1));
-            int zoom = zoom(level), tilesAcross = 1 << zoom;
-            int x0 = (int) Math.floor(grid.pixelX(x - reach, zoom) / 256), x1 = (int) Math.floor(grid.pixelX(x + reach, zoom) / 256);
-            int y0 = (int) Math.floor(grid.pixelY(z - reach, zoom) / 256), y1 = (int) Math.floor(grid.pixelY(z + reach, zoom) / 256);
-            for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) for (int tx = x0; tx <= x1; tx++) {
-                Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
-                loads.add(() -> {
-                    try { tiles.tile(tile.zoom, tile.x, tile.y); }
-                    catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
-                });
+            // The level's own tiles, and for the fine levels the coarser ones their rules survey the land round a column on.
+            for (int zoom : new int[] {zoom(level), Math.min(WATER_ZOOM, zoom(level)), Math.min(FAR_ZOOM, zoom(level))}) {
+                int tilesAcross = 1 << zoom;
+                double far = zoom == zoom(level) ? reach : reach + PREVIEW_SURVEY;
+                int x0 = (int) Math.floor(grid.pixelX(x - far, zoom) / 256), x1 = (int) Math.floor(grid.pixelX(x + far, zoom) / 256);
+                int y0 = (int) Math.floor(grid.pixelY(z - far, zoom) / 256), y1 = (int) Math.floor(grid.pixelY(z + far, zoom) / 256);
+                for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) for (int tx = x0; tx <= x1; tx++) {
+                    Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
+                    if (!asked.add(tile)) continue;
+                    loads.add(() -> {
+                        try { tiles.tile(tile.zoom, tile.x, tile.y); }
+                        catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
+                    });
+                }
             }
             // The rules that look round a column for snow, towns and wild land reach some eight kilometres past it.
             double around = reach + PREVIEW_AROUND;
@@ -1317,8 +1325,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         int code = cover.code(point.latitude(), point.longitude(), overview);
         if (code == WorldCoverSource.WATER) {
             if (iceWater(x, z, overview, metresPerBlock)) return WorldCoverSource.SNOW_AND_ICE;
-            return voxel <= STRAY_VOXEL ? strayWater(x, z, point) : code;
+            // Stray water is told by a survey of the ground round it on fine tiles: a quick stand-in leaves it water.
+            return voxel <= STRAY_VOXEL && !quick() ? strayWater(x, z, point) : code;
         }
+        // The river map traces each river down fine tiles and the surface water: a quick stand-in shows only the rivers the land cover kept.
+        if (quick()) return code;
         // Narrow rivers the land cover lost, read at the same wandering point so their banks curve too. Not in marsh:
         // herbaceous wetland, as the Everglades' sawgrass, the Pantanal's or the Sudd's, stands in water for part of
         // the year, and the river map traced its sheet flood as a mesh of channels that joined the sea and drowned it.

@@ -820,8 +820,11 @@ public final class FarRenderer {
         double normal = 1 / Math.tan(Math.toRadians(Math.max(Minecraft.getInstance().options.fov().get(), 70)) / 2);
         var eye = player.getEyePosition();
         double height = eye.y - ground(player.getBlockX(), player.getBlockZ(), eye.y);
+        FarZoom before = zoomView;
         zoomView = ZOOM ? FarZoom.at(focal / normal, spread * focal / normal, eye.x, eye.y, eye.z, height,
                 player.getYRot(), player.getXRot(), zoomView) : null;
+        // A view that zooms in or turns is planned for at once, not at the next half second: what it looks at is asked for first.
+        if (zoomView != null && zoomView != before) planNow = true;
         // The plan works out how much of the zoom counts; unzoomed, the walk drops it at once.
         if (zoomView == null) zoom = null;
     }
@@ -929,7 +932,7 @@ public final class FarRenderer {
         // the middle out. As much zoom counts as keeps them within FarZoom.MAX_COLUMNS: sharpening only
         // some of them left a patchwork of levels with walls between them all over the view.
         LongOpenHashSet zoomed = new LongOpenHashSet();
-        LongArrayList zoomMissing = new LongArrayList();
+        LongArrayList zoomMissing = new LongArrayList(), zoomBare = new LongArrayList();
         FarZoom view = zoomView, zoom = null;
         if (view != null) {
             FarZoom.Horizon horizon = horizon(view);
@@ -951,7 +954,14 @@ public final class FarRenderer {
                 long key = seen.getLong(i);
                 zoomed.add(key);
                 counts[4]++;
-                if (!places.want(Far.level(key), Far.x(key), Far.z(key), ticks)) zoomMissing.add(key);
+                if (!places.want(Far.level(key), Far.x(key), Far.z(key), ticks)) {
+                    zoomMissing.add(key);
+                    if (previews && Far.level(key) >= Far.PREVIEW_LEVEL) zoomBare.add(key);
+                } else {
+                    // A stand-in is drawn as any column, and its real column is still to come.
+                    Column column = held(key);
+                    if (column != null && column.preview) zoomMissing.add(key);
+                }
             }
             zoomSeen = seen.size();
         }
@@ -970,12 +980,16 @@ public final class FarRenderer {
         Long2LongOpenHashMap order = new Long2LongOpenHashMap(missing.size());
         for (int i = 0; i < missing.size(); i++) order.put(missing.getLong(i), priority(missing.getLong(i), bx, bz));
         missing.unstableSort((a, b) -> Long.compare(order.get(a), order.get(b)));
-        // Already in order.
-        missing.addAll(zoomMissing);
+        // What a zoomed view looks at comes first, already in order: the player is looking right at it, and behind
+        // everything else it sharpened only once the whole far view had loaded.
         plan.clear();
+        plan.addAll(zoomMissing);
         plan.addAll(missing);
         planned = 0;
-        if (previews) askPreviews(bare, bx, bz);
+        if (previews) {
+            askPreviews(zoomBare, bx, bz);
+            askPreviews(bare, bx, bz);
+        }
     }
 
     /**
