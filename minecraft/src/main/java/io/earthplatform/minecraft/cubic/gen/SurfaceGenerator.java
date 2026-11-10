@@ -131,6 +131,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
      */
     protected int canopy(int x, int z) { return -1; }
 
+    /**
+     * Which form a giant tree rooted at a column takes: {@link Giants#SEQUOIA}, {@link Giants#REDWOOD} or
+     * {@link Giants#FIR}; or -1 for the one sequoia worlds made before build 70 have.
+     */
+    protected int giantForm(int x, int z) { return -1; }
+
     /** Whether trees' bare log ends at the top of their crowns are covered with leaves; worlds made before build 70 keep vanilla's. */
     protected boolean cappedCrowns() { return false; }
 

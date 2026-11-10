@@ -3837,6 +3837,17 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /**
+     * Giants by climate: where under 1,500 mm falls in a year, the giant sequoia of the Sierra Nevada's groves; where
+     * more does, a spire, the coast redwood where the year averages 10.5 C and warmer and a giant fir or spruce where
+     * it is cooler, as in the Olympic rainforest and the Cascades.
+     */
+    @Override protected int giantForm(int x, int z) {
+        if (canopy == null) return -1;
+        Local local = local(x, z, surfaceY(x, z));
+        return local == null || local.rain() < 1500 ? 0 : local.temperature() >= 10.5 ? 1 : 2;
+    }
+
+    /**
      * Whether giant trees may stand near a column: in worlds that read the canopy map, where its 256-block cell or
      * the nine columns past its edge hold a reading of giant height, in conifer country. Elsewhere no forest
      * column asks the map twice. Older worlds keep the Sierra Nevada's sequoia belt.
