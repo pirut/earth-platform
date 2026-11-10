@@ -104,6 +104,8 @@ class FarColumnRunsTest {
         old.writeByteArray(new byte[] {1, 2, 3});
         old.writeByteArray(new byte[0]);
         for (short drop : drops) old.writeShort(drop);
+        // Then whether it is a quick stand-in (build 70's stand-ins added this byte for every column).
+        old.writeBoolean(false);
         RegistryFriendlyByteBuf now = new RegistryFriendlyByteBuf(Unpooled.buffer(), RegistryAccess.EMPTY);
         CubePayloads.FarColumnData.CODEC.encode(now, column);
         assertEquals(old, now);
