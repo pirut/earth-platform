@@ -130,6 +130,9 @@ public final class BareEarth implements GlobalElevation.Tiles {
             for (int j = 0; j < latitudes.length; j++)
                 for (int i = 0; i < longitudes.length; i++) out[j * longitudes.length + i] = (byte) code(latitudes[j], longitudes[i]);
         }
+
+        /** Starts loading all of the cover over a box together, which {@link #code} would otherwise fetch a piece at a time as it met them. */
+        default void prefetch(double south, double west, double north, double east) {}
     }
 
     /**
@@ -158,6 +161,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
         this(tiles::tile, new Cover() {
             @Override public int code(double latitude, double longitude) { return cover.code(latitude, longitude, 0); }
             @Override public void codes(double[] latitudes, double[] longitudes, byte[] out) { cover.codes(latitudes, longitudes, out); }
+            @Override public void prefetch(double south, double west, double north, double east) { cover.prefetch(south, west, north, east, 0); }
         }, 160, 256, cacheRoot);
     }
 
@@ -178,6 +182,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
             float[] hit = changed.get(key);
             if (hit != null) return hit;
         }
+        early(zoom, x, y);
         float[] source = tiles.tile(zoom, x, y);
         float[] out;
         try {
@@ -194,6 +199,26 @@ public final class BareEarth implements GlobalElevation.Tiles {
             changed.putAndTrim(key, out, maxTiles);
         }
         return out;
+    }
+
+    /**
+     * Starts working out the fields a tile will be laid under, beside the tile's own read rather than after it: a
+     * field reads the land cover and nine tiles round it, and on a first visit a tile that had waited seconds on its
+     * own downloads then waited as long again on its field's.
+     */
+    private void early(int zoom, int x, int y) {
+        int across = 1 << ZOOM;
+        double scale = Math.scalb(1.0, ZOOM - zoom);
+        int span = Math.max(1, (int) Math.ceil(SIZE * scale / SIZE));
+        int fx0 = (int) Math.floor(x * SIZE * scale / SIZE), fy0 = (int) Math.floor(y * SIZE * scale / SIZE);
+        for (int j = 0; j < span; j++) for (int i = 0; i < span; i++) {
+            int fx = Math.floorMod(fx0 + i, across), fy = Math.min(across - 1, fy0 + j);
+            long key = (long) fx << 32 | fy;
+            synchronized (fields) { if (fields.get(key) != null) continue; }
+            if (fieldsInFlight.containsKey(key)) continue;
+            // A failure here is apply()'s to meet: it asks for the field again.
+            Thread.ofVirtual().start(() -> { try { field(fx, fy); } catch (RuntimeException later) { } });
+        }
     }
 
     /** The tile with the ground under towns in place of its own, or the tile itself where none lies. */
@@ -311,6 +336,13 @@ public final class BareEarth implements GlobalElevation.Tiles {
             double column = Math.floorMod(gx0 + k, size) + 0.5;
             longitude[k] = column / size * 360 - 180;
         }
+        // The cover's pieces under the window all at once: the first look below meets every one of them, and one
+        // after another they were most of what a new place's first tiles waited on. Not across the date line,
+        // where the window's west lies east of its east; there they come as they are met.
+        if (longitude[0] < longitude[SPAN - 1]) {
+            try { cover.prefetch(latitude[SPAN - 1], longitude[0], latitude[0], longitude[SPAN - 1]); }
+            catch (RuntimeException later) { /* the look below meets it */ }
+        }
         // A first, sparse look: most of the world has no town within reach, and much no forest beside open land.
         int built = 0, forest = 0, open = 0, samples = 0;
         for (int j = SCOUT / 2; j < SPAN; j += SCOUT)
@@ -329,6 +361,22 @@ public final class BareEarth implements GlobalElevation.Tiles {
         float[] dem = new float[n];
         byte[] code = new byte[n];
         cover.codes(latitude, longitude, code);
+        // The window's tiles, nine as a rule, read together rather than each as the rows below come to it.
+        java.util.Set<Long> wanted = new java.util.LinkedHashSet<>();
+        for (int j = 0; j < SPAN; ) {
+            long gy = Math.max(0, Math.min(size - 1, gy0 + j));
+            for (int i = 0; i < SPAN; ) {
+                long gx = Math.floorMod(gx0 + i, size);
+                wanted.add((gx >> 8) << 32 | gy >> 8);
+                i += (int) Math.min(SPAN - i, SIZE - (gx & 255));
+            }
+            j += (int) Math.min(SPAN - j, SIZE - (gy & 255));
+        }
+        if (wanted.size() > 1) {
+            java.util.List<Runnable> reads = new java.util.ArrayList<>(wanted.size());
+            for (long tile : wanted) reads.add(() -> tiles.tile(ZOOM, (int) (tile >> 32), (int) tile));
+            RangeFiles.all(reads);
+        }
         // The window spans at most four tiles each way; each row is copied from them in runs.
         for (int j = 0; j < SPAN; j++) {
             long gy = Math.max(0, Math.min(size - 1, gy0 + j));

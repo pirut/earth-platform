@@ -67,7 +67,9 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  * to wait for the far terrain, 600 by default), {@code EARTH_VISIT_CORES} (size the workers as the game would on a
  * machine with that many cores), {@code EARTH_VISIT_FAR_MOST} (most far columns made at once, as
  * {@code -Dearthplatform.far.mostThreads}) and {@code EARTH_VISIT_STAND_INS=false} (no quick stand-ins for the
- * two coarsest levels, for comparing).
+ * two coarsest levels, for comparing), {@code EARTH_VISIT_SEARCH} (how far the landing is searched for, 2048 as a
+ * famous place's; 256 is a plain latitude and longitude's) and {@code EARTH_VISIT_WARMUP} with {@code EARTH_VISIT_REST}
+ * (another place fetched first, and seconds of quiet after it, so the visit is timed in a process that has run a while).
  */
 class FirstVisitBench {
     @Test
@@ -101,19 +103,19 @@ class FirstVisitBench {
 
         // The sources a new world reads, as CubicSettings makes them.
         Duration thirty = Duration.ofSeconds(30);
-        CopernicusSource copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache.resolve(CopernicusSource.DATASET_ID), true, 12, 8, thirty);
+        CopernicusSource copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache.resolve(CopernicusSource.DATASET_ID), true, 12, CubicSettings.transfers(8, 16), thirty);
         TerrariumTileSource[] made = new TerrariumTileSource[1];
         List<ElevationLayer> layers = List.of(
                 new CopernicusFill(copernicus, (z, x, y) -> made[0].cleaned(z, x, y), 512),
-                new HrdemElevation(HrdemElevation.AWS_HRDEM, cache.resolve(HrdemElevation.DATASET_ID), true, CubicSettings.blocksKept(), 6, thirty),
-                new UsgsElevation(UsgsElevation.AWS_3DEP, cache.resolve(UsgsElevation.DATASET_ID), true, CubicSettings.blocksKept(), 6, thirty, UsgsElevation.Reading.GRADED),
-                new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache.resolve(RemaSource.DATASET_ID), true, CubicSettings.blocksKept(), 6, thirty)),
+                new HrdemElevation(HrdemElevation.AWS_HRDEM, cache.resolve(HrdemElevation.DATASET_ID), true, CubicSettings.blocksKept(), CubicSettings.transfers(6, 24), thirty),
+                new UsgsElevation(UsgsElevation.AWS_3DEP, cache.resolve(UsgsElevation.DATASET_ID), true, CubicSettings.blocksKept(), CubicSettings.transfers(6, 24), thirty, UsgsElevation.Reading.GRADED),
+                new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache.resolve(RemaSource.DATASET_ID), true, CubicSettings.blocksKept(), CubicSettings.transfers(6, 24), thirty)),
                 new IgnElevation(IgnElevation.IGN_WMS, cache.resolve(IgnElevation.DATASET_ID), true, 64, 12, thirty),
                 new GsiElevation(GsiElevation.GSI_TILES, cache.resolve(GsiElevation.DATASET_ID), true, 64, 16, thirty));
         Path tileCache = cache.resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
-        TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, tileCache, true, CubicSettings.tilesKept(), 16, Duration.ofSeconds(20), layers);
+        TerrariumTileSource tiles = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, tileCache, true, CubicSettings.tilesKept(), CubicSettings.transfers(16, 48), Duration.ofSeconds(20), layers);
         made[0] = tiles;
-        WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, 8, thirty);
+        WorldCoverSource cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache.resolve(WorldCoverSource.DATASET_ID), true, 48, CubicSettings.transfers(8, 24), thirty);
         ClimateSource climate = new ClimateSource(ClimateSource.CHELSA, cache.resolve(ClimateSource.DATASET_ID), true, 320, 8, thirty);
         SurfaceWaterSource water = new SurfaceWaterSource(SurfaceWaterSource.JRC_GSW, cache.resolve(SurfaceWaterSource.DATASET_ID), true, 96, 4, thirty);
         RiverMap rivers = new RiverMap(water, new Drainage(new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, tileCache, true, 64, 16, Duration.ofSeconds(20)),
@@ -125,6 +127,19 @@ class FirstVisitBench {
         System.out.printf(Locale.ROOT, "%n== First visit to %s (%.4f, %.4f), world home %s, %s; %d cores: %d cube workers, far %d to %d%n",
                 name, latitude, longitude, home[0] + "," + home[1], cache, cores, cubeThreads, farBusy, farMost);
 
+        // EARTH_VISIT_WARMUP=name,latitude,longitude fetches another place's near data first, so the visit is timed as
+        // a travel in a game that has been running is, not with the first downloads of a new Java process; and
+        // EARTH_VISIT_REST seconds of quiet after it lets the connections it opened close, as they have for a player
+        // who travels after standing a while.
+        String warmUp = System.getenv("EARTH_VISIT_WARMUP");
+        if (warmUp != null) {
+            String[] place = warmUp.split(",");
+            int[] there = earth.block(Double.parseDouble(place[1]), Double.parseDouble(place[2]));
+            long w0 = System.nanoTime();
+            earth.prepareNear(there[0], there[1]);
+            System.out.printf(Locale.ROOT, "warm-up at %s: %.1f s%n", place[0], seconds(w0));
+            Thread.sleep(1000L * Integer.parseInt(System.getenv().getOrDefault("EARTH_VISIT_REST", "0")));
+        }
         Tick tick = new Tick();
         long t0 = System.nanoTime();
         Map<String, long[]> before = Downloads.totals();
@@ -140,13 +155,15 @@ class FirstVisitBench {
         });
         // A famous place's travel, as the spawn picker's: the data about the landing, then the search for it.
         int[] centre = earth.block(latitude, longitude);
+        // EARTH_VISIT_SEARCH=256 is a plain latitude and longitude's travel (/cubes goto), whose search stays close by.
+        int search = Integer.parseInt(System.getenv().getOrDefault("EARTH_VISIT_SEARCH", "2048"));
         earth.prepareNear(centre[0], centre[1]);
         double prepared = seconds(t0);
         String nearData = Downloads.since(before);
         var landing = CubicEvents.class.getDeclaredMethod("landing", io.earthplatform.minecraft.cubic.gen.CubeGenerator.class, int[].class, int.class, boolean.class);
         landing.setAccessible(true);
         Map<String, long[]> beforeLanding = Downloads.totals();
-        int[] spot = (int[]) landing.invoke(null, earth, centre, 2048, true);
+        int[] spot = (int[]) landing.invoke(null, earth, centre, search, search > 256);
         double landed = seconds(t0);
         String landingData = Downloads.since(beforeLanding);
         tick.start();

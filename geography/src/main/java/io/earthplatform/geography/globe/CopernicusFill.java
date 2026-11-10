@@ -144,6 +144,9 @@ public final class CopernicusFill implements ElevationLayer {
         double north = latitude(tileY * 256L, size), south = latitude((tileY + 1) * 256L, size);
         double west = tileX * 360.0 / (1 << zoom) - 180, east = (tileX + 1) * 360.0 / (1 << zoom) - 180;
         double margin = 0.02;
+        // The checks under the tile all at once: any() asks them one at a time until one stands, each a round of
+        // downloads of its own on a first visit, and the tile's pixels then asked for the rest.
+        checks(Math.max(-89.9999, south - margin), Math.min(89.9999, north + margin), west - margin, east + margin);
         if (!any(Math.max(-89.9999, south - margin), Math.min(89.9999, north + margin), west - margin, east + margin)) return;
         double pixel = EARTH_CIRCUMFERENCE * Math.cos(Math.toRadians((north + south) / 2)) / size;
         int overview = (int) Math.max(0, Math.min(CopernicusSource.MAX_OVERVIEW, Math.floor(Math.log(pixel / COPERNICUS_METRES) / Math.log(2))));
@@ -189,6 +192,39 @@ public final class CopernicusFill implements ElevationLayer {
                 if (v == 0f && !(c == 0 && weight >= 1)) v = Math.ulp(0f);
                 values[i] = v;
             }
+        }
+    }
+
+    /** Works out together the parts {@link #any} would ask of a box one by one; a failure is left for it to meet. */
+    private void checks(double south, double north, double west, double east) {
+        List<Runnable> squares = new ArrayList<>();
+        for (int s = (int) Math.floor(south); s <= (int) Math.floor(north); s++)
+            for (int w = (int) Math.floor(west); w <= (int) Math.floor(east); w++) {
+                int at = s, from = w;
+                squares.add(() -> {
+                    int square = wrapWest(from);
+                    int[] dims = dem.size(at + 0.5, square + 0.5, CHECK_OVERVIEW);
+                    if (dims == null) return;
+                    int width = dims[0], height = dims[1];
+                    int top = row(Math.min(at + 1, north), at, height), bottom = row(Math.max(at, south), at, height);
+                    int left = column(Math.max(from, west), from, width), right = column(Math.min(from + 1, east), from, width);
+                    List<Runnable> checks = new ArrayList<>();
+                    for (int pr = part(top, height); pr <= part(bottom, height); pr++)
+                        for (int pc = part(left, width); pc <= part(right, width); pc++) {
+                            int partRow = pr, partColumn = pc;
+                            boolean known;
+                            synchronized (this.parts) { known = this.parts.get(partKey(at, square, partRow, partColumn)) != null; }
+                            if (!known) checks.add(() -> part(at, square, width, height, partRow, partColumn));
+                        }
+                    if (checks.size() == 1) checks.get(0).run();
+                    else if (!checks.isEmpty()) RangeFiles.all(checks);
+                });
+            }
+        try {
+            if (squares.size() == 1) squares.get(0).run();
+            else if (!squares.isEmpty()) RangeFiles.all(squares);
+        } catch (RuntimeException later) {
+            // any() and the tile's weights meet it, and report it.
         }
     }
 
@@ -360,6 +396,14 @@ public final class CopernicusFill implements ElevationLayer {
             for (int tx = tileLeft; tx <= tileRight; tx++) {
                 int x = Math.floorMod(tx, 1 << CHECK_ZOOM), y = ty;
                 reads.add(() -> { try { tiles.tile(CHECK_ZOOM, x, y); } catch (RuntimeException missing) { /* the bands meet it */ } });
+            }
+        // And Copernicus under the window's corners and middle, so a margin that reaches into the next degree square
+        // has that square's header and block on their way from the start, not from the row that first meets them.
+        for (int r : new int[] {0, down / 2, down - 1})
+            for (int c : new int[] {0, across / 2, across - 1}) {
+                double latitude = south + 1 - (row0 + r - m + 0.5) / height, longitude = west + (column0 + c - m + 0.5) / width;
+                if (Math.abs(latitude) >= 90) continue;
+                reads.add(() -> { try { dem.metres(latitude, longitude, CHECK_OVERVIEW); } catch (RuntimeException missing) { /* the bands meet it */ } });
             }
         for (int b = 0; b < bands; b++) {
             int from = b * down / bands, to = (b + 1) * down / bands;

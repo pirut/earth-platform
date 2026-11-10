@@ -18,6 +18,8 @@ Most are read once when the class that uses them loads, so set them on the comma
 | `earthplatform.copernicus.fastWeight` | on | `false` makes the Copernicus fill ask the shared caches for each tile pixel's check size and part, and wraps longitudes with remainders only; the weights are identical | `CopernicusFill`, `CopernicusSource` |
 | `earthplatform.earth.offline` | `false` | Never download; only places already in the cache generate. Same as the `offline` setting | `CubicSettings`, `EarthStatus` |
 | `earthplatform.earth.imagery` | `false` | New worlds take ground colors from EOX satellite imagery. Same as the `satelliteImagery` setting | `CubicSettings`, `EarthConfig` |
+| `earthplatform.earth.transfers` | many | Downloads at once from the Amazon open data buckets (elevation tiles 48, 3DEP, HRDEM, REMA and land cover 24, Copernicus 16); `few` keeps the 16, 6 and 8 of before, for comparing. Climate and surface water keep theirs | `CubicSettings.transfers` |
+| `earthplatform.earth.prepareLog` | `false` | Logs, after each fetch of a place's data, which pieces came in last and how long each took: what a travel waited on | `EarthGenerator.prepare` |
 | `earthplatform.earth.home` | Yosemite Valley | Default home of new worlds, as `LAT,LON` | `EarthSettings` |
 | `earthplatform.earth.copernicus` | on | `false` leaves the Copernicus 30 m fill out of new worlds | `CubicSettings.elevation()` |
 | `earthplatform.earth.3dep` | on | `false` leaves the USGS 3DEP layer (United States) out of new worlds | `CubicSettings.elevation()` |

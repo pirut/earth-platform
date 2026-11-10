@@ -26,4 +26,16 @@ public interface ElevationLayer {
      * here is left for refine to meet.
      */
     default void prefetch(int zoom, int x, int y) {}
+
+    /**
+     * Reads all that {@link #refine} needs of a tile but the tile's own pixels, while those are
+     * still on their way: on a first visit a layer's downloads then run beside the tile's and the
+     * other layers' rather than behind them. What it returns is handed to
+     * {@link #refine(int, int, int, float[], Object)} for the same tile, which waits for it; null
+     * leaves refine to read for itself. May block; a failure here is left for refine to meet.
+     */
+    default Object plan(int zoom, int x, int y) { return null; }
+
+    /** {@link #refine(int, int, int, float[])} with what {@link #plan} read for the tile, or null: the values come out the same either way. */
+    default void refine(int zoom, int x, int y, float[] values, Object plan) { refine(zoom, x, y, values); }
 }

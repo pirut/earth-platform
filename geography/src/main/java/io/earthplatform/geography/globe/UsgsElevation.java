@@ -101,14 +101,52 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
 
     @Override public String id() { return reading.id; }
 
-    @Override public void refine(int zoom, int x, int y, float[] values) {
-        if (zoom < MIN_ZOOM) return;
+    /** What 3DEP holds under a tile's pixels: each one's share of data around it, and its metres where that share is over half. */
+    private record Readings(double[] shares, double[] metres) {
+        /** A tile 3DEP has nothing for. */
+        static final Readings NONE = new Readings(null, null);
+    }
+
+    @Override public Object plan(int zoom, int x, int y) { return read(zoom, x, y); }
+
+    @Override public void refine(int zoom, int x, int y, float[] values) { refine(zoom, x, y, values, null); }
+
+    @Override public void refine(int zoom, int x, int y, float[] values, Object plan) {
+        Readings readings = plan instanceof Readings ahead ? ahead : read(zoom, x, y);
+        if (readings.shares == null) return;
+        double[] shares = readings.shares, read = readings.metres;
+        for (int at = 0; at < shares.length; at++) {
+            double share = shares[at];
+            if (share <= 0.5) continue;
+            float own = values[at];
+            double metres = read[at];
+            if (Double.isNaN(metres)) continue;
+            // 3DEP has no bathymetry; the composite's stays.
+            if (metres <= 0 && own < 0) continue;
+            // Exactly 0 is open sea to the generator, and stays sea unless 3DEP has data all around it and
+            // stands well above the sea there. The composite has voids of 0 inland, pits hundreds of metres
+            // deep in a mountainside or a lake, that this fills. 3DEP also covers bays and sounds at a few
+            // metres, and a coarse pixel of sea under a bluff reads a few tens, so lower readings stay sea.
+            if (own == 0 && (share < 1 - 1e-9 || metres < VOID_ABOVE_SEA)) continue;
+            double s = Math.min(1, (share - 0.5) * 2), weight = s * s * (3 - 2 * s);
+            float out = (float) (own + weight * (metres - own));
+            // Exactly 0 means open sea to the generator.
+            values[at] = out == 0 ? Float.MIN_VALUE : out;
+        }
+    }
+
+    /**
+     * Reads 3DEP under a tile. None of it waits on the tile's own pixels, so on a first visit it runs beside their
+     * download ({@link #plan}) rather than after it and the layers before this one.
+     */
+    private Readings read(int zoom, int x, int y) {
+        if (zoom < MIN_ZOOM) return Readings.NONE;
         int size = TerrariumTileSource.TILE_SIZE;
         double world = (double) size * (1L << zoom);
         double north = Mercator.latitude((double) y * size, world), south = Mercator.latitude((double) (y + 1) * size, world);
         double west = (double) x * size / world * 360 - 180, east = (double) (x + 1) * size / world * 360 - 180;
         java.util.List<Integer> listedCells = cells(north, south, west, east);
-        if (listedCells.isEmpty()) return;
+        if (listedCells.isEmpty()) return Readings.NONE;
         // Read 3DEP at about the tile's pixel size, measured north-south at its centre.
         double centre = Mercator.latitude((y + 0.5) * size, world);
         double pixel = 360 / world * Math.cos(Math.toRadians(centre));
@@ -145,6 +183,7 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
         }
         read.load();
         double[] shares = new double[pixels];
+        boolean any = false;
         for (int at = 0; at < pixels; at++) {
             if (grids[at] == null) continue;
             double lat = latitudes[at / size], lon = longitudes[at % size];
@@ -152,36 +191,27 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
             shares[at] = share;
             grids[at] = null;
             if (share <= 0.5) continue;
+            any = true;
             FloatCogs.Grid grid = read.grid(cells[at], overview, lon, lat);
             grids[at] = grid;
             // A pixel outside the finer overview reads coarser ones below, one at a time.
             if (grid != null) read.wantMetres(grid, lon, lat);
         }
+        if (!any) return Readings.NONE;
         read.load();
+        double[] metres = new double[pixels];
         for (int at = 0; at < pixels; at++) {
-            double share = shares[at];
-            if (share <= 0.5) continue;
+            if (shares[at] <= 0.5) continue;
             double lat = latitudes[at / size], lon = longitudes[at % size];
-            float own = values[at];
-            double metres = grids[at] == null ? Double.NaN : read.metres(grids[at], lon, lat);
+            double here = grids[at] == null ? Double.NaN : read.metres(grids[at], lon, lat);
             // A gap at the finer overview takes the coarser data around it.
-            for (int level = overview + 1; Double.isNaN(metres) && level <= MAX_OVERVIEW; level++) {
+            for (int level = overview + 1; Double.isNaN(here) && level <= MAX_OVERVIEW; level++) {
                 FloatCogs.Grid grid = read.grid(cells[at], level, lon, lat);
-                if (grid != null) metres = read.metres(grid, lon, lat);
+                if (grid != null) here = read.metres(grid, lon, lat);
             }
-            if (Double.isNaN(metres)) continue;
-            // 3DEP has no bathymetry; the composite's stays.
-            if (metres <= 0 && own < 0) continue;
-            // Exactly 0 is open sea to the generator, and stays sea unless 3DEP has data all around it and
-            // stands well above the sea there. The composite has voids of 0 inland, pits hundreds of metres
-            // deep in a mountainside or a lake, that this fills. 3DEP also covers bays and sounds at a few
-            // metres, and a coarse pixel of sea under a bluff reads a few tens, so lower readings stay sea.
-            if (own == 0 && (share < 1 - 1e-9 || metres < VOID_ABOVE_SEA)) continue;
-            double s = Math.min(1, (share - 0.5) * 2), weight = s * s * (3 - 2 * s);
-            float out = (float) (own + weight * (metres - own));
-            // Exactly 0 means open sea to the generator.
-            values[at] = out == 0 ? Float.MIN_VALUE : out;
+            metres[at] = here;
         }
+        return new Readings(shares, metres);
     }
 
     /** The listed cells that meet the box. */

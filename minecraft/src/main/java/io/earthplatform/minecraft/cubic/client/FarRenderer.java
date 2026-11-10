@@ -1463,11 +1463,23 @@ public final class FarRenderer {
             // the two go the remeshes of the two finest levels' drawn columns, the ground round the player: its
             // first meshes are made before its neighbours and the cubes over it are known, and on a Mac, left
             // behind some seventeen thousand stand-ins, it stood as slabs and steps for two seconds longer.
-            if (FIRST_MESH_ORDER && !column.meshed) order[i] = column.preview ? standInOrder(column.key, bx, bz) - (4L << 40) : firstMeshOrder(column.key, bx, bz) - (5L << 40);
+            // A stand-in over the player's own ground is not hurried: meshed, the walk draws it whole over the finer levels
+            // until every finer column under it is in, a slab for the first seconds after a travel. The rest of the
+            // middles still come early, so no sky shows between the horizon and the near ground.
+            boolean overGround = column.preview && Far.refined(column.level, Far.x(column.key), Far.z(column.key), bx, bz, finest)
+                    && nearSquare(column, bx, bz);
+            if (FIRST_MESH_ORDER && !column.meshed && !overGround) order[i] = column.preview ? standInOrder(column.key, bx, bz) - (4L << 40) : firstMeshOrder(column.key, bx, bz) - (5L << 40);
             else if (FIRST_MESH_ORDER && column.drawnPick == pickSerial && column.level <= finest + 1) order[i] = priority(column.key, bx, bz) - (5L << 40);
             else order[i] = (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz);
         }
         for (int i : FarOrder.first(order, free)) submit(due.get(i));
+    }
+
+    /** Whether a column's square reaches within the two finest levels' rings round the player. */
+    private boolean nearSquare(Column column, int bx, int bz) {
+        int width = Far.width(column.level);
+        long dx = Math.max(0, Math.max(column.x0 - bx, bx - (column.x0 + width))), dz = Math.max(0, Math.max(column.z0 - bz, bz - (column.z0 + width)));
+        return Math.max(dx, dz) < 24L * Far.width(Math.min(Far.MAX_LEVEL, finest + 1));
     }
 
     /** Sets when a column is next meshed, keeping {@link #dueColumns} to the columns with a time. */

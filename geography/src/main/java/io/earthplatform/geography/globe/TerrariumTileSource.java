@@ -112,9 +112,9 @@ public final class TerrariumTileSource implements AutoCloseable {
         CompletableFuture<float[]> shared = inFlight.putIfAbsent(key, mine);
         if (shared == null) {
             try {
-                early(zoom, x, y);
+                java.util.List<CompletableFuture<Object>> plans = early(zoom, x, y);
                 float[] values = read(zoom, x, y);
-                for (ElevationLayer layer : layers) refine(layer, zoom, x, y, values);
+                for (int i = 0; i < layers.size(); i++) refine(layers.get(i), zoom, x, y, values, plans.get(i));
                 if (zoom >= TileDespike.SPIKE_ZOOM) TileDespike.despike(values);
                 synchronized (memory) {
                     memory.putAndTrim(key, values, maxTilesInMemory);
@@ -191,6 +191,9 @@ public final class TerrariumTileSource implements AutoCloseable {
             if (kept != null) return kept;
         }
         try {
+            // Its seams' neighbours start beside it, as early() starts a whole tile's: one after another they kept
+            // a Copernicus check, and every tile of a new place behind it, waiting four downloads longer.
+            earlyNeighbours(zoom, x, y);
             float[] values = read(zoom, x, y);
             synchronized (cleanMemory) {
                 cleanMemory.putAndTrim(key, values, CLEAN_KEEP);
@@ -207,9 +210,11 @@ public final class TerrariumTileSource implements AutoCloseable {
     /**
      * On a first visit a tile waits on a chain of downloads: its own pixels, then the neighbours its seams read, the
      * coarser tile its repair compares against, and the layers' sources. None of them depends on another's values,
-     * so they all start at once here and the chain later joins the loads in flight or finds them cached.
+     * so they all start at once here and the chain later joins the loads in flight or finds them cached. Each
+     * layer reads all it can without the tile's pixels ({@link ElevationLayer#plan}); what it read is returned
+     * for {@link #refine}, in the layers' order.
      */
-    private void early(int zoom, int x, int y) {
+    private java.util.List<CompletableFuture<Object>> early(int zoom, int x, int y) {
         if (zoom > REFERENCE_ZOOM + 1) {
             int shift = zoom - REFERENCE_ZOOM;
             boolean known;
@@ -218,18 +223,34 @@ public final class TerrariumTileSource implements AutoCloseable {
                 try { tile(REFERENCE_ZOOM, x >> shift, y >> shift); } catch (RuntimeException missing) { /* repair() does without */ }
             });
         }
-        for (ElevationLayer layer : layers) Thread.ofVirtual().start(() -> {
-            try { layer.prefetch(zoom, x, y); } catch (RuntimeException missing) { /* refine() reports it */ }
-        });
-        // Neighbours are worth reading ahead only when this tile must come over the network too: from the disk, seams
-        // reads them in moments, and reading them twice would cost more than it saves.
-        if (cacheRoot == null || !Files.isRegularFile(cacheRoot.resolve(zoom + "/" + x + "/" + y + ".png"), LinkOption.NOFOLLOW_LINKS))
-            TileSeams.seamNeighbours(zoom, x, y, (nz, nx, ny) -> {
-                if (ny < 0 || ny >= 1 << nz) return;
-                int wrapped = Math.floorMod(nx, 1 << nz);
-                if (cacheRoot != null && Files.isRegularFile(cacheRoot.resolve(nz + "/" + wrapped + "/" + ny + ".png"), LinkOption.NOFOLLOW_LINKS)) return;
-                Thread.ofVirtual().start(() -> neighbour(nz, wrapped, ny));
+        java.util.List<CompletableFuture<Object>> plans = new java.util.ArrayList<>(layers.size());
+        for (ElevationLayer layer : layers) {
+            CompletableFuture<Object> plan = new CompletableFuture<>();
+            plans.add(plan);
+            Thread.ofVirtual().start(() -> {
+                try { layer.prefetch(zoom, x, y); } catch (RuntimeException missing) { /* refine() reports it */ }
             });
+            Thread.ofVirtual().start(() -> {
+                // A failure here is refine()'s to meet and report: it reads for itself when handed no plan.
+                try { plan.complete(layer.plan(zoom, x, y)); } catch (Throwable missing) { plan.complete(null); }
+            });
+        }
+        earlyNeighbours(zoom, x, y);
+        return plans;
+    }
+
+    /**
+     * Starts reading the neighbours a tile's seams read. Worth it only when the tile must come over the network
+     * too: from the disk, seams reads them in moments, and reading them twice would cost more than it saves.
+     */
+    private void earlyNeighbours(int zoom, int x, int y) {
+        if (cacheRoot != null && Files.isRegularFile(cacheRoot.resolve(zoom + "/" + x + "/" + y + ".png"), LinkOption.NOFOLLOW_LINKS)) return;
+        TileSeams.seamNeighbours(zoom, x, y, (nz, nx, ny) -> {
+            if (ny < 0 || ny >= 1 << nz) return;
+            int wrapped = Math.floorMod(nx, 1 << nz);
+            if (cacheRoot != null && Files.isRegularFile(cacheRoot.resolve(nz + "/" + wrapped + "/" + ny + ".png"), LinkOption.NOFOLLOW_LINKS)) return;
+            Thread.ofVirtual().start(() -> neighbour(nz, wrapped, ny));
+        });
     }
 
     /** A tile's values as the composite holds them, from the disk cache or else the network; the caller's own copy. */
@@ -370,10 +391,22 @@ public final class TerrariumTileSource implements AutoCloseable {
      * missing tiles do, so it is tried again later; one that breaks any other way is a bug in it, and the
      * tile goes on as the layers before it left it rather than leaving a hole in the world.
      */
-    static void refine(ElevationLayer layer, int zoom, int x, int y, float[] values) {
+    static void refine(ElevationLayer layer, int zoom, int x, int y, float[] values) { refine(layer, zoom, x, y, values, null); }
+
+    /** @param plan what the layer read ahead for the tile ({@link ElevationLayer#plan}), still on its way perhaps, or null */
+    static void refine(ElevationLayer layer, int zoom, int x, int y, float[] values, CompletableFuture<Object> plan) {
         float[] before = values.clone();
         try {
-            layer.refine(zoom, x, y, values);
+            Object read = null;
+            if (plan != null) {
+                try { read = DataWaits.get(plan); }
+                catch (ExecutionException unreachable) { /* early() completes it with null on a failure */ }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new MissingTerrainException("Interrupted reading elevation layer " + layer.id() + " for tile " + zoom + "/" + x + "/" + y);
+                }
+            }
+            layer.refine(zoom, x, y, values, read);
         } catch (MissingTerrainException missing) {
             throw missing;
         } catch (RuntimeException broken) {

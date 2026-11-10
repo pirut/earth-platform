@@ -3954,9 +3954,22 @@ public final class EarthGenerator extends SurfaceGenerator {
      */
     @Override public void prepareNear(int x, int z) { prepare(x, z, NEAR_REACH, false); }
 
+    /**
+     * {@code -Dearthplatform.earth.prepareLog=true} logs, after each fetch here, when its last pieces came in and how
+     * long each took: what a travel to a new place waited on.
+     */
+    private static final boolean PREPARE_LOG = Boolean.getBoolean("earthplatform.earth.prepareLog");
+
     private void prepare(int x, int z, double most, boolean far) {
         record Tile(int zoom, int x, int y) {}
         List<Runnable> loads = new ArrayList<>();
+        long began = System.nanoTime();
+        List<String> finished = PREPARE_LOG ? java.util.Collections.synchronizedList(new ArrayList<>()) : null;
+        java.util.function.BiConsumer<String, Runnable> add = (name, load) -> loads.add(finished == null ? load : () -> {
+            long start = System.nanoTime();
+            load.run();
+            finished.add(String.format(Locale.ROOT, "%5.2f s %s (%.2f s)", (System.nanoTime() - began) / 1e9, name, (System.nanoTime() - start) / 1e9));
+        });
         // Failures are told once for the whole fetch: with a data server down, each of hundreds of pieces fails.
         java.util.concurrent.atomic.AtomicInteger failed = new java.util.concurrent.atomic.AtomicInteger();
         java.util.concurrent.atomic.AtomicReference<String> first = new java.util.concurrent.atomic.AtomicReference<>();
@@ -3982,7 +3995,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) {
                 for (int tx = x0; tx <= x1; tx++) {
                     Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
-                    loads.add(() -> {
+                    add.accept("elevation " + tile.zoom + "/" + tile.x + "/" + tile.y, () -> {
                         try { ground.tile(tile.zoom, tile.x, tile.y); }
                         catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
                     });
@@ -3996,7 +4009,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             double reach = !far ? 24000
                     : Math.max(24000, (Far.OUTER + 1) * (double) Far.width(Far.MAX_LEVEL) + Strata.dryReach(grid.groundMetresPerBlock(z)));
             GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
-            loads.add(() -> {
+            add.accept("climate", () -> {
                 try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
                 catch (RuntimeException failure) { missed.accept("climate", failure); }
             });
@@ -4004,7 +4017,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (rivers != null) {
             double reach = Math.min(most, 3500);
             GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
-            loads.add(() -> {
+            add.accept("rivers", () -> {
                 try { rivers.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
                 catch (RuntimeException failure) { missed.accept("rivers", failure); }
             });
@@ -4015,7 +4028,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             for (int k = 0; k < imageryReaches.length; k++) {
                 double reach = Math.min(most, imageryReaches[k]);
                 int zoom = ImagerySource.MAX_ZOOM - k;
-                loads.add(() -> {
+                add.accept("imagery " + zoom, () -> {
                     try { imagery.prefetch(grid, x - reach, z - reach, x + reach, z + reach, zoom); }
                     catch (RuntimeException failure) { missed.accept("imagery", failure); }
                 });
@@ -4030,7 +4043,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 double reach = overview == WATER_OVERVIEW ? reaches[overview] : Math.min(most, reaches[overview]);
                 int level = overview;
                 GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
-                loads.add(() -> {
+                add.accept("land cover " + level, () -> {
                     try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), level); }
                     catch (RuntimeException failure) { missed.accept("land cover", failure); }
                 });
@@ -4038,13 +4051,19 @@ public final class EarthGenerator extends SurfaceGenerator {
             // And the overview joinsOpenSea() reads its sea cells at, which a landing by the coast asks first.
             int seaOverview = Mth.clamp(Mth.floor(Math.log(SEA_CELL * grid.groundMetresPerBlock(z) / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
             GeoPoint a = grid.geographic(x - 24000, z + 24000), b = grid.geographic(x + 24000, z - 24000);
-            loads.add(() -> {
+            add.accept("land cover sea", () -> {
                 try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), seaOverview); }
                 catch (RuntimeException failure) { missed.accept("land cover", failure); }
             });
         }
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             for (Runnable load : loads) pool.execute(load);
+        }
+        if (finished != null) {
+            List<String> last = new ArrayList<>(finished);
+            last.sort(java.util.Comparator.reverseOrder());
+            EarthPlatformMod.LOGGER.info("Earth data fetched to {} blocks: {} pieces in {} s; last in: {}", (int) Math.min(most, 1e7), last.size(),
+                    String.format(Locale.ROOT, "%.2f", (System.nanoTime() - began) / 1e9), String.join("; ", last.subList(0, Math.min(14, last.size()))));
         }
         if (failed.get() > 0)
             EarthPlatformMod.LOGGER.warn("Could not prefetch {} of {} pieces of Earth data; generation asks for them again (first: {})", failed.get(), loads.size(), first.get());
