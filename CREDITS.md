@@ -145,6 +145,50 @@ Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based 
 Dinerstein, E., Olson, D., Joshi, A., et al. (2017). An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm. *BioScience* 67(6), 534-545. https://doi.org/10.1093/biosci/bix014
 License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: the ecoregion polygons are rasterized to a 0.05 degree grid (`earthplatform/ecoregions.png`, with ecoregion names in `ecoregions.tsv`) and used to tune biomes and ground cover.
 
+## Tree heights: Meta and WRI canopy height maps (downloaded while you play)
+
+**What it gives Earth Platform:** How tall the forest stands at each place, so taiga stays low, rainforest stands tall, and giant trees grow where the world's tallest conifers really are.
+
+**Thank you** to Meta and the World Resources Institute for mapping the height of the world's trees and sharing the map openly.
+
+**Attribution and license:**
+
+Canopy height: Meta and World Resources Institute (WRI), High Resolution Canopy Height Maps v2, on the Registry of Open Data on AWS; method: Tolan, J. et al. (2024), Very high resolution canopy height maps from RGB imagery using self-supervised vision transformer and convolutional decoder trained on aerial lidar, Remote Sensing of Environment 300, 113888.
+License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: heights are read at about 20 m detail from dataforgood-fb-data.s3.amazonaws.com only where you play, cached on disk, and used to choose how tall each tree grows and where groves of giant trees stand. New worlds only. Turn it off for new worlds with `-Dearthplatform.earth.canopy=false`.
+
+## Rock: Global Lithological Map and HydroATLAS (bundled)
+
+**What it gives Earth Platform:** The kind of rock under each place, so lava country is dark basalt and granite country is pale.
+
+**Thank you** to Jens Hartmann and Nils Moosdorf for the Global Lithological Map, and to the HydroATLAS team for carrying it basin by basin.
+
+**Attribution and license:**
+
+Rock: Global Lithological Map (GLiM), Hartmann, J. and Moosdorf, N. (2012), The new global lithological map database GLiM, Geochemistry, Geophysics, Geosystems 13, Q12004, doi:10.1029/2012GC004370 (gridded version doi:10.1594/PANGAEA.788537, CC BY 3.0), as carried per sub-basin by HydroATLAS v1.0, Linke, S. et al. (2019), Scientific Data 6:283, doi:10.1038/s41597-019-0300-6 (CC BY 4.0).
+Licenses: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (HydroATLAS) and [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) (gridded GLiM). Changes: the rock class that covers most of each HydroATLAS level 12 sub-basin is drawn to a 0.05 degree grid (`earthplatform/rock.png`); islands HydroATLAS leaves out take the class of GLiM's half-degree grid. Made by `minecraft/scripts/earthmaps.py`.
+
+## Red ground: NASA Blue Marble (bundled)
+
+**What it gives Earth Platform:** Where the bare ground is red, as in Australia's center, the Namib and Monument Valley.
+
+**Thank you** to NASA's Earth Observatory and the GIBS team.
+
+**Attribution and license:**
+
+Ground color: NASA Earth Observatory, Blue Marble: Next Generation, served by NASA GIBS (public domain).
+NASA imagery is not subject to copyright in the United States. Changes: the land's red-to-green ratio is averaged to a 0.1 degree grid in sixteen steps (`earthplatform/redground.png`). NASA does not endorse Earth Platform.
+
+## Soil: ISRIC SoilGrids (bundled)
+
+**What it gives Earth Platform:** How much peat and humus lies in the topsoil, which decides how much of a northern forest's floor is podzol.
+
+**Thank you** to ISRIC - World Soil Information and the SoilGrids team.
+
+**Attribution and license:**
+
+Soil: ISRIC SoilGrids 2.0, Poggio, L. et al. (2021), SoilGrids 2.0: producing soil information for the globe with quantified spatial uncertainty, SOIL 7, 217-240, doi:10.5194/soil-7-217-2021 (CC BY 4.0).
+License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: organic carbon in the top 5 cm of the 5 km aggregated product is averaged to a 0.2 degree grid in sixteen steps (`earthplatform/soilcarbon.png`).
+
 ## Ground colors (optional): Sentinel-2 cloudless
 
 **What it gives Earth Platform:** When you turn it on, ground blocks that match what each place looks like from space.

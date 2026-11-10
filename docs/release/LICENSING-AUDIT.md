@@ -16,6 +16,10 @@ First checked on 2026-10-13 against the cubic engine branch (PR #2) and the feat
 | ESA WorldCover | OK | Credited, changes noted (CC BY 4.0) |
 | CHELSA climate | OK (license) / courtesy | CC0; ask CHELSA about public traffic or mirror the four bands |
 | RESOLVE Ecoregions 2017 (PR #14) | OK | CC BY 4.0; credited with the citation, and the derived raster noted |
+| Meta/WRI canopy height maps v2 (build 70) | OK | CC BY 4.0, on the Registry of Open Data on AWS; credited, changes noted. New runtime host `dataforgood-fb-data.s3.amazonaws.com` |
+| Rock map from GLiM via HydroATLAS (build 70) | OK | HydroATLAS CC BY 4.0, gridded GLiM CC BY 3.0; both credited, derived raster noted. The full-detail GLiM polygons state no license and are not used |
+| Red ground map from NASA Blue Marble (build 70) | OK | Public domain; credited, no-endorsement line |
+| Soil carbon map from ISRIC SoilGrids 2.0 (build 70) | OK | CC BY 4.0; credited, derived raster noted |
 | Copernicus GLO-30 elevation fill (PR #22) | OK | Same license as the bundled crop; credited with the liability and no-endorsement lines |
 | River channels (PR #19) | **OK: JRC Global Surface Water v1.4** | JRC GSW is free without restriction of use, with a citation. HydroRIVERS' license forbids open redistribution of its data, so it can't ship in an LGPL mod (details below) |
 | Hand-traced falls water (PR #16 `KnownWater`) | **Resolved: removed** | Deleted in 3e297c3; falls now come from general rules on Terrarium elevation and WorldCover, so no traced or OSM data ships |
@@ -61,6 +65,18 @@ Needs a decision or a code change (handed to the engine work, not changed here):
 - Code: `WorldCoverSource`, `https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/`.
 - Terms: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Commercial use allowed. Requires the attribution string and a note that the data were changed.
 - Done: attribution in game, CREDITS.md and notices, with the changes described (classes mapped to biomes and blocks, built-up land replaced).
+
+### Meta and WRI High Resolution Canopy Height Maps v2 (tree heights, build 70)
+- Code: `CanopySource`, HTTP range reads from `https://dataforgood-fb-data.s3.amazonaws.com/forests/v2/global/dinov3_global_chm_v2_ml3_10m_p95/chm/`.
+- Terms: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), listed on the [Registry of Open Data on AWS](https://registry.opendata.aws/dataforgood-fb-forests/). Commercial use allowed. A large public bucket, not a volunteer host.
+- Done: attribution in game, CREDITS.md and notices, with the changes described. New worlds only, pinned as `earth.canopy`.
+
+### Rock, red ground and soil maps (bundled, build 70)
+- Code: `EarthMaps`, three small PNGs in the jar (about 0.9 MB), baked by `minecraft/scripts/earthmaps.py`. Nothing is downloaded while the game runs.
+- Rock: HydroATLAS v1.0 BasinATLAS level 12 `lit_cl_smj` ([CC BY 4.0](https://www.hydrosheds.org/hydroatlas)), which carries the Global Lithological Map class covering most of each sub-basin; gaps from GLiM's half-degree grid on PANGAEA ([CC BY 3.0](https://doi.org/10.1594/PANGAEA.788537)). The full-detail GLiM geodatabase states no license, so it is not used; using it would need the authors' permission.
+- Red ground: NASA Blue Marble: Next Generation from NASA GIBS, public domain.
+- Soil: ISRIC SoilGrids 2.0, 5 km aggregated organic carbon 0-5 cm ([CC BY 4.0](https://www.isric.org/explore/soilgrids/faq-soilgrids)).
+- Done: all four credited in game, CREDITS.md and notices with the derived rasters noted. New worlds only, pinned as `earth.maps`.
 
 ### CHELSA V2.1 climatologies 1981-2010 (climate)
 - Code: `ClimateSource`, HTTP range reads from `https://os.zhdk.cloud.switch.ch/chelsav2/GLOBAL/...`.

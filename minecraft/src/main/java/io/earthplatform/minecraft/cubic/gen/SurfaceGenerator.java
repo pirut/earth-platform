@@ -125,6 +125,21 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     /** Whether giant sequoia groves may be near a column; their trees stand far taller than any other. */
     protected boolean giants(int x, int z) { return false; }
 
+    /**
+     * How tall the real trees round a column stand, in metres, where the generator knows; -1 where it does not,
+     * and trees grow to the heights vanilla gives them.
+     */
+    protected int canopy(int x, int z) { return -1; }
+
+    /**
+     * Which form a giant tree rooted at a column takes: {@link Giants#SEQUOIA}, {@link Giants#REDWOOD} or
+     * {@link Giants#FIR}; or -1 for the one sequoia worlds made before build 70 have.
+     */
+    protected int giantForm(int x, int z) { return -1; }
+
+    /** Whether trees' bare log ends at the top of their crowns are covered with leaves; worlds made before build 70 keep vanilla's. */
+    protected boolean cappedCrowns() { return false; }
+
     /** Whether the water over a column is iced over: by default wherever its biome freezes. */
     protected boolean iced(Surface surface, int x, int z) { return surface.biome().value().getBaseTemperature() < 0.15f; }
     /** The rock layers a column shows in its cliff faces, or null for plain stone. */
@@ -448,8 +463,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /**
      * Rasterises the real trees into voxels of 2 or 4 blocks, or only the sequoias into wider
-     * ones: a voxel turns to leaves or log once a quarter of it is (an eighth for sequoias, whose
-     * crowns are looser than a voxel that wide).
+     * ones: a voxel turns to crown or log once a quarter of it is tree (an eighth for sequoias, whose
+     * crowns are looser than a voxel that wide), and to log only where the trunk has next to no leaves by it.
      */
     private void farTrees(int level, int x0, int z0, int bottom, LevelChunkSection[] stack, boolean giantsOnly) {
         int v = 1 << level, width = 16 * v, height = stack.length * 16, baseY = bottom * width;
@@ -468,12 +483,18 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         };
         vegetation.trees(x0, baseY, z0, x0 + width - 1, baseY + height * v - 1, z0 + width - 1, giantsOnly, sink);
         int quarter = Math.max(1, v * v * v / (giantsOnly ? 8 : 4));
+        // A sequoia's crown is clumps on long branches: a wide voxel shows as crown on far fewer leaves. Its trunk is
+        // drawn as crown too: out here the forest round it is a flat sheet of leaves, and a voxel-wide trunk on that
+        // is a brown post, where a dark spire is what a giant looks like from this far.
+        int loose = giantsOnly ? v * v * v / 24 : Integer.MAX_VALUE;
         for (int i = 0; i < leafCount.length; i++) {
-            if (leafCount[i] < quarter && logCount[i] < quarter) continue;
+            if (leafCount[i] + logCount[i] < quarter && leafCount[i] < loose) continue;
             int vx = i & 15, vz = i >> 4 & 15, vy = i >> 8;
             LevelChunkSection section = stack[vy >> 4];
             if (!section.getBlockState(vx, vy & 15, vz).isAir()) continue;
-            BlockState state = logCount[i] >= quarter && logCount[i] * 2 >= leafCount[i] ? logKind[i] : leafKind[i];
+            // A trunk inside its crown shows as crown: a voxel is log only where the trunk stands nearly bare, or a
+            // thick trunk under a thin top would stand out of the forest as a brown post as wide as the voxel.
+            BlockState state = leafCount[i] >= loose || leafCount[i] * 4 >= logCount[i] ? leafKind[i] : logCount[i] < quarter ? null : giantsOnly ? Vegetation.leaves(Tree.SEQUOIA) : logKind[i];
             // Crowns' top leaves under snow that covers a quarter of the voxel, lying in it or just above, show white;
             // the leaves below them stay green, as the trees' sides do nearer.
             boolean above = i + 256 < snowCount.length;
