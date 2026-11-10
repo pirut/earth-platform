@@ -195,7 +195,9 @@ final class FarShaders {
     private static final float HAZE_HEIGHT = 1000.0F;
 
     static final String VERTEX = String.format(java.util.Locale.ROOT,
-            "const float earth_HazeHeight = %.1f;\nconst float earth_Edge = %.1f;\n", HAZE_HEIGHT, 0.95F * io.earthplatform.minecraft.cubic.far.Far.reach()) + """
+            "const float earth_HazeHeight = %.1f;\n", HAZE_HEIGHT) + """
+            // Where far terrain ends, in blocks: a uniform, since the far distance changes while playing.
+            uniform float earth_Edge;
             uniform usamplerBuffer earth_Quads;
             uniform isamplerBuffer earth_Columns;
             uniform mat4 earth_ModelView;

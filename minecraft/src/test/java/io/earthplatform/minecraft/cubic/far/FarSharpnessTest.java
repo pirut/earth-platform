@@ -11,15 +11,15 @@ class FarSharpnessTest {
         float reach = Far.reach();
         try {
             Far.sharpness(1.0);
-            assertEquals(Far.DETAIL, Far.hole());
+            assertEquals(Far.detail(), Far.hole());
             Far.sharpness(0.7);
-            assertTrue(Far.hole() < Far.DETAIL);
+            assertTrue(Far.hole() < Far.detail());
             Far.sharpness(1.6);
-            assertTrue(Far.hole() > Far.DETAIL);
+            assertTrue(Far.hole() > Far.detail());
             assertEquals(reach, Far.reach());
             // However sharp the normal choices, the coarsest level keeps a ring of its own.
             Far.sharpness(Far.EXTREME_SCALE);
-            assertTrue(Far.hole() < Far.OUTER);
+            assertTrue(Far.hole() < Far.outer());
             // The extreme ones may cover it, and requests stay inside the server's slack.
             Far.sharpness(100);
             assertEquals(Far.MAX_HOLE, Far.hole());
@@ -40,7 +40,7 @@ class FarSharpnessTest {
                 Far.around(12_345, -6_789, key -> count[Far.level(key)]++);
                 int side = 4 * Far.hole() + 2;
                 for (int level = Far.MIN_LEVEL; level < Far.MAX_LEVEL; level++) assertEquals(side * side, count[level]);
-                assertEquals((2 * Far.OUTER + 1) * (2 * Far.OUTER + 1), count[Far.MAX_LEVEL]);
+                assertEquals((2 * Far.outer() + 1) * (2 * Far.outer() + 1), count[Far.MAX_LEVEL]);
             }
         } finally {
             Far.sharpness(1.0);
@@ -143,16 +143,58 @@ class FarSharpnessTest {
                     }
                     // Nothing past the coarsest square.
                     int shift = Far.MAX_LEVEL - level;
-                    assertTrue(x >> shift >= Far.column(bx, Far.MAX_LEVEL) - Far.OUTER && x >> shift <= Far.column(bx, Far.MAX_LEVEL) + Far.OUTER);
-                    assertTrue(z >> shift >= Far.column(bz, Far.MAX_LEVEL) - Far.OUTER && z >> shift <= Far.column(bz, Far.MAX_LEVEL) + Far.OUTER);
+                    assertTrue(x >> shift >= Far.column(bx, Far.MAX_LEVEL) - Far.outer() && x >> shift <= Far.column(bx, Far.MAX_LEVEL) + Far.outer());
+                    assertTrue(z >> shift >= Far.column(bz, Far.MAX_LEVEL) - Far.outer() && z >> shift <= Far.column(bz, Far.MAX_LEVEL) + Far.outer());
                 }
                 // The coarsest level keeps its outer ring, so the horizon never waits on finer levels.
-                for (int x = -Far.OUTER; x <= Far.OUTER; x++)
-                    assertTrue(!Far.refined(Far.MAX_LEVEL, Far.column(bx, Far.MAX_LEVEL) + x, Far.column(bz, Far.MAX_LEVEL) + Far.OUTER, bx, bz), "scale " + scale);
-                long side = (2L * Far.OUTER + 1) * Far.width(Far.MAX_LEVEL);
+                for (int x = -Far.outer(); x <= Far.outer(); x++)
+                    assertTrue(!Far.refined(Far.MAX_LEVEL, Far.column(bx, Far.MAX_LEVEL) + x, Far.column(bz, Far.MAX_LEVEL) + Far.outer(), bx, bz), "scale " + scale);
+                long side = (2L * Far.outer() + 1) * Far.width(Far.MAX_LEVEL);
                 assertEquals(side * side, area, "scale " + scale);
             }
         } finally {
+            Far.sharpness(1.0);
+        }
+    }
+
+    /** The far distance changes while playing: the reach and every level's square follow at once, and go back. */
+    @Test void detailChangesTheReachWhilePlaying() {
+        int before = Far.detail();
+        try {
+            for (int detail : new int[] {4, 11, 24, 48}) {
+                Far.detail(detail);
+                Far.sharpness(1.3);
+                assertEquals(detail, Far.detail());
+                assertEquals(2 * detail + 1, Far.outer());
+                assertEquals((2 * detail + 1) * (float) Far.width(Far.MAX_LEVEL), Far.reach());
+                assertEquals(Far.hole(1.3, detail), Far.hole());
+                assertTrue(Far.hole() < Far.outer());
+                int outer = Far.outer(), hole = Far.hole(), bx = 98_765, bz = -43_210;
+                LongOpenHashSet keys = new LongOpenHashSet();
+                Far.around(bx, bz, Far.MIN_LEVEL, hole, outer, keys::add);
+                int[] count = new int[Far.MAX_LEVEL + 1];
+                for (long key : keys) {
+                    count[Far.level(key)]++;
+                    assertTrue(Far.kept(key, bx, bz, Far.MIN_LEVEL, hole, outer));
+                    // What a client asks for at any distance, the server is willing to make.
+                    assertTrue(Far.near(key, bx, bz));
+                    assertTrue(Far.inReach(key, bx, bz));
+                }
+                assertEquals((2 * outer + 1) * (2 * outer + 1), count[Far.MAX_LEVEL]);
+                // One ring past the square is not kept.
+                assertTrue(!Far.kept(Far.key(Far.MAX_LEVEL, Far.column(bx, Far.MAX_LEVEL) + outer + 1, Far.column(bz, Far.MAX_LEVEL)), bx, bz, Far.MIN_LEVEL, hole, outer));
+            }
+            // The sharpness last set carries over to a new distance.
+            Far.detail(11);
+            Far.sharpness(1.6);
+            Far.detail(20);
+            assertEquals(Far.hole(1.6, 20), Far.hole());
+            Far.detail(1000);
+            assertEquals(Far.MAX_DETAIL, Far.detail());
+            Far.detail(0);
+            assertEquals(4, Far.detail());
+        } finally {
+            Far.detail(before);
             Far.sharpness(1.0);
         }
     }

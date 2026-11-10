@@ -60,8 +60,13 @@ import org.joml.Matrix4f;
  * pack's own water shader.
  */
 public final class FarRenderer {
-    /** Distance to the nearest edge of the coarsest level's square. */
-    private static final float REACH = Far.reach();
+    /**
+     * Distance to the nearest edge of the coarsest level's square, as the frames being drawn use
+     * it: read from {@link Far#reach} once a client tick (see {@link #tick}), between frames, so
+     * the fog, the depth range, the shaders' edge and a pack's LOD distance all change together
+     * when the far distance is changed while playing.
+     */
+    private static volatile float reach = Far.reach();
     /**
      * Where the haze over low ground ends, in meters: by default just inside the far view's edge,
      * so everything drawn stays clear and the haze only hides where the terrain stops. It no longer
@@ -70,17 +75,33 @@ public final class FarRenderer {
      * air), never past the edge. The levels beyond still show what rises above the haze (see
      * {@link FarShaders}), so distant mountains stand clear.
      */
-    private static final float VISIBILITY = Math.min(0.95F * REACH,
-            Math.max(5_000.0F, Float.parseFloat(System.getProperty("earthplatform.far.visibility", "1e9"))));
+    private static final float SET_VISIBILITY = Math.max(5_000.0F, Float.parseFloat(System.getProperty("earthplatform.far.visibility", "1e9")));
+
+    private static float visibility() { return Math.min(edge(), SET_VISIBILITY); }
+
+    /** Where far terrain fades out, just inside the coarsest square's nearest edge, in blocks. */
+    static float edge() { return 0.95F * reach; }
+
+    /** True when the haze sits at the far view's edge, which is in blocks, not ground meters. */
+    public static boolean hazeAtEdge() { return SET_VISIBILITY >= edge(); }
+
     /**
      * Haze distances in blocks where a block is a meter, as at an Earth world's home latitude; see
      * {@link #hazeScale}. At the edge the haze starts thin at 70% of the way out; a set visibility
-     * starts it a quarter of the way out. The depth range covers the coarsest square's corners.
+     * starts it a quarter of the way out.
      */
-    public static final float FOG_START = (VISIBILITY >= 0.95F * REACH ? 0.7F : 0.25F) * VISIBILITY, FOG_END = VISIBILITY,
-            DEPTH_FAR = 2.0F * REACH;
-    /** True when the haze sits at the far view's edge, which is in blocks, not ground meters. */
-    public static final boolean HAZE_AT_EDGE = VISIBILITY >= 0.95F * REACH;
+    public static float fogStart() { return (hazeAtEdge() ? 0.7F : 0.25F) * visibility(); }
+
+    public static float fogEnd() { return visibility(); }
+
+    /** The far plane of far terrain's depth range, which covers the coarsest square's corners. */
+    public static float depthFar() { return 2.0F * reach; }
+
+    /**
+     * The coarsest level's half-width in its columns, as this renderer plans and walks with it: read
+     * from {@link Far#outer()} with {@link #reach}.
+     */
+    private int outer = Far.outer();
     /**
      * Levels drawn with block textures; coarser ones use each face's average colour, which is what
      * a texture blurs to at that distance anyway and stays steady when the camera moves.
@@ -240,7 +261,7 @@ public final class FarRenderer {
      */
     private static final boolean MOVE_PATCHES = PARTIAL_WALKS && !"false".equals(System.getProperty("earthplatform.far.movePatches"));
     /** What the last walk depended on (see {@link #walkDue}): the camera's column at {@link #walkLevel}, and the settings it saw. */
-    private int walkX, walkZ, walkFinest, walkHole;
+    private int walkX, walkZ, walkFinest, walkHole, walkOuter;
     /**
      * The level whose column under the camera the last walk depends on: {@link #WALK_LEVEL}, or with
      * {@link #COARSE_WALKS} the level above the finest one drawn, when the walk went through no column
@@ -789,6 +810,9 @@ public final class FarRenderer {
 
     /** Asks for missing columns, forgets old ones, refreshes masks and starts due meshes. */
     public void tick() {
+        // A far distance set since the last tick, from the pause menu or the settings file, takes effect here.
+        reach = Far.reach();
+        outer = Far.outer();
         ticks++;
         var player = Minecraft.getInstance().player;
         if (closed || player == null) return;
@@ -842,7 +866,7 @@ public final class FarRenderer {
         LongArrayList seen = new LongArrayList(), level = new LongArrayList(), next = new LongArrayList();
         List<FarZoom.Box> boxes = new ArrayList<>(), nextBoxes = new ArrayList<>();
         int px = Far.column(bx, Far.MAX_LEVEL), pz = Far.column(bz, Far.MAX_LEVEL);
-        for (int z = pz - Far.OUTER; z <= pz + Far.OUTER; z++) for (int x = px - Far.OUTER; x <= px + Far.OUTER; x++) {
+        for (int z = pz - outer; z <= pz + outer; z++) for (int x = px - outer; x <= px + outer; x++) {
             level.add(Far.key(Far.MAX_LEVEL, x, z));
             boxes.add(null);
         }
@@ -860,7 +884,7 @@ public final class FarRenderer {
                     long child = Far.key(at - 1, 2 * x + dx, 2 * z + dz);
                     next.add(child);
                     nextBoxes.add(column != null ? column.quarter(dz * 2 + dx) : box);
-                    if (!Far.kept(child, bx, bz, finest, hole)) seen.add(child);
+                    if (!Far.kept(child, bx, bz, finest, hole, outer)) seen.add(child);
                 }
             }
             LongArrayList swap = level;
@@ -893,9 +917,9 @@ public final class FarRenderer {
     private void plan(int bx, int bz, @Nullable int[] lead) {
         LongArrayList missing = new LongArrayList();
         // Read once, so the plan and the requests it keeps agree on the columns wanted.
-        int hole = Far.hole(), finest = this.finest;
+        int hole = Far.hole(), finest = this.finest, outer = this.outer;
         int[] counts = new int[5];
-        Far.around(bx, bz, finest, hole, key -> {
+        Far.around(bx, bz, finest, hole, outer, key -> {
             counts[4]++;
             int level = Far.level(key), x = Far.x(key), z = Far.z(key);
             // Noted and answered by the places alone, never reaching the columns themselves.
@@ -912,8 +936,8 @@ public final class FarRenderer {
             if (!held) missing.add(key);
         });
         // Flying fast, the columns the levels will want a few seconds on too, ordered from where the player is now.
-        if (lead != null) Far.around(lead[0], lead[1], finest, hole, key -> {
-            if (Far.kept(key, bx, bz, finest, hole)) return;
+        if (lead != null) Far.around(lead[0], lead[1], finest, hole, outer, key -> {
+            if (Far.kept(key, bx, bz, finest, hole, outer)) return;
             counts[4]++;
             if (!places.want(Far.level(key), Far.x(key), Far.z(key), ticks)) missing.add(key);
         });
@@ -957,8 +981,8 @@ public final class FarRenderer {
         settledInView = counts[3];
         // A request the server dropped (its player had moved on) or one for a place left behind
         // frees its place for the columns wanted now; one still wanted is asked for again later.
-        requested.long2IntEntrySet().removeIf(entry -> !Far.kept(entry.getLongKey(), bx, bz, finest, hole)
-                && (lead == null || !Far.kept(entry.getLongKey(), lead[0], lead[1], finest, hole)) && !zoomed.contains(entry.getLongKey())
+        requested.long2IntEntrySet().removeIf(entry -> !Far.kept(entry.getLongKey(), bx, bz, finest, hole, outer)
+                && (lead == null || !Far.kept(entry.getLongKey(), lead[0], lead[1], finest, hole, outer)) && !zoomed.contains(entry.getLongKey())
                 || ticks - entry.getIntValue() > RETRY_TICKS);
         Long2LongOpenHashMap order = new Long2LongOpenHashMap(missing.size());
         for (int i = 0; i < missing.size(); i++) order.put(missing.getLong(i), priority(missing.getLong(i), bx, bz));
@@ -1500,6 +1524,7 @@ public final class FarRenderer {
     }
 
     public void beginFrame() {
+        FarGovernor.drawn();
         drawCount.begin();
         FarGpuTimers.frame();
         frame++;
@@ -1858,7 +1883,7 @@ public final class FarRenderer {
 
     /** The same but for the camera's column, which a patch can follow (see {@link #moveRoots}). */
     private boolean walkKept(boolean band) {
-        return walked && !walkStale && finest == walkFinest && Far.hole() == walkHole && band == walkBand && Objects.equals(zoom, walkZoom);
+        return walked && !walkStale && finest == walkFinest && Far.hole() == walkHole && outer == walkOuter && band == walkBand && Objects.equals(zoom, walkZoom);
     }
 
     /** Whether something the kept walk does not draw yet has changed: a column meshed, or a fade it saw ended. */
@@ -1876,7 +1901,7 @@ public final class FarRenderer {
         int level = column.level, x = Far.x(column.key), z = Far.z(column.key), bx = walkBx, bz = walkBz;
         // The walk starts at the top level's columns around the camera's.
         int top = Far.MAX_LEVEL - level;
-        if (Math.abs((x >> top) - Far.column(bx, Far.MAX_LEVEL)) > Far.OUTER || Math.abs((z >> top) - Far.column(bz, Far.MAX_LEVEL)) > Far.OUTER) return -1;
+        if (Math.abs((x >> top) - Far.column(bx, Far.MAX_LEVEL)) > walkOuter || Math.abs((z >> top) - Far.column(bz, Far.MAX_LEVEL)) > walkOuter) return -1;
         int path = 0;
         for (int at = Far.MAX_LEVEL; at > level; at--) {
             int ax = x >> (at - level), az = z >> (at - level);
@@ -1996,8 +2021,8 @@ public final class FarRenderer {
      * from its own to {@link #lastKey}. -1 for a place the walk starts nowhere over.
      */
     private long walkKey(int level, int x, int z) {
-        int top = Far.MAX_LEVEL - level, side = 2 * Far.OUTER + 1;
-        int tx = (x >> top) - walkPx + Far.OUTER, tz = (z >> top) - walkPz + Far.OUTER;
+        int top = Far.MAX_LEVEL - level, side = 2 * walkOuter + 1;
+        int tx = (x >> top) - walkPx + walkOuter, tz = (z >> top) - walkPz + walkOuter;
         if (tx < 0 || tz < 0 || tx >= side || tz >= side) return -1;
         long key = (long) (tz * side + tx) << keyShift(Far.MAX_LEVEL);
         for (int at = Far.MAX_LEVEL - 1; at >= level; at--)
@@ -2308,7 +2333,7 @@ public final class FarRenderer {
         // and averages it; without one it stays put, and where the two levels' outlines differ, as at
         // cliff edges, it left fixed specks of sky. There levels meet at a plain seam.
         bandFade = band;
-        int px = Far.column(bx, Far.MAX_LEVEL), pz = Far.column(bz, Far.MAX_LEVEL), side = 2 * Far.OUTER + 1;
+        int px = Far.column(bx, Far.MAX_LEVEL), pz = Far.column(bz, Far.MAX_LEVEL), outer = this.outer, side = 2 * outer + 1;
         cullTree.clear(CULL_TREE);
         walkGeneration = 0;
         patchedAt.clear();
@@ -2316,7 +2341,7 @@ public final class FarRenderer {
         meshRoots.clear();
         if (topNodes.length != side * side) topNodes = new int[side * side];
         int top = 0;
-        for (int z = pz - Far.OUTER; z <= pz + Far.OUTER; z++) for (int x = px - Far.OUTER; x <= px + Far.OUTER; x++) {
+        for (int z = pz - outer; z <= pz + outer; z++) for (int x = px - outer; x <= px + outer; x++) {
             int parent = cullTree.open();
             topNodes[top] = cullTree.current();
             visit(held(Far.MAX_LEVEL, x, z), Far.MAX_LEVEL, x, z, bx, bz, false, (long) top++ << keyShift(Far.MAX_LEVEL));
@@ -2339,6 +2364,7 @@ public final class FarRenderer {
         walkZ = Far.column(bz, walkLevel);
         walkFinest = finest;
         walkHole = Far.hole();
+        walkOuter = outer;
         walkBand = band;
         walkStale = false;
         walkBehind = false;
@@ -3112,6 +3138,7 @@ public final class FarRenderer {
     }
 
     void close() {
+        FarGovernor.left();
         FarGpuTimers.close();
         closed = true;
         built.close();

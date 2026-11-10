@@ -127,7 +127,7 @@ public final class FarLod {
      */
     static int renderDistance() {
         if (ClientCubeWorld.current() == null) return Minecraft.getInstance().options.getEffectiveRenderDistance();
-        return (int) Math.ceil(0.95F * 0.5F * FarRenderer.DEPTH_FAR / 16.0F);
+        return (int) Math.ceil(0.95F * 0.5F * FarRenderer.depthFar() / 16.0F);
     }
 
     /** How far out from the camera, in blocks, the game's blocks reach before far terrain takes over. */
@@ -182,7 +182,7 @@ public final class FarLod {
     /** Far terrain's projection for this frame: the game's, with far terrain's own near and far planes. */
     static Matrix4f project(Matrix4f game) {
         vanilla.set(game);
-        float near = NEAR, far = FarRenderer.DEPTH_FAR;
+        float near = NEAR, far = FarRenderer.depthFar();
         projection.set(game).m22((far + near) / (near - far)).m32(2.0F * far * near / (near - far));
         projection.invert(inverse);
         Matrix4f last = history[LevelPasses.inFrame()];
@@ -404,7 +404,7 @@ public final class FarLod {
         GL11C.glDepthFunc(GL11C.GL_ALWAYS);
         GL11C.glDepthMask(true);
         GL20C.glUseProgram(smooth.id);
-        GL20C.glUniform2f(GL20C.glGetUniformLocation(smooth.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(smooth.id, "earth_NearFar"), NEAR, FarRenderer.depthFar());
         GL20C.glUniform1f(GL20C.glGetUniformLocation(smooth.id, "earth_Focal"), projection.m11() * 0.5F * height);
         GL20C.glUniform1f(GL20C.glGetUniformLocation(smooth.id, "earth_NearReach"), nearReach());
         int step = GL20C.glGetUniformLocation(smooth.id, "earth_Step");
@@ -455,7 +455,7 @@ public final class FarLod {
         }
         GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_GameSteps"), steps);
         GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_GameNear"), vanilla.m32() / (vanilla.m22() - 1.0F));
-        GL20C.glUniform2f(GL20C.glGetUniformLocation(deepen.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(deepen.id, "earth_NearFar"), NEAR, FarRenderer.depthFar());
         return true;
     }
 
@@ -542,7 +542,7 @@ public final class FarLod {
             GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(surface.id, "earth_GameProjection"), false, vanilla.get(matrix));
         }
         GL20C.glUniform1f(GL20C.glGetUniformLocation(surface.id, "earth_GameSteps"), waterSteps);
-        GL20C.glUniform2f(GL20C.glGetUniformLocation(surface.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(surface.id, "earth_NearFar"), NEAR, FarRenderer.depthFar());
         long timer = FarGpuTimers.begin("water depth restore");
         try { water.run(); } finally { FarGpuTimers.end(timer); }
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, 0, 0);

@@ -22,6 +22,7 @@ public final class EarthConfig {
     public static final ModConfigSpec CLIENT_SPEC;
     public static final ModConfigSpec.IntValue FAR_DETAIL;
     public static final ModConfigSpec.EnumValue<Sharpness> FAR_SHARPNESS;
+    public static final ModConfigSpec.IntValue FAR_TARGET_FPS;
     public static final ModConfigSpec.IntValue FAR_TEXTURED_LEVELS;
     public static final ModConfigSpec.BooleanValue SHOW_DOWNLOADS;
     public static final ModConfigSpec.BooleanValue PRESELECT_EARTH;
@@ -56,14 +57,19 @@ public final class EarthConfig {
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
         FAR_DETAIL = client.comment("How far the far terrain reaches (4 to 48): 4 is about 37 km, 11 about 94 km, 24 about 201 km.",
                         "25 to 48 (up to about 397 km) is the extreme range, for very powerful computers.",
-                        "Farther costs memory and video memory and takes longer to fill in. Default 11. Applies after a restart.",
+                        "Farther costs memory and video memory and takes longer to fill in. Default 11. Changes at once, without a restart.",
                         "The sharpness setting scales this while playing; this one sets how far the far terrain reaches.")
-                .translation(key("farDetail")).gameRestart().defineInRange("detail", 11, 4, Far.MAX_DETAIL);
+                .translation(key("farDetail")).defineInRange("detail", 11, 4, Far.MAX_DETAIL);
         FAR_SHARPNESS = client.comment("How sharp far terrain looks: how close coarser levels take over. Changes at once, without a restart.",
                         "Sharper keeps finer voxels further out but takes longer to fill in and uses more memory; Fast fills in quickest. Default Balanced.",
                         "Extreme and Ultra are for very powerful computers: several times the far columns, GPU memory and fill-in time of Balanced,",
                         "and single-digit frame rates even on fast ones, Ultra most of all.")
                 .translation(key("farSharpness")).defineEnum("sharpness", Sharpness.BALANCED);
+        FAR_TARGET_FPS = client.comment("A frame rate to hold, in frames per second, or 0 for off (the default). When set, far terrain sharpness",
+                        "steps down, a choice at a time and no lower than Fast, while the game runs slower than this, and back up",
+                        "to the sharpness chosen above when there is room again. It never goes sharper than that choice, and it",
+                        "leaves the far distance alone.")
+                .translation(key("farTargetFps")).defineInRange("targetFrameRate", 0, 0, 240);
         // A new key, so configs saved with the old default of 2 take up the new one.
         FAR_TEXTURED_LEVELS = client.comment("How many far levels are drawn with block textures; further ones use flat colors. Default 8, all of them.")
                 .translation(key("farTexturedLevels")).gameRestart().defineInRange("texturedFarLevels", 8, 0, 8);
@@ -136,7 +142,7 @@ public final class EarthConfig {
     private EarthConfig() {}
 
     /**
-     * Far terrain sharpness choices, as scales of the start-up detail (see {@link Far#sharpness}).
+     * Far terrain sharpness choices, as scales of the detail (see {@link Far#sharpness}).
      * Even the default keeps each level a bit past where it would turn to blurry squares on screen,
      * since far terrain drawn as blocks shows its block size far more than smooth ground did.
      * Extreme and Ultra, past {@link Far#EXTREME_SCALE}, are for very powerful computers and big
@@ -158,18 +164,45 @@ public final class EarthConfig {
         return (int) Math.round((2 * detail + 1) * (double) Far.width(Far.MAX_LEVEL) / 1000.0);
     }
 
-    /** Sets the far terrain's distance from a screen in game: saved to the file, in effect after a restart. */
+    /** Sets the far terrain's distance from a screen in game: saved to the file and in effect at once. */
     public static void setDetail(int detail) {
-        if (FAR_DETAIL.get() == detail) return;
-        FAR_DETAIL.set(detail);
-        CLIENT_SPEC.save();
+        if (FAR_DETAIL.get() != detail) {
+            FAR_DETAIL.set(detail);
+            CLIENT_SPEC.save();
+        }
+        Far.detail(detail);
     }
 
     /** Sets the far terrain's sharpness from a screen in game: saved to the file and in effect at once. */
     public static void setSharpness(Sharpness sharpness) {
         FAR_SHARPNESS.set(sharpness);
         CLIENT_SPEC.save();
-        Far.sharpness(sharpness.scale);
+        steps = 0;
+        applySharpness();
+    }
+
+    /**
+     * How many choices below the one chosen the far terrain's sharpness is held for now, to keep
+     * the frame rate asked for (see {@link #FAR_TARGET_FPS}); 0 when nothing holds it down.
+     */
+    private static volatile int steps;
+
+    public static int sharpnessSteps() { return steps; }
+
+    /** The most {@link #sharpnessSteps} the choice made leaves: down to Fast. */
+    public static int mostSharpnessSteps() { return FAR_SHARPNESS.get().ordinal(); }
+
+    /** Holds the sharpness that many choices below the one chosen, in effect at once; never saved. */
+    public static void sharpnessSteps(int below) {
+        int now = Math.clamp(below, 0, mostSharpnessSteps());
+        if (now == steps) return;
+        steps = now;
+        applySharpness();
+    }
+
+    private static void applySharpness() {
+        Sharpness[] all = Sharpness.values();
+        Far.sharpness(all[Math.max(0, FAR_SHARPNESS.get().ordinal() - steps)].scale);
     }
 
     private static String key(String name) { return EarthPlatformMod.MOD_ID + ".configuration." + name; }
@@ -188,8 +221,10 @@ public final class EarthConfig {
     public static void apply(ModConfig config) {
         if (config.getSpec() == CLIENT_SPEC) {
             property("earthplatform.far.detail", Integer.toString(FAR_DETAIL.get()));
+            if (!FROM_COMMAND_LINE.contains("earthplatform.far.detail")) Far.detail(FAR_DETAIL.get());
             property("earthplatform.far.textured", Integer.toString(FAR_TEXTURED_LEVELS.get()));
-            Far.sharpness(FAR_SHARPNESS.get().scale);
+            steps = Math.min(steps, mostSharpnessSteps());
+            applySharpness();
         } else if (config.getSpec() == COMMON_SPEC) {
             property("earthplatform.earth.offline", Boolean.toString(OFFLINE.get()));
             property("earthplatform.earth.imagery", Boolean.toString(SATELLITE_IMAGERY.get()));

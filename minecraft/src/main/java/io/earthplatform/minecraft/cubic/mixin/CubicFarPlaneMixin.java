@@ -16,6 +16,6 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
 abstract class CubicFarPlaneMixin {
     @ModifyArg(method = "getProjectionMatrix", at = @At(value = "INVOKE", target = "Lorg/joml/Matrix4f;perspective(FFFF)Lorg/joml/Matrix4f;"), index = 3)
     private float earthplatform$farTerrainDepth(float far) {
-        return ClientCubeWorld.current() != null ? Math.max(far, FarRenderer.DEPTH_FAR) : far;
+        return ClientCubeWorld.current() != null ? Math.max(far, FarRenderer.depthFar()) : far;
     }
 }

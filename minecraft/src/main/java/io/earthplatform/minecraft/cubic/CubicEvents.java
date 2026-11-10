@@ -327,6 +327,11 @@ public final class CubicEvents {
                 : "Earth " + place + ": ground " + (generator.surfaceY(feet.getX(), feet.getZ()) - generator.seaLevel()) + " m, standing at Y "
                         + feet.getY() + " (" + (feet.getY() - generator.seaLevel() - 1) + " m).";
         source.sendSuccess(() -> Component.literal(text), false);
+        if (generator instanceof io.earthplatform.minecraft.cubic.earth.EarthGenerator earth) {
+            var grid = earth.grid();
+            String stretch = io.earthplatform.minecraft.cubic.play.EarthStretch.where(grid.metresPerBlock(), grid.geographic(feet.getX(), feet.getZ()).latitude());
+            source.sendSuccess(() -> Component.literal(stretch).withStyle(ChatFormatting.GRAY), false);
+        }
     }
 
     /** Finds the nearest vanilla structure of a kind in the cubic world, off the server thread, as /locate does elsewhere. */

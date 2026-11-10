@@ -410,6 +410,7 @@ final class FarGpu {
         GL20C.glUniform1i(program.location("earth_Blocks"), BLOCKS_UNIT);
         if (packMode && packOwnDepth && !near) FarLod.shadowUniforms(program::location);
         GL20C.glUniform1f(program.location("earth_FadeHole"), Far.hole());
+        GL20C.glUniform1f(program.location("earth_Edge"), FarRenderer.edge());
         GL20C.glUniform1f(program.location("earth_NearReach"), FarLod.nearReach());
         GL30C.glUniform1ui(program.location("earth_Now"), frozenNow != 0 ? frozenNow : now());
         GL20C.glUniform1fv(program.location("earth_FadeTicks"), fadeTicks);
