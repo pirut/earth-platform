@@ -287,6 +287,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         farColumn(level, columnX, columnZ, out, packets, materialize, false);
     }
 
+    /** Blocks a forest's crowns stand above the ground where trees are not drawn one by one: a voxel of the 8-block level. */
+    private static final int CROWN = 8;
+
     private void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets, boolean materialize, boolean preview) {
         out.packet = null;
         int v = 1 << level, width = 16 * v, x0 = columnX * width, z0 = columnZ * width, half = v >> 1;
@@ -325,6 +328,10 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                 BlockState leaves = water[g] > h ? null : canopy(surface, wx, wz, v);
                 if (leaves != null && v == 8) crown[cell] = leaves;
                 else if (leaves != null) top[cell] = leaves;
+            } else if (preview && water[g] <= h) {
+                // A quick stand-in rasterises no trees: forests stand as the crowns the 8-block level draws, one to
+                // each 8-block square, until the real column brings the trees themselves.
+                crown[cell] = canopy(surface, (wx & ~7) + 4, (wz & ~7) + 4, 8);
             }
             min = Math.min(min, h);
             max = Math.max(max, Math.max(h, water[g]));
@@ -339,7 +346,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         // Room for trees: drawn as they are out to 4-block voxels, sequoias out to 16.
         boolean giants = !preview && v <= 16 && giants(x0 + width / 2, z0 + width / 2);
         if (giants) max += Sequoia.TALLEST + 1;
-        else if (v <= 4) max += Trees.TALLEST + 1;
+        else if (v <= 4) max += preview ? CROWN : Trees.TALLEST + 1;
         else if (v == 8) max += v;
         int bottom = (min - v) >> (level + 4), highest = max >> (level + 4);
         // Columns taller than the section budget keep their top, where the view is.
@@ -410,14 +417,14 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                         if (rock[cz * 16 + cx] != null) state = rock[cz * 16 + cx].at(y0 + (v >> 1));
                         else if (state == STONE && bedrock(under[cz * 16 + cx])) state = under[cz * 16 + cx];
                     }
-                    if (state == AIR && crown[cz * 16 + cx] != null && ground[g] < y0 && ground[g] >= y0 - v) state = crown[cz * 16 + cx];
+                    if (state == AIR && crown[cz * 16 + cx] != null && ground[g] < y0 && ground[g] >= y0 - Math.max(v, CROWN)) state = crown[cz * 16 + cx];
                     if (state == AIR && y0 <= pours[cz * 16 + cx]) state = WATER;
                     if (state != AIR) section.setBlockState(cx, vy, cz, state, false);
                 }
             }
             stack[si] = section;
         }
-        if (v <= 4 || giants) farTrees(level, x0, z0, bottom, stack, v > 4);
+        if (!preview && (v <= 4 || giants)) farTrees(level, x0, z0, bottom, stack, v > 4);
         for (LevelChunkSection section : stack) {
             section.recalcBlockCounts();
             out.sections.add(section.hasOnlyAir() ? null : section);

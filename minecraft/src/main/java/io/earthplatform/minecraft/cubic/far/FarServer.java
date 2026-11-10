@@ -51,7 +51,7 @@ import net.minecraft.world.level.chunk.PalettedContainer;
 public final class FarServer {
     private static final int SEND_PER_TICK = 64, CACHE = 8192;
     /** Most quick stand-ins sent to a player in a tick: small, and what fills the view on arriving. */
-    private static final int PREVIEWS_PER_TICK = 256;
+    private static final int PREVIEWS_PER_TICK = 1024;
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
     private final CubeGenerator generator;
@@ -95,10 +95,18 @@ public final class FarServer {
     // Quick stand-ins ----------------------------------------------------------------------------
 
     /**
-     * Most quick stand-ins kept, and most one player may be waiting for: the two coarsest levels
-     * hold some 4,300 columns at the default detail and 9,300 at the sharpest normal setting.
+     * Most quick stand-ins kept, and most one player may be waiting for: all eight levels hold some
+     * 17,000 columns at the default detail and 37,000 at the sharpest normal setting.
      */
-    private static final int PREVIEW_CACHE = 12288, PREVIEW_QUEUE = 12288;
+    private static final int PREVIEW_CACHE = 20480, PREVIEW_QUEUE = 40960;
+    /**
+     * Threads that make the stand-ins: more than the real columns' few at work, since a view's worth
+     * is a few seconds of work in all and the real columns wait for it (see {@link FarWorkers#pause}).
+     * Two cores are left to the game.
+     */
+    private static final int PREVIEW_WORKERS = Math.clamp(Runtime.getRuntime().availableProcessors() - 2, WORKERS, 8);
+    /** Stand-ins players asked for that are not made yet; the real columns start none while there are any. */
+    private final AtomicInteger previewsAwaited = new AtomicInteger();
     /** How far a player moves, in blocks, before the stand-ins' data is fetched round the new place. */
     private static final int PREVIEW_MOVE = 4 * Far.SIZE << Far.MAX_LEVEL;
     /** Whether this world's generator makes quick stand-ins for the coarsest levels (see {@link CubeGenerator#farPreviews}). */
@@ -108,7 +116,7 @@ public final class FarServer {
      * long queue: the ones players asked for first, in the order asked, then the ones made ahead of
      * an arrival.
      */
-    private final java.util.concurrent.ThreadPoolExecutor previewWorkers = new java.util.concurrent.ThreadPoolExecutor(WORKERS, WORKERS, 30,
+    private final java.util.concurrent.ThreadPoolExecutor previewWorkers = new java.util.concurrent.ThreadPoolExecutor(PREVIEW_WORKERS, PREVIEW_WORKERS, 30,
             java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.PriorityBlockingQueue<>(), NamedThreads.numbered("Earth far stand-ins", Thread.MIN_PRIORITY));
     private final java.util.concurrent.atomic.AtomicLong previewOrder = new java.util.concurrent.atomic.AtomicLong();
     private final ConcurrentHashMap<Long, CubePayloads.FarColumnData> previewCache = new ConcurrentHashMap<>();
@@ -147,7 +155,7 @@ public final class FarServer {
                     EarthPlatformMod.LOGGER.warn("Could not make the stand-in for far column {} ({} failures so far)", key, previewFailures.get(), failure);
                 }
             } finally {
-                previewMaking.remove(key);
+                if (Boolean.TRUE.equals(previewMaking.remove(key))) previewsAwaited.decrementAndGet();
             }
         }
     }
@@ -155,6 +163,7 @@ public final class FarServer {
     private void submitPreview(long key, boolean asked) {
         Boolean before = asked ? previewMaking.put(key, true) : previewMaking.putIfAbsent(key, false);
         // One made ahead that a player now asks for moves up the queue; its first place then finds it made.
+        if (asked && (before == null || !before)) previewsAwaited.incrementAndGet();
         if (before == null || asked && !before) previewWorkers.execute(new PreviewJob(key, asked));
     }
 
@@ -529,6 +538,7 @@ public final class FarServer {
                 stale.add(key);
             }
         }
+        workers.pause(previewsAwaited.get() > 0);
         for (CubePayloads.FarColumnData standIn; (standIn = previewsMade.poll()) != null; )
             for (Session session : sessions.values()) if (session.previewsWanted.remove(standIn.key())) session.queue(standIn);
         for (Made done; (done = made.poll()) != null; ) {

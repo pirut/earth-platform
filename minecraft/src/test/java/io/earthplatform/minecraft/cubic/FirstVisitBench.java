@@ -225,11 +225,15 @@ class FirstVisitBench {
             }
         });
         AtomicInteger failures = new AtomicInteger();
-        // Quick stand-ins for the two coarsest levels, asked for at once as a client does: in view first, on the server's own few threads.
+        // Quick stand-ins for every level, asked for at once as a client does: in view first, on the server's own threads, the real columns waiting for them.
         Map<Long, FarColumn> standIns = new ConcurrentHashMap<>();
         double[] standInsInView = {-1}, standInsAll = {-1};
         java.util.concurrent.atomic.AtomicLong standInNanos = new java.util.concurrent.atomic.AtomicLong();
-        ExecutorService previewWorkers = Executors.newFixedThreadPool(farBusy, runnable -> { Thread t = new Thread(runnable, "visit stand-ins"); t.setDaemon(true); t.setPriority(Thread.MIN_PRIORITY); return t; });
+        java.util.concurrent.atomic.AtomicLongArray standInLevelNanos = new java.util.concurrent.atomic.AtomicLongArray(Far.MAX_LEVEL + 1);
+        java.util.concurrent.atomic.AtomicIntegerArray standInLevelCount = new java.util.concurrent.atomic.AtomicIntegerArray(Far.MAX_LEVEL + 1);
+        double[] standInLevelDone = new double[Far.MAX_LEVEL + 1];
+        AtomicInteger standInsLeft = new AtomicInteger();
+        ExecutorService previewWorkers = Executors.newFixedThreadPool(Math.clamp(cores - 2, farBusy, 8), runnable -> { Thread t = new Thread(runnable, "visit stand-ins"); t.setDaemon(true); t.setPriority(Thread.MIN_PRIORITY); return t; });
         if (previews) {
             LongArrayList ask = new LongArrayList();
             for (long key : all) if (Far.level(key) >= Far.PREVIEW_LEVEL) ask.add(key);
@@ -238,7 +242,8 @@ class FirstVisitBench {
             ask.unstableSort((a, b) -> Long.compare(order.get(a), order.get(b)));
             int viewCount = 0;
             for (long key : ask) if (inView.contains(key)) viewCount++;
-            AtomicInteger viewLeft = new AtomicInteger(viewCount), left = new AtomicInteger(ask.size());
+            AtomicInteger viewLeft = new AtomicInteger(viewCount), left = standInsLeft;
+            left.set(ask.size());
             System.out.printf(Locale.ROOT, "stand-ins: %d asked for at %.1f s, %d of them drawn and in view%n", ask.size(), seconds(t0), viewCount);
             for (long key : ask) previewWorkers.execute(() -> {
                 long start = System.nanoTime();
@@ -251,6 +256,9 @@ class FirstVisitBench {
                     if (failures.incrementAndGet() <= 3) failure.printStackTrace();
                 }
                 standInNanos.addAndGet(System.nanoTime() - start);
+                standInLevelNanos.addAndGet(Far.level(key), System.nanoTime() - start);
+                standInLevelCount.incrementAndGet(Far.level(key));
+                synchronized (standInLevelDone) { standInLevelDone[Far.level(key)] = seconds(t0); }
                 if (inView.contains(key) && viewLeft.decrementAndGet() == 0) standInsInView[0] = seconds(t0);
                 if (left.decrementAndGet() == 0) { standInsAll[0] = seconds(t0); previewDataText[0] = Downloads.since(before); }
             });
@@ -261,6 +269,8 @@ class FirstVisitBench {
         long[] levelNanos = new long[Far.MAX_LEVEL + 1];
         int[] levelCount = new int[Far.MAX_LEVEL + 1];
         double[] wantedAt = new double[101], inViewAt = new double[101];
+        double[] shownAt = new double[101];
+        java.util.Arrays.fill(shownAt, -1);
         java.util.Arrays.fill(wantedAt, -1);
         java.util.Arrays.fill(inViewAt, -1);
         int nextPrint = 0;
@@ -271,6 +281,7 @@ class FirstVisitBench {
         while (true) {
             long now = System.nanoTime();
             farWorkers.hold(nearPending.get() > 0);
+            farWorkers.pause(standInsLeft.get() > 0);
             if (now - lastPlan > 500_000_000L || planned >= plan.size()) {
                 lastPlan = now;
                 plan.clear();
@@ -308,6 +319,10 @@ class FirstVisitBench {
             int share = (int) (100L * doneWanted / wanted.size()), viewShare = (int) (100L * doneInView / Math.max(1, inView.size()));
             for (int p = 0; p <= share; p++) if (wantedAt[p] < 0) wantedAt[p] = t;
             for (int p = 0; p <= viewShare; p++) if (inViewAt[p] < 0) inViewAt[p] = t;
+            int shown = 0;
+            for (long key : inView) if (columns.containsKey(key) || standIns.containsKey(key)) shown++;
+            int shownShare = (int) (100L * shown / Math.max(1, inView.size()));
+            for (int p = 0; p <= shownShare; p++) if (shownAt[p] < 0) shownAt[p] = t;
             if (t >= nextPrint) {
                 System.out.printf(Locale.ROOT, "t=%4.0f s: far %5d of %d made, %3d%% of the drawn ones (%3d%% in view), %d working; near %s; %s%n", t, columns.size(), all.size(),
                         share, viewShare, inFlight.get(), nearDone[0] >= 0 ? "done" : nearPending.get() + " waiting", Downloads.since(before).replaceAll(":.*", ""));
@@ -325,10 +340,14 @@ class FirstVisitBench {
                 name, arrived, prepared, landed - prepared, nearDone[0], farData[0], farDone, failures.get());
         for (int p : new int[] {25, 50, 75, 90, 95, 99, 100})
             System.out.printf(Locale.ROOT, "far drawn %3d%%: %6.1f s, in view %6.1f s%n", p, wantedAt[p], inViewAt[p]);
+        System.out.printf(Locale.ROOT, "in view with a column or a stand-in: 50%% %.1f s, 90%% %.1f s, 99%% %.1f s, 100%% %.1f s%n", shownAt[50], shownAt[90], shownAt[99], shownAt[100]);
         for (int level = Far.MIN_LEVEL; level <= Far.MAX_LEVEL; level++)
             System.out.printf(Locale.ROOT, "level %d: %5d columns, %.1f ms each (wall, waits included)%n", level, levelCount[level], levelNanos[level] / 1e6 / Math.max(1, levelCount[level]));
         if (previews) System.out.printf(Locale.ROOT, "stand-ins: data fetched %.1f s; the ones in view all made %.1f s, all %d made %.1f s, %.1f ms each; downloads by then: %s%n",
                 previewData[0], standInsInView[0], standIns.size(), standInsAll[0], standInNanos.get() / 1e6 / Math.max(1, standIns.size()), previewDataText[0]);
+        if (previews) for (int level = Far.PREVIEW_LEVEL; level <= Far.MAX_LEVEL; level++)
+            System.out.printf(Locale.ROOT, "stand-ins level %d: %5d made, %.2f ms each, the last at %.1f s%n", level, standInLevelCount.get(level),
+                    standInLevelNanos.get(level) / 1e6 / Math.max(1, standInLevelCount.get(level)), standInLevelDone[level]);
         if (previews) System.out.println("stand-ins against the columns that replace them: " + compare(standIns, columns));
         System.out.println(tick);
         System.out.println("far data: " + farDataText[0]);

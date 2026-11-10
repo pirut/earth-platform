@@ -28,6 +28,8 @@ public final class FarWorkers {
     private int running, waiting, turns;
     /** Set while cubes near players are waiting to be made: they come first, so no more than {@code busy} run. */
     private volatile boolean held;
+    /** Set while quick stand-ins a player waits for are being made: no new column starts until they are. */
+    private volatile boolean paused;
 
     public FarWorkers(String name, int busy, int most) {
         this.busy = busy;
@@ -45,7 +47,7 @@ public final class FarWorkers {
      */
     public int allowed() {
         synchronized (gate) {
-            return held ? busy : Math.min(most, busy + waiting - turns);
+            return paused ? 0 : held ? busy : Math.min(most, busy + waiting - turns);
         }
     }
 
@@ -54,6 +56,16 @@ public final class FarWorkers {
         if (this.held == held) return;
         this.held = held;
         if (!held) synchronized (gate) { gate.notifyAll(); }
+    }
+
+    /**
+     * Starts no new column while {@code paused}: the quick stand-ins a player waits for take the
+     * processor for the few seconds they need. Columns under way finish.
+     */
+    public void pause(boolean paused) {
+        if (this.paused == paused) return;
+        this.paused = paused;
+        if (!paused) synchronized (gate) { gate.notifyAll(); }
     }
 
     private void waiting(boolean now) {
