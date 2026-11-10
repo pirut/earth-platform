@@ -33,7 +33,7 @@ import org.lwjgl.glfw.GLFW;
  * size and under any shader pack.
  */
 public final class EarthPostcardScreen extends Screen {
-    public static final KeyMapping KEY = new KeyMapping("key.earthplatform.postcard", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_P, "key.categories.earthplatform");
+    public static final KeyMapping KEY = new KeyMapping("key.earthplatform.postcard", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_F8, "key.categories.earthplatform");
     /** Frames drawn before the picture is taken, so the hotbar and hand are gone from it and far terrain has had a moment to settle. */
     private static final int FRAMES = 4;
 

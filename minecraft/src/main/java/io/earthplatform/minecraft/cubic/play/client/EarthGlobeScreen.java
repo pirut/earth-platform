@@ -207,8 +207,8 @@ public final class EarthGlobeScreen extends Screen {
         gui.drawCenteredString(font, title, width / 2, 8, 0xFFFFFF);
         gui.drawCenteredString(font, status(), width / 2, height - 48, 0x9FD7FF);
         if (searching()) {
-            int x = search.getX(), y = search.getY() + search.getHeight() + 2;
-            gui.fill(x - 1, y - 1, x + SEARCH_WIDTH + 1, y + results.size() * ROW + 1, 0xE0101018);
+            int x = search.getX(), y = search.getY() + search.getHeight() + 3;
+            gui.fill(x - 1, y - 1, x + SEARCH_WIDTH + 1, y + results.size() * ROW + 1, 0xFF101018);
             for (int row = 0; row < results.size(); row++) {
                 boolean over = mouseX >= x && mouseX < x + SEARCH_WIDTH && mouseY >= y + row * ROW && mouseY < y + (row + 1) * ROW;
                 if (over || row == 0) gui.fill(x, y + row * ROW, x + SEARCH_WIDTH, y + (row + 1) * ROW, over ? 0x60FFFFFF : 0x30FFFFFF);
@@ -569,7 +569,7 @@ public final class EarthGlobeScreen extends Screen {
     @Override public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (flight != null) return true;
         if (searching()) {
-            int x = search.getX(), y = search.getY() + search.getHeight() + 2;
+            int x = search.getX(), y = search.getY() + search.getHeight() + 3;
             int row = (int) Math.floor((mouseY - y) / ROW);
             if (mouseX >= x && mouseX < x + SEARCH_WIDTH && mouseY >= y && row < results.size()) {
                 choose(results.get(row));

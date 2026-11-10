@@ -2,7 +2,7 @@
   "generator.earthplatform.earth": "Earth",
   "generator.earthplatform.earth.info": "The real Earth at true scale and height",
   "earthplatform.setup.title": "Where on Earth do you want to start?",
-  "earthplatform.setup.hint": "Pick a famous place, choose a spot on the globe, or type any latitude and longitude. You can travel anywhere later with /earth.",
+  "earthplatform.setup.hint": "Pick a famous place, search for any town on the globe, or type any latitude and longitude. You can travel anywhere later with /earth.",
   "earthplatform.setup.latitude": "Latitude",
   "earthplatform.setup.longitude": "Longitude",
   "earthplatform.setup.random": "Surprise me",
