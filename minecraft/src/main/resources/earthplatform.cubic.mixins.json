@@ -123,6 +123,8 @@
     "CubicIrisPhotonCompatMixin",
     "CubicIrisCloudsMixin",
     "CubicIrisVoxyMixin",
+    "CubicIrisDhMixin",
+    "CubicIrisDhDepthMixin",
     "CubicIrisLodSamplersMixin",
     "CubicIrisLodUniformsMixin",
     "CubicJetWeatherMixin",

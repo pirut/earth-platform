@@ -55,6 +55,7 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.coverFrom` | 2 | The finest far level whose ground cover is evened out | `FarMesher` |
 | `earthplatform.far.buildFill` | 8 | How much of a coarse voxel a player build must fill to show far away, as 1/N | `FarBuilds` |
 | `earthplatform.far.lodDepth` | on | `false` makes far terrain share the game's depth buffer under shader packs | `FarLod` |
+| `earthplatform.far.dhPacks` | on | Under a shader pack that has a Distant Horizons terrain program (`dh_terrain`) and no Voxy code, compiles the pack with `DISTANT_HORIZONS`, draws far terrain with that program into the targets it names, and gives the pack far terrain's own depth and projection under Distant Horizons' names (`dhDepthTex0`, `dhProjection` and the rest). Not when Distant Horizons is installed. `false` leaves such packs as before, far terrain in plain colors | `FarDhPack`, `FarShaders`, `FarLod` |
 | `earthplatform.far.indexed` | on | `false` draws six corners per face instead of indexed faces | `FarGpu` |
 | `earthplatform.far.splitRanges` | `false` | Draws every group as its own range, for comparing | `FarGpu` |
 | `earthplatform.far.trackBytes` | on | `false` sums every column for each memory query, for comparing | `FarRenderer` |

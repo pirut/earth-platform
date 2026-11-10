@@ -390,6 +390,18 @@ final class FarGpu {
             GL20C.glUniformMatrix4fv(program.location("earth_ModelView"), false, modelView.get(matrix));
             GL20C.glUniformMatrix4fv(program.location("earth_Projection"), false, projection.get(matrix));
             GL20C.glUniform1fv(program.location("earth_Shade"), shade);
+            if (program.dh) {
+                // What Iris sets on a pack's Distant Horizons program in place of the old built-in matrices.
+                Matrix4f inverse = new Matrix4f();
+                GL20C.glUniformMatrix4fv(program.location("iris_ModelViewMatrix"), false, modelView.get(matrix));
+                GL20C.glUniformMatrix4fv(program.location("iris_ModelViewMatrixInverse"), false, modelView.invert(inverse).get(matrix));
+                GL20C.glUniformMatrix4fv(program.location("iris_ProjectionMatrix"), false, projection.get(matrix));
+                GL20C.glUniformMatrix4fv(program.location("iris_ProjectionMatrixInverse"), false, projection.invert(inverse).get(matrix));
+                GL20C.glUniformMatrix3fv(program.location("iris_NormalMatrix"), false,
+                        modelView.invert(inverse).transpose3x3(new org.joml.Matrix3f()).get(stack.mallocFloat(9)));
+                GL20C.glUniform1f(program.location("mircoOffset"), 0.01F);
+                GL20C.glUniform1f(program.location("clipDistance"), FarLod.nearReach());
+            }
         }
         int bx = (int) Math.floor(camera.x), by = (int) Math.floor(camera.y), bz = (int) Math.floor(camera.z);
         GL20C.glUniform3i(program.location("earth_CameraBlock"), bx, by, bz);
@@ -538,7 +550,8 @@ final class FarGpu {
      * has a program for has both passes' programs too, and nothing blends.
      */
     boolean prepassReady(@Nullable FarShaders.PackPatch patch) {
-        if (!depthPrepass || patch == null || !prepassSafe(patch) || GL11C.glIsEnabled(GL11C.GL_BLEND)) return false;
+        // A pack's Distant Horizons program is its own vertex shader too, which the pre-pass can't match corner for corner.
+        if (!depthPrepass || patch == null || patch.dh() || !prepassSafe(patch) || GL11C.glIsEnabled(GL11C.GL_BLEND)) return false;
         boolean wasNear = near, wasGround = ground;
         int was = phase;
         near = ground = false;
@@ -920,7 +933,28 @@ final class FarGpu {
         // Every fade builds as the plain program did: the same patch, jittered or not.
         String jitter = packJittered && patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
         String header = version + FarShaders.fade(fade);
-        if (packPatched) {
+        if (packPatched && patch.dh()) {
+            // The pack's own vertex shader places far terrain, with whatever jitter the pack gives its terrain.
+            pack[fade] = ownDepth && FarLod.dhFits(patch.outputs())
+                    ? linkPack(null, FarShaders.dhFragment(version, patch, true, fade, false), "far terrain (shader pack's Distant Horizons program)", header, true, patch)
+                    : null;
+            if (pack[fade] != null) {
+                if (fade == NO_FADE) {
+                    packJittered = false;
+                    EarthPlatformMod.LOGGER.info("Far terrain uses the shader pack's Distant Horizons terrain program ({} targets)", patch.outputs());
+                }
+                return pack[fade];
+            }
+            if (fade != NO_FADE) {
+                packFailed[fade] = true;
+                EarthPlatformMod.LOGGER.warn("Far terrain's fade between levels does not build with the shader pack; levels meet without it");
+                return null;
+            }
+            packPatched = false;
+            EarthPlatformMod.LOGGER.warn("The shader pack's Distant Horizons terrain program does not build for far terrain; using plain colors");
+            // From the next frame far terrain draws as under a pack with no support for it, in the game's own depth.
+            if (ShaderBlocks.IRIS) FarDhPack.failed(patch);
+        } else if (packPatched) {
             pack[fade] = linkPack(jitter, FarShaders.packFragment(version, packCode(patch), ownDepth, fade), "far terrain (shader pack)", header, packSamplers);
             if (pack[fade] != null) {
                 if (fade == NO_FADE) {
@@ -962,7 +996,11 @@ final class FarGpu {
         ground = keep;
         if (main == null || patch == null || !packPatched || !packOwnDepth) { failed[fade] = true; return null; }
         String jitter = main.jittered && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
-        programs[fade] = linkPack(jitter, FarShaders.packNearFragment(version, packCode(patch), fade, ground),
+        programs[fade] = patch.dh()
+                // In the game's own depth a Distant Horizons program has no place; plain colours, as under a pack with no far terrain support.
+                ? linkPack(null, FarShaders.dhNearFragment(version + (ground ? FarShaders.GROUND : "") + FarShaders.fade(fade)),
+                        "far terrain near by (plain, shader pack)", version + FarShaders.fade(fade), false)
+                : linkPack(jitter, FarShaders.packNearFragment(version, packCode(patch), fade, ground),
                 ground ? "far terrain near by, under the game's blocks (shader pack)" : "far terrain near by (shader pack)", version + FarShaders.fade(fade), packSamplers);
         if (programs[fade] == null) {
             failed[fade] = true;
@@ -985,7 +1023,10 @@ final class FarGpu {
         if (main == null) { packGroundFailed[fade] = true; return null; }
         String jitter = main.jittered && patch != null && ShaderBlocks.IRIS ? FarIrisUniforms.jitter(patch.taaOffset()) : null;
         String header = version + FarShaders.GROUND + FarShaders.fade(fade);
-        packGround[fade] = packPatched && patch != null
+        packGround[fade] = packPatched && patch != null && patch.dh()
+                ? linkPack(null, FarShaders.dhFragment(version, patch, packOwnDepth, fade, true), "far terrain under the game's blocks (shader pack's Distant Horizons program)",
+                        header, true, patch)
+                : packPatched && patch != null
                 ? linkPack(jitter, FarShaders.packFragment(version, packCode(patch), packOwnDepth, fade, true), "far terrain under the game's blocks (shader pack)",
                         header, packSamplers)
                 : linkPack(jitter, header + FarShaders.PACK_FALLBACK, "far terrain under the game's blocks (plain, shader pack)", header, false);
@@ -1001,8 +1042,21 @@ final class FarGpu {
 
     /** Links a pack program, jittered when {@code jitter} builds, and finds the pack's uniforms in it. */
     @Nullable private Program linkPack(@Nullable String jitter, String fragment, String name, String header, boolean samplers) {
+        return linkPack(jitter, fragment, name, header, samplers, null);
+    }
+
+    /** The same; with {@code dh}, the vertex shader is the pack's Distant Horizons one after far terrain's own (see {@link FarShaders#dhVertex}). */
+    @Nullable private Program linkPack(@Nullable String jitter, String fragment, String name, String header, boolean samplers,
+            @Nullable FarShaders.PackPatch dh) {
         Program program = null;
-        if (jitter != null) {
+        if (dh != null) {
+            try { program = Program.link(FarShaders.dhVertex(header, dh), fragment, name); program.dh = true; }
+            catch (IllegalStateException failure) {
+                EarthPlatformMod.LOGGER.warn("Could not build {}", name, failure);
+                return null;
+            }
+        }
+        if (program == null && jitter != null) {
             try { program = Program.link(FarShaders.packVertex(header, jitter), fragment, name); program.jittered = true; }
             catch (IllegalStateException failure) {
                 EarthPlatformMod.LOGGER.warn("The shader pack's TAA jitter does not build for far terrain; far terrain goes without it", failure);
@@ -1018,7 +1072,7 @@ final class FarGpu {
         if (ShaderBlocks.IRIS) {
             try { program.irisUniforms = FarIrisUniforms.create(program.id, name, samplers); }
             catch (FarIrisUniforms.TooManySamplers full) {
-                EarthPlatformMod.LOGGER.warn("Shader pack {}: its Voxy code reads more textures than are left for far terrain ({}); far terrain uses plain colours",
+                EarthPlatformMod.LOGGER.warn("Shader pack {}: its code for far terrain reads more textures than are left for far terrain ({}); far terrain uses plain colours",
                         net.irisshaders.iris.Iris.getCurrentPackName(), full.getMessage());
                 program.close();
                 return null;
@@ -1071,6 +1125,8 @@ final class FarGpu {
         /** The shader pack's uniforms; only ever set with Iris, so FarIrisUniforms never loads without it. */
         @Nullable FarIrisUniforms irisUniforms;
         boolean jittered;
+        /** Whether this is a pack's Distant Horizons program, which takes its matrices under Iris's names. */
+        boolean dh;
 
         private Program(int id) { this.id = id; }
 

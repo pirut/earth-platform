@@ -19,10 +19,42 @@ import net.minecraft.world.level.block.state.BlockState;
  * rebuild.
  */
 final class FarLooks {
-    /** Ints per look: sprite u0, v0, u1, v1 (float bits), average RGB, tint RGB, pack block id, flags. */
+    /** Ints per look: sprite u0, v0, u1, v1 (float bits), average RGB, tint RGB, pack block id, flags (and above them the material, see {@link #MATERIAL_SHIFT}). */
     static final int INTS = 8;
     /** Flag: the face shows its block texture rather than the texture's average colour. */
     static final int TEXTURED = 1;
+
+    /** Where a look's flags hold its Distant Horizons material: four bits, for packs drawn with their Distant Horizons program. */
+    static final int MATERIAL_SHIFT = 4;
+
+    /**
+     * A block's material as Distant Horizons names it for shader packs ({@code dhMaterialId}): the
+     * numbers Iris defines as {@code DH_BLOCK_*}. Packs use it to pick out water, leaves, snow and
+     * lights among far terrain, as they use block ids near by.
+     */
+    static int material(BlockState state) {
+        var fluid = state.getFluidState();
+        if (fluid.is(net.minecraft.tags.FluidTags.WATER)) return 12;
+        if (fluid.is(net.minecraft.tags.FluidTags.LAVA) || state.is(net.minecraft.world.level.block.Blocks.MAGMA_BLOCK)) return 6;
+        if (state.getLightEmission() > 0) return 15;
+        if (state.is(net.minecraft.tags.BlockTags.LEAVES)) return 1;
+        if (state.is(net.minecraft.world.level.block.Blocks.GRASS_BLOCK)) return 13;
+        if (state.is(net.minecraft.tags.BlockTags.SNOW) || state.is(net.minecraft.tags.BlockTags.ICE)) return 8;
+        if (state.is(net.minecraft.tags.BlockTags.SAND) || state.is(net.minecraft.world.level.block.Blocks.SANDSTONE)
+                || state.is(net.minecraft.world.level.block.Blocks.RED_SANDSTONE) || state.is(net.minecraft.world.level.block.Blocks.GRAVEL)) return 9;
+        if (state.is(net.minecraft.tags.BlockTags.TERRACOTTA)) return 10;
+        if (state.is(net.minecraft.tags.BlockTags.DIRT)) return 5;
+        if (state.is(net.minecraft.tags.BlockTags.LOGS) || state.is(net.minecraft.tags.BlockTags.PLANKS)) return 3;
+        if (state.is(net.minecraft.tags.BlockTags.BASE_STONE_NETHER)) return 11;
+        var sound = state.getSoundType();
+        if (sound == net.minecraft.world.level.block.SoundType.DEEPSLATE || sound == net.minecraft.world.level.block.SoundType.DEEPSLATE_BRICKS
+                || sound == net.minecraft.world.level.block.SoundType.DEEPSLATE_TILES || sound == net.minecraft.world.level.block.SoundType.POLISHED_DEEPSLATE) return 7;
+        if (sound == net.minecraft.world.level.block.SoundType.METAL || sound == net.minecraft.world.level.block.SoundType.COPPER
+                || sound == net.minecraft.world.level.block.SoundType.NETHERITE_BLOCK) return 4;
+        if (sound == net.minecraft.world.level.block.SoundType.WOOD) return 3;
+        if (sound == net.minecraft.world.level.block.SoundType.STONE || state.is(net.minecraft.tags.BlockTags.BASE_STONE_OVERWORLD)) return 2;
+        return 0;
+    }
 
     private record Key(BlockState state, int face, int tint, boolean textured) {}
 
@@ -51,7 +83,7 @@ final class FarLooks {
         data[at + 4] = face.rgb() & 0xFFFFFF;
         data[at + 5] = tint & 0xFFFFFF;
         data[at + 6] = blockId(state);
-        data[at + 7] = textured ? TEXTURED : 0;
+        data[at + 7] = (textured ? TEXTURED : 0) | material(state) << MATERIAL_SHIFT;
         ids.put(key, id);
         return id;
     }
