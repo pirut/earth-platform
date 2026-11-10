@@ -13,7 +13,7 @@ import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * Giant sequoias at their real size: 70 to 94 m tall on trunks about 6 to 9 m across, flared at
- * the foot and bare for the lower half, under a rounded crown of big upswept branches that end in
+ * the foot and bare for the lower half (the lower third in worlds from build 70 on), under a rounded crown of big upswept branches that end in
  * clumps of foliage. The bark is mangrove wood's red-brown, and the duff around the foot podzol.
  */
 final class Sequoia {
@@ -23,17 +23,21 @@ final class Sequoia {
     private static final BlockState LOG = Blocks.MANGROVE_LOG.defaultBlockState(),
             LEAVES = Blocks.SPRUCE_LEAVES.defaultBlockState(), PODZOL = Blocks.PODZOL.defaultBlockState(),
             COARSE_DIRT = Blocks.COARSE_DIRT.defaultBlockState();
-    private static volatile TreeShape[] shapes;
+    private static volatile TreeShape[] shapes, deep;
 
     private Sequoia() {}
 
-    /** The sequoias every grove picks from, grown once. */
-    static TreeShape[] shapes() {
-        TreeShape[] made = shapes;
+    /**
+     * The sequoias every grove picks from, grown once. With {@code deepCrowns} their crowns start about a third of
+     * the way up, level with the tops of the old forest around them, so that from above a grove is crowns over a
+     * canopy and not bare trunks standing out of it; without, half way up, as worlds made before build 70 have them.
+     */
+    static TreeShape[] shapes(boolean deepCrowns) {
+        TreeShape[] made = deepCrowns ? deep : shapes;
         if (made == null) {
             made = new TreeShape[VARIANTS];
-            for (int i = 0; i < VARIANTS; i++) made[i] = grow(0x5E9A01AL * 31 + i * 0x9E3779B97F4A7C15L);
-            shapes = made;
+            for (int i = 0; i < VARIANTS; i++) made[i] = grow(0x5E9A01AL * 31 + i * 0x9E3779B97F4A7C15L, deepCrowns);
+            if (deepCrowns) deep = made; else shapes = made;
         }
         return made;
     }
@@ -52,11 +56,12 @@ final class Sequoia {
         return Math.sqrt(Math.max(0, 1 - k * k));
     }
 
-    static TreeShape grow(long seed) {
+    static TreeShape grow(long seed, boolean deepCrowns) {
         RandomSource random = RandomSource.create(seed);
         int height = 70 + random.nextInt(25);
         double base = 3.0 + random.nextDouble() * 1.4;
-        int crownBase = (int) (height * (0.42 + random.nextDouble() * 0.12));
+        double low = random.nextDouble();
+        int crownBase = (int) (height * (deepCrowns ? 0.29 + low * 0.09 : 0.42 + low * 0.12));
         double widest = 8.5 + random.nextDouble() * 3.5;
         double phase = random.nextDouble() * Math.PI * 2;
         Long2ObjectOpenHashMap<BlockState> blocks = new Long2ObjectOpenHashMap<>();

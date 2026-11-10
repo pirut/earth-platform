@@ -99,6 +99,7 @@ class DataRulesBench {
                             .append(slice(both[k], at[0], at[1], image, PIXELS + 8 + k * (SLICE_HIGH + 8))).append('\n');
                 }
                 ImageIO.write(image, "png", out.resolve(part[0] + ".png").toFile());
+                if (System.getenv("EARTH_DATA_FAR") != null) for (int level = 0; level <= 4; level++) text.append(farProbe(data, at[0], at[1], level));
                 int dump = Integer.parseInt(System.getenv().getOrDefault("EARTH_DATA_DUMP", "0"));
                 if (dump > 0) for (int k = 0; k < 2; k++) dump(both[k], at[0], at[1], dump, out.resolve(part[0] + (k == 0 ? "-boxes" : "-data") + ".vox"));
             } catch (RuntimeException failure) {
@@ -228,6 +229,30 @@ class DataRulesBench {
     }
 
     /** Writes the blocks of a square as colours, for a 3D picture: sizes and base height, then 3 bytes a block (0 for air), x fastest, then z, then y. */
+    private static String farProbe(EarthGenerator earth, int px, int pz, int level) {
+        int v = 1 << level, width = 16 * v, span = 384 / width;
+        long[] logs = new long[8], leaves = new long[8];
+        for (int tz = -span; tz < span; tz++) for (int tx = -span; tx < span; tx++) {
+            int cx = Math.floorDiv(px, width) + tx, cz = Math.floorDiv(pz, width) + tz;
+            io.earthplatform.minecraft.cubic.gen.FarColumn column = new io.earthplatform.minecraft.cubic.gen.FarColumn();
+            earth.farColumn(level, cx, cz, column);
+            for (int s = 0; s < column.sections.size(); s++) {
+                var section = column.sections.get(s);
+                if (section == null) continue;
+                for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+                    var state = section.getBlockState(x, y, z);
+                    boolean log = state.getBlock() instanceof net.minecraft.world.level.block.RotatedPillarBlock, leaf = state.getBlock() instanceof net.minecraft.world.level.block.LeavesBlock;
+                    if (!log && !leaf) continue;
+                    int wy = ((column.bottom + s) * 16 + y) * v;
+                    int above = wy - earth.surfaceY(cx * width + x * v + v / 2, cz * width + z * v + v / 2);
+                    int band = Math.clamp(above / 16, 0, 7);
+                    (log ? logs : leaves)[band] += (long) v * v * v;
+                }
+            }
+        }
+        return "  far level " + level + " (blocks of log / leaves per 16-block band above ground): " + java.util.Arrays.toString(logs) + " / " + java.util.Arrays.toString(leaves) + "\n";
+    }
+
     private static void dump(EarthGenerator earth, int cx, int cz, int size, Path file) throws java.io.IOException {
         int x0 = cx - size / 2 & ~15, z0 = cz - size / 2 & ~15, low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
         for (int x = x0; x < x0 + size; x += 4) for (int z = z0; z < z0 + size; z += 4) {

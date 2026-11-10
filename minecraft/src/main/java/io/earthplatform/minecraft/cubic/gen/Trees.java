@@ -261,7 +261,7 @@ final class Trees {
                     foot = Math.min(foot, gen.surfaceY(x + (int) Math.round(4 * Math.cos(angle)), z + (int) Math.round(4 * Math.sin(angle))));
                 }
                 if (h - foot > 6) continue;
-                TreeShape[] grown = Sequoia.shapes();
+                TreeShape[] grown = Sequoia.shapes(gen.cappedCrowns());
                 trees.add(new Planted(x, foot + 1, z, grown[(int) Math.floorMod(r >>> 32, grown.length)], (int) (r >>> 50 & 3), r, snowy(surface)));
             }
         Planted[] made = trees.isEmpty() ? NONE : trees.toArray(Planted[]::new);
