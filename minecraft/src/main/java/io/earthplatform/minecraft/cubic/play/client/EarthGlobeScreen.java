@@ -79,7 +79,7 @@ public final class EarthGlobeScreen extends Screen {
     private List<EarthTowns.Town> results = List.of();
     /** The name of the place the pin was put on from a search, or null. */
     @Nullable private String pinnedName;
-    private static final int RESULTS = 6, SEARCH_WIDTH = 170, ROW = 12;
+    private static final int RESULTS = 6, SEARCH_WIDTH = 240, ROW = 12;
     /** Whether the mouse is over the compass's target. */
     private boolean overTarget;
 
