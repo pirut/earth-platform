@@ -345,6 +345,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private static final double PREVIEW_AROUND = 3 * 4096;
     /** Blocks past a level's square that its stand-ins' rules survey the elevation, for floodplains and slopes. */
     private static final double PREVIEW_SURVEY = 3072;
+    /** Pieces of the stand-ins' data fetched at once, in the order wanted. */
+    private static final int PREVIEW_FETCHES = 12;
     /** Blocks of water a quick stand-in gives a lake, and the sea where the tiles carry no depth. */
     private static final int PREVIEW_DEPTH = 4;
 
@@ -399,7 +401,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             first.compareAndSet(null, piece + ": " + failure.getMessage());
         };
         double outer = (Far.OUTER + 2) * (double) Far.width(Far.MAX_LEVEL);
-        for (int level = Far.PREVIEW_LEVEL; level <= Far.MAX_LEVEL; level++) {
+        // The backdrop's few pieces first, then from the finest level out, a few at a time: all asked at once,
+        // the near ground's tiles waited their turn behind the whole view's, and the ground round the player came last.
+        int[] levels = java.util.stream.IntStream.rangeClosed(Far.PREVIEW_LEVEL, Far.MAX_LEVEL).boxed()
+                .sorted(java.util.Comparator.comparingInt(l -> l >= Far.MAX_LEVEL - 1 ? l - 100 : l)).mapToInt(Integer::intValue).toArray();
+        for (int level : levels) {
             // A level's square is the middle of the next coarser one's, and the coarsest reaches all the way.
             double reach = level == Far.MAX_LEVEL ? outer : Math.min(outer, (Far.hole(level + 1) + 2) * (double) Far.width(level + 1));
             // The level's own tiles, and for the fine levels the coarser ones their rules survey the land round a column on.
@@ -442,11 +448,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
         }
         GeoPoint a = grid.geographic(x - outer, z + outer), b = grid.geographic(x + outer, z - outer);
-        loads.add(() -> {
+        loads.add(0, () -> {
             try { climate.prefetchCoarse(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
             catch (RuntimeException failure) { missed.accept("climate", failure); }
         });
-        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+        try (ExecutorService pool = Executors.newFixedThreadPool(PREVIEW_FETCHES, Thread.ofVirtual().factory())) {
             for (Runnable load : loads) pool.execute(load);
         }
         if (failed.get() > 0)
@@ -4037,7 +4043,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 catch (RuntimeException failure) { missed.accept("land cover", failure); }
             });
         }
-        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+        try (ExecutorService pool = Executors.newFixedThreadPool(PREVIEW_FETCHES, Thread.ofVirtual().factory())) {
             for (Runnable load : loads) pool.execute(load);
         }
         if (failed.get() > 0)
