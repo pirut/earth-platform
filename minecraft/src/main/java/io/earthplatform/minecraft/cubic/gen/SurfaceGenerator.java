@@ -266,12 +266,34 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return out.packet;
     }
 
+    /**
+     * A quick stand-in for a far column: the same voxels built from {@link #previewGround} and
+     * {@link #previewSurface} in place of the full ground and surface, with no rock layers.
+     */
+    @Override public void farPreview(int level, int columnX, int columnZ, FarColumn out) {
+        previewing(level);
+        try { farColumn(level, columnX, columnZ, out, false, true, true); }
+        finally { previewing(0); }
+    }
+
+    /** Told the level as this thread starts a quick stand-in and 0 as it ends, for rules that read less while one is made. */
+    protected void previewing(int level) {}
+    /** A column's ground and water for a quick stand-in, as {@link #farGround} gives them. */
+    protected void previewGround(int level, int x, int z, int[] out) { farGround(level, x, z, out); }
+    /** A column's surface for a quick stand-in, as {@link #farSurface} gives it. */
+    protected Surface previewSurface(int level, int x, int z, int ground, int water, int slope) { return farSurface(level, x, z, ground, water, slope); }
+
     private void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets, boolean materialize) {
+        farColumn(level, columnX, columnZ, out, packets, materialize, false);
+    }
+
+    private void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets, boolean materialize, boolean preview) {
         out.packet = null;
         int v = 1 << level, width = 16 * v, x0 = columnX * width, z0 = columnZ * width, half = v >> 1;
         int[] ground = new int[18 * 18], water = new int[18 * 18], sample = new int[2];
         for (int j = 0; j < 18; j++) for (int i = 0; i < 18; i++) {
-            farGround(level, x0 + (i - 1) * v + half, z0 + (j - 1) * v + half, sample);
+            if (preview) previewGround(level, x0 + (i - 1) * v + half, z0 + (j - 1) * v + half, sample);
+            else farGround(level, x0 + (i - 1) * v + half, z0 + (j - 1) * v + half, sample);
             // Far below a water surface nothing shows, so deep seabeds are raised to save sections.
             int floor = sample[1] == DRY ? Integer.MIN_VALUE : sample[1] - width;
             ground[j * 18 + i] = Math.max(sample[0], floor);
@@ -288,7 +310,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             int g = (cz + 1) * 18 + cx + 1, h = ground[g], cell = cz * 16 + cx;
             int wx = x0 + cx * v + half, wz = z0 + cz * v + half;
             int slope = (Math.abs(ground[g + 1] - ground[g - 1]) + Math.abs(ground[g + 18] - ground[g - 18])) / v;
-            Surface surface = farSurface(level, wx, wz, h, water[g], slope);
+            Surface surface = preview ? previewSurface(level, wx, wz, h, water[g], slope) : farSurface(level, wx, wz, h, water[g], slope);
             biome[cell] = surface.biome();
             top[cell] = surface.top();
             ice[cell] = water[g] > h && iced(surface, wx, wz);
@@ -296,7 +318,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             if (water[g] <= h && Trees.snowy(surface) && !top[cell].is(Blocks.ICE) && !top[cell].is(Blocks.PACKED_ICE)
                     && !top[cell].is(Blocks.POWDER_SNOW)) top[cell] = SNOW_BLOCK;
             under[cell] = v > 2 && !bedrock(surface.under()) ? STONE : surface.under();
-            rock[cell] = layers(wx, wz);
+            rock[cell] = preview ? null : layers(wx, wz);
             // Voxels wider than a tree show forests as leaves: at 8 blocks a voxel above the ground, about a tree's
             // height, so they meet the rasterised trees nearer; wider voxels would stand too tall, so leaves lie on the ground voxel.
             if (v >= 8) {
@@ -315,7 +337,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             }
         }
         // Room for trees: drawn as they are out to 4-block voxels, sequoias out to 16.
-        boolean giants = v <= 16 && giants(x0 + width / 2, z0 + width / 2);
+        boolean giants = !preview && v <= 16 && giants(x0 + width / 2, z0 + width / 2);
         if (giants) max += Sequoia.TALLEST + 1;
         else if (v <= 4) max += Trees.TALLEST + 1;
         else if (v == 8) max += v;

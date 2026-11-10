@@ -41,6 +41,7 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.textured` | from settings | Far levels drawn with block textures; coarser ones use flat colors. Same as the `texturedLevels` setting | `FarRenderer` |
 | `earthplatform.far.threads` | (cores - 4) / 2, 2 to 8 | Server workers that make far columns | `FarServer.WORKERS` |
 | `earthplatform.far.mostThreads` | workers + 24, up to 64 | Most far columns made at once; only `far.threads` of them use the processor, the rest wait on downloads | `FarServer.MOST_WORKERS` |
+| `earthplatform.far.previews` | on | Quick stand-ins for the two coarsest far levels, which are the horizon: the server makes each in a millisecond or two from the level's own elevation tiles and land cover and every 32nd climate row, sends them first, and the client shows them until the real columns it asks for as before replace them. `false` on the server makes none; `false` on a client asks for none, so the far terrain comes in as it did before them | `EarthGenerator`, `FarServer`, `FarRenderer` |
 | `earthplatform.far.inFlight` | 192 | Far columns a client asks for before earlier ones arrive | `FarRenderer` |
 | `earthplatform.far.visibility` | edge of the far view | Haze distance in meters, as a real-world visibility | `FarRenderer` |
 | `earthplatform.far.fade` | on | `false` makes far levels meet at a seam instead of fading into each other | `FarRenderer` |

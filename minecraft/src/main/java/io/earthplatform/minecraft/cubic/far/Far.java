@@ -82,6 +82,11 @@ public final class Far {
     public static final int EDIT_LEVELS = 4;
     /** Most sections one column may hold. */
     public static final int MAX_SECTIONS = 64;
+    /**
+     * The levels a generator may make quick stand-ins for, from this one up: the two coarsest, whose
+     * rings are the horizon and whose columns take the longest to make over a place never seen.
+     */
+    public static final int PREVIEW_LEVEL = 7;
 
     private Far() {}
 

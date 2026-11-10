@@ -96,11 +96,26 @@ public final class CubePayloads {
     }
 
     /**
+     * Columns of the coarsest far levels the client holds nothing for, by {@link Far} key, to be
+     * sent quick stand-ins for at once: a server whose generator makes them says so with its
+     * {@link EarthScale}. The real columns are asked for with {@link FarRequest} as ever.
+     */
+    public record FarPreviewRequest(long[] keys) implements CustomPacketPayload {
+        public static final int MAX_KEYS = 4096;
+        public static final Type<FarPreviewRequest> TYPE = new Type<>(id("far_preview_request"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, FarPreviewRequest> CODEC = StreamCodec.of(
+                (buf, p) -> buf.writeLongArray(p.keys), buf -> new FarPreviewRequest(buf.readLongArray(null, MAX_KEYS)));
+        @Override public Type<FarPreviewRequest> type() { return TYPE; }
+    }
+
+    /**
      * One far-terrain column: its lowest section's Y in level units, then each section's vanilla
      * section bytes (voxels as blocks, plus biomes) from the bottom up, empty for an all-air
      * section, then each voxel column's drop (see {@link io.earthplatform.minecraft.cubic.gen.FarColumn#drops}).
+     * {@code preview} marks a quick stand-in (see {@link FarPreviewRequest}), which the client shows
+     * and goes on asking for the real column in place of.
      */
-    public record FarColumnData(long key, int bottom, List<byte[]> sections, short[] drops) implements CustomPacketPayload {
+    public record FarColumnData(long key, int bottom, List<byte[]> sections, short[] drops, boolean preview) implements CustomPacketPayload {
         public static final Type<FarColumnData> TYPE = new Type<>(id("far_column"));
         public static final StreamCodec<RegistryFriendlyByteBuf, FarColumnData> CODEC = StreamCodec.of((buf, p) -> {
             buf.writeLong(p.key);
@@ -108,6 +123,7 @@ public final class CubePayloads {
             buf.writeVarInt(p.sections.size());
             for (byte[] section : p.sections) buf.writeByteArray(section);
             for (short drop : p.drops) buf.writeShort(drop);
+            buf.writeBoolean(p.preview);
         }, buf -> {
             long key = buf.readLong();
             int bottom = buf.readInt(), count = Math.min(buf.readVarInt(), Far.MAX_SECTIONS);
@@ -115,7 +131,7 @@ public final class CubePayloads {
             for (int i = 0; i < count; i++) sections.add(buf.readByteArray(1 << 20));
             short[] drops = new short[256];
             for (int i = 0; i < 256; i++) drops[i] = buf.readShort();
-            return new FarColumnData(key, bottom, sections, drops);
+            return new FarColumnData(key, bottom, sections, drops, buf.readBoolean());
         });
         /** Rough size on the wire, for pacing. */
         public int size() {
@@ -129,17 +145,17 @@ public final class CubePayloads {
     /**
      * An Earth world's map scale, sent when a player's far terrain starts: how many metres a block
      * spans at the equator. Map stretch grows toward the poles, so the client measures its haze in
-     * ground metres rather than blocks.
+     * ground metres rather than blocks. {@code previews} says the server answers {@link FarPreviewRequest}.
      */
-    public record EarthScale(double metresPerBlock) implements CustomPacketPayload {
+    public record EarthScale(double metresPerBlock, boolean previews) implements CustomPacketPayload {
         public static final Type<EarthScale> TYPE = new Type<>(id("earth_scale"));
         public static final StreamCodec<RegistryFriendlyByteBuf, EarthScale> CODEC = StreamCodec.of(
-                (buf, p) -> buf.writeDouble(p.metresPerBlock), buf -> new EarthScale(buf.readDouble()));
+                (buf, p) -> { buf.writeDouble(p.metresPerBlock); buf.writeBoolean(p.previews); }, buf -> new EarthScale(buf.readDouble(), buf.readBoolean()));
         @Override public Type<EarthScale> type() { return TYPE; }
     }
 
     /** Version of this group of payloads; NeoForge refuses a connection whose two sides differ. */
-    public static final String VERSION = "cubic-2";
+    public static final String VERSION = "cubic-3";
 
     public static void register(Payloads registrar) {
         registrar.toClient(CubeData.TYPE, CubeData.CODEC, p -> { if (Loader.INSTANCE.isClient()) CubicClientReceiver.cube(p); });
@@ -150,6 +166,9 @@ public final class CubePayloads {
         registrar.toClient(EarthScale.TYPE, EarthScale.CODEC, p -> { if (Loader.INSTANCE.isClient()) CubicClientReceiver.scale(p); });
         registrar.toServer(FarRequest.TYPE, FarRequest.CODEC, (p, player) -> {
             if (CubicLevel.of(player.serverLevel()) instanceof ServerCubeWorld world) world.far().request(player, p.keys());
+        });
+        registrar.toServer(FarPreviewRequest.TYPE, FarPreviewRequest.CODEC, (p, player) -> {
+            if (CubicLevel.of(player.serverLevel()) instanceof ServerCubeWorld world) world.far().requestPreviews(player, p.keys());
         });
     }
 }

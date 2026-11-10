@@ -313,6 +313,123 @@ public final class EarthGenerator extends SurfaceGenerator {
         place(dem, x, z, metres, sample, 1 << level, out);
     }
 
+    // Quick stand-ins ----------------------------------------------------------------------------
+
+    /**
+     * Whether the two coarsest far levels get quick stand-ins (see {@link #farPreview}): on unless
+     * {@code -Dearthplatform.far.previews=false}, in worlds with land cover and climate.
+     */
+    private static final boolean PREVIEWS = !"false".equals(System.getProperty("earthplatform.far.previews"));
+    /** The level of the quick stand-in a thread is making, or 0 while it makes none. */
+    private final ThreadLocal<int[]> previewing = ThreadLocal.withInitial(() -> new int[1]);
+
+    /** Whether this thread is making a quick stand-in, whose rules read only the little its level's own data holds. */
+    private boolean quick() { return previewing.get()[0] != 0; }
+
+    /**
+     * The tiles a rule reads at a zoom; for a quick stand-in, its own level's coarser tiles, which
+     * are there already.
+     */
+    private GlobalElevation survey(int zoom) {
+        int level = previewing.get()[0];
+        return plain[level == 0 ? zoom : Math.min(zoom, zoom(level))];
+    }
+
+    @Override public boolean farPreviews(int level) { return PREVIEWS && cover != null && climate != null && level >= Far.PREVIEW_LEVEL && level <= Far.MAX_LEVEL; }
+
+    @Override protected void previewing(int level) { previewing.get()[0] = level; }
+
+    /** Metres above the sea up to which mapped water counts as the sea in a quick stand-in. */
+    private static final double PREVIEW_SEA = 1.5;
+    /** Blocks past the far levels' squares that the stand-ins' land cover is fetched, for the rules that look round a column. */
+    private static final double PREVIEW_AROUND = 3 * 4096;
+    /** Blocks of water a quick stand-in gives a lake, and the sea where the tiles carry no depth. */
+    private static final int PREVIEW_DEPTH = 4;
+
+    /**
+     * Ground and water for a quick stand-in, from the level's own elevation tiles and land cover
+     * alone: the open sea and mapped water near its level are the sea, other mapped water lies at
+     * the height the tiles give it, and the rest is land at the tiles' height. None of the survey
+     * of lakes' levels, the search for water that joins the sea, rock terraces or towers, which
+     * read finer tiles and every climate row across the view: over a place never seen those were
+     * most of the half minute the horizon took.
+     */
+    @Override protected void previewGround(int level, int x, int z, int[] out) {
+        int voxel = 1 << level;
+        double[] sample = new double[3];
+        double metres = plain[zoom(level)].sample(x + 0.5, z + 0.5, sample);
+        int code = cover(x, z, voxel);
+        boolean water = code == WorldCoverSource.WATER;
+        if (sample[2] > 0.5 || (code == WorldCoverSource.NO_DATA || water) && metres < PREVIEW_SEA) {
+            out[0] = Math.min(SEA - PREVIEW_DEPTH, Mth.floor(SEA + 0.5 + Math.min(metres, 0)));
+            out[1] = SEA;
+            return;
+        }
+        int y = Mth.floor(SEA + 0.5 + metres);
+        if (water) {
+            out[0] = y - PREVIEW_DEPTH;
+            out[1] = y;
+            return;
+        }
+        out[0] = y;
+        out[1] = DRY;
+    }
+
+    /** The surface for a quick stand-in: every rule of {@link #surface}, read with the coarse climate (see {@link #local}) and no rock layers. */
+    @Override protected Surface previewSurface(int level, int x, int z, int ground, int water, int slope) {
+        return surface(x, z, ground, water, slope, 1 << level);
+    }
+
+    /**
+     * Fetches what the quick stand-ins of the far levels round a point read: each level's elevation
+     * tiles and land cover over its square, and every {@value ClimateSource#COARSE_ROWS}th climate
+     * row. A few megabytes in a few dozen requests, all at once.
+     */
+    @Override public void preparePreview(int x, int z) {
+        if (!farPreviews(Far.MAX_LEVEL)) return;
+        record Tile(int zoom, int x, int y) {}
+        List<Runnable> loads = new ArrayList<>();
+        java.util.concurrent.atomic.AtomicInteger failed = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<String> first = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.function.BiConsumer<String, RuntimeException> missed = (piece, failure) -> {
+            failed.incrementAndGet();
+            first.compareAndSet(null, piece + ": " + failure.getMessage());
+        };
+        double outer = (Far.OUTER + 2) * (double) Far.width(Far.MAX_LEVEL);
+        for (int level = Far.PREVIEW_LEVEL; level <= Far.MAX_LEVEL; level++) {
+            // A level's square is the middle of the next coarser one's, and the coarsest reaches all the way.
+            double reach = level == Far.MAX_LEVEL ? outer : Math.min(outer, (Far.hole(level + 1) + 2) * (double) Far.width(level + 1));
+            int zoom = zoom(level), tilesAcross = 1 << zoom;
+            int x0 = (int) Math.floor(grid.pixelX(x - reach, zoom) / 256), x1 = (int) Math.floor(grid.pixelX(x + reach, zoom) / 256);
+            int y0 = (int) Math.floor(grid.pixelY(z - reach, zoom) / 256), y1 = (int) Math.floor(grid.pixelY(z + reach, zoom) / 256);
+            for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) for (int tx = x0; tx <= x1; tx++) {
+                Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
+                loads.add(() -> {
+                    try { tiles.tile(tile.zoom, tile.x, tile.y); }
+                    catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
+                });
+            }
+            // The rules that look round a column for snow, towns and wild land reach some eight kilometres past it.
+            double around = reach + PREVIEW_AROUND;
+            GeoPoint a = grid.geographic(x - around, z + around), b = grid.geographic(x + around, z - around);
+            int overview = coverOverview(z, 1 << level);
+            loads.add(() -> {
+                try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), overview); }
+                catch (RuntimeException failure) { missed.accept("land cover", failure); }
+            });
+        }
+        GeoPoint a = grid.geographic(x - outer, z + outer), b = grid.geographic(x + outer, z - outer);
+        loads.add(() -> {
+            try { climate.prefetchCoarse(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
+            catch (RuntimeException failure) { missed.accept("climate", failure); }
+        });
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (Runnable load : loads) pool.execute(load);
+        }
+        if (failed.get() > 0)
+            EarthPlatformMod.LOGGER.warn("Could not prefetch {} of {} pieces of Earth data for the far stand-ins; they ask for them again (first: {})", failed.get(), loads.size(), first.get());
+    }
+
     /** Ground and water of a column from its elevation, slope, sea share and land cover. */
     private void place(GlobalElevation dem, int x, int z, double metres, double[] sample, int voxel, int[] out) {
         surveyed(dem, x, z, metres, sample, voxel, out);
@@ -1431,7 +1548,8 @@ public final class EarthGenerator extends SurfaceGenerator {
      * the front's water turned to ice, leaving Perito Moreno's cliff standing back from a beach.
      */
     private boolean iceWater(double x, double z, int overview, double metresPerBlock) {
-        if (!icyCell(Math.floorDiv(Mth.floor(x), WATER_CELL), Math.floorDiv(Mth.floor(z), WATER_CELL))) return false;
+        // The cells are a first look at a finer overview, to spare the rings; a quick stand-in reads only its own, so goes by the rings alone.
+        if (!quick() && !icyCell(Math.floorDiv(Mth.floor(x), WATER_CELL), Math.floorDiv(Mth.floor(z), WATER_CELL))) return false;
         int snow = 0, other = 0, water = 0;
         for (double ring : ICE_RINGS) {
             double r = Math.max(ring, PIXEL_METRES * (1 << overview)) / metresPerBlock;
@@ -2646,7 +2764,13 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** The real climate at a column and height, or one from latitude and height where there is none. */
     private Local local(int x, int z, int y) {
         int metres = Math.max(0, y - SEA);
-        if (climate != null) {
+        if (climate != null && quick()) {
+            // A quick stand-in reads every thirty-second row alone, at the column's own longitude and height.
+            GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
+            ClimateSource.Climate c = Math.abs(point.latitude()) <= 90 ? climate.coarse(point.latitude(), point.longitude(), metres) : null;
+            if (c != null) return new Local(ClimateZone.of(c.koppen(), c.meanTemperature(), c.warmestQuarter()),
+                    c.meanTemperature(), c.warmestQuarter(), c.precipitation());
+        } else if (climate != null) {
             // Zone borders follow the 1 km grid; a gentle warp of a few hundred metres bends them, and finer layers down
             // to a few blocks fray them, so forest gives way to taiga in tongues and patches rather than along a curve.
             double perBlock = 1 / grid.groundMetresPerBlock(z);
@@ -2775,7 +2899,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             // roads were taken out: there it shows buildings and asphalt, not the wild land put in their place.
             Surface ground = imageryGround == null || built ? covered
                     : imageryGround.apply(covered, code, x, z, local.zone(), steep, voxel, (mix(x, 0x494D47L, z) >>> 11) * 0x1.0p-53);
-            Strata.Layers rock = strata.layers(x, z, SEA + 0.5);
+            Strata.Layers rock = quick() ? null : strata.layers(x, z, SEA + 0.5);
             return rock == null ? ground : rock.dress(ground, y, steep, voxel);
         }
         if (t < -8) {
@@ -2882,10 +3006,13 @@ public final class EarthGenerator extends SurfaceGenerator {
         Boolean known = glacierFed.get(key);
         if (known != null) return known;
         int cx = gx * size + size / 2, cz = gz * size + size / 2;
+        // A quick stand-in reads the land cover at its own level's overview, and its answer is not kept.
+        int quick = previewing.get()[0], voxel = quick == 0 ? 64 : 1 << quick;
         boolean fed = false;
         for (int radius = 2000; radius <= 8000 && !fed; radius *= 2)
             for (int k = 0; k < 8 && !fed; k++)
-                fed = cover(cx + RING_X[k] * radius, cz + RING_Z[k] * radius, 64) == WorldCoverSource.SNOW_AND_ICE;
+                fed = cover(cx + RING_X[k] * radius, cz + RING_Z[k] * radius, voxel) == WorldCoverSource.SNOW_AND_ICE;
+        if (quick != 0) return fed;
         if (glacierFed.size() > 1 << 16) glacierFed.clear();
         glacierFed.putIfAbsent(key, fed);
         return fed;
@@ -2893,6 +3020,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Whether water lies close to the open sea, as a lagoon inside a reef or a barrier island does. */
     private boolean lagoon(int x, int z, int water, int voxel) {
+        // Judged from the full ground round it: a quick stand-in leaves a lagoon the colour of other water.
+        if (quick()) return false;
         // The sea test first: it is judged per cell and cached, and away from coasts, as along every river of the
         // Amazon, it alone answers; reading the ring for every warm river voxel of a far column thrashed the tiles.
         if (!seaAround(x, z, Integer.numberOfTrailingZeros(voxel))) return false;
@@ -3249,7 +3378,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Rise per run of the elevation survey across eight blocks either way. */
     private double surveySlope(int x, int z) {
         // The tiles as they are: snow and ice hold no towns or forest, and far levels read this too.
-        GlobalElevation dem = plain[WATER_ZOOM];
+        GlobalElevation dem = survey(WATER_ZOOM);
         double dx = dem.metres(x + 8.5, z + 0.5) - dem.metres(x - 7.5, z + 0.5), dz = dem.metres(x + 0.5, z + 8.5) - dem.metres(x + 0.5, z - 7.5);
         return Math.sqrt(dx * dx + dz * dz) / (16 * grid.groundMetresPerBlock(z));
     }
@@ -3345,6 +3474,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private boolean peatland(int code, int x, int z, Local local) {
         if (local.zone() != ClimateZone.SUBARCTIC || code != WorldCoverSource.WETLAND && code != WorldCoverSource.MOSS_AND_LICHEN
                 && code != WorldCoverSource.SHRUBLAND && code != WorldCoverSource.GRASSLAND) return false;
+        // How level the ground lies is read from fine tiles: a quick stand-in leaves mires as the open ground round them.
+        if (quick()) return false;
         // Cells blended into their neighbours along a wandering line, so a mire's edge is never a grid of squares.
         double fx = x / (double) PEAT_CELL - 0.5 + warpX.getValue(x / 151.0, z / 151.0) * 0.45;
         double fz = z / (double) PEAT_CELL - 0.5 + warpZ.getValue(x / 151.0, z / 151.0) * 0.45;
@@ -3431,6 +3562,8 @@ public final class EarthGenerator extends SurfaceGenerator {
      * somewhere, and dunes are never flat.
      */
     private boolean saltPan(int x, int z) {
+        // Found on fine tiles: a quick stand-in leaves a pan the desert round it.
+        if (quick()) return false;
         // Cells blended into their neighbours along a wandering line, so a pan's shore is never a grid of squares.
         double fx = x / (double) SALT_CELL - 0.5 + warpX.getValue(x / 47.0, z / 47.0) * 0.45;
         double fz = z / (double) SALT_CELL - 0.5 + warpZ.getValue(x / 47.0, z / 47.0) * 0.45;
@@ -3478,7 +3611,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private boolean volcanic(int x, int z) {
         GeoPoint p = grid.geographic(x, z);
         for (double[] box : LAVA) if (p.latitude() > box[0] && p.latitude() < box[1] && p.longitude() > box[2] && p.longitude() < box[3]) return true;
-        return cone(x, z);
+        // Cones are found on fine tiles: a quick stand-in leaves them the ground round them.
+        return !quick() && cone(x, z);
     }
 
     /** Summits of volcanic cones, by 1024-block cell: x, z and the mean height of the ring round them, or none. */
@@ -3576,9 +3710,10 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Whether ground lies on a broad, level floodplain: the land a few kilometres round is within a few metres of it. */
     private boolean floodplain(int x, int z) {
         // The tiles as they are: a few kilometres round, a town's roofs are noise, and far levels read this too.
-        double here = plain[FAR_ZOOM].metres(x, z);
+        GlobalElevation dem = survey(FAR_ZOOM);
+        double here = dem.metres(x, z);
         for (int k = 0; k < 8; k += 2)
-            if (Math.abs(plain[FAR_ZOOM].metres(x + RING_X[k] * 3000, z + RING_Z[k] * 3000) - here) > 8) return false;
+            if (Math.abs(dem.metres(x + RING_X[k] * 3000, z + RING_Z[k] * 3000) - here) > 8) return false;
         return true;
     }
 
