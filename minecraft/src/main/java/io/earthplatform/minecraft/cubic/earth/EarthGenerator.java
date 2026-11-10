@@ -4043,7 +4043,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 catch (RuntimeException failure) { missed.accept("land cover", failure); }
             });
         }
-        try (ExecutorService pool = Executors.newFixedThreadPool(PREVIEW_FETCHES, Thread.ofVirtual().factory())) {
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             for (Runnable load : loads) pool.execute(load);
         }
         if (failed.get() > 0)

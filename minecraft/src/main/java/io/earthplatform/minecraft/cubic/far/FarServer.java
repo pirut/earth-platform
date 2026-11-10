@@ -104,7 +104,9 @@ public final class FarServer {
      * is a few seconds of work in all and the real columns make way for it (see {@link FarWorkers#giveWay}).
      * Two cores are left to the game.
      */
-    private static final int PREVIEW_WORKERS = Math.clamp(Runtime.getRuntime().availableProcessors() - 2, WORKERS, 8);
+    private static final int PREVIEW_WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.previewThreads", Math.clamp(Runtime.getRuntime().availableProcessors() - 2, WORKERS, 8)), 1, 16);
+    /** Whether the real columns leave processors to stand-ins being made; {@code -Dearthplatform.far.giveWay=false} for comparing. */
+    private static final boolean GIVE_WAY = !"false".equals(System.getProperty("earthplatform.far.giveWay"));
     /** Stand-ins being made and not waiting on data: the processors the real columns leave them (see {@link FarWorkers#giveWay}). */
     private final AtomicInteger previewsAtWork = new AtomicInteger();
     /** How far a player moves, in blocks, before the stand-ins' data is fetched round the new place. */
@@ -553,7 +555,7 @@ public final class FarServer {
                 stale.add(key);
             }
         }
-        workers.giveWay(previewsAtWork.get());
+        workers.giveWay(GIVE_WAY ? previewsAtWork.get() : 0);
         for (CubePayloads.FarColumnData standIn; (standIn = previewsMade.poll()) != null; )
             for (Session session : sessions.values()) if (session.previewsWanted.remove(standIn.key())) session.queue(standIn);
         for (Made done; (done = made.poll()) != null; ) {

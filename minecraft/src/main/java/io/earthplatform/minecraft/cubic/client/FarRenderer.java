@@ -1048,6 +1048,11 @@ public final class FarRenderer {
         return (inView(key, bx, bz) ? 0 : 4L << 40) + ((long) tier << 40) + ((long) (Far.MAX_LEVEL - level) << 32) + Math.min(Math.max(dx, dz), (1L << 32) - 1);
     }
 
+    /** Whether columns never meshed go ahead of remeshes, in their own order; {@code -Dearthplatform.far.firstMeshOrder=false} for comparing. */
+    private static final boolean FIRST_MESH_ORDER = !"false".equals(System.getProperty("earthplatform.far.firstMeshOrder"));
+    /** Whether the far meshers' queue grows with the frame time; {@code -Dearthplatform.far.meshQueue=false} for comparing. */
+    private static final boolean MESH_QUEUE = !"false".equals(System.getProperty("earthplatform.far.meshQueue"));
+
     /** The order real columns never meshed are first meshed in: in view first, from the player outward. */
     private long firstMeshOrder(long key, int bx, int bz) {
         int level = Far.level(key), width = Far.width(level);
@@ -1447,7 +1452,7 @@ public final class FarRenderer {
         // Only the first few can start. Ordering every waiting column each tick, as after a long
         // teleport with tens of thousands of them, took the render thread longer than the meshing.
         // At a low frame rate the meshers finish far more than the short queue between two frames' uploads, and stood idle.
-        int free = Math.max(MESHES_IN_FLIGHT, (int) Math.min(2048, frameNanos / 1_000_000L * MESH_THREADS)) - meshing;
+        int free = Math.max(MESHES_IN_FLIGHT, MESH_QUEUE ? (int) Math.min(2048, frameNanos / 1_000_000L * MESH_THREADS) : 0) - meshing;
         if (due.isEmpty() || free <= 0) return;
         int count = due.size();
         long[] order = new long[count];
@@ -1455,7 +1460,7 @@ public final class FarRenderer {
             Column column = due.get(i);
             // A column never meshed and in view fills a hole there: before the remeshes of what is drawn already, the
             // real ones first, then the stand-ins in their own order; one behind comes after the remeshes.
-            order[i] = !column.meshed ? (column.preview ? standInOrder(column.key, bx, bz) : firstMeshOrder(column.key, bx, bz)) - (4L << 40)
+            order[i] = FIRST_MESH_ORDER && !column.meshed ? (column.preview ? standInOrder(column.key, bx, bz) : firstMeshOrder(column.key, bx, bz)) - (4L << 40)
                     : (column.drawnPick == pickSerial ? 0 : 1L << 40) + priority(column.key, bx, bz);
         }
         for (int i : FarOrder.first(order, free)) submit(due.get(i));

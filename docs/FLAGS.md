@@ -43,6 +43,10 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.mostThreads` | workers + 24, up to 64 | Most far columns made at once; only `far.threads` of them use the processor, the rest wait on downloads | `FarServer.MOST_WORKERS` |
 | `earthplatform.far.previews` | on | Quick stand-ins for the far columns: the server makes each in about a millisecond from the level's own elevation tiles and land cover and every 32nd climate row, sends them first, and the client shows them until the real columns it asks for as before replace them. `false` on the server makes none; `false` on a client asks for none, so the far terrain comes in as it did before them | `EarthGenerator`, `FarServer`, `FarRenderer` |
 | `earthplatform.far.previewLevel` | 1 | The finest far level that gets stand-ins. 1 is every level, so the whole far view stands seconds after arriving and a zoomed view sharpens at once; `7` keeps them to the two coarsest levels, the horizon | `Far.PREVIEW_LEVEL` |
+| `earthplatform.far.previewThreads` | cores - 2, at least the far workers, at most 8 | Server threads that make stand-ins | `FarServer.PREVIEW_WORKERS` |
+| `earthplatform.far.giveWay` | on | Real far columns leave up to half their processors to stand-ins being made; `false` for comparing | `FarServer.GIVE_WAY` |
+| `earthplatform.far.firstMeshOrder` | on | Far columns never meshed go ahead of remeshes, real ones first; `false` for comparing | `FarRenderer.FIRST_MESH_ORDER` |
+| `earthplatform.far.meshQueue` | on | The far meshers' queue grows with the frame time; `false` keeps it at 128 | `FarRenderer.MESH_QUEUE` |
 | `earthplatform.far.inFlight` | 192 | Far columns a client asks for before earlier ones arrive | `FarRenderer` |
 | `earthplatform.far.visibility` | edge of the far view | Haze distance in meters, as a real-world visibility | `FarRenderer` |
 | `earthplatform.far.fade` | on | `false` makes far levels meet at a seam instead of fading into each other | `FarRenderer` |
