@@ -177,7 +177,8 @@ public final class FarServer {
      */
     public void warmPreviews(int bx, int bz) {
         if (closed || !previews) return;
-        Far.around(bx, bz, Far.PREVIEW_LEVEL, key -> {
+        // The backdrop alone: the finer levels' stand-ins read far more, and fetched ahead they held up the landing itself.
+        Far.around(bx, bz, Math.max(Far.PREVIEW_LEVEL, Far.BACKDROP_LEVEL), key -> {
             if (!cache.containsKey(key) && !previewCache.containsKey(key)) submitPreview(key, false);
         });
     }
@@ -191,12 +192,21 @@ public final class FarServer {
         if (closed || !previews) return;
         Session session = session(player);
         int bx = player.getBlockX(), bz = player.getBlockZ();
-        if (Math.abs(bx - session.preparedX) > PREVIEW_MOVE || Math.abs(bz - session.preparedZ) > PREVIEW_MOVE) {
+        boolean fine = false;
+        for (long key : keys) if (Far.level(key) < Far.BACKDROP_LEVEL) { fine = true; break; }
+        if (fine && (Math.abs(bx - session.preparedFineX) > PREVIEW_MOVE || Math.abs(bz - session.preparedFineZ) > PREVIEW_MOVE)) {
+            session.preparedFineX = session.preparedX = bx;
+            session.preparedFineZ = session.preparedZ = bz;
+            net.minecraft.Util.ioPool().execute(() -> {
+                try { generator.preparePreview(bx, bz); }
+                catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not fetch the far stand-ins' data", failure); }
+            });
+        } else if (Math.abs(bx - session.preparedX) > PREVIEW_MOVE || Math.abs(bz - session.preparedZ) > PREVIEW_MOVE) {
             // The little they read, all at once, rather than piece by piece as the few threads making them come to it.
             session.preparedX = bx;
             session.preparedZ = bz;
             net.minecraft.Util.ioPool().execute(() -> {
-                try { generator.preparePreview(bx, bz); }
+                try { generator.preparePreview(bx, bz, Far.BACKDROP_LEVEL); }
                 catch (RuntimeException failure) { EarthPlatformMod.LOGGER.warn("Could not fetch the far stand-ins' data", failure); }
             });
         }
@@ -250,7 +260,7 @@ public final class FarServer {
         final LongOpenHashSet previewsQueued = new LongOpenHashSet();
         void queue(CubePayloads.FarColumnData standIn) { if (previewsQueued.add(standIn.key())) previews.add(standIn); }
         /** Where the stand-ins' data was last fetched round. */
-        int preparedX = Integer.MIN_VALUE / 2, preparedZ = Integer.MIN_VALUE / 2;
+        int preparedX = Integer.MIN_VALUE / 2, preparedZ = Integer.MIN_VALUE / 2, preparedFineX = Integer.MIN_VALUE / 2, preparedFineZ = Integer.MIN_VALUE / 2;
         /**
          * Columns queued that are farther off than the player's own levels reach (see {@link Far#near}),
          * which a zoomed view asked for where it looks; at most {@link FarServer#ZOOMED} at once.

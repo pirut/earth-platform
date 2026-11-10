@@ -896,6 +896,9 @@ public final class FarRenderer {
         LongArrayList missing = new LongArrayList();
         // The coarsest levels' columns with nothing held, to ask quick stand-ins for.
         LongArrayList bare = new LongArrayList();
+        LongArrayList bareLater = new LongArrayList();
+        // The two finest levels' columns in view, and those of them not held yet.
+        int[] near = new int[2];
         boolean previews = previewsOffered && PREVIEWS;
         // Read once, so the plan and the requests it keeps agree on the columns wanted.
         int hole = Far.hole(), finest = this.finest;
@@ -906,12 +909,17 @@ public final class FarRenderer {
             // Noted and answered by the places alone, never reaching the columns themselves.
             boolean held = places.want(level, x, z, ticks);
             if (previews && level >= Far.PREVIEW_LEVEL) {
-                // The finer levels' middles are left out: the levels inside them have stand-ins of their own.
-                if (!held && (level >= BACKDROP_LEVEL || !Far.refined(level, x, z, bx, bz, finest))) bare.add(key);
+                // The finer levels' middles are left out: the levels inside them have stand-ins of their own. And the two
+                // finest levels have none: their real columns are the first to come, and the ground round the player is
+                // theirs. On a Mac the other levels' stand-ins, asked for at once, kept it a plain of coarse slabs for
+                // ten seconds where it had stood whole in three, so those wait until it is in.
+                if (!held && level >= BACKDROP_LEVEL) bare.add(key);
+                else if (!held && level > finest + 1 && !Far.refined(level, x, z, bx, bz, finest)) bareLater.add(key);
                 // A stand-in is drawn as any column, and its real column is still to come.
                 else { Column column = held(key); if (column != null && column.preview) missing.add(key); }
             }
             if (!Far.refined(level, x, z, bx, bz, finest)) {
+                if (level <= finest + 1 && inView(key, bx, bz)) { near[0]++; if (!held) near[1]++; }
                 boolean meshed = held && places.meshed(level, x, z);
                 counts[0]++;
                 if (meshed) counts[1]++;
@@ -990,6 +998,8 @@ public final class FarRenderer {
         if (previews) {
             askPreviews(zoomBare, bx, bz);
             askPreviews(bare, bx, bz);
+            // All but an eighth, so the few always missing at the edge while flying do not keep the rest waiting.
+            if (near[1] * 8 <= near[0]) askPreviews(bareLater, bx, bz);
         }
     }
 
@@ -1021,8 +1031,7 @@ public final class FarRenderer {
         }
     }
 
-    /** The two coarsest levels, whose stand-ins come first and whole, middles too: a backdrop for the whole view within a second. */
-    private static final int BACKDROP_LEVEL = 7;
+    private static final int BACKDROP_LEVEL = Far.BACKDROP_LEVEL;
 
     /**
      * The order stand-ins are asked for and first meshed in: what is in view first; of that the

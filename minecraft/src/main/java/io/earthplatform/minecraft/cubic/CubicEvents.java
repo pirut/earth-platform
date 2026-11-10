@@ -54,7 +54,7 @@ public final class CubicEvents {
         if (!generator.farPreviews(io.earthplatform.minecraft.cubic.far.Far.MAX_LEVEL)) return;
         Util.ioPool().execute(() -> {
             try {
-                generator.preparePreview(x, z);
+                generator.preparePreview(x, z, io.earthplatform.minecraft.cubic.far.Far.BACKDROP_LEVEL);
                 cubes.far().warmPreviews(x, z);
             } catch (RuntimeException failure) {
                 EarthPlatformMod.LOGGER.warn("Could not make the far stand-ins ahead", failure);

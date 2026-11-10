@@ -83,7 +83,10 @@ public interface CubeGenerator {
     /** Fills a quick stand-in for a far column; only for levels {@link #farPreviews} answers for. */
     default void farPreview(int level, int columnX, int columnZ, FarColumn out) { farColumn(level, columnX, columnZ, out); }
     /** Loads the little that {@link #farPreview} reads as far as the far levels reach round a point. Blocks; call off-thread. */
-    default void preparePreview(int x, int z) {}
+    default void preparePreview(int x, int z) { preparePreview(x, z, io.earthplatform.minecraft.cubic.far.Far.PREVIEW_LEVEL); }
+
+    /** The same for the levels from {@code finest} up only: the coarsest levels' few pieces come ahead of a player's arrival, the rest once the ground round the player is in. */
+    default void preparePreview(int x, int z, int finest) {}
     /** Loads whatever generating near a point will need, so the server thread never waits on it. Blocks; call off-thread. */
     default void prepare(int x, int z) {}
     /** Loads only what the cubes about a point need, before {@link #prepare} loads the rest. Blocks; call off-thread. */

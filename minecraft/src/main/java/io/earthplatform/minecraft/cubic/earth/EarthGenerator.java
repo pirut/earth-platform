@@ -389,7 +389,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * tiles and land cover over its square, and every {@value ClimateSource#COARSE_ROWS}th climate
      * row. A few megabytes in a few dozen requests, all at once.
      */
-    @Override public void preparePreview(int x, int z) {
+    @Override public void preparePreview(int x, int z, int finest) {
         if (!farPreviews(Far.MAX_LEVEL)) return;
         record Tile(int zoom, int x, int y) {}
         List<Runnable> loads = new ArrayList<>();
@@ -403,7 +403,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         double outer = (Far.OUTER + 2) * (double) Far.width(Far.MAX_LEVEL);
         // The backdrop's few pieces first, then from the finest level out, a few at a time: all asked at once,
         // the near ground's tiles waited their turn behind the whole view's, and the ground round the player came last.
-        int[] levels = java.util.stream.IntStream.rangeClosed(Far.PREVIEW_LEVEL, Far.MAX_LEVEL).boxed()
+        int[] levels = java.util.stream.IntStream.rangeClosed(Math.max(finest, Far.PREVIEW_LEVEL), Far.MAX_LEVEL).boxed()
                 .sorted(java.util.Comparator.comparingInt(l -> l >= Far.MAX_LEVEL - 1 ? l - 100 : l)).mapToInt(Integer::intValue).toArray();
         for (int level : levels) {
             // A level's square is the middle of the next coarser one's, and the coarsest reaches all the way.
