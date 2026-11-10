@@ -132,7 +132,11 @@ final class FarMesher {
         }
         return buildPrepared(job);
     }
-    static Built build(Job job) { return AUTO_RUNS&&job.packet==null?buildRunPrototype(job):buildPrepared(job); }
+    static Built build(Job job) {
+        // With the run mesher switched off for a comparison, columns that came as runs are filled back into sections.
+        if (!AUTO_RUNS) return buildPrepared(job.dense());
+        return job.packet==null?buildRunPrototype(job):buildPrepared(job);
+    }
     private static Built buildPrepared(Job job) {
         // Bounded direct consumer: coverage masks, smooth terrain and edit overlays retain the dense oracle.
         if (job.packet != null && (smooth(job) || job.drawn != null && !job.drawn.isEmpty() || job.packet.editCount() != 0)) job=job.dense();

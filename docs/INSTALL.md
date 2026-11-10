@@ -8,6 +8,16 @@
 - An internet connection the first time you visit each place
 - A few GB of free disk space for downloaded Earth data (the limit is a setting)
 
+## The quick way: an install pack
+
+Each release comes with two pack files, `earth-platform-neoforge-<build>.mrpack` and `earth-platform-fabric-<build>.mrpack`. A pack sets up Minecraft 1.21.1, the mod loader, Earth Platform, Sodium, Iris and the Photon shader pack in one step, with Photon switched on.
+
+1. Download one of the two files from the [latest release](https://github.com/pirut/earth-platform/releases/latest). Either works; pick NeoForge if you have no preference.
+2. Open it with a launcher that reads Modrinth packs: in the Modrinth App, **Add instance → From file**; in Prism Launcher, **Add Instance → Import** (or drag the file onto the window); in ATLauncher, **Import**.
+3. Set the instance's memory to **6 GB** (a pack can't set this for you), then press Play. Singleplayer → Create New World: the world type is already **Earth**.
+
+The pack holds the Earth Platform jar itself. Sodium, Iris and Photon are not copied into it: your launcher downloads each from its own Modrinth page. The rest of this page is the same setup by hand.
+
 ## Install
 
 1. Download the [NeoForge 21.1.256 installer](https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.256/neoforge-21.1.256-installer.jar), run it and choose **Install client**.

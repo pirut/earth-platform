@@ -170,7 +170,11 @@ public final class ServerCubeWorld extends CubeWorld {
                 new PalettedContainer<>(biomes.asHolderIdMap(), biomes.getHolderOrThrow(net.minecraft.world.level.biome.Biomes.PLAINS), PalettedContainer.Strategy.SECTION_BIOMES)));
         this.storage = new CubeStorage(DimensionType.getStorageFolder(level.dimension(),
                 level.getServer().getWorldPath(LevelResource.ROOT)).resolve("cubes"));
-        storage.onProblem(problem -> problemNotes.add(problemNote(problem)));
+        storage.onProblem(problem -> {
+            problemNotes.add(problemNote(problem));
+            FarServer columns = far();
+            if (columns != null) columns.savesLost();
+        });
         this.far = new FarServer(generator, storage, codec, level.registryAccess().registryOrThrow(Registries.BIOME));
         int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 2));
         this.workers = Executors.newFixedThreadPool(threads, NamedThreads.numbered("Earth cube worker", THREADS, Thread.NORM_PRIORITY - 1));
@@ -1094,7 +1098,7 @@ public final class ServerCubeWorld extends CubeWorld {
         int standing = 0;
         for (Watcher watcher : watchers.values()) standing += watcher.stood.size();
         return generator.id() + ", " + cubes.size() + " cubes loaded, " + standing + " buried cubes stood in for, " + opened.size() + " opened by caves, " + pending.size() + " pending (" + generated + " made, " + dropped + " dropped as no longer wanted), " + light.size() + " lit, "
-                + watchers.size() + " watching, " + far.cached() + " far columns cached, " + far.builds() + (failures > 0 ? ", " + failures + " generation failures" : "");
+                + watchers.size() + " watching, " + far.cached() + " far columns cached, " + far.stored() + ", " + far.made() + ", " + far.builds() + (failures > 0 ? ", " + failures + " generation failures" : "");
     }
 
     /** Iterates loaded cubes; exposed for diagnostics. */

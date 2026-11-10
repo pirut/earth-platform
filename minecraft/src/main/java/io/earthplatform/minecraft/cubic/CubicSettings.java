@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic;
 
 import io.earthplatform.geography.globe.BareEarth;
+import io.earthplatform.geography.globe.CanopySource;
 import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
@@ -19,9 +20,11 @@ import io.earthplatform.geography.globe.Drainage;
 import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.SurfaceWaterSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
+import io.earthplatform.minecraft.cubic.earth.EarthMaps;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.HighlandsGenerator;
+import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
 import io.earthplatform.minecraft.platform.Loader;
 import java.io.IOException;
 import java.io.Reader;
@@ -59,6 +62,9 @@ public final class CubicSettings {
     /** 3DEP by each way of reading it a world may pin. */
     private static final UsgsElevation[] usgs = new UsgsElevation[UsgsElevation.Reading.values().length];
     private static WorldCoverSource cover;
+    private static CanopySource canopy;
+    /** The {@code earth.plants} pin of worlds whose cacti, bamboo and cherries grow by ecoregion realm and climate. */
+    public static final String PLANT_REALMS = "realms-v1";
     private static BareEarth bareEarth;
     private static ClimateSource climate;
     private static SurfaceWaterSource surfaceWater;
@@ -115,9 +121,27 @@ public final class CubicSettings {
                     throw new IllegalStateException("Unsupported ground '" + groundId + "' in " + file);
                 // Worlds made before elevation layers read the composite alone.
                 String elevationId = properties.getProperty("earth.elevation", TerrariumTileSource.DATASET_ID);
-                yield new EarthGenerator(seed, biomes, settings, tiles(elevationId), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
+                // Worlds made before vanilla's caves keep the caves they had, so new cubes meet saved ones.
+                String cavesId = properties.getProperty("earth.caves", "");
+                if (!cavesId.isEmpty() && !SurfaceGenerator.VANILLA_CAVES.equals(cavesId))
+                    throw new IllegalStateException("Unsupported caves '" + cavesId + "' in " + file);
+                EarthGenerator earth = new EarthGenerator(seed, biomes, settings, tiles(elevationId), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
                         coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : streamsId.isEmpty() ? rivers() : riversAndStreams(),
                         coverId.isEmpty() || groundId.isEmpty() ? null : bareEarth());
+                if (cavesId.isEmpty()) earth.legacyCaves();
+                // Worlds made before build 70 keep the boxes of latitude and longitude that placed their giant trees, red
+                // deserts, lava fields, cacti, bamboo and cherries, so new ground matches what they have saved.
+                String canopyId = properties.getProperty("earth.canopy", "");
+                if (!canopyId.isEmpty() && !CanopySource.DATASET_ID.equals(canopyId))
+                    throw new IllegalStateException("Unsupported canopy heights '" + canopyId + "' in " + file);
+                String mapsId = properties.getProperty("earth.maps", "");
+                if (!mapsId.isEmpty() && !EarthMaps.ID.equals(mapsId))
+                    throw new IllegalStateException("Unsupported rock and soil maps '" + mapsId + "' in " + file);
+                String plantsId = properties.getProperty("earth.plants", "");
+                if (!plantsId.isEmpty() && !PLANT_REALMS.equals(plantsId))
+                    throw new IllegalStateException("Unsupported plant ranges '" + plantsId + "' in " + file);
+                earth.data(coverId.isEmpty() || canopyId.isEmpty() ? null : canopy(), !mapsId.isEmpty(), !plantsId.isEmpty());
+                yield earth;
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
         };
@@ -157,6 +181,10 @@ public final class CubicSettings {
         properties.setProperty("earth.rivers", SurfaceWaterSource.DATASET_ID);
         properties.setProperty("earth.streams", Drainage.ID);
         properties.setProperty("earth.ground", BareEarth.ID);
+        properties.setProperty("earth.caves", SurfaceGenerator.VANILLA_CAVES);
+        if (!"false".equals(System.getProperty("earthplatform.earth.canopy"))) properties.setProperty("earth.canopy", CanopySource.DATASET_ID);
+        if (!"false".equals(System.getProperty("earthplatform.earth.maps"))) properties.setProperty("earth.maps", EarthMaps.ID);
+        if (!"false".equals(System.getProperty("earthplatform.earth.realms"))) properties.setProperty("earth.plants", PLANT_REALMS);
         if (imageryEnabled()) properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
         if (!name.isEmpty()) properties.setProperty("earth.homeName", name);
     }
@@ -243,7 +271,7 @@ public final class CubicSettings {
             // sixteenth of the heap, from 256 to 1,024 of them. Fetching them is mostly a wait on the round
             // trip, so many go at once.
             known = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                    tilesKept(), 16, Duration.ofSeconds(20), layers);
+                    tilesKept(), transfers(16, 48), Duration.ofSeconds(20), layers);
         } catch (IOException failure) {
             throw new UncheckedIOException("Could not open the elevation tile cache at " + cache, failure);
         }
@@ -262,7 +290,7 @@ public final class CubicSettings {
             Path cache = cacheFolder().resolve(CopernicusSource.DATASET_ID);
             try {
                 copernicus = new CopernicusSource(CopernicusSource.AWS_COPERNICUS, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        12, 8, Duration.ofSeconds(30));
+                        12, transfers(8, 16), Duration.ofSeconds(30));
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the Copernicus elevation cache at " + cache, failure);
             }
@@ -277,13 +305,24 @@ public final class CubicSettings {
             Path cache = cacheFolder().resolve(UsgsElevation.DATASET_ID);
             try {
                 usgs[at] = new UsgsElevation(UsgsElevation.AWS_3DEP, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        blocksKept(), 6, Duration.ofSeconds(30), reading);
+                        blocksKept(), transfers(6, 24), Duration.ofSeconds(30), reading);
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the 3DEP elevation cache at " + cache, failure);
             }
         }
         return usgs[at];
     }
+
+    /**
+     * Transfers at once from Amazon S3's open data buckets (elevation tiles, 3DEP, Copernicus, land cover, HRDEM,
+     * REMA), which serve thousands of requests a second. A piece is mostly a wait on the round trip, some 0.1 to
+     * 0.25 s on a home line, so the few at a time of before set how long a travel took: on a first visit to Mount
+     * Rainier the 100 pieces of 3DEP, six at a time, were close to four of the travel's four and a half seconds
+     * on their own. A host that asks for less is still obeyed (see HostBackoff).
+     * {@code -Dearthplatform.earth.transfers=few} keeps the few of before, for comparing. The climate and surface
+     * water hosts, which are not Amazon's, keep theirs.
+     */
+    static int transfers(int few, int many) { return "few".equals(System.getProperty("earthplatform.earth.transfers")) ? few : many; }
 
     /**
      * Decoded 3DEP and REMA blocks kept in memory. A zoom-15 tile needs one to four, but far terrain,
@@ -300,7 +339,7 @@ public final class CubicSettings {
             Path cache = cacheFolder().resolve(RemaSource.DATASET_ID);
             try {
                 rema = new RemaElevation(new RemaSource(RemaSource.AWS_REMA, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        blocksKept(), 6, Duration.ofSeconds(30)));
+                        blocksKept(), transfers(6, 24), Duration.ofSeconds(30)));
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the REMA elevation cache at " + cache, failure);
             }
@@ -314,7 +353,7 @@ public final class CubicSettings {
             Path cache = cacheFolder().resolve(HrdemElevation.DATASET_ID);
             try {
                 hrdem = new HrdemElevation(HrdemElevation.AWS_HRDEM, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        blocksKept(), 6, Duration.ofSeconds(30));
+                        blocksKept(), transfers(6, 24), Duration.ofSeconds(30));
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the HRDEM elevation cache at " + cache, failure);
             }
@@ -362,13 +401,28 @@ public final class CubicSettings {
         return bareEarth;
     }
 
+    /** Canopy heights shared by every Earth world in this game, cached on disk beside the elevation tiles. */
+    public static synchronized CanopySource canopy() {
+        if (canopy == null) {
+            Path cache = cacheFolder().resolve(CanopySource.DATASET_ID);
+            try {
+                // Each block is 256 KiB and covers 10 km of trees at the detail they are read at.
+                canopy = new CanopySource(CanopySource.AWS_CANOPY, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
+                        24, 4, Duration.ofSeconds(30));
+            } catch (IOException failure) {
+                throw new UncheckedIOException("Could not open the canopy height cache at " + cache, failure);
+            }
+        }
+        return canopy;
+    }
+
     /** Land cover shared by every Earth world in this game, cached on disk beside the elevation tiles. */
     public static synchronized WorldCoverSource cover() {
         if (cover == null) {
             Path cache = cacheFolder().resolve(WorldCoverSource.DATASET_ID);
             try {
                 cover = new WorldCoverSource(WorldCoverSource.AWS_WORLDCOVER, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                        48, 8, Duration.ofSeconds(30));
+                        48, transfers(8, 24), Duration.ofSeconds(30));
             } catch (IOException failure) {
                 throw new UncheckedIOException("Could not open the land cover cache at " + cache, failure);
             }

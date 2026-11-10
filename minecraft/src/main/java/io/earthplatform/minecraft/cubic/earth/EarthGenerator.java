@@ -3,6 +3,7 @@ package io.earthplatform.minecraft.cubic.earth;
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.BareEarth;
+import io.earthplatform.geography.globe.CanopySource;
 import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
 import io.earthplatform.geography.globe.GlobalElevation;
@@ -121,6 +122,12 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Nullable private final ImageryGround imageryGround;
     /** Narrow rivers the land cover misses, or null in worlds made before them. */
     @Nullable private final RiverMap rivers;
+    /** How tall the trees stand, or null in worlds made before trees followed the canopy height map. */
+    @Nullable private CanopySource canopy;
+    /** Rock, red ground and soil maps, or null in worlds made before the ground followed them. */
+    @Nullable private EarthMaps maps;
+    /** Whether cacti, bamboo and cherries grow by ecoregion realm and climate; worlds made before keep {@link OldRegions}. */
+    private boolean realms;
     private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth, warpX, warpZ, patches;
     private final Holder<Biome> ocean, deepOcean, coldOcean, deepColdOcean, frozenOcean, lukewarmOcean, deepLukewarmOcean, warmOcean,
             beach, snowyBeach, stonyShore, snowySlopes, frozenPeaks, stonyPeaks, meadow, taiga, oldTaiga, forest,
@@ -260,6 +267,20 @@ public final class EarthGenerator extends SurfaceGenerator {
         return new int[]{Mth.floor(grid.blockX(point)), Mth.floor(grid.blockZ(point))};
     }
 
+    /**
+     * What worlds made since build 70 read from data in place of {@link OldRegions}' boxes of latitude and
+     * longitude; call before any cube is made.
+     *
+     * @param canopy tree heights and giant groves from the canopy height map, or null to keep the old groves
+     * @param maps   whether rock, lava, red ground and soil follow {@link EarthMaps}
+     * @param realms whether cacti, bamboo and cherries follow ecoregion realms and climate
+     */
+    public void data(@Nullable CanopySource canopy, boolean maps, boolean realms) {
+        this.canopy = cover == null ? null : canopy;
+        this.maps = cover != null && maps ? EarthMaps.get() : null;
+        this.realms = cover != null && realms && Ecoregions.get() != null;
+    }
+
     @Override public String place(int x, int z) {
         GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
         return String.format(Locale.ROOT, "%.5f, %.5f", point.latitude(), point.longitude());
@@ -277,6 +298,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                 + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION)
                 + (imagery == null ? "" : ". Imagery: " + ImagerySource.ATTRIBUTION)
                 + (cover == null ? "" : ". " + Ecoregions.ATTRIBUTION)
+                + (canopy == null ? "" : ". " + CanopySource.ATTRIBUTION)
+                + (maps == null ? "" : ". " + EarthMaps.ATTRIBUTION)
                 + (rivers == null ? "" : ". Rivers: " + io.earthplatform.geography.globe.SurfaceWaterSource.ATTRIBUTION);
     }
 
@@ -311,6 +334,152 @@ public final class EarthGenerator extends SurfaceGenerator {
         GlobalElevation dem = elevation(zoom(Math.max(1, level)), 1 << level);
         double metres = dem.sample(x + 0.5, z + 0.5, sample);
         place(dem, x, z, metres, sample, 1 << level, out);
+    }
+
+    // Quick stand-ins ----------------------------------------------------------------------------
+
+    /**
+     * Whether the two coarsest far levels get quick stand-ins (see {@link #farPreview}): on unless
+     * {@code -Dearthplatform.far.previews=false}, in worlds with land cover and climate.
+     */
+    private static final boolean PREVIEWS = !"false".equals(System.getProperty("earthplatform.far.previews"));
+    /** The level of the quick stand-in a thread is making, or 0 while it makes none. */
+    private final ThreadLocal<int[]> previewing = ThreadLocal.withInitial(() -> new int[1]);
+
+    /** Whether this thread is making a quick stand-in, whose rules read only the little its level's own data holds. */
+    private boolean quick() { return previewing.get()[0] != 0; }
+
+    /**
+     * The tiles a rule reads at a zoom; for a quick stand-in, its own level's coarser tiles, which
+     * are there already.
+     */
+    private GlobalElevation survey(int zoom) {
+        int level = previewing.get()[0];
+        return plain[level == 0 ? zoom : Math.min(zoom, zoom(level))];
+    }
+
+    @Override public boolean farPreviews(int level) { return PREVIEWS && cover != null && climate != null && level >= Far.PREVIEW_LEVEL && level <= Far.MAX_LEVEL; }
+
+    @Override protected void previewing(int level) { previewing.get()[0] = level; }
+
+    /** Metres above the sea up to which mapped water counts as the sea in a quick stand-in. */
+    private static final double PREVIEW_SEA = 1.5;
+    /** Blocks past the far levels' squares that the stand-ins' land cover is fetched, for the rules that look round a column. */
+    private static final double PREVIEW_AROUND = 3 * 4096;
+    /** Blocks past a level's square that its stand-ins' rules survey the elevation, for floodplains and slopes. */
+    private static final double PREVIEW_SURVEY = 3072;
+    /** Pieces of the stand-ins' data fetched at once, in the order wanted. */
+    private static final int PREVIEW_FETCHES = 12;
+    /** Blocks of water a quick stand-in gives a lake, and the sea where the tiles carry no depth. */
+    private static final int PREVIEW_DEPTH = 4;
+
+    /**
+     * Ground and water for a quick stand-in, from the level's own elevation tiles and land cover
+     * alone: the open sea and mapped water near its level are the sea, other mapped water lies at
+     * the height the tiles give it, and the rest is land at the tiles' height. None of the survey
+     * of lakes' levels, the search for water that joins the sea, rock terraces or towers, which
+     * read finer tiles and every climate row across the view: over a place never seen those were
+     * most of the half minute the horizon took.
+     */
+    @Override protected void previewGround(int level, int x, int z, int[] out) {
+        int voxel = 1 << level;
+        double[] sample = new double[3];
+        double metres = plain[zoom(level)].sample(x + 0.5, z + 0.5, sample);
+        int code = cover(x, z, voxel);
+        boolean water = code == WorldCoverSource.WATER;
+        if (sample[2] > 0.5 || (code == WorldCoverSource.NO_DATA || water) && metres < PREVIEW_SEA) {
+            out[0] = Math.min(SEA - PREVIEW_DEPTH, Mth.floor(SEA + 0.5 + Math.min(metres, 0)));
+            out[1] = SEA;
+            return;
+        }
+        int y = Mth.floor(SEA + 0.5 + metres);
+        if (water) {
+            out[0] = y - PREVIEW_DEPTH;
+            out[1] = y;
+            return;
+        }
+        out[0] = y;
+        out[1] = DRY;
+    }
+
+    /** The surface for a quick stand-in: every rule of {@link #surface}, read with the coarse climate (see {@link #local}) and no rock layers. */
+    @Override protected Surface previewSurface(int level, int x, int z, int ground, int water, int slope) {
+        return surface(x, z, ground, water, slope, 1 << level);
+    }
+
+    /**
+     * Fetches what the quick stand-ins of the far levels round a point read: each level's elevation
+     * tiles and land cover over its square, and every {@value ClimateSource#COARSE_ROWS}th climate
+     * row. A few megabytes in a few dozen requests, all at once.
+     */
+    @Override public void preparePreview(int x, int z, int finest) {
+        if (!farPreviews(Far.MAX_LEVEL)) return;
+        record Tile(int zoom, int x, int y) {}
+        List<Runnable> loads = new ArrayList<>();
+        java.util.Set<Tile> asked = new java.util.HashSet<>();
+        java.util.concurrent.atomic.AtomicInteger failed = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<String> first = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.function.BiConsumer<String, RuntimeException> missed = (piece, failure) -> {
+            failed.incrementAndGet();
+            first.compareAndSet(null, piece + ": " + failure.getMessage());
+        };
+        double outer = (Far.outer() + 2) * (double) Far.width(Far.MAX_LEVEL);
+        // The backdrop's few pieces first, then from the finest level out, a few at a time: all asked at once,
+        // the near ground's tiles waited their turn behind the whole view's, and the ground round the player came last.
+        int[] levels = java.util.stream.IntStream.rangeClosed(Math.max(finest, Far.PREVIEW_LEVEL), Far.MAX_LEVEL).boxed()
+                .sorted(java.util.Comparator.comparingInt(l -> l >= Far.MAX_LEVEL - 1 ? l - 100 : l)).mapToInt(Integer::intValue).toArray();
+        for (int level : levels) {
+            // A level's square is the middle of the next coarser one's, and the coarsest reaches all the way.
+            double reach = level == Far.MAX_LEVEL ? outer : Math.min(outer, (Far.hole(level + 1) + 2) * (double) Far.width(level + 1));
+            // The level's own tiles, and for the fine levels the coarser ones their rules survey the land round a column on.
+            for (int zoom : new int[] {zoom(level), Math.min(WATER_ZOOM, zoom(level)), Math.min(FAR_ZOOM, zoom(level))}) {
+                int tilesAcross = 1 << zoom;
+                double far = zoom == zoom(level) ? reach : reach + PREVIEW_SURVEY;
+                int x0 = (int) Math.floor(grid.pixelX(x - far, zoom) / 256), x1 = (int) Math.floor(grid.pixelX(x + far, zoom) / 256);
+                int y0 = (int) Math.floor(grid.pixelY(z - far, zoom) / 256), y1 = (int) Math.floor(grid.pixelY(z + far, zoom) / 256);
+                for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) for (int tx = x0; tx <= x1; tx++) {
+                    Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
+                    if (!asked.add(tile)) continue;
+                    loads.add(() -> {
+                        try { tiles.tile(tile.zoom, tile.x, tile.y); }
+                        catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
+                    });
+                }
+            }
+            // The rules that look round a column for snow, towns and wild land reach some eight kilometres past it.
+            double around = reach + PREVIEW_AROUND;
+            GeoPoint a = grid.geographic(x - around, z + around), b = grid.geographic(x + around, z - around);
+            int overview = coverOverview(z, 1 << level);
+            loads.add(() -> {
+                try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), overview); }
+                catch (RuntimeException failure) { missed.accept("land cover", failure); }
+            });
+        }
+        // Volcanic cones are looked for on the coarsest tiles, up to some fifteen kilometres past a column.
+        {
+            int zoom = COARSEST_ZOOM, tilesAcross = 1 << zoom;
+            double far = outer + 16384;
+            int x0 = (int) Math.floor(grid.pixelX(x - far, zoom) / 256), x1 = (int) Math.floor(grid.pixelX(x + far, zoom) / 256);
+            int y0 = (int) Math.floor(grid.pixelY(z - far, zoom) / 256), y1 = (int) Math.floor(grid.pixelY(z + far, zoom) / 256);
+            for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) for (int tx = x0; tx <= x1; tx++) {
+                Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
+                if (!asked.add(tile)) continue;
+                loads.add(() -> {
+                    try { tiles.tile(tile.zoom, tile.x, tile.y); }
+                    catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
+                });
+            }
+        }
+        GeoPoint a = grid.geographic(x - outer, z + outer), b = grid.geographic(x + outer, z - outer);
+        loads.add(0, () -> {
+            try { climate.prefetchCoarse(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
+            catch (RuntimeException failure) { missed.accept("climate", failure); }
+        });
+        try (ExecutorService pool = Executors.newFixedThreadPool(PREVIEW_FETCHES, Thread.ofVirtual().factory())) {
+            for (Runnable load : loads) pool.execute(load);
+        }
+        if (failed.get() > 0)
+            EarthPlatformMod.LOGGER.warn("Could not prefetch {} of {} pieces of Earth data for the far stand-ins; they ask for them again (first: {})", failed.get(), loads.size(), first.get());
     }
 
     /** Ground and water of a column from its elevation, slope, sea share and land cover. */
@@ -1200,8 +1369,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         int code = cover.code(point.latitude(), point.longitude(), overview);
         if (code == WorldCoverSource.WATER) {
             if (iceWater(x, z, overview, metresPerBlock)) return WorldCoverSource.SNOW_AND_ICE;
-            return voxel <= STRAY_VOXEL ? strayWater(x, z, point) : code;
+            // Stray water is told by a survey of the ground round it on fine tiles: a quick stand-in leaves it water.
+            return voxel <= STRAY_VOXEL && !quick() ? strayWater(x, z, point) : code;
         }
+        // The river map traces each river down fine tiles and the surface water: a quick stand-in shows only the rivers the land cover kept.
+        if (quick()) return code;
         // Narrow rivers the land cover lost, read at the same wandering point so their banks curve too. Not in marsh:
         // herbaceous wetland, as the Everglades' sawgrass, the Pantanal's or the Sudd's, stands in water for part of
         // the year, and the river map traced its sheet flood as a mesh of channels that joined the sea and drowned it.
@@ -1431,7 +1603,8 @@ public final class EarthGenerator extends SurfaceGenerator {
      * the front's water turned to ice, leaving Perito Moreno's cliff standing back from a beach.
      */
     private boolean iceWater(double x, double z, int overview, double metresPerBlock) {
-        if (!icyCell(Math.floorDiv(Mth.floor(x), WATER_CELL), Math.floorDiv(Mth.floor(z), WATER_CELL))) return false;
+        // The cells are a first look at a finer overview, to spare the rings; a quick stand-in reads only its own, so goes by the rings alone.
+        if (!quick() && !icyCell(Math.floorDiv(Mth.floor(x), WATER_CELL), Math.floorDiv(Mth.floor(z), WATER_CELL))) return false;
         int snow = 0, other = 0, water = 0;
         for (double ring : ICE_RINGS) {
             double r = Math.max(ring, PIXEL_METRES * (1 << overview)) / metresPerBlock;
@@ -2641,12 +2814,18 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** A column's climate at height y: its zone, mean and warmest-quarter temperatures (°C) and rainfall (mm a year). */
-    private record Local(ClimateZone zone, double temperature, double warmest, double rain) {}
+    private record Local(ClimateZone zone, double temperature, double warmest, double rain, int koppen) {}
 
     /** The real climate at a column and height, or one from latitude and height where there is none. */
     private Local local(int x, int z, int y) {
         int metres = Math.max(0, y - SEA);
-        if (climate != null) {
+        if (climate != null && quick()) {
+            // A quick stand-in reads every thirty-second row alone, at the column's own longitude and height.
+            GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
+            ClimateSource.Climate c = Math.abs(point.latitude()) <= 90 ? climate.coarse(point.latitude(), point.longitude(), metres) : null;
+            if (c != null) return new Local(ClimateZone.of(c.koppen(), c.meanTemperature(), c.warmestQuarter()),
+                    c.meanTemperature(), c.warmestQuarter(), c.precipitation(), c.koppen());
+        } else if (climate != null) {
             // Zone borders follow the 1 km grid; a gentle warp of a few hundred metres bends them, and finer layers down
             // to a few blocks fray them, so forest gives way to taiga in tongues and patches rather than along a curve.
             double perBlock = 1 / grid.groundMetresPerBlock(z);
@@ -2657,10 +2836,10 @@ public final class EarthGenerator extends SurfaceGenerator {
                             + warpZ.getValue(x / 37.0 - 5.2, z / 37.0 + 1.7) * 16) * perBlock + grain(x, z, 0x434C5AL) * 3);
             ClimateSource.Climate c = climate.at(point.latitude(), point.longitude(), metres);
             if (c != null) return new Local(ClimateZone.of(c.koppen(), c.meanTemperature(), c.warmestQuarter()),
-                    c.meanTemperature(), c.warmestQuarter(), c.precipitation());
+                    c.meanTemperature(), c.warmestQuarter(), c.precipitation(), c.koppen());
         }
         double t = temperature(x, z, y);
-        return new Local(ClimateZone.of(ClimateSource.NO_DATA, t, t + 10), t, t + 10, 800);
+        return new Local(ClimateZone.of(ClimateSource.NO_DATA, t, t + 10), t, t + 10, 800, ClimateSource.NO_DATA);
     }
 
     private double wetness(int x, int z) { return fbm(wetBroad, x / 9000.0, z / 9000.0, 2) * 0.7 + wetLocal.getValue(x / 1400.0, z / 1400.0) * 0.3; }
@@ -2775,7 +2954,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             // roads were taken out: there it shows buildings and asphalt, not the wild land put in their place.
             Surface ground = imageryGround == null || built ? covered
                     : imageryGround.apply(covered, code, x, z, local.zone(), steep, voxel, (mix(x, 0x494D47L, z) >>> 11) * 0x1.0p-53);
-            Strata.Layers rock = strata.layers(x, z, SEA + 0.5);
+            Strata.Layers rock = quick() ? null : strata.layers(x, z, SEA + 0.5);
             return rock == null ? ground : rock.dress(ground, y, steep, voxel);
         }
         if (t < -8) {
@@ -2882,10 +3061,13 @@ public final class EarthGenerator extends SurfaceGenerator {
         Boolean known = glacierFed.get(key);
         if (known != null) return known;
         int cx = gx * size + size / 2, cz = gz * size + size / 2;
+        // A quick stand-in reads the land cover at its own level's overview, and its answer is not kept.
+        int quick = previewing.get()[0], voxel = quick == 0 ? 64 : 1 << quick;
         boolean fed = false;
         for (int radius = 2000; radius <= 8000 && !fed; radius *= 2)
             for (int k = 0; k < 8 && !fed; k++)
-                fed = cover(cx + RING_X[k] * radius, cz + RING_Z[k] * radius, 64) == WorldCoverSource.SNOW_AND_ICE;
+                fed = cover(cx + RING_X[k] * radius, cz + RING_Z[k] * radius, voxel) == WorldCoverSource.SNOW_AND_ICE;
+        if (quick != 0) return fed;
         if (glacierFed.size() > 1 << 16) glacierFed.clear();
         glacierFed.putIfAbsent(key, fed);
         return fed;
@@ -2893,6 +3075,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Whether water lies close to the open sea, as a lagoon inside a reef or a barrier island does. */
     private boolean lagoon(int x, int z, int water, int voxel) {
+        // Judged from the full ground round it: a quick stand-in leaves a lagoon the colour of other water.
+        if (quick()) return false;
         // The sea test first: it is judged per cell and cached, and away from coasts, as along every river of the
         // Amazon, it alone answers; reading the ring for every warm river voxel of a far column thrashed the tiles.
         if (!seaAround(x, z, Integer.numberOfTrailingZeros(voxel))) return false;
@@ -2978,7 +3162,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Heather moorland where summers are cool and the rain never stops, as in Scotland, Ireland and Norway's coast.
         boolean moor = (zone == ClimateZone.OCEANIC || zone == ClimateZone.SUBPOLAR_OCEANIC) && local.warmest() < 14 && local.rain() > 800;
         // Young lava: black basalt flows and cinders, as on Hawaii and Iceland, where WorldCover maps bare ground.
-        if (code == WorldCoverSource.MOSS_AND_LICHEN && volcanic(x, z) && !(patch > 0.3)) {
+        if (code == WorldCoverSource.MOSS_AND_LICHEN && mossyLava(x, z, local) && !(patch > 0.3)) {
             // Moss on old lava: grey-green moss only in its hollows, black cinders and brown tuff between.
             BlockState cinder = !weathered(x, z, t) && roll < 50 ? BLACKSTONE : roll < 75 ? COARSE_DIRT : BASALT;
             return new Surface(stonyPeaks, patch > 0 ? MOSS : patch < -0.4 ? TUFF : cinder, BASALT, 0, 0, 0, 0, 0, false);
@@ -3073,7 +3257,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                     case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 15 * trees, 0, 0, 320, 340, true, Tree.JUNGLE);
                     case TROPICAL_DRY, HOT_STEPPE -> new Surface(patch > 0.5 ? windsweptSavanna : savanna, top, DIRT, 7 * trees, 0, 0, 320, 330, false, Tree.ACACIA);
                     // Desert scrub: bare sand and gravel with dead bushes, and cacti where they grow wild, in the Americas.
-                    case HOT_DESERT -> new Surface(desert, rocky != null ? rocky : patch > 0.2 ? COARSE_DIRT : SAND, SANDSTONE, 0, 0, 0, 25, americas(x, z) ? 31 : 25, false);
+                    case HOT_DESERT -> new Surface(desert, rocky != null ? rocky : patch > 0.2 ? COARSE_DIRT : SAND, SANDSTONE, 0, 0, 0, 25, cacti(x, z) ? 31 : 25, false);
                     // Sagebrush and saltbush: mostly bare tan ground with low grey shrubs, grass only in patches.
                     case COLD_DESERT, COLD_STEPPE -> t < -3 ? new Surface(snowyPlains, top, DIRT, 0, 0, 0, 200, 210, false)
                             : sagebrush(rocky != null ? rocky : patch > 0.3 || roll < 55 ? scrubGround(x, z) : GRASS, trees);
@@ -3249,7 +3433,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Rise per run of the elevation survey across eight blocks either way. */
     private double surveySlope(int x, int z) {
         // The tiles as they are: snow and ice hold no towns or forest, and far levels read this too.
-        GlobalElevation dem = plain[WATER_ZOOM];
+        GlobalElevation dem = survey(WATER_ZOOM);
         double dx = dem.metres(x + 8.5, z + 0.5) - dem.metres(x - 7.5, z + 0.5), dz = dem.metres(x + 0.5, z + 8.5) - dem.metres(x + 0.5, z - 7.5);
         return Math.sqrt(dx * dx + dz * dz) / (16 * grid.groundMetresPerBlock(z));
     }
@@ -3345,6 +3529,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private boolean peatland(int code, int x, int z, Local local) {
         if (local.zone() != ClimateZone.SUBARCTIC || code != WorldCoverSource.WETLAND && code != WorldCoverSource.MOSS_AND_LICHEN
                 && code != WorldCoverSource.SHRUBLAND && code != WorldCoverSource.GRASSLAND) return false;
+        // How level the ground lies is read from fine tiles: a quick stand-in leaves mires as the open ground round them.
+        if (quick()) return false;
         // Cells blended into their neighbours along a wandering line, so a mire's edge is never a grid of squares.
         double fx = x / (double) PEAT_CELL - 0.5 + warpX.getValue(x / 151.0, z / 151.0) * 0.45;
         double fz = z / (double) PEAT_CELL - 0.5 + warpZ.getValue(x / 151.0, z / 151.0) * 0.45;
@@ -3431,6 +3617,8 @@ public final class EarthGenerator extends SurfaceGenerator {
      * somewhere, and dunes are never flat.
      */
     private boolean saltPan(int x, int z) {
+        // Found on fine tiles: a quick stand-in leaves a pan the desert round it.
+        if (quick()) return false;
         // Cells blended into their neighbours along a wandering line, so a pan's shore is never a grid of squares.
         double fx = x / (double) SALT_CELL - 0.5 + warpX.getValue(x / 47.0, z / 47.0) * 0.45;
         double fz = z / (double) SALT_CELL - 0.5 + warpZ.getValue(x / 47.0, z / 47.0) * 0.45;
@@ -3468,21 +3656,35 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /**
-     * The world's great young lava fields, which are broad and low and so not told by their shape: Hawaii, Iceland,
-     * the Canaries, the Galápagos, Etna and Réunion. Volcanic cones anywhere are found by their shape instead.
+     * Whether a column's rock is lava or ash. Lava fields are broad and low and so not told by their shape: the rock
+     * map names them, wherever it shows basalt, andesite or their ash (Hawaii, Iceland, the Canaries, the Galápagos,
+     * Arabia's harrats, the Snake River Plain). Volcanic cones anywhere are found by their shape besides.
      */
-    private static final double[][] LAVA = {
-            {18.8, 22.3, -160.5, -154.7}, {63.2, 66.6, -24.6, -13.4}, {27.6, 29.5, -18.2, -13.3},
-            {-1.5, 0.7, -92.0, -89.0}, {37.6, 37.9, 14.8, 15.2}, {-21.4, -20.8, 55.2, 55.9}};
-
     private boolean volcanic(int x, int z) {
-        GeoPoint p = grid.geographic(x, z);
-        for (double[] box : LAVA) if (p.latitude() > box[0] && p.latitude() < box[1] && p.longitude() > box[2] && p.longitude() < box[3]) return true;
+        if (maps == null ? OldRegions.lava(grid.geographic(x, z)) : EarthMaps.volcanic(rock(x, z))) return true;
         return cone(x, z);
+    }
+
+    /**
+     * Whether moss and lichen at a column grow on a lava field, as Iceland's do, rather than on tundra. The rock map
+     * shows lava of any age, and on the old basalt of cold, dry plateaus, such as Siberia's, tundra has long since
+     * covered it: only where 900 mm of rain a year keeps moss thick on young rock, or on a cone.
+     */
+    private boolean mossyLava(int x, int z, Local local) {
+        if (maps == null) return volcanic(x, z);
+        return cone(x, z) || local.rain() > 900 && EarthMaps.volcanic(rock(x, z));
+    }
+
+    /** The rock map's class under a column, its borders wandering as the ecoregions' do. */
+    private int rock(int x, int z) {
+        GeoPoint p = frayed(x, z);
+        return maps.rock(p.latitude(), p.longitude());
     }
 
     /** Summits of volcanic cones, by 1024-block cell: x, z and the mean height of the ring round them, or none. */
     private final RecentCache<double[]> cones = new RecentCache<>(1 << 16);
+    /** The same as a quick stand-in finds them, on the coarsest tiles, which it has for the whole view: kept apart, as the two may differ at a cone's edge. */
+    private final RecentCache<double[]> quickCones = new RecentCache<>(1 << 16);
     private static final double[] NO_CONE = {};
 
     /**
@@ -3495,32 +3697,34 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Each cell finds its own summit, so a cone is looked for from the cells round about too: its edge then follows its
         // own ring and height, not the cells' square borders. The ring wanders a little, so it is no perfect circle either.
         double wx = x + warpX.getValue(x / 700.0, z / 700.0) * 600, wz = z + warpZ.getValue(x / 700.0, z / 700.0) * 600;
+        boolean quick = quick();
+        GlobalElevation dem = plain[quick ? COARSEST_ZOOM : FAR_ZOOM];
         for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
-            double[] c = coneOf((x >> 10) + i, (z >> 10) + j);
+            double[] c = coneOf((x >> 10) + i, (z >> 10) + j, dem, quick ? quickCones : cones);
             if (c.length == 0) continue;
             double dx = wx - c[0], dz = wz - c[1];
-            if (dx * dx + dz * dz < 5000.0 * 5000.0 && plain[FAR_ZOOM].metres(x, z) > c[2]) return true;
+            if (dx * dx + dz * dz < 5000.0 * 5000.0 && dem.metres(x, z) > c[2]) return true;
         }
         return false;
     }
 
     /** The volcanic cone a 1024-block cell's search finds: its summit's x and z and the mean height of the ring round it, or none. */
-    private double[] coneOf(int gx, int gz) {
+    private double[] coneOf(int gx, int gz, GlobalElevation dem, RecentCache<double[]> cones) {
         long key = it.unimi.dsi.fastutil.HashCommon.mix((long) gx << 32 | gz & 0xFFFFFFFFL);
         double[] c = cones.get(key);
         if (c == null) {
             double cx = gx * 1024.0 + 512, cz = gz * 1024.0 + 512, px = cx, pz = cz, top = -1e9;
             for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
-                double m = plain[FAR_ZOOM].metres(cx + i * 2000, cz + j * 2000);
+                double m = dem.metres(cx + i * 2000, cz + j * 2000);
                 if (m > top) { top = m; px = cx + i * 2000; pz = cz + j * 2000; }
             }
             double sum = 0, sq = 0, high = -1e9;
             int down = 0;
             for (int k = 0; k < 8; k++) {
-                double m = plain[FAR_ZOOM].metres(px + RING_X[k] * 5000, pz + RING_Z[k] * 5000);
+                double m = dem.metres(px + RING_X[k] * 5000, pz + RING_Z[k] * 5000);
                 sum += m; sq += m * m; high = Math.max(high, m);
                 // A cone's flanks go on falling to its foot; a range's peaks stand on ridges that rise again.
-                if (plain[FAR_ZOOM].metres(px + RING_X[k] * 10000, pz + RING_Z[k] * 10000) < m) down++;
+                if (dem.metres(px + RING_X[k] * 10000, pz + RING_Z[k] * 10000) < m) down++;
             }
             double mean = sum / 8, spread = Math.sqrt(Math.max(0, sq / 8 - mean * mean)), drop = top - mean;
             c = drop > 1000 && spread < 0.3 * drop && high < top - 600 && down == 8 ? new double[] {px, pz, mean} : NO_CONE;
@@ -3533,15 +3737,22 @@ public final class EarthGenerator extends SurfaceGenerator {
     private int ecoregion(int x, int z) {
         Ecoregions map = cover == null ? null : Ecoregions.get();
         if (map == null) return 0;
-        // The map's cells are 5 km squares: read through a warp of a few hundred metres, with finer layers down to a
-        // few blocks, its borders wander and fray like a real change of country rather than running dead straight.
+        GeoPoint p = frayed(x, z);
+        return map.ecoregion(p.latitude(), p.longitude());
+    }
+
+    /**
+     * Where a column reads the maps whose cells are 5 km squares: through a warp of a few hundred metres, with finer
+     * layers down to a few blocks, so their borders wander and fray like a real change of country rather than
+     * running dead straight.
+     */
+    private GeoPoint frayed(int x, int z) {
         double perBlock = 1 / grid.groundMetresPerBlock(z);
         double dx = (warpX.getValue(x / 1700.0 + 31.7, z / 1700.0 - 4.1) * 600 + warpX.getValue(x / 310.0 - 8.3, z / 310.0 + 17.2) * 140
                 + warpX.getValue(x / 47.0 + 2.9, z / 47.0 - 6.6) * 24) * perBlock + grain(x, z, 0x45434FL) * 3;
         double dz = (warpZ.getValue(x / 1700.0 + 31.7, z / 1700.0 - 4.1) * 600 + warpZ.getValue(x / 310.0 - 8.3, z / 310.0 + 17.2) * 140
                 + warpZ.getValue(x / 47.0 + 2.9, z / 47.0 - 6.6) * 24) * perBlock + grain(x, z, 0x45435AL) * 3;
-        GeoPoint p = grid.geographic(x + dx, z + dz);
-        return map.ecoregion(p.latitude(), p.longitude());
+        return grid.geographic(x + dx, z + dz);
     }
 
     /** Whether a column's ecoregion is tropical forest, or unknown. */
@@ -3576,9 +3787,10 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Whether ground lies on a broad, level floodplain: the land a few kilometres round is within a few metres of it. */
     private boolean floodplain(int x, int z) {
         // The tiles as they are: a few kilometres round, a town's roofs are noise, and far levels read this too.
-        double here = plain[FAR_ZOOM].metres(x, z);
+        GlobalElevation dem = survey(FAR_ZOOM);
+        double here = dem.metres(x, z);
         for (int k = 0; k < 8; k += 2)
-            if (Math.abs(plain[FAR_ZOOM].metres(x + RING_X[k] * 3000, z + RING_Z[k] * 3000) - here) > 8) return false;
+            if (Math.abs(dem.metres(x + RING_X[k] * 3000, z + RING_Z[k] * 3000) - here) > 8) return false;
         return true;
     }
 
@@ -3592,45 +3804,59 @@ public final class EarthGenerator extends SurfaceGenerator {
      * near glaciers and snowfields, where the rock is fresh and unweathered rather than dark with lichen and stain.
      */
     private boolean paleRock(int x, int z) {
-        return glacierFed(x, z);
+        // And where the rock map says the country is granite, as the Sierra Nevada's domes are, ice or no ice.
+        return glacierFed(x, z) || maps != null && EarthMaps.granitic(rock(x, z));
     }
 
-    /** Whether a column is in Australia's arid interior, the red centre. */
+    /** Whether a hot, dry column's ground is red sand under its scrub and red rock where it stands bare, as Australia's centre is. */
     private boolean outback(int x, int z) {
-        GeoPoint p = grid.geographic(x, z);
-        return p.latitude() > -32 && p.latitude() < -14 && p.longitude() > 114 && p.longitude() < 150;
+        return maps == null ? OldRegions.outback(grid.geographic(x, z)) : redCountry(x, z);
     }
 
-    /** Whether a column is on the Colorado Plateau, whose bare ground is red rock and red sand. */
+    /** Whether a dry column's bare ground is red rock and red sand, as the Colorado Plateau's is. */
     private boolean redRock(int x, int z) {
-        GeoPoint p = grid.geographic(x, z);
-        // The Grand Canyon and its rims keep the canyon strata's own colours.
-        if (p.latitude() > 35.8 && p.latitude() < 36.7 && p.longitude() < -111.5) return false;
-        return p.latitude() > 35 && p.latitude() < 38.5 && p.longitude() > -113 && p.longitude() < -108;
+        return maps == null ? OldRegions.redRock(grid.geographic(x, z)) : redCountry(x, z);
     }
 
-    /** About how much of a hot desert's sand is orange: most in Australia, much in the Sahara and Arabia, little in the Americas. */
-    private double redShare(int x, int z) {
+    /** How red a column's bare ground is from orbit, 0 for pale sand and grey rock to 1 for the red of Australia's centre. */
+    private double redness(int x, int z) {
         GeoPoint p = grid.geographic(x, z);
-        double lat = p.latitude(), lon = p.longitude();
-        if (lon > 110 && lon < 155 && lat < -10) return 0.7;
-        // Orange ergs: Morocco's and the western Sahara's, the Namib's and Arabia's. Algeria's and Libya's are pale.
-        if (lon > -20 && lon < 0 && lat > 10) return 0.5;
-        if (lon > 10 && lon < 20 && lat < -15) return 0.5;
-        if (lon > 35 && lon < 60 && lat < 32) return 0.5;
-        return 0.05;
+        return maps.red(p.latitude(), p.longitude());
+    }
+
+    /**
+     * Whether a column lies in red country, where the land is red from orbit: Australia's centre and the Pilbara, the
+     * Namib and the Kalahari's red sands, Monument Valley. The map's cells are 10 km across and blended, and the line
+     * is drawn through noise a few hundred metres and a few dozen blocks across, so red country ends in tongues and
+     * patches, never along a cell's edge.
+     */
+    private boolean redCountry(int x, int z) {
+        double red = redness(x, z);
+        if (red < 0.3) return false;
+        return red + 0.11 * patches.getValue(x / 600.0 - 41.3, z / 600.0 + 12.9) + 0.05 * patches.getValue(x / 70.0 + 3.1, z / 70.0 - 27.4)
+                + ((mix(x, 0x524544L, z) & 1023) / 511.5 - 1) * 0.03 > 0.55;
+    }
+
+    /**
+     * About how much of a hot desert's sand is orange: a few grains anywhere, a quarter where the land is tan with
+     * a red cast from orbit, as the Libyan Desert and the Nafud are, and most of it where the land is red.
+     */
+    private double redShare(int x, int z) {
+        if (maps == null) return OldRegions.redShare(grid.geographic(x, z));
+        double t = Mth.clamp((redness(x, z) - 0.1) / 0.6, 0, 1);
+        return Math.max(0.03, 0.85 * t * t * (3 - 2 * t));
     }
 
     /**
      * Temperate broadleaf woods: mostly the given forest, with birch stands, flowery glades and dark,
      * dense old groves, and cherry groves where cherries grow wild, in East Asia and the Himalaya.
      */
-    private Surface groves(double patch, int x, int z, Surface usual) {
+    private Surface groves(double patch, int x, int z, Local local, Surface usual) {
         if (patch > 0.35) return new Surface(birchForest, GRASS, DIRT, 82, 0, 8, 90, 130, false);
         if (patch > 0.22) return new Surface(flowerForest, GRASS, DIRT, 45, 0, 1, 100, 320, false);
         if (patch < -0.45) return new Surface(darkForest, GRASS, DIRT, 92, 0, 1, 80, 100, false, Tree.DARK_OAK);
         // Cherry groves stand together in a few large stands, with clearings, not speckled through every wood.
-        if (patch < 0 && cherries(x, z) && patches.getValue(x / 450.0 + 13.7, z / 450.0 - 71.3) > 0.6) return new Surface(cherryGrove, GRASS, DIRT, 35, 0, 0, 200, 420, false, Tree.CHERRY);
+        if (patch < 0 && patches.getValue(x / 450.0 + 13.7, z / 450.0 - 71.3) > 0.6 && cherries(x, z, local)) return new Surface(cherryGrove, GRASS, DIRT, 35, 0, 0, 200, 420, false, Tree.CHERRY);
         return usual;
     }
 
@@ -3639,17 +3865,44 @@ public final class EarthGenerator extends SurfaceGenerator {
         return new Surface(bambooJungle, patch < -0.6 ? PODZOL : GRASS, DIRT, 25, 0, 0, 160, 170, true, Tree.JUNGLE);
     }
 
-    /** Whether a column is where bamboo forests grow, in South and East Asia. */
-    private boolean bamboo(int x, int z) {
+    /** Organic carbon in a column's topsoil, 0 for none to 1 for peat and deep forest litter. */
+    private double soilCarbon(int x, int z) {
         GeoPoint p = grid.geographic(x, z);
-        return p.longitude() > 68 && p.longitude() < 150 && p.latitude() > -10 && p.latitude() < 40;
+        return maps.carbon(p.latitude(), p.longitude());
     }
 
-    /** Whether a column is where cherries grow wild: Japan, Korea, China and the Himalaya. */
-    private boolean cherries(int x, int z) {
-        GeoPoint p = grid.geographic(x, z);
-        double lat = p.latitude(), lon = p.longitude();
-        return lon > 100 && lon < 146 && lat > 24 && lat < 46 || lon > 74 && lon <= 100 && lat > 25 && lat < 36;
+    /** The realm a column's ecoregion lies in, or {@link Ecoregions#NO_REALM} at sea, on ice and where the map has none. */
+    private int realm(int x, int z) {
+        int eco = ecoregion(x, z);
+        return eco == 0 ? Ecoregions.NO_REALM : Ecoregions.get().realm(eco);
+    }
+
+    /**
+     * Whether a warm, wet column is where bamboo forests grow: anywhere in the Indomalayan realm (India to Borneo and
+     * south China), and in the Palearctic where summers are hot and a metre of rain falls, as in central China and
+     * the south of Japan and Korea, but nowhere in Europe.
+     */
+    private boolean bamboo(int x, int z, Local local) {
+        if (!realms) return OldRegions.bamboo(grid.geographic(x, z));
+        int realm = realm(x, z);
+        return realm == Ecoregions.INDOMALAYAN || realm == Ecoregions.PALEARCTIC && local.rain() > 1000 && local.warmest() >= 24.5;
+    }
+
+    /**
+     * Whether a temperate column is where cherries blossom wild: in the Palearctic and Indomalayan realms under the
+     * East Asian monsoon, which Köppen marks by a dry winter (Korea, north and south-west China, the Himalaya) or,
+     * where winters are wet too, by hot summers with more than 1,100 mm of rain a year (Japan, east China).
+     */
+    private boolean cherries(int x, int z, Local local) {
+        if (!realms) return OldRegions.cherries(grid.geographic(x, z));
+        boolean monsoon = switch (local.koppen()) {
+            case ClimateSource.CWA, ClimateSource.CWB, ClimateSource.CWC, ClimateSource.DWA, ClimateSource.DWB, ClimateSource.DWC -> true;
+            case ClimateSource.CFA, ClimateSource.DFA, ClimateSource.DFB -> local.rain() > 1100 && local.warmest() >= 23.5;
+            default -> false;
+        };
+        if (!monsoon) return false;
+        int realm = realm(x, z);
+        return realm == Ecoregions.PALEARCTIC || realm == Ecoregions.INDOMALAYAN;
     }
 
     /** Badlands rock in level bands a few blocks thick, one colour all along a cliff. */
@@ -3658,57 +3911,191 @@ public final class EarthGenerator extends SurfaceGenerator {
         return BANDS[k < 35 ? 0 : k < 55 ? 1 : k < 65 ? 2 : k < 75 ? 3 : k < 85 ? 4 : k < 93 ? 5 : 6];
     }
 
-    /** Whether a column is in the Americas, the only place cacti grow wild. */
-    private boolean americas(int x, int z) {
-        double longitude = grid.geographic(x, z).longitude();
-        return longitude < -30 && longitude > -170;
+    /** Whether cacti grow wild at a column: only in the Americas, the Nearctic and Neotropic realms. */
+    private boolean cacti(int x, int z) {
+        if (!realms) return OldRegions.americas(grid.geographic(x, z));
+        int realm = realm(x, z);
+        return realm == Ecoregions.NEARCTIC || realm == Ecoregions.NEOTROPIC;
+    }
+
+    // How tall the trees stand ------------------------------------------------------------------
+
+    /**
+     * The canopy height above which a conifer forest's trees are giants, in metres. The map reads the tallest
+     * forests low (a sequoia grove's 80 m as 45 to 60), and at this height it picks out the Sierra Nevada's
+     * sequoia groves, the coast redwoods and the old firs and spruces of the Olympics and the Cascades, and
+     * next to nothing else: not Yosemite Valley's pines or Lake Tahoe's, none of the Alps or the Rockies.
+     */
+    private static final int GIANT_CANOPY = 45;
+    /** The canopy map's overview trees are read at: pixels about 19 m across at the equator. */
+    private static final int CANOPY_OVERVIEW = 1;
+    /** Giant country cells, in blocks as a power of two, and how far past its edge a cell looks, in 16-block columns. */
+    private static final int GIANT_CELL_BITS = 8, GIANT_MARGIN = 9;
+    /**
+     * A grove is where at least {@link #GROVE_GIANTS} of the 16-block columns within {@link #GROVE_REACH} columns (81 of them)
+     * read giant height: the map's giants come as crowns scattered a few to the hectare, and a grove is the
+     * ground between them too, while one tall pine alone on a ridge makes none.
+     */
+    private static final int GROVE_REACH = 4;
+    private static final double GROVE_GIANTS = 5;
+    /** The stand height from which conifer country's forest is old growth, in metres. */
+    private static final int OLD_GROWTH = 33;
+    /** Canopy heights by 16-block column, a byte each with 0 for unknown, and whether each giant country cell holds giants. */
+    private final RecentCache<Byte> canopyColumns = new RecentCache<>(1 << 16);
+    private final RecentCache<Boolean> giantCells = new RecentCache<>(1 << 14);
+    private final RecentCache<Byte> groveColumns = new RecentCache<>(1 << 16), standColumns = new RecentCache<>(1 << 16);
+
+    /** The canopy map's height in metres at the middle of a 16-block column, or -1 where it has no reading. */
+    private int canopyColumn(int cx, int cz) {
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
+        Byte known = canopyColumns.get(key);
+        if (known == null) {
+            GeoPoint p = grid.geographic((cx << 4) + 8, (cz << 4) + 8);
+            int metres = canopy.metres(p.latitude(), p.longitude(), CANOPY_OVERVIEW);
+            known = (byte) (metres < 0 ? 0 : Math.min(126, metres) + 1);
+            canopyColumns.put(key, known);
+        }
+        return known - 1;
     }
 
     /**
-     * Giant sequoia groves: the larger real groves on the Sierra Nevada's western slope, as
-     * latitude, longitude and radius in metres (centres and sizes approximate).
+     * How tall the stand at a 16-block column is, in metres: the tallest of the canopy map's readings at the middles
+     * of the nine columns round it, since the map reads the gaps between crowns as well as the crowns, and a tree
+     * beside a gap is as tall as its neighbours. -1 where the map has no reading.
      */
-    private static final double[][] GROVES = {
-            {38.2777, -120.3080, 500},   // Calaveras North Grove
-            {38.2460, -120.2480, 1200},  // Calaveras South Grove
-            {37.7590, -119.8060, 400},   // Tuolumne Grove
-            {37.7480, -119.8410, 400},   // Merced Grove
-            {37.5110, -119.6000, 1100},  // Mariposa Grove
-            {37.4300, -119.5850, 900},   // Nelder Grove
-            {37.0230, -119.1080, 400},   // McKinley Grove
-            {36.8150, -118.9550, 1500},  // Converse Basin
-            {36.7470, -118.9720, 700},   // Grant Grove
-            {36.6950, -118.9200, 1900},  // Redwood Mountain Grove
-            {36.6380, -118.8170, 500},   // Muir Grove
-            {36.5700, -118.7600, 2000},  // Giant Forest
-            {36.4650, -118.6750, 1300},  // Atwell Grove
-            {36.2400, -118.6750, 2000},  // Mountain Home Grove
-            {36.1350, -118.5150, 1500},  // Freeman Creek Grove
-    };
-
-    /** The Sierra Nevada's sequoia belt, round all the groves. */
-    @Override protected boolean giants(int x, int z) {
-        GeoPoint p = grid.geographic(x, z);
-        return p.latitude() > 36.05 && p.latitude() < 38.33 && p.longitude() > -120.36 && p.longitude() < -118.45;
+    private int standColumn(int cx, int cz) {
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
+        Byte known = standColumns.get(key);
+        if (known == null) {
+            int tallest = -1;
+            for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) tallest = Math.max(tallest, canopyColumn(cx + i, cz + j));
+            known = (byte) (tallest + 1);
+            standColumns.put(key, known);
+        }
+        return known - 1;
     }
 
-    /** Whether a forest column is in a giant sequoia grove: inside a real grove, between 1,200 and 2,600 m up. */
-    private boolean sequoias(int x, int z, int y) {
-        int metres = y - SEA;
-        if (metres < 1200 || metres > 2600 || !giants(x, z)) return false;
-        GeoPoint p = grid.geographic(x, z);
-        double east = 111320 * Math.cos(Math.toRadians(p.latitude()));
-        for (double[] grove : GROVES) {
-            double dx = (p.longitude() - grove[1]) * east, dz = (p.latitude() - grove[0]) * 110540;
-            if (dx * dx + dz * dz < grove[2] * grove[2]) return true;
+    /** How tall the stand round a block column is, in metres, blended between the columns round it; -1 where unknown. */
+    private double stand(int x, int z) {
+        int ix = x - 8 >> 4, iz = z - 8 >> 4;
+        double tx = (x - 8 - (ix << 4)) / 16.0, tz = (z - 8 - (iz << 4)) / 16.0, sum = 0, weight = 0;
+        for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
+            int metres = standColumn(ix + i, iz + j);
+            if (metres < 0) continue;
+            double w = (i == 0 ? 1 - tx : tx) * (j == 0 ? 1 - tz : tz);
+            sum += metres * w;
+            weight += w;
         }
+        return weight < 0.25 ? -1 : sum / weight;
+    }
+
+    @Override protected boolean cappedCrowns() { return canopy != null; }
+
+    /** How tall the trees round a column stand, in metres; -1 where there is no map or it has no reading. */
+    @Override protected int canopy(int x, int z) {
+        return canopy == null ? -1 : (int) Math.round(stand(x, z));
+    }
+
+    /**
+     * Whether a forest column in conifer country is old growth: where the stand is {@link #OLD_GROWTH} metres tall
+     * and more, as in the Olympics' and the Cascades' rainforests and the Sierra Nevada's sugar pine and fir belt.
+     * Such forest is big conifers whatever the climate alone would grow, and it is what giant groves stand in.
+     */
+    private boolean oldGrowth(int x, int z) {
+        if (canopy == null) return false;
+        return coniferCountry(x, z) && stand(x + sway(x, z, 2), z + sway(x, z, 3)) >= OLD_GROWTH;
+    }
+
+    /**
+     * Giants by climate: where under 1,500 mm falls in a year, the giant sequoia of the Sierra Nevada's groves; where
+     * more does, a spire, the coast redwood where the year averages 10.5 C and warmer and a giant fir or spruce where
+     * it is cooler, as in the Olympic rainforest and the Cascades.
+     */
+    @Override protected int giantForm(int x, int z) {
+        if (canopy == null) return -1;
+        Local local = local(x, z, surfaceY(x, z));
+        return local == null || local.rain() < 1500 ? 0 : local.temperature() >= 10.5 ? 1 : 2;
+    }
+
+    /**
+     * Whether giant trees may stand near a column: in worlds that read the canopy map, where its 256-block cell or
+     * the nine columns past its edge hold a reading of giant height, in conifer country. Elsewhere no forest
+     * column asks the map twice. Older worlds keep the Sierra Nevada's sequoia belt.
+     */
+    @Override protected boolean giants(int x, int z) {
+        if (canopy == null) return OldRegions.sequoiaBelt(grid.geographic(x, z));
+        int gx = x >> GIANT_CELL_BITS, gz = z >> GIANT_CELL_BITS;
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) gx << 32 | gz & 0xFFFFFFFFL);
+        Boolean known = giantCells.get(key);
+        if (known == null) {
+            known = giantCell(gx, gz);
+            giantCells.put(key, known);
+        }
+        return known;
+    }
+
+    private boolean giantCell(int gx, int gz) {
+        // Conifer country first, which costs no download: at the cell's corners, middle and the middles of its sides.
+        int x0 = gx << GIANT_CELL_BITS, z0 = gz << GIANT_CELL_BITS, half = 1 << GIANT_CELL_BITS - 1;
+        boolean conifers = false;
+        for (int j = 0; j <= 2 && !conifers; j++) for (int i = 0; i <= 2 && !conifers; i++) conifers = coniferCountry(x0 + i * half, z0 + j * half);
+        if (!conifers) return false;
+        int columns = 1 << GIANT_CELL_BITS - 4, cx0 = x0 >> 4, cz0 = z0 >> 4;
+        for (int j = -GIANT_MARGIN; j < columns + GIANT_MARGIN; j++) for (int i = -GIANT_MARGIN; i < columns + GIANT_MARGIN; i++)
+            if (canopyColumn(cx0 + i, cz0 + j) >= GIANT_CANOPY) return true;
         return false;
+    }
+
+    /** Whether a column's ecoregion is temperate conifer forest, as the Sierra Nevada's, the redwood coast's and the Cascades' are. */
+    private boolean coniferCountry(int x, int z) {
+        int eco = ecoregion(x, z);
+        return eco != 0 && Ecoregions.get().biome(eco) == Ecoregions.TEMPERATE_CONIFER;
+    }
+
+    /**
+     * Whether a forest column is in a grove of giant trees: where the canopy map shows conifers standing at giant
+     * height, wherever on Earth that is. Worlds made before the map keep the Sierra Nevada's real sequoia groves.
+     */
+    private boolean sequoias(int x, int z, int y) {
+        if (canopy == null) return OldRegions.grove(grid.geographic(x, z), y - SEA);
+        if (!giants(x, z) || !coniferCountry(x, z)) return false;
+        // Read a few dozen blocks aside, by broad noise: the map is stitched from strips of imagery that read heights
+        // a little differently, and a grove must not end along a strip's straight edge. Then blended between the
+        // columns round it, so a grove's edge is a curve and not a staircase of 16-block squares.
+        int wx = x + sway(x, z, 0), wz = z + sway(x, z, 1);
+        x = wx; z = wz;
+        int ix = x - 8 >> 4, iz = z - 8 >> 4;
+        double tx = (x - 8 - (ix << 4)) / 16.0, tz = (z - 8 - (iz << 4)) / 16.0;
+        double north = groveColumn(ix, iz) * (1 - tx) + groveColumn(ix + 1, iz) * tx, south = groveColumn(ix, iz + 1) * (1 - tx) + groveColumn(ix + 1, iz + 1) * tx;
+        return north * (1 - tz) + south * tz >= GROVE_GIANTS;
+    }
+
+    /** How far aside a column reads the canopy map's groves and old growth, in blocks: up to about 50, changing over a few hundred. */
+    private int sway(int x, int z, int which) {
+        return (int) Math.round(36 * patches.getValue(x / 260.0 + 51.3 + which * 19.1, z / 260.0 - 77.9 - which * 7.3)
+                + 12 * patches.getValue(x / 70.0 - 3.7 - which * 11.9, z / 70.0 + 9.2 + which * 23.3));
+    }
+
+    /** How many of the 16-block columns within {@link #GROVE_REACH} of one read giant height on the canopy map. */
+    private int groveColumn(int cx, int cz) {
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
+        Byte known = groveColumns.get(key);
+        if (known == null) {
+            int count = 0;
+            for (int j = -GROVE_REACH; j <= GROVE_REACH; j++) for (int i = -GROVE_REACH; i <= GROVE_REACH; i++)
+                if (canopyColumn(cx + i, cz + j) >= GIANT_CANOPY) count++;
+            known = (byte) count;
+            groveColumns.put(key, known);
+        }
+        return known;
     }
 
     /** The forest of a climate: rainforest, bamboo, dry tropical woodland, pine, oak, birch, dark oak, cherry or taiga. */
     private Surface forest(Local local, double patch, int x, int z, int y) {
         // Giant sequoias among old conifers, on duff, in the real groves.
         if (sequoias(x, z, y)) return new Surface(oldTaiga, patch > -0.2 ? PODZOL : GRASS, DIRT, 70, 7, 0, 90, 100, true, Tree.SEQUOIA);
+        if (oldGrowth(x, z) && local.zone() != ClimateZone.RAINFOREST && local.zone() != ClimateZone.TROPICAL_DRY)
+            return new Surface(oldTaiga, patch > 0.3 ? PODZOL : GRASS, DIRT, 80, 8, 0, 110, 120, true);
         double t = local.temperature();
         // A tropical climate over an ecoregion that is not tropical forest, as in south Florida: no jungle there.
         if (local.zone() == ClimateZone.RAINFOREST || local.zone() == ClimateZone.TROPICAL_DRY) {
@@ -3718,7 +4105,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 return new Surface(forest, GRASS, DIRT, 70, 4, 0, 180, 200, false);
         }
         return switch (local.zone()) {
-            case RAINFOREST -> patch < -0.5 && bamboo(x, z) ? bambooForest(patch) : new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true, Tree.JUNGLE);
+            case RAINFOREST -> patch < -0.5 && bamboo(x, z, local) ? bambooForest(patch) : new Surface(jungle, GRASS, DIRT, 90, 0, 0, 160, 170, true, Tree.JUNGLE);
             // Monsoon forest where the wet season is long; open woodland with grass between the trees, as in the
             // cerrado and the Pantanal's tree islands, where it is not; acacia savanna woodland where drier still.
             case TROPICAL_DRY -> local.rain() > 1800 ? new Surface(sparseJungle, GRASS, DIRT, 70, 0, 0, 150, 160, true, Tree.JUNGLE)
@@ -3733,24 +4120,29 @@ public final class EarthGenerator extends SurfaceGenerator {
                     // Where summers are parched, holm oak and pine woods are open, with dry dust and leaf litter between.
                     : parched(local) ? new Surface(forest, patch > 0.3 ? COARSE_DIRT : GRASS, DIRT, 55, 1, 0, 140, 170, false)
                     : new Surface(forest, GRASS, DIRT, 70, 1, 0, 140, 170, false);
-            case SUBTROPICAL -> patch < -0.62 && bamboo(x, z) ? bambooForest(patch)
+            case SUBTROPICAL -> patch < -0.62 && bamboo(x, z, local) ? bambooForest(patch)
                     // Jungle only where the ecoregion is tropical forest, as in south China; Florida's warm woods are oak and pine.
                     // Humid subtropical forest, where winters are cool, is evergreen broadleaf and laurel rather than jungle: dense,
                     // dark groves among broadleaf woods, as on south China's hills.
                     : t > 20 && tropicalForest(x, z) ? patch < 0 ? new Surface(darkForest, GRASS, DIRT, 90, 0, 0, 80, 100, false, Tree.DARK_OAK)
                             : new Surface(forest, GRASS, DIRT, 88, 0, 0, 100, 130, true)
                     : t > 20 ? new Surface(forest, GRASS, DIRT, 70, 4, 0, 180, 200, false)
-                    : groves(patch, x, z, new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false));
-            case OCEANIC -> groves(patch, x, z, new Surface(forest, GRASS, DIRT, 82, t < 8 ? 3 : 0, 2, 90, 130, true));
+                    : groves(patch, x, z, local, new Surface(forest, GRASS, DIRT, 85, 0, 1, 100, 130, false));
+            case OCEANIC -> groves(patch, x, z, local, new Surface(forest, GRASS, DIRT, 82, t < 8 ? 3 : 0, 2, 90, 130, true));
             case SUBPOLAR_OCEANIC -> new Surface(taiga, GRASS, DIRT, 70, 10, 0, 110, 120, true);
             // Broadleaf in the warmer continental interiors, mixed with birch and spruce further north.
-            case CONTINENTAL -> t > 7 ? groves(patch, x, z, new Surface(forest, GRASS, DIRT, 85, 0, 2, 90, 130, false))
+            case CONTINENTAL -> t > 7 ? groves(patch, x, z, local, new Surface(forest, GRASS, DIRT, 85, 0, 2, 90, 130, false))
                     : patch > 0.25 ? new Surface(birchForest, GRASS, DIRT, 82, 1, 8, 90, 130, false)
                     : patch < -0.25 ? new Surface(taiga, GRASS, DIRT, 82, 10, 0, 110, 120, true)
                     : new Surface(forest, GRASS, DIRT, 82, 5, 2, 90, 120, true);
             // Snowy taiga only where the cold is extreme, so summer taiga is not dotted with snow-field patches.
-            case SUBARCTIC -> t < -10 ? new Surface(snowyTaiga, GRASS, DIRT, 65, 10, 0, 90, 100, true)
-                    : new Surface(patch > 0.45 && local.rain() > 500 ? oldTaiga : taiga, patch > 0.45 ? PODZOL : GRASS, DIRT, 75, 9, 1, 110, 120, true);
+            case SUBARCTIC -> {
+                if (t < -10) yield new Surface(snowyTaiga, GRASS, DIRT, 65, 10, 0, 90, 100, true);
+                // Podzol where the patches say, and more of it the more humus the soil map shows under the trees:
+                // most of the floor in Finland's and Quebec's wet spruce woods, little in the dry larch taiga of Yakutia.
+                double podzol = maps == null ? 0.45 : 0.45 - (soilCarbon(x, z) - 0.5) * 0.7;
+                yield new Surface(patch > podzol && local.rain() > 500 ? oldTaiga : taiga, patch > podzol ? PODZOL : GRASS, DIRT, 75, 9, 1, 110, 120, true);
+            }
             // Stunted trees at the treeline.
             case TUNDRA, ICE -> new Surface(t < -5 ? snowyTaiga : grove, GRASS, DIRT, 30, 10, 0, 60, 70, false);
         };
@@ -3784,9 +4176,22 @@ public final class EarthGenerator extends SurfaceGenerator {
      */
     @Override public void prepareNear(int x, int z) { prepare(x, z, NEAR_REACH, false); }
 
+    /**
+     * {@code -Dearthplatform.earth.prepareLog=true} logs, after each fetch here, when its last pieces came in and how
+     * long each took: what a travel to a new place waited on.
+     */
+    private static final boolean PREPARE_LOG = Boolean.getBoolean("earthplatform.earth.prepareLog");
+
     private void prepare(int x, int z, double most, boolean far) {
         record Tile(int zoom, int x, int y) {}
         List<Runnable> loads = new ArrayList<>();
+        long began = System.nanoTime();
+        List<String> finished = PREPARE_LOG ? java.util.Collections.synchronizedList(new ArrayList<>()) : null;
+        java.util.function.BiConsumer<String, Runnable> add = (name, load) -> loads.add(finished == null ? load : () -> {
+            long start = System.nanoTime();
+            load.run();
+            finished.add(String.format(Locale.ROOT, "%5.2f s %s (%.2f s)", (System.nanoTime() - began) / 1e9, name, (System.nanoTime() - start) / 1e9));
+        });
         // Failures are told once for the whole fetch: with a data server down, each of hundreds of pieces fails.
         java.util.concurrent.atomic.AtomicInteger failed = new java.util.concurrent.atomic.AtomicInteger();
         java.util.concurrent.atomic.AtomicReference<String> first = new java.util.concurrent.atomic.AtomicReference<>();
@@ -3812,7 +4217,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) {
                 for (int tx = x0; tx <= x1; tx++) {
                     Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
-                    loads.add(() -> {
+                    add.accept("elevation " + tile.zoom + "/" + tile.x + "/" + tile.y, () -> {
                         try { ground.tile(tile.zoom, tile.x, tile.y); }
                         catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
                     });
@@ -3820,21 +4225,39 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
         }
         if (climate != null) {
-            // All of it: the landing search reads climate this far, and piece by piece it comes in far smaller reads.
-            // The far levels read it across their whole square, and their rock layers look for dry country a way past
-            // that: some 230 rows of each variable, which came in one request each as the columns needed them.
-            double reach = !far ? 24000
-                    : Math.max(24000, (Far.OUTER + 1) * (double) Far.width(Far.MAX_LEVEL) + Strata.dryReach(grid.groundMetresPerBlock(z)));
+            // The cubes and the search for a landing read climate only where their rock layers look for dry country,
+            // a zone's reach past the ground they stand on: all of that at once, as piece by piece it comes in far
+            // smaller reads. No further for a traveller waiting to arrive: each row of the climate's elevation is a
+            // request of its own to a host that takes eight at a time, and the 24,000 blocks fetched here before were
+            // the last of a trip's data to come in, over half of them rows nothing read until the far levels did.
+            // The far levels read climate across their whole square, and their rock layers look a zone's reach past
+            // that: some 230 rows of each variable, which came in one request each as the columns needed them. The
+            // rows of the levels nearest the player first, which are made first.
+            double dry = Strata.dryReach(grid.groundMetresPerBlock(z));
+            double[] reaches = !far ? new double[] {Math.min(24000, NEAR_REACH + dry)}
+                    : new double[] {24000, Math.max(24000, (Far.outer() + 1) * (double) Far.width(Far.MAX_LEVEL) + dry)};
+            add.accept("climate", () -> {
+                try {
+                    for (double reach : reaches) {
+                        GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
+                        climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude());
+                    }
+                } catch (RuntimeException failure) { missed.accept("climate", failure); }
+            });
+        }
+        if (canopy != null) {
+            // Tree heights for the trees that stand near by; further out the far levels draw no trees.
+            double reach = Math.min(most, 3500);
             GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
             loads.add(() -> {
-                try { climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
-                catch (RuntimeException failure) { missed.accept("climate", failure); }
+                try { canopy.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), CANOPY_OVERVIEW); }
+                catch (RuntimeException failure) { missed.accept("canopy height", failure); }
             });
         }
         if (rivers != null) {
             double reach = Math.min(most, 3500);
             GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
-            loads.add(() -> {
+            add.accept("rivers", () -> {
                 try { rivers.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
                 catch (RuntimeException failure) { missed.accept("rivers", failure); }
             });
@@ -3845,7 +4268,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             for (int k = 0; k < imageryReaches.length; k++) {
                 double reach = Math.min(most, imageryReaches[k]);
                 int zoom = ImagerySource.MAX_ZOOM - k;
-                loads.add(() -> {
+                add.accept("imagery " + zoom, () -> {
                     try { imagery.prefetch(grid, x - reach, z - reach, x + reach, z + reach, zoom); }
                     catch (RuntimeException failure) { missed.accept("imagery", failure); }
                 });
@@ -3860,7 +4283,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 double reach = overview == WATER_OVERVIEW ? reaches[overview] : Math.min(most, reaches[overview]);
                 int level = overview;
                 GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
-                loads.add(() -> {
+                add.accept("land cover " + level, () -> {
                     try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), level); }
                     catch (RuntimeException failure) { missed.accept("land cover", failure); }
                 });
@@ -3868,13 +4291,19 @@ public final class EarthGenerator extends SurfaceGenerator {
             // And the overview joinsOpenSea() reads its sea cells at, which a landing by the coast asks first.
             int seaOverview = Mth.clamp(Mth.floor(Math.log(SEA_CELL * grid.groundMetresPerBlock(z) / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
             GeoPoint a = grid.geographic(x - 24000, z + 24000), b = grid.geographic(x + 24000, z - 24000);
-            loads.add(() -> {
+            add.accept("land cover sea", () -> {
                 try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), seaOverview); }
                 catch (RuntimeException failure) { missed.accept("land cover", failure); }
             });
         }
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             for (Runnable load : loads) pool.execute(load);
+        }
+        if (finished != null) {
+            List<String> last = new ArrayList<>(finished);
+            last.sort(java.util.Comparator.reverseOrder());
+            EarthPlatformMod.LOGGER.info("Earth data fetched to {} blocks: {} pieces in {} s; last in: {}", (int) Math.min(most, 1e7), last.size(),
+                    String.format(Locale.ROOT, "%.2f", (System.nanoTime() - began) / 1e9), String.join("; ", last.subList(0, Math.min(14, last.size()))));
         }
         if (failed.get() > 0)
             EarthPlatformMod.LOGGER.warn("Could not prefetch {} of {} pieces of Earth data; generation asks for them again (first: {})", failed.get(), loads.size(), first.get());

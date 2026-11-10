@@ -64,6 +64,12 @@ public interface CubeGenerator {
      */
     void farColumn(int level, int columnX, int columnZ, FarColumn out);
 
+    /**
+     * The same column, which a generator that can may leave as runs alone: {@link FarColumn#packet} set and
+     * no sections. The runs then hold exactly what {@link #farColumn} would have filled.
+     */
+    default void farColumnCompact(int level, int columnX, int columnZ, FarColumn out) { farColumn(level, columnX, columnZ, out); }
+
     /** Top block of the sea: players arrive on ground above it. */
     int seaLevel();
     /** Ground too cold or high for a new arrival to start on. */
@@ -74,6 +80,19 @@ public interface CubeGenerator {
     default String place(int x, int z) { return ""; }
     /** Credits for the data the world is made from, shown to players entering it, or empty. */
     default String credits() { return ""; }
+    /**
+     * Whether {@link #farPreview} makes quick stand-ins for a far level's columns: columns of the
+     * same form made in a fraction of the time from a little coarse data, to show at once and be
+     * replaced by the ones {@link #farColumn} makes.
+     */
+    default boolean farPreviews(int level) { return false; }
+    /** Fills a quick stand-in for a far column; only for levels {@link #farPreviews} answers for. */
+    default void farPreview(int level, int columnX, int columnZ, FarColumn out) { farColumn(level, columnX, columnZ, out); }
+    /** Loads the little that {@link #farPreview} reads as far as the far levels reach round a point. Blocks; call off-thread. */
+    default void preparePreview(int x, int z) { preparePreview(x, z, io.earthplatform.minecraft.cubic.far.Far.PREVIEW_LEVEL); }
+
+    /** The same for the levels from {@code finest} up only: the coarsest levels' few pieces come ahead of a player's arrival, the rest once the ground round the player is in. */
+    default void preparePreview(int x, int z, int finest) {}
     /** Loads whatever generating near a point will need, so the server thread never waits on it. Blocks; call off-thread. */
     default void prepare(int x, int z) {}
     /** Loads only what the cubes about a point need, before {@link #prepare} loads the rest. Blocks; call off-thread. */

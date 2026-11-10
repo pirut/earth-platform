@@ -118,15 +118,15 @@ public final class CubicClient {
             Runtime runtime = Runtime.getRuntime();
             var camera = Minecraft.getInstance().gameRenderer.getMainCamera();
             int[] byView = world.renderer().meshesByView(camera.getPosition(), camera.getYRot());
-            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes ({} in view), {} to compile, far {}/{} columns {}% settled ({}% in view) {} MB {} draws, {} sent again; {}",
+            EarthPlatformMod.LOGGER.info("cubic perf: {} fps, heap {} MB, {} cubes, {} meshes ({} in view, {} drawn, {} behind rock, {} tested hidden, {} in shadow map, {} draw calls, {} shared buffers {} MB, {} MB used), {} to compile, far {}/{} columns {}% settled ({}% in view) {} MB {} draws ({} of them only where queries pass), {} sent again, {}; {}",
                     Minecraft.getInstance().getFps(), (runtime.totalMemory() - runtime.freeMemory()) >> 20, world.loadedCubes(),
-                    world.renderer().meshCount(), byView[0], world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
-                    world.far().settledPercent(), world.far().settledInViewPercent(), world.far().vertexBytes() >> 20, world.far().drawnRanges(), world.far().replacedCount(), timings(Timings.LOGGER));
+                    world.renderer().meshCount(), byView[0], world.renderer().visibleMeshCount(), world.renderer().caveCulledCount(), world.renderer().occlusionTestedCount(), world.renderer().shadowDrawnCount(), world.renderer().drawCallCount(), world.renderer().regionBufferCount(), world.renderer().regionBufferMegabytes(), world.renderer().regionUsedMegabytes(), world.renderer().pendingCount(), world.far().drawnCount(), world.far().columnCount(),
+                    world.far().settledPercent(), world.far().settledInViewPercent(), world.far().vertexBytes() >> 20, world.far().drawnRanges(), world.far().queryHiddenRanges(), world.far().replacedCount(), world.far().previews(), timings(Timings.LOGGER));
         }
     }
 
     private static String timings(int reader) {
-        return String.join(", ", Timings.FRAME.read(reader), Timings.CUBE_DRAW.read(reader), Timings.FAR_DRAW.read(reader), Timings.FAR_WALK.read(reader), Timings.FAR_WATER.read(reader),
+        return String.join(", ", Timings.FRAME.read(reader), Timings.CUBE_DRAW.read(reader), Timings.CUBE_CAVES.read(reader), Timings.FAR_DRAW.read(reader), Timings.FAR_WALK.read(reader), Timings.FAR_WATER.read(reader),
                 Timings.CUBE_UPLOAD.read(reader), Timings.FAR_UPLOAD.read(reader), Timings.CUBE_MESH.read(reader),
                 Timings.FAR_MESH.read(reader), Timings.FAR_MAKE.read(reader),
                 Timings.SERVER_TICK.read(reader), Timings.CUBE_UNLOAD.read(reader), Timings.CUBE_FLUSH.read(reader));
@@ -186,8 +186,10 @@ public final class CubicClient {
         left.add(at + 1, "Far: " + world.far().drawnCount() + "/" + world.far().columnCount() + " columns, "
                 + world.far().settledPercent() + "% settled (" + world.far().settledInViewPercent() + "% in view), "
                 + world.far().vertexBytes() / (1 << 20) + " MB, " + world.far().drawnRanges() + " draws");
+        int held = io.earthplatform.minecraft.cubic.play.EarthConfig.sharpnessSteps();
+        if (held > 0) left.add(at + 2, "Far sharpness held " + held + " lower to hold " + io.earthplatform.minecraft.cubic.play.EarthConfig.FAR_TARGET_FPS.get() + " fps");
         String zoom = world.far().zoomInfo();
-        if (!zoom.isEmpty()) left.add(at + 2, zoom);
+        if (!zoom.isEmpty()) left.add(at + (held > 0 ? 3 : 2), zoom);
         // The debug screen redraws every frame; read the timings about twice a second so they can be read.
         long now = System.nanoTime();
         if (now - timingsAt > 500_000_000L) { timingsAt = now; timingLines = timings(Timings.SCREEN).split(", "); }
@@ -226,8 +228,8 @@ public final class CubicClient {
         var camera = view.getPosition();
         ClientCubeWorld world = ClientCubeWorld.current();
         float height = (float) camera.y - world.skyTop(net.minecraft.util.Mth.floor(camera.x), net.minecraft.util.Mth.floor(camera.z));
-        float scale = FarRenderer.HAZE_AT_EDGE ? 1.0F : world.far().hazeScale(camera.z), end = FarRenderer.FOG_END * scale;
-        float start = Math.min(Math.max(FarRenderer.FOG_START * scale, height * 1.25F), 0.8F * end);
+        float scale = FarRenderer.hazeAtEdge() ? 1.0F : world.far().hazeScale(camera.z), end = FarRenderer.fogEnd() * scale;
+        float start = Math.min(Math.max(FarRenderer.fogStart() * scale, height * 1.25F), 0.8F * end);
         return new float[] {start, end};
     }
 

@@ -76,7 +76,9 @@ public final class EarthWorlds {
                 .toClient(EarthMap.Payload.TYPE, EarthMap.Payload.CODEC,
                         payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.received(payload); })
                 .toClient(EarthMap.Players.TYPE, EarthMap.Players.CODEC,
-                        payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.others(payload); });
+                        payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.others(payload); })
+                .toClient(EarthPostcard.Payload.TYPE, EarthPostcard.Payload.CODEC,
+                        payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthPostcardScreen.received(payload); });
     }
 
     /** A home picked on the Create World screen, for the next new Earth world this game makes. */
@@ -403,6 +405,8 @@ public final class EarthWorlds {
                 .then(Commands.argument("place", StringArgumentType.greedyString())
                         .suggests((context, builder) -> SharedSuggestionProvider.suggest(EarthPlaces.all().stream().map(EarthPlaces.Place::id), builder))
                         .executes(context -> visit(context.getSource(), StringArgumentType.getString(context, "place")))));
+        root.then(Commands.literal("find").then(Commands.argument("name", StringArgumentType.greedyString())
+                .executes(context -> find(context.getSource(), StringArgumentType.getString(context, "name")))));
         root.then(Commands.literal("goto").requires(EarthWorlds::mayTravel)
                 .then(Commands.argument("latitude", DoubleArgumentType.doubleArg(-80, 80))
                         .then(Commands.argument("longitude", DoubleArgumentType.doubleArg(-180, 180)).executes(context -> {
@@ -421,6 +425,7 @@ public final class EarthWorlds {
         EarthTeleports.register(root);
         EarthRace.register(root);
         EarthGuess.register(root);
+        EarthPostcard.register(root);
         EarthAdmin.register(root);
         EarthToggles.register(root);
         root.then(Commands.literal("where").executes(context -> where(context.getSource())));
@@ -438,14 +443,46 @@ public final class EarthWorlds {
 
     private static int visit(CommandSourceStack source, String query) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         Optional<EarthPlaces.Place> place = EarthPlaces.find(query);
-        if (place.isEmpty()) {
-            source.sendFailure(Component.literal("No famous place called '" + query + "'. Try /earth places, or /earth goto <latitude> <longitude>."));
+        if (place.isPresent()) {
+            if (!EarthRules.pay(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude())) return 0;
+            source.sendSuccess(() -> Component.literal("Traveling to " + place.get().label() + ".").withStyle(ChatFormatting.GREEN), false);
+            return CubicEvents.travel(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude(),
+                    place.get().viewLatitude(), place.get().viewLongitude());
+        }
+        // Not a famous place: the biggest town of that name ("Paris", or "Paris, Texas").
+        List<EarthTowns.Town> towns = EarthTowns.search(query, 1);
+        if (towns.isEmpty()) {
+            source.sendFailure(Component.literal("No place called '" + query + "'. Try /earth find <name>, /earth places, or /earth goto <latitude> <longitude>."));
             return 0;
         }
-        if (!EarthRules.pay(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude())) return 0;
-        source.sendSuccess(() -> Component.literal("Traveling to " + place.get().label() + ".").withStyle(ChatFormatting.GREEN), false);
-        return CubicEvents.travel(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude(),
-                place.get().viewLatitude(), place.get().viewLongitude());
+        EarthTowns.Town town = towns.get(0);
+        if (!EarthRules.pay(source, source.getPlayerOrException(), town.latitude(), town.longitude())) return 0;
+        source.sendSuccess(() -> Component.literal("Traveling to where " + town.label() + " is. The Earth here is wild land, so there is no town.")
+                .withStyle(ChatFormatting.GREEN), false);
+        return CubicEvents.travel(source, town.latitude(), town.longitude());
+    }
+
+    /** Lists the places a name could mean, each a click away for those who may travel. */
+    private static int find(CommandSourceStack source, String query) {
+        List<Component> lines = new ArrayList<>();
+        boolean travel = mayTravel(source);
+        EarthPlaces.find(query).ifPresent(place -> lines.add(found(place.label(), place.latitude(), place.longitude(), travel)));
+        for (EarthTowns.Town town : EarthTowns.search(query, 8)) lines.add(found(town.label(), town.latitude(), town.longitude(), travel));
+        if (lines.isEmpty()) {
+            source.sendFailure(Component.literal("No place called '" + query + "'. Towns of 1,000 people or more are listed; add a state or country after a comma to narrow it."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Places called '" + query + "':").withStyle(ChatFormatting.GOLD), false);
+        for (Component line : lines) source.sendSuccess(() -> line, false);
+        return lines.size();
+    }
+
+    private static Component found(String label, double latitude, double longitude, boolean travel) {
+        String spot = String.format(java.util.Locale.ROOT, "%.3f %.3f", latitude, longitude);
+        var line = Component.literal("  " + label + " ").append(Component.literal("(" + spot + ")").withStyle(ChatFormatting.GRAY));
+        if (!travel) return line;
+        return line.withStyle(style -> style.withClickEvent(new net.minecraft.network.chat.ClickEvent(net.minecraft.network.chat.ClickEvent.Action.RUN_COMMAND, "/earth goto " + spot))
+                .withHoverEvent(new net.minecraft.network.chat.HoverEvent(net.minecraft.network.chat.HoverEvent.Action.SHOW_TEXT, Component.literal("Click to travel here"))));
     }
 
     /** Sends a player to the server spawn (the world's start unless operators moved it); replies go to {@code source}. */

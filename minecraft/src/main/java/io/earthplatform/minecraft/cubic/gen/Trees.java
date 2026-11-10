@@ -50,7 +50,9 @@ import net.minecraft.world.level.levelgen.placement.PlacedFeature;
  * forest; spruce and pine in a taiga), at a density from the land cover. Each tree kind is grown
  * a few dozen times on flat ground into {@link TreeShape}s, which are then placed per column from
  * a hash, so every cube a tree reaches gets the same tree. Giant sequoias grow in the groves the
- * generator marks.
+ * generator marks. Where the generator knows how tall the real forest stands, each tree is the
+ * nearest to that height of a few of its kind's shapes, with trunk added under its crown to make
+ * up some of what it lacks.
  */
 final class Trees {
     /** How far a tree reaches sideways from its origin, and the tallest vanilla tree (a giant jungle tree) above it. */
@@ -93,12 +95,20 @@ final class Trees {
     }
     private static final int MOST = 24;
 
-    /** A tree standing at (x, y, z), its origin the block above the ground, turned {@code turn} quarters, snowed on where it is cold. */
-    private record Planted(int x, int y, int z, TreeShape shape, int turn, long seed, boolean snow) {
+    /**
+     * A tree standing at (x, y, z), its origin the block above the ground, turned {@code turn} quarters, snowed on
+     * where it is cold, with {@code lift} blocks of trunk added under its crown.
+     */
+    private record Planted(int x, int y, int z, TreeShape shape, int turn, long seed, boolean snow, int lift) {
+        Planted(int x, int y, int z, TreeShape shape, int turn, long seed, boolean snow) { this(x, y, z, shape, turn, seed, snow, 0); }
+
         void place(int x0, int y0, int z0, int x1, int y1, int z1, IntBinaryOperator ground, TreeShape.Sink sink) {
-            shape.place(x, y, z, turn, seed, snow, x0, y0, z0, x1, y1, z1, ground, sink);
+            shape.place(x, y, z, turn, seed, snow, lift, x0, y0, z0, x1, y1, z1, ground, sink);
         }
     }
+
+    /** Shapes a tree chooses among for the one nearest the real forest's height. */
+    private static final int CHOICES = 4;
 
     /** A vanilla random selector's trees: the first entry whose chance passes, else the default; null entries grow no tree. */
     private record Pick(float[] chances, ConfiguredFeature<?, ?>[] trees, @Nullable ConfiguredFeature<?, ?> otherwise) {
@@ -176,7 +186,7 @@ final class Trees {
             if (feature == null) continue;
             TreeShape[] grown = shapes(feature);
             if (grown.length == 0) continue;
-            trees.add(new Planted(x, h + 1, z, grown[(int) Math.floorMod(r >>> 24, grown.length)], (int) (r >>> 34 & 3), r, snowy(surface)));
+            trees.add(sized(x, h + 1, z, grown, r, snowy(surface)));
         }
         if (mostAdded() > 0) for (int dz = 0; dz < 16; dz++) for (int dx = 0; dx < 16; dx++) {
             Planted tree = added((cx << 4) + dx, (cz << 4) + dz);
@@ -186,6 +196,29 @@ final class Trees {
         if (chunks.size() > 32768) chunks.clear();
         chunks.putIfAbsent(key, made);
         return made;
+    }
+
+    /**
+     * One of a kind's shapes for a tree at (x, z). Where the generator does not know the forest's height, any of
+     * them, by the hash. Where it does, the tree aims for three quarters to the whole of that height (the map
+     * gives the canopy's top, and a stand's trees are not all its tallest): it takes the nearest of
+     * {@value #CHOICES} shapes the hash draws, and a shorter one gains up to three fifths of its own height in trunk,
+     * never past the tallest vanilla tree. So taiga stays low, a temperate wood's oaks and spruces stand as tall as
+     * vanilla's shapes allow, and rainforest giants reach the 30 m and more the Amazon's do.
+     */
+    private Planted sized(int x, int y, int z, TreeShape[] grown, long r, boolean snow) {
+        int first = (int) Math.floorMod(r >>> 24, grown.length), turn = (int) (r >>> 34 & 3);
+        int canopy = gen.canopy(x, z);
+        if (canopy < 0) return new Planted(x, y, z, grown[first], turn, r, snow);
+        long more = gen.mix(x, 0x54414C4CL, z);
+        int want = (int) Math.round(canopy * (0.75 + 0.25 * ((more & 0xFFFF) / 65536.0)));
+        TreeShape best = grown[first];
+        for (int k = 1; k < CHOICES; k++) {
+            TreeShape other = grown[(int) Math.floorMod(more >>> 16 * k, grown.length)];
+            if (Math.abs(other.height() - want) < Math.abs(best.height() - want)) best = other;
+        }
+        int lift = best.stretches() ? Math.max(0, Math.min(want, TALLEST - 1) - best.height()) : 0;
+        return new Planted(x, y, z, best, turn, r, snow, Math.min(lift, Math.max(2, best.height() * 3 / 5)));
     }
 
     /** Whether snow falls where a tree stands, as on the ground around it. */
@@ -228,7 +261,8 @@ final class Trees {
                     foot = Math.min(foot, gen.surfaceY(x + (int) Math.round(4 * Math.cos(angle)), z + (int) Math.round(4 * Math.sin(angle))));
                 }
                 if (h - foot > 6) continue;
-                TreeShape[] grown = Sequoia.shapes();
+                int form = gen.giantForm(x, z);
+                TreeShape[] grown = form < 0 ? Sequoia.shapes() : Giants.shapes(form);
                 trees.add(new Planted(x, foot + 1, z, grown[(int) Math.floorMod(r >>> 32, grown.length)], (int) (r >>> 50 & 3), r, snowy(surface)));
             }
         Planted[] made = trees.isEmpty() ? NONE : trees.toArray(Planted[]::new);
@@ -499,6 +533,40 @@ final class Trees {
     }
 
     /**
+     * Fills a conifer's crown where vanilla leaves its trunk bare: the log ends on top (a 2x2 spruce gets one leaf
+     * over four logs) and the rings between a spruce's tiers. From above, and on far terrain most of all, those
+     * dot a conifer forest with brown squares; filled, each crown is one green cone.
+     */
+    private static void cap(Long2ObjectOpenHashMap<BlockState> kept) {
+        int lowestLeaf = Integer.MAX_VALUE;
+        BlockState needle = null;
+        for (var entry : kept.long2ObjectEntrySet()) {
+            if (!entry.getValue().is(Blocks.SPRUCE_LEAVES)) continue;
+            lowestLeaf = Math.min(lowestLeaf, BlockPos.getY(entry.getLongKey()));
+            needle = entry.getValue().setValue(net.minecraft.world.level.block.LeavesBlock.DISTANCE, 1);
+        }
+        if (needle == null) return;
+        Long2ObjectOpenHashMap<BlockState> added = new Long2ObjectOpenHashMap<>();
+        for (var entry : kept.long2ObjectEntrySet()) {
+            long key = entry.getLongKey();
+            int x = BlockPos.getX(key), y = BlockPos.getY(key), z = BlockPos.getZ(key);
+            if (y < lowestLeaf || !entry.getValue().is(BlockTags.LOGS)) continue;
+            if (!kept.containsKey(BlockPos.asLong(x, y + 1, z))) added.put(BlockPos.asLong(x, y + 1, z), needle);
+            boolean bare = true;
+            for (int side = 0; side < 4 && bare; side++) {
+                BlockState beside = kept.get(BlockPos.asLong(x + SIDE_X[side], y, z + SIDE_Z[side]));
+                bare = beside == null || beside.is(BlockTags.LOGS);
+            }
+            if (bare) for (int side = 0; side < 4; side++) {
+                long at = BlockPos.asLong(x + SIDE_X[side], y, z + SIDE_Z[side]);
+                if (!kept.containsKey(at)) added.put(at, needle);
+            }
+        }
+        kept.putAll(added);
+    }
+    private static final int[] SIDE_X = {1, -1, 0, 0}, SIDE_Z = {0, 0, 1, -1};
+
+    /**
      * Grows a vanilla tree feature on flat ground (mud for mangroves) until it has {@link #VARIANTS}
      * shapes. Bee nests are left out and added as the shape is placed, at the feature's own odds.
      * Huge mushrooms get a patch of mycelium under them.
@@ -530,6 +598,7 @@ final class Trees {
                     if (Math.abs(dx) + Math.abs(dz) <= 1 || Math.abs(dx) + Math.abs(dz) <= 3 && random.nextBoolean())
                         kept.put(BlockPos.asLong(dx, -1, dz), Blocks.MYCELIUM.defaultBlockState());
             if (kept.isEmpty()) continue;
+            if (gen.cappedCrowns()) cap(kept);
             // Other mods' trees must fit the reach cubes look for trees in, and must grow a tree, not a patch of flowers.
             if (soil != null && (!fits(kept) || kept.values().stream().noneMatch(Trees::woody))) continue;
             grown.add(new TreeShape(kept, bees));

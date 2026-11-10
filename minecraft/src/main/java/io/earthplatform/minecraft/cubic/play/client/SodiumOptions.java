@@ -29,8 +29,7 @@ public final class SodiumOptions implements ConfigEntryPoint {
                 .setValueFormatter(value -> Component.literal(distance(value)))
                 .setDefaultValue(11)
                 .setImpact(OptionImpact.HIGH)
-                .setFlags(OptionFlag.REQUIRES_GAME_RESTART)
-                .setBinding(EarthConfig.FAR_DETAIL::set, EarthConfig.FAR_DETAIL::get)
+                .setBinding(EarthConfig::setDetail, EarthConfig.FAR_DETAIL::get)
                 .setStorageHandler(EarthConfig.CLIENT_SPEC::save);
         var sharpness = builder.createEnumOption(id("far_sharpness"), EarthConfig.Sharpness.class)
                 .setName(shortName("sharpness"))
@@ -39,6 +38,15 @@ public final class SodiumOptions implements ConfigEntryPoint {
                 .setDefaultValue(EarthConfig.Sharpness.BALANCED)
                 .setImpact(OptionImpact.HIGH)
                 .setBinding(EarthConfig::setSharpness, EarthConfig.FAR_SHARPNESS::get)
+                .setStorageHandler(EarthConfig.CLIENT_SPEC::save);
+        var target = builder.createIntegerOption(id("far_target_fps"))
+                .setName(shortName("targetFps"))
+                .setTooltip(tooltip("farTargetFps"))
+                .setRange(0, 240, 5)
+                .setValueFormatter(value -> value == 0 ? Component.translatable("options.off") : Component.translatable("options.framerate", value))
+                .setDefaultValue(0)
+                .setImpact(OptionImpact.VARIES)
+                .setBinding(EarthConfig.FAR_TARGET_FPS::set, () -> EarthConfig.FAR_TARGET_FPS.get() / 5 * 5)
                 .setStorageHandler(EarthConfig.CLIENT_SPEC::save);
         var textured = builder.createIntegerOption(id("far_textured_levels"))
                 .setName(shortName("texturedLevels"))
@@ -88,6 +96,7 @@ public final class SodiumOptions implements ConfigEntryPoint {
                                 .setName(Component.translatable("earthplatform.sodium.farTerrain"))
                                 .addOption(detail)
                                 .addOption(sharpness)
+                                .addOption(target)
                                 .addOption(textured))
                         .addOptionGroup(builder.createOptionGroup()
                                 .setName(Component.translatable("earthplatform.sodium.sky"))

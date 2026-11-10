@@ -1,847 +1,847 @@
-0	11	Rock and Ice
-1	1	Albertine Rift montane forests
-2	1	Cameroon Highlands forests
-3	1	Central Congolian lowland forests
-4	1	Comoros forests
-5	1	Congolian coastal forests
-6	1	Cross-Niger transition forests
-7	1	Cross-Sanaga-Bioko coastal forests
-8	1	East African montane forests
-9	1	Eastern Arc forests
-10	1	Eastern Congolian swamp forests
-11	1	Eastern Guinean forests
-12	1	Ethiopian montane forests
-13	1	Granitic Seychelles forests
-14	1	Guinean montane forests
-15	1	Knysna-Amatole montane forests
-16	1	Kwazulu Natal-Cape coastal forests
-17	1	Madagascar humid forests
-18	1	Madagascar subhumid forests
-19	1	Maputaland coastal forests and woodlands
-20	1	Mascarene forests
-21	1	Mount Cameroon and Bioko montane forests
-22	1	Niger Delta swamp forests
-23	1	Nigerian lowland forests
-24	1	Northeast Congolian lowland forests
-25	1	Northern Swahili coastal forests
-26	1	Northwest Congolian lowland forests
-27	1	São Tomé, Príncipe, and Annobón forests
-28	1	Southern Swahili coastal forests and woodlands
-29	1	Western Congolian swamp forests
-30	1	Western Guinean lowland forests
-31	2	Cape Verde Islands dry forests
-32	2	Madagascar dry deciduous forests
-33	2	Zambezian evergreen dry forests
-34	7	Angolan mopane woodlands
-35	7	Angolan scarp savanna and woodlands
-36	7	Angolan wet miombo woodlands
-37	7	Ascension scrub and grasslands
-38	7	Central bushveld
-39	7	Central Zambezian wet miombo woodlands
-40	7	Drakensberg Escarpment savanna and thicket
-41	7	Drakensberg grasslands
-42	7	Dry miombo woodlands
-43	7	East Sudanian savanna
-44	7	Guinean forest-savanna
-45	7	Horn of Africa xeric bushlands
-46	7	Itigi-Sumbu thicket
-47	7	Kalahari Acacia woodlands
-48	7	Limpopo lowveld
-49	7	Mandara Plateau woodlands
-50	7	Masai xeric grasslands and shrublands
-51	7	Northern Acacia-Commiphora bushlands and thickets
-52	7	Northern Congolian Forest-Savanna
-53	7	Sahelian Acacia savanna
-54	7	Serengeti volcanic grasslands
-55	7	Somali Acacia-Commiphora bushlands and thickets
-56	7	South Arabian fog woodlands, shrublands, and dune
-57	7	Southern Acacia-Commiphora bushlands and thickets
-58	7	Southern Congolian forest-savanna
-59	7	Southwest Arabian montane woodlands and grasslands
-60	7	St. Helena scrub and woodlands
-61	7	Victoria Basin forest-savanna
-62	7	West Sudanian savanna
-63	7	Western Congolian forest-savanna
-64	7	Zambezian Baikiaea woodlands
-65	7	Zambezian mopane woodlands
-66	7	Zambezian-Limpopo mixed woodlands
-67	8	Amsterdam-Saint Paul Islands temperate grasslands
-68	8	Tristan Da Cunha-Gough Islands shrub and grasslands
-69	9	East African halophytics
-70	9	Etosha Pan halophytics
-71	9	Inner Niger Delta flooded savanna
-72	9	Lake Chad flooded savanna
-73	9	Makgadikgadi halophytics
-74	9	Sudd flooded grasslands
-75	9	Zambezian coastal flooded savanna
-76	9	Zambezian flooded grasslands
-77	10	Angolan montane forest-grassland
-78	10	East African montane moorlands
-79	10	Ethiopian montane grasslands and woodlands
-80	10	Ethiopian montane moorlands
-81	10	Highveld grasslands
-82	10	Jos Plateau forest-grassland
-83	10	Madagascar ericoid thickets
-84	10	Mulanje Montane forest-grassland
-85	10	Nyanga-Chimanimani Montane forest-grassland
-86	10	Rwenzori-Virunga montane moorlands
-87	10	Southern Rift Montane forest-grassland
-88	12	Albany thickets
-89	12	Fynbos shrubland
-90	12	Renosterveld shrubland
-91	13	Aldabra Island xeric scrub
-92	13	Djibouti xeric shrublands
-93	13	Eritrean coastal desert
-94	13	Gariep Karoo
-95	13	Hobyo grasslands and shrublands
-96	13	Ile Europa and Bassas da India xeric scrub
-97	13	Kalahari xeric savanna
-98	13	Kaokoveld desert
-99	13	Madagascar spiny thickets
-100	13	Madagascar succulent woodlands
-101	13	Nama Karoo shrublands
-102	13	Namaqualand-Richtersveld steppe
-103	13	Namib Desert
-104	13	Namibian savanna woodlands
-105	13	Socotra Island xeric shrublands
-106	13	Somali montane xeric woodlands
-107	13	Southwest Arabian coastal xeric shrublands
-108	13	Southwest Arabian Escarpment shrublands and woodlands
-109	13	Southwest Arabian highland xeric scrub
-110	13	Succulent Karoo xeric shrublands
-111	14	Central African mangroves
-112	14	East African mangroves
-113	14	Guinean mangroves
-114	14	Madagascar mangroves
-115	14	Red Sea mangroves
-116	14	Southern Africa mangroves
-117	11	Adelie Land tundra
-118	11	Central South Antarctic Peninsula tundra
-119	11	Dronning Maud Land tundra
-120	11	East Antarctic tundra
-121	11	Ellsworth Land tundra
-122	11	Ellsworth Mountains tundra
-123	11	Enderby Land tundra
-124	11	Marie Byrd Land tundra
-125	11	North Victoria Land tundra
-126	11	Northeast Antarctic Peninsula tundra
-127	11	Northwest Antarctic Peninsula tundra
-128	11	Prince Charles Mountains tundra
-129	11	Scotia Sea Islands tundra
-130	11	South Antarctic Peninsula tundra
-131	11	South Orkney Islands tundra
-132	11	South Victoria Land tundra
-133	11	Southern Indian Ocean Islands tundra
-134	11	Transantarctic Mountains tundra
-135	1	Admiralty Islands lowland rain forests
-136	1	Banda Sea Islands moist deciduous forests
-137	1	Biak-Numfoor rain forests
-138	1	Buru rain forests
-139	1	Central Range Papuan montane rain forests
-140	1	Halmahera rain forests
-141	1	Huon Peninsula montane rain forests
-142	1	Lord Howe Island subtropical forests
-143	1	Louisiade Archipelago rain forests
-144	1	New Britain-New Ireland lowland rain forests
-145	1	New Britain-New Ireland montane rain forests
-146	1	New Caledonia rain forests
-147	1	Norfolk Island subtropical forests
-148	1	Northern New Guinea lowland rain and freshwater swamp forests
-149	1	Northern New Guinea montane rain forests
-150	1	Queensland tropical rain forests
-151	1	Seram rain forests
-152	1	Solomon Islands rain forests
-153	1	Southeast Papuan rain forests
-154	1	Southern New Guinea freshwater swamp forests
-155	1	Southern New Guinea lowland rain forests
-156	1	Sulawesi lowland rain forests
-157	1	Sulawesi montane rain forests
-158	1	Trobriand Islands rain forests
-159	1	Vanuatu rain forests
-160	1	Vogelkop montane rain forests
-161	1	Vogelkop-Aru lowland rain forests
-162	1	Yapen rain forests
-163	2	Lesser Sundas deciduous forests
-164	2	New Caledonia dry forests
-165	2	Sumba deciduous forests
-166	2	Timor and Wetar deciduous forests
-167	4	Chatham Island temperate forests
-168	4	Eastern Australian temperate forests
-169	4	Fiordland temperate forests
-170	4	Nelson Coast temperate forests
-171	4	New Zealand North Island temperate forests
-172	4	New Zealand South Island temperate forests
-173	4	Northland temperate kauri forests
-174	4	Rakiura Island temperate forests
-175	4	Richmond temperate forests
-176	4	Southeast Australia temperate forests
-177	4	Tasmanian Central Highland forests
-178	4	Tasmanian temperate forests
-179	4	Tasmanian temperate rain forests
-180	4	Westland temperate forests
-181	7	Arnhem Land tropical savanna
-182	7	Brigalow tropical savanna
-183	7	Cape York Peninsula tropical savanna
-184	7	Carpentaria tropical savanna
-185	7	Einasleigh upland savanna
-186	7	Kimberly tropical savanna
-187	7	Mitchell Grass Downs
-188	7	Trans Fly savanna and grasslands
-189	7	Victoria Plains tropical savanna
-190	8	Canterbury-Otago tussock grasslands
-191	8	Eastern Australia mulga shrublands
-192	8	Southeast Australia temperate savanna
-193	10	Australian Alps montane grasslands
-194	10	New Zealand South Island montane grasslands
-195	10	Papuan Central Range sub-alpine grasslands
-196	11	Antipodes Subantarctic Islands tundra
-197	12	Coolgardie woodlands
-198	12	Esperance mallee
-199	12	Eyre and York mallee
-200	12	Flinders-Lofty montane woodlands
-201	12	Hampton mallee and woodlands
-202	12	Jarrah-Karri forest and shrublands
-203	12	Murray-Darling woodlands and mallee
-204	12	Naracoorte woodlands
-205	12	Southwest Australia savanna
-206	12	Southwest Australia woodlands
-207	13	Carnarvon xeric shrublands
-208	13	Central Ranges xeric scrub
-209	13	Gibson desert
-210	13	Great Sandy-Tanami desert
-211	13	Great Victoria desert
-212	13	Nullarbor Plains xeric shrublands
-213	13	Pilbara shrublands
-214	13	Simpson desert
-215	13	Tirari-Sturt stony desert
-216	13	Western Australian Mulga shrublands
-217	14	New Guinea mangroves
-218	1	Andaman Islands rain forests
-219	1	Borneo lowland rain forests
-220	1	Borneo montane rain forests
-221	1	Borneo peat swamp forests
-222	1	Brahmaputra Valley semi-evergreen forests
-223	1	Cardamom Mountains rain forests
-224	1	Chao Phraya freshwater swamp forests
-225	1	Chao Phraya lowland moist deciduous forests
-226	1	Chin Hills-Arakan Yoma montane forests
-227	1	Christmas and Cocos Islands tropical forests
-228	1	East Deccan moist deciduous forests
-229	1	Eastern Java-Bali montane rain forests
-230	1	Eastern Java-Bali rain forests
-231	1	Greater Negros-Panay rain forests
-232	1	Hainan Island monsoon rain forests
-233	1	Himalayan subtropical broadleaf forests
-234	1	Irrawaddy freshwater swamp forests
-235	1	Irrawaddy moist deciduous forests
-236	1	Jian Nan subtropical evergreen forests
-237	1	Kayah-Karen montane rain forests
-238	1	Lower Gangetic Plains moist deciduous forests
-239	1	Luang Prabang montane rain forests
-240	1	Luzon montane rain forests
-241	1	Luzon rain forests
-242	1	Malabar Coast moist forests
-243	1	Maldives-Lakshadweep-Chagos Archipelago tropical moist forests
-244	1	Meghalaya subtropical forests
-245	1	Mentawai Islands rain forests
-246	1	Mindanao montane rain forests
-247	1	Mindanao-Eastern Visayas rain forests
-248	1	Mindoro rain forests
-249	1	Mizoram-Manipur-Kachin rain forests
-250	1	Myanmar coastal rain forests
-251	1	Nansei Islands subtropical evergreen forests
-252	1	Nicobar Islands rain forests
-253	1	North Western Ghats moist deciduous forests
-254	1	North Western Ghats montane rain forests
-255	1	Northern Annamites rain forests
-256	1	Northern Indochina subtropical forests
-257	1	Northern Khorat Plateau moist deciduous forests
-258	1	Northern Thailand-Laos moist deciduous forests
-259	1	Northern Triangle subtropical forests
-260	1	Northern Vietnam lowland rain forests
-261	1	Orissa semi-evergreen forests
-262	1	Palawan rain forests
-263	1	Peninsular Malaysian montane rain forests
-264	1	Peninsular Malaysian peat swamp forests
-265	1	Peninsular Malaysian rain forests
-266	1	Red River freshwater swamp forests
-267	1	South China Sea Islands
-268	1	South China-Vietnam subtropical evergreen forests
-269	1	South Taiwan monsoon rain forests
-270	1	South Western Ghats moist deciduous forests
-271	1	South Western Ghats montane rain forests
-272	1	Southern Annamites montane rain forests
-273	1	Southwest Borneo freshwater swamp forests
-274	1	Sri Lanka lowland rain forests
-275	1	Sri Lanka montane rain forests
-276	1	Sulu Archipelago rain forests
-277	1	Sumatran freshwater swamp forests
-278	1	Sumatran lowland rain forests
-279	1	Sumatran montane rain forests
-280	1	Sumatran peat swamp forests
-281	1	Sundaland heath forests
-282	1	Sundarbans freshwater swamp forests
-283	1	Taiwan subtropical evergreen forests
-284	1	Tenasserim-South Thailand semi-evergreen rain forests
-285	1	Tonle Sap freshwater swamp forests
-286	1	Tonle Sap-Mekong peat swamp forests
-287	1	Upper Gangetic Plains moist deciduous forests
-288	1	Western Java montane rain forests
-289	1	Western Java rain forests
-290	2	Central Deccan Plateau dry deciduous forests
-291	2	Central Indochina dry forests
-292	2	Chhota-Nagpur dry deciduous forests
-293	2	East Deccan dry-evergreen forests
-294	2	Irrawaddy dry forests
-295	2	Khathiar-Gir dry deciduous forests
-296	2	Narmada Valley dry deciduous forests
-297	2	North Deccan dry deciduous forests
-298	2	South Deccan Plateau dry deciduous forests
-299	2	Southeast Indochina dry evergreen forests
-300	2	Southern Vietnam lowland dry forests
-301	2	Sri Lanka dry-zone dry evergreen forests
-302	3	Himalayan subtropical pine forests
-303	3	Luzon tropical pine forests
-304	3	Northeast India-Myanmar pine forests
-305	3	Sumatran tropical pine forests
-306	4	Eastern Himalayan broadleaf forests
-307	4	Northern Triangle temperate forests
-308	4	Western Himalayan broadleaf forests
-309	5	Eastern Himalayan subalpine conifer forests
-310	5	Western Himalayan subalpine conifer forests
-311	7	Terai-Duar savanna and grasslands
-312	9	Rann of Kutch seasonal salt marsh
-313	10	Kinabalu montane alpine meadows
-314	13	Aravalli west thorn scrub forests
-315	13	Deccan thorn scrub forests
-316	13	Godavari-Krishna mangroves
-317	13	Indus Valley desert
-318	13	Thar desert
-319	14	Indochina mangroves
-320	14	Indus River Delta-Arabian Sea mangroves
-321	14	Myanmar Coast mangroves
-322	14	Sunda Shelf mangroves
-323	14	Sundarbans mangroves
-324	2	Sonoran-Sinaloan subtropical dry forest
-325	3	Bermuda subtropical conifer forests
-326	3	Sierra Madre Occidental pine-oak forests
-327	3	Sierra Madre Oriental pine-oak forests
-328	4	Allegheny Highlands forests
-329	4	Appalachian mixed mesophytic forests
-330	4	Appalachian Piedmont forests
-331	4	Appalachian-Blue Ridge forests
-332	4	East Central Texas forests
-333	4	Eastern Canadian Forest-Boreal transition
-334	4	Eastern Great Lakes lowland forests
-335	4	Gulf of St. Lawrence lowland forests
-336	4	Interior Plateau US Hardwood Forests
-337	4	Mississippi lowland forests
-338	4	New England-Acadian forests
-339	4	Northeast US Coastal forests
-340	4	Ozark Highlands mixed forests
-341	4	Ozark Mountain forests
-342	4	Southern Great Lakes forests
-343	4	Upper Midwest US forest-savanna transition
-344	4	Western Great Lakes forests
-345	5	Alberta-British Columbia foothills forests
-346	5	Arizona Mountains forests
-347	5	Atlantic coastal pine barrens
-348	5	Blue Mountains forests
-349	5	British Columbia coastal conifer forests
-350	5	Central British Columbia Mountain forests
-351	5	Central Pacific Northwest coastal forests
-352	5	Central-Southern Cascades Forests
-353	5	Colorado Rockies forests
-354	5	Eastern Cascades forests
-355	5	Fraser Plateau and Basin conifer forests
-356	5	Great Basin montane forests
-357	5	Klamath-Siskiyou forests
-358	5	North Cascades conifer forests
-359	5	Northern California coastal forests
-360	5	Northern Pacific Alaskan coastal forests
-361	5	Northern Rockies conifer forests
-362	5	Okanogan dry forests
-363	5	Piney Woods
-364	5	Puget lowland forests
-365	5	Queen Charlotte Islands conifer forests
-366	5	Sierra Nevada forests
-367	5	South Central Rockies forests
-368	5	Wasatch and Uinta montane forests
-369	6	Alaska Peninsula montane taiga
-370	6	Central Canadian Shield forests
-371	6	Cook Inlet taiga
-372	6	Copper Plateau taiga
-373	6	Eastern Canadian forests
-374	6	Eastern Canadian Shield taiga
-375	6	Interior Alaska-Yukon lowland taiga
-376	6	Mid-Canada Boreal Plains forests
-377	6	Midwest Canadian Shield forests
-378	6	Muskwa-Slave Lake taiga
-379	6	Northern Canadian Shield taiga
-380	6	Northern Cordillera forests
-381	6	Northwest Territories taiga
-382	6	Southern Hudson Bay taiga
-383	6	Watson Highlands taiga
-384	7	Western Gulf coastal grasslands
-385	8	California Central Valley grasslands
-386	8	Canadian Aspen forests and parklands
-387	8	Central US forest-grasslands transition
-388	8	Central Tallgrass prairie
-389	8	Central-Southern US mixed grasslands
-390	8	Cross-Timbers savanna-woodland
-391	8	Edwards Plateau savanna
-392	8	Flint Hills tallgrass prairie
-393	8	Mid-Atlantic US coastal savannas
-394	8	Montana Valley and Foothill grasslands
-395	8	Nebraska Sand Hills mixed grasslands
-396	8	Northern Shortgrass prairie
-397	8	Northern Tallgrass prairie
-398	8	Palouse prairie
-399	8	Southeast US conifer savannas
-400	8	Southeast US mixed woodlands and savannas
-401	8	Texas blackland prairies
-402	8	Western shortgrass prairie
-403	8	Willamette Valley oak savanna
-404	11	Ahklun and Kilbuck Upland Tundra
-405	11	Alaska-St. Elias Range tundra
-406	11	Aleutian Islands tundra
-407	11	Arctic coastal tundra
-408	11	Arctic foothills tundra
-409	11	Beringia lowland tundra
-410	11	Beringia upland tundra
-411	11	Brooks-British Range tundra
-412	11	Canadian High Arctic tundra
-413	11	Canadian Low Arctic tundra
-414	11	Canadian Middle Arctic Tundra
-415	11	Davis Highlands tundra
-416	11	Interior Yukon-Alaska alpine tundra
-417	11	Kalaallit Nunaat Arctic steppe
-418	11	Kalaallit Nunaat High Arctic tundra
-419	11	Ogilvie-MacKenzie alpine tundra
-420	11	Pacific Coastal Mountain icefields and tundra
-421	11	Torngat Mountain tundra
-422	12	California coastal sage and chaparral
-423	12	California interior chaparral and woodlands
-424	12	California montane chaparral and woodlands
-425	12	Santa Lucia Montane Chaparral & Woodlands
-426	13	Baja California desert
-427	13	Central Mexican matorral
-428	13	Chihuahuan desert
-429	13	Colorado Plateau shrublands
-430	13	Great Basin shrub steppe
-431	13	Gulf of California xeric scrub
-432	13	Meseta Central matorral
-433	13	Mojave desert
-434	13	Snake-Columbia shrub steppe
-435	13	Sonoran desert
-436	13	Tamaulipan matorral
-437	13	Tamaulipan mezquital
-438	13	Wyoming Basin shrub steppe
-439	1	Alto Paraná Atlantic forests
-440	1	Araucaria moist forests
-441	1	Atlantic Coast restingas
-442	1	Bahia coastal forests
-443	1	Bahia interior forests
-444	1	Bolivian Yungas
-445	1	Caatinga Enclaves moist forests
-446	1	Caqueta moist forests
-447	1	Catatumbo moist forests
-448	1	Cauca Valley montane forests
-449	1	Cayos Miskitos-San Andrés and Providencia moist forests
-450	1	Central American Atlantic moist forests
-451	1	Central American montane forests
-452	1	Chiapas montane forests
-453	1	Chimalapas montane forests
-454	1	Chocó-Darién moist forests
-455	1	Cocos Island moist forests
-456	1	Cordillera La Costa montane forests
-457	1	Cordillera Oriental montane forests
-458	1	Costa Rican seasonal moist forests
-459	1	Cuban moist forests
-460	1	Eastern Cordillera Real montane forests
-461	1	Eastern Panamanian montane forests
-462	1	Fernando de Noronha-Atol das Rocas moist forests
-463	1	Guianan freshwater swamp forests
-464	1	Guianan Highlands moist forests
-465	1	Guianan lowland moist forests
-466	1	Guianan piedmont moist forests
-467	1	Gurupa várzea
-468	1	Hispaniolan moist forests
-469	1	Iquitos várzea
-470	1	Isthmian-Atlantic moist forests
-471	1	Isthmian-Pacific moist forests
-472	1	Jamaican moist forests
-473	1	Japurá-Solimões-Negro moist forests
-474	1	Juruá-Purus moist forests
-475	1	Leeward Islands moist forests
-476	1	Madeira-Tapajós moist forests
-477	1	Magdalena Valley montane forests
-478	1	Magdalena-Urabá moist forests
-479	1	Marañón dry forests
-480	1	Marajó várzea
-481	1	Mato Grosso tropical dry forests
-482	1	Monte Alegre várzea
-483	1	Napo moist forests
-484	1	Negro-Branco moist forests
-485	1	Northeast Brazil restingas
-486	1	Northwest Andean montane forests
-487	1	Oaxacan montane forests
-488	1	Orinoco Delta swamp forests
-489	1	Pantanos de Centla
-490	1	Pantepui forests & shrublands
-491	1	Pernambuco coastal forests
-492	1	Pernambuco interior forests
-493	1	Peruvian Yungas
-494	1	Petén-Veracruz moist forests
-495	1	Puerto Rican moist forests
-496	1	Purus várzea
-497	1	Purus-Madeira moist forests
-498	1	Rio Negro campinarana
-499	1	Santa Marta montane forests
-500	1	Serra do Mar coastal forests
-501	1	Sierra de los Tuxtlas
-502	1	Sierra Madre de Chiapas moist forests
-503	1	Solimões-Japurá moist forests
-504	1	Southern Andean Yungas
-505	1	Southwest Amazon moist forests
-506	1	Talamancan montane forests
-507	1	Tapajós-Xingu moist forests
-508	1	Tocantins/Pindare moist forests
-509	1	Trindade-Martin Vaz Islands tropical forests
-510	1	Trinidad and Tobago moist forest
-511	1	Uatumã-Trombetas moist forests
-512	1	Ucayali moist forests
-513	1	Venezuelan Andes montane forests
-514	1	Veracruz moist forests
-515	1	Veracruz montane forests
-516	1	Western Ecuador moist forests
-517	1	Windward Islands moist forests
-518	1	Xingu-Tocantins-Araguaia moist forests
-519	1	Yucatán moist forests
-520	2	Apure-Villavicencio dry forests
-521	2	Bajío dry forests
-522	2	Balsas dry forests
-523	2	Bolivian montane dry forests
-524	2	Brazilian Atlantic dry forests
-525	2	Caatinga
-526	2	Cauca Valley dry forests
-527	2	Central American dry forests
-528	2	Chiapas Depression dry forests
-529	2	Chiquitano dry forests
-530	2	Cuban dry forests
-531	2	Ecuadorian dry forests
-532	2	Hispaniolan dry forests
-533	2	Islas Revillagigedo dry forests
-534	2	Jalisco dry forests
-535	2	Jamaican dry forests
-536	2	Lara-Falcón dry forests
-537	2	Lesser Antillean dry forests
-538	2	Magdalena Valley dry forests
-539	2	Maracaibo dry forests
-540	2	Maranhão Babaçu forests
-541	2	Panamanian dry forests
-542	2	Patía valley dry forests
-543	2	Puerto Rican dry forests
-544	2	Sierra de la Laguna dry forests
-545	2	Sinaloan dry forests
-546	2	Sinú Valley dry forests
-547	2	Southern Pacific dry forests
-548	2	Trinidad and Tobago dry forest
-549	2	Tumbes-Piura dry forests
-550	2	Veracruz dry forests
-551	2	Yucatán dry forests
-552	3	Bahamian pineyards
-553	3	Central American pine-oak forests
-554	3	Cuban pine forests
-555	3	Hispaniolan pine forests
-556	3	Sierra de la Laguna pine-oak forests
-557	3	Sierra Madre de Oaxaca pine-oak forests
-558	3	Sierra Madre del Sur pine-oak forests
-559	3	Trans-Mexican Volcanic Belt pine-oak forests
-560	4	Juan Fernández Islands temperate forests
-561	4	Magellanic subpolar forests
-562	4	San Félix-San Ambrosio Islands temperate forests
-563	4	Valdivian temperate forests
-564	7	Belizian pine savannas
-565	7	Beni savanna
-566	7	Campos Rupestres montane savanna
-567	7	Cerrado
-568	7	Clipperton Island shrub and grasslands
-569	7	Dry Chaco
-570	7	Guianan savanna
-571	7	Humid Chaco
-572	7	Llanos
-573	7	Miskito pine forests
-574	7	Uruguayan savanna
-575	8	Espinal
-576	8	Humid Pampas
-577	8	Low Monte
-578	8	Patagonian steppe
-579	9	Cuban wetlands
-580	9	Enriquillo wetlands
-581	9	Everglades flooded grasslands
-582	9	Guayaquil flooded grasslands
-583	9	Orinoco wetlands
-584	9	Pantanal
-585	9	Paraná flooded savanna
-586	9	Southern Cone Mesopotamian savanna
-587	10	Central Andean dry puna
-588	10	Central Andean puna
-589	10	Central Andean wet puna
-590	10	Cordillera Central páramo
-591	10	Cordillera de Merida páramo
-592	10	High Monte
-593	10	Northern Andean páramo
-594	10	Santa Marta páramo
-595	10	Southern Andean steppe
-596	12	Chilean Matorral
-597	13	Araya and Paria xeric scrub
-598	13	Atacama desert
-599	13	Caribbean shrublands
-600	13	Cuban cactus scrub
-601	13	Galápagos Islands xeric scrub
-602	13	Guajira-Barranquilla xeric scrub
-603	13	La Costa xeric shrublands
-604	13	Malpelo Island xeric scrub
-605	13	Motagua Valley thornscrub
-606	13	Paraguaná xeric scrub
-607	13	San Lucan xeric scrub
-608	13	Sechura desert
-609	13	St. Peter and St. Paul Rocks
-610	13	Tehuacán Valley matorral
-611	14	Amazon-Orinoco-Southern Caribbean mangroves
-612	14	Bahamian-Antillean mangroves
-613	14	Mesoamerican Gulf-Caribbean mangroves
-614	14	Northern Mesoamerican Pacific mangroves
-615	14	South American Pacific mangroves
-616	14	Southern Atlantic Brazilian mangroves
-617	14	Southern Mesoamerican Pacific mangroves
-618	1	Carolines tropical moist forests
-619	1	Central Polynesian tropical moist forests
-620	1	Cook Islands tropical moist forests
-621	1	Eastern Micronesia tropical moist forests
-622	1	Fiji tropical moist forests
-623	1	Hawai'i tropical moist forests
-624	1	Kermadec Islands subtropical moist forests
-625	1	Marquesas tropical moist forests
-626	1	Ogasawara subtropical moist forests
-627	1	Palau tropical moist forests
-628	1	Rapa Nui and Sala y Gómez subtropical forests
-629	1	Samoan tropical moist forests
-630	1	Society Islands tropical moist forests
-631	1	Tongan tropical moist forests
-632	1	Tuamotu tropical moist forests
-633	1	Tubuai tropical moist forests
-634	1	Western Polynesian tropical moist forests
-635	2	Fiji tropical dry forests
-636	2	Hawai'i tropical dry forests
-637	2	Marianas tropical dry forests
-638	2	Yap tropical dry forests
-639	7	Hawai'i tropical high shrublands
-640	7	Hawai'i tropical low shrublands
-641	7	Northwest Hawai'i scrub
-642	1	Guizhou Plateau broadleaf and mixed forests
-643	1	Yunnan Plateau subtropical evergreen forests
-644	4	Appenine deciduous montane forests
-645	4	Azores temperate mixed forests
-646	4	Balkan mixed forests
-647	4	Baltic mixed forests
-648	4	Cantabrian mixed forests
-649	4	Caspian Hyrcanian mixed forests
-650	4	Caucasus mixed forests
-651	4	Celtic broadleaf forests
-652	4	Central Anatolian steppe and woodlands
-653	4	Central China Loess Plateau mixed forests
-654	4	Central European mixed forests
-655	4	Central Korean deciduous forests
-656	4	Changbai Mountains mixed forests
-657	4	Changjiang Plain evergreen forests
-658	4	Crimean Submediterranean forest complex
-659	4	Daba Mountains evergreen forests
-660	4	Dinaric Mountains mixed forests
-661	4	East European forest steppe
-662	4	Eastern Anatolian deciduous forests
-663	4	English Lowlands beech forests
-664	4	European Atlantic mixed forests
-665	4	Euxine-Colchic broadleaf forests
-666	4	Hokkaido deciduous forests
-667	4	Huang He Plain mixed forests
-668	4	Madeira evergreen forests
-669	4	Manchurian mixed forests
-670	4	Nihonkai evergreen forests
-671	4	Nihonkai montane deciduous forests
-672	4	North Atlantic moist mixed forests
-673	4	Northeast China Plain deciduous forests
-674	4	Pannonian mixed forests
-675	4	Po Basin mixed forests
-676	4	Pyrenees conifer and mixed forests
-677	4	Qin Ling Mountains deciduous forests
-678	4	Rodope montane mixed forests
-679	4	Sarmatic mixed forests
-680	4	Sichuan Basin evergreen broadleaf forests
-681	4	Southern Korea evergreen forests
-682	4	Taiheiyo evergreen forests
-683	4	Taiheiyo montane deciduous forests
-684	4	Tarim Basin deciduous forests and steppe
-685	4	Ussuri broadleaf and mixed forests
-686	4	Western European broadleaf forests
-687	4	Western Siberian hemiboreal forests
-688	4	Zagros Mountains forest steppe
-689	5	Alps conifer and mixed forests
-690	5	Altai montane forest and forest steppe
-691	5	Caledon conifer forests
-692	5	Carpathian montane forests
-693	5	Da Hinggan-Dzhagdy Mountains conifer forests
-694	5	East Afghan montane conifer forests
-695	5	Elburz Range forest steppe
-696	5	Helanshan montane conifer forests
-697	5	Hengduan Mountains subalpine conifer forests
-698	5	Hokkaido montane conifer forests
-699	5	Honshu alpine conifer forests
-700	5	Khangai Mountains conifer forests
-701	5	Mediterranean conifer and mixed forests
-702	5	Northeast Himalayan subalpine conifer forests
-703	5	Northern Anatolian conifer and deciduous forests
-704	5	Nujiang Langcang Gorge alpine conifer and mixed forests
-705	5	Qilian Mountains conifer forests
-706	5	Qionglai-Minshan conifer forests
-707	5	Sayan montane conifer forests
-708	5	Scandinavian coastal conifer forests
-709	5	Tian Shan montane conifer forests
-710	6	East Siberian taiga
-711	6	Iceland boreal birch forests and alpine tundra
-712	6	Kamchatka taiga
-713	6	Kamchatka-Kurile meadows and sparse forests
-714	6	Northeast Siberian taiga
-715	6	Okhotsk-Manchurian taiga
-716	6	Sakhalin Island taiga
-717	6	Scandinavian and Russian taiga
-718	6	Trans-Baikal conifer forests
-719	6	Urals montane forest and taiga
-720	6	West Siberian taiga
-721	8	Alai-Western Tian Shan steppe
-722	8	Al-Hajar foothill xeric woodlands and shrublands
-723	8	Al-Hajar montane woodlands and shrublands
-724	8	Altai steppe and semi-desert
-725	8	Central Anatolian steppe
-726	8	Daurian forest steppe
-727	8	Eastern Anatolian montane steppe
-728	8	Emin Valley steppe
-729	8	Faroe Islands boreal grasslands
-730	8	Gissaro-Alai open woodlands
-731	8	Kazakh forest steppe
-732	8	Kazakh steppe
-733	8	Kazakh upland steppe
-734	8	Mongolian-Manchurian grassland
-735	8	Pontic steppe
-736	8	Sayan Intermontane steppe
-737	8	Selenge-Orkhon forest steppe
-738	8	South Siberian forest steppe
-739	8	Syrian xeric grasslands and shrublands
-740	8	Tian Shan foothill arid steppe
-741	9	Amur meadow steppe
-742	9	Bohai Sea saline meadow
-743	9	Nenjiang River grassland
-744	9	Nile Delta flooded savanna
-745	9	Saharan halophytics
-746	9	Suiphun-Khanka meadows and forest meadows
-747	9	Tigris-Euphrates alluvial salt marsh
-748	9	Yellow Sea saline meadow
-749	10	Altai alpine meadow and tundra
-750	10	Central Tibetan Plateau alpine steppe
-751	10	Eastern Himalayan alpine shrub and meadows
-752	10	Ghorat-Hazarajat alpine meadow
-753	10	Hindu Kush alpine meadow
-754	10	Karakoram-West Tibetan Plateau alpine steppe
-755	10	Khangai Mountains alpine meadow
-756	10	Kopet Dag woodlands and forest steppe
-757	10	Kuh Rud and Eastern Iran montane woodlands
-758	10	Mediterranean High Atlas juniper steppe
-759	10	North Tibetan Plateau-Kunlun Mountains alpine desert
-760	10	Northwestern Himalayan alpine shrub and meadows
-761	10	Ordos Plateau steppe
-762	10	Pamir alpine desert and tundra
-763	10	Qilian Mountains subalpine meadows
-764	10	Sayan alpine meadows and tundra
-765	10	Southeast Tibet shrublands and meadows
-766	10	Sulaiman Range alpine meadows
-767	10	Tian Shan montane steppe and meadows
-768	10	Tibetan Plateau alpine shrublands and meadows
-769	10	Western Himalayan alpine shrub and meadows
-770	10	Yarlung Zanbo arid steppe
-771	11	Cherskii-Kolyma mountain tundra
-772	11	Chukchi Peninsula tundra
-773	11	Kamchatka tundra
-774	11	Kola Peninsula tundra
-775	11	Northeast Siberian coastal tundra
-776	11	Northwest Russian-Novaya Zemlya tundra
-777	11	Novosibirsk Islands Arctic desert
-778	11	Russian Arctic desert
-779	11	Russian Bering tundra
-780	11	Scandinavian Montane Birch forest and grasslands
-781	11	Taimyr-Central Siberian tundra
-782	11	Trans-Baikal Bald Mountain tundra
-783	11	Wrangel Island Arctic desert
-784	11	Yamal-Gydan tundra
-785	12	Aegean and Western Turkey sclerophyllous and mixed forests
-786	12	Anatolian conifer and deciduous mixed forests
-787	12	Canary Islands dry woodlands and forests
-788	12	Corsican montane broadleaf and mixed forests
-789	12	Crete Mediterranean forests
-790	12	Cyprus Mediterranean forests
-791	12	Eastern Mediterranean conifer-broadleaf forests
-792	12	Iberian conifer forests
-793	12	Iberian sclerophyllous and semi-deciduous forests
-794	12	Illyrian deciduous forests
-795	12	Italian sclerophyllous and semi-deciduous forests
-796	12	Mediterranean Acacia-Argania dry woodlands and succulent thickets
-797	12	Mediterranean dry woodlands and steppe
-798	12	Mediterranean woodlands and forests
-799	12	Northeast Spain and Southern France Mediterranean forests
-800	12	Northwest Iberian montane forests
-801	12	Pindus Mountains mixed forests
-802	12	South Apennine mixed montane forests
-803	12	Southeast Iberian shrubs and woodlands
-804	12	Southern Anatolian montane conifer and deciduous forests
-805	12	Southwest Iberian Mediterranean sclerophyllous and mixed forests
-806	12	Tyrrhenian-Adriatic sclerophyllous and mixed forests
-807	13	Afghan Mountains semi-desert
-808	13	Alashan Plateau semi-desert
-809	13	Arabian desert
-810	13	Arabian sand desert
-811	13	Arabian-Persian Gulf coastal plain desert
-812	13	Azerbaijan shrub desert and steppe
-813	13	Badghyz and Karabil semi-desert
-814	13	Baluchistan xeric woodlands
-815	13	Caspian lowland desert
-816	13	Central Afghan Mountains xeric woodlands
-817	13	Central Asian northern desert
-818	13	Central Asian riparian woodlands
-819	13	Central Asian southern desert
-820	13	Central Persian desert basins
-821	13	East Arabian fog shrublands and sand desert
-822	13	East Sahara Desert
-823	13	East Saharan montane xeric woodlands
-824	13	Eastern Gobi desert steppe
-825	13	Gobi Lakes Valley desert steppe
-826	13	Great Lakes Basin desert steppe
-827	13	Junggar Basin semi-desert
-828	13	Kazakh semi-desert
-829	13	Kopet Dag semi-desert
-830	13	Mesopotamian shrub desert
-831	13	North Arabian desert
-832	13	North Arabian highland shrublands
-833	13	North Saharan Xeric Steppe and Woodland
-834	13	Paropamisus xeric woodlands
-835	13	Qaidam Basin semi-desert
-836	13	Red Sea coastal desert
-837	13	Red Sea-Arabian Desert shrublands
-838	13	Registan-North Pakistan sandy desert
-839	13	Saharan Atlantic coastal desert
-840	13	South Arabian plains and plateau desert
-841	13	South Iran Nubo-Sindian desert and semi-desert
-842	13	South Sahara desert
-843	13	Taklimakan desert
-844	13	Tibesti-Jebel Uweinat montane xeric woodlands
-845	13	West Sahara desert
-846	13	West Saharan montane xeric woodlands
+0	11	Rock and Ice	
+1	1	Albertine Rift montane forests	AT
+2	1	Cameroon Highlands forests	AT
+3	1	Central Congolian lowland forests	AT
+4	1	Comoros forests	AT
+5	1	Congolian coastal forests	AT
+6	1	Cross-Niger transition forests	AT
+7	1	Cross-Sanaga-Bioko coastal forests	AT
+8	1	East African montane forests	AT
+9	1	Eastern Arc forests	AT
+10	1	Eastern Congolian swamp forests	AT
+11	1	Eastern Guinean forests	AT
+12	1	Ethiopian montane forests	AT
+13	1	Granitic Seychelles forests	AT
+14	1	Guinean montane forests	AT
+15	1	Knysna-Amatole montane forests	AT
+16	1	Kwazulu Natal-Cape coastal forests	AT
+17	1	Madagascar humid forests	AT
+18	1	Madagascar subhumid forests	AT
+19	1	Maputaland coastal forests and woodlands	AT
+20	1	Mascarene forests	AT
+21	1	Mount Cameroon and Bioko montane forests	AT
+22	1	Niger Delta swamp forests	AT
+23	1	Nigerian lowland forests	AT
+24	1	Northeast Congolian lowland forests	AT
+25	1	Northern Swahili coastal forests	AT
+26	1	Northwest Congolian lowland forests	AT
+27	1	São Tomé, Príncipe, and Annobón forests	AT
+28	1	Southern Swahili coastal forests and woodlands	AT
+29	1	Western Congolian swamp forests	AT
+30	1	Western Guinean lowland forests	AT
+31	2	Cape Verde Islands dry forests	AT
+32	2	Madagascar dry deciduous forests	AT
+33	2	Zambezian evergreen dry forests	AT
+34	7	Angolan mopane woodlands	AT
+35	7	Angolan scarp savanna and woodlands	AT
+36	7	Angolan wet miombo woodlands	AT
+37	7	Ascension scrub and grasslands	AT
+38	7	Central bushveld	AT
+39	7	Central Zambezian wet miombo woodlands	AT
+40	7	Drakensberg Escarpment savanna and thicket	AT
+41	7	Drakensberg grasslands	AT
+42	7	Dry miombo woodlands	AT
+43	7	East Sudanian savanna	AT
+44	7	Guinean forest-savanna	AT
+45	7	Horn of Africa xeric bushlands	AT
+46	7	Itigi-Sumbu thicket	AT
+47	7	Kalahari Acacia woodlands	AT
+48	7	Limpopo lowveld	AT
+49	7	Mandara Plateau woodlands	AT
+50	7	Masai xeric grasslands and shrublands	AT
+51	7	Northern Acacia-Commiphora bushlands and thickets	AT
+52	7	Northern Congolian Forest-Savanna	AT
+53	7	Sahelian Acacia savanna	AT
+54	7	Serengeti volcanic grasslands	AT
+55	7	Somali Acacia-Commiphora bushlands and thickets	AT
+56	7	South Arabian fog woodlands, shrublands, and dune	AT
+57	7	Southern Acacia-Commiphora bushlands and thickets	AT
+58	7	Southern Congolian forest-savanna	AT
+59	7	Southwest Arabian montane woodlands and grasslands	AT
+60	7	St. Helena scrub and woodlands	AT
+61	7	Victoria Basin forest-savanna	AT
+62	7	West Sudanian savanna	AT
+63	7	Western Congolian forest-savanna	AT
+64	7	Zambezian Baikiaea woodlands	AT
+65	7	Zambezian mopane woodlands	AT
+66	7	Zambezian-Limpopo mixed woodlands	AT
+67	8	Amsterdam-Saint Paul Islands temperate grasslands	AT
+68	8	Tristan Da Cunha-Gough Islands shrub and grasslands	AT
+69	9	East African halophytics	AT
+70	9	Etosha Pan halophytics	AT
+71	9	Inner Niger Delta flooded savanna	AT
+72	9	Lake Chad flooded savanna	AT
+73	9	Makgadikgadi halophytics	AT
+74	9	Sudd flooded grasslands	AT
+75	9	Zambezian coastal flooded savanna	AT
+76	9	Zambezian flooded grasslands	AT
+77	10	Angolan montane forest-grassland	AT
+78	10	East African montane moorlands	AT
+79	10	Ethiopian montane grasslands and woodlands	AT
+80	10	Ethiopian montane moorlands	AT
+81	10	Highveld grasslands	AT
+82	10	Jos Plateau forest-grassland	AT
+83	10	Madagascar ericoid thickets	AT
+84	10	Mulanje Montane forest-grassland	AT
+85	10	Nyanga-Chimanimani Montane forest-grassland	AT
+86	10	Rwenzori-Virunga montane moorlands	AT
+87	10	Southern Rift Montane forest-grassland	AT
+88	12	Albany thickets	AT
+89	12	Fynbos shrubland	AT
+90	12	Renosterveld shrubland	AT
+91	13	Aldabra Island xeric scrub	AT
+92	13	Djibouti xeric shrublands	AT
+93	13	Eritrean coastal desert	AT
+94	13	Gariep Karoo	AT
+95	13	Hobyo grasslands and shrublands	AT
+96	13	Ile Europa and Bassas da India xeric scrub	AT
+97	13	Kalahari xeric savanna	AT
+98	13	Kaokoveld desert	AT
+99	13	Madagascar spiny thickets	AT
+100	13	Madagascar succulent woodlands	AT
+101	13	Nama Karoo shrublands	AT
+102	13	Namaqualand-Richtersveld steppe	AT
+103	13	Namib Desert	AT
+104	13	Namibian savanna woodlands	AT
+105	13	Socotra Island xeric shrublands	AT
+106	13	Somali montane xeric woodlands	AT
+107	13	Southwest Arabian coastal xeric shrublands	AT
+108	13	Southwest Arabian Escarpment shrublands and woodlands	AT
+109	13	Southwest Arabian highland xeric scrub	AT
+110	13	Succulent Karoo xeric shrublands	AT
+111	14	Central African mangroves	AT
+112	14	East African mangroves	AT
+113	14	Guinean mangroves	AT
+114	14	Madagascar mangroves	AT
+115	14	Red Sea mangroves	AT
+116	14	Southern Africa mangroves	AT
+117	11	Adelie Land tundra	AN
+118	11	Central South Antarctic Peninsula tundra	AN
+119	11	Dronning Maud Land tundra	AN
+120	11	East Antarctic tundra	AN
+121	11	Ellsworth Land tundra	AN
+122	11	Ellsworth Mountains tundra	AN
+123	11	Enderby Land tundra	AN
+124	11	Marie Byrd Land tundra	AN
+125	11	North Victoria Land tundra	AN
+126	11	Northeast Antarctic Peninsula tundra	AN
+127	11	Northwest Antarctic Peninsula tundra	AN
+128	11	Prince Charles Mountains tundra	AN
+129	11	Scotia Sea Islands tundra	AN
+130	11	South Antarctic Peninsula tundra	AN
+131	11	South Orkney Islands tundra	AN
+132	11	South Victoria Land tundra	AN
+133	11	Southern Indian Ocean Islands tundra	AN
+134	11	Transantarctic Mountains tundra	AN
+135	1	Admiralty Islands lowland rain forests	AA
+136	1	Banda Sea Islands moist deciduous forests	AA
+137	1	Biak-Numfoor rain forests	AA
+138	1	Buru rain forests	AA
+139	1	Central Range Papuan montane rain forests	AA
+140	1	Halmahera rain forests	AA
+141	1	Huon Peninsula montane rain forests	AA
+142	1	Lord Howe Island subtropical forests	AA
+143	1	Louisiade Archipelago rain forests	AA
+144	1	New Britain-New Ireland lowland rain forests	AA
+145	1	New Britain-New Ireland montane rain forests	AA
+146	1	New Caledonia rain forests	AA
+147	1	Norfolk Island subtropical forests	AA
+148	1	Northern New Guinea lowland rain and freshwater swamp forests	AA
+149	1	Northern New Guinea montane rain forests	AA
+150	1	Queensland tropical rain forests	AA
+151	1	Seram rain forests	AA
+152	1	Solomon Islands rain forests	AA
+153	1	Southeast Papuan rain forests	AA
+154	1	Southern New Guinea freshwater swamp forests	AA
+155	1	Southern New Guinea lowland rain forests	AA
+156	1	Sulawesi lowland rain forests	AA
+157	1	Sulawesi montane rain forests	AA
+158	1	Trobriand Islands rain forests	AA
+159	1	Vanuatu rain forests	AA
+160	1	Vogelkop montane rain forests	AA
+161	1	Vogelkop-Aru lowland rain forests	AA
+162	1	Yapen rain forests	AA
+163	2	Lesser Sundas deciduous forests	AA
+164	2	New Caledonia dry forests	AA
+165	2	Sumba deciduous forests	AA
+166	2	Timor and Wetar deciduous forests	AA
+167	4	Chatham Island temperate forests	AA
+168	4	Eastern Australian temperate forests	AA
+169	4	Fiordland temperate forests	AA
+170	4	Nelson Coast temperate forests	AA
+171	4	New Zealand North Island temperate forests	AA
+172	4	New Zealand South Island temperate forests	AA
+173	4	Northland temperate kauri forests	AA
+174	4	Rakiura Island temperate forests	AA
+175	4	Richmond temperate forests	AA
+176	4	Southeast Australia temperate forests	AA
+177	4	Tasmanian Central Highland forests	AA
+178	4	Tasmanian temperate forests	AA
+179	4	Tasmanian temperate rain forests	AA
+180	4	Westland temperate forests	AA
+181	7	Arnhem Land tropical savanna	AA
+182	7	Brigalow tropical savanna	AA
+183	7	Cape York Peninsula tropical savanna	AA
+184	7	Carpentaria tropical savanna	AA
+185	7	Einasleigh upland savanna	AA
+186	7	Kimberly tropical savanna	AA
+187	7	Mitchell Grass Downs	AA
+188	7	Trans Fly savanna and grasslands	AA
+189	7	Victoria Plains tropical savanna	AA
+190	8	Canterbury-Otago tussock grasslands	AA
+191	8	Eastern Australia mulga shrublands	AA
+192	8	Southeast Australia temperate savanna	AA
+193	10	Australian Alps montane grasslands	AA
+194	10	New Zealand South Island montane grasslands	AA
+195	10	Papuan Central Range sub-alpine grasslands	AA
+196	11	Antipodes Subantarctic Islands tundra	AA
+197	12	Coolgardie woodlands	AA
+198	12	Esperance mallee	AA
+199	12	Eyre and York mallee	AA
+200	12	Flinders-Lofty montane woodlands	AA
+201	12	Hampton mallee and woodlands	AA
+202	12	Jarrah-Karri forest and shrublands	AA
+203	12	Murray-Darling woodlands and mallee	AA
+204	12	Naracoorte woodlands	AA
+205	12	Southwest Australia savanna	AA
+206	12	Southwest Australia woodlands	AA
+207	13	Carnarvon xeric shrublands	AA
+208	13	Central Ranges xeric scrub	AA
+209	13	Gibson desert	AA
+210	13	Great Sandy-Tanami desert	AA
+211	13	Great Victoria desert	AA
+212	13	Nullarbor Plains xeric shrublands	AA
+213	13	Pilbara shrublands	AA
+214	13	Simpson desert	AA
+215	13	Tirari-Sturt stony desert	AA
+216	13	Western Australian Mulga shrublands	AA
+217	14	New Guinea mangroves	AA
+218	1	Andaman Islands rain forests	IM
+219	1	Borneo lowland rain forests	IM
+220	1	Borneo montane rain forests	IM
+221	1	Borneo peat swamp forests	IM
+222	1	Brahmaputra Valley semi-evergreen forests	IM
+223	1	Cardamom Mountains rain forests	IM
+224	1	Chao Phraya freshwater swamp forests	IM
+225	1	Chao Phraya lowland moist deciduous forests	IM
+226	1	Chin Hills-Arakan Yoma montane forests	IM
+227	1	Christmas and Cocos Islands tropical forests	IM
+228	1	East Deccan moist deciduous forests	IM
+229	1	Eastern Java-Bali montane rain forests	IM
+230	1	Eastern Java-Bali rain forests	IM
+231	1	Greater Negros-Panay rain forests	IM
+232	1	Hainan Island monsoon rain forests	IM
+233	1	Himalayan subtropical broadleaf forests	IM
+234	1	Irrawaddy freshwater swamp forests	IM
+235	1	Irrawaddy moist deciduous forests	IM
+236	1	Jian Nan subtropical evergreen forests	IM
+237	1	Kayah-Karen montane rain forests	IM
+238	1	Lower Gangetic Plains moist deciduous forests	IM
+239	1	Luang Prabang montane rain forests	IM
+240	1	Luzon montane rain forests	IM
+241	1	Luzon rain forests	IM
+242	1	Malabar Coast moist forests	IM
+243	1	Maldives-Lakshadweep-Chagos Archipelago tropical moist forests	IM
+244	1	Meghalaya subtropical forests	IM
+245	1	Mentawai Islands rain forests	IM
+246	1	Mindanao montane rain forests	IM
+247	1	Mindanao-Eastern Visayas rain forests	IM
+248	1	Mindoro rain forests	IM
+249	1	Mizoram-Manipur-Kachin rain forests	IM
+250	1	Myanmar coastal rain forests	IM
+251	1	Nansei Islands subtropical evergreen forests	IM
+252	1	Nicobar Islands rain forests	IM
+253	1	North Western Ghats moist deciduous forests	IM
+254	1	North Western Ghats montane rain forests	IM
+255	1	Northern Annamites rain forests	IM
+256	1	Northern Indochina subtropical forests	IM
+257	1	Northern Khorat Plateau moist deciduous forests	IM
+258	1	Northern Thailand-Laos moist deciduous forests	IM
+259	1	Northern Triangle subtropical forests	IM
+260	1	Northern Vietnam lowland rain forests	IM
+261	1	Orissa semi-evergreen forests	IM
+262	1	Palawan rain forests	IM
+263	1	Peninsular Malaysian montane rain forests	IM
+264	1	Peninsular Malaysian peat swamp forests	IM
+265	1	Peninsular Malaysian rain forests	IM
+266	1	Red River freshwater swamp forests	IM
+267	1	South China Sea Islands	IM
+268	1	South China-Vietnam subtropical evergreen forests	IM
+269	1	South Taiwan monsoon rain forests	IM
+270	1	South Western Ghats moist deciduous forests	IM
+271	1	South Western Ghats montane rain forests	IM
+272	1	Southern Annamites montane rain forests	IM
+273	1	Southwest Borneo freshwater swamp forests	IM
+274	1	Sri Lanka lowland rain forests	IM
+275	1	Sri Lanka montane rain forests	IM
+276	1	Sulu Archipelago rain forests	IM
+277	1	Sumatran freshwater swamp forests	IM
+278	1	Sumatran lowland rain forests	IM
+279	1	Sumatran montane rain forests	IM
+280	1	Sumatran peat swamp forests	IM
+281	1	Sundaland heath forests	IM
+282	1	Sundarbans freshwater swamp forests	IM
+283	1	Taiwan subtropical evergreen forests	IM
+284	1	Tenasserim-South Thailand semi-evergreen rain forests	IM
+285	1	Tonle Sap freshwater swamp forests	IM
+286	1	Tonle Sap-Mekong peat swamp forests	IM
+287	1	Upper Gangetic Plains moist deciduous forests	IM
+288	1	Western Java montane rain forests	IM
+289	1	Western Java rain forests	IM
+290	2	Central Deccan Plateau dry deciduous forests	IM
+291	2	Central Indochina dry forests	IM
+292	2	Chhota-Nagpur dry deciduous forests	IM
+293	2	East Deccan dry-evergreen forests	IM
+294	2	Irrawaddy dry forests	IM
+295	2	Khathiar-Gir dry deciduous forests	IM
+296	2	Narmada Valley dry deciduous forests	IM
+297	2	North Deccan dry deciduous forests	IM
+298	2	South Deccan Plateau dry deciduous forests	IM
+299	2	Southeast Indochina dry evergreen forests	IM
+300	2	Southern Vietnam lowland dry forests	IM
+301	2	Sri Lanka dry-zone dry evergreen forests	IM
+302	3	Himalayan subtropical pine forests	IM
+303	3	Luzon tropical pine forests	IM
+304	3	Northeast India-Myanmar pine forests	IM
+305	3	Sumatran tropical pine forests	IM
+306	4	Eastern Himalayan broadleaf forests	IM
+307	4	Northern Triangle temperate forests	IM
+308	4	Western Himalayan broadleaf forests	IM
+309	5	Eastern Himalayan subalpine conifer forests	IM
+310	5	Western Himalayan subalpine conifer forests	IM
+311	7	Terai-Duar savanna and grasslands	IM
+312	9	Rann of Kutch seasonal salt marsh	IM
+313	10	Kinabalu montane alpine meadows	IM
+314	13	Aravalli west thorn scrub forests	IM
+315	13	Deccan thorn scrub forests	IM
+316	13	Godavari-Krishna mangroves	IM
+317	13	Indus Valley desert	IM
+318	13	Thar desert	IM
+319	14	Indochina mangroves	IM
+320	14	Indus River Delta-Arabian Sea mangroves	IM
+321	14	Myanmar Coast mangroves	IM
+322	14	Sunda Shelf mangroves	IM
+323	14	Sundarbans mangroves	IM
+324	2	Sonoran-Sinaloan subtropical dry forest	NA
+325	3	Bermuda subtropical conifer forests	NA
+326	3	Sierra Madre Occidental pine-oak forests	NA
+327	3	Sierra Madre Oriental pine-oak forests	NA
+328	4	Allegheny Highlands forests	NA
+329	4	Appalachian mixed mesophytic forests	NA
+330	4	Appalachian Piedmont forests	NA
+331	4	Appalachian-Blue Ridge forests	NA
+332	4	East Central Texas forests	NA
+333	4	Eastern Canadian Forest-Boreal transition	NA
+334	4	Eastern Great Lakes lowland forests	NA
+335	4	Gulf of St. Lawrence lowland forests	NA
+336	4	Interior Plateau US Hardwood Forests	NA
+337	4	Mississippi lowland forests	NA
+338	4	New England-Acadian forests	NA
+339	4	Northeast US Coastal forests	NA
+340	4	Ozark Highlands mixed forests	NA
+341	4	Ozark Mountain forests	NA
+342	4	Southern Great Lakes forests	NA
+343	4	Upper Midwest US forest-savanna transition	NA
+344	4	Western Great Lakes forests	NA
+345	5	Alberta-British Columbia foothills forests	NA
+346	5	Arizona Mountains forests	NA
+347	5	Atlantic coastal pine barrens	NA
+348	5	Blue Mountains forests	NA
+349	5	British Columbia coastal conifer forests	NA
+350	5	Central British Columbia Mountain forests	NA
+351	5	Central Pacific Northwest coastal forests	NA
+352	5	Central-Southern Cascades Forests	NA
+353	5	Colorado Rockies forests	NA
+354	5	Eastern Cascades forests	NA
+355	5	Fraser Plateau and Basin conifer forests	NA
+356	5	Great Basin montane forests	NA
+357	5	Klamath-Siskiyou forests	NA
+358	5	North Cascades conifer forests	NA
+359	5	Northern California coastal forests	NA
+360	5	Northern Pacific Alaskan coastal forests	NA
+361	5	Northern Rockies conifer forests	NA
+362	5	Okanogan dry forests	NA
+363	5	Piney Woods	NA
+364	5	Puget lowland forests	NA
+365	5	Queen Charlotte Islands conifer forests	NA
+366	5	Sierra Nevada forests	NA
+367	5	South Central Rockies forests	NA
+368	5	Wasatch and Uinta montane forests	NA
+369	6	Alaska Peninsula montane taiga	NA
+370	6	Central Canadian Shield forests	NA
+371	6	Cook Inlet taiga	NA
+372	6	Copper Plateau taiga	NA
+373	6	Eastern Canadian forests	NA
+374	6	Eastern Canadian Shield taiga	NA
+375	6	Interior Alaska-Yukon lowland taiga	NA
+376	6	Mid-Canada Boreal Plains forests	NA
+377	6	Midwest Canadian Shield forests	NA
+378	6	Muskwa-Slave Lake taiga	NA
+379	6	Northern Canadian Shield taiga	NA
+380	6	Northern Cordillera forests	NA
+381	6	Northwest Territories taiga	NA
+382	6	Southern Hudson Bay taiga	NA
+383	6	Watson Highlands taiga	NA
+384	7	Western Gulf coastal grasslands	NA
+385	8	California Central Valley grasslands	NA
+386	8	Canadian Aspen forests and parklands	NA
+387	8	Central US forest-grasslands transition	NA
+388	8	Central Tallgrass prairie	NA
+389	8	Central-Southern US mixed grasslands	NA
+390	8	Cross-Timbers savanna-woodland	NA
+391	8	Edwards Plateau savanna	NA
+392	8	Flint Hills tallgrass prairie	NA
+393	8	Mid-Atlantic US coastal savannas	NA
+394	8	Montana Valley and Foothill grasslands	NA
+395	8	Nebraska Sand Hills mixed grasslands	NA
+396	8	Northern Shortgrass prairie	NA
+397	8	Northern Tallgrass prairie	NA
+398	8	Palouse prairie	NA
+399	8	Southeast US conifer savannas	NA
+400	8	Southeast US mixed woodlands and savannas	NA
+401	8	Texas blackland prairies	NA
+402	8	Western shortgrass prairie	NA
+403	8	Willamette Valley oak savanna	NA
+404	11	Ahklun and Kilbuck Upland Tundra	NA
+405	11	Alaska-St. Elias Range tundra	NA
+406	11	Aleutian Islands tundra	NA
+407	11	Arctic coastal tundra	NA
+408	11	Arctic foothills tundra	NA
+409	11	Beringia lowland tundra	NA
+410	11	Beringia upland tundra	NA
+411	11	Brooks-British Range tundra	NA
+412	11	Canadian High Arctic tundra	NA
+413	11	Canadian Low Arctic tundra	NA
+414	11	Canadian Middle Arctic Tundra	NA
+415	11	Davis Highlands tundra	NA
+416	11	Interior Yukon-Alaska alpine tundra	NA
+417	11	Kalaallit Nunaat Arctic steppe	NA
+418	11	Kalaallit Nunaat High Arctic tundra	NA
+419	11	Ogilvie-MacKenzie alpine tundra	NA
+420	11	Pacific Coastal Mountain icefields and tundra	NA
+421	11	Torngat Mountain tundra	NA
+422	12	California coastal sage and chaparral	NA
+423	12	California interior chaparral and woodlands	NA
+424	12	California montane chaparral and woodlands	NA
+425	12	Santa Lucia Montane Chaparral & Woodlands	NA
+426	13	Baja California desert	NA
+427	13	Central Mexican matorral	NA
+428	13	Chihuahuan desert	NA
+429	13	Colorado Plateau shrublands	NA
+430	13	Great Basin shrub steppe	NA
+431	13	Gulf of California xeric scrub	NA
+432	13	Meseta Central matorral	NA
+433	13	Mojave desert	NA
+434	13	Snake-Columbia shrub steppe	NA
+435	13	Sonoran desert	NA
+436	13	Tamaulipan matorral	NA
+437	13	Tamaulipan mezquital	NA
+438	13	Wyoming Basin shrub steppe	NA
+439	1	Alto Paraná Atlantic forests	NT
+440	1	Araucaria moist forests	NT
+441	1	Atlantic Coast restingas	NT
+442	1	Bahia coastal forests	NT
+443	1	Bahia interior forests	NT
+444	1	Bolivian Yungas	NT
+445	1	Caatinga Enclaves moist forests	NT
+446	1	Caqueta moist forests	NT
+447	1	Catatumbo moist forests	NT
+448	1	Cauca Valley montane forests	NT
+449	1	Cayos Miskitos-San Andrés and Providencia moist forests	NT
+450	1	Central American Atlantic moist forests	NT
+451	1	Central American montane forests	NT
+452	1	Chiapas montane forests	NT
+453	1	Chimalapas montane forests	NT
+454	1	Chocó-Darién moist forests	NT
+455	1	Cocos Island moist forests	NT
+456	1	Cordillera La Costa montane forests	NT
+457	1	Cordillera Oriental montane forests	NT
+458	1	Costa Rican seasonal moist forests	NT
+459	1	Cuban moist forests	NT
+460	1	Eastern Cordillera Real montane forests	NT
+461	1	Eastern Panamanian montane forests	NT
+462	1	Fernando de Noronha-Atol das Rocas moist forests	NT
+463	1	Guianan freshwater swamp forests	NT
+464	1	Guianan Highlands moist forests	NT
+465	1	Guianan lowland moist forests	NT
+466	1	Guianan piedmont moist forests	NT
+467	1	Gurupa várzea	NT
+468	1	Hispaniolan moist forests	NT
+469	1	Iquitos várzea	NT
+470	1	Isthmian-Atlantic moist forests	NT
+471	1	Isthmian-Pacific moist forests	NT
+472	1	Jamaican moist forests	NT
+473	1	Japurá-Solimões-Negro moist forests	NT
+474	1	Juruá-Purus moist forests	NT
+475	1	Leeward Islands moist forests	NT
+476	1	Madeira-Tapajós moist forests	NT
+477	1	Magdalena Valley montane forests	NT
+478	1	Magdalena-Urabá moist forests	NT
+479	1	Marañón dry forests	NT
+480	1	Marajó várzea	NT
+481	1	Mato Grosso tropical dry forests	NT
+482	1	Monte Alegre várzea	NT
+483	1	Napo moist forests	NT
+484	1	Negro-Branco moist forests	NT
+485	1	Northeast Brazil restingas	NT
+486	1	Northwest Andean montane forests	NT
+487	1	Oaxacan montane forests	NT
+488	1	Orinoco Delta swamp forests	NT
+489	1	Pantanos de Centla	NT
+490	1	Pantepui forests & shrublands	NT
+491	1	Pernambuco coastal forests	NT
+492	1	Pernambuco interior forests	NT
+493	1	Peruvian Yungas	NT
+494	1	Petén-Veracruz moist forests	NT
+495	1	Puerto Rican moist forests	NT
+496	1	Purus várzea	NT
+497	1	Purus-Madeira moist forests	NT
+498	1	Rio Negro campinarana	NT
+499	1	Santa Marta montane forests	NT
+500	1	Serra do Mar coastal forests	NT
+501	1	Sierra de los Tuxtlas	NT
+502	1	Sierra Madre de Chiapas moist forests	NT
+503	1	Solimões-Japurá moist forests	NT
+504	1	Southern Andean Yungas	NT
+505	1	Southwest Amazon moist forests	NT
+506	1	Talamancan montane forests	NT
+507	1	Tapajós-Xingu moist forests	NT
+508	1	Tocantins/Pindare moist forests	NT
+509	1	Trindade-Martin Vaz Islands tropical forests	NT
+510	1	Trinidad and Tobago moist forest	NT
+511	1	Uatumã-Trombetas moist forests	NT
+512	1	Ucayali moist forests	NT
+513	1	Venezuelan Andes montane forests	NT
+514	1	Veracruz moist forests	NT
+515	1	Veracruz montane forests	NT
+516	1	Western Ecuador moist forests	NT
+517	1	Windward Islands moist forests	NT
+518	1	Xingu-Tocantins-Araguaia moist forests	NT
+519	1	Yucatán moist forests	NT
+520	2	Apure-Villavicencio dry forests	NT
+521	2	Bajío dry forests	NT
+522	2	Balsas dry forests	NT
+523	2	Bolivian montane dry forests	NT
+524	2	Brazilian Atlantic dry forests	NT
+525	2	Caatinga	NT
+526	2	Cauca Valley dry forests	NT
+527	2	Central American dry forests	NT
+528	2	Chiapas Depression dry forests	NT
+529	2	Chiquitano dry forests	NT
+530	2	Cuban dry forests	NT
+531	2	Ecuadorian dry forests	NT
+532	2	Hispaniolan dry forests	NT
+533	2	Islas Revillagigedo dry forests	NT
+534	2	Jalisco dry forests	NT
+535	2	Jamaican dry forests	NT
+536	2	Lara-Falcón dry forests	NT
+537	2	Lesser Antillean dry forests	NT
+538	2	Magdalena Valley dry forests	NT
+539	2	Maracaibo dry forests	NT
+540	2	Maranhão Babaçu forests	NT
+541	2	Panamanian dry forests	NT
+542	2	Patía valley dry forests	NT
+543	2	Puerto Rican dry forests	NT
+544	2	Sierra de la Laguna dry forests	NT
+545	2	Sinaloan dry forests	NT
+546	2	Sinú Valley dry forests	NT
+547	2	Southern Pacific dry forests	NT
+548	2	Trinidad and Tobago dry forest	NT
+549	2	Tumbes-Piura dry forests	NT
+550	2	Veracruz dry forests	NT
+551	2	Yucatán dry forests	NT
+552	3	Bahamian pineyards	NT
+553	3	Central American pine-oak forests	NT
+554	3	Cuban pine forests	NT
+555	3	Hispaniolan pine forests	NT
+556	3	Sierra de la Laguna pine-oak forests	NT
+557	3	Sierra Madre de Oaxaca pine-oak forests	NT
+558	3	Sierra Madre del Sur pine-oak forests	NT
+559	3	Trans-Mexican Volcanic Belt pine-oak forests	NT
+560	4	Juan Fernández Islands temperate forests	NT
+561	4	Magellanic subpolar forests	NT
+562	4	San Félix-San Ambrosio Islands temperate forests	NT
+563	4	Valdivian temperate forests	NT
+564	7	Belizian pine savannas	NT
+565	7	Beni savanna	NT
+566	7	Campos Rupestres montane savanna	NT
+567	7	Cerrado	NT
+568	7	Clipperton Island shrub and grasslands	NT
+569	7	Dry Chaco	NT
+570	7	Guianan savanna	NT
+571	7	Humid Chaco	NT
+572	7	Llanos	NT
+573	7	Miskito pine forests	NT
+574	7	Uruguayan savanna	NT
+575	8	Espinal	NT
+576	8	Humid Pampas	NT
+577	8	Low Monte	NT
+578	8	Patagonian steppe	NT
+579	9	Cuban wetlands	NT
+580	9	Enriquillo wetlands	NT
+581	9	Everglades flooded grasslands	NT
+582	9	Guayaquil flooded grasslands	NT
+583	9	Orinoco wetlands	NT
+584	9	Pantanal	NT
+585	9	Paraná flooded savanna	NT
+586	9	Southern Cone Mesopotamian savanna	NT
+587	10	Central Andean dry puna	NT
+588	10	Central Andean puna	NT
+589	10	Central Andean wet puna	NT
+590	10	Cordillera Central páramo	NT
+591	10	Cordillera de Merida páramo	NT
+592	10	High Monte	NT
+593	10	Northern Andean páramo	NT
+594	10	Santa Marta páramo	NT
+595	10	Southern Andean steppe	NT
+596	12	Chilean Matorral	NT
+597	13	Araya and Paria xeric scrub	NT
+598	13	Atacama desert	NT
+599	13	Caribbean shrublands	NT
+600	13	Cuban cactus scrub	NT
+601	13	Galápagos Islands xeric scrub	NT
+602	13	Guajira-Barranquilla xeric scrub	NT
+603	13	La Costa xeric shrublands	NT
+604	13	Malpelo Island xeric scrub	NT
+605	13	Motagua Valley thornscrub	NT
+606	13	Paraguaná xeric scrub	NT
+607	13	San Lucan xeric scrub	NT
+608	13	Sechura desert	NT
+609	13	St. Peter and St. Paul Rocks	NT
+610	13	Tehuacán Valley matorral	NT
+611	14	Amazon-Orinoco-Southern Caribbean mangroves	NT
+612	14	Bahamian-Antillean mangroves	NT
+613	14	Mesoamerican Gulf-Caribbean mangroves	NT
+614	14	Northern Mesoamerican Pacific mangroves	NT
+615	14	South American Pacific mangroves	NT
+616	14	Southern Atlantic Brazilian mangroves	NT
+617	14	Southern Mesoamerican Pacific mangroves	NT
+618	1	Carolines tropical moist forests	OC
+619	1	Central Polynesian tropical moist forests	OC
+620	1	Cook Islands tropical moist forests	OC
+621	1	Eastern Micronesia tropical moist forests	OC
+622	1	Fiji tropical moist forests	OC
+623	1	Hawai'i tropical moist forests	OC
+624	1	Kermadec Islands subtropical moist forests	OC
+625	1	Marquesas tropical moist forests	OC
+626	1	Ogasawara subtropical moist forests	OC
+627	1	Palau tropical moist forests	OC
+628	1	Rapa Nui and Sala y Gómez subtropical forests	OC
+629	1	Samoan tropical moist forests	OC
+630	1	Society Islands tropical moist forests	OC
+631	1	Tongan tropical moist forests	OC
+632	1	Tuamotu tropical moist forests	OC
+633	1	Tubuai tropical moist forests	OC
+634	1	Western Polynesian tropical moist forests	OC
+635	2	Fiji tropical dry forests	OC
+636	2	Hawai'i tropical dry forests	OC
+637	2	Marianas tropical dry forests	OC
+638	2	Yap tropical dry forests	OC
+639	7	Hawai'i tropical high shrublands	OC
+640	7	Hawai'i tropical low shrublands	OC
+641	7	Northwest Hawai'i scrub	OC
+642	1	Guizhou Plateau broadleaf and mixed forests	PA
+643	1	Yunnan Plateau subtropical evergreen forests	PA
+644	4	Appenine deciduous montane forests	PA
+645	4	Azores temperate mixed forests	PA
+646	4	Balkan mixed forests	PA
+647	4	Baltic mixed forests	PA
+648	4	Cantabrian mixed forests	PA
+649	4	Caspian Hyrcanian mixed forests	PA
+650	4	Caucasus mixed forests	PA
+651	4	Celtic broadleaf forests	PA
+652	4	Central Anatolian steppe and woodlands	PA
+653	4	Central China Loess Plateau mixed forests	PA
+654	4	Central European mixed forests	PA
+655	4	Central Korean deciduous forests	PA
+656	4	Changbai Mountains mixed forests	PA
+657	4	Changjiang Plain evergreen forests	PA
+658	4	Crimean Submediterranean forest complex	PA
+659	4	Daba Mountains evergreen forests	PA
+660	4	Dinaric Mountains mixed forests	PA
+661	4	East European forest steppe	PA
+662	4	Eastern Anatolian deciduous forests	PA
+663	4	English Lowlands beech forests	PA
+664	4	European Atlantic mixed forests	PA
+665	4	Euxine-Colchic broadleaf forests	PA
+666	4	Hokkaido deciduous forests	PA
+667	4	Huang He Plain mixed forests	PA
+668	4	Madeira evergreen forests	PA
+669	4	Manchurian mixed forests	PA
+670	4	Nihonkai evergreen forests	PA
+671	4	Nihonkai montane deciduous forests	PA
+672	4	North Atlantic moist mixed forests	PA
+673	4	Northeast China Plain deciduous forests	PA
+674	4	Pannonian mixed forests	PA
+675	4	Po Basin mixed forests	PA
+676	4	Pyrenees conifer and mixed forests	PA
+677	4	Qin Ling Mountains deciduous forests	PA
+678	4	Rodope montane mixed forests	PA
+679	4	Sarmatic mixed forests	PA
+680	4	Sichuan Basin evergreen broadleaf forests	PA
+681	4	Southern Korea evergreen forests	PA
+682	4	Taiheiyo evergreen forests	PA
+683	4	Taiheiyo montane deciduous forests	PA
+684	4	Tarim Basin deciduous forests and steppe	PA
+685	4	Ussuri broadleaf and mixed forests	PA
+686	4	Western European broadleaf forests	PA
+687	4	Western Siberian hemiboreal forests	PA
+688	4	Zagros Mountains forest steppe	PA
+689	5	Alps conifer and mixed forests	PA
+690	5	Altai montane forest and forest steppe	PA
+691	5	Caledon conifer forests	PA
+692	5	Carpathian montane forests	PA
+693	5	Da Hinggan-Dzhagdy Mountains conifer forests	PA
+694	5	East Afghan montane conifer forests	PA
+695	5	Elburz Range forest steppe	PA
+696	5	Helanshan montane conifer forests	PA
+697	5	Hengduan Mountains subalpine conifer forests	PA
+698	5	Hokkaido montane conifer forests	PA
+699	5	Honshu alpine conifer forests	PA
+700	5	Khangai Mountains conifer forests	PA
+701	5	Mediterranean conifer and mixed forests	PA
+702	5	Northeast Himalayan subalpine conifer forests	PA
+703	5	Northern Anatolian conifer and deciduous forests	PA
+704	5	Nujiang Langcang Gorge alpine conifer and mixed forests	PA
+705	5	Qilian Mountains conifer forests	PA
+706	5	Qionglai-Minshan conifer forests	PA
+707	5	Sayan montane conifer forests	PA
+708	5	Scandinavian coastal conifer forests	PA
+709	5	Tian Shan montane conifer forests	PA
+710	6	East Siberian taiga	PA
+711	6	Iceland boreal birch forests and alpine tundra	PA
+712	6	Kamchatka taiga	PA
+713	6	Kamchatka-Kurile meadows and sparse forests	PA
+714	6	Northeast Siberian taiga	PA
+715	6	Okhotsk-Manchurian taiga	PA
+716	6	Sakhalin Island taiga	PA
+717	6	Scandinavian and Russian taiga	PA
+718	6	Trans-Baikal conifer forests	PA
+719	6	Urals montane forest and taiga	PA
+720	6	West Siberian taiga	PA
+721	8	Alai-Western Tian Shan steppe	PA
+722	8	Al-Hajar foothill xeric woodlands and shrublands	PA
+723	8	Al-Hajar montane woodlands and shrublands	PA
+724	8	Altai steppe and semi-desert	PA
+725	8	Central Anatolian steppe	PA
+726	8	Daurian forest steppe	PA
+727	8	Eastern Anatolian montane steppe	PA
+728	8	Emin Valley steppe	PA
+729	8	Faroe Islands boreal grasslands	PA
+730	8	Gissaro-Alai open woodlands	PA
+731	8	Kazakh forest steppe	PA
+732	8	Kazakh steppe	PA
+733	8	Kazakh upland steppe	PA
+734	8	Mongolian-Manchurian grassland	PA
+735	8	Pontic steppe	PA
+736	8	Sayan Intermontane steppe	PA
+737	8	Selenge-Orkhon forest steppe	PA
+738	8	South Siberian forest steppe	PA
+739	8	Syrian xeric grasslands and shrublands	PA
+740	8	Tian Shan foothill arid steppe	PA
+741	9	Amur meadow steppe	PA
+742	9	Bohai Sea saline meadow	PA
+743	9	Nenjiang River grassland	PA
+744	9	Nile Delta flooded savanna	PA
+745	9	Saharan halophytics	PA
+746	9	Suiphun-Khanka meadows and forest meadows	PA
+747	9	Tigris-Euphrates alluvial salt marsh	PA
+748	9	Yellow Sea saline meadow	PA
+749	10	Altai alpine meadow and tundra	PA
+750	10	Central Tibetan Plateau alpine steppe	PA
+751	10	Eastern Himalayan alpine shrub and meadows	PA
+752	10	Ghorat-Hazarajat alpine meadow	PA
+753	10	Hindu Kush alpine meadow	PA
+754	10	Karakoram-West Tibetan Plateau alpine steppe	PA
+755	10	Khangai Mountains alpine meadow	PA
+756	10	Kopet Dag woodlands and forest steppe	PA
+757	10	Kuh Rud and Eastern Iran montane woodlands	PA
+758	10	Mediterranean High Atlas juniper steppe	PA
+759	10	North Tibetan Plateau-Kunlun Mountains alpine desert	PA
+760	10	Northwestern Himalayan alpine shrub and meadows	PA
+761	10	Ordos Plateau steppe	PA
+762	10	Pamir alpine desert and tundra	PA
+763	10	Qilian Mountains subalpine meadows	PA
+764	10	Sayan alpine meadows and tundra	PA
+765	10	Southeast Tibet shrublands and meadows	PA
+766	10	Sulaiman Range alpine meadows	PA
+767	10	Tian Shan montane steppe and meadows	PA
+768	10	Tibetan Plateau alpine shrublands and meadows	PA
+769	10	Western Himalayan alpine shrub and meadows	PA
+770	10	Yarlung Zanbo arid steppe	PA
+771	11	Cherskii-Kolyma mountain tundra	PA
+772	11	Chukchi Peninsula tundra	PA
+773	11	Kamchatka tundra	PA
+774	11	Kola Peninsula tundra	PA
+775	11	Northeast Siberian coastal tundra	PA
+776	11	Northwest Russian-Novaya Zemlya tundra	PA
+777	11	Novosibirsk Islands Arctic desert	PA
+778	11	Russian Arctic desert	PA
+779	11	Russian Bering tundra	PA
+780	11	Scandinavian Montane Birch forest and grasslands	PA
+781	11	Taimyr-Central Siberian tundra	PA
+782	11	Trans-Baikal Bald Mountain tundra	PA
+783	11	Wrangel Island Arctic desert	PA
+784	11	Yamal-Gydan tundra	PA
+785	12	Aegean and Western Turkey sclerophyllous and mixed forests	PA
+786	12	Anatolian conifer and deciduous mixed forests	PA
+787	12	Canary Islands dry woodlands and forests	PA
+788	12	Corsican montane broadleaf and mixed forests	PA
+789	12	Crete Mediterranean forests	PA
+790	12	Cyprus Mediterranean forests	PA
+791	12	Eastern Mediterranean conifer-broadleaf forests	PA
+792	12	Iberian conifer forests	PA
+793	12	Iberian sclerophyllous and semi-deciduous forests	PA
+794	12	Illyrian deciduous forests	PA
+795	12	Italian sclerophyllous and semi-deciduous forests	PA
+796	12	Mediterranean Acacia-Argania dry woodlands and succulent thickets	PA
+797	12	Mediterranean dry woodlands and steppe	PA
+798	12	Mediterranean woodlands and forests	PA
+799	12	Northeast Spain and Southern France Mediterranean forests	PA
+800	12	Northwest Iberian montane forests	PA
+801	12	Pindus Mountains mixed forests	PA
+802	12	South Apennine mixed montane forests	PA
+803	12	Southeast Iberian shrubs and woodlands	PA
+804	12	Southern Anatolian montane conifer and deciduous forests	PA
+805	12	Southwest Iberian Mediterranean sclerophyllous and mixed forests	PA
+806	12	Tyrrhenian-Adriatic sclerophyllous and mixed forests	PA
+807	13	Afghan Mountains semi-desert	PA
+808	13	Alashan Plateau semi-desert	PA
+809	13	Arabian desert	PA
+810	13	Arabian sand desert	PA
+811	13	Arabian-Persian Gulf coastal plain desert	PA
+812	13	Azerbaijan shrub desert and steppe	PA
+813	13	Badghyz and Karabil semi-desert	PA
+814	13	Baluchistan xeric woodlands	PA
+815	13	Caspian lowland desert	PA
+816	13	Central Afghan Mountains xeric woodlands	PA
+817	13	Central Asian northern desert	PA
+818	13	Central Asian riparian woodlands	PA
+819	13	Central Asian southern desert	PA
+820	13	Central Persian desert basins	PA
+821	13	East Arabian fog shrublands and sand desert	PA
+822	13	East Sahara Desert	PA
+823	13	East Saharan montane xeric woodlands	PA
+824	13	Eastern Gobi desert steppe	PA
+825	13	Gobi Lakes Valley desert steppe	PA
+826	13	Great Lakes Basin desert steppe	PA
+827	13	Junggar Basin semi-desert	PA
+828	13	Kazakh semi-desert	PA
+829	13	Kopet Dag semi-desert	PA
+830	13	Mesopotamian shrub desert	PA
+831	13	North Arabian desert	PA
+832	13	North Arabian highland shrublands	PA
+833	13	North Saharan Xeric Steppe and Woodland	PA
+834	13	Paropamisus xeric woodlands	PA
+835	13	Qaidam Basin semi-desert	PA
+836	13	Red Sea coastal desert	PA
+837	13	Red Sea-Arabian Desert shrublands	PA
+838	13	Registan-North Pakistan sandy desert	PA
+839	13	Saharan Atlantic coastal desert	PA
+840	13	South Arabian plains and plateau desert	PA
+841	13	South Iran Nubo-Sindian desert and semi-desert	PA
+842	13	South Sahara desert	PA
+843	13	Taklimakan desert	PA
+844	13	Tibesti-Jebel Uweinat montane xeric woodlands	PA
+845	13	West Sahara desert	PA
+846	13	West Saharan montane xeric woodlands	PA

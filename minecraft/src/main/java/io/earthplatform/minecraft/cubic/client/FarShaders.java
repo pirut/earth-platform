@@ -20,14 +20,22 @@ final class FarShaders {
      * fragment output location far terrain's faces' own depth takes beside the pack's outputs
      * (see {@link #faceDepthLocation}), and the uniforms and samplers (name to GLSL type) its
      * {@code voxy.json} asks for, which Voxy declares for the code (see {@link #voxyDeclarations}).
+     * For a pack with Distant Horizons programs and no Voxy code, see {@link PackPatch#dh}.
      */
     record PackPatch(String fragment, @Nullable String taaOffset, int faceDepthLocation, java.util.List<String> uniforms,
-            java.util.Map<String, String> samplers) {
+            java.util.Map<String, String> samplers, @Nullable String vertex, int outputs) {
         PackPatch(String fragment, @Nullable String taaOffset) { this(fragment, taaOffset, java.util.List.of(), java.util.Map.of()); }
 
         PackPatch(String fragment, @Nullable String taaOffset, java.util.List<String> uniforms, java.util.Map<String, String> samplers) {
-            this(fragment, taaOffset, FarShaders.faceDepthLocation(fragment), uniforms, samplers);
+            this(fragment, taaOffset, FarShaders.faceDepthLocation(fragment), uniforms, samplers, null, 0);
         }
+
+        /**
+         * A pack's Distant Horizons terrain program (see {@link #dhPatch}) rather than Voxy code:
+         * {@code vertex} is its vertex shader and {@code fragment} its fragment shader, both as Iris
+         * patched them, and {@code outputs} how many of the pack's targets the fragment shader writes.
+         */
+        boolean dh() { return vertex != null; }
     }
 
     private static final Pattern UNIFORM_LIST = Pattern.compile("\"uniforms\"\\s*:\\s*\\[([^\\]]*)\\]");
@@ -195,7 +203,9 @@ final class FarShaders {
     private static final float HAZE_HEIGHT = 1000.0F;
 
     static final String VERTEX = String.format(java.util.Locale.ROOT,
-            "const float earth_HazeHeight = %.1f;\nconst float earth_Edge = %.1f;\n", HAZE_HEIGHT, 0.95F * io.earthplatform.minecraft.cubic.far.Far.reach()) + """
+            "const float earth_HazeHeight = %.1f;\n", HAZE_HEIGHT) + """
+            // Where far terrain ends, in blocks: a uniform, since the far distance changes while playing.
+            uniform float earth_Edge;
             uniform usamplerBuffer earth_Quads;
             uniform isamplerBuffer earth_Columns;
             uniform mat4 earth_ModelView;
@@ -784,6 +794,165 @@ final class FarShaders {
     /** The same, drawing only where the game drew none of its blocks with {@code ground} (see {@link #GROUND}). */
     static String packNearFragment(String version, String patch, int fade, boolean ground) {
         return packFragment(version, patch, false, fade, ground).replaceFirst("\n", "\n#define EARTH_NEAR\n");
+    }
+
+    // Distant Horizons packs (see FarDhPack) --------------------------------------------------------
+
+    private static final Pattern VERSION = Pattern.compile("(?m)^[ \\t]*#version[ \\t]+(\\d+)[^\n]*$");
+    private static final Pattern MAIN = Pattern.compile("\\bvoid\\s+main\\s*\\(\\s*(?:void)?\\s*\\)");
+    private static final Pattern VERT_INIT = Pattern.compile("\\bvoid\\s+_vert_init\\s*\\(\\s*(?:void)?\\s*\\)\\s*\\{");
+
+    /**
+     * Far terrain's pack code from a pack's Distant Horizons terrain program, for a pack that has
+     * one and no Voxy code: its vertex and fragment shaders as Iris patches them for Distant
+     * Horizons, with their {@code main}s renamed so far terrain's own run first, and the vertex
+     * shader's unpacking of Distant Horizons' vertices swapped for far terrain's faces (see
+     * {@link #DH_VERTEX}). Null when the vertex shader isn't one Iris patched as expected, which
+     * leaves far terrain in plain colours. {@code outputs} is how many targets the program draws to.
+     */
+    @Nullable static PackPatch dhPatch(String vertex, String fragment, int outputs) {
+        Matcher init = VERT_INIT.matcher(vertex);
+        if (!init.find() || !MAIN.matcher(vertex).find() || !MAIN.matcher(fragment).find()) return null;
+        int end = closing(vertex, init.end() - 1);
+        if (end < 0) return null;
+        String unpacked = vertex.substring(0, init.end()) + " earth_dhInit(); _vert_position = earth_dhPosition; _vert_normal = earth_dhNormal;"
+                + " dhMaterialId = earth_dhMaterial; _vert_tex_light_coord = earth_dhLight; _vert_color = earth_dhColour; " + vertex.substring(end);
+        String vertexCode = MAIN.matcher(unpacked).replaceFirst("void earth_dhMain()");
+        String fragmentCode = MAIN.matcher(fragment).replaceFirst("void earth_dhMain()");
+        return new PackPatch(fragmentCode, null, faceDepthLocation(fragmentCode), java.util.List.of(), java.util.Map.of(), vertexCode, outputs);
+    }
+
+    /** The index of the brace closing the one at {@code open}, or -1. */
+    private static int closing(String source, int open) {
+        int depth = 0;
+        for (int at = open; at < source.length(); at++) {
+            char c = source.charAt(at);
+            if (c == '{') depth++;
+            else if (c == '}' && --depth == 0) return at;
+        }
+        return -1;
+    }
+
+    /** A shader's lines apart: its #extension lines, and the rest without its #version line. */
+    private static String[] split(String source) {
+        StringBuilder extensions = new StringBuilder(), body = new StringBuilder();
+        for (String line : source.split("\n", -1)) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("#extension")) extensions.append(trimmed).append('\n');
+            else if (!trimmed.startsWith("#version")) body.append(line).append('\n');
+        }
+        return new String[] {extensions.toString(), body.toString()};
+    }
+
+    /**
+     * A program's header with the GLSL version the pack's shader asks for when that is newer than
+     * far terrain's own: a pack written for 4.3 doesn't build as 3.3. Where the GPU hasn't got that
+     * version the program fails to build, and far terrain falls back to plain colours.
+     */
+    static String dhHeader(String header, String packSource) {
+        Matcher pack = VERSION.matcher(packSource), own = VERSION.matcher(header);
+        if (!pack.find() || !own.find()) return header;
+        return Integer.parseInt(pack.group(1)) <= Integer.parseInt(own.group(1)) ? header
+                : header.substring(0, own.start(1)) + pack.group(1) + header.substring(own.end(1));
+    }
+
+    /**
+     * What a far face is to a pack's Distant Horizons vertex shader, worked out by far terrain's own
+     * vertex shader (which runs first) and handed to the pack's in place of a Distant Horizons
+     * vertex: its place from the camera, its colour (the block texture's average, tinted, as
+     * Distant Horizons colours its own), its light, its Distant Horizons material and its normal.
+     * The normal leans to the ground's slope as voxels shrink on screen, as with Voxy code (see
+     * {@link #SLOPE}), worked out here from the distance and the angle the face is seen at, since a
+     * vertex shader has no pixel sizes.
+     */
+    private static final String DH_VERTEX = """
+            uniform usamplerBuffer earth_Looks;
+            vec3 earth_dhPosition;
+            vec3 earth_dhNormal;
+            vec4 earth_dhColour;
+            vec2 earth_dhLight;
+            int earth_dhMaterial;
+            const vec3 earth_dhNormals[6] = vec3[](vec3(0, -1, 0), vec3(0, 1, 0), vec3(0, 0, -1), vec3(0, 0, 1), vec3(-1, 0, 0), vec3(1, 0, 0));
+
+            const float earth_GrowPixels = 0.46;
+
+            void earth_dhInit() {
+                uvec4 look = texelFetch(earth_Looks, int(earth_look) * 2 + 1);
+                vec3 face = earth_dhNormals[min(earth_face, 5u)];
+                earth_dhPosition = earth_position;
+                earth_dhMaterial = int((look.w >> 4) & 15u);
+                earth_dhLight = (vec2(float(earth_light >> 4), float(earth_light & 15u)) + 0.5) / 16.0;
+                if (earth_smooth > 0.5) {
+                    earth_dhColour = vec4(earth_vcolour, 1.0);
+                    earth_dhNormal = normalize(earth_vnormal);
+                    return;
+                }
+                earth_dhColour = vec4(earth_rgb(look.x) * earth_rgb(look.y), 1.0);
+                earth_dhNormal = face;
+                if (earth_normal == 0u) return;
+                // Pixels a voxel spans: a face grows by earth_Grow blocks per block of distance to reach a set share of a pixel.
+                float voxel = earth_reach / 16.0;
+                float pixels = max(voxel, 2.0) * earth_GrowPixels / max(earth_Grow * length(earth_anchor), 1e-6);
+                // Seen edge on, a face is as thin on screen as a far smaller one seen square on.
+                pixels *= abs(dot(normalize(earth_anchor), face));
+                float share = 0.85 * (1.0 - smoothstep(2.0, 10.0, pixels));
+                earth_dhNormal = normalize(mix(face, earth_decodeNormal(earth_normal), share));
+            }
+            """;
+
+    /**
+     * The vertex shader for a pack's Distant Horizons program: far terrain's own, which places the
+     * face, then the pack's, which takes the face as its vertex and sets the pack's own outputs for
+     * its fragment shader. The position the pack's shader leaves is kept, with whatever the pack
+     * does to it (its TAA jitter, say); it works it out from the same matrices as far terrain's.
+     */
+    static String dhVertex(String header, PackPatch patch) {
+        String[] pack = split(patch.vertex());
+        String own = MAIN.matcher(VERTEX).replaceFirst("void earth_main()").replace("CORNERS", "earth_Corners").replace("TRIANGLES", "earth_Triangles");
+        return dhHeader(header, patch.vertex()) + pack[0] + own + DH_VERTEX + pack[1] + "\nvoid main() {\n    earth_main();\n    earth_dhMain();\n}\n";
+    }
+
+    /** What {@link #PACK_MAIN} does before it calls a pack's Voxy code, ahead of a pack's Distant Horizons fragment shader. */
+    private static final String DH_BEFORE = """
+            void earth_dhBefore() {
+            #ifdef EARTH_FADE
+                earth_fade();
+            #endif
+            #ifdef EARTH_GROUND
+                earth_ground();
+            #endif
+            #ifdef EARTH_OWN_DEPTH
+                if (texelFetch(earth_GameDepth, ivec2(gl_FragCoord.xy), 0).r < 1.0) discard;
+                if (length(earth_position.xz) < earth_NearReach) discard;
+                earth_faceDepth = gl_FragCoord.z;
+                earth_slopeDepth();
+            #endif
+            }
+            """;
+
+    /**
+     * The fragment shader for a pack's Distant Horizons program: far terrain's own part first (what
+     * it drops, its faces' depth and its slope's depth, as with Voxy code), then the pack's whole
+     * fragment shader. Far terrain's code comes before the pack's so the pack's macros can't touch it.
+     */
+    static String dhFragment(String header, PackPatch patch, boolean ownDepth, int fade, boolean ground) {
+        String[] pack = split(patch.fragment());
+        String declarations = SLOPE + faceDepthAt(PACK_DECLARATIONS, patch.faceDepthLocation());
+        return dhHeader(header, patch.fragment()) + pack[0] + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + (ground ? GROUND : "") + fade(fade)
+                + declarations + DH_BEFORE + pack[1] + "\nvoid main() {\n    earth_dhBefore();\n    earth_dhMain();\n}\n";
+    }
+
+    /**
+     * Far terrain inside the game's blocks' reach under a pack's Distant Horizons program, which is
+     * drawn in plain lit colours into the game's own depth, as under a pack with no far terrain
+     * support: a Distant Horizons program expects its own depth and projection.
+     */
+    static String dhNearFragment(String header) {
+        String main = PACK_FALLBACK.substring(PACK_FALLBACK.lastIndexOf("void main() {"));
+        return header + PACK_FALLBACK.substring(0, PACK_FALLBACK.length() - main.length()) + """
+                in vec3 earth_position;
+                uniform float earth_NearReach;
+                """ + main.replaceFirst("\\{", "{\n    if (length(earth_position.xz) >= earth_NearReach) discard;");
     }
 
     // Depth pre-pass (-Dearthplatform.far.depthPrepass=true; see FarGpu#DEPTH_PREPASS) ---------------

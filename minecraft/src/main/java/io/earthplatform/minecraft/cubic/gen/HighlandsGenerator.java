@@ -36,6 +36,8 @@ public final class HighlandsGenerator extends SurfaceGenerator {
 
     private HighlandsGenerator(long seed, Registry<Biome> biomes, Noises noises) {
         super(seed, biomes, noises.random);
+        // The Highlands test world keeps the caves it always had.
+        legacyCaves();
         SimplexNoise[] n = noises.noise;
         continent = n[0]; ridge = n[1]; mask = n[2]; hills = n[3]; detail = n[4]; moisture = n[5]; snow = n[6];
         plains = holder(biomes, Biomes.PLAINS); forest = holder(biomes, Biomes.FOREST); birch = holder(biomes, Biomes.BIRCH_FOREST);

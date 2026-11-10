@@ -292,6 +292,11 @@ public final class CubeStorage {
                 root.put("cubes", all);
                 Path temp = file.resolveSibling(file.getFileName() + ".tmp");
                 NbtIo.writeCompressed(root, temp);
+                // On disk before it takes the old file's place: renamed while still in the system's buffers, a power
+                // cut could leave an empty file where the region was, and with it every edit in the region.
+                try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(temp, java.nio.file.StandardOpenOption.WRITE)) {
+                    channel.force(true);
+                }
                 Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
                 written = true;
             } finally {

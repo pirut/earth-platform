@@ -30,6 +30,7 @@ public final class EarthPlatformFabricClient implements ClientModInitializer {
     public void onInitializeClient() {
         FabricPayloads.registerClient();
         KeyBindingHelper.registerKeyBinding(EarthFlight.KEY);
+        KeyBindingHelper.registerKeyBinding(io.earthplatform.minecraft.cubic.play.client.EarthPostcardScreen.KEY);
         ClientLifecycleEvents.CLIENT_STARTED.register(client -> Flawless.offer());
 
         ClientTickEvents.START_CLIENT_TICK.register(client -> CubicClient.tickStart());
@@ -37,6 +38,7 @@ public final class EarthPlatformFabricClient implements ClientModInitializer {
             CubicClient.tick();
             CubicCompat.tick();
             EarthFlight.clientTick();
+            io.earthplatform.minecraft.cubic.play.client.EarthPostcardScreen.clientTick();
             EarthCompassHud.tick();
             JetHud.tick();
         });

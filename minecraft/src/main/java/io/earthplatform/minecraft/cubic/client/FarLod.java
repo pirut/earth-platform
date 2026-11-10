@@ -85,24 +85,44 @@ public final class FarLod {
     private static double cameraX, cameraY, cameraZ, lastX, lastY, lastZ;
     /** Whether {@link #shadows} holds last frame's far shadows, which this frame's far terrain reads. */
     private static boolean shadowsReady, sunUp;
+    /** Whether the pack was compiled with {@code DISTANT_HORIZONS} for far terrain (see {@link #lodDefine}). */
+    private static boolean dh;
 
     private FarLod() {}
 
     // The pack's side ---------------------------------------------------------------------------
 
     /**
-     * Whether a pack about to be compiled should get {@code VOXY}: not when Distant Horizons is
-     * installed, as packs give it its own path and refuse both at once. Remembers the answer.
+     * The define a pack about to be compiled should get for far terrain: {@code VOXY}, or
+     * {@code DISTANT_HORIZONS} for a pack with a Distant Horizons terrain program and no Voxy code
+     * (see {@link FarDhPack}). Neither when Distant Horizons is installed, as packs give it its own
+     * path and refuse both at once. Remembers the answer. Only called by Iris.
      */
-    public static boolean defineVoxy() {
+    @Nullable public static String lodDefine() {
         // Iris loads its pack before the mod list is up, so ask the loader.
         defined = ENABLED && !Loader.INSTANCE.isModLoaded("distanthorizons");
-        return defined;
+        dh = defined && FarDhPack.wanted();
+        return !defined ? null : dh ? "DISTANT_HORIZONS" : "VOXY";
     }
 
     static boolean voxyDefined() { return defined; }
 
-    /** True when far terrain draws into its own depth: a pack with Voxy support, compiled with {@code VOXY}. */
+    /** True when the pack was compiled to read far terrain's depth under Distant Horizons' names rather than Voxy's. */
+    public static boolean dhDefined() { return dh; }
+
+    /** True while far terrain is drawn with the pack's Distant Horizons terrain program. */
+    public static boolean dhActive() {
+        if (!dh || !ShaderBlocks.packInUse()) return false;
+        FarShaders.PackPatch patch = ShaderBlocks.voxyPatch();
+        return patch != null && patch.dh();
+    }
+
+    /** Far terrain's depth range and reach in blocks, as a pack reads Distant Horizons' ({@code dhNearPlane}, {@code dhFarPlane}, {@code dhRenderDistance}). */
+    public static float dhNearPlane() { return NEAR; }
+    public static float dhFarPlane() { return FarRenderer.depthFar(); }
+    public static int dhRenderDistance() { return (int) (0.95F * 0.5F * FarRenderer.depthFar()); }
+
+    /** True when far terrain draws into its own depth: a pack with Voxy support or a Distant Horizons program, compiled for it. */
     static boolean active() {
         return defined && ShaderBlocks.packInUse() && ShaderBlocks.voxyPatch() != null;
     }
@@ -127,11 +147,11 @@ public final class FarLod {
      */
     static int renderDistance() {
         if (ClientCubeWorld.current() == null) return Minecraft.getInstance().options.getEffectiveRenderDistance();
-        return (int) Math.ceil(0.95F * 0.5F * FarRenderer.DEPTH_FAR / 16.0F);
+        return (int) Math.ceil(0.95F * 0.5F * FarRenderer.depthFar() / 16.0F);
     }
 
     /** How far out from the camera, in blocks, the game's blocks reach before far terrain takes over. */
-    static float nearReach() {
+    public static float nearReach() {
         return Math.min(io.earthplatform.minecraft.cubic.Cubic.MAX_HORIZONTAL_RADIUS, Minecraft.getInstance().options.getEffectiveRenderDistance()) * 16.0F;
     }
 
@@ -182,7 +202,7 @@ public final class FarLod {
     /** Far terrain's projection for this frame: the game's, with far terrain's own near and far planes. */
     static Matrix4f project(Matrix4f game) {
         vanilla.set(game);
-        float near = NEAR, far = FarRenderer.DEPTH_FAR;
+        float near = NEAR, far = FarRenderer.depthFar();
         projection.set(game).m22((far + near) / (near - far)).m32(2.0F * far * near / (near - far));
         projection.invert(inverse);
         Matrix4f last = history[LevelPasses.inFrame()];
@@ -208,7 +228,17 @@ public final class FarLod {
         int colour = attached(GL11C.glGetInteger(GL20C.GL_DRAW_BUFFER0));
         gameDepth = attached(GL30C.GL_DEPTH_ATTACHMENT);
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, framebuffer);
-        GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, colour, 0);
+        dhTargets = dhActive() ? FarDhPack.targets() : null;
+        if (dhTargets != null) {
+            // The pack's Distant Horizons program draws to its own list of targets: its first at 0, the rest from 2 up.
+            for (int i = 0; i < dhTargets.length; i++) {
+                GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, dhAttachment(i), GL11C.GL_TEXTURE_2D, dhTargets[i], 0);
+            }
+            dhBlend = GL11C.glIsEnabled(GL11C.GL_BLEND);
+            GL11C.glDisable(GL11C.GL_BLEND);
+        } else {
+            GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, colour, 0);
+        }
         GL20C.glDrawBuffers(targets(true, true));
         previousActive = GlStateManager._getActiveTexture();
         bind(VANILLA_UNIT, gameDepth);
@@ -256,6 +286,22 @@ public final class FarLod {
     static int height() { return height; }
 
     private static int maxDrawBuffers;
+    /** The pack's targets far terrain is being drawn to with its Distant Horizons program, by output; null otherwise. */
+    @Nullable private static int[] dhTargets;
+    private static boolean dhBlend;
+
+    /** Where the pack's target for output {@code i} is attached: attachment 1 is far terrain's faces' depth. */
+    private static int dhAttachment(int output) {
+        return output == 0 ? GL30C.GL_COLOR_ATTACHMENT0 : GL30C.GL_COLOR_ATTACHMENT1 + output;
+    }
+
+    /**
+     * Whether a pack's Distant Horizons program with this many outputs can be drawn: each needs a
+     * draw buffer and an attachment, and far terrain's faces' depth one more of each.
+     */
+    static boolean dhFits(int outputs) {
+        return outputs + 1 <= Math.min(GL11C.glGetInteger(GL20C.GL_MAX_DRAW_BUFFERS), GL11C.glGetInteger(GL30C.GL_MAX_COLOR_ATTACHMENTS));
+    }
 
     /**
      * Far terrain's draw buffers by fragment output location: the pack's first target at 0 (when
@@ -267,6 +313,15 @@ public final class FarLod {
     private static int[] targets(boolean colour, boolean faces) {
         FarShaders.PackPatch patch = ShaderBlocks.voxyPatch();
         if (maxDrawBuffers == 0) maxDrawBuffers = Math.max(2, GL11C.glGetInteger(GL20C.GL_MAX_DRAW_BUFFERS));
+        if (dhTargets != null) {
+            // Every output of the pack's Distant Horizons program goes to the target the pack names for it.
+            int location = patch == null ? dhTargets.length : patch.faceDepthLocation();
+            int[] buffers = new int[Math.min(Math.max(dhTargets.length, location + 1), maxDrawBuffers)];
+            java.util.Arrays.fill(buffers, GL11C.GL_NONE);
+            if (colour) for (int i = 0; i < dhTargets.length && i < buffers.length; i++) buffers[i] = dhAttachment(i);
+            if (faces && location < buffers.length) buffers[location] = GL30C.GL_COLOR_ATTACHMENT1;
+            return buffers;
+        }
         int location = Math.min(patch == null ? 1 : patch.faceDepthLocation(), maxDrawBuffers - 1);
         int[] buffers = new int[location + 1];
         java.util.Arrays.fill(buffers, GL11C.GL_NONE);
@@ -339,10 +394,18 @@ public final class FarLod {
 
     static void endDraw() {
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, 0, 0);
+        if (dhTargets != null) {
+            for (int i = 1; i < dhTargets.length; i++) GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, dhAttachment(i), GL11C.GL_TEXTURE_2D, 0, 0);
+            if (dhBlend) GL11C.glEnable(GL11C.GL_BLEND);
+        }
+        boolean dhDrawn = dhTargets != null;
+        dhTargets = null;
         unbind(SCRATCH_UNIT);
         unbind(VANILLA_UNIT);
         smooth();
-        shadows();
+        // A pack's Distant Horizons program takes no shadows from far terrain's own pass; it shades far terrain itself.
+        if (dhDrawn) shadowsReady = false;
+        else shadows();
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, drawnFrom);
         GlStateManager._activeTexture(previousActive);
     }
@@ -404,7 +467,7 @@ public final class FarLod {
         GL11C.glDepthFunc(GL11C.GL_ALWAYS);
         GL11C.glDepthMask(true);
         GL20C.glUseProgram(smooth.id);
-        GL20C.glUniform2f(GL20C.glGetUniformLocation(smooth.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(smooth.id, "earth_NearFar"), NEAR, FarRenderer.depthFar());
         GL20C.glUniform1f(GL20C.glGetUniformLocation(smooth.id, "earth_Focal"), projection.m11() * 0.5F * height);
         GL20C.glUniform1f(GL20C.glGetUniformLocation(smooth.id, "earth_NearReach"), nearReach());
         int step = GL20C.glGetUniformLocation(smooth.id, "earth_Step");
@@ -455,7 +518,7 @@ public final class FarLod {
         }
         GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_GameSteps"), steps);
         GL20C.glUniform1f(GL20C.glGetUniformLocation(deepen.id, "earth_GameNear"), vanilla.m32() / (vanilla.m22() - 1.0F));
-        GL20C.glUniform2f(GL20C.glGetUniformLocation(deepen.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(deepen.id, "earth_NearFar"), NEAR, FarRenderer.depthFar());
         return true;
     }
 
@@ -542,7 +605,7 @@ public final class FarLod {
             GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(surface.id, "earth_GameProjection"), false, vanilla.get(matrix));
         }
         GL20C.glUniform1f(GL20C.glGetUniformLocation(surface.id, "earth_GameSteps"), waterSteps);
-        GL20C.glUniform2f(GL20C.glGetUniformLocation(surface.id, "earth_NearFar"), NEAR, FarRenderer.DEPTH_FAR);
+        GL20C.glUniform2f(GL20C.glGetUniformLocation(surface.id, "earth_NearFar"), NEAR, FarRenderer.depthFar());
         long timer = FarGpuTimers.begin("water depth restore");
         try { water.run(); } finally { FarGpuTimers.end(timer); }
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, 0, 0);

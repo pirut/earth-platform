@@ -35,6 +35,16 @@ public final class FarLodIris {
                 .uniformMatrix(UniformUpdateFrequency.PER_FRAME, "vxViewProjPrev", () -> views().previousViewProjection);
     }
 
+    /** Far terrain's projection for this frame, as a pack compiled for Distant Horizons reads it ({@code dhProjection}). */
+    public static Matrix4f dhProjection() {
+        return new Matrix4f(current(FarLod.projection()));
+    }
+
+    /** Far terrain's depth, as a pack compiled for Distant Horizons reads it. */
+    public static int dhDepthTexture() {
+        return FarLod.depthTexture();
+    }
+
     /** This frame's view matrices for Voxy's uniforms, and last frame's, worked out once a frame. */
     private static final class Views {
         final Matrix4f modelView = new Matrix4f(), modelViewInverse = new Matrix4f(), previousModelView = new Matrix4f();

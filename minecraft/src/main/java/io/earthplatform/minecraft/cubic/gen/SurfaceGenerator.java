@@ -87,6 +87,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         below = new Underground(this, seed, biomes, random);
     }
     Underground underground() { return below; }
+
+    /** Pinned in a new Earth world's settings when it is made with vanilla's caves. */
+    public static final String VANILLA_CAVES = "vanilla-1.21";
+
+    /** Keeps the caves worlds made before vanilla's caves were made with; call before any cube is made. */
+    public final void legacyCaves() { below.vanillaCaves(false); }
     protected static Holder<Biome> holder(Registry<Biome> registry, ResourceKey<Biome> key) { return registry.getHolderOrThrow(key); }
 
     /** Fractal noise: {@code octaves} layers of {@code noise}, each half as strong and 2.03x as fine, averaged by weight. */
@@ -118,6 +124,21 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** Whether giant sequoia groves may be near a column; their trees stand far taller than any other. */
     protected boolean giants(int x, int z) { return false; }
+
+    /**
+     * How tall the real trees round a column stand, in metres, where the generator knows; -1 where it does not,
+     * and trees grow to the heights vanilla gives them.
+     */
+    protected int canopy(int x, int z) { return -1; }
+
+    /**
+     * Which form a giant tree rooted at a column takes: {@link Giants#SEQUOIA}, {@link Giants#REDWOOD} or
+     * {@link Giants#FIR}; or -1 for the one sequoia worlds made before build 70 have.
+     */
+    protected int giantForm(int x, int z) { return -1; }
+
+    /** Whether trees' bare log ends at the top of their crowns are covered with leaves; worlds made before build 70 keep vanilla's. */
+    protected boolean cappedCrowns() { return false; }
 
     /** Whether the water over a column is iced over: by default wherever its biome freezes. */
     protected boolean iced(Surface surface, int x, int z) { return surface.biome().value().getBaseTemperature() < 0.15f; }
@@ -241,31 +262,58 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     // Far terrain: voxel columns sampled from the same height, cover and tree rules -------------
 
-    private static final boolean SURFACE_PACKETS = Boolean.getBoolean("earthplatform.far.surfacePackets");
-
     @Override public void farColumn(int level, int columnX, int columnZ, FarColumn out) {
-        farColumn(level, columnX, columnZ, out, SURFACE_PACKETS);
+        farColumn(level, columnX, columnZ, out, false, true, true, false);
+    }
+
+    /**
+     * Where the column is only ground, water and cover, it comes as runs alone ({@link FarColumn#packet}, no
+     * sections), which is far less to make, send and keep; anywhere else as {@link #farColumn} makes it.
+     */
+    @Override public void farColumnCompact(int level, int columnX, int columnZ, FarColumn out) {
+        farColumn(level, columnX, columnZ, out, true, false, true, false);
     }
 
     /** Explicit control for the dense oracle; never changes near cube generation. */
     final void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets) {
-        farColumn(level, columnX, columnZ, out, packets, true);
+        farColumn(level, columnX, columnZ, out, packets, true, true, false);
     }
 
-    /** Bounded direct prototype: null requires the caller to use the existing dense path. */
+    /** The column as runs, or null where only the dense form can hold it. */
     @Nullable public final FarSurfacePacket surfacePacket(int level, int columnX, int columnZ) {
         if (level < Far.MIN_LEVEL || level > Far.MAX_LEVEL) throw new IllegalArgumentException("Unsupported far level");
         FarColumn out = new FarColumn();
-        farColumn(level, columnX, columnZ, out, true, false);
+        farColumn(level, columnX, columnZ, out, true, false, false, false);
         return out.packet;
     }
 
-    private void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets, boolean materialize) {
+    /**
+     * A quick stand-in for a far column: the same voxels built from {@link #previewGround} and
+     * {@link #previewSurface} in place of the full ground and surface, with no rock layers.
+     */
+    @Override public void farPreview(int level, int columnX, int columnZ, FarColumn out) {
+        previewing(level);
+        try { farColumn(level, columnX, columnZ, out, false, true, true, true); }
+        finally { previewing(0); }
+    }
+
+    /** Told the level as this thread starts a quick stand-in and 0 as it ends, for rules that read less while one is made. */
+    protected void previewing(int level) {}
+    /** A column's ground and water for a quick stand-in, as {@link #farGround} gives them. */
+    protected void previewGround(int level, int x, int z, int[] out) { farGround(level, x, z, out); }
+    /** A column's surface for a quick stand-in, as {@link #farSurface} gives it. */
+    protected Surface previewSurface(int level, int x, int z, int ground, int water, int slope) { return farSurface(level, x, z, ground, water, slope); }
+
+    /** Blocks a forest's crowns stand above the ground where trees are not drawn one by one: a voxel of the 8-block level. */
+    private static final int CROWN = 8;
+
+    private void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets, boolean materialize, boolean dense, boolean preview) {
         out.packet = null;
         int v = 1 << level, width = 16 * v, x0 = columnX * width, z0 = columnZ * width, half = v >> 1;
         int[] ground = new int[18 * 18], water = new int[18 * 18], sample = new int[2];
         for (int j = 0; j < 18; j++) for (int i = 0; i < 18; i++) {
-            farGround(level, x0 + (i - 1) * v + half, z0 + (j - 1) * v + half, sample);
+            if (preview) previewGround(level, x0 + (i - 1) * v + half, z0 + (j - 1) * v + half, sample);
+            else farGround(level, x0 + (i - 1) * v + half, z0 + (j - 1) * v + half, sample);
             // Far below a water surface nothing shows, so deep seabeds are raised to save sections.
             int floor = sample[1] == DRY ? Integer.MIN_VALUE : sample[1] - width;
             ground[j * 18 + i] = Math.max(sample[0], floor);
@@ -282,7 +330,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             int g = (cz + 1) * 18 + cx + 1, h = ground[g], cell = cz * 16 + cx;
             int wx = x0 + cx * v + half, wz = z0 + cz * v + half;
             int slope = (Math.abs(ground[g + 1] - ground[g - 1]) + Math.abs(ground[g + 18] - ground[g - 18])) / v;
-            Surface surface = farSurface(level, wx, wz, h, water[g], slope);
+            Surface surface = preview ? previewSurface(level, wx, wz, h, water[g], slope) : farSurface(level, wx, wz, h, water[g], slope);
             biome[cell] = surface.biome();
             top[cell] = surface.top();
             ice[cell] = water[g] > h && iced(surface, wx, wz);
@@ -290,13 +338,17 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             if (water[g] <= h && Trees.snowy(surface) && !top[cell].is(Blocks.ICE) && !top[cell].is(Blocks.PACKED_ICE)
                     && !top[cell].is(Blocks.POWDER_SNOW)) top[cell] = SNOW_BLOCK;
             under[cell] = v > 2 && !bedrock(surface.under()) ? STONE : surface.under();
-            rock[cell] = layers(wx, wz);
+            rock[cell] = preview ? null : layers(wx, wz);
             // Voxels wider than a tree show forests as leaves: at 8 blocks a voxel above the ground, about a tree's
             // height, so they meet the rasterised trees nearer; wider voxels would stand too tall, so leaves lie on the ground voxel.
             if (v >= 8) {
                 BlockState leaves = water[g] > h ? null : canopy(surface, wx, wz, v);
                 if (leaves != null && v == 8) crown[cell] = leaves;
                 else if (leaves != null) top[cell] = leaves;
+            } else if (preview && water[g] <= h) {
+                // A quick stand-in rasterises no trees: forests stand as the crowns the 8-block level draws, one to
+                // each 8-block square, until the real column brings the trees themselves.
+                crown[cell] = canopy(surface, (wx & ~7) + 4, (wz & ~7) + 4, 8);
             }
             min = Math.min(min, h);
             max = Math.max(max, Math.max(h, water[g]));
@@ -309,9 +361,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             }
         }
         // Room for trees: drawn as they are out to 4-block voxels, sequoias out to 16.
-        boolean giants = v <= 16 && giants(x0 + width / 2, z0 + width / 2);
+        boolean giants = !preview && v <= 16 && giants(x0 + width / 2, z0 + width / 2);
         if (giants) max += Sequoia.TALLEST + 1;
-        else if (v <= 4) max += Trees.TALLEST + 1;
+        else if (v <= 4) max += preview ? CROWN : Trees.TALLEST + 1;
         else if (v == 8) max += v;
         int bottom = (min - v) >> (level + 4), highest = max >> (level + 4);
         // Columns taller than the section budget keep their top, where the view is.
@@ -362,11 +414,10 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             java.util.List<Holder<Biome>> quarts = new java.util.ArrayList<>(16);
             for (int qz = 0; qz < 4; qz++) for (int qx = 0; qx < 4; qx++) quarts.add(biome[(qz * 4 + 1) * 16 + qx * 4 + 1]);
             out.packet = FarSurfacePacket.generated(level, bottom, rows, out.drops, biome[8 * 16 + 8], quarts, runOffsets, packedRuns);
-            // Legacy adapter preserves current wire/mesh/edit ordering until a direct consumer is validated.
             if (materialize) out.sections.addAll(out.packet.materialize(biomeIds));
             return;
         }
-        if (!materialize) return; // Unsupported direct request: caller retains the dense fallback.
+        if (!dense) return;
         LevelChunkSection[] stack = new LevelChunkSection[sections];
         for (int si = 0; si < sections; si++) {
             LevelChunkSection section = new LevelChunkSection(
@@ -382,14 +433,14 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                         if (rock[cz * 16 + cx] != null) state = rock[cz * 16 + cx].at(y0 + (v >> 1));
                         else if (state == STONE && bedrock(under[cz * 16 + cx])) state = under[cz * 16 + cx];
                     }
-                    if (state == AIR && crown[cz * 16 + cx] != null && ground[g] < y0 && ground[g] >= y0 - v) state = crown[cz * 16 + cx];
+                    if (state == AIR && crown[cz * 16 + cx] != null && ground[g] < y0 && ground[g] >= y0 - Math.max(v, CROWN)) state = crown[cz * 16 + cx];
                     if (state == AIR && y0 <= pours[cz * 16 + cx]) state = WATER;
                     if (state != AIR) section.setBlockState(cx, vy, cz, state, false);
                 }
             }
             stack[si] = section;
         }
-        if (v <= 4 || giants) farTrees(level, x0, z0, bottom, stack, v > 4);
+        if (!preview && (v <= 4 || giants)) farTrees(level, x0, z0, bottom, stack, v > 4);
         for (LevelChunkSection section : stack) {
             section.recalcBlockCounts();
             out.sections.add(section.hasOnlyAir() ? null : section);
@@ -437,8 +488,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /**
      * Rasterises the real trees into voxels of 2 or 4 blocks, or only the sequoias into wider
-     * ones: a voxel turns to leaves or log once a quarter of it is (an eighth for sequoias, whose
-     * crowns are looser than a voxel that wide).
+     * ones: a voxel turns to crown or log once a quarter of it is tree (an eighth for sequoias, whose
+     * crowns are looser than a voxel that wide), and to log only where the trunk has next to no leaves by it.
      */
     private void farTrees(int level, int x0, int z0, int bottom, LevelChunkSection[] stack, boolean giantsOnly) {
         int v = 1 << level, width = 16 * v, height = stack.length * 16, baseY = bottom * width;
@@ -457,12 +508,18 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         };
         vegetation.trees(x0, baseY, z0, x0 + width - 1, baseY + height * v - 1, z0 + width - 1, giantsOnly, sink);
         int quarter = Math.max(1, v * v * v / (giantsOnly ? 8 : 4));
+        // A sequoia's crown is clumps on long branches: a wide voxel shows as crown on far fewer leaves. Its trunk is
+        // drawn as crown too: out here the forest round it is a flat sheet of leaves, and a voxel-wide trunk on that
+        // is a brown post, where a dark spire is what a giant looks like from this far.
+        int loose = giantsOnly ? v * v * v / 24 : Integer.MAX_VALUE;
         for (int i = 0; i < leafCount.length; i++) {
-            if (leafCount[i] < quarter && logCount[i] < quarter) continue;
+            if (leafCount[i] + logCount[i] < quarter && leafCount[i] < loose) continue;
             int vx = i & 15, vz = i >> 4 & 15, vy = i >> 8;
             LevelChunkSection section = stack[vy >> 4];
             if (!section.getBlockState(vx, vy & 15, vz).isAir()) continue;
-            BlockState state = logCount[i] >= quarter && logCount[i] * 2 >= leafCount[i] ? logKind[i] : leafKind[i];
+            // A trunk inside its crown shows as crown: a voxel is log only where the trunk stands nearly bare, or a
+            // thick trunk under a thin top would stand out of the forest as a brown post as wide as the voxel.
+            BlockState state = leafCount[i] >= loose || leafCount[i] * 4 >= logCount[i] ? leafKind[i] : logCount[i] < quarter ? null : giantsOnly ? Vegetation.leaves(Tree.SEQUOIA) : logKind[i];
             // Crowns' top leaves under snow that covers a quarter of the voxel, lying in it or just above, show white;
             // the leaves below them stay green, as the trees' sides do nearer.
             boolean above = i + 256 < snowCount.length;

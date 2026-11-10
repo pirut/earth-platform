@@ -145,6 +145,50 @@ Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based 
 Dinerstein, E., Olson, D., Joshi, A., et al. (2017). An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm. *BioScience* 67(6), 534-545. https://doi.org/10.1093/biosci/bix014
 License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: the ecoregion polygons are rasterized to a 0.05 degree grid (`earthplatform/ecoregions.png`, with ecoregion names in `ecoregions.tsv`) and used to tune biomes and ground cover.
 
+## Tree heights: Meta and WRI canopy height maps (downloaded while you play)
+
+**What it gives Earth Platform:** How tall the forest stands at each place, so taiga stays low, rainforest stands tall, and giant trees grow where the world's tallest conifers really are.
+
+**Thank you** to Meta and the World Resources Institute for mapping the height of the world's trees and sharing the map openly.
+
+**Attribution and license:**
+
+Canopy height: Meta and World Resources Institute (WRI), High Resolution Canopy Height Maps v2, on the Registry of Open Data on AWS; method: Tolan, J. et al. (2024), Very high resolution canopy height maps from RGB imagery using self-supervised vision transformer and convolutional decoder trained on aerial lidar, Remote Sensing of Environment 300, 113888.
+License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: heights are read at about 20 m detail from dataforgood-fb-data.s3.amazonaws.com only where you play, cached on disk, and used to choose how tall each tree grows and where groves of giant trees stand. New worlds only. Turn it off for new worlds with `-Dearthplatform.earth.canopy=false`.
+
+## Rock: Global Lithological Map and HydroATLAS (bundled)
+
+**What it gives Earth Platform:** The kind of rock under each place, so lava country is dark basalt and granite country is pale.
+
+**Thank you** to Jens Hartmann and Nils Moosdorf for the Global Lithological Map, and to the HydroATLAS team for carrying it basin by basin.
+
+**Attribution and license:**
+
+Rock: Global Lithological Map (GLiM), Hartmann, J. and Moosdorf, N. (2012), The new global lithological map database GLiM, Geochemistry, Geophysics, Geosystems 13, Q12004, doi:10.1029/2012GC004370 (gridded version doi:10.1594/PANGAEA.788537, CC BY 3.0), as carried per sub-basin by HydroATLAS v1.0, Linke, S. et al. (2019), Scientific Data 6:283, doi:10.1038/s41597-019-0300-6 (CC BY 4.0).
+Licenses: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (HydroATLAS) and [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) (gridded GLiM). Changes: the rock class that covers most of each HydroATLAS level 12 sub-basin is drawn to a 0.05 degree grid (`earthplatform/rock.png`); islands HydroATLAS leaves out take the class of GLiM's half-degree grid. Made by `minecraft/scripts/earthmaps.py`.
+
+## Red ground: NASA Blue Marble (bundled)
+
+**What it gives Earth Platform:** Where the bare ground is red, as in Australia's center, the Namib and Monument Valley.
+
+**Thank you** to NASA's Earth Observatory and the GIBS team.
+
+**Attribution and license:**
+
+Ground color: NASA Earth Observatory, Blue Marble: Next Generation, served by NASA GIBS (public domain).
+NASA imagery is not subject to copyright in the United States. Changes: the land's red-to-green ratio is averaged to a 0.1 degree grid in sixteen steps (`earthplatform/redground.png`). NASA does not endorse Earth Platform.
+
+## Soil: ISRIC SoilGrids (bundled)
+
+**What it gives Earth Platform:** How much peat and humus lies in the topsoil, which decides how much of a northern forest's floor is podzol.
+
+**Thank you** to ISRIC - World Soil Information and the SoilGrids team.
+
+**Attribution and license:**
+
+Soil: ISRIC SoilGrids 2.0, Poggio, L. et al. (2021), SoilGrids 2.0: producing soil information for the globe with quantified spatial uncertainty, SOIL 7, 217-240, doi:10.5194/soil-7-217-2021 (CC BY 4.0).
+License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: organic carbon in the top 5 cm of the 5 km aggregated product is averaged to a 0.2 degree grid in sixteen steps (`earthplatform/soilcarbon.png`).
+
 ## Ground colors (optional): Sentinel-2 cloudless
 
 **What it gives Earth Platform:** When you turn it on, ground blocks that match what each place looks like from space.
@@ -175,6 +219,16 @@ The globe on the Customize screen shows NASA's Blue Marble: NASA Earth Observato
 
 Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com. Admin 0 countries at 1:50m, packed into `minecraft/src/main/resources/earthplatform/countries.bin` by `minecraft/scripts/countries.py`. Public domain.
 
+## Town names (bundled)
+
+**What it gives Earth Platform:** The search box on the globe, `/earth visit <town>`, `/earth find`, and the town named on a postcard: every town of 1,000 people or more, with its state or province, country and position.
+
+**Thank you** to GeoNames and its contributors for a free gazetteer of the whole world.
+
+**Attribution and license:**
+
+Town names and positions from [GeoNames](https://www.geonames.org/) (`cities1000`, `admin1CodesASCII` and `countryInfo` from https://download.geonames.org/export/dump/), packed into `minecraft/src/main/resources/earthplatform/towns.bin` by `minecraft/scripts/towns.py` (names, regions and positions rounded to 1/1000 degree; nothing else kept). Licensed under [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 ## Software
 
 Earth Platform runs on [NeoForge](https://neoforged.net/) and on [Fabric](https://fabricmc.net/) with [Fabric API](https://modrinth.com/mod/fabric-api). The NeoForge jar contains no third-party code; the Fabric jar bundles [Forge Config API Port](https://github.com/Fuzss/forgeconfigapiport) by Fuzs (MPL-2.0) with [NightConfig](https://github.com/TheElectronWill/night-config) (LGPL-3.0), so settings files work the same on both. Optional companions are installed separately and keep their own licenses: [Sodium](https://modrinth.com/mod/sodium) (PolyForm Shield 1.0.0), [Iris](https://modrinth.com/mod/iris) (LGPL-3.0) and [Photon](https://github.com/sixthsurge/photon) by Benjamin Stott (SixthSurge), under the Photon Shaders License Agreement. Earth Platform's own code was written for this project; see [Originality](docs/release/LICENSING-AUDIT.md#originality-check) for how that was checked.
@@ -194,6 +248,14 @@ From **Distant Horizons** we took:
 - building distant terrain on the server from the world generator, so far land is there before anyone has visited it;
 - how Iris hands a shader pack's uniforms to Distant Horizons' programs, which we follow for our own far programs;
 - years of showing players what "render distance" can mean.
+
+## Culling ideas: thank you, Horizon
+
+[Horizon](https://github.com/horizon-rust/horizon), an open-source (MIT) rewrite of Minecraft: Java Edition in Rust, showed how to leave out terrain the camera can't see: culling near terrain by which faces of each section its open space joins, as Minecraft does, and occlusion culling in two phases, drawing what was seen last frame first and then testing everything else against the depth it left, in the same frame. Earth Platform's near cubes and far terrain's depth pre-pass now cull this way. It contains no code from Horizon.
+
+## Filling every level first: thank you, SeedGen
+
+[Voxy SeedGen](https://modrinth.com/mod/voxy-seedgen) and Distant Horizons SeedGen by MobiusMeansBusiness showed how fast a far view can stand when every ring is written straight at the detail it is drawn at and made finer as the player comes nearer. Our quick stand-ins for every far level follow that idea with Earth's map data in place of seed math. They contain no code from SeedGen, which is closed source.
 
 ## Earlier Earth and cubic-chunks projects
 

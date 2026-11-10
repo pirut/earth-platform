@@ -58,7 +58,16 @@ public final class WorldCoverSource implements AutoCloseable {
     /** Each thread's last block, so reads that stay in one block skip the shared cache. */
     private final ThreadLocal<Last> recent = ThreadLocal.withInitial(Last::new);
 
-    private static final class Last { long key = -1; byte[] block; }
+    /**
+     * The four blocks a thread read last, by two bits of their key: the rules that look round a column
+     * read rings of points in other blocks and other overviews between its own, and with one block
+     * remembered each of those went back to the shared memory and its lock.
+     */
+    private static final class Last {
+        final long[] keys = new long[4];
+        final byte[][] blocks = new byte[4][];
+        Last() { java.util.Arrays.fill(keys, -1); }
+    }
 
     /**
      * @param base              URI prefix the files are named under
@@ -96,11 +105,12 @@ public final class WorldCoverSource implements AutoCloseable {
         long px = Math.min(last, Math.min(full - 1, (long) fx) >> overview), py = Math.min(last, Math.min(full - 1, Math.max(0, (long) fy)) >> overview);
         long key = blockKey(square, overview, (int) (py >> 10), (int) (px >> 10));
         Last cached = recent.get();
-        if (cached.key != key) {
-            cached.block = block(square, overview, (int) (py >> 10), (int) (px >> 10));
-            cached.key = key;
+        int slot = (int) (key * 0x9E3779B97F4A7C15L >>> 62);
+        if (cached.keys[slot] != key) {
+            cached.blocks[slot] = block(square, overview, (int) (py >> 10), (int) (px >> 10));
+            cached.keys[slot] = key;
         }
-        byte[] block = cached.block;
+        byte[] block = cached.blocks[slot];
         if (block.length == 0) return NO_DATA;
         return block[(int) ((py & 1023) << 10 | (px & 1023))] & 0xFF;
     }
@@ -192,6 +202,9 @@ public final class WorldCoverSource implements AutoCloseable {
     }
 
     private Header header(int square) {
+        // Read already, nearly always: no name to spell and nothing to wait for.
+        CompletableFuture<Header> have = headers.get(square);
+        if (have != null && have.isDone() && !have.isCompletedExceptionally()) return have.join();
         CompletableFuture<Header> mine = new CompletableFuture<>(), shared = headers.putIfAbsent(square, mine);
         if (shared == null) {
             try { mine.complete(readHeader(square)); }

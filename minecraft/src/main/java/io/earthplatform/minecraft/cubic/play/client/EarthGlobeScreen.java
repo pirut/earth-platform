@@ -5,6 +5,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.minecraft.cubic.play.EarthMap;
 import io.earthplatform.minecraft.cubic.play.EarthPlaces;
+import io.earthplatform.minecraft.cubic.play.EarthTowns;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -16,6 +17,7 @@ import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.network.chat.Component;
@@ -72,6 +74,12 @@ public final class EarthGlobeScreen extends Screen {
     /** Where the survival map's player's compass points now, or NaN. */
     private double targetLat = Double.NaN, targetLon = Double.NaN;
     @Nullable private Button done;
+    /** The search box, and the places its text could mean, best first. */
+    @Nullable private EditBox search;
+    private List<EarthTowns.Town> results = List.of();
+    /** The name of the place the pin was put on from a search, or null. */
+    @Nullable private String pinnedName;
+    private static final int RESULTS = 6, SEARCH_WIDTH = 240, ROW = 12;
     /** Whether the mouse is over the compass's target. */
     private boolean overTarget;
 
@@ -172,6 +180,12 @@ public final class EarthGlobeScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("-"), b -> zoomBy(-1, width / 2.0, centreY())).bounds(width / 2 - 155, y, 20, 20).build());
         addRenderableWidget(Button.builder(Component.literal("+"), b -> zoomBy(1, width / 2.0, centreY())).bounds(width / 2 - 133, y, 20, 20).build());
         done = addRenderableWidget(Button.builder(Component.translatable(keys != null ? keys + ".button" : hereLat == hereLat ? "earthplatform.map.travel" : "earthplatform.globe.choose"), b -> finish()).bounds(width / 2 - 108, y, 130, 20).build());
+        String typed = search == null ? "" : search.getValue();
+        search = addRenderableWidget(new EditBox(font, width - SEARCH_WIDTH - 6, 4, SEARCH_WIDTH, 16, Component.translatable("earthplatform.globe.search")));
+        search.setHint(Component.translatable("earthplatform.globe.search").withStyle(net.minecraft.ChatFormatting.DARK_GRAY));
+        search.setMaxLength(60);
+        search.setValue(typed);
+        search.setResponder(text -> results = searchFor(text));
         addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), b -> onClose()).bounds(width / 2 + 27, y, 128, 20).build());
         dirty = true;
     }
@@ -191,7 +205,23 @@ public final class EarthGlobeScreen extends Screen {
         if (done != null && look()) done.active = pinned && compass();
         super.render(gui, mouseX, mouseY, partialTick);
         gui.drawCenteredString(font, title, width / 2, 8, 0xFFFFFF);
-        gui.drawCenteredString(font, status(), width / 2, height - 48, 0x9FD7FF);
+        Component stretch = stretch();
+        gui.drawCenteredString(font, status(), width / 2, height - (stretch != null ? 51 : 48), 0x9FD7FF);
+        if (stretch != null) gui.drawCenteredString(font, stretch, width / 2, height - 40, 0xA0A0A0);
+        if (searching()) {
+            int x = search.getX(), y = search.getY() + search.getHeight() + 3;
+            // Above everything else on the screen, as a tooltip is: the globe's own texts must not show through.
+            gui.pose().pushPose();
+            gui.pose().translate(0, 0, 300);
+            gui.fill(x - 1, y - 1, x + SEARCH_WIDTH + 1, y + results.size() * ROW + 1, 0xFF101018);
+            for (int row = 0; row < results.size(); row++) {
+                boolean over = mouseX >= x && mouseX < x + SEARCH_WIDTH && mouseY >= y + row * ROW && mouseY < y + (row + 1) * ROW;
+                if (over || row == 0) gui.fill(x, y + row * ROW, x + SEARCH_WIDTH, y + (row + 1) * ROW, over ? 0x60FFFFFF : 0x30FFFFFF);
+                gui.drawString(font, font.plainSubstrByWidth(results.get(row).label(), SEARCH_WIDTH - 6), x + 3, y + row * ROW + 2, 0xFFFFFF);
+            }
+            gui.pose().popPose();
+            return;
+        }
         if (hover != null) gui.renderTooltip(font, Component.literal(hover.place.label()), hover.x, hover.y);
         else if (overTarget) gui.renderTooltip(font, Component.translatable(LOOK + ".target"), mouseX, mouseY);
     }
@@ -301,6 +331,17 @@ public final class EarthGlobeScreen extends Screen {
 
     private record Hover(EarthPlaces.Place place, int x, int y) {}
 
+    /**
+     * How stretched the map is where the pin stands (see {@link io.earthplatform.minecraft.cubic.play.EarthStretch}),
+     * or null with nothing to say: in a world, by that world's scale; for a new world, whose home the
+     * pin sets, how the rest of the map stretches from there.
+     */
+    @Nullable private Component stretch() {
+        if (!pinned || look() || warning != null && Util.getMillis() < warningUntil || Math.abs(pinLat) > 80) return null;
+        var world = io.earthplatform.minecraft.cubic.client.ClientCubeWorld.current();
+        return EarthPlayClient.stretch(world != null ? world.far().metresPerBlock() : 0, pinLat);
+    }
+
     private Component status() {
         if (warning != null && Util.getMillis() < warningUntil) return warning;
         boolean travel = hereLat == hereLat;
@@ -308,17 +349,47 @@ public final class EarthGlobeScreen extends Screen {
             if (!compass()) return Component.translatable(LOOK + ".noCompass");
             if (!pinned) return Component.translatable(LOOK + ".hint");
             return Component.translatable(LOOK + ".at", pinnedPlayer != null ? pinnedPlayer
-                    : EarthPlaces.near(pinLat, pinLon).map(EarthPlaces.Place::label).orElse(String.format(Locale.ROOT, "%.4f, %.4f", pinLat, pinLon)));
+                    : pinName().orElse(String.format(Locale.ROOT, "%.4f, %.4f", pinLat, pinLon)));
         }
         if (pinned && pinnedPlayer != null && keys == null && travel) return Component.translatable("earthplatform.map.travelTo", pinnedPlayer);
-        if (keys != null) return pinned ? Component.translatable(keys + ".at", EarthPlaces.near(pinLat, pinLon).map(EarthPlaces.Place::label)
+        if (keys != null) return pinned ? Component.translatable(keys + ".at", pinName()
                 .orElse(String.format(Locale.ROOT, "%.4f, %.4f", pinLat, pinLon))) : Component.translatable(keys + ".hint");
         if (!pinned) return Component.translatable(travel ? "earthplatform.map.hint" : "earthplatform.globe.hint");
         String point = String.format(Locale.ROOT, "%.4f, %.4f", pinLat, pinLon);
         if (travel) return Component.translatable("earthplatform.map.travelTo",
-                EarthPlaces.near(pinLat, pinLon).map(EarthPlaces.Place::label).orElse(point));
-        return EarthPlaces.near(pinLat, pinLon).map(place -> Component.translatable("earthplatform.setup.startAt", place.label()))
+                pinName().orElse(point));
+        return pinName().map(label -> Component.translatable("earthplatform.setup.startAt", label))
                 .orElse(Component.translatable("earthplatform.globe.startAt", point));
+    }
+
+    /** What the pinned spot is called: the place searched for, or a famous place there. */
+    private java.util.Optional<String> pinName() {
+        return pinnedName != null ? java.util.Optional.of(pinnedName) : EarthPlaces.near(pinLat, pinLon).map(EarthPlaces.Place::label);
+    }
+
+    /** Whether the search box has the keys and results to show. */
+    private boolean searching() { return search != null && search.isFocused() && !results.isEmpty(); }
+
+    /** Famous places first, then towns, for what is typed in the search box. */
+    private static List<EarthTowns.Town> searchFor(String text) {
+        if (text.strip().length() < 2) return List.of();
+        List<EarthTowns.Town> found = new java.util.ArrayList<>();
+        EarthPlaces.find(text).ifPresent(place -> found.add(new EarthTowns.Town(place.name(), place.region(), place.latitude(), place.longitude())));
+        found.addAll(EarthTowns.search(text, RESULTS - found.size()));
+        return found;
+    }
+
+    /** Puts the pin on a searched place and turns the globe to it, close enough to see the land around it. */
+    private void choose(EarthTowns.Town town) {
+        pin(town.latitude(), town.longitude());
+        if (!pinned || pinLat != town.latitude()) return;
+        pinnedName = town.label();
+        centreLat = Mth.clamp(town.latitude(), -85, 85);
+        centreLon = town.longitude();
+        zoom = Math.max(zoom, 7);
+        setFocused(null);
+        search.setFocused(false);
+        changed();
     }
 
     private void drawCorners(GuiGraphics gui, long now) {
@@ -514,7 +585,17 @@ public final class EarthGlobeScreen extends Screen {
 
     @Override public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (flight != null) return true;
+        if (searching()) {
+            int x = search.getX(), y = search.getY() + search.getHeight() + 3;
+            int row = (int) Math.floor((mouseY - y) / ROW);
+            if (mouseX >= x && mouseX < x + SEARCH_WIDTH && mouseY >= y && row < results.size()) {
+                choose(results.get(row));
+                return true;
+            }
+        }
         if (super.mouseClicked(mouseX, mouseY, button)) return true;
+        // A click off the search box gives the keys back to the globe.
+        if (search != null && search.isFocused()) { setFocused(null); search.setFocused(false); }
         if (!overGlobe(mouseY)) return false;
         pressX = mouseX;
         pressY = mouseY;
@@ -573,6 +654,7 @@ public final class EarthGlobeScreen extends Screen {
         }
         warning = null;
         pinnedPlayer = null;
+        pinnedName = null;
         pinLat = lat;
         pinLon = lon;
         pinned = true;
@@ -607,6 +689,14 @@ public final class EarthGlobeScreen extends Screen {
             // Escape comes straight back down; the trip itself carries on.
             if (keyCode == GLFW.GLFW_KEY_ESCAPE) flight.skip();
             return true;
+        }
+        if (search != null && search.isFocused()) {
+            // Typing: Enter takes the best match, and the globe's own keys stay letters and arrows in the box.
+            if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+                if (!results.isEmpty()) choose(results.get(0));
+                return true;
+            }
+            return super.keyPressed(keyCode, scanCode, modifiers);
         }
         double step = Math.toDegrees(40 / radius());
         switch (keyCode) {

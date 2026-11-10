@@ -82,6 +82,29 @@ public final class CubeRenderer {
     private final Long2IntOpenHashMap retireBy = new Long2IntOpenHashMap();
     private static final int RETIRE_TICKS = 100;
     private final List<Mesh> visible = new ArrayList<>();
+    private final CubeOcclusion occlusion = new CubeOcclusion();
+    /** Where the meshes live on the GPU when cubes share buffers by region ({@link CubeRegions#ON}). */
+    private final CubeRegions regions = new CubeRegions();
+    /** Draw calls the last frame's near cubes took, every pass and the shadow map together, for the performance log. */
+    private int drawCalls, lastDrawCalls;
+    /** A pass's meshes in view split for occlusion culling: drawn first, drawn on condition of their box, rechecked. */
+    private final List<Mesh> first = new ArrayList<>(), rest = new ArrayList<>(), recheck = new ArrayList<>();
+    /** Meshes in view that the last occlusion test hid (drawn on condition, and not drawn), for the performance log. */
+    private int occlusionTested;
+    /**
+     * Which faces each meshed cube's air joins, for cave culling ({@link CubeCaves}); cubes not in it count as open.
+     * {@link #reached} is the last search's answer, made from {@link #reachedFrom} with {@link #visibilityVersion}.
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap visibility = new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    private int visibilityVersion, reachedVersion = -1;
+    private long reachedFrom = Long.MIN_VALUE;
+    /** The box of cubes the last search went over. */
+    private final int[] searchedLow = new int[3], searchedHigh = new int[3];
+    @org.jetbrains.annotations.Nullable private LongOpenHashSet reached;
+    /** Meshes in the frustum that cave culling left out of the last view, for the performance log. */
+    private int caveCulled;
+    /** The cubes the last cave search reached, or null when it culled nothing; block entities use it too. */
+    private @org.jetbrains.annotations.Nullable LongOpenHashSet caveSeen;
     private int ticks, drawnFrame = -1, frame;
     /** The level passes (see {@link LevelPasses}) this renderer last culled for, drew the opaque layers in and drew the translucent ones in. */
     private int culledPass = -1, opaquePass = -1, translucentPass = -1;
@@ -93,17 +116,37 @@ public final class CubeRenderer {
         final long key;
         final int x, y, z;
         final AABB box;
+        /** Each layer's own buffer, or with {@link CubeRegions#ON} its place in its region's ({@link #slices}). */
         final CubeBuffer[] buffers = new CubeBuffer[CubeMesher.LAYERS.size()];
+        final CubeRegions.Slice[] slices = new CubeRegions.Slice[CubeMesher.LAYERS.size()];
         double distance;
+        /**
+         * Occlusion culling ({@link CubeOcclusion}): the mesh's query, whether its box was seen when last tested,
+         * whether that test's answer is still to be read, and the pass whose layers it draws on condition of its box.
+         */
+        int query;
+        boolean seen = true, asked;
+        int conditionalPass = -1;
         Mesh(long key) {
             this.key = key; x = CubeKey.x(key) << 4; y = CubeKey.y(key) << 4; z = CubeKey.z(key) << 4;
             box = new AABB(x, y, z, x + 16, y + 16, z + 16);
         }
-        void close() { for (int i = 0; i < buffers.length; i++) if (buffers[i] != null) { buffers[i].close(); buffers[i] = null; } }
-        boolean empty() { for (CubeBuffer buffer : buffers) if (buffer != null) return false; return true; }
+        void close(CubeRegions regions) {
+            for (int i = 0; i < buffers.length; i++) {
+                if (buffers[i] != null) { buffers[i].close(); buffers[i] = null; }
+                if (slices[i] != null) { regions.free(slices[i]); slices[i] = null; }
+            }
+            CubeOcclusion.deleteQuery(query);
+            query = 0;
+        }
+        boolean has(int layer) { return buffers[layer] != null || slices[layer] != null; }
+        boolean empty() { for (int i = 0; i < buffers.length; i++) if (has(i)) return false; return true; }
     }
 
-    CubeRenderer(ClientCubeWorld world) { this.world = world; }
+    CubeRenderer(ClientCubeWorld world) {
+        this.world = world;
+        visibility.defaultReturnValue(CubeCaves.OPEN);
+    }
 
     public int meshCount() { return meshes.size(); }
     /** Cube meshes in the most recently rendered view, including retained transition meshes. */
@@ -146,7 +189,7 @@ public final class CubeRenderer {
         for (long key : meshes.keySet()) markDirty(key);
         for (long key : building) { markDirty(key); staleBuilds.add(key); }
         // Retiring meshes are in the old format too, and nothing remeshes them.
-        for (Mesh mesh : retiring.values()) mesh.close();
+        for (Mesh mesh : retiring.values()) mesh.close(regions);
         retiring.clear();
         retireBy.clear();
     }
@@ -160,10 +203,11 @@ public final class CubeRenderer {
         light.remove(key);
         compiled.remove(key);
         compiledVersion++;
+        setVisibility(key, CubeCaves.OPEN);
         Mesh mesh = meshes.remove(key);
         if (mesh == null) return;
         Mesh older = retiring.put(key, mesh);
-        if (older != null) older.close();
+        if (older != null) older.close(regions);
         retireBy.put(key, ticks + RETIRE_TICKS);
     }
 
@@ -175,7 +219,7 @@ public final class CubeRenderer {
             var entry = it.next();
             long key = entry.getLongKey();
             if (ticks <= retireBy.get(key) && far != null && far.holeFor(key)) continue;
-            entry.getValue().close();
+            entry.getValue().close(regions);
             it.remove();
             retireBy.remove(key);
         }
@@ -185,7 +229,7 @@ public final class CubeRenderer {
     private void unretire(long key) {
         Mesh mesh = retiring.remove(key);
         if (mesh == null) return;
-        mesh.close();
+        mesh.close(regions);
         retireBy.remove(key);
     }
 
@@ -243,6 +287,7 @@ public final class CubeRenderer {
     public void tick() {
         ticks++;
         retire();
+        if (ticks % 20 == 0) regions.sweep();
     }
 
     private boolean neighboursReady(long key) {
@@ -285,10 +330,23 @@ public final class CubeRenderer {
         for (int i = 0; i < count; i++) submit(ready.getLong((int) (sorted[i] & ((1 << 22) - 1))), camera);
     }
 
+    /** Notes the faces a cube's air joins; {@link CubeCaves#OPEN} forgets it, as for a cube not meshed. */
+    private void setVisibility(long key, long faces) {
+        long old = faces == CubeCaves.OPEN ? visibility.remove(key) : visibility.put(key, faces);
+        if (old == faces) return;
+        // A cube the last search never reached was never stepped out of, so its faces changed nothing; nor does a cube
+        // inside the box searched (missing cubes there counted as open). Only the rest search again.
+        int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
+        boolean inside = x >= searchedLow[0] && x <= searchedHigh[0] && y >= searchedLow[1] && y <= searchedHigh[1]
+                && z >= searchedLow[2] && z <= searchedHigh[2];
+        if (reached == null || !inside || reached.contains(key)) visibilityVersion++;
+    }
+
     private void compileEmpty(long key) {
         unretire(key);
+        setVisibility(key, CubeCaves.OPEN);
         Mesh mesh = meshes.remove(key);
-        if (mesh != null) mesh.close();
+        if (mesh != null) mesh.close(regions);
         light.remove(key);
         compiled.add(key);
         compiledVersion++;
@@ -347,7 +405,7 @@ public final class CubeRenderer {
             }
             catch (Throwable failure) {
                 EarthPlatformMod.LOGGER.error("Cube mesh build failed for {}", CubeKey.toString(key), failure);
-                built.add(new CubeMesher.Built(key, -1, List.of(), null));
+                built.add(new CubeMesher.Built(key, -1, List.of(), null, CubeCaves.OPEN));
             }
         });
     }
@@ -364,6 +422,7 @@ public final class CubeRenderer {
             boolean stale = staleBuilds.remove(result.key());
             if (stale || closed || world.cube(result.key()) == null || result.version() < 0) { result.free(); continue; }
             if (result.light() != null) light.put(result.key(), result.light());
+            setVisibility(result.key(), result.visibility());
             compiled.add(result.key());
             compiledVersion++;
             unretire(result.key());
@@ -371,14 +430,24 @@ public final class CubeRenderer {
             if (mesh == null) { mesh = new Mesh(result.key()); meshes.put(result.key(), mesh); }
             boolean[] present = new boolean[mesh.buffers.length];
             for (CubeMesher.Layer layer : result.layers()) {
-                CubeBuffer buffer = mesh.buffers[layer.index()];
-                if (buffer == null) buffer = mesh.buffers[layer.index()] = new CubeBuffer();
-                buffer.upload(layer.mesh());
+                int i = layer.index();
+                if (CubeRegions.ON) {
+                    // The old mesh's room first, so the new one can have it back.
+                    regions.free(mesh.slices[i]);
+                    mesh.slices[i] = regions.upload(result.key(), i, layer.mesh());
+                    present[i] = mesh.slices[i] != null;
+                } else {
+                    CubeBuffer buffer = mesh.buffers[i];
+                    if (buffer == null) buffer = mesh.buffers[i] = new CubeBuffer();
+                    buffer.upload(layer.mesh());
+                    present[i] = true;
+                }
                 layer.memory().close();
-                present[layer.index()] = true;
             }
             for (int i = 0; i < present.length; i++) {
-                if (!present[i] && mesh.buffers[i] != null) { mesh.buffers[i].close(); mesh.buffers[i] = null; }
+                if (present[i]) continue;
+                if (mesh.buffers[i] != null) { mesh.buffers[i].close(); mesh.buffers[i] = null; }
+                if (mesh.slices[i] != null) { regions.free(mesh.slices[i]); mesh.slices[i] = null; }
             }
             if (mesh.empty()) meshes.remove(result.key());
         }
@@ -403,13 +472,115 @@ public final class CubeRenderer {
         if (culledPass == LevelPasses.current()) return;
         culledPass = LevelPasses.current();
         visible.clear();
-        for (Mesh mesh : meshes.values()) see(mesh, frustum, position);
-        for (Mesh mesh : retiring.values()) see(mesh, frustum, position);
+        LongOpenHashSet seen = CubeCaves.ON ? reach(position) : null;
+        caveSeen = seen;
+        caveCulled = 0;
+        for (Mesh mesh : meshes.values()) see(mesh, frustum, position, seen);
+        // Retiring meshes stand in for far terrain still coming: always drawn while they last.
+        for (Mesh mesh : retiring.values()) see(mesh, frustum, position, null);
         visible.sort(Comparator.comparingDouble(mesh -> mesh.distance));
     }
 
-    private void see(Mesh mesh, Frustum frustum, Vec3 position) {
+    /**
+     * The cubes cave culling lets the camera see ({@link CubeCaves#reach}), searched again only when the camera enters
+     * another cube or a cube's faces change; null where nothing is culled.
+     */
+    @org.jetbrains.annotations.Nullable private LongOpenHashSet reach(Vec3 position) {
+        BlockPos at = BlockPos.containing(position);
+        // A camera inside a solid block (a spectator in rock) sees out through the faces round it, which no cube's
+        // faces say: nothing is culled, as vanilla turns its own cave culling off there.
+        if (world.client().getBlockState(at).isSolidRender(world.client(), at)) return null;
+        long from = CubeKey.ofBlock(at);
+        if (from == reachedFrom && reachedVersion == visibilityVersion) return reached;
+        long start = System.nanoTime();
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        for (long key : meshes.keySet()) {
+            int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
+            minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+            maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+        }
+        searchedLow[0] = minX; searchedLow[1] = minY; searchedLow[2] = minZ;
+        searchedHigh[0] = maxX; searchedHigh[1] = maxY; searchedHigh[2] = maxZ;
+        reached = meshes.isEmpty() ? null : CubeCaves.reach(position.x, position.y, position.z, visibility, minX, minY, minZ, maxX, maxY, maxZ);
+        reachedFrom = from;
+        reachedVersion = visibilityVersion;
+        Timings.CUBE_CAVES.since(start);
+        return reached;
+    }
+
+    /** Whether the last cave search's box held this cube. */
+    private boolean searched(long key) {
+        int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
+        return x >= searchedLow[0] && x <= searchedHigh[0] && y >= searchedLow[1] && y <= searchedHigh[1]
+                && z >= searchedLow[2] && z <= searchedHigh[2];
+    }
+
+    /**
+     * {@code -Dearthplatform.cubes.shadowCaves=false}: in a sealed cave the shadow map still takes every cube Iris's
+     * frustum lets through.
+     */
+    static final boolean SHADOW_CAVES = !"false".equals(System.getProperty("earthplatform.cubes.shadowCaves"));
+    /** Blocks the sealed cave's box is grown by: models and entities reaching out of it, and a pack's soft shadow edges. */
+    private static final double SHADOW_CAVE_GROW = 16.0;
+    private LongOpenHashSet sealedFor;
+    private boolean sealed;
+    private final double[] sealedBox = new double[6];
+    private int sealedMeshes;
+
+    /**
+     * Where the cave search shows the camera shut in (nothing it reached touches the edge of the box searched, so the
+     * view never leaves the near cubes: a cave with no way out in sight), the block box of all it reached, grown; null
+     * otherwise. Everything the view can show lies in that box, so only what casts a shadow into it matters to the
+     * shadow map.
+     */
+    @org.jetbrains.annotations.Nullable private double[] sealedCave(Vec3 position) {
+        // Retiring meshes are drawn wherever they stand, and a mesh newer than the search may lie outside it.
+        if (!SHADOW_CAVES || !CubeCaves.ON || !retiring.isEmpty()) return null;
+        LongOpenHashSet seen = reach(position);
+        if (seen == null) return null;
+        if (seen != sealedFor) {
+            sealedFor = seen;
+            sealedMeshes = meshes.size();
+            int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+            int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+            for (long key : seen) {
+                int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
+                minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+                maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+            }
+            sealed = minX > searchedLow[0] && minY > searchedLow[1] && minZ > searchedLow[2]
+                    && maxX < searchedHigh[0] && maxY < searchedHigh[1] && maxZ < searchedHigh[2];
+            sealedBox[0] = (minX << 4) - SHADOW_CAVE_GROW; sealedBox[1] = (minY << 4) - SHADOW_CAVE_GROW; sealedBox[2] = (minZ << 4) - SHADOW_CAVE_GROW;
+            sealedBox[3] = (maxX + 1 << 4) + SHADOW_CAVE_GROW; sealedBox[4] = (maxY + 1 << 4) + SHADOW_CAVE_GROW; sealedBox[5] = (maxZ + 1 << 4) + SHADOW_CAVE_GROW;
+        }
+        if (!sealed) return null;
+        if (meshes.size() != sealedMeshes) {
+            // Meshes have come or gone since: one outside the box searched is drawn though the search knows nothing of it.
+            for (long key : meshes.keySet()) if (!searched(key)) return null;
+            sealedMeshes = meshes.size();
+        }
+        return sealedBox;
+    }
+
+    /** Meshes in the frustum that cave culling left out of the last view. */
+    public int caveCulledCount() { return caveCulled; }
+
+    /** Meshes the last shadow map pass drew. */
+    public int shadowDrawnCount() { return shadowDrawn; }
+
+    /** {@code -Dearthplatform.cubes.shadowCull=false} culls the shadow map by its own box only, as before. */
+    static final boolean SHADOW_CULL = !"false".equals(System.getProperty("earthplatform.cubes.shadowCull"));
+    private int shadowDrawn;
+
+    private void see(Mesh mesh, Frustum frustum, Vec3 position, @org.jetbrains.annotations.Nullable LongOpenHashSet seen) {
         if (!frustum.isVisible(mesh.box)) return;
+        if (seen != null && !seen.contains(mesh.key)) {
+            if (searched(mesh.key)) { caveCulled++; return; }
+            // Meshed since the search, outside the box it covered: the search knows nothing of it, so it is drawn,
+            // and the next frame searches again with it inside.
+            visibilityVersion++;
+        }
         double dx = mesh.x + 8 - position.x, dy = mesh.y + 8 - position.y, dz = mesh.z + 8 - position.z;
         mesh.distance = dx * dx + dy * dy + dz * dz;
         visible.add(mesh);
@@ -422,7 +593,17 @@ public final class CubeRenderer {
         return building.size();
     }
 
+    /** Draw calls near cubes took in the last whole frame, the shadow map's among them. */
+    public int drawCallCount() { return lastDrawCalls; }
+
+    /** Buffers the meshes share by region, and the megabytes of GPU memory those take; 0 when every cube has its own. */
+    public int regionBufferCount() { return regions.bufferCount(); }
+    public int regionBufferMegabytes() { return (int) (regions.bytes() >> 20); }
+    public int regionUsedMegabytes() { return (int) (regions.usedBytes() >> 20); }
+
     public void beginFrame() {
+        lastDrawCalls = drawCalls;
+        drawCalls = 0;
         frame++;
         long now = System.nanoTime();
         frameNanos = Math.min(now - frameStart, 1_000_000_000L);
@@ -442,13 +623,72 @@ public final class CubeRenderer {
         opaquePass = LevelPasses.current();
         prepare(camera, frustum);
         long start = System.nanoTime();
-        for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {
-            RenderType type = CubeMesher.LAYERS.get(i);
-            if (type == RenderType.translucent() || type == RenderType.tripwire()) continue;
-            draw(i, camera.getPosition(), modelView, projection, false);
+        Vec3 position = camera.getPosition();
+        boolean occlude = CubeOcclusion.ON && LevelPasses.inFrame() == 0 && !visible.isEmpty() && occlusion.ready();
+        if (occlude) split(position);
+        drawOpaqueLayers(occlude ? first : visible, position, modelView, projection);
+        if (occlude && !(rest.isEmpty() && recheck.isEmpty())) {
+            // Phase two: each other cube's box against the depth phase one left, then its layers on condition of it.
+            CubeOcclusion.State state = occlusion.begin(modelView, projection);
+            try {
+                for (Mesh mesh : rest) ask(mesh, position);
+                for (Mesh mesh : recheck) ask(mesh, position);
+            } finally {
+                state.end();
+            }
+            int pass = LevelPasses.current();
+            for (Mesh mesh : rest) mesh.conditionalPass = pass;
+            drawOpaqueLayers(rest, position, modelView, projection);
         }
         Timings.CUBE_DRAW.since(start);
     }
+
+    private void drawOpaqueLayers(List<Mesh> meshes, Vec3 position, Matrix4f modelView, Matrix4f projection) {
+        for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {
+            RenderType type = CubeMesher.LAYERS.get(i);
+            if (type == RenderType.translucent() || type == RenderType.tripwire()) continue;
+            draw(i, meshes, position, modelView, projection, false, true);
+        }
+    }
+
+    /**
+     * Splits the meshes in view for occlusion culling (see {@link CubeOcclusion}): those whose box was seen when last
+     * tested, never tested, or that the camera is in or right beside are drawn first, a share of them tested again;
+     * the rest are tested and drawn on condition.
+     */
+    private void split(Vec3 position) {
+        first.clear();
+        rest.clear();
+        recheck.clear();
+        for (Mesh mesh : visible) {
+            if (mesh.asked && CubeOcclusion.answered(mesh.query)) {
+                mesh.seen = CubeOcclusion.seen(mesh.query);
+                mesh.asked = false;
+            }
+            // Within two blocks of the grown box its faces may be clipped by the near plane: never tested.
+            double near = CubeOcclusion.GROW + 2;
+            boolean beside = position.x > mesh.x - near && position.x < mesh.x + 16 + near && position.y > mesh.y - near
+                    && position.y < mesh.y + 16 + near && position.z > mesh.z - near && position.z < mesh.z + 16 + near;
+            if (beside) { mesh.seen = true; first.add(mesh); continue; }
+            if (mesh.seen) {
+                first.add(mesh);
+                if (!mesh.asked && Math.floorMod((int) (mesh.key ^ mesh.key >>> 32) + frame, CubeOcclusion.RECHECK_EVERY) == 0) recheck.add(mesh);
+            } else {
+                rest.add(mesh);
+            }
+        }
+        occlusionTested = rest.size();
+    }
+
+    private void ask(Mesh mesh, Vec3 position) {
+        if (mesh.query == 0) mesh.query = CubeOcclusion.newQuery();
+        occlusion.test(mesh.query, (float) (mesh.x - position.x), (float) (mesh.y - position.y), (float) (mesh.z - position.z),
+                (float) (mesh.x + 16 - position.x), (float) (mesh.y + 16 - position.y), (float) (mesh.z + 16 - position.z));
+        mesh.asked = true;
+    }
+
+    /** Meshes in view that the last occlusion test drew only on condition of their box. */
+    public int occlusionTestedCount() { return occlusionTested; }
 
     public void drawTranslucent(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
         // Called at two stages so it draws whichever comes; once per pass, not once per frame, or a
@@ -456,8 +696,8 @@ public final class CubeRenderer {
         if (translucentPass == LevelPasses.current()) return;
         translucentPass = LevelPasses.current();
         prepare(camera, frustum);
-        draw(CubeMesher.LAYERS.indexOf(RenderType.translucent()), camera.getPosition(), modelView, projection, true);
-        draw(CubeMesher.LAYERS.indexOf(RenderType.tripwire()), camera.getPosition(), modelView, projection, true);
+        draw(CubeMesher.LAYERS.indexOf(RenderType.translucent()), visible, camera.getPosition(), modelView, projection, true, true);
+        draw(CubeMesher.LAYERS.indexOf(RenderType.tripwire()), visible, camera.getPosition(), modelView, projection, true, true);
     }
 
     /** Whether the opaque layers are drawn in this pass of the level already. */
@@ -471,41 +711,70 @@ public final class CubeRenderer {
     public void drawShadow(Camera camera, Matrix4f modelView, Matrix4f projection) {
         upload();
         Vec3 position = camera.getPosition();
-        Frustum shadow = new Frustum(modelView, projection);
-        shadow.prepare(position.x, position.y, position.z);
+        // Iris's own shadow frustum, as its own sections are culled by: past drawing only what lies in the map, it
+        // leaves out what can cast no shadow into the view, where the pack allows (see ShaderBlocks#shadowFrustum).
+        Frustum iris = SHADOW_CULL ? ShaderBlocks.shadowFrustum() : null;
+        Frustum shadow = iris;
+        if (shadow == null) {
+            shadow = new Frustum(modelView, projection);
+            shadow.prepare(position.x, position.y, position.z);
+        }
+        // In a sealed cave only what casts a shadow into the cave matters (see #sealedCave); where the pack lets Iris cull.
+        double[] cave = iris != null && ShaderBlocks.shadowCulls(iris) ? sealedCave(position) : null;
+        // Shadows fall away from the light, which looks down its own -z.
+        org.joml.Vector3f fall = cave == null ? null : new Matrix4f(modelView).invert().transformDirection(new org.joml.Vector3f(0.0F, 0.0F, -1.0F));
         List<Mesh> all = new ArrayList<>(meshes.size());
-        for (Mesh mesh : meshes.values()) if (shadow.isVisible(mesh.box)) all.add(mesh);
+        for (Mesh mesh : meshes.values()) {
+            if (!shadow.isVisible(mesh.box)) continue;
+            if (cave != null && !CubeCaves.shadowReaches(mesh.x, mesh.y, mesh.z, mesh.x + 16, mesh.y + 16, mesh.z + 16, fall.x, fall.y, fall.z, cave)) continue;
+            all.add(mesh);
+        }
         for (Mesh mesh : retiring.values()) if (shadow.isVisible(mesh.box)) all.add(mesh);
+        shadowDrawn = all.size();
         for (int i = 0; i < CubeMesher.LAYERS.size(); i++) {
             RenderType type = CubeMesher.LAYERS.get(i);
             if (type == RenderType.translucent() || type == RenderType.tripwire()) continue;
-            draw(i, all, camera.getPosition(), modelView, projection, false);
+            draw(i, all, camera.getPosition(), modelView, projection, false, false);
         }
     }
 
-    private void draw(int layer, Vec3 camera, Matrix4f modelView, Matrix4f projection, boolean backToFront) {
-        draw(layer, visible, camera, modelView, projection, backToFront);
-    }
-
-    private void draw(int layer, List<Mesh> visible, Vec3 camera, Matrix4f modelView, Matrix4f projection, boolean backToFront) {
+    /** {@code conditions}: meshes occlusion culling tested this pass draw only where their box was seen. */
+    private void draw(int layer, List<Mesh> visible, Vec3 camera, Matrix4f modelView, Matrix4f projection, boolean backToFront, boolean conditions) {
         RenderType type = CubeMesher.LAYERS.get(layer);
         boolean any = false;
-        for (Mesh mesh : visible) if (mesh.buffers[layer] != null) { any = true; break; }
+        for (Mesh mesh : visible) if (mesh.has(layer)) { any = true; break; }
         if (!any) return;
         type.setupRenderState();
         ShaderInstance shader = RenderSystem.getShader();
         shader.setDefaultUniforms(VertexFormat.Mode.QUADS, modelView, projection, Minecraft.getInstance().getWindow());
         shader.apply();
         Uniform offset = shader.CHUNK_OFFSET;
+        int pass = LevelPasses.current();
+        // Meshes that share buffers by region: a call a buffer, or a run of cubes where the order matters.
+        if (CubeRegions.ON) regions.begin(offset, camera, backToFront);
         for (int n = 0; n < visible.size(); n++) {
             Mesh mesh = visible.get(backToFront ? visible.size() - 1 - n : n);
+            CubeRegions.Slice slice = mesh.slices[layer];
+            if (slice != null) {
+                if (conditions && mesh.conditionalPass == pass && mesh.query != 0) regions.drawOnCondition(slice, mesh.query);
+                else regions.draw(slice);
+                continue;
+            }
             CubeBuffer buffer = mesh.buffers[layer];
             if (buffer == null) continue;
+            drawCalls++;
             if (offset != null) {
                 offset.set((float) (mesh.x - camera.x), (float) (mesh.y - camera.y), (float) (mesh.z - camera.z));
                 offset.upload();
             }
+            boolean conditional = conditions && mesh.conditionalPass == pass && mesh.query != 0;
+            if (conditional) CubeOcclusion.beginConditional(mesh.query);
             buffer.draw();
+            if (conditional) CubeOcclusion.endConditional();
+        }
+        if (CubeRegions.ON) {
+            regions.end();
+            drawCalls += regions.takeCalls();
         }
         if (offset != null) offset.set(0.0F, 0.0F, 0.0F);
         shader.clear();
@@ -520,10 +789,15 @@ public final class CubeRenderer {
         MultiBufferSource.BufferSource buffers = minecraft.renderBuffers().bufferSource();
         Vec3 position = camera.getPosition();
         boolean any = false;
+        LongOpenHashSet caves = caveSeen;
         for (Cube cube : world.cubes()) {
             if (cube.blockEntities().isEmpty()) continue;
+            // In a cube behind rock, as its terrain is, unless the renderer reaches out of it (a beacon's beam).
+            boolean hidden = caves != null && !caves.contains(cube.key);
             for (BlockEntity entity : cube.blockEntities().values()) {
-                if (dispatcher.getRenderer(entity) == null) continue;
+                var renderer = dispatcher.getRenderer(entity);
+                if (renderer == null) continue;
+                if (hidden && !renderer.shouldRenderOffScreen(entity)) continue;
                 BlockPos pos = entity.getBlockPos();
                 if (!frustum.isVisible(new AABB(pos).inflate(1.0))) continue;
                 pose.pushPose();
@@ -538,13 +812,17 @@ public final class CubeRenderer {
 
     void close() {
         closed = true;
+        occlusion.close();
         built.close();
-        for (Mesh mesh : meshes.values()) mesh.close();
+        regions.close();
+        for (Mesh mesh : meshes.values()) mesh.close(regions);
         meshes.clear();
-        for (Mesh mesh : retiring.values()) mesh.close();
+        for (Mesh mesh : retiring.values()) mesh.close(regions);
         retiring.clear();
         retireBy.clear();
         light.clear();
+        visibility.clear();
+        reached = null;
         compiled.clear();
         compiledVersion++;
         dirty.clear();

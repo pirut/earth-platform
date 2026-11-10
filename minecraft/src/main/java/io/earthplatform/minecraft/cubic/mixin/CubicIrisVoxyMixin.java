@@ -11,14 +11,16 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * Compiles shader packs with {@code VOXY} defined, so packs with Voxy support read far terrain's
- * own depth; see {@link FarLod}. Skipped when Iris is not installed.
+ * own depth, or with {@code DISTANT_HORIZONS} for a pack that supports only that; see {@link FarLod}.
+ * Skipped when Iris is not installed.
  */
 @Pseudo
 @Mixin(targets = "net.irisshaders.iris.gl.shader.StandardMacros", remap = false)
 abstract class CubicIrisVoxyMixin {
     @Inject(method = "createStandardEnvironmentDefines", at = @At("RETURN"), cancellable = true, require = 0, remap = false)
     private static void earthplatform$defineVoxy(CallbackInfoReturnable<ImmutableList<StringPair>> result) {
-        if (!FarLod.defineVoxy()) return;
-        result.setReturnValue(ImmutableList.<StringPair>builder().addAll(result.getReturnValue()).add(new StringPair("VOXY", "")).build());
+        String define = FarLod.lodDefine();
+        if (define == null) return;
+        result.setReturnValue(ImmutableList.<StringPair>builder().addAll(result.getReturnValue()).add(new StringPair(define, "")).build());
     }
 }

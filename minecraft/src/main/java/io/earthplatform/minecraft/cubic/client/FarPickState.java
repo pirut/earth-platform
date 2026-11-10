@@ -31,5 +31,13 @@ final class FarPickState {
         return changed;
     }
 
-    void invalidate() { valid = false; }
+    void invalidate() {
+        valid = false;
+        invalidated++;
+    }
+
+    /** How many times the pick was invalidated, so a view held across frames knows something it shows changed. */
+    int invalidations() { return invalidated; }
+
+    private int invalidated;
 }

@@ -35,13 +35,13 @@ Only the first time you visit a place. The mod downloads that area's elevation, 
 It depends how much of the planet you explore. Downloaded data lives in `earthplatform/cache` inside your game folder. It is limited to 8 GB by default: the files you used least recently are removed when the game starts and as the cache grows. Change the limit in Mods → Earth Platform → Config (or `cacheLimitGb` in `config/earthplatform-common.toml`). Deleting the folder is safe: it downloads again when needed.
 
 **Stuck on "Preparing your Earth"?**
-The starting place has not finished downloading. Check your connection; the screen keeps retrying and enters the world as soon as the ground has arrived. Behind a firewall, allow `s3.amazonaws.com`, `esa-worldcover.s3.eu-central-1.amazonaws.com` and `os.zhdk.cloud.switch.ch` (plus `tiles.maps.eox.at` if you turned satellite imagery on).
+The starting place has not finished downloading. Check your connection; the screen keeps retrying and enters the world as soon as the ground has arrived. Behind a firewall, allow `s3.amazonaws.com`, `esa-worldcover.s3.eu-central-1.amazonaws.com`, `dataforgood-fb-data.s3.amazonaws.com` and `os.zhdk.cloud.switch.ch` (plus `tiles.maps.eox.at` if you turned satellite imagery on).
 
 ## Performance
 
 **It's slow or stutters.**
 - Give the game at least 4 GB of memory, and at least 6 GB with shaders such as Photon or higher far terrain detail. With Photon, 4 GB drops the frame rate sharply.
-- Lower **far terrain detail** in Mods → Earth Platform → Config → Graphics (restart to apply). The default is 11; 6 to 8 helps weaker GPUs.
+- Lower **far terrain detail** in Mods → Earth Platform → Config → Graphics, or the far view slider on the pause menu (changes at once). The default is 11; 6 to 8 helps weaker GPUs.
 - Flying fast over new ground downloads and builds terrain as you go; it settles once the area is cached.
 - Sodium helps frame rate. Use 0.8.12 or a later 0.8 release, as in the [install guide](INSTALL.md#shaders-optional).
 
