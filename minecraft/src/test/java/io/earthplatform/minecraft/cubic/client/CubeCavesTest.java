@@ -71,4 +71,17 @@ class CubeCavesTest {
     @Test void fullyOpenGraphIsOpen() {
         assertEquals(CubeCaves.OPEN, CubeCaves.of(new VisGraph().resolve()));
     }
+
+    @Test void shadowReachesOnlyDownTheLightsWay() {
+        double[] cave = {0, 0, 0, 32, 16, 32};
+        // Light straight overhead: shadows fall straight down.
+        assertTrue(CubeCaves.shadowReaches(0, 64, 0, 16, 80, 16, 0, -1, 0, cave), "above the cave");
+        assertFalse(CubeCaves.shadowReaches(0, -64, 0, 16, -48, 16, 0, -1, 0, cave), "below it: the shadow falls away");
+        assertFalse(CubeCaves.shadowReaches(64, 64, 0, 80, 80, 16, 0, -1, 0, cave), "beside it");
+        assertTrue(CubeCaves.shadowReaches(8, 4, 8, 12, 8, 12, 0, -1, 0, cave), "inside it");
+        // A low light: a cube up and to the side reaches the cave only along the slant.
+        double s = Math.sqrt(0.5);
+        assertTrue(CubeCaves.shadowReaches(-80, 64, 0, -64, 80, 16, s, -s, 0, cave));
+        assertFalse(CubeCaves.shadowReaches(80, 64, 0, 96, 80, 16, s, -s, 0, cave));
+    }
 }
