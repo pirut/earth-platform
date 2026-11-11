@@ -60,6 +60,8 @@ public final class PerformanceDiagnostics {
             if(world!=null) {
                 record.add("far",gson.toJsonTree(world.far().perfState()));
                 JsonObject cubes=new JsonObject();cubes.addProperty("loaded",world.loadedCubes());cubes.addProperty("meshes",world.renderer().meshCount());cubes.addProperty("pending_meshes",world.renderer().pendingCount());record.add("cubes",cubes);
+                cubes.add("snapshot_cache",gson.toJsonTree(world.renderer().snapshotStats()));
+                cubes.addProperty("interior_meshes_skipped",CubeMesher.interiorSkipped());
             }
             record.add("run_mesher",gson.toJsonTree(FarMesher.runStats()));
             JsonObject stages=new JsonObject();
@@ -70,6 +72,12 @@ public final class PerformanceDiagnostics {
                 long count=before==null?total.calls():Math.max(0,total.calls()-before.calls());
                 long nanos=before==null?total.nanos():Math.max(0,total.nanos()-before.nanos());
                 JsonObject stage=new JsonObject();stage.addProperty("calls",count);stage.addProperty("cpu_ms_total",nanos/1e6);stage.addProperty("cpu_ms_mean",count==0?0:nanos/1e6/count);stages.add(names[i],stage);
+            }
+            for (var entry : Map.of("cube_snapshot",Timings.CUBE_SNAPSHOT,"cube_light",Timings.CUBE_LIGHT).entrySet()) {
+                var total=entry.getValue().total();var before=previous.put(entry.getValue(),total);
+                long calls=before==null?total.calls():Math.max(0,total.calls()-before.calls());
+                long nanos=before==null?total.nanos():Math.max(0,total.nanos()-before.nanos());
+                JsonObject stage=new JsonObject();stage.addProperty("calls",calls);stage.addProperty("cpu_ms_total",nanos/1e6);stage.addProperty("cpu_ms_mean",calls==0?0:nanos/1e6/calls);stages.add(entry.getKey(),stage);
             }
             record.add("stages",stages);
             Map<String,long[]> gpu=new LinkedHashMap<>();

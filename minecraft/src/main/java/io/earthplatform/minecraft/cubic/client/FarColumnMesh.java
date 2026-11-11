@@ -108,9 +108,9 @@ final class FarColumnMesh {
     }
 
     Built build() {
-        // The ground is drawn as one smooth surface rather than voxels, so only water is meshed voxel by voxel,
-        // and on the textured levels trees too, which stand on the ground as blocks do up close.
-        boolean smooth = smooth(job), trees = smooth && job.textured();
+        // At smooth distances vegetation belongs to the surface too. A leaf voxel here can
+        // be 32+ blocks wide; drawing it separately makes oversized boxes above the slope.
+        boolean smooth = smooth(job);
         if(job.packet()!=null) {
             java.util.BitSet candidates=FarRunCandidates.make(job.packet());
             for(int bit=candidates.nextSetBit(0);bit>=0;bit=candidates.nextSetBit(bit+1)) {
@@ -125,7 +125,7 @@ final class FarColumnMesh {
             if (section == null || section.hasOnlyAir()) continue;
             for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
                 BlockState state = section.getBlockState(x, y, z);
-                if (state.isAir() || smooth && !seeThrough(state) && !(trees && foliage(state))) continue;
+                if (state.isAir() || smooth && !seeThrough(state)) continue;
                 int vy = si * 16 + y;
                 if (drawn(x, vy, z)) continue;
                 voxel(state, x, vy, z);
@@ -137,10 +137,6 @@ final class FarColumnMesh {
         int[] grid = null;
         if (smooth) {
             grid = new FarSmoothGround(this).emit(groups);
-            if (trees) {
-                opaqueFlat.emitQuads(this, groups);
-                emitSides(groups);
-            }
         } else {
             opaqueFlat.emitQuads(this, groups);
             emitSides(groups);
@@ -343,13 +339,23 @@ final class FarColumnMesh {
         int tint = job.faces().tint(state, biome, face);
         int rgb = texturedWater ? tint : multiply(face.rgb(), tint);
         // Flat faces have no texture to carry water's see-through alpha, so the vertices do.
-        int alpha = texturedWater ? 255 : face.rgb() >>> 24;
+        // At coarse distances water represents a deep optical path, not a glass sheet. Near
+        // textured water keeps the game's normal transparency; distant merged water hides the bed.
+        int alpha = texturedWater ? 255 : Math.max(250, face.rgb() >>> 24);
         return alpha << 24 | shade(rgb, job.shade()[direction.get3DDataValue()]);
     }
 
     /** One side of a box of blocks, in blocks from the column's base. */
     void face(BufferBuilder builder, BlockState state, int argb, Direction direction,
               float x, float y, float z, float sx, float sy, float sz, int light, boolean textured) {
+        // Bound curvature error without tessellating coarse ocean into individual blocks.
+        int grid = EarthView.WATER_GRID;
+        if (!textured && (sx > grid || sz > grid)) {
+            for (float dz = 0; dz < sz; dz += grid) for (float dx = 0; dx < sx; dx += grid)
+                face(builder, state, argb, direction, x + dx, y, z + dz,
+                        Math.min(grid, sx - dx), sy, Math.min(grid, sz - dz), light, false);
+            return;
+        }
         FarFaces.Face face = textured ? job.faces().face(state, direction) : null;
         float u0 = face != null ? face.u0() : job.white()[0], u1 = face != null ? face.u1() : job.white()[2];
         float v0 = face != null ? face.v0() : job.white()[1], v1 = face != null ? face.v1() : job.white()[3];

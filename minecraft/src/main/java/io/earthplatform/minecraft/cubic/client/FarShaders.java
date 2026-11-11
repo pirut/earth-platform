@@ -202,6 +202,7 @@ final class FarShaders {
             uniform mat4 earth_Projection;
             uniform ivec3 earth_CameraBlock;
             uniform vec3 earth_CameraFraction;
+            uniform float earth_Curvature;
             uniform int earth_FogShape;
 
             out vec2 earth_tile;
@@ -320,6 +321,8 @@ final class FarShaders {
                     else local.zy += grow;
                 }
                 vec3 position = origin + local;
+                float curveRadius = max(0.0, length(position.xz) - 2000.0);
+                position.y -= earth_Curvature * curveRadius * curveRadius;
                 earth_position = position;
                 earth_where = local;
                 earth_anchor = earth_smooth > 0.5 ? position : origin + earth_local(face, vec2(0.5), x, y, z, width, extent, v);
@@ -356,9 +359,9 @@ final class FarShaders {
                 else if (face == 3u) earth_tile = vec2(local.x, -local.y);
                 else if (face == 4u) earth_tile = vec2(local.z, -local.y);
                 else earth_tile = vec2(-local.z, -local.y);
-                // Further out a texture spans more blocks, two to a voxel side, so each voxel reads as a
-                // block of its own at any distance instead of a blur of tiny repeats.
-                earth_tile /= max(1.0, v * 0.5);
+                // Keep Minecraft's one-block texture scale at every level. Enlarging the
+                // texture with a coarse voxel made distant rock look like giant blocks.
+                // The fragment footprint filter averages detail once it becomes subpixel.
 
                 uint look = q.w & 0xFFFFFu;
                 earth_normal = earth_smooth > 0.5 ? 0u : q.w >> 20;
@@ -393,6 +396,7 @@ final class FarShaders {
             flat in uint earth_look;
 
             uniform sampler2D earth_Atlas;
+            uniform float earth_Atmosphere;
             uniform usamplerBuffer earth_Quads;
             uniform usamplerBuffer earth_Looks;
 
@@ -469,8 +473,15 @@ final class FarShaders {
                 if (earth_smooth > 0.5 && (earth_flags & 1u) == 0u) return vec4(earth_vcolour, 1.0);
                 if ((earth_flags & 1u) == 0u) return vec4(earth_average, 1.0);
                 earth_here();
+                // Repeat textures smoothly approach their average before they become subpixel
+                // stripes. Unwrapped derivatives remain stable across atlas tile boundaries.
+                float footprint = max(length(dFdx(earth_hereTile)), length(dFdy(earth_hereTile)));
+                float aerial = earth_Atmosphere * smoothstep(512.0, 4096.0, earth_distance);
+                float detail = (1.0 - smoothstep(0.125, 0.5, footprint)) * (1.0 - aerial);
+                if (detail <= 0.0) return vec4(earth_smooth > 0.5 ? earth_vcolour : earth_hereAverage, 1.0);
                 vec2 size = earth_hereSprite.zw - earth_hereSprite.xy;
                 vec4 texel = textureGrad(earth_Atlas, earth_atlasUv(), dFdx(earth_hereTile) * size, dFdy(earth_hereTile) * size);
+                texel.rgb = mix(earth_hereAverage, texel.rgb, detail);
                 // Smooth ground's colour blends from voxel column to voxel column; the texture keeps its pattern on top.
                 if (earth_smooth > 0.5) return vec4(earth_vcolour * min(texel.rgb / max(earth_hereAverage, vec3(1.0 / 255.0)), vec3(3.0)), 1.0);
                 return vec4(texel.rgb, 1.0);
@@ -517,9 +528,10 @@ final class FarShaders {
             // spans plenty of pixels it is lit face by face, as a block is, with a lit top and shaded
             // sides. Smaller, a stepped hillside lit that way breaks into stripes of lit treads and
             // dark risers, so there the slope takes most of it over and the steps keep only a
-            // light relief. A texture spans half a voxel.
+            // light relief. Texture coordinates remain in actual blocks, so coarse LOD
+            // voxels do not acquire exaggerated dark risers just because they are bigger.
             float earth_faceShare() {
-                float pixels = 2.0 / max(length(fwidth(earth_tile)), 1e-5);
+                float pixels = 1.0 / max(length(fwidth(earth_tile)), 1e-5);
                 return smoothstep(2.0, 10.0, pixels);
             }
 
@@ -556,6 +568,12 @@ final class FarShaders {
 
     /** Vanilla look: lightmap, side shading and linear fog, as rendertype_solid does. */
     static final String FRAGMENT = SAMPLE + SHADE + """
+            in vec3 earth_position;
+            #ifdef EARTH_PRECISE_DEPTH
+            uniform mat4 earth_ModelView;
+            uniform mat4 earth_GameProjection;
+            uniform sampler2D earth_Blocks;
+            #endif
             uniform sampler2D earth_Lightmap;
             uniform vec4 earth_ColorModulator;
             uniform float earth_FogStart;
@@ -566,6 +584,12 @@ final class FarShaders {
             out vec4 earth_fragColor;
 
             void main() {
+            #ifdef EARTH_PRECISE_DEPTH
+                vec4 gameClip = earth_GameProjection * earth_ModelView * vec4(earth_position, 1.0);
+                float gameDepth = gameClip.z / gameClip.w * 0.5 + 0.5;
+                float blocks = texelFetch(earth_Blocks, ivec2(gl_FragCoord.xy), 0).r;
+                if (blocks < 1.0 && gameDepth > blocks + 1e-7) discard;
+            #endif
             #ifdef EARTH_FADE
                 earth_fade();
             #endif
@@ -580,6 +604,9 @@ final class FarShaders {
                 float fog = earth_distance <= earth_FogStart ? 0.0
                         : earth_distance < earth_FogEnd ? smoothstep(earth_FogStart, earth_FogEnd, earth_distance) : 1.0;
                 fog = max(fog, earth_edge);
+                // Terrain remains visible beneath the existing cloud deck during high flight.
+                float air = earth_Atmosphere * (1.0 - exp(-length(earth_position) / 18000.0)) * 0.65;
+                fog = max(fog, air);
                 if (fog > 0.0) colour.rgb = mix(colour.rgb, earth_FogColor.rgb, fog * earth_FogColor.a);
                 earth_fragColor = vec4(colour.rgb, 1.0);
             }

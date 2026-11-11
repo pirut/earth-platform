@@ -228,6 +228,8 @@ public final class CubicClient {
         float height = (float) camera.y - world.skyTop(net.minecraft.util.Mth.floor(camera.x), net.minecraft.util.Mth.floor(camera.z));
         float scale = FarRenderer.HAZE_AT_EDGE ? 1.0F : world.far().hazeScale(camera.z), end = FarRenderer.FOG_END * scale;
         float start = Math.min(Math.max(FarRenderer.FOG_START * scale, height * 1.25F), 0.8F * end);
+        // Clouds composite their own local extinction. Never replace the entire terrain fog
+        // range based on the camera's altitude/density; that washed out the middle cloud band.
         return new float[] {start, end};
     }
 

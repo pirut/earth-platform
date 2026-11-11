@@ -80,6 +80,24 @@ final class FarGpu {
     private final String version;
     /** Programs by fade ({@link #NO_FADE}, {@link #FADE_OUT}, {@link #FADE_IN}); a fade's program is built when first asked for. */
     private final Program[] vanilla = new Program[3], pack = new Program[3], packNear = new Program[3];
+    private final Program[] precise = new Program[3];
+    private final boolean[] preciseFailed = new boolean[3];
+    private boolean plainDepth;
+    private Matrix4f gameProjection;
+    private float atmosphere;
+    private float curvature;
+
+    void atmosphere(float value) { atmosphere = value; }
+    void curvature(float value) { curvature = value; }
+
+    boolean preciseReady() {
+        plainDepth = true;
+        boolean ready = vanillaProgram(NO_FADE) != null;
+        plainDepth = false;
+        return ready;
+    }
+
+    void plainDepth(@Nullable Matrix4f game) { plainDepth = game != null; gameProjection = game; }
     private final boolean[] vanillaFailed = new boolean[3], packFailed = new boolean[3], packNearFailed = new boolean[3];
     /** The same three, drawing only where the game drew none of its blocks (see {@link FarShaders#GROUND}). */
     private final Program[] vanillaGround = new Program[3], packGround = new Program[3], packNearGround = new Program[3];
@@ -305,7 +323,7 @@ final class FarGpu {
         previousActive = GlStateManager._getActiveTexture();
         bind2d(ATLAS_UNIT, atlas, packMode);
         bind2d(LIGHT_UNIT, lightmap, packMode);
-        if (this.ground) bind2d(BLOCKS_UNIT, FarBlockDepth.texture(), packMode);
+        if (this.ground || plainDepth) bind2d(BLOCKS_UNIT, FarBlockDepth.texture(), packMode);
         bindBuffer(LOOK_UNIT, looks.texture);
         bindBuffer(COLUMN_UNIT, columns.texture);
         GlStateManager._activeTexture(previousActive);
@@ -384,12 +402,15 @@ final class FarGpu {
             FloatBuffer matrix = stack.mallocFloat(16);
             GL20C.glUniformMatrix4fv(program.location("earth_ModelView"), false, modelView.get(matrix));
             GL20C.glUniformMatrix4fv(program.location("earth_Projection"), false, projection.get(matrix));
+            if (plainDepth) GL20C.glUniformMatrix4fv(program.location("earth_GameProjection"), false, gameProjection.get(matrix));
             GL20C.glUniform1fv(program.location("earth_Shade"), shade);
         }
         int bx = (int) Math.floor(camera.x), by = (int) Math.floor(camera.y), bz = (int) Math.floor(camera.z);
         GL20C.glUniform3i(program.location("earth_CameraBlock"), bx, by, bz);
         GL20C.glUniform3f(program.location("earth_CameraFraction"), (float) (camera.x - bx), (float) (camera.y - by), (float) (camera.z - bz));
         GL20C.glUniform1f(program.location("earth_Grow"), grow(projection));
+        GL20C.glUniform1f(program.location("earth_Atmosphere"), atmosphere);
+        GL20C.glUniform1f(program.location("earth_Curvature"), curvature);
         GL20C.glUniform1i(program.location("earth_FogShape"), RenderSystem.getShaderFogShape().getIndex());
         GL20C.glUniform1f(program.location("earth_FogStart"), RenderSystem.getShaderFogStart());
         GL20C.glUniform1f(program.location("earth_FogEnd"), RenderSystem.getShaderFogEnd());
@@ -501,7 +522,7 @@ final class FarGpu {
         for (int unit : new int[] {QUAD_UNIT, LOOK_UNIT, COLUMN_UNIT}) bindBuffer(unit, 0);
         restore2d(ATLAS_UNIT);
         restore2d(LIGHT_UNIT);
-        if (ground) restore2d(BLOCKS_UNIT);
+        if (ground || plainDepth) restore2d(BLOCKS_UNIT);
         GlStateManager._activeTexture(previousActive);
         GL30C.glBindVertexArray(previousVao);
         BufferUploader.invalidate();
@@ -819,6 +840,17 @@ final class FarGpu {
     // Programs -----------------------------------------------------------------------------------
 
     @Nullable private Program vanillaProgram(int fade) {
+        if (plainDepth) {
+            if (precise[fade] == null && !preciseFailed[fade]) {
+                String header = version + "#define EARTH_PRECISE_DEPTH\n" + FarShaders.fade(fade);
+                try { precise[fade] = Program.link(header + FarShaders.VERTEX, header + FarShaders.FRAGMENT, "far terrain (precise depth)"); }
+                catch (IllegalStateException failure) {
+                    preciseFailed[fade] = true;
+                    EarthPlatformMod.LOGGER.warn("Precise far terrain shader unavailable", failure);
+                }
+            }
+            return precise[fade];
+        }
         if (ground) return vanillaGroundProgram(fade);
         if (vanilla[fade] == null && !vanillaFailed[fade]) {
             String header = version + FarShaders.fade(fade);
@@ -1014,7 +1046,7 @@ final class FarGpu {
         arenas.clear();
         columns.close();
         looks.close();
-        for (Program[] programs : new Program[][] {vanilla, pack, packNear, vanillaGround, packGround, packNearGround})
+        for (Program[] programs : new Program[][] {vanilla, precise, pack, packNear, vanillaGround, packGround, packNearGround})
             for (Program program : programs) if (program != null) program.close();
         for (Program program : prepass) if (program != null) program.close();
         for (Program program : shading) if (program != null) program.close();

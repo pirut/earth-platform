@@ -72,6 +72,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     protected final IdMap<Holder<Biome>> biomeIds;
     private final Registry<Biome> biomeRegistry;
     private final Underground below;
+    private final int minimumY;
     /** Vanilla's structures, once a server level is attached; until then cubes are terrain only. */
     @Nullable private volatile VanillaStructures vanilla;
     /** Base cubes (before vanilla structures) that structure layout reads, by section key. */
@@ -81,12 +82,21 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** Cave noise is drawn from {@code random} after whatever the subclass drew from it. */
     protected SurfaceGenerator(long seed, Registry<Biome> biomes, RandomSource random) {
+        this(seed, biomes, random, io.earthplatform.minecraft.cubic.CubeWorld.MIN_Y);
+    }
+
+    protected SurfaceGenerator(long seed, Registry<Biome> biomes, RandomSource random, int minimumY) {
+        if (minimumY < io.earthplatform.minecraft.cubic.CubeWorld.MIN_Y || minimumY > 63 - 11_000)
+            throw new IllegalArgumentException("Generation floor must preserve Earth's deep seabeds");
+        this.minimumY = minimumY;
         this.seed = seed;
         this.biomeIds = biomes.asHolderIdMap();
         this.biomeRegistry = biomes;
         below = new Underground(this, seed, biomes, random);
     }
     Underground underground() { return below; }
+
+    public final int minimumY() { return minimumY; }
     protected static Holder<Biome> holder(Registry<Biome> registry, ResourceKey<Biome> key) { return registry.getHolderOrThrow(key); }
 
     /** Fractal noise: {@code octaves} layers of {@code noise}, each half as strong and 2.03x as fine, averaged by weight. */
@@ -182,6 +192,21 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** The cube column's own lowest ground, from the column its cubes are made from. */
     @Override public final int lowestGround(int cubeX, int cubeZ) { return column(cubeX, cubeZ).min; }
+
+    @Override public final int highestSurface(int cubeX, int cubeZ) {
+        Column column = column(cubeX, cubeZ);
+        return Math.max(column.max, column.maxWater);
+    }
+
+    @Override public final int lowestSurface(int cubeX, int cubeZ) {
+        Column column = column(cubeX, cubeZ);
+        int low = Integer.MAX_VALUE;
+        for (int z = 1; z <= 16; z++) for (int x = 1; x <= 16; x++) {
+            int i = z * 18 + x;
+            low = Math.min(low, Math.max(column.height[i], column.water[i]));
+        }
+        return low;
+    }
 
     @Override public final int surfaceY(int x, int z) {
         Column cached = columns.get(columnKey(x >> 4, z >> 4));
@@ -500,6 +525,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     @Override public void attach(ServerLevel level) { vanilla = new VanillaStructures(level, new StructureHost(), seed); }
 
     @Override public LevelChunkSection generate(int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
+        if ((long) cy * 16 + 15 < minimumY) return new LevelChunkSection(biomeRegistry);
         LevelChunkSection section = terrain(cx, cy, cz, blockEntities, entities);
         Vegetation.bees(section, cx << 4, cy << 4, cz << 4, blockEntities);
         VanillaStructures structures = vanilla;
@@ -507,8 +533,22 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             structures.place(section, cx, cy, cz, blockEntities, entities);
             section.recalcBlockCounts();
         }
+        sealDepth(section, cx, cy, cz);
+        if (minimumY != io.earthplatform.minecraft.cubic.CubeWorld.MIN_Y)
+            entities.removeIf(tag -> tag.contains("Pos", 9) && tag.getList("Pos", 6).getDouble(1) < minimumY + 5);
         dropStrayBlockEntities(section, cx, cy, cz, blockEntities);
         return section;
+    }
+
+    /** Run after structures too: nothing may carve through bedrock or populate the void below. */
+    private void sealDepth(LevelChunkSection section, int cx, int cy, int cz) {
+        if (minimumY == io.earthplatform.minecraft.cubic.CubeWorld.MIN_Y || (long) cy * 16 > minimumY + 4) return;
+        for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+            int by = (cy << 4) + y;
+            if (by < minimumY) section.setBlockState(x, y, z, AIR, false);
+            else if (below.bedrock((cx << 4) + x, by, (cz << 4) + z)) section.setBlockState(x, y, z, Underground.BEDROCK, false);
+        }
+        section.recalcBlockCounts();
     }
 
     /**
@@ -629,10 +669,15 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             return biomeRegistry.holders().filter(h -> h.is(BiomeTags.IS_OVERWORLD)).map(h -> (Holder<Biome>) h);
         }
         @Override public BlockState fill(int x, int y, int z, int depth) {
+            if (minimumY != io.earthplatform.minecraft.cubic.CubeWorld.MIN_Y) {
+                if (y < minimumY) return AIR;
+                if (below.bedrock(x, y, z)) return Underground.BEDROCK;
+            }
             Surface surface = column(x >> 4, z >> 4).surface[(z & 15) * 16 + (x & 15)];
             return depth <= 0 ? surface.top() : depth < 4 ? surface.under() : below.rock(x, y, z, below.floor(x, z));
         }
         @Nullable @Override public LevelChunkSection cube(int cx, int cy, int cz) {
+            if ((long) cy * 16 + 15 < minimumY) return null;
             Column col = column(cx, cz);
             if (cy << 4 > Math.max(col.max + 16, col.maxWater)) return null;
             long key = SectionPos.asLong(cx, cy, cz);
@@ -647,6 +692,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** A cube as generated before vanilla structures: terrain, caves, ores, plants and this generator's own structures. */
     private LevelChunkSection terrain(int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
+        if ((long) cy * 16 + 15 < minimumY) return new LevelChunkSection(biomeRegistry);
         Column col = column(cx, cz);
         Holder<Biome> fallback = col.surface[8 * 16 + 8].biome();
         int y0 = cy << 4, x0 = cx << 4, z0 = cz << 4;
@@ -673,6 +719,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         }
         for (int ly = 0; ly < 16; ly++) {
             int y = y0 + ly;
+            if (y < minimumY) continue;
             for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
                 int ci = lz * 16 + lx, gi = (lz + 1) * 18 + lx + 1, h = col.height[gi];
                 Surface surface = col.surface[ci];

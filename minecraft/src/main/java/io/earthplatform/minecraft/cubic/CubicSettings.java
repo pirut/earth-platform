@@ -117,7 +117,7 @@ public final class CubicSettings {
                 String elevationId = properties.getProperty("earth.elevation", TerrariumTileSource.DATASET_ID);
                 yield new EarthGenerator(seed, biomes, settings, tiles(elevationId), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
                         coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : streamsId.isEmpty() ? rivers() : riversAndStreams(),
-                        coverId.isEmpty() || groundId.isEmpty() ? null : bareEarth());
+                        coverId.isEmpty() || groundId.isEmpty() ? null : bareEarth(), WorldDepth.read(properties).minimumY);
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
         };
@@ -151,6 +151,7 @@ public final class CubicSettings {
         properties.setProperty("earth.longitude", Double.toString(earth.longitude()));
         properties.setProperty("earth.metresPerBlock", Double.toString(earth.metresPerBlock()));
         properties.setProperty("earth.projection", earth.projection());
+        properties.setProperty(WorldDepth.KEY, WorldDepth.newWorld().id);
         properties.setProperty("earth.elevation", elevation());
         properties.setProperty("earth.cover", WorldCoverSource.DATASET_ID);
         properties.setProperty("earth.climate", ClimateSource.DATASET_ID);

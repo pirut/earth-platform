@@ -95,6 +95,8 @@ final class CubeMesher {
     private static final java.util.concurrent.atomic.AtomicInteger CHECKED = new java.util.concurrent.atomic.AtomicInteger();
     private static final java.util.concurrent.atomic.AtomicInteger DIFFERENT = new java.util.concurrent.atomic.AtomicInteger();
     private static final java.util.concurrent.atomic.AtomicInteger NORMALS = new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.LongAdder INTERIOR_SKIPPED = new java.util.concurrent.atomic.LongAdder();
+    static long interiorSkipped() { return INTERIOR_SKIPPED.sum(); }
 
     private static final ThreadLocal<Work> WORK = ThreadLocal.withInitial(Work::new);
 
@@ -112,10 +114,28 @@ final class CubeMesher {
     }
 
     private static Built build(Snapshot s, Work work, Mode mode) {
+        if (mode.skipBuried && s.blockEntities.isEmpty() && CubeInterior.enclosedStone(s.states, s.tops, s.cy)
+                && onlyCulledStoneModels(s, work)) {
+            INTERIOR_SKIPPED.increment();
+            return new Built(s.key, s.version, List.of(), new byte[4096]);
+        }
+        long lightStart = System.nanoTime();
         CubeLight.Field field = CubeLight.light(s.states, s.tops, s.cy, mode.fastLight);
+        io.earthplatform.minecraft.cubic.Timings.CUBE_LIGHT.since(lightStart);
         View view = new View(s, field);
         List<Layer> layers = mesh(s, work, field, view, mode);
         return new Built(s.key, s.version, layers, CubeLight.centre(field));
+    }
+
+    private static boolean onlyCulledStoneModels(Snapshot s, Work work) {
+        BlockRenderDispatcher blocks = Minecraft.getInstance().getBlockRenderer();
+        return !s.states[13].maybeHas(state -> {
+            BakedModel model = blocks.getBlockModel(state);
+            // Resource packs may give stone unconditional interior quads. Modded and
+            // weighted models retain the ordinary path rather than guessing their output.
+            return model.getClass() != SimpleBakedModel.class
+                    || !model.getQuads(state, null, work.plain).isEmpty();
+        });
     }
 
     /**

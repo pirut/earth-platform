@@ -97,9 +97,7 @@ public final class FarRenderer {
     private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
             SETTLE_TICKS = 3, HIDDEN_SETTLE_TICKS = 40, UPLOADS_PER_FRAME = 8, MESHES_IN_FLIGHT = 128;
     /** Speeds only elytra and the jet stream reach, in blocks a second. */
-    static final double FAST_BLOCKS_PER_SECOND = 200, JET_BLOCKS_PER_SECOND = 800;
-    /** The finest level at jet stream speed: 64-block voxels, as before the far levels reached farther. */
-    private static final int JET_LEVEL = 6;
+    static final double FAST_BLOCKS_PER_SECOND = 200;
     private static final long UPLOAD_NANOS = 3_000_000L;
     /**
      * Columns asked of the server and not yet back. Kept short so the server's queue always holds
@@ -119,6 +117,14 @@ public final class FarRenderer {
     private final FarFaces faces = new FarFaces();
     private final FarLooks looks = new FarLooks();
     @Nullable private FarGpu gpu;
+    private final FarPlainDepth plainDepth = new FarPlainDepth();
+    private boolean preciseCloudDepth;
+    public int cloudDepthTexture() { return preciseCloudDepth ? plainDepth.texture() : 0; }
+    public Matrix4f cloudDepthProjection() { return plainDepth.projection(); }
+    private float curvature;
+    private boolean cruiseSmooth;
+
+    public float curvature() { return curvature; }
     /** Every column's water, in shared buffers (see {@link FarWaterBuffers}). */
     private final FarWaterBuffers waterBuffers = new FarWaterBuffers();
     private boolean unsupported;
@@ -139,6 +145,7 @@ public final class FarRenderer {
     private double spread;
     /** The columns the zoomed view wants, and those it would want but for {@link FarZoom#MAX_COLUMNS}, for the debug screen. */
     private int zoomWanted, zoomSeen;
+    private int lastPlanTick = -100;
     /** The zoomed view as the player has it, of which the plan counts as much zoom as it can (see {@link #zoom}). */
     @Nullable private FarZoom zoomView;
     /** Columns the view wants at their own level, and how many of them are drawn: how settled the far terrain is. */
@@ -316,7 +323,7 @@ public final class FarRenderer {
     /** The level pass (see {@link LevelPasses}) whose water is drawn; a VR mod's second eye needs its own. */
     private int waterPass = -1;
     private int ticks, frame, uploadedFrame = -1, replaced;
-    /** The finest level asked for and drawn; coarser while the player is high up or fast (see {@link #finest}). */
+    /** The finest level asked for and drawn; coarser only when the ground is far enough below (see {@link #finest}). */
     private int finest = Far.MIN_LEVEL;
     /** Meshes handed to the workers and not yet taken back, so the nearest due columns go first. */
     private int meshing;
@@ -771,7 +778,8 @@ public final class FarRenderer {
         // A rider's own velocity stays at nothing; its boat's is how fast it goes.
         var motion = player.getRootVehicle().getDeltaMovement();
         double blocksPerSecond = motion.horizontalDistance() * 20.0;
-        finest = finest(player.getY() - ground(player.getBlockX(), player.getBlockZ(), player.getY()), blocksPerSecond, finest);
+        double altitude = player.getY() - ground(player.getBlockX(), player.getBlockZ(), player.getY());
+        finest = finest(altitude, finest);
         fadeLength.tick(blocksPerSecond);
         if (ticks % MASK_TICKS == 0) mask();
         for (Column column : staleMasks) if (column.drawnPick == pickSerial && column.due >= 0) due(column, Math.min(column.due, ticks + SETTLE_TICKS));
@@ -779,9 +787,19 @@ public final class FarRenderer {
         lookX = -Math.sin(yaw);
         lookZ = Math.cos(yaw);
         int bx = player.getBlockX(), bz = player.getBlockZ();
+        FarZoom previousZoom = zoomView;
         zoom(player);
+        boolean cruise = FarAtmosphere.cruise(altitude, cruiseSmooth, zoomView != null);
+        if (cruise != cruiseSmooth) {
+            cruiseSmooth = cruise;
+            if (FarMesher.SMOOTH_FROM > Far.EDIT_LEVELS + 1)
+                for (Column column : columns.values())
+                    if (column.level > Far.EDIT_LEVELS && column.level < FarMesher.SMOOTH_FROM) schedule(column);
+        }
         submitDue(bx, bz);
-        if (ticks % PLAN_TICKS == 0) {
+        if (ticks % PLAN_TICKS == 0 || previousZoom == null && zoomView != null
+                || !Objects.equals(previousZoom, zoomView) && ticks - lastPlanTick >= 4) {
+            lastPlanTick = ticks;
             plan(bx, bz, FarLead.at(bx, bz, motion.x * 20.0, motion.z * 20.0));
             evict();
         }
@@ -939,10 +957,7 @@ public final class FarRenderer {
         Long2LongOpenHashMap order = new Long2LongOpenHashMap(missing.size());
         for (int i = 0; i < missing.size(); i++) order.put(missing.getLong(i), priority(missing.getLong(i), bx, bz));
         missing.unstableSort((a, b) -> Long.compare(order.get(a), order.get(b)));
-        // Already in order.
-        missing.addAll(zoomMissing);
-        plan.clear();
-        plan.addAll(missing);
+        FarRequestOrder.merge(missing, zoomMissing, plan);
         planned = 0;
     }
 
@@ -999,19 +1014,15 @@ public final class FarRenderer {
 
     /**
      * The finest level worth asking for. A level's hole is no wider than the player's height above
-     * the ground is worth nothing more, as it only covers the ground straight below. Speed counts
-     * too: each level is a ring 47 columns across, so crossing one column width brings in 47 new
-     * ones, and at the jet stream's 1,500 blocks a second level 4 alone needs about 480 columns a
-     * second, more than the server keeps up with. Coming back down needs a fifth less height and
-     * half the speed, so the levels do not flicker at the edge.
+     * the ground is worth nothing more, as it only covers the ground straight below. Coming back
+     * down needs a fifth less height so the levels do not flicker at the edge. Speed changes
+     * prefetch and fade timing, not visible detail: a fast low pass must not switch to 64-block
+     * voxels while the ground is still close enough to see individual blocks.
      */
-    static int finest(double height, double blocksPerSecond, int current) {
+    static int finest(double height, int current) {
         int finest = Far.MIN_LEVEL;
         int hole = Far.hole();
         while (finest < Far.MAX_LEVEL && hole * Far.width(finest) * (finest < current ? 0.8 : 1.0) <= height) finest++;
-        double slack = current > finest ? 0.5 : 1.0;
-        if (blocksPerSecond >= JET_BLOCKS_PER_SECOND * slack) finest = Math.max(finest, JET_LEVEL);
-        else if (blocksPerSecond >= FAST_BLOCKS_PER_SECOND * slack) finest = Math.max(finest, 3);
         return finest;
     }
 
@@ -1396,7 +1407,7 @@ public final class FarRenderer {
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = level.getShade(direction, true);
         FarMesher.Job job = new FarMesher.Job(column.key, column.version = nextVersion(), column.level, column.slot, column.x0, column.z0, column.bottom,
                 column.sections, column.drops, sides, diagonals, column.drawnCubes, column.level <= TEXTURED_LEVELS, looks, faces,
-                ShaderBlocks.ids(), shade, white());
+                ShaderBlocks.ids(), shade, white(), null, FarAtmosphere.smoothFrom(FarMesher.SMOOTH_FROM, cruiseSmooth));
         meshing++;
         MESHER.execute(() -> {
             if (built.isClosed()) return;
@@ -1516,11 +1527,18 @@ public final class FarRenderer {
     }
 
     private void drawColumns(FarGpu gpu, Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
+        preciseCloudDepth = false;
         Vec3 position = camera.getPosition();
         int bx = (int) Math.floor(position.x), bz = (int) Math.floor(position.z);
         focal = Math.abs(projection.m11());
         spread = Math.hypot(1 / projection.m00(), 1 / projection.m11());
         gpu.fadeTicks(fadeLength.table());
+        double altitude = position.y - ground(bx, bz, position.y);
+        gpu.atmosphere(FarAtmosphere.blend(altitude));
+        float curve = EarthView.curvature(altitude, hazeScale(position.z), ShaderBlocks.packInUse());
+        if (curve != curvature) pick.invalidate();
+        curvature = curve;
+        gpu.curvature(curvature);
         // Spatial dither still runs in the shaders every frame; only timed arrivals need a new pick.
         boolean band = FADE && ShaderBlocks.packInUse() && gpu.jittered();
         FrustumAccess plain = frustum.getClass() == Frustum.class && frustum instanceof FrustumAccess view ? view : null;
@@ -1566,12 +1584,17 @@ public final class FarRenderer {
         // Applying the terrain shader binds a shader pack's terrain buffers, which the far terrain draws into too.
         shader.setDefaultUniforms(VertexFormat.Mode.QUADS, modelView, projection, Minecraft.getInstance().getWindow());
         shader.apply();
+        boolean precise = !pack && gpu.preciseReady() && plainDepth.begin(projection);
+        preciseCloudDepth = precise;
+        if (precise) farProjection = plainDepth.projection();
+        gpu.plainDepth(precise ? plainDepth.gameProjection() : null);
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = world.client().getShade(direction, true);
         float reach = FarLod.nearReach();
         reachLists(position, reach);
         // While the ground near the player loads, far terrain inside the reach leaves the game's blocks alone.
-        boolean ground = NEAR_GROUND && !near.isEmpty() && settling(now) && FarBlockDepth.copy();
+        boolean ground = !precise && NEAR_GROUND && !near.isEmpty() && settling(now) && FarBlockDepth.copy();
+        try {
         if (own) {
             // Far terrain inside the game's blocks' reach goes in the game's own depth, as without a pack's Voxy support.
             long setting = Float.floatToIntBits(reach) & 0xFFFFFFFFL;
@@ -1655,8 +1678,14 @@ public final class FarRenderer {
             FarLod.endDeepen();
         }
         FarGpuTimers.end(deepenTimer);
-        shader.clear();
-        type.clearRenderState();
+        } finally {
+            try { if (precise) plainDepth.end(); }
+            finally {
+                gpu.plainDepth(null);
+                shader.clear();
+                type.clearRenderState();
+            }
+        }
     }
 
     /**
@@ -2313,7 +2342,7 @@ public final class FarRenderer {
      */
     private void view(Vec3 position, Frustum frustum) {
         viewSerial++;
-        boolean tree = CULL_TREE && frustum.getClass() == Frustum.class && frustum instanceof FrustumAccess;
+        boolean tree = curvature == 0 && CULL_TREE && frustum.getClass() == Frustum.class && frustum instanceof FrustumAccess;
         if (tree) {
             FrustumAccess view = (FrustumAccess) frustum;
             cullTree.classify(view.earthplatform$intersection(), view.earthplatform$camX(), view.earthplatform$camY(), view.earthplatform$camZ());
@@ -2330,12 +2359,17 @@ public final class FarRenderer {
             int at = i * 6;
             double minX = drawnBoxes[at], minY = drawnBoxes[at + 1], minZ = drawnBoxes[at + 2];
             double maxX = drawnBoxes[at + 3], maxY = drawnBoxes[at + 4], maxZ = drawnBoxes[at + 5];
+            if (curvature > 0) {
+                double x = Math.max(Math.abs(minX - position.x), Math.abs(maxX - position.x));
+                double z = Math.max(Math.abs(minZ - position.z), Math.abs(maxZ - position.z));
+                minY -= EarthView.drop(x, z, curvature);
+            }
             if (seen == FarCullTree.OUTSIDE || seen == FarCullTree.PARTLY && !(view != null
                     // As Frustum.isVisible tests a box: its corners as floats from the frustum's camera.
                     ? view.earthplatform$intersection().testAab((float) (minX - view.earthplatform$camX()), (float) (minY - view.earthplatform$camY()),
                             (float) (minZ - view.earthplatform$camZ()), (float) (maxX - view.earthplatform$camX()),
                             (float) (maxY - view.earthplatform$camY()), (float) (maxZ - view.earthplatform$camZ()))
-                    : frustum.isVisible(drawn.get(i).box))) continue;
+                    : frustum.isVisible(curvature == 0 ? drawn.get(i).box : new AABB(minX, minY, minZ, maxX, maxY, maxZ)))) continue;
             // As AABB.getCenter() works it out, without making a Vec3 for each column.
             double dx = minX + 0.5 * (maxX - minX) - position.x, dz = minZ + 0.5 * (maxZ - minZ) - position.z;
             order.add(dx * dx + dz * dz, i);
@@ -2609,6 +2643,14 @@ public final class FarRenderer {
         RenderType type = RenderType.translucent();
         type.setupRenderState();
         ShaderInstance shader = RenderSystem.getShader();
+        ShaderInstance continuousWater = ShaderBlocks.packInUse() ? null : FarWaterShader.get();
+        if (continuousWater != null) {
+            shader = continuousWater;
+            shader.getUniform("EarthCurvature").set(curvature);
+            shader.getUniform("EarthDepthBias").set((float) WATER_LIFT);
+            shader.setSampler("Sampler0", RenderSystem.getShaderTexture(0));
+            shader.setSampler("Sampler2", RenderSystem.getShaderTexture(2));
+        }
         shader.setDefaultUniforms(VertexFormat.Mode.QUADS, modelView, projection, Minecraft.getInstance().getWindow());
         shader.apply();
         // With far terrain in its own depth, far hills hide the water behind them this way instead.
@@ -2636,7 +2678,7 @@ public final class FarRenderer {
                         lastX = x; lastY = y; lastZ = z;
                     }
                 }
-                if (view != null) {
+                if (view != null && continuousWater == null) {
                     // In the shared depth buffer a step of depth spans hundreds of blocks kilometres
                     // off, and a lake's bed a few blocks under its water showed through it in dark
                     // stripes. Drawn shrunk toward the camera the water covers the same pixels, at a
@@ -2645,9 +2687,12 @@ public final class FarRenderer {
                     double distance = Math.sqrt(shownDistance[at] + square(column.box.minY + 0.5 * (column.box.maxY - column.box.minY) - position.y));
                     float scale = (float) Math.max(0.8, 1.0 - distance * lift);
                     if (!FAST_WATER || scale != lastScale) {
-                        view.set(nearer.set(modelView).scale(scale));
+                        Matrix4f base = curvature == 0 ? modelView : EarthView.water(modelView,
+                                column.x0 + Far.width(column.level) * 0.5 - position.x,
+                                column.z0 + Far.width(column.level) * 0.5 - position.z, curvature);
+                        view.set(nearer.set(base).scale(scale));
                         view.upload();
-                        lastScale = scale;
+                        lastScale = curvature == 0 ? scale : Float.NaN;
                     }
                 }
                 if (pass == 0) {
@@ -2961,6 +3006,7 @@ public final class FarRenderer {
     }
 
     void close() {
+        plainDepth.close();
         FarGpuTimers.close();
         closed = true;
         built.close();

@@ -52,11 +52,12 @@ public final class CubeRenderer {
     private static final int THREAD_COUNT = Math.max(1, Math.min(3, Runtime.getRuntime().availableProcessors() / 2));
     private static final ExecutorService POOL = Executors.newFixedThreadPool(THREAD_COUNT,
             NamedThreads.numbered("Earth cube mesher", Thread.NORM_PRIORITY - 1));
-    private static final int MIN_IN_FLIGHT = 48, MAX_IN_FLIGHT = 512, MIN_UPLOADS_PER_FRAME = 48, NEIGHBOUR_WAIT_TICKS = 20;
-    /** About how long one mesh takes a worker, to keep the workers busy for a whole frame. */
-    private static final long MESH_NANOS = 5_000_000L;
+    private static final int NEIGHBOUR_WAIT_TICKS = 20;
 
     private final ClientCubeWorld world;
+    private final CubeSnapshotCache snapshots = new CubeSnapshotCache(1024);
+    private static final boolean REUSE_SNAPSHOTS = !"false".equals(System.getProperty("earthplatform.cubes.reuseSnapshots"));
+    CubeSnapshotCache.Stats snapshotStats() { return snapshots.stats(); }
     private final Long2ObjectOpenHashMap<Mesh> meshes = new Long2ObjectOpenHashMap<>();
     private final Long2ObjectOpenHashMap<byte[]> light = new Long2ObjectOpenHashMap<>();
     private final LongOpenHashSet dirty = new LongOpenHashSet();
@@ -87,6 +88,8 @@ public final class CubeRenderer {
     private int culledPass = -1, opaquePass = -1, translucentPass = -1;
     /** How long the last frame took, so meshing and uploads keep pace however low the frame rate goes. */
     private long frameStart = System.nanoTime(), frameNanos = 16_000_000L;
+    private CubeWorkBudget uploadBudget;
+    private int uploadBudgetFrame = -1;
     private boolean closed;
 
     private static final class Mesh {
@@ -143,6 +146,7 @@ public final class CubeRenderer {
 
     /** Rebuilds every mesh, as when a shader pack comes or goes and changes the vertex format and block ids. */
     void remeshAll() {
+        snapshots.clear();
         for (long key : meshes.keySet()) markDirty(key);
         for (long key : building) { markDirty(key); staleBuilds.add(key); }
         // Retiring meshes are in the old format too, and nothing remeshes them.
@@ -151,9 +155,13 @@ public final class CubeRenderer {
         retireBy.clear();
     }
 
-    void cubeArrived(long key) { markAround(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), false); }
+    void cubeArrived(long key) {
+        snapshots.invalidate(key);
+        markAround(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), false);
+    }
 
     void drop(long key) {
+        snapshots.invalidate(key);
         dirty.remove(key);
         dirtySince.remove(key);
         versions.remove(key);
@@ -190,6 +198,7 @@ public final class CubeRenderer {
     }
 
     void blockChanged(BlockPos pos, BlockState old, BlockState state) {
+        snapshots.invalidate(CubeKey.ofBlock(pos));
         int cx = pos.getX() >> 4, cy = pos.getY() >> 4, cz = pos.getZ() >> 4;
         boolean lighting = old.getLightEmission() != state.getLightEmission()
                 || old.getLightBlock(world.client(), pos) != state.getLightBlock(world.client(), pos);
@@ -202,7 +211,7 @@ public final class CubeRenderer {
     }
 
     void topsChanged(int cubeX, int cubeZ, int[] old, int[] now) {
-        if (old == null) { firstTops(cubeX, cubeZ); return; }
+        if (old == null) { firstTops(cubeX, cubeZ, now); return; }
         int low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
         for (int i = 0; i < 256; i++) {
             if (old[i] == now[i]) continue;
@@ -218,13 +227,25 @@ public final class CubeRenderer {
     /**
      * A column's tops came for the first time. Cubes beside it meshed before then, as those with a neighbour slow to
      * come are, took it for open sky at every height, and under water that lit the bed beside it in pale squares that
-     * stayed: they are meshed again. Only cubes meshed or meshing, in the band the player is sent.
+     * stayed: they are meshed again. Includes surface cubes retained below a flying player's band.
      */
-    private void firstTops(int cubeX, int cubeZ) {
+    private void firstTops(int cubeX, int cubeZ, int[] tops) {
         var player = Minecraft.getInstance().player;
         if (player == null) return;
         int cy = player.getBlockY() >> 4, reach = Cubic.VERTICAL_RADIUS + 1;
-        for (int y = cy - reach; y <= cy + reach; y++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
+        dirtyLitBand(cubeX, cubeZ, cy - reach, cy + reach);
+        int low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
+        for (int top : tops) {
+            if (top < ClientCubeWorld.MIN_Y || top > ClientCubeWorld.MAX_Y) continue;
+            low = Math.min(low, top); high = Math.max(high, top);
+        }
+        if (low <= high) dirtyLitBand(cubeX, cubeZ, (low >> 4) - 1, (high >> 4) + 6);
+    }
+
+    private void dirtyLitBand(int cubeX, int cubeZ, int low, int high) {
+        low = Math.max(low, ClientCubeWorld.MIN_Y >> 4);
+        high = Math.min(high, ClientCubeWorld.MAX_Y >> 4);
+        for (int y = low; y <= high; y++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
             long key = CubeKey.pack(cubeX + dx, y, cubeZ + dz);
             if (light.containsKey(key) || building.contains(key)) markDirty(key);
         }
@@ -254,7 +275,7 @@ public final class CubeRenderer {
 
     private void schedule(Vec3 camera, float yaw) {
         int limit = inFlight();
-        if (dirty.isEmpty()) return;
+        if (dirty.isEmpty() || building.size() >= limit) return;
         double lookX = ViewOrder.lookX(yaw), lookZ = ViewOrder.lookZ(yaw);
         int cx = (int) Math.floor(camera.x) >> 4, cy = (int) Math.floor(camera.y) >> 4, cz = (int) Math.floor(camera.z) >> 4;
         LongArrayList ready = new LongArrayList(), order = new LongArrayList();
@@ -282,7 +303,11 @@ public final class CubeRenderer {
         // Nearest first, counting the view; the picks can be hundreds.
         long[] sorted = order.toLongArray();
         if (count < sorted.length) Arrays.sort(sorted);
-        for (int i = 0; i < count; i++) submit(ready.getLong((int) (sorted[i] & ((1 << 22) - 1))), camera);
+        // Snapshot construction copies 27 neighbour containers on this thread. Bound
+        // it separately from the worker queue, even when many slots became free.
+        CubeWorkBudget snapshots = new CubeWorkBudget(System.nanoTime(), 1_000_000L, 8);
+        for (int i = 0; i < count && snapshots.take(System.nanoTime()); i++)
+            submit(ready.getLong((int) (sorted[i] & ((1 << 22) - 1))), camera);
     }
 
     private void compileEmpty(long key) {
@@ -318,13 +343,14 @@ public final class CubeRenderer {
         if (center == null) return;
         int x = center.x, y = center.y, z = center.z;
         if (center.isEmpty()) { compileEmpty(key); return; }
+        long snapshotStart = System.nanoTime();
         PalettedContainer<BlockState>[] states = new PalettedContainer[27];
         PalettedContainerRO<Holder<Biome>>[] biomes = new PalettedContainerRO[27];
         for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
             Cube cube = world.cube(CubeKey.pack(x + dx, y + dy, z + dz));
             int i = (dy + 1) * 9 + (dz + 1) * 3 + (dx + 1);
             if (cube == null) continue;
-            states[i] = cube.section.getStates().copy();
+            states[i] = REUSE_SNAPSHOTS ? snapshots.get(cube.key, cube.section.getStates()) : cube.section.getStates().copy();
             biomes[i] = cube.section.getBiomes();
         }
         int[][] tops = new int[9][];
@@ -338,6 +364,7 @@ public final class CubeRenderer {
                 ShaderBlocks.ids(), modelData(center),
                 center.blockEntities().isEmpty() ? Map.of() : new HashMap<>(center.blockEntities()));
         building.add(key);
+        Timings.CUBE_SNAPSHOT.since(snapshotStart);
         POOL.execute(() -> {
             if (built.isClosed()) return;
             long start = System.nanoTime();
@@ -352,17 +379,22 @@ public final class CubeRenderer {
         });
     }
 
-    /** Uploads finished meshes: a few every frame, and more while an eighth of the last frame's time lasts. */
+    /** Bounded uploads per frame; explicit flawless-frame settling may drain the queue. */
     private void upload() { upload(false); }
 
     private void upload(boolean all) {
-        long deadline = System.nanoTime() + frameNanos / 8;
-        for (int n = 0; all || n < MIN_UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
+        if (uploadBudgetFrame != frame) {
+            uploadBudgetFrame = frame;
+            uploadBudget = new CubeWorkBudget(System.nanoTime(), 1_500_000L, 8);
+        }
+        // Shadow and main passes share the same allowance, rather than each getting eight.
+        while (all || uploadBudget.take(System.nanoTime())) {
             CubeMesher.Built result = built.poll();
             if (result == null) return;
             building.remove(result.key());
             boolean stale = staleBuilds.remove(result.key());
-            if (stale || closed || world.cube(result.key()) == null || result.version() < 0) { result.free(); continue; }
+            if (stale || closed || world.cube(result.key()) == null || result.version() < 0
+                    || result.version() != versions.get(result.key())) { result.free(); continue; }
             if (result.light() != null) light.put(result.key(), result.light());
             compiled.add(result.key());
             compiledVersion++;
@@ -430,12 +462,10 @@ public final class CubeRenderer {
     }
 
     /**
-     * Meshes started per frame: enough to keep the workers busy until the next frame. A fixed 12
-     * (then 48) meant a frame rate of 1 under a shader pack built 12 cubes a second.
+     * Keep workers supplied without stockpiling render-thread snapshots when frame time spikes.
      */
     private int inFlight() {
-        long perFrame = frameNanos * THREAD_COUNT / MESH_NANOS;
-        return (int) Math.clamp(perFrame, MIN_IN_FLIGHT, MAX_IN_FLIGHT);
+        return CubeWorkBudget.inFlight(frameNanos, THREAD_COUNT);
     }
 
     public void drawOpaque(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
@@ -537,6 +567,7 @@ public final class CubeRenderer {
     }
 
     void close() {
+        snapshots.clear();
         closed = true;
         built.close();
         for (Mesh mesh : meshes.values()) mesh.close();

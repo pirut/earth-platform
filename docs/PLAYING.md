@@ -64,6 +64,11 @@ In singleplayer you can always travel. On servers only operators can, unless `an
 
 ## Settings
 
+**Underground depth for new worlds.** Bedrock defaults to 12,000 blocks below sea level
+(Y -11,937). Set `earthDepth = true` in `config/earthplatform-common.toml` before
+creating a world to retain the original deeper floor at Y -16,384. Existing worlds
+keep their original depth. See [underground depth and caves](WORLD-DEPTH.md).
+
 Mods → Earth Platform → Config, or the files in `config/`.
 
 | Setting | File | Default | What it does |
@@ -73,7 +78,10 @@ Mods → Earth Platform → Config, or the files in `config/`.
 | `texturedFarLevels` | client | 8 (0 to 8) | How many far levels use block textures; further ones use flat colors. Restart to apply |
 | `showDownloadStatus` | client | on | The small note while Earth data downloads or can't be reached |
 | `preselectEarth` | client | on | Create World starts with the Earth world type |
-| `cloudHeight` | client | 2500 | Cloud height in meters; 0 gives vanilla clouds |
+| `cloudHeight` | client | 2500 | Height scale for the three Earth cloud bands; 0 gives vanilla clouds |
+| `layeredClouds` | client | true | Use the mod's 3D cloud volumes without a shader pack |
+| `cloudQuality` | client | HIGH | BALANCED / HIGH / CINEMATIC; higher quality uses more GPU time |
+| `cloudOpacity` | client | 0.72 | Combined cloud opacity limit, preserving visibility inside dense banks |
 | `defaultHome` | common | Yosemite Valley | Where new worlds start when nobody picks: a place id from `/earth places`, or `latitude,longitude` |
 | `satelliteImagery` | common | off | Ground colors from EOX satellite imagery for new worlds (also a toggle on the Customize screen) |
 | `offline` | common | off | Never download; only places already cached generate. Restart to apply |

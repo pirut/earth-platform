@@ -159,13 +159,19 @@ public final class EarthGenerator extends SurfaceGenerator {
     public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
                           @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery, @Nullable RiverMap rivers,
                           @Nullable BareEarth bareEarth) {
-        this(seed, biomes, settings, tiles, cover, climate, imagery, rivers, bareEarth, Noises.of(seed));
+        this(seed, biomes, settings, tiles, cover, climate, imagery, rivers, bareEarth, io.earthplatform.minecraft.cubic.CubeWorld.MIN_Y);
+    }
+
+    public EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
+                          @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery,
+                          @Nullable RiverMap rivers, @Nullable BareEarth bareEarth, int minimumY) {
+        this(seed, biomes, settings, tiles, cover, climate, imagery, rivers, bareEarth, Noises.of(seed), minimumY);
     }
 
     private EarthGenerator(long seed, Registry<Biome> biomes, EarthSettings settings, TerrariumTileSource tiles,
                            @Nullable WorldCoverSource cover, @Nullable ClimateSource climate, @Nullable ImagerySource imagery,
-                           @Nullable RiverMap rivers, @Nullable BareEarth bareEarth, Noises noises) {
-        super(seed, biomes, noises.random);
+                           @Nullable RiverMap rivers, @Nullable BareEarth bareEarth, Noises noises, int minimumY) {
+        super(seed, biomes, noises.random, minimumY);
         this.settings = settings;
         this.grid = new MercatorGrid(settings.metresPerBlock());
         this.tiles = tiles;

@@ -63,7 +63,12 @@ final class FarMesher {
     /** Everything a worker needs; sections are never changed after they arrive, so sharing them is safe. */
     record Job(long key, int version, int level, int slot, int x0, int z0, int bottom, LevelChunkSection[] sections, char[] drops,
                @Nullable Side[] sides, @Nullable Side[] diagonals, @Nullable LongOpenHashSet drawn, boolean textured, FarLooks looks,
-               FarFaces faces, @Nullable Object2IntMap<BlockState> shaderIds, float[] shade, float[] white, @Nullable FarSurfacePacket packet) {
+               FarFaces faces, @Nullable Object2IntMap<BlockState> shaderIds, float[] shade, float[] white, @Nullable FarSurfacePacket packet, int smoothFrom) {
+        Job(long key, int version, int level, int slot, int x0, int z0, int bottom, LevelChunkSection[] sections, char[] drops,
+            @Nullable Side[] sides, @Nullable Side[] diagonals, @Nullable LongOpenHashSet drawn, boolean textured, FarLooks looks,
+            FarFaces faces, @Nullable Object2IntMap<BlockState> shaderIds, float[] shade, float[] white, @Nullable FarSurfacePacket packet) {
+            this(key,version,level,slot,x0,z0,bottom,sections,drops,sides,diagonals,drawn,textured,looks,faces,shaderIds,shade,white,packet,SMOOTH_FROM);
+        }
         Job(long key, int version, int level, int slot, int x0, int z0, int bottom, LevelChunkSection[] sections, char[] drops,
             @Nullable Side[] sides, @Nullable Side[] diagonals, @Nullable LongOpenHashSet drawn, boolean textured, FarLooks looks,
             FarFaces faces, @Nullable Object2IntMap<BlockState> shaderIds, float[] shade, float[] white) {
@@ -74,7 +79,7 @@ final class FarMesher {
             Side[] plainSides=denseSides(sides),plainDiagonals=denseSides(diagonals);
             if(packet==null&&plainSides==sides&&plainDiagonals==diagonals)return this;
             return new Job(key,version,level,slot,x0,z0,bottom,packet==null?sections:packet.materializeForMeshing().toArray(LevelChunkSection[]::new),drops,
-                    plainSides,plainDiagonals,drawn,textured,looks,faces,shaderIds,shade,white);
+                    plainSides,plainDiagonals,drawn,textured,looks,faces,shaderIds,shade,white,null,smoothFrom);
         }
     }
     @Nullable private static Side[] denseSides(@Nullable Side[] sides) {
@@ -126,7 +131,7 @@ final class FarMesher {
             try {
                 var packet=FarSurfacePacket.fromDense(job.level,job.bottom,job.sections,job.drops);
                 if(packet!=null)job=new Job(job.key,job.version,job.level,job.slot,job.x0,job.z0,job.bottom,job.sections,job.drops,
-                        job.sides,job.diagonals,job.drawn,job.textured,job.looks,job.faces,job.shaderIds,job.shade,job.white,packet);
+                        job.sides,job.diagonals,job.drawn,job.textured,job.looks,job.faces,job.shaderIds,job.shade,job.white,packet,job.smoothFrom);
             }catch(RuntimeException failure){PerfFailures.record(PerfFailures.Stage.RUN_CONVERSION,failure);}
             if(job.packet==null)RUN_FALLBACK.increment();else RUN_USED.increment();
         }
@@ -135,7 +140,7 @@ final class FarMesher {
     static Built build(Job job) { return AUTO_RUNS&&job.packet==null?buildRunPrototype(job):buildPrepared(job); }
     private static Built buildPrepared(Job job) {
         // Bounded direct consumer: coverage masks, smooth terrain and edit overlays retain the dense oracle.
-        if (job.packet != null && (smooth(job) || job.drawn != null && !job.drawn.isEmpty() || job.packet.editCount() != 0)) job=job.dense();
+        if (smooth(job) || job.packet != null && (job.drawn != null && !job.drawn.isEmpty() || job.packet.editCount() != 0)) job=job.dense();
         return new FarColumnMesh(job).build();
     }
 
@@ -143,13 +148,13 @@ final class FarMesher {
     static final boolean CACHE_COVERAGE = Boolean.parseBoolean(System.getProperty("earthplatform.far.cacheCoverage", "true"));
 
     /**
-     * Whether far ground is drawn smooth: off by default, so far terrain stays blocks all the way out
-     * as Minecraft looks; on with {@code -Dearthplatform.far.smooth=true}.
-     * Every level is smooth, the textured ones too, or only from a later level with
+     * Whether far ground is drawn smooth. Near levels keep their blocks; coarser levels form a
+     * continuous surface instead of many little steps. Off with {@code -Dearthplatform.far.smooth=false}.
+     * Starts at a later level with
      * {@code -Dearthplatform.far.smoothFrom}.
      */
-    static final boolean SMOOTH = Boolean.getBoolean("earthplatform.far.smooth");
-    static final int SMOOTH_FROM = Integer.getInteger("earthplatform.far.smoothFrom", 1);
+    static final boolean SMOOTH = Boolean.parseBoolean(System.getProperty("earthplatform.far.smooth", "true"));
+    static final int SMOOTH_FROM = Math.clamp(Integer.getInteger("earthplatform.far.smoothFrom", Far.EDIT_LEVELS + 1), Far.EDIT_LEVELS + 1, Far.MAX_LEVEL);
     /** Grid points along each side of a column's smooth ground: its two edges and the middles of its 16 voxel columns. */
     static final int POINTS = 18;
     /** The levels whose water is textured; further out it is flat-coloured and merged. */
@@ -159,7 +164,15 @@ final class FarMesher {
 
     /** True when a column's ground is drawn as a smooth surface: any level with nothing of its own drawn up close. */
     static boolean smooth(Job job) {
-        return SMOOTH && job.level >= SMOOTH_FROM && (job.drawn == null || job.drawn.isEmpty());
+        if (!SMOOTH || job.level <= Far.EDIT_LEVELS || job.level < job.smoothFrom) return false;
+        if (job.drawn == null || job.drawn.isEmpty()) return true;
+        int voxel = Far.voxel(job.level), bottom = job.bottom * 16 * voxel;
+        int top = bottom + job.height() * voxel;
+        for (long key : job.drawn) {
+            int y = CubeKey.y(key) << 4;
+            if (y + 16 > bottom && y < top) return false;
+        }
+        return true; // Air cubes far above the surface cannot cut a rectangular island into it.
     }
 
     /** A visible part of a voxel's side, from and to in 1/256 blocks above the column's base. */

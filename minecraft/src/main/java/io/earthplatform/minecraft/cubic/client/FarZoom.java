@@ -27,7 +27,7 @@ final class FarZoom {
     /** The most zoom it counts: past that the columns the view wants outgrow what a zoomed look is worth. */
     static final double MAX = 32.0;
     /** The most columns asked for a zoomed view at once, on top of the player's own. */
-    static final int MAX_COLUMNS = 8000;
+    static final int MAX_COLUMNS = 2048;
     /** Blocks the camera's position is rounded to. */
     private static final int CAMERA = 32;
 
@@ -69,7 +69,7 @@ final class FarZoom {
 
     /** The same view counting at most {@code steps} of its zoom (see {@link #steps}). */
     FarZoom limited(int steps) {
-        return steps >= zoomSteps ? this : new FarZoom(steps, x, y, z, height, yaw, pitch, spreadSteps, zoomSteps);
+        return steps >= zoomSteps ? this : new FarZoom(steps, x, y, z, height, yaw, pitch, spreadSteps, viewSteps);
     }
 
     /**
@@ -84,7 +84,7 @@ final class FarZoom {
         int zoomSteps = (int) Math.floor(2 * Math.log(Math.min(zoom, MAX)) / Math.log(2));
         int spreadSteps = (int) Math.ceil(spread * 100);
         double step = step(Math.atan(spreadSteps / 100.0 / Math.pow(2, zoomSteps / 2.0)));
-        FarZoom zoomed = new FarZoom(zoomSteps, round(x), round(y), round(z), round(Math.max(0, height)),
+        FarZoom zoomed = new FarZoom(Math.min(zoomSteps, 6), round(x), round(y), round(z), round(Math.max(0, height)),
                 (int) Math.round(Math.toRadians(yaw) / step), (int) Math.round(Math.toRadians(pitch) / step), spreadSteps, zoomSteps);
         return zoomed.equals(previous) ? previous : zoomed;
     }
@@ -106,7 +106,10 @@ final class FarZoom {
         // To the column's middle: round the player, a column whose middle is a hole's width off is the
         // last one its level splits, so unzoomed this splits none the player's own levels do not.
         double ox = (cx + 0.5) * width - x, oz = (cz + 0.5) * width - z;
-        if (Math.max(Math.sqrt(ox * ox + oz * oz), height) > Far.hole(level) * width * zoom) return false;
+        // A high camera can still be close to a mountain in the view. Its local ground is not
+        // the distance to that mountain, so use the held column's actual vertical bounds.
+        double vertical = column == null ? height : Math.max(0, Math.max(column.lowY() - y, y - column.highY()));
+        if (Math.max(Math.sqrt(ox * ox + oz * oz), vertical) > Far.hole(level) * width * zoom) return false;
         if (column == null) return true;
         return inView(cx, cz, width, column.lowY(), column.highY())
                 && (horizon == null || !horizon.hidden((cx + 0.5) * width, (cz + 0.5) * width, width / 2.0, column.highY() + 2 * column.voxel()));

@@ -225,10 +225,11 @@ public final class FarLod {
 
     /** The far terrain shader's uniforms for its sun shadows; {@code location} finds one in the bound program. */
     static void shadowUniforms(ToIntFunction<String> location) {
+        boolean enabled = Boolean.parseBoolean(System.getProperty("earthplatform.far.extraShadows", "false"));
         GL20C.glUniform1i(location.applyAsInt("earth_SunShadows"), SCRATCH_UNIT);
-        GL20C.glUniform1f(location.applyAsInt("earth_ShadowShade"), shadowsReady && sunUp ? 1.0F - SHADE : 0.0F);
-        GL20C.glUniform1f(location.applyAsInt("earth_Occlusion"), shadowsReady ? OCCLUSION : 0.0F);
-        GL20C.glUniform1f(location.applyAsInt("earth_Detail"), DETAIL);
+        GL20C.glUniform1f(location.applyAsInt("earth_ShadowShade"), enabled && shadowsReady && sunUp ? 1.0F - SHADE : 0.0F);
+        GL20C.glUniform1f(location.applyAsInt("earth_Occlusion"), enabled && shadowsReady ? OCCLUSION : 0.0F);
+        GL20C.glUniform1f(location.applyAsInt("earth_Detail"), enabled ? DETAIL : 0.0F);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             GL20C.glUniformMatrix4fv(location.applyAsInt("earth_ShadowFrame"), false, shadowFrame.get(stack.mallocFloat(16)));
         }
@@ -354,6 +355,7 @@ public final class FarLod {
      * far walls by chance (as stripes) and at this fine one catches almost nothing.
      */
     private static void shadows() {
+        if (!Boolean.parseBoolean(System.getProperty("earthplatform.far.extraShadows", "false"))) { shadowsReady = false; return; }
         lastView.set(modelView);
         shadowProjection.set(projection);
         lastX = cameraX;

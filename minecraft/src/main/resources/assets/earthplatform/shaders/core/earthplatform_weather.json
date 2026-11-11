@@ -1,0 +1,29 @@
+{
+  "vertex": "earthplatform_weather",
+  "fragment": "earthplatform_weather",
+  "samplers": [{ "name": "Sampler0" }, { "name": "Weather1" }, { "name": "Weather2" }, { "name": "SceneDepth" }, { "name": "FarDepth" }],
+  "uniforms": [
+    { "name": "WeatherPhase", "type": "float", "count": 4, "values": [0,0,0,0] },
+    { "name": "WeatherAmount", "type": "float", "count": 1, "values": [1] },
+    { "name": "FarInvProjection", "type": "matrix4x4", "count": 16, "values": [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1] },
+    { "name": "UseFarDepth", "type": "float", "count": 1, "values": [0] },
+    { "name": "SkyInvProjection", "type": "matrix4x4", "count": 16, "values": [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1] },
+    { "name": "SkyInvView", "type": "matrix4x4", "count": 16, "values": [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1] },
+    { "name": "ColorModulator", "type": "float", "count": 4, "values": [1,1,1,1] },
+    { "name": "CameraHeight", "type": "float", "count": 1, "values": [0] },
+    { "name": "CloudLight", "type": "float", "count": 3, "values": [1,1,1] },
+    { "name": "SunDirection", "type": "float", "count": 3, "values": [0,1,0] },
+    { "name": "Curvature", "type": "float", "count": 1, "values": [0] },
+    { "name": "MarchSteps", "type": "int", "count": 1, "values": [24] },
+    { "name": "MaxOpacity", "type": "float", "count": 1, "values": [0.72] },
+    { "name": "NoiseVolume", "type": "int", "count": 1, "values": [5] },
+    { "name": "Band0", "type": "float", "count": 4, "values": [1688,450,24576,0.82] },
+    { "name": "Band1", "type": "float", "count": 4, "values": [3813,850,40960,0.64] },
+    { "name": "Band2", "type": "float", "count": 4, "values": [7563,220,65536,0.28] },
+    { "name": "Phase0", "type": "float", "count": 2, "values": [0,0] },
+    { "name": "Phase1", "type": "float", "count": 2, "values": [0,0] },
+    { "name": "Phase2", "type": "float", "count": 2, "values": [0,0] },
+    { "name": "NoisePhase0", "type": "float", "count": 3, "values": [0,0,0] },
+    { "name": "NoisePhase1", "type": "float", "count": 3, "values": [0,0,0] }
+  ]
+}

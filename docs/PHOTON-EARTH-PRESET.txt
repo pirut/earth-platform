@@ -1,0 +1,72 @@
+Earth Platform - Photon v1.3b presets
+
+START WITH: Earth-Photon-Balanced-v1.3b.txt
+FALLBACK:   Earth-Photon-Fast-v1.3b.txt
+
+These are settings files, not a shader pack or a replacement mod JAR. Use your
+existing latest Earth Platform mod and a separately obtained Photon v1.3b pack.
+Photon's official page: https://modrinth.com/shader/photon-shader
+Other Photon releases need their option names/ranges revalidated first.
+
+APPLY IN IRIS
+
+1. Select Photon v1.3b and open "Shader Pack Settings...".
+2. Export your current settings if you want a backup.
+3. Reset Photon settings first so unrelated old Ultra/PBR choices do not remain.
+   In the checked Iris version, hold Shift while clicking Reset.
+4. Use "Import settings from file" and choose the Balanced TXT file. Apply.
+   The profile may read Custom; that is expected for these tuned settings.
+5. If needed, reset and import Fast instead. Import only one preset at a time.
+
+WHAT BALANCED CHANGES
+
+- Terrain stays at full rendering resolution. TAA is on; whole-scene temporal
+  upscaling (TAAU), motion blur and depth of field are off. CAS sharpening is on.
+- Clouds use Photon's temporal upscaling, independent of terrain resolution.
+  Earth scale is one metre per block, with cumulus at 2500 m, altocumulus at
+  5000 m and cirrus at 7500 m above sea level. Cumulus thickness is reduced to
+  0.30 of its altitude, about 750 m, rather than a multi-kilometre dense bank.
+  Upper-layer thickness is 0.10. Everest-scale peaks can remain above these.
+- Photon's own random/biome weather variations are enabled, with lower cloud
+  coverage and density. This does not use the mod's regional cloud-weather code.
+- Three regular cloud types stay on. Extra congestus towers and noctilucent
+  clouds are off. Cumulus uses 32/16 horizon/zenith steps, 4 lighting steps and
+  1 ambient step, versus the checked defaults of 40/20, 6 and 2.
+- Shadows use 1536 resolution and 96-block distance. Colored shadows, contact
+  ray shadows, entity/block-entity shadows and cloud shadows are off.
+- Volumetric fog and sky lighting remain, but fog intensity is reduced to 0.35.
+  Extra colored light shafts, voxel colored lighting, screen-space environment
+  reflections, water parallax/displacement, caustics, POM and PBR mapping are off.
+  Sky reflections and ordinary water appearance remain.
+
+FAST DIFFERENCES
+
+Fast uses 1024-resolution shadows at 80 blocks, disables extra shader AO,
+volumetric fog and SH sky lighting, and skips the middle altocumulus layer.
+Low clouds use 24/12 primary steps and 3 lighting steps. Terrain resolution,
+Minecraft block geometry, TAA, sharpening and the Earth-scale cloud heights stay.
+
+SCOPE AND VERIFICATION
+
+These presets change Photon settings globally for that selected shader pack,
+including other worlds, until you reset/import another preset. They explicitly
+set cloud scale and height, so Earth Platform respects these chosen values.
+Changing the mod's cloudHeight afterward will not override the preset's values.
+
+Photon supplies its own clouds/atmosphere. The mod's custom cloud volumes,
+regional weather envelope and plain-renderer curved-terrain path are not used
+while a shader pack is active. Settings alone cannot make those pipelines the
+same. Existing mod terrain/compatibility handling still applies.
+
+All 66 option names, menu/profile exposure, booleans and enumerated values in
+each preset were checked against the pinned Photon v1.3b archive. Files were
+read back and the source archive hash was verified unchanged. validation.json
+records hashes and the check result. No pack code or active installation was
+modified. These presets have NOT been visually tested or benchmarked in-game.
+
+Compare the same loaded location with the same time/weather, resolution and far
+setting. Test ground-level movement, mountain flight and spyglass use. A shader
+preset cannot by itself remove CPU chunk-generation or mesh-loading bottlenecks.
+
+Regenerate in this checkout:
+  minecraft/scripts/New-PhotonEarthPresets.ps1

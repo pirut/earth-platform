@@ -23,15 +23,22 @@ public final class EarthConfig {
     public static final ModConfigSpec.IntValue FAR_DETAIL;
     public static final ModConfigSpec.EnumValue<Sharpness> FAR_SHARPNESS;
     public static final ModConfigSpec.IntValue FAR_TEXTURED_LEVELS;
+    public static final ModConfigSpec.BooleanValue SMOOTH_FAR_TERRAIN;
+    public static final ModConfigSpec.IntValue SMOOTH_FAR_FROM;
+    public static final ModConfigSpec.BooleanValue HIGH_ALTITUDE_ATMOSPHERE;
+    public static final ModConfigSpec.BooleanValue LAYERED_CLOUDS, CURVED_HORIZON, CRUISE_SMOOTH, EXTRA_FAR_SHADOWS;
     public static final ModConfigSpec.BooleanValue SHOW_DOWNLOADS;
     public static final ModConfigSpec.BooleanValue PRESELECT_EARTH;
     public static final ModConfigSpec.IntValue CLOUD_HEIGHT;
+    public static final ModConfigSpec.EnumValue<CloudQuality> CLOUD_QUALITY;
+    public static final ModConfigSpec.DoubleValue CLOUD_OPACITY;
 
     // Common --------------------------------------------------------------------------------------
     public static final ModConfigSpec COMMON_SPEC;
     public static final ModConfigSpec.ConfigValue<String> DEFAULT_HOME;
     public static final ModConfigSpec.BooleanValue OFFLINE;
     public static final ModConfigSpec.BooleanValue SATELLITE_IMAGERY;
+    public static final ModConfigSpec.BooleanValue EARTH_DEPTH;
     public static final ModConfigSpec.IntValue CACHE_LIMIT_GB;
     public static final ModConfigSpec.BooleanValue ANYONE_CAN_TRAVEL;
     public static final ModConfigSpec.BooleanValue ANYONE_CAN_USE_HOMES;
@@ -69,10 +76,37 @@ public final class EarthConfig {
                 .translation(key("farTexturedLevels")).gameRestart().defineInRange("texturedFarLevels", 8, 0, 8);
         SHOW_DOWNLOADS = client.comment("Show a small note while Earth data downloads, and when it can't be reached.")
                 .translation(key("showDownloads")).define("showDownloadStatus", true);
+        SMOOTH_FAR_TERRAIN = client.comment("Draw coarser distant ground as connected slopes instead of stair steps. Near blocks stay detailed.",
+                        "Applies after restarting the game.")
+                .translation(key("smoothFarTerrain")).gameRestart().define("smoothFarTerrain", true);
+        SMOOTH_FAR_FROM = client.comment("First smoothed distant level: 5=32-block voxels, 6=64, 7=128, 8=256. Detailed levels 1-4 always keep block faces.",
+                        "Applies after restarting the game.")
+                .translation(key("smoothFarFrom")).gameRestart().defineInRange("smoothFarFrom", 5, Far.EDIT_LEVELS + 1, Far.MAX_LEVEL);
+        HIGH_ALTITUDE_ATMOSPHERE = client.comment("Gradually soften far textures and add plain-renderer haze from 2000 to 6000 blocks above local terrain.",
+                        "Terrain remains visible through clouds. Shader packs retain their own atmospheric shading.")
+                .translation(key("highAltitudeAtmosphere")).define("highAltitudeAtmosphere", true);
+        LAYERED_CLOUDS = client.comment("Use soft cloud banks at three different heights, with thickness and independent wind, without a shader pack.",
+                        "Shader packs keep their own cloud system. False uses vanilla clouds.")
+                .translation(key("layeredClouds")).define("layeredClouds", true);
+        CLOUD_QUALITY = client.comment("Quality of 3D cloud bodies, erosion and sunlight: Balanced=16, High=24, Cinematic=32 march steps per cloud band.",
+                        "Higher settings cost GPU time. Shader packs keep their own clouds.")
+                .translation(key("cloudQuality")).defineEnum("cloudQuality", CloudQuality.HIGH);
+        CLOUD_OPACITY = client.comment("Maximum combined cloud opacity. Default 0.72 preserves some visibility when flying inside a dense bank.",
+                        "Clouds affect only rays passing through cloud volume; they do not shorten the whole world's fog range.")
+                .translation(key("cloudOpacity")).defineInRange("cloudOpacity", .72, .2, .98);
+        CURVED_HORIZON = client.comment("Subtle visual Earth curvature during high flight. Near builds/collision stay flat.",
+                        "Currently applies without a shader pack; packs retain their own projection.")
+                .translation(key("curvedHorizon")).define("curvedHorizon", true);
+        CRUISE_SMOOTH = client.comment("Above 2200 blocks over local terrain allow coarse levels 5+ to smooth; restore the chosen threshold below 1600.",
+                        "Nearby real cubes keep their block geometry. Display only; generation and saves stay unchanged.")
+                .translation(key("cruiseSmooth")).define("cruiseSmooth", true);
+        EXTRA_FAR_SHADOWS = client.comment("Add the mod's screen-space distant shadows and ambient occlusion under a shader pack.",
+                        "Off by default to avoid amplifying LOD boundaries into dark bands; the pack's normal lighting remains.")
+                .translation(key("extraFarShadows")).define("extraFarShadows", false);
         PRESELECT_EARTH = client.comment("Pick the Earth world type when you open Create World.")
                 .translation(key("preselectEarth")).define("preselectEarth", true);
-        CLOUD_HEIGHT = client.comment("Height of the clouds in Earth worlds, in meters above sea level; they also stay at least 1200 m over",
-                        "the ground you stand on. 0 keeps vanilla clouds at Y 192. Shader packs draw their own clouds. Default 2500.")
+        CLOUD_HEIGHT = client.comment("Weather-height scale: soft cloud bands sit at 0.65, 1.5 and 3 times this height above sea level.",
+                        "Bands have thickness and mountains can rise through them. 0 keeps vanilla clouds; shader packs draw their own. Default 2500.")
                 .translation(key("cloudHeight")).defineInRange("cloudHeight", 2500, 0, 9000);
         CLIENT_SPEC = client.build();
 
@@ -88,6 +122,10 @@ public final class EarthConfig {
         SATELLITE_IMAGERY = common.comment("Color the ground of new Earth worlds from satellite photos (EOX Sentinel-2 cloudless imagery,",
                         "downloaded like the terrain). Off by default; existing worlds keep what they were made with.")
                 .translation(key("satelliteImagery")).define("satelliteImagery", false);
+        EARTH_DEPTH = common.comment("Depth for NEW Earth worlds. False: bedrock 12000 blocks below sea level (Y -11937).",
+                        "True: retain the original extended floor at Y -16384. This is not a simulation of Earth's interior.",
+                        "Each world pins its choice when created. Existing worlds keep their original depth.")
+                .translation(key("earthDepth")).define("earthDepth", false);
         ANYONE_CAN_TRAVEL = common.comment("Let every player use /earth goto. When false, only operators can (singleplayer always can).")
                 .translation(key("anyoneCanTravel")).define("anyoneCanTravel", false);
         ANYONE_CAN_USE_HOMES = common.comment("Let every player save a home with /earth sethome and go back with /earth home, and go to the server spawn",
@@ -134,6 +172,13 @@ public final class EarthConfig {
     }
 
     private EarthConfig() {}
+
+    public enum CloudQuality implements TranslatableEnum {
+        BALANCED, HIGH, CINEMATIC;
+        @Override public Component getTranslatedName() {
+            return Component.translatable(key("cloudQuality." + name().toLowerCase(java.util.Locale.ROOT)));
+        }
+    }
 
     /**
      * Far terrain sharpness choices, as scales of the start-up detail (see {@link Far#sharpness}).
@@ -189,10 +234,20 @@ public final class EarthConfig {
         if (config.getSpec() == CLIENT_SPEC) {
             property("earthplatform.far.detail", Integer.toString(FAR_DETAIL.get()));
             property("earthplatform.far.textured", Integer.toString(FAR_TEXTURED_LEVELS.get()));
+            property("earthplatform.far.smooth", Boolean.toString(SMOOTH_FAR_TERRAIN.get()));
+            property("earthplatform.far.smoothFrom", Integer.toString(SMOOTH_FAR_FROM.get()));
+            property("earthplatform.far.atmosphere", Boolean.toString(HIGH_ALTITUDE_ATMOSPHERE.get()));
+            property("earthplatform.clouds.layered", Boolean.toString(LAYERED_CLOUDS.get()));
+            property("earthplatform.clouds.quality", CLOUD_QUALITY.get().name().toLowerCase(java.util.Locale.ROOT));
+            property("earthplatform.clouds.opacity", Double.toString(CLOUD_OPACITY.get()));
+            property("earthplatform.far.curvature", Boolean.toString(CURVED_HORIZON.get()));
+            property("earthplatform.far.cruiseSmooth", Boolean.toString(CRUISE_SMOOTH.get()));
+            property("earthplatform.far.extraShadows", Boolean.toString(EXTRA_FAR_SHADOWS.get()));
             Far.sharpness(FAR_SHARPNESS.get().scale);
         } else if (config.getSpec() == COMMON_SPEC) {
             property("earthplatform.earth.offline", Boolean.toString(OFFLINE.get()));
             property("earthplatform.earth.imagery", Boolean.toString(SATELLITE_IMAGERY.get()));
+            property("earthplatform.earth.depth", Boolean.toString(EARTH_DEPTH.get()));
             // An edited file takes effect on a running server at once, as /earth settings does.
             var server = Platform.INSTANCE.currentServer();
             if (server != null) server.execute(() -> EarthToggles.changed(server));
@@ -201,7 +256,10 @@ public final class EarthConfig {
 
     /** Engine properties given on the command line, which the file never overrides. */
     private static final java.util.Set<String> FROM_COMMAND_LINE = java.util.stream.Stream.of(
-            "earthplatform.far.detail", "earthplatform.far.textured", "earthplatform.earth.offline", "earthplatform.earth.imagery")
+            "earthplatform.far.detail", "earthplatform.far.textured", "earthplatform.far.smooth", "earthplatform.far.smoothFrom",
+            "earthplatform.far.atmosphere", "earthplatform.clouds.layered", "earthplatform.clouds.quality", "earthplatform.clouds.opacity",
+            "earthplatform.far.curvature", "earthplatform.far.cruiseSmooth",
+            "earthplatform.far.extraShadows", "earthplatform.earth.offline", "earthplatform.earth.imagery", "earthplatform.earth.depth")
             .filter(key -> System.getProperty(key) != null).collect(java.util.stream.Collectors.toUnmodifiableSet());
 
     /** Sets satellite imagery from the Create World screen: saved to the file and in effect for the next new world. */

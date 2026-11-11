@@ -105,7 +105,8 @@ final class Underground {
 
     /** Stone, deepslate or bedrock for solid rock at a height, before veins. */
     BlockState rock(int x, int y, int z, int floor) {
-        if (y <= CubeWorld.MIN_Y + 4 && y - CubeWorld.MIN_Y < 1 + Math.floorMod(mix(x, y, z), 5)) return BEDROCK;
+        if (y < terrain.minimumY()) return AIR;
+        if (bedrock(x, y, z)) return BEDROCK;
         int vy = vanillaY(y, floor);
         BlockState vein = largeVein(x, y, z, vy);
         if (vein != null) return vein;
@@ -113,6 +114,11 @@ final class Underground {
         if (vy >= DEEPSLATE_TOP) return STONE;
         // Vanilla's blend: the chance of deepslate falls from all to none over eight blocks.
         return Math.floorMod(mix(x, y, z) >>> 7, DEEPSLATE_TOP) >= vy ? DEEPSLATE : STONE;
+    }
+
+    boolean bedrock(int x, int y, int z) {
+        int bottom = terrain.minimumY();
+        return y >= bottom && y <= bottom + 4 && y - bottom < 1 + Math.floorMod(mix(x, y, z), 5);
     }
 
     private static final BlockState GRANITE = Blocks.GRANITE.defaultBlockState(), TUFF = Blocks.TUFF.defaultBlockState(),
@@ -196,6 +202,10 @@ final class Underground {
 
     /** Whether a block is solid ground as generated, before veins, plants and structures. */
     boolean solid(int x, int y, int z) {
+        if (terrain.minimumY() != CubeWorld.MIN_Y) {
+            if (y < terrain.minimumY()) return false;
+            if (bedrock(x, y, z)) return true;
+        }
         int ground = terrain.surfaceY(x, z);
         if (y > ground) return false;
         int depth = ground - y;

@@ -18,6 +18,7 @@ Most are read once when the class that uses them loads, so set them on the comma
 | `earthplatform.copernicus.fastWeight` | on | `false` makes the Copernicus fill ask the shared caches for each tile pixel's check size and part, and wraps longitudes with remainders only; the weights are identical | `CopernicusFill`, `CopernicusSource` |
 | `earthplatform.earth.offline` | `false` | Never download; only places already in the cache generate. Same as the `offline` setting | `CubicSettings`, `EarthStatus` |
 | `earthplatform.earth.imagery` | `false` | New worlds take ground colors from EOX satellite imagery. Same as the `satelliteImagery` setting | `CubicSettings`, `EarthConfig` |
+| `earthplatform.earth.depth` | `false` | New worlds: false puts bedrock 12,000 blocks below sea level (Y -11,937); true retains the original Y -16,384 floor. Pinned per world; old worlds without a pin retain the original depth | `WorldDepth`, `CubicSettings`, `EarthConfig` |
 | `earthplatform.earth.home` | Yosemite Valley | Default home of new worlds, as `LAT,LON` | `EarthSettings` |
 | `earthplatform.earth.copernicus` | on | `false` leaves the Copernicus 30 m fill out of new worlds | `CubicSettings.elevation()` |
 | `earthplatform.earth.3dep` | on | `false` leaves the USGS 3DEP layer (United States) out of new worlds | `CubicSettings.elevation()` |
@@ -26,6 +27,7 @@ Most are read once when the class that uses them loads, so set them on the comma
 | `earthplatform.earth.ign` | on | `false` leaves IGN RGE ALTI (France) out of new worlds | `CubicSettings.elevation()` |
 | `earthplatform.earth.gsi` | on | `false` leaves GSI (Japan) out of new worlds | `CubicSettings.elevation()` |
 | `earthplatform.cubes.fastBlobs` | on | `false` restores ore and rock blobs' per-block sphere sums, their writes of blocks that are already the vein's, and the walk through the spheres of blobs that cannot reach the cube; the cubes are identical | `Underground` |
+| `earthplatform.cubic.flightSurface` | on | Retains a bounded band of nearby surface cubes during low flight, within 384 blocks of the ground/water surface and the server's horizontal view distance. `false` restores only the player-centered cube band for comparison. Generation and send budgets are shared with ordinary cubes | `SurfaceFlight`, `ServerCubeWorld` |
 | `earthplatform.cubes.plainRandom` | on | `false` draws each cube's veins, cave plants and structure plans, and the random numbers block models ask for when near cubes are meshed, from vanilla's legacy random source (an atomic seed) instead of the plain one; both give the same numbers | `Underground`, `Structures`, `CubeMesher` |
 | `earthplatform.cubes.fastLight` | on | Lights a cube's 48-block neighborhood filling cubes of one state at once, starting the skylight's spread from each column's lowest sky and its neighbors' instead of looking at every block for a darker neighbor, and looking for light sources only in cubes whose palette holds one; `false` goes over every block, for comparing. The same light, on the server and in near cube meshes | `CubeLight` |
 
@@ -44,8 +46,16 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.inFlight` | 192 | Far columns a client asks for before earlier ones arrive | `FarRenderer` |
 | `earthplatform.far.visibility` | edge of the far view | Haze distance in meters, as a real-world visibility | `FarRenderer` |
 | `earthplatform.far.fade` | on | `false` makes far levels meet at a seam instead of fading into each other | `FarRenderer` |
-| `earthplatform.far.smooth` | `false` | Draw far ground smooth instead of blocky | `FarMesher` |
-| `earthplatform.far.smoothFrom` | 1 | With `far.smooth`, the first level drawn smooth | `FarMesher` |
+| `earthplatform.far.smooth` | on | Draw coarser distant ground as connected slopes. Same as `smoothFarTerrain` in the client config; restart required | `FarMesher` |
+| `earthplatform.far.smoothFrom` | 5 | First smoothed coarse level, 5–8. Detailed levels 1–4 always keep block faces, including high flight. Same as `smoothFarFrom` in the client config; restart required | `FarMesher` |
+| `earthplatform.far.plainDepth` | on | Resolve no-shader opaque far terrain in separate 32-bit depth, then merge into the game depth. `false` restores the original depth path | `FarPlainDepth` |
+| `earthplatform.far.atmosphere` | on | Gradual texture softening and no-shader haze between 2,000 and 6,000 blocks above local terrain. Same as `highAltitudeAtmosphere` in the client config | `FarAtmosphere`, `FarShaders` |
+| `earthplatform.clouds.layered` | on | Three depth-clipped cloud volumes at fixed world heights, with thickness and independent winds; no shader pack only. Same as `layeredClouds` | `EarthClouds`, `CloudField`, `CloudVolume` |
+| `earthplatform.clouds.quality` | high | `balanced`, `high`, `cinematic`: 16/24/32 ray samples per cloud band. Same as `cloudQuality` | `CloudVolume` |
+| `earthplatform.clouds.opacity` | 0.72 | Combined cloud opacity limit; preserves some visibility inside dense banks. Same as `cloudOpacity` | `EarthClouds`, cloud shader |
+| `earthplatform.far.curvature` | on | Gradual visual Earth-scale curvature during high flight, without shader packs. Closest 2,000 blocks stay flat. Same as `curvedHorizon` | `EarthView`, `FarRenderer` |
+| `earthplatform.far.cruiseSmooth` | on | Allow smoothing in coarse levels 5+ above 2,200 blocks over terrain; restore the selected threshold below 1,600. Detailed block levels never switch. Same as `cruiseSmooth` | `FarRenderer`, `FarMesher` |
+| `earthplatform.far.extraShadows` | `false` | Enable the mod's additional screen-space far sun shadows/AO under a pack. Off avoids amplifying LOD boundaries. Same as `extraFarShadows` | `FarLod` |
 | `earthplatform.far.coverFrom` | 2 | The finest far level whose ground cover is evened out | `FarMesher` |
 | `earthplatform.far.buildFill` | 8 | How much of a coarse voxel a player build must fill to show far away, as 1/N | `FarBuilds` |
 | `earthplatform.far.lodDepth` | on | `false` makes far terrain share the game's depth buffer under shader packs | `FarLod` |

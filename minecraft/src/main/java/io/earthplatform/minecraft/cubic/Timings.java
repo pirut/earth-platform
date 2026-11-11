@@ -16,6 +16,7 @@ public final class Timings {
     public static final Timings FAR_MAKE = new Timings("far make"), FAR_MESH = new Timings("far mesh"),
             FAR_UPLOAD = new Timings("far upload"), FAR_DRAW = new Timings("far draw"), FAR_WALK = new Timings("far walk"), FAR_WATER = new Timings("far water"), CUBE_MESH = new Timings("cube mesh"),
             CUBE_UPLOAD = new Timings("cube upload"), CUBE_DRAW = new Timings("cube draw"), FRAME = new Timings("frame"),
+            CUBE_SNAPSHOT = new Timings("cube snapshot"), CUBE_LIGHT = new Timings("cube light"),
             SERVER_TICK = new Timings("server cubes"), CUBE_UNLOAD = new Timings("cube unload"), CUBE_FLUSH = new Timings("cube flush");
 
     private final String name;
