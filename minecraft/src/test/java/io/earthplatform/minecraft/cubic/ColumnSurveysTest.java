@@ -139,4 +139,35 @@ class ColumnSurveysTest {
         rig.surveys.lowest(1, 1, ColumnSurveys.ANY);
         assertTrue(rig.queued.isEmpty(), "a column that worked is not asked for again");
     }
+
+    /** A failed survey means ground that can't be had: nothing is buried there, as {@link ColumnSurvey#of} says. */
+    @Test void aFailedSurveyBuriesNothingInItsColumnOrNextToIt() {
+        for (boolean surfaces : new boolean[] {false, true}) {
+            Rig rig = new Rig(surfaces);
+            rig.failing = column -> column == CubeKey.column(0, 0);
+            for (int x = -1; x <= 1; x++) rig.surveys.lowest(x, 0, ColumnSurveys.ANY);
+            rig.surveys.lowest(0, 1, ColumnSurveys.ANY);
+            rig.surveys.lowest(0, -1, ColumnSurveys.ANY);
+            rig.finish(0);
+            assertEquals(Integer.MIN_VALUE, rig.surveys.lowest(0, 0, ColumnSurveys.ANY));
+            for (int y : new int[] {-1000, -100, -5, 0, 2, 50})
+                assertEquals(0, rig.surveys.buried(0, y, 0, ColumnSurveys.ANY), "failed column, cube y=" + y);
+            // The same cubes over a column that worked (ground at 40) are buried when deep.
+            Rig worked = new Rig(surfaces);
+            for (int x = -1; x <= 1; x++) worked.surveys.lowest(x, 0, ColumnSurveys.ANY);
+            worked.surveys.lowest(0, 1, ColumnSurveys.ANY);
+            worked.surveys.lowest(0, -1, ColumnSurveys.ANY);
+            worked.finish(0);
+            assertEquals(1, worked.surveys.buried(0, -100, 0, ColumnSurveys.ANY));
+            assertEquals(0, worked.surveys.buried(0, 2, 0, ColumnSurveys.ANY));
+            // A neighbour's failure buries nothing in the centre column, which worked.
+            worked.failing = column -> column == CubeKey.column(1, 0);
+            worked.surveys.prune(column -> column != CubeKey.column(1, 0));
+            worked.surveys.lowest(1, 0, ColumnSurveys.ANY);
+            worked.finish(1);
+            assertEquals(40, worked.surveys.lowest(0, 0, ColumnSurveys.ANY));
+            for (int y : new int[] {-100, -5, 2, 50})
+                assertEquals(0, worked.surveys.buried(0, y, 0, ColumnSurveys.ANY), "failed neighbour, cube y=" + y);
+        }
+    }
 }
