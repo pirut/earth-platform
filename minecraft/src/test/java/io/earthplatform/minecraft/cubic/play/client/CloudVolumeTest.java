@@ -20,6 +20,8 @@ class CloudVolumeTest {
         assertEquals(.98f, CloudVolume.opacity("5"), 1e-6);
         assertEquals(.2f, CloudVolume.opacity("-1"), 1e-6);
         assertEquals(.72f, CloudVolume.opacity("lots"), 1e-6);
+        assertEquals(.72f, CloudVolume.opacity("NaN"), 1e-6);
+        assertEquals(.72f, CloudVolume.opacity("Infinity"), 1e-6);
     }
 
     /**

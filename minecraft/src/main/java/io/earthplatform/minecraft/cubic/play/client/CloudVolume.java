@@ -55,8 +55,11 @@ final class CloudVolume {
 
     /** The most the clouds may cover, from {@code earthplatform.clouds.opacity}, kept within 0.2 to 0.98. */
     static float opacity(String value) {
-        try { return (float) Math.clamp(Double.parseDouble(value), .2, .98); }
-        catch (NumberFormatException invalid) { return .72f; }
+        try {
+            double parsed = Double.parseDouble(value);
+            return Double.isFinite(parsed) ? (float) Math.clamp(parsed, .2, .98) : .72f;
+        }
+        catch (NumberFormatException | NullPointerException invalid) { return .72f; }
     }
 
     /** Draws the clouds for this frame; false when it can't, and the plain deck draws instead. */
