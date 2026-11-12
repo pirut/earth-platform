@@ -11,6 +11,7 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.CubeLight;
 import io.earthplatform.minecraft.cubic.CubeWorld;
+import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.platform.ClientPlatform;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import java.util.List;
@@ -78,6 +79,13 @@ final class CubeMesher {
      */
     private static final boolean REUSE_POSE = !"false".equals(System.getProperty("earthplatform.cubes.reusePose"));
     /**
+     * {@code -Dearthplatform.cubes.skipInterior=true}: a cube of solid stone or deepslate sealed in by more of it on all
+     * six faces, under its column's sky ({@link CubeInterior}), is neither lit nor meshed. Every block in it is buried,
+     * so the mesh would be empty, the light dark and no face joined to another; this skips the light, the walk over its
+     * blocks and the cave graph that find that out.
+     */
+    private static final boolean SKIP_INTERIOR = Boolean.getBoolean("earthplatform.cubes.skipInterior");
+    /**
      * Models draw their random numbers from a plain LCG, the same numbers as vanilla's legacy source without its atomic
      * seed, which every draw updated with a compare-and-set: a block's model reseeds it seven times. {@code false} keeps
      * the legacy source, for comparing (as for generation, the flag {@code cubes.plainRandom}).
@@ -90,12 +98,16 @@ final class CubeMesher {
     private static final boolean CHECK_MESH = Boolean.getBoolean("earthplatform.cubes.checkMesh");
 
     /** Which speedups a mesh uses: the flags', or none, for {@link #CHECK_MESH}. */
-    private record Mode(boolean skipBuried, boolean reusePose, boolean plainRandom, boolean fastLight) {}
-    private static final Mode FLAGS = new Mode(SKIP_BURIED, REUSE_POSE, PLAIN_RANDOM, CubeLight.FAST_LIGHT);
-    private static final Mode PLAIN = new Mode(false, false, false, false);
+    private record Mode(boolean skipBuried, boolean reusePose, boolean plainRandom, boolean fastLight, boolean skipInterior) {}
+    private static final Mode FLAGS = new Mode(SKIP_BURIED, REUSE_POSE, PLAIN_RANDOM, CubeLight.FAST_LIGHT, SKIP_INTERIOR);
+    private static final Mode PLAIN = new Mode(false, false, false, false, false);
     private static final java.util.concurrent.atomic.AtomicInteger CHECKED = new java.util.concurrent.atomic.AtomicInteger();
     private static final java.util.concurrent.atomic.AtomicInteger DIFFERENT = new java.util.concurrent.atomic.AtomicInteger();
     private static final java.util.concurrent.atomic.AtomicInteger NORMALS = new java.util.concurrent.atomic.AtomicInteger();
+    /** Cubes {@link #SKIP_INTERIOR} left unmeshed, for the performance log. */
+    private static final java.util.concurrent.atomic.LongAdder INTERIOR_SKIPPED = new java.util.concurrent.atomic.LongAdder();
+
+    static long interiorSkipped() { return INTERIOR_SKIPPED.sum(); }
 
     private static final ThreadLocal<Work> WORK = ThreadLocal.withInitial(Work::new);
 
@@ -115,10 +127,29 @@ final class CubeMesher {
     }
 
     private static Built build(Snapshot s, Work work, Mode mode) {
+        if (mode.skipInterior && s.blockEntities.isEmpty() && CubeInterior.enclosedStone(s.states, s.tops, s.cy) && onlyCulledFaces(s, work)) {
+            INTERIOR_SKIPPED.increment();
+            // All blocks opaque: vanilla's graph joins no face to another.
+            return new Built(s.key, s.version, List.of(), new byte[4096], 0L);
+        }
+        long lightStart = System.nanoTime();
         CubeLight.Field field = CubeLight.light(s.states, s.tops, s.cy, mode.fastLight);
+        Timings.CUBE_LIGHT.since(lightStart);
         View view = new View(s, field);
         List<Layer> layers = mesh(s, work, field, view, mode);
         return new Built(s.key, s.version, layers, CubeLight.centre(field), visibility(field, view));
+    }
+
+    /**
+     * Whether every block model in the cube is vanilla's simplest kind with no quads that no face hides. A resource pack
+     * may give stone such quads, and a mod's or a weighted model may draw what its faces do not say, so those are meshed.
+     */
+    private static boolean onlyCulledFaces(Snapshot s, Work work) {
+        BlockRenderDispatcher blocks = Minecraft.getInstance().getBlockRenderer();
+        return !s.states[13].maybeHas(state -> {
+            BakedModel model = blocks.getBlockModel(state);
+            return model.getClass() != SimpleBakedModel.class || !model.getQuads(state, null, work.plain).isEmpty();
+        });
     }
 
     /** Which of the cube's faces its air joins, as vanilla works it out for a section: full opaque blocks close it. */
@@ -147,9 +178,10 @@ final class CubeMesher {
             if (differ == null && differ(built, plain, true) != null) NORMALS.incrementAndGet();
             if (differ != null) {
                 StringBuilder culprits = new StringBuilder();
-                Mode[] alone = {new Mode(true, false, false, false), new Mode(false, true, false, false),
-                        new Mode(false, false, true, false), new Mode(false, false, false, true)};
-                String[] names = {"skipBuried", "reusePose", "plainRandom", "fastLight"};
+                Mode[] alone = {new Mode(true, false, false, false, false), new Mode(false, true, false, false, false),
+                        new Mode(false, false, true, false, false), new Mode(false, false, false, true, false),
+                        new Mode(false, false, false, false, true)};
+                String[] names = {"skipBuried", "reusePose", "plainRandom", "fastLight", "skipInterior"};
                 for (int i = 0; i < alone.length; i++) {
                     Built one = build(s, work, alone[i]);
                     if (differ(one, plain, false) != null) culprits.append(' ').append(names[i]);

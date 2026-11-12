@@ -52,11 +52,23 @@ public final class CubeRenderer {
     private static final int THREAD_COUNT = Math.max(1, Math.min(3, Runtime.getRuntime().availableProcessors() / 2));
     private static final ExecutorService POOL = Executors.newFixedThreadPool(THREAD_COUNT,
             NamedThreads.numbered("Earth cube mesher", Thread.NORM_PRIORITY - 1));
-    private static final int MIN_IN_FLIGHT = 48, MAX_IN_FLIGHT = 512, MIN_UPLOADS_PER_FRAME = 48, NEIGHBOUR_WAIT_TICKS = 20;
-    /** About how long one mesh takes a worker, to keep the workers busy for a whole frame. */
-    private static final long MESH_NANOS = 5_000_000L;
+    private static final int NEIGHBOUR_WAIT_TICKS = 20;
+    /**
+     * {@code -Dearthplatform.cubes.reuseSnapshots=true}: a cube's blocks are copied once for all the snapshots it is in
+     * ({@link CubeSnapshotCache}) instead of once for each of up to 27.
+     */
+    private static final boolean REUSE_SNAPSHOTS = Boolean.getBoolean("earthplatform.cubes.reuseSnapshots");
+    /**
+     * A finished mesh made from older contents than its cube now has, while the cube has a mesh to go on drawing, is
+     * thrown away rather than uploaded: the newer one follows. Not more than this many times running, so a cube that
+     * changes faster than it meshes still shows its changes.
+     */
+    static final int STALE_DROPS = 2;
 
     private final ClientCubeWorld world;
+    private final CubeSnapshotCache snapshots = new CubeSnapshotCache(1024);
+    /** Finished meshes of each cube thrown away as stale since it last had one uploaded. */
+    private final Long2IntOpenHashMap staleDropped = new Long2IntOpenHashMap();
     private final Long2ObjectOpenHashMap<Mesh> meshes = new Long2ObjectOpenHashMap<>();
     private final Long2ObjectOpenHashMap<byte[]> light = new Long2ObjectOpenHashMap<>();
     private final LongOpenHashSet dirty = new LongOpenHashSet();
@@ -108,8 +120,14 @@ public final class CubeRenderer {
     private int ticks, drawnFrame = -1, frame;
     /** The level passes (see {@link LevelPasses}) this renderer last culled for, drew the opaque layers in and drew the translucent ones in. */
     private int culledPass = -1, opaquePass = -1, translucentPass = -1;
-    /** How long the last frame took, so meshing and uploads keep pace however low the frame rate goes. */
-    private long frameStart = System.nanoTime(), frameNanos = 16_000_000L;
+    /**
+     * How long the last frame took, and the frame time meshing and uploads keep pace with however low the frame rate
+     * goes ({@link CubeWorkBudget#pace}).
+     */
+    private long frameStart = System.nanoTime(), frameNanos = 16_000_000L, paceNanos = 16_000_000L;
+    /** This frame's uploads, the shadow map's and the view's together. */
+    private CubeWorkBudget uploads;
+    private int uploadsFrame = -1;
     private boolean closed;
 
     private static final class Mesh {
@@ -152,6 +170,7 @@ public final class CubeRenderer {
     /** Cube meshes in the most recently rendered view, including retained transition meshes. */
     public int visibleMeshCount() { return visible.size(); }
     public int pendingCount() { return dirty.size() + building.size(); }
+    CubeSnapshotCache.Stats snapshotStats() { return snapshots.stats(); }
 
     /** Meshes in view (within 60 degrees of where the player looks) and behind, to see how the view fills in. */
     public int[] meshesByView(Vec3 camera, float yaw) {
@@ -194,9 +213,15 @@ public final class CubeRenderer {
         retireBy.clear();
     }
 
-    void cubeArrived(long key) { markAround(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), false); }
+    /** A cube came, came again, or was rewritten in place by a mod ({@link ClientCubeWorld#onRewritten}). */
+    void cubeArrived(long key) {
+        snapshots.invalidate(key);
+        markAround(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), false);
+    }
 
     void drop(long key) {
+        snapshots.invalidate(key);
+        staleDropped.remove(key);
         dirty.remove(key);
         dirtySince.remove(key);
         versions.remove(key);
@@ -233,7 +258,9 @@ public final class CubeRenderer {
         retireBy.remove(key);
     }
 
+    /** A block was stored in a cube in place ({@link ClientCubeWorld#onStateStored}), as every edit on the client is. */
     void blockChanged(BlockPos pos, BlockState old, BlockState state) {
+        snapshots.invalidate(CubeKey.ofBlock(pos));
         int cx = pos.getX() >> 4, cy = pos.getY() >> 4, cz = pos.getZ() >> 4;
         boolean lighting = old.getLightEmission() != state.getLightEmission()
                 || old.getLightBlock(world.client(), pos) != state.getLightBlock(world.client(), pos);
@@ -298,8 +325,9 @@ public final class CubeRenderer {
     }
 
     private void schedule(Vec3 camera, float yaw) {
-        int limit = inFlight();
-        if (dirty.isEmpty()) return;
+        int limit = CubeWorkBudget.inFlight(paceNanos, THREAD_COUNT);
+        // Every worker slot taken: nothing would start, so the dirty cubes need no look.
+        if (dirty.isEmpty() || building.size() >= limit) return;
         double lookX = ViewOrder.lookX(yaw), lookZ = ViewOrder.lookZ(yaw);
         int cx = (int) Math.floor(camera.x) >> 4, cy = (int) Math.floor(camera.y) >> 4, cz = (int) Math.floor(camera.z) >> 4;
         LongArrayList ready = new LongArrayList(), order = new LongArrayList();
@@ -327,7 +355,9 @@ public final class CubeRenderer {
         // Nearest first, counting the view; the picks can be hundreds.
         long[] sorted = order.toLongArray();
         if (count < sorted.length) Arrays.sort(sorted);
-        for (int i = 0; i < count; i++) submit(ready.getLong((int) (sorted[i] & ((1 << 22) - 1))), camera);
+        // A snapshot copies 27 cubes' blocks on this thread: no more of them a frame than a share of it allows.
+        CubeWorkBudget budget = new CubeWorkBudget(System.nanoTime(), CubeWorkBudget.snapshotNanos(paceNanos), count);
+        for (int i = 0; budget.take(System.nanoTime()); i++) submit(ready.getLong((int) (sorted[i] & ((1 << 22) - 1))), camera);
     }
 
     /** Notes the faces a cube's air joins; {@link CubeCaves#OPEN} forgets it, as for a cube not meshed. */
@@ -344,6 +374,7 @@ public final class CubeRenderer {
 
     private void compileEmpty(long key) {
         unretire(key);
+        staleDropped.remove(key);
         setVisibility(key, CubeCaves.OPEN);
         Mesh mesh = meshes.remove(key);
         if (mesh != null) mesh.close(regions);
@@ -376,13 +407,14 @@ public final class CubeRenderer {
         if (center == null) return;
         int x = center.x, y = center.y, z = center.z;
         if (center.isEmpty()) { compileEmpty(key); return; }
+        long start = System.nanoTime();
         PalettedContainer<BlockState>[] states = new PalettedContainer[27];
         PalettedContainerRO<Holder<Biome>>[] biomes = new PalettedContainerRO[27];
         for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
             Cube cube = world.cube(CubeKey.pack(x + dx, y + dy, z + dz));
             int i = (dy + 1) * 9 + (dz + 1) * 3 + (dx + 1);
             if (cube == null) continue;
-            states[i] = cube.section.getStates().copy();
+            states[i] = REUSE_SNAPSHOTS ? snapshots.get(cube.key, cube.section.getStates()) : cube.section.getStates().copy();
             biomes[i] = cube.section.getBiomes();
         }
         int[][] tops = new int[9][];
@@ -396,12 +428,13 @@ public final class CubeRenderer {
                 ShaderBlocks.ids(), modelData(center),
                 center.blockEntities().isEmpty() ? Map.of() : new HashMap<>(center.blockEntities()));
         building.add(key);
+        Timings.CUBE_SNAPSHOT.since(start);
         POOL.execute(() -> {
             if (built.isClosed()) return;
-            long start = System.nanoTime();
+            long meshStart = System.nanoTime();
             try {
                 built.add(CubeMesher.build(snapshot));
-                Timings.CUBE_MESH.since(start);
+                Timings.CUBE_MESH.since(meshStart);
             }
             catch (Throwable failure) {
                 EarthPlatformMod.LOGGER.error("Cube mesh build failed for {}", CubeKey.toString(key), failure);
@@ -410,17 +443,26 @@ public final class CubeRenderer {
         });
     }
 
-    /** Uploads finished meshes: a few every frame, and more while an eighth of the last frame's time lasts. */
+    /** Uploads finished meshes while an eighth of the frame lasts, the shadow map's uploads counted in. */
     private void upload() { upload(false); }
 
     private void upload(boolean all) {
-        long deadline = System.nanoTime() + frameNanos / 8;
-        for (int n = 0; all || n < MIN_UPLOADS_PER_FRAME || System.nanoTime() < deadline; n++) {
+        if (uploadsFrame != frame) {
+            uploadsFrame = frame;
+            uploads = new CubeWorkBudget(System.nanoTime(), CubeWorkBudget.uploadNanos(paceNanos), Integer.MAX_VALUE);
+        }
+        while (all || uploads.take(System.nanoTime())) {
             CubeMesher.Built result = built.poll();
             if (result == null) return;
             building.remove(result.key());
             boolean stale = staleBuilds.remove(result.key());
             if (stale || closed || world.cube(result.key()) == null || result.version() < 0) { result.free(); continue; }
+            if (dropStale(result.version(), versions.get(result.key()), meshes.containsKey(result.key()), staleDropped.get(result.key()))) {
+                staleDropped.addTo(result.key(), 1);
+                result.free();
+                continue;
+            }
+            staleDropped.remove(result.key());
             if (result.light() != null) light.put(result.key(), result.light());
             setVisibility(result.key(), result.visibility());
             compiled.add(result.key());
@@ -451,6 +493,11 @@ public final class CubeRenderer {
             }
             if (mesh.empty()) meshes.remove(result.key());
         }
+    }
+
+    /** See {@link #STALE_DROPS}. */
+    static boolean dropStale(int builtVersion, int version, boolean drawn, int dropped) {
+        return builtVersion != version && drawn && dropped < STALE_DROPS;
     }
 
     // Drawing ------------------------------------------------------------------------------------
@@ -606,17 +653,10 @@ public final class CubeRenderer {
         drawCalls = 0;
         frame++;
         long now = System.nanoTime();
-        frameNanos = Math.min(now - frameStart, 1_000_000_000L);
+        long last = Math.min(now - frameStart, 1_000_000_000L);
+        paceNanos = CubeWorkBudget.pace(last, frameNanos);
+        frameNanos = last;
         frameStart = now;
-    }
-
-    /**
-     * Meshes started per frame: enough to keep the workers busy until the next frame. A fixed 12
-     * (then 48) meant a frame rate of 1 under a shader pack built 12 cubes a second.
-     */
-    private int inFlight() {
-        long perFrame = frameNanos * THREAD_COUNT / MESH_NANOS;
-        return (int) Math.clamp(perFrame, MIN_IN_FLIGHT, MAX_IN_FLIGHT);
     }
 
     public void drawOpaque(Camera camera, Frustum frustum, Matrix4f modelView, Matrix4f projection) {
@@ -812,6 +852,8 @@ public final class CubeRenderer {
 
     void close() {
         closed = true;
+        snapshots.clear();
+        staleDropped.clear();
         occlusion.close();
         built.close();
         regions.close();
