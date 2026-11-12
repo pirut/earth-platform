@@ -39,7 +39,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - Far view and sharpness on the pause menu: 37 to 201 km of far terrain, and Fast to Sharpest. Extreme settings for very powerful computers go further: up to 397 km, and Extreme and Ultra sharpness for far blocks a half and a third of Balanced's size on screen.
 - Soft clouds at the Earth's cloud height, kept clear of the jet stream.
 - Works with Iris and Photon, which light near blocks and far terrain alike.
-- Teleporting, fast flight and switching shader packs no longer hitch a frame while nearby ground meshes; the ground still fills in as fast as before (contributed by VanceCStone, #161).
+- Nearby ground's meshing and uploads are spread over frames, so teleporting, fast flight and switching shader packs should not stall a single frame (contributed by VanceCStone, #161).
 - A spyglass sharpens a nearby peak when you zoom at it from a plane or a mountain top (contributed by VanceCStone, #161).
 - Distant flat-colored water is nearly opaque, so the seabed no longer shows through far oceans and lakes without a shader pack (contributed by VanceCStone, #161).
 - Experimental, off by default: layered clouds, three cloud banks with their own wind and regional weather, from the config screen or Sodium's Earth page, with quality and opacity settings. A server flag keeps sending the real ground and water to players flying low over it, `-Dearthplatform.cubic.flightSurface=true`. More flags for trying faster meshing and smoother far ground. See [Flying and far terrain](docs/FLIGHT-RENDERING.md) (contributed by VanceCStone, #161).

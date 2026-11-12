@@ -8,7 +8,7 @@ Flags are Java system properties, given as JVM arguments such as `-Dearthplatfor
 
 | Part | On by default | What it does |
 | --- | --- | --- |
-| Near cube frame budgets | yes | Meshing and uploading near cubes is limited per frame, so teleporting, fast flight or a shader switch no longer hitches one frame. Nearby ground fills in as fast as before when the frame has time |
+| Near cube frame budgets | yes | Meshing and uploading near cubes is spread over frames, so teleporting, fast flight or a shader switch should not stall a single frame. The limits follow the frame time so nearby ground is not meant to fill in more slowly; that is not yet measured in game |
 | Layered clouds | no | Three cloud banks with their own wind and regional weather, in place of the single deck |
 | Surface cubes for flight | no | A player flying over the ground keeps getting the real blocks of the ground and water below, not only far terrain |
 | Spyglass from high up | yes | Zooming at a nearby peak from a plane or a mountain now sharpens it |
@@ -33,7 +33,7 @@ Flags are Java system properties, given as JVM arguments such as `-Dearthplatfor
 
 - **Layered clouds, whiteout.** With the camera inside the middle bank, about Y 3,400 to 4,200 at the default height, the horizon is a uniform white veil.
 - **Layered clouds, ribbons.** The top bank can show long straight lines when seen at a shallow angle.
-- **Layered clouds, clipping.** Where a cloud meets a distant slope the cutoff can sit tens of blocks off, because the game's depth is coarse past a few kilometres. #167 fixes it.
+- **Layered clouds, clipping.** Where a cloud meets a distant slope the cutoff can sit tens of blocks off, because the game's depth is coarse past a few kilometres. #167 adds a precise far depth for the clouds to clip against; it passes GPU tests but has not been checked in game.
 - The layered cloud pass keeps about 1 MiB of textures after it is switched off, until the next resource reload.
 - **Distant water under Photon.** Photon computes its own water alpha, so the seabed can still show through far water.
 - **Surface cubes.** A cube held below the player that meshed before its column's tops arrived can keep pale lighting until it is next remeshed. Survey work for players on foot can delay a flyer's, and a column whose survey fails five times stays unknown until it is pruned.
