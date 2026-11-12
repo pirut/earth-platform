@@ -35,7 +35,7 @@ Flags are Java system properties, given as JVM arguments such as `-Dearthplatfor
 - **Layered clouds, whiteout.** With the camera inside the middle bank, about Y 3,400 to 4,200 at the default height, the horizon is a uniform white veil.
 - **Layered clouds, ribbons.** The top bank can show long straight lines when seen at a shallow angle.
 - **Layered clouds, clipping.** Where a cloud meets a distant slope the cutoff can sit tens of blocks off, because the game's depth is coarse past a few kilometres. The precise far depth (`far.plainDepth`, on while layered clouds draw) is meant to fix this; it passes GPU tests but has not been checked in game. The first cloud pass after turning them on can still use the coarse depth.
-- The layered cloud pass keeps about 1 MiB of textures after it is switched off, until the next resource reload.
+- The layered cloud pass keeps up to about 1 MiB of textures in video memory after it is switched off, until the game closes; a resource reload does not free them.
 - **Distant water under Photon.** Photon computes its own water alpha, so the seabed can still show through far water.
 - **Surface cubes.** A cube held below the player that meshed before its column's tops arrived can keep pale lighting until it is next remeshed. Survey work for players on foot can delay a flyer's, and a column whose survey fails five times stays unknown until it is pruned.
 
