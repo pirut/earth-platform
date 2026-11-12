@@ -26,8 +26,13 @@ final class FarZoom {
     static final double MIN = 1.6;
     /** The most zoom it counts: past that the columns the view wants outgrow what a zoomed look is worth. */
     static final double MAX = 32.0;
-    /** The most columns asked for a zoomed view at once, on top of the player's own. */
-    static final int MAX_COLUMNS = 8000;
+    /** The most columns asked for a zoomed view at once, on top of the player's own; {@code -Dearthplatform.far.zoomColumns} sets fewer or more. */
+    static final int MAX_COLUMNS = Math.max(1, Integer.getInteger("earthplatform.far.zoomColumns", 8000));
+    /**
+     * The most zoom counted, in half steps of two (see {@link #steps}): all of {@link #MAX} unless
+     * {@code -Dearthplatform.far.zoomSteps} sets fewer. The view's cone still follows the whole zoom.
+     */
+    static final int MAX_STEPS = Math.clamp(Integer.getInteger("earthplatform.far.zoomSteps", 10), 1, 10);
     /** Blocks the camera's position is rounded to. */
     private static final int CAMERA = 32;
 
@@ -69,7 +74,7 @@ final class FarZoom {
 
     /** The same view counting at most {@code steps} of its zoom (see {@link #steps}). */
     FarZoom limited(int steps) {
-        return steps >= zoomSteps ? this : new FarZoom(steps, x, y, z, height, yaw, pitch, spreadSteps, zoomSteps);
+        return steps >= zoomSteps ? this : new FarZoom(steps, x, y, z, height, yaw, pitch, spreadSteps, viewSteps);
     }
 
     /**
@@ -84,7 +89,7 @@ final class FarZoom {
         int zoomSteps = (int) Math.floor(2 * Math.log(Math.min(zoom, MAX)) / Math.log(2));
         int spreadSteps = (int) Math.ceil(spread * 100);
         double step = step(Math.atan(spreadSteps / 100.0 / Math.pow(2, zoomSteps / 2.0)));
-        FarZoom zoomed = new FarZoom(zoomSteps, round(x), round(y), round(z), round(Math.max(0, height)),
+        FarZoom zoomed = new FarZoom(Math.min(zoomSteps, MAX_STEPS), round(x), round(y), round(z), round(Math.max(0, height)),
                 (int) Math.round(Math.toRadians(yaw) / step), (int) Math.round(Math.toRadians(pitch) / step), spreadSteps, zoomSteps);
         return zoomed.equals(previous) ? previous : zoomed;
     }
@@ -105,8 +110,11 @@ final class FarZoom {
         int width = Far.width(level);
         // To the column's middle: round the player, a column whose middle is a hole's width off is the
         // last one its level splits, so unzoomed this splits none the player's own levels do not.
+        // A column held is as far above or below as its own ground, not the ground under the camera:
+        // up high, a mountain top near the camera is near however deep the valley under it.
         double ox = (cx + 0.5) * width - x, oz = (cz + 0.5) * width - z;
-        if (Math.max(Math.sqrt(ox * ox + oz * oz), height) > Far.hole(level) * width * zoom) return false;
+        double vertical = column == null ? height : Math.max(0, Math.max(column.lowY() - y, y - column.highY()));
+        if (Math.max(Math.sqrt(ox * ox + oz * oz), vertical) > Far.hole(level) * width * zoom) return false;
         if (column == null) return true;
         return inView(cx, cz, width, column.lowY(), column.highY())
                 && (horizon == null || !horizon.hidden((cx + 0.5) * width, (cz + 0.5) * width, width / 2.0, column.highY() + 2 * column.voxel()));

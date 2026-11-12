@@ -59,8 +59,11 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.inFlight` | 192 | Far columns a client asks for before earlier ones arrive | `FarRenderer` |
 | `earthplatform.far.visibility` | edge of the far view | Haze distance in meters, as a real-world visibility | `FarRenderer` |
 | `earthplatform.far.fade` | on | `false` makes far levels meet at a seam instead of fading into each other | `FarRenderer` |
-| `earthplatform.far.smooth` | `false` | Draw far ground smooth instead of blocky | `FarMesher` |
-| `earthplatform.far.smoothFrom` | 1 | With `far.smooth`, the first level drawn smooth | `FarMesher` |
+| `earthplatform.far.smooth` | `false` | Draw far ground smooth instead of blocky, trees included. The four finest levels, which show a player's edits, keep their blocks, and so does a column with near cubes drawn within its height | `FarMesher` |
+| `earthplatform.far.smoothFrom` | 5 | With `far.smooth`, the first level drawn smooth; never below 5 | `FarMesher` |
+| `earthplatform.far.blockTextures` | `false` | Far textures keep one block's size at every level instead of half a voxel's, fade to their average color as they shrink to a few pixels, and coarse voxels are lit by their slope until each block spans a few pixels | `FarShaders` |
+| `earthplatform.far.zoomColumns` | 8000 | Most columns a zoomed view (spyglass, zoom mod) asks for on top of the player's own; fewer sharpens less of the view at high zoom but asks the server for less | `FarZoom` |
+| `earthplatform.far.zoomSteps` | 10 | Most zoom a zoomed view sharpens for, in half steps of two (10 is 32x, 6 is 8x); the view's cone still follows the whole zoom | `FarZoom` |
 | `earthplatform.far.coverFrom` | 2 | The finest far level whose ground cover is evened out | `FarMesher` |
 | `earthplatform.far.buildFill` | 8 | How much of a coarse voxel a player build must fill to show far away, as 1/N | `FarBuilds` |
 | `earthplatform.far.lodDepth` | on | `false` makes far terrain share the game's depth buffer under shader packs | `FarLod` |

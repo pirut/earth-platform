@@ -85,6 +85,40 @@ class FarSurfaceMeshOracleTest {
         for (int i = 0; i < av.remaining(); i++) if (i % stride != 31) assertEquals(av.get(av.position() + i), bv.get(bv.position() + i));
         assertEquals(a.mesh().indexBuffer(), b.mesh().indexBuffer());
     }
+    @Test void distantCanopyUsesTheSurfaceWithoutOversizedLeafBoxes() throws Exception {
+        var leaves = net.minecraft.world.level.block.Blocks.OAK_LEAVES.defaultBlockState();
+        var stone = net.minecraft.world.level.block.Blocks.STONE.defaultBlockState();
+        var section = new LevelChunkSection(SurfacePacketFixtures.biomes());
+        for (int z=0; z<16; z++) for (int x=0; x<16; x++) {
+            for (int y=0; y<4; y++) section.setBlockState(x,y,z,stone,false);
+            if (x>=6 && x<=9 && z>=6 && z<=9) section.setBlockState(x,4,z,leaves,false);
+        }
+        section.recalcBlockCounts();
+        FarColumn column = new FarColumn(); column.sections.add(section);
+        FarFaces looks = faces(new LevelChunkSection[] {section});
+        for (int level : new int[] {4,5,8}) {
+            var base=job(column,level,false,looks);
+            // Textured, and smooth from the first level -Dearthplatform.far.smooth=true smooths.
+            var textured=new FarMesher.Job(base.key(),base.version(),base.level(),base.slot(),base.x0(),base.z0(),base.bottom(),
+                    base.sections(),base.drops(),base.sides(),base.diagonals(),base.drawn(),true,base.looks(),base.faces(),
+                    base.shaderIds(),base.shade(),base.white(),null,io.earthplatform.minecraft.cubic.far.Far.EDIT_LEVELS+1);
+            var mesh=FarMesher.build(textured);
+            try {
+                if (level==4) {
+                    assertNull(mesh.grid(), "detailed scenery retains block geometry");
+                    assertTrue(mesh.quads().length>0);
+                } else {
+                    assertNotNull(mesh.grid());
+                    for (int i=0;i<mesh.quads().length;i+=4)
+                        assertTrue(((mesh.quads()[i]>>>10)&7)>=6, "smooth scenery must not retain separate leaf boxes");
+                    int centre=(8*FarMesher.POINTS+8)*4;
+                    assertEquals(5*(1<<level)*FarMesher.UNIT,mesh.grid()[centre], "canopy height remains in the surface");
+                    assertNotEquals(0,mesh.grid()[centre+3], "canopy keeps its textured material");
+                }
+            } finally {mesh.free();}
+        }
+    }
+
     @Test void legacyAdapterKeepsPackedFacesOrderingNormalsCoverageHaloAndWaterAttributes() throws Exception {
         var generator = new SurfacePacketFixtures.Country(0); int jobs = 0, waterParts = 0; long quads = 0;
         for (int level = 3; level <= 8; level++) for (boolean masked : new boolean[] {false, true}) {

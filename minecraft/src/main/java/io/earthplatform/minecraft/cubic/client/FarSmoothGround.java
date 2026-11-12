@@ -8,7 +8,6 @@ import static io.earthplatform.minecraft.cubic.client.FarMesher.SMOOTH_TOP;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.SMOOTH_WALL;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.UNIT;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.WALL_DEPTH;
-import static io.earthplatform.minecraft.cubic.client.FarMesher.groundRow;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.multiply;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.normalCode;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.side;
@@ -89,8 +88,8 @@ final class FarSmoothGround {
             if (side == null || side.sections() == null) return false;
             sections = side.sections(); bottom = side.bottom(); drops = side.drops();
         }
-        // Textured levels draw trees as blocks on the ground; further out they are part of the surface.
-        int x = cx & 15, z = cz & 15, row = job.textured() ? groundRow(sections, x, z) : top(sections, x, z, true);
+        // Trees are part of the surface, the textured levels' too.
+        int x = cx & 15, z = cz & 15, row = top(sections, x, z, true);
         int at = cell(cx, cz);
         height[at] = (row + 1 + (bottom - job.bottom()) * 16) * voxel - drops[z * 16 + x];
         BlockState top = row < 0 ? GROUND : sections[row >> 4].getBlockState(x, row & 15, z);

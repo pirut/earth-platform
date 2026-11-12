@@ -117,7 +117,7 @@ public final class FarRenderer {
     /** How long each level's fades last at the camera's speed. */
     private final FarFade fadeLength = new FarFade();
     private static final ResourceLocation WHITE = ResourceLocation.fromNamespaceAndPath(EarthPlatformMod.MOD_ID, "block/far_white");
-    private static final int PLAN_TICKS = 10, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
+    private static final int PLAN_TICKS = 10, ZOOM_PLAN_TICKS = 4, MASK_TICKS = 4, RETRY_TICKS = 200, KEEP_TICKS = 1200, MAX_COLUMNS = 8000,
             SETTLE_TICKS = 3, HIDDEN_SETTLE_TICKS = 40, UPLOADS_PER_FRAME = 8, MESHES_IN_FLIGHT = 128;
     /** Speeds only elytra and the jet stream reach, in blocks a second. */
     static final double FAST_BLOCKS_PER_SECOND = 200, JET_BLOCKS_PER_SECOND = 800;
@@ -155,6 +155,9 @@ public final class FarRenderer {
     private final Long2IntOpenHashMap previewsAsked = new Long2IntOpenHashMap();
     /** Set to plan at the next tick rather than the next turn of {@link #PLAN_TICKS}. */
     private boolean planNow;
+    /** Set when a zoomed view turned or zoomed further, to plan once {@link #ZOOM_PLAN_TICKS} have passed since the last plan. */
+    private boolean zoomMoved;
+    private int plannedAt;
     /** Stand-ins received, and how many the real column has replaced since. */
     private int previewsReceived, previewsReplaced;
     /** Missing columns in the order to ask for them, from the last plan, and how many of them have been looked at. */
@@ -797,7 +800,7 @@ public final class FarRenderer {
             if (side != null) schedule(side);
         }
         // Smooth ground meets its diagonal neighbours at its corners too.
-        if (FarMesher.SMOOTH && level >= FarMesher.SMOOTH_FROM) {
+        if (level >= FarMesher.SMOOTH_FROM) {
             for (int corner = 0; corner < 4; corner++) {
                 Column diagonal = held(column.diagonal(corner));
                 if (diagonal != null) schedule(diagonal);
@@ -850,8 +853,9 @@ public final class FarRenderer {
         int bx = player.getBlockX(), bz = player.getBlockZ();
         zoom(player);
         submitDue(bx, bz);
-        if (ticks % PLAN_TICKS == 0 || planNow) {
-            planNow = false;
+        if (ticks % PLAN_TICKS == 0 || planNow || zoomMoved && ticks - plannedAt >= ZOOM_PLAN_TICKS) {
+            planNow = zoomMoved = false;
+            plannedAt = ticks;
             plan(bx, bz, FarLead.at(bx, bz, motion.x * 20.0, motion.z * 20.0));
             evict();
         }
@@ -870,8 +874,12 @@ public final class FarRenderer {
         FarZoom before = zoomView;
         zoomView = ZOOM ? FarZoom.at(focal / normal, spread * focal / normal, eye.x, eye.y, eye.z, height,
                 player.getYRot(), player.getXRot(), zoomView) : null;
-        // A view that zooms in or turns is planned for at once, not at the next half second: what it looks at is asked for first.
-        if (zoomView != null && zoomView != before) planNow = true;
+        // A view that zooms in is planned for at once, not at the next half second: what it looks at is asked for first.
+        // One that turns or zooms further waits a few ticks, as a spyglass panning walked the zoomed view every tick.
+        if (zoomView != null && zoomView != before) {
+            if (before == null) planNow = true;
+            else zoomMoved = true;
+        }
         // The plan works out how much of the zoom counts; unzoomed, the walk drops it at once.
         if (zoomView == null) zoom = null;
     }
