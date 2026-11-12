@@ -20,7 +20,7 @@ Flags are Java system properties, given as JVM arguments such as `-Dearthplatfor
 
 ## Turn the experimental parts on
 
-**Layered clouds** (client). Mods → Earth Platform → Config → Layered clouds, or the Sky group on Sodium's Earth page, or `layeredClouds = true` in the client settings file. Quality (`cloudQuality`: Balanced, High, Cinematic) and the most the clouds may hide (`cloudOpacity`, 0.2 to 0.98, default 0.72) are next to it. They change at once. The banks sit at 0.65, 1.5 and 3 times `cloudHeight`, about Y 1,690, 3,810 and 7,560 at the default 2,500, and are never drawn under a shader pack, which keeps its own clouds. If the shader fails to load, the old deck draws instead.
+**Layered clouds** (client). Mods → Earth Platform → Config → Layered clouds, or the Sky group on Sodium's Earth page, or `layeredClouds = true` in the client settings file. Quality (`cloudQuality`: Balanced, High, Cinematic) and the most the clouds may hide (`cloudOpacity`, 0.2 to 0.98, default 0.72) are in the config screen and the client settings file, not on Sodium's page. They change at once. The banks sit at 0.65, 1.5 and 3 times `cloudHeight`, about Y 1,690, 3,810 and 7,560 at the default 2,500, and are never drawn under a shader pack, which keeps its own clouds. If the shader fails to load, the old deck draws instead.
 
 **Surface cubes for flight** (server). `-Dearthplatform.cubic.flightSurface=true`. From 48 blocks over the ground or water, a flyer keeps receiving the real ground and water out to the cube view distance (192 blocks at most), and within 384 blocks in a straight line. Past that the far terrain takes over. No load test with many flying players exists yet, which is why it is off.
 
