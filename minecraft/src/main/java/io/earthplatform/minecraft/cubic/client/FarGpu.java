@@ -85,8 +85,8 @@ final class FarGpu {
     private final Program[] vanillaGround = new Program[3], packGround = new Program[3], packNearGround = new Program[3];
     private final boolean[] vanillaGroundFailed = new boolean[3], packGroundFailed = new boolean[3], packNearGroundFailed = new boolean[3];
     /** The vanilla three in far terrain's own finer depth, testing the game's blocks by hand (see {@link FarShaders#PRECISE_DEPTH}). */
-    private final Program[] precise = new Program[3];
-    private final boolean[] preciseFailed = new boolean[3];
+    @Nullable private Program[] precise;
+    @Nullable private boolean[] preciseFailed;
     /** The game's projection while far terrain draws in its own finer depth (see {@link FarPlainDepth}); null otherwise. */
     @Nullable private Matrix4f gameProjection;
     /** Whether this draw bound the copy of the game's depth, to put back at its end. */
@@ -982,6 +982,10 @@ final class FarGpu {
 
     /** The vanilla program in far terrain's own finer depth (see {@link FarShaders#PRECISE_DEPTH}). */
     @Nullable private Program preciseProgram(int fade) {
+        if (precise == null) {
+            precise = new Program[3];
+            preciseFailed = new boolean[3];
+        }
         if (precise[fade] == null && !preciseFailed[fade]) {
             String header = version + FarShaders.PRECISE_DEPTH + FarShaders.fade(fade);
             try { precise[fade] = Program.link(header + FarShaders.VERTEX, header + FarShaders.FRAGMENT, "far terrain in its own depth"); }
@@ -1229,7 +1233,7 @@ final class FarGpu {
         columns.close();
         looks.close();
         for (Program[] programs : new Program[][] {vanilla, precise, pack, packNear, vanillaGround, packGround, packNearGround})
-            for (Program program : programs) if (program != null) program.close();
+            if (programs != null) for (Program program : programs) if (program != null) program.close();
         for (Program program : prepass) if (program != null) program.close();
         for (Program program : shading) if (program != null) program.close();
         if (hiddenCull != null) { hiddenCull.close(); hiddenCull = null; }

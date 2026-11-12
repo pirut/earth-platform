@@ -351,7 +351,7 @@ final class FarColumnMesh {
         // Under the Earth's curve only a face's corners follow it, so wide flat water is cut into
         // faces at most EarthView.WATER_GRID across: at most sixteen for a coarsest column's sea.
         int grid = EarthView.WATER_GRID;
-        if (EarthView.ENABLED && !textured && (sx > grid || sz > grid)) {
+        if (job.cutsWater() && !textured && (sx > grid || sz > grid)) {
             for (float dz = 0; dz < sz; dz += grid)
                 for (float dx = 0; dx < sx; dx += grid)
                     face(builder, state, argb, direction, x + dx, y, z + dz, Math.min(grid, sx - dx), sy, Math.min(grid, sz - dz), light, false);

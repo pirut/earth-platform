@@ -22,6 +22,12 @@ final class EarthView {
     private EarthView() {}
 
     /**
+     * Whether far water is meshed cut at {@link #WATER_GRID}, for the curve: not under a shader pack,
+     * which never curves. A pack coming or going meshes far water again (see FarRenderer#shadersChanged).
+     */
+    static boolean cutsWater(boolean shaderPack) { return ENABLED && !shaderPack; }
+
+    /**
      * The drop per square block past {@link #FLAT}, for a camera this high above the ground: none up
      * to 1,500 blocks, the Earth's own by 6,000, and none under a shader pack.
      */
@@ -38,5 +44,15 @@ final class EarthView {
     static double drop(double x, double z, float curvature) {
         double r = Math.max(0, Math.hypot(x, z) - FLAT);
         return curvature * r * r;
+    }
+
+    /**
+     * How far below its flat place a box's farthest corner from a camera at (camX, camZ), or anywhere
+     * within {@code grow} blocks of it, is drawn: the most any of the box drops, for culling it.
+     */
+    static double drop(double minX, double maxX, double minZ, double maxZ, double camX, double camZ, double grow, float curvature) {
+        if (curvature == 0) return 0;
+        return drop(Math.max(Math.abs(minX - camX), Math.abs(maxX - camX)) + grow,
+                Math.max(Math.abs(minZ - camZ), Math.abs(maxZ - camZ)) + grow, curvature);
     }
 }

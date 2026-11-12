@@ -226,6 +226,58 @@ class FarPlainDepthGlTest {
         }
     }
 
+    /**
+     * A stand-in 1.6 blocks from the camera, drawn in the game's projection before far terrain's own
+     * depth begins, as FarRenderer draws the columns inside the reach: it is kept in the game's
+     * depth through the copy and the merge, and covers the far terrain behind it.
+     */
+    @Test void standInsDrawnFirstInTheGamesDepthSurviveTheMerge() {
+        int size = 8;
+        int colour = GL11C.glGenTextures(), depth = GL11C.glGenTextures(), target = GL30C.glGenFramebuffers(), vao = GL30C.glGenVertexArrays();
+        FarPlainDepth own = new FarPlainDepth();
+        Matrix4f game = new Matrix4f().perspective(1.2f, 1, 0.05f, FarRenderer.depthFar());
+        Vector4f near = game.transform(new Vector4f(0, 0, -1.6f, 1));
+        int program = GlShaders.link("#version 330 core\nuniform float depth; void main() { vec2 c = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));"
+                + " gl_Position = vec4(c * 2.0 - 1.0, depth, 1.0); }", "#version 330 core\nout vec4 colour; void main() { colour = vec4(1.0); }", "stand-in");
+        try {
+            GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, target);
+            texture(colour, GL11C.GL_RGBA8, GL11C.GL_RGBA, size, size);
+            texture(depth, GL30C.GL_DEPTH_COMPONENT24, GL11C.GL_DEPTH_COMPONENT, size, size);
+            GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, colour, 0);
+            GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, depth, 0);
+            GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
+            GL11C.glViewport(0, 0, size, size);
+            GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[] {1});
+            // The stand-in, in the game's projection.
+            GL11C.glEnable(GL11C.GL_DEPTH_TEST);
+            GL11C.glDepthFunc(GL11C.GL_LESS);
+            GL11C.glDepthMask(true);
+            GL20C.glUseProgram(program);
+            GL20C.glUniform1f(GL20C.glGetUniformLocation(program, "depth"), near.z / near.w);
+            GL30C.glBindVertexArray(vao);
+            GL11C.glDrawArrays(GL11C.GL_TRIANGLES, 0, 3);
+            GL20C.glUseProgram(0);
+            assertTrue(own.begin(game, size, size));
+            Vector4f clip = own.projection().transform(new Vector4f(0, 0, -10000, 1));
+            GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[] {clip.z / clip.w * .5f + .5f});
+            own.end();
+            float[] stored = new float[1];
+            GL11C.glReadPixels(size / 2, size / 2, 1, 1, GL11C.GL_DEPTH_COMPONENT, GL11C.GL_FLOAT, stored);
+            assertEquals(near.z / near.w * .5f + .5f, stored[0], 1e-6, "the stand-in keeps its depth in front of far terrain");
+            assertEquals(GL11C.GL_NO_ERROR, GL11C.glGetError());
+        } finally {
+            own.close();
+            GL11C.glDisable(GL11C.GL_DEPTH_TEST);
+            GL30C.glBindVertexArray(0);
+            GL30C.glDeleteVertexArrays(vao);
+            GL20C.glDeleteProgram(program);
+            GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, 0);
+            GL30C.glDeleteFramebuffers(target);
+            GL11C.glDeleteTextures(colour);
+            GL11C.glDeleteTextures(depth);
+        }
+    }
+
     /** What far terrain's own depth costs a frame at 1080p beyond far terrain's draw: the copy, the clear and the merge. */
     @Test void ownDepthsPassesAtFullHd() {
         int width = 1920, height = 1080;

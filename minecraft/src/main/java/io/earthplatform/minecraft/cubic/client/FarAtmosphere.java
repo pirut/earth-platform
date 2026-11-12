@@ -25,8 +25,11 @@ final class FarAtmosphere {
     static int smoothFrom(boolean cruise) { return cruise ? FIRST_SMOOTH : FarMesher.SMOOTH_FROM; }
 
     /** Whether a camera this high over the ground cruises: above 2,200 blocks, and until it comes back under 1,600. */
-    static boolean cruise(double height, boolean cruising) {
-        return Double.isFinite(height) && height > (cruising ? 1600 : 2200);
+    static boolean cruise(double height, boolean cruising) { return cruise(height, cruising, false); }
+
+    /** The same, and never under a shader pack, whose own look the cruise's smoothing would change. */
+    static boolean cruise(double height, boolean cruising, boolean pack) {
+        return !pack && Double.isFinite(height) && height > (cruising ? 1600 : 2200);
     }
 
     /** How much haze and texture fading a camera this high over the ground sees: none up to 2,000 blocks, all of it from 6,000. */

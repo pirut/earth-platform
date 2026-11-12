@@ -45,6 +45,26 @@ class FarVisualDetailTest {
         assertFalse(FarAtmosphere.CRUISES);
     }
 
+    @Test void neverCruisesUnderAShaderPack() {
+        assertFalse(FarAtmosphere.cruise(5000, false, true));
+        assertFalse(FarAtmosphere.cruise(5000, true, true), "a pack coming mid-cruise ends it");
+        assertTrue(FarAtmosphere.cruise(5000, true, false));
+    }
+
+    /**
+     * Stand-ins at the player's feet, 1.6, 4 and 7.9 blocks in front, are nearer than far terrain's
+     * own near plane: drawn in its projection they would clip, so they draw in the game's.
+     */
+    @Test void nearStandInsWouldClipInFarTerrainsOwnDepth() {
+        Matrix4f game = new Matrix4f().perspective(1.2f, 16f / 9, 0.05f, FarRenderer.depthFar());
+        Matrix4f own = FarPlainDepth.projection(game);
+        for (float z : new float[] {1.6f, 4, 7.9f}) {
+            Vector4f inGame = game.transform(new Vector4f(0, -1.6f, -z, 1)), inOwn = own.transform(new Vector4f(0, -1.6f, -z, 1));
+            assertTrue(inGame.z >= -inGame.w, "kept in the game's depth at " + z);
+            assertTrue(inOwn.z < -inOwn.w, "clipped in far terrain's own at " + z);
+        }
+    }
+
     @Test void cruisingHasHysteresis() {
         assertFalse(FarAtmosphere.cruise(2000, false));
         assertTrue(FarAtmosphere.cruise(2300, false));

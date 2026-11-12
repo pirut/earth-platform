@@ -36,6 +36,20 @@ class EarthViewTest {
         assertEquals(EarthView.curvature(8000, 1, false) / 2, curve, 1e-14);
     }
 
+    /**
+     * What the query cull tests a column by reaches down as far as the curve draws it: a 128-block
+     * column 90 km out drops about 608 blocks, and from anywhere the held view's camera may be.
+     */
+    @Test void aBoxReachesDownAsFarAsItsFarthestCornerDrops() {
+        float curve = EarthView.full(1);
+        double drop = EarthView.drop(90_000, 90_128, 0, 128, 0, 0, 0, curve);
+        assertEquals(EarthView.drop(90_128, 128, curve), drop, 1e-9);
+        assertTrue(drop > 607.75, "drop " + drop);
+        assertTrue(EarthView.drop(90_000, 90_128, 0, 128, 0, 0, 16, curve) > drop, "grown by where the camera may move");
+        assertEquals(EarthView.drop(-90_128, -90_000, -128, 0, 0, 0, 0, curve), drop, 1e-9, "the same on every side");
+        assertEquals(0, EarthView.drop(90_000, 90_128, 0, 128, 0, 0, 16, 0), "nothing without the curve");
+    }
+
     @Test void theCurveGrowsSmoothlyWithHeight() {
         float before = 0;
         for (int height = 0; height <= 8000; height += 10) {

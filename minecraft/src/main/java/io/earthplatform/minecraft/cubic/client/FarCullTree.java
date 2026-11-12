@@ -119,9 +119,7 @@ final class FarCullTree {
         Arrays.fill(state, 0, columns, PARTLY);
         for (int n = 0; n < nodes; ) {
             if (start[n] == end[n] || box[n * 6] > box[n * 6 + 3]) { n++; continue; }
-            double drop = curvature == 0 ? 0 : EarthView.drop(
-                    Math.max(Math.abs(box[n * 6] - camX), Math.abs(box[n * 6 + 3] - camX)) + grow,
-                    Math.max(Math.abs(box[n * 6 + 2] - camZ), Math.abs(box[n * 6 + 5] - camZ)) + grow, curvature);
+            double drop = EarthView.drop(box[n * 6], box[n * 6 + 3], box[n * 6 + 2], box[n * 6 + 5], camX, camZ, grow, curvature);
             int seen = view.intersectAab((float) (box[n * 6] - grow - camX), (float) (box[n * 6 + 1] - grow - drop - camY), (float) (box[n * 6 + 2] - grow - camZ),
                     (float) (box[n * 6 + 3] + grow - camX), (float) (box[n * 6 + 4] + grow - camY), (float) (box[n * 6 + 5] + grow - camZ));
             if (seen == FrustumIntersection.INTERSECT) { n++; continue; }

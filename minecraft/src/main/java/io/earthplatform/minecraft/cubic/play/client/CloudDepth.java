@@ -30,7 +30,7 @@ interface CloudDepth {
 
         @Override public Matrix4f projection(Matrix4f game) {
             FarRenderer far = far();
-            return far == null ? game : far.plainDepthProjection();
+            return far == null ? game : far.plainDepthProjection(game);
         }
     };
 
