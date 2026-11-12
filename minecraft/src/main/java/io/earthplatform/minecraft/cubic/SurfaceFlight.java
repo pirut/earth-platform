@@ -46,13 +46,15 @@ public final class SurfaceFlight {
     }
 
     /**
-     * New column surveys a player may queue now, with {@code inFlight} already queued; unbounded on foot, as before.
-     * None for a flyer while its cubes are being asked for ({@code asking}): those go to the workers first, and a cube
-     * near it over a column not surveyed yet is asked for as on foot.
+     * How many column surveys may be in flight on the workers, from every player, before a call for a player asks for
+     * none ({@link ColumnSurveys#lowest}); no limit on foot, as before. None for a flyer while its cubes are being
+     * asked for ({@code asking}): those go to the workers first, and a cube near it over a column not surveyed yet is
+     * asked for as on foot. A call with no player of its own, such as adopting or unloading a cube, passes whether
+     * anyone flies.
      */
-    static int surveyRoom(boolean flying, boolean asking, int inFlight) {
-        if (!flying) return Integer.MAX_VALUE;
-        return asking ? 0 : Math.max(0, SURVEYS - inFlight);
+    static int surveyCap(boolean flying, boolean asking) {
+        if (!flying) return ColumnSurveys.ANY;
+        return asking ? 0 : SURVEYS;
     }
 
     /** A column's lowest and highest ground or water, packed. */

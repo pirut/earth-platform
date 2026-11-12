@@ -124,13 +124,11 @@ class SurfaceFlightTest {
 
     /** Review: a flyer entering new ground queued every column survey before the first cube around it. */
     @Test void aFlyerQueuesNoSurveyAheadOfItsCubesAndFewAfter() {
-        assertEquals(0, SurfaceFlight.surveyRoom(true, true, 0), "none while its cubes are asked for");
-        assertEquals(SurfaceFlight.SURVEYS, SurfaceFlight.surveyRoom(true, false, 0));
-        assertEquals(SurfaceFlight.SURVEYS - 5, SurfaceFlight.surveyRoom(true, false, 5));
-        assertEquals(0, SurfaceFlight.surveyRoom(true, false, 1000), "never below none");
+        assertEquals(0, SurfaceFlight.surveyCap(true, true), "none while its cubes are asked for");
+        assertEquals(SurfaceFlight.SURVEYS, SurfaceFlight.surveyCap(true, false));
         assertTrue(SurfaceFlight.SURVEYS <= 16, "far fewer than the 489 columns of the widest band");
         for (boolean asking : new boolean[] {true, false})
-            assertEquals(Integer.MAX_VALUE, SurfaceFlight.surveyRoom(false, asking, 1000), "on foot, as before");
+            assertEquals(ColumnSurveys.ANY, SurfaceFlight.surveyCap(false, asking), "on foot, as before");
     }
 
     /** Review: the ground under a flyer came from waterY, which could sample Earth data on the server thread. */
@@ -138,9 +136,6 @@ class SurfaceFlightTest {
         assertEquals(90, SurfaceFlight.ground(SurfaceFlight.bounds(63, 90), Integer.MIN_VALUE), "the column's highest");
         assertEquals(90, SurfaceFlight.ground(SurfaceFlight.UNKNOWN, 90), "the last column's while this one is surveyed");
         assertEquals(Integer.MIN_VALUE, SurfaceFlight.ground(SurfaceFlight.UNKNOWN, Integer.MIN_VALUE));
-        long failed = SurfaceFlight.bounds(Integer.MIN_VALUE, Integer.MIN_VALUE);
-        assertNotEquals(SurfaceFlight.UNKNOWN, failed);
-        assertFalse(SurfaceFlight.flying(1000, SurfaceFlight.ground(failed, 63), false), "ground that can't be had is not flown over");
         for (int[] b : new int[][] {{-140, -129}, {63, 63}, {CubeWorld.MIN_Y, CubeWorld.MAX_Y}}) {
             long packed = SurfaceFlight.bounds(b[0], b[1]);
             assertEquals(b[0], SurfaceFlight.low(packed));

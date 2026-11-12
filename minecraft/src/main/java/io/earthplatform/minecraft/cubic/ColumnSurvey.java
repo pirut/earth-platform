@@ -11,6 +11,9 @@ import java.io.IOException;
 final class ColumnSurvey {
     private ColumnSurvey() {}
 
+    /** Every bound of a survey that failed, as the column's data could not be had. */
+    static final int FAILED = Integer.MIN_VALUE;
+
     /** Where the saved cubes start; without surface bounds, the layout is as it was before {@link SurfaceFlight}. */
     static int saved(boolean surfaces) { return surfaces ? 4 : 2; }
 
@@ -25,8 +28,11 @@ final class ColumnSurvey {
         }
         catch (IOException | RuntimeException failure) {
             result.size(1);
-            for (int i = 1; i < saved(surfaces); i++) result.add(Integer.MIN_VALUE);
+            for (int i = 1; i < saved(surfaces); i++) result.add(FAILED);
         }
         return result.toLongArray();
     }
+
+    /** Whether a survey failed. */
+    static boolean failed(long[] survey) { return survey[1] == FAILED; }
 }
