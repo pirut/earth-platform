@@ -172,28 +172,4 @@ class SurfaceFlightTest {
         SurfaceFlight.surface(0, 0, h, (x, z) -> x == 1 && z == 1 ? SurfaceFlight.bounds(63, 63) : SurfaceFlight.UNKNOWN, 8, 263, 8, cubes::add);
         assertEquals(column(1, 1, 63, 63, 8, 263, 8), cubes, "columns not surveyed yet wait");
     }
-
-    /** Review: a column's first tops remeshed every row from its lowest top to its highest, even 1,000 rows. */
-    @Test void topRowsAreTheShadedRowsBoundedAndNoneOutsideTheWorld() {
-        int[] tops = new int[256];
-        java.util.Arrays.fill(tops, 63);
-        long rows = SurfaceFlight.topRows(tops);
-        assertEquals(2, SurfaceFlight.low(rows), "one under the ground's row");
-        assertEquals(3, SurfaceFlight.high(rows), "none over the highest top: that is open sky");
-
-        tops[17] = 16_000;
-        rows = SurfaceFlight.topRows(tops);
-        assertEquals(2, SurfaceFlight.low(rows));
-        assertEquals(SurfaceFlight.TOP_ROWS, SurfaceFlight.high(rows) - SurfaceFlight.low(rows) + 1, "a build high over the ground: bounded");
-
-        tops[17] = 63 + 16 * 5;
-        rows = SurfaceFlight.topRows(tops);
-        assertEquals(2, SurfaceFlight.low(rows));
-        assertEquals(8, SurfaceFlight.high(rows), "rows between tops are shaded too");
-
-        java.util.Arrays.fill(tops, CubeWorld.MIN_Y - 1);
-        assertEquals(SurfaceFlight.UNKNOWN, SurfaceFlight.topRows(tops), "open sky everywhere");
-        tops[0] = CubeWorld.MIN_Y;
-        assertEquals(CubeWorld.MIN_Y >> 4, SurfaceFlight.low(SurfaceFlight.topRows(tops)), "never under the world");
-    }
 }

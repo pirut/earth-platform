@@ -9,7 +9,6 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.Cubic;
-import io.earthplatform.minecraft.cubic.SurfaceFlight;
 import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.ViewOrder;
 import io.earthplatform.minecraft.platform.ClientPlatform;
@@ -274,7 +273,7 @@ public final class CubeRenderer {
     }
 
     void topsChanged(int cubeX, int cubeZ, int[] old, int[] now) {
-        if (old == null) { firstTops(cubeX, cubeZ, now); return; }
+        if (old == null) { firstTops(cubeX, cubeZ); return; }
         int low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
         for (int i = 0; i < 256; i++) {
             if (old[i] == now[i]) continue;
@@ -290,26 +289,13 @@ public final class CubeRenderer {
     /**
      * A column's tops came for the first time. Cubes beside it meshed before then, as those with a neighbour slow to
      * come are, took it for open sky at every height, and under water that lit the bed beside it in pale squares that
-     * stayed: they are meshed again. Only cubes meshed or meshing, in the band the player is sent and, for a flying
-     * player, in the surface cubes sent under it (see {@link SurfaceFlight}).
+     * stayed: they are meshed again. Only cubes meshed or meshing, in the band the player is sent.
      */
-    private void firstTops(int cubeX, int cubeZ, int[] tops) {
+    private void firstTops(int cubeX, int cubeZ) {
         var player = Minecraft.getInstance().player;
         if (player == null) return;
-        int cy = player.getBlockY() >> 4, reach = Cubic.VERTICAL_RADIUS + 1, low = cy - reach, high = cy + reach;
-        remeshLit(cubeX, cubeZ, low, high);
-        long rows = SurfaceFlight.topRows(tops);
-        if (rows == SurfaceFlight.UNKNOWN) return;
-        // The rows the tops shade outside the band, each once.
-        int from = SurfaceFlight.low(rows), to = SurfaceFlight.high(rows);
-        remeshLit(cubeX, cubeZ, from, Math.min(to, low - 1));
-        remeshLit(cubeX, cubeZ, Math.max(from, high + 1), to);
-    }
-
-    private void remeshLit(int cubeX, int cubeZ, int low, int high) {
-        low = Math.max(low, ClientCubeWorld.MIN_Y >> 4);
-        high = Math.min(high, ClientCubeWorld.MAX_Y >> 4);
-        for (int y = low; y <= high; y++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
+        int cy = player.getBlockY() >> 4, reach = Cubic.VERTICAL_RADIUS + 1;
+        for (int y = cy - reach; y <= cy + reach; y++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
             long key = CubeKey.pack(cubeX + dx, y, cubeZ + dz);
             if (light.containsKey(key) || building.contains(key)) markDirty(key);
         }

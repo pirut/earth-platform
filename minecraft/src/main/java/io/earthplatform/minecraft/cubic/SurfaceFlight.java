@@ -24,8 +24,6 @@ public final class SurfaceFlight {
     /** Cubes kept under a column's lowest surface, for lighting and meshing, and over its highest, for trees. */
     public static final int BELOW = 1, ABOVE = 6;
     private static final int MAX_COLUMN_CUBES = 16;
-    /** Most rows {@link #topRows} gives. */
-    static final int TOP_ROWS = 2 * MAX_COLUMN_CUBES;
     /** Cubes of the band around the player that come before the surface. */
     static final int FIRST = 64;
     /**
@@ -82,23 +80,6 @@ public final class SurfaceFlight {
             long bounds = known.of(cx + dx, cz + dz);
             if (bounds != UNKNOWN) column(cx + dx, cz + dz, low(bounds), high(bounds), eyeX, eyeY, eyeZ, out);
         }
-    }
-
-    /**
-     * Client: the cube rows a column's tops shade, from the one under its lowest top up to its highest, for remeshing
-     * the cubes beside it a flying player holds; packed as {@link #bounds}, or {@link #UNKNOWN} with no top in the
-     * world. At most {@link #TOP_ROWS} rows: surface cubes come only in columns {@link #MAX_COLUMN_CUBES} rows tall,
-     * so a build high over the ground does not make every row between them be looked at.
-     */
-    public static long topRows(int[] tops) {
-        int low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
-        for (int top : tops) {
-            if (top < CubeWorld.MIN_Y || top > CubeWorld.MAX_Y) continue;
-            low = Math.min(low, top); high = Math.max(high, top);
-        }
-        if (low > high) return UNKNOWN;
-        int from = Math.max(CubeWorld.MIN_Y >> 4, (low >> 4) - BELOW);
-        return bounds(from, Math.min(high >> 4, from + TOP_ROWS - 1));
     }
 
     /**
