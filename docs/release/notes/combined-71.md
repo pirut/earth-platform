@@ -22,7 +22,7 @@ New since build 70:
 ### Clouds and weather
 - Layered clouds add three banks with their own wind and regional weather. They are off by default. Turn Layered clouds on or off in Mods → Earth Platform → Config, Sodium's Earth page under Sky, or with `layeredClouds = true` or `false` in client settings. Quality and opacity controls are beside it; opacity defaults to 0.72. Under a shader pack, the pack keeps its own clouds.
 - Precise far depth helps layered clouds meet distant mountains. It is enabled only while layered clouds draw without a shader pack; `-Dearthplatform.far.plainDepth=false` turns it off. GPU tests passed, but the result and frame cost still need checking in game. The first cloud pass can still use coarse depth.
-- Known issues: the middle bank can make a white veil around Y 3,400 to 4,200 at the default cloud height, and the top bank can show straight ribbons. Turning layered clouds off retains about 1 MiB of textures until resource reload. A flight surface cube can keep pale lighting if it meshed before its column tops arrived. See [Flying and far terrain](../../FLIGHT-RENDERING.md) for the remaining checks and stock Photon settings, which have not been tried or timed in game.
+- Known issues: the middle bank can make a white veil around Y 3,400 to 4,200 at the default cloud height, and the top bank can show straight ribbons. Turning layered clouds off retains about 1 MiB of textures until resource reload. A flight surface cube can keep pale lighting if it meshed before its column tops arrived. See docs/FLIGHT-RENDERING.md for the remaining checks and stock Photon settings, which have not been tried or timed in game.
 
 ### Contributors
 - This build's flight and rendering work was contributed by VanceCStone (#161).

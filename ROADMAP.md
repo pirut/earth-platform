@@ -23,7 +23,6 @@ Releases are public alphas on [Modrinth](https://modrinth.com/mod/YnuWHcwC) and 
 - **Fabric.** A Fabric build alongside the NeoForge one, from build 67.
 - **Finding and sharing places.** Town search on the globe and `/earth visit`, place codes (`/earth code`), F8 postcards, and one-click `.mrpack` install packs, from build 70.
 - **Arriving fast.** Quick stand-ins fill the whole far view within seconds of arriving, and far terrain is kept on disk with the world, from build 70.
-
 - **Flying and rendering.** Near-cube frame budgets, spyglass fixes and opaque distant water, plus experimental flight surface streaming, layered clouds, curvature and haze, from build 71. Most experimental parts are off by default; see [Flying and far terrain](docs/FLIGHT-RENDERING.md).
 
 ## Now
