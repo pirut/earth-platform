@@ -53,6 +53,24 @@ public interface CubeGenerator {
         for (int i = 0; i < 256; i++) low = Math.min(low, surfaceY((cubeX << 4) + (i & 15), (cubeZ << 4) + (i >> 4)));
         return low;
     }
+    /** Lowest ground or water top of a cube column: the sea, not its bed. Slow on first use; call off-thread. */
+    default int lowestSurface(int cubeX, int cubeZ) {
+        int low = Integer.MAX_VALUE;
+        for (int i = 0; i < 256; i++) {
+            int x = (cubeX << 4) + (i & 15), z = (cubeZ << 4) + (i >> 4);
+            low = Math.min(low, Math.max(surfaceY(x, z), waterY(x, z)));
+        }
+        return low;
+    }
+    /** Highest ground or water top of a cube column. Slow on first use; call off-thread. */
+    default int highestSurface(int cubeX, int cubeZ) {
+        int high = Integer.MIN_VALUE;
+        for (int i = 0; i < 256; i++) {
+            int x = (cubeX << 4) + (i & 15), z = (cubeZ << 4) + (i >> 4);
+            high = Math.max(high, Math.max(surfaceY(x, z), waterY(x, z)));
+        }
+        return high;
+    }
     /** Top generated water block of a column, or {@link Integer#MIN_VALUE} where it is dry. */
     default int waterY(int x, int z) { return Integer.MIN_VALUE; }
     /** Highest generated block that blocks skylight in a column, used as the initial sky top. */
