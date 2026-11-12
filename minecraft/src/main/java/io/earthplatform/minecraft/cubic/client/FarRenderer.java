@@ -153,11 +153,8 @@ public final class FarRenderer {
      */
     private boolean previewsOffered;
     private final Long2IntOpenHashMap previewsAsked = new Long2IntOpenHashMap();
-    /** Set to plan at the next tick rather than the next turn of {@link #PLAN_TICKS}. */
-    private boolean planNow;
-    /** Set when a zoomed view turned or moved, to plan once {@link #ZOOM_PLAN_TICKS} have passed since the last plan. */
-    private boolean zoomMoved;
-    private int plannedAt;
+    /** When the next plan is due (see {@link PlanGate}). */
+    private final PlanGate planGate = new PlanGate();
     /** Stand-ins received, and how many the real column has replaced since. */
     private int previewsReceived, previewsReplaced;
     /** Missing columns in the order to ask for them, from the last plan, and how many of them have been looked at. */
@@ -853,9 +850,7 @@ public final class FarRenderer {
         int bx = player.getBlockX(), bz = player.getBlockZ();
         zoom(player);
         submitDue(bx, bz);
-        if (plans(ticks, plannedAt, planNow, zoomMoved)) {
-            planNow = zoomMoved = false;
-            plannedAt = ticks;
+        if (planGate.due(ticks)) {
             plan(bx, bz, FarLead.at(bx, bz, motion.x * 20.0, motion.z * 20.0));
             evict();
         }
@@ -863,11 +858,38 @@ public final class FarRenderer {
     }
 
     /**
-     * Whether the tick plans: every {@link #PLAN_TICKS}, at once when asked to, or for a zoomed view that
-     * turned or moved once {@link #ZOOM_PLAN_TICKS} have passed since the last plan.
+     * When the next plan is due: every {@link #PLAN_TICKS}, at the next tick when asked to, or for a
+     * zoomed view that turned or moved once {@link #ZOOM_PLAN_TICKS} have passed since the last plan.
      */
-    static boolean plans(int ticks, int plannedAt, boolean planNow, boolean zoomMoved) {
-        return ticks % PLAN_TICKS == 0 || planNow || zoomMoved && ticks - plannedAt >= ZOOM_PLAN_TICKS;
+    static final class PlanGate {
+        /** Set to plan at the next tick rather than the next turn of {@link #PLAN_TICKS}. */
+        private boolean planNow;
+        /** Set when a zoomed view turned or moved, to plan once {@link #ZOOM_PLAN_TICKS} have passed since the last plan. */
+        private boolean zoomMoved;
+        private int plannedAt;
+
+        /** Plans at the next tick. */
+        void now() { planNow = true; }
+
+        /**
+         * Takes in a change of zoomed view, from {@code before} to {@code after}, either null unzoomed.
+         * A view that zooms in, or zooms by another amount (see {@link FarZoom#rezoomed}), is planned for
+         * at once, not at the next half second: what it looks at is asked for first. One that only turns
+         * or moves waits a few ticks, as a spyglass panning walked the zoomed view every tick.
+         */
+        void zoom(@Nullable FarZoom before, @Nullable FarZoom after) {
+            if (after == null || after == before) return;
+            if (FarZoom.rezoomed(before, after)) planNow = true;
+            else zoomMoved = true;
+        }
+
+        /** Whether tick {@code ticks} plans; if so, what asked for it is taken as done. */
+        boolean due(int ticks) {
+            if (!(ticks % PLAN_TICKS == 0 || planNow || zoomMoved && ticks - plannedAt >= ZOOM_PLAN_TICKS)) return false;
+            planNow = zoomMoved = false;
+            plannedAt = ticks;
+            return true;
+        }
     }
 
     /**
@@ -882,13 +904,7 @@ public final class FarRenderer {
         FarZoom before = zoomView;
         zoomView = ZOOM ? FarZoom.at(focal / normal, spread * focal / normal, eye.x, eye.y, eye.z, height,
                 player.getYRot(), player.getXRot(), zoomView) : null;
-        // A view that zooms in, or zooms by another amount, is planned for at once, not at the next half second:
-        // what it looks at is asked for first. One that only turns or moves waits a few ticks, as a spyglass
-        // panning walked the zoomed view every tick.
-        if (zoomView != null && zoomView != before) {
-            if (FarZoom.rezoomed(before, zoomView)) planNow = true;
-            else zoomMoved = true;
-        }
+        planGate.zoom(before, zoomView);
         // The plan works out how much of the zoom counts; unzoomed, the walk drops it at once.
         if (zoomView == null) zoom = null;
     }
@@ -2858,7 +2874,7 @@ public final class FarRenderer {
     public void scale(double metresPerBlock, boolean previews) {
         this.metresPerBlock = metresPerBlock;
         // The first plan went out before the server said so: plan again now, to ask for the stand-ins at once.
-        if (previews && !previewsOffered) planNow = true;
+        if (previews && !previewsOffered) planGate.now();
         previewsOffered = previews;
     }
 

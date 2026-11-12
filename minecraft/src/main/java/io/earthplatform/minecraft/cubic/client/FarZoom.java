@@ -35,6 +35,11 @@ final class FarZoom {
     static final int MAX_STEPS = Math.clamp(Integer.getInteger("earthplatform.far.zoomSteps", 10), 1, 10);
     /** Blocks the camera's position is rounded to. */
     private static final int CAMERA = 32;
+    /**
+     * How far under {@link #MIN}, in half steps of two, a view already zoomed stays zoomed. A field of
+     * view that sits near {@link #MIN} and wavers would otherwise zoom in afresh every other tick.
+     */
+    private static final double HOLD = 0.5;
 
     /** The zoom, rounded down to a power of the square root of two. */
     final double zoom;
@@ -44,12 +49,18 @@ final class FarZoom {
     private final int yaw, pitch, spreadSteps, zoomSteps;
     /** The view's own zoom in half steps of two, which the cone follows; {@link #zoomSteps} may count less of it (see {@link #limited}). */
     private final int viewSteps;
+    /**
+     * The view's zoom in half steps of two, not rounded, as it was the last time it changed by a whole
+     * step or more (see {@link #rezoomed}): a zoom that wavers round a rounding edge keeps it.
+     */
+    private final double zoomedAt;
     /** The look, and the cosine of the cone's half angle. */
     private final double dx, dy, dz, cone;
 
-    private FarZoom(int zoomSteps, int x, int y, int z, int height, int yaw, int pitch, int spreadSteps, int viewSteps) {
+    private FarZoom(int zoomSteps, int x, int y, int z, int height, int yaw, int pitch, int spreadSteps, int viewSteps, double zoomedAt) {
         this.zoomSteps = zoomSteps;
         this.viewSteps = viewSteps;
+        this.zoomedAt = zoomedAt;
         this.zoom = Math.pow(2, zoomSteps / 2.0);
         this.x = x;
         this.y = y;
@@ -74,32 +85,38 @@ final class FarZoom {
 
     /** The same view counting at most {@code steps} of its zoom (see {@link #steps}). */
     FarZoom limited(int steps) {
-        return steps >= zoomSteps ? this : new FarZoom(steps, x, y, z, height, yaw, pitch, spreadSteps, viewSteps);
+        return steps >= zoomSteps ? this : new FarZoom(steps, x, y, z, height, yaw, pitch, spreadSteps, viewSteps, zoomedAt);
     }
 
     /**
      * The zoomed view, or null unzoomed. {@code zoom} is how much narrower the view is than the game's
      * field of view, {@code spread} the tangent of the angle from the look to the view's corners at
      * that field of view; {@code yaw} and {@code pitch} in degrees as the game has them. The previous
-     * one comes back while nothing has changed past its rounding.
+     * one comes back while nothing has changed past its rounding, and stays zoomed down to {@link #HOLD}
+     * under {@link #MIN}.
      */
     @Nullable static FarZoom at(double zoom, double spread, double x, double y, double z, double height, float yaw, float pitch,
             @Nullable FarZoom previous) {
-        if (!(zoom >= MIN)) return null;
-        int zoomSteps = (int) Math.floor(2 * Math.log(Math.min(zoom, MAX)) / Math.log(2));
+        double exact = 2 * Math.log(Math.min(zoom, MAX)) / Math.log(2);
+        if (!(zoom >= MIN) && !(previous != null && exact >= 2 * Math.log(MIN) / Math.log(2) - HOLD)) return null;
+        int zoomSteps = (int) Math.floor(exact);
+        double zoomedAt = previous == null || Math.abs(exact - previous.zoomedAt) >= 1 ? exact : previous.zoomedAt;
         int spreadSteps = (int) Math.ceil(spread * 100);
         double step = step(Math.atan(spreadSteps / 100.0 / Math.pow(2, zoomSteps / 2.0)));
         FarZoom zoomed = new FarZoom(Math.min(zoomSteps, MAX_STEPS), round(x), round(y), round(z), round(Math.max(0, height)),
-                (int) Math.round(Math.toRadians(yaw) / step), (int) Math.round(Math.toRadians(pitch) / step), spreadSteps, zoomSteps);
+                (int) Math.round(Math.toRadians(yaw) / step), (int) Math.round(Math.toRadians(pitch) / step), spreadSteps, zoomSteps, zoomedAt);
         return zoomed.equals(previous) ? previous : zoomed;
     }
 
     /**
-     * True when {@code after} zooms in from unzoomed ({@code before} null) or zooms by another amount:
-     * the columns it wants change, so it is planned for at once. A view that only turns or moves is not.
+     * True when {@code after} zooms in from unzoomed ({@code before} null) or zooms by a whole half step
+     * of two (a factor of the square root of two) or more since the zoom last changed that much: the
+     * columns it wants change, so it is planned for at once. A view that only turns or moves is not,
+     * nor one whose zoom wavers by less, as a field of view settling or wobbling may: past a rounding
+     * edge that flips the rounded zoom every tick, and is planned for as a turn is.
      */
     static boolean rezoomed(@Nullable FarZoom before, FarZoom after) {
-        return before == null || before.viewSteps != after.viewSteps;
+        return before == null || before.zoomedAt != after.zoomedAt;
     }
 
     private static int round(double blocks) { return (int) Math.round(blocks / CAMERA) * CAMERA; }
@@ -237,13 +254,14 @@ final class FarZoom {
 
     @Override public boolean equals(Object other) {
         return other instanceof FarZoom zoomed && zoomed.zoomSteps == zoomSteps && zoomed.viewSteps == viewSteps && zoomed.x == x && zoomed.y == y && zoomed.z == z
-                && zoomed.height == height && zoomed.yaw == yaw && zoomed.pitch == pitch && zoomed.spreadSteps == spreadSteps;
+                && zoomed.height == height && zoomed.yaw == yaw && zoomed.pitch == pitch && zoomed.spreadSteps == spreadSteps
+                && Double.compare(zoomed.zoomedAt, zoomedAt) == 0;
     }
 
     @Override public int hashCode() {
         int hash = zoomSteps * 31 + viewSteps;
         for (int value : new int[] {x, y, z, height, yaw, pitch, spreadSteps}) hash = hash * 31 + value;
-        return hash;
+        return hash * 31 + Double.hashCode(zoomedAt);
     }
 
     @Override public String toString() { return String.format("%.1fx", zoom); }
