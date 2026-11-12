@@ -382,8 +382,14 @@ final class FarMesher {
         return nx | nz << 6;
     }
 
-    /** The finest level whose ground cover is evened out (see {@link #evenCover}); finer ones sit by the real blocks and keep theirs. */
-    static final int COVER_FROM = Integer.getInteger("earthplatform.far.coverFrom", 2);
+    /**
+     * The finest level whose ground cover is evened out (see {@link #evenCover}). Level 1, with
+     * its 2-block voxels, is included: it is the finest far level, and through a zoom it fills the
+     * screen out to tens of kilometres, where left as it came its cover read as a mosaic of flat
+     * squares. It does meet the real blocks at the edge of the render distance; 2 leaves it as it
+     * was, sitting by them with the cover of its own blocks.
+     */
+    static final int COVER_FROM = Integer.getInteger("earthplatform.far.coverFrom", 1);
 
     /**
      * Evens out what the ground shows from voxel to voxel. A far voxel takes the block found at

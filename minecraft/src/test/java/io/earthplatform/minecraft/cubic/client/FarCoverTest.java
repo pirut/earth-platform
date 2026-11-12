@@ -19,7 +19,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-/** {@link FarMesher#evenCover} on a coarse forest: leaves lying on stone, with a grassy clearing. */
+/** {@link FarMesher#evenCover} on a coarse forest: leaves lying on stone, with a grassy clearing; and on level 1, the finest far level. */
 class FarCoverTest {
     private static Map<TagKey<Block>, List<Holder<Block>>> previous;
 
@@ -53,5 +53,35 @@ class FarCoverTest {
         BlockState[] cover = FarMesher.evenCover(job, rows);
         BlockState shown = cover == null || cover[7 * 16 + 7] == null ? grass : cover[7 * 16 + 7];
         assertEquals(grass, shown, "the hidden stone under the leaves turned the clearing to stone");
+    }
+
+    @Test void levelOneIsEvenedByDefault() {
+        // Level 1 meets the real blocks at the render distance, so a change of this default is meant, not drifted into.
+        assertEquals(1, FarMesher.COVER_FROM);
+    }
+
+    @Test void aLoneSpeckOnLevelOneTakesItsNeighboursCoverAndTheGroundStaysAsItWas() {
+        BlockState stone = Blocks.STONE.defaultBlockState(), grass = Blocks.GRASS_BLOCK.defaultBlockState();
+        FarColumnMesh plain = new FarColumnMesh(levelOne(null, stone));
+        FarColumnMesh speck = new FarColumnMesh(levelOne(grass, stone));
+        int cell = 7 * 16 + 7;
+        assertNotNull(speck.cover, "level 1 should be evened out");
+        assertEquals(stone, speck.cover[cell], "the grass speck should show the stone around it");
+        assertEquals(stone, speck.cover[0]);
+        assertEquals(0, speck.groundRows[cell]);
+        assertArrayEquals(plain.groundRows, speck.groundRows);
+        assertArrayEquals(plain.tops, speck.tops);
+        assertArrayEquals(plain.surface, speck.surface);
+        assertArrayEquals(plain.normals, speck.normals);
+    }
+
+    /** A 16 by 16 level 1 column of {@code ground} one voxel deep, with {@code speck} (if any) at voxel 7, 7. */
+    private static FarMesher.Job levelOne(BlockState speck, BlockState ground) {
+        LevelChunkSection section = new LevelChunkSection(SurfacePacketFixtures.biomes());
+        for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++)
+            section.setBlockState(x, 0, z, speck != null && x == 7 && z == 7 ? speck : ground, false);
+        section.recalcBlockCounts();
+        return new FarMesher.Job(1, 1, 1, 0, 0, 0, 0, new LevelChunkSection[] {section}, new char[256], null, null,
+                null, false, new FarLooks(), new FarFaces(), null, new float[6], new float[4]);
     }
 }
