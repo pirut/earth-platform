@@ -67,6 +67,13 @@ public final class SodiumOptions implements ConfigEntryPoint {
                 .setImpact(OptionImpact.LOW)
                 .setBinding(EarthConfig.CLOUD_HEIGHT::set, () -> EarthConfig.CLOUD_HEIGHT.get() / 100 * 100)
                 .setStorageHandler(EarthConfig.CLIENT_SPEC::save);
+        var layered = builder.createBooleanOption(id("layered_clouds"))
+                .setName(name("layeredClouds"))
+                .setTooltip(tooltip("layeredClouds"))
+                .setDefaultValue(false)
+                .setImpact(OptionImpact.MEDIUM)
+                .setBinding(EarthConfig::setLayeredClouds, EarthConfig.LAYERED_CLOUDS::get)
+                .setStorageHandler(EarthConfig.CLIENT_SPEC::save);
         var downloads = builder.createBooleanOption(id("show_downloads"))
                 .setName(name("showDownloads"))
                 .setTooltip(tooltip("showDownloads"))
@@ -100,7 +107,8 @@ public final class SodiumOptions implements ConfigEntryPoint {
                                 .addOption(textured))
                         .addOptionGroup(builder.createOptionGroup()
                                 .setName(Component.translatable("earthplatform.sodium.sky"))
-                                .addOption(clouds))
+                                .addOption(clouds)
+                                .addOption(layered))
                         .addOptionGroup(builder.createOptionGroup()
                                 .setName(Component.translatable("earthplatform.sodium.general"))
                                 .addOption(downloads)

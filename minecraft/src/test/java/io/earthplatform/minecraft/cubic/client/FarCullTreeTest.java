@@ -159,6 +159,49 @@ class FarCullTreeTest {
         columns.add(box);
     }
 
+    /** Under the Earth's curve, a column the curve drops into view must never settle outside, as in a view from high up. */
+    @Test void curvedBranchesNeverHideAColumnTheCurveDropsIntoView() {
+        Random random = new Random(4471);
+        float curvature = EarthView.full(1);
+        for (int round = 0; round < 40; round++) {
+            Matrix4f view = new Matrix4f().perspective((float) Math.toRadians(30 + random.nextInt(60)), 16 / 9f, 0.05f, 400_000f)
+                    .rotateX((float) (random.nextDouble() * 0.6)).rotateY((float) (random.nextDouble() * 6.3));
+            FrustumIntersection frustum = new FrustumIntersection(view);
+            double camX = random.nextDouble() * 2e6 - 1e6, camY = 2000 + random.nextDouble() * 8000, camZ = random.nextDouble() * 2e6 - 1e6;
+            FarCullTree tree = new FarCullTree();
+            tree.clear(true);
+            List<AABB> columns = new ArrayList<>();
+            for (int tile = 0; tile < 9; tile++) {
+                int outer = tree.open();
+                double size = 65_536;
+                double x = camX + (tile % 3 - 1) * size, z = camZ + (tile / 3 - 1) * size;
+                add(tree, columns, random, x - x % size, z - z % size, size, 6);
+                tree.close(outer);
+            }
+            tree.classify(frustum, camX, camY, camZ, 0, curvature);
+            for (int i = 0; i < columns.size(); i++) {
+                AABB box = columns.get(i);
+                double drop = EarthView.drop(Math.max(Math.abs(box.minX - camX), Math.abs(box.maxX - camX)),
+                        Math.max(Math.abs(box.minZ - camZ), Math.abs(box.maxZ - camZ)), curvature);
+                boolean dropped = frustum.testAab((float) (box.minX - camX), (float) (box.minY - drop - camY), (float) (box.minZ - camZ),
+                        (float) (box.maxX - camX), (float) (box.maxY - camY), (float) (box.maxZ - camZ));
+                if (tree.state(i) == FarCullTree.OUTSIDE) assertFalse(dropped, "column " + i + " settled outside but its drop is in view");
+            }
+        }
+        // A tall far column above the top of a level view: flat it is out of sight, dropped by the curve it shows.
+        FarCullTree tree = new FarCullTree();
+        tree.clear(true);
+        int outer = tree.open();
+        AABB box = new AABB(-1000, 13_600, -60_000, 1000, 14_000, -58_000);
+        tree.own(0, box);
+        tree.close(outer);
+        FrustumIntersection level = new FrustumIntersection(new Matrix4f().perspective((float) Math.toRadians(20), 16 / 9f, 0.05f, 400_000f));
+        tree.classify(level, 0, 3000, 0, 0, 0);
+        assertEquals(FarCullTree.OUTSIDE, tree.state(0));
+        tree.classify(level, 0, 3000, 0, 0, curvature);
+        assertNotEquals(FarCullTree.OUTSIDE, tree.state(0));
+    }
+
     @Test void disabledLeavesEveryColumnToItsOwnTest() {
         FarCullTree tree = new FarCullTree();
         tree.clear(false);

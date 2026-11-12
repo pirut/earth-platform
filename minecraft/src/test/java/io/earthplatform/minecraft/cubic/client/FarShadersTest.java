@@ -287,6 +287,106 @@ class FarShadersTest {
         assertTrue(near.contains("if (length(earth_position.xz) >= earth_NearReach) discard;"), near);
     }
 
+    /**
+     * Far terrain under a pack never curves or hazes: with {@code far.curvature} and
+     * {@code far.atmosphere} both on, every pack shader is built exactly as with both off.
+     */
+    @Test void packShadersLeaveOutTheCurveAndTheHazeWithBothOn() throws Exception {
+        ClassLoader fresh = new FreshPackage(FarShadersTest.class.getClassLoader());
+        Class<?> shaders = withCurveAndHaze(() -> Class.forName(FarShaders.class.getName(), true, fresh));
+        Class<?> patchType = Class.forName(FarShaders.PackPatch.class.getName(), true, fresh);
+        // The flags took: far terrain without a pack curves and hazes.
+        assertTrue(((String) field(shaders, "VERTEX")).contains("#define EARTH_CURVATURE\n"));
+        assertTrue(((String) field(shaders, "FRAGMENT")).contains("#define EARTH_ATMOSPHERE\n"));
+        String version = "#version 330 core\n", jitter = "vec2 earth_taaOffset() { return vec2(0.0); }\n";
+        Object patch = call(shaders, "dhPatch", types(String.class, String.class, int.class), DH_VERTEX, DH_FRAGMENT, 3);
+        FarShaders.PackPatch own = FarShaders.dhPatch(DH_VERTEX, DH_FRAGMENT, 3);
+        java.util.List<String[]> built = new java.util.ArrayList<>();
+        for (String taa : new String[] {null, jitter}) {
+            built.add(new String[] {call(shaders, "packVertex", types(String.class, String.class), version, taa), FarShaders.packVertex(version, taa)});
+        }
+        built.add(new String[] {call(shaders, "dhVertex", types(String.class, patchType), version, patch), FarShaders.dhVertex(version, own)});
+        built.add(new String[] {version + field(shaders, "PACK_FALLBACK"), version + FarShaders.PACK_FALLBACK});
+        built.add(new String[] {call(shaders, "dhNearFragment", types(String.class), version), FarShaders.dhNearFragment(version)});
+        for (int fade : new int[] {FarGpu.NO_FADE, FarGpu.FADE_IN}) {
+            built.add(new String[] {call(shaders, "packPrepassFragment", types(String.class, String.class, int.class), version, PHOTON_NORMAL, fade),
+                    FarShaders.packPrepassFragment(version, PHOTON_NORMAL, fade)});
+            built.add(new String[] {call(shaders, "packShadeFragment", types(String.class, String.class, int.class), version, PHOTON_NORMAL, fade),
+                    FarShaders.packShadeFragment(version, PHOTON_NORMAL, fade)});
+            for (boolean ground : new boolean[] {false, true}) {
+                built.add(new String[] {call(shaders, "packNearFragment", types(String.class, String.class, int.class, boolean.class), version, PHOTON_NORMAL, fade, ground),
+                        FarShaders.packNearFragment(version, PHOTON_NORMAL, fade, ground)});
+                for (boolean ownDepth : new boolean[] {false, true}) {
+                    built.add(new String[] {call(shaders, "packFragment", types(String.class, String.class, boolean.class, int.class, boolean.class),
+                            version, PHOTON_NORMAL, ownDepth, fade, ground), FarShaders.packFragment(version, PHOTON_NORMAL, ownDepth, fade, ground)});
+                    built.add(new String[] {call(shaders, "dhFragment", types(String.class, patchType, boolean.class, int.class, boolean.class),
+                            version, patch, ownDepth, fade, ground), FarShaders.dhFragment(version, own, ownDepth, fade, ground)});
+                }
+            }
+        }
+        for (String[] source : built) {
+            assertTrue(!source[0].contains("#define EARTH_CURVATURE") && !source[0].contains("const float earth_Flat")
+                    && !source[0].contains("#define EARTH_ATMOSPHERE"), source[0]);
+            assertEquals(source[1], source[0]);
+        }
+    }
+
+    private static Class<?>[] types(Class<?>... types) { return types; }
+
+    private static Object field(Class<?> type, String name) throws ReflectiveOperationException {
+        java.lang.reflect.Field field = type.getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T call(Class<?> type, String name, Class<?>[] types, Object... arguments) throws ReflectiveOperationException {
+        java.lang.reflect.Method method = type.getDeclaredMethod(name, types);
+        method.setAccessible(true);
+        return (T) method.invoke(null, arguments);
+    }
+
+    /** Runs {@code load} with {@code far.curvature} and {@code far.atmosphere} on, as they were read when a fresh FarShaders initialises. */
+    private static <T> T withCurveAndHaze(java.util.concurrent.Callable<T> load) throws Exception {
+        String[] flags = {"earthplatform.far.curvature", "earthplatform.far.atmosphere"};
+        String[] was = new String[flags.length];
+        for (int i = 0; i < flags.length; i++) was[i] = System.setProperty(flags[i], "true");
+        try { return load.call(); }
+        finally {
+            for (int i = 0; i < flags.length; i++) {
+                if (was[i] == null) System.clearProperty(flags[i]);
+                else System.setProperty(flags[i], was[i]);
+            }
+        }
+    }
+
+    /**
+     * Defines this package's classes afresh, so their flags are read again; everything else comes
+     * from the test's own loader. The whole package, as its classes reach each other's package-private parts.
+     */
+    private static final class FreshPackage extends ClassLoader {
+        private static final String PACKAGE = FarShaders.class.getPackageName() + ".";
+
+        FreshPackage(ClassLoader parent) { super(parent); }
+
+        @Override protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            if (!name.startsWith(PACKAGE) || name.indexOf('.', PACKAGE.length()) >= 0) return super.loadClass(name, resolve);
+            synchronized (getClassLoadingLock(name)) {
+                Class<?> loaded = findLoadedClass(name);
+                if (loaded != null) return loaded;
+                try (java.io.InputStream in = getParent().getResourceAsStream(name.replace('.', '/') + ".class")) {
+                    if (in == null) return super.loadClass(name, resolve);
+                    byte[] bytes = in.readAllBytes();
+                    Class<?> defined = defineClass(name, bytes, 0, bytes.length);
+                    if (resolve) resolveClass(defined);
+                    return defined;
+                } catch (java.io.IOException failure) {
+                    throw new ClassNotFoundException(name, failure);
+                }
+            }
+        }
+    }
+
     private static int count(String text, String part) {
         int count = 0;
         for (int at = text.indexOf(part); at >= 0; at = text.indexOf(part, at + 1)) count++;

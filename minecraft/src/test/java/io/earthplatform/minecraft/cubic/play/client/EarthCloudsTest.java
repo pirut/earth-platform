@@ -8,6 +8,19 @@ import static org.junit.jupiter.api.Assertions.*;
 class EarthCloudsTest {
     private static final int GRID = EarthClouds.GRID;
 
+    /**
+     * Far terrain's own depth runs only while the layered clouds actually draw: never before they
+     * have, and not for long after they stop, when their shader fails or clouds are switched off.
+     */
+    @Test void layeredCloudsCountAsDrawingOnlyForAFewPassesAfterTheyDrew() {
+        assertFalse(EarthClouds.drewLately(false, 0, 0), "never drawn");
+        assertTrue(EarthClouds.drewLately(true, 41, 41));
+        assertTrue(EarthClouds.drewLately(true, 41, 42), "drawn last pass");
+        assertTrue(EarthClouds.drewLately(true, 41, 41 + io.earthplatform.minecraft.cubic.client.LevelPasses.TRACKED), "a VR frame's passes");
+        assertFalse(EarthClouds.drewLately(true, 41, 42 + io.earthplatform.minecraft.cubic.client.LevelPasses.TRACKED), "stopped drawing");
+        assertTrue(EarthClouds.drewLately(true, Integer.MAX_VALUE, Integer.MIN_VALUE + 2), "across the pass count wrapping");
+    }
+
     /** The cells as before columns off the grid were skipped: every column worked out in full. */
     private static void raiseInFull(int[] high, double left, double near, double step, int x0, int z0, int width, int top) {
         int i0 = Math.max(0, (int) Math.floor((x0 - left) / step)), i1 = Math.min(GRID - 1, (int) Math.floor((x0 + width - left) / step));

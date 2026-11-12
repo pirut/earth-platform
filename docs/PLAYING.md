@@ -83,13 +83,16 @@ Mods → Earth Platform → Config, or the files in `config/`.
 | `showDownloadStatus` | client | on | The small note while Earth data downloads or can't be reached |
 | `preselectEarth` | client | on | Create World starts with the Earth world type |
 | `cloudHeight` | client | 2500 | Cloud height in meters; 0 gives vanilla clouds |
+| `layeredClouds` | client | off | Experimental: three cloud banks with their own wind and regional weather instead of the single deck. Not drawn under a shader pack. Changes at once (also on Sodium's Earth page). See [FLIGHT-RENDERING.md](FLIGHT-RENDERING.md) |
+| `cloudQuality` | client | High | With `layeredClouds`: Balanced, High or Cinematic. Higher costs more GPU time. Changes at once |
+| `cloudOpacity` | client | 0.72 (0.2 to 0.98) | With `layeredClouds`: the most the clouds may hide, so some of the view stays when you fly inside a bank. Changes at once |
 | `defaultHome` | common | Yosemite Valley | Where new worlds start when nobody picks: a place id from `/earth places`, or `latitude,longitude` |
 | `satelliteImagery` | common | off | Ground colors from EOX satellite imagery for new worlds (also a toggle on the Customize screen) |
 | `offline` | common | off | Never download; only places already cached generate. Restart to apply |
 | `cacheLimitGb` | common | 8 | Size limit for downloaded data in GB (0 for no limit); the least recently used files go first, when the game starts and as the cache grows |
 | `anyoneCanTravel` | common | off | Let every player use `/earth goto` on servers |
 
-Command-line `-Dearthplatform.far.detail`, `-Dearthplatform.far.textured`, `-Dearthplatform.earth.offline` and `-Dearthplatform.earth.imagery` still win over the files. The other developer flags are listed in [FLAGS.md](FLAGS.md).
+Command-line `-Dearthplatform.far.detail`, `-Dearthplatform.far.textured`, `-Dearthplatform.clouds.layered`, `-Dearthplatform.clouds.quality`, `-Dearthplatform.clouds.opacity`, `-Dearthplatform.earth.offline` and `-Dearthplatform.earth.imagery` still win over the files. The other developer flags are listed in [FLAGS.md](FLAGS.md).
 
 ## The Nether, the End and other dimensions
 

@@ -31,7 +31,7 @@ There are no cities: built-up land becomes the wild land around it. Vanilla vill
 
 The first visit to a place downloads its terrain, so you need an internet connection. Places you have been stay on your computer (up to 8 GB by default) and work offline afterwards.
 
-More: [Install guide](docs/INSTALL.md) (shaders, Macs, servers) · [Playing on the Earth](docs/PLAYING.md) (commands and settings) · [FAQ and troubleshooting](docs/FAQ.md) · [Changelog](CHANGELOG.md)
+More: [Install guide](docs/INSTALL.md) (shaders, Macs, servers) · [Playing on the Earth](docs/PLAYING.md) (commands and settings) · [FAQ and troubleshooting](docs/FAQ.md) · [Flying and far terrain](docs/FLIGHT-RENDERING.md) · [Changelog](CHANGELOG.md)
 
 ## Credits
 

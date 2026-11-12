@@ -53,7 +53,7 @@ Earth Platform is tested with this set. Iris must be 1.8.14 or a later 1.8 relea
 
 Choose Photon under Options → Video Settings → Shader Packs. Press **K** to turn shaders off and on.
 
-Packs that ship Voxy support (Photon does) light the far terrain the same way as nearby blocks. Other packs light near blocks normally, but far terrain may look flat or too bright.
+Packs that ship Voxy support (Photon does) light the far terrain the same way as nearby blocks. Other packs light near blocks normally, but far terrain may look flat or too bright. Suggested Photon settings for the Earth are in [Flying and far terrain](FLIGHT-RENDERING.md#recommended-photon-settings).
 
 ### On a Mac
 
