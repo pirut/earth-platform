@@ -117,14 +117,16 @@ final class ColumnSurveys {
 
     /**
      * 1 when a cube lies under at least {@link #COVER} blocks of rock below the lowest ground of its own and the four
-     * next cube columns, 0 when not, -1 while that ground is being worked out.
+     * next cube columns, 0 when not, -1 while that ground is being worked out. Ground that can't be had (a failed
+     * survey, in the cube's column or beside it) counts as nothing buried: the cube is made.
      */
     int buried(int x, int y, int z, int cap) {
         if (allBuried) return 0;
         if (!kept.isEmpty() && kept.contains(CubeKey.pack(x, y, z)) || !opened.isEmpty() && opened.contains(CubeKey.pack(x, y, z))) return 0;
         int low = lowAround(x, z, cap);
         if (low == UNKNOWN_LOW) return -1;
-        return (y << 4) + 15 < low - COVER ? 1 : 0;
+        // Long arithmetic: a failed survey's low is Integer.MIN_VALUE, which must stay far below every cube, not wrap round.
+        return (y << 4) + 15 < (long) low - COVER ? 1 : 0;
     }
 
     /**
