@@ -122,6 +122,10 @@ public final class ServerCubeWorld extends CubeWorld {
     /** With {@link SurfaceFlight}, the lowest and highest ground or water of cube columns, from the workers too. */
     private final Long2IntOpenHashMap surfaceLows = new Long2IntOpenHashMap(), surfaceHighs = new Long2IntOpenHashMap();
     private final LongOpenHashSet lowsPending = new LongOpenHashSet();
+    /** Where the saved buried cubes start in a {@link ColumnSurvey}. */
+    private static final int SURVEY_SAVED = ColumnSurvey.saved(SurfaceFlight.ENABLED);
+    /** New column surveys {@link #lowest} may still queue for the player being served; see {@link SurfaceFlight#surveyRoom}. */
+    private int surveyRoom = Integer.MAX_VALUE;
     private final ConcurrentLinkedQueue<long[]> lowsReady = new ConcurrentLinkedQueue<>();
     /** Saved buried cubes near players, such as a mine: they come back from the save, never as a stand-in that would fill them in. */
     private final LongOpenHashSet kept = new LongOpenHashSet();
@@ -160,7 +164,7 @@ public final class ServerCubeWorld extends CubeWorld {
         boolean deep;
         /** Flying over the ground (see {@link SurfaceFlight}): rock under it is left out, even near. */
         boolean flying;
-        /** Ground or water where the player is, with {@link SurfaceFlight} on. */
+        /** Highest ground or water of the cube column the player is in, or was in last while this one is surveyed; with {@link SurfaceFlight} on. */
         int ground = Integer.MIN_VALUE;
         /** Surface cubes sent while flying; replaced, never changed, so workers may read it. */
         LongSet surface = LongSets.EMPTY_SET;
@@ -532,7 +536,7 @@ public final class ServerCubeWorld extends CubeWorld {
             lowsPending.remove(low[0]);
             lows.put(low[0], (int) low[1]);
             if (SurfaceFlight.ENABLED) { surfaceLows.put(low[0], (int) low[2]); surfaceHighs.put(low[0], (int) low[3]); }
-            for (int i = 4; i < low.length; i++) kept.add(low[i]);
+            for (int i = SURVEY_SAVED; i < low.length; i++) kept.add(low[i]);
         }
         far.nearWaiting(!pending.isEmpty());
         int h = horizontalRadius(), v = Cubic.VERTICAL_RADIUS;
@@ -558,9 +562,13 @@ public final class ServerCubeWorld extends CubeWorld {
                 if (ticks % 10 == 0) unsend(watcher, 1, 1, cx, cy, cz, true);
                 continue;
             }
+            // The cubes around a flyer are asked for before the columns its surface needs are surveyed, a few at a time.
+            surveyRoom = SurfaceFlight.surveyRoom(watcher.flying, true, lowsPending.size());
             requestAround(watcher, cx, cz, share);
+            surveyRoom = SurfaceFlight.surveyRoom(watcher.flying, false, lowsPending.size());
             send(watcher, cx, cz);
             if (ticks % 10 == 0) unsend(watcher, h + 1, v + 1, cx, cy, cz, false);
+            surveyRoom = Integer.MAX_VALUE;
         }
         flushChanges();
         far.tick(server.players());
@@ -613,7 +621,9 @@ public final class ServerCubeWorld extends CubeWorld {
     /**
      * What the player looks at is made and sent first; see {@link ViewOrder}. A flying player's surface cubes come
      * after the cubes right around them, worked out again when they move two cubes, turn, or every ten ticks. Column
-     * bounds come from the workers; until a column's are known its surface waits.
+     * bounds come from the workers; until a column's are known its surface waits. Only the player's own column is
+     * asked for here, as its cubes come first and are made from the same column data; the rest are asked for as the
+     * band is sent, nearest first, a few at a time (see {@link SurfaceFlight#surveyRoom}).
      */
     private void plan(Watcher watcher, int h, int v) {
         var player = watcher.player;
@@ -621,6 +631,10 @@ public final class ServerCubeWorld extends CubeWorld {
         int sector = ViewOrder.sector(player.getYRot());
         CubeOffsets offsets = CubeOffsets.of(h, v, sector);
         watcher.plan.around(offsets, cx, cy, cz);
+        if (SurfaceFlight.ENABLED && !watcher.deep) {
+            lowest(cx, cz);
+            watcher.ground = SurfaceFlight.ground(surfaceBounds(cx, cz), watcher.ground);
+        }
         watcher.flying = SurfaceFlight.active(player.getY(), watcher.ground, watcher.deep);
         if (!watcher.flying) {
             if (watcher.planOffsets != null) land(watcher);
@@ -631,16 +645,15 @@ public final class ServerCubeWorld extends CubeWorld {
                 && Math.abs(cx - watcher.planX) < 2 && Math.abs(cy - watcher.planY) < 2 && Math.abs(cz - watcher.planZ) < 2) return;
         watcher.planX = cx; watcher.planY = cy; watcher.planZ = cz; watcher.planSector = sector; watcher.planOffsets = offsets;
         LongOpenHashSet surface = new LongOpenHashSet(Math.max(16, watcher.surface.size()));
-        int reach = Math.min(h, SurfaceFlight.REACH / 16 + 1);
-        for (int dz = -reach; dz <= reach; dz++) for (int dx = -reach; dx <= reach; dx++) {
-            if (!CubeOffsets.within(dx, 0, dz, h, 0)) continue;
-            int x = cx + dx, z = cz + dz;
-            long column = CubeKey.column(x, z);
-            if (lowest(x, z) == UNKNOWN_LOW || !surfaceHighs.containsKey(column)) continue;
-            SurfaceFlight.column(x, z, surfaceLows.get(column), surfaceHighs.get(column), player.getX(), player.getY(), player.getZ(), surface::add);
-        }
+        SurfaceFlight.surface(cx, cz, h, this::surfaceBounds, player.getX(), player.getY(), player.getZ(), surface::add);
         watcher.surface = surface;
         watcher.plan.surface(surface, player.getX(), player.getY(), player.getZ(), player.getYRot());
+    }
+
+    /** Server thread. A column's surface bounds from the workers, or {@link SurfaceFlight#UNKNOWN}; never asks for them. */
+    private long surfaceBounds(int x, int z) {
+        long column = CubeKey.column(x, z);
+        return surfaceHighs.containsKey(column) ? SurfaceFlight.bounds(surfaceLows.get(column), surfaceHighs.get(column)) : SurfaceFlight.UNKNOWN;
     }
 
     private static void land(Watcher watcher) {
@@ -724,23 +737,9 @@ public final class ServerCubeWorld extends CubeWorld {
     private int lowest(int x, int z) {
         long column = CubeKey.column(x, z);
         int low = lows.get(column);
-        if (low == UNKNOWN_LOW && !closed && lowsPending.add(column)) {
-            workers.execute(() -> {
-                LongArrayList result = new LongArrayList();
-                result.add(column);
-                // Ground that can't be had yet counts as nothing buried there: its cubes are all made, as before.
-                try {
-                    result.add(generator.lowestGround(x, z));
-                    result.add(SurfaceFlight.ENABLED ? generator.lowestSurface(x, z) : Integer.MIN_VALUE);
-                    result.add(SurfaceFlight.ENABLED ? generator.highestSurface(x, z) : Integer.MIN_VALUE);
-                    result.addAll(storage.savedIn(x, x, z, z));
-                }
-                catch (IOException | RuntimeException failure) {
-                    result.size(1);
-                    result.add(Integer.MIN_VALUE); result.add(Integer.MIN_VALUE); result.add(Integer.MIN_VALUE);
-                }
-                lowsReady.add(result.toLongArray());
-            });
+        if (low == UNKNOWN_LOW && !closed && surveyRoom > 0 && lowsPending.add(column)) {
+            surveyRoom--;
+            workers.execute(() -> lowsReady.add(ColumnSurvey.of(column, x, z, generator, storage, SurfaceFlight.ENABLED)));
         }
         return low;
     }
@@ -752,11 +751,7 @@ public final class ServerCubeWorld extends CubeWorld {
     private boolean deep(Watcher watcher) {
         if (ALL_BURIED) return true;
         int ground;
-        try {
-            ground = generator.surfaceY(watcher.player.getBlockX(), watcher.player.getBlockZ());
-            // The same cached ground as surfaceY, not more Earth data.
-            if (SurfaceFlight.ENABLED) watcher.ground = Math.max(ground, generator.waterY(watcher.player.getBlockX(), watcher.player.getBlockZ()));
-        }
+        try { ground = generator.surfaceY(watcher.player.getBlockX(), watcher.player.getBlockZ()); }
         catch (RuntimeException missing) { return watcher.deep; }
         return watcher.player.getBlockY() < ground - (watcher.deep ? COVER / 2 : COVER);
     }

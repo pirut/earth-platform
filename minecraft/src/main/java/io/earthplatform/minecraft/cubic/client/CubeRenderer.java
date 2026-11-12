@@ -269,14 +269,14 @@ public final class CubeRenderer {
     private void firstTops(int cubeX, int cubeZ, int[] tops) {
         var player = Minecraft.getInstance().player;
         if (player == null) return;
-        int cy = player.getBlockY() >> 4, reach = Cubic.VERTICAL_RADIUS + 1;
-        remeshLit(cubeX, cubeZ, cy - reach, cy + reach);
-        int low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
-        for (int top : tops) {
-            if (top < ClientCubeWorld.MIN_Y || top > ClientCubeWorld.MAX_Y) continue;
-            low = Math.min(low, top); high = Math.max(high, top);
-        }
-        if (low <= high) remeshLit(cubeX, cubeZ, (low >> 4) - SurfaceFlight.BELOW, (high >> 4) + SurfaceFlight.ABOVE);
+        int cy = player.getBlockY() >> 4, reach = Cubic.VERTICAL_RADIUS + 1, low = cy - reach, high = cy + reach;
+        remeshLit(cubeX, cubeZ, low, high);
+        long rows = SurfaceFlight.topRows(tops);
+        if (rows == SurfaceFlight.UNKNOWN) return;
+        // The rows the tops shade outside the band, each once.
+        int from = SurfaceFlight.low(rows), to = SurfaceFlight.high(rows);
+        remeshLit(cubeX, cubeZ, from, Math.min(to, low - 1));
+        remeshLit(cubeX, cubeZ, Math.max(from, high + 1), to);
     }
 
     private void remeshLit(int cubeX, int cubeZ, int low, int high) {

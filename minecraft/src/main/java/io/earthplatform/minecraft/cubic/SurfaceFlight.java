@@ -13,13 +13,28 @@ public final class SurfaceFlight {
     public static final boolean ENABLED = Boolean.getBoolean("earthplatform.cubic.flightSurface");
     /** Blocks above the ground where flight starts. */
     public static final int START_HEIGHT = 48;
-    /** How far off surface cubes are sent; the far terrain shows the ground beyond. */
+    /**
+     * How far off surface cubes are sent, in a straight line. Across, they go no further than the band of cubes
+     * around the player (the server's view distance, at most {@link Cubic#MAX_HORIZONTAL_RADIUS} cubes, 192 blocks):
+     * the client draws far terrain past that reach in their place (see {@code FarLod.nearReach}), so surface cubes
+     * there would be drawn twice, and would mean four times the columns to survey, make and hold. This limit binds a
+     * player more than about 330 blocks over the ground.
+     */
     public static final int REACH = 384;
     /** Cubes kept under a column's lowest surface, for lighting and meshing, and over its highest, for trees. */
     public static final int BELOW = 1, ABOVE = 6;
     private static final int MAX_COLUMN_CUBES = 16;
+    /** Most rows {@link #topRows} gives. */
+    static final int TOP_ROWS = 2 * MAX_COLUMN_CUBES;
     /** Cubes of the band around the player that come before the surface. */
     static final int FIRST = 64;
+    /**
+     * Column surveys a flying player may have in flight on the cube workers. They share the workers with the cubes
+     * players stand in, so a flyer entering new ground never queues hundreds of them ahead of those cubes.
+     */
+    static final int SURVEYS = 16;
+    /** A column's bounds not worked out yet; see {@link #bounds}. */
+    public static final long UNKNOWN = Long.MIN_VALUE;
 
     private SurfaceFlight() {}
 
@@ -28,6 +43,60 @@ public final class SurfaceFlight {
 
     static boolean flying(double y, int surfaceY, boolean underground) {
         return !underground && surfaceY != Integer.MIN_VALUE && y - surfaceY >= START_HEIGHT;
+    }
+
+    /**
+     * New column surveys a player may queue now, with {@code inFlight} already queued; unbounded on foot, as before.
+     * None for a flyer while its cubes are being asked for ({@code asking}): those go to the workers first, and a cube
+     * near it over a column not surveyed yet is asked for as on foot.
+     */
+    static int surveyRoom(boolean flying, boolean asking, int inFlight) {
+        if (!flying) return Integer.MAX_VALUE;
+        return asking ? 0 : Math.max(0, SURVEYS - inFlight);
+    }
+
+    /** A column's lowest and highest ground or water, packed. */
+    public static long bounds(int low, int high) { return (long) low << 32 | high & 0xFFFFFFFFL; }
+    public static int low(long bounds) { return (int) (bounds >> 32); }
+    public static int high(long bounds) { return (int) bounds; }
+
+    /**
+     * The ground or water a player flies over, from the bounds of the cube column they are in (its highest, so a
+     * cliff in it counts). While that column is not worked out yet, as when flying into new ground, the last
+     * column's stands, so the player does not land and take off again on the way.
+     */
+    static int ground(long bounds, int last) { return bounds == UNKNOWN ? last : high(bounds); }
+
+    /** Known column bounds, or {@link #UNKNOWN}; never asks for them. */
+    @FunctionalInterface interface Bounds { long of(int x, int z); }
+
+    /**
+     * The surface cubes of the cube columns within {@code h} cubes across of the one at {@code cx, cz} whose bounds
+     * are known, as {@link #column} picks them; see {@link #REACH}.
+     */
+    static void surface(int cx, int cz, int h, Bounds known, double eyeX, double eyeY, double eyeZ, LongConsumer out) {
+        for (int dz = -h; dz <= h; dz++) for (int dx = -h; dx <= h; dx++) {
+            if (!CubeOffsets.within(dx, 0, dz, h, 0)) continue;
+            long bounds = known.of(cx + dx, cz + dz);
+            if (bounds != UNKNOWN) column(cx + dx, cz + dz, low(bounds), high(bounds), eyeX, eyeY, eyeZ, out);
+        }
+    }
+
+    /**
+     * Client: the cube rows a column's tops shade, from the one under its lowest top up to its highest, for remeshing
+     * the cubes beside it a flying player holds; packed as {@link #bounds}, or {@link #UNKNOWN} with no top in the
+     * world. At most {@link #TOP_ROWS} rows: surface cubes come only in columns {@link #MAX_COLUMN_CUBES} rows tall,
+     * so a build high over the ground does not make every row between them be looked at.
+     */
+    public static long topRows(int[] tops) {
+        int low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
+        for (int top : tops) {
+            if (top < CubeWorld.MIN_Y || top > CubeWorld.MAX_Y) continue;
+            low = Math.min(low, top); high = Math.max(high, top);
+        }
+        if (low > high) return UNKNOWN;
+        int from = Math.max(CubeWorld.MIN_Y >> 4, (low >> 4) - BELOW);
+        return bounds(from, Math.min(high >> 4, from + TOP_ROWS - 1));
     }
 
     /**
