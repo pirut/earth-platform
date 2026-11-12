@@ -97,6 +97,29 @@ class FarZoomViewTest {
         assertFalse(flat.refined(4, 0, 351, ground));
     }
 
+    /**
+     * The Earth's curve at a tenth of a block to the metre, a camera 4,512 blocks up looking 45.35 degrees
+     * up at level 2 ground between 8,496 and 8,500 blocks, 3,936 off: its flat gap of 3,984 blocks is past
+     * the 3,982 a 6x view reaches, but the curve draws it about 2.2 blocks lower, on the screen and inside the reach.
+     */
+    @Test void earthCurveBringingGroundAboveTheCameraInsideTheReachKeepsItsColumn() {
+        double aspect = 16 / 9.0, spread = SPREAD;
+        float curve = EarthView.curvature(4512, 0.1, false);
+        FarZoom curved = FarZoom.at(6, spread, aspect, false, curve, 0, 4512, 0, 100, 0, -45.35F, null);
+        FarZoom flat = FarZoom.at(6, spread, aspect, false, 0, 0, 4512, 0, 100, 0, -45.35F, null);
+        assertNotNull(curved);
+        assertNotNull(flat);
+        assertEquals(Math.pow(2, 2.5), curved.zoom, 1e-9);
+        FarZoom.Box ground = box(8496, 8500);
+        double reach = Far.hole(2) * Far.width(2) * curved.zoom, drop = EarthView.drop(32, 3936, curve);
+        assertEquals(3982.43, reach, 0.01);
+        assertTrue(8496 - drop - 4512 < reach && 8496 - 4512 > reach, "its flat gap is past the reach, its drawn gap inside");
+        assertTrue(new View(0, 4512, 0, 0, -45.35F, 0, 0, curved.zoom, spread, aspect).sees(32, 8498 - drop, 3936), "drawn there it is on the screen");
+        assertTrue(curved.refined(2, 0, 61, ground));
+        // On flat ground it is where it lies, past the reach.
+        assertFalse(flat.refined(2, 0, 61, ground));
+    }
+
     @Test void bobbingAndTheEarthCurveAreWhatMakeTwoViewsDiffer() {
         double zoom = 64, curve = EarthView.full(1.0);
         FarZoom view = FarZoom.at(zoom, SPREAD, WIDE, false, 0, 0, 1024, 0, 100, 0, 0, null);
@@ -111,7 +134,10 @@ class FarZoomViewTest {
         assertNotEquals(view.limited(2), bobbed.limited(2));
     }
 
-    /** The walking bob counts while it can be tipping the view, which it does for a few seconds after the player stops. */
+    /**
+     * The walking bob counts while it can be tipping the view: its own dies away in about a third of a
+     * second after the player stops, and the view holds the wider sides for about a second more.
+     */
     @Test void bobbingCountsOnlyWhileTheOptionIsOnAndThePlayerBobs() {
         assertTrue(FarZoom.bobs(true, 0.1F, 0.1F));
         assertTrue(FarZoom.bobs(true, 0, 0.05F), "the view lerps from the last tick's");
@@ -121,6 +147,36 @@ class FarZoomViewTest {
         float bob = 0.1F;
         for (int tick = 0; tick < 8; tick++) bob *= 0.6F;
         assertFalse(FarZoom.bobs(true, bob, bob));
+    }
+
+    @Test void bobbingHoldsThroughAJumpAndEndsAfterAQuietSecond() {
+        // Sprint-jumping: 0.1 on the ground, then dying away by 0.6 a tick for a 12 tick jump, then back.
+        int hold = 0;
+        float bob = 0.1F;
+        hold = FarZoom.bobHold(true, bob, bob, hold);
+        assertEquals(FarZoom.BOB_HOLD, hold);
+        boolean quiet = false;
+        for (int tick = 0; tick < 12; tick++) {
+            float last = bob;
+            bob *= 0.6F;
+            hold = FarZoom.bobHold(true, bob, last, hold);
+            assertTrue(hold > 0, "still counted as bobbing " + tick + " ticks into the jump");
+            quiet |= !FarZoom.bobs(true, bob, last);
+        }
+        assertTrue(quiet, "the bob itself was under the least that counts for part of the jump");
+        // Landing sets it back.
+        assertEquals(FarZoom.BOB_HOLD, FarZoom.bobHold(true, 0.04F, bob, hold));
+        // Standing still, it counts down by one a tick and is off after a second of quiet.
+        hold = FarZoom.BOB_HOLD;
+        for (int tick = 1; tick < FarZoom.BOB_HOLD; tick++) {
+            hold = FarZoom.bobHold(true, 0, 0, hold);
+            assertTrue(hold > 0, "after " + tick + " quiet ticks");
+        }
+        assertEquals(0, FarZoom.bobHold(true, 0, 0, hold), "off after " + FarZoom.BOB_HOLD + " quiet ticks");
+        assertEquals(0, FarZoom.bobHold(true, 0, 0, 0));
+        // With the option off it never counts, whatever was held.
+        assertEquals(0, FarZoom.bobHold(false, 0.1F, 0.1F, FarZoom.BOB_HOLD));
+        assertEquals(0, FarZoom.bobHold(false, 0, 0, FarZoom.BOB_HOLD));
     }
 
     /**
@@ -166,8 +222,10 @@ class FarZoomViewTest {
                 // Ground at that height, within a voxel or two: the point lies inside the column's box.
                 FarZoom.Box ground = box(lies - 2 * Far.voxel(level), lies + 2 * Far.voxel(level));
                 double ox = (cx + 0.5) * width - zoomed.x, oz = (cz + 0.5) * width - zoomed.z;
-                // Only where the distance alone has the level split, as refined asks first.
-                if (Math.max(Math.hypot(ox, oz), Math.max(0, Math.max(ground.lowY() - zoomed.y, zoomed.y - ground.highY()))) > reach) continue;
+                // Only where the distance alone has the level split, as refined asks first: ground above
+                // the camera as low as the curve can draw it, as it counts.
+                double gap = Math.max(0, Math.max(ground.lowY() - zoomed.drop(cx, cz, width) - zoomed.y, zoomed.y - ground.highY()));
+                if (Math.max(Math.hypot(ox, oz), gap) > reach) continue;
                 assertTrue(zoomed.refined(level, cx, cz, ground), "view " + view + " point " + point + " left out");
                 checked++;
             }

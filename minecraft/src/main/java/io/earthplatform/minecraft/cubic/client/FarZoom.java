@@ -62,6 +62,12 @@ final class FarZoom {
      * rounding leaves spare, even at the narrowest view.
      */
     private static final float BOB_MIN = 0.005F;
+    /**
+     * The ticks the view keeps counting as bobbing after the bob last was above {@link #BOB_MIN}, about a
+     * second. A jump's bob dies away within six ticks and comes back on landing, which would change the
+     * view, and walk it again, twice a jump; a longer hold only widens the view.
+     */
+    static final int BOB_HOLD = 20;
     /** The factor the Earth's curve is rounded up by, so that it is not walked again as the camera goes north or south. */
     private static final double CURVE_STEP = 1.25;
 
@@ -76,7 +82,7 @@ final class FarZoom {
     private final int yaw, pitch, spreadSteps, zoomSteps, aspectSteps;
     /** The view's own zoom in half steps of two, which the cone follows; {@link #zoomSteps} may count less of it (see {@link #limited}). */
     private final int viewSteps;
-    /** Whether the game's view bobbing can be turning the view (see {@link #bobs}). */
+    /** Whether the game's view bobbing can be turning the view (see {@link #bobHold}). */
     private final boolean bobbing;
     /** The drop per square block the view is culled for (see {@link EarthView#drop}), rounded up, or 0 on flat ground. */
     private final float curvature;
@@ -157,10 +163,20 @@ final class FarZoom {
     }
 
     /**
-     * Whether the game's view bobbing can be turning the view: the option is on and the player's walking
-     * bob, this tick's or last's (the view lerps between them), is more than {@link #BOB_MIN}.
+     * Whether the game's view bobbing can be turning the view right now: the option is on and the
+     * player's walking bob, this tick's or last's (the view lerps between them), is more than
+     * {@link #BOB_MIN}, a twentieth of its most. The view counts as bobbing for a while longer (see {@link #bobHold}).
      */
     static boolean bobs(boolean option, float bob, float previousBob) { return option && Math.max(bob, previousBob) > BOB_MIN; }
+
+    /**
+     * The ticks left that the view counts as bobbing, after a tick with this bob and {@code hold} left
+     * before it: {@link #BOB_HOLD} while the bob is above the least that counts (see {@link #bobs}),
+     * one fewer each quiet tick, and 0 whenever the option is off. The view bobs while this is above 0.
+     */
+    static int bobHold(boolean option, float bob, float previousBob, int hold) {
+        return bobs(option, bob, previousBob) ? BOB_HOLD : option ? Math.max(0, hold - 1) : 0;
+    }
 
     /**
      * The zoomed view, or null unzoomed. {@code zoom} is how much narrower the view is than the game's
@@ -172,7 +188,7 @@ final class FarZoom {
      * where it can show inside the view's four sides, not anywhere in the cone round its corners,
      * which on a wide screen took in about twice the ground above and below the view; 0 counts the
      * cone alone. {@code bobbing} is whether the game's view bobbing can be turning the view (see
-     * {@link #bobs}), and {@code curvature} the drop per square block the view is culled for, or 0
+     * {@link #bobHold}), and {@code curvature} the drop per square block the view is culled for, or 0
      * on flat ground (see {@link EarthView#drop}).
      */
     @Nullable static FarZoom at(double zoom, double spread, double aspect, boolean bobbing, float curvature, double x, double y, double z,
@@ -209,9 +225,11 @@ final class FarZoom {
         // To the column's middle: round the player, a column whose middle is a hole's width off is the
         // last one its level splits, so unzoomed this splits none the player's own levels do not.
         // A column held is as far above or below as its own ground, not the ground under the camera:
-        // up high, a mountain top near the camera is near however deep the valley under it.
+        // up high, a mountain top near the camera is near however deep the valley under it. Under the
+        // Earth's curve ground above the camera is drawn as low as it can drop, so it is that near;
+        // ground below only moves farther.
         double ox = (cx + 0.5) * width - x, oz = (cz + 0.5) * width - z;
-        double vertical = column == null ? height : Math.max(0, Math.max(column.lowY() - y, y - column.highY()));
+        double vertical = column == null ? height : Math.max(0, Math.max(column.lowY() - drop(cx, cz, width) - y, y - column.highY()));
         if (Math.max(Math.sqrt(ox * ox + oz * oz), vertical) > Far.hole(level) * width * zoom) return false;
         if (column == null) return true;
         return inView(cx, cz, width, column.lowY(), column.highY())
@@ -296,11 +314,18 @@ final class FarZoom {
         }
     }
 
+    /**
+     * How far below where it lies the ground of a column can be drawn under the Earth's curve, as far
+     * as its farthest corner drops, as the renderer culls it (see FarRenderer#view); 0 on flat ground.
+     */
+    double drop(int cx, int cz, int width) {
+        return EarthView.drop((double) cx * width, (double) (cx + 1) * width, (double) cz * width, (double) (cz + 1) * width, x, z, CAMERA, curvature);
+    }
+
     /** Whether a column's box, between block heights {@code bottom} and {@code top}, can show in the zoomed view. */
     private boolean inView(int cx, int cz, int width, double bottom, double top) {
-        // Under the Earth's curve the ground is drawn as far below where it lies as its farthest corner
-        // drops, so the box reaches down that far, as the renderer culls it (see FarRenderer#view).
-        if (curvature > 0) bottom -= EarthView.drop((double) cx * width, (double) (cx + 1) * width, (double) cz * width, (double) (cz + 1) * width, x, z, CAMERA, curvature);
+        // The box reaches down as far as the curve can draw it below where it lies.
+        bottom -= drop(cx, cz, width);
         double ox = (cx + 0.5) * width - x, oy = (bottom + top) / 2 - y, oz = (cz + 0.5) * width - z;
         double half = (top - bottom) / 2, radius = Math.sqrt(0.5 * width * width + half * half);
         double distance = Math.sqrt(ox * ox + oy * oy + oz * oz);

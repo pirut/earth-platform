@@ -188,6 +188,8 @@ public final class FarRenderer {
     private int zoomWanted, zoomSeen;
     /** The zoomed view as the player has it, of which the plan counts as much zoom as it can (see {@link #zoom}). */
     @Nullable private FarZoom zoomView;
+    /** The ticks the zoomed view still counts as bobbing (see {@link FarZoom#bobHold}). */
+    private int bobHold;
     /** Columns the view wants at their own level, and how many of them are drawn: how settled the far terrain is. */
     private int wanted, settled, planSize, wantedInView, settledInView;
     /** Columns kept beyond what the plan wants, for going back over ground just left. */
@@ -897,8 +899,9 @@ public final class FarRenderer {
         double height = eye.y - ground(player.getBlockX(), player.getBlockZ(), eye.y);
         FarZoom before = zoomView;
         // The view as the game draws it may be tipped by walking (view bobbing), and ground is drawn lower under the Earth's curve.
-        boolean bobbing = FarZoom.bobs(Minecraft.getInstance().options.bobView().get(), player.bob, player.oBob);
-        zoomView = ZOOM ? FarZoom.at(focal / normal, spread * focal / normal, aspect, bobbing, cullCurvature, eye.x, eye.y, eye.z, height,
+        // Counted a client tick at a time, as this runs, and held for a second after the bob dies away, so a jump does not change the view twice.
+        bobHold = FarZoom.bobHold(Minecraft.getInstance().options.bobView().get(), player.bob, player.oBob, bobHold);
+        zoomView = ZOOM ? FarZoom.at(focal / normal, spread * focal / normal, aspect, bobHold > 0, cullCurvature, eye.x, eye.y, eye.z, height,
                 player.getYRot(), player.getXRot(), zoomView) : null;
         // A view that zooms in or turns is planned for at once, not at the next half second: what it looks at is asked for first.
         if (zoomView != null && zoomView != before) planNow = true;
