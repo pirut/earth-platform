@@ -15,10 +15,10 @@ class FarVisualDetailTest {
     }
 
     @Test void extremeZoomCountsUpToTheStepLimitAndKeepsItsNarrowCone() {
-        FarZoom view = FarZoom.at(32, 1, 0, 8000, 0, 8000, 0, 0, null);
+        FarZoom view = FarZoom.at(FarZoom.MAX, 1, 0, 8000, 0, 8000, 0, 0, null);
         assertNotNull(view);
         assertEquals(Math.pow(2, FarZoom.MAX_STEPS / 2.0), view.zoom);
-        // A zoom capped at six steps is what limited(6) makes; limiting it again must keep the 32x cone.
+        // A zoom capped at six steps is what limited(6) makes; limiting it again must keep the whole zoom's cone.
         FarZoom capped = view.limited(6);
         assertEquals(8, capped.zoom);
         assertEquals(view.limited(2), capped.limited(2));

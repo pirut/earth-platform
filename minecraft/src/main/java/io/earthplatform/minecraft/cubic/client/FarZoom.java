@@ -24,15 +24,22 @@ import javax.annotation.Nullable;
 final class FarZoom {
     /** The least zoom that sharpens: a sprinting or dynamic field of view zooms out, so this is well clear of them. */
     static final double MIN = 1.6;
-    /** The most zoom it counts: past that the columns the view wants outgrow what a zoomed look is worth. */
-    static final double MAX = 32.0;
+    /**
+     * The most zoom it counts, and the narrowest view whose cone it follows: enough for a zoom mod's
+     * narrowest view (Zume's is a 1 degree field of view, about 80 times). At 32, the most it once
+     * counted, such a view asked for the ground in a 32x view's cone, two and a half times as wide
+     * each way as what it shows: looking from Mount Rainier at the Goat Rocks 56 km off, 7,428
+     * columns where its own wants 4,012, and the view took twice as long to sharpen. Where the
+     * columns pass {@link #MAX_COLUMNS}, less of the zoom counts, as before.
+     */
+    static final double MAX = 128.0;
     /** The most columns asked for a zoomed view at once, on top of the player's own; {@code -Dearthplatform.far.zoomColumns} sets fewer or more. */
     static final int MAX_COLUMNS = Math.max(1, Integer.getInteger("earthplatform.far.zoomColumns", 8000));
     /**
      * The most zoom counted, in half steps of two (see {@link #steps}): all of {@link #MAX} unless
      * {@code -Dearthplatform.far.zoomSteps} sets fewer. The view's cone still follows the whole zoom.
      */
-    static final int MAX_STEPS = Math.clamp(Integer.getInteger("earthplatform.far.zoomSteps", 10), 1, 10);
+    static final int MAX_STEPS = Math.clamp(Integer.getInteger("earthplatform.far.zoomSteps", 14), 1, 14);
     /** Blocks the camera's position is rounded to. */
     private static final int CAMERA = 32;
 
@@ -40,14 +47,23 @@ final class FarZoom {
     final double zoom;
     /** The camera's block position and height over the ground, rounded to {@link #CAMERA} blocks. */
     final int x, y, z, height;
-    /** The look's yaw and pitch in steps of {@link #step} radians, and the view's spread in hundredths. */
-    private final int yaw, pitch, spreadSteps, zoomSteps;
+    /**
+     * The look's yaw and pitch in steps of {@link #step} radians, the view's spread in hundredths,
+     * and its width over its height in hundredths, or 0 where only the cone round its corners counts.
+     */
+    private final int yaw, pitch, spreadSteps, zoomSteps, aspectSteps;
     /** The view's own zoom in half steps of two, which the cone follows; {@link #zoomSteps} may count less of it (see {@link #limited}). */
     private final int viewSteps;
     /** The look, and the cosine of the cone's half angle. */
     private final double dx, dy, dz, cone;
+    /**
+     * The four sides of the view, as the normals of the planes through the camera they lie in,
+     * pointing out of the view, each widened by the rounding of the look; none where
+     * {@link #aspectSteps} is 0 or the view is wider than a half turn.
+     */
+    private final double[][] sides;
 
-    private FarZoom(int zoomSteps, int x, int y, int z, int height, int yaw, int pitch, int spreadSteps, int viewSteps) {
+    private FarZoom(int zoomSteps, int x, int y, int z, int height, int yaw, int pitch, int spreadSteps, int viewSteps, int aspectSteps) {
         this.zoomSteps = zoomSteps;
         this.viewSteps = viewSteps;
         this.zoom = Math.pow(2, zoomSteps / 2.0);
@@ -64,6 +80,32 @@ final class FarZoom {
         dy = -Math.sin(pitchRadians);
         dz = Math.cos(yawRadians) * Math.cos(pitchRadians);
         cone = Math.cos(Math.min(Math.PI / 2, half + step));
+        this.aspectSteps = aspectSteps;
+        sides = aspectSteps > 0 ? sides(Math.tan(half), aspectSteps / 100.0, step, yawRadians, pitchRadians) : new double[0][];
+    }
+
+    /**
+     * The sides of a view whose corners are {@code corner} (a tangent) from its middle and whose width
+     * is {@code aspect} times its height, looking along yaw and pitch: each side's angle from the middle
+     * widened by {@code step}, as the look may be that far off.
+     */
+    private static double[][] sides(double corner, double aspect, double step, double yaw, double pitch) {
+        double up = corner / Math.sqrt(1 + aspect * aspect), across = up * aspect;
+        double wide = Math.atan(across) + step, high = Math.atan(up) + step;
+        if (wide >= Math.PI / 2 || high >= Math.PI / 2) return new double[0][];
+        double[] forward = {-Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)};
+        // The view's right and its up, at right angles to the look and to each other.
+        double[] right = {Math.cos(yaw), 0, Math.sin(yaw)};
+        double[] top = {right[1] * forward[2] - right[2] * forward[1], right[2] * forward[0] - right[0] * forward[2], right[0] * forward[1] - right[1] * forward[0]};
+        double tanWide = Math.tan(wide), tanHigh = Math.tan(high);
+        double[][] sides = new double[4][3];
+        for (int i = 0; i < 3; i++) {
+            sides[0][i] = right[i] - tanWide * forward[i];
+            sides[1][i] = -right[i] - tanWide * forward[i];
+            sides[2][i] = top[i] - tanHigh * forward[i];
+            sides[3][i] = -top[i] - tanHigh * forward[i];
+        }
+        return sides;
     }
 
     /** The step the look is rounded to: a quarter of the view's half angle. */
@@ -74,23 +116,36 @@ final class FarZoom {
 
     /** The same view counting at most {@code steps} of its zoom (see {@link #steps}). */
     FarZoom limited(int steps) {
-        return steps >= zoomSteps ? this : new FarZoom(steps, x, y, z, height, yaw, pitch, spreadSteps, viewSteps);
+        return steps >= zoomSteps ? this : new FarZoom(steps, x, y, z, height, yaw, pitch, spreadSteps, viewSteps, aspectSteps);
     }
 
     /**
      * The zoomed view, or null unzoomed. {@code zoom} is how much narrower the view is than the game's
      * field of view, {@code spread} the tangent of the angle from the look to the view's corners at
      * that field of view; {@code yaw} and {@code pitch} in degrees as the game has them. The previous
-     * one comes back while nothing has changed past its rounding.
+     * one comes back while nothing has changed past its rounding. Only the cone round the view's
+     * corners counts: {@link #at(double, double, double, double, double, double, double, float, float, FarZoom)}
+     * with the view's shape cuts it to the view itself.
      */
     @Nullable static FarZoom at(double zoom, double spread, double x, double y, double z, double height, float yaw, float pitch,
+            @Nullable FarZoom previous) {
+        return at(zoom, spread, 0, x, y, z, height, yaw, pitch, previous);
+    }
+
+    /**
+     * The same for a view {@code aspect} times as wide as it is high: a column counts only where it
+     * can show inside the view's four sides, not anywhere in the cone round its corners, which on a
+     * wide screen took in about twice the ground above and below the view.
+     */
+    @Nullable static FarZoom at(double zoom, double spread, double aspect, double x, double y, double z, double height, float yaw, float pitch,
             @Nullable FarZoom previous) {
         if (!(zoom >= MIN)) return null;
         int zoomSteps = (int) Math.floor(2 * Math.log(Math.min(zoom, MAX)) / Math.log(2));
         int spreadSteps = (int) Math.ceil(spread * 100);
         double step = step(Math.atan(spreadSteps / 100.0 / Math.pow(2, zoomSteps / 2.0)));
         FarZoom zoomed = new FarZoom(Math.min(zoomSteps, MAX_STEPS), round(x), round(y), round(z), round(Math.max(0, height)),
-                (int) Math.round(Math.toRadians(yaw) / step), (int) Math.round(Math.toRadians(pitch) / step), spreadSteps, zoomSteps);
+                (int) Math.round(Math.toRadians(yaw) / step), (int) Math.round(Math.toRadians(pitch) / step), spreadSteps, zoomSteps,
+                aspect > 0 ? Math.max(1, (int) Math.floor(aspect * 100)) : 0);
         return zoomed.equals(previous) ? previous : zoomed;
     }
 
@@ -208,7 +263,13 @@ final class FarZoom {
         double along = (ox * dx + oy * dy + oz * dz) / distance;
         // Within the cone, widened by the angle the column's own size takes up.
         double wider = Math.asin(Math.min(1, (radius + CAMERA) / distance));
-        return Math.acos(Math.max(-1, Math.min(1, along))) <= Math.acos(cone) + wider;
+        if (Math.acos(Math.max(-1, Math.min(1, along))) > Math.acos(cone) + wider) return false;
+        // Inside the four sides, the box grown by how far the camera may be from where it is rounded to.
+        double across = width / 2.0 + CAMERA, up = half + CAMERA;
+        for (double[] side : sides) {
+            if (ox * side[0] + oy * side[1] + oz * side[2] > across * (Math.abs(side[0]) + Math.abs(side[2])) + up * Math.abs(side[1])) return false;
+        }
+        return true;
     }
 
     /** How near the middle of the view a column is, as the cosine of its angle from the look: higher is nearer. */
@@ -229,12 +290,12 @@ final class FarZoom {
 
     @Override public boolean equals(Object other) {
         return other instanceof FarZoom zoomed && zoomed.zoomSteps == zoomSteps && zoomed.viewSteps == viewSteps && zoomed.x == x && zoomed.y == y && zoomed.z == z
-                && zoomed.height == height && zoomed.yaw == yaw && zoomed.pitch == pitch && zoomed.spreadSteps == spreadSteps;
+                && zoomed.height == height && zoomed.yaw == yaw && zoomed.pitch == pitch && zoomed.spreadSteps == spreadSteps && zoomed.aspectSteps == aspectSteps;
     }
 
     @Override public int hashCode() {
         int hash = zoomSteps * 31 + viewSteps;
-        for (int value : new int[] {x, y, z, height, yaw, pitch, spreadSteps}) hash = hash * 31 + value;
+        for (int value : new int[] {x, y, z, height, yaw, pitch, spreadSteps, aspectSteps}) hash = hash * 31 + value;
         return hash;
     }
 
