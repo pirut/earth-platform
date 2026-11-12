@@ -30,7 +30,8 @@ import org.lwjgl.system.MemoryUtil;
 /**
  * The layered clouds: three banks at fixed heights (see {@link CloudField}) with thickness and
  * their own winds, ray marched in one full-screen pass and stopped at the scene's depth (see
- * {@link CloudDepth}), so mountains rise through them. Weather fronts (see {@link CloudWeather})
+ * {@link CloudDepth}), so mountains rise through them. They curve with far terrain (see
+ * {@code earthplatform.far.curvature}). Weather fronts (see {@link CloudWeather})
  * thin and thicken them over time. Without a shader pack only. Render thread only.
  */
 final class CloudVolume {
@@ -68,18 +69,25 @@ final class CloudVolume {
         if (cloud == null) return false;
         int depth = CloudDepth.SCENE.texture();
         if (depth == 0) return false;
+        int farDepth = CloudDepth.FAR.texture();
+        var far = CloudDepth.far();
         Vec3 colour = level.getCloudColor(partialTick);
         double ticks = level.getGameTime() + partialTick;
         double angle = level.getTimeOfDay(partialTick) * Math.PI * 2;
         configure(cloud, view, projection, camX, camY, camZ, ticks, height, (float) colour.x, (float) colour.y, (float) colour.z,
                 (float) -Math.sin(angle), (float) Math.cos(angle), .2f,
                 steps(System.getProperty("earthplatform.clouds.quality", "high")),
-                opacity(System.getProperty("earthplatform.clouds.opacity", "0.72")), level.getRainLevel(partialTick));
+                opacity(System.getProperty("earthplatform.clouds.opacity", "0.72")), level.getRainLevel(partialTick),
+                far == null ? 0 : far.curvature());
         var textureManager = Minecraft.getInstance().getTextureManager();
         RenderSystem.setShaderTexture(0, texture(0));
         cloud.setSampler("Weather1", textureManager.getTexture(texture(1)).getId());
         cloud.setSampler("Weather2", textureManager.getTexture(texture(2)).getId());
         cloud.setSampler("SceneDepth", depth);
+        // Past the game's blocks, far terrain's own finer depth, when there is one.
+        cloud.setSampler("FarDepth", farDepth != 0 ? farDepth : depth);
+        cloud.safeGetUniform("UseFarDepth").set(farDepth != 0 ? 1F : 0F);
+        cloud.safeGetUniform("FarInvProjection").set(new Matrix4f(CloudDepth.FAR.projection(projection)).invert());
 
         boolean cull = GL11.glIsEnabled(GL11.GL_CULL_FACE), blend = GL11.glIsEnabled(GL11.GL_BLEND), depthTest = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
         boolean depthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
@@ -190,7 +198,8 @@ final class CloudVolume {
     }
 
     private static void configure(ShaderInstance shader, Matrix4f view, Matrix4f projection, double x, double y, double z, double ticks, double height,
-                                  float r, float g, float b, float sunX, float sunY, float sunZ, int steps, float opacity, float rain) {
+                                  float r, float g, float b, float sunX, float sunY, float sunZ, int steps, float opacity, float rain,
+                                  float curvature) {
         shader.safeGetUniform("SkyInvProjection").set(new Matrix4f(projection).invert());
         shader.safeGetUniform("SkyInvView").set(new Matrix4f(view).invert());
         shader.safeGetUniform("CameraHeight").set((float) y);
@@ -198,6 +207,7 @@ final class CloudVolume {
         shader.safeGetUniform("SunDirection").set(sunX, sunY, sunZ);
         shader.safeGetUniform("MarchSteps").set(Math.clamp(steps, 8, 32));
         shader.safeGetUniform("MaxOpacity").set(opacity);
+        shader.safeGetUniform("Curvature").set(curvature);
         shader.safeGetUniform("NoiseVolume").set(NOISE_UNIT);
         // The phases are fractions of each texture's period, so the patterns stay fixed to the world as the camera moves.
         shader.safeGetUniform("WeatherPhase").set((float) CloudWeather.frac(x / CloudWeather.REGION_PERIOD), (float) CloudWeather.frac(z / CloudWeather.REGION_PERIOD),

@@ -348,6 +348,15 @@ final class FarColumnMesh {
     /** One side of a box of blocks, in blocks from the column's base. */
     void face(BufferBuilder builder, BlockState state, int argb, Direction direction,
               float x, float y, float z, float sx, float sy, float sz, int light, boolean textured) {
+        // Under the Earth's curve only a face's corners follow it, so wide flat water is cut into
+        // faces at most EarthView.WATER_GRID across: at most sixteen for a coarsest column's sea.
+        int grid = EarthView.WATER_GRID;
+        if (EarthView.ENABLED && !textured && (sx > grid || sz > grid)) {
+            for (float dz = 0; dz < sz; dz += grid)
+                for (float dx = 0; dx < sx; dx += grid)
+                    face(builder, state, argb, direction, x + dx, y, z + dz, Math.min(grid, sx - dx), sy, Math.min(grid, sz - dz), light, false);
+            return;
+        }
         FarFaces.Face face = textured ? job.faces().face(state, direction) : null;
         float u0 = face != null ? face.u0() : job.white()[0], u1 = face != null ? face.u1() : job.white()[2];
         float v0 = face != null ? face.v0() : job.white()[1], v1 = face != null ? face.v1() : job.white()[3];

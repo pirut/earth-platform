@@ -105,6 +105,11 @@ public final class EarthClouds {
         return level instanceof ClientLevel client && Cubic.isCubic(client.dimension());
     }
 
+    /** Whether the layered clouds are on, with a cloud height to draw them at (see {@link CloudVolume}). */
+    public static boolean layered() {
+        return Boolean.getBoolean("earthplatform.clouds.layered") && EarthConfig.CLOUD_HEIGHT.get() > 0;
+    }
+
     /** Draws the Earth's clouds instead of vanilla's; false leaves the frame to vanilla. */
     public static boolean render(ClientLevel level, Matrix4f view, Matrix4f projection, float partialTick, double camX, double camY, double camZ) {
         if (level == null || !Cubic.isCubic(level.dimension())) return false;
@@ -114,7 +119,7 @@ public final class EarthClouds {
         // This deck isn't fogged, so from under water, lava or powder snow it would show through
         // as a white speckled sheet far overhead; nothing that high can be seen from there anyway.
         if (Minecraft.getInstance().gameRenderer.getMainCamera().getFluidInCamera() != FogType.NONE) return true;
-        if (Boolean.getBoolean("earthplatform.clouds.layered") && CloudVolume.draw(level, view, projection, partialTick, camX, camY, camZ, height)) return true;
+        if (layered() && CloudVolume.draw(level, view, projection, partialTick, camX, camY, camZ, height)) return true;
 
         double under = followGround(level);
         double deck = Double.isNaN(under) ? SEA + height : Math.max(SEA + height, under + ABOVE_GROUND);

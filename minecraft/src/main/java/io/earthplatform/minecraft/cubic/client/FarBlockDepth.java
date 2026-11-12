@@ -30,16 +30,21 @@ public final class FarBlockDepth {
 
     /** Copies the bound framebuffer's depth; false when there is none it can copy, and far terrain then draws as before. */
     public static boolean copy() {
+        var target = Minecraft.getInstance().getMainRenderTarget();
+        return copy(target.width, target.height);
+    }
+
+    /** The same for a framebuffer of this size. */
+    static boolean copy(int targetWidth, int targetHeight) {
         if (failed) return false;
         RenderSystem.assertOnRenderThread();
         int drawn = GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
         if (drawn == 0) return false;
         int wanted = copying ? GL30C.GL_DEPTH_COMPONENT32F : sourceFormat();
         if (wanted == 0) return false;
-        var target = Minecraft.getInstance().getMainRenderTarget();
-        boolean fresh = texture == 0 || target.width != width || target.height != height || wanted != format;
+        boolean fresh = texture == 0 || targetWidth != width || targetHeight != height || wanted != format;
         if (fresh) {
-            allocate(target.width, target.height, wanted);
+            allocate(targetWidth, targetHeight, wanted);
             while (GL11C.glGetError() != GL11C.GL_NO_ERROR) {}
         }
         int read = GL11C.glGetInteger(GL30C.GL_READ_FRAMEBUFFER_BINDING);
@@ -68,7 +73,7 @@ public final class FarBlockDepth {
         if (!copying) {
             copying = true;
             EarthPlatformMod.LOGGER.info("The game's depth does not blit into a matching format; far terrain copies it instead");
-            return copy();
+            return copy(targetWidth, targetHeight);
         }
         failed = true;
         EarthPlatformMod.LOGGER.warn("Could not copy the game's depth; far terrain may cover nearby blocks while they load");

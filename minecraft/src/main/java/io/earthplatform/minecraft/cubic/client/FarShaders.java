@@ -210,10 +210,26 @@ final class FarShaders {
      */
     private static final String BLOCK_TEXTURES = Boolean.getBoolean("earthplatform.far.blockTextures") ? "#define EARTH_BLOCK_TEXTURES\n" : "";
 
+    /** Defined with {@code far.curvature}: far terrain drops away with the Earth's curve (see {@link EarthView}). */
+    private static final String CURVATURE = EarthView.ENABLED
+            ? String.format(java.util.Locale.ROOT, "#define EARTH_CURVATURE\nconst float earth_Flat = %.1f;\n", EarthView.FLAT) : "";
+
+    /** Defined with {@code far.atmosphere}: haze and fading textures seen from high up (see {@link FarAtmosphere}). */
+    private static final String ATMOSPHERE = FarAtmosphere.ENABLED ? "#define EARTH_ATMOSPHERE\n" : "";
+
+    /**
+     * Defined for far terrain drawn in its own finer depth without a pack (see {@link FarPlainDepth}):
+     * it tests itself against the game's blocks by hand, as the game's depth is not there to.
+     */
+    static final String PRECISE_DEPTH = "#define EARTH_PRECISE_DEPTH\n";
+
     static final String VERTEX = String.format(java.util.Locale.ROOT,
-            "const float earth_HazeHeight = %.1f;\n", HAZE_HEIGHT) + BLOCK_TEXTURES + """
+            "const float earth_HazeHeight = %.1f;\n", HAZE_HEIGHT) + BLOCK_TEXTURES + CURVATURE + """
             // Where far terrain ends, in blocks: a uniform, since the far distance changes while playing.
             uniform float earth_Edge;
+            #ifdef EARTH_CURVATURE
+            uniform float earth_Curvature;
+            #endif
             uniform usamplerBuffer earth_Quads;
             uniform isamplerBuffer earth_Columns;
             uniform mat4 earth_ModelView;
@@ -338,6 +354,11 @@ final class FarShaders {
                     else local.zy += grow;
                 }
                 vec3 position = origin + local;
+            #ifdef EARTH_CURVATURE
+                // Past the flat ground round the camera, the drop grows with the square of the distance (see EarthView).
+                float curveRadius = max(0.0, length(position.xz) - earth_Flat);
+                position.y -= earth_Curvature * curveRadius * curveRadius;
+            #endif
                 earth_position = position;
                 earth_where = local;
                 earth_anchor = earth_smooth > 0.5 ? position : origin + earth_local(face, vec2(0.5), x, y, z, width, extent, v);
@@ -392,7 +413,7 @@ final class FarShaders {
     private static final String SMOOTH_IN = """
             #ifndef EARTH_SMOOTH_IN
             #define EARTH_SMOOTH_IN
-            """ + BLOCK_TEXTURES + """
+            """ + BLOCK_TEXTURES + ATMOSPHERE + """
             in vec3 earth_vcolour;
             in vec3 earth_vnormal;
             flat in float earth_smooth;
@@ -416,6 +437,10 @@ final class FarShaders {
             uniform sampler2D earth_Atlas;
             uniform usamplerBuffer earth_Quads;
             uniform usamplerBuffer earth_Looks;
+            #ifdef EARTH_ATMOSPHERE
+            // How high above the ground the camera is, from nothing to all (see FarAtmosphere#blend).
+            uniform float earth_Atmosphere;
+            #endif
 
             #ifdef EARTH_GROUND
             // The game's depth as its own blocks left it, before any far terrain (see FarBlockDepth).
@@ -490,15 +515,22 @@ final class FarShaders {
                 if (earth_smooth > 0.5 && (earth_flags & 1u) == 0u) return vec4(earth_vcolour, 1.0);
                 if ((earth_flags & 1u) == 0u) return vec4(earth_average, 1.0);
                 earth_here();
+            #if defined(EARTH_BLOCK_TEXTURES) || defined(EARTH_ATMOSPHERE)
+                float detail = 1.0;
             #ifdef EARTH_BLOCK_TEXTURES
                 // A texture repeating within a few pixels fades to its average instead of breaking into stripes.
                 float footprint = max(length(dFdx(earth_hereTile)), length(dFdy(earth_hereTile)));
-                float detail = 1.0 - smoothstep(0.125, 0.5, footprint);
+                detail = 1.0 - smoothstep(0.125, 0.5, footprint);
+            #endif
+            #ifdef EARTH_ATMOSPHERE
+                // Seen from high up, textures past half a kilometre fade into their even colour.
+                detail *= 1.0 - earth_Atmosphere * smoothstep(512.0, 4096.0, earth_distance);
+            #endif
                 if (detail <= 0.0) return vec4(earth_smooth > 0.5 ? earth_vcolour : earth_hereAverage, 1.0);
             #endif
                 vec2 size = earth_hereSprite.zw - earth_hereSprite.xy;
                 vec4 texel = textureGrad(earth_Atlas, earth_atlasUv(), dFdx(earth_hereTile) * size, dFdy(earth_hereTile) * size);
-            #ifdef EARTH_BLOCK_TEXTURES
+            #if defined(EARTH_BLOCK_TEXTURES) || defined(EARTH_ATMOSPHERE)
                 texel.rgb = mix(earth_hereAverage, texel.rgb, detail);
             #endif
                 // Smooth ground's colour blends from voxel column to voxel column; the texture keeps its pattern on top.
@@ -597,8 +629,25 @@ final class FarShaders {
             uniform float earth_FogEnd;
             uniform vec4 earth_FogColor;
             in float earth_edge;
+            #if defined(EARTH_ATMOSPHERE) || defined(EARTH_PRECISE_DEPTH)
+            in vec3 earth_position;
+            #endif
 
             out vec4 earth_fragColor;
+
+            #ifdef EARTH_PRECISE_DEPTH
+            uniform mat4 earth_ModelView;
+            uniform mat4 earth_GameProjection;
+            // The game's depth as its own blocks left it, before any far terrain (see FarBlockDepth).
+            uniform sampler2D earth_Blocks;
+
+            // Drops the fragment behind one of the game's blocks, in the game's projection, as its depth test would.
+            void earth_behindBlocks() {
+                vec4 clip = earth_GameProjection * earth_ModelView * vec4(earth_position, 1.0);
+                float blocks = texelFetch(earth_Blocks, ivec2(gl_FragCoord.xy), 0).r;
+                if (blocks < 1.0 && clip.z / clip.w * 0.5 + 0.5 > blocks + 1e-7) discard;
+            }
+            #endif
 
             void main() {
             #ifdef EARTH_FADE
@@ -606,6 +655,9 @@ final class FarShaders {
             #endif
             #ifdef EARTH_GROUND
                 earth_ground();
+            #endif
+            #ifdef EARTH_PRECISE_DEPTH
+                earth_behindBlocks();
             #endif
                 earth_readLook();
                 vec4 colour = earth_sample();
@@ -615,6 +667,10 @@ final class FarShaders {
                 float fog = earth_distance <= earth_FogStart ? 0.0
                         : earth_distance < earth_FogEnd ? smoothstep(earth_FogStart, earth_FogEnd, earth_distance) : 1.0;
                 fog = max(fog, earth_edge);
+            #ifdef EARTH_ATMOSPHERE
+                // From high up, the air between the camera and the ground far below hazes it.
+                fog = max(fog, earth_Atmosphere * (1.0 - exp(-length(earth_position) / 18000.0)) * 0.65);
+            #endif
                 if (fog > 0.0) colour.rgb = mix(colour.rgb, earth_FogColor.rgb, fog * earth_FogColor.a);
                 earth_fragColor = vec4(colour.rgb, 1.0);
             }
