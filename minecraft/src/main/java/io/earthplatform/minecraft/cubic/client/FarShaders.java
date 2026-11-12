@@ -210,7 +210,10 @@ final class FarShaders {
      */
     private static final String BLOCK_TEXTURES = Boolean.getBoolean("earthplatform.far.blockTextures") ? "#define EARTH_BLOCK_TEXTURES\n" : "";
 
-    /** Defined with {@code far.curvature}: far terrain drops away with the Earth's curve (see {@link EarthView}). */
+    /**
+     * Defined with {@code far.curvature}: far terrain drops away with the Earth's curve (see {@link EarthView}).
+     * Only without a pack, whose shaders are built with neither this nor {@link #ATMOSPHERE}.
+     */
     private static final String CURVATURE = EarthView.ENABLED
             ? String.format(java.util.Locale.ROOT, "#define EARTH_CURVATURE\nconst float earth_Flat = %.1f;\n", EarthView.FLAT) : "";
 
@@ -223,8 +226,14 @@ final class FarShaders {
      */
     static final String PRECISE_DEPTH = "#define EARTH_PRECISE_DEPTH\n";
 
-    static final String VERTEX = String.format(java.util.Locale.ROOT,
-            "const float earth_HazeHeight = %.1f;\n", HAZE_HEIGHT) + BLOCK_TEXTURES + CURVATURE + """
+    static final String VERTEX = vertex(CURVATURE);
+
+    /** The vertex shader under a pack: never curved (see {@link EarthView}). */
+    private static final String PACK_VERTEX = vertex("");
+
+    private static String vertex(String curvature) {
+        return String.format(java.util.Locale.ROOT,
+            "const float earth_HazeHeight = %.1f;\n", HAZE_HEIGHT) + BLOCK_TEXTURES + curvature + """
             // Where far terrain ends, in blocks: a uniform, since the far distance changes while playing.
             uniform float earth_Edge;
             #ifdef EARTH_CURVATURE
@@ -408,12 +417,13 @@ final class FarShaders {
                 earth_look = look;
             }
             """;
+    }
 
     /** Smooth ground's blended colour and slope, declared once whichever part needs them first. */
     private static final String SMOOTH_IN = """
             #ifndef EARTH_SMOOTH_IN
             #define EARTH_SMOOTH_IN
-            """ + BLOCK_TEXTURES + ATMOSPHERE + """
+            """ + BLOCK_TEXTURES + """
             in vec3 earth_vcolour;
             in vec3 earth_vnormal;
             flat in float earth_smooth;
@@ -621,8 +631,8 @@ final class FarShaders {
             }
             """;
 
-    /** Vanilla look: lightmap, side shading and linear fog, as rendertype_solid does. */
-    static final String FRAGMENT = SAMPLE + SHADE + """
+    /** Vanilla look: lightmap, side shading and linear fog, as rendertype_solid does; with the high-altitude haze when it is on. */
+    static final String FRAGMENT = ATMOSPHERE + SAMPLE + SHADE + """
             uniform sampler2D earth_Lightmap;
             uniform vec4 earth_ColorModulator;
             uniform float earth_FogStart;
@@ -843,7 +853,7 @@ final class FarShaders {
      * jitters as the pack's own terrain does, so its TAA anti-aliases it instead of smearing it.
      */
     static String packVertex(String version, @Nullable String jitter) {
-        return jitter == null ? version + VERTEX : version + "#define EARTH_JITTER\n" + jitter + VERTEX;
+        return jitter == null ? version + PACK_VERTEX : version + "#define EARTH_JITTER\n" + jitter + PACK_VERTEX;
     }
 
     /**
@@ -989,7 +999,7 @@ final class FarShaders {
      */
     static String dhVertex(String header, PackPatch patch) {
         String[] pack = split(patch.vertex());
-        String own = MAIN.matcher(VERTEX).replaceFirst("void earth_main()").replace("CORNERS", "earth_Corners").replace("TRIANGLES", "earth_Triangles");
+        String own = MAIN.matcher(PACK_VERTEX).replaceFirst("void earth_main()").replace("CORNERS", "earth_Corners").replace("TRIANGLES", "earth_Triangles");
         return dhHeader(header, patch.vertex()) + pack[0] + own + DH_VERTEX + pack[1] + "\nvoid main() {\n    earth_main();\n    earth_dhMain();\n}\n";
     }
 

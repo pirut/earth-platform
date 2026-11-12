@@ -1726,10 +1726,12 @@ public final class FarRenderer {
         spread = Math.hypot(1 / projection.m00(), 1 / projection.m11());
         gpu.fadeTicks(fadeLength.table());
         boolean pack = ShaderBlocks.packInUse();
-        if (EarthView.ENABLED || FarAtmosphere.ENABLED) {
+        // A pack's shaders are built with neither the Earth's curve nor the haze (see FarShaders#PACK_VERTEX).
+        if (pack) flatten();
+        else if (EarthView.ENABLED || FarAtmosphere.ENABLED) {
             double height = position.y - ground(bx, bz, position.y);
-            if (FarAtmosphere.ENABLED) gpu.atmosphere(pack ? 0 : FarAtmosphere.blend(height));
-            if (EarthView.ENABLED) curve(gpu, height, position.z, pack);
+            if (FarAtmosphere.ENABLED) gpu.atmosphere(FarAtmosphere.blend(height));
+            if (EarthView.ENABLED) curve(gpu, height, position.z, false);
         }
         // Spatial dither still runs in the shaders every frame; only timed arrivals need a new pick.
         boolean band = FADE && pack && gpu.jittered();
@@ -1788,7 +1790,8 @@ public final class FarRenderer {
         float reach = FarLod.nearReach();
         reachLists(seen, reach);
         // While the ground near the player loads, far terrain inside the reach leaves the game's blocks alone.
-        boolean ground = NEAR_GROUND && !near.isEmpty() && settling(now) && FarBlockDepth.copy();
+        boolean standIns = !near.isEmpty() && settling(now);
+        boolean ground = NEAR_GROUND && standIns && FarBlockDepth.copy();
         if (own) {
             // Far terrain inside the game's blocks' reach goes in the game's own depth, as without a pack's Voxy support.
             long setting = Float.floatToIntBits(reach) & 0xFFFFFFFFL;
@@ -1861,7 +1864,7 @@ public final class FarRenderer {
                 }
             }
             // The game's depth copied from here on holds the stand-ins too, which far terrain then tests itself against and is merged with.
-            if (precise) precise = plainDepth().begin(projection);
+            precise = preciseDepth(precise, standIns, apart) && plainDepth().begin(projection);
             if (precise) {
                 farProjection = plainDepth.projection();
                 gpu.plainDepth(plainDepth.gameProjection());
@@ -2916,6 +2919,21 @@ public final class FarRenderer {
         if ((cull > 0) != (cullCurvature > 0)) pick.invalidate();
         cullCurvature = cull;
     }
+
+    /** No Earth curve, under a pack: what an earlier frame without one set is undone, and the view culled again for it. */
+    private void flatten() {
+        if (cullCurvature > 0) pick.invalidate();
+        curvature = cullCurvature = 0;
+    }
+
+    /**
+     * Whether far terrain without a pack draws in its own finer depth this frame, as {@code wanted}:
+     * not while stand-ins under the player ({@code standIns}, see {@link #settling}) were left in the
+     * far pass rather than drawn {@code apart} in the game's projection first, since the finer
+     * depth's near plane would clip them at the player's feet. The clouds then clip against the
+     * game's depth for the frame.
+     */
+    static boolean preciseDepth(boolean wanted, boolean standIns, boolean apart) { return wanted && (apart || !standIns); }
 
     /** This frame's Earth curve, which the layered clouds follow too (see {@link EarthView}). */
     public float curvature() { return curvature; }
