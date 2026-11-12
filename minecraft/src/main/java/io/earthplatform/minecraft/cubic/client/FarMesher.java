@@ -64,7 +64,14 @@ final class FarMesher {
     record Job(long key, int version, int level, int slot, int x0, int z0, int bottom, LevelChunkSection[] sections, char[] drops,
                @Nullable Side[] sides, @Nullable Side[] diagonals, @Nullable LongOpenHashSet drawn, boolean textured, FarLooks looks,
                FarFaces faces, @Nullable Object2IntMap<BlockState> shaderIds, float[] shade, float[] white, @Nullable FarSurfacePacket packet,
-               int smoothFrom) {
+               int smoothFrom, boolean cutsWater) {
+        Job(long key, int version, int level, int slot, int x0, int z0, int bottom, LevelChunkSection[] sections, char[] drops,
+            @Nullable Side[] sides, @Nullable Side[] diagonals, @Nullable LongOpenHashSet drawn, boolean textured, FarLooks looks,
+            FarFaces faces, @Nullable Object2IntMap<BlockState> shaderIds, float[] shade, float[] white, @Nullable FarSurfacePacket packet,
+            int smoothFrom) {
+            this(key,version,level,slot,x0,z0,bottom,sections,drops,sides,diagonals,drawn,textured,looks,faces,shaderIds,shade,white,packet,smoothFrom,
+                    EarthView.cutsWater(false));
+        }
         Job(long key, int version, int level, int slot, int x0, int z0, int bottom, LevelChunkSection[] sections, char[] drops,
             @Nullable Side[] sides, @Nullable Side[] diagonals, @Nullable LongOpenHashSet drawn, boolean textured, FarLooks looks,
             FarFaces faces, @Nullable Object2IntMap<BlockState> shaderIds, float[] shade, float[] white, @Nullable FarSurfacePacket packet) {
@@ -80,7 +87,7 @@ final class FarMesher {
             Side[] plainSides=denseSides(sides),plainDiagonals=denseSides(diagonals);
             if(packet==null&&plainSides==sides&&plainDiagonals==diagonals)return this;
             return new Job(key,version,level,slot,x0,z0,bottom,packet==null?sections:packet.materializeForMeshing().toArray(LevelChunkSection[]::new),drops,
-                    plainSides,plainDiagonals,drawn,textured,looks,faces,shaderIds,shade,white,null,smoothFrom);
+                    plainSides,plainDiagonals,drawn,textured,looks,faces,shaderIds,shade,white,null,smoothFrom,cutsWater);
         }
     }
     @Nullable private static Side[] denseSides(@Nullable Side[] sides) {
@@ -132,7 +139,7 @@ final class FarMesher {
             try {
                 var packet=FarSurfacePacket.fromDense(job.level,job.bottom,job.sections,job.drops);
                 if(packet!=null)job=new Job(job.key,job.version,job.level,job.slot,job.x0,job.z0,job.bottom,job.sections,job.drops,
-                        job.sides,job.diagonals,job.drawn,job.textured,job.looks,job.faces,job.shaderIds,job.shade,job.white,packet,job.smoothFrom);
+                        job.sides,job.diagonals,job.drawn,job.textured,job.looks,job.faces,job.shaderIds,job.shade,job.white,packet,job.smoothFrom,job.cutsWater);
             }catch(RuntimeException failure){PerfFailures.record(PerfFailures.Stage.RUN_CONVERSION,failure);}
             if(job.packet==null)RUN_FALLBACK.increment();else RUN_USED.increment();
         }
