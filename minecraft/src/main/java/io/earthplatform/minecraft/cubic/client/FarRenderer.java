@@ -155,7 +155,7 @@ public final class FarRenderer {
     private final Long2IntOpenHashMap previewsAsked = new Long2IntOpenHashMap();
     /** Set to plan at the next tick rather than the next turn of {@link #PLAN_TICKS}. */
     private boolean planNow;
-    /** Set when a zoomed view turned or zoomed further, to plan once {@link #ZOOM_PLAN_TICKS} have passed since the last plan. */
+    /** Set when a zoomed view turned or moved, to plan once {@link #ZOOM_PLAN_TICKS} have passed since the last plan. */
     private boolean zoomMoved;
     private int plannedAt;
     /** Stand-ins received, and how many the real column has replaced since. */
@@ -853,13 +853,21 @@ public final class FarRenderer {
         int bx = player.getBlockX(), bz = player.getBlockZ();
         zoom(player);
         submitDue(bx, bz);
-        if (ticks % PLAN_TICKS == 0 || planNow || zoomMoved && ticks - plannedAt >= ZOOM_PLAN_TICKS) {
+        if (plans(ticks, plannedAt, planNow, zoomMoved)) {
             planNow = zoomMoved = false;
             plannedAt = ticks;
             plan(bx, bz, FarLead.at(bx, bz, motion.x * 20.0, motion.z * 20.0));
             evict();
         }
         request();
+    }
+
+    /**
+     * Whether the tick plans: every {@link #PLAN_TICKS}, at once when asked to, or for a zoomed view that
+     * turned or moved once {@link #ZOOM_PLAN_TICKS} have passed since the last plan.
+     */
+    static boolean plans(int ticks, int plannedAt, boolean planNow, boolean zoomMoved) {
+        return ticks % PLAN_TICKS == 0 || planNow || zoomMoved && ticks - plannedAt >= ZOOM_PLAN_TICKS;
     }
 
     /**
@@ -874,10 +882,11 @@ public final class FarRenderer {
         FarZoom before = zoomView;
         zoomView = ZOOM ? FarZoom.at(focal / normal, spread * focal / normal, eye.x, eye.y, eye.z, height,
                 player.getYRot(), player.getXRot(), zoomView) : null;
-        // A view that zooms in is planned for at once, not at the next half second: what it looks at is asked for first.
-        // One that turns or zooms further waits a few ticks, as a spyglass panning walked the zoomed view every tick.
+        // A view that zooms in, or zooms by another amount, is planned for at once, not at the next half second:
+        // what it looks at is asked for first. One that only turns or moves waits a few ticks, as a spyglass
+        // panning walked the zoomed view every tick.
         if (zoomView != null && zoomView != before) {
-            if (before == null) planNow = true;
+            if (FarZoom.rezoomed(before, zoomView)) planNow = true;
             else zoomMoved = true;
         }
         // The plan works out how much of the zoom counts; unzoomed, the walk drops it at once.

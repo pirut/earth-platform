@@ -94,6 +94,14 @@ final class FarZoom {
         return zoomed.equals(previous) ? previous : zoomed;
     }
 
+    /**
+     * True when {@code after} zooms in from unzoomed ({@code before} null) or zooms by another amount:
+     * the columns it wants change, so it is planned for at once. A view that only turns or moves is not.
+     */
+    static boolean rezoomed(@Nullable FarZoom before, FarZoom after) {
+        return before == null || before.viewSteps != after.viewSteps;
+    }
+
     private static int round(double blocks) { return (int) Math.round(blocks / CAMERA) * CAMERA; }
 
     /**
