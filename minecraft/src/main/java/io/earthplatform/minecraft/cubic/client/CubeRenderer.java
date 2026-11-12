@@ -126,7 +126,7 @@ public final class CubeRenderer {
      */
     private long frameStart = System.nanoTime(), frameNanos = 16_000_000L, paceNanos = 16_000_000L;
     /** This frame's uploads, the shadow map's and the view's together. */
-    private CubeWorkBudget uploads;
+    private CubeUploadBudget uploads;
     private int uploadsFrame = -1;
     private boolean closed;
 
@@ -346,18 +346,26 @@ public final class CubeRenderer {
                 double later = ViewOrder.later(dx, dz, lookX, lookZ, 1.5);
                 distance = (long) (distance * later * later);
             }
-            // Distance in the high bits and the index below, so one primitive sort orders them.
-            order.add(Math.min(distance, 1L << 40) << 22 | ready.size());
+            order.add(orderEntry(distance, ready.size()));
             ready.add(key);
         }
         int count = Math.min(ready.size(), limit - building.size());
         if (count <= 0) return;
-        // Nearest first, counting the view; the picks can be hundreds.
-        long[] sorted = order.toLongArray();
-        if (count < sorted.length) Arrays.sort(sorted);
         // A snapshot copies 27 cubes' blocks on this thread: no more of them a frame than a share of it allows.
         CubeWorkBudget budget = new CubeWorkBudget(System.nanoTime(), CubeWorkBudget.snapshotNanos(paceNanos), count);
-        for (int i = 0; budget.take(System.nanoTime()); i++) submit(ready.getLong((int) (sorted[i] & ((1 << 22) - 1))), camera);
+        submitNearest(order.toLongArray(), budget, System::nanoTime, i -> submit(ready.getLong(i), camera));
+    }
+
+    /** Distance in the high bits and the index below, so one primitive sort orders them. */
+    static long orderEntry(long distance, int index) { return Math.min(distance, 1L << 40) << 22 | index; }
+
+    /**
+     * Submits the picks ({@link #orderEntry}) nearest first, counting the view, while the budget lasts. Always sorted:
+     * the budget can stop partway even when every pick would fit, and unsorted that left the nearest cubes for later.
+     */
+    static void submitNearest(long[] order, CubeWorkBudget budget, java.util.function.LongSupplier clock, java.util.function.IntConsumer submit) {
+        Arrays.sort(order);
+        for (int i = 0; i < order.length && budget.take(clock.getAsLong()); i++) submit.accept((int) (order[i] & ((1 << 22) - 1)));
     }
 
     /** Notes the faces a cube's air joins; {@link CubeCaves#OPEN} forgets it, as for a cube not meshed. */
@@ -449,50 +457,67 @@ public final class CubeRenderer {
     private void upload(boolean all) {
         if (uploadsFrame != frame) {
             uploadsFrame = frame;
-            uploads = new CubeWorkBudget(System.nanoTime(), CubeWorkBudget.uploadNanos(paceNanos), Integer.MAX_VALUE);
+            uploads = new CubeUploadBudget(CubeWorkBudget.uploadNanos(paceNanos));
         }
-        while (all || uploads.take(System.nanoTime())) {
-            CubeMesher.Built result = built.poll();
+        drain(built, this::uploadOne, all ? null : uploads, System::nanoTime);
+    }
+
+    /**
+     * Takes finished meshes off the queue and uploads them while the budget allows, or all of them with no budget. The
+     * budget is charged only for a mesh taken off the queue, and only the time {@code upload} spent on it.
+     */
+    static <T> void drain(java.util.Queue<T> queue, java.util.function.Predicate<T> upload, @javax.annotation.Nullable CubeUploadBudget budget,
+            java.util.function.LongSupplier clock) {
+        while (budget == null || budget.mayStart()) {
+            T result = queue.poll();
             if (result == null) return;
-            building.remove(result.key());
-            boolean stale = staleBuilds.remove(result.key());
-            if (stale || closed || world.cube(result.key()) == null || result.version() < 0) { result.free(); continue; }
-            if (dropStale(result.version(), versions.get(result.key()), meshes.containsKey(result.key()), staleDropped.get(result.key()))) {
-                staleDropped.addTo(result.key(), 1);
-                result.free();
-                continue;
-            }
-            staleDropped.remove(result.key());
-            if (result.light() != null) light.put(result.key(), result.light());
-            setVisibility(result.key(), result.visibility());
-            compiled.add(result.key());
-            compiledVersion++;
-            unretire(result.key());
-            Mesh mesh = meshes.get(result.key());
-            if (mesh == null) { mesh = new Mesh(result.key()); meshes.put(result.key(), mesh); }
-            boolean[] present = new boolean[mesh.buffers.length];
-            for (CubeMesher.Layer layer : result.layers()) {
-                int i = layer.index();
-                if (CubeRegions.ON) {
-                    // The old mesh's room first, so the new one can have it back.
-                    regions.free(mesh.slices[i]);
-                    mesh.slices[i] = regions.upload(result.key(), i, layer.mesh());
-                    present[i] = mesh.slices[i] != null;
-                } else {
-                    CubeBuffer buffer = mesh.buffers[i];
-                    if (buffer == null) buffer = mesh.buffers[i] = new CubeBuffer();
-                    buffer.upload(layer.mesh());
-                    present[i] = true;
-                }
-                layer.memory().close();
-            }
-            for (int i = 0; i < present.length; i++) {
-                if (present[i]) continue;
-                if (mesh.buffers[i] != null) { mesh.buffers[i].close(); mesh.buffers[i] = null; }
-                if (mesh.slices[i] != null) { regions.free(mesh.slices[i]); mesh.slices[i] = null; }
-            }
-            if (mesh.empty()) meshes.remove(result.key());
+            long start = clock.getAsLong();
+            boolean uploaded = upload.test(result);
+            if (budget != null) budget.spend(clock.getAsLong() - start, uploaded);
         }
+    }
+
+    /** Uploads one finished mesh; false if it was thrown away instead. */
+    private boolean uploadOne(CubeMesher.Built result) {
+        building.remove(result.key());
+        boolean stale = staleBuilds.remove(result.key());
+        if (stale || closed || world.cube(result.key()) == null || result.version() < 0) { result.free(); return false; }
+        if (dropStale(result.version(), versions.get(result.key()), meshes.containsKey(result.key()), staleDropped.get(result.key()))) {
+            staleDropped.addTo(result.key(), 1);
+            result.free();
+            return false;
+        }
+        staleDropped.remove(result.key());
+        if (result.light() != null) light.put(result.key(), result.light());
+        setVisibility(result.key(), result.visibility());
+        compiled.add(result.key());
+        compiledVersion++;
+        unretire(result.key());
+        Mesh mesh = meshes.get(result.key());
+        if (mesh == null) { mesh = new Mesh(result.key()); meshes.put(result.key(), mesh); }
+        boolean[] present = new boolean[mesh.buffers.length];
+        for (CubeMesher.Layer layer : result.layers()) {
+            int i = layer.index();
+            if (CubeRegions.ON) {
+                // The old mesh's room first, so the new one can have it back.
+                regions.free(mesh.slices[i]);
+                mesh.slices[i] = regions.upload(result.key(), i, layer.mesh());
+                present[i] = mesh.slices[i] != null;
+            } else {
+                CubeBuffer buffer = mesh.buffers[i];
+                if (buffer == null) buffer = mesh.buffers[i] = new CubeBuffer();
+                buffer.upload(layer.mesh());
+                present[i] = true;
+            }
+            layer.memory().close();
+        }
+        for (int i = 0; i < present.length; i++) {
+            if (present[i]) continue;
+            if (mesh.buffers[i] != null) { mesh.buffers[i].close(); mesh.buffers[i] = null; }
+            if (mesh.slices[i] != null) { regions.free(mesh.slices[i]); mesh.slices[i] = null; }
+        }
+        if (mesh.empty()) meshes.remove(result.key());
+        return true;
     }
 
     /** See {@link #STALE_DROPS}. */

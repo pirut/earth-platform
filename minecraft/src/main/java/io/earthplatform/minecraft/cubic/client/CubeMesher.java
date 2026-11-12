@@ -202,8 +202,10 @@ final class CubeMesher {
      * the render thread is drawing the level (a flag it shares between threads), so the same mesh made twice can differ in
      * normals alone; {@code normals} false leaves those out of the vertices compared.
      */
-    @Nullable private static String differ(Built built, Built plain, boolean normals) {
+    @Nullable static String differ(Built built, Built plain, boolean normals) {
         if (!java.util.Arrays.equals(built.light, plain.light)) return "light";
+        // Which faces the air joins: skipInterior says none, and a wrong answer hides caves behind the cube.
+        if (built.visibility != plain.visibility) return "visibility " + Long.toHexString(built.visibility) + " against " + Long.toHexString(plain.visibility);
         if (built.layers.size() != plain.layers.size()) return "layers " + built.layers.size() + " against " + plain.layers.size();
         for (int i = 0; i < built.layers.size(); i++) {
             Layer a = built.layers.get(i), b = plain.layers.get(i);
