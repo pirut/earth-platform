@@ -24,7 +24,7 @@ Flags are Java system properties, given as JVM arguments such as `-Dearthplatfor
 
 **Surface cubes for flight** (server). `-Dearthplatform.cubic.flightSurface=true`. From 48 blocks over the ground or water, a flyer keeps receiving the real ground and water out to the cube view distance (192 blocks at most), and within 384 blocks in a straight line. Past that the far terrain takes over. No load test with many flying players exists yet, which is why it is off.
 
-**Near cube savings** (client). `-Dearthplatform.cubes.reuseSnapshots=true -Dearthplatform.cubes.skipInterior=true`. Add `-Dearthplatform.cubes.checkMesh=true` to log a warning when either changes a mesh, then dig and place blocks underground.
+**Near cube savings** (client). `-Dearthplatform.cubes.reuseSnapshots=true -Dearthplatform.cubes.skipInterior=true`. Add `-Dearthplatform.cubes.checkMesh=true` to log a warning when a mesher shortcut such as `skipInterior` changes a mesh, then dig and place blocks underground. It cannot catch a stale reused snapshot, since both meshes it compares come from the same snapshot; check snapshot reuse by watching that edits show up at once.
 
 **Far terrain looks** (client). `-Dearthplatform.far.smooth=true` blends trees into smooth ground from level 5 out (`far.smoothFrom` moves that). `-Dearthplatform.far.blockTextures=true` keeps far textures one block in size and fades them to their average colour.
 
@@ -44,7 +44,7 @@ Flags are Java system properties, given as JVM arguments such as `-Dearthplatfor
 - Layered clouds: the shader compiles on NeoForge and Fabric, on Mac and on Windows and Linux drivers; toggling live from the config screen and from Sodium; flying through Y 3,400 to 4,200; the top bank from low down; clouds against the Himalayas; the pass staying off under Photon; GPU cost at Balanced, High and Cinematic.
 - Surface cubes: elytra flight at 60 to 300 blocks over land, then over deep ocean. Ground and water stay full blocks, with no holes or pale squares, and buried rock does not load.
 - Near cubes with Photon: teleport and fast low flight show no hitch, and a redstone clock or flowing water beside you keeps updating.
-- `far.blockTextures=true` has not been compiled on a GPU yet. Check that it builds, with and without Photon.
+- `far.blockTextures=true` compiles and links on this Mac's GPU without a pack (the #167 GPU tests include it). It has not been tried under Photon or looked at in game.
 - Precise far depth: far terrain looks the same with layered clouds on or off, and stand-ins at your feet don't clip after a teleport.
 - Curvature and haze: the ramps from 1,500 and 2,000 blocks up are smooth, shores stay closed, and nothing curves under Photon.
 
