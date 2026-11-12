@@ -20,6 +20,13 @@ import javax.annotation.Nullable;
  * blocks, the look to a quarter of the view), so the walk, which depends on it, is walked again only
  * when it changes that much, not every frame of a zoom mod's smooth zoom or a slow pan; the cone is
  * that much wider than the view to cover it.
+ *
+ * <p>Two things draw the view somewhere other than where the player looks, and each widens it while it
+ * holds. While the player walks, the game's view bobbing tips the view up to {@link #BOB_PITCH} and
+ * rolls it up to {@link #BOB_ROLL} (see {@link #bobs}); at a narrow view that is a share of the screen,
+ * so while it can, the view is wider by as much, and still it is not followed step by step. Under the
+ * Earth's curve (see {@link EarthView}) ground is drawn lower than it lies, so a column counts as far
+ * down as it can be drawn, as the renderer culls it.
  */
 final class FarZoom {
     /** The least zoom that sharpens: a sprinting or dynamic field of view zooms out, so this is well clear of them. */
@@ -37,11 +44,26 @@ final class FarZoom {
     static final int MAX_COLUMNS = Math.max(1, Integer.getInteger("earthplatform.far.zoomColumns", 8000));
     /**
      * The most zoom counted, in half steps of two (see {@link #steps}): all of {@link #MAX} unless
-     * {@code -Dearthplatform.far.zoomSteps} sets fewer. The view's cone still follows the whole zoom.
+     * {@code -Dearthplatform.far.zoomSteps} sets fewer. The view's cone follows the view's own zoom,
+     * which is rounded down to a half step of two and capped at {@link #MAX}, not what this counts.
      */
     static final int MAX_STEPS = Math.clamp(Integer.getInteger("earthplatform.far.zoomSteps", 14), 1, 14);
     /** Blocks the camera's position is rounded to. */
     private static final int CAMERA = 32;
+    /**
+     * The most the game's view bobbing tips the view up or down and rolls it, in radians: its pitch is
+     * at most {@code 5 * bob} degrees and its roll at most {@code 3 * bob}, and the walking bob a
+     * player has (see {@code Player#aiStep}) is at most 0.1.
+     */
+    private static final double BOB_PITCH = Math.toRadians(0.5), BOB_ROLL = Math.toRadians(0.3);
+    /**
+     * The least walking bob that counts: it dies away by a factor of 0.6 each tick after a player stops
+     * and is never quite zero, but at this its pitch (a fortieth of a degree) is inside what the look's
+     * rounding leaves spare, even at the narrowest view.
+     */
+    private static final float BOB_MIN = 0.005F;
+    /** The factor the Earth's curve is rounded up by, so that it is not walked again as the camera goes north or south. */
+    private static final double CURVE_STEP = 1.25;
 
     /** The zoom, rounded down to a power of the square root of two. */
     final double zoom;
@@ -54,6 +76,10 @@ final class FarZoom {
     private final int yaw, pitch, spreadSteps, zoomSteps, aspectSteps;
     /** The view's own zoom in half steps of two, which the cone follows; {@link #zoomSteps} may count less of it (see {@link #limited}). */
     private final int viewSteps;
+    /** Whether the game's view bobbing can be turning the view (see {@link #bobs}). */
+    private final boolean bobbing;
+    /** The drop per square block the view is culled for (see {@link EarthView#drop}), rounded up, or 0 on flat ground. */
+    private final float curvature;
     /** The look, and the cosine of the cone's half angle. */
     private final double dx, dy, dz, cone;
     /**
@@ -63,9 +89,12 @@ final class FarZoom {
      */
     private final double[][] sides;
 
-    private FarZoom(int zoomSteps, int x, int y, int z, int height, int yaw, int pitch, int spreadSteps, int viewSteps, int aspectSteps) {
+    private FarZoom(int zoomSteps, int x, int y, int z, int height, int yaw, int pitch, int spreadSteps, int viewSteps, int aspectSteps,
+            boolean bobbing, float curvature) {
         this.zoomSteps = zoomSteps;
         this.viewSteps = viewSteps;
+        this.bobbing = bobbing;
+        this.curvature = curvature;
         this.zoom = Math.pow(2, zoomSteps / 2.0);
         this.x = x;
         this.y = y;
@@ -79,19 +108,27 @@ final class FarZoom {
         dx = -Math.sin(yawRadians) * Math.cos(pitchRadians);
         dy = -Math.sin(pitchRadians);
         dz = Math.cos(yawRadians) * Math.cos(pitchRadians);
-        cone = Math.cos(Math.min(Math.PI / 2, half + step));
+        cone = Math.cos(Math.min(Math.PI / 2, half + step + (bobbing ? BOB_PITCH : 0)));
         this.aspectSteps = aspectSteps;
-        sides = aspectSteps > 0 ? sides(Math.tan(half), aspectSteps / 100.0, step, yawRadians, pitchRadians) : new double[0][];
+        sides = aspectSteps > 0 ? sides(Math.tan(half), aspectSteps / 100.0, step, bobbing, yawRadians, pitchRadians) : new double[0][];
     }
 
     /**
      * The sides of a view whose corners are {@code corner} (a tangent) from its middle and whose width
      * is {@code aspect} times its height, looking along yaw and pitch: each side's angle from the middle
-     * widened by {@code step}, as the look may be that far off.
+     * widened by {@code step}, as the look may be that far off. While {@code bobbing}, the view may
+     * also be tipped by {@link #BOB_PITCH} either way (the game only ever tips it down, which this does
+     * not lean on) and rolled by {@link #BOB_ROLL}: the roll swings each side by that much of how far off
+     * the middle the view's corner is across it, the tip's share of which the vertical sides also count.
      */
-    private static double[][] sides(double corner, double aspect, double step, double yaw, double pitch) {
+    private static double[][] sides(double corner, double aspect, double step, boolean bobbing, double yaw, double pitch) {
         double up = corner / Math.sqrt(1 + aspect * aspect), across = up * aspect;
         double wide = Math.atan(across) + step, high = Math.atan(up) + step;
+        if (bobbing) {
+            double w = wide, h = high;
+            wide = w + BOB_ROLL * (h + BOB_PITCH);
+            high = h + BOB_PITCH + BOB_ROLL * w;
+        }
         if (wide >= Math.PI / 2 || high >= Math.PI / 2) return new double[0][];
         double[] forward = {-Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)};
         // The view's right and its up, at right angles to the look and to each other.
@@ -116,40 +153,46 @@ final class FarZoom {
 
     /** The same view counting at most {@code steps} of its zoom (see {@link #steps}). */
     FarZoom limited(int steps) {
-        return steps >= zoomSteps ? this : new FarZoom(steps, x, y, z, height, yaw, pitch, spreadSteps, viewSteps, aspectSteps);
+        return steps >= zoomSteps ? this : new FarZoom(steps, x, y, z, height, yaw, pitch, spreadSteps, viewSteps, aspectSteps, bobbing, curvature);
     }
+
+    /**
+     * Whether the game's view bobbing can be turning the view: the option is on and the player's walking
+     * bob, this tick's or last's (the view lerps between them), is more than {@link #BOB_MIN}.
+     */
+    static boolean bobs(boolean option, float bob, float previousBob) { return option && Math.max(bob, previousBob) > BOB_MIN; }
 
     /**
      * The zoomed view, or null unzoomed. {@code zoom} is how much narrower the view is than the game's
      * field of view, {@code spread} the tangent of the angle from the look to the view's corners at
      * that field of view; {@code yaw} and {@code pitch} in degrees as the game has them. The previous
-     * one comes back while nothing has changed past its rounding. Only the cone round the view's
-     * corners counts: {@link #at(double, double, double, double, double, double, double, float, float, FarZoom)}
-     * with the view's shape cuts it to the view itself.
+     * one comes back while nothing has changed past its rounding.
+     *
+     * <p>{@code aspect} is how many times as wide as high the view is, and a column then counts only
+     * where it can show inside the view's four sides, not anywhere in the cone round its corners,
+     * which on a wide screen took in about twice the ground above and below the view; 0 counts the
+     * cone alone. {@code bobbing} is whether the game's view bobbing can be turning the view (see
+     * {@link #bobs}), and {@code curvature} the drop per square block the view is culled for, or 0
+     * on flat ground (see {@link EarthView#drop}).
      */
-    @Nullable static FarZoom at(double zoom, double spread, double x, double y, double z, double height, float yaw, float pitch,
-            @Nullable FarZoom previous) {
-        return at(zoom, spread, 0, x, y, z, height, yaw, pitch, previous);
-    }
-
-    /**
-     * The same for a view {@code aspect} times as wide as it is high: a column counts only where it
-     * can show inside the view's four sides, not anywhere in the cone round its corners, which on a
-     * wide screen took in about twice the ground above and below the view.
-     */
-    @Nullable static FarZoom at(double zoom, double spread, double aspect, double x, double y, double z, double height, float yaw, float pitch,
-            @Nullable FarZoom previous) {
+    @Nullable static FarZoom at(double zoom, double spread, double aspect, boolean bobbing, float curvature, double x, double y, double z,
+            double height, float yaw, float pitch, @Nullable FarZoom previous) {
         if (!(zoom >= MIN)) return null;
         int zoomSteps = (int) Math.floor(2 * Math.log(Math.min(zoom, MAX)) / Math.log(2));
         int spreadSteps = (int) Math.ceil(spread * 100);
         double step = step(Math.atan(spreadSteps / 100.0 / Math.pow(2, zoomSteps / 2.0)));
         FarZoom zoomed = new FarZoom(Math.min(zoomSteps, MAX_STEPS), round(x), round(y), round(z), round(Math.max(0, height)),
                 (int) Math.round(Math.toRadians(yaw) / step), (int) Math.round(Math.toRadians(pitch) / step), spreadSteps, zoomSteps,
-                aspect > 0 ? Math.max(1, (int) Math.floor(aspect * 100)) : 0);
+                aspect > 0 ? Math.max(1, (int) Math.floor(aspect * 100)) : 0, bobbing, curve(curvature));
         return zoomed.equals(previous) ? previous : zoomed;
     }
 
     private static int round(double blocks) { return (int) Math.round(blocks / CAMERA) * CAMERA; }
+
+    /** The Earth's curve, rounded up to a power of {@link #CURVE_STEP}: a little more drop than there is, never less. */
+    private static float curve(float curvature) {
+        return curvature > 0 ? (float) Math.pow(CURVE_STEP, Math.ceil(Math.log(curvature) / Math.log(CURVE_STEP))) : 0;
+    }
 
     /**
      * True for a column the zoomed view draws its next finer level in: up to the zoom times as far from
@@ -255,6 +298,9 @@ final class FarZoom {
 
     /** Whether a column's box, between block heights {@code bottom} and {@code top}, can show in the zoomed view. */
     private boolean inView(int cx, int cz, int width, double bottom, double top) {
+        // Under the Earth's curve the ground is drawn as far below where it lies as its farthest corner
+        // drops, so the box reaches down that far, as the renderer culls it (see FarRenderer#view).
+        if (curvature > 0) bottom -= EarthView.drop((double) cx * width, (double) (cx + 1) * width, (double) cz * width, (double) (cz + 1) * width, x, z, CAMERA, curvature);
         double ox = (cx + 0.5) * width - x, oy = (bottom + top) / 2 - y, oz = (cz + 0.5) * width - z;
         double half = (top - bottom) / 2, radius = Math.sqrt(0.5 * width * width + half * half);
         double distance = Math.sqrt(ox * ox + oy * oy + oz * oz);
@@ -290,12 +336,13 @@ final class FarZoom {
 
     @Override public boolean equals(Object other) {
         return other instanceof FarZoom zoomed && zoomed.zoomSteps == zoomSteps && zoomed.viewSteps == viewSteps && zoomed.x == x && zoomed.y == y && zoomed.z == z
-                && zoomed.height == height && zoomed.yaw == yaw && zoomed.pitch == pitch && zoomed.spreadSteps == spreadSteps && zoomed.aspectSteps == aspectSteps;
+                && zoomed.height == height && zoomed.yaw == yaw && zoomed.pitch == pitch && zoomed.spreadSteps == spreadSteps && zoomed.aspectSteps == aspectSteps
+                && zoomed.bobbing == bobbing && zoomed.curvature == curvature;
     }
 
     @Override public int hashCode() {
         int hash = zoomSteps * 31 + viewSteps;
-        for (int value : new int[] {x, y, z, height, yaw, pitch, spreadSteps, aspectSteps}) hash = hash * 31 + value;
+        for (int value : new int[] {x, y, z, height, yaw, pitch, spreadSteps, aspectSteps, bobbing ? 1 : 0, Float.floatToIntBits(curvature)}) hash = hash * 31 + value;
         return hash;
     }
 

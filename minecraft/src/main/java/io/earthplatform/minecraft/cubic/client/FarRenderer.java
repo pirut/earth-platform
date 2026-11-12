@@ -896,7 +896,9 @@ public final class FarRenderer {
         var eye = player.getEyePosition();
         double height = eye.y - ground(player.getBlockX(), player.getBlockZ(), eye.y);
         FarZoom before = zoomView;
-        zoomView = ZOOM ? FarZoom.at(focal / normal, spread * focal / normal, aspect, eye.x, eye.y, eye.z, height,
+        // The view as the game draws it may be tipped by walking (view bobbing), and ground is drawn lower under the Earth's curve.
+        boolean bobbing = FarZoom.bobs(Minecraft.getInstance().options.bobView().get(), player.bob, player.oBob);
+        zoomView = ZOOM ? FarZoom.at(focal / normal, spread * focal / normal, aspect, bobbing, cullCurvature, eye.x, eye.y, eye.z, height,
                 player.getYRot(), player.getXRot(), zoomView) : null;
         // A view that zooms in or turns is planned for at once, not at the next half second: what it looks at is asked for first.
         if (zoomView != null && zoomView != before) planNow = true;
