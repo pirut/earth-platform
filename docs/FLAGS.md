@@ -5,9 +5,9 @@ Players never need them: the settings files and menus cover everything a player 
 They are for testing, measuring and comparing against older behavior.
 
 Most are read once when the class that uses them loads, so set them on the command line, not at runtime.
-The frame rate to hold (`targetFrameRate` in the client settings file, off by default) is a setting, not a flag: see [PLAYING.md](PLAYING.md#settings). Four of them
-(`far.detail`, `far.textured`, `earth.offline`, `earth.imagery`) are also set by the settings files through
-`EarthConfig`; a value given on the command line wins over the file.
+The frame rate to hold (`targetFrameRate` in the client settings file, off by default) is a setting, not a flag: see [PLAYING.md](PLAYING.md#settings). Seven of them
+(`far.detail`, `far.textured`, `clouds.layered`, `clouds.quality`, `clouds.opacity`, `earth.offline`, `earth.imagery`) are also set by the settings files through
+`EarthConfig`; a value given on the command line wins over the file. The three cloud flags are read every frame.
 
 ## World data
 
@@ -118,6 +118,14 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.cubes.shadowCaves` | on | With `cubes.shadowCull` and `cubes.caveCull`: where the cave search shows the camera shut in (nothing it reached touches the edge of the near cubes, so the view never leaves them), the shadow map takes only the cubes whose shadow, falling away from the light, meets the box of what the search reached (grown 16 blocks). In a sealed test room under Photon the map drew 171 cubes instead of 536. Never with retiring meshes about, or a pack Iris may not cull for. `false` leaves it out | `CubeRenderer`, `CubeCaves` |
 | `earthplatform.cubes.regions` | on | Near cube meshes share vertex buffers by region (8 cubes a side), their vertices placed in the region, and each opaque layer is drawn with one `glMultiDrawElementsBaseVertex` a buffer, in the main pass and the shadow map; translucent layers keep their exact back-to-front order, drawn in runs of cubes that share a buffer. Buffers are of fixed size and meshes never move, so nothing is copied on the GPU (OpenGL 3.2, a Mac too); they take about 1.4 times the meshes' own bytes. Cubes drawn on condition of an occlusion query still draw one by one. The same picture bar a few edge pixels in a hundred thousand, from rounding a vertex's place in the region instead of in the cube. `false` gives every cube its own buffers and draws, as before | `CubeRegions`, `CubeRanges`, `CubeRenderer`, `CubeMesher` |
 | `earthplatform.cubic.lightmapRing` | on | In cubic worlds without a shader pack, uploads the game's lightmap to three textures in turn, so an upload never waits on frames still drawing with the last one; the same pixels are drawn. `false` always uploads to the one texture, for comparing | `CubicLightmapTexture` |
+
+## Sky
+
+| Flag | Default | What it does | Read in |
+| --- | --- | --- | --- |
+| `earthplatform.clouds.layered` | `false` | Experimental: three thick cloud banks at 0.65, 1.5 and 3 times `cloudHeight`, each with its own wind and regional weather, ray marched in one pass and stopped at the game's depth, instead of the single deck. Without a shader pack only; falls back to the deck when the shader or depth isn't there. Same as `layeredClouds` in the client settings | `EarthClouds`, `CloudVolume` |
+| `earthplatform.clouds.quality` | `high` | With `clouds.layered`: `balanced`, `high` or `cinematic`, 16, 24 or 32 ray samples a bank. Same as `cloudQuality` | `CloudVolume` |
+| `earthplatform.clouds.opacity` | 0.72 | With `clouds.layered`: the most the clouds may hide, 0.2 to 0.98. Same as `cloudOpacity` | `CloudVolume` |
 
 ## Shaders, debugging and measuring
 
