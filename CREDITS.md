@@ -263,7 +263,7 @@ The [Cubic Chunks](https://github.com/OpenCubicChunks) mods, [Terrarium](https:/
 
 ## Contributors
 
-**VanceCStone** wrote the flight and distant rendering work in [pull request #161](https://github.com/pirut/earth-platform/pull/161): surface cubes for low flight, the near cube frame budgets, spyglass and far terrain detail, and the layered clouds with regional weather. It was split into smaller parts and fitted onto the current build, and the curved horizon from the same work is still in review. Thank you.
+**VanceCStone** wrote the flight and distant rendering work in [pull request #161](https://github.com/pirut/earth-platform/pull/161): surface cubes for low flight, the near cube frame budgets, spyglass and far terrain detail, the layered clouds with regional weather, and the curved horizon with its high-altitude haze. It was split into smaller parts and fitted onto the current build. Thank you.
 
 ## Trademarks
 

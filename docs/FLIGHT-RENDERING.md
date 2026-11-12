@@ -1,6 +1,6 @@
 # Flying high and seeing far
 
-How the game looks and loads when you fly, climb or look a long way. Most of it is experimental and off by default. The pieces were written by VanceCStone in [#161](https://github.com/pirut/earth-platform/pull/161) and landed in four parts ([#162](https://github.com/pirut/earth-platform/pull/162), [#163](https://github.com/pirut/earth-platform/pull/163), [#164](https://github.com/pirut/earth-platform/pull/164), [#165](https://github.com/pirut/earth-platform/pull/165)), with a fifth ([#167](https://github.com/pirut/earth-platform/pull/167)) in review.
+How the game looks and loads when you fly, climb or look a long way. Most of it is experimental and off by default. The pieces were written by VanceCStone in [#161](https://github.com/pirut/earth-platform/pull/161) and landed in five parts ([#162](https://github.com/pirut/earth-platform/pull/162), [#163](https://github.com/pirut/earth-platform/pull/163), [#164](https://github.com/pirut/earth-platform/pull/164), [#165](https://github.com/pirut/earth-platform/pull/165), [#167](https://github.com/pirut/earth-platform/pull/167)).
 
 Flags are Java system properties, given as JVM arguments such as `-Dearthplatform.cubes.reuseSnapshots=true`. Every flag and its default is in [FLAGS.md](FLAGS.md). The world's height is unchanged by any of this.
 
@@ -15,7 +15,8 @@ Flags are Java system properties, given as JVM arguments such as `-Dearthplatfor
 | Distant water | yes | Flat-coloured far water is nearly opaque, so the seabed no longer shows through distant oceans (plain renderer only) |
 | Snapshot reuse, sealed-stone skip | no | Two near cube meshing savings |
 | Smooth far ground, block textures | no | Two far terrain looks |
-| Curvature, high-altitude haze, precise far depth | no | Arrive with #167. See below |
+| Curvature, high-altitude haze | no | The far view curves away with the Earth and hazes when you fly high. See below |
+| Precise far depth | only with layered clouds | Layered clouds clip cleanly against distant mountains |
 
 ## Turn the experimental parts on
 
@@ -27,13 +28,13 @@ Flags are Java system properties, given as JVM arguments such as `-Dearthplatfor
 
 **Far terrain looks** (client). `-Dearthplatform.far.smooth=true` blends trees into smooth ground from level 5 out (`far.smoothFrom` moves that). `-Dearthplatform.far.blockTextures=true` keeps far textures one block in size and fades them to their average colour.
 
-**With #167** (client, no shader pack). `-Dearthplatform.far.curvature=true` drops far terrain, water and layered clouds away with the Earth's curve from 1,500 blocks up; by 6,000 blocks it is the real drop, about 196 m at 50 km. Only the picture curves, never the world. `-Dearthplatform.far.atmosphere=true` hazes far terrain from 2,000 to 6,000 blocks up. `far.plainDepth` (on) draws far terrain into a 32-bit depth of its own, but only while layered clouds draw, so the clouds meet distant mountains cleanly; `false` turns it off. All four do nothing under a shader pack. Their rows in FLAGS.md arrive with #167.
+**Curvature, haze and precise far depth** (client, no shader pack). `-Dearthplatform.far.curvature=true` drops far terrain, water and layered clouds away with the Earth's curve from 1,500 blocks up; by 6,000 blocks it is the real drop, about 196 m at 50 km. Only the picture curves, never the world. `-Dearthplatform.far.atmosphere=true` hazes far terrain from 2,000 to 6,000 blocks up. `far.plainDepth` (on) draws far terrain into a 32-bit depth of its own, but only while layered clouds draw, so the clouds meet distant mountains cleanly; `false` turns it off. All four do nothing under a shader pack.
 
 ## Known issues
 
 - **Layered clouds, whiteout.** With the camera inside the middle bank, about Y 3,400 to 4,200 at the default height, the horizon is a uniform white veil.
 - **Layered clouds, ribbons.** The top bank can show long straight lines when seen at a shallow angle.
-- **Layered clouds, clipping.** Where a cloud meets a distant slope the cutoff can sit tens of blocks off, because the game's depth is coarse past a few kilometres. #167 adds a precise far depth for the clouds to clip against; it passes GPU tests but has not been checked in game.
+- **Layered clouds, clipping.** Where a cloud meets a distant slope the cutoff can sit tens of blocks off, because the game's depth is coarse past a few kilometres. The precise far depth (`far.plainDepth`, on while layered clouds draw) is meant to fix this; it passes GPU tests but has not been checked in game. The first cloud pass after turning them on can still use the coarse depth.
 - The layered cloud pass keeps about 1 MiB of textures after it is switched off, until the next resource reload.
 - **Distant water under Photon.** Photon computes its own water alpha, so the seabed can still show through far water.
 - **Surface cubes.** A cube held below the player that meshed before its column's tops arrived can keep pale lighting until it is next remeshed. Survey work for players on foot can delay a flyer's, and a column whose survey fails five times stays unknown until it is pruned.
@@ -44,7 +45,8 @@ Flags are Java system properties, given as JVM arguments such as `-Dearthplatfor
 - Surface cubes: elytra flight at 60 to 300 blocks over land, then over deep ocean. Ground and water stay full blocks, with no holes or pale squares, and buried rock does not load.
 - Near cubes with Photon: teleport and fast low flight show no hitch, and a redstone clock or flowing water beside you keeps updating.
 - `far.blockTextures=true` has not been compiled on a GPU yet. Check that it builds, with and without Photon.
-- With #167: far terrain looks the same with layered clouds on or off, and the curvature and haze ramps are smooth.
+- Precise far depth: far terrain looks the same with layered clouds on or off, and stand-ins at your feet don't clip after a teleport.
+- Curvature and haze: the ramps from 1,500 and 2,000 blocks up are smooth, shores stay closed, and nothing curves under Photon.
 
 ## Recommended Photon settings
 
