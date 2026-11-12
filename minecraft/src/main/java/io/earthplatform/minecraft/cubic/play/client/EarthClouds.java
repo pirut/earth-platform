@@ -34,7 +34,8 @@ import org.lwjgl.opengl.GL11;
  * layer of hard squares a hundred metres wide read as paper cut-outs, and its diagonal streaks as a
  * deck tilted toward the horizon. Wherever the far terrain reaches up near the deck (Aconcagua from its foot,
  * the Himalaya) the cloud thins away around the slopes, so peaks stand above the clouds rather than
- * being sliced by them. Other worlds keep vanilla clouds, and a shader pack keeps its own.
+ * being sliced by them. Other worlds keep vanilla clouds, and a shader pack keeps its own. With
+ * {@code earthplatform.clouds.layered} three thick banks draw instead (see {@link CloudVolume}).
  */
 public final class EarthClouds {
     private static final ResourceLocation TEXTURE = ResourceLocation.withDefaultNamespace("textures/environment/clouds.png");
@@ -113,6 +114,7 @@ public final class EarthClouds {
         // This deck isn't fogged, so from under water, lava or powder snow it would show through
         // as a white speckled sheet far overhead; nothing that high can be seen from there anyway.
         if (Minecraft.getInstance().gameRenderer.getMainCamera().getFluidInCamera() != FogType.NONE) return true;
+        if (Boolean.getBoolean("earthplatform.clouds.layered") && CloudVolume.draw(level, view, projection, partialTick, camX, camY, camZ, height)) return true;
 
         double under = followGround(level);
         double deck = Double.isNaN(under) ? SEA + height : Math.max(SEA + height, under + ABOVE_GROUND);

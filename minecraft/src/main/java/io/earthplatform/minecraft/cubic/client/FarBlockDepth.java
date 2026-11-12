@@ -17,7 +17,7 @@ import org.lwjgl.opengl.GL30C;
  * It is copied from whatever framebuffer the game, or a shader pack, draws its terrain into, only
  * on frames that need it. Render thread only.
  */
-final class FarBlockDepth {
+public final class FarBlockDepth {
     private static int texture, framebuffer, width, height, format;
     /** Whether it copies into 32-bit float depth by {@code glCopyTexSubImage2D}, after a blit failed for a depth format it could not match. */
     private static boolean copying;
@@ -26,10 +26,10 @@ final class FarBlockDepth {
 
     private FarBlockDepth() {}
 
-    static int texture() { return texture; }
+    public static int texture() { return texture; }
 
     /** Copies the bound framebuffer's depth; false when there is none it can copy, and far terrain then draws as before. */
-    static boolean copy() {
+    public static boolean copy() {
         if (failed) return false;
         RenderSystem.assertOnRenderThread();
         int drawn = GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
