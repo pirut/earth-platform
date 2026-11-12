@@ -3,6 +3,7 @@
 Earth Platform reads a few Java system properties, given as JVM arguments such as `-Dearthplatform.far.threads=4`.
 Players never need them: the settings files and menus cover everything a player changes (see [PLAYING.md](PLAYING.md#settings)).
 They are for testing, measuring and comparing against older behavior.
+The experimental flying, cloud and far terrain flags are explained together in [FLIGHT-RENDERING.md](FLIGHT-RENDERING.md).
 
 Most are read once when the class that uses them loads, so set them on the command line, not at runtime.
 The frame rate to hold (`targetFrameRate` in the client settings file, off by default) is a setting, not a flag: see [PLAYING.md](PLAYING.md#settings). Seven of them
