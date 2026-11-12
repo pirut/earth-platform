@@ -27,6 +27,9 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue SHOW_DOWNLOADS;
     public static final ModConfigSpec.BooleanValue PRESELECT_EARTH;
     public static final ModConfigSpec.IntValue CLOUD_HEIGHT;
+    public static final ModConfigSpec.BooleanValue LAYERED_CLOUDS;
+    public static final ModConfigSpec.EnumValue<CloudQuality> CLOUD_QUALITY;
+    public static final ModConfigSpec.DoubleValue CLOUD_OPACITY;
 
     // Common --------------------------------------------------------------------------------------
     public static final ModConfigSpec COMMON_SPEC;
@@ -80,6 +83,15 @@ public final class EarthConfig {
         CLOUD_HEIGHT = client.comment("Height of the clouds in Earth worlds, in meters above sea level; they also stay at least 1200 m over",
                         "the ground you stand on. 0 keeps vanilla clouds at Y 192. Shader packs draw their own clouds. Default 2500.")
                 .translation(key("cloudHeight")).defineInRange("cloudHeight", 2500, 0, 9000);
+        LAYERED_CLOUDS = client.comment("Experimental: draw three thick cloud banks at 0.65, 1.5 and 3 times the cloud height, each with its own wind,",
+                        "and weather that clears and clouds over, instead of the single deck. Without a shader pack only. Off by default:",
+                        "clouds can still cut into mountains, and the high bank can show straight streaks. Changes at once.")
+                .translation(key("layeredClouds")).define("layeredClouds", false);
+        CLOUD_QUALITY = client.comment("How finely the layered clouds are sampled: Balanced, High or Cinematic (16, 24 or 32 samples a bank).",
+                        "Higher costs GPU time. Default High.")
+                .translation(key("cloudQuality")).defineEnum("cloudQuality", CloudQuality.HIGH);
+        CLOUD_OPACITY = client.comment("The most the layered clouds may hide, from 0.2 to 0.98, so some of the view stays when flying inside a bank. Default 0.72.")
+                .translation(key("cloudOpacity")).defineInRange("cloudOpacity", .72, .2, .98);
         CLIENT_SPEC = client.build();
 
         ModConfigSpec.Builder common = new ModConfigSpec.Builder();
@@ -140,6 +152,13 @@ public final class EarthConfig {
     }
 
     private EarthConfig() {}
+
+    /** Layered cloud sampling choices; {@code CloudVolume} turns them into samples per bank. */
+    public enum CloudQuality implements TranslatableEnum {
+        BALANCED, HIGH, CINEMATIC;
+
+        @Override public Component getTranslatedName() { return Component.translatable(key("cloudQuality." + name().toLowerCase(java.util.Locale.ROOT))); }
+    }
 
     /**
      * Far terrain sharpness choices, as scales of the detail (see {@link Far#sharpness}).
@@ -223,6 +242,9 @@ public final class EarthConfig {
             property("earthplatform.far.detail", Integer.toString(FAR_DETAIL.get()));
             if (!FROM_COMMAND_LINE.contains("earthplatform.far.detail")) Far.detail(FAR_DETAIL.get());
             property("earthplatform.far.textured", Integer.toString(FAR_TEXTURED_LEVELS.get()));
+            property("earthplatform.clouds.layered", Boolean.toString(LAYERED_CLOUDS.get()));
+            property("earthplatform.clouds.quality", CLOUD_QUALITY.get().name().toLowerCase(java.util.Locale.ROOT));
+            property("earthplatform.clouds.opacity", Double.toString(CLOUD_OPACITY.get()));
             steps = Math.min(steps, mostSharpnessSteps());
             applySharpness();
         } else if (config.getSpec() == COMMON_SPEC) {
@@ -236,7 +258,8 @@ public final class EarthConfig {
 
     /** Engine properties given on the command line, which the file never overrides. */
     private static final java.util.Set<String> FROM_COMMAND_LINE = java.util.stream.Stream.of(
-            "earthplatform.far.detail", "earthplatform.far.textured", "earthplatform.earth.offline", "earthplatform.earth.imagery")
+            "earthplatform.far.detail", "earthplatform.far.textured", "earthplatform.clouds.layered", "earthplatform.clouds.quality",
+            "earthplatform.clouds.opacity", "earthplatform.earth.offline", "earthplatform.earth.imagery")
             .filter(key -> System.getProperty(key) != null).collect(java.util.stream.Collectors.toUnmodifiableSet());
 
     /** Sets satellite imagery from the Create World screen: saved to the file and in effect for the next new world. */
@@ -244,6 +267,13 @@ public final class EarthConfig {
         SATELLITE_IMAGERY.set(on);
         COMMON_SPEC.save();
         property("earthplatform.earth.imagery", Boolean.toString(on));
+    }
+
+    /** Turns the layered clouds on or off from a screen in game: saved to the file and in effect at once. */
+    public static void setLayeredClouds(boolean on) {
+        LAYERED_CLOUDS.set(on);
+        CLIENT_SPEC.save();
+        property("earthplatform.clouds.layered", Boolean.toString(on));
     }
 
     /** Whether new worlds get satellite imagery, counting a command-line setting. */
