@@ -10,6 +10,7 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexSorting;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
+import io.earthplatform.minecraft.cubic.client.LevelPasses;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
 import io.earthplatform.minecraft.platform.Loader;
 import net.minecraft.client.Camera;
@@ -105,6 +106,24 @@ public final class EarthClouds {
         return level instanceof ClientLevel client && Cubic.isCubic(client.dimension());
     }
 
+    /** Whether the layered clouds are on, with a cloud height to draw them at (see {@link CloudVolume}). */
+    public static boolean layered() {
+        return Boolean.getBoolean("earthplatform.clouds.layered") && EarthConfig.CLOUD_HEIGHT.get() > 0;
+    }
+
+    /** The level pass the layered clouds last drew in (see {@link LevelPasses}). */
+    private static int layeredPass;
+    private static boolean layeredDrew;
+
+    /**
+     * Whether the layered clouds are on and drew in one of the last few level passes: not when their
+     * shader failed and the plain deck draws instead, nor while clouds are off in the game's settings.
+     */
+    public static boolean layeredDrawing() { return layered() && drewLately(layeredDrew, layeredPass, LevelPasses.current()); }
+
+    /** Whether a draw in pass {@code drawn}, if there was one, is among the last {@link LevelPasses#TRACKED} before {@code now}. */
+    static boolean drewLately(boolean drew, int drawn, int now) { return drew && now - drawn >= 0 && now - drawn <= LevelPasses.TRACKED; }
+
     /** Draws the Earth's clouds instead of vanilla's; false leaves the frame to vanilla. */
     public static boolean render(ClientLevel level, Matrix4f view, Matrix4f projection, float partialTick, double camX, double camY, double camZ) {
         if (level == null || !Cubic.isCubic(level.dimension())) return false;
@@ -114,7 +133,11 @@ public final class EarthClouds {
         // This deck isn't fogged, so from under water, lava or powder snow it would show through
         // as a white speckled sheet far overhead; nothing that high can be seen from there anyway.
         if (Minecraft.getInstance().gameRenderer.getMainCamera().getFluidInCamera() != FogType.NONE) return true;
-        if (Boolean.getBoolean("earthplatform.clouds.layered") && CloudVolume.draw(level, view, projection, partialTick, camX, camY, camZ, height)) return true;
+        if (layered() && CloudVolume.draw(level, view, projection, partialTick, camX, camY, camZ, height)) {
+            layeredDrew = true;
+            layeredPass = LevelPasses.current();
+            return true;
+        }
 
         double under = followGround(level);
         double deck = Double.isNaN(under) ? SEA + height : Math.max(SEA + height, under + ABOVE_GROUND);

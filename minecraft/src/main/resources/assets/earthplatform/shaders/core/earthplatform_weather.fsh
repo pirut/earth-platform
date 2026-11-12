@@ -3,6 +3,9 @@ uniform sampler2D Sampler0;
 uniform sampler2D Weather1;
 uniform sampler2D Weather2;
 uniform sampler2D SceneDepth;
+uniform sampler2D FarDepth;
+uniform mat4 FarInvProjection;
+uniform float UseFarDepth;
 uniform sampler3D NoiseVolume;
 uniform vec4 WeatherPhase;
 uniform vec4 ColorModulator;
@@ -20,6 +23,7 @@ uniform vec2 Phase2;
 uniform vec3 NoisePhase0;
 uniform vec3 NoisePhase1;
 uniform float MaxOpacity;
+uniform float Curvature;
 uniform int MarchSteps;
 in vec2 weatherUV;
 in vec4 weatherTint;
@@ -27,8 +31,10 @@ out vec4 weatherColour;
 
 vec4 band(int kind) { return kind == 0 ? Band0 : kind == 1 ? Band1 : Band2; }
 
+// Banks curve with far terrain: past 2 km from the camera they drop as it does (see EarthView).
 float heightInBand(vec3 p, vec4 b) {
-    return (CameraHeight + p.y - b.x) / b.y + 0.5;
+    float radius = max(0.0, length(p.xz) - 2000.0);
+    return (CameraHeight + p.y + Curvature * radius * radius - b.x) / b.y + 0.5;
 }
 
 float density(vec3 p, int kind) {
@@ -62,7 +68,8 @@ float density(vec3 p, int kind) {
 }
 
 vec2 interval(vec3 ray, vec4 b, float limit) {
-    float low = b.x - b.y * 0.5 - CameraHeight;
+    float drop = Curvature * max(0.0, limit - 2000.0) * max(0.0, limit - 2000.0);
+    float low = b.x - b.y * 0.5 - CameraHeight - drop;
     float high = b.x + b.y * 0.5 - CameraHeight;
     if (abs(ray.y) < 1e-5) return low <= 0.0 && high >= 0.0 ? vec2(1.0, limit) : vec2(limit, limit);
     float a = low / ray.y, z = high / ray.y;
@@ -78,7 +85,17 @@ void main() {
     float scene = texture(SceneDepth, weatherUV).r;
     if (scene < 1.0) {
         vec4 hit = SkyInvProjection * vec4(weatherUV * 2.0 - 1.0, scene * 2.0 - 1.0, 1.0);
-        sceneLimit = min(limit, length(hit.xyz / hit.w));
+        float distanceToScene = length(hit.xyz / hit.w);
+        // With far terrain's own depth, the game's counts only near by, for its blocks: further out
+        // its steps run tens of blocks, and far water is drawn a little nearer than it is.
+        if (UseFarDepth < 0.5 || distanceToScene < 2048.0) sceneLimit = min(limit, distanceToScene);
+    }
+    if (UseFarDepth > 0.5) {
+        float far = texture(FarDepth, weatherUV).r;
+        if (far < 1.0) {
+            vec4 hit = FarInvProjection * vec4(weatherUV * 2.0 - 1.0, far * 2.0 - 1.0, 1.0);
+            sceneLimit = min(sceneLimit, length(hit.xyz / hit.w));
+        }
     }
     vec2 spans[3];
     int order[3] = int[](0, 1, 2);
