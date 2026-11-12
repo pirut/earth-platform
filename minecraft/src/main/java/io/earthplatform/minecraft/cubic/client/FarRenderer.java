@@ -797,7 +797,7 @@ public final class FarRenderer {
             if (side != null) schedule(side);
         }
         // Smooth ground meets its diagonal neighbours at its corners too.
-        if (FarMesher.SMOOTH && level >= FarMesher.SMOOTH_FROM) {
+        if (level >= FarMesher.SMOOTH_FROM) {
             for (int corner = 0; corner < 4; corner++) {
                 Column diagonal = held(column.diagonal(corner));
                 if (diagonal != null) schedule(diagonal);

@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import static io.earthplatform.minecraft.cubic.client.FarMesher.COARSE_WATER_ALPHA;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.COVER_FROM;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.DIRECTIONS;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.FIRST_WALL;
@@ -108,9 +109,9 @@ final class FarColumnMesh {
     }
 
     Built build() {
-        // The ground is drawn as one smooth surface rather than voxels, so only water is meshed voxel by voxel,
-        // and on the textured levels trees too, which stand on the ground as blocks do up close.
-        boolean smooth = smooth(job), trees = smooth && job.textured();
+        // The ground is drawn as one smooth surface rather than voxels, so only water is meshed voxel by voxel.
+        // Trees are part of that surface: a leaf voxel this far out is 32 blocks or more, and as a box it floated over the slope.
+        boolean smooth = smooth(job);
         if(job.packet()!=null) {
             java.util.BitSet candidates=FarRunCandidates.make(job.packet());
             for(int bit=candidates.nextSetBit(0);bit>=0;bit=candidates.nextSetBit(bit+1)) {
@@ -125,7 +126,7 @@ final class FarColumnMesh {
             if (section == null || section.hasOnlyAir()) continue;
             for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
                 BlockState state = section.getBlockState(x, y, z);
-                if (state.isAir() || smooth && !seeThrough(state) && !(trees && foliage(state))) continue;
+                if (state.isAir() || smooth && !seeThrough(state)) continue;
                 int vy = si * 16 + y;
                 if (drawn(x, vy, z)) continue;
                 voxel(state, x, vy, z);
@@ -137,10 +138,6 @@ final class FarColumnMesh {
         int[] grid = null;
         if (smooth) {
             grid = new FarSmoothGround(this).emit(groups);
-            if (trees) {
-                opaqueFlat.emitQuads(this, groups);
-                emitSides(groups);
-            }
         } else {
             opaqueFlat.emitQuads(this, groups);
             emitSides(groups);
@@ -342,8 +339,9 @@ final class FarColumnMesh {
         FarFaces.Face face = job.faces().face(state, direction);
         int tint = job.faces().tint(state, biome, face);
         int rgb = texturedWater ? tint : multiply(face.rgb(), tint);
-        // Flat faces have no texture to carry water's see-through alpha, so the vertices do.
-        int alpha = texturedWater ? 255 : face.rgb() >>> 24;
+        // Flat faces have no texture to carry water's see-through alpha, so the vertices do. Merged water
+        // this far out stands for deep water, nearly opaque, so the bed under it does not show through.
+        int alpha = texturedWater ? 255 : Math.max(COARSE_WATER_ALPHA, face.rgb() >>> 24);
         return alpha << 24 | shade(rgb, job.shade()[direction.get3DDataValue()]);
     }
 

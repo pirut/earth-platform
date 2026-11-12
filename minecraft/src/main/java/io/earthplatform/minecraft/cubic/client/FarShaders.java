@@ -202,8 +202,16 @@ final class FarShaders {
     /** Blocks of height over which the haze thins to about a third (1/e): roughly how deep the hazy lower air is. */
     private static final float HAZE_HEIGHT = 1000.0F;
 
+    /**
+     * Defined when far textures keep one block's size at every level, with
+     * {@code -Dearthplatform.far.blockTextures=true}: further out they fade to their average colour as
+     * they shrink to a few pixels, and coarse voxels are lit by their slope until a block, not a voxel,
+     * spans a few pixels. Off, a texture spans half a voxel, so each voxel reads as a block of its own.
+     */
+    private static final String BLOCK_TEXTURES = Boolean.getBoolean("earthplatform.far.blockTextures") ? "#define EARTH_BLOCK_TEXTURES\n" : "";
+
     static final String VERTEX = String.format(java.util.Locale.ROOT,
-            "const float earth_HazeHeight = %.1f;\n", HAZE_HEIGHT) + """
+            "const float earth_HazeHeight = %.1f;\n", HAZE_HEIGHT) + BLOCK_TEXTURES + """
             // Where far terrain ends, in blocks: a uniform, since the far distance changes while playing.
             uniform float earth_Edge;
             uniform usamplerBuffer earth_Quads;
@@ -366,9 +374,11 @@ final class FarShaders {
                 else if (face == 3u) earth_tile = vec2(local.x, -local.y);
                 else if (face == 4u) earth_tile = vec2(local.z, -local.y);
                 else earth_tile = vec2(-local.z, -local.y);
+            #ifndef EARTH_BLOCK_TEXTURES
                 // Further out a texture spans more blocks, two to a voxel side, so each voxel reads as a
                 // block of its own at any distance instead of a blur of tiny repeats.
                 earth_tile /= max(1.0, v * 0.5);
+            #endif
 
                 uint look = q.w & 0xFFFFFu;
                 earth_normal = earth_smooth > 0.5 ? 0u : q.w >> 20;
@@ -382,6 +392,7 @@ final class FarShaders {
     private static final String SMOOTH_IN = """
             #ifndef EARTH_SMOOTH_IN
             #define EARTH_SMOOTH_IN
+            """ + BLOCK_TEXTURES + """
             in vec3 earth_vcolour;
             in vec3 earth_vnormal;
             flat in float earth_smooth;
@@ -479,8 +490,17 @@ final class FarShaders {
                 if (earth_smooth > 0.5 && (earth_flags & 1u) == 0u) return vec4(earth_vcolour, 1.0);
                 if ((earth_flags & 1u) == 0u) return vec4(earth_average, 1.0);
                 earth_here();
+            #ifdef EARTH_BLOCK_TEXTURES
+                // A texture repeating within a few pixels fades to its average instead of breaking into stripes.
+                float footprint = max(length(dFdx(earth_hereTile)), length(dFdy(earth_hereTile)));
+                float detail = 1.0 - smoothstep(0.125, 0.5, footprint);
+                if (detail <= 0.0) return vec4(earth_smooth > 0.5 ? earth_vcolour : earth_hereAverage, 1.0);
+            #endif
                 vec2 size = earth_hereSprite.zw - earth_hereSprite.xy;
                 vec4 texel = textureGrad(earth_Atlas, earth_atlasUv(), dFdx(earth_hereTile) * size, dFdy(earth_hereTile) * size);
+            #ifdef EARTH_BLOCK_TEXTURES
+                texel.rgb = mix(earth_hereAverage, texel.rgb, detail);
+            #endif
                 // Smooth ground's colour blends from voxel column to voxel column; the texture keeps its pattern on top.
                 if (earth_smooth > 0.5) return vec4(earth_vcolour * min(texel.rgb / max(earth_hereAverage, vec3(1.0 / 255.0)), vec3(3.0)), 1.0);
                 return vec4(texel.rgb, 1.0);
@@ -527,9 +547,14 @@ final class FarShaders {
             // spans plenty of pixels it is lit face by face, as a block is, with a lit top and shaded
             // sides. Smaller, a stepped hillside lit that way breaks into stripes of lit treads and
             // dark risers, so there the slope takes most of it over and the steps keep only a
-            // light relief. A texture spans half a voxel.
+            // light relief. A texture spans half a voxel, or one block with EARTH_BLOCK_TEXTURES, when
+            // a coarse voxel keeps its faces' light only once each of its blocks spans a few pixels.
             float earth_faceShare() {
+            #ifdef EARTH_BLOCK_TEXTURES
+                float pixels = 1.0 / max(length(fwidth(earth_tile)), 1e-5);
+            #else
                 float pixels = 2.0 / max(length(fwidth(earth_tile)), 1e-5);
+            #endif
                 return smoothstep(2.0, 10.0, pixels);
             }
 
