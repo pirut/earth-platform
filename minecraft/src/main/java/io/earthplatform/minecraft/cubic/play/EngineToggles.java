@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
@@ -91,6 +92,13 @@ public final class EngineToggles {
             for (int i = 1; i < parts.length; i++) key.append(Character.toUpperCase(parts[i].charAt(0))).append(parts[i], 1, parts[i].length());
             return key.toString();
         }
+
+        /**
+         * The path of the option's id on Sodium's page: lowercase, as the game's {@code ResourceLocation} requires
+         * ({@code [a-z0-9/._-]}), and apart from {@link #key()} (the settings file's name) and the language key.
+         * Iris lets the game accept anything here, so only a game without it would show a wrong one.
+         */
+        public String sodiumId() { return "toggle_" + property.replace('.', '_').toLowerCase(Locale.ROOT); }
 
         /** The language key of the name; the description is the same with {@code .tooltip}. */
         public String langKey() { return EarthPlatformMod.MOD_ID + ".configuration." + key(); }
@@ -289,11 +297,14 @@ public final class EngineToggles {
     }
 
     static synchronized void preload(Path configDir, Properties properties, Map<String, String> commandLine, Consumer<String> log) {
+        List<String> unreadable = new ArrayList<>();
         for (Side side : Side.values()) {
-            Map<String, Boolean> file = readBooleans(configDir.resolve(side.file));
+            Map<String, Boolean> file = readBooleans(configDir.resolve(side.file), unreadable);
             apply(properties, commandLine, of(side), toggle -> file.get(toggle.group().key + "." + toggle.key()), true, false);
         }
-        preloaded = true;
+        // With a file the early read could not parse, the loader's own load is the first to apply it, which may be late.
+        preloaded = unreadable.isEmpty();
+        unreadable.forEach(log);
         List<String> changed = new ArrayList<>();
         List<String> overridden = new ArrayList<>();
         for (Toggle toggle : ALL) {
@@ -322,35 +333,41 @@ public final class EngineToggles {
     }
 
     /**
-     * The on/off values of a settings file, as {@code group.key} to value, for the tables and keys of
-     * the form the game writes. Anything else in the file, and a file that is not there, reads as nothing.
+     * The on/off values of a settings file, as dotted keys to values ({@code farTerrain.farSmooth}), read with
+     * NightConfig's TOML parser, the one the loader reads the file with, so any form it accepts reads the same:
+     * quoted table names and keys, inline tables, comments. Other values, and a file that is not there, read as
+     * nothing. A file that cannot be read adds a line to {@code unreadable} and reads as nothing: the defaults stand
+     * until the loader's own load, which reports a broken file.
      */
-    static Map<String, Boolean> readBooleans(Path file) {
+    static Map<String, Boolean> readBooleans(Path file, List<String> unreadable) {
         Map<String, Boolean> found = new HashMap<>();
         if (!Files.isRegularFile(file)) return found;
         try (BufferedReader in = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            String table = "";   // null inside an array of tables, whose keys are not toggles
-            for (String line = in.readLine(); line != null; line = in.readLine()) {
-                String text = line.strip();
-                if (text.isEmpty() || text.startsWith("#")) continue;
-                if (text.startsWith("[")) {
-                    int end = text.indexOf(']');
-                    table = text.startsWith("[[") || end < 0 ? null : text.substring(1, end).strip();
-                    continue;
-                }
-                if (table == null) continue;
-                int equals = text.indexOf('=');
-                if (equals < 0) continue;
-                String value = text.substring(equals + 1).strip();
-                int comment = value.indexOf('#');
-                if (comment >= 0 && !value.startsWith("\"")) value = value.substring(0, comment).strip();
-                if (!value.equals("true") && !value.equals("false")) continue;
-                String name = text.substring(0, equals).strip();
-                found.put(table.isEmpty() ? name : table + "." + name, Boolean.parseBoolean(value));
-            }
-        } catch (IOException unreadable) {
-            EarthPlatformMod.LOGGER.debug("Could not read {} early; the defaults stand until it loads", file, unreadable);
+            TomlReader.read(in, found);
+        } catch (IOException | RuntimeException | LinkageError failure) {
+            unreadable.add("Earth Platform could not read " + file.getFileName() + " before the game started (" + failure.getClass().getSimpleName()
+                    + (failure.getMessage() == null ? "" : ": " + failure.getMessage()) + "); the defaults stand until the game loads it, and its engine settings may then apply only after a restart");
+            return new HashMap<>();
         }
         return found;
+    }
+
+    /**
+     * NightConfig lives in its own class so a loader without it fails here, caught by {@link #readBooleans}, and not
+     * when {@link EngineToggles} initializes. It is on the class path before any mod runs on both loaders: FML ships it,
+     * and Forge Config API Port nests it in the Fabric jar.
+     */
+    private static final class TomlReader {
+        static void read(BufferedReader in, Map<String, Boolean> into) {
+            flatten("", com.electronwill.nightconfig.toml.TomlFormat.instance().createParser().parse(in), into);
+        }
+
+        private static void flatten(String prefix, com.electronwill.nightconfig.core.UnmodifiableConfig config, Map<String, Boolean> into) {
+            for (Map.Entry<String, Object> entry : config.valueMap().entrySet()) {
+                String name = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
+                if (entry.getValue() instanceof Boolean value) into.put(name, value);
+                else if (entry.getValue() instanceof com.electronwill.nightconfig.core.UnmodifiableConfig table) flatten(name, table, into);
+            }
+        }
     }
 }

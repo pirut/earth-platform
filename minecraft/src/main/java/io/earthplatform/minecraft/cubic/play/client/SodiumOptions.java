@@ -135,7 +135,7 @@ public final class SodiumOptions implements ConfigEntryPoint {
         for (EngineToggles.Toggle toggle : EngineToggles.of(EngineToggles.Side.CLIENT, heading)) {
             if (!toggle.sodium()) continue;
             var value = EarthConfig.toggle(toggle);
-            var option = builder.createBooleanOption(id("toggle_" + toggle.key()))
+            var option = builder.createBooleanOption(id(toggle.sodiumId()))
                     .setName(Component.translatable(toggle.langKey()))
                     .setTooltip(Component.translatable(toggle.langKey() + ".tooltip"))
                     .setDefaultValue(toggle.defaultValue())

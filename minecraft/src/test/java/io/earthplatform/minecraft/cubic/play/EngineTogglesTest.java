@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.play;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -151,10 +152,46 @@ class EngineTogglesTest {
 
     @Test void theFileReaderTakesTablesAndComments(@TempDir Path config) throws IOException {
         Path file = config.resolve("settings.toml");
-        Files.writeString(file, String.join("\n", "top = true", "name = \"a # b\"", "count = 5", "[[list]]", "x = true", "[a]", "b = false", "[c.d]", "e = true # yes", "not a line", ""));
-        Map<String, Boolean> read = EngineToggles.readBooleans(file);
-        assertEquals(Map.of("top", true, "a.b", false, "c.d.e", true), read);
-        assertTrue(EngineToggles.readBooleans(config.resolve("absent.toml")).isEmpty());
+        Files.writeString(file, String.join("\n", "top = true", "name = \"a # b\"", "count = 5", "[[list]]", "x = true", "[a]", "b = false", "[c.d]", "e = true # yes", ""));
+        List<String> unreadable = new ArrayList<>();
+        assertEquals(Map.of("top", true, "a.b", false, "c.d.e", true), EngineToggles.readBooleans(file, unreadable));
+        assertTrue(EngineToggles.readBooleans(config.resolve("absent.toml"), unreadable).isEmpty());
+        assertTrue(unreadable.isEmpty(), "a missing file is not a problem: " + unreadable);
+    }
+
+    @Test void quotedTablesQuotedKeysAndInlineTablesApplyLikeThePlainForm(@TempDir Path config) throws IOException {
+        Files.writeString(config.resolve("earthplatform-client.toml"), String.join("\n",
+                "[\"farTerrain\"]", "\t\"farSmooth\" = true", "\tfarFade = false",
+                "[nearbyBlocks]", "\t'cubesCaveCull' = false", ""));
+        Files.writeString(config.resolve("earthplatform-common.toml"), "worldData = { earthCanopy = false }\n[flying]\ncubicFlightSurface = true\n");
+        Properties quoted = new Properties();
+        List<String> log = new ArrayList<>();
+        EngineToggles.preload(config, quoted, Map.of(), log::add);
+
+        Path plain = Files.createDirectory(config.resolve("plain"));
+        Files.writeString(plain.resolve("earthplatform-client.toml"), String.join("\n",
+                "[farTerrain]", "\tfarSmooth = true", "\tfarFade = false", "[nearbyBlocks]", "\tcubesCaveCull = false", ""));
+        Files.writeString(plain.resolve("earthplatform-common.toml"), "[worldData]\n\tearthCanopy = false\n[flying]\ncubicFlightSurface = true\n");
+        Properties expected = new Properties();
+        EngineToggles.preload(plain, expected, Map.of(), line -> { });
+
+        assertEquals(expected, quoted, "the same settings in a form the loader accepts apply the same way");
+        assertEquals("true", quoted.getProperty("earthplatform.far.smooth"));
+        assertEquals("false", quoted.getProperty("earthplatform.earth.canopy"));
+        assertTrue(log.stream().noneMatch(line -> line.contains("could not read")), log.toString());
+        assertTrue(EngineToggles.preloaded());
+    }
+
+    @Test void aMalformedFileFallsBackToTheDefaultsWithoutThrowing(@TempDir Path config) throws IOException {
+        Files.writeString(config.resolve("earthplatform-client.toml"), "[farTerrain\nfarSmooth = = true\n");
+        Files.writeString(config.resolve("earthplatform-common.toml"), "[flying]\ncubicFlightSurface = true\n");
+        Properties properties = new Properties();
+        List<String> log = new ArrayList<>();
+        EngineToggles.preload(config, properties, Map.of(), log::add);
+        assertNull(properties.getProperty("earthplatform.far.smooth"), "the unreadable file leaves its defaults");
+        assertEquals("true", properties.getProperty("earthplatform.cubic.flightSurface"), "the other file still reads");
+        assertTrue(log.stream().anyMatch(line -> line.contains("could not read earthplatform-client.toml") && line.contains("defaults stand")), log.toString());
+        assertFalse(EngineToggles.preloaded(), "the loader's read is then the first, so it may be late");
     }
 
     // Every toggle ---------------------------------------------------------------------------------
@@ -187,6 +224,28 @@ class EngineTogglesTest {
             if (toggle.when() == When.RESTART) assertTrue(text.endsWith("Restart the game to apply."), toggle.property() + " must say it needs a restart");
             else assertTrue(text.contains("new world") || text.contains("worlds you make"), toggle.property() + " must say it applies to new worlds");
         }
+    }
+
+    @Test void everySodiumOptionIdIsAValidLowercaseResourcePathAndUnique() throws IOException {
+        // The game's rule for a ResourceLocation path, which Iris happens to switch off: [a-z0-9/._-].
+        java.util.regex.Pattern valid = java.util.regex.Pattern.compile("[a-z0-9/._-]+");
+        Set<String> seen = new HashSet<>();
+        for (Toggle toggle : EngineToggles.ALL) {
+            String id = toggle.sodiumId();
+            assertTrue(valid.matcher(id).matches(), toggle.property() + ": Sodium id '" + id + "' is not a valid path");
+            assertTrue(seen.add(id), "two toggles share the Sodium id " + id);
+            assertNotEquals(toggle.key(), id, "the Sodium id stays apart from the settings key");
+        }
+        // The ids this PR did not generate: every literal one in SodiumOptions.
+        String source = Files.readString(repo().resolve("minecraft/src/main/java/io/earthplatform/minecraft/cubic/play/client/SodiumOptions.java"), StandardCharsets.UTF_8);
+        Matcher literal = Pattern.compile("\\bid\\(\"([^\"]*)\"\\)").matcher(source);
+        int found = 0;
+        while (literal.find()) {
+            found++;
+            assertTrue(valid.matcher(literal.group(1)).matches(), "SodiumOptions id '" + literal.group(1) + "' is not a valid path");
+            assertTrue(seen.add(literal.group(1)), "SodiumOptions id '" + literal.group(1) + "' repeats");
+        }
+        assertTrue(found >= 8, "the literal ids were not found: " + found);
     }
 
     @Test void theSodiumPageCarriesFeaturesAndNoDiagnostics() throws IOException {
