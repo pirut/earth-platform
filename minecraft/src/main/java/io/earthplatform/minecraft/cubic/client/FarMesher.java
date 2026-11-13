@@ -16,7 +16,9 @@ import net.minecraft.core.Direction;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.HugeMushroomBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 
@@ -400,14 +402,18 @@ final class FarMesher {
      * afar. Its shape and height stay as they are. Ground under a tree top shows nothing and has
      * no say: from 16-block voxels a forest's leaves lie on the stone voxel under them, and that
      * hidden stone outvoted the grass of every clearing, which stood as pale stone squares in
-     * the forest while the coarse levels stood in after arriving.
+     * the forest while the coarse levels stood in after arriving. Only natural ground takes part
+     * (see {@link #natural}): what a player built, a path or a marker of wool a voxel wide, keeps
+     * its own block, and does not lend it to its neighbours.
      */
     @Nullable static BlockState[] evenCover(Job job, int[] groundRows) {
         BlockState[] cover = new BlockState[256];
         boolean any = false;
         for (int cell = 0; cell < 256; cell++) {
             if (groundRows[cell] < 0 || foliage(at(job, cell & 15, groundRows[cell] + 1, cell >> 4))) continue;
-            cover[cell] = at(job, cell & 15, groundRows[cell], cell >> 4);
+            BlockState state = at(job, cell & 15, groundRows[cell], cell >> 4);
+            if (!natural(state)) continue;
+            cover[cell] = state;
             any = true;
         }
         if (!any) return null;
@@ -439,6 +445,25 @@ final class FarMesher {
             cover = next;
         }
         return cover;
+    }
+
+    /** Ground blocks the generator lays that no vanilla ground tag holds. */
+    private static final List<Block> EXTRA_GROUND = List.of(Blocks.GRAVEL, Blocks.CLAY, Blocks.SANDSTONE, Blocks.RED_SANDSTONE,
+            Blocks.CALCITE, Blocks.SMOOTH_BASALT, Blocks.BLACKSTONE, Blocks.PACKED_MUD);
+
+    /**
+     * Whether a ground block is one the generator lays as ground cover, the only kind {@link #evenCover}
+     * works on. A far voxel holds only a block, not whether a player put it there, so what was built is
+     * told from natural ground by its material: soils, sands, snow, ice, base rocks and terracottas by
+     * tag, the few other ground blocks the generator lays (above), and the mushroom blocks it stands as
+     * a huge mushroom's cap. A natural block that is missing from these is simply left as it is. A
+     * pattern a player makes from natural blocks, such as a gravel path on grass, is evened like the
+     * ground it lies on.
+     */
+    static boolean natural(BlockState state) {
+        return state.is(BlockTags.DIRT) || state.is(BlockTags.SAND) || state.is(BlockTags.SNOW) || state.is(BlockTags.ICE)
+                || state.is(BlockTags.BASE_STONE_OVERWORLD) || state.is(BlockTags.TERRACOTTA)
+                || EXTRA_GROUND.contains(state.getBlock()) || state.getBlock() instanceof HugeMushroomBlock;
     }
 
     /** The highest voxel row of ground in a voxel column: solid, not water and not foliage. */
