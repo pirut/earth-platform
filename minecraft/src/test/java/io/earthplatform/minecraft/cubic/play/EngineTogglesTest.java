@@ -154,7 +154,7 @@ class EngineTogglesTest {
         Path file = config.resolve("settings.toml");
         Files.writeString(file, String.join("\n", "top = true", "name = \"a # b\"", "count = 5", "[[list]]", "x = true", "[a]", "b = false", "[c.d]", "e = true # yes", ""));
         List<String> unreadable = new ArrayList<>();
-        assertEquals(Map.of("top", true, "a.b", false, "c.d.e", true), EngineToggles.readBooleans(file, unreadable));
+        assertEquals(Map.of(List.of("top"), true, List.of("a", "b"), false, List.of("c", "d", "e"), true), EngineToggles.readBooleans(file, unreadable));
         assertTrue(EngineToggles.readBooleans(config.resolve("absent.toml"), unreadable).isEmpty());
         assertTrue(unreadable.isEmpty(), "a missing file is not a problem: " + unreadable);
     }
@@ -180,6 +180,33 @@ class EngineTogglesTest {
         assertEquals("false", quoted.getProperty("earthplatform.earth.canopy"));
         assertTrue(log.stream().noneMatch(line -> line.contains("could not read")), log.toString());
         assertTrue(EngineToggles.preloaded());
+    }
+
+    @Test void aRootKeyThatContainsADotIsNotAToggleInATable(@TempDir Path config) throws IOException {
+        // NightConfig keeps "farTerrain.farSmooth" at the root as one literal key; the loader reads by path and never sees it as the setting.
+        Files.writeString(config.resolve("earthplatform-client.toml"), "\"farTerrain.farSmooth\" = true\n'cubes.cubesCaveCull' = false\n");
+        Files.writeString(config.resolve("earthplatform-common.toml"), "\"worldData.earthCanopy\" = false\n");
+        Properties literal = new Properties();
+        EngineToggles.preload(config, literal, Map.of(), line -> { });
+        assertTrue(literal.isEmpty(), "literal dotted keys set nothing: " + literal);
+
+        for (String form : List.of("[farTerrain]\nfarSmooth = true\n", "[\"farTerrain\"]\n\"farSmooth\" = true\n", "farTerrain = { farSmooth = true }\n")) {
+            Path dir = Files.createTempDirectory(config, "form");
+            Files.writeString(dir.resolve("earthplatform-client.toml"), form);
+            Properties tabled = new Properties();
+            EngineToggles.preload(dir, tabled, Map.of(), line -> { });
+            assertEquals("true", tabled.getProperty("earthplatform.far.smooth"), "the same setting as a table applies: " + form);
+        }
+    }
+
+    @Test void anUnreadableFileIsReportedAsAWarningNotAnInfoLine(@TempDir Path config) throws IOException {
+        Files.writeString(config.resolve("earthplatform-client.toml"), "[farTerrain\n");
+        List<String> info = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+        EngineToggles.preload(config, new Properties(), Map.of(), info::add, warnings::add);
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.get(0).contains("could not read earthplatform-client.toml"), warnings.get(0));
+        assertTrue(info.stream().noneMatch(line -> line.contains("could not read")), info.toString());
     }
 
     @Test void aMalformedFileFallsBackToTheDefaultsWithoutThrowing(@TempDir Path config) throws IOException {

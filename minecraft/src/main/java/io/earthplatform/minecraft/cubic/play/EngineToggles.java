@@ -96,7 +96,8 @@ public final class EngineToggles {
         /**
          * The path of the option's id on Sodium's page: lowercase, as the game's {@code ResourceLocation} requires
          * ({@code [a-z0-9/._-]}), and apart from {@link #key()} (the settings file's name) and the language key.
-         * Iris lets the game accept anything here, so only a game without it would show a wrong one.
+         * Iris switches the game's check off, so with it a wrong id passes; without it, registering the option throws and
+         * the game stops at start-up.
          */
         public String sodiumId() { return "toggle_" + property.replace('.', '_').toLowerCase(Locale.ROOT); }
 
@@ -293,18 +294,23 @@ public final class EngineToggles {
      * file leaves the defaults, and the loader's own config load reports a broken one.
      */
     public static void preload(Path configDir) {
-        preload(configDir, System.getProperties(), COMMAND_LINE, EarthPlatformMod.LOGGER::info);
+        preload(configDir, System.getProperties(), COMMAND_LINE, EarthPlatformMod.LOGGER::info, EarthPlatformMod.LOGGER::warn);
     }
 
-    static synchronized void preload(Path configDir, Properties properties, Map<String, String> commandLine, Consumer<String> log) {
+    static void preload(Path configDir, Properties properties, Map<String, String> commandLine, Consumer<String> log) {
+        preload(configDir, properties, commandLine, log, log);
+    }
+
+    static synchronized void preload(Path configDir, Properties properties, Map<String, String> commandLine, Consumer<String> log, Consumer<String> warn) {
         List<String> unreadable = new ArrayList<>();
         for (Side side : Side.values()) {
-            Map<String, Boolean> file = readBooleans(configDir.resolve(side.file), unreadable);
-            apply(properties, commandLine, of(side), toggle -> file.get(toggle.group().key + "." + toggle.key()), true, false);
+            Map<List<String>, Boolean> file = readBooleans(configDir.resolve(side.file), unreadable);
+            // By path: a toggle is the table named for its group, then its key, so a root key that merely contains a dot is not one.
+            apply(properties, commandLine, of(side), toggle -> file.get(List.of(toggle.group().key, toggle.key())), true, false);
         }
         // With a file the early read could not parse, the loader's own load is the first to apply it, which may be late.
         preloaded = unreadable.isEmpty();
-        unreadable.forEach(log);
+        unreadable.forEach(warn);
         List<String> changed = new ArrayList<>();
         List<String> overridden = new ArrayList<>();
         for (Toggle toggle : ALL) {
@@ -333,14 +339,14 @@ public final class EngineToggles {
     }
 
     /**
-     * The on/off values of a settings file, as dotted keys to values ({@code farTerrain.farSmooth}), read with
+     * The on/off values of a settings file, as paths ({@code [farTerrain, farSmooth]}) to values, so a root key that contains a dot is not a table's key, read with
      * NightConfig's TOML parser, the one the loader reads the file with, so any form it accepts reads the same:
      * quoted table names and keys, inline tables, comments. Other values, and a file that is not there, read as
      * nothing. A file that cannot be read adds a line to {@code unreadable} and reads as nothing: the defaults stand
      * until the loader's own load, which reports a broken file.
      */
-    static Map<String, Boolean> readBooleans(Path file, List<String> unreadable) {
-        Map<String, Boolean> found = new HashMap<>();
+    static Map<List<String>, Boolean> readBooleans(Path file, List<String> unreadable) {
+        Map<List<String>, Boolean> found = new HashMap<>();
         if (!Files.isRegularFile(file)) return found;
         try (BufferedReader in = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             TomlReader.read(in, found);
@@ -358,15 +364,16 @@ public final class EngineToggles {
      * and Forge Config API Port nests it in the Fabric jar.
      */
     private static final class TomlReader {
-        static void read(BufferedReader in, Map<String, Boolean> into) {
-            flatten("", com.electronwill.nightconfig.toml.TomlFormat.instance().createParser().parse(in), into);
+        static void read(BufferedReader in, Map<List<String>, Boolean> into) {
+            flatten(List.of(), com.electronwill.nightconfig.toml.TomlFormat.instance().createParser().parse(in), into);
         }
 
-        private static void flatten(String prefix, com.electronwill.nightconfig.core.UnmodifiableConfig config, Map<String, Boolean> into) {
+        private static void flatten(List<String> path, com.electronwill.nightconfig.core.UnmodifiableConfig config, Map<List<String>, Boolean> into) {
             for (Map.Entry<String, Object> entry : config.valueMap().entrySet()) {
-                String name = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
-                if (entry.getValue() instanceof Boolean value) into.put(name, value);
-                else if (entry.getValue() instanceof com.electronwill.nightconfig.core.UnmodifiableConfig table) flatten(name, table, into);
+                List<String> at = new ArrayList<>(path);
+                at.add(entry.getKey());
+                if (entry.getValue() instanceof Boolean value) into.put(List.copyOf(at), value);
+                else if (entry.getValue() instanceof com.electronwill.nightconfig.core.UnmodifiableConfig table) flatten(at, table, into);
             }
         }
     }
