@@ -389,7 +389,8 @@ final class FarMesher {
      * its 2-block voxels, is included: it is the finest far level, and through a zoom it fills the
      * screen out to tens of kilometres, where left as it came its cover read as a mosaic of flat
      * squares. It does meet the real blocks at the edge of the render distance; 2 leaves it as it
-     * was, sitting by them with the cover of its own blocks.
+     * was, sitting by them with the cover of its own blocks. On level 1 only natural ground is
+     * evened, so what players built stays as built there; levels 2 and up even every block.
      */
     static final int COVER_FROM = Integer.getInteger("earthplatform.far.coverFrom", 1);
 
@@ -402,9 +403,11 @@ final class FarMesher {
      * afar. Its shape and height stay as they are. Ground under a tree top shows nothing and has
      * no say: from 16-block voxels a forest's leaves lie on the stone voxel under them, and that
      * hidden stone outvoted the grass of every clearing, which stood as pale stone squares in
-     * the forest while the coarse levels stood in after arriving. Only natural ground takes part
-     * (see {@link #natural}): what a player built, a path or a marker of wool a voxel wide, keeps
-     * its own block, and does not lend it to its neighbours.
+     * the forest while the coarse levels stood in after arriving. On level 1 only natural ground
+     * takes part (see {@link #natural}): what a player built, a path or a marker of wool a voxel
+     * wide, keeps its own block there and does not lend it to its neighbours, so does any other
+     * block the generator lays that is not natural ground. From level 2 up every ground block
+     * takes part, built or not, as it always has.
      */
     @Nullable static BlockState[] evenCover(Job job, int[] groundRows) {
         BlockState[] cover = new BlockState[256];
@@ -412,7 +415,7 @@ final class FarMesher {
         for (int cell = 0; cell < 256; cell++) {
             if (groundRows[cell] < 0 || foliage(at(job, cell & 15, groundRows[cell] + 1, cell >> 4))) continue;
             BlockState state = at(job, cell & 15, groundRows[cell], cell >> 4);
-            if (!natural(state)) continue;
+            if (job.level() == Far.MIN_LEVEL && !natural(state)) continue;
             cover[cell] = state;
             any = true;
         }
@@ -453,10 +456,10 @@ final class FarMesher {
 
     /**
      * Whether a ground block is one the generator lays as ground cover, the only kind {@link #evenCover}
-     * works on. A far voxel holds only a block, not whether a player put it there, so what was built is
+     * works on at level 1; from level 2 up it works on every block. A far voxel holds only a block, not whether a player put it there, so what was built is
      * told from natural ground by its material: soils, sands, snow, ice, base rocks and terracottas by
      * tag, the few other ground blocks the generator lays (above), and the mushroom blocks it stands as
-     * a huge mushroom's cap. A natural block that is missing from these is simply left as it is. A
+     * a huge mushroom's cap. A natural block that is missing from these is simply left as it is on level 1. A
      * pattern a player makes from natural blocks, such as a gravel path on grass, is evened like the
      * ground it lies on.
      */

@@ -191,6 +191,77 @@ class FarCoverTest {
         }
     }
 
+    @Test void aBuiltVoxelAtLevelTwoIsStillEvenedToTheGroundAroundIt() {
+        // From level 2 up every ground block takes part, built or not, as before the exemption; it is left for later.
+        BlockState stone = Blocks.STONE.defaultBlockState();
+        BlockState[] ground = new BlockState[256];
+        java.util.Arrays.fill(ground, stone);
+        ground[7 * 16 + 7] = Blocks.RED_WOOL.defaultBlockState();
+        assertEquals(stone, evenCover(2, ground)[7 * 16 + 7], "the wool should be evened to stone at level 2");
+        assertEquals(stone, evenCover(4, ground)[7 * 16 + 7], "the wool should be evened to stone at level 4");
+        assertNull(evenCover(1, ground)[7 * 16 + 7], "level 1 keeps the wool");
+    }
+
+    /** Grass and stone with generated blocks that are not natural ground: pumpkins, bone, cobblestone. */
+    private static final String[] SPECKLED = {
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGPGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGKKGGGGGG",
+            "GGGGGGGGKKGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGBGGG",
+            "GGGGGGGGGGGGGGGG",
+            "SSSSSSGGGGGGGGGG",
+            "SSSSSSGGGGGGGGGG",
+            "SSBSSSGGGGGGGGGG",
+            "SSSSSSGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG"};
+    /** What {@link #SPECKLED} comes out as at level 2 and up, as it did on main: the specks are gone. */
+    private static final String[] SPECKLED_EVENED = {
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG",
+            "SSSSSGGGGGGGGGGG",
+            "SSSSSSGGGGGGGGGG",
+            "SSSSSSGGGGGGGGGG",
+            "SSSSSGGGGGGGGGGG",
+            "GGGGGGGGGGGGGGGG"};
+
+    @Test void generatedBlocksThatAreNotNaturalAreEvenedAtLevelTwoAsBefore() {
+        BlockState[] ground = parse(SPECKLED);
+        for (int level : new int[] {2, 3, 5})
+            assertEquals(String.join("\n", SPECKLED_EVENED), String.join("\n", render(evenCover(level, ground))), "level " + level);
+        String[] one = render(evenCover(1, ground));
+        assertEquals('.', one[2].charAt(3), "level 1 keeps the pumpkin");
+        assertEquals('.', one[5].charAt(8), "level 1 keeps the cobblestone");
+        assertEquals('.', one[6].charAt(9), "level 1 keeps the cobblestone");
+        assertEquals('.', one[9].charAt(12), "level 1 keeps the bone");
+        assertEquals('.', one[13].charAt(2), "level 1 keeps the bone among the stone");
+        assertEquals('G', one[2].charAt(4));
+    }
+
+    private static BlockState[] evenCover(int level, BlockState[] ground) {
+        FarMesher.Job job = new FarMesher.Job(1, 1, level, 0, 0, 0, 0, new LevelChunkSection[] {section(ground)}, new char[256], null, null,
+                null, false, new FarLooks(), new FarFaces(), null, new float[6], new float[4]);
+        int[] rows = new int[256];
+        for (int cell = 0; cell < 256; cell++) rows[cell] = FarMesher.groundRow(job, cell & 15, cell >> 4);
+        BlockState[] cover = FarMesher.evenCover(job, rows);
+        assertNotNull(cover);
+        return cover;
+    }
+
     @Test void everyBlockTheGeneratorLaysAsGroundIsNatural() {
         for (var ground : io.earthplatform.geography.globe.GroundPalette.Ground.values()) {
             Block block = BuiltInRegistries.BLOCK.get(net.minecraft.resources.ResourceLocation.withDefaultNamespace(ground.id()));
@@ -217,6 +288,10 @@ class FarCoverTest {
             case 'M' -> Blocks.MUD.defaultBlockState();
             case 'I' -> Blocks.PACKED_ICE.defaultBlockState();
             case 'C' -> Blocks.COARSE_DIRT.defaultBlockState();
+            case 'W' -> Blocks.RED_WOOL.defaultBlockState();
+            case 'P' -> Blocks.PUMPKIN.defaultBlockState();
+            case 'B' -> Blocks.BONE_BLOCK.defaultBlockState();
+            case 'K' -> Blocks.COBBLESTONE.defaultBlockState();
             default -> throw new IllegalArgumentException(rows[z]);
         };
         return ground;
