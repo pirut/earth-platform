@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated November 12, 2026, at build 71.
+Last updated November 12, 2026, at build 72.
 
 ## Where things stand
 
@@ -24,6 +24,7 @@ Releases are public alphas on [Modrinth](https://modrinth.com/mod/YnuWHcwC) and 
 - **Finding and sharing places.** Town search on the globe and `/earth visit`, place codes (`/earth code`), F8 postcards, and one-click `.mrpack` install packs, from build 70.
 - **Arriving fast.** Quick stand-ins fill the whole far view within seconds of arriving, and far terrain is kept on disk with the world, from build 70.
 - **Flying and rendering.** Near-cube frame budgets, spyglass fixes and opaque distant water, plus experimental flight surface streaming, layered clouds, curvature and haze, from build 71. Most experimental parts are off by default; see [Flying and far terrain](docs/FLIGHT-RENDERING.md).
+- **Zooming in.** A zoom mod's whole zoom counts, up to 128x, and a zoomed view asks only for the ground on screen, so it sharpens about twice as fast; the finest far terrain has smoother ground colour, from build 72. Tried in the plain renderer on macOS only so far.
 
 ## Now
 
