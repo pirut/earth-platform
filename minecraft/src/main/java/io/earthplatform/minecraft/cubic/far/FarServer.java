@@ -148,7 +148,15 @@ public final class FarServer {
      * is a few seconds of work in all and the real columns make way for it (see {@link FarWorkers#giveWay}).
      * Two cores are left to the game.
      */
-    private static final int PREVIEW_WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.previewThreads", Math.clamp(Runtime.getRuntime().availableProcessors() - 2, WORKERS, 8)), 1, 16);
+    private static final int PREVIEW_WORKERS = Math.clamp(Integer.getInteger("earthplatform.far.previewThreads", previewWorkersFor(Runtime.getRuntime().availableProcessors(), WORKERS)), 1, 16);
+
+    /**
+     * Stand-in threads on a machine with {@code cores} processors and {@code workers} far workers, when
+     * nothing sets it: the cores less two, at most eight, but never fewer than the far workers. A
+     * clamp from the far workers up to eight threw on twenty or more cores, where there are more than
+     * eight far workers.
+     */
+    public static int previewWorkersFor(int cores, int workers) { return Math.max(workers, Math.min(cores - 2, 8)); }
     /** Whether the real columns leave processors to stand-ins being made; {@code -Dearthplatform.far.giveWay=false} for comparing. */
     private static final boolean GIVE_WAY = !"false".equals(System.getProperty("earthplatform.far.giveWay"));
     /** Stand-ins being made and not waiting on data: the processors the real columns leave them (see {@link FarWorkers#giveWay}). */
