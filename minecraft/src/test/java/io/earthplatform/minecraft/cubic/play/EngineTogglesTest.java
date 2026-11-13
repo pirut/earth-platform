@@ -33,51 +33,31 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class EngineTogglesTest {
+    private static final String ELEVATION_LAYER = "a command-line flag only: BareEarth, which every world's heights are read through, is one process-wide "
+            + "object built from the current flags rather than the world's own earth.elevation pin, so a setting could not keep existing worlds' layers";
     private static final Toggle OFF = new Toggle(Side.CLIENT, Group.FAR_TERRAIN, "far.smooth", false, When.RESTART, List.of());
     private static final Toggle ON = new Toggle(Side.CLIENT, Group.FAR_TERRAIN, "far.fade", true, When.RESTART, List.of());
     private static final Toggle WORLDS = new Toggle(Side.COMMON, Group.WORLD_DATA, "earth.canopy", true, When.NEW_WORLDS, List.of());
     private static final List<Toggle> THREE = List.of(OFF, ON, WORLDS);
 
-    // The helper: command line, then setting, then default --------------------------------------
-
-    @Test void theCommandLineWinsOverTheSetting() {
-        assertTrue(EngineToggles.resolve("true", false, false), "-D...=true wins over a setting that is off");
-        assertFalse(EngineToggles.resolve("false", true, true), "-D...=false wins over a setting that is on");
-        assertTrue(EngineToggles.resolve("true", null, false));
-    }
-
-    @Test void theSettingIsUsedWhenThereIsNoCommandLine() {
-        assertTrue(EngineToggles.resolve(null, true, false));
-        assertFalse(EngineToggles.resolve(null, false, true));
-    }
-
-    @Test void theDefaultStandsWhenThereIsNeither() {
-        assertTrue(EngineToggles.resolve(null, null, true));
-        assertFalse(EngineToggles.resolve(null, null, false));
-    }
-
-    @Test void aCommandLineValueReadsAsTheEngineReadsIt() {
-        assertTrue(EngineToggles.resolve("anything", null, true), "a default-on flag is off only for false");
-        assertFalse(EngineToggles.resolve("anything", null, false), "a default-off flag is on only for true");
-        assertTrue(EngineToggles.resolve("TRUE", null, false), "Boolean.getBoolean ignores case");
-    }
+    // Precedence, through the code that ships: apply and preload ------------------------------------
 
     @Test void settingsBecomePropertiesAndDefaultsLeaveThemUnset() {
         Properties properties = new Properties();
         Map<Toggle, Boolean> settings = new HashMap<>(Map.of(OFF, true, ON, false, WORLDS, true));
-        EngineToggles.apply(properties, Map.of(), THREE, settings::get, true);
+        EngineToggles.apply(properties, Map.of(), THREE, settings::get, true, false);
         assertEquals("true", properties.getProperty("earthplatform.far.smooth"), "off by default, set on");
         assertEquals("false", properties.getProperty("earthplatform.far.fade"), "on by default, set off");
         assertNull(properties.getProperty("earthplatform.earth.canopy"), "a toggle at its default leaves its property unset");
 
         settings.put(OFF, false);
-        EngineToggles.apply(properties, Map.of(), THREE, settings::get, true);
+        EngineToggles.apply(properties, Map.of(), THREE, settings::get, true, false);
         assertNull(properties.getProperty("earthplatform.far.smooth"), "back at its default, the property goes again");
     }
 
     @Test void aToggleWithNoSettingStandsAtItsDefault() {
         Properties properties = new Properties();
-        EngineToggles.apply(properties, Map.of(), THREE, toggle -> null, true);
+        EngineToggles.apply(properties, Map.of(), THREE, toggle -> null, true, false);
         assertTrue(properties.isEmpty(), "nothing set means nothing differs from before");
     }
 
@@ -89,8 +69,8 @@ class EngineTogglesTest {
         assertEquals(Map.of("earthplatform.far.smooth", "true", "earthplatform.earth.canopy", "false"), commandLine);
 
         Map<Toggle, Boolean> settings = Map.of(OFF, false, ON, false, WORLDS, true);
-        EngineToggles.apply(properties, commandLine, THREE, settings::get, true);
-        EngineToggles.apply(properties, commandLine, THREE, settings::get, false);
+        EngineToggles.apply(properties, commandLine, THREE, settings::get, true, false);
+        EngineToggles.apply(properties, commandLine, THREE, settings::get, false, false);
         assertEquals("true", properties.getProperty("earthplatform.far.smooth"), "the file says off; the command line still on");
         assertEquals("false", properties.getProperty("earthplatform.earth.canopy"), "the file says on; the command line still off");
         assertEquals("false", properties.getProperty("earthplatform.far.fade"), "the one with no command line follows the file");
@@ -99,35 +79,47 @@ class EngineTogglesTest {
     @Test void onlyTheNewWorldTogglesChangeAfterStartup() {
         Properties properties = new Properties();
         Map<Toggle, Boolean> settings = new HashMap<>(Map.of(OFF, false, ON, true, WORLDS, true));
-        EngineToggles.apply(properties, Map.of(), THREE, settings::get, true);
+        EngineToggles.apply(properties, Map.of(), THREE, settings::get, true, false);
 
         settings.put(OFF, true);
         settings.put(WORLDS, false);
-        EngineToggles.apply(properties, Map.of(), THREE, settings::get, false);
+        EngineToggles.apply(properties, Map.of(), THREE, settings::get, false, false);
         assertNull(properties.getProperty("earthplatform.far.smooth"), "read once at class initialization: the next start");
         assertEquals("false", properties.getProperty("earthplatform.earth.canopy"), "read when a world is made: at once");
     }
 
-    @Test void aRestartToggleThatChangesAtStartupAfterThePreloadIsReportedLate() {
+    @Test void aRestartToggleThatChangesAtStartupAfterThePreloadIsReportedAndKeepsTheEarlyValue() {
         Properties properties = new Properties();
         Map<Toggle, Boolean> settings = Map.of(OFF, true, ON, true, WORLDS, false);
-        List<Toggle> late = EngineToggles.apply(properties, Map.of(), THREE, settings::get, true);
+        List<Toggle> late = EngineToggles.apply(properties, Map.of(), THREE, settings::get, true, true);
         assertEquals(List.of(OFF), late, "only a read-once toggle can be too late; the new-world one is read afterwards, and ON is at its default");
+        assertNull(properties.getProperty("earthplatform.far.smooth"), "after the early read its value stands, so no class sees two");
+        assertEquals("false", properties.getProperty("earthplatform.earth.canopy"), "a new-world toggle still follows the file");
         List<String> warnings = new ArrayList<>();
-        EngineToggles.warnLate(late, warnings::add);
+        EngineToggles.warnLate(late, true, warnings::add);
         assertEquals(1, warnings.size());
-        assertTrue(warnings.get(0).contains("farSmooth"), warnings.get(0));
+        assertTrue(warnings.get(0).contains("farSmooth") && warnings.get(0).contains("after a restart"), warnings.get(0));
+    }
 
+    @Test void withoutAnEarlyReadTheLoadersReadStillAppliesAndIsReportedLate() {
+        Properties properties = new Properties();
+        Map<Toggle, Boolean> settings = Map.of(OFF, true);
+        List<Toggle> late = EngineToggles.apply(properties, Map.of(), THREE, settings::get, true, false);
+        assertEquals(List.of(OFF), late);
+        assertEquals("true", properties.getProperty("earthplatform.far.smooth"), "best effort when nothing read the file early");
+        List<String> warnings = new ArrayList<>();
+        EngineToggles.warnLate(late, false, warnings::add);
+        assertTrue(warnings.get(0).contains("read late"), warnings.get(0));
         warnings.clear();
-        EngineToggles.warnLate(EngineToggles.apply(properties, Map.of(), THREE, settings::get, true), warnings::add);
-        assertTrue(warnings.isEmpty(), "applied already: nothing more to say");
+        EngineToggles.warnLate(List.of(), false, warnings::add);
+        assertTrue(warnings.isEmpty());
     }
 
     // The early read of the settings files -------------------------------------------------------
 
     @Test void thePreloadReadsBothFilesAndTheCommandLineStillWins(@TempDir Path config) throws IOException {
         Files.writeString(config.resolve("earthplatform-client.toml"), String.join("\n",
-                "# comment", "cloudHeight = 2500", "", "[farTerrain]", "\t#Same as -Dx", "\tfarSmooth = true # trailing", "\tfarFade = false", "",
+                "# comment", "cloudHeight = 2500", "", "[farTerrain]", "\t#Same as -Dx", "\tfarSmooth = true # trailing", "\tfarFade = false", "\tfarZoom = true", "",
                 "[nearbyBlocks]", "\tcubesCaveCull = false", ""));
         Files.writeString(config.resolve("earthplatform-common.toml"), "[worldData]\n\tearthCanopy = false\n");
         Properties properties = new Properties();
@@ -141,7 +133,8 @@ class EngineTogglesTest {
         assertEquals("true", properties.getProperty("earthplatform.far.fade"), "the file says false, the command line true");
         assertEquals("false", properties.getProperty("earthplatform.cubes.caveCull"));
         assertEquals("false", properties.getProperty("earthplatform.earth.canopy"));
-        assertNull(properties.getProperty("earthplatform.far.zoom"), "not in the file: its default");
+        assertNull(properties.getProperty("earthplatform.far.zoom"), "in the file at its default: nothing is set");
+        assertNull(properties.getProperty("earthplatform.far.cruiseSmooth"), "not in the file: its default");
         assertTrue(log.stream().anyMatch(line -> line.contains("3 of") && line.contains("farSmooth=true") && line.contains("cubesCaveCull=false")), log.toString());
         assertTrue(log.stream().anyMatch(line -> line.contains("farFade=true")), "the command line's win is said: " + log);
         assertTrue(EngineToggles.preloaded());
@@ -222,7 +215,8 @@ class EngineTogglesTest {
     /** The properties read as on/off flags in the sources, with the default each read gives. */
     private static Map<String, Set<Boolean>> readsInTheSources() throws IOException {
         Map<String, Set<Boolean>> reads = new HashMap<>();
-        for (Path root : List.of(repo().resolve("minecraft/src/main/java"), repo().resolve("geography/src/main/java"))) {
+        for (Path root : List.of(repo().resolve("minecraft/src/main/java"), repo().resolve("minecraft/src/neoforge/java"),
+                repo().resolve("fabric/src/main/java"), repo().resolve("geography/src/main/java"))) {
             try (Stream<Path> files = Files.walk(root)) {
                 for (Path file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
                     String source = Files.readString(file, StandardCharsets.UTF_8);
@@ -251,13 +245,38 @@ class EngineTogglesTest {
         }
     }
 
-    @Test void everyOnOffFlagInTheCodeHasAToggle() throws IOException {
-        // Already settings of their own, with their own screens: see EarthConfig.
-        Set<String> settingsAlready = Set.of("clouds.layered", "earth.offline", "earth.imagery");
+    /** On/off flags that are deliberately not settings, each with the reason. */
+    private static final Map<String, String> NOT_SETTINGS = Map.of(
+            "clouds.layered", "already a setting of its own (layeredClouds), with its own screens: see EarthConfig",
+            "earth.offline", "already a setting of its own (offline): see EarthConfig",
+            "earth.imagery", "already a setting of its own (satelliteImagery): see EarthConfig",
+            "earth.copernicus", ELEVATION_LAYER,
+            "earth.3dep", ELEVATION_LAYER,
+            "earth.hrdem", ELEVATION_LAYER,
+            "earth.rema", ELEVATION_LAYER,
+            "earth.ign", ELEVATION_LAYER,
+            "earth.gsi", ELEVATION_LAYER);
+
+    @Test void everyOnOffFlagInTheCodeHasAToggleOrAReasonItHasNone() throws IOException {
         Set<String> missing = new TreeSet<>(readsInTheSources().keySet());
-        missing.removeAll(settingsAlready);
+        missing.removeAll(NOT_SETTINGS.keySet());
         EngineToggles.ALL.forEach(toggle -> missing.remove(toggle.property()));
-        assertTrue(missing.isEmpty(), "on/off flags with no toggle (add them to EngineToggles.ALL, the language file and docs/FLAGS.md): " + missing);
+        assertTrue(missing.isEmpty(), "on/off flags with no toggle (add them to EngineToggles.ALL, the language file and docs/FLAGS.md, or to NOT_SETTINGS with the reason): " + missing);
+        for (String property : NOT_SETTINGS.keySet())
+            assertTrue(EngineToggles.ALL.stream().noneMatch(toggle -> toggle.property().equals(property)), property + " is listed as not a setting, but has a toggle");
+    }
+
+    @Test void theElevationLayersStayCommandLineFlagsAndTheOtherNewWorldDataIsPerWorld() {
+        assertEquals(Set.of("earth.canopy", "earth.maps", "earth.realms"),
+                EngineToggles.of(Side.COMMON, Group.WORLD_DATA).stream().map(Toggle::property).collect(java.util.stream.Collectors.toSet()));
+        EngineToggles.of(Side.COMMON, Group.WORLD_DATA).forEach(toggle -> assertEquals(When.NEW_WORLDS, toggle.when(), toggle.property()));
+    }
+
+    @Test void flagsThatCannotWorkFromSettingsAloneAreNotOnSodiumsPage() {
+        EngineToggles.ALL.stream().filter(toggle -> toggle.property().equals("far.cruiseSmooth")).forEach(toggle -> assertFalse(toggle.sodium(),
+                "far.cruiseSmooth needs -Dearthplatform.far.smoothFrom past 5, so it stays on the config screen"));
+        assertEquals(Group.FAR_TERRAIN, EngineToggles.ALL.stream().filter(toggle -> toggle.property().equals("far.nearGround")).findAny().orElseThrow().group(),
+                "far.nearGround changes what is drawn near the player, so it is not a speed-up");
     }
 
     @Test void flagsDocListsEveryToggleWithTheSameDefault() throws IOException {

@@ -293,9 +293,10 @@ public final class EarthConfig {
     /** Sets the engine switches' properties from the file just loaded; see {@link EngineToggles}. */
     private static synchronized void applyToggles(EngineToggles.Side side) {
         boolean startup = LOADED.add(side);
+        boolean early = EngineToggles.preloaded();
         var late = EngineToggles.apply(System.getProperties(), EngineToggles.commandLine(), EngineToggles.of(side),
-                toggle -> TOGGLES.get(toggle).get(), startup);
-        if (startup) EngineToggles.warnLate(late, EarthPlatformMod.LOGGER::warn);
+                toggle -> TOGGLES.get(toggle).getRaw(), startup, early);
+        if (startup) EngineToggles.warnLate(late, early, EarthPlatformMod.LOGGER::warn);
     }
 
     /** Engine properties given on the command line, which the file never overrides. */

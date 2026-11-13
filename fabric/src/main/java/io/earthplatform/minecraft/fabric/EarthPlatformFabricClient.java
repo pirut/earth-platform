@@ -1,5 +1,7 @@
 package io.earthplatform.minecraft.fabric;
 
+import fuzs.forgeconfigapiport.fabric.api.neoforge.v4.client.ConfigScreenFactoryRegistry;
+import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.client.CubicClient;
 import io.earthplatform.minecraft.cubic.client.Flawless;
 import io.earthplatform.minecraft.cubic.client.PerfExportCommand;
@@ -19,6 +21,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.fabricmc.loader.api.FabricLoader;
+import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 
 /**
  * The Fabric client entry point. Level loading, frames, the level's draw stages, fog and the
@@ -29,6 +32,9 @@ public final class EarthPlatformFabricClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         FabricPayloads.registerClient();
+        // Forge Config API Port's Mod Menu integration (optional: it is only used when Mod Menu is installed) lists a
+        // mod's config screen from this registry, so Mods > Earth Platform > Config opens the same screen as on NeoForge.
+        ConfigScreenFactoryRegistry.INSTANCE.register(EarthPlatformMod.MOD_ID, (modId, parent) -> new ConfigurationScreen(modId, parent));
         KeyBindingHelper.registerKeyBinding(EarthFlight.KEY);
         KeyBindingHelper.registerKeyBinding(io.earthplatform.minecraft.cubic.play.client.EarthPostcardScreen.KEY);
         ClientLifecycleEvents.CLIENT_STARTED.register(client -> Flawless.offer());

@@ -13,8 +13,9 @@ The frame rate to hold (`targetFrameRate` in the client settings file, off by de
 Every other on/off flag in the tables below is also a toggle in the settings files and on the config screen (Mods → Earth Platform → Config), under the
 group named in [PLAYING.md](PLAYING.md#engine-switches), with its default as the setting's default. A toggle at its default changes nothing, and a value given on the command line wins over the file.
 Flags that are not on or off (counts, distances, `auto` modes: `far.threads`, `far.store`, `far.depthPrepass`, `photon.compat`, `earth.transfers`, `earth.home` and the like) stay command-line only.
+So do the six elevation layer flags (`earth.copernicus`, `earth.3dep`, `earth.hrdem`, `earth.rema`, `earth.ign`, `earth.gsi`): they are not settings because the bare-earth heights every world is read through are not yet tied to each world's own pin (see the note under World data), so a setting could not keep existing worlds' layers.
 `EngineToggles` lists the toggles; the settings files are read by `EngineToggles.preload` first thing when the mod starts, before the classes that read these flags once can load, so a changed toggle takes effect the next time the game starts.
-The nine `earth.*` layer flags are read when a world is made, so they take effect for the next new world at once. `EngineTogglesTest` checks that each on/off flag in the code has a toggle, with the default shown here.
+The three `earth.*` flags for canopy, maps and realms are read when a world is made and pinned in it, so they take effect for the next new world at once. `EngineTogglesTest` checks that each on/off flag in the code has a toggle (or a stated reason it has none), with the default shown here.
 
 ## World data
 
@@ -43,7 +44,7 @@ The nine `earth.*` layer flags are read when a world is made, so they take effec
 | `earthplatform.cubes.plainRandom` | on | `false` draws each cube's veins, cave plants and structure plans, and the random numbers block models ask for when near cubes are meshed, from vanilla's legacy random source (an atomic seed) instead of the plain one; both give the same numbers | `Underground`, `Structures`, `CubeMesher` |
 | `earthplatform.cubes.fastLight` | on | Lights a cube's 48-block neighborhood filling cubes of one state at once, starting the skylight's spread from each column's lowest sky and its neighbors' instead of looking at every block for a darker neighbor, and looking for light sources only in cubes whose palette holds one; `false` goes over every block, for comparing. The same light, on the server and in near cube meshes | `CubeLight` |
 
-A world pins its elevation layers when it is made, so the layer flags only change new worlds.
+A world pins its elevation layers when it is made, but the bare-earth ground (`BareEarth`, which `EarthGenerator` reads every height through) is one object per game built from the layer flags as they are, not from each world's own pin. So a layer flag affects the new ground of existing worlds too, with a seam against what they saved. Tying bare earth to the pin is future work, and until then the six layer flags are command-line only, not settings.
 
 ## Far terrain
 

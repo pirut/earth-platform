@@ -127,7 +127,9 @@ public final class SodiumOptions implements ConfigEntryPoint {
     /**
      * Adds the player-facing engine switches of a group (see {@link EngineToggles}) to a Sodium group: the ones
      * flagged for this page, in the client settings file. Diagnostics and the speed-ups kept for comparing
-     * stay on the config screen only. A switch read once at start carries Sodium's restart flag.
+     * stay on the config screen only. A switch read once at start carries Sodium's restart flag, and the control
+     * shows the saved value ({@code getRaw}), not the one the game started with: {@code get} stays cached for
+     * restart settings, so it would show the old value after a change until the next start.
      */
     private static OptionGroupBuilder toggles(ConfigBuilder builder, OptionGroupBuilder group, EngineToggles.Group heading) {
         for (EngineToggles.Toggle toggle : EngineToggles.of(EngineToggles.Side.CLIENT, heading)) {
@@ -138,7 +140,7 @@ public final class SodiumOptions implements ConfigEntryPoint {
                     .setTooltip(Component.translatable(toggle.langKey() + ".tooltip"))
                     .setDefaultValue(toggle.defaultValue())
                     .setImpact(OptionImpact.VARIES)
-                    .setBinding(value::set, value::get)
+                    .setBinding(value::set, value::getRaw)
                     .setStorageHandler(EarthConfig.CLIENT_SPEC::save);
             if (toggle.when() == EngineToggles.When.RESTART) option.setFlags(OptionFlag.REQUIRES_GAME_RESTART);
             group.addOption(option);

@@ -45,7 +45,7 @@ public final class EngineToggles {
     public enum Group {
         FAR_TERRAIN("farTerrain", "Far terrain"), FLYING("flying", "Flying and horizon"), SKY("sky", "Clouds and sky"),
         NEARBY_BLOCKS("nearbyBlocks", "Nearby blocks"), COMPATIBILITY("compatibility", "Compatibility"),
-        SPEEDUPS("speedups", "Speed-ups and comparisons"), DIAGNOSTICS("diagnostics", "Diagnostics"), WORLD_DATA("worldData", "World layers");
+        SPEEDUPS("speedups", "Speed-ups and comparisons"), DIAGNOSTICS("diagnostics", "Diagnostics"), WORLD_DATA("worldData", "Data for new worlds");
 
         /** The section's name in the settings file, and the end of its language key. */
         public final String key;
@@ -127,6 +127,7 @@ public final class EngineToggles {
             off(CLIENT, Group.FAR_TERRAIN, "far.blockTextures", RESTART, EXPERIMENTAL, SODIUM),
             on(CLIENT, Group.FAR_TERRAIN, "far.fade", RESTART, SODIUM),
             on(CLIENT, Group.FAR_TERRAIN, "far.zoom", RESTART, SODIUM),
+            on(CLIENT, Group.FAR_TERRAIN, "far.nearGround", RESTART),
             // client file, flying
             off(CLIENT, Group.FLYING, "far.curvature", RESTART, EXPERIMENTAL, SODIUM),
             off(CLIENT, Group.FLYING, "far.atmosphere", RESTART, EXPERIMENTAL, SODIUM),
@@ -158,7 +159,6 @@ public final class EngineToggles {
             on(CLIENT, Group.SPEEDUPS, "far.sharedWater", RESTART),
             on(CLIENT, Group.SPEEDUPS, "far.batchWater", RESTART),
             on(CLIENT, Group.SPEEDUPS, "far.batchStamps", RESTART),
-            on(CLIENT, Group.SPEEDUPS, "far.nearGround", RESTART),
             on(CLIENT, Group.SPEEDUPS, "far.linkColumns", RESTART),
             on(CLIENT, Group.SPEEDUPS, "far.reuseDraws", RESTART),
             on(CLIENT, Group.SPEEDUPS, "far.viewMargin", RESTART),
@@ -191,12 +191,6 @@ public final class EngineToggles {
             off(CLIENT, Group.DIAGNOSTICS, "cubic.perf", RESTART, DIAGNOSTIC),
             on(CLIENT, Group.DIAGNOSTICS, "perfLog", RESTART, DIAGNOSTIC),
             // common file, world data
-            on(COMMON, Group.WORLD_DATA, "earth.copernicus", NEW_WORLDS),
-            on(COMMON, Group.WORLD_DATA, "earth.3dep", NEW_WORLDS),
-            on(COMMON, Group.WORLD_DATA, "earth.hrdem", NEW_WORLDS),
-            on(COMMON, Group.WORLD_DATA, "earth.rema", NEW_WORLDS),
-            on(COMMON, Group.WORLD_DATA, "earth.ign", NEW_WORLDS),
-            on(COMMON, Group.WORLD_DATA, "earth.gsi", NEW_WORLDS),
             on(COMMON, Group.WORLD_DATA, "earth.canopy", NEW_WORLDS),
             on(COMMON, Group.WORLD_DATA, "earth.maps", NEW_WORLDS),
             on(COMMON, Group.WORLD_DATA, "earth.realms", NEW_WORLDS),
@@ -256,25 +250,17 @@ public final class EngineToggles {
     }
 
     /**
-     * What a toggle comes to: the command line's value when it is given, else the setting, else the
-     * default. A command-line value reads as the engine reads it: anything but {@code false} turns a
-     * default-on flag on, and only {@code true} turns a default-off flag on.
-     */
-    public static boolean resolve(String commandLine, Boolean setting, boolean defaultValue) {
-        if (commandLine != null) return defaultValue ? !"false".equals(commandLine) : "true".equalsIgnoreCase(commandLine);
-        return setting != null ? setting : defaultValue;
-    }
-
-    /**
      * Sets the properties of one side's toggles from their settings: a toggle at its default clears its
      * property (so the engine runs as it always did), another value sets it, and a property given on the
      * command line is left alone. With {@code startup} false, toggles read once at class initialization
      * are left alone, since changing their property mid-session could only split the engine's classes
-     * between two values. Returns the toggles whose startup property had to change from what
-     * {@link #preload} set, which means the settings file was read too late for them.
+     * between two values. Returns the read-once toggles whose setting differs from the property at
+     * startup, which means the settings file was read too late for them (or changed since
+     * {@link #preload}); with {@code keepEarly} they are reported only and the property stays as
+     * the early read left it, so no class can end up with a different value from another.
      */
     static List<Toggle> apply(Properties properties, Map<String, String> commandLine, List<Toggle> toggles,
-                              Function<Toggle, Boolean> settings, boolean startup) {
+                              Function<Toggle, Boolean> settings, boolean startup, boolean keepEarly) {
         List<Toggle> late = new ArrayList<>();
         for (Toggle toggle : toggles) {
             String property = toggle.systemProperty();
@@ -283,10 +269,12 @@ public final class EngineToggles {
             Boolean setting = settings.apply(toggle);
             boolean value = setting != null ? setting : toggle.defaultValue();
             String wanted = value == toggle.defaultValue() ? null : Boolean.toString(value);
-            if (!Objects.equals(properties.getProperty(property), wanted)) {
-                if (startup && toggle.when() == When.RESTART) late.add(toggle);
-                if (wanted == null) properties.remove(property); else properties.setProperty(property, wanted);
+            if (Objects.equals(properties.getProperty(property), wanted)) continue;
+            if (startup && toggle.when() == When.RESTART) {
+                late.add(toggle);
+                if (keepEarly) continue;
             }
+            if (wanted == null) properties.remove(property); else properties.setProperty(property, wanted);
         }
         return late;
     }
@@ -303,7 +291,7 @@ public final class EngineToggles {
     static synchronized void preload(Path configDir, Properties properties, Map<String, String> commandLine, Consumer<String> log) {
         for (Side side : Side.values()) {
             Map<String, Boolean> file = readBooleans(configDir.resolve(side.file));
-            apply(properties, commandLine, of(side), toggle -> file.get(toggle.group().key + "." + toggle.key()), true);
+            apply(properties, commandLine, of(side), toggle -> file.get(toggle.group().key + "." + toggle.key()), true, false);
         }
         preloaded = true;
         List<String> changed = new ArrayList<>();
@@ -321,12 +309,15 @@ public final class EngineToggles {
     /** Whether {@link #preload} has run, so the loader's own config load only has to confirm it. */
     static boolean preloaded() { return preloaded; }
 
-    /** Warns of toggles the loader's config load changed after {@link #preload}, which classes may already have read. */
-    static void warnLate(List<Toggle> late, Consumer<String> warn) {
+    /**
+     * Warns of read-once toggles whose setting differs from what the game started with: after
+     * {@link #preload} the early value stands, and the new one applies at the next start.
+     */
+    static void warnLate(List<Toggle> late, boolean preloaded, Consumer<String> warn) {
         if (late.isEmpty()) return;
         List<String> names = late.stream().map(Toggle::key).toList();
         warn.accept(preloaded
-                ? "Earth Platform settings changed while the game was starting (" + String.join(", ", names) + "); restart the game if they seem to do nothing"
+                ? "Earth Platform settings differ from what the game read at start (" + String.join(", ", names) + "); they apply after a restart"
                 : "Earth Platform settings were read late (" + String.join(", ", names) + "); restart the game if they seem to do nothing");
     }
 
