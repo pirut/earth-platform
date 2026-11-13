@@ -72,7 +72,7 @@ In singleplayer you can always travel. On servers only operators can, unless `an
 
 ## Settings
 
-Mods → Earth Platform → Config, or the files in `config/`.
+Mods → Earth Platform → Config, or the files in `config/`. On NeoForge the Mods list has the Config button. On Fabric the same screen is in Mod Menu when it is installed; without Mod Menu, use the **All Earth settings** button on Sodium's Earth page (Video Settings), or edit the files.
 
 | Setting | File | Default | What it does |
 | --- | --- | --- | --- |
@@ -92,7 +92,24 @@ Mods → Earth Platform → Config, or the files in `config/`.
 | `cacheLimitGb` | common | 8 | Size limit for downloaded data in GB (0 for no limit); the least recently used files go first, when the game starts and as the cache grows |
 | `anyoneCanTravel` | common | off | Let every player use `/earth goto` on servers |
 
-Command-line `-Dearthplatform.far.detail`, `-Dearthplatform.far.textured`, `-Dearthplatform.clouds.layered`, `-Dearthplatform.clouds.quality`, `-Dearthplatform.clouds.opacity`, `-Dearthplatform.earth.offline` and `-Dearthplatform.earth.imagery` still win over the files. The other developer flags are listed in [FLAGS.md](FLAGS.md).
+Command-line `-Dearthplatform.far.detail`, `-Dearthplatform.far.textured`, `-Dearthplatform.clouds.layered`, `-Dearthplatform.clouds.quality`, `-Dearthplatform.clouds.opacity`, `-Dearthplatform.earth.offline` and `-Dearthplatform.earth.imagery` still win over the files. The other on/off developer flags are also settings (see [Engine switches](#engine-switches) below), and all of them are listed in [FLAGS.md](FLAGS.md).
+
+### Engine switches
+
+Every on/off developer flag in [FLAGS.md](FLAGS.md) is also a switch in the same two files and on the config screen, under these headings. Each has a one-line description and says when it takes effect: **Restart the game to apply** (read once when the game starts), or **Applies to worlds you make after changing it** (the Data for new worlds group). Experimental ones say so in their name and are off by default. A `-D` value on the command line still wins over the file.
+
+| Group | File | What is in it |
+| --- | --- | --- |
+| Far terrain | client | Smooth far ground, block-sized far textures, fading between levels, sharper far terrain when zoomed, keeping far terrain off the ground you stand on. The server's far stand-ins are in the common file's group of the same name |
+| Flying and horizon | client | Curved horizon and high-altitude haze (both experimental, no shader pack), smooth ground while cruising high (config screen only: it needs the command-line `far.smoothFrom` past 5 as well). In the common file: real blocks for low flight (experimental, a server setting) |
+| Clouds and sky | client | Precise far depth for the layered clouds (the cloud settings themselves are the ones above) |
+| Nearby blocks | client | Cave culling, shadow culling under shader packs, occlusion culling, skipping sealed stone, reusing block copies (the last three experimental). In the common file: loading what you look at first, and making every buried cube |
+| Compatibility | client | Far terrain's own depth under packs, Distant Horizons packs, and the GPU culling paths (OpenGL 4.3 only for hiding far faces; the two-phase pre-pass and the occlusion-query one are experimental) |
+| Data for new worlds | common | Whether new worlds use the canopy height map, the rock and soil maps and plants by ecoregion realm. Each world keeps what it was made with. The six elevation layer flags (Copernicus, 3DEP, HRDEM, REMA, IGN, GSI) are not settings, only command-line flags, because bare-earth heights are not yet tied to each world's layers |
+| Speed-ups and comparisons | both | Faster ways of doing the same work, mostly on by default, and the older ways to compare them with (`far.splitRanges` and `earth.everyLayer` are off by default and slower). None should change what you see or the blocks made; switch one only to compare |
+| Diagnostics | both | Self-checks, logs and timers for testing. Most slow the game down. Not on Sodium's page |
+
+Sodium's Earth page has the player-facing ones (looks, culling, shader pack and graphics card switches, 18 in all, with Far terrain, Flying and horizon, Sky, Nearby blocks and Compatibility headings). The speed-ups and the diagnostics are on the config screen only. Some switches only matter in some setups, and their descriptions say so: shader packs only, no shader pack only, OpenGL 4.3 only, only with the layered clouds on, a server setting.
 
 ## The Nether, the End and other dimensions
 

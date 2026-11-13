@@ -5,6 +5,10 @@ import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.platform.Loader;
 import io.earthplatform.minecraft.platform.Platform;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
 import net.minecraft.network.chat.Component;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.ModConfigSpec;
@@ -56,6 +60,9 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue WEB_MAP;
     public static final ModConfigSpec.BooleanValue SURVIVAL_MAP;
 
+    /** The settings behind the engine switches (see {@link EngineToggles}), in whichever file each lives. */
+    private static final Map<EngineToggles.Toggle, ModConfigSpec.BooleanValue> TOGGLES = new LinkedHashMap<>();
+
     static {
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
         FAR_DETAIL = client.comment("How far the far terrain reaches (4 to 48): 4 is about 37 km, 11 about 94 km, 24 about 201 km.",
@@ -92,6 +99,7 @@ public final class EarthConfig {
                 .translation(key("cloudQuality")).defineEnum("cloudQuality", CloudQuality.HIGH);
         CLOUD_OPACITY = client.comment("The most the layered clouds may hide, from 0.2 to 0.98, so some of the view stays when flying inside a bank. Default 0.72.")
                 .translation(key("cloudOpacity")).defineInRange("cloudOpacity", .72, .2, .98);
+        defineToggles(client, EngineToggles.Side.CLIENT);
         CLIENT_SPEC = client.build();
 
         ModConfigSpec.Builder common = new ModConfigSpec.Builder();
@@ -148,10 +156,31 @@ public final class EarthConfig {
         SURVIVAL_MAP = common.comment("Let players who can't use the travel map open the map (N) anyway, to look around and point a compass",
                         "at a spot, a famous place, their home or another player (/earth compass). It never moves anyone.")
                 .translation(key("survivalMap")).define("survivalMap", true);
+        defineToggles(common, EngineToggles.Side.COMMON);
         COMMON_SPEC = common.build();
     }
 
     private EarthConfig() {}
+
+    /** One section a group, one on/off setting a toggle, named for the screens by language keys. */
+    private static void defineToggles(ModConfigSpec.Builder builder, EngineToggles.Side side) {
+        for (EngineToggles.Group group : EngineToggles.Group.values()) {
+            var toggles = EngineToggles.of(side, group);
+            if (toggles.isEmpty()) continue;
+            builder.comment(group.label + ": engine switches that are also -Dearthplatform... flags (see docs/FLAGS.md)").translation(key("group." + group.key)).push(group.key);
+            for (EngineToggles.Toggle toggle : toggles) {
+                builder.comment("Same as -D" + toggle.systemProperty() + "=" + !toggle.defaultValue() + " on the command line, which wins over this setting.",
+                        toggle.when() == EngineToggles.When.RESTART ? "Takes effect when the game starts." : "Takes effect for worlds made after the change.");
+                builder.translation(toggle.langKey());
+                if (toggle.when() == EngineToggles.When.RESTART) builder.gameRestart();
+                TOGGLES.put(toggle, builder.define(toggle.key(), toggle.defaultValue()));
+            }
+            builder.pop();
+        }
+    }
+
+    /** The setting that switches an engine flag. */
+    public static ModConfigSpec.BooleanValue toggle(EngineToggles.Toggle toggle) { return TOGGLES.get(toggle); }
 
     /** Layered cloud sampling choices; {@code CloudVolume} turns them into samples per bank. */
     public enum CloudQuality implements TranslatableEnum {
@@ -247,13 +276,27 @@ public final class EarthConfig {
             property("earthplatform.clouds.opacity", Double.toString(CLOUD_OPACITY.get()));
             steps = Math.min(steps, mostSharpnessSteps());
             applySharpness();
+            applyToggles(EngineToggles.Side.CLIENT);
         } else if (config.getSpec() == COMMON_SPEC) {
             property("earthplatform.earth.offline", Boolean.toString(OFFLINE.get()));
             property("earthplatform.earth.imagery", Boolean.toString(SATELLITE_IMAGERY.get()));
+            applyToggles(EngineToggles.Side.COMMON);
             // An edited file takes effect on a running server at once, as /earth settings does.
             var server = Platform.INSTANCE.currentServer();
             if (server != null) server.execute(() -> EarthToggles.changed(server));
         }
+    }
+
+    /** The sides whose settings the loader has loaded once: the first load is the start, later ones are edits. */
+    private static final Set<EngineToggles.Side> LOADED = EnumSet.noneOf(EngineToggles.Side.class);
+
+    /** Sets the engine switches' properties from the file just loaded; see {@link EngineToggles}. */
+    private static synchronized void applyToggles(EngineToggles.Side side) {
+        boolean startup = LOADED.add(side);
+        boolean early = EngineToggles.preloaded();
+        var late = EngineToggles.apply(System.getProperties(), EngineToggles.commandLine(), EngineToggles.of(side),
+                toggle -> TOGGLES.get(toggle).getRaw(), startup, early);
+        if (startup) EngineToggles.warnLate(late, early, EarthPlatformMod.LOGGER::warn);
     }
 
     /** Engine properties given on the command line, which the file never overrides. */

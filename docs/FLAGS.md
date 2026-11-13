@@ -10,6 +10,13 @@ The frame rate to hold (`targetFrameRate` in the client settings file, off by de
 (`far.detail`, `far.textured`, `clouds.layered`, `clouds.quality`, `clouds.opacity`, `earth.offline`, `earth.imagery`) are also set by the settings files through
 `EarthConfig`; a value given on the command line wins over the file. The three cloud flags are read every frame.
 
+Every other on/off flag in the tables below is also a toggle in the settings files and on the config screen (Mods → Earth Platform → Config), under the
+group named in [PLAYING.md](PLAYING.md#engine-switches), with its default as the setting's default. A toggle at its default changes nothing, and a value given on the command line wins over the file.
+Flags that are not on or off (counts, distances, `auto` modes: `far.threads`, `far.store`, `far.depthPrepass`, `photon.compat`, `earth.transfers`, `earth.home` and the like) stay command-line only.
+So do the six elevation layer flags (`earth.copernicus`, `earth.3dep`, `earth.hrdem`, `earth.rema`, `earth.ign`, `earth.gsi`): they are not settings because the bare-earth heights every world is read through are not yet tied to each world's own pin (see the note under World data), so a setting could not keep existing worlds' layers.
+`EngineToggles` lists the toggles; the settings files are read by `EngineToggles.preload` first thing when the mod starts, before the classes that read these flags once can load, so a changed toggle takes effect the next time the game starts.
+The three `earth.*` flags for canopy, maps and realms are read when a world is made and pinned in it, so they take effect for the next new world at once. `EngineTogglesTest` checks that each on/off flag in the code has a toggle (or a stated reason it has none), with the default shown here.
+
 ## World data
 
 | Flag | Default | What it does | Read in |
@@ -37,7 +44,7 @@ The frame rate to hold (`targetFrameRate` in the client settings file, off by de
 | `earthplatform.cubes.plainRandom` | on | `false` draws each cube's veins, cave plants and structure plans, and the random numbers block models ask for when near cubes are meshed, from vanilla's legacy random source (an atomic seed) instead of the plain one; both give the same numbers | `Underground`, `Structures`, `CubeMesher` |
 | `earthplatform.cubes.fastLight` | on | Lights a cube's 48-block neighborhood filling cubes of one state at once, starting the skylight's spread from each column's lowest sky and its neighbors' instead of looking at every block for a darker neighbor, and looking for light sources only in cubes whose palette holds one; `false` goes over every block, for comparing. The same light, on the server and in near cube meshes | `CubeLight` |
 
-A world pins its elevation layers when it is made, so the layer flags only change new worlds.
+A world pins its elevation layers when it is made, but the bare-earth ground (`BareEarth`, which `EarthGenerator` reads every height through) is one object per game built from the layer flags as they are, not from each world's own pin. So a layer flag affects the new ground of existing worlds too, with a seam against what they saved. Tying bare earth to the pin is future work, and until then the six layer flags are command-line only, not settings.
 
 ## Far terrain
 
@@ -60,6 +67,8 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.far.inFlight` | 192 | Far columns a client asks for before earlier ones arrive | `FarRenderer` |
 | `earthplatform.far.visibility` | edge of the far view | Haze distance in meters, as a real-world visibility | `FarRenderer` |
 | `earthplatform.far.fade` | on | `false` makes far levels meet at a seam instead of fading into each other | `FarRenderer` |
+| `earthplatform.far.zoom` | on | `false` keeps the far levels round the player alone, as before, instead of also sharpening the far terrain a zoomed view (spyglass, zoom mod) looks at | `FarRenderer` |
+| `earthplatform.far.cullTree` | on | `false` tests every drawn far column against the view on its own instead of through a tree, for comparing | `FarRenderer`, `FarCullTree` |
 | `earthplatform.far.smooth` | `false` | Draw far ground smooth instead of blocky, trees included. The four finest levels, which show a player's edits, keep their blocks, and so does a column with near cubes drawn within its height | `FarMesher` |
 | `earthplatform.far.smoothFrom` | 5 | With `far.smooth`, the first level drawn smooth; never below 5 | `FarMesher` |
 | `earthplatform.far.cruiseSmooth` | on | With `far.smooth` and `far.smoothFrom` past 5: while the camera is more than 2,200 blocks above the ground, until it comes back under 1,600, smoothing reaches down to level 5. The four finest levels keep their blocks. Does nothing without `far.smooth`, or under a shader pack | `FarAtmosphere`, `FarRenderer` |
@@ -153,4 +162,4 @@ A world pins its elevation layers when it is made, so the layer flags only chang
 | `earthplatform.cubic.trace` | `false` | Logs cube traffic | `Cubic` |
 | `earthplatform.map.pace` | 1 | Slows the travel map's flight by this factor, for checking it frame by frame | `EarthFlight` |
 
-When you add a flag, add it here, and keep reading it where it is used, so it is read at the same moment as before.
+When you add an on/off flag, add it here, to `EngineToggles.ALL` and to the language file (`EngineTogglesTest` fails until you do), and keep reading it where it is used, so it is read at the same moment as before.

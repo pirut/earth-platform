@@ -2,12 +2,14 @@ package io.earthplatform.minecraft.cubic.play.client;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
+import io.earthplatform.minecraft.cubic.play.EngineToggles;
 import java.util.Locale;
 import net.caffeinemc.mods.sodium.api.config.ConfigEntryPoint;
 import net.caffeinemc.mods.sodium.api.config.ConfigEntryPointForge;
 import net.caffeinemc.mods.sodium.api.config.option.OptionFlag;
 import net.caffeinemc.mods.sodium.api.config.option.OptionImpact;
 import net.caffeinemc.mods.sodium.api.config.structure.ConfigBuilder;
+import net.caffeinemc.mods.sodium.api.config.structure.OptionGroupBuilder;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -99,21 +101,51 @@ public final class SodiumOptions implements ConfigEntryPoint {
                 .setName("Earth Platform")
                 .addPage(builder.createOptionPage()
                         .setName(Component.translatable("earthplatform.sodium.page"))
-                        .addOptionGroup(builder.createOptionGroup()
+                        .addOptionGroup(toggles(builder, builder.createOptionGroup()
                                 .setName(Component.translatable("earthplatform.sodium.farTerrain"))
                                 .addOption(detail)
                                 .addOption(sharpness)
                                 .addOption(target)
-                                .addOption(textured))
-                        .addOptionGroup(builder.createOptionGroup()
+                                .addOption(textured), EngineToggles.Group.FAR_TERRAIN))
+                        .addOptionGroup(toggles(builder, builder.createOptionGroup()
+                                .setName(Component.translatable("earthplatform.sodium.flying")), EngineToggles.Group.FLYING))
+                        .addOptionGroup(toggles(builder, builder.createOptionGroup()
                                 .setName(Component.translatable("earthplatform.sodium.sky"))
                                 .addOption(clouds)
-                                .addOption(layered))
+                                .addOption(layered), EngineToggles.Group.SKY))
+                        .addOptionGroup(toggles(builder, builder.createOptionGroup()
+                                .setName(Component.translatable("earthplatform.sodium.nearbyBlocks")), EngineToggles.Group.NEARBY_BLOCKS))
+                        .addOptionGroup(toggles(builder, builder.createOptionGroup()
+                                .setName(Component.translatable("earthplatform.sodium.compatibility")), EngineToggles.Group.COMPATIBILITY))
                         .addOptionGroup(builder.createOptionGroup()
                                 .setName(Component.translatable("earthplatform.sodium.general"))
                                 .addOption(downloads)
                                 .addOption(preselect)
                                 .addOption(allSettings)));
+    }
+
+    /**
+     * Adds the player-facing engine switches of a group (see {@link EngineToggles}) to a Sodium group: the ones
+     * flagged for this page, in the client settings file. Diagnostics and the speed-ups kept for comparing
+     * stay on the config screen only. A switch read once at start carries Sodium's restart flag, and the control
+     * shows the saved value ({@code getRaw}), not the one the game started with: {@code get} stays cached for
+     * restart settings, so it would show the old value after a change until the next start.
+     */
+    private static OptionGroupBuilder toggles(ConfigBuilder builder, OptionGroupBuilder group, EngineToggles.Group heading) {
+        for (EngineToggles.Toggle toggle : EngineToggles.of(EngineToggles.Side.CLIENT, heading)) {
+            if (!toggle.sodium()) continue;
+            var value = EarthConfig.toggle(toggle);
+            var option = builder.createBooleanOption(id(toggle.sodiumId()))
+                    .setName(Component.translatable(toggle.langKey()))
+                    .setTooltip(Component.translatable(toggle.langKey() + ".tooltip"))
+                    .setDefaultValue(toggle.defaultValue())
+                    .setImpact(OptionImpact.VARIES)
+                    .setBinding(value::set, value::getRaw)
+                    .setStorageHandler(EarthConfig.CLIENT_SPEC::save);
+            if (toggle.when() == EngineToggles.When.RESTART) option.setFlags(OptionFlag.REQUIRES_GAME_RESTART);
+            group.addOption(option);
+        }
+        return group;
     }
 
     /** The far distance as the pause-menu slider shows it: kilometers, with miles beside them. */

@@ -12,6 +12,7 @@ import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.play.EarthAdmin;
 import io.earthplatform.minecraft.cubic.play.EarthCompass;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
+import io.earthplatform.minecraft.cubic.play.EngineToggles;
 import io.earthplatform.minecraft.cubic.play.EarthExplorer;
 import io.earthplatform.minecraft.cubic.play.EarthMemory;
 import io.earthplatform.minecraft.cubic.play.EarthRules;
@@ -50,6 +51,9 @@ public final class EarthPlatformFabric implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        // Classes that read engine flags once may initialize before the settings files load, so the flags'
+        // settings are read here, before anything else of the mod runs (see EngineToggles).
+        EngineToggles.preload(FabricLoader.getInstance().getConfigDir());
         NeoForgeModConfigEvents.loading(EarthPlatformMod.MOD_ID).register(EarthConfig::apply);
         NeoForgeModConfigEvents.reloading(EarthPlatformMod.MOD_ID).register(EarthConfig::apply);
         NeoForgeConfigRegistry.INSTANCE.register(EarthPlatformMod.MOD_ID, ModConfig.Type.CLIENT, EarthConfig.CLIENT_SPEC);
