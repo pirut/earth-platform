@@ -178,16 +178,18 @@ public final class FarRenderer {
     private double lookX, lookZ = 1;
     /**
      * The zoomed view (see {@link FarZoom}), or null unzoomed; and the one the kept walk drew
-     * for. The projection's focal length and the tangent of the angle to its corners, from the last
-     * frame drawn.
+     * for. The projection's focal length, the tangent of the angle to its corners and its width over
+     * its height, from the last frame drawn.
      */
     @Nullable private FarZoom zoom, walkZoom;
     private float focal;
-    private double spread;
+    private double spread, aspect;
     /** The columns the zoomed view wants, and those it would want but for {@link FarZoom#MAX_COLUMNS}, for the debug screen. */
     private int zoomWanted, zoomSeen;
     /** The zoomed view as the player has it, of which the plan counts as much zoom as it can (see {@link #zoom}). */
     @Nullable private FarZoom zoomView;
+    /** The ticks the zoomed view still counts as bobbing (see {@link FarZoom#bobHold}). */
+    private int bobHold;
     /** Columns the view wants at their own level, and how many of them are drawn: how settled the far terrain is. */
     private int wanted, settled, planSize, wantedInView, settledInView;
     /** Columns kept beyond what the plan wants, for going back over ground just left. */
@@ -896,7 +898,10 @@ public final class FarRenderer {
         var eye = player.getEyePosition();
         double height = eye.y - ground(player.getBlockX(), player.getBlockZ(), eye.y);
         FarZoom before = zoomView;
-        zoomView = ZOOM ? FarZoom.at(focal / normal, spread * focal / normal, eye.x, eye.y, eye.z, height,
+        // The view as the game draws it may be tipped by walking (view bobbing), and ground is drawn lower under the Earth's curve.
+        // Counted a client tick at a time, as this runs, and held for a second after the bob dies away, so a jump does not change the view twice.
+        bobHold = FarZoom.bobHold(Minecraft.getInstance().options.bobView().get(), player.bob, player.oBob, bobHold);
+        zoomView = ZOOM ? FarZoom.at(focal / normal, spread * focal / normal, aspect, bobHold > 0, cullCurvature, eye.x, eye.y, eye.z, height,
                 player.getYRot(), player.getXRot(), zoomView) : null;
         // A view that zooms in or turns is planned for at once, not at the next half second: what it looks at is asked for first.
         if (zoomView != null && zoomView != before) planNow = true;
@@ -1724,6 +1729,7 @@ public final class FarRenderer {
         int bx = (int) Math.floor(position.x), bz = (int) Math.floor(position.z);
         focal = Math.abs(projection.m11());
         spread = Math.hypot(1 / projection.m00(), 1 / projection.m11());
+        aspect = Math.abs(projection.m11() / projection.m00());
         gpu.fadeTicks(fadeLength.table());
         boolean pack = ShaderBlocks.packInUse();
         // A pack's shaders are built with neither the Earth's curve nor the haze (see FarShaders#PACK_VERTEX).
