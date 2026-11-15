@@ -51,12 +51,12 @@ public final class EarthMemory {
     /** Each server tick: the first time memory runs short in this game, says so. */
     public static void tick(MinecraftServer server) {
         if (!MemoryPressure.high() || !MemoryPressure.firstShortage()) return;
-        String used = String.format(Locale.ROOT, "%.1f of %.1f GB", MemoryPressure.usedMib() / 1024.0, MemoryPressure.mostMib() / 1024.0);
-        EarthPlatformMod.LOGGER.warn("Java is nearly out of memory ({} in long-lived use); give the game more memory ({})", used, HELP);
+        String most = String.format(Locale.ROOT, "%.1f GB", MemoryPressure.mostMib() / 1024.0);
+        EarthPlatformMod.LOGGER.warn("Java ran short of its {} of memory; give the game more memory ({})", most, HELP);
         if (server.isDedicatedServer()) return;
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             if (!server.isSingleplayerOwner(player.getGameProfile())) continue;
-            player.sendSystemMessage(Component.literal("Minecraft is nearly out of memory (" + used + " in use), so Earth is keeping less in memory and drawing far terrain more slowly. "
+            player.sendSystemMessage(Component.literal("Minecraft ran short of its " + most + " of memory, so Earth is keeping less in memory and drawing far terrain more slowly. "
                             + "Give the game more memory, 6 GB or more with many mods, or it may crash. ")
                     .withStyle(ChatFormatting.YELLOW)
                     .append(Component.literal("[How]").withStyle(style -> style.withColor(ChatFormatting.AQUA)
