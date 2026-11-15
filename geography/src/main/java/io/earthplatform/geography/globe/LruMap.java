@@ -20,10 +20,14 @@ final class LruMap<K, V> extends LinkedHashMap<K, V> {
         super(initialCapacity, 0.75f, true);
     }
 
-    /** Puts an entry, then drops the least recently used entries while more than {@code most} remain. */
+    /**
+     * Puts an entry, then drops the least recently used entries while more than {@code most} remain,
+     * or a quarter of that while memory is short (see {@link MemoryPressure#scaled}).
+     */
     void putAndTrim(K key, V value, int most) {
         put(key, value);
+        int kept = MemoryPressure.scaled(most);
         Iterator<Map.Entry<K, V>> iterator = entrySet().iterator();
-        while (size() > most && iterator.hasNext()) { iterator.next(); iterator.remove(); }
+        while (size() > kept && iterator.hasNext()) { iterator.next(); iterator.remove(); }
     }
 }

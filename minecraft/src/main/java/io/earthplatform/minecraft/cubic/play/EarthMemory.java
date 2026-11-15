@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.play;
 
+import io.earthplatform.geography.globe.MemoryPressure;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -15,6 +16,11 @@ import net.minecraft.server.level.ServerPlayer;
  * cube cache and the downloads then fight the garbage collector, and the game stutters or runs
  * out. A dedicated server says so in its log at startup; a singleplayer game also tells its owner
  * in chat.
+ *
+ * <p>Four gigabytes are plenty for Earth on its own, but not always in a big mod pack, where the
+ * other mods hold much of it. So the game's memory is also watched while it runs (see
+ * {@link MemoryPressure}): when it runs short Earth makes room, and the first time in a game the
+ * singleplayer owner (or a dedicated server's log) is told how much is in use and what to do.
  */
 public final class EarthMemory {
     /** Below this the game runs short; the install guide asks for 4 GB, and launchers round 4 GB a little down. */
@@ -26,6 +32,7 @@ public final class EarthMemory {
     private EarthMemory() {}
 
     public static void started(MinecraftServer server) {
+        if (EarthWorlds.isEarth(server)) MemoryPressure.watch(EarthPlatformMod.LOGGER::warn);
         if (server.isDedicatedServer() && EarthWorlds.isEarth(server) && low() && warned.compareAndSet(false, true)) log();
     }
 
@@ -39,6 +46,23 @@ public final class EarthMemory {
                 .append(Component.literal("[How]").withStyle(style -> style.withColor(ChatFormatting.AQUA)
                         .withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, HELP))
                         .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal(HELP))))));
+    }
+
+    /** Each server tick: the first time memory runs short in this game, says so. */
+    public static void tick(MinecraftServer server) {
+        if (!MemoryPressure.high() || !MemoryPressure.firstShortage()) return;
+        String used = String.format(Locale.ROOT, "%.1f of %.1f GB", MemoryPressure.usedMib() / 1024.0, MemoryPressure.mostMib() / 1024.0);
+        EarthPlatformMod.LOGGER.warn("Java is nearly out of memory ({} in long-lived use); give the game more memory ({})", used, HELP);
+        if (server.isDedicatedServer()) return;
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            if (!server.isSingleplayerOwner(player.getGameProfile())) continue;
+            player.sendSystemMessage(Component.literal("Minecraft is nearly out of memory (" + used + " in use), so Earth is keeping less in memory and drawing far terrain more slowly. "
+                            + "Give the game more memory, 6 GB or more with many mods, or it may crash. ")
+                    .withStyle(ChatFormatting.YELLOW)
+                    .append(Component.literal("[How]").withStyle(style -> style.withColor(ChatFormatting.AQUA)
+                            .withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, HELP))
+                            .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal(HELP))))));
+        }
     }
 
     private static boolean low() { return mib() < LEAST_MIB; }

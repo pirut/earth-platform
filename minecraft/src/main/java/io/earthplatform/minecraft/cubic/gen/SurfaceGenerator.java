@@ -3,6 +3,7 @@ package io.earthplatform.minecraft.cubic.gen;
 import io.earthplatform.minecraft.cubic.far.Far;
 import java.util.ArrayList;
 import java.util.List;
+import io.earthplatform.geography.globe.MemoryPressure;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.annotation.Nullable;
 import net.minecraft.core.Holder;
@@ -196,7 +197,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             layers[dz * 16 + dx] = layers(x0 + dx, z0 + dz);
         }
         Column made = new Column(h, w, surface, layers, min, max, maxWater);
-        if (columns.size() > 8192) columns.clear();
+        if (columns.size() > MemoryPressure.scaled(8192)) columns.clear();
         columns.putIfAbsent(key, made);
         return made;
     }
@@ -239,7 +240,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         if (known == null) {
             java.util.concurrent.atomic.AtomicLongArray fresh = new java.util.concurrent.atomic.AtomicLongArray(256);
             for (int i = 0; i < 256; i++) fresh.set(i, UNKNOWN);
-            if (grounds.size() > 8192) grounds.clear();
+            if (grounds.size() > MemoryPressure.scaled(8192)) grounds.clear();
             known = grounds.putIfAbsent(key, fresh);
             if (known == null) known = fresh;
         }
@@ -711,7 +712,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             LevelChunkSection cached = bases.get(key);
             if (cached != null) return cached;
             LevelChunkSection made = terrain(cx, cy, cz, new ArrayList<>(), new ArrayList<>());
-            if (bases.size() > 4096) bases.clear();
+            if (bases.size() > MemoryPressure.scaled(4096)) bases.clear();
             bases.putIfAbsent(key, made);
             return made;
         }

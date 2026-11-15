@@ -105,6 +105,7 @@ public final class EarthPlatformFabric implements ModInitializer {
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             EarthWorlds.tick(server);
             EarthRules.tick(server);
+            EarthMemory.tick(server);
         });
         if (FabricLoader.getInstance().isModLoaded("axiom")) ServerTickEvents.END_SERVER_TICK.register(server -> AxiomCubes.flush(false));
 

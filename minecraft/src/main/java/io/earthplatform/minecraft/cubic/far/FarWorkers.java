@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic.far;
 
 import io.earthplatform.geography.globe.DataWaits;
+import io.earthplatform.geography.globe.MemoryPressure;
 import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.geography.globe.TickShare;
 import java.util.concurrent.ExecutorService;
@@ -49,6 +50,9 @@ public final class FarWorkers {
         synchronized (gate) {
             // Half stay at the real columns: the ground right round the player is theirs, and it came seconds later with none.
         int atWork = Math.max((busy + 1) / 2, busy - taken);
+            // While memory is short, half the usual at work and none more for those waiting on data: each column under way holds
+            // its data and voxels, and on many cores a new place's columns all at once filled a 4 GB game in a big mod pack.
+            if (MemoryPressure.high()) return Math.max(1, atWork / 2);
             return held ? atWork : Math.min(most, atWork + waiting - turns);
         }
     }
@@ -100,7 +104,8 @@ public final class FarWorkers {
             TickShare.giveWay();
             synchronized (gate) {
                 try {
-                    while (running >= allowed()) gate.wait();
+                    // Timed while memory is short, so columns start again once it frees up.
+                    while (running >= allowed()) gate.wait(MemoryPressure.high() ? 250 : 0);
                 } catch (InterruptedException stopped) {
                     Thread.currentThread().interrupt();
                     return;

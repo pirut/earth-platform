@@ -1,6 +1,7 @@
 package io.earthplatform.geography.globe;
 
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -73,9 +74,41 @@ public final class DiskCache {
         Path temp = Files.createTempFile(path.getParent(), prefix, ".part");
         try {
             Files.write(temp, bytes);
-            Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            moveIntoPlace(temp, path);
         } finally {
             Files.deleteIfExists(temp);
+        }
+    }
+
+    /** Tries of {@link #moveIntoPlace} before it gives up, waiting 5, 10, 20 and 40 ms between them. */
+    private static final int MOVE_TRIES = 5;
+
+    /**
+     * Moves a finished temporary file over its cache file. On Windows the move is refused while any
+     * other handle has the cache file open: another thread reading it, a second download of the same
+     * piece that got there first, or a virus scanner looking at the new file. Such a lock lasts
+     * moments, so the move is tried again a few times; if it still fails while the cache file is
+     * there, that file is a whole copy of the same bytes (cache files are only ever written whole,
+     * this way), so it is kept and this copy dropped.
+     */
+    static void moveIntoPlace(Path temp, Path path) throws IOException {
+        for (int tried = 1; ; tried++) {
+            try {
+                Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                return;
+            } catch (AccessDeniedException e) {
+                if (tried >= MOVE_TRIES) {
+                    if (Files.isRegularFile(path)) return;
+                    throw e;
+                }
+                try {
+                    Thread.sleep(5L << (tried - 1));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    if (Files.isRegularFile(path)) return;
+                    throw e;
+                }
+            }
         }
     }
 

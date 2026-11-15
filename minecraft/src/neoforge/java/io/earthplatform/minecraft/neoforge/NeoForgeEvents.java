@@ -129,6 +129,7 @@ public final class NeoForgeEvents {
     @SubscribeEvent public static void serverTick(ServerTickEvent.Post event) {
         EarthWorlds.tick(event.getServer());
         EarthRules.tick(event.getServer());
+        EarthMemory.tick(event.getServer());
     }
 
     // Players ------------------------------------------------------------------------------------
