@@ -1,4 +1,4 @@
-# TEMPORARY: checks the CurseForge token and tags from this branch without uploading. Remove before merge.
+# TEMPORARY: one-time backfill of build 73 to CurseForge from this branch. Remove right after it runs.
 name: CurseForge dry run (temporary)
 on:
   push:
@@ -10,12 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Dry run with build 73's jars
+      - name: Upload build 73's jars (JR picked build 73 only)
         env:
           GH_TOKEN: ${{ github.token }}
           CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
           CURSEFORGE_PROJECT: ${{ vars.CURSEFORGE_PROJECT || secrets.CURSEFORGE_PROJECT }}
-          CURSEFORGE_DRY_RUN: '1'
+          CURSEFORGE_DRY_RUN: '0'
         run: |
           [ -n "$CURSEFORGE_TOKEN" ] && echo "CURSEFORGE_TOKEN is set" || echo "::error::CURSEFORGE_TOKEN is missing"
           [ -n "$CURSEFORGE_PROJECT" ] && echo "CURSEFORGE_PROJECT=$CURSEFORGE_PROJECT" || echo "::error::CURSEFORGE_PROJECT is missing"
