@@ -4,7 +4,8 @@
 # Usage: curseforge-upload.sh <folder with earthplatform-$TAG.jar and earthplatform-fabric-$TAG.jar>
 # Environment: TAG (combined-NN), VERSION (0.1.0-alpha.NN), CURSEFORGE_TOKEN, CURSEFORGE_PROJECT,
 # GITHUB_REPOSITORY. Changelog: docs/release/notes/$TAG.md from the checkout.
-# Skips with a notice when the token or project id is missing.
+# Skips with a notice when the token or project id is missing. CURSEFORGE_DRY_RUN=1 checks the token
+# and looks up the tags but uploads nothing.
 set -euo pipefail
 if [ -z "${CURSEFORGE_TOKEN:-}" ] || [ -z "${CURSEFORGE_PROJECT:-}" ]; then
   echo "::notice::No CURSEFORGE_TOKEN secret or CURSEFORGE_PROJECT variable, so $TAG was not uploaded to CurseForge."
@@ -36,6 +37,9 @@ upload() { # display-name jar game-version-ids-json relations-json
     --argjson versions "$3" --argjson extras "$extras" --argjson relations "$4" \
     '{displayName: $name, changelog: $changelog, changelogType: "markdown", releaseType: $type,
       gameVersions: ($versions + $extras), relations: {projects: $relations}}' > curseforge-file.json
+  if [ "${CURSEFORGE_DRY_RUN:-}" = 1 ]; then
+    echo "Dry run, not uploaded: $2 with"; jq -c 'del(.changelog)' curseforge-file.json; return 0
+  fi
   curl -sS --fail-with-body -A "$agent" -H "X-Api-Token: $CURSEFORGE_TOKEN" \
     -F "metadata=<curseforge-file.json;type=application/json" \
     -F "file=@$dist/$2;type=application/java-archive" \
