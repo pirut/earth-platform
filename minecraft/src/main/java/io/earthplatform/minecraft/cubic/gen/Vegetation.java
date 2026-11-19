@@ -142,7 +142,7 @@ final class Vegetation {
             // Desert scrub: dead bushes, and cacti on every other column (so no two touch) with no higher ground beside them.
             if (roll < s.grass()) plant = state(Blocks.DEAD_BUSH);
             else if (roll < s.flowers() && ((x | z) & 1) == 0 && height[gi - 1] <= h && height[gi + 1] <= h
-                    && height[gi - 18] <= h && height[gi + 18] <= h) {
+                    && height[gi - 18] <= h && height[gi + 18] <= h && gen.cacti(x, z)) {
                 stalk = CACTUS;
                 stalkHeight = 1 + (int) Math.floorMod(r >>> 20, 3);
             }
