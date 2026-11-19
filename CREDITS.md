@@ -133,6 +133,10 @@ JRC Global Surface Water v1.4 (Source: EC JRC/Google; Pekel et al. 2016, Nature 
 Pekel, J.-F., Cottam, A., Gorelick, N. & Belward, A.S. (2016). High-resolution mapping of global surface water and its long-term changes. *Nature* 540, 418-422. https://doi.org/10.1038/nature20584
 Terms: produced under the Copernicus Programme and provided free of charge, without restriction of use ([data access page](https://global-surface-water.appspot.com/download)). The European Union and the organisations in charge of the Copernicus programme do not incur any liability for any use of these data. Changes: the water occurrence layer is read where you play and turned into river channels in the terrain.
 
+## Helgoland elevation: Schleswig-Holstein DGM5 (bundled)
+
+ATKIS Digitales Geländemodell 5, © GeoBasis-DE/LVermGeo SH 2025, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Earth Platform resamples the Helgoland delivery from the [Schleswig-Holstein OpenGBD portal](https://geodaten.schleswig-holstein.de/gaialight-sh/_apps/dladownload/dl-dgm5.html) into its own elevation grid.
+
 ## Estonia's surveyed rivers (bundled)
 
 Estonian Topographic Database (ETAK) watercourses, 2026-11-14, Republic of Estonia Land and Spatial Development Board. The [watercourse data](https://geoportaal.maaruum.ee/eng/Spatial-Data/Estonian-Topographic-Database/Download-Topographic-Data-p618.html) is distributed under the [Board's open data licence](https://geoportaal.maaruum.ee/opendata-licence). Earth Platform extracts the features surveyed as rivers, reprojects and simplifies their centre lines, and uses them to fill gaps in the satellite water map.
