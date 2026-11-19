@@ -3912,7 +3912,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** Whether cacti grow wild at a column: only in the Americas, the Nearctic and Neotropic realms. */
-    private boolean cacti(int x, int z) {
+    @Override protected boolean cacti(int x, int z) {
         if (!realms) return OldRegions.americas(grid.geographic(x, z));
         int realm = realm(x, z);
         return realm == Ecoregions.NEARCTIC || realm == Ecoregions.NEOTROPIC;
