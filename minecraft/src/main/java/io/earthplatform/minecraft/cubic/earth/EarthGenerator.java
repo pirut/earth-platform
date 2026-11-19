@@ -7,6 +7,7 @@ import io.earthplatform.geography.globe.CanopySource;
 import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
 import io.earthplatform.geography.globe.GlobalElevation;
+import io.earthplatform.geography.globe.Dgm5Elevation;
 import io.earthplatform.geography.globe.EstonianRivers;
 import io.earthplatform.geography.globe.GsiElevation;
 import io.earthplatform.geography.globe.HrdemElevation;
@@ -299,6 +300,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 + (tiles.layers().stream().anyMatch(layer -> layer instanceof HrdemElevation) ? ". " + HrdemElevation.ATTRIBUTION : "")
                 + (tiles.layers().stream().anyMatch(layer -> layer instanceof IgnElevation) ? ". " + IgnElevation.ATTRIBUTION : "")
                 + (tiles.layers().stream().anyMatch(layer -> layer instanceof GsiElevation) ? ". " + GsiElevation.ATTRIBUTION : "")
+                + (tiles.layers().stream().anyMatch(layer -> layer instanceof Dgm5Elevation) ? ". " + Dgm5Elevation.ATTRIBUTION : "")
                 + (cover == null ? "" : ". Land cover: " + WorldCoverSource.ATTRIBUTION)
                 + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION)
                 + (imagery == null ? "" : ". Imagery: " + ImagerySource.ATTRIBUTION)
