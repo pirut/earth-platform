@@ -17,6 +17,7 @@ import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.UsgsElevation;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.geography.globe.Drainage;
+import io.earthplatform.geography.globe.EstonianRivers;
 import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.SurfaceWaterSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
@@ -129,6 +130,10 @@ public final class CubicSettings {
                         coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : streamsId.isEmpty() ? rivers() : riversAndStreams(),
                         coverId.isEmpty() || groundId.isEmpty() ? null : bareEarth());
                 if (cavesId.isEmpty()) earth.legacyCaves();
+                String surveysId = properties.getProperty("earth.riverSurveys", "");
+                if (!surveysId.isEmpty() && !EstonianRivers.ID.equals(surveysId))
+                    throw new IllegalStateException("Unsupported river surveys '" + surveysId + "' in " + file);
+                if (!surveysId.isEmpty()) earth.enableSurveyedRivers();
                 // Worlds made before build 70 keep the boxes of latitude and longitude that placed their giant trees, red
                 // deserts, lava fields, cacti, bamboo and cherries, so new ground matches what they have saved.
                 String canopyId = properties.getProperty("earth.canopy", "");
@@ -180,6 +185,7 @@ public final class CubicSettings {
         properties.setProperty("earth.climate", ClimateSource.DATASET_ID);
         properties.setProperty("earth.rivers", SurfaceWaterSource.DATASET_ID);
         properties.setProperty("earth.streams", Drainage.ID);
+        properties.setProperty("earth.riverSurveys", EstonianRivers.ID);
         properties.setProperty("earth.ground", BareEarth.ID);
         properties.setProperty("earth.caves", SurfaceGenerator.VANILLA_CAVES);
         if (!"false".equals(System.getProperty("earthplatform.earth.canopy"))) properties.setProperty("earth.canopy", CanopySource.DATASET_ID);
