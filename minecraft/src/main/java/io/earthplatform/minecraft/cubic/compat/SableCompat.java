@@ -151,15 +151,21 @@ public final class SableCompat {
         }
     }
 
+    /** Resolves only the server overload. Reflection enumerates the client overload on dedicated servers. */
+    static MethodHandle serverContainerHandle() throws ReflectiveOperationException {
+        Class<?> containers = Class.forName("dev.ryanhcode.sable.api.sublevel.SubLevelContainer");
+        Class<?> server = Class.forName("dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer");
+        return MethodHandles.publicLookup().findStatic(containers, "getContainer", MethodType.methodType(server, ServerLevel.class));
+    }
+
     private static boolean physicsHandles() {
         if (!handlesTried) {
             handlesTried = true;
             try {
                 MethodHandles.Lookup lookup = MethodHandles.publicLookup();
-                Class<?> containers = Class.forName("dev.ryanhcode.sable.api.sublevel.SubLevelContainer");
-                Class<?> server = Class.forName("dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer");
+                container = serverContainerHandle();
+                Class<?> server = container.type().returnType();
                 Class<?> system = Class.forName("dev.ryanhcode.sable.sublevel.system.SubLevelPhysicsSystem");
-                container = lookup.findStatic(containers, "getContainer", MethodType.methodType(server, ServerLevel.class));
                 physics = lookup.findVirtual(server, "physicsSystem", MethodType.methodType(system));
                 blockChange = lookup.findVirtual(system, "handleBlockChange", MethodType.methodType(void.class,
                         SectionPos.class, LevelChunkSection.class, int.class, int.class, int.class, BlockState.class, BlockState.class));
