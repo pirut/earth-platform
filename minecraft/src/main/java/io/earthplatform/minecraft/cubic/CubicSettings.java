@@ -411,12 +411,16 @@ public final class CubicSettings {
 
     private static Path cacheFolder() { return Loader.INSTANCE.gameDir().resolve("earthplatform").resolve("cache"); }
 
-    /** Old worlds retain the shared ground source. Newly pinned surveys also inform their ground fields. */
+    /** Old worlds retain the shared ground source. DGM5 replaces the corrected surface where it has data. */
     private static synchronized BareEarth bareEarth(String pin) {
         String survey = "+" + Dgm5Elevation.ID;
         String groundPin = pin.endsWith(survey) ? pin : baselineElevation();
-        return ground.computeIfAbsent(groundPin, id ->
-                new BareEarth(tiles(id), cover(), cacheFolder().resolve(BareEarth.ID), id.endsWith(survey)));
+        return ground.computeIfAbsent(groundPin, id -> {
+            boolean surveyed = id.endsWith(survey);
+            String correction = surveyed ? id.substring(0, id.length() - survey.length()) : id;
+            return new BareEarth(tiles(correction), cover(), cacheFolder().resolve(BareEarth.ID),
+                    surveyed ? new Dgm5Elevation() : null);
+        });
     }
 
     /** Canopy heights shared by every Earth world in this game, cached on disk beside the elevation tiles. */

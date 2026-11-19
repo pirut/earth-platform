@@ -20,15 +20,12 @@ public final class Dgm5Elevation implements ElevationLayer {
 
     @Override public String id() { return ID; }
 
-    static boolean affectsGroundField(int zoom, int x, int y) {
-        for (int dy = -1; dy <= 1; dy++)
-            for (int dx = -1; dx <= 1; dx++)
-                if (COVERAGE.covers(zoom, x + dx, y + dy)) return true;
-        return false;
+    boolean covers(int zoom, int x, int y) {
+        return zoom >= MIN_ZOOM && zoom <= ZOOM && COVERAGE.covers(zoom, x, y);
     }
 
     @Override public void refine(int zoom, int x, int y, float[] values) {
-        if (zoom < MIN_ZOOM || zoom > ZOOM || !COVERAGE.covers(zoom, x, y)) return;
+        if (!covers(zoom, x, y)) return;
         int step = 1 << (ZOOM - zoom), left = x * SIZE * step, top = y * SIZE * step;
         int centre = (step - 1) / 2, across = step == 1 ? 1 : 2;
         float[] heights = new float[values.length];
