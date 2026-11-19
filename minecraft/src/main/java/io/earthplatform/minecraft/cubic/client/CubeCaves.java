@@ -26,6 +26,9 @@ final class CubeCaves {
     static final int CHECK_FROM = 60;
     /** {@code -Dearthplatform.cubes.caveLine=false} leaves out the look back to the camera past {@link #CHECK_FROM}. */
     static final boolean LINE = !"false".equals(System.getProperty("earthplatform.cubes.caveLine"));
+    // Near terrain normally covers thousands of cubes. A teleport can leave meshes at both ends
+    // of the trip for a frame, with an enormous box of empty space between them.
+    private static final int MAX_SEARCH_CUBES = 1 << 18;
     private static final Direction[] DIRECTIONS = Direction.values();
 
     private CubeCaves() {}
@@ -52,15 +55,17 @@ final class CubeCaves {
     /**
      * The cubes the camera at block ({@code camX}, {@code camY}, {@code camZ}) can see into, searching only inside the
      * cube box {@code [minX..maxX] x [minY..maxY] x [minZ..maxZ]}; null when the camera's cube lies outside it (high
-     * above the loaded cubes, say), where nothing is culled. {@code visibility} holds each meshed cube's faces; cubes
-     * missing from it are open.
+     * above the loaded cubes, say) or the box is too large to search. In both cases nothing is culled.
+     * {@code visibility} holds each meshed cube's faces; cubes missing from it are open.
      */
     static LongOpenHashSet reach(double camX, double camY, double camZ, Long2LongOpenHashMap visibility,
                                  int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
         int sx = (int) Math.floor(camX) >> 4, sy = (int) Math.floor(camY) >> 4, sz = (int) Math.floor(camZ) >> 4;
         if (sx < minX || sx > maxX || sy < minY || sy > maxY || sz < minZ || sz > maxZ) return null;
         int width = maxX - minX + 1, height = maxY - minY + 1, depth = maxZ - minZ + 1;
-        int capacity = width * height * depth;
+        long area = (long) width * depth;
+        if (area > MAX_SEARCH_CUBES / height) return null;
+        int capacity = (int) (area * height);
         LongOpenHashSet reached = new LongOpenHashSet(Math.min(capacity, 1 << 16));
         // Breadth first, so each cube is reached by its shortest path, as vanilla's search does.
         long[] keys = new long[Math.min(capacity, 1 << 16)];

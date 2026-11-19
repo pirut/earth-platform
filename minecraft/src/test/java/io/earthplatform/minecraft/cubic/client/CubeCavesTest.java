@@ -26,6 +26,13 @@ class CubeCavesTest {
         assertNull(CubeCaves.reach(8, 8 + 16 * 40, 8, faces(), -4, -2, -4, 4, 2, 4));
     }
 
+    @Test void meshesAcrossALongTeleportDoNotOverflowTheSearch() {
+        // Old and new near meshes can span a continent and several kilometres in height.
+        assertNull(CubeCaves.reach(8, 8, 8, faces(), -600_000, -500, 0, 0, 0, 50_000));
+        // A smaller jump fits in an int but still leaves too much empty space to flood.
+        assertNull(CubeCaves.reach(8, 8, 8, faces(), -100, -40, -15, 100, 40, 15));
+    }
+
     @Test void solidWallHidesWhatIsBehindItButIsItselfDrawn() {
         Long2LongOpenHashMap map = faces();
         for (int y = -2; y <= 2; y++) for (int z = -4; z <= 4; z++) map.put(CubeKey.pack(2, y, z), 0L);
