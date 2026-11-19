@@ -19,6 +19,10 @@ on:
       tag:
         description: Tag to release (for example combined-34). Builds the chosen branch and creates the tag there if it does not exist yet.
         required: true
+      curseforge:
+        description: Upload to CurseForge too. Untick when CurseForge already has this build, since a re-run would add the files a second time.
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -146,6 +150,7 @@ jobs:
           { echo; echo "Mod version $version, for Minecraft 1.21.1: \`earthplatform-$TAG.jar\` for NeoForge, \`earthplatform-fabric-$TAG.jar\` for Fabric (with Fabric API). Built from $(git rev-parse --short HEAD)."; echo; echo '```'; cat dist/*.jar.sha256; echo '```'; } >> release-notes.md
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        id: github_release
         if: steps.tag.outputs.skip != 'true'
         with:
           tag_name: ${{ env.TAG }}
@@ -198,3 +203,20 @@ jobs:
           # Fabric API's Modrinth project id is P7dR8mSH.
           upload "$VERSION+fabric" "$TITLE for Fabric" "earthplatform-fabric-$TAG.jar" '["fabric", "quilt"]' \
             '[{"project_id": "P7dR8mSH", "dependency_type": "required"}]'
+
+      # Uploads the jars to CurseForge as alphas for Minecraft 1.21.1, with the build's notes as the
+      # changelog: the NeoForge jar as one file, the Fabric jar (Fabric and Quilt, needing Fabric API)
+      # as another. Both are marked for client and server and Java 21. Sodium and Iris are optional.
+      # Needs the CURSEFORGE_TOKEN secret (an API token from CurseForge → Account settings → API tokens)
+      # and the CURSEFORGE_PROJECT repository variable (the project's numeric id, shown on the project
+      # page under About Project). Without either, the step says so and skips. It runs even when the
+      # Modrinth upload failed, as long as the GitHub release was made.
+      # CurseForge has no "is this version already there" check for upload tokens, so a push to main
+      # uploads once (an existing release stops the workflow earlier). When re-running a release by
+      # hand, untick "Upload to CurseForge too" if CurseForge already has the files.
+      - name: Upload to CurseForge
+        if: ${{ !cancelled() && steps.tag.outputs.skip != 'true' && steps.github_release.outcome == 'success' && github.event.inputs.curseforge != 'false' }}
+        env:
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          CURSEFORGE_PROJECT: ${{ vars.CURSEFORGE_PROJECT || secrets.CURSEFORGE_PROJECT }}
+        run: bash .github/scripts/curseforge-upload.sh dist

@@ -3,6 +3,7 @@ package io.earthplatform.minecraft.cubic.gen;
 import io.earthplatform.minecraft.cubic.far.Far;
 import java.util.ArrayList;
 import java.util.List;
+import io.earthplatform.geography.globe.MemoryPressure;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.annotation.Nullable;
 import net.minecraft.core.Holder;
@@ -78,6 +79,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     private final ConcurrentHashMap<Long, LevelChunkSection> bases = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Column> columns = new ConcurrentHashMap<>();
     private final Vegetation vegetation = new Vegetation(this);
+    @Nullable private TerrainSlabs terrainSlabs;
 
     /** Cave noise is drawn from {@code random} after whatever the subclass drew from it. */
     protected SurfaceGenerator(long seed, Registry<Biome> biomes, RandomSource random) {
@@ -93,6 +95,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** Keeps the caves worlds made before vanilla's caves were made with; call before any cube is made. */
     public final void legacyCaves() { below.vanillaCaves(false); }
+    /** Adds optional half-block steps to a world that pinned them before its first cube. */
+    public final void enableTerrainSlabs() { terrainSlabs = TerrainSlabs.load(); }
     protected static Holder<Biome> holder(Registry<Biome> registry, ResourceKey<Biome> key) { return registry.getHolderOrThrow(key); }
 
     /** Fractal noise: {@code octaves} layers of {@code noise}, each half as strong and 2.03x as fine, averaged by weight. */
@@ -139,6 +143,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** Whether trees' bare log ends at the top of their crowns are covered with leaves; worlds made before build 70 keep vanilla's. */
     protected boolean cappedCrowns() { return false; }
+
+    /** Whether cacti may grow naturally at a column. */
+    protected boolean cacti(int x, int z) { return true; }
 
     /** Whether the water over a column is iced over: by default wherever its biome freezes. */
     protected boolean iced(Surface surface, int x, int z) { return surface.biome().value().getBaseTemperature() < 0.15f; }
@@ -196,7 +203,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             layers[dz * 16 + dx] = layers(x0 + dx, z0 + dz);
         }
         Column made = new Column(h, w, surface, layers, min, max, maxWater);
-        if (columns.size() > 8192) columns.clear();
+        if (columns.size() > MemoryPressure.scaled(8192)) columns.clear();
         columns.putIfAbsent(key, made);
         return made;
     }
@@ -239,7 +246,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         if (known == null) {
             java.util.concurrent.atomic.AtomicLongArray fresh = new java.util.concurrent.atomic.AtomicLongArray(256);
             for (int i = 0; i < 256; i++) fresh.set(i, UNKNOWN);
-            if (grounds.size() > 8192) grounds.clear();
+            if (grounds.size() > MemoryPressure.scaled(8192)) grounds.clear();
             known = grounds.putIfAbsent(key, fresh);
             if (known == null) known = fresh;
         }
@@ -711,7 +718,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             LevelChunkSection cached = bases.get(key);
             if (cached != null) return cached;
             LevelChunkSection made = terrain(cx, cy, cz, new ArrayList<>(), new ArrayList<>());
-            if (bases.size() > 4096) bases.clear();
+            if (bases.size() > MemoryPressure.scaled(4096)) bases.clear();
             bases.putIfAbsent(key, made);
             return made;
         }
@@ -766,6 +773,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             }
         }
         if (!underground) vegetation.decorate(section, x0, y0, z0, col.height, col.water, col.surface);
+        if (terrainSlabs != null && y0 <= col.max + 1 && y0 + 15 > col.min) {
+            terrainSlabs.decorate(section, y0, col.height, col.water, col.surface);
+        }
         if (y0 <= col.max) below.finish(section, cx, cy, cz, caves, blockEntities, entities);
         section.recalcBlockCounts();
         return section;

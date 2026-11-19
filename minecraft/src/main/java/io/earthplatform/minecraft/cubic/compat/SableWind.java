@@ -3,7 +3,9 @@ package io.earthplatform.minecraft.cubic.compat;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.jet.JetStream;
-import java.lang.reflect.Method;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -36,7 +38,7 @@ public final class SableWind {
     /** Each ship's eastward speed right after last tick's push, to measure what drag took since. */
     private static final Map<Object, Double> EXPECTED = new WeakHashMap<>();
     /** Reflected Sable calls; null once a lookup failed. */
-    private static Method container, subLevels, pose, position, handle, velocity, push;
+    private static MethodHandle container, subLevels, pose, position, handle, velocity, push;
     private static boolean tried, broken;
 
     private SableWind() {}
@@ -45,7 +47,7 @@ public final class SableWind {
         if (!SableCompat.LOADED || broken || !(levelAccessor instanceof ServerLevel level) || !Cubic.isCubic(level.dimension())) return;
         if (!tried && !lookUp()) return;
         try {
-            Object ships = container.invoke(null, level);
+            Object ships = container.invoke(level);
             if (ships == null) return;
             Vector3d current = new Vector3d();
             Set<Object> ridden = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -56,7 +58,7 @@ public final class SableWind {
             for (Object ship : (List<?>) subLevels.invoke(ships)) {
                 double y = ((Vector3dc) position.invoke(pose.invoke(ship))).y();
                 double strength = JetStream.strength(y);
-                Object body = strength > 0 ? handle.invoke(null, ship) : null;
+                Object body = strength > 0 ? handle.invoke(ship) : null;
                 if (body == null) {
                     EXPECTED.remove(ship);
                     continue;
@@ -70,7 +72,8 @@ public final class SableWind {
                 push.invoke(body, new Vector3d(change, 0, 0), NONE);
                 EXPECTED.put(ship, current.x + change);
             }
-        } catch (ReflectiveOperationException | RuntimeException failure) {
+        } catch (Throwable failure) {
+            if (failure instanceof Error fatal && !(fatal instanceof LinkageError)) throw fatal;
             EarthPlatformMod.LOGGER.warn("Jet stream could not move Sable ships; leaving them to their own propellers", failure);
             broken = true;
         }
@@ -79,19 +82,20 @@ public final class SableWind {
     private static boolean lookUp() {
         tried = true;
         try {
-            Class<?> containers = Class.forName("dev.ryanhcode.sable.api.sublevel.SubLevelContainer");
-            Class<?> serverContainers = Class.forName("dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer");
+            var lookup = MethodHandles.publicLookup();
+            container = SableCompat.serverContainerHandle();
+            Class<?> serverContainer = container.type().returnType();
             Class<?> ship = Class.forName("dev.ryanhcode.sable.sublevel.ServerSubLevel");
+            Class<?> poseType = Class.forName("dev.ryanhcode.sable.companion.math.Pose3d");
             Class<?> handles = Class.forName("dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle");
-            container = containers.getMethod("getContainer", ServerLevel.class);
-            subLevels = serverContainers.getMethod("getAllSubLevels");
-            pose = ship.getMethod("logicalPose");
-            position = pose.getReturnType().getMethod("position");
-            handle = handles.getMethod("of", ship);
-            velocity = handles.getMethod("getLinearVelocity", Vector3d.class);
-            push = handles.getMethod("addLinearAndAngularVelocity", Vector3dc.class, Vector3dc.class);
+            subLevels = lookup.findVirtual(serverContainer, "getAllSubLevels", MethodType.methodType(List.class));
+            pose = lookup.findVirtual(ship, "logicalPose", MethodType.methodType(poseType));
+            position = lookup.findVirtual(poseType, "position", MethodType.methodType(Vector3d.class));
+            handle = lookup.findStatic(handles, "of", MethodType.methodType(handles, ship));
+            velocity = lookup.findVirtual(handles, "getLinearVelocity", MethodType.methodType(Vector3d.class, Vector3d.class));
+            push = lookup.findVirtual(handles, "addLinearAndAngularVelocity", MethodType.methodType(void.class, Vector3dc.class, Vector3dc.class));
             return true;
-        } catch (ReflectiveOperationException | LinkageError failure) {
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             EarthPlatformMod.LOGGER.warn("Sable ship hooks not found; the jet stream won't carry ships", failure);
             broken = true;
             return false;

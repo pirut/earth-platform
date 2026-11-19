@@ -150,6 +150,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
     private final Cover cover;
     /** Where worked-out fields are kept on disk, or null to keep them in memory only. */
     private final Path cacheRoot;
+    private final Dgm5Elevation detailedGround;
     private final int maxFields, maxTiles;
     private final LruMap<Long, Field> fields = new LruMap<>(64);
     private final Map<Long, CompletableFuture<Field>> fieldsInFlight = new ConcurrentHashMap<>();
@@ -158,19 +159,28 @@ public final class BareEarth implements GlobalElevation.Tiles {
 
     /** @param cacheRoot optional disk cache directory for the worked-out fields, or null for memory only */
     public BareEarth(TerrariumTileSource tiles, WorldCoverSource cover, Path cacheRoot) {
+        this(tiles, cover, cacheRoot, null);
+    }
+
+    public BareEarth(TerrariumTileSource tiles, WorldCoverSource cover, Path cacheRoot, Dgm5Elevation detailedGround) {
         this(tiles::tile, new Cover() {
             @Override public int code(double latitude, double longitude) { return cover.code(latitude, longitude, 0); }
             @Override public void codes(double[] latitudes, double[] longitudes, byte[] out) { cover.codes(latitudes, longitudes, out); }
             @Override public void prefetch(double south, double west, double north, double east) { cover.prefetch(south, west, north, east, 0); }
-        }, 160, 256, cacheRoot);
+        }, 160, 256, cacheRoot, detailedGround);
     }
 
     BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles) { this(tiles, cover, maxFields, maxTiles, null); }
 
     BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles, Path cacheRoot) {
+        this(tiles, cover, maxFields, maxTiles, cacheRoot, null);
+    }
+
+    BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles, Path cacheRoot, Dgm5Elevation detailedGround) {
         this.tiles = tiles;
         this.cover = cover;
         this.cacheRoot = cacheRoot;
+        this.detailedGround = detailedGround;
         this.maxFields = maxFields;
         this.maxTiles = maxTiles;
     }
@@ -193,6 +203,11 @@ public final class BareEarth implements GlobalElevation.Tiles {
             // A bug here must not leave a hole in the world: the tile goes on with its roofs.
             TerrariumTileSource.warnOnce(ID, "Bare earth failed on tile " + zoom + "/" + x + "/" + y + "; using the tile as it is", broken);
             out = source;
+        }
+        // DGM5 measures the ground directly. Apply it after correcting survey tiles that include roofs.
+        if (detailedGround != null && detailedGround.covers(zoom, x, y)) {
+            if (out == source) out = source.clone();
+            detailedGround.refine(zoom, x, y, out);
         }
         // Kept whether or not it changed, so a tile beside a town is looked over only once.
         synchronized (changed) {

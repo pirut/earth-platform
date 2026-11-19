@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -51,5 +52,25 @@ class DiskCacheTest {
         Path read = file("read", 1, 1_000);
         DiskCache.read(read);
         assertTrue(Files.getLastModifiedTime(read).toMillis() > 1_000);
+    }
+
+    @Test
+    void manyWritersOfOneFileAllFinishWithOneWholeFile() throws Exception {
+        Path target = cache.resolve("rows/5538.z");
+        byte[] bytes = new byte[64 << 10];
+        java.util.Arrays.fill(bytes, (byte) 7);
+        List<Thread> writers = new java.util.ArrayList<>();
+        List<Throwable> failed = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        for (int i = 0; i < 8; i++) writers.add(Thread.ofPlatform().start(() -> {
+            try {
+                for (int j = 0; j < 20; j++) {
+                    DiskCache.write(target, bytes);
+                    assertArrayEquals(bytes, Files.readAllBytes(target));
+                }
+            } catch (Throwable e) { failed.add(e); }
+        }));
+        for (Thread writer : writers) writer.join();
+        assertEquals(List.of(), failed);
+        try (var left = Files.list(target.getParent())) { assertEquals(List.of(target), left.toList(), "no .part files left behind"); }
     }
 }

@@ -36,6 +36,10 @@ Regional relief and surface appearance are explicitly procedural heuristics laye
 
 Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm, BioScience 67(6):534-545, CC BY 4.0; derived 0.05 degree raster. Bundled as `minecraft/src/main/resources/earthplatform/ecoregions.png` (derived raster) and `ecoregions.tsv` (ecoregion names). https://doi.org/10.1093/biosci/bix014 . Changes: polygons rasterized to 0.05 degree cells.
 
+Estonian Topographic Database (ETAK) watercourses, 2026-11-14, Republic of Estonia Land and Spatial Development Board. Bundled derived river centre lines. [Open data licence](https://geoportaal.maaruum.ee/opendata-licence).
+
+Helgoland: ATKIS DGM5, ©GeoBasis-DE/LVermGeo SH/[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (Quelle verändert). Resampled by Earth Platform from the [Schleswig-Holstein OpenGBD portal](https://geodaten.schleswig-holstein.de/gaialight-sh/_apps/dladownload/dl-dgm5.html).
+
 ## Separately installed shader inputs
 
 Shaders are optional. Players install Iris (1.8.14 or a later 1.8 release, LGPL-3.0), Sodium (0.8.12 or a later 0.8 release, PolyForm Shield 1.0.0) and a shader pack such as Photon (Photon Shaders License Agreement) themselves. None of their files, shaders or licenses ship in Earth Platform; the mod only compiles against Iris and Sodium and mixes into them at runtime. When the player's driver needs it, the mod adapts the player's own Photon copy on their machine (see the licensing audit); the jar contains no Photon text.

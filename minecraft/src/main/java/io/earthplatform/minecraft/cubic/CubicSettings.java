@@ -17,6 +17,8 @@ import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.UsgsElevation;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.geography.globe.Drainage;
+import io.earthplatform.geography.globe.EstonianRivers;
+import io.earthplatform.geography.globe.Dgm5Elevation;
 import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.SurfaceWaterSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
@@ -25,6 +27,7 @@ import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.HighlandsGenerator;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
+import io.earthplatform.minecraft.cubic.gen.TerrainSlabs;
 import io.earthplatform.minecraft.platform.Loader;
 import java.io.IOException;
 import java.io.Reader;
@@ -65,7 +68,7 @@ public final class CubicSettings {
     private static CanopySource canopy;
     /** The {@code earth.plants} pin of worlds whose cacti, bamboo and cherries grow by ecoregion realm and climate. */
     public static final String PLANT_REALMS = "realms-v1";
-    private static BareEarth bareEarth;
+    private static final Map<String, BareEarth> ground = new HashMap<>();
     private static ClimateSource climate;
     private static SurfaceWaterSource surfaceWater;
     private static RiverMap rivers, riversAndStreams;
@@ -127,8 +130,17 @@ public final class CubicSettings {
                     throw new IllegalStateException("Unsupported caves '" + cavesId + "' in " + file);
                 EarthGenerator earth = new EarthGenerator(seed, biomes, settings, tiles(elevationId), coverId.isEmpty() ? null : cover(), coverId.isEmpty() ? null : climate(),
                         coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : streamsId.isEmpty() ? rivers() : riversAndStreams(),
-                        coverId.isEmpty() || groundId.isEmpty() ? null : bareEarth());
+                        coverId.isEmpty() || groundId.isEmpty() ? null : bareEarth(elevationId));
                 if (cavesId.isEmpty()) earth.legacyCaves();
+                String surveysId = properties.getProperty("earth.riverSurveys", "");
+                if (!surveysId.isEmpty() && !EstonianRivers.ID.equals(surveysId))
+                    throw new IllegalStateException("Unsupported river surveys '" + surveysId + "' in " + file);
+                if (!surveysId.isEmpty()) earth.enableSurveyedRivers();
+                String slabsId = properties.getProperty("earth.terrainSlabs", "");
+                if (!slabsId.isEmpty()) {
+                    if (!TerrainSlabs.ID.equals(slabsId)) throw new IllegalStateException("Unsupported terrain slabs '" + slabsId + "' in " + file);
+                    earth.enableTerrainSlabs();
+                }
                 // Worlds made before build 70 keep the boxes of latitude and longitude that placed their giant trees, red
                 // deserts, lava fields, cacti, bamboo and cherries, so new ground matches what they have saved.
                 String canopyId = properties.getProperty("earth.canopy", "");
@@ -180,8 +192,10 @@ public final class CubicSettings {
         properties.setProperty("earth.climate", ClimateSource.DATASET_ID);
         properties.setProperty("earth.rivers", SurfaceWaterSource.DATASET_ID);
         properties.setProperty("earth.streams", Drainage.ID);
+        properties.setProperty("earth.riverSurveys", EstonianRivers.ID);
         properties.setProperty("earth.ground", BareEarth.ID);
         properties.setProperty("earth.caves", SurfaceGenerator.VANILLA_CAVES);
+        if (TerrainSlabs.enabledForNewWorld()) properties.setProperty("earth.terrainSlabs", TerrainSlabs.ID);
         if (!"false".equals(System.getProperty("earthplatform.earth.canopy"))) properties.setProperty("earth.canopy", CanopySource.DATASET_ID);
         if (!"false".equals(System.getProperty("earthplatform.earth.maps"))) properties.setProperty("earth.maps", EarthMaps.ID);
         if (!"false".equals(System.getProperty("earthplatform.earth.realms"))) properties.setProperty("earth.plants", PLANT_REALMS);
@@ -222,7 +236,9 @@ public final class CubicSettings {
      * source covers only its own country, so their order matters only at a border: 3DEP follows HRDEM,
      * and the United States keeps 3DEP.
      */
-    public static String elevation() {
+    public static String elevation() { return baselineElevation() + "+" + Dgm5Elevation.ID; }
+
+    private static String baselineElevation() {
         String pin = TerrariumTileSource.DATASET_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.copernicus"))) pin += "+" + CopernicusFill.ICE_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.hrdem"))) pin += "+" + HrdemElevation.DATASET_ID;
@@ -262,6 +278,7 @@ public final class CubicSettings {
             else if (HrdemElevation.DATASET_ID.equals(ids[i])) layers.add(hrdem());
             else if (IgnElevation.DATASET_ID.equals(ids[i])) layers.add(ign());
             else if (GsiElevation.DATASET_ID.equals(ids[i])) layers.add(gsi());
+            else if (Dgm5Elevation.ID.equals(ids[i])) layers.add(new Dgm5Elevation());
             else throw new IllegalStateException("Unsupported elevation layer '" + ids[i] + "' in '" + pin + "'");
         }
         Path cache = cacheFolder().resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
@@ -394,11 +411,16 @@ public final class CubicSettings {
 
     private static Path cacheFolder() { return Loader.INSTANCE.gameDir().resolve("earthplatform").resolve("cache"); }
 
-    /** Bare-earth ground shared by every Earth world in this game, its worked-out fields cached on disk beside the elevation tiles. */
-    public static synchronized BareEarth bareEarth() {
-        if (bareEarth == null)
-            bareEarth = new BareEarth(tiles(), cover(), cacheFolder().resolve(BareEarth.ID));
-        return bareEarth;
+    /** Old worlds retain the shared ground source. DGM5 replaces the corrected surface where it has data. */
+    private static synchronized BareEarth bareEarth(String pin) {
+        String survey = "+" + Dgm5Elevation.ID;
+        String groundPin = pin.endsWith(survey) ? pin : baselineElevation();
+        return ground.computeIfAbsent(groundPin, id -> {
+            boolean surveyed = id.endsWith(survey);
+            String correction = surveyed ? id.substring(0, id.length() - survey.length()) : id;
+            return new BareEarth(tiles(correction), cover(), cacheFolder().resolve(BareEarth.ID),
+                    surveyed ? new Dgm5Elevation() : null);
+        });
     }
 
     /** Canopy heights shared by every Earth world in this game, cached on disk beside the elevation tiles. */

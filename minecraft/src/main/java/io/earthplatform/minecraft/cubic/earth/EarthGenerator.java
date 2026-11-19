@@ -7,6 +7,8 @@ import io.earthplatform.geography.globe.CanopySource;
 import io.earthplatform.geography.globe.CopernicusFill;
 import io.earthplatform.geography.globe.CopernicusSource;
 import io.earthplatform.geography.globe.GlobalElevation;
+import io.earthplatform.geography.globe.Dgm5Elevation;
+import io.earthplatform.geography.globe.EstonianRivers;
 import io.earthplatform.geography.globe.GsiElevation;
 import io.earthplatform.geography.globe.HrdemElevation;
 import io.earthplatform.geography.globe.IgnElevation;
@@ -122,6 +124,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Nullable private final ImageryGround imageryGround;
     /** Narrow rivers the land cover misses, or null in worlds made before them. */
     @Nullable private final RiverMap rivers;
+    private boolean surveyedRivers;
     /** How tall the trees stand, or null in worlds made before trees followed the canopy height map. */
     @Nullable private CanopySource canopy;
     /** Rock, red ground and soil maps, or null in worlds made before the ground followed them. */
@@ -242,6 +245,9 @@ public final class EarthGenerator extends SurfaceGenerator {
     public EarthSettings settings() { return settings; }
     public MercatorGrid grid() { return grid; }
 
+    /** Use regional river surveys in worlds pinned to them. */
+    public void enableSurveyedRivers() { surveyedRivers = rivers != null; }
+
     @Override public int[] arrival() {
         GeoPoint home = new GeoPoint(settings.latitude(), settings.longitude());
         return new int[]{Mth.floor(grid.blockX(home)), Mth.floor(grid.blockZ(home))};
@@ -294,13 +300,15 @@ public final class EarthGenerator extends SurfaceGenerator {
                 + (tiles.layers().stream().anyMatch(layer -> layer instanceof HrdemElevation) ? ". " + HrdemElevation.ATTRIBUTION : "")
                 + (tiles.layers().stream().anyMatch(layer -> layer instanceof IgnElevation) ? ". " + IgnElevation.ATTRIBUTION : "")
                 + (tiles.layers().stream().anyMatch(layer -> layer instanceof GsiElevation) ? ". " + GsiElevation.ATTRIBUTION : "")
+                + (tiles.layers().stream().anyMatch(layer -> layer instanceof Dgm5Elevation) ? ". " + Dgm5Elevation.ATTRIBUTION : "")
                 + (cover == null ? "" : ". Land cover: " + WorldCoverSource.ATTRIBUTION)
                 + (climate == null ? "" : ". Climate: " + ClimateSource.ATTRIBUTION)
                 + (imagery == null ? "" : ". Imagery: " + ImagerySource.ATTRIBUTION)
                 + (cover == null ? "" : ". " + Ecoregions.ATTRIBUTION)
                 + (canopy == null ? "" : ". " + CanopySource.ATTRIBUTION)
                 + (maps == null ? "" : ". " + EarthMaps.ATTRIBUTION)
-                + (rivers == null ? "" : ". Rivers: " + io.earthplatform.geography.globe.SurfaceWaterSource.ATTRIBUTION);
+                + (rivers == null ? "" : ". Rivers: " + io.earthplatform.geography.globe.SurfaceWaterSource.ATTRIBUTION)
+                + (surveyedRivers ? ". " + EstonianRivers.ATTRIBUTION : "");
     }
 
     // Height -------------------------------------------------------------------------------------
@@ -1357,6 +1365,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     private int coverAt(double x, double z, int voxel) {
+        double riverX = x + 0.5, riverZ = z + 0.5;
         double metresPerBlock = grid.groundMetresPerBlock(z);
         if (voxel <= 8) {
             double amplitude = 0.55 * PIXEL_METRES / metresPerBlock;
@@ -1367,13 +1376,19 @@ public final class EarthGenerator extends SurfaceGenerator {
         int overview = overview(metresPerBlock, voxel);
         GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
         int code = cover.code(point.latitude(), point.longitude(), overview);
-        if (code == WorldCoverSource.WATER) {
+        boolean mappedWater = code == WorldCoverSource.WATER;
+        if (mappedWater) {
             if (iceWater(x, z, overview, metresPerBlock)) return WorldCoverSource.SNOW_AND_ICE;
             // Stray water is told by a survey of the ground round it on fine tiles: a quick stand-in leaves it water.
-            return voxel <= STRAY_VOXEL && !quick() ? strayWater(x, z, point) : code;
+            if (voxel <= STRAY_VOXEL && !quick()) code = strayWater(x, z, point);
+            if (code == WorldCoverSource.WATER) return code;
         }
         // The river map traces each river down fine tiles and the surface water: a quick stand-in shows only the rivers the land cover kept.
         if (quick()) return code;
+        // Keep surveyed centre lines on their real course. The cover noise would break narrow bends.
+        if (surveyedRivers && voxel <= RIVER_VOXEL && code != WorldCoverSource.NO_DATA && code != WorldCoverSource.SNOW_AND_ICE
+                && EstonianRivers.contains(grid, riverX, riverZ, voxel)) return RIVER;
+        if (mappedWater) return code;
         // Narrow rivers the land cover lost, read at the same wandering point so their banks curve too. Not in marsh:
         // herbaceous wetland, as the Everglades' sawgrass, the Pantanal's or the Sudd's, stands in water for part of
         // the year, and the river map traced its sheet flood as a mesh of channels that joined the sea and drowned it.
@@ -3912,7 +3927,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** Whether cacti grow wild at a column: only in the Americas, the Nearctic and Neotropic realms. */
-    private boolean cacti(int x, int z) {
+    @Override protected boolean cacti(int x, int z) {
         if (!realms) return OldRegions.americas(grid.geographic(x, z));
         int realm = realm(x, z);
         return realm == Ecoregions.NEARCTIC || realm == Ecoregions.NEOTROPIC;

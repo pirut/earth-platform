@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic.far;
 
 import io.earthplatform.geography.MissingTerrainException;
+import io.earthplatform.geography.globe.MemoryPressure;
 import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubeCodec;
@@ -123,7 +124,8 @@ public final class FarServer {
         synchronized void put(long key, CubePayloads.FarColumnData column) {
             CubePayloads.FarColumnData old = columns.put(key, column);
             bytes += column.size() - (old == null ? 0 : old.size());
-            for (var it = columns.values().iterator(); bytes > CACHE_BYTES && columns.size() > 1; ) {
+            long most = MemoryPressure.high() ? CACHE_BYTES / 4 : CACHE_BYTES;
+            for (var it = columns.values().iterator(); bytes > most && columns.size() > 1; ) {
                 bytes -= it.next().size();
                 it.remove();
             }
