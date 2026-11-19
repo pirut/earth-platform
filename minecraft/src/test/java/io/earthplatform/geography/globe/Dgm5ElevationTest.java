@@ -11,7 +11,7 @@ class Dgm5ElevationTest {
     private final Dgm5Elevation layer = new Dgm5Elevation();
 
     @Test void theSurveyRaisesTheHelgolandCliffToItsMeasuredHeight() {
-        GeoPoint cliff = new GeoPoint(54.1868709, 7.872419);
+        GeoPoint cliff = new GeoPoint(54.1866912, 7.8724239);
         MercatorGrid grid = new MercatorGrid(1);
         GlobalElevation elevation = new GlobalElevation(grid, (zoom, x, y) -> {
             float[] base = new float[256 * 256];
@@ -20,7 +20,7 @@ class Dgm5ElevationTest {
             return base;
         }, 15);
         double metres = elevation.metres(grid.blockX(cliff), grid.blockZ(cliff));
-        assertEquals(52.13, metres, 3.0);
+        assertEquals(54.66, metres, 1.0);
     }
 
     @Test void leavesUncoveredTilesAlone() {
