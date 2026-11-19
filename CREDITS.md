@@ -135,7 +135,7 @@ Terms: produced under the Copernicus Programme and provided free of charge, with
 
 ## Helgoland elevation: Schleswig-Holstein DGM5 (bundled)
 
-ATKIS Digitales Geländemodell 5, © GeoBasis-DE/LVermGeo SH 2025, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Earth Platform resamples the Helgoland delivery from the [Schleswig-Holstein OpenGBD portal](https://geodaten.schleswig-holstein.de/gaialight-sh/_apps/dladownload/dl-dgm5.html) into its own elevation grid.
+ATKIS Digitales Geländemodell 5, ©GeoBasis-DE/LVermGeo SH/[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (Quelle verändert). Earth Platform resamples the Helgoland delivery from the [Schleswig-Holstein OpenGBD portal](https://geodaten.schleswig-holstein.de/gaialight-sh/_apps/dladownload/dl-dgm5.html) into its own elevation grid.
 
 ## Estonia's surveyed rivers (bundled)
 

@@ -38,7 +38,7 @@ Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based 
 
 Estonian Topographic Database (ETAK) watercourses, 2026-11-14, Republic of Estonia Land and Spatial Development Board. Bundled derived river centre lines. [Open data licence](https://geoportaal.maaruum.ee/opendata-licence).
 
-Helgoland: ATKIS DGM5, © GeoBasis-DE/LVermGeo SH 2025, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Resampled by Earth Platform from the [Schleswig-Holstein OpenGBD portal](https://geodaten.schleswig-holstein.de/gaialight-sh/_apps/dladownload/dl-dgm5.html).
+Helgoland: ATKIS DGM5, ©GeoBasis-DE/LVermGeo SH/[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (Quelle verändert). Resampled by Earth Platform from the [Schleswig-Holstein OpenGBD portal](https://geodaten.schleswig-holstein.de/gaialight-sh/_apps/dladownload/dl-dgm5.html).
 
 ## Separately installed shader inputs
 

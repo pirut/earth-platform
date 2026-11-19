@@ -73,6 +73,7 @@ public final class SableWind {
                 EXPECTED.put(ship, current.x + change);
             }
         } catch (Throwable failure) {
+            if (failure instanceof Error fatal && !(fatal instanceof LinkageError)) throw fatal;
             EarthPlatformMod.LOGGER.warn("Jet stream could not move Sable ships; leaving them to their own propellers", failure);
             broken = true;
         }

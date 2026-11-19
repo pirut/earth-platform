@@ -411,13 +411,12 @@ public final class CubicSettings {
 
     private static Path cacheFolder() { return Loader.INSTANCE.gameDir().resolve("earthplatform").resolve("cache"); }
 
-    /** Cached ground fields must use the same elevation as the world that reads them. */
+    /** Old worlds retain the shared ground source. Newly pinned surveys also inform their ground fields. */
     private static synchronized BareEarth bareEarth(String pin) {
-        return ground.computeIfAbsent(pin, id -> {
-            Path cache = cacheFolder().resolve(BareEarth.ID);
-            if (!id.equals(baselineElevation())) cache = cache.resolve(id);
-            return new BareEarth(tiles(id), cover(), cache);
-        });
+        String survey = "+" + Dgm5Elevation.ID;
+        String groundPin = pin.endsWith(survey) ? pin : baselineElevation();
+        return ground.computeIfAbsent(groundPin, id ->
+                new BareEarth(tiles(id), cover(), cacheFolder().resolve(BareEarth.ID), id.endsWith(survey)));
     }
 
     /** Canopy heights shared by every Earth world in this game, cached on disk beside the elevation tiles. */

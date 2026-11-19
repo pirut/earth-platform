@@ -12,13 +12,20 @@ import java.util.zip.GZIPInputStream;
 /** Regional bare-earth elevation from Schleswig-Holstein's ATKIS DGM5 survey. */
 public final class Dgm5Elevation implements ElevationLayer {
     public static final String ID = "dgm5-helgoland-v1";
-    public static final String ATTRIBUTION = "Helgoland: ATKIS DGM5, © GeoBasis-DE/LVermGeo SH 2025 (CC BY 4.0), resampled by Earth Platform";
+    public static final String ATTRIBUTION = "Helgoland: ATKIS DGM5, ©GeoBasis-DE/LVermGeo SH/CC BY 4.0 (Quelle verändert), resampled by Earth Platform";
     private static final int SIZE = TerrariumTileSource.TILE_SIZE;
     private static final int ZOOM = 15;
     private static final int MIN_ZOOM = 12;
     private static final TileCoverage COVERAGE = TileCoverage.load(ID + ".txt");
 
     @Override public String id() { return ID; }
+
+    static boolean affectsGroundField(int zoom, int x, int y) {
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+                if (COVERAGE.covers(zoom, x + dx, y + dy)) return true;
+        return false;
+    }
 
     @Override public void refine(int zoom, int x, int y, float[] values) {
         if (zoom < MIN_ZOOM || zoom > ZOOM || !COVERAGE.covers(zoom, x, y)) return;

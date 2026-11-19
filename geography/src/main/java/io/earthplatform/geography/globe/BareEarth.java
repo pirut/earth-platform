@@ -150,6 +150,7 @@ public final class BareEarth implements GlobalElevation.Tiles {
     private final Cover cover;
     /** Where worked-out fields are kept on disk, or null to keep them in memory only. */
     private final Path cacheRoot;
+    private final boolean surveyedHelgoland;
     private final int maxFields, maxTiles;
     private final LruMap<Long, Field> fields = new LruMap<>(64);
     private final Map<Long, CompletableFuture<Field>> fieldsInFlight = new ConcurrentHashMap<>();
@@ -158,19 +159,28 @@ public final class BareEarth implements GlobalElevation.Tiles {
 
     /** @param cacheRoot optional disk cache directory for the worked-out fields, or null for memory only */
     public BareEarth(TerrariumTileSource tiles, WorldCoverSource cover, Path cacheRoot) {
+        this(tiles, cover, cacheRoot, false);
+    }
+
+    public BareEarth(TerrariumTileSource tiles, WorldCoverSource cover, Path cacheRoot, boolean surveyedHelgoland) {
         this(tiles::tile, new Cover() {
             @Override public int code(double latitude, double longitude) { return cover.code(latitude, longitude, 0); }
             @Override public void codes(double[] latitudes, double[] longitudes, byte[] out) { cover.codes(latitudes, longitudes, out); }
             @Override public void prefetch(double south, double west, double north, double east) { cover.prefetch(south, west, north, east, 0); }
-        }, 160, 256, cacheRoot);
+        }, 160, 256, cacheRoot, surveyedHelgoland);
     }
 
     BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles) { this(tiles, cover, maxFields, maxTiles, null); }
 
     BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles, Path cacheRoot) {
+        this(tiles, cover, maxFields, maxTiles, cacheRoot, false);
+    }
+
+    private BareEarth(GlobalElevation.Tiles tiles, Cover cover, int maxFields, int maxTiles, Path cacheRoot, boolean surveyedHelgoland) {
         this.tiles = tiles;
         this.cover = cover;
         this.cacheRoot = cacheRoot;
+        this.surveyedHelgoland = surveyedHelgoland;
         this.maxFields = maxFields;
         this.maxTiles = maxTiles;
     }
@@ -414,7 +424,10 @@ public final class BareEarth implements GlobalElevation.Tiles {
         if (cacheRoot == null) return compute(dem, code, metres, towns, clearings);
         // Kept with a digest of what it was worked out from, so a field is never read back over changed tiles or cover.
         long digest = BareEarthCache.digest(dem, code);
-        Path cached = cacheRoot.resolve(ZOOM + "/" + tileX + "/" + tileY + ".field");
+        // Only fields whose one-tile margin samples the new survey need a separate cache.
+        Path folder = surveyedHelgoland && Dgm5Elevation.affectsGroundField(ZOOM, tileX, tileY)
+                ? cacheRoot.resolve(Dgm5Elevation.ID) : cacheRoot;
+        Path cached = folder.resolve(ZOOM + "/" + tileX + "/" + tileY + ".field");
         Field field = BareEarthCache.read(cached, digest);
         if (field != null) return field;
         field = compute(dem, code, metres, towns, clearings);
