@@ -27,6 +27,7 @@ import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.HighlandsGenerator;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
+import io.earthplatform.minecraft.cubic.gen.TerrainSlabs;
 import io.earthplatform.minecraft.platform.Loader;
 import java.io.IOException;
 import java.io.Reader;
@@ -135,6 +136,11 @@ public final class CubicSettings {
                 if (!surveysId.isEmpty() && !EstonianRivers.ID.equals(surveysId))
                     throw new IllegalStateException("Unsupported river surveys '" + surveysId + "' in " + file);
                 if (!surveysId.isEmpty()) earth.enableSurveyedRivers();
+                String slabsId = properties.getProperty("earth.terrainSlabs", "");
+                if (!slabsId.isEmpty()) {
+                    if (!TerrainSlabs.ID.equals(slabsId)) throw new IllegalStateException("Unsupported terrain slabs '" + slabsId + "' in " + file);
+                    earth.enableTerrainSlabs();
+                }
                 // Worlds made before build 70 keep the boxes of latitude and longitude that placed their giant trees, red
                 // deserts, lava fields, cacti, bamboo and cherries, so new ground matches what they have saved.
                 String canopyId = properties.getProperty("earth.canopy", "");
@@ -189,6 +195,7 @@ public final class CubicSettings {
         properties.setProperty("earth.riverSurveys", EstonianRivers.ID);
         properties.setProperty("earth.ground", BareEarth.ID);
         properties.setProperty("earth.caves", SurfaceGenerator.VANILLA_CAVES);
+        if (TerrainSlabs.enabledForNewWorld()) properties.setProperty("earth.terrainSlabs", TerrainSlabs.ID);
         if (!"false".equals(System.getProperty("earthplatform.earth.canopy"))) properties.setProperty("earth.canopy", CanopySource.DATASET_ID);
         if (!"false".equals(System.getProperty("earthplatform.earth.maps"))) properties.setProperty("earth.maps", EarthMaps.ID);
         if (!"false".equals(System.getProperty("earthplatform.earth.realms"))) properties.setProperty("earth.plants", PLANT_REALMS);

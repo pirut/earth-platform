@@ -69,6 +69,8 @@ Most do. Tested in the Earth world: Xaero's Minimap and World Map, JourneyMap, C
 
 [Create Sky](https://www.curseforge.com/minecraft/mc-mods/create-sky) 0.1.0 can draw its clouds and cloud shadows in NeoForge Earth worlds. Its default cloud base moves up to Y 2563 on Earth, and its settings still adjust the deck. Install Create Sky on the server as well as the client for local storms. Run `/weather` from inside the Earth dimension to create or clear a storm there.
 
+[Countered's Terrain Slabs](https://modrinth.com/mod/countereds-terrain-slabs) 3.1.2 adds half-block steps on gentle, bare soil and grass slopes in new Earth worlds. Install the 1.21.1 build for your loader and turn on slab generation before creating the world. A world created with these steps needs Terrain Slabs when you reopen it. On a dedicated server install it on both the server and clients.
+
 **Does WorldEdit work? What about Axiom or FAWE?**
 On the NeoForge build, WorldEdit 7.3.8 or later 7.3 works at any height and anywhere on the Earth: selections, `//set`, `//copy` and `//paste`, `//undo`, brushes and `//setbiome`. Edits far from any player load the ground there first, and the far terrain shows them once that ground is saved, usually within a minute. `//regen` rebuilds the selection from the Earth data, exactly as the ground first generated, and `//undo` takes it back; add `-b` to restore biomes too. A 2 million block `//set` takes about 10 seconds, and a 2 million block `//regen` about 30. Axiom works on the Fabric build (tested with Axiom 6.1.3): its tools see the real ground at any height, and brush strokes and undo reach every player on a server. Axiom has no NeoForge release. FastAsyncWorldEdit runs only on Paper-style servers, so it can't run alongside Earth Platform.
 
