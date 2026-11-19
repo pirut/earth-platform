@@ -5,7 +5,6 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
 import io.earthplatform.minecraft.cubic.Cubic;
-import io.earthplatform.minecraft.cubic.play.EarthWorlds;
 import java.util.List;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.server.MinecraftServer;
@@ -47,6 +46,7 @@ abstract class CreateSkyStormManagerMixin {
             target = "Lnet/minecraft/server/players/PlayerList;getPlayers()Ljava/util/List;"), require = 0)
     private List<ServerPlayer> earthplatform$syncDimension(List<ServerPlayer> players,
                                                            @Local(argsOnly = true) ServerLevel level) {
-        return Cubic.isCubic(level.dimension()) || EarthWorlds.isEarth(level.getServer()) ? level.players() : players;
+        // Earth exists in normal saves too; never broadcast another dimension's storms to its players.
+        return level.players();
     }
 }
