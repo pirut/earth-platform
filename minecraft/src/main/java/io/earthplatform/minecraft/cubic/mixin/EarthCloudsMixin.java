@@ -11,10 +11,10 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * In the Earth, clouds float kilometres up instead of at Y 192. Applied ahead of other mods' cloud
- * renderers (Sodium's replaces this method the same way) so the Earth's deck wins only there.
+ * Draws Earth's raised deck when no other renderer owns the clouds. Create Sky's higher priority
+ * lets it draw its deck first and fall back here when disabled or unavailable.
  */
-@Mixin(value = LevelRenderer.class, priority = 900)
+@Mixin(value = LevelRenderer.class, priority = 899)
 abstract class EarthCloudsMixin {
     @Inject(method = "renderClouds", at = @At("HEAD"), cancellable = true)
     private void earthplatform$earthClouds(PoseStack pose, Matrix4f view, Matrix4f projection, float partialTick,
