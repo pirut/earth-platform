@@ -4,6 +4,7 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.bug.BugReporting;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicEvents;
 import io.earthplatform.minecraft.cubic.CubicLevel;
@@ -429,6 +430,9 @@ public final class EarthWorlds {
         EarthAdmin.register(root);
         EarthToggles.register(root);
         root.then(Commands.literal("where").executes(context -> where(context.getSource())));
+        root.then(Commands.literal("bug").executes(context -> BugReporting.file(context.getSource(), ""))
+                .then(Commands.argument("what", StringArgumentType.greedyString())
+                        .executes(context -> BugReporting.file(context.getSource(), StringArgumentType.getString(context, "what")))));
         root.then(Commands.literal("places").executes(context -> places(context.getSource())));
         dispatcher.register(root);
     }

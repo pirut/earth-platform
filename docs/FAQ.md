@@ -109,4 +109,4 @@ Yes. Earth Platform is free software under the GNU LGPL 3.0: include it in any m
 
 ## Reporting a problem
 
-Include your `logs/latest.log`, the place (`/earth where`), your mods list, and whether shaders were on.
+Install [Bug Courier](https://github.com/pirut/mc-mods/releases?q=bug-courier) if you can, then use the pause menu's **Report a mod bug** button or `/bugreport earthplatform`. It is optional: without it, `/earth bug` opens a prefilled GitHub issue. Either way you see the report before anything is sent. Include the place (`/earth where`) and whether shaders were on. Security problems go to the private form on the [Security tab](https://github.com/pirut/earth-platform/security/advisories/new), not a public issue.

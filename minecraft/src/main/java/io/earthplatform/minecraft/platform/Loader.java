@@ -17,7 +17,16 @@ public interface Loader {
     /** "neoforge" or "fabric". */
     String name();
 
+    /** That loader's own version, such as a NeoForge build or a Fabric Loader build. */
+    String version();
+
     boolean isModLoaded(String modId);
+
+    /**
+     * Whether {@code modId} is installed, including a mod whose constructor has not run yet.
+     * {@link #isModLoaded} can still be false while this process is constructing mods.
+     */
+    boolean hasMod(String modId);
 
     /** Whether a class file is in an installed mod's jar or on the class path, without loading it. */
     boolean hasClass(String className);

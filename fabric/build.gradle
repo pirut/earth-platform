@@ -48,6 +48,10 @@ loom {
             server()
             runDir 'run-server'
         }
+        serverCourier {
+            server()
+            runDir 'run-server-courier'
+        }
     }
 }
 
@@ -71,7 +75,34 @@ def verifyFabricInputs = tasks.register('verifyFabricInputs') {
         }
     }
 }
-tasks.named('compileJava') { dependsOn verifyFabricInputs }
+// Bug Courier's Fabric jar. Compile-only, checked by SHA-256, never bundled (see docs/BUILDING.md).
+def bugCourierJar = providers.gradleProperty('bugCourierJar')
+        .orElse(providers.environmentVariable('EARTH_BUG_COURIER_FABRIC_JAR'))
+def verifyBugCourier = tasks.register('verifyBugCourier') {
+    def path = bugCourierJar.orNull
+    def expected = 'd082b37978957872c2ef681660c6ce069f4964a31d8e8d444c5f548c484e85ab'
+    inputs.property('jar', path == null ? '' : path)
+    doLast {
+        if (path == null) throw new GradleException('Set EARTH_BUG_COURIER_FABRIC_JAR to bugcourier-fabric-1.21.1-0.1.0.jar (see docs/BUILDING.md).')
+        def actual = java.security.MessageDigest.getInstance('SHA-256').digest(file(path).bytes).encodeHex().toString()
+        if (actual != expected) throw new GradleException("${path} has SHA-256 ${actual}, expected ${expected}")
+    }
+}
+tasks.named('compileJava') { dependsOn verifyFabricInputs, verifyBugCourier }
+
+// The courier server run loads Bug Courier the way a player does: a jar in mods/.
+def stageBugCourier = tasks.register('stageBugCourier') {
+    dependsOn verifyBugCourier
+    def jar = bugCourierJar
+    def destDir = file('run-server-courier/mods')
+    inputs.property('jar', jar.orElse(''))
+    outputs.file(destDir.toPath().resolve('bugcourier-fabric-1.21.1-0.1.0.jar').toFile())
+    doLast {
+        destDir.mkdirs()
+        java.nio.file.Files.copy(file(jar.get()).toPath(), destDir.toPath().resolve('bugcourier-fabric-1.21.1-0.1.0.jar'), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+    }
+}
+tasks.matching { it.name == 'runServerCourier' }.configureEach { dependsOn stageBugCourier }
 
 dependencies {
     minecraft "com.mojang:minecraft:${minecraft_version}"
@@ -86,6 +117,9 @@ dependencies {
 
     // NeoForge's classpath carries these annotations; vanilla Fabric does not.
     compileOnly 'com.google.code.findbugs:jsr305:3.0.2'
+
+    // Same optional Bug Courier jar as the NeoForge build: compile against it, never bundle it.
+    compileOnly files(bugCourierJar.map { file(it) })
 
     modCompileOnly files(fabricIrisJar.map { file(it) })
     modCompileOnly files(fabricSodiumJar.map { file(it) })

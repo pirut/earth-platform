@@ -14,7 +14,14 @@ import net.fabricmc.loader.api.ModContainer;
 public final class FabricModLoader implements Loader {
     @Override public String name() { return "fabric"; }
 
+    @Override public String version() {
+        return FabricLoader.getInstance().getModContainer("fabricloader")
+                .map(mod -> mod.getMetadata().getVersion().getFriendlyString()).orElse("unknown");
+    }
+
     @Override public boolean isModLoaded(String modId) { return FabricLoader.getInstance().isModLoaded(modId); }
+
+    @Override public boolean hasMod(String modId) { return FabricLoader.getInstance().isModLoaded(modId); }
 
     @Override public boolean hasClass(String className) {
         String path = className.replace('.', '/') + ".class";
