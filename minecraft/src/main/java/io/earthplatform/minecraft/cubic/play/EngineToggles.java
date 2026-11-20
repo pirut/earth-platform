@@ -203,6 +203,7 @@ public final class EngineToggles {
             on(COMMON, Group.WORLD_DATA, "earth.canopy", NEW_WORLDS),
             on(COMMON, Group.WORLD_DATA, "earth.maps", NEW_WORLDS),
             on(COMMON, Group.WORLD_DATA, "earth.realms", NEW_WORLDS),
+            on(COMMON, Group.WORLD_DATA, "earth.forests", NEW_WORLDS),
             // common file, far terrain
             on(COMMON, Group.FAR_TERRAIN, "far.previews", RESTART),
             // common file, flying

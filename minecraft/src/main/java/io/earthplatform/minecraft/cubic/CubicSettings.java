@@ -23,6 +23,7 @@ import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.SurfaceWaterSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import io.earthplatform.minecraft.cubic.earth.EarthMaps;
+import io.earthplatform.minecraft.cubic.earth.ForestTypes;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.gen.HighlandsGenerator;
@@ -153,6 +154,11 @@ public final class CubicSettings {
                 if (!plantsId.isEmpty() && !PLANT_REALMS.equals(plantsId))
                     throw new IllegalStateException("Unsupported plant ranges '" + plantsId + "' in " + file);
                 earth.data(coverId.isEmpty() || canopyId.isEmpty() ? null : canopy(), !mapsId.isEmpty(), !plantsId.isEmpty());
+                // Worlds made before the forest type map keep forests chosen by climate alone.
+                String forestsId = properties.getProperty("earth.forests", "");
+                if (!forestsId.isEmpty() && !ForestTypes.ID.equals(forestsId))
+                    throw new IllegalStateException("Unsupported forest types '" + forestsId + "' in " + file);
+                if (!forestsId.isEmpty()) earth.enableForestTypes();
                 yield earth;
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
@@ -199,6 +205,7 @@ public final class CubicSettings {
         if (!"false".equals(System.getProperty("earthplatform.earth.canopy"))) properties.setProperty("earth.canopy", CanopySource.DATASET_ID);
         if (!"false".equals(System.getProperty("earthplatform.earth.maps"))) properties.setProperty("earth.maps", EarthMaps.ID);
         if (!"false".equals(System.getProperty("earthplatform.earth.realms"))) properties.setProperty("earth.plants", PLANT_REALMS);
+        if (!"false".equals(System.getProperty("earthplatform.earth.forests"))) properties.setProperty("earth.forests", ForestTypes.ID);
         if (imageryEnabled()) properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
         if (!name.isEmpty()) properties.setProperty("earth.homeName", name);
     }

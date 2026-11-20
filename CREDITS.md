@@ -153,6 +153,17 @@ Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based 
 Dinerstein, E., Olson, D., Joshi, A., et al. (2017). An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm. *BioScience* 67(6), 534-545. https://doi.org/10.1093/biosci/bix014
 License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: the ecoregion polygons are rasterized to a 0.05 degree grid (`earthplatform/ecoregions.png`, with ecoregion names in `ecoregions.tsv`) and used to tune biomes and ground cover.
 
+## Forest types: Copernicus Global Land Service (bundled)
+
+**What it gives Earth Platform:** What kind of trees each forest is made of, so the Black Forest's spruce stands among its beech woods, the American South's pinewoods among its oaks, and birch and aspen fill the edge of the taiga.
+
+**Thank you** to the Copernicus Global Land Service, VITO and the team behind the 100 m global land cover for mapping the world's forest types and sharing them openly.
+
+**Attribution and license:**
+
+Forest types: Copernicus Global Land Service, Land Cover 100 m: collection 3, epoch 2019, Globe, forest type layer. Buchhorn, M., Smets, B., Bertels, L., De Roo, B., Lesiv, M., Tsendbazar, N.-E., Herold, M., Fritz, S. (2020). https://doi.org/10.5281/zenodo.3939050
+License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: the 100 m forest types are counted into a 1/24 degree grid of each cell's needleleaf share and its broadleaf's evergreen share (`earthplatform/forests.png`, baked by `minecraft/scripts/forests.py`), and cells with little forest borrow a forested neighbor's. New worlds only. Turn it off for new worlds with `-Dearthplatform.earth.forests=false`.
+
 ## Tree heights: Meta and WRI canopy height maps (downloaded while you play)
 
 **What it gives Earth Platform:** How tall the forest stands at each place, so taiga stays low, rainforest stands tall, and giant trees grow where the world's tallest conifers really are.

@@ -131,6 +131,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Nullable private EarthMaps maps;
     /** Whether cacti, bamboo and cherries grow by ecoregion realm and climate; worlds made before keep {@link OldRegions}. */
     private boolean realms;
+    /** The forest type map, for worlds pinned to it; null keeps forests to climate alone. */
+    @Nullable private ForestTypes forestTypes;
     private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth, warpX, warpZ, patches;
     private final Holder<Biome> ocean, deepOcean, coldOcean, deepColdOcean, frozenOcean, lukewarmOcean, deepLukewarmOcean, warmOcean,
             beach, snowyBeach, stonyShore, snowySlopes, frozenPeaks, stonyPeaks, meadow, taiga, oldTaiga, forest,
@@ -287,6 +289,9 @@ public final class EarthGenerator extends SurfaceGenerator {
         this.realms = cover != null && realms && Ecoregions.get() != null;
     }
 
+    /** Makes forests' trees follow the forest type map: needleleaf, evergreen or deciduous broadleaf as it shows. */
+    public void enableForestTypes() { forestTypes = cover == null ? null : ForestTypes.get(); }
+
     @Override public String place(int x, int z) {
         GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
         return String.format(Locale.ROOT, "%.5f, %.5f", point.latitude(), point.longitude());
@@ -307,6 +312,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 + (cover == null ? "" : ". " + Ecoregions.ATTRIBUTION)
                 + (canopy == null ? "" : ". " + CanopySource.ATTRIBUTION)
                 + (maps == null ? "" : ". " + EarthMaps.ATTRIBUTION)
+                + (forestTypes == null ? "" : ". " + ForestTypes.ATTRIBUTION)
                 + (rivers == null ? "" : ". Rivers: " + io.earthplatform.geography.globe.SurfaceWaterSource.ATTRIBUTION)
                 + (surveyedRivers ? ". " + EstonianRivers.ATTRIBUTION : "");
     }
@@ -4112,6 +4118,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (oldGrowth(x, z) && local.zone() != ClimateZone.RAINFOREST && local.zone() != ClimateZone.TROPICAL_DRY)
             return new Surface(oldTaiga, patch > 0.3 ? PODZOL : GRASS, DIRT, 80, 8, 0, 110, 120, true);
         double t = local.temperature();
+        Surface typed = typed(local, patch, x, z);
+        if (typed != null) return typed;
         // A tropical climate over an ecoregion that is not tropical forest, as in south Florida: no jungle there.
         if (local.zone() == ClimateZone.RAINFOREST || local.zone() == ClimateZone.TROPICAL_DRY) {
             int eco = ecoregion(x, z), biome = eco == 0 ? Ecoregions.NONE : Ecoregions.get().biome(eco);
@@ -4162,6 +4170,86 @@ public final class EarthGenerator extends SurfaceGenerator {
             case TUNDRA, ICE -> new Surface(t < -5 ? snowyTaiga : grove, GRASS, DIRT, 30, 10, 0, 60, 70, false);
         };
     }
+
+    private final ThreadLocal<double[]> forestMix = ThreadLocal.withInitial(() -> new double[2]);
+
+    /**
+     * A forest column's woods as the forest type map has them, mixed with its climate, or null where the map has
+     * nothing to say and the climate's own rules choose. Conifer and broadleaf stand apart in stands a few hundred
+     * metres across, as much of the land in each as the map shows, so Germany's spruce plantations sit among its
+     * beech woods, the Southeast's pinewoods among its oaks, and the Cascades' firs give way to the Willamette's oaks;
+     * in mixed country a few spruces stand among the broadleaf too. Climate still says how the trees grow: snowy
+     * taiga where it is bitter, birch and aspen where broadleaf woods meet the north, jungle where it is hot and wet.
+     */
+    @Nullable private Surface typed(Local local, double patch, int x, int z) {
+        if (forestTypes == null) return null;
+        GeoPoint p = frayed(x, z);
+        double[] mix = forestMix.get();
+        if (!forestTypes.at(p.latitude(), p.longitude(), mix)) return null;
+        double needle = mix[0], evergreen = mix[1], t = local.temperature();
+        boolean conifer = woods(x, z, 0x434F4EL) < needle, evergreenBroadleaf = woods(x, z, 0x455647L) < evergreen;
+        // Conifers among the broadleaf in mixed woods, none where the map has broadleaf alone.
+        int spruce = needle < 0.15 ? 0 : (int) Math.min(4, Math.round(needle * 8));
+        BlockState duff = patch > 0.3 ? PODZOL : GRASS;
+        return switch (local.zone()) {
+            case RAINFOREST, TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> {
+                // Tropical pinewoods, as in Honduras' highlands, Cuba's and the Bahamas' pine islands and Luzon's
+                // mountains: tall pines over grass.
+                if (conifer) yield new Surface(forest, GRASS, DIRT, 55, 10, 0, 220, 240, false);
+                // Monsoon woods that drop their leaves in the dry season, where the climate alone would make rainforest,
+                // as in central India and Myanmar's teak country.
+                if (local.zone() == ClimateZone.RAINFOREST && !evergreenBroadleaf && tropicalForest(x, z))
+                    yield new Surface(sparseJungle, GRASS, DIRT, 60, 0, 0, 180, 200, true, Tree.JUNGLE);
+                // Evergreen forest on a drier climate's wet hills, as on the Western Ghats' slopes and in the Atlantic Forest.
+                if (local.zone() == ClimateZone.TROPICAL_DRY && evergreenBroadleaf && evergreen > 0.6 && local.rain() > 1000 && tropicalForest(x, z))
+                    yield new Surface(jungle, GRASS, DIRT, 80, 0, 0, 160, 170, true, Tree.JUNGLE);
+                yield null;
+            }
+            case MEDITERRANEAN -> conifer
+                    ? t < 12 ? null
+                    // Aleppo, stone and maritime pine on the hills, as in Provence, Andalusia and the Peloponnese.
+                    : new Surface(forest, parched(local) && patch > 0.3 ? COARSE_DIRT : GRASS, DIRT, 55, 10, 0, 140, 170, false)
+                    // Oak and chestnut woods below the mountains' conifers, as in the Sierra's foothills.
+                    : t < 12 ? new Surface(forest, GRASS, DIRT, 75, spruce, 0, 120, 150, false) : null;
+            // The Southeast's pinewoods: loblolly, slash and longleaf, tall over grass.
+            case SUBTROPICAL -> conifer ? new Surface(forest, GRASS, DIRT, 65, 10, 0, 200, 220, false)
+                    // Monsoon woods of sal and teak that stand bare in the dry winter, as across central India, not dark laurel.
+                    : !evergreenBroadleaf && evergreen < 0.4 && t > 20 && tropicalForest(x, z)
+                    ? new Surface(sparseJungle, GRASS, DIRT, 55, 0, 0, 200, 220, false, Tree.JUNGLE) : null;
+            // Douglas fir, hemlock and spruce, old and tall where the rain never stops, as west of the Cascades.
+            case OCEANIC -> conifer ? local.rain() > 1400 && t >= 4 ? new Surface(oldTaiga, duff, DIRT, 80, 9, 0, 110, 120, true)
+                    : new Surface(taiga, duff, DIRT, 80, 9, 1, 110, 120, true)
+                    : groves(patch, x, z, local, new Surface(forest, GRASS, DIRT, 82, spruce, 2, 90, 130, true));
+            // Downy birch where the oceanic north has broadleaf, as in Iceland, the Faroes and the Norwegian coast.
+            case SUBPOLAR_OCEANIC -> conifer ? null : new Surface(birchForest, GRASS, DIRT, 70, spruce, 8, 110, 130, true);
+            case CONTINENTAL -> conifer ? new Surface(t < -2 ? snowyTaiga : taiga, duff, DIRT, 82, 9, 1, 110, 120, true)
+                    : t > 7 ? groves(patch, x, z, local, new Surface(forest, GRASS, DIRT, 85, spruce, 2, 90, 130, false))
+                    // Birch and aspen woods, and maple and oak among them where it is milder.
+                    : patch > 0 || t < 3 ? new Surface(birchForest, GRASS, DIRT, 82, spruce, 8, 90, 130, false)
+                    : new Surface(forest, GRASS, DIRT, 82, spruce, 4, 90, 130, false);
+            // Birch and aspen in the taiga, as across Russia's southern taiga and western Siberia's parkland.
+            case SUBARCTIC -> conifer || t < -10 ? null : new Surface(birchForest, GRASS, DIRT, 75, spruce, 9, 110, 130, true);
+            // Aspen groves on dry mountains, as in the Rockies.
+            case COLD_DESERT, COLD_STEPPE -> conifer || t >= 6 ? null : new Surface(birchForest, GRASS, DIRT, 45, spruce, 8, 200, 210, false);
+            case TUNDRA, ICE -> null;
+        };
+    }
+
+    /**
+     * Where in a stand a column falls, 0 to 1 and about evenly spread over that: a warped noise a few hundred
+     * metres across with a finer layer and a grain of jitter, so a stand's edge is ragged, never a smooth curve.
+     */
+    private double woods(int x, int z, long salt) {
+        double o = (salt & 0xFF) * 0.37;
+        double wx = x / 170.0 + 0.7 * patches.getValue(x / 520.0 + o, z / 520.0 - 9.3), wz = z / 170.0 + 0.7 * patches.getValue(x / 520.0 - 4.1, z / 520.0 + o);
+        double v = 0.8 * patches.getValue(wx + o, wz - o) + 0.25 * patches.getValue(x / 19.0 - o, z / 19.0 + o)
+                + ((mix(x, salt, z) & 1023) / 511.5 - 1) * 0.12;
+        // The noise's spread, as measured, made even.
+        return 1 / (1 + Math.exp(-v * WOODS_SPREAD));
+    }
+
+    /** Scales {@link #woods}'s noise so the logistic makes it about even from 0 to 1. */
+    private static final double WOODS_SPREAD = 4.2;
 
     // Fetching data ahead of generation -----------------------------------------------------------
 

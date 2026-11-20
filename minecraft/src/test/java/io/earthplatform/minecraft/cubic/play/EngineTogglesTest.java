@@ -353,7 +353,7 @@ class EngineTogglesTest {
     }
 
     @Test void theElevationLayersStayCommandLineFlagsAndTheOtherNewWorldDataIsPerWorld() {
-        assertEquals(Set.of("earth.canopy", "earth.maps", "earth.realms"),
+        assertEquals(Set.of("earth.canopy", "earth.maps", "earth.realms", "earth.forests"),
                 EngineToggles.of(Side.COMMON, Group.WORLD_DATA).stream().map(Toggle::property).collect(java.util.stream.Collectors.toSet()));
         EngineToggles.of(Side.COMMON, Group.WORLD_DATA).forEach(toggle -> assertEquals(When.NEW_WORLDS, toggle.when(), toggle.property()));
     }
