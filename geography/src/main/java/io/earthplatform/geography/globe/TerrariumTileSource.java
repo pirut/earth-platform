@@ -108,37 +108,40 @@ public final class TerrariumTileSource implements AutoCloseable {
             if (hit != null) { memoryHits.incrementAndGet(); return hit; }
         }
         TickShare.giveWay();
-        CompletableFuture<float[]> mine = new CompletableFuture<>();
-        CompletableFuture<float[]> shared = inFlight.putIfAbsent(key, mine);
-        if (shared == null) {
-            try {
-                java.util.List<CompletableFuture<Object>> plans = early(zoom, x, y);
-                float[] values = read(zoom, x, y);
-                for (int i = first(plans); i < layers.size(); i++) refine(layers.get(i), zoom, x, y, values, plans.get(i));
-                if (zoom >= TileDespike.SPIKE_ZOOM) TileDespike.despike(values);
-                synchronized (memory) {
-                    memory.putAndTrim(key, values, maxTilesInMemory);
-                }
-                mine.complete(values);
-            } catch (Throwable failure) {
-                failures.incrementAndGet();
-                mine.completeExceptionally(failure);
-            } finally {
-                inFlight.remove(key, mine);
-            }
-            shared = mine;
-        }
+        MemoryPressure.enterHeavy();
         try {
-            return DataWaits.get(shared, timeout.toMillis() * 4, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new MissingTerrainException("Interrupted waiting for elevation tile " + zoom + "/" + x + "/" + y);
-        } catch (TimeoutException late) {
-            throw new MissingTerrainException("Timed out waiting for elevation tile " + zoom + "/" + x + "/" + y);
-        } catch (ExecutionException failed) {
-            if (failed.getCause() instanceof MissingTerrainException missing) throw missing;
-            throw new MissingTerrainException("Elevation tile " + zoom + "/" + x + "/" + y + " failed: " + failed.getCause());
-        }
+            CompletableFuture<float[]> mine = new CompletableFuture<>();
+            CompletableFuture<float[]> shared = inFlight.putIfAbsent(key, mine);
+            if (shared == null) {
+                try {
+                    java.util.List<CompletableFuture<Object>> plans = early(zoom, x, y);
+                    float[] values = read(zoom, x, y);
+                    for (int i = first(plans); i < layers.size(); i++) refine(layers.get(i), zoom, x, y, values, plans.get(i));
+                    if (zoom >= TileDespike.SPIKE_ZOOM) TileDespike.despike(values);
+                    synchronized (memory) {
+                        memory.putAndTrim(key, values, maxTilesInMemory);
+                    }
+                    mine.complete(values);
+                } catch (Throwable failure) {
+                    failures.incrementAndGet();
+                    mine.completeExceptionally(failure);
+                } finally {
+                    inFlight.remove(key, mine);
+                }
+                shared = mine;
+            }
+            try {
+                return DataWaits.get(shared, timeout.toMillis() * 4, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new MissingTerrainException("Interrupted waiting for elevation tile " + zoom + "/" + x + "/" + y);
+            } catch (TimeoutException late) {
+                throw new MissingTerrainException("Timed out waiting for elevation tile " + zoom + "/" + x + "/" + y);
+            } catch (ExecutionException failed) {
+                if (failed.getCause() instanceof MissingTerrainException missing) throw missing;
+                throw new MissingTerrainException("Elevation tile " + zoom + "/" + x + "/" + y + " failed: " + failed.getCause());
+            }
+        } finally { MemoryPressure.exitHeavy(); }
     }
 
     /**
@@ -190,6 +193,7 @@ public final class TerrariumTileSource implements AutoCloseable {
             float[] kept = cleanMemory.get(key);
             if (kept != null) return kept;
         }
+        MemoryPressure.enterHeavy();
         try {
             // Its seams' neighbours start beside it, as early() starts a whole tile's: one after another they kept
             // a Copernicus check, and every tile of a new place behind it, waiting four downloads longer.
@@ -204,7 +208,7 @@ public final class TerrariumTileSource implements AutoCloseable {
             throw new MissingTerrainException("Interrupted reading elevation tile " + zoom + "/" + x + "/" + y);
         } catch (IOException failure) {
             throw new MissingTerrainException("Elevation tile " + zoom + "/" + x + "/" + y + " failed: " + failure);
-        }
+        } finally { MemoryPressure.exitHeavy(); }
     }
 
     /**

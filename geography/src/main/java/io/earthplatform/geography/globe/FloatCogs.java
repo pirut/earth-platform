@@ -44,6 +44,9 @@ final class FloatCogs implements AutoCloseable {
     private final Map<Integer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
     private final LruMap<Long, float[]> memory = new LruMap<>(32);
     private long memoryBytes;
+    /** Keeps {@link #shedMemory} registered for as long as this source is alive. */
+    @SuppressWarnings("unused")
+    private final MemoryPressure.Hook pressure = MemoryPressure.keep(this::shedMemory);
     private final Map<Long, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
     /** Each thread's last few blocks, so reads that stay in them skip the shared cache. */
     private final ThreadLocal<Recent> recent = ThreadLocal.withInitial(() -> new Recent(4));
@@ -360,14 +363,24 @@ final class FloatCogs implements AutoCloseable {
             synchronized (memory) {
                 float[] was = memory.put(key, decoded);
                 memoryBytes += decoded.length * 4L - (was == null ? 0 : was.length * 4L);
-                var iterator = memory.entrySet().iterator();
-                while (memoryBytes > (long) maxBlocksInMemory << 20 && memory.size() > 1 && iterator.hasNext()) {
-                    memoryBytes -= iterator.next().getValue().length * 4L;
-                    iterator.remove();
-                }
+                trimMemory();
             }
             return decoded;
         }, what + " block");
+    }
+
+    /** Drops decoded blocks down to the budget, a quarter of it while memory is short. */
+    private void shedMemory() {
+        synchronized (memory) { trimMemory(); }
+    }
+
+    private void trimMemory() {
+        long budget = (long) MemoryPressure.scaled(maxBlocksInMemory) << 20;
+        var iterator = memory.entrySet().iterator();
+        while (memoryBytes > budget && memory.size() > 1 && iterator.hasNext()) {
+            memoryBytes -= iterator.next().getValue().length * 4L;
+            iterator.remove();
+        }
     }
 
     private Header header(int file) {
