@@ -234,6 +234,17 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** Ground and water of columns asked about before their cube column is made, packed as ground << 32 | water. */
     private final ConcurrentHashMap<Long, java.util.concurrent.atomic.AtomicLongArray> grounds = new ConcurrentHashMap<>();
+
+    /** Drops column caches that are over the short cap. Called when memory runs short, from the watcher thread. */
+    private void shedCaches() {
+        if (!MemoryPressure.high()) return;
+        if (columns.size() > MemoryPressure.scaled(8192)) columns.clear();
+        if (grounds.size() > MemoryPressure.scaled(8192)) grounds.clear();
+        if (bases.size() > MemoryPressure.scaled(4096)) bases.clear();
+    }
+    /** Keeps {@link #shedCaches} registered for as long as this generator is alive. */
+    @SuppressWarnings("unused")
+    private final MemoryPressure.Hook pressure = MemoryPressure.keep(this::shedCaches);
     private static final long UNKNOWN = Long.MIN_VALUE;
 
     /**

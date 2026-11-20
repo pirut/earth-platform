@@ -97,7 +97,7 @@ final class RangeFiles implements AutoCloseable {
         RuntimeException first = null;
         try (ExecutorService threads = Executors.newVirtualThreadPerTaskExecutor()) {
             java.util.List<Future<?>> running = new java.util.ArrayList<>(loads.size());
-            for (Runnable load : loads) running.add(threads.submit(load));
+            for (Runnable load : loads) running.add(threads.submit(() -> MemoryPressure.runHeavy(load)));
             for (Future<?> load : running) {
                 try { DataWaits.get(load); }
                 catch (ExecutionException failed) {
@@ -116,9 +116,12 @@ final class RangeFiles implements AutoCloseable {
         TickShare.giveWay();
         CompletableFuture<T> mine = new CompletableFuture<>(), shared = flights.putIfAbsent(key, mine);
         if (shared == null) {
-            try { mine.complete(load.get()); }
-            catch (Throwable failure) { failures.incrementAndGet(); mine.completeExceptionally(failure); }
-            finally { flights.remove(key, mine); }
+            try {
+                MemoryPressure.runHeavy(() -> {
+                    try { mine.complete(load.get()); }
+                    catch (Throwable failure) { failures.incrementAndGet(); mine.completeExceptionally(failure); }
+                });
+            } finally { flights.remove(key, mine); }
             shared = mine;
         }
         return await(shared, piece);

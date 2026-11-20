@@ -31,7 +31,8 @@
  *       those pixels take zoom-10 bathymetry.</li>
  * </ul>
  *
- * <p>Shared plumbing: {@code DiskCache} (atomic cache writes), {@code LruMap}, {@code Mercator} (row and
+ * <p>Shared plumbing: {@code DiskCache} (atomic cache writes), {@code LruMap}, {@code MemoryPressure}
+ * (heap headroom), {@code Mercator} (row and
  * latitude formulas), {@code Deflate}, {@code ClassicTiff} and {@link io.earthplatform.geography.globe.NamedThreads}.
  * {@code TerrariumTileSource} runs its cleaning passes from {@code StrayZeros}, {@code TileSeams},
  * {@code TileMending}, {@code TileRepair} and {@code TileDespike}, in that class's order.
