@@ -284,6 +284,8 @@ The [Cubic Chunks](https://github.com/OpenCubicChunks) mods, [Terrarium](https:/
 
 **VanceCStone** wrote the flight and distant rendering work in [pull request #161](https://github.com/pirut/earth-platform/pull/161): surface cubes for low flight, the near cube frame budgets, spyglass and far terrain detail, the layered clouds with regional weather, and the curved horizon with its high-altitude haze. It was split into smaller parts and fitted onto the current build. Thank you.
 
+**Cheesidibb1** kept Sable's ship physics steady far from the map origin in [pull request #197](https://github.com/pirut/earth-platform/pull/197). Sable's physics runs in 32-bit floats, so a ship tens of millions of blocks out used to shake; each physics scene now stays near zero. Thank you.
+
 ## Trademarks
 
 Minecraft is a trademark of Mojang Synergies AB. Earth Platform is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.

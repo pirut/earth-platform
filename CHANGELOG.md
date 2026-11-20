@@ -76,6 +76,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - On a Mac, Photon's Colored Lights, Colored Shadows and Cloud Shadows are unavailable (the mod adapts stock Photon for Apple's OpenGL automatically).
 - Layered clouds can turn the view white when you fly through the middle bank (about Y 3,400 to 4,200), show straight streaks on the top bank, and cut into distant mountains (contributed by VanceCStone, #161).
 - Create Aeronautics ships with players aboard ride the jet stream at 40 blocks a second; only empty ships reach elytra speed.
+- Create Aeronautics and Sable ships no longer shake far from the map origin: their physics runs near zero, so a ship at 10 million blocks moves as smoothly as one at the spawn (contributed by Cheesidibb1, #197).
 - In the Earth world, AE2's meteorite compass finds meteorites by map column only and doesn't notice blocks changed later.
 - Other mods that check build height or read chunks themselves may misbehave in the Earth world; please report them.
 - Blocks you place above Y 9,000 have no collision for a player gliding in the jet stream.
