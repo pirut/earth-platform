@@ -589,6 +589,43 @@ public final class GlobeTest {
         float[] westSide = TileSeams.seams(tiles[0], zoom, left, ty, both), eastSide = TileSeams.seams(tiles[1], zoom, right, ty, both);
         near(cleanTiles[0][77 * 256 + 255], westSide[77 * 256 + 255], 3, "trench mended west of a tile edge");
         near(cleanTiles[1][77 * 256], eastSide[77 * 256], 3, "trench mended east of a tile edge");
+
+        // The slot south of Durban: four rows along 30°S, kilometres below the sea, with open sea on both
+        // sides. Zeros are not ground to the narrow pass, and the slot is wider than an SRTM edge.
+        int oceanZoom = 12;
+        long oceanSize = 256L << oceanZoom;
+        int oceanRow = (int) Math.floor(Mercator.row(Math.toRadians(-30), oceanSize));
+        int oceanY = oceanRow / 256, oceanLine = oceanRow - oceanY * 256;
+        int oceanBand = (int) Math.ceil((12.0 / 3600) / (360.0 / oceanSize * Math.cos(Math.toRadians(-30)))) + 1;
+        float[] ocean = new float[256 * 256];
+        float[] slot = {-6123f, -14296f, -10299f, -2126f};
+        for (int x = 0; x < 256; x++) for (int k = 0; k < slot.length; k++) ocean[(oceanLine - 1 + k) * 256 + x] = slot[k];
+        // Beach well outside the slot, and one column whose shore is the flank the slot is mended toward.
+        int beach = oceanLine - (oceanBand + 4);
+        for (int x = 0; x < 256; x++) ocean[beach * 256 + x] = 48;
+        ocean[(oceanLine - 2) * 256 + 20] = 16;
+        float[] mendedOcean = TileSeams.seams(ocean, oceanZoom, 100, oceanY, (z, x, y) -> new float[256 * 256]);
+        for (int i = 0; i < ocean.length; i++) {
+            int y = i / 256, x = i % 256;
+            if (x == 20 && ocean[i] < 0) check(mendedOcean[i] > -1 && mendedOcean[i] <= 16, "slot beside a beach meets the beach at " + y);
+            else if (ocean[i] == 0f) near(0, mendedOcean[i], 0, "open sea around the slot stays sea");
+            else if (ocean[i] > 0) near(ocean[i], mendedOcean[i], 0, "beach beside the slot stays");
+            else near(0, mendedOcean[i], 0, "ocean void at " + x + "," + y + " becomes sea");
+        }
+        // A deep ocean that is deep on both sides of the line stays a deep ocean.
+        float[] trench = new float[256 * 256];
+        java.util.Arrays.fill(trench, -2500f);
+        float[] mendedTrench = TileSeams.seams(trench, oceanZoom, 100, oceanY, (z, x, y) -> trench);
+        check(mendedTrench == trench, "a deep ocean with no shore is left as it is");
+        // Two pixels of a real shelf stay; one impossible pixel at the tile's edge is filled.
+        float[] shelf = new float[256 * 256];
+        shelf[oceanLine * 256 + 4] = -60;
+        shelf[oceanLine * 256 + 5] = -55;
+        shelf[oceanLine * 256 + 255] = -4000;
+        float[] mendedShelf = TileSeams.seams(shelf, oceanZoom, 100, oceanY, (z, x, y) -> new float[256 * 256]);
+        near(-60, mendedShelf[oceanLine * 256 + 4], 0, "a short shelf along the line stays");
+        near(-55, mendedShelf[oceanLine * 256 + 5], 0, "the other shelf pixel stays");
+        near(0, mendedShelf[oceanLine * 256 + 255], 0, "one impossible pixel below the sea is filled");
     }
 
     private static void repair() {
