@@ -59,6 +59,8 @@
     "compat.SablePhysicsTerrainMixin",
     "compat.SimulatedDisassemblyMixin",
     "compat.SablePhysicsEditsMixin",
+    "compat.SableOriginMixin",
+    "compat.SableOriginConstraintMixin",
     "compat.SimulatedAssemblyMixin",
     "compat.SimulatedLoadedMixin",
     "compat.SimulatedAltitudeMixin",
