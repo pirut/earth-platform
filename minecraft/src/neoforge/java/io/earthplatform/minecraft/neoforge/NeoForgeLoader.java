@@ -20,9 +20,22 @@ import net.neoforged.fml.loading.moddiscovery.ModFileInfo;
 public final class NeoForgeLoader implements Loader {
     @Override public String name() { return "neoforge"; }
 
+    @Override public String version() {
+        ModList mods = ModList.get();
+        if (mods == null) return "unknown";
+        return mods.getModContainerById("neoforge").map(container -> container.getModInfo().getVersion().toString()).orElse("unknown");
+    }
+
     @Override public boolean isModLoaded(String modId) {
         ModList mods = ModList.get();
         if (mods != null) return mods.isLoaded(modId);
+        LoadingModList loading = LoadingModList.get();
+        return loading != null && loading.getModFileById(modId) != null;
+    }
+
+    @Override public boolean hasMod(String modId) {
+        ModList mods = ModList.get();
+        if (mods != null && mods.getModFileById(modId) != null) return true;
         LoadingModList loading = LoadingModList.get();
         return loading != null && loading.getModFileById(modId) != null;
     }

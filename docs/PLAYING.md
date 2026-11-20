@@ -23,6 +23,7 @@ Press **F8** to take a postcard: a screenshot without the hotbar, your hand or c
 | `/earth code` | Your place code: twelve letters and digits holding where you stand and which way you face |
 | `/earth code <code>` | Go to the spot a place code holds, facing the same way, e.g. `/earth code S6GV-H1C2-DS2C` |
 | `/earth where` | Your latitude, longitude, real height and country, and how stretched the map is there (blocks are 1 m wide only at the world's home latitude) |
+| `/earth bug` | File a bug. With [Bug Courier](https://github.com/pirut/mc-mods/releases?q=bug-courier) installed, this opens its report screen (the pause menu's **Report a mod bug** button does the same). Without it, a prefilled GitHub issue opens. Nothing is sent until you press Submit |
 | `/earth random` | A random trip to somewhere on land; `/earth random <km>` stays within that distance |
 | `/earth sethome` | Save where you stand as your home |
 | `/earth home` | Back to your home, or to your spawn if you haven't set one |

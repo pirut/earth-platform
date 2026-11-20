@@ -94,6 +94,10 @@ tasks.named('processResources') { dependsOn generateBuildIdentity }
 // Mojang ships Java 21 to end users in 1.21.1, so mods should target Java 21.
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
+// Declared above the runs so the Bug Courier server run can put the jar on its classpath only.
+def bugCourierJar = providers.gradleProperty('bugCourierJar')
+        .orElse(providers.environmentVariable('EARTH_BUG_COURIER_JAR'))
+
 neoForge {
     // Specify the version of NeoForge to use.
     version = project.neo_version
@@ -113,6 +117,34 @@ neoForge {
             client()
             // Authorized disposable shader baseline; engine resource caps are unchanged.
             jvmArgument '-Xmx4G'
+        }
+
+        // Headless dedicated server, without Bug Courier. A second run loads it from run/server-courier/mods.
+        server {
+            server()
+            programArguments.add '--nogui'
+            gameDirectory = file('run/server-plain')
+        }
+        // Bug Courier is a normal mod jar in this run's mods folder (stageBugCourier), not on the
+        // compile or default runtime classpath. That is how a player installs it.
+        serverCourier {
+            server()
+            programArguments.add '--nogui'
+            gameDirectory = file('run/server-courier')
+        }
+        // Dev dedicated server with NeoForge's game-test hook. ModDevGradle has no separate game-test run type;
+        // -Dneoforge.gameTestServer makes the dedicated server run registered tests and then exit.
+        gameTestServer {
+            server()
+            gameDirectory = file('run/gametest')
+            systemProperty 'neoforge.gameTestServer', 'true'
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'earthplatform'
+        }
+        gameTestServerCourier {
+            server()
+            gameDirectory = file('run/gametest-courier')
+            systemProperty 'neoforge.gameTestServer', 'true'
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'earthplatform'
         }
 
         data {
@@ -292,11 +324,47 @@ idea {
     }
 }
 
+// Bug Courier is compile-only. It is not bundled, and it is not on the runtime classpath, so the
+// game still starts when a player has not installed it. The bridge class is the only one that
+// names its types, and that class is loaded only when the mod is present on a client.
+def bugCourierFiles = files(bugCourierJar.map { file(it) })
+def verifyBugCourier = tasks.register('verifyBugCourier') {
+    def path = bugCourierJar.orNull
+    def expected = 'a5498561e0e5297f21ed5dfda515c929944d98104be362dd6f5cf3b055ee3890'
+    inputs.property('jar', path == null ? '' : path)
+    doLast {
+        if (path == null) throw new GradleException('Set EARTH_BUG_COURIER_JAR to bugcourier-neoforge-1.21.1-0.1.0.jar (see docs/BUILDING.md).')
+        def actual = java.security.MessageDigest.getInstance('SHA-256').digest(file(path).bytes).encodeHex().toString()
+        if (actual != expected) throw new GradleException("${path} has SHA-256 ${actual}, expected ${expected}")
+    }
+}
+
 dependencies {
+    compileOnly bugCourierFiles
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
+tasks.named('compileJava') { dependsOn verifyBugCourier }
+
+// Copies the checked Bug Courier jar into the two runs that boot with it installed.
+def stageBugCourier = tasks.register('stageBugCourier') {
+    dependsOn verifyBugCourier
+    def jar = bugCourierJar
+    def destinations = ['run/server-courier/mods', 'run/gametest-courier/mods']
+    inputs.property('jar', jar.orElse(''))
+    outputs.files(destinations.collect { file("${it}/bugcourier-neoforge-1.21.1-0.1.0.jar") })
+    doLast {
+        def source = file(jar.get()).toPath()
+        destinations.each { dir ->
+            def dest = file(dir).toPath()
+            java.nio.file.Files.createDirectories(dest)
+            java.nio.file.Files.copy(source, dest.resolve('bugcourier-neoforge-1.21.1-0.1.0.jar'), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+}
+tasks.named('prepareServerCourierRun') { dependsOn stageBugCourier }
+tasks.named('prepareGameTestServerCourierRun') { dependsOn stageBugCourier }
 // Iris and Sodium are compile-only for tests too; no optional upstream class is ever on a test classpath.
 tasks.withType(Test).configureEach {
     useJUnitPlatform()
@@ -433,7 +501,7 @@ tasks.register('verifyShimArtifact') {
                 entries++
                 def path = entry.name.toLowerCase(java.util.Locale.ROOT)
                 if (path.endsWith('.class') && path.contains(' ')) failures.add('invalid duplicate class filename: ' + entry.name)
-                if (path.startsWith('net/neoforged/') || path.startsWith('net/minecraft/')
+                if (path.startsWith('io/bugcourier/') || path.startsWith('net/neoforged/') || path.startsWith('net/minecraft/')
                         || path.startsWith('com/mojang/') || path.startsWith('com/seibel/') || path.startsWith('com/distanthorizons/')
                         || path.startsWith('net/irisshaders/') || path.startsWith('net/caffeinemc/')
                         || path.startsWith('assets/distanthorizons/') || path.startsWith('distanthorizons/')

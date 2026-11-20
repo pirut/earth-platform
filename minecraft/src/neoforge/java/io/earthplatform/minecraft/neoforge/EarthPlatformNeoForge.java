@@ -21,6 +21,7 @@ public final class EarthPlatformNeoForge {
         EngineToggles.preload(FMLPaths.CONFIGDIR.get());
         container.registerConfig(ModConfig.Type.CLIENT, EarthConfig.CLIENT_SPEC);
         container.registerConfig(ModConfig.Type.COMMON, EarthConfig.COMMON_SPEC);
+        io.earthplatform.minecraft.bug.BugReporting.registerIfPresent();
         EarthPlatformMod.LOGGER.info("Earth Platform loaded");
     }
 }
