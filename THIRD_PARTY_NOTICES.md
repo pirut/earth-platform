@@ -36,6 +36,8 @@ Regional relief and surface appearance are explicitly procedural heuristics laye
 
 Ecoregions: RESOLVE Ecoregions 2017, Dinerstein et al. 2017, An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm, BioScience 67(6):534-545, CC BY 4.0; derived 0.05 degree raster. Bundled as `minecraft/src/main/resources/earthplatform/ecoregions.png` (derived raster) and `ecoregions.tsv` (ecoregion names). https://doi.org/10.1093/biosci/bix014 . Changes: polygons rasterized to 0.05 degree cells.
 
+Forest types: Copernicus Global Land Service, Land Cover 100 m: collection 3, epoch 2019, Globe (Buchhorn et al. 2020), forest type layer, CC BY 4.0, https://doi.org/10.5281/zenodo.3939050 . Bundled as `minecraft/src/main/resources/earthplatform/forests.png` (derived raster). Changes: 100 m forest type classes counted into 1/24 degree cells holding the needleleaf share and the broadleaf's evergreen share; cells with under 4% forest take a neighbor's value.
+
 Estonian Topographic Database (ETAK) watercourses, 2026-11-14, Republic of Estonia Land and Spatial Development Board. Bundled derived river centre lines. [Open data licence](https://geoportaal.maaruum.ee/opendata-licence).
 
 Helgoland: ATKIS DGM5, ©GeoBasis-DE/LVermGeo SH/[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (Quelle verändert). Resampled by Earth Platform from the [Schleswig-Holstein OpenGBD portal](https://geodaten.schleswig-holstein.de/gaialight-sh/_apps/dladownload/dl-dgm5.html).

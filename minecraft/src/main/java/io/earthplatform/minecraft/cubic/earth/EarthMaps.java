@@ -110,7 +110,10 @@ public final class EarthMaps {
             return new Grid(width, height, starts, values);
         }
 
-        private int cell(int x, int y) {
+        int width() { return width; }
+        int height() { return height; }
+
+        int cell(int x, int y) {
             short[] s = starts[y];
             int i = Arrays.binarySearch(s, (short) x);
             if (i < 0) i = -i - 2;
