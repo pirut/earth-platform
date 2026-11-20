@@ -41,7 +41,8 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  * <p>Off unless asked for: {@code EARTH_DATA_BENCH=<cache dir> EARTH_DATA_PLACES=<file>
  * EARTH_DATA_OUT=<dir> ./gradlew test --tests '*DataRulesBench'}, with optional
  * {@code EARTH_DATA_SIZE} (blocks square, default 2048) and {@code EARTH_DATA_TREES=0} to leave
- * the side views out. Each line of the places file is a name, a latitude and a longitude.
+ * the side views out, and {@code EARTH_DATA_FORESTS=1} to set forests by climate alone beside
+ * forests from the forest type map instead. Each line of the places file is a name, a latitude and a longitude.
  */
 class DataRulesBench {
     private static final int PIXELS = 384, SLICE = 256, SLICE_HIGH = 112, SLICE_DEEP = 16;
@@ -83,6 +84,11 @@ class DataRulesBench {
         EarthGenerator boxes = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null);
         EarthGenerator data = new EarthGenerator(1234L, biomes, settings, tiles, cover, climate, null);
         data.data(canopy, true, true);
+        // EARTH_DATA_FORESTS=1 compares forests by climate alone (left) with forests from the forest type map (right).
+        if ("1".equals(System.getenv("EARTH_DATA_FORESTS"))) {
+            boxes.data(canopy, true, true);
+            data.enableForestTypes();
+        }
         StringBuilder all = new StringBuilder();
         for (String line : Files.readAllLines(Path.of(System.getenv("EARTH_DATA_PLACES")))) {
             String[] part = line.trim().split("\\s+");

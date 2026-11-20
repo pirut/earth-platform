@@ -223,6 +223,8 @@
   "earthplatform.configuration.earthMaps.tooltip": "New worlds use the bundled rock, red ground and soil maps. Off falls back to boxes of latitude and longitude for red deserts and lava fields. Applies to worlds you make after changing it.",
   "earthplatform.configuration.earthRealms": "Plants by ecoregion",
   "earthplatform.configuration.earthRealms.tooltip": "New worlds place cacti, bamboo and cherries by ecoregion realm and climate. Off uses boxes of latitude and longitude. Applies to worlds you make after changing it.",
+  "earthplatform.configuration.earthForests": "Forest types from map",
+  "earthplatform.configuration.earthForests.tooltip": "New worlds grow conifer, broadleaf, evergreen or deciduous woods where the Copernicus forest type map shows them. Off picks forests by climate alone. Applies to worlds you make after changing it.",
   "earthplatform.configuration.farPreviews": "Far terrain stand-ins",
   "earthplatform.configuration.farPreviews.tooltip": "The server makes quick stand-ins for far columns and sends them first; the client shows them until the real columns arrive. Off on a server makes none; off on a client asks for none, so far terrain comes in without them. Restart the game to apply.",
   "earthplatform.configuration.cubicFlightSurface": "Experimental: low-flight cubes",
