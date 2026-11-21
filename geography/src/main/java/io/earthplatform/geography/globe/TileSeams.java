@@ -13,6 +13,29 @@ final class TileSeams {
 
     /** Degrees either side of a whole-degree line within which its bad pixels lie: three quarters of an SRTM arc-second. */
     private static final double SEAM_REACH = 0.75 / 3600;
+    /**
+     * Degrees either side of a whole-degree line that a resampled ocean void spreads. The composite's
+     * fine tiles hold a slot a few arc-seconds wide along some whole-degree lines over the sea, about
+     * 14 km deep south of Durban and the same shape on other oceans, where an SRTM edge was filled and
+     * then resampled. {@link #SEAM_REACH} does not cover it, and the sea either side is exactly 0, which
+     * {@link #across} will not use as ground.
+     */
+    private static final double VOID_REACH = 12.0 / 3600;
+    /** Metres a void must lie below the ground outside the slot. Shallower seabed relief stays. */
+    private static final double VOID_DROP = 40;
+    /** Voids are below the sea. Land above this, and the open sea's own zeros, are left as they are. */
+    private static final float VOID_SEA = -8f;
+    /**
+     * Shores this close to sea level are the sea. The resampled slot leaves a metre or two of ringing on its lip,
+     * and filling toward that lip would leave a reef; both lips that low means the slot is open sea.
+     */
+    private static final float VOID_SHORE = 5f;
+    /**
+     * A void this deep is mended even where it does not run on along the line: the resampled slot frays
+     * into a few pixels at a tile's edge, still kilometres deep, and a lone pixel that far below the sea
+     * with ordinary ground either side of the line is the same fill.
+     */
+    private static final float VOID_ALONE = -120f;
     /** Coarsest zoom {@link #seams} mends; below it a seam averages away into pixels a kilometre or more across. */
     static final int SEAM_ZOOM = 10;
 
@@ -28,23 +51,33 @@ final class TileSeams {
      * so cliff edges and rough ground keep their shape; and only where pixels about as far from
      * the line are off too at most of the five places along it. Pixels beyond the tile's edge come from
      * its neighbours, unmended as this tile is, so both sides of a seam agree.
+     *
+     * <p>A second pass, {@link #voidSlot}, fills the wider ocean voids {@link #across} misses: pixels
+     * below the sea by tens of metres or more, inside {@link #VOID_REACH} of the line, with ordinary
+     * ground or open sea just outside that. Open sea either side becomes open sea again, so the
+     * bathymetry fill can put the real seabed back; land above the sea is not lowered.
      */
     static float[] seams(float[] metres, int zoom, int tileX, int tileY, Neighbours neighbours) {
         if (zoom < SEAM_ZOOM) return metres;
         double pixel = 40_075_016.7 / Math.cosh(Math.PI * (1 - 2.0 * (tileY + 0.5) / (1 << zoom))) / ((long) TILE_SIZE << zoom);
         float[][] out = {metres};
-        seamLines(zoom, tileX, tileY, (meridian, line, band) -> out[0] = across(metres, out[0], meridian, line, band, pixel, zoom, tileX, tileY, neighbours));
+        seamLines(zoom, tileX, tileY, SEAM_REACH, (meridian, line, band) -> out[0] = across(metres, out[0], meridian, line, band, pixel, zoom, tileX, tileY, neighbours));
+        seamLines(zoom, tileX, tileY, VOID_REACH, (meridian, line, band) -> out[0] = voidSlot(out[0], meridian, line, band, pixel, zoom, tileX, tileY, neighbours));
         return out[0];
     }
 
     /** A seam {@link #seams} looks at: column {@code line} (a meridian) or row {@code line} (a parallel) and its band. */
     private interface SeamLine { void at(boolean meridian, int line, int band); }
 
-    /** The whole-degree lines near a tile, in its pixels, with the band of pixels either side that {@link #seams} mends. */
-    private static void seamLines(int zoom, int tileX, int tileY, SeamLine each) {
+    /**
+     * The whole-degree lines near a tile, in its pixels, with the band of pixels either side that a reach of
+     * {@code reachDegrees} covers. {@link #SEAM_REACH} is the narrow SRTM edge; {@link #VOID_REACH} is the
+     * resampled ocean void, which asks for the same neighbours and more.
+     */
+    private static void seamLines(int zoom, int tileX, int tileY, double reachDegrees, SeamLine each) {
         long size = (long) TILE_SIZE << zoom;
         double degrees = 360.0 / size;
-        int band = (int) Math.ceil(SEAM_REACH / degrees) + 1;
+        int band = (int) Math.ceil(reachDegrees / degrees) + 1;
         long left = (long) tileX * TILE_SIZE;
         for (long lon = (long) Math.ceil((left - band - 3) * degrees - 180); lon <= (left + TILE_SIZE + band + 3) * degrees - 180; lon++) {
             int line = (int) ((long) Math.floor((lon + 180) / 360.0 * size) - left);
@@ -55,15 +88,16 @@ final class TileSeams {
         for (long lat = (long) Math.ceil(south); lat <= north; lat++) {
             double phi = Math.toRadians(lat);
             int line = (int) ((long) Math.floor(Mercator.row(phi, size)) - top);
-            int rows = (int) Math.ceil(SEAM_REACH / (degrees * Math.cos(phi))) + 1;
+            int rows = (int) Math.ceil(reachDegrees / (degrees * Math.cos(phi))) + 1;
             each.at(false, line, rows);
         }
     }
 
-    /** The neighbouring tiles {@link #seams} will read for a tile, as {@link #across} asks for them; known before any pixel is. */
+    /** The neighbouring tiles {@link #seams} will read for a tile, as {@link #across} and {@link #voidSlot} ask for them; known before any pixel is. */
     static void seamNeighbours(int zoom, int tileX, int tileY, Neighbour each) {
         if (zoom < SEAM_ZOOM) return;
-        seamLines(zoom, tileX, tileY, (meridian, line, band) -> {
+        // The void reach is the wider one, so its neighbours include the narrow pass's.
+        seamLines(zoom, tileX, tileY, VOID_REACH, (meridian, line, band) -> {
             int reach = band + 2;
             if (line + band < 0 || line - band >= TILE_SIZE) return;
             if (line - reach < 0) { if (meridian) each.at(zoom, tileX - 1, tileY); else each.at(zoom, tileX, tileY - 1); }
@@ -155,6 +189,84 @@ final class TileSeams {
                 }
                 if (out == metres) out = metres.clone();
                 out[index] = (float) value;
+            }
+        }
+        return out;
+    }
+
+    /**
+     * One whole-degree line's ocean void. Within {@code band} pixels of the line, each run of pixels below the
+     * sea that has a shore on both ends is the void when it lies more than {@link #VOID_DROP} under the line
+     * joining those shores. The resampled slot does not sit on the degree pixel itself: south of Durban the sea
+     * between 30°S and the slot is ordinary 0, and the slot, a few arc-seconds wide and offset to the south, runs
+     * to about 14 km below sea level. Open sea is 0 here, which {@link #across} treats as missing, so that pass
+     * never sees it. Where both shores are sea the slot becomes sea again; where one shore is a beach the slot
+     * meets it. A run that reaches the edge of the search has no shore there, so a deep ocean stays deep, and
+     * land above the sea is not lowered.
+     */
+    private static float[] voidSlot(float[] tile, boolean meridian, int line, int band, double pixel,
+                                    int zoom, int tileX, int tileY, Neighbours neighbours) {
+        if (line + band < 0 || line - band >= TILE_SIZE) return tile;
+        float[] before = null, after = null;
+        if (line - band < 0) before = meridian ? neighbours.tile(zoom, tileX - 1, tileY) : neighbours.tile(zoom, tileX, tileY - 1);
+        if (line + band >= TILE_SIZE) after = meridian ? neighbours.tile(zoom, tileX + 1, tileY) : neighbours.tile(zoom, tileX, tileY + 1);
+        int width = 2 * band + 1;
+        boolean[] off = new boolean[TILE_SIZE * width];
+        double[] expected = new double[TILE_SIZE * width];
+        boolean[] openSea = new boolean[TILE_SIZE * width];
+        float[] profile = new float[width];
+        for (int s = 0; s < TILE_SIZE; s++) {
+            for (int k = -band; k <= band; k++) profile[k + band] = at(tile, before, after, meridian, line + k, s);
+            for (int a = 0; a < width; ) {
+                while (a < width && !(profile[a] < VOID_SEA)) a++;
+                int b = a;
+                while (b < width && profile[b] < VOID_SEA) b++;
+                // A run with a shore at both ends. One that meets the search edge may be deep ocean with no far shore.
+                if (a > 0 && b < width && b > a) {
+                    float ls = profile[a - 1], rs = profile[b];
+                    if (!Float.isNaN(ls) && !Float.isNaN(rs)) {
+                        float furtherLeft = a > 1 ? profile[a - 2] : ls, furtherRight = b + 1 < width ? profile[b + 1] : rs;
+                        // A neighbouring void is not the ground's slope; measuring the step across it would hide this one.
+                        double step = 0;
+                        if (!Float.isNaN(furtherLeft) && furtherLeft >= VOID_SEA) step = Math.abs(ls - furtherLeft);
+                        if (!Float.isNaN(furtherRight) && furtherRight >= VOID_SEA) step = Math.max(step, Math.abs(rs - furtherRight));
+                        double limit = Math.max(VOID_DROP, Math.max(4 + pixel, 2 * step));
+                        boolean open = ls <= VOID_SHORE && rs <= VOID_SHORE;
+                        double span = b - (a - 1);
+                        for (int p = a; p < b; p++) {
+                            float v = profile[p];
+                            if (Float.isNaN(v) || v == 0f) continue;
+                            int c = line + p - band;
+                            if (c < 0 || c >= TILE_SIZE) continue;
+                            double level = ls + (p - (a - 1)) / span * (rs - ls);
+                            if (v >= level - limit) continue;
+                            off[s * width + p] = true;
+                            openSea[s * width + p] = open;
+                            expected[s * width + p] = level;
+                        }
+                    }
+                }
+                a = Math.max(b, a + 1);
+            }
+        }
+        float[] out = tile;
+        for (int s = 0; s < TILE_SIZE; s++) {
+            for (int k = 0; k < width; k++) {
+                if (!off[s * width + k]) continue;
+                int c = line + k - band;
+                int index = meridian ? s * TILE_SIZE + c : c * TILE_SIZE + s;
+                int along = 0;
+                for (int t = Math.max(0, s - 2); t <= Math.min(TILE_SIZE - 1, s + 2); t++) {
+                    boolean near = false;
+                    for (int j = Math.max(0, k - 1); j <= Math.min(width - 1, k + 1); j++) near |= off[t * width + j];
+                    if (near) along++;
+                }
+                if (along < 3 && tile[index] >= VOID_ALONE) continue;
+                double level = expected[s * width + k];
+                float value = openSea[s * width + k] || level <= 0 ? 0f : (float) level;
+                if (value == tile[index]) continue;
+                if (out == tile) out = tile.clone();
+                out[index] = value;
             }
         }
         return out;
