@@ -5,7 +5,7 @@ Requires Minecraft 1.21.1 with NeoForge 21.1.256 or newer, or Fabric Loader 0.16
 ### Travel
 
 - Teleporting a long way, such as from the Serengeti to Everest, no longer crashes the game once the new terrain has meshes. For that one oversized frame, nearby cubes that would have been hidden stay drawn, and hiding them resumes when the old meshes are gone (#204, #185).
-- Sable ships assembled far from the map origin no longer shake, drift off their selection box, or get pulled away by the physics wand until Sable removes them. Physics boxes, ropes, and collision-effect positions are still not covered. Thanks to Cheesidibb1 (#197, #183).
+- Sable ships, physics boxes, and ropes far from the map origin stay where they should. Ships no longer shake or get flung away, ropes keep their contraptions, the physics wand turns a ship around the selected block, and the selection outline sits on that block. Dragging a ship very fast with the wand can still tunnel through terrain, and each physics scene has one origin, so two clusters millions of blocks apart cannot both sit near it. Thanks to Cheesidibb1 (#213, #197, #183).
 
 ### Terrain
 
