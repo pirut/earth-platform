@@ -1,6 +1,11 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import io.earthplatform.geography.GeoPoint;
+import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.minecraft.cubic.CubeKey;
+import io.earthplatform.minecraft.cubic.Cubic;
+import io.earthplatform.minecraft.cubic.earth.EarthSettings;
+import io.earthplatform.minecraft.cubic.play.EarthPlaces;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.client.renderer.chunk.VisGraph;
@@ -32,6 +37,37 @@ class CubeCavesTest {
         // A smaller jump fits in an int but still leaves too much empty space to flood.
         assertNull(CubeCaves.reach(8, 8, 8, faces(), -100, -40, -15, 100, 40, 15));
     }
+
+    /**
+     * The reported crash: teleporting from Africa to Everest on a default world, then drawing once the new
+     * ground has meshes while the old ones are still loaded. The int volume of that box is negative, which is
+     * the count fastutil refuses.
+     */
+    @Test void africaToEverestDoesNotSizeTheCaveSetFromANegativeCount() {
+        MercatorGrid grid = new MercatorGrid(EarthSettings.at(EarthSettings.DEFAULT_LATITUDE, EarthSettings.DEFAULT_LONGITUDE).metresPerBlock());
+        EarthPlaces.Place africa = EarthPlaces.byId("serengeti").orElseThrow();
+        EarthPlaces.Place everest = EarthPlaces.byId("everest").orElseThrow();
+        int ax = cube(grid.blockX(new GeoPoint(africa.latitude(), africa.longitude())));
+        int az = cube(grid.blockZ(new GeoPoint(africa.latitude(), africa.longitude())));
+        int ex = cube(grid.blockX(new GeoPoint(everest.latitude(), everest.longitude())));
+        int ez = cube(grid.blockZ(new GeoPoint(everest.latitude(), everest.longitude())));
+        // The Serengeti plateau and Everest's summit. The int product's sign depends on the exact span;
+        // these heights are the ones that wrap negative and hit fastutil.
+        int ay = 1400 >> 4, ey = 8849 >> 4;
+        int reach = Cubic.MAX_HORIZONTAL_RADIUS, vertical = Cubic.VERTICAL_RADIUS;
+        int minX = Math.min(ax, ex) - reach, maxX = Math.max(ax, ex) + reach;
+        int minY = Math.min(ay, ey) - vertical, maxY = Math.max(ay, ey) + vertical;
+        int minZ = Math.min(az, ez) - reach, maxZ = Math.max(az, ez) + reach;
+        int width = maxX - minX + 1, height = maxY - minY + 1, depth = maxZ - minZ + 1;
+        int product = width * height * depth;
+        assertTrue(product < 0, "int volume wrapped to " + product + " for " + width + "x" + height + "x" + depth);
+        IllegalArgumentException rejected = assertThrows(IllegalArgumentException.class, () -> new LongOpenHashSet(product));
+        assertEquals("The expected number of elements must be nonnegative", rejected.getMessage());
+        // Standing on the Everest landing, inside the box, is when the old sizing ran.
+        assertNull(CubeCaves.reach((ex << 4) + 8, (ey << 4) + 8, (ez << 4) + 8, faces(), minX, minY, minZ, maxX, maxY, maxZ));
+    }
+
+    private static int cube(double block) { return (int) Math.floor(block) >> 4; }
 
     @Test void solidWallHidesWhatIsBehindItButIsItselfDrawn() {
         Long2LongOpenHashMap map = faces();
