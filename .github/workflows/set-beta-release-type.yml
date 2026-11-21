@@ -1,0 +1,185 @@
+# One-time hand run. Sets the already-uploaded build 74 and 75 files to Beta.
+# Build 73 (CurseForge files 9649106 and 9649108) is already Beta and is not touched.
+# Metadata only: this never uploads a jar and never calls upload-file.
+# It shows in the Actions tab only after this file is on the default branch.
+name: Set Beta release type
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Tick to print each request and change nothing. Leave unticked to set Beta.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  set-beta:
+    name: Set Beta on the uploaded 74 and 75 files
+    runs-on: ubuntu-latest
+    steps:
+      # CurseForge: POST /api/projects/{projectId}/update-file, multipart field metadata,
+      # {"fileID": <id>, "releaseType": "beta"}. fileID is required; releaseType is one of
+      # alpha, beta, release, and other metadata fields are optional. The upload API returns
+      # {"id": <fileID>} and documents no GET of releaseType for this token (X-Api-Token).
+      # Same host, header, token and project id as .github/scripts/curseforge-upload.sh.
+      # Modrinth: PATCH /v2/version/{id} with {"version_type":"beta"} (204, no body). A GET of
+      # the same version then has to read version_type beta. Same Authorization header as the
+      # Release workflow: the MODRINTH_TOKEN secret, with no Bearer prefix.
+      - name: Set release type to beta
+        env:
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          CURSEFORGE_PROJECT: ${{ vars.CURSEFORGE_PROJECT || secrets.CURSEFORGE_PROJECT }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          case "${DRY_RUN:-false}" in
+            true) dry=true ;;
+            false) dry=false ;;
+            *) echo "::error::dry_run must be true or false (got '${DRY_RUN}')."; exit 1 ;;
+          esac
+
+          # Exactly these ids. 74 NeoForge, 74 Fabric, 75 NeoForge, 75 Fabric.
+          curseforge_files=(9702176 9702179 9717345 9717346)
+          # Exactly the four Modrinth versions the Release workflow created for 74 and 75.
+          modrinth_versions=(L731Yius KbGObl6H Ill0bX4v 7PcVaVGZ)
+
+          echo "CurseForge files: ${curseforge_files[*]}"
+          echo "Modrinth versions: ${modrinth_versions[*]}"
+          if [ "$dry" = true ]; then
+            echo "Dry run: the requests below are not sent."
+          else
+            echo "Live run: setting release type to beta. No jars are uploaded."
+            missing=()
+            [ -n "${CURSEFORGE_TOKEN:-}" ] || missing+=("CURSEFORGE_TOKEN secret")
+            [ -n "${CURSEFORGE_PROJECT:-}" ] || missing+=("CURSEFORGE_PROJECT variable")
+            [ -n "${MODRINTH_TOKEN:-}" ] || missing+=("MODRINTH_TOKEN secret")
+            if [ "${#missing[@]}" -gt 0 ]; then
+              echo "::error::Missing ${missing[*]}."
+              exit 1
+            fi
+          fi
+          if [ -z "${CURSEFORGE_PROJECT:-}" ]; then
+            echo "::error::CURSEFORGE_PROJECT is not set, so the CurseForge URL cannot be built."
+            exit 1
+          fi
+
+          agent="${GITHUB_REPOSITORY:-pirut/earth-platform} set beta release type"
+          cf_api=https://minecraft.curseforge.com/api
+          mr_api=https://api.modrinth.com/v2
+          work=$(mktemp -d)
+
+          # Prints the HTTP status and body. Exits on a transport error or any non-2xx status.
+          request() { # description, then curl args, with the URL last
+            local what="$1"
+            shift
+            local body rc code
+            body=$(mktemp)
+            code=$(curl -sS --fail-with-body --connect-timeout 30 --max-time 60 \
+              -o "$body" -w '%{http_code}' -A "$agent" "$@") && rc=0 || rc=$?
+            if [ "$rc" -ne 0 ] && { [ -z "$code" ] || [ "$code" = 000 ]; }; then
+              echo "::error::$what failed before a response (curl exit $rc)."
+              cat "$body" || true
+              echo
+              exit 1
+            fi
+            case "$code" in
+              2[0-9][0-9]) ;;
+              *)
+                echo "::error::$what returned HTTP $code."
+                cat "$body" || true
+                echo
+                exit 1
+                ;;
+            esac
+            echo "$what: HTTP $code $(cat "$body")"
+          }
+
+          for id in "${curseforge_files[@]}"; do
+            case "$id" in
+              9702176|9702179|9717345|9717346) ;;
+              *) echo "::error::Refusing unexpected CurseForge file id $id."; exit 1 ;;
+            esac
+            meta="$work/curseforge-$id.json"
+            jq -nc --argjson id "$id" '{fileID: $id, releaseType: "beta"}' > "$meta"
+            jq -e --argjson id "$id" \
+              'keys == ["fileID", "releaseType"] and .fileID == $id and .releaseType == "beta"' \
+              "$meta" >/dev/null
+            url="$cf_api/projects/$CURSEFORGE_PROJECT/update-file"
+            case "$url" in
+              *upload-file*) echo "::error::Refusing to upload a file ($url)."; exit 1 ;;
+            esac
+            payload=$(jq -c . "$meta")
+            if [ "$dry" = true ]; then
+              echo "Dry run, not sent: POST $url metadata $payload"
+              continue
+            fi
+            request "CurseForge file $id" \
+              -H "X-Api-Token: $CURSEFORGE_TOKEN" \
+              -F "metadata=<$meta;type=application/json" \
+              "$url"
+          done
+
+          mr_body="$work/modrinth-beta.json"
+          jq -nc '{version_type: "beta"}' > "$mr_body"
+          jq -e 'keys == ["version_type"] and .version_type == "beta"' "$mr_body" >/dev/null
+          payload=$(jq -c . "$mr_body")
+          for id in "${modrinth_versions[@]}"; do
+            case "$id" in
+              L731Yius|KbGObl6H|Ill0bX4v|7PcVaVGZ) ;;
+              *) echo "::error::Refusing unexpected Modrinth version id $id."; exit 1 ;;
+            esac
+            url="$mr_api/version/$id"
+            case "$url" in
+              "$mr_api/version"|"$mr_api/version/") echo "::error::Refusing to create a Modrinth version."; exit 1 ;;
+            esac
+            if [ "$dry" = true ]; then
+              echo "Dry run, not sent: PATCH $url $payload"
+              continue
+            fi
+            request "Modrinth version $id" \
+              -X PATCH \
+              -H "Authorization: $MODRINTH_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data-binary "@$mr_body" \
+              "$url"
+            readback=$(mktemp)
+            read_code=$(curl -sS --fail-with-body --connect-timeout 30 --max-time 60 \
+              -o "$readback" -w '%{http_code}' -A "$agent" \
+              -H "Authorization: $MODRINTH_TOKEN" \
+              "$url") && rc=0 || rc=$?
+            if [ "$rc" -ne 0 ] && { [ -z "$read_code" ] || [ "$read_code" = 000 ]; }; then
+              echo "::error::Modrinth GET $id failed before a response (curl exit $rc)."
+              cat "$readback" || true
+              echo
+              exit 1
+            fi
+            case "$read_code" in
+              2[0-9][0-9]) ;;
+              *)
+                echo "::error::Modrinth GET $id returned HTTP $read_code."
+                cat "$readback" || true
+                echo
+                exit 1
+                ;;
+            esac
+            version_type=$(jq -er '.version_type' "$readback") || {
+              echo "::error::Modrinth GET $id did not return version_type."
+              cat "$readback" || true
+              exit 1
+            }
+            echo "Modrinth version $id reads version_type=$version_type (HTTP $read_code)"
+            if [ "$version_type" != "beta" ]; then
+              echo "::error::Modrinth version $id is $version_type after the update."
+              exit 1
+            fi
+          done
+
+          if [ "$dry" = true ]; then
+            echo "Dry run finished. Nothing was changed."
+          else
+            echo "Set ${#curseforge_files[@]} CurseForge files and ${#modrinth_versions[@]} Modrinth versions to beta."
+          fi
