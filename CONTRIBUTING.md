@@ -4,7 +4,7 @@ Thanks for helping. Bug reports with a place (latitude and longitude) and a scre
 
 ## Reporting a problem
 
-Open an [issue](https://github.com/pirut/earth-platform/issues/new/choose) and fill in the form. Before you do:
+Open an [issue](https://github.com/pirut/earth-platform/issues/new/choose) and fill in the form. Players can also file one from the game: install the optional [Bug Courier](https://github.com/pirut/mc-mods/releases?q=bug-courier) mod and use **Report a mod bug**, or run `/earth bug` without it. Before you do:
 
 - Try a **fresh world**. A world keeps the data choices it was made with, so fixes to terrain only show in new worlds.
 - Check the [FAQ](docs/FAQ.md) for memory, shader and first-visit questions.

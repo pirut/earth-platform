@@ -140,3 +140,16 @@ config="${mod_id}.neoforge.mixins.json"
     versionRange="[0.8.12-beta.1+mc1.21.1,0.9)"
     ordering="AFTER"
     side="CLIENT"
+
+# Bug Courier adds the pause-menu report button. The game runs the same without it.
+# Reports are filed on the client, so a dedicated server does not need the jar.
+[[dependencies.${mod_id}]]
+    modId="bugcourier"
+    type="optional"
+    versionRange="[0.1.0,1.0)"
+    ordering="AFTER"
+    side="CLIENT"
+
+[modproperties.${mod_id}]
+bugcourier_tracker="github:pirut/earth-platform"
+bugcourier_labels="bug,bug-courier"

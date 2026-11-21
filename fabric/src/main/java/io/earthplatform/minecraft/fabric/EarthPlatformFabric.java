@@ -131,6 +131,7 @@ public final class EarthPlatformFabric implements ModInitializer {
             EarthRules.loggedOut(handler.player);
         });
 
+        io.earthplatform.minecraft.bug.BugReporting.registerIfPresent();
         EarthPlatformMod.LOGGER.info("Earth Platform loaded");
     }
 }

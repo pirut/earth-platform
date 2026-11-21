@@ -49,6 +49,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - An Earth world type, chosen by default in Create World, with a picker for famous places or any latitude and longitude.
 - You arrive on open ground with a landmark in sight, facing the view.
 - `/earth visit`, `/earth goto`, `/earth places`, `/earth where` and `/earth home`.
+- `/earth bug` files a report. With Bug Courier installed it opens that mod's report screen; without it, a prefilled GitHub issue. The game runs the same if Bug Courier is not installed.
 - The jet stream: glide with an elytra above Y 9,200 and the wind carries you at over 1,000 blocks a second, fast enough to cross a continent in under an hour.
 - A "Preparing your Earth" screen on first arrival, and a quiet note while data downloads or when it can't be reached.
 - A creative travel map: press N (or `/earth map`), click anywhere on the globe, and the camera flies out to the globe and back down at the new place.

@@ -14,8 +14,9 @@ The mod is one Gradle project in `minecraft/`, which builds the NeoForge jar. It
 | `EARTH_INSTALLED_IRIS_JAR` | [iris-neoforge-1.8.14-beta.1+mc1.21.1.jar](https://cdn.modrinth.com/data/YL57xq9U/versions/KduFYu4t/iris-neoforge-1.8.14-beta.1%2Bmc1.21.1.jar) | `60d5f8bf52f25e9986440f4a4270a6bd986d9cff994510e1108ac1547063b314` |
 | `EARTH_INSTALLED_SODIUM_JAR` | [sodium-neoforge-0.8.12-beta.1+mc1.21.1.jar](https://cdn.modrinth.com/data/AANobbMI/versions/iw5APcWy/sodium-neoforge-0.8.12-beta.1%2Bmc1.21.1.jar) | `dc2838d5538db39414171fe86586ab89d1a30d2fd97f59229cc44cf3777f569d` |
 | `EARTH_INSTALLED_SHADER_PACK` | [photon_v1.3b.zip](https://cdn.modrinth.com/data/lLqFfGNs/versions/gUv7fBPN/photon_v1.3b.zip), unmodified | `120897768eaa8cb1f14a3e98f88dff009ae3204ee3b96904a4fe8586edfc1ead` |
+| `EARTH_BUG_COURIER_JAR` | [bugcourier-neoforge-1.21.1-0.1.0.jar](https://github.com/pirut/mc-mods/releases/download/bug-courier-v0.1.0/bugcourier-neoforge-1.21.1-0.1.0.jar) | `a5498561e0e5297f21ed5dfda515c929944d98104be362dd6f5cf3b055ee3890` |
 
-Set each variable to the file's absolute path, or pass the same paths as `-PinstalledIrisJar=`, `-PinstalledSodiumJar=` and `-PinstalledShaderPack=`.
+Set each variable to the file's absolute path, or pass the same paths as `-PinstalledIrisJar=`, `-PinstalledSodiumJar=` and `-PinstalledShaderPack=`. Bug Courier is `-PbugCourierJar=` or `EARTH_BUG_COURIER_JAR`. It is compile-only: the jar is not bundled, and the game runs without it.
 
 ## Build
 
@@ -33,7 +34,9 @@ The jar is `minecraft/build/libs/earthplatform-<version>.jar` (for example `eart
 ./gradlew --no-daemon test --continue
 ```
 
-The unit tests run in a couple of minutes, and all should pass. They include `GlobeTest`, a harness for the Earth data code that serves synthetic tiles from a local HTTP server. GitHub runs the same build and tests on every pull request (`.github/workflows/ci.yml`). Publishing is separate: a pull request labeled `build` that merges into `main` releases the newest build, and when the repository has a `MODRINTH_TOKEN` secret that release uploads the jars to Modrinth (`.github/workflows/release.yml`). How to open that pull request is in [Shipping a build](release/RELEASE-DAY.md#shipping-a-build).
+The unit tests run in a couple of minutes, and all should pass. They include `GlobeTest`, a harness for the Earth data code that serves synthetic tiles from a local HTTP server, and `GithubBugLinkTest`, which checks the prefilled bug-report link. GitHub runs the same build and tests on every pull request (`.github/workflows/ci.yml`). Publishing is separate: a pull request labeled `build` that merges into `main` releases the newest build, and when the repository has a `MODRINTH_TOKEN` secret that release uploads the jars to Modrinth (`.github/workflows/release.yml`). How to open that pull request is in [Shipping a build](release/RELEASE-DAY.md#shipping-a-build).
+
+Headless checks, with `EARTH_BUG_COURIER_JAR` set: `runServer` boots a dedicated server without Bug Courier, and `runServerCourier` boots one with the jar copied into that run's `mods` folder. `runGameTestServer` and `runGameTestServerCourier` are the same dedicated server with NeoForge's game-test hook (`-Dneoforge.gameTestServer`), which runs the Earth Platform game test and exits. The Fabric project has `runServer` and `runServerCourier` for the same pair.
 
 ## Try it in game
 
@@ -47,6 +50,7 @@ Install the jar into a NeoForge 21.1.256 or newer instance for Minecraft 1.21.1 
 | --- | --- | --- |
 | `EARTH_INSTALLED_FABRIC_IRIS_JAR` | [iris-fabric-1.8.14-beta.1+mc1.21.1.jar](https://cdn.modrinth.com/data/YL57xq9U/versions/bAo1Qhte/iris-fabric-1.8.14-beta.1%2Bmc1.21.1.jar) | `0ceb694040b4628bf3fa02286cfe5f0db833195669ab07f8caa4001359763eff` |
 | `EARTH_INSTALLED_FABRIC_SODIUM_JAR` | [sodium-fabric-0.8.13+mc1.21.1.jar](https://cdn.modrinth.com/data/AANobbMI/versions/SMxNOGZ6/sodium-fabric-0.8.13%2Bmc1.21.1.jar) | `3d43c14985a4deb19c654aad3393b454cf57e1ebcbba86c4ae6a98dfc60eca2d` |
+| `EARTH_BUG_COURIER_FABRIC_JAR` | [bugcourier-fabric-1.21.1-0.1.0.jar](https://github.com/pirut/mc-mods/releases/download/bug-courier-v0.1.0/bugcourier-fabric-1.21.1-0.1.0.jar) | `d082b37978957872c2ef681660c6ce069f4964a31d8e8d444c5f548c484e85ab` |
 
 ```sh
 cd fabric && gradle --no-daemon build
