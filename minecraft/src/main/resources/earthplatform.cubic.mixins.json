@@ -61,6 +61,7 @@
     "compat.SablePhysicsEditsMixin",
     "compat.SableOriginMixin",
     "compat.SableOriginConstraintMixin",
+    "compat.SableOriginObjectMixin",
     "compat.SimulatedAssemblyMixin",
     "compat.SimulatedLoadedMixin",
     "compat.SimulatedAltitudeMixin",

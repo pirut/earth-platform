@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.compat;
 
+import io.earthplatform.minecraft.EarthPlatformMod;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
@@ -54,6 +55,7 @@ public final class SableOrigin {
         ox = chunkX;
         oz = chunkZ;
         worldFrames.clear();
+        EarthPlatformMod.LOGGER.info("Sable physics origin set to block ({}, {})", chunkX << 4, chunkZ << 4);
     }
 
     private static int chunkOf(double blocks) { return (int) Math.floor(blocks) >> 4; }
@@ -84,6 +86,22 @@ public final class SableOrigin {
     public synchronized int chunkX(int x) { return set ? x - ox : x; }
 
     public synchronized int chunkZ(int z) { return set ? z - oz : z; }
+
+    /** Shifts the x and z of a flat array of x, y, z triples, as for a rope's points. */
+    public synchronized void toPhysics(double[] triples, int count) {
+        for (int i = 0; i < count; i++) {
+            triples[i * 3] -= blockX();
+            triples[i * 3 + 2] -= blockZ();
+        }
+    }
+
+    /** The inverse of {@link #toPhysics}. */
+    public synchronized void fromPhysics(double[] triples) {
+        for (int i = 0; i + 2 < triples.length; i += 3) {
+            triples[i] += blockX();
+            triples[i + 2] += blockZ();
+        }
+    }
 
     /** Records which frames of a new constraint are anchored in the world. */
     public synchronized void constraintAdded(long handle, int bodyA, int bodyB) {
