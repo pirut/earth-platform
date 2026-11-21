@@ -28,6 +28,8 @@ public final class SableOrigin {
     private final LongOpenHashSet chunks = new LongOpenHashSet();
     /** Constraint handle to which of its two frames (bit 0, bit 1) sit in the world. */
     private final Long2IntOpenHashMap worldFrames = new Long2IntOpenHashMap();
+    /** Constraint handle to how far its world frame was moved, in that frame's axes; see the constraint mixin. */
+    private final Long2ObjectOpenHashMap<double[]> motorShifts = new Long2ObjectOpenHashMap<>();
     private boolean set;
     private int ox, oz;
     private int live;
@@ -55,6 +57,7 @@ public final class SableOrigin {
         ox = chunkX;
         oz = chunkZ;
         worldFrames.clear();
+        motorShifts.clear();
         EarthPlatformMod.LOGGER.info("Sable physics origin set to block ({}, {})", chunkX << 4, chunkZ << 4);
     }
 
@@ -109,7 +112,15 @@ public final class SableOrigin {
         if (mask != 0) worldFrames.put(handle, mask);
     }
 
-    public synchronized void constraintRemoved(long handle) { worldFrames.remove(handle); }
+    public synchronized void constraintRemoved(long handle) {
+        worldFrames.remove(handle);
+        motorShifts.remove(handle);
+    }
+
+    /** Remembers that a constraint's world frame was moved, so its linear motor targets must move with it. */
+    public synchronized void motorShift(long handle, double[] shift) { motorShifts.put(handle, shift); }
+
+    @Nullable public synchronized double[] motorShift(long handle) { return motorShifts.get(handle); }
 
     /** Whether frame 0 or 1 of a constraint is anchored in the world. */
     public synchronized boolean worldFrame(long handle, int frame) {

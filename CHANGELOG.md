@@ -78,6 +78,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - Create Aeronautics ships with players aboard ride the jet stream at 40 blocks a second; only empty ships reach elytra speed.
 - Create Aeronautics and Sable ships no longer shake far from the map origin: their physics runs near zero, so a ship at 10 million blocks moves as smoothly as one at the spawn (contributed by Cheesidibb1, #197).
 - Physics boxes and ropes (such as Aeronautics rope connectors) now work far from the map origin too, instead of pulling their ships toward a point millions of blocks away.
+- Dragging and rotating a ship with the physics staff far from the map origin turns it around the block you selected.
 - In the Earth world, AE2's meteorite compass finds meteorites by map column only and doesn't notice blocks changed later.
 - Other mods that check build height or read chunks themselves may misbehave in the Earth world; please report them.
 - Blocks you place above Y 9,000 have no collision for a player gliding in the jet stream.
