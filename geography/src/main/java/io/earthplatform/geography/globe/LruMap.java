@@ -14,6 +14,11 @@ import java.util.Map;
  */
 final class LruMap<K, V> extends LinkedHashMap<K, V> {
     private static final long serialVersionUID = 1L;
+    /** The cap last passed to {@link #putAndTrim}, so a memory shortage can trim without waiting for the next put. */
+    private int cap;
+    /** Keeps this map registered with {@link MemoryPressure} for as long as the map itself is alive. */
+    @SuppressWarnings("unused")
+    private final MemoryPressure.Hook pressure = MemoryPressure.keep(this::trimNow);
 
     /** @param initialCapacity the starting size of the backing table, as for {@link LinkedHashMap} */
     LruMap(int initialCapacity) {
@@ -25,8 +30,17 @@ final class LruMap<K, V> extends LinkedHashMap<K, V> {
      * or a quarter of that while memory is short (see {@link MemoryPressure#scaled}).
      */
     void putAndTrim(K key, V value, int most) {
+        cap = most;
         put(key, value);
-        int kept = MemoryPressure.scaled(most);
+        trimTo(MemoryPressure.scaled(most));
+    }
+
+    /** Drops down to the short cap. Called on the watcher thread as well as under the caller's lock. */
+    synchronized void trimNow() {
+        if (cap > 0) trimTo(MemoryPressure.scaled(cap));
+    }
+
+    private void trimTo(int kept) {
         Iterator<Map.Entry<K, V>> iterator = entrySet().iterator();
         while (size() > kept && iterator.hasNext()) { iterator.next(); iterator.remove(); }
     }

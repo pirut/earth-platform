@@ -52,7 +52,7 @@ public final class FarWorkers {
         int atWork = Math.max((busy + 1) / 2, busy - taken);
             // While memory is short, half the usual at work and none more for those waiting on data: each column under way holds
             // its data and voxels, and on many cores a new place's columns all at once filled a 4 GB game in a big mod pack.
-            if (MemoryPressure.high()) return Math.max(1, atWork / 2);
+            if (MemoryPressure.high() || MemoryPressure.tight()) return Math.max(1, atWork / 2);
             return held ? atWork : Math.min(most, atWork + waiting - turns);
         }
     }
@@ -112,7 +112,7 @@ public final class FarWorkers {
                 }
                 running++;
             }
-            try { job.run(); }
+            try { MemoryPressure.runHeavy(job); }
             finally {
                 synchronized (gate) {
                     running--;

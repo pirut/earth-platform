@@ -15,6 +15,7 @@ import io.earthplatform.geography.globe.IgnElevation;
 import io.earthplatform.geography.globe.RemaElevation;
 import io.earthplatform.geography.globe.UsgsElevation;
 import io.earthplatform.geography.globe.ImagerySource;
+import io.earthplatform.geography.globe.MemoryPressure;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.TerrariumTileSource;
@@ -4400,7 +4401,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             });
         }
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (Runnable load : loads) pool.execute(load);
+            for (Runnable load : loads) pool.execute(() -> MemoryPressure.runHeavy(load));
         }
         if (finished != null) {
             List<String> last = new ArrayList<>(finished);
