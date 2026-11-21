@@ -1,7 +1,14 @@
 # Builds the mod jar and publishes it as a GitHub release.
-# Every push to main releases the newest build: the highest docs/release/notes/combined-NN.md names
-# the tag. When that release already exists the run only makes sure it is the repository's Latest
-# release (so the Releases box on the repository page shows it) and stops; docs-only merges build nothing.
+# A normal merge to main does not release. Merge fix pull requests freely.
+# To ship, open a pull request that bumps mod_version in minecraft/gradle.properties to the next
+# 0.1.0-alpha.N (Fabric reads that same line; if fabric/gradle.properties ever has its own
+# mod_version, bump that too), adds docs/release/notes/combined-N.md, and has the "build" label.
+# Merging that pull request into main releases it. The highest docs/release/notes/combined-NN.md
+# names the tag. When that release already exists the run only makes sure it is the repository's
+# Latest release (so the Releases box on the repository page shows it) and stops.
+# The merged pull request is checked out and tagged at its merge commit on main.
+# Open the build pull request from a branch in this repository. A pull_request run from a fork
+# gets no secrets and a read-only token, so it cannot publish.
 # Releases are full releases marked Latest, not pre-releases: GitHub leaves pre-releases out of the
 # Releases box, so a pre-release made the repository page show only "1 tag".
 # Third-party actions are pinned to full commit SHAs (the tag each SHA was taken from is in the comment).
@@ -9,9 +16,11 @@
 name: Release
 
 on:
-  push:
+  pull_request:
+    types: [closed]
     branches:
       - main
+  push:
     tags:
       - 'combined-*'
   workflow_dispatch:
@@ -29,9 +38,17 @@ permissions:
 
 jobs:
   release:
+    # A closed pull request publishes only when it was merged and it carries the build label.
+    # Tag pushes and manual runs are unchanged.
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'build')) }}
     runs-on: ubuntu-latest
     steps:
+      # github.sha on a pull_request event is the pull request merge ref. The merge commit on main
+      # is pull_request.merge_commit_sha. Tag pushes and manual runs have no merge commit, so they
+      # use github.sha, the commit that triggered the run.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
 
       - name: Pick the tag
         id: tag
@@ -154,7 +171,7 @@ jobs:
         if: steps.tag.outputs.skip != 'true'
         with:
           tag_name: ${{ env.TAG }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
           name: ${{ env.TITLE }}
           body_path: release-notes.md
           prerelease: false
@@ -213,9 +230,9 @@ jobs:
       # and the CURSEFORGE_PROJECT repository variable (the project's numeric id, shown on the project
       # page under About Project). Without either, the step says so and skips. It runs even when the
       # Modrinth upload failed, as long as the GitHub release was made.
-      # CurseForge has no "is this version already there" check for upload tokens, so a push to main
-      # uploads once (an existing release stops the workflow earlier). When re-running a release by
-      # hand, untick "Upload to CurseForge too" if CurseForge already has the files.
+      # CurseForge has no "is this version already there" check for upload tokens, so a merged build
+      # pull request uploads once (an existing release stops the workflow earlier). When re-running a
+      # release by hand, untick "Upload to CurseForge too" if CurseForge already has the files.
       - name: Upload to CurseForge
         if: ${{ !cancelled() && steps.tag.outputs.skip != 'true' && steps.github_release.outcome == 'success' && github.event.inputs.curseforge != 'false' }}
         env:

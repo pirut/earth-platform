@@ -6,7 +6,7 @@ Last updated November 12, 2026, at build 73.
 
 Earth Platform is playable and public. You can start anywhere on Earth at one block per meter, play ordinary survival, and see terrain out to about 94 km. It runs on NeoForge and Fabric for Minecraft 1.21.1.
 
-Releases are public alphas on [Modrinth](https://modrinth.com/mod/YnuWHcwC) and the [Releases page](https://github.com/pirut/earth-platform/releases). Every merge to `main` builds one, numbered `0.1.0-alpha.N`, where N is the build number. Each release batches several fixes rather than shipping them one at a time.
+Releases are public alphas on [Modrinth](https://modrinth.com/mod/YnuWHcwC) and the [Releases page](https://github.com/pirut/earth-platform/releases). A pull request labeled `build` that merges to `main` builds one, numbered `0.1.0-alpha.N`, where N is the build number. Each release batches several fixes rather than shipping them one at a time. Fix pull requests merge without publishing.
 
 ## Done
 
@@ -19,7 +19,7 @@ Releases are public alphas on [Modrinth](https://modrinth.com/mod/YnuWHcwC) and 
 - **Getting around.** Spawn picker with a list of places and a globe, `/earth` commands, a travel map in creative (N), and a jet stream for elytra above Y 9,200.
 - **Shaders.** Iris with the stock Photon download, including on Macs, and Voxy- or Distant Horizons-capable packs.
 - **Servers and other mods.** Dedicated servers with several players, and a long list of popular mods tested in the Earth world (see the [FAQ](docs/FAQ.md#which-other-mods-work)).
-- **Releases.** CI on pull requests, and an automatic release on every merge that goes up on GitHub and Modrinth for both loaders.
+- **Releases.** CI on pull requests, and a release when a pull request labeled `build` is merged, which goes up on GitHub and Modrinth for both loaders.
 - **Fabric.** A Fabric build alongside the NeoForge one, from build 67.
 - **Finding and sharing places.** Town search on the globe and `/earth visit`, place codes (`/earth code`), F8 postcards, and one-click `.mrpack` install packs, from build 70.
 - **Arriving fast.** Quick stand-ins fill the whole far view within seconds of arriving, and far terrain is kept on disk with the world, from build 70.
