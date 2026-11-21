@@ -3,6 +3,8 @@ package io.earthplatform.minecraft.cubic.mixin.compat;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import io.earthplatform.minecraft.cubic.compat.SableOrigin;
+import org.joml.Quaterniond;
+import org.joml.Vector3d;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Pseudo;
 import org.spongepowered.asm.mixin.injection.At;
@@ -37,14 +39,37 @@ abstract class SableOriginConstraintMixin {
         return handle;
     }
 
+    /**
+     * A free constraint whose frame 1 is the world is how the physics staff drags a ship: that frame sits
+     * at the world's own origin (0, 0, 0) and the linear motors pull the ship's anchor to a goal measured
+     * from it. Shifted like the other anchors it would land millions of blocks from the scene origin, and
+     * Rapier's 32-bit maths would put the rotation pivot a block or more off the selected block. The
+     * frame is moved to the scene origin instead, which a free constraint allows, and the linear motor
+     * targets are moved by the same amount, in the frame's axes (see {@link #earthplatform$motor}).
+     */
     @WrapOperation(method = "create", require = 0, at = @At(value = "INVOKE", target = R3D + "addFreeConstraint(JIIDDDDDDDDDD)J"))
     private static long earthplatform$free(long scene, int a, int b, double p1x, double p1y, double p1z, double p2x, double p2y, double p2z,
                                            double qx, double qy, double qz, double qw, Operation<Long> original) {
         SableOrigin origin = SableOrigin.find(scene);
-        long handle = original.call(scene, a, b, earthplatform$x(origin, a, p1x), p1y, earthplatform$z(origin, a, p1z),
-                earthplatform$x(origin, b, p2x), p2y, earthplatform$z(origin, b, p2z), qx, qy, qz, qw);
-        if (origin != null) origin.constraintAdded(handle, a, b);
+        if (origin == null || a != SableOrigin.WORLD) {
+            long handle = original.call(scene, a, b, earthplatform$x(origin, a, p1x), p1y, earthplatform$z(origin, a, p1z),
+                    earthplatform$x(origin, b, p2x), p2y, earthplatform$z(origin, b, p2z), qx, qy, qz, qw);
+            if (origin != null) origin.constraintAdded(handle, a, b);
+            return handle;
+        }
+        Vector3d moved = new Quaterniond(qx, qy, qz, qw).transformInverse(new Vector3d(origin.blockX() - p1x, 0, origin.blockZ() - p1z));
+        long handle = original.call(scene, a, b, 0.0, p1y, 0.0, earthplatform$x(origin, b, p2x), p2y, earthplatform$z(origin, b, p2z), qx, qy, qz, qw);
+        origin.constraintAdded(handle, a, b);
+        origin.motorShift(handle, new double[] {moved.x, moved.y, moved.z});
         return handle;
+    }
+
+    /** Linear motor targets are measured from the world frame, which {@link #earthplatform$free} moved. */
+    @WrapOperation(method = "setMotor", require = 0, at = @At(value = "INVOKE", target = R3D + "setConstraintMotor(JJIDDDZD)V"))
+    private void earthplatform$motor(long scene, long handle, int axis, double target, double stiffness, double damping, boolean flag, double max, Operation<Void> original) {
+        SableOrigin origin = SableOrigin.find(scene);
+        double[] moved = origin == null || axis > 2 ? null : origin.motorShift(handle);
+        original.call(scene, handle, axis, moved == null ? target : target - moved[axis], stiffness, damping, flag, max);
     }
 
     @WrapOperation(method = "create", require = 0, at = @At(value = "INVOKE", target = R3D + "addRotaryConstraint(JIIDDDDDDDDDDDD)J"))

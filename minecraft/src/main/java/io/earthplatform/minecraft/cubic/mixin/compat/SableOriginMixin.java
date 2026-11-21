@@ -28,6 +28,14 @@ abstract class SableOriginMixin {
         pose[2] -= origin.blockZ();
     }
 
+    /** A scene exists here from the start, so boxes and ropes made before any ship share the same origin. */
+    @WrapOperation(method = "init", require = 0, at = @At(value = "INVOKE", target = R3D + "initialize(DDDD)J"))
+    private long earthplatform$init(double a, double b, double c, double d, Operation<Long> original) {
+        long scene = original.call(a, b, c, d);
+        if (CubicLevel.of(level) != null) SableOrigin.of(scene);
+        return scene;
+    }
+
     @WrapOperation(method = "add", require = 0, at = @At(value = "INVOKE", target = R3D + "createSubLevel(JI[D)V"))
     private void earthplatform$createShip(long scene, int id, double[] pose, Operation<Void> original) {
         if (CubicLevel.of(level) != null) {

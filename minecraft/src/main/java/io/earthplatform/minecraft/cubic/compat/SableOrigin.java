@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.compat;
 
+import io.earthplatform.minecraft.EarthPlatformMod;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
@@ -27,6 +28,8 @@ public final class SableOrigin {
     private final LongOpenHashSet chunks = new LongOpenHashSet();
     /** Constraint handle to which of its two frames (bit 0, bit 1) sit in the world. */
     private final Long2IntOpenHashMap worldFrames = new Long2IntOpenHashMap();
+    /** Constraint handle to how far its world frame was moved, in that frame's axes; see the constraint mixin. */
+    private final Long2ObjectOpenHashMap<double[]> motorShifts = new Long2ObjectOpenHashMap<>();
     private boolean set;
     private int ox, oz;
     private int live;
@@ -54,6 +57,8 @@ public final class SableOrigin {
         ox = chunkX;
         oz = chunkZ;
         worldFrames.clear();
+        motorShifts.clear();
+        EarthPlatformMod.LOGGER.info("Sable physics origin set to block ({}, {})", chunkX << 4, chunkZ << 4);
     }
 
     private static int chunkOf(double blocks) { return (int) Math.floor(blocks) >> 4; }
@@ -85,13 +90,37 @@ public final class SableOrigin {
 
     public synchronized int chunkZ(int z) { return set ? z - oz : z; }
 
+    /** Shifts the x and z of a flat array of x, y, z triples, as for a rope's points. */
+    public synchronized void toPhysics(double[] triples, int count) {
+        for (int i = 0; i < count; i++) {
+            triples[i * 3] -= blockX();
+            triples[i * 3 + 2] -= blockZ();
+        }
+    }
+
+    /** The inverse of {@link #toPhysics}. */
+    public synchronized void fromPhysics(double[] triples) {
+        for (int i = 0; i + 2 < triples.length; i += 3) {
+            triples[i] += blockX();
+            triples[i + 2] += blockZ();
+        }
+    }
+
     /** Records which frames of a new constraint are anchored in the world. */
     public synchronized void constraintAdded(long handle, int bodyA, int bodyB) {
         int mask = (bodyA == WORLD ? 1 : 0) | (bodyB == WORLD ? 2 : 0);
         if (mask != 0) worldFrames.put(handle, mask);
     }
 
-    public synchronized void constraintRemoved(long handle) { worldFrames.remove(handle); }
+    public synchronized void constraintRemoved(long handle) {
+        worldFrames.remove(handle);
+        motorShifts.remove(handle);
+    }
+
+    /** Remembers that a constraint's world frame was moved, so its linear motor targets must move with it. */
+    public synchronized void motorShift(long handle, double[] shift) { motorShifts.put(handle, shift); }
+
+    @Nullable public synchronized double[] motorShift(long handle) { return motorShifts.get(handle); }
 
     /** Whether frame 0 or 1 of a constraint is anchored in the world. */
     public synchronized boolean worldFrame(long handle, int frame) {
