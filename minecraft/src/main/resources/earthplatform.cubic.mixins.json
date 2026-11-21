@@ -62,6 +62,7 @@
     "compat.SableOriginMixin",
     "compat.SableOriginConstraintMixin",
     "compat.SableOriginObjectMixin",
+    "compat.SableRenderOffsetMixin",
     "compat.SimulatedAssemblyMixin",
     "compat.SimulatedLoadedMixin",
     "compat.SimulatedAltitudeMixin",
