@@ -60,6 +60,8 @@ The full attribution each source asks for, and how we changed its data, is in [C
 
 **Distant terrain: thank you, Voxy and Distant Horizons.** Our far terrain is built on ideas from [Voxy](https://modrinth.com/mod/voxy) by Cortex and [Distant Horizons](https://modrinth.com/mod/distanthorizons) by James Seibel and contributors. We'd have recommended using them directly, but neither works with a cubic-chunks world, so we wrote our own renderer following their lead; it contains no code from either. See [what we learned from each](CREDITS.md#distant-terrain-thank-you-voxy-and-distant-horizons).
 
+**Contributors.** [VanceCStone](https://github.com/pirut/earth-platform/pull/161) wrote the flight and distant rendering work. [Cheesidibb1](https://github.com/Cheesidibb1) kept Sable ship physics steady far from the map origin ([#197](https://github.com/pirut/earth-platform/pull/197)). The full list is in [CREDITS.md](CREDITS.md#contributors).
+
 Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.
 
 ## Building from source

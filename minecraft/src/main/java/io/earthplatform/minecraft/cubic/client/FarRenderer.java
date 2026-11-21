@@ -710,12 +710,12 @@ public final class FarRenderer {
         return total;
     }
 
-    /** The far terrain's GPU side, made on first use on the render thread; null where GL is too old. */
+    /** The far terrain's GPU side, made on first use on the render thread; null where this GL cannot draw it. */
     @Nullable private FarGpu gpu() {
         if (gpu == null && !unsupported) {
             if (!FarGpu.supported()) {
                 unsupported = true;
-                EarthPlatformMod.LOGGER.warn("Far terrain needs OpenGL 3.3; it is off");
+                EarthPlatformMod.LOGGER.warn("Far terrain needs buffer textures, integer uniforms and multi-draw; it is off");
                 return null;
             }
             gpu = new FarGpu();

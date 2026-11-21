@@ -31,7 +31,11 @@ quilt=$(id_of Quilt '^modloader$')
 extras=$(for tag in "Java 21:^java$" "Client:^environment$" "Server:^environment$"; do id_of "${tag%%:*}" "${tag#*:}"; done | jq -sc '.')
 notes="docs/release/notes/$TAG.md"
 if [ -f "$notes" ]; then changelog=$(cat "$notes"); else changelog="Earth Platform $TAG"; fi
-case "$VERSION" in *-beta.*) type=beta ;; *-alpha.*|*prototype*) type=alpha ;; *) type=release ;; esac
+# Store channel is Beta for 0.1.0-alpha.N and 0.1.0-beta.N. The "-alpha" in the version
+# string is the build scheme, not the CurseForge release type. A version with no
+# alpha, beta, or prototype suffix (the first stable 0.1.0) is a release.
+# The Modrinth step in release.yml uses this same rule. Both jars share $type.
+case "$VERSION" in *-beta.*|*-alpha.*|*prototype*) type=beta ;; *) type=release ;; esac
 upload() { # display-name jar game-version-ids-json relations-json
   jq -n --arg name "$1" --arg changelog "$changelog" --arg type "$type" \
     --argjson versions "$3" --argjson extras "$extras" --argjson relations "$4" \

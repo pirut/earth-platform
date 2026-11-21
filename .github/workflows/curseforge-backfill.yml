@@ -40,5 +40,7 @@ jobs:
               --pattern "earthplatform-$tag.jar" --pattern "earthplatform-fabric-$tag.jar" \
               || { echo "::error::Could not download the jars of $tag."; exit 1; }
             ( cd "$dir" && sha256sum *.jar )
+            # VERSION stays 0.1.0-alpha.N so the display name matches the build. The upload
+            # script publishes that as CurseForge release type beta, for both jars.
             TAG="$tag" VERSION="0.1.0-alpha.${tag#combined-}" bash .github/scripts/curseforge-upload.sh "$dir"
           done

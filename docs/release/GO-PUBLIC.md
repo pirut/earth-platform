@@ -6,7 +6,7 @@ The steps that only JR can take, in order, with the exact clicks. Everything els
 
 - **Secrets and private details:** every file in the current tree and every file ever committed on any branch (3,195 versions), plus the old `recovery/` archive, were scanned. There are no passwords, keys or tokens, no private server addresses and no third-party mod files (no Photon, Iris, Sodium, Distant Horizons or Voxy jars or packs). The only email addresses in files are public data-provider contacts.
 - **Licenses:** LGPL-3.0-only (`LICENSE`, `COPYING`, and in the jar). Every data source is credited ([CREDITS.md](../../CREDITS.md), [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md), in game). A full re-scan found no copied code ([LICENSING-AUDIT.md](LICENSING-AUDIT.md)).
-- **Workflows:** `release.yml` runs only on pushes to `main`, `combined-*` tags or a manual run, so pull requests from strangers can never publish a release. `ci.yml` builds and tests pull requests with read-only access and no secrets. Third-party actions are pinned to exact commits. Neither workflow uses any secret beyond GitHub's own short-lived token.
+- **Workflows:** `release.yml` publishes when a pull request labeled `build` is merged into `main`, on a pushed `combined-*` tag, or on a manual run. Merging any other pull request does not publish. That workflow uses the `MODRINTH_TOKEN` and `CURSEFORGE_TOKEN` secrets when they are set. `ci.yml` builds and tests pull requests with read-only access and no secrets. Third-party actions are pinned to exact commits.
 - **Community files:** [CONTRIBUTING.md](../../CONTRIBUTING.md), [SECURITY.md](../../SECURITY.md), issue forms and a pull request template under `.github/`.
 
 ## 2. Make the repository public (JR)
@@ -75,4 +75,4 @@ Paste the fields from [STORE-PAGE.md](STORE-PAGE.md).
 
 - Put the Modrinth link in the repository's **About** → Website.
 - Link the Modrinth and CurseForge pages from the top of the README.
-- For each later build: the GitHub release appears by itself when the build merges into `main`; upload the same jar as a new version on both sites with that build's notes.
+- For each later build: the GitHub release appears when a pull request labeled `build` is merged into `main` (see [Shipping a build](RELEASE-DAY.md#shipping-a-build)); upload the same jar as a new version on both sites with that build's notes.

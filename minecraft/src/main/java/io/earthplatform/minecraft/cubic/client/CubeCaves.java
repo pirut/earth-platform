@@ -55,7 +55,7 @@ final class CubeCaves {
     /**
      * The cubes the camera at block ({@code camX}, {@code camY}, {@code camZ}) can see into, searching only inside the
      * cube box {@code [minX..maxX] x [minY..maxY] x [minZ..maxZ]}; null when the camera's cube lies outside it (high
-     * above the loaded cubes, say) or the box is too large to search. In both cases nothing is culled.
+     * above the loaded cubes, say) or the box is empty or too large to search. In both cases nothing is culled.
      * {@code visibility} holds each meshed cube's faces; cubes missing from it are open.
      */
     static LongOpenHashSet reach(double camX, double camY, double camZ, Long2LongOpenHashMap visibility,
@@ -63,9 +63,13 @@ final class CubeCaves {
         int sx = (int) Math.floor(camX) >> 4, sy = (int) Math.floor(camY) >> 4, sz = (int) Math.floor(camZ) >> 4;
         if (sx < minX || sx > maxX || sy < minY || sy > maxY || sz < minZ || sz > maxZ) return null;
         int width = maxX - minX + 1, height = maxY - minY + 1, depth = maxZ - minZ + 1;
-        long area = (long) width * depth;
-        if (area > MAX_SEARCH_CUBES / height) return null;
-        int capacity = (int) (area * height);
+        // The set used to be sized from the int product width * height * depth. After a teleport the
+        // meshes at both ends are still loaded for a frame, and that product overflows an int. From the
+        // Serengeti to Everest's summit, on the default world, it is negative, and fastutil throws
+        // "The expected number of elements must be nonnegative".
+        long volume = (long) width * height * depth;
+        if (volume < 1 || volume > MAX_SEARCH_CUBES) return null;
+        int capacity = (int) volume;
         LongOpenHashSet reached = new LongOpenHashSet(Math.min(capacity, 1 << 16));
         // Breadth first, so each cube is reached by its shortest path, as vanilla's search does.
         long[] keys = new long[Math.min(capacity, 1 << 16)];

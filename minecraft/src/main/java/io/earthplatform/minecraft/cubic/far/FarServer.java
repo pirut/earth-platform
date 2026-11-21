@@ -98,6 +98,9 @@ public final class FarServer {
      * It was 8,192 columns emptied whenever it filled, less than half of one player's far view.
      */
     private final Recent cache = new Recent();
+    /** Keeps {@link Recent#shed} registered for as long as this server is alive. */
+    @SuppressWarnings("unused")
+    private final MemoryPressure.Hook pressure = MemoryPressure.keep(cache::shed);
     /** The columns kept on disk with the world (see {@link FarStore}), or null when they are not kept. */
     @Nullable private final FarStore store;
     /**
@@ -124,7 +127,11 @@ public final class FarServer {
         synchronized void put(long key, CubePayloads.FarColumnData column) {
             CubePayloads.FarColumnData old = columns.put(key, column);
             bytes += column.size() - (old == null ? 0 : old.size());
-            long most = MemoryPressure.high() ? CACHE_BYTES / 4 : CACHE_BYTES;
+            trim(MemoryPressure.high() ? CACHE_BYTES / 4 : CACHE_BYTES);
+        }
+        /** Drops columns at once when memory runs short, rather than on the next one stored. */
+        synchronized void shed() { trim(MemoryPressure.high() ? CACHE_BYTES / 4 : CACHE_BYTES); }
+        private void trim(long most) {
             for (var it = columns.values().iterator(); bytes > most && columns.size() > 1; ) {
                 bytes -= it.next().size();
                 it.remove();

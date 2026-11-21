@@ -153,6 +153,8 @@ final class FarGpu {
         int max = GL11C.glGetInteger(GL31C.GL_MAX_TEXTURE_BUFFER_SIZE);
         arenaQuads = Math.max(1 << 16, Math.min(ARENA_QUADS, max));
         version = glslVersion() + (INDEXED ? "#define EARTH_INDEXED\n" : "");
+        if (version.startsWith("#version 150"))
+            EarthPlatformMod.LOGGER.info("Far terrain uses GLSL 1.50; this OpenGL context is 3.2");
     }
 
     /**
@@ -171,17 +173,51 @@ final class FarGpu {
         return text != null && text.toLowerCase(java.util.Locale.ROOT).contains("apple");
     }
 
-    /** True when this GL can draw far terrain at all (OpenGL 3.3). */
+    /**
+     * True when this GL can draw far terrain. The shaders read integer buffer textures
+     * ({@code usamplerBuffer}, {@code texelFetch}) and bit-cast look texels with {@code uintBitsToFloat},
+     * and the draw is a vertex-array multi-draw with an unsigned-integer uniform. Those are OpenGL 3.0
+     * to 3.2 features, plus {@code uintBitsToFloat}, which is GLSL 3.30 or {@code GL_ARB_shader_bit_encoding}.
+     * A Fabric window's 3.2 core context has them and does not set {@code OpenGL33}.
+     */
     static boolean supported() {
         GLCapabilities caps = GL.getCapabilities();
-        return caps.OpenGL33;
+        boolean multiDraw = (INDEXED ? caps.glMultiDrawElementsBaseVertex : caps.glMultiDrawArrays) != 0;
+        return supported(caps.glGenVertexArrays != 0, caps.glTexBuffer != 0, caps.glUniform1ui != 0, multiDraw,
+                caps.OpenGL33 || caps.GL_ARB_shader_bit_encoding);
     }
 
-    private static String glslVersion() {
+    /** The feature check behind {@link #supported()}. */
+    static boolean supported(boolean vertexArrays, boolean bufferTextures, boolean uintUniforms, boolean multiDraw, boolean bitCast) {
+        return vertexArrays && bufferTextures && uintUniforms && multiDraw && bitCast;
+    }
+
+    /** The GLSL header baked into far terrain's programs, from the current context. */
+    static String glslVersion() {
         GLCapabilities caps = GL.getCapabilities();
-        String number = caps.OpenGL46 ? "460" : caps.OpenGL45 ? "450" : caps.OpenGL44 ? "440" : caps.OpenGL43 ? "430"
-                : caps.OpenGL42 ? "420" : caps.OpenGL41 ? "410" : caps.OpenGL40 ? "400" : "330";
-        return "#version " + number + " core\n";
+        return glslVersion(caps.OpenGL46, caps.OpenGL45, caps.OpenGL44, caps.OpenGL43, caps.OpenGL42, caps.OpenGL41, caps.OpenGL40, caps.OpenGL33,
+                caps.GL_ARB_shader_bit_encoding, caps.GL_ARB_explicit_attrib_location);
+    }
+
+    /**
+     * The same header from version flags. A 3.3 or newer context keeps the version it has always had
+     * ({@code #version 330 core} through {@code 460}). A 3.2 core context rejects {@code #version 330},
+     * so the header is {@code #version 150 core}. {@code uintBitsToFloat} and {@code layout(location)}
+     * are GLSL 3.30; the shader text already uses both, and on 3.2 they compile when the driver
+     * exposes the extensions that provide them. No shader body changes for that.
+     */
+    static String glslVersion(boolean gl46, boolean gl45, boolean gl44, boolean gl43, boolean gl42, boolean gl41, boolean gl40, boolean gl33,
+            boolean bitEncoding, boolean explicitLocations) {
+        if (gl46 || gl45 || gl44 || gl43 || gl42 || gl41 || gl40 || gl33) {
+            String number = gl46 ? "460" : gl45 ? "450" : gl44 ? "440" : gl43 ? "430"
+                    : gl42 ? "420" : gl41 ? "410" : gl40 ? "400" : "330";
+            return "#version " + number + " core\n";
+        }
+        StringBuilder header = new StringBuilder("#version 150 core\n");
+        // Extensions before any shader text: a #extension line after a declaration is an error.
+        if (bitEncoding) header.append("#extension GL_ARB_shader_bit_encoding : enable\n");
+        if (explicitLocations) header.append("#extension GL_ARB_explicit_attrib_location : enable\n");
+        return header.toString();
     }
 
     long quadBytes() { return quadBytes; }
