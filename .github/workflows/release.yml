@@ -161,7 +161,7 @@ jobs:
           make_latest: 'true'
           files: dist/*
 
-      # Uploads the jars to Modrinth (project earth-platform) as alphas for Minecraft 1.21.1, with the
+      # Uploads the jars to Modrinth (project earth-platform) as betas for Minecraft 1.21.1, with the
       # build's notes as the changelog: the NeoForge jar as version N, the Fabric jar as N+fabric
       # (needing Fabric API). Each jar runs on both client and server.
       # Needs the MODRINTH_TOKEN secret (a Modrinth personal access token with "Create versions");
@@ -182,7 +182,9 @@ jobs:
           agent="$GITHUB_REPOSITORY release workflow"
           notes="docs/release/notes/$TAG.md"
           if [ -f "$notes" ]; then changelog=$(cat "$notes"); else changelog="Earth Platform $TAG"; fi
-          case "$VERSION" in *-beta.*) type=beta ;; *-alpha.*|*prototype*) type=alpha ;; *) type=release ;; esac
+          # Same channel rule as .github/scripts/curseforge-upload.sh: 0.1.0-alpha.N is Beta.
+          # Both the NeoForge version and the Fabric version share $type.
+          case "$VERSION" in *-beta.*|*-alpha.*|*prototype*) type=beta ;; *) type=release ;; esac
           upload() { # version-number name jar loaders-json dependencies-json
             status=$(curl -sS -o /dev/null -w '%{http_code}' -A "$agent" -H "Authorization: $MODRINTH_TOKEN" \
               "$api/project/$MODRINTH_PROJECT/version/$1")
@@ -204,7 +206,7 @@ jobs:
           upload "$VERSION+fabric" "$TITLE for Fabric" "earthplatform-fabric-$TAG.jar" '["fabric", "quilt"]' \
             '[{"project_id": "P7dR8mSH", "dependency_type": "required"}]'
 
-      # Uploads the jars to CurseForge as alphas for Minecraft 1.21.1, with the build's notes as the
+      # Uploads the jars to CurseForge as betas for Minecraft 1.21.1, with the build's notes as the
       # changelog: the NeoForge jar as one file, the Fabric jar (Fabric and Quilt, needing Fabric API)
       # as another. Both are marked for client and server and Java 21. Sodium and Iris are optional.
       # Needs the CURSEFORGE_TOKEN secret (an API token from CurseForge → Account settings → API tokens)
