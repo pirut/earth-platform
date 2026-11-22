@@ -32,7 +32,7 @@ public final class OptionalMixins implements IMixinConfigPlugin {
      * same in its NeoForge and Fabric builds, and the Minecraft methods they look for are remapped
      * like the rest of ours.
      */
-    private static final Set<String> ON_FABRIC = Set.of("ComputerCraftTurtleMoveMixin", "ComputerCraftModemRangeMixin");
+    private static final Set<String> ON_FABRIC = Set.of("ComputerCraftTurtleMoveMixin", "ComputerCraftModemRangeMixin", "SodiumSectionDirtyMixin");
 
     /** Compat mixins targeting vanilla classes that should only apply when their companion mod is loaded. */
     private static final java.util.Map<String, String> REQUIRES_MOD_CLASS = java.util.Map.of(

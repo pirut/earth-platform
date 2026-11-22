@@ -1,9 +1,15 @@
 package io.earthplatform.minecraft.cubic.client;
 
 import static org.junit.jupiter.api.Assertions.*;
+import io.earthplatform.minecraft.cubic.Cube;
+import io.earthplatform.minecraft.cubic.CubeKey;
+import io.earthplatform.minecraft.cubic.gen.SurfacePacketFixtures;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import org.junit.jupiter.api.Test;
 
 class CubeRendererTest {
@@ -94,5 +100,77 @@ class CubeRendererTest {
         List<Integer> submitted = new ArrayList<>();
         CubeRenderer.submitNearest(order, new CubeWorkBudget(0, 1_000_000L, 3), () -> 0, submitted::add);
         assertEquals(List.of(1, 0, 2), submitted);
+    }
+
+    private static Cube cube(int cx, int cy, int cz, boolean solid) {
+        LevelChunkSection section = new LevelChunkSection(SurfacePacketFixtures.biomes());
+        if (solid) section.setBlockState(0, 0, 0, Blocks.STONE.defaultBlockState(), false);
+        return new Cube(cx, cy, cz, section);
+    }
+
+    @Test void sectionDirtyMarksLoadedCubesAtAnyHeightWithoutDoubleBumping() {
+        Long2ObjectOpenHashMap<Cube> cubes = new Long2ObjectOpenHashMap<>();
+        int[][] coords = {{0, 3, 0}, {12, 550, -7}, {-5, -300, 9}};
+        for (int[] c : coords) {
+            Cube cube = cube(c[0], c[1], c[2], true);
+            cubes.put(cube.key, cube);
+        }
+        CubeRenderer renderer = new CubeRenderer(cubes::get);
+        for (int[] c : coords) {
+            long key = CubeKey.pack(c[0], c[1], c[2]);
+            renderer.sectionDirty(c[0], c[1], c[2]);
+            assertTrue(renderer.dirty.contains(key));
+            assertEquals(1, renderer.versions.get(key));
+            // A duplicate dirty call (such as markAndNotify after blockChanged, or Sodium after LevelRenderer)
+            // leaves the version alone.
+            renderer.sectionDirty(c[0], c[1], c[2]);
+            assertEquals(1, renderer.versions.get(key));
+        }
+        assertEquals(coords.length, renderer.pendingCount());
+    }
+
+    @Test void sectionDirtyIgnoresUnloadedWrappedAndEmptyCubes() {
+        Long2ObjectOpenHashMap<Cube> cubes = new Long2ObjectOpenHashMap<>();
+        Cube loaded = cube(1, 3, -2, true);
+        Cube air = cube(1, 4, -2, false);
+        cubes.put(loaded.key, loaded);
+        cubes.put(air.key, air);
+        CubeRenderer renderer = new CubeRenderer(cubes::get);
+
+        // Unloaded section.
+        renderer.sectionDirty(99, 3, -2);
+        // Out-of-range Y that wraps in 20-bit CubeKey to loaded's key.
+        renderer.sectionDirty(1, 3 + (1 << 20), -2);
+        // Loaded air-only cube with no mesh.
+        renderer.sectionDirty(1, 4, -2);
+
+        assertTrue(renderer.dirty.isEmpty());
+        assertEquals(0, renderer.versions.get(loaded.key));
+        assertEquals(0, renderer.versions.get(air.key));
+        assertEquals(0, renderer.pendingCount());
+    }
+
+    @Test void sectionDirtyRequeuesInFlightBuilds() {
+        Long2ObjectOpenHashMap<Cube> cubes = new Long2ObjectOpenHashMap<>();
+        Cube loaded = cube(0, 3, 0, true);
+        cubes.put(loaded.key, loaded);
+        CubeRenderer renderer = new CubeRenderer(cubes::get);
+
+        renderer.sectionDirty(0, 3, 0);
+        assertEquals(1, renderer.versions.get(loaded.key));
+
+        // Simulate submit(): moves key out of dirty and into building while keeping version 1.
+        renderer.dirty.remove(loaded.key);
+        renderer.building.add(loaded.key);
+
+        // A moving dynamic light dirties the cube again while its previous build is still in flight.
+        renderer.sectionDirty(0, 3, 0);
+        assertTrue(renderer.dirty.contains(loaded.key));
+        assertEquals(2, renderer.versions.get(loaded.key));
+        assertTrue(CubeRenderer.dropStale(1, renderer.versions.get(loaded.key), true, 0));
+
+        // Another dirty notification before the next submit does not bump version again.
+        renderer.sectionDirty(0, 3, 0);
+        assertEquals(2, renderer.versions.get(loaded.key));
     }
 }

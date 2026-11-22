@@ -73,6 +73,8 @@ public final class FarStore implements AutoCloseable {
     private volatile boolean ready;
     private volatile boolean closed;
     private long lastSweep = System.nanoTime();
+    /** Writer-thread running total of bytes on disk and bytes appended since the last live trim. */
+    private long storedBytes, writtenSinceTrim;
 
     /**
      * @param stamp what the columns depend on beyond the ground: the mod's build and the generator; a store with
@@ -111,10 +113,12 @@ public final class FarStore implements AutoCloseable {
             if (!wanted.equals(found)) {
                 if (found != null && !closed) log.accept("Far terrain kept on disk was made by another build; it is made again as it is seen");
                 clear();
+                storedBytes = 0;
+                writtenSinceTrim = 0;
                 Files.createDirectories(directory);
                 Files.writeString(file, wanted, StandardCharsets.UTF_8);
             } else {
-                trim();
+                trim(null);
             }
             ready = true;
         } catch (IOException | RuntimeException failure) {
@@ -136,30 +140,51 @@ public final class FarStore implements AutoCloseable {
         });
     }
 
-    /** Deletes the files used longest ago until the store fits in nine tenths of its limit. */
-    private void trim() throws IOException {
+    /**
+     * Deletes the files used longest ago until the store fits in nine tenths of its limit, closing
+     * any open region handles first so trimming is safe both on startup and during active writes.
+     * {@code keep}, if non-null, is the region just written and is skipped.
+     */
+    private void trim(@Nullable Path keep) throws IOException {
         if (limit <= 0 || !Files.isDirectory(directory)) return;
-        record Kept(Path file, long size, FileTime used) {}
+        record Kept(Path file, long size, long used, long nano) {}
+        Map<Path, Map.Entry<Long, Region>> live = new HashMap<>();
+        for (Map.Entry<Long, Region> entry : regions.entrySet()) live.put(entry.getValue().file, entry);
         List<Kept> files = new ArrayList<>();
         long[] total = new long[1];
         Files.walkFileTree(directory, new SimpleFileVisitor<>() {
             @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
                 if (file.getFileName().toString().endsWith(".far")) {
-                    files.add(new Kept(file, attributes.size(), attributes.lastModifiedTime()));
+                    Map.Entry<Long, Region> entry = live.get(file);
+                    long used = entry != null ? entry.getValue().usedMillis : attributes.lastModifiedTime().toMillis();
+                    long nano = entry != null ? entry.getValue().used : Long.MIN_VALUE;
+                    files.add(new Kept(file, attributes.size(), used, nano));
                     total[0] += attributes.size();
                 }
                 return FileVisitResult.CONTINUE;
             }
         });
+        storedBytes = total[0];
+        writtenSinceTrim = 0;
         if (total[0] <= limit) return;
-        files.sort(Comparator.comparing(Kept::used));
-        long before = total[0];
+        files.sort(Comparator.comparingLong(Kept::used).thenComparingLong(Kept::nano));
+        long before = total[0], target = limit / 10 * 9;
+        int removed = 0;
         for (Kept kept : files) {
-            if (total[0] <= limit / 10 * 9) break;
-            Files.deleteIfExists(kept.file);
+            if (total[0] <= target) break;
+            if (kept.file.equals(keep)) continue;
+            Map.Entry<Long, Region> entry = live.get(kept.file);
+            if (entry != null) {
+                entry.getValue().delete();
+                regions.remove(entry.getKey(), entry.getValue());
+            } else {
+                Files.deleteIfExists(kept.file);
+            }
             total[0] -= kept.size;
+            removed++;
         }
-        log.accept("Far terrain kept on disk trimmed from " + (before >> 20) + " MB to " + (total[0] >> 20) + " MB");
+        storedBytes = total[0];
+        if (removed > 0) log.accept("Far terrain kept on disk trimmed from " + (before >> 20) + " MB to " + (total[0] >> 20) + " MB");
     }
 
     private static long regionKey(long key) {
@@ -193,8 +218,13 @@ public final class FarStore implements AutoCloseable {
         writer.execute(() -> {
             if (!ready || epoch(key) != epoch) return;
             try {
-                region(key).append(key, column);
+                Region target = region(key);
+                long delta = target.append(key, column);
+                storedBytes = Math.max(0, storedBytes + delta);
+                if (delta > 0) writtenSinceTrim += delta;
                 puts.incrementAndGet();
+                long slack = Math.max(1L, limit / 8);
+                if (limit > 0 && storedBytes > limit + slack && writtenSinceTrim >= slack) trim(target.file);
             } catch (IOException | RuntimeException failure) { drop(key, failure); }
             sweep();
         });
@@ -207,7 +237,10 @@ public final class FarStore implements AutoCloseable {
         removing.merge(key, 1, Integer::sum);
         writer.execute(() -> {
             try {
-                if (ready) region(key).append(key, null);
+                if (ready) {
+                    long delta = region(key).append(key, null);
+                    storedBytes = Math.max(0, storedBytes + delta);
+                }
             } catch (IOException | RuntimeException failure) {
                 drop(key, failure);
             } finally {
@@ -293,13 +326,15 @@ public final class FarStore implements AutoCloseable {
         /** Where each live key's record starts, and its packed length. */
         @Nullable private Map<Long, long[]> index;
         private long size, live;
-        private long used = System.nanoTime();
+        private volatile long used = System.nanoTime();
+        private volatile long usedMillis = System.currentTimeMillis();
 
         Region(Path file) { this.file = file; }
 
         /** Opens the file and reads its records' headers; the file ends at the first one that can't be right. */
         private void open(boolean create) throws IOException {
             used = System.nanoTime();
+            usedMillis = System.currentTimeMillis();
             if (index != null && (channel != null || !create)) return;
             Map<Long, long[]> found = new HashMap<>();
             if (!create && !Files.exists(file)) { index = found; return; }
@@ -352,10 +387,14 @@ public final class FarStore implements AutoCloseable {
             return inflate(packed);
         }
 
-        /** Appends a column's record, or an empty one that takes the key out when {@code column} is null. */
-        synchronized void append(long key, @Nullable byte[] column) throws IOException {
+        /**
+         * Appends a column's record, or an empty one that takes the key out when {@code column} is null.
+         * Returns the net change in this file's size in bytes (including any compaction).
+         */
+        synchronized long append(long key, @Nullable byte[] column) throws IOException {
             open(column != null);
-            if (column == null && !index.containsKey(key)) return;
+            if (column == null && !index.containsKey(key)) return 0;
+            long before = size;
             byte[] packed = column == null ? new byte[0] : deflate(column);
             CRC32 check = new CRC32();
             check.update(packed);
@@ -368,6 +407,7 @@ public final class FarStore implements AutoCloseable {
             if (old != null) live -= old[1] + HEADER;
             if (column != null) live += packed.length + HEADER;
             if (size - live > Math.max(COMPACT_BYTES, live)) compact();
+            return size - before;
         }
 
         /** Writes the live records out to a new file that takes this one's place. */

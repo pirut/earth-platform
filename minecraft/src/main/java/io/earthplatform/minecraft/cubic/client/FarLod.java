@@ -124,7 +124,8 @@ public final class FarLod {
 
     /** True when far terrain draws into its own depth: a pack with Voxy support or a Distant Horizons program, compiled for it. */
     static boolean active() {
-        return defined && ShaderBlocks.packInUse() && ShaderBlocks.voxyPatch() != null;
+        FarShaders.PackPatch patch = ShaderBlocks.voxyPatch();
+        return defined && ShaderBlocks.packInUse() && patch != null && patch.ownDepth();
     }
 
     /** True when the pack fades and fogs far terrain by {@link #renderDistance} rather than the {@code far} uniform. */

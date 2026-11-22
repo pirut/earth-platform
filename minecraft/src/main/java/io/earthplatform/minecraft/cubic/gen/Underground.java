@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic.gen;
 
 import io.earthplatform.minecraft.cubic.CubeWorld;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.annotation.Nullable;
@@ -198,13 +199,82 @@ final class Underground {
         return field;
     }
 
+    /** Horizontal radius, in blocks, over which rock cover counts nearby cliff faces for vanilla cave density. */
+    private static final int COVER_REACH = 16;
+    /** Maximum horizontal radius, in blocks, over which a column's cave roof protects against cliff-face holes. */
+    static final int CLIFF_SHELL = 5;
+    private static final int[] COVER_DX, COVER_DZ, COVER_DIST;
+    static {
+        List<int[]> offsets = new ArrayList<>();
+        for (int dz = -4; dz <= 4; dz++) for (int dx = -4; dx <= 4; dx++) {
+            if (dx == 0 && dz == 0) continue;
+            int dist = (int) Math.round(Math.hypot(dx * 4.0, dz * 4.0));
+            if (dist <= COVER_REACH) offsets.add(new int[]{dx, dz, dist});
+        }
+        offsets.sort(java.util.Comparator.comparingInt(o -> o[2]));
+        COVER_DX = new int[offsets.size()];
+        COVER_DZ = new int[offsets.size()];
+        COVER_DIST = new int[offsets.size()];
+        for (int i = 0; i < offsets.size(); i++) {
+            COVER_DX[i] = offsets.get(i)[0];
+            COVER_DZ[i] = offsets.get(i)[1];
+            COVER_DIST[i] = offsets.get(i)[2];
+        }
+    }
+
     private double[] vanillaField(VanillaCaves caves, int x0, int y0, int z0) {
         double[] field = new double[VanillaCaves.NODES * VanillaCaves.VALUES];
+        int[] grounds = new int[VanillaCaves.NX * VanillaCaves.NZ];
+        int[] floors = new int[VanillaCaves.NX * VanillaCaves.NZ];
+        int minG = Integer.MAX_VALUE, maxG = Integer.MIN_VALUE;
         for (int iz = 0; iz < VanillaCaves.NZ; iz++) for (int ix = 0; ix < VanillaCaves.NX; ix++) {
-            int x = x0 + ix * 4, z = z0 + iz * 4, ground = terrain.surfaceY(x, z), floor = floor(x, z, ground);
+            int x = x0 + ix * 4, z = z0 + iz * 4, g = terrain.surfaceY(x, z);
+            int ci = iz * VanillaCaves.NX + ix;
+            grounds[ci] = g;
+            floors[ci] = floor(x, z, g);
+            if (g < minG) minG = g;
+            if (g > maxG) maxG = g;
+        }
+        int[] grid = null;
+        if (maxG >= y0) {
+            int[] probes = {
+                    terrain.surfaceY(x0 - 16, z0 + 8), terrain.surfaceY(x0 + 32, z0 + 8),
+                    terrain.surfaceY(x0 + 8, z0 - 16), terrain.surfaceY(x0 + 8, z0 + 32),
+                    terrain.surfaceY(x0 - 12, z0 - 12), terrain.surfaceY(x0 + 28, z0 - 12),
+                    terrain.surfaceY(x0 - 12, z0 + 28), terrain.surfaceY(x0 + 28, z0 + 28)
+            };
+            for (int p : probes) {
+                if (p < minG) minG = p;
+                if (p > maxG) maxG = p;
+            }
+            if (maxG - minG > 12 && y0 + 16 > minG - COVER_REACH) {
+                grid = new int[13 * 13];
+                for (int gz = 0; gz < 13; gz++) for (int gx = 0; gx < 13; gx++) {
+                    if (gx >= 4 && gx < 9 && gz >= 4 && gz < 9) {
+                        grid[gz * 13 + gx] = grounds[(gz - 4) * VanillaCaves.NX + (gx - 4)];
+                    } else {
+                        grid[gz * 13 + gx] = terrain.surfaceY(x0 + (gx - 4) * 4, z0 + (gz - 4) * 4);
+                    }
+                }
+            }
+        }
+        for (int iz = 0; iz < VanillaCaves.NZ; iz++) for (int ix = 0; ix < VanillaCaves.NX; ix++) {
+            int x = x0 + ix * 4, z = z0 + iz * 4;
+            int ci = iz * VanillaCaves.NX + ix, ground = grounds[ci], floor = floors[ci];
             for (int iy = 0; iy < VanillaCaves.NY; iy++) {
                 int y = y0 + iy * 8;
-                caves.corner(field, ((iy * VanillaCaves.NZ + iz) * VanillaCaves.NX + ix) * VanillaCaves.VALUES, x, vanillaY(y, floor), z, ground - y);
+                int cover = ground - y;
+                if (grid != null && cover > 0) {
+                    int cx = ix + 4, cz = iz + 4;
+                    for (int k = 0; k < COVER_DIST.length; k++) {
+                        int d = COVER_DIST[k];
+                        if (d >= cover) break;
+                        int h = grid[(cz + COVER_DZ[k]) * 13 + cx + COVER_DX[k]];
+                        int c = h < y ? d : d + (h - y);
+                        if (c < cover) cover = c;
+                    }
+                }
+                caves.corner(field, ((iy * VanillaCaves.NZ + iz) * VanillaCaves.NX + ix) * VanillaCaves.VALUES, x, vanillaY(y, floor), z, cover);
             }
         }
         return field;
@@ -241,13 +311,34 @@ final class Underground {
         return 6;
     }
 
+    /**
+     * Highest y at which caves may open in column {@code (x, z)}, keeping at least {@code roof}
+     * blocks of vertical cover and up to {@link #CLIFF_SHELL} + 1 blocks of horizontal cover from
+     * sheer cliff faces and narrow ridges. Equals {@code ground - roof} on terrain gentler than 45°.
+     */
+    int caveCeiling(int x, int z, int ground, int roof) {
+        if (roof <= 0) return ground;
+        int reach = Math.min(roof - 1, CLIFF_SHELL);
+        int cap = ground;
+        for (int dz = -reach; dz <= reach; dz++) {
+            int span = reach - Math.abs(dz);
+            for (int dx = -span; dx <= span; dx++) {
+                int dist = Math.abs(dx) + Math.abs(dz);
+                if (dist == 0) continue;
+                cap = Math.min(cap, terrain.surfaceY(x + dx, z + dz) + dist);
+            }
+        }
+        return cap - roof;
+    }
+
     /** Whether a block is solid ground as generated, before veins, plants and structures. */
     boolean solid(int x, int y, int z) {
         int ground = terrain.surfaceY(x, z);
         if (y > ground) return false;
-        int depth = ground - y;
-        if (depth < caveRoofAt(x, z, ground)) return true;
-        return !cave(x, y, z);
+        int roof = caveRoofAt(x, z, ground);
+        if (ground - y < roof) return true;
+        if (!cave(x, y, z)) return true;
+        return roof > 0 && y > caveCeiling(x, z, ground, roof);
     }
     private int caveRoofAt(int x, int z, int ground) {
         int slope = Math.abs(terrain.surfaceY(x + 1, z) - terrain.surfaceY(x - 1, z)) + Math.abs(terrain.surfaceY(x, z + 1) - terrain.surfaceY(x, z - 1));

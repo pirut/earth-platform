@@ -52,10 +52,18 @@ public final class DiskCache {
         return bytes;
     }
 
-    /** Marks a cache file used this session, so a trim leaves it. */
+    /** How often a cache file's modified time is refreshed during a long session so LRU order stays current. */
+    private static final long TOUCH_INTERVAL_MS = 60_000L;
+    /** Grace window keeping files touched in the last minute when trimming an active session back to its limit. */
+    private static final long SESSION_GRACE_MS = 60_000L;
+
+    /** Marks a cache file used, refreshing its timestamp periodically during long sessions. */
     static void used(Path cached) {
         try {
-            if (Files.getLastModifiedTime(cached).toMillis() < SESSION) Files.setLastModifiedTime(cached, FileTime.fromMillis(System.currentTimeMillis()));
+            long now = System.currentTimeMillis();
+            long modified = Files.getLastModifiedTime(cached).toMillis();
+            if (modified < SESSION || now - modified >= TOUCH_INTERVAL_MS)
+                Files.setLastModifiedTime(cached, FileTime.fromMillis(now));
         } catch (IOException | RuntimeException ignored) {
             // Read-only or gone: it is then only trimmed sooner.
         }
@@ -189,7 +197,7 @@ public final class DiskCache {
         long most = limit;
         if (folder == null || most <= 0 || !trimming.compareAndSet(false, true)) return;
         Thread thread = new Thread(() -> {
-            try { trim(folder, most, SESSION); }
+            try { trim(folder, most, SESSION, System.currentTimeMillis() - SESSION_GRACE_MS); }
             finally { trimming.set(false); }
         }, "Earth cache trim");
         thread.setDaemon(true);
@@ -199,9 +207,21 @@ public final class DiskCache {
 
     /**
      * Deletes the least recently used files under {@code folder} until it fits in 90% of
-     * {@code limit} bytes, leaving every file used at or after {@code since}.
+     * {@code limit} bytes, evicting entries before {@code since} first and enforcing a hard cap
+     * of twice {@code limit} if current-session data alone grows far beyond {@code limit}.
      */
     static void trim(Path folder, long limit, long since) {
+        trim(folder, limit, since, since);
+    }
+
+    /**
+     * Deletes the least recently used files under {@code folder} until it fits in 90% of
+     * {@code limit} bytes: pre-session files (before {@code since}) go first, then older
+     * current-session files (before {@code keepAfter}) whenever the cache still exceeds
+     * {@code limit}, and finally the oldest remaining files if even recent writes exceed twice
+     * {@code limit}.
+     */
+    static void trim(Path folder, long limit, long since, long keepAfter) {
         if (!Files.isDirectory(folder)) return;
         record Entry(Path path, long size, long time) {}
         List<Entry> entries = new ArrayList<>();
@@ -222,11 +242,29 @@ public final class DiskCache {
         if (total <= limit) return;
         entries.sort(Comparator.comparingLong(Entry::time));
         long target = limit / 10 * 9, freed = 0;
-        int removed = 0;
-        for (Entry entry : entries) {
-            if (total - freed <= target || entry.time >= since) break;
+        int removed = 0, index = 0;
+        // Pass 1: evict pre-session files oldest-first down to 90% of limit.
+        while (index < entries.size() && total - freed > target && entries.get(index).time < since) {
+            Entry entry = entries.get(index++);
             try { if (Files.deleteIfExists(entry.path)) { freed += entry.size; removed++; } }
             catch (IOException | RuntimeException ignored) { /* in use; try the next one */ }
+        }
+        // Pass 2: if still over limit, evict older current-session files outside the recent grace window.
+        if (total - freed > limit) {
+            while (index < entries.size() && total - freed > target && entries.get(index).time < keepAfter) {
+                Entry entry = entries.get(index++);
+                try { if (Files.deleteIfExists(entry.path)) { freed += entry.size; removed++; } }
+                catch (IOException | RuntimeException ignored) { /* in use; try the next one */ }
+            }
+        }
+        // Pass 3: hard ceiling so rapid bursts within the grace window still cannot grow unboundedly.
+        long hardLimit = limit <= Long.MAX_VALUE / 2 ? limit * 2 : Long.MAX_VALUE;
+        if (total - freed > hardLimit) {
+            while (index < entries.size() && total - freed > target) {
+                Entry entry = entries.get(index++);
+                try { if (Files.deleteIfExists(entry.path)) { freed += entry.size; removed++; } }
+                catch (IOException | RuntimeException ignored) { /* in use; try the next one */ }
+            }
         }
         if (removed > 0) log.accept("Trimmed the Earth data cache: removed " + removed + " files, " + (freed >> 20) + " MB; " + ((total - freed) >> 20) + " MB kept");
         if (total - freed > limit && !warned) {

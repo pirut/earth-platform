@@ -69,6 +69,14 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
     public static final String ATTRIBUTION = "United States: USGS 3D Elevation Program 1/3 arc-second DEM (public domain)";
     /** Metres 3DEP must read where the composite has exactly 0 for that 0 to be a void, not sea. */
     static final double VOID_ABOVE_SEA = 50;
+    /** Terrarium depth below which a pixel under shallow 3DEP is a corrupt coastal pit, not nearshore bathymetry. */
+    static final float PIT_DEPTH = -60f;
+    /** Shallow 3DEP floor above which a deep negative Terrarium pixel counts as a pit rather than a below-sea basin. */
+    private static final double SHALLOW_3DEP = -5;
+    /** Depth up to which a pit's resampled rim around a core deeper than {@value #PIT_DEPTH} m also takes 3DEP. */
+    private static final float PIT_RIM = -2f;
+    /** Maximum pixel steps from a pit core that its rim flood-fill may reach. */
+    private static final int PIT_REACH = 16;
     public static final URI AWS_3DEP = URI.create("https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/historical/");
     /** Coarser tiles cover so much ground that they are left to the composite. */
     public static final int MIN_ZOOM = 8;
@@ -136,14 +144,15 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
         Readings readings = plan instanceof Readings ahead ? ahead : read(zoom, x, y);
         if (readings.shares == null) return;
         double[] shares = readings.shares, read = readings.metres;
+        boolean[] pits = coastalPits(values, shares, read);
         for (int at = 0; at < shares.length; at++) {
             double share = shares[at];
             if (share <= 0.5) continue;
             float own = values[at];
             double metres = read[at];
             if (Double.isNaN(metres)) continue;
-            // 3DEP has no bathymetry; the composite's stays.
-            if (metres <= 0 && own < 0) continue;
+            // 3DEP has no bathymetry; the composite's stays, except for corrupt coastal pits under shallow 3DEP.
+            if (metres <= 0 && own < 0 && (pits == null || !pits[at])) continue;
             // Exactly 0 is open sea to the generator, and stays sea unless 3DEP has data all around it and
             // stands well above the sea there. The composite has voids of 0 inland, pits hundreds of metres
             // deep in a mountainside or a lake, that this fills. 3DEP also covers bays and sounds at a few
@@ -156,6 +165,49 @@ public final class UsgsElevation implements ElevationLayer, AutoCloseable {
             // Exactly 0 means open sea to the generator.
             values[at] = out == 0 ? Float.MIN_VALUE : out;
         }
+    }
+
+    /**
+     * Marks corrupt negative Terrarium pits (deeper than {@value #PIT_DEPTH} m) and their connected resampled rims
+     * (deeper than {@value #PIT_RIM} m within {@value #PIT_REACH} pixels) where 3DEP reads shallow coastal elevation
+     * ({@value #SHALLOW_3DEP}..0 m). Returns null when the tile has none, leaving normal bathymetry untouched.
+     */
+    private static boolean[] coastalPits(float[] values, double[] shares, double[] read) {
+        int pixels = values.length, size = TerrariumTileSource.TILE_SIZE;
+        boolean[] pits = null;
+        int[] queue = null, dist = null;
+        int head = 0, tail = 0;
+        for (int at = 0; at < pixels; at++) {
+            if (shares[at] <= 0.5 || values[at] >= PIT_DEPTH) continue;
+            double m = read[at];
+            if (Double.isNaN(m) || m > 0 || m <= SHALLOW_3DEP) continue;
+            if (pits == null) {
+                pits = new boolean[pixels];
+                queue = new int[pixels];
+                dist = new int[pixels];
+            }
+            pits[at] = true;
+            queue[tail++] = at;
+        }
+        if (pits == null) return null;
+        while (head < tail) {
+            int at = queue[head++], d = dist[at];
+            if (d >= PIT_REACH) continue;
+            int px = at % size, py = at / size;
+            for (int dir = 0; dir < 4; dir++) {
+                int nx = px + (dir == 0 ? 1 : dir == 1 ? -1 : 0);
+                int ny = py + (dir == 2 ? 1 : dir == 3 ? -1 : 0);
+                if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+                int n = ny * size + nx;
+                if (pits[n] || shares[n] <= 0.5 || values[n] >= PIT_RIM) continue;
+                double m = read[n];
+                if (Double.isNaN(m) || m > 0 || m <= SHALLOW_3DEP) continue;
+                pits[n] = true;
+                dist[n] = d + 1;
+                queue[tail++] = n;
+            }
+        }
+        return pits;
     }
 
     /**
