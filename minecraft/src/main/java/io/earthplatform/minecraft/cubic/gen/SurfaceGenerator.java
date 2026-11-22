@@ -339,6 +339,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** Blocks a forest's crowns stand above the ground where trees are not drawn one by one: a voxel of the 8-block level. */
     private static final int CROWN = 8;
+    /** Solid rock kept below the lowest ground in fine far columns, so cave mouths do not immediately reach {@code vy = 0}. */
+    private static final int CAVE_DEPTH = 32;
 
     private void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets, boolean materialize, boolean dense, boolean preview) {
         out.packet = null;
@@ -398,7 +400,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         if (giants) max += Sequoia.TALLEST + 1;
         else if (v <= 4) max += preview ? CROWN : Trees.TALLEST + 1;
         else if (v == 8) max += v;
-        int bottom = (min - v) >> (level + 4), highest = max >> (level + 4);
+        int depth = level <= Far.EDIT_LEVELS ? Math.max(v, CAVE_DEPTH) : v;
+        int bottom = (min - depth) >> (level + 4), highest = max >> (level + 4);
         // Columns taller than the section budget keep their top, where the view is.
         bottom = Math.max(bottom, highest - Far.MAX_SECTIONS + 1);
         int sections = highest - bottom + 1, base = bottom * width;
