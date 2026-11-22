@@ -53,6 +53,8 @@ final class Underground {
     private final Holder<Biome> lushCaves, dripstoneCaves, deepDarkCaves;
     private final ConcurrentHashMap<Long, Integer> floorNodes = new ConcurrentHashMap<>();
     final Structures structures;
+    /** Ores other mods add to biomes, placed after vanilla's own veins. */
+    private final ModOres modOres;
     /** Vanilla's caves, or null for the caves worlds made before build 70 carry on with. */
     @Nullable private volatile VanillaCaves vanillaCaves;
     /** Vanilla cave fields of recent cubes (about 3 KB each), by cube: structures test blocks of the cubes around theirs, which then reuse them. */
@@ -78,6 +80,7 @@ final class Underground {
         dripstoneCaves = biomes.getHolderOrThrow(Biomes.DRIPSTONE_CAVES);
         deepDarkCaves = biomes.getHolderOrThrow(Biomes.DEEP_DARK);
         structures = new Structures(this, seed);
+        modOres = new ModOres(terrain, this, seed, biomes);
         vanillaCaves = new VanillaCaves(seed);
     }
 
@@ -276,12 +279,13 @@ final class Underground {
     // After the rock is laid: veins, cave plants, structures -------------------------------------
 
     /**
-     * Adds a cube's rock and ore veins, cave plants and structures. {@code kind} is the cube's
-     * cave kind, or null when it holds the surface.
+     * Adds a cube's rock and ore veins, ores other mods add, cave plants and structures.
+     * {@code kind} is the cube's cave kind, or null when it holds the surface.
      */
     void finish(LevelChunkSection section, int cx, int cy, int cz, @Nullable Kind kind,
                 List<CompoundTag> blockEntities, List<CompoundTag> entities) {
         veins(section, cx, cy, cz);
+        modOres.place(section, cx, cy, cz);
         if (kind != null) plants(section, cx, cy, cz, kind);
         structures.place(section, cx, cy, cz, blockEntities, entities);
     }
