@@ -1800,7 +1800,9 @@ public final class EarthGenerator extends SurfaceGenerator {
      * the four cells around, blended by distance and by how much water each holds. It never stands
      * more than {@value #BANK} blocks above the lowest surveyed height close by, which the shore
      * climbs to meet, and in steep country, where one cell holds lakes and streams at many heights,
-     * never more than {@value #DIP} below it either.
+     * never more than {@value #DIP} below it either. A drowned level is the shores' and may stand
+     * far above the old bed; when the bank beside the column sits with the ground instead, as a
+     * canyon river's does or the pool under a falls, the level comes down to that bank.
      */
     private int lakeSurface(GlobalElevation dem, double x, double z, int voxel) {
         double r = Math.max(8, voxel);
@@ -1902,15 +1904,68 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (!drowned && !Double.isNaN(drownedBy) && !Double.isNaN(level) && level > drownedBy) { level = drownedBy; drowned = true; }
         if (Double.isNaN(level)) return local;
         int surface = Mth.floor(SEA + 0.5 + level);
-        // A falls' face stands at the level of the reach above it or the pool below, whatever the ground reads.
+        // A drowned level, and a falls face snapped to the reach above it, can sit on the wall rather than
+        // the channel. The bank on this column's own ground brings it down; a reservoir's shore, up at the
+        // level, does not. A falls' face then keeps whichever of the two reaches that leaves it.
+        int column = Mth.floor(SEA + 0.5 + dem.metres(x + 0.5, z + 0.5));
+        if ((drowned || fallingNear) && surface > column + BANK)
+            surface = WaterLevels.capToBanks(surface, column, bankEdge(dem, x, z, voxel, column), BANK);
         if (fallingNear) return surface;
         if (relief > MOUNTAINS && !drowned) surface = Math.max(surface, local - DIP);
         // Nor does a lake lie under the sea's level where the ground round it doesn't: a cell's water samples include
         // the sea, whose survey reads the bathymetry, and the Exumas' salt ponds took its depth, twenty and thirty
         // blocks under the sea beside them. Below-sea lakes, as the Dead Sea, have their ground as low.
         if (!drowned && surface < SEA) surface = Math.max(surface, Math.min(SEA, local - DIP));
-        // Drowned ground lies far under its water, which stands at its shores' level.
+        // Drowned ground lies far under its water, which stands at its shores' level, unless the bank
+        // beside the column brought that level down to the channel.
         return drowned ? surface : Math.min(surface, local + BANK);
+    }
+
+    /**
+     * The bank beside a column whose water was levelled by its shores, on {@code dem}, or
+     * {@link WaterLevels#MISSING} when the water runs on for {@link #BANK_SEEK} blocks. Wide open
+     * water, the middle of a reservoir, is that: the shore is not beside it, and the level stays.
+     * Directions that do meet land within the reach contribute the bank there, and the one nearest
+     * this column's ground is the channel's edge rather than a wall or the next reach downstream.
+     */
+    private int bankEdge(GlobalElevation dem, double x, double z, int voxel, int ground) {
+        int seek = Math.max(BANK_SEEK, voxel * 8);
+        for (int reach : new int[] {seek / 2, seek}) {
+            boolean land = false;
+            for (int k = 0; k < 8 && !land; k++)
+                land = !openWater(x + RING_X[k] * reach, z + RING_Z[k] * reach, voxel);
+            if (!land && reach == seek) return WaterLevels.MISSING;
+            if (!land) continue;
+            int stride = Math.max(8, voxel), fine = Math.max(1, voxel);
+            int[] heights = new int[8];
+            int n = 0;
+            for (int k = 0; k < 8; k++) {
+                int edge = -1;
+                for (int step = stride; step <= seek; step += stride) {
+                    if (!openWater(x + RING_X[k] * step, z + RING_Z[k] * step, voxel)) { edge = step; break; }
+                }
+                if (edge < 0 && !openWater(x + RING_X[k] * seek, z + RING_Z[k] * seek, voxel)) edge = seek;
+                if (edge < 0) continue;
+                int prev = Math.max(0, edge - stride);
+                for (int step = prev + fine; step <= edge; step += fine) {
+                    if (!openWater(x + RING_X[k] * step, z + RING_Z[k] * step, voxel)) { edge = step; break; }
+                }
+                double landX = Math.floor(x + RING_X[k] * edge) + 0.5, landZ = Math.floor(z + RING_Z[k] * edge) + 0.5;
+                double waterX = Math.floor(x + RING_X[k] * Math.max(0, edge - fine)) + 0.5;
+                double waterZ = Math.floor(z + RING_Z[k] * Math.max(0, edge - fine)) + 0.5;
+                int landY = Mth.floor(SEA + 0.5 + dem.metres(landX, landZ));
+                int waterY = Mth.floor(SEA + 0.5 + dem.metres(waterX, waterZ));
+                heights[n++] = WaterLevels.bankReading(ground, landY, waterY, (int) FALL);
+            }
+            return WaterLevels.closestBank(ground, n == 0 ? new int[0] : Arrays.copyOf(heights, n));
+        }
+        return WaterLevels.MISSING;
+    }
+
+    /** Whether the land cover at a point is water or the open sea, so a bank search walks on through it. */
+    private boolean openWater(double x, double z, int voxel) {
+        int code = cover(x, z, voxel);
+        return code == WorldCoverSource.WATER || code == WorldCoverSource.NO_DATA;
     }
 
     /** The ground's height range over the water cells around a column, as {@link #lakeSurface} weighs them. */
@@ -1925,6 +1980,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private static final int WATER_CELL = 1024, WATER_ZOOM = 12, WATER_OVERVIEW = 2, WATER_SAMPLES = 16;
     /** How far water may stand above the lowest surveyed height near it, and, in steep country, below it. */
     private static final int BANK = 4, DIP = 2;
+    /** How far, in blocks, a level taken from the shores looks for the bank beside a column. */
+    private static final int BANK_SEEK = 128;
     /** Height range (metres, middle 80% of a cell's ground) above which a cell counts as steep country. */
     private static final double MOUNTAINS = 100;
 
