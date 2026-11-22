@@ -327,6 +327,8 @@
   "earthplatform.configuration.localizedDayNight.tooltip": "Progresses the sun from each spot's longitude, latitude and season, so players in Australia and Canada see different times of day and opposite seasons. Off keeps one shared sky everywhere.",
   "earthplatform.configuration.yearLengthDays": "Seasonal year length (days)",
   "earthplatform.configuration.yearLengthDays.tooltip": "In-game days in one full seasonal year when localized day/night is on. 0 keeps equal 12-hour days and nights everywhere.",
+  "earthplatform.configuration.moddedBiomes": "Use modded biomes and blocks",
+  "earthplatform.configuration.moddedBiomes.tooltip": "Use realistic biomes and blocks from installed biome mods (such as Biomes O' Plenty, Regions Unexplored, and Oh The Biomes We've Gone) where they fit Earth's climates and landscapes.",
   "earthplatform.globe.title": "Choose where your Earth begins",
   "earthplatform.globe.choose": "Start here",
   "earthplatform.globe.hint": "Click the globe to choose a spot.",

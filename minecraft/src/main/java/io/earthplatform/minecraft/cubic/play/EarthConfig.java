@@ -61,6 +61,7 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue SURVIVAL_MAP;
     public static final ModConfigSpec.BooleanValue LOCALIZED_DAY_NIGHT;
     public static final ModConfigSpec.IntValue YEAR_LENGTH_DAYS;
+    public static final ModConfigSpec.BooleanValue MODDED_BIOMES;
 
     /** The settings behind the engine switches (see {@link EngineToggles}), in whichever file each lives. */
     private static final Map<EngineToggles.Toggle, ModConfigSpec.BooleanValue> TOGGLES = new LinkedHashMap<>();
@@ -164,6 +165,9 @@ public final class EarthConfig {
         YEAR_LENGTH_DAYS = common.comment("In-game days in one full seasonal year when localizedDayNight is on (longer summer days and shorter winter days,",
                         "flipped between hemispheres). 0 keeps equal 12-hour days and nights everywhere. Default 96.")
                 .translation(key("yearLengthDays")).defineInRange("yearLengthDays", EarthSolar.DEFAULT_YEAR_DAYS, 0, 3650);
+        MODDED_BIOMES = common.comment("Use realistic biomes and surface blocks from installed biome mods (such as Biomes O' Plenty, Regions Unexplored",
+                        "and Oh The Biomes We've Gone) where they fit Earth's climates and landscapes. When false, Earth worlds use vanilla biomes and blocks only.")
+                .translation(key("moddedBiomes")).define("moddedBiomes", true);
         defineToggles(common, EngineToggles.Side.COMMON);
         COMMON_SPEC = common.build();
     }
@@ -329,6 +333,12 @@ public final class EarthConfig {
 
     /** Whether new worlds get satellite imagery, counting a command-line setting. */
     public static boolean imagery() { return Boolean.getBoolean("earthplatform.earth.imagery"); }
+
+    /** Whether installed biome mods' realistic biomes and surface blocks are used. */
+    public static boolean moddedBiomes() {
+        try { return COMMON_SPEC.isLoaded() ? MODDED_BIOMES.get() : true; }
+        catch (RuntimeException unloaded) { return true; }
+    }
 
     private static void property(String key, String value) {
         if (!FROM_COMMAND_LINE.contains(key)) System.setProperty(key, value);

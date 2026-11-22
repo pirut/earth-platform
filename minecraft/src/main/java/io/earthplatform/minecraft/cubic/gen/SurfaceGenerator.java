@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.gen;
 
+import io.earthplatform.minecraft.cubic.earth.ModdedBiomes;
 import io.earthplatform.minecraft.cubic.far.Far;
 import java.util.ArrayList;
 import java.util.List;
@@ -141,6 +142,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
      */
     protected int giantForm(int x, int z) { return -1; }
 
+    /** Optional {@code {bark, furrow, leaves}} override for giant conifers (0 sequoia, 1 redwood, 2 fir), or null for vanilla blocks. */
+    @Nullable protected BlockState[] giantBlocks(int form) { return null; }
+
     /** Whether trees' bare log ends at the top of their crowns are covered with leaves; worlds made before build 70 keep vanilla's. */
     protected boolean cappedCrowns() { return false; }
 
@@ -167,7 +171,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
      * otherwise stood as grey stone walls under a few blocks of red.
      */
     private static boolean bedrock(BlockState under) {
-        return under.is(Blocks.SANDSTONE) || under.is(Blocks.RED_SANDSTONE) || under.is(BlockTags.TERRACOTTA);
+        return ModdedBiomes.isSandstone(under) || under.is(BlockTags.TERRACOTTA);
     }
 
     // Columns ------------------------------------------------------------------------------------
