@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.LongFunction;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -66,15 +67,16 @@ public final class CubeRenderer {
     static final int STALE_DROPS = 2;
 
     private final ClientCubeWorld world;
+    private final LongFunction<Cube> lookup;
     private final CubeSnapshotCache snapshots = new CubeSnapshotCache(1024);
     /** Finished meshes of each cube thrown away as stale since it last had one uploaded. */
     private final Long2IntOpenHashMap staleDropped = new Long2IntOpenHashMap();
     private final Long2ObjectOpenHashMap<Mesh> meshes = new Long2ObjectOpenHashMap<>();
     private final Long2ObjectOpenHashMap<byte[]> light = new Long2ObjectOpenHashMap<>();
-    private final LongOpenHashSet dirty = new LongOpenHashSet();
+    final LongOpenHashSet dirty = new LongOpenHashSet();
     private final Long2IntOpenHashMap dirtySince = new Long2IntOpenHashMap();
-    private final Long2IntOpenHashMap versions = new Long2IntOpenHashMap();
-    private final LongOpenHashSet building = new LongOpenHashSet();
+    final Long2IntOpenHashMap versions = new Long2IntOpenHashMap();
+    final LongOpenHashSet building = new LongOpenHashSet();
     /**
      * Cubes being meshed when a shader pack came or went. Iris picks the vertex format when the
      * mesher starts a buffer, so these come back in the old one: drawn with the new one, their
@@ -162,7 +164,16 @@ public final class CubeRenderer {
     }
 
     CubeRenderer(ClientCubeWorld world) {
+        this(world, world::cube);
+    }
+
+    CubeRenderer(LongFunction<Cube> lookup) {
+        this(null, lookup);
+    }
+
+    private CubeRenderer(@org.jetbrains.annotations.Nullable ClientCubeWorld world, LongFunction<Cube> lookup) {
         this.world = world;
+        this.lookup = lookup;
         visibility.defaultReturnValue(CubeCaves.OPEN);
     }
 
@@ -191,9 +202,23 @@ public final class CubeRenderer {
     // Dirty tracking -----------------------------------------------------------------------------
 
     private void markDirty(long key) {
-        if (world.cube(key) == null) return;
+        if (lookup.apply(key) == null) return;
         if (dirty.add(key)) dirtySince.put(key, ticks);
         versions.addTo(key, 1);
+    }
+
+    /**
+     * Marks a loaded cube dirty when vanilla or another mod schedules a section rebuild outside the cube store, as
+     * dynamic lighting mods do when a light moves. Already-dirty cubes keep their version, empty cubes with no mesh
+     * are skipped so far terrain does not re-mask, and cubes already building are queued again.
+     */
+    public void sectionDirty(int cx, int cy, int cz) {
+        long key = CubeKey.pack(cx, cy, cz);
+        Cube cube = lookup.apply(key);
+        if (cube == null || cube.x != cx || cube.y != cy || cube.z != cz) return;
+        if (cube.isEmpty() && !meshes.containsKey(key)) return;
+        if (dirty.contains(key)) return;
+        markDirty(key);
     }
 
     private void markAround(int cx, int cy, int cz, boolean all) {
