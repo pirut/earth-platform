@@ -82,6 +82,59 @@ class FarGpuGl32Test {
                 }
                 """;
         GL20C.glDeleteProgram(GlShaders.link(FarShaders.packVertex(header, null), FarShaders.packFragment(header, patch, true), "150 pack own depth"));
+        String terrainVert = """
+                #version 150 core
+                uniform mat4 iris_ProjMat;
+                uniform mat4 iris_ModelViewMat;
+                uniform mat3 iris_NormalMat;
+                uniform vec4 iris_ColorModulator;
+                in vec3 iris_Position;
+                in vec4 iris_Color;
+                in vec3 iris_Normal;
+                in vec2 iris_UV0;
+                in ivec2 iris_UV2;
+                in vec4 mc_Entity;
+                in vec4 at_tangent;
+                out vec4 vCol;
+                out vec2 vUv;
+                out vec2 vLm;
+                out vec3 vNorm;
+                void main() {
+                    gl_Position = iris_ProjMat * iris_ModelViewMat * vec4(iris_Position, 1.0);
+                    vCol = iris_Color * iris_ColorModulator;
+                    vUv = iris_UV0;
+                    vLm = vec2(iris_UV2) / 240.0;
+                    vNorm = normalize(iris_NormalMat * iris_Normal) + at_tangent.xyz * 0.0 + mc_Entity.xyz * 0.0;
+                }
+                """;
+        String terrainFrag = """
+                #version 150 core
+                #extension GL_ARB_explicit_attrib_location : enable
+                uniform sampler2D gtexture;
+                uniform sampler2D lightmap;
+                in vec4 vCol;
+                in vec2 vUv;
+                in vec2 vLm;
+                in vec3 vNorm;
+                layout(location = 0) out vec4 iris_FragData0;
+                layout(location = 1) out vec4 iris_FragData1;
+                layout(location = 2) out vec4 iris_FragData2;
+                layout(location = 3) out vec4 iris_FragData3;
+                void main() {
+                    iris_FragData0 = texture(gtexture, vUv) * vCol;
+                    iris_FragData1 = vec4(vNorm * 0.5 + 0.5, 1.0);
+                    iris_FragData2 = vec4(vLm, 0.0, 1.0);
+                    iris_FragData3 = texture(lightmap, vLm);
+                }
+                """;
+        FarShaders.PackPatch terrain = FarShaders.terrainPatch(terrainVert, terrainFrag, 4);
+        for (int fade = 0; fade < 3; fade++) {
+            for (boolean ground : new boolean[] {false, true}) {
+                String h = header + FarShaders.fade(fade);
+                GL20C.glDeleteProgram(GlShaders.link(FarShaders.terrainVertex(h, terrain),
+                        FarShaders.terrainFragment(header, terrain, fade, ground), "150 terrain " + fade + " " + ground));
+            }
+        }
         assertEquals(GL11C.GL_NO_ERROR, GL11C.glGetError());
     }
 }

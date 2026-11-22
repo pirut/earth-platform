@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.gen;
 
 import static io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.*;
 
+import io.earthplatform.minecraft.cubic.earth.ModdedBiomes;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Surface;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Tree;
 import java.util.ArrayList;
@@ -135,10 +136,10 @@ final class Vegetation {
         int stalkHeight = 0;
         boolean byWater = !snowy && nextToWater(gi, height, water, h);
         if (top == SNOW_BLOCK) plant = SNOW;
-        else if (byWater && roll < 150 && (soil || top == SAND || top == RED_SAND || top == DIRT || top == COARSE_DIRT || top == MUD)) {
+        else if (byWater && roll < 150 && (soil || ModdedBiomes.isSand(top) || top == DIRT || top == COARSE_DIRT || top == MUD)) {
             stalk = SUGAR_CANE;
             stalkHeight = 2 + (int) Math.floorMod(r >>> 20, 3);
-        } else if (top == SAND || top == RED_SAND) {
+        } else if (ModdedBiomes.isSand(top)) {
             // Desert scrub: dead bushes, and cacti on every other column (so no two touch) with no higher ground beside them.
             if (roll < s.grass()) plant = state(Blocks.DEAD_BUSH);
             else if (roll < s.flowers() && ((x | z) & 1) == 0 && height[gi - 1] <= h && height[gi + 1] <= h
@@ -146,8 +147,7 @@ final class Vegetation {
                 stalk = CACTUS;
                 stalkHeight = 1 + (int) Math.floorMod(r >>> 20, 3);
             }
-        } else if ((top == COARSE_DIRT || top.is(Blocks.LIGHT_GRAY_TERRACOTTA)) && (biome.is(Biomes.SAVANNA) || biome.is(Biomes.WINDSWEPT_SAVANNA)
-                || biome.is(Biomes.DESERT) || biome.is(Biomes.BADLANDS))) {
+        } else if ((top == COARSE_DIRT || top.is(Blocks.PACKED_MUD) || top.is(Blocks.LIGHT_GRAY_TERRACOTTA)) && ModdedBiomes.isArid(biome)) {
             // Dry scrub on bare dirt: sagebrush and saltbush stand-ins, with a few tufts of grass.
             if (roll < s.grass() / 5) plant = state(Blocks.DEAD_BUSH);
             else if (roll < s.grass() / 3 && top == COARSE_DIRT) plant = state(Blocks.SHORT_GRASS);
@@ -161,9 +161,8 @@ final class Vegetation {
             // Crops grow wild in patches: one 16-block square in many has some.
             long region = gen.mix(x >> 4, 0x50415443L, z >> 4);
             int patch = (int) Math.floorMod(r >>> 32, 100);
-            boolean jungle = biome.is(Biomes.JUNGLE) || biome.is(Biomes.SPARSE_JUNGLE) || biome.is(Biomes.BAMBOO_JUNGLE);
-            boolean taiga = biome.is(Biomes.TAIGA) || biome.is(Biomes.SNOWY_TAIGA) || biome.is(Biomes.OLD_GROWTH_SPRUCE_TAIGA)
-                    || biome.is(Biomes.OLD_GROWTH_PINE_TAIGA);
+            boolean jungle = ModdedBiomes.isJungle(biome);
+            boolean taiga = ModdedBiomes.isTaiga(biome);
             if (biome.is(Biomes.BAMBOO_JUNGLE) && roll < 300 && top != MYCELIUM) {
                 stalk = state(Blocks.BAMBOO);
                 stalkHeight = 5 + (int) Math.floorMod(r >>> 20, 10);
@@ -209,16 +208,16 @@ final class Vegetation {
 
     /** The flower a biome grows here; each kind grows in patches a few blocks across. */
     private BlockState flower(Holder<Biome> biome, int x, int z, long r) {
-        if (biome.is(Biomes.SWAMP)) return state(Blocks.BLUE_ORCHID);
+        if (ModdedBiomes.isWetland(biome) && !biome.is(Biomes.MANGROVE_SWAMP)) return state(Blocks.BLUE_ORCHID);
         if (biome.is(Biomes.CHERRY_GROVE)) return state(Blocks.PINK_PETALS).setValue(PinkPetalsBlock.FACING, SIDES[(int) (r >>> 40 & 3)])
                 .setValue(PinkPetalsBlock.AMOUNT, 1 + (int) (r >>> 42 & 3));
         long patch = gen.mix(x >> 3, 0x464C4F57L, z >> 3);
         if (biome.is(Biomes.SUNFLOWER_PLAINS) && Math.floorMod(patch, 10) < 6) return state(Blocks.SUNFLOWER);
         BlockState[] kinds;
         if (biome.is(Biomes.FLOWER_FOREST)) { kinds = ALL_FLOWERS; patch = gen.mix(x >> 2, 0x464C4F57L, z >> 2); }
-        else if (biome.is(Biomes.MEADOW)) kinds = MEADOW_FLOWERS;
-        else if (biome.is(Biomes.PLAINS) || biome.is(Biomes.SUNFLOWER_PLAINS)) kinds = PLAINS_FLOWERS;
-        else if (biome.is(Biomes.FOREST) || biome.is(Biomes.BIRCH_FOREST) || biome.is(Biomes.OLD_GROWTH_BIRCH_FOREST) || biome.is(Biomes.DARK_FOREST)) kinds = FOREST_FLOWERS;
+        else if (ModdedBiomes.isMeadow(biome)) kinds = MEADOW_FLOWERS;
+        else if (ModdedBiomes.isPlains(biome)) kinds = PLAINS_FLOWERS;
+        else if (ModdedBiomes.isForest(biome)) kinds = FOREST_FLOWERS;
         else kinds = DEFAULT_FLOWERS;
         return kinds[(int) Math.floorMod(patch >>> 8, kinds.length)];
     }
@@ -231,7 +230,7 @@ final class Vegetation {
         Holder<Biome> b = s.biome();
         long r = gen.mix(x, water, z);
         int roll = (int) Math.floorMod(r, 1000);
-        boolean swampy = b.is(Biomes.SWAMP) || b.is(Biomes.MANGROVE_SWAMP), river = b.is(Biomes.RIVER);
+        boolean swampy = ModdedBiomes.isWetland(b), river = b.is(Biomes.RIVER);
         if (swampy && depth <= 3 && roll < 70 || river && depth <= 2 && roll < 12) plant(section, lx, water + 1 - y0, lz, state(Blocks.LILY_PAD));
         boolean warm = b.is(Biomes.WARM_OCEAN), lukewarm = b.is(Biomes.LUKEWARM_OCEAN) || b.is(Biomes.DEEP_LUKEWARM_OCEAN);
         boolean sea = warm || lukewarm || b.is(Biomes.OCEAN) || b.is(Biomes.DEEP_OCEAN) || b.is(Biomes.COLD_OCEAN) || b.is(Biomes.DEEP_COLD_OCEAN);

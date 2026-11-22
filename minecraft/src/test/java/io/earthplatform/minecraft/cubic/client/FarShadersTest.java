@@ -301,11 +301,15 @@ class FarShadersTest {
         String version = "#version 330 core\n", jitter = "vec2 earth_taaOffset() { return vec2(0.0); }\n";
         Object patch = call(shaders, "dhPatch", types(String.class, String.class, int.class), DH_VERTEX, DH_FRAGMENT, 3);
         FarShaders.PackPatch own = FarShaders.dhPatch(DH_VERTEX, DH_FRAGMENT, 3);
+        String terrainVert = "#version 330 core\nin vec3 iris_Position;\nvoid main() { gl_Position = vec4(iris_Position, 1.0); }\n";
+        Object terrainPatch = call(shaders, "terrainPatch", types(String.class, String.class, int.class), terrainVert, DH_FRAGMENT, 3);
+        FarShaders.PackPatch ownTerrain = FarShaders.terrainPatch(terrainVert, DH_FRAGMENT, 3);
         java.util.List<String[]> built = new java.util.ArrayList<>();
         for (String taa : new String[] {null, jitter}) {
             built.add(new String[] {call(shaders, "packVertex", types(String.class, String.class), version, taa), FarShaders.packVertex(version, taa)});
         }
         built.add(new String[] {call(shaders, "dhVertex", types(String.class, patchType), version, patch), FarShaders.dhVertex(version, own)});
+        built.add(new String[] {call(shaders, "terrainVertex", types(String.class, patchType), version, terrainPatch), FarShaders.terrainVertex(version, ownTerrain)});
         built.add(new String[] {version + field(shaders, "PACK_FALLBACK"), version + FarShaders.PACK_FALLBACK});
         built.add(new String[] {call(shaders, "dhNearFragment", types(String.class), version), FarShaders.dhNearFragment(version)});
         for (int fade : new int[] {FarGpu.NO_FADE, FarGpu.FADE_IN}) {
@@ -316,6 +320,8 @@ class FarShadersTest {
             for (boolean ground : new boolean[] {false, true}) {
                 built.add(new String[] {call(shaders, "packNearFragment", types(String.class, String.class, int.class, boolean.class), version, PHOTON_NORMAL, fade, ground),
                         FarShaders.packNearFragment(version, PHOTON_NORMAL, fade, ground)});
+                built.add(new String[] {call(shaders, "terrainFragment", types(String.class, patchType, int.class, boolean.class), version, terrainPatch, fade, ground),
+                        FarShaders.terrainFragment(version, ownTerrain, fade, ground)});
                 for (boolean ownDepth : new boolean[] {false, true}) {
                     built.add(new String[] {call(shaders, "packFragment", types(String.class, String.class, boolean.class, int.class, boolean.class),
                             version, PHOTON_NORMAL, ownDepth, fade, ground), FarShaders.packFragment(version, PHOTON_NORMAL, ownDepth, fade, ground)});
