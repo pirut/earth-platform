@@ -226,7 +226,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (climate == null) return false;
                 GeoPoint p = grid.geographic(x, z);
                 if (!(Math.abs(p.latitude()) <= 90)) return false;
-                ClimateSource.Climate c = climate.at(p.latitude(), p.longitude(), 0);
+                double h = metres(x, z);
+                ClimateSource.Climate c = climate.at(p.latitude(), p.longitude(), Double.isFinite(h) ? Math.max(0, h) : 0);
                 if (c == null) return false;
                 ClimateZone zone = ClimateZone.of(c.koppen(), c.meanTemperature(), c.warmestQuarter());
                 return zone == ClimateZone.HOT_DESERT || zone == ClimateZone.COLD_DESERT || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.COLD_STEPPE;
@@ -2836,7 +2837,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** A column's climate at height y: its zone, mean and warmest-quarter temperatures (°C) and rainfall (mm a year). */
-    private record Local(ClimateZone zone, double temperature, double warmest, double rain, int koppen) {}
+    record Local(ClimateZone zone, double temperature, double warmest, double rain, int koppen) {}
 
     /** The real climate at a column and height, or one from latitude and height where there is none. */
     private Local local(int x, int z, int y) {
@@ -3166,7 +3167,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * What a WorldCover class puts on dry ground in this climate, or null for classes that are not
      * ground cover. Steep ground stays bare rock whatever is mapped on it, and sheds its snow.
      */
-    @Nullable private Surface covered(int code, int x, int z, int y, Local local, double steep, int roll, int slope, int voxel) {
+    @Nullable Surface covered(int code, int x, int z, int y, Local local, double steep, int roll, int slope, int voxel) {
         double t = local.temperature();
         ClimateZone zone = local.zone();
         boolean cliff = steep > 1.25;
@@ -3211,9 +3212,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Pantanal, mangrove coasts, and the American South's bayous and pine flatwoods.
         int eco = ecoregion(x, z);
         // Puna, páramo and Afro-alpine heath above 3,000 m, as on the Altiplano and Kilimanjaro's Shira plateau:
-        // treeless tussock grass, bare dust and scree.
+        // treeless tussock grass, bare dust and scree. Bare rock and lichen keep their own subnival cover, and
+        // cold mid-latitude peaks whose summers stay near freezing fall through to rock, scree and snow.
         if (eco != 0 && y > SEA + 3000 && code != WorldCoverSource.SNOW_AND_ICE && code != WorldCoverSource.WATER
-                && code != WorldCoverSource.CROPLAND && Ecoregions.get().biome(eco) == Ecoregions.MONTANE_GRASSLAND) {
+                && code != WorldCoverSource.CROPLAND && code != WorldCoverSource.BARE && code != WorldCoverSource.MOSS_AND_LICHEN
+                && local.warmest() >= 4 && zone != ClimateZone.ICE && Ecoregions.get().biome(eco) == Ecoregions.MONTANE_GRASSLAND) {
             if (cliff) return rock();
             // Mostly grass, with dust and scree in patches whose edges break up grain by grain.
             BlockState top = rocky != null ? rocky : patch > 0.45 + roll * 0.003 ? GRAVEL : patch < -0.3 - roll * 0.003 || roll < 6 ? COARSE_DIRT : GRASS;
@@ -3277,11 +3280,14 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (subalpine(y, local) && !montaneGrassland(x, z)) return new Surface(taiga, top, DIRT, 40 * trees, 10, 0, 250, 270, true);
                 return switch (zone) {
                     case RAINFOREST -> new Surface(sparseJungle, top, DIRT, 15 * trees, 0, 0, 320, 340, true, Tree.JUNGLE);
-                    case TROPICAL_DRY, HOT_STEPPE -> new Surface(patch > 0.5 ? windsweptSavanna : savanna, top, DIRT, 7 * trees, 0, 0, 320, 330, false, Tree.ACACIA);
+                    case TROPICAL_DRY, HOT_STEPPE -> {
+                        int density = local.rain() >= 350 ? (tropicalGrassland(x, z) ? 16 : 12) : 7;
+                        yield new Surface(patch > 0.5 ? windsweptSavanna : savanna, top, DIRT, density * trees, 0, 0, 320, 330, false, Tree.ACACIA);
+                    }
                     // Desert scrub: bare sand and gravel with dead bushes, and cacti where they grow wild, in the Americas.
                     case HOT_DESERT -> new Surface(desert, rocky != null ? rocky : patch > 0.2 ? COARSE_DIRT : SAND, SANDSTONE, 0, 0, 0, 25, cacti(x, z) ? 31 : 25, false);
                     // Sagebrush and saltbush: mostly bare tan ground with low grey shrubs, grass only in patches.
-                    case COLD_DESERT, COLD_STEPPE -> t < -3 ? new Surface(snowyPlains, top, DIRT, 0, 0, 0, 200, 210, false)
+                    case COLD_DESERT, COLD_STEPPE -> coldSnowy(z, local) ? new Surface(snowyPlains, top, DIRT, 0, 0, 0, 200, 210, false)
                             : sagebrush(rocky != null ? rocky : patch > 0.3 || roll < 55 ? scrubGround(x, z) : GRASS, trees);
                     // Chaparral and maquis: dry where summers are hot.
                     // Maquis and garrigue: oaks and pines among the scrub, never acacias.
@@ -3290,7 +3296,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                     case SUBPOLAR_OCEANIC -> new Surface(t < -3 ? snowyPlains : plains, top, DIRT, 6 * trees, 4, 5, 250, 260, false);
                     // Boreal scrub and bog: dark taiga ground, moss and podzol, stunted spruce.
                     case SUBARCTIC -> t < -3 ? new Surface(snowyPlains, top, DIRT, 0, 0, 0, 250, 260, false) : boreal(top, patch, trees);
-                    case TUNDRA, ICE -> new Surface(t < -3 ? snowyPlains : meadow, top, DIRT, 0, 0, 0, 250, 300, false);
+                    case TUNDRA, ICE -> new Surface(coldSnowy(z, local) ? snowyPlains : meadow, top, DIRT, 0, 0, 0, 250, 300, false);
                     // Heath with azaleas in half of the humid temperate scrub.
                     default -> new Surface(plains, top, DIRT, 9 * trees, t < 6 ? 6 : 0, 1, 330, 350, false, patch < 0 ? Tree.AZALEA : Tree.OAK);
                 };
@@ -3316,7 +3322,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             case WorldCoverSource.GRASSLAND -> {
                 if (cliff || rocky != null && t < -3) return rock();
                 BlockState top = rocky != null ? rocky : GRASS;
-                if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
+                if (coldSnowy(z, local)) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
                 // Cold steppe, as in Mongolia and the Great Basin: tufts of grass on bare ground, about a third grass.
                 if (dry && top == GRASS && (patch > 0.35 || roll < 60)) return sagebrush(scrubGround(x, z), 0);
                 return grassland(top, x, z, local, patch, moor, roll, rocky);
@@ -3416,11 +3422,16 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (moor) return moor(patch, roll, rocky);
                 BlockState top = rocky != null ? rocky : patch > 0.2 ? MOSS : roll < 30 ? GRAVEL : GRASS;
                 // Arctic tundra lies under snow; high mountain lichen fields, warm for a few weeks each summer, mostly do not.
-                boolean snowy = t < -2 && (local.warmest() < 2 || Math.abs(latitude(z)) > 55);
+                boolean snowy = coldSnowy(z, local);
                 return new Surface(snowy ? snowyPlains : meadow, top, DIRT, 0, 0, 0, top == GRASS ? 200 : 0, top == GRASS ? 230 : 0, false);
             }
             default -> { return null; }
         }
+    }
+
+    /** Whether cold open ground lies under snow: arctic tundra and cold alpine peaks, not mid-latitude meadows with warm summers. */
+    private boolean coldSnowy(int z, Local local) {
+        return local.temperature() < -2 && (local.warmest() < 2 || Math.abs(latitude(z)) > 55);
     }
 
     /**
@@ -3486,8 +3497,12 @@ public final class EarthGenerator extends SurfaceGenerator {
             // tan grass and dust with no trees, as acacias stand only in the wooded country the map shows as trees or shrubs.
             case TROPICAL_DRY, HOT_DESERT, HOT_STEPPE -> {
                 double dust = 0.15 - Mth.clamp((1100 - local.rain()) / 1200, 0, 0.5);
+                // Bushveld and warm tropical steppes carry light scattered acacias where rain reaches 350 mm; true desert stays treeless.
+                int trees = local.zone() == ClimateZone.HOT_DESERT || local.rain() < 350 ? 0
+                        : local.zone() == ClimateZone.HOT_STEPPE || tropicalGrassland(x, z) ? 6
+                        : local.rain() < 900 ? 0 : 2;
                 yield new Surface(savanna, top == GRASS && local.rain() < 1100 && patch > dust ? scrubGround(x, z) : top,
-                        DIRT, local.rain() < 900 ? 0 : 2, 0, 0, 380, 390, false, Tree.ACACIA);
+                        DIRT, trees, 0, 0, 380, 390, false, Tree.ACACIA);
             }
             // Junipers on the cold steppes.
             case COLD_DESERT, COLD_STEPPE -> new Surface(savanna, top, DIRT, 2, 10, 0, 380, 390, false);
@@ -3796,6 +3811,11 @@ public final class EarthGenerator extends SurfaceGenerator {
     private boolean montaneGrassland(int x, int z) {
         int eco = ecoregion(x, z);
         return eco != 0 && Ecoregions.get().biome(eco) == Ecoregions.MONTANE_GRASSLAND;
+    }
+
+    private boolean tropicalGrassland(int x, int z) {
+        int eco = ecoregion(x, z);
+        return eco != 0 && Ecoregions.get().biome(eco) == Ecoregions.TROPICAL_GRASSLAND;
     }
 
     /**

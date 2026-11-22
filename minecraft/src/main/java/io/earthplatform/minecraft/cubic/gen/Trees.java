@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 import java.util.function.IntBinaryOperator;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
@@ -40,6 +41,7 @@ import net.minecraft.world.level.levelgen.feature.configurations.RandomBooleanFe
 import net.minecraft.world.level.levelgen.feature.configurations.RandomFeatureConfiguration;
 import net.minecraft.world.level.levelgen.feature.configurations.RootSystemConfiguration;
 import net.minecraft.world.level.levelgen.feature.configurations.TreeConfiguration;
+import net.minecraft.world.level.levelgen.feature.foliageplacers.FoliagePlacer;
 import net.minecraft.world.level.levelgen.feature.treedecorators.BeehiveDecorator;
 import net.minecraft.world.level.levelgen.feature.treedecorators.TreeDecorator;
 import net.minecraft.world.level.levelgen.placement.PlacedFeature;
@@ -231,7 +233,7 @@ final class Trees {
     private static boolean fits(Surface surface, Tree kind, int h, int water) {
         int depth = water == DRY ? 0 : water - h;
         int deepest = kind == Tree.MANGROVE ? 5 : surface.biome().is(Biomes.SWAMP) ? 2 : 0;
-        return depth <= deepest && surface.top().is(BlockTags.DIRT);
+        return depth <= deepest && (surface.top().is(BlockTags.DIRT) || surface.top().is(Blocks.PACKED_MUD));
     }
 
     /**
@@ -514,10 +516,9 @@ final class Trees {
         return new Pick(new float[0], new ConfiguredFeature<?, ?>[0], tree(feature));
     }
 
-    /** The feature if it grows a tree or a huge mushroom, else null (a grass patch in bamboo jungle's list). */
-    @Nullable private static ConfiguredFeature<?, ?> tree(Holder<ConfiguredFeature<?, ?>> feature) {
-        Feature<?> kind = feature.value().feature();
-        return kind == Feature.TREE || kind == Feature.HUGE_RED_MUSHROOM || kind == Feature.HUGE_BROWN_MUSHROOM ? feature.value() : null;
+    /** The feature if it grows a tree, else null (huge mushrooms in dark forests and grass patches in bamboo jungles). */
+    @Nullable static ConfiguredFeature<?, ?> tree(Holder<ConfiguredFeature<?, ?>> feature) {
+        return feature.value().feature() == Feature.TREE ? feature.value() : null;
     }
 
     // Growing shapes -----------------------------------------------------------------------------
@@ -571,7 +572,7 @@ final class Trees {
      * shapes. Bee nests are left out and added as the shape is placed, at the feature's own odds.
      * Huge mushrooms get a patch of mycelium under them.
      */
-    private TreeShape[] grow(ConfiguredFeature<?, ?> feature, @Nullable BlockState soil) {
+    TreeShape[] grow(ConfiguredFeature<?, ?> feature, @Nullable BlockState soil) {
         boolean mud = feature.config() instanceof TreeConfiguration tree && tree.rootPlacer.isPresent();
         BlockState top = soil != null ? soil : (mud ? Blocks.MUD : Blocks.GRASS_BLOCK).defaultBlockState(), under = soil != null ? under(soil) : (mud ? Blocks.MUD : Blocks.DIRT).defaultBlockState();
         float bees = bees(feature);
@@ -586,24 +587,106 @@ final class Trees {
                 EarthPlatformMod.LOGGER.warn("Could not grow tree feature {}", feature, failure);
                 break;
             }
-            Long2ObjectOpenHashMap<BlockState> kept = new Long2ObjectOpenHashMap<>();
-            for (var entry : level.blocks.long2ObjectEntrySet()) {
-                BlockState state = entry.getValue();
-                if (state.is(Blocks.BEE_NEST) || state == level.ground(BlockPos.getY(entry.getLongKey()))) continue;
-                kept.put(entry.getLongKey(), state);
-            }
-            // Huge mushrooms stand on a patch of mycelium, the one place it grows outside mushroom islands.
-            if (feature.feature() == Feature.HUGE_RED_MUSHROOM || feature.feature() == Feature.HUGE_BROWN_MUSHROOM)
-                for (int dz = -2; dz <= 2; dz++) for (int dx = -2; dx <= 2; dx++)
-                    if (Math.abs(dx) + Math.abs(dz) <= 1 || Math.abs(dx) + Math.abs(dz) <= 3 && random.nextBoolean())
-                        kept.put(BlockPos.asLong(dx, -1, dz), Blocks.MYCELIUM.defaultBlockState());
-            if (kept.isEmpty()) continue;
-            if (gen.cappedCrowns()) cap(kept);
-            // Other mods' trees must fit the reach cubes look for trees in, and must grow a tree, not a patch of flowers.
-            if (soil != null && (!fits(kept) || kept.values().stream().noneMatch(Trees::woody))) continue;
-            grown.add(new TreeShape(kept, bees));
+            TreeShape shape = capture(level, feature, soil, random, bees);
+            if (shape != null) grown.add(shape);
         }
+        // If a third-party mod broke vanilla TreeFeature.place on our synthetic TreeLevel, grow directly
+        // from the TreeConfiguration (or a minimal fallback crown) so Earth forests never turn treeless.
+        if (grown.isEmpty() && soil == null) return growFallback(feature, top, under, anywhere, bees);
         return grown.toArray(TreeShape[]::new);
+    }
+
+    @Nullable private TreeShape capture(TreeLevel level, ConfiguredFeature<?, ?> feature, @Nullable BlockState soil, RandomSource random, float bees) {
+        Long2ObjectOpenHashMap<BlockState> kept = new Long2ObjectOpenHashMap<>();
+        for (var entry : level.blocks.long2ObjectEntrySet()) {
+            BlockState state = entry.getValue();
+            if (state.is(Blocks.BEE_NEST) || state == level.ground(BlockPos.getY(entry.getLongKey()))) continue;
+            kept.put(entry.getLongKey(), state);
+        }
+        // Huge mushrooms (from third-party mod additions) stand on a patch of mycelium.
+        if (feature.feature() == Feature.HUGE_RED_MUSHROOM || feature.feature() == Feature.HUGE_BROWN_MUSHROOM)
+            for (int dz = -2; dz <= 2; dz++) for (int dx = -2; dx <= 2; dx++)
+                if (Math.abs(dx) + Math.abs(dz) <= 1 || Math.abs(dx) + Math.abs(dz) <= 3 && random.nextBoolean())
+                    kept.put(BlockPos.asLong(dx, -1, dz), Blocks.MYCELIUM.defaultBlockState());
+        if (kept.isEmpty()) return null;
+        if (gen.cappedCrowns()) cap(kept);
+        // Other mods' trees must fit the reach cubes look for trees in, and must grow a tree, not a patch of flowers.
+        if (soil != null && (!fits(kept) || kept.values().stream().noneMatch(Trees::woody))) return null;
+        return new TreeShape(kept, bees);
+    }
+
+    /**
+     * Fallback when {@code feature.place} fails for an Earth forest tree: runs a {@link TreeConfiguration}'s
+     * own root, trunk and foliage placers directly (skipping {@code TreeFeature.place} and decorators), and
+     * if even that fails, builds a simple crown from its log and leaf providers (or oak) so forests never empty.
+     */
+    private TreeShape[] growFallback(ConfiguredFeature<?, ?> feature, BlockState top, BlockState under, Holder<Biome> anywhere, float bees) {
+        List<TreeShape> grown = new ArrayList<>();
+        if (feature.config() instanceof TreeConfiguration tree) {
+            for (int attempt = 0; attempt < VARIANTS * 3 && grown.size() < VARIANTS; attempt++) {
+                RandomSource random = RandomSource.create(0x54524545L + attempt * 0x9E3779B97F4A7C15L);
+                TreeLevel level = new TreeLevel(top, under, anywhere, random);
+                try {
+                    if (!placeDirect(level, random, tree)) continue;
+                } catch (RuntimeException failure) {
+                    EarthPlatformMod.LOGGER.warn("Direct tree placement also failed for {}, using simple fallback", feature, failure);
+                    grown.clear();
+                    break;
+                }
+                TreeShape shape = capture(level, feature, null, random, bees);
+                if (shape != null) grown.add(shape);
+            }
+        }
+        return grown.isEmpty() ? simpleFallback(feature, bees) : grown.toArray(TreeShape[]::new);
+    }
+
+    private static boolean placeDirect(TreeLevel level, RandomSource random, TreeConfiguration tree) {
+        BlockPos origin = tree.rootPlacer.map(r -> r.getTrunkOrigin(BlockPos.ZERO, random)).orElse(BlockPos.ZERO);
+        BiConsumer<BlockPos, BlockState> writer = (pos, state) -> level.setBlock(pos, state, 19);
+        if (tree.rootPlacer.isPresent() && !tree.rootPlacer.get().placeRoots(level, writer, random, BlockPos.ZERO, origin, tree)) return false;
+        int height = tree.trunkPlacer.getTreeHeight(random);
+        int foliageHeight = tree.foliagePlacer.foliageHeight(random, height, tree);
+        int foliageRadius = tree.foliagePlacer.foliageRadius(random, height - foliageHeight);
+        List<FoliagePlacer.FoliageAttachment> attachments = tree.trunkPlacer.placeTrunk(level, writer, random, height, origin, tree);
+        FoliagePlacer.FoliageSetter foliage = new FoliagePlacer.FoliageSetter() {
+            @Override public void set(BlockPos pos, BlockState state) {
+                BlockState leaf = state.hasProperty(LeavesBlock.DISTANCE) ? state.setValue(LeavesBlock.DISTANCE, 1) : state;
+                level.setBlock(pos, leaf, 19);
+            }
+            @Override public boolean isSet(BlockPos pos) { return level.blocks.containsKey(pos.asLong()); }
+        };
+        for (FoliagePlacer.FoliageAttachment attachment : attachments) {
+            tree.foliagePlacer.createFoliage(level, foliage, random, tree, height, attachment, foliageHeight, foliageRadius);
+        }
+        return !level.blocks.isEmpty();
+    }
+
+    private TreeShape[] simpleFallback(ConfiguredFeature<?, ?> feature, float bees) {
+        BlockState log = Blocks.OAK_LOG.defaultBlockState();
+        BlockState leaf = Blocks.OAK_LEAVES.defaultBlockState();
+        if (feature.config() instanceof TreeConfiguration tree) {
+            RandomSource r = RandomSource.create(0x54524545L);
+            try { log = tree.trunkProvider.getState(r, BlockPos.ZERO); } catch (RuntimeException ignored) {}
+            try { leaf = tree.foliageProvider.getState(r, BlockPos.ZERO); } catch (RuntimeException ignored) {}
+        }
+        if (leaf.hasProperty(LeavesBlock.DISTANCE)) leaf = leaf.setValue(LeavesBlock.DISTANCE, 1);
+        TreeShape[] shapes = new TreeShape[3];
+        for (int i = 0; i < shapes.length; i++) {
+            int height = 4 + i;
+            Long2ObjectOpenHashMap<BlockState> kept = new Long2ObjectOpenHashMap<>();
+            for (int dy = height - 2; dy <= height; dy++) {
+                int radius = dy == height ? 1 : 2;
+                for (int dz = -radius; dz <= radius; dz++) for (int dx = -radius; dx <= radius; dx++) {
+                    if (Math.abs(dx) == radius && Math.abs(dz) == radius && (dy == height || ((dx + dz + i) & 1) == 0)) continue;
+                    kept.put(BlockPos.asLong(dx, dy, dz), leaf);
+                }
+            }
+            kept.put(BlockPos.asLong(0, height + 1, 0), leaf);
+            for (int dy = 0; dy < height; dy++) kept.put(BlockPos.asLong(0, dy, 0), log);
+            if (gen.cappedCrowns()) cap(kept);
+            shapes[i] = new TreeShape(kept, bees);
+        }
+        return shapes;
     }
 
     /** Whether a grown tree stays within {@link #REACH} of its origin and {@link #TALLEST} above it. */
