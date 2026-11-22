@@ -23,11 +23,11 @@ final class FarShaders {
      * For a pack with Distant Horizons programs and no Voxy code, see {@link PackPatch#dh}.
      */
     record PackPatch(String fragment, @Nullable String taaOffset, int faceDepthLocation, java.util.List<String> uniforms,
-            java.util.Map<String, String> samplers, @Nullable String vertex, int outputs) {
+            java.util.Map<String, String> samplers, @Nullable String vertex, int outputs, boolean terrain) {
         PackPatch(String fragment, @Nullable String taaOffset) { this(fragment, taaOffset, java.util.List.of(), java.util.Map.of()); }
 
         PackPatch(String fragment, @Nullable String taaOffset, java.util.List<String> uniforms, java.util.Map<String, String> samplers) {
-            this(fragment, taaOffset, FarShaders.faceDepthLocation(fragment), uniforms, samplers, null, 0);
+            this(fragment, taaOffset, FarShaders.faceDepthLocation(fragment), uniforms, samplers, null, 0, false);
         }
 
         /**
@@ -35,7 +35,14 @@ final class FarShaders {
          * {@code vertex} is its vertex shader and {@code fragment} its fragment shader, both as Iris
          * patched them, and {@code outputs} how many of the pack's targets the fragment shader writes.
          */
-        boolean dh() { return vertex != null; }
+        boolean dh() { return vertex != null && !terrain; }
+
+        /**
+         * Whether far terrain draws into its own depth buffer ({@link FarLod}): true for Voxy and
+         * Distant Horizons patches, false for a pack's own solid terrain program ({@link #terrain}),
+         * which draws into the game's depth and already-bound terrain G-buffer.
+         */
+        boolean ownDepth() { return !terrain; }
     }
 
     private static final Pattern UNIFORM_LIST = Pattern.compile("\"uniforms\"\\s*:\\s*\\[([^\\]]*)\\]");
@@ -910,7 +917,7 @@ final class FarShaders {
                 + " dhMaterialId = earth_dhMaterial; _vert_tex_light_coord = earth_dhLight; _vert_color = earth_dhColour; " + vertex.substring(end);
         String vertexCode = MAIN.matcher(unpacked).replaceFirst("void earth_dhMain()");
         String fragmentCode = MAIN.matcher(fragment).replaceFirst("void earth_dhMain()");
-        return new PackPatch(fragmentCode, null, faceDepthLocation(fragmentCode), java.util.List.of(), java.util.Map.of(), vertexCode, outputs);
+        return new PackPatch(fragmentCode, null, faceDepthLocation(fragmentCode), java.util.List.of(), java.util.Map.of(), vertexCode, outputs, false);
     }
 
     /** The index of the brace closing the one at {@code open}, or -1. */
@@ -1044,6 +1051,232 @@ final class FarShaders {
                 in vec3 earth_position;
                 uniform float earth_NearReach;
                 """ + main.replaceFirst("\\{", "{\n    if (length(earth_position.xz) >= earth_NearReach) discard;");
+    }
+
+    // Solid terrain packs (see FarTerrainPack) ------------------------------------------------------
+
+    /** A global-scope vertex shader input declaration: its GLSL type, and its comma-separated variable names. */
+    private static final Pattern VERTEX_IN = Pattern.compile(
+            "^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?"
+            + "(?:(?:flat|smooth|noperspective|centroid|sample|invariant|precise|highp|mediump|lowp)\\s+)*"
+            + "in\\s+"
+            + "(?:(?:highp|mediump|lowp)\\s+)?"
+            + "([A-Za-z_][A-Za-z0-9_]*)\\s+"
+            + "([A-Za-z_][A-Za-z0-9_]*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*)*)\\s*;$",
+            Pattern.DOTALL);
+
+    /**
+     * Far terrain's pack code from a pack's own solid terrain program, for a pack with neither Voxy
+     * nor Distant Horizons support: its vertex and fragment shaders as Iris's vanilla patcher leaves
+     * them, with the vertex shader's global {@code in} attributes turned into plain globals fed by
+     * far terrain's unpacked face ({@link #TERRAIN_VERTEX}), and both {@code main}s renamed so far
+     * terrain's own code runs first. All fragment outputs ({@code DRAWBUFFERS} / {@code RENDERTARGETS})
+     * stay intact so the pack's deferred and composite passes read complete G-buffers. Null when the
+     * vertex shader does not look like an Iris-patched vanilla terrain shader.
+     */
+    @Nullable static PackPatch terrainPatch(@Nullable String vertex, @Nullable String fragment, int outputs) {
+        if (vertex == null || fragment == null || outputs <= 0 || !MAIN.matcher(vertex).find() || !MAIN.matcher(fragment).find()) return null;
+        java.util.Map<String, String> inputs = new java.util.LinkedHashMap<>();
+        String rewritten = rewriteVertexInputs(vertex, inputs);
+        if (!inputs.containsKey("iris_Position")) return null;
+        StringBuilder assign = new StringBuilder("\nvoid earth_terrainAssign() {\n");
+        for (java.util.Map.Entry<String, String> entry : inputs.entrySet()) {
+            assign.append("    ").append(entry.getKey()).append(" = ").append(terrainInputValue(entry.getKey(), entry.getValue())).append(";\n");
+        }
+        assign.append("}\n");
+        String vertexCode = MAIN.matcher(rewritten).replaceFirst("void earth_terrainMain()") + assign;
+        String fragmentCode = MAIN.matcher(fragment).replaceFirst("void earth_terrainMain()");
+        return new PackPatch(fragmentCode, null, 0, java.util.List.of(), java.util.Map.of(), vertexCode, outputs, true);
+    }
+
+    /**
+     * Converts global-scope vertex {@code in} declarations into plain global variables and records
+     * each variable's declared GLSL type in {@code inputs}. Comments, preprocessor directives,
+     * function parameter lists, and braced blocks are skipped so only top-level vertex attributes change.
+     */
+    private static String rewriteVertexInputs(String source, java.util.Map<String, String> inputs) {
+        StringBuilder out = new StringBuilder(source.length());
+        int length = source.length(), copied = 0, brace = 0, paren = 0, stmtStart = -1;
+        boolean lineStart = true;
+        for (int i = 0; i < length; i++) {
+            char c = source.charAt(i);
+            if (c == '/' && i + 1 < length) {
+                char next = source.charAt(i + 1);
+                if (next == '/') {
+                    int end = source.indexOf('\n', i + 2);
+                    i = end < 0 ? length - 1 : end;
+                    lineStart = true;
+                    continue;
+                }
+                if (next == '*') {
+                    int end = source.indexOf("*/", i + 2);
+                    i = end < 0 ? length - 1 : end + 1;
+                    continue;
+                }
+            }
+            if (lineStart && c == '#' && brace == 0 && paren == 0 && stmtStart < 0) {
+                while (i < length) {
+                    if (source.charAt(i) == '\n' && (i == 0 || source.charAt(i - 1) != '\\')) break;
+                    i++;
+                }
+                lineStart = true;
+                continue;
+            }
+            if (c == '\n') { lineStart = true; continue; }
+            if (c == ' ' || c == '\t' || c == '\r') continue;
+            lineStart = false;
+            if (c == '{') {
+                if (brace == 0) stmtStart = -1;
+                brace++;
+            } else if (c == '}') {
+                if (brace > 0) brace--;
+                if (brace == 0) stmtStart = -1;
+            } else if (c == '(') {
+                if (brace == 0 && paren == 0 && stmtStart < 0) stmtStart = i;
+                paren++;
+            } else if (c == ')') {
+                if (paren > 0) paren--;
+            } else if (c == ';' && brace == 0 && paren == 0) {
+                if (stmtStart >= 0) {
+                    String stmt = source.substring(stmtStart, i + 1);
+                    Matcher matched = VERTEX_IN.matcher(COMMENTS.matcher(stmt).replaceAll(" "));
+                    if (matched.matches()) {
+                        String type = matched.group(1), names = matched.group(2);
+                        out.append(source, copied, stmtStart).append(type).append(' ').append(names).append(';');
+                        copied = i + 1;
+                        for (String name : names.split(",")) inputs.put(name.trim(), type);
+                    }
+                    stmtStart = -1;
+                }
+            } else if (brace == 0 && paren == 0 && stmtStart < 0) {
+                stmtStart = i;
+            }
+        }
+        out.append(source, copied, length);
+        return out.toString();
+    }
+
+    /** The GLSL expression feeding one vertex attribute of a pack's solid terrain vertex shader. */
+    private static String terrainInputValue(String name, String type) {
+        return switch (name) {
+            case "iris_Position" -> type.equals("vec4") ? "vec4(earth_terrainPosition, 1.0)" : "earth_terrainPosition";
+            case "iris_Normal" -> type.equals("vec4") ? "vec4(earth_terrainNormal, 0.0)" : "earth_terrainNormal";
+            case "iris_Color" -> type.equals("vec3") ? "earth_terrainColour.rgb" : "earth_terrainColour";
+            case "iris_UV0", "mc_midTexCoord" -> switch (type) {
+                case "vec4" -> "vec4(earth_terrainUv, 0.0, 1.0)";
+                case "vec3" -> "vec3(earth_terrainUv, 0.0)";
+                default -> "earth_terrainUv";
+            };
+            case "iris_UV2" -> type.equals("vec2") ? "vec2(earth_terrainLight)" : "earth_terrainLight";
+            case "iris_UV1" -> type.equals("vec2") ? "vec2(0.0, 10.0)" : "ivec2(0, 10)";
+            case "at_tangent" -> type.equals("vec3") ? "earth_terrainTangent.xyz" : "earth_terrainTangent";
+            case "mc_Entity" -> switch (type) {
+                case "vec4" -> "vec4(-1.0, 0.0, 0.0, 0.0)";
+                case "vec3" -> "vec3(-1.0, 0.0, 0.0)";
+                case "vec2" -> "vec2(-1.0, 0.0)";
+                case "float" -> "-1.0";
+                case "ivec4" -> "ivec4(-1, 0, 0, 0)";
+                case "ivec3" -> "ivec3(-1, 0, 0)";
+                case "ivec2" -> "ivec2(-1, 0)";
+                case "int" -> "-1";
+                default -> type + "(0)";
+            };
+            case "iris_Entity" -> type.equals("ivec3") ? "ivec3(-1, -1, -1)" : type + "(0)";
+            default -> type + "(0)";
+        };
+    }
+
+    /**
+     * What a far face is to a pack's solid terrain vertex shader, worked out by far terrain's own
+     * vertex shader and handed to the pack's in place of chunk vertex attributes: camera-relative
+     * position, slope-blended world normal, average/smooth tinted colour, sprite centre UV,
+     * Minecraft lightmap coordinates (0..240), and a unit tangent orthogonal to the normal.
+     */
+    private static final String TERRAIN_VERTEX = """
+            uniform usamplerBuffer earth_Looks;
+            vec3 earth_terrainPosition;
+            vec3 earth_terrainNormal;
+            vec4 earth_terrainColour;
+            vec2 earth_terrainUv;
+            ivec2 earth_terrainLight;
+            vec4 earth_terrainTangent;
+            const vec3 earth_terrainNormals[6] = vec3[](vec3(0, -1, 0), vec3(0, 1, 0), vec3(0, 0, -1), vec3(0, 0, 1), vec3(-1, 0, 0), vec3(1, 0, 0));
+
+            const float earth_GrowPixels = 0.46;
+
+            void earth_terrainInit() {
+                uvec4 spriteBits = texelFetch(earth_Looks, int(earth_look) * 2);
+                uvec4 look = texelFetch(earth_Looks, int(earth_look) * 2 + 1);
+                vec4 sprite = uintBitsToFloat(spriteBits);
+                vec3 face = earth_terrainNormals[min(earth_face, 5u)];
+                earth_terrainPosition = earth_position;
+                earth_terrainUv = (sprite.xy + sprite.zw) * 0.5;
+                earth_terrainLight = ivec2(int(earth_light >> 4) * 16, int(earth_light & 15u) * 16);
+                if (earth_smooth > 0.5) {
+                    earth_terrainColour = vec4(earth_vcolour, 1.0);
+                    earth_terrainNormal = dot(earth_vnormal, earth_vnormal) > 1e-12 ? normalize(earth_vnormal) : face;
+                } else {
+                    earth_terrainColour = vec4(earth_rgb(look.x) * earth_rgb(look.y), 1.0);
+                    earth_terrainNormal = face;
+                    if (earth_normal != 0u) {
+                        float voxel = earth_reach / 16.0;
+                        float pixels = max(voxel, 2.0) * earth_GrowPixels / max(earth_Grow * length(earth_anchor), 1e-6);
+                        pixels *= abs(dot(normalize(earth_anchor), face));
+                        float share = 0.85 * (1.0 - smoothstep(2.0, 10.0, pixels));
+                        vec3 mixed = mix(face, earth_decodeNormal(earth_normal), share);
+                        earth_terrainNormal = dot(mixed, mixed) > 1e-12 ? normalize(mixed) : face;
+                    }
+                }
+                vec3 up = abs(earth_terrainNormal.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0);
+                earth_terrainTangent = vec4(normalize(cross(up, earth_terrainNormal)), 1.0);
+            }
+            """;
+
+    /** The vertex shader for a pack's solid terrain program: far terrain unpacks the face, then the pack's own vertex shader runs. */
+    static String terrainVertex(String header, PackPatch patch) {
+        String[] pack = split(patch.vertex());
+        String own = MAIN.matcher(PACK_VERTEX).replaceFirst("void earth_main()").replace("CORNERS", "earth_Corners").replace("TRIANGLES", "earth_Triangles");
+        return dhHeader(header, patch.vertex()) + pack[0] + own + TERRAIN_VERTEX + pack[1]
+                + "\nvoid main() {\n    earth_main();\n    earth_terrainInit();\n    earth_terrainAssign();\n    earth_terrainMain();\n}\n";
+    }
+
+    /** Far terrain's fade and stand-in ground discard ahead of a pack's solid terrain fragment shader. */
+    private static final String TERRAIN_BEFORE = """
+            #ifdef EARTH_GROUND
+            uniform sampler2D earth_Blocks;
+            void earth_ground() {
+                if (texelFetch(earth_Blocks, ivec2(gl_FragCoord.xy), 0).r < 1.0) discard;
+            }
+            #endif
+            #ifdef EARTH_FADE
+            in vec2 earth_band;
+            flat in float earth_arrived;
+            flat in float earth_merging;
+            uniform float earth_FadeHole;
+            uniform float earth_DitherFrame;
+            void earth_fade() {
+                float coarse = smoothstep(earth_FadeHole - 0.5, earth_FadeHole + 0.5, max(abs(earth_band.x), abs(earth_band.y)));
+                coarse = earth_merging > 0.5 ? 1.0 - earth_arrived : max(coarse, 1.0 - earth_arrived);
+                vec2 pixel = gl_FragCoord.xy + 5.588238 * earth_DitherFrame;
+                float dither = fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+                if (EARTH_FADE == 1 ? dither < coarse : dither >= coarse) discard;
+            }
+            #endif
+            void earth_terrainBefore() {
+            #ifdef EARTH_FADE
+                earth_fade();
+            #endif
+            #ifdef EARTH_GROUND
+                earth_ground();
+            #endif
+            }
+            """;
+
+    /** The fragment shader for a pack's solid terrain program: far terrain's discard checks first, then the pack's full fragment shader. */
+    static String terrainFragment(String header, PackPatch patch, int fade, boolean ground) {
+        String[] pack = split(patch.fragment());
+        return dhHeader(header, patch.fragment()) + pack[0] + (ground ? GROUND : "") + fade(fade)
+                + TERRAIN_BEFORE + pack[1] + "\nvoid main() {\n    earth_terrainBefore();\n    earth_terrainMain();\n}\n";
     }
 
     // Depth pre-pass (-Dearthplatform.far.depthPrepass=true; see FarGpu#DEPTH_PREPASS) ---------------
