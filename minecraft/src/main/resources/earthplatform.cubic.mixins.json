@@ -112,7 +112,9 @@
     "CubicBiomeLocateMixin",
     "CubicStructureManagerMixin",
     "CubicLocateMixin",
-    "EarthCompassReequipMixin"
+    "EarthCompassReequipMixin",
+    "CubicDaylightDetectorMixin",
+    "CubicSunBurnMixin"
   ],
   "client": [
     "FrustumAccess",
@@ -155,7 +157,9 @@
     "CubicVoidFogMixin",
     "GuiOverlayAccess",
     "EarthCompassSpinMixin",
-    "CubicAnimateTickMixin"
+    "CubicAnimateTickMixin",
+    "CubicLocalTimeMixin",
+    "CubicClientSkyTickMixin"
   ],
   "injectors": {
     "defaultRequire": 1

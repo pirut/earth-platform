@@ -59,6 +59,8 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue RACES;
     public static final ModConfigSpec.BooleanValue WEB_MAP;
     public static final ModConfigSpec.BooleanValue SURVIVAL_MAP;
+    public static final ModConfigSpec.BooleanValue LOCALIZED_DAY_NIGHT;
+    public static final ModConfigSpec.IntValue YEAR_LENGTH_DAYS;
 
     /** The settings behind the engine switches (see {@link EngineToggles}), in whichever file each lives. */
     private static final Map<EngineToggles.Toggle, ModConfigSpec.BooleanValue> TOGGLES = new LinkedHashMap<>();
@@ -156,6 +158,12 @@ public final class EarthConfig {
         SURVIVAL_MAP = common.comment("Let players who can't use the travel map open the map (N) anyway, to look around and point a compass",
                         "at a spot, a famous place, their home or another player (/earth compass). It never moves anyone.")
                 .translation(key("survivalMap")).define("survivalMap", true);
+        LOCALIZED_DAY_NIGHT = common.comment("Progress the day/night cycle from each spot's real longitude, latitude and season,",
+                        "so players in Australia and Canada see different times of day and opposite seasons. Off keeps one shared sky everywhere.")
+                .translation(key("localizedDayNight")).define("localizedDayNight", false);
+        YEAR_LENGTH_DAYS = common.comment("In-game days in one full seasonal year when localizedDayNight is on (longer summer days and shorter winter days,",
+                        "flipped between hemispheres). 0 keeps equal 12-hour days and nights everywhere. Default 96.")
+                .translation(key("yearLengthDays")).defineInRange("yearLengthDays", EarthSolar.DEFAULT_YEAR_DAYS, 0, 3650);
         defineToggles(common, EngineToggles.Side.COMMON);
         COMMON_SPEC = common.build();
     }
