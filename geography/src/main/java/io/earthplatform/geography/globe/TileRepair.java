@@ -15,6 +15,8 @@ final class TileRepair {
      * broken. Real cliffs and gorges stay inside that relief; broken runs do not.
      */
     static final float BROKEN_METRES = 150f;
+    /** Deeper than the Mariana Trench (~10,984 m): always a resampled -32768 void in the source composite. */
+    static final float IMPOSSIBLE_DEPTH = -11_500f;
     /** Fine pixels either side along the row and column whose detail a repaired pixel borrows. */
     private static final int REPAIR_REACH = 4;
 
@@ -43,7 +45,8 @@ final class TileRepair {
                         float r = reference[j * TILE_SIZE + k];
                         low = Math.min(low, r); high = Math.max(high, r);
                     }
-                broken[i] = values[i] != 0f && Math.abs(values[i] - expected[i]) > BROKEN_METRES + high - low;
+                broken[i] = values[i] != 0f && (values[i] < IMPOSSIBLE_DEPTH && expected[i] >= IMPOSSIBLE_DEPTH
+                        || Math.abs(values[i] - expected[i]) > BROKEN_METRES + high - low);
                 any |= broken[i];
             }
         }
@@ -67,5 +70,49 @@ final class TileRepair {
         for (int i = 0; i < fixed.length; i++) if (broken[i]) values[i] = fixed[i];
     }
 
-    private static boolean sound(float[] values, boolean[] broken, int i) { return !broken[i] && values[i] != 0f; }
+    private static boolean sound(float[] values, boolean[] broken, int i) {
+        return !broken[i] && values[i] != 0f && values[i] >= IMPOSSIBLE_DEPTH;
+    }
+
+    /**
+     * Replaces any pixels deeper than {@value #IMPOSSIBLE_DEPTH} m — deeper than any real ocean — that survived
+     * cleaning and elevation layers (for instance where no finer DEM covers the tile). Each takes the mean of the
+     * nearest sound pixels along its row and column, or 0 m (open sea) when surrounded by open sea or no valid pixel.
+     */
+    static void repairImpossibleDepths(float[] values) {
+        boolean any = false;
+        for (float v : values) {
+            if (v < IMPOSSIBLE_DEPTH) { any = true; break; }
+        }
+        if (!any) return;
+        float[] fixed = values.clone();
+        for (int py = 0; py < TILE_SIZE; py++) {
+            for (int px = 0; px < TILE_SIZE; px++) {
+                int i = py * TILE_SIZE + px;
+                if (values[i] >= IMPOSSIBLE_DEPTH) continue;
+                double sum = 0;
+                int nonZero = 0, zeros = 0;
+                for (int dir = 0; dir < 4; dir++) {
+                    int dx = dir == 0 ? 1 : dir == 1 ? -1 : 0;
+                    int dy = dir == 2 ? 1 : dir == 3 ? -1 : 0;
+                    for (int step = 1; step < TILE_SIZE; step++) {
+                        int qx = px + dx * step, qy = py + dy * step;
+                        if (qx < 0 || qx >= TILE_SIZE || qy < 0 || qy >= TILE_SIZE) break;
+                        float v = values[qy * TILE_SIZE + qx];
+                        if (v < IMPOSSIBLE_DEPTH) continue;
+                        if (v == 0f) zeros++;
+                        else { sum += v; nonZero++; }
+                        break;
+                    }
+                }
+                if (nonZero > zeros) {
+                    float value = (float) (sum / nonZero);
+                    fixed[i] = value == 0f ? Math.ulp(0f) : value;
+                } else {
+                    fixed[i] = 0f;
+                }
+            }
+        }
+        System.arraycopy(fixed, 0, values, 0, values.length);
+    }
 }

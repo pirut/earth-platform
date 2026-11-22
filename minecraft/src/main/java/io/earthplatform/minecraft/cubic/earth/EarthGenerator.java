@@ -583,8 +583,10 @@ public final class EarthGenerator extends SurfaceGenerator {
         Strata.Layers rock = strata.layers(x, z, SEA + 0.5);
         if (rock != null) { detail *= rock.calm(metres); metres = rock.terrace(metres); }
         int y = Mth.floor(SEA + 0.5 + metres + detail);
-        // Ground beside the sea never dips under its level, so the sea stays where it is.
+        // Ground beside the sea never dips under its level, so the sea stays where it is;
+        // shallow datum dips right behind a coast rise to it too, while deep polders and inland basins stay below.
         if (sample[2] > 0.02 && y < SEA) y = SEA;
+        else if (cover != null && y < SEA && y >= SEA - 2 && besideSea(x, z)) y = SEA;
         // Land under a reservoir newer than the survey, which its water closes round, is the reservoir's bed; and
         // its shore, a few metres under the water's level in the old valley's slopes, rises to it. Below its dam
         // the valley keeps its drop.
@@ -1830,7 +1832,9 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Cells, in blocks, for finding whether water joins the open sea, and how many cells out a search may go. */
     private static final int SEA_CELL = 256, SEA_REACH = 512;
-    /** Whether each cell's water joins the open sea, as far as searches have found. */
+    /** Cells around a search's start where narrow inlets and shores are traced on the 64-block water grid (about 8 km). */
+    private static final int INLET_REACH = 32;
+    /** Whether each cell's water joins the open sea, as far as searches have found (only cached when unsplit). */
     private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> openSea = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
@@ -1849,46 +1853,161 @@ public final class EarthGenerator extends SurfaceGenerator {
         return wet && joinsOpenSea(x, z);
     }
 
+    /** Packed {@code (openMask << 16) | waterMask} for the 4x4 (64-block) samples inside sea cell {@code (cx, cz)}. */
+    private int seaCellMasks(int cx, int cz) {
+        long[] mask = coverWater(Math.floorDiv(cx, 4), Math.floorDiv(cz, 4));
+        int words = NO_SEA.length, ox = Math.floorMod(cx, 4) * 4, w = Math.floorMod(cz, 4);
+        int open = extract4x4(mask[words + w], ox);
+        int water = extract4x4(mask[w] | mask[words + w], ox);
+        return (open << 16) | water;
+    }
+
+    /** Extracts a 4x4 sub-grid of bits starting at column {@code ox} from four 16-bit rows packed in {@code word}. */
+    private static int extract4x4(long word, int ox) {
+        long s = word >>> ox;
+        return (int) ((s & 0xFL)
+                | ((s >>> 12) & 0xF0L)
+                | ((s >>> 24) & 0xF00L)
+                | ((s >>> 36) & 0xF000L));
+    }
+
+    /** 4-connected flood within a 4x4 bitmask of water samples. */
+    private static int flood4x4(int seed, int water) {
+        int reached = seed & water;
+        for (;;) {
+            int next = reached
+                    | ((reached & 0x7777) << 1)
+                    | ((reached & 0xEEEE) >>> 1)
+                    | (reached << 4)
+                    | (reached >>> 4);
+            next &= water;
+            if (next == reached) return reached;
+            reached = next;
+        }
+    }
+
+    private static boolean isWaterOrOpen(int code) { return code == WorldCoverSource.WATER || code == WorldCoverSource.NO_DATA; }
+
     /**
-     * Whether the cell holding a column is water that joins the open sea through cells of water,
-     * within {@value #SEA_REACH} cells. A search that ends at the open sea answers for every water
-     * cell it crossed; one that runs out of water answers for all of them too, as a closed lake or
-     * sea such as the Caspian; one that reaches its limit answers only for the cells within half
-     * its reach, as open sea may lie just past the rest.
+     * Whether a column's water joins the open sea through water, within {@value #SEA_REACH} cells.
+     * Within {@value #INLET_REACH} cells of the start it traces 4-connected 64-block samples from
+     * {@link #coverWater}, so narrow shoreline strips and barrier-island inlets connect without ever
+     * crossing dry beaches; farther out it steps by {@value #SEA_CELL}-block cells. Only cells whose
+     * whole water mask belongs to one reached component are cached in {@link #openSea}.
      */
     private boolean joinsOpenSea(int x, int z) {
-        long start = (long) Math.floorDiv(x, SEA_CELL) << 32 | Math.floorDiv(z, SEA_CELL) & 0xFFFFFFFFL;
-        Boolean known = openSea.get(it.unimi.dsi.fastutil.HashCommon.mix(start));
-        if (known != null) return known;
-        it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue queue = new it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue();
+        int spacing = WATER_CELL / WATER_SAMPLES;
+        int sx = Math.floorDiv(x, spacing), sz = Math.floorDiv(z, spacing);
+        int startCx = Math.floorDiv(sx, 4), startCz = Math.floorDiv(sz, 4);
+        long startCell = (long) startCx << 32 | startCz & 0xFFFFFFFFL;
+        int startBit = 1 << (Math.floorMod(sz, 4) * 4 + Math.floorMod(sx, 4));
+        int startMasks = seaCellMasks(startCx, startCz);
+        int startWater = startMasks & 0xFFFF, startOpen = startMasks >>> 16;
+        if ((startBit & startOpen) != 0) return true;
+        if ((startBit & startWater) != 0) {
+            Boolean known = openSea.get(it.unimi.dsi.fastutil.HashCommon.mix(startCell));
+            if (known != null) return known;
+        }
+        it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue cellQueue = new it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue();
+        it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue entryQueue = new it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue();
+        it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap seen = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
         it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap steps = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+        it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap waterMasks = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
         it.unimi.dsi.fastutil.longs.LongArrayList crossed = new it.unimi.dsi.fastutil.longs.LongArrayList();
-        queue.enqueue(start);
-        steps.put(start, 0);
+        if ((startBit & startWater) != 0) {
+            cellQueue.enqueue(startCell);
+            entryQueue.enqueue(startBit);
+            steps.put(startCell, 0);
+        } else {
+            // Narrow shoreline strip or tidal flat whose 64-block sample centre fell on dry land.
+            int colCode = cover(x, z, 1);
+            if (colCode == WorldCoverSource.NO_DATA) return true;
+            boolean columnWet = colCode == WorldCoverSource.WATER;
+            int fineOverview = columnWet ? coverOverview(z, 1) : WATER_OVERVIEW;
+            for (int dir = 0; dir < 4; dir++) {
+                int nsx = sx + (dir == 0 ? 1 : dir == 1 ? -1 : 0);
+                int nsz = sz + (dir == 2 ? 1 : dir == 3 ? -1 : 0);
+                int ncx = Math.floorDiv(nsx, 4), ncz = Math.floorDiv(nsz, 4);
+                int nbit = 1 << (Math.floorMod(nsz, 4) * 4 + Math.floorMod(nsx, 4));
+                int nmasks = seaCellMasks(ncx, ncz);
+                if ((nmasks & nbit) == 0) continue;
+                if (columnWet && !waterBetween(x + 0.5, z + 0.5, (nsx + 0.5) * spacing, (nsz + 0.5) * spacing, fineOverview)) continue;
+                if (((nmasks >>> 16) & nbit) != 0) return true;
+                long ncell = (long) ncx << 32 | ncz & 0xFFFFFFFFL;
+                Boolean known = openSea.get(it.unimi.dsi.fastutil.HashCommon.mix(ncell));
+                if (Boolean.TRUE.equals(known)) return true;
+                if (Boolean.FALSE.equals(known)) continue;
+                cellQueue.enqueue(ncell);
+                entryQueue.enqueue(nbit);
+                steps.putIfAbsent(ncell, 0);
+            }
+            if (cellQueue.isEmpty()) return false;
+        }
         boolean found = false, cut = false;
-        while (!queue.isEmpty() && !found) {
-            long cell = queue.dequeueLong();
+        while (!cellQueue.isEmpty() && !found) {
+            long cell = cellQueue.dequeueLong();
+            int entry = entryQueue.dequeueInt();
             int cx = (int) (cell >> 32), cz = (int) cell, step = steps.get(cell);
-            int code = cover((double) cx * SEA_CELL + SEA_CELL / 2.0, (double) cz * SEA_CELL + SEA_CELL / 2.0, SEA_CELL);
-            if (code != WorldCoverSource.WATER && code != WorldCoverSource.NO_DATA) continue;
-            crossed.add(cell);
-            if (code == WorldCoverSource.NO_DATA) { found = true; break; }
+            boolean fine = Math.max(Math.abs(cx - startCx), Math.abs(cz - startCz)) <= INLET_REACH;
+            int waterMask, openMask;
+            if (fine) {
+                int masks = seaCellMasks(cx, cz);
+                waterMask = masks & 0xFFFF;
+                openMask = masks >>> 16;
+            } else {
+                int code = cover((double) cx * SEA_CELL + SEA_CELL / 2.0, (double) cz * SEA_CELL + SEA_CELL / 2.0, SEA_CELL);
+                if (code == WorldCoverSource.NO_DATA) { found = true; break; }
+                if (code != WorldCoverSource.WATER) continue;
+                waterMask = 0xFFFF;
+                openMask = 0;
+            }
+            int prev = seen.get(cell);
+            int fresh = (fine ? flood4x4(entry, waterMask) : waterMask) & ~prev;
+            if (fresh == 0) continue;
+            if (prev == 0) {
+                crossed.add(cell);
+                waterMasks.put(cell, waterMask);
+            }
+            seen.put(cell, prev | fresh);
+            if ((fresh & openMask) != 0) { found = true; break; }
             if (step >= SEA_REACH) { cut = true; continue; }
-            for (int k = 0; k < 8 && !found; k += 2) {
-                long next = (long) (cx + (int) RING_X[k]) << 32 | (cz + (int) RING_Z[k]) & 0xFFFFFFFFL;
-                if (steps.containsKey(next)) continue;
+            for (int dir = 0; dir < 4 && !found; dir++) {
+                int nextEntry = switch (dir) {
+                    case 0 -> (fresh & 0x8888) >>> 3;
+                    case 1 -> (fresh & 0x1111) << 3;
+                    case 2 -> (fresh & 0xF000) >>> 12;
+                    default -> (fresh & 0x000F) << 12;
+                };
+                if (nextEntry == 0) continue;
+                int nx = cx + (dir == 0 ? 1 : dir == 1 ? -1 : 0);
+                int nz = cz + (dir == 2 ? 1 : dir == 3 ? -1 : 0);
+                long next = (long) nx << 32 | nz & 0xFFFFFFFFL;
                 Boolean result = openSea.get(it.unimi.dsi.fastutil.HashCommon.mix(next));
-                if (result != null && result) found = true;
-                else { steps.put(next, step + 1); queue.enqueue(next); }
+                if (result != null) {
+                    if (!result) continue;
+                    boolean nextFine = Math.max(Math.abs(nx - startCx), Math.abs(nz - startCz)) <= INLET_REACH;
+                    boolean touches = nextFine
+                            ? (seaCellMasks(nx, nz) & nextEntry) != 0
+                            : isWaterOrOpen(cover((double) nx * SEA_CELL + SEA_CELL / 2.0, (double) nz * SEA_CELL + SEA_CELL / 2.0, SEA_CELL));
+                    if (touches) { found = true; break; }
+                    continue;
+                }
+                if ((seen.get(next) & nextEntry) == nextEntry) continue;
+                if (!steps.containsKey(next)) steps.put(next, step + 1);
+                cellQueue.enqueue(next);
+                entryQueue.enqueue(nextEntry);
             }
         }
         if (openSea.size() > 1 << 20) openSea.clear();
-        if (crossed.isEmpty()) openSea.put(it.unimi.dsi.fastutil.HashCommon.mix(start), false);
         for (int i = 0; i < crossed.size(); i++) {
             long cell = crossed.getLong(i);
-            if (found || !cut || steps.get(cell) <= SEA_REACH / 2) openSea.put(it.unimi.dsi.fastutil.HashCommon.mix(cell), found);
+            int cx = (int) (cell >> 32), cz = (int) cell;
+            if (Math.max(Math.abs(cx - startCx), Math.abs(cz - startCz)) > INLET_REACH) continue;
+            if (seen.get(cell) != waterMasks.get(cell)) continue;
+            if (found || !cut || steps.get(cell) <= SEA_REACH / 2)
+                openSea.put(it.unimi.dsi.fastutil.HashCommon.mix(cell), found);
         }
-        return found && !crossed.isEmpty();
+        return found;
     }
 
     // Lakes and inland water levels -------------------------------------------------------------
@@ -2024,7 +2143,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Nor does a lake lie under the sea's level where the ground round it doesn't: a cell's water samples include
         // the sea, whose survey reads the bathymetry, and the Exumas' salt ponds took its depth, twenty and thirty
         // blocks under the sea beside them. Below-sea lakes, as the Dead Sea, have their ground as low.
-        if (!drowned && surface < SEA) surface = Math.max(surface, Math.min(SEA, local - DIP));
+        if (!drowned && surface < SEA) surface = Math.max(surface, Math.min(SEA, local));
         // Drowned ground lies far under its water, which stands at its shores' level, unless the bank
         // beside the column brought that level down to the channel.
         return drowned ? surface : Math.min(surface, local + BANK);
@@ -2921,9 +3040,9 @@ public final class EarthGenerator extends SurfaceGenerator {
      * Within a cell or two of the sea, only cells holding raised water need it.
      */
     private long[] seaSamples(int cx, int cz, Survey centre) {
-        boolean raised = false;
-        for (int k = 0; k < centre.kind.length && !raised; k++) raised = centre.kind[k] == WET || centre.kind[k] == FLAT && centre.metres[k] > SEA_METRES;
-        if (!raised) return NO_SEA;
+        boolean water = false;
+        for (int k = 0; k < centre.kind.length && !water; k++) water = centre.kind[k] == WET || centre.kind[k] == FLAT;
+        if (!water) return NO_SEA;
         int span = 3 * WATER_SAMPLES;
         Survey[] window = new Survey[9];
         // A neighbour the land cover maps no water in is land and open sea only, read from the cover alone.
