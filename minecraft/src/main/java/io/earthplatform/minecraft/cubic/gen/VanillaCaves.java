@@ -91,8 +91,8 @@ final class VanillaCaves {
      */
     void corner(double[] out, int at, int x, int vy, int z, int depth) {
         if (depth < 0) {
-            // Over the ground: vanilla's terrain density alone, already open air; no noodle.
-            out[at] = DENSITY_PER_BLOCK * depth; out[at + 1] = -1; out[at + 2] = 0; out[at + 3] = 0; out[at + 4] = 0;
+            // Over the ground: already open air, so stay neutral (0) and don't bleed negative sky density into sheer cliffs.
+            out[at] = 0; out[at + 1] = -1; out[at + 2] = 0; out[at + 3] = 0; out[at + 4] = 0;
             return;
         }
         out[at] = density(x, vy, z, depth);
