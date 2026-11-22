@@ -459,7 +459,7 @@ public final class FarServer {
         Session session = sessions.get(player.getUUID());
         if (session == null) {
             sessions.put(player.getUUID(), session = new Session());
-            if (generator instanceof EarthGenerator earth) Platform.INSTANCE.sendToPlayer(player, new CubePayloads.EarthScale(earth.grid().metresPerBlock(), previews));
+            if (generator instanceof EarthGenerator earth) Platform.INSTANCE.sendToPlayer(player, new CubePayloads.EarthScale(earth.grid().metresPerBlock(), previews, earth.grid().id()));
         }
         return session;
     }

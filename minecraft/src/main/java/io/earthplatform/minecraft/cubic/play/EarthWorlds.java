@@ -112,8 +112,9 @@ public final class EarthWorlds {
         if (!isEarth(server) || server.getWorldData().overworldData().isInitialized()) return;
         if (choice == null || server.isDedicatedServer()) {
             String text = EarthConfig.DEFAULT_HOME.get();
-            EarthSettings settings = EarthConfig.home(text);
-            if (settings == null) settings = EarthSettings.defaults();
+            String projection = EarthConfig.DEFAULT_PROJECTION.get();
+            EarthSettings settings = EarthConfig.home(text, projection);
+            if (settings == null) settings = EarthSettings.at(EarthSettings.DEFAULT_LATITUDE, EarthSettings.DEFAULT_LONGITUDE, projection);
             String name = EarthPlaces.byId(text.trim()).map(EarthPlaces.Place::label).orElse("");
             choice = new Choice(settings, name);
         }

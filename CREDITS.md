@@ -278,7 +278,7 @@ From **Distant Horizons** we took:
 
 ## Earlier Earth and cubic-chunks projects
 
-The [Cubic Chunks](https://github.com/OpenCubicChunks) mods, [Terrarium](https://github.com/gegy/terrarium) and [Terra++](https://github.com/BuildTheEarth/terraplusplus) (Build The Earth) proved that tall worlds and a real-scale Earth in Minecraft are possible. Earth Platform contains no code from them.
+The [Cubic Chunks](https://github.com/OpenCubicChunks) mods, [Terrarium](https://github.com/gegy/terrarium) and [Terra++](https://github.com/BuildTheEarth/terraplusplus) (Build The Earth) proved that tall worlds and a real-scale Earth in Minecraft are possible. Earth Platform's optional `bte-dymaxion-v1` world projection (`geography/.../globe/BteDymaxionProjection`) is an original implementation of the BuildTheEarth upright conformal Modified Airocean coordinate specification (based on R. Buckminster Fuller's Dymaxion icosahedral orientation, L. P. Lee's 1976 conformal icosahedral projection, and the BuildTheEarth / Terra++ / `terraminusminus` MIT-licensed Modified Airocean vertex/cut/scale layout) so worlds created with it match BuildTheEarth X/Z coordinates. Earth Platform contains no code or bundled data files from Terra++ or `terraminusminus`.
 
 ## Contributors
 

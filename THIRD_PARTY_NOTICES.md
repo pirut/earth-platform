@@ -87,3 +87,7 @@ Sentinel-2 cloudless 2016 (streamed by `ImagerySource` from https://tiles.maps.e
 ## Photon adjusted for macOS
 
 A Photon v1.3b copy adjusted for Apple OpenGL was made for testing. It was used for testing only and will not be distributed: the mod is required to work with stock Photon. It is a derivative of Photon (© 2021-2025 Benjamin Stott "SixthSurge", Photon Shaders License Agreement), keeps that license file, and is not part of any Earth Platform distribution. Its license forbids redistribution on platforms that pay creators (such as Modrinth and CurseForge) without the author's written permission.
+
+## BuildTheEarth Modified Airocean specification (compatibility)
+
+`geography/src/main/java/io/earthplatform/geography/globe/BteDymaxionProjection.java` is an original LGPL-3.0-only implementation compatible with the BuildTheEarth upright conformal Modified Airocean coordinate system (`bte-dymaxion-v1`). It follows L. P. Lee's 1976 conformal icosahedral mathematics (computing its conformal interpolation table analytically at runtime) and the public BuildTheEarth / Terra++ / `terraminusminus` (MIT) Modified Airocean vertex, cut, and scale specification (`7318261.522857145`). No third-party source code, jars, or binary lookup tables are bundled.

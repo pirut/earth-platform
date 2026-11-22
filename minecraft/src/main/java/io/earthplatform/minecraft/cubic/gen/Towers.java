@@ -26,6 +26,8 @@ public final class Towers {
         /** Ground height in metres above the sea at a block position. */
         double metres(double x, double z);
         double metresPerBlock(double z);
+        /** Ground metres spanned by one block at (x, z); projections with spatially varying scale override this. */
+        default double metresPerBlock(double x, double z) { return metresPerBlock(z); }
     }
 
     /** Blocks across a cell of the top and base envelopes, and of the survey for hilltops. */
@@ -127,7 +129,7 @@ public final class Towers {
         long key = it.unimi.dsi.fastutil.HashCommon.mix(i << 32 ^ (j & 0xFFFFFFFFL));
         Float known = field.get(key);
         if (known != null) return known;
-        double cx = i * (double) FIELD_CELL, cz = j * (double) FIELD_CELL, metresPerBlock = globe.metresPerBlock(cz);
+        double cx = i * (double) FIELD_CELL, cz = j * (double) FIELD_CELL, metresPerBlock = globe.metresPerBlock(cx, cz);
         double far = FAR / metresPerBlock, near = NEAR / metresPerBlock;
         int span = HILL_CELL * BLOCK_CELLS;
         float best = 0;
@@ -184,7 +186,7 @@ public final class Towers {
             if (m > top) { top = m; tx = x; tz = z; }
         }
         top = Math.max(0, top);
-        double metresPerBlock = globe.metresPerBlock(tz), step = HILL_REACH / STEPS / metresPerBlock;
+        double metresPerBlock = globe.metresPerBlock(tx, tz), step = HILL_REACH / STEPS / metresPerBlock;
         double[] ground = new double[RAYS * STEPS];
         double base = top;
         for (int r = 0; r < RAYS; r++) {
@@ -240,7 +242,7 @@ public final class Towers {
             long key = it.unimi.dsi.fastutil.HashCommon.mix(i << 32 ^ (j & 0xFFFFFFFFL));
             Float known = corners.get(key);
             if (known != null) return known;
-            double cellMetres = cell * globe.metresPerBlock(j * (double) cell);
+            double cellMetres = cell * globe.metresPerBlock(i * (double) cell, j * (double) cell);
             int n = (int) Math.ceil(reach / cellMetres);
             float best = high ? -Float.MAX_VALUE : Float.MAX_VALUE;
             for (int dj = -n; dj < n; dj++) for (int di = -n; di < n; di++) {

@@ -1,7 +1,7 @@
 package io.earthplatform.minecraft.cubic.play.client;
 
 import io.earthplatform.geography.GeoPoint;
-import io.earthplatform.geography.globe.MercatorGrid;
+import io.earthplatform.geography.globe.GlobeProjection;
 import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
 import io.earthplatform.minecraft.cubic.jet.JetHud;
 import io.earthplatform.minecraft.cubic.mixin.GuiOverlayAccess;
@@ -63,9 +63,10 @@ public final class EarthCompassHud {
         if (round) return null;
         ItemStack compass = held(player);
         if (compass == null) return null;
-        MercatorGrid grid = grid();
+        GlobeProjection grid = grid();
         if (grid == null) return null;
-        GeoPoint here = grid.geographic(player.getX(), player.getZ());
+        GeoPoint here = grid.tryGeographic(player.getX(), player.getZ());
+        if (here == null) return null;
         GeoPoint to;
         Component name;
         CompoundTag target = EarthCompass.target(compass);
@@ -75,7 +76,8 @@ public final class EarthCompassHud {
         } else {
             BlockPos pos = position(player, compass);
             if (pos == null) return null;
-            to = grid.geographic(pos.getX() + 0.5, pos.getZ() + 0.5);
+            to = grid.tryGeographic(pos.getX() + 0.5, pos.getZ() + 0.5);
+            if (to == null) return null;
             name = Component.translatable(compass.is(Items.RECOVERY_COMPASS) ? "earthplatform.compass.death"
                     : compass.has(DataComponents.LODESTONE_TRACKER) ? "earthplatform.compass.lodestone" : "earthplatform.compass.spawn");
         }
@@ -102,11 +104,10 @@ public final class EarthCompassHud {
         return null;
     }
 
-    /** The Earth's block grid, once the server has said its scale; null outside Earth worlds. */
-    @Nullable static MercatorGrid grid() {
+    /** The Earth's projection, once the server has said its scale; null outside Earth worlds. */
+    @Nullable static GlobeProjection grid() {
         ClientCubeWorld world = ClientCubeWorld.current();
-        double scale = world == null ? 0 : world.far().metresPerBlock();
-        return scale > 0 ? new MercatorGrid(scale) : null;
+        return world == null ? null : world.far().projection();
     }
 
     /** Where the first compass the player carries points, from this mod's own pointing, or null. */

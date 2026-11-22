@@ -51,11 +51,8 @@ public final class BugPlace {
         if (!(CubicLevel.of(player.level()) instanceof ServerCubeWorld cubes) || !(cubes.generator() instanceof EarthGenerator earth)) {
             return "not an Earth world";
         }
-        try {
-            GeoPoint point = earth.grid().blockCentre(player.getBlockX(), player.getBlockZ());
-            return String.format(Locale.ROOT, "%.5f, %.5f", point.latitude(), point.longitude());
-        } catch (RuntimeException outside) {
-            return "outside the map";
-        }
+        GeoPoint point = earth.grid().tryBlockCentre(player.getBlockX(), player.getBlockZ());
+        if (point == null) return "outside the map";
+        return String.format(Locale.ROOT, "%.5f, %.5f", point.latitude(), point.longitude());
     }
 }

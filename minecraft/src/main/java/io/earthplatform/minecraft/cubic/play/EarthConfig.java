@@ -1,6 +1,8 @@
 package io.earthplatform.minecraft.cubic.play;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.geography.globe.GlobeProjection;
+import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.platform.Loader;
@@ -38,6 +40,7 @@ public final class EarthConfig {
     // Common --------------------------------------------------------------------------------------
     public static final ModConfigSpec COMMON_SPEC;
     public static final ModConfigSpec.ConfigValue<String> DEFAULT_HOME;
+    public static final ModConfigSpec.ConfigValue<String> DEFAULT_PROJECTION;
     public static final ModConfigSpec.BooleanValue OFFLINE;
     public static final ModConfigSpec.BooleanValue SATELLITE_IMAGERY;
     public static final ModConfigSpec.IntValue CACHE_LIMIT_GB;
@@ -106,6 +109,9 @@ public final class EarthConfig {
         DEFAULT_HOME = common.comment("Where new Earth worlds start when nobody picked a place: a famous place id (see /earth places)",
                         "or \"latitude,longitude\". Singleplayer worlds can pick one on the Create World screen.")
                 .translation(key("defaultHome")).define("defaultHome", EarthPlaces.YOSEMITE.id(), value -> value instanceof String text && home(text) != null);
+        DEFAULT_PROJECTION = common.comment("Map projection for new Earth worlds: \"web-mercator-v1\" (default, north-up) or \"bte-dymaxion-v1\" (BuildTheEarth upright conformal Modified Airocean, ~1:1 scale worldwide).",
+                        "Singleplayer worlds can pick one on the Create World screen.")
+                .translation(key("defaultProjection")).define("defaultProjection", MercatorGrid.PROJECTION_ID, value -> value instanceof String text && GlobeProjection.supported(text));
         OFFLINE = common.comment("Never download Earth data; only places already in the cache generate.")
                 .translation(key("offline")).gameRestart().define("offline", false);
         CACHE_LIMIT_GB = common.comment("Largest size of the downloaded Earth data cache, in gigabytes; the least recently used files go first,",
@@ -257,11 +263,16 @@ public final class EarthConfig {
 
     /** Settings for a home written as a place id or "latitude,longitude", or null when it is neither. */
     public static EarthSettings home(String text) {
+        return home(text, MercatorGrid.PROJECTION_ID);
+    }
+
+    /** Settings for a home written as a place id or "latitude,longitude" under the given projection, or null when invalid. */
+    public static EarthSettings home(String text, String projection) {
         var place = EarthPlaces.byId(text.trim());
-        if (place.isPresent()) return EarthSettings.at(place.get().latitude(), place.get().longitude());
+        if (place.isPresent()) return EarthSettings.at(place.get().latitude(), place.get().longitude(), projection);
         String[] parts = text.split(",");
         if (parts.length != 2) return null;
-        try { return EarthSettings.at(Double.parseDouble(parts[0].trim()), Double.parseDouble(parts[1].trim())); }
+        try { return EarthSettings.at(Double.parseDouble(parts[0].trim()), Double.parseDouble(parts[1].trim()), projection); }
         catch (RuntimeException invalid) { return null; }
     }
 

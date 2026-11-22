@@ -3,9 +3,11 @@
  * cubic world's Earth generator. Nothing here depends on Minecraft.
  *
  * <ul>
- *   <li>{@link io.earthplatform.geography.globe.MercatorGrid} ({@code web-mercator-v1}): X east,
- *       Z south, origin at 0°/0°, {@code metresPerBlock} projected metres per block. Conformal, so
- *       shapes keep their proportions; beyond ±85.05° fails explicitly.</li>
+ *   <li>{@link io.earthplatform.geography.globe.GlobeProjection}: maps between geographic
+ *       coordinates and Minecraft blocks, implemented by
+ *       {@link io.earthplatform.geography.globe.MercatorGrid} ({@code web-mercator-v1}) and
+ *       {@link io.earthplatform.geography.globe.BteDymaxionProjection} ({@code bte-dymaxion-v1},
+ *       BuildTheEarth upright conformal Modified Airocean).</li>
  *   <li>{@link io.earthplatform.geography.globe.TerrariumTileSource} ({@code terrarium-v1}): AWS
  *       Terrain Tiles PNGs, single-flight per tile, bounded concurrent transfers with retry, a
  *       decoded-tile LRU, an atomic disk cache under {@code z/x/y.png} and an offline mode. Callers

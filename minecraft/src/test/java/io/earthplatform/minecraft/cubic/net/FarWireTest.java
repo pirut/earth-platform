@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.earthplatform.geography.globe.BteDymaxionProjection;
+import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.minecraft.cubic.far.Far;
 import io.netty.buffer.Unpooled;
 import java.util.List;
@@ -36,13 +38,16 @@ class FarWireTest {
     }
 
     @Test void scaleSaysWhetherStandInsAreToBeHad() {
-        for (boolean previews : new boolean[] {false, true}) {
-            var buffer = buffer();
-            CubePayloads.EarthScale.CODEC.encode(buffer, new CubePayloads.EarthScale(1.2643, previews));
-            CubePayloads.EarthScale back = CubePayloads.EarthScale.CODEC.decode(buffer);
-            assertEquals(0, buffer.readableBytes());
-            assertEquals(1.2643, back.metresPerBlock());
-            assertEquals(previews, back.previews());
+        for (String projectionId : new String[] {MercatorGrid.PROJECTION_ID, BteDymaxionProjection.PROJECTION_ID}) {
+            for (boolean previews : new boolean[] {false, true}) {
+                var buffer = buffer();
+                CubePayloads.EarthScale.CODEC.encode(buffer, new CubePayloads.EarthScale(1.2643, previews, projectionId));
+                CubePayloads.EarthScale back = CubePayloads.EarthScale.CODEC.decode(buffer);
+                assertEquals(0, buffer.readableBytes());
+                assertEquals(1.2643, back.metresPerBlock());
+                assertEquals(previews, back.previews());
+                assertEquals(projectionId, back.projectionId());
+            }
         }
     }
 

@@ -1,5 +1,7 @@
 package io.earthplatform.minecraft.cubic.play.client;
 
+import io.earthplatform.geography.globe.BteDymaxionProjection;
+import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
 import io.earthplatform.minecraft.cubic.play.EarthStretch;
 import io.earthplatform.minecraft.cubic.play.EarthStatus;
@@ -97,6 +99,13 @@ public final class EarthPlayClient {
      * is not the Earth's.
      */
     @javax.annotation.Nullable static Component stretch(double metresPerBlock, double latitude) {
+        return stretch(metresPerBlock, latitude, MercatorGrid.PROJECTION_ID);
+    }
+
+    @javax.annotation.Nullable static Component stretch(double metresPerBlock, double latitude, String projectionId) {
+        if (BteDymaxionProjection.PROJECTION_ID.equals(projectionId)) {
+            return Component.translatable("earthplatform.stretch.dymaxion");
+        }
         if (metresPerBlock > 0) {
             double stretch = EarthStretch.at(metresPerBlock, latitude);
             return EarthStretch.close(stretch) ? Component.translatable("earthplatform.stretch.true")

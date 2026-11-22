@@ -3,6 +3,7 @@ package io.earthplatform.minecraft.cubic.play.client;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.earthplatform.geography.GeoPoint;
+import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.minecraft.cubic.play.EarthMap;
 import io.earthplatform.minecraft.cubic.play.EarthPlaces;
 import io.earthplatform.minecraft.cubic.play.EarthTowns;
@@ -82,9 +83,16 @@ public final class EarthGlobeScreen extends Screen {
     private static final int RESULTS = 6, SEARCH_WIDTH = 240, ROW = 12;
     /** Whether the mouse is over the compass's target. */
     private boolean overTarget;
+    /** Projection chosen on the setup screen when picking a new world's start. */
+    private String previewProjection = MercatorGrid.PROJECTION_ID;
 
     EarthGlobeScreen(Screen parent, double lat, double lon, BiConsumer<Double, Double> picked) {
+        this(parent, lat, lon, MercatorGrid.PROJECTION_ID, picked);
+    }
+
+    EarthGlobeScreen(Screen parent, double lat, double lon, String projectionId, BiConsumer<Double, Double> picked) {
         this(Component.translatable("earthplatform.globe.title"), parent, lat, lon, picked);
+        this.previewProjection = projectionId;
     }
 
     private EarthGlobeScreen(Component title, @Nullable Screen parent, double lat, double lon, BiConsumer<Double, Double> picked) {
@@ -339,7 +347,11 @@ public final class EarthGlobeScreen extends Screen {
     @Nullable private Component stretch() {
         if (!pinned || look() || warning != null && Util.getMillis() < warningUntil || Math.abs(pinLat) > 80) return null;
         var world = io.earthplatform.minecraft.cubic.client.ClientCubeWorld.current();
-        return EarthPlayClient.stretch(world != null ? world.far().metresPerBlock() : 0, pinLat);
+        if (world != null) {
+            var proj = world.far().projection();
+            return EarthPlayClient.stretch(world.far().metresPerBlock(), pinLat, proj != null ? proj.id() : MercatorGrid.PROJECTION_ID);
+        }
+        return EarthPlayClient.stretch(0, pinLat, previewProjection);
     }
 
     private Component status() {

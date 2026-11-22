@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.earth;
 
 import com.mojang.brigadier.CommandDispatcher;
 import io.earthplatform.geography.GeoPoint;
+import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.GroundPalette;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.minecraft.EarthPlatformMod;
@@ -125,8 +126,20 @@ public final class ImageryCalibration {
             double light = shade(earth, x, z, Math.max(1, (int) step));
             image.setRGB(PIXELS + 8 + i, j, scale(plainRgb, light));
             image.setRGB(2 * PIXELS + 16 + i, j, scale(withRgb, light));
-            double px = earth.grid().pixelX(x + 0.5, zoom), py = earth.grid().pixelY(z + 0.5, zoom);
-            int span = Math.max(1, (int) Math.round(step / earth.grid().blocksPerPixel(zoom)));
+            double px, py;
+            double bpp;
+            if (earth.grid() instanceof MercatorGrid mercator) {
+                px = mercator.pixelX(x + 0.5, zoom);
+                py = mercator.pixelY(z + 0.5, zoom);
+                bpp = mercator.blocksPerPixel(zoom);
+            } else {
+                GeoPoint pt = earth.grid().tryGeographic(x + 0.5, z + 0.5);
+                if (pt == null || Math.abs(pt.latitude()) > MercatorGrid.MAX_LATITUDE) { image.setRGB(i, j, 0); continue; }
+                px = MercatorGrid.UNIT.pixelX(MercatorGrid.UNIT.blockX(pt), zoom);
+                py = MercatorGrid.UNIT.pixelY(MercatorGrid.UNIT.blockZ(pt), zoom);
+                bpp = earth.grid().worldWidthBlocks() / (256.0 * (1L << zoom));
+            }
+            int span = Math.max(1, (int) Math.round(step / bpp));
             if (!imagery.mean(px, py, zoom, span, linear)) { image.setRGB(i, j, 0); continue; }
             image.setRGB(i, j, rgb(linear));
             if (wet) continue;

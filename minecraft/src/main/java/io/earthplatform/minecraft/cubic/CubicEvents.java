@@ -344,7 +344,12 @@ public final class CubicEvents {
         source.sendSuccess(() -> Component.literal(text), false);
         if (generator instanceof io.earthplatform.minecraft.cubic.earth.EarthGenerator earth) {
             var grid = earth.grid();
-            String stretch = io.earthplatform.minecraft.cubic.play.EarthStretch.where(grid.metresPerBlock(), grid.geographic(feet.getX(), feet.getZ()).latitude());
+            String stretch;
+            if (grid.isWebMercator()) {
+                stretch = io.earthplatform.minecraft.cubic.play.EarthStretch.where(grid.metresPerBlock(), grid.geographic(feet.getX(), feet.getZ()).latitude());
+            } else {
+                stretch = io.earthplatform.minecraft.cubic.play.EarthStretch.whereLocal(grid.groundMetresPerBlock(feet.getX(), feet.getZ()));
+            }
             source.sendSuccess(() -> Component.literal(stretch).withStyle(ChatFormatting.GRAY), false);
         }
     }

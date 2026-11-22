@@ -64,7 +64,7 @@ public final class EarthExplorer {
         Seen last = LAST.put(id, new Seen(player.level().dimension(), player.getX(), player.getZ(), here));
         if (last != null) {
             // The Earth repeats east and west, so a hop to the same spot in the next copy of it is no move at all.
-            double dx = Math.IEEEremainder(player.getX() - last.x, earth.grid().worldWidthBlocks()), dz = player.getZ() - last.z;
+            double dx = earth.grid().wrapsEastWest() ? Math.IEEEremainder(player.getX() - last.x, earth.grid().worldWidthBlocks()) : player.getX() - last.x, dz = player.getZ() - last.z;
             if (last.level == player.level().dimension() && dx * dx + dz * dz <= STEP * STEP) travelled(player, journeys, last.point, here);
             else journeys.endTrip(id);
         }

@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic.jet;
 
-import io.earthplatform.geography.globe.MercatorGrid;
+import io.earthplatform.geography.GeoPoint;
+import io.earthplatform.geography.globe.GlobeProjection;
 import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
 import io.earthplatform.minecraft.cubic.client.FarRenderer;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
@@ -39,8 +40,8 @@ public final class CurrentRide {
     @Nullable static Vec3 steer(Boat boat) {
         OceanCurrent.Ride ride = (OceanCurrent.Ride) boat;
         ClientCubeWorld world = ClientCubeWorld.current();
-        double scale = world == null ? 0 : world.far().metresPerBlock();
-        if (scale <= 0 || !(boat.getControllingPassenger() instanceof LocalPlayer player)) {
+        GlobeProjection projection = world == null ? null : world.far().projection();
+        if (projection == null || !(boat.getControllingPassenger() instanceof LocalPlayer player)) {
             // Only the Earth has a sea to read and latitudes for the currents.
             ride.earthplatform$setRiding(false);
             state = State.NONE;
@@ -69,8 +70,10 @@ public final class CurrentRide {
             riding = next.horizontalDistance() >= OceanCurrent.LETS_GO;
             state = !riding ? State.NONE : letGo ? State.SLOWING : State.RIDING;
         } else {
-            double latitude = new MercatorGrid(scale).geographic(boat.getX(), boat.getZ()).latitude();
-            next = OceanCurrent.carry(velocity, yaw, latitude);
+            GeoPoint here = projection.tryGeographic(boat.getX(), boat.getZ());
+            double latitude = here == null ? 0.0 : here.latitude();
+            double[] east = projection.eastUnit(boat.getX(), boat.getZ());
+            next = OceanCurrent.carry(velocity, yaw, latitude, east[0], east[1]);
             state = State.RIDING;
         }
         ride.earthplatform$setRiding(riding);

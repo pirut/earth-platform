@@ -1,20 +1,25 @@
 package io.earthplatform.geography.globe;
 
+import io.earthplatform.geography.GeoPoint;
+
 /**
- * Continuous elevation over the whole Mercator grid, bicubic (Catmull-Rom) through Terrarium pixel centres.
+ * Continuous elevation over a {@link GlobeProjection}, bicubic (Catmull-Rom) through Terrarium pixel centres.
  *
  * <p>Terrain Tiles carry ocean bathymetry only up to zoom {@value #BATHYMETRY_ZOOM}; deeper zooms encode open sea as
  * exactly 0 m. Every detail pixel that reads exactly 0 is therefore replaced by the bicubic bathymetry from zoom
  * {@value #BATHYMETRY_ZOOM} when that is below sea level, before the detail kernel runs, so coasts blend continuously.
  *
- * <p>Sampling happens in slippy-map pixel space, which is linear in block coordinates, so neighbouring tiles join
- * without seams and X wraps across the antimeridian. Rows are clamped at the poles of the coverage square. Each thread
- * remembers its most recent tile to avoid lock traffic on the shared cache during column sampling, and a 4x4 kernel
- * that lies inside one tile reads it once.
+ * <p>For {@link MercatorGrid}, sampling happens directly in slippy-map pixel space, which is linear in block
+ * coordinates, with zero per-sample trigonometry. Other projections (such as {@link BteDymaxionProjection}) project
+ * through geographic coordinates to Web Mercator pixels and transform slopes via the local 2x2 Jacobian, returning
+ * deep ocean outside the projection net or north of Web Mercator coverage.
  */
 public final class GlobalElevation {
     public static final int BATHYMETRY_ZOOM = 10;
-    private final MercatorGrid grid;
+    /** Open deep-ocean depth returned outside a finite projection net or north of Web Mercator coverage. */
+    public static final double OPEN_OCEAN_METRES = -4000.0;
+    private final GlobeProjection projection;
+    private final MercatorGrid mercator;
     private final Tiles tiles;
     private final int zoom;
     private final int tilesAcross;
@@ -35,30 +40,51 @@ public final class GlobalElevation {
         float[] tile(int zoom, int x, int y);
     }
 
-    public GlobalElevation(MercatorGrid grid, TerrariumTileSource tiles, int zoom) {
-        this(grid, (Tiles) tiles::tile, zoom);
+    public GlobalElevation(GlobeProjection projection, TerrariumTileSource tiles, int zoom) {
+        this(projection, (Tiles) tiles::tile, zoom);
     }
 
     /** Elevation read from {@code tiles}, such as {@link BareEarth}'s ground in place of the tiles' own. */
-    public GlobalElevation(MercatorGrid grid, Tiles tiles, int zoom) {
-        this(grid, tiles, zoom, zoom > BATHYMETRY_ZOOM);
+    public GlobalElevation(GlobeProjection projection, Tiles tiles, int zoom) {
+        this(projection, tiles, zoom, zoom > BATHYMETRY_ZOOM);
     }
 
-    private GlobalElevation(MercatorGrid grid, Tiles tiles, int zoom, boolean fillBathymetry) {
+    private GlobalElevation(GlobeProjection projection, Tiles tiles, int zoom, boolean fillBathymetry) {
         if (zoom < 0 || zoom > TerrariumTileSource.MAX_ZOOM) throw new IllegalArgumentException("Unsupported zoom " + zoom);
-        this.grid = grid;
+        this.projection = projection;
+        this.mercator = projection instanceof MercatorGrid m ? m : null;
         this.tiles = tiles;
         this.zoom = zoom;
         this.tilesAcross = 1 << zoom;
-        this.bathymetry = fillBathymetry ? new GlobalElevation(grid, tiles, BATHYMETRY_ZOOM, false) : null;
+        this.bathymetry = fillBathymetry ? new GlobalElevation(projection, tiles, BATHYMETRY_ZOOM, false) : null;
     }
 
-    public MercatorGrid grid() { return grid; }
+    public GlobeProjection projection() { return projection; }
+
+    public MercatorGrid grid() {
+        if (mercator == null) throw new IllegalStateException("Projection is not Web Mercator: " + projection.id());
+        return mercator;
+    }
+
     public int zoom() { return zoom; }
 
     /** Elevation in metres at a continuous block-space position. */
     public double metres(double blockX, double blockZ) {
-        double px = grid.pixelX(blockX, zoom) - 0.5, py = grid.pixelY(blockZ, zoom) - 0.5;
+        double px, py;
+        if (mercator != null) {
+            px = mercator.pixelX(blockX, zoom) - 0.5;
+            py = mercator.pixelY(blockZ, zoom) - 0.5;
+        } else {
+            GeoPoint point = projection.tryGeographic(blockX, blockZ);
+            if (point == null || point.latitude() > MercatorGrid.MAX_LATITUDE) return OPEN_OCEAN_METRES;
+            GeoPoint clamped = point.latitude() < -MercatorGrid.MAX_LATITUDE ? new GeoPoint(-MercatorGrid.MAX_LATITUDE, point.longitude()) : point;
+            px = MercatorGrid.UNIT.pixelX(MercatorGrid.UNIT.blockX(clamped), zoom) - 0.5;
+            py = MercatorGrid.UNIT.pixelY(MercatorGrid.UNIT.blockZ(clamped), zoom) - 0.5;
+        }
+        return metresAtPixel(px, py);
+    }
+
+    private double metresAtPixel(double px, double py) {
         long ix = (long) Math.floor(px), iy = (long) Math.floor(py);
         double fx = px - ix, fy = py - iy;
         float[] raw = kernel(ix, iy);
@@ -82,7 +108,42 @@ public final class GlobalElevation {
      * zooms above {@link #BATHYMETRY_ZOOM} mark open sea; below that {@code out[2]} is 0.
      */
     public double sample(double blockX, double blockZ, double[] out) {
-        double px = grid.pixelX(blockX, zoom) - 0.5, py = grid.pixelY(blockZ, zoom) - 0.5;
+        if (mercator != null) {
+            double px = mercator.pixelX(blockX, zoom) - 0.5, py = mercator.pixelY(blockZ, zoom) - 0.5;
+            long ix = (long) Math.floor(px), iy = (long) Math.floor(py);
+            double fx = px - ix, fy = py - iy;
+            double value = 0, dx = 0, dy = 0, sea = 0;
+            float[] kernel = kernel(ix, iy);
+            for (int j = -1; j <= 2; j++) {
+                double wy = weight(j - fy), dwy = -slope(j - fy);
+                for (int i = -1; i <= 2; i++) {
+                    double wx = weight(i - fx), dwx = -slope(i - fx);
+                    float raw = kernel[(j + 1) * 4 + i + 1];
+                    double p = raw;
+                    if (raw == 0f && bathymetry != null) {
+                        p = fill(ix + i, iy + j);
+                        sea += wx * wy;
+                    }
+                    value += p * wx * wy;
+                    dx += p * dwx * wy;
+                    dy += p * wx * dwy;
+                }
+            }
+            double pixelsPerBlock = 1.0 / mercator.blocksPerPixel(zoom);
+            out[0] = dx * pixelsPerBlock;
+            out[1] = dy * pixelsPerBlock;
+            out[2] = sea;
+            return value;
+        }
+        GeoPoint point = projection.tryGeographic(blockX, blockZ);
+        if (point == null || point.latitude() > MercatorGrid.MAX_LATITUDE) {
+            out[0] = 0;
+            out[1] = 0;
+            out[2] = 1.0;
+            return OPEN_OCEAN_METRES;
+        }
+        double px0 = mercatorPixelX(point), py0 = mercatorPixelY(point);
+        double px = px0 - 0.5, py = py0 - 0.5;
         long ix = (long) Math.floor(px), iy = (long) Math.floor(py);
         double fx = px - ix, fy = py - iy;
         double value = 0, dx = 0, dy = 0, sea = 0;
@@ -102,11 +163,42 @@ public final class GlobalElevation {
                 dy += p * wx * dwy;
             }
         }
-        double pixelsPerBlock = 1.0 / grid.blocksPerPixel(zoom);
-        out[0] = dx * pixelsPerBlock;
-        out[1] = dy * pixelsPerBlock;
+        // Transform pixel-space derivatives (dH/dpx, dH/dpy) to block-space (dH/dblockX, dH/dblockZ) via local 2x2 Jacobian.
+        double totalPixels = MercatorGrid.pixelsAt(zoom);
+        double dpxDx = 0, dpyDx = 0, dpxDz = 0, dpyDz = 0;
+        double sx = 1.0;
+        GeoPoint pX = projection.tryGeographic(blockX + 1.0, blockZ);
+        if (pX == null || pX.latitude() > MercatorGrid.MAX_LATITUDE) {
+            pX = projection.tryGeographic(blockX - 1.0, blockZ);
+            sx = -1.0;
+        }
+        if (pX != null && pX.latitude() <= MercatorGrid.MAX_LATITUDE) {
+            dpxDx = Math.IEEEremainder(mercatorPixelX(pX) - px0, totalPixels) * sx;
+            dpyDx = (mercatorPixelY(pX) - py0) * sx;
+        }
+        double sz = 1.0;
+        GeoPoint pZ = projection.tryGeographic(blockX, blockZ + 1.0);
+        if (pZ == null || pZ.latitude() > MercatorGrid.MAX_LATITUDE) {
+            pZ = projection.tryGeographic(blockX, blockZ - 1.0);
+            sz = -1.0;
+        }
+        if (pZ != null && pZ.latitude() <= MercatorGrid.MAX_LATITUDE) {
+            dpxDz = Math.IEEEremainder(mercatorPixelX(pZ) - px0, totalPixels) * sz;
+            dpyDz = (mercatorPixelY(pZ) - py0) * sz;
+        }
+        out[0] = dx * dpxDx + dy * dpyDx;
+        out[1] = dx * dpxDz + dy * dpyDz;
         out[2] = sea;
         return value;
+    }
+
+    private double mercatorPixelX(GeoPoint point) {
+        return MercatorGrid.UNIT.pixelX(MercatorGrid.UNIT.blockX(point), zoom);
+    }
+
+    private double mercatorPixelY(GeoPoint point) {
+        double lat = Math.max(-MercatorGrid.MAX_LATITUDE, Math.min(MercatorGrid.MAX_LATITUDE, point.latitude()));
+        return MercatorGrid.UNIT.pixelY(MercatorGrid.UNIT.blockZ(new GeoPoint(lat, point.longitude())), zoom);
     }
 
     /** Source pixel with open-sea zeros replaced by coarser bathymetry. */

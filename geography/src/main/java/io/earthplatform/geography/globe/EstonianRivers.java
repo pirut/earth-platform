@@ -1,5 +1,6 @@
 package io.earthplatform.geography.globe;
 
+import io.earthplatform.geography.GeoPoint;
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
@@ -21,13 +22,26 @@ public final class EstonianRivers {
     private EstonianRivers() {}
 
     /** Whether a block or voxel covers one of the surveyed channels. */
-    public static boolean contains(MercatorGrid grid, double x, double z, int voxel) {
-        double mx = x * grid.metresPerBlock(), mz = z * grid.metresPerBlock();
-        // Fast rejection outside Estonia. Avoid loading the index in worlds that never visit it.
-        if (mx < 2_430_000 || mx > 3_150_000 || mz < -8_320_000 || mz > -7_860_000) return false;
+    public static boolean contains(GlobeProjection grid, double x, double z, int voxel) {
+        double mx, mz, scaleMetres;
+        if (grid instanceof MercatorGrid mercator) {
+            mx = x * mercator.metresPerBlock();
+            mz = z * mercator.metresPerBlock();
+            // Fast rejection outside Estonia. Avoid loading the index in worlds that never visit it.
+            if (mx < 2_430_000 || mx > 3_150_000 || mz < -8_320_000 || mz > -7_860_000) return false;
+            scaleMetres = mercator.metresPerBlock();
+        } else {
+            GeoPoint point = grid.tryGeographic(x, z);
+            if (point == null || point.latitude() < 57.3 || point.latitude() > 60.0
+                    || point.longitude() < 21.5 || point.longitude() > 28.5) return false;
+            mx = MercatorGrid.UNIT.blockX(point);
+            mz = MercatorGrid.UNIT.blockZ(point);
+            if (mx < 2_430_000 || mx > 3_150_000 || mz < -8_320_000 || mz > -7_860_000) return false;
+            scaleMetres = grid.groundMetresPerBlock(x, z) * Math.cosh(mz / MercatorGrid.RADIUS);
+        }
         double width = HALF_WIDTH * Math.cosh(mz / MercatorGrid.RADIUS);
         // Retain a continuous trace at the first few far levels, where voxel centres are farther apart.
-        double radius = Math.max(width, voxel * grid.metresPerBlock() * Math.sqrt(0.5));
+        double radius = Math.max(width, voxel * scaleMetres * Math.sqrt(0.5));
         return Index.contains(mx, mz, radius);
     }
 

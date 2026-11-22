@@ -43,7 +43,7 @@ public final class EarthRules {
     /** Where a player stands on the Earth, or null off it. */
     @Nullable static GeoPoint where(ServerPlayer player) {
         EarthGenerator earth = earth(player);
-        return earth == null ? null : earth.grid().geographic(player.getX(), player.getZ());
+        return earth == null ? null : earth.grid().tryGeographic(player.getX(), player.getZ());
     }
 
     /**

@@ -198,6 +198,7 @@ public final class EarthCompass {
      */
     private static int[] nearest(EarthGenerator earth, double x, double latitude, double longitude) {
         int[] at = earth.block(latitude, longitude);
+        if (!earth.grid().wrapsEastWest()) return at;
         double width = earth.grid().worldWidthBlocks();
         long shifted = Math.round(at[0] + Math.round((x - at[0]) / width) * width);
         // Block positions only travel so far on the wire.

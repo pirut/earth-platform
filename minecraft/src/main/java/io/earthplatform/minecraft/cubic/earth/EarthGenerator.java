@@ -16,6 +16,7 @@ import io.earthplatform.geography.globe.RemaElevation;
 import io.earthplatform.geography.globe.UsgsElevation;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MemoryPressure;
+import io.earthplatform.geography.globe.GlobeProjection;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.RiverMap;
 import io.earthplatform.geography.globe.TerrariumTileSource;
@@ -101,7 +102,8 @@ public final class EarthGenerator extends SurfaceGenerator {
             Blocks.LIGHT_GRAY_TERRACOTTA.defaultBlockState()};
 
     private final EarthSettings settings;
-    private final MercatorGrid grid;
+    private final GlobeProjection grid;
+    @Nullable private final MercatorGrid mercator;
     private final TerrariumTileSource tiles;
     /** The tiles every height is read from: with {@link BareEarth}, the ground under towns in place of their roofs. */
     private final GlobalElevation.Tiles ground;
@@ -180,7 +182,8 @@ public final class EarthGenerator extends SurfaceGenerator {
                            @Nullable RiverMap rivers, @Nullable BareEarth bareEarth, Noises noises) {
         super(seed, biomes, noises.random);
         this.settings = settings;
-        this.grid = new MercatorGrid(settings.metresPerBlock());
+        this.grid = GlobeProjection.of(settings.projection(), settings.metresPerBlock());
+        this.mercator = grid instanceof MercatorGrid m ? m : null;
         this.tiles = tiles;
         this.ground = bareEarth != null && cover != null ? bareEarth : tiles::tile;
         this.cover = cover;
@@ -221,11 +224,12 @@ public final class EarthGenerator extends SurfaceGenerator {
         // terrain, and both judge rises of tens of metres or more, which a town's roofs don't make.
         strata = new Strata(seed, new Strata.Globe() {
             @Override public double metres(double x, double z) { return plain[FAR_ZOOM].metres(x, z); }
-            @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
+            @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(0, z); }
+            @Override public double metresPerBlock(double x, double z) { return grid.groundMetresPerBlock(x, z); }
             @Override public boolean arid(double x, double z) {
                 if (climate == null) return false;
-                GeoPoint p = grid.geographic(x, z);
-                if (!(Math.abs(p.latitude()) <= 90)) return false;
+                GeoPoint p = grid.tryGeographic(x, z);
+                if (p == null || !(Math.abs(p.latitude()) <= 90)) return false;
                 ClimateSource.Climate c = climate.at(p.latitude(), p.longitude(), 0);
                 if (c == null) return false;
                 ClimateZone zone = ClimateZone.of(c.koppen(), c.meanTemperature(), c.warmestQuarter());
@@ -234,7 +238,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         }, badlands);
         towers = new Towers(seed, new Towers.Globe() {
             @Override public double metres(double x, double z) { return plain[TOWER_ZOOM].metres(x, z); }
-            @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(z); }
+            @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(0, z); }
+            @Override public double metresPerBlock(double x, double z) { return grid.groundMetresPerBlock(x, z); }
         });
     }
 
@@ -246,14 +251,14 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Override protected boolean emeralds(int maxGround) { return maxGround > SEA + 1800; }
     @Override public boolean barren(int x, int z, int y) { return (cover == null ? temperature(x, z, y) : local(x, z, y).temperature()) < -3; }
     public EarthSettings settings() { return settings; }
-    public MercatorGrid grid() { return grid; }
+    public GlobeProjection grid() { return grid; }
 
     /** Use regional river surveys in worlds pinned to them. */
     public void enableSurveyedRivers() { surveyedRivers = rivers != null; }
 
     @Override public int[] arrival() {
-        GeoPoint home = new GeoPoint(settings.latitude(), settings.longitude());
-        return new int[]{Mth.floor(grid.blockX(home)), Mth.floor(grid.blockZ(home))};
+        double[] b = grid.toBlock(settings.latitude(), settings.longitude());
+        return new int[]{Mth.floor(b[0]), Mth.floor(b[1])};
     }
 
     /** Coarse elevation, about 2.4 km a pixel at the equator: enough to tell land from sea in few downloads. */
@@ -266,14 +271,14 @@ public final class EarthGenerator extends SurfaceGenerator {
     public double roughMetres(double latitude, double longitude) {
         GlobalElevation coarse = rough;
         if (coarse == null) rough = coarse = new GlobalElevation(grid, tiles::tile, 6);
-        GeoPoint point = new GeoPoint(latitude, longitude);
-        return coarse.metres(grid.blockX(point), grid.blockZ(point));
+        double[] b = grid.toBlock(latitude, longitude);
+        return coarse.metres(b[0], b[1]);
     }
 
     /** Block X and Z of a latitude and longitude. */
     public int[] block(double latitude, double longitude) {
-        GeoPoint point = new GeoPoint(latitude, longitude);
-        return new int[]{Mth.floor(grid.blockX(point)), Mth.floor(grid.blockZ(point))};
+        double[] b = grid.toBlock(latitude, longitude);
+        return new int[]{Mth.floor(b[0]), Mth.floor(b[1])};
     }
 
     /**
@@ -294,7 +299,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     public void enableForestTypes() { forestTypes = cover == null ? null : ForestTypes.get(); }
 
     @Override public String place(int x, int z) {
-        GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
+        GeoPoint point = grid.tryGeographic(x + 0.5, z + 0.5);
+        if (point == null) return "open ocean";
         return String.format(Locale.ROOT, "%.5f, %.5f", point.latitude(), point.longitude());
     }
 
@@ -345,6 +351,11 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Level 0 stands for cubes: one-block voxels, read like far level 1. */
     @Override protected void farGround(int level, int x, int z, int[] out) {
+        if (mercator == null && grid.tryGeographic(x + 0.5, z + 0.5) == null) {
+            out[0] = SEA - 4000;
+            out[1] = SEA;
+            return;
+        }
         double[] sample = new double[3];
         GlobalElevation dem = elevation(zoom(Math.max(1, level)), 1 << level);
         double metres = dem.sample(x + 0.5, z + 0.5, sample);
@@ -397,6 +408,11 @@ public final class EarthGenerator extends SurfaceGenerator {
      * most of the half minute the horizon took.
      */
     @Override protected void previewGround(int level, int x, int z, int[] out) {
+        if (mercator == null && grid.tryGeographic(x + 0.5, z + 0.5) == null) {
+            out[0] = SEA - 4000;
+            out[1] = SEA;
+            return;
+        }
         int voxel = 1 << level;
         double[] sample = new double[3];
         double metres = plain[zoom(level)].sample(x + 0.5, z + 0.5, sample);
@@ -448,48 +464,45 @@ public final class EarthGenerator extends SurfaceGenerator {
             double reach = level == Far.MAX_LEVEL ? outer : Math.min(outer, (Far.hole(level + 1) + 2) * (double) Far.width(level + 1));
             // The level's own tiles, and for the fine levels the coarser ones their rules survey the land round a column on.
             for (int zoom : new int[] {zoom(level), Math.min(WATER_ZOOM, zoom(level)), Math.min(FAR_ZOOM, zoom(level))}) {
-                int tilesAcross = 1 << zoom;
                 double far = zoom == zoom(level) ? reach : reach + PREVIEW_SURVEY;
-                int x0 = (int) Math.floor(grid.pixelX(x - far, zoom) / 256), x1 = (int) Math.floor(grid.pixelX(x + far, zoom) / 256);
-                int y0 = (int) Math.floor(grid.pixelY(z - far, zoom) / 256), y1 = (int) Math.floor(grid.pixelY(z + far, zoom) / 256);
-                for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) for (int tx = x0; tx <= x1; tx++) {
-                    Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
-                    if (!asked.add(tile)) continue;
+                collectTiles(zoom, x, z, far, (tx, ty) -> {
+                    Tile tile = new Tile(zoom, tx, ty);
+                    if (!asked.add(tile)) return;
                     loads.add(() -> {
                         try { tiles.tile(tile.zoom, tile.x, tile.y); }
                         catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
                     });
-                }
+                });
             }
             // The rules that look round a column for snow, towns and wild land reach some eight kilometres past it.
             double around = reach + PREVIEW_AROUND;
-            GeoPoint a = grid.geographic(x - around, z + around), b = grid.geographic(x + around, z - around);
-            int overview = coverOverview(z, 1 << level);
-            loads.add(() -> {
-                try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), overview); }
-                catch (RuntimeException failure) { missed.accept("land cover", failure); }
-            });
+            int overview = coverOverview(x, z, 1 << level);
+            for (GeoBox box : geoBoxes(x, z, around)) {
+                loads.add(() -> {
+                    try { cover.prefetch(box.minLat(), box.minLon(), box.maxLat(), box.maxLon(), overview); }
+                    catch (RuntimeException failure) { missed.accept("land cover", failure); }
+                });
+            }
         }
         // Volcanic cones are looked for on the coarsest tiles, up to some fifteen kilometres past a column.
         {
-            int zoom = COARSEST_ZOOM, tilesAcross = 1 << zoom;
+            int zoom = COARSEST_ZOOM;
             double far = outer + 16384;
-            int x0 = (int) Math.floor(grid.pixelX(x - far, zoom) / 256), x1 = (int) Math.floor(grid.pixelX(x + far, zoom) / 256);
-            int y0 = (int) Math.floor(grid.pixelY(z - far, zoom) / 256), y1 = (int) Math.floor(grid.pixelY(z + far, zoom) / 256);
-            for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) for (int tx = x0; tx <= x1; tx++) {
-                Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
-                if (!asked.add(tile)) continue;
+            collectTiles(zoom, x, z, far, (tx, ty) -> {
+                Tile tile = new Tile(zoom, tx, ty);
+                if (!asked.add(tile)) return;
                 loads.add(() -> {
                     try { tiles.tile(tile.zoom, tile.x, tile.y); }
                     catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
                 });
-            }
+            });
         }
-        GeoPoint a = grid.geographic(x - outer, z + outer), b = grid.geographic(x + outer, z - outer);
-        loads.add(0, () -> {
-            try { climate.prefetchCoarse(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
-            catch (RuntimeException failure) { missed.accept("climate", failure); }
-        });
+        for (GeoBox box : geoBoxes(x, z, outer)) {
+            loads.add(0, () -> {
+                try { climate.prefetchCoarse(box.minLat(), box.minLon(), box.maxLat(), box.maxLon()); }
+                catch (RuntimeException failure) { missed.accept("climate", failure); }
+            });
+        }
         try (ExecutorService pool = Executors.newFixedThreadPool(PREVIEW_FETCHES, Thread.ofVirtual().factory())) {
             for (Runnable load : loads) pool.execute(load);
         }
@@ -782,7 +795,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         sweep(foot, wet, n, side, corner);
         // Flat tops: gentle over a couple of points each way, carrying their height. Blocks span fewer metres the
         // farther a place lies from the home's latitude, so slopes and distances are reckoned in metres.
-        double across = grid.groundMetresPerBlock((tz + 0.5) * CLIFF_TILE * spacing), run = 2.0 * spacing * across;
+        double across = grid.groundMetresPerBlock((tx + 0.5) * CLIFF_TILE * spacing, (tz + 0.5) * CLIFF_TILE * spacing), run = 2.0 * spacing * across;
         for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) {
             int at = j * n + i;
             boolean flat = false;
@@ -1186,7 +1199,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (known != null) return known;
         GlobalElevation dem = elevation[TerrariumTileSource.MAX_ZOOM];
         double cx = (i + 0.5) * CREST_CELL, cz = (j + 0.5) * CREST_CELL, here = dem.metres(cx, cz);
-        double r = CREST_METRES / grid.groundMetresPerBlock(cz);
+        double r = CREST_METRES / grid.groundMetresPerBlock(cx, cz);
         int lower = 0;
         for (int k = 0; k < CREST_POINTS; k++) {
             double a = k * 2 * Math.PI / CREST_POINTS;
@@ -1312,8 +1325,8 @@ public final class EarthGenerator extends SurfaceGenerator {
      */
     private int riverBank(int x, int z, int voxel) {
         if (rivers == null || voxel > RIVER_VOXEL) return DRY;
-        GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
-        if (rivers.near(point.latitude(), point.longitude()) < RiverMap.EDGE) return DRY;
+        GeoPoint point = grid.tryGeographic(x + 0.5, z + 0.5);
+        if (point == null || rivers.near(point.latitude(), point.longitude()) < RiverMap.EDGE) return DRY;
         return riverSurface(x, z) - BANK;
     }
 
@@ -1365,7 +1378,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     private final ThreadLocal<CoverMemo> coverMemo = ThreadLocal.withInitial(CoverMemo::new);
 
     /** The land cover overview a voxel's cover is read at: its pixels no bigger than the voxel. */
-    private int coverOverview(double z, int voxel) { return overview(grid.groundMetresPerBlock(z), voxel); }
+    private int coverOverview(double x, double z, int voxel) { return overview(grid.groundMetresPerBlock(x, z), voxel); }
 
     private static int overview(double metresPerBlock, int voxel) {
         return Mth.clamp(Mth.floor(Math.log(voxel * metresPerBlock / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
@@ -1373,7 +1386,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     private int coverAt(double x, double z, int voxel) {
         double riverX = x + 0.5, riverZ = z + 0.5;
-        double metresPerBlock = grid.groundMetresPerBlock(z);
+        double metresPerBlock = grid.groundMetresPerBlock(x, z);
         if (voxel <= 8) {
             double amplitude = 0.55 * PIXEL_METRES / metresPerBlock;
             double nx = x / 13.0, nz = z / 13.0;
@@ -1381,7 +1394,8 @@ public final class EarthGenerator extends SurfaceGenerator {
             z += (warpZ.getValue(nx, nz) + 0.5 * warpZ.getValue(nx * 2.7, nz * 2.7)) * amplitude;
         }
         int overview = overview(metresPerBlock, voxel);
-        GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
+        GeoPoint point = grid.tryGeographic(x + 0.5, z + 0.5);
+        if (point == null) return WorldCoverSource.NO_DATA;
         int code = cover.code(point.latitude(), point.longitude(), overview);
         boolean mappedWater = code == WorldCoverSource.WATER;
         if (mappedWater) {
@@ -1513,12 +1527,43 @@ public final class EarthGenerator extends SurfaceGenerator {
         long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         Long2IntOpenHashMap known = strayCells.get(key);
         if (known != null) return known;
-        GeoPoint a = grid.geographic(cx * (double) WATER_CELL, cz * (double) WATER_CELL);
-        GeoPoint b = grid.geographic((cx + 1) * (double) WATER_CELL, (cz + 1) * (double) WATER_CELL);
+        double minLat, maxLat, minLon, maxLon;
+        if (mercator != null) {
+            GeoPoint a = mercator.geographic(cx * (double) WATER_CELL, cz * (double) WATER_CELL);
+            GeoPoint b = mercator.geographic((cx + 1) * (double) WATER_CELL, (cz + 1) * (double) WATER_CELL);
+            minLat = Math.min(a.latitude(), b.latitude());
+            maxLat = Math.max(a.latitude(), b.latitude());
+            minLon = Math.min(a.longitude(), b.longitude());
+            maxLon = Math.max(a.longitude(), b.longitude());
+        } else {
+            minLat = Double.POSITIVE_INFINITY; maxLat = Double.NEGATIVE_INFINITY;
+            minLon = Double.POSITIVE_INFINITY; maxLon = Double.NEGATIVE_INFINITY;
+            double x0 = cx * (double) WATER_CELL, z0 = cz * (double) WATER_CELL;
+            for (int j = 0; j <= 2; j++) for (int i = 0; i <= 2; i++) {
+                GeoPoint p = grid.tryGeographic(x0 + i * (WATER_CELL * 0.5), z0 + j * (WATER_CELL * 0.5));
+                if (p == null) continue;
+                minLat = Math.min(minLat, p.latitude()); maxLat = Math.max(maxLat, p.latitude());
+                minLon = Math.min(minLon, p.longitude()); maxLon = Math.max(maxLon, p.longitude());
+            }
+            if (!Double.isFinite(minLat) || maxLon - minLon > 180) {
+                Long2IntOpenHashMap empty = new Long2IntOpenHashMap();
+                if (strayCells.size() > 1 << 14) strayCells.clear();
+                strayCells.putIfAbsent(key, empty);
+                return empty;
+            }
+        }
         long rows = 180L * WorldCoverSource.PIXELS_PER_DEGREE;
-        long top = Math.max(0, row(Math.max(a.latitude(), b.latitude())) - STRAY_MARGIN), left = column(Math.min(a.longitude(), b.longitude())) - STRAY_MARGIN;
-        int height = (int) (Math.min(rows - 1, row(Math.min(a.latitude(), b.latitude())) + STRAY_MARGIN) - top + 1);
-        int width = (int) (column(Math.max(a.longitude(), b.longitude())) + STRAY_MARGIN - left + 1);
+        long top = Math.max(0, row(maxLat) - STRAY_MARGIN), left = column(minLon) - STRAY_MARGIN;
+        long hLong = Math.min(rows - 1, row(minLat) + STRAY_MARGIN) - top + 1;
+        long wLong = column(maxLon) + STRAY_MARGIN - left + 1;
+        if (mercator == null && (hLong <= 0 || wLong <= 0 || hLong * wLong > 200_000)) {
+            Long2IntOpenHashMap empty = new Long2IntOpenHashMap();
+            if (strayCells.size() > 1 << 14) strayCells.clear();
+            strayCells.putIfAbsent(key, empty);
+            return empty;
+        }
+        int height = (int) hLong;
+        int width = (int) wLong;
         double ppd = WorldCoverSource.PIXELS_PER_DEGREE;
         byte[] codes = new byte[width * height];
         for (int j = 0; j < height; j++) for (int i = 0; i < width; i++)
@@ -1574,8 +1619,8 @@ public final class EarthGenerator extends SurfaceGenerator {
             double lowest = Double.MAX_VALUE, lowX = 0, lowZ = 0;
             for (int k = 0; k < size; k++) {
                 int i = patch[k] % width, j = patch[k] / width;
-                GeoPoint p = new GeoPoint(90 - (top + j + 0.5) / ppd, (left + i + 0.5) / ppd - 180);
-                double bx = grid.blockX(p), bz = grid.blockZ(p);
+                double[] b = grid.toBlock(90 - (top + j + 0.5) / ppd, (left + i + 0.5) / ppd - 180);
+                double bx = b[0], bz = b[1];
                 ground[k] = dem.metres(bx, bz);
                 if (ground[k] < lowest) { lowest = ground[k]; lowX = bx; lowZ = bz; }
                 north = Math.min(north, j); south = Math.max(south, j); west = Math.min(west, i); east = Math.max(east, i);
@@ -1584,7 +1629,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             double pixel = 1 / ppd * Math.PI / 180 * 6_371_008.8, latitude = 90 - (top + (north + south) / 2.0) / ppd;
             double across = Math.hypot((south - north + 1) * pixel, (east - west + 1) * pixel * Math.cos(Math.toRadians(latitude)));
             if (ground[size * 3 / 4] - ground[size / 4] < STRAY_RISE || ground[size * 9 / 10] - ground[size / 10] < STRAY_GRADE * across) continue;
-            double metresPerBlock = grid.groundMetresPerBlock(lowZ), below = lowest;
+            double metresPerBlock = grid.groundMetresPerBlock(lowX, lowZ), below = lowest;
             for (double ring : STRAY_RINGS) for (int d = 0; d < 8; d++)
                 below = Math.min(below, dem.metres(lowX + RING_X[d] * ring / metresPerBlock, lowZ + RING_Z[d] * ring / metresPerBlock));
             if (below > lowest - STRAY_FALL) continue;
@@ -1631,7 +1676,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         for (double ring : ICE_RINGS) {
             double r = Math.max(ring, PIXEL_METRES * (1 << overview)) / metresPerBlock;
             for (int i = 0; i < 8; i++) {
-                GeoPoint point = grid.geographic(x + 0.5 + RING_X[i] * r, z + 0.5 + RING_Z[i] * r);
+                GeoPoint point = grid.tryGeographic(x + 0.5 + RING_X[i] * r, z + 0.5 + RING_Z[i] * r);
+                if (point == null) { water++; continue; }
                 int code = cover.code(point.latitude(), point.longitude(), overview);
                 if (code == WorldCoverSource.SNOW_AND_ICE) snow++;
                 else if (code == WorldCoverSource.WATER) water++;
@@ -1649,8 +1695,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         boolean icy = false;
         double spacing = WATER_CELL / 8.0;
         for (int k = 0; k < 64 && !icy; k++) {
-            GeoPoint point = grid.geographic(cx * (double) WATER_CELL + (k % 8 + 0.5) * spacing, cz * (double) WATER_CELL + (k / 8 + 0.5) * spacing);
-            icy = cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW) == WorldCoverSource.SNOW_AND_ICE;
+            GeoPoint point = grid.tryGeographic(cx * (double) WATER_CELL + (k % 8 + 0.5) * spacing, cz * (double) WATER_CELL + (k / 8 + 0.5) * spacing);
+            icy = point != null && cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW) == WorldCoverSource.SNOW_AND_ICE;
         }
         if (icyCells.size() > 1 << 16) icyCells.clear();
         icyCells.putIfAbsent(key, icy);
@@ -2400,8 +2446,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         long[] mask = new long[2 * words];
         double spacing = (double) WATER_CELL / WATER_SAMPLES;
         for (int j = 0; j < WATER_SAMPLES; j++) for (int i = 0; i < WATER_SAMPLES; i++) {
-            GeoPoint point = grid.geographic(cx * (double) WATER_CELL + (i + 0.5) * spacing, cz * (double) WATER_CELL + (j + 0.5) * spacing);
-            int k = j * WATER_SAMPLES + i, code = cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW);
+            GeoPoint point = grid.tryGeographic(cx * (double) WATER_CELL + (i + 0.5) * spacing, cz * (double) WATER_CELL + (j + 0.5) * spacing);
+            int k = j * WATER_SAMPLES + i, code = point == null ? WorldCoverSource.NO_DATA : cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW);
             if (code == WorldCoverSource.WATER) mask[k >> 6] |= 1L << (k & 63);
             else if (code == WorldCoverSource.NO_DATA) mask[words + (k >> 6)] |= 1L << (k & 63);
         }
@@ -2435,8 +2481,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         double wet = 0, dry = 1, x0 = ox + (wi + 0.5) * spacing, z0 = oz + (wj + 0.5) * spacing, dx = (di - wi) * spacing, dz = (dj - wj) * spacing;
         for (int step = 0; step < 4; step++) {
             double t = (wet + dry) / 2;
-            GeoPoint point = grid.geographic(x0 + dx * t, z0 + dz * t);
-            if (cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW) == WorldCoverSource.WATER) wet = t; else dry = t;
+            GeoPoint point = grid.tryGeographic(x0 + dx * t, z0 + dz * t);
+            if (point == null || cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW) == WorldCoverSource.WATER) wet = t; else dry = t;
         }
         double t = (wet + dry) / 2;
         // The tiles as they are, as the survey reads them.
@@ -2621,8 +2667,8 @@ public final class EarthGenerator extends SurfaceGenerator {
             int k = j * WATER_SAMPLES + i;
             metres[k] = (float) m;
             ground[k] = m;
-            GeoPoint point = grid.geographic(x, z);
-            int code = cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW);
+            GeoPoint point = grid.tryGeographic(x, z);
+            int code = point == null ? WorldCoverSource.NO_DATA : cover.code(point.latitude(), point.longitude(), WATER_OVERVIEW);
             kind[k] = code == WorldCoverSource.NO_DATA ? OPEN : code != WorldCoverSource.WATER ? DRY_LAND
                     : m <= SEA_METRES || coarse(dem, x, z, m, 48) ? FLAT : WET;
         }
@@ -2726,7 +2772,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     private boolean waterBetween(double x0, double z0, double x1, double z1, int overview) {
         for (int step = 1; step < 4; step++) {
-            GeoPoint point = grid.geographic(x0 + (x1 - x0) * step / 4, z0 + (z1 - z0) * step / 4);
+            GeoPoint point = grid.tryGeographic(x0 + (x1 - x0) * step / 4, z0 + (z1 - z0) * step / 4);
+            if (point == null) continue;
             int code = cover.code(point.latitude(), point.longitude(), overview);
             if (code != WorldCoverSource.WATER && code != WorldCoverSource.NO_DATA) return false;
         }
@@ -2756,7 +2803,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             if ((sea[k >> 6] >>> (k & 63) & 1) == 0) continue;
             double x1 = (sx + 0.5) * spacing, z1 = (sz + 0.5) * spacing;
             if (waterBetween(x + 0.5, z + 0.5, x1, z1)) return true;
-            if (fine < 0) fine = coverOverview(z, voxel);
+            if (fine < 0) fine = coverOverview(x, z, voxel);
             if (fine < WATER_OVERVIEW && waterBetween(x + 0.5, z + 0.5, x1, z1, fine)) return true;
         }
         return false;
@@ -2825,13 +2872,17 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     // Climate, biomes and ground surface --------------------------------------------------------
 
-    private double latitude(int z) {
-        return Math.toDegrees(2 * Math.atan(Math.exp(-(z + 0.5) * settings.metresPerBlock() / MercatorGrid.RADIUS)) - Math.PI / 2);
+    private double latitude(int x, int z) {
+        if (mercator != null) {
+            return Math.toDegrees(2 * Math.atan(Math.exp(-(z + 0.5) * settings.metresPerBlock() / MercatorGrid.RADIUS)) - Math.PI / 2);
+        }
+        GeoPoint point = grid.tryGeographic(x + 0.5, z + 0.5);
+        return point == null ? 0.0 : point.latitude();
     }
 
     /** Rough mean yearly temperature in °C: warm at the equator, cooling toward the poles and with height. */
     private double temperature(int x, int z, int y) {
-        double lat = latitude(z);
+        double lat = latitude(x, z);
         return 27 - 0.0074 * lat * lat - 0.0065 * Math.max(0, y - SEA) + warmth.getValue(x / 700.0, z / 700.0) * 1.5;
     }
 
@@ -2843,20 +2894,20 @@ public final class EarthGenerator extends SurfaceGenerator {
         int metres = Math.max(0, y - SEA);
         if (climate != null && quick()) {
             // A quick stand-in reads every thirty-second row alone, at the column's own longitude and height.
-            GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
-            ClimateSource.Climate c = Math.abs(point.latitude()) <= 90 ? climate.coarse(point.latitude(), point.longitude(), metres) : null;
+            GeoPoint point = grid.tryGeographic(x + 0.5, z + 0.5);
+            ClimateSource.Climate c = point != null && Math.abs(point.latitude()) <= 90 ? climate.coarse(point.latitude(), point.longitude(), metres) : null;
             if (c != null) return new Local(ClimateZone.of(c.koppen(), c.meanTemperature(), c.warmestQuarter()),
                     c.meanTemperature(), c.warmestQuarter(), c.precipitation(), c.koppen());
         } else if (climate != null) {
             // Zone borders follow the 1 km grid; a gentle warp of a few hundred metres bends them, and finer layers down
             // to a few blocks fray them, so forest gives way to taiga in tongues and patches rather than along a curve.
-            double perBlock = 1 / grid.groundMetresPerBlock(z);
-            GeoPoint point = grid.geographic(
+            double perBlock = 1 / grid.groundMetresPerBlock(x, z);
+            GeoPoint point = grid.tryGeographic(
                     x + 0.5 + (warpX.getValue(x / 900.0, z / 900.0) * 350 + warpX.getValue(x / 190.0 + 9.4, z / 190.0 - 3.8) * 80
                             + warpX.getValue(x / 37.0 - 5.2, z / 37.0 + 1.7) * 16) * perBlock + grain(x, z, 0x434C58L) * 3,
                     z + 0.5 + (warpZ.getValue(x / 900.0, z / 900.0) * 350 + warpZ.getValue(x / 190.0 + 9.4, z / 190.0 - 3.8) * 80
                             + warpZ.getValue(x / 37.0 - 5.2, z / 37.0 + 1.7) * 16) * perBlock + grain(x, z, 0x434C5AL) * 3);
-            ClimateSource.Climate c = climate.at(point.latitude(), point.longitude(), metres);
+            ClimateSource.Climate c = point == null ? null : climate.at(point.latitude(), point.longitude(), metres);
             if (c != null) return new Local(ClimateZone.of(c.koppen(), c.meanTemperature(), c.warmestQuarter()),
                     c.meanTemperature(), c.warmestQuarter(), c.precipitation(), c.koppen());
         }
@@ -2933,6 +2984,9 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** A column's surface with the given imagery, or none, having the last word; for {@link ImageryCalibration}. */
     Surface surface(int x, int z, int y, int water, int slope, int voxel, @Nullable ImageryGround imageryGround) {
+        if (mercator == null && grid.tryGeographic(x + 0.5, z + 0.5) == null) {
+            return new Surface(deepOcean, GRAVEL, GRAVEL, 0, 0, 0, 0, 0, false);
+        }
         Local local = cover == null ? null : local(x, z, y);
         double t = local == null ? temperature(x, z, y) : local.temperature();
         if (water != DRY && water != SEA && cover != null) return lake(x, z, y, water, t, voxel);
@@ -2943,7 +2997,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             // turn deep: cut at one depth, the bed's steps drew hard-edged navy boxes in turquoise lagoons.
             // No polar bears in the south: the Southern Ocean is cold ocean, iced over by iced() as frozen ocean is.
             double deep = depth + seaWobble(x, z);
-            Holder<Biome> b = t < -2 && latitude(z) > -50 ? frozenOcean : t < 6 ? (deep > 40 ? deepColdOcean : coldOcean)
+            Holder<Biome> b = t < -2 && latitude(x, z) > -50 ? frozenOcean : t < 6 ? (deep > 40 ? deepColdOcean : coldOcean)
                     : t > 15 ? (deep > (t > 21 ? 2 * SHALLOWS : 40) ? deepLukewarmOcean : t > 21 && deep <= SHALLOWS ? warmOcean : lukewarmOcean)
                     : deep > 40 ? deepOcean : ocean;
             BlockState floor = depth < 30 ? SAND : GRAVEL;
@@ -3018,7 +3072,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * it the colder the coast, until it is closed pack ice in the high Arctic and off Antarctica.
      */
     @Override protected boolean iced(Surface surface, int x, int z) {
-        boolean southern = (surface.biome() == coldOcean || surface.biome() == deepColdOcean) && latitude(z) < -50;
+        boolean southern = (surface.biome() == coldOcean || surface.biome() == deepColdOcean) && latitude(x, z) < -50;
         if (!southern && !super.iced(surface, x, z)) return false;
         if (surface.biome() != frozenOcean && !southern) return true;
         double t = cover == null ? temperature(x, z, SEA) : local(x, z, SEA).temperature();
@@ -3416,7 +3470,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (moor) return moor(patch, roll, rocky);
                 BlockState top = rocky != null ? rocky : patch > 0.2 ? MOSS : roll < 30 ? GRAVEL : GRASS;
                 // Arctic tundra lies under snow; high mountain lichen fields, warm for a few weeks each summer, mostly do not.
-                boolean snowy = t < -2 && (local.warmest() < 2 || Math.abs(latitude(z)) > 55);
+                boolean snowy = t < -2 && (local.warmest() < 2 || Math.abs(latitude(x, z)) > 55);
                 return new Surface(snowy ? snowyPlains : meadow, top, DIRT, 0, 0, 0, top == GRASS ? 200 : 0, top == GRASS ? 230 : 0, false);
             }
             default -> { return null; }
@@ -3457,7 +3511,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         // The tiles as they are: snow and ice hold no towns or forest, and far levels read this too.
         GlobalElevation dem = survey(WATER_ZOOM);
         double dx = dem.metres(x + 8.5, z + 0.5) - dem.metres(x - 7.5, z + 0.5), dz = dem.metres(x + 0.5, z + 8.5) - dem.metres(x + 0.5, z - 7.5);
-        return Math.sqrt(dx * dx + dz * dz) / (16 * grid.groundMetresPerBlock(z));
+        return Math.sqrt(dx * dx + dz * dz) / (16 * grid.groundMetresPerBlock(x, z));
     }
 
     /** Bare rock, pale granite where the mountains are granite. */
@@ -3683,7 +3737,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * Arabia's harrats, the Snake River Plain). Volcanic cones anywhere are found by their shape besides.
      */
     private boolean volcanic(int x, int z) {
-        if (maps == null ? OldRegions.lava(grid.geographic(x, z)) : EarthMaps.volcanic(rock(x, z))) return true;
+        if (maps == null ? oldRegion(x, z, OldRegions::lava) : EarthMaps.volcanic(rock(x, z))) return true;
         return cone(x, z);
     }
 
@@ -3700,7 +3754,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** The rock map's class under a column, its borders wandering as the ecoregions' do. */
     private int rock(int x, int z) {
         GeoPoint p = frayed(x, z);
-        return maps.rock(p.latitude(), p.longitude());
+        return p == null ? 0 : maps.rock(p.latitude(), p.longitude());
     }
 
     /** Summits of volcanic cones, by 1024-block cell: x, z and the mean height of the ring round them, or none. */
@@ -3760,7 +3814,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         Ecoregions map = cover == null ? null : Ecoregions.get();
         if (map == null) return 0;
         GeoPoint p = frayed(x, z);
-        return map.ecoregion(p.latitude(), p.longitude());
+        return p == null ? 0 : map.ecoregion(p.latitude(), p.longitude());
     }
 
     /**
@@ -3768,13 +3822,18 @@ public final class EarthGenerator extends SurfaceGenerator {
      * layers down to a few blocks, so their borders wander and fray like a real change of country rather than
      * running dead straight.
      */
-    private GeoPoint frayed(int x, int z) {
-        double perBlock = 1 / grid.groundMetresPerBlock(z);
+    @Nullable private GeoPoint frayed(int x, int z) {
+        double perBlock = 1 / grid.groundMetresPerBlock(x, z);
         double dx = (warpX.getValue(x / 1700.0 + 31.7, z / 1700.0 - 4.1) * 600 + warpX.getValue(x / 310.0 - 8.3, z / 310.0 + 17.2) * 140
                 + warpX.getValue(x / 47.0 + 2.9, z / 47.0 - 6.6) * 24) * perBlock + grain(x, z, 0x45434FL) * 3;
         double dz = (warpZ.getValue(x / 1700.0 + 31.7, z / 1700.0 - 4.1) * 600 + warpZ.getValue(x / 310.0 - 8.3, z / 310.0 + 17.2) * 140
                 + warpZ.getValue(x / 47.0 + 2.9, z / 47.0 - 6.6) * 24) * perBlock + grain(x, z, 0x45435AL) * 3;
-        return grid.geographic(x + dx, z + dz);
+        return grid.tryGeographic(x + dx, z + dz);
+    }
+
+    private boolean oldRegion(int x, int z, java.util.function.Predicate<GeoPoint> predicate) {
+        GeoPoint p = grid.tryGeographic(x, z);
+        return p != null && predicate.test(p);
     }
 
     /** Whether a column's ecoregion is tropical forest, or unknown. */
@@ -3832,18 +3891,18 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Whether a hot, dry column's ground is red sand under its scrub and red rock where it stands bare, as Australia's centre is. */
     private boolean outback(int x, int z) {
-        return maps == null ? OldRegions.outback(grid.geographic(x, z)) : redCountry(x, z);
+        return maps == null ? oldRegion(x, z, OldRegions::outback) : redCountry(x, z);
     }
 
     /** Whether a dry column's bare ground is red rock and red sand, as the Colorado Plateau's is. */
     private boolean redRock(int x, int z) {
-        return maps == null ? OldRegions.redRock(grid.geographic(x, z)) : redCountry(x, z);
+        return maps == null ? oldRegion(x, z, OldRegions::redRock) : redCountry(x, z);
     }
 
     /** How red a column's bare ground is from orbit, 0 for pale sand and grey rock to 1 for the red of Australia's centre. */
     private double redness(int x, int z) {
-        GeoPoint p = grid.geographic(x, z);
-        return maps.red(p.latitude(), p.longitude());
+        GeoPoint p = grid.tryGeographic(x, z);
+        return p == null ? 0 : maps.red(p.latitude(), p.longitude());
     }
 
     /**
@@ -3864,7 +3923,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * a red cast from orbit, as the Libyan Desert and the Nafud are, and most of it where the land is red.
      */
     private double redShare(int x, int z) {
-        if (maps == null) return OldRegions.redShare(grid.geographic(x, z));
+        if (maps == null) { GeoPoint p = grid.tryGeographic(x, z); return p == null ? 0.03 : OldRegions.redShare(p); }
         double t = Mth.clamp((redness(x, z) - 0.1) / 0.6, 0, 1);
         return Math.max(0.03, 0.85 * t * t * (3 - 2 * t));
     }
@@ -3889,8 +3948,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Organic carbon in a column's topsoil, 0 for none to 1 for peat and deep forest litter. */
     private double soilCarbon(int x, int z) {
-        GeoPoint p = grid.geographic(x, z);
-        return maps.carbon(p.latitude(), p.longitude());
+        GeoPoint p = grid.tryGeographic(x, z);
+        return p == null ? 0 : maps.carbon(p.latitude(), p.longitude());
     }
 
     /** The realm a column's ecoregion lies in, or {@link Ecoregions#NO_REALM} at sea, on ice and where the map has none. */
@@ -3905,7 +3964,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * the south of Japan and Korea, but nowhere in Europe.
      */
     private boolean bamboo(int x, int z, Local local) {
-        if (!realms) return OldRegions.bamboo(grid.geographic(x, z));
+        if (!realms) return oldRegion(x, z, OldRegions::bamboo);
         int realm = realm(x, z);
         return realm == Ecoregions.INDOMALAYAN || realm == Ecoregions.PALEARCTIC && local.rain() > 1000 && local.warmest() >= 24.5;
     }
@@ -3916,7 +3975,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * where winters are wet too, by hot summers with more than 1,100 mm of rain a year (Japan, east China).
      */
     private boolean cherries(int x, int z, Local local) {
-        if (!realms) return OldRegions.cherries(grid.geographic(x, z));
+        if (!realms) return oldRegion(x, z, OldRegions::cherries);
         boolean monsoon = switch (local.koppen()) {
             case ClimateSource.CWA, ClimateSource.CWB, ClimateSource.CWC, ClimateSource.DWA, ClimateSource.DWB, ClimateSource.DWC -> true;
             case ClimateSource.CFA, ClimateSource.DFA, ClimateSource.DFB -> local.rain() > 1100 && local.warmest() >= 23.5;
@@ -3935,7 +3994,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Whether cacti grow wild at a column: only in the Americas, the Nearctic and Neotropic realms. */
     @Override protected boolean cacti(int x, int z) {
-        if (!realms) return OldRegions.americas(grid.geographic(x, z));
+        if (!realms) return oldRegion(x, z, OldRegions::americas);
         int realm = realm(x, z);
         return realm == Ecoregions.NEARCTIC || realm == Ecoregions.NEOTROPIC;
     }
@@ -3972,8 +4031,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         Byte known = canopyColumns.get(key);
         if (known == null) {
-            GeoPoint p = grid.geographic((cx << 4) + 8, (cz << 4) + 8);
-            int metres = canopy.metres(p.latitude(), p.longitude(), CANOPY_OVERVIEW);
+            GeoPoint p = grid.tryGeographic((cx << 4) + 8, (cz << 4) + 8);
+            int metres = p == null ? -1 : canopy.metres(p.latitude(), p.longitude(), CANOPY_OVERVIEW);
             known = (byte) (metres < 0 ? 0 : Math.min(126, metres) + 1);
             canopyColumns.put(key, known);
         }
@@ -4045,7 +4104,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * column asks the map twice. Older worlds keep the Sierra Nevada's sequoia belt.
      */
     @Override protected boolean giants(int x, int z) {
-        if (canopy == null) return OldRegions.sequoiaBelt(grid.geographic(x, z));
+        if (canopy == null) return oldRegion(x, z, OldRegions::sequoiaBelt);
         int gx = x >> GIANT_CELL_BITS, gz = z >> GIANT_CELL_BITS;
         long key = it.unimi.dsi.fastutil.HashCommon.mix((long) gx << 32 | gz & 0xFFFFFFFFL);
         Boolean known = giantCells.get(key);
@@ -4079,7 +4138,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * height, wherever on Earth that is. Worlds made before the map keep the Sierra Nevada's real sequoia groves.
      */
     private boolean sequoias(int x, int z, int y) {
-        if (canopy == null) return OldRegions.grove(grid.geographic(x, z), y - SEA);
+        if (canopy == null) { GeoPoint p = grid.tryGeographic(x, z); return p != null && OldRegions.grove(p, y - SEA); }
         if (!giants(x, z) || !coniferCountry(x, z)) return false;
         // Read a few dozen blocks aside, by broad noise: the map is stitched from strips of imagery that read heights
         // a little differently, and a grove must not end along a strip's straight edge. Then blended between the
@@ -4185,6 +4244,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Nullable private Surface typed(Local local, double patch, int x, int z) {
         if (forestTypes == null) return null;
         GeoPoint p = frayed(x, z);
+        if (p == null) return null;
         double[] mix = forestMix.get();
         if (!forestTypes.at(p.latitude(), p.longitude(), mix)) return null;
         double needle = mix[0], evergreen = mix[1], t = local.temperature();
@@ -4315,18 +4375,13 @@ public final class EarthGenerator extends SurfaceGenerator {
         for (Map.Entry<Integer, Double> entry : zooms.entrySet()) {
             int zoom = entry.getKey();
             double reach = entry.getValue();
-            int tilesAcross = 1 << zoom;
-            int x0 = (int) Math.floor(grid.pixelX(x - reach, zoom) / 256), x1 = (int) Math.floor(grid.pixelX(x + reach, zoom) / 256);
-            int y0 = (int) Math.floor(grid.pixelY(z - reach, zoom) / 256), y1 = (int) Math.floor(grid.pixelY(z + reach, zoom) / 256);
-            for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) {
-                for (int tx = x0; tx <= x1; tx++) {
-                    Tile tile = new Tile(zoom, Math.floorMod(tx, tilesAcross), ty);
-                    add.accept("elevation " + tile.zoom + "/" + tile.x + "/" + tile.y, () -> {
-                        try { ground.tile(tile.zoom, tile.x, tile.y); }
-                        catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
-                    });
-                }
-            }
+            collectTiles(zoom, x, z, reach, (tx, ty) -> {
+                Tile tile = new Tile(zoom, tx, ty);
+                add.accept("elevation " + tile.zoom + "/" + tile.x + "/" + tile.y, () -> {
+                    try { ground.tile(tile.zoom, tile.x, tile.y); }
+                    catch (RuntimeException failure) { missed.accept("elevation tile " + tile.zoom + "/" + tile.x + "/" + tile.y, failure); }
+                });
+            });
         }
         if (climate != null) {
             // The cubes and the search for a landing read climate only where their rock layers look for dry country,
@@ -4337,14 +4392,15 @@ public final class EarthGenerator extends SurfaceGenerator {
             // The far levels read climate across their whole square, and their rock layers look a zone's reach past
             // that: some 230 rows of each variable, which came in one request each as the columns needed them. The
             // rows of the levels nearest the player first, which are made first.
-            double dry = Strata.dryReach(grid.groundMetresPerBlock(z));
+            double dry = Strata.dryReach(grid.groundMetresPerBlock(x, z));
             double[] reaches = !far ? new double[] {Math.min(24000, NEAR_REACH + dry)}
                     : new double[] {24000, Math.max(24000, (Far.outer() + 1) * (double) Far.width(Far.MAX_LEVEL) + dry)};
             add.accept("climate", () -> {
                 try {
                     for (double reach : reaches) {
-                        GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
-                        climate.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude());
+                        for (GeoBox box : geoBoxes(x, z, reach)) {
+                            climate.prefetch(box.minLat(), box.minLon(), box.maxLat(), box.maxLon());
+                        }
                     }
                 } catch (RuntimeException failure) { missed.accept("climate", failure); }
             });
@@ -4352,19 +4408,21 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (canopy != null) {
             // Tree heights for the trees that stand near by; further out the far levels draw no trees.
             double reach = Math.min(most, 3500);
-            GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
-            loads.add(() -> {
-                try { canopy.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), CANOPY_OVERVIEW); }
-                catch (RuntimeException failure) { missed.accept("canopy height", failure); }
-            });
+            for (GeoBox box : geoBoxes(x, z, reach)) {
+                loads.add(() -> {
+                    try { canopy.prefetch(box.minLat(), box.minLon(), box.maxLat(), box.maxLon(), CANOPY_OVERVIEW); }
+                    catch (RuntimeException failure) { missed.accept("canopy height", failure); }
+                });
+            }
         }
         if (rivers != null) {
             double reach = Math.min(most, 3500);
-            GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
-            add.accept("rivers", () -> {
-                try { rivers.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude()); }
-                catch (RuntimeException failure) { missed.accept("rivers", failure); }
-            });
+            for (GeoBox box : geoBoxes(x, z, reach)) {
+                add.accept("rivers", () -> {
+                    try { rivers.prefetch(box.minLat(), box.minLon(), box.maxLat(), box.maxLon()); }
+                    catch (RuntimeException failure) { missed.accept("rivers", failure); }
+                });
+            }
         }
         if (imagery != null) {
             // Imagery: full detail near by, coarser zooms further out, as the far levels read them.
@@ -4386,19 +4444,21 @@ public final class EarthGenerator extends SurfaceGenerator {
                 // The water survey's overview in full: the sea checks by a landing read it.
                 double reach = overview == WATER_OVERVIEW ? reaches[overview] : Math.min(most, reaches[overview]);
                 int level = overview;
-                GeoPoint a = grid.geographic(x - reach, z + reach), b = grid.geographic(x + reach, z - reach);
-                add.accept("land cover " + level, () -> {
-                    try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), level); }
+                for (GeoBox box : geoBoxes(x, z, reach)) {
+                    add.accept("land cover " + level, () -> {
+                        try { cover.prefetch(box.minLat(), box.minLon(), box.maxLat(), box.maxLon(), level); }
+                        catch (RuntimeException failure) { missed.accept("land cover", failure); }
+                    });
+                }
+            }
+            // And the overview joinsOpenSea() reads its sea cells at, which a landing by the coast asks first.
+            int seaOverview = Mth.clamp(Mth.floor(Math.log(SEA_CELL * grid.groundMetresPerBlock(x, z) / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
+            for (GeoBox box : geoBoxes(x, z, 24000)) {
+                add.accept("land cover sea", () -> {
+                    try { cover.prefetch(box.minLat(), box.minLon(), box.maxLat(), box.maxLon(), seaOverview); }
                     catch (RuntimeException failure) { missed.accept("land cover", failure); }
                 });
             }
-            // And the overview joinsOpenSea() reads its sea cells at, which a landing by the coast asks first.
-            int seaOverview = Mth.clamp(Mth.floor(Math.log(SEA_CELL * grid.groundMetresPerBlock(z) / PIXEL_METRES) / Math.log(2)), 0, WorldCoverSource.MAX_OVERVIEW);
-            GeoPoint a = grid.geographic(x - 24000, z + 24000), b = grid.geographic(x + 24000, z - 24000);
-            add.accept("land cover sea", () -> {
-                try { cover.prefetch(a.latitude(), a.longitude(), b.latitude(), b.longitude(), seaOverview); }
-                catch (RuntimeException failure) { missed.accept("land cover", failure); }
-            });
         }
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             for (Runnable load : loads) pool.execute(() -> MemoryPressure.runHeavy(load));
@@ -4411,5 +4471,74 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         if (failed.get() > 0)
             EarthPlatformMod.LOGGER.warn("Could not prefetch {} of {} pieces of Earth data; generation asks for them again (first: {})", failed.get(), loads.size(), first.get());
+    }
+
+    private record GeoBox(double minLat, double minLon, double maxLat, double maxLon) {}
+
+    /**
+     * Geographic bounding box(es) covering a square of radius {@code reach} blocks around {@code (x, z)}.
+     * Preserves the exact two-corner lookup for Web Mercator and samples an 9x9 grid for non-Mercator
+     * projections, splitting across the antimeridian when needed.
+     */
+    private List<GeoBox> geoBoxes(double x, double z, double reach) {
+        if (mercator != null) {
+            GeoPoint a = mercator.geographic(x - reach, z + reach), b = mercator.geographic(x + reach, z - reach);
+            return List.of(new GeoBox(a.latitude(), a.longitude(), b.latitude(), b.longitude()));
+        }
+        double minLat = Double.POSITIVE_INFINITY, maxLat = Double.NEGATIVE_INFINITY;
+        double minLon = Double.POSITIVE_INFINITY, maxLon = Double.NEGATIVE_INFINITY;
+        double minPosLon = Double.POSITIVE_INFINITY, maxNegLon = Double.NEGATIVE_INFINITY;
+        int samples = 8;
+        for (int j = 0; j <= samples; j++) {
+            double sz = z - reach + (2.0 * reach * j) / samples;
+            for (int i = 0; i <= samples; i++) {
+                double sx = x - reach + (2.0 * reach * i) / samples;
+                GeoPoint p = grid.tryGeographic(sx, sz);
+                if (p == null) continue;
+                double lat = p.latitude(), lon = p.longitude();
+                minLat = Math.min(minLat, lat);
+                maxLat = Math.max(maxLat, lat);
+                minLon = Math.min(minLon, lon);
+                maxLon = Math.max(maxLon, lon);
+                if (lon >= 0) minPosLon = Math.min(minPosLon, lon);
+                else maxNegLon = Math.max(maxNegLon, lon);
+            }
+        }
+        if (!Double.isFinite(minLat)) return List.of();
+        if (maxLon - minLon <= 180.0) {
+            return List.of(new GeoBox(minLat, minLon, maxLat, maxLon));
+        }
+        List<GeoBox> split = new ArrayList<>(2);
+        if (Double.isFinite(maxNegLon)) split.add(new GeoBox(minLat, -180.0, maxLat, maxNegLon));
+        if (Double.isFinite(minPosLon)) split.add(new GeoBox(minLat, minPosLon, maxLat, 180.0));
+        return split;
+    }
+
+    /** Calls {@code accept(tx, ty)} for slippy elevation tiles at {@code zoom} covering {@code (x, z) +/- reach}. */
+    private void collectTiles(int zoom, double x, double z, double reach, java.util.function.BiConsumer<Integer, Integer> accept) {
+        int tilesAcross = 1 << zoom;
+        if (mercator != null) {
+            int x0 = (int) Math.floor(mercator.pixelX(x - reach, zoom) / 256), x1 = (int) Math.floor(mercator.pixelX(x + reach, zoom) / 256);
+            int y0 = (int) Math.floor(mercator.pixelY(z - reach, zoom) / 256), y1 = (int) Math.floor(mercator.pixelY(z + reach, zoom) / 256);
+            for (int ty = Math.max(0, y0); ty <= Math.min(tilesAcross - 1, y1); ty++) {
+                for (int tx = x0; tx <= x1; tx++) accept.accept(Math.floorMod(tx, tilesAcross), ty);
+            }
+            return;
+        }
+        for (GeoBox box : geoBoxes(x, z, reach)) {
+            if (box.minLat() > MercatorGrid.MAX_LATITUDE) continue;
+            double topLat = Math.min(MercatorGrid.MAX_LATITUDE, box.maxLat());
+            double botLat = Math.max(-MercatorGrid.MAX_LATITUDE, box.minLat());
+            int x0 = (int) Math.floor(MercatorGrid.UNIT.pixelX(MercatorGrid.UNIT.blockX(new GeoPoint(topLat, box.minLon())), zoom) / 256);
+            int x1 = (int) Math.floor(MercatorGrid.UNIT.pixelX(MercatorGrid.UNIT.blockX(new GeoPoint(topLat, box.maxLon())), zoom) / 256);
+            int y0 = (int) Math.floor(MercatorGrid.UNIT.pixelY(MercatorGrid.UNIT.blockZ(new GeoPoint(topLat, box.minLon())), zoom) / 256);
+            int y1 = (int) Math.floor(MercatorGrid.UNIT.pixelY(MercatorGrid.UNIT.blockZ(new GeoPoint(botLat, box.maxLon())), zoom) / 256);
+            int loY = Math.max(0, Math.min(y0, y1)), hiY = Math.min(tilesAcross - 1, Math.max(y0, y1));
+            int loX = Math.min(x0, x1), hiX = Math.max(x0, x1);
+            if ((long) (hiX - loX + 1) * (hiY - loY + 1) > 1024) continue;
+            for (int ty = loY; ty <= hiY; ty++) {
+                for (int tx = loX; tx <= hiX; tx++) accept.accept(Math.floorMod(tx, tilesAcross), ty);
+            }
+        }
     }
 }

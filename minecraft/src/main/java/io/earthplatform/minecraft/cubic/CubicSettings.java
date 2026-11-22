@@ -10,6 +10,7 @@ import io.earthplatform.geography.globe.ElevationLayer;
 import io.earthplatform.geography.globe.GsiElevation;
 import io.earthplatform.geography.globe.HrdemElevation;
 import io.earthplatform.geography.globe.IgnElevation;
+import io.earthplatform.geography.globe.GlobeProjection;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.RemaElevation;
 import io.earthplatform.geography.globe.RemaSource;
@@ -95,10 +96,11 @@ public final class CubicSettings {
         return switch (id) {
             case HighlandsGenerator.ID -> new HighlandsGenerator(seed, biomes);
             case EarthGenerator.ID -> {
-                if (!MercatorGrid.PROJECTION_ID.equals(properties.getProperty("earth.projection")))
-                    throw new IllegalStateException("Unsupported Earth projection in " + file);
+                String projectionId = properties.getProperty("earth.projection", MercatorGrid.PROJECTION_ID);
+                if (!GlobeProjection.supported(projectionId))
+                    throw new IllegalStateException("Unsupported Earth projection '" + projectionId + "' in " + file);
                 EarthSettings settings = new EarthSettings(number(properties, "earth.latitude"), number(properties, "earth.longitude"),
-                        number(properties, "earth.metresPerBlock"));
+                        number(properties, "earth.metresPerBlock"), projectionId);
                 // Worlds made before land cover keep generating as they did.
                 String coverId = properties.getProperty("earth.cover", "");
                 if (!coverId.isEmpty() && !WorldCoverSource.DATASET_ID.equals(coverId))
