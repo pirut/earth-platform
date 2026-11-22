@@ -22,9 +22,11 @@ import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.far.Far;
+import io.earthplatform.minecraft.cubic.gen.RegionalTrees;
 import io.earthplatform.minecraft.cubic.gen.Strata;
 import io.earthplatform.minecraft.cubic.gen.Towers;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
+import io.earthplatform.minecraft.cubic.play.EarthConfig;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -44,6 +46,7 @@ import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.LegacyRandomSource;
@@ -134,6 +137,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     private boolean realms;
     /** The forest type map, for worlds pinned to it; null keeps forests to climate alone. */
     @Nullable private ForestTypes forestTypes;
+    /** Explicit override for custom regional trees (mainly for tests); null reads {@link EarthConfig#customTrees()}. */
+    @Nullable private Boolean customTreesOverride;
     private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth, warpX, warpZ, patches;
     private final Holder<Biome> ocean, deepOcean, coldOcean, deepColdOcean, frozenOcean, lukewarmOcean, deepLukewarmOcean, warmOcean,
             beach, snowyBeach, stonyShore, snowySlopes, frozenPeaks, stonyPeaks, meadow, taiga, oldTaiga, forest,
@@ -292,6 +297,9 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Makes forests' trees follow the forest type map: needleleaf, evergreen or deciduous broadleaf as it shows. */
     public void enableForestTypes() { forestTypes = cover == null ? null : ForestTypes.get(); }
+
+    /** Explicitly enables or disables custom regional tree shapes on this generator. */
+    public void customTrees(boolean enabled) { customTreesOverride = enabled; }
 
     @Override public String place(int x, int z) {
         GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
@@ -3324,8 +3332,10 @@ public final class EarthGenerator extends SurfaceGenerator {
             case WorldCoverSource.BARE -> {
                 // Bare ground low by the sea is beach and dune, as Whitehaven's silica sand, not rock: the beach rule
                 // above reaches only two blocks up and four in from the water.
-                if (!cliff && level(steep, 0.6, x, z, voxel) && y <= SEA + BEACH_RISE && !volcanic(x, z) && seaWithin(x, z, BEACH_REACH, voxel))
-                    return new Surface(t < 0 ? snowyBeach : beach, SAND, SAND, 0, 0, 0, 0, 0, false);
+                if (!cliff && level(steep, 0.6, x, z, voxel) && y <= SEA + BEACH_RISE && !volcanic(x, z) && seaWithin(x, z, BEACH_REACH, voxel)) {
+                    int palms = y >= SEA + 2 && (zone == ClimateZone.RAINFOREST || zone == ClimateZone.TROPICAL_DRY) && local.rain() >= 700 ? 2 : 0;
+                    return new Surface(t < 0 ? snowyBeach : beach, SAND, SAND, palms, 0, 0, 0, 0, false, Tree.JUNGLE);
+                }
                 boolean hot = zone == ClimateZone.HOT_DESERT || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.TROPICAL_DRY;
                 // Dry lands' cliffs show their rock in coloured bands, as the Colorado Plateau's and the Sahara's do.
                 boolean arid = hot || dry;
@@ -4012,6 +4022,98 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     @Override protected boolean cappedCrowns() { return canopy != null; }
+
+    @Override protected boolean customTrees() { return customTreesOverride != null ? customTreesOverride : EarthConfig.customTrees(); }
+
+    @Override @Nullable protected RegionalTrees.Species regionalTree(int x, int z, int y, Surface surface, Tree kind, long roll) {
+        Local local = local(x, z, y);
+        int eco = ecoregion(x, z);
+        int ecoBiome = eco == 0 ? Ecoregions.NONE : Ecoregions.get().biome(eco);
+        int realm = eco == 0 ? Ecoregions.NO_REALM : Ecoregions.get().realm(eco);
+        boolean coastal = y <= SEA + 16 && seaWithin(x, z, BEACH_REACH, 1);
+        boolean sandy = surface.top().is(BlockTags.SAND);
+        boolean lowland = y <= SEA + 120;
+        int chance = (int) Math.floorMod(roll >>> 36, 100);
+        return chooseRegionalTree(local == null ? null : local.zone(), local == null ? Double.NaN : local.temperature(),
+                ecoBiome, realm, coastal, sandy, lowland, surface.biome(), kind, chance);
+    }
+
+    /**
+     * Picks a regional custom tree species from general climate, ecoregion, realm, coast and tree family rules,
+     * or null to grow vanilla's tree shape for natural multi-layered variety.
+     */
+    @Nullable static RegionalTrees.Species chooseRegionalTree(
+            @Nullable ClimateZone zone, double temperature, int ecoBiome, int realm,
+            boolean coastal, boolean sandy, boolean lowland,
+            Holder<Biome> biome, Tree kind, int chance) {
+        if (kind == Tree.MANGROVE || kind == Tree.CHERRY || kind == Tree.AZALEA) return null;
+        if (biome.is(Biomes.SWAMP)) return null;
+
+        if (sandy) {
+            return (zone == ClimateZone.RAINFOREST || zone == ClimateZone.TROPICAL_DRY
+                    || zone == ClimateZone.HOT_DESERT || zone == null && biome.is(Biomes.BEACH))
+                    ? RegionalTrees.Species.PALM : null;
+        }
+
+        if (zone == ClimateZone.HOT_DESERT && kind != Tree.SPRUCE) {
+            if (chance < 70) return RegionalTrees.Species.PALM;
+            return chance < 90 ? RegionalTrees.Species.FLAT_ACACIA : null;
+        }
+
+        if (coastal && (zone == ClimateZone.RAINFOREST || zone == ClimateZone.TROPICAL_DRY)
+                && (kind == Tree.JUNGLE || kind == Tree.OAK || kind == Tree.ACACIA) && chance < 45) {
+            return RegionalTrees.Species.PALM;
+        }
+
+        if (kind == Tree.JUNGLE) {
+            boolean dense = biome.is(Biomes.JUNGLE);
+            if (dense) {
+                if (chance < 50) return RegionalTrees.Species.RAINFOREST_CANOPY;
+                if (lowland && chance < 60) return RegionalTrees.Species.PALM;
+                return null;
+            }
+            if (chance < 35) return RegionalTrees.Species.RAINFOREST_CANOPY;
+            if (lowland && chance < 50) return RegionalTrees.Species.PALM;
+            return null;
+        }
+
+        boolean mediterranean = (zone == ClimateZone.MEDITERRANEAN || ecoBiome == Ecoregions.MEDITERRANEAN)
+                && (Double.isNaN(temperature) || temperature >= 9.0);
+        if (mediterranean) {
+            if (kind == Tree.SPRUCE) {
+                if (chance < 55) return RegionalTrees.Species.STONE_PINE;
+                return chance < 80 ? RegionalTrees.Species.CYPRESS : null;
+            }
+            if (kind == Tree.OAK || kind == Tree.DARK_OAK) {
+                if (chance < 30) return RegionalTrees.Species.CYPRESS;
+                if (chance < 55) return RegionalTrees.Species.STONE_PINE;
+                return chance < 80 ? RegionalTrees.Species.BROADLEAF_OAK : null;
+            }
+        }
+
+        boolean savannaCountry = kind == Tree.ACACIA
+                || zone == ClimateZone.HOT_STEPPE
+                || ecoBiome == Ecoregions.TROPICAL_GRASSLAND && kind == Tree.OAK;
+        if (savannaCountry && kind != Tree.SPRUCE && kind != Tree.BIRCH) {
+            boolean baobabRealm = realm == Ecoregions.AFROTROPIC || realm == Ecoregions.AUSTRALASIA
+                    || (realm == Ecoregions.NO_REALM && biome.is(Biomes.SAVANNA));
+            if (baobabRealm && chance < 12) return RegionalTrees.Species.BAOBAB;
+            return chance < 80 ? RegionalTrees.Species.FLAT_ACACIA : null;
+        }
+
+        if (kind == Tree.SPRUCE || kind == Tree.SEQUOIA) {
+            boolean boreal = zone == ClimateZone.SUBARCTIC || zone == ClimateZone.SUBPOLAR_OCEANIC || zone == ClimateZone.TUNDRA
+                    || ecoBiome == Ecoregions.BOREAL || ecoBiome == Ecoregions.TEMPERATE_CONIFER
+                    || biome.is(Biomes.TAIGA) || biome.is(Biomes.OLD_GROWTH_PINE_TAIGA)
+                    || biome.is(Biomes.OLD_GROWTH_SPRUCE_TAIGA) || biome.is(Biomes.SNOWY_TAIGA);
+            return chance < (boreal ? 70 : 60) ? RegionalTrees.Species.BOREAL_PINE : null;
+        }
+
+        if (kind == Tree.BIRCH) return chance < 65 ? RegionalTrees.Species.TALL_BIRCH : null;
+        if (kind == Tree.OAK) return chance < 60 ? RegionalTrees.Species.BROADLEAF_OAK : null;
+        if (kind == Tree.DARK_OAK) return chance < 40 ? RegionalTrees.Species.BROADLEAF_OAK : null;
+        return null;
+    }
 
     /** How tall the trees round a column stand, in metres; -1 where there is no map or it has no reading. */
     @Override protected int canopy(int x, int z) {

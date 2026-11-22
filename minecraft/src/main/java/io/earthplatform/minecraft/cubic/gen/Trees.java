@@ -181,12 +181,18 @@ final class Trees {
             if (surface.trees() <= 0) continue;
             Tree kind = surface.tree((int) Math.floorMod(r >>> 16, 10));
             if (roll >= surface.trees() * full(kind) * 256 / 100) continue;
-            if (!fits(surface, kind, h, water)) continue;
+            RegionalTrees.Species regional = gen.customTrees() ? gen.regionalTree(x, z, h, surface, kind, r) : null;
+            if (!fits(surface, kind, regional, h, water)) continue;
+            if (regional != null) {
+                TreeShape[] grown = RegionalTrees.shapes(regional);
+                if (grown.length > 0) trees.add(sized(x, h + 1, z, grown, r, snowy(surface), false));
+                continue;
+            }
             ConfiguredFeature<?, ?> feature = pick(surface.biome(), kind).choose(RandomSource.create(r));
             if (feature == null) continue;
             TreeShape[] grown = shapes(feature);
             if (grown.length == 0) continue;
-            trees.add(sized(x, h + 1, z, grown, r, snowy(surface)));
+            trees.add(sized(x, h + 1, z, grown, r, snowy(surface), true));
         }
         if (mostAdded() > 0) for (int dz = 0; dz < 16; dz++) for (int dx = 0; dx < 16; dx++) {
             Planted tree = added((cx << 4) + dx, (cz << 4) + dz);
@@ -206,7 +212,7 @@ final class Trees {
      * never past the tallest vanilla tree. So taiga stays low, a temperate wood's oaks and spruces stand as tall as
      * vanilla's shapes allow, and rainforest giants reach the 30 m and more the Amazon's do.
      */
-    private Planted sized(int x, int y, int z, TreeShape[] grown, long r, boolean snow) {
+    private Planted sized(int x, int y, int z, TreeShape[] grown, long r, boolean snow, boolean stretch) {
         int first = (int) Math.floorMod(r >>> 24, grown.length), turn = (int) (r >>> 34 & 3);
         int canopy = gen.canopy(x, z);
         if (canopy < 0) return new Planted(x, y, z, grown[first], turn, r, snow);
@@ -217,7 +223,7 @@ final class Trees {
             TreeShape other = grown[(int) Math.floorMod(more >>> 16 * k, grown.length)];
             if (Math.abs(other.height() - want) < Math.abs(best.height() - want)) best = other;
         }
-        int lift = best.stretches() ? Math.max(0, Math.min(want, TALLEST - 1) - best.height()) : 0;
+        int lift = stretch && best.stretches() ? Math.max(0, Math.min(want, TALLEST - 1) - best.height()) : 0;
         return new Planted(x, y, z, best, turn, r, snow, Math.min(lift, Math.max(2, best.height() * 3 / 5)));
     }
 
@@ -228,8 +234,10 @@ final class Trees {
      * Whether a tree of this kind can stand on a column: on soil, out of water but for mangroves
      * (up to 5 deep) and swamp oaks (up to 2), as vanilla places them.
      */
-    private static boolean fits(Surface surface, Tree kind, int h, int water) {
+    private static boolean fits(Surface surface, Tree kind, @Nullable RegionalTrees.Species regional, int h, int water) {
         int depth = water == DRY ? 0 : water - h;
+        if (regional == RegionalTrees.Species.PALM)
+            return depth <= 0 && (surface.top().is(BlockTags.DIRT) || surface.top().is(BlockTags.SAND));
         int deepest = kind == Tree.MANGROVE ? 5 : surface.biome().is(Biomes.SWAMP) ? 2 : 0;
         return depth <= deepest && surface.top().is(BlockTags.DIRT);
     }
@@ -514,10 +522,9 @@ final class Trees {
         return new Pick(new float[0], new ConfiguredFeature<?, ?>[0], tree(feature));
     }
 
-    /** The feature if it grows a tree or a huge mushroom, else null (a grass patch in bamboo jungle's list). */
-    @Nullable private static ConfiguredFeature<?, ?> tree(Holder<ConfiguredFeature<?, ?>> feature) {
-        Feature<?> kind = feature.value().feature();
-        return kind == Feature.TREE || kind == Feature.HUGE_RED_MUSHROOM || kind == Feature.HUGE_BROWN_MUSHROOM ? feature.value() : null;
+    /** The feature if it grows a tree, else null (excluding huge mushrooms and grass patches). */
+    @Nullable static ConfiguredFeature<?, ?> tree(Holder<ConfiguredFeature<?, ?>> feature) {
+        return feature.value().feature() == Feature.TREE ? feature.value() : null;
     }
 
     // Growing shapes -----------------------------------------------------------------------------
