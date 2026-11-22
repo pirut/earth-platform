@@ -62,6 +62,9 @@ public abstract class CubeWorld {
 
     public static boolean inRange(int y) { return y >= MIN_Y && y <= MAX_Y; }
 
+    /** Metres per block at the equator for Earth worlds, or 0 when this cubic world has no Earth grid. */
+    public double earthMetresPerBlock() { return 0; }
+
     public BlockState getBlockState(BlockPos pos) {
         Cube cube = cubeAtBlock(pos.getX(), pos.getY(), pos.getZ());
         return cube == null ? UNLOADED : cube.get(pos.getX(), pos.getY(), pos.getZ());

@@ -197,6 +197,7 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     public CubeGenerator generator() { return generator; }
+    @Override public double earthMetresPerBlock() { return generator instanceof io.earthplatform.minecraft.cubic.earth.EarthGenerator earth ? earth.grid().metresPerBlock() : 0; }
     public FarServer far() { return far; }
 
     /**

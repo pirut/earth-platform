@@ -125,7 +125,20 @@
     "CubicLocateMixin",
     "EarthCompassReequipMixin",
     "CubicDaylightDetectorMixin",
-    "CubicSunBurnMixin"
+    "CubicSunBurnMixin",
+    "compat.PMWeatherServerConfigMixin",
+    "compat.PMWeatherLevelUpdaterMixin",
+    "compat.PMWeatherSeasonalUpdaterMixin",
+    "compat.PMWeatherServerLevelMixin",
+    "compat.PMWeatherStormBoundsMixin",
+    "compat.PMWeatherStormPosMixin",
+    "compat.PMWeatherSupercellMixin",
+    "compat.PMWeatherGameBusMixin",
+    "compat.PMWeatherMoistureMixin",
+    "compat.PMWeatherThermodynamicsMixin",
+    "compat.PMWeatherSoundingMixin",
+    "compat.PMWeatherCloudsMixin",
+    "compat.PMWeatherWeatherHandlerMixin"
   ],
   "client": [
     "FrustumAccess",
@@ -175,7 +188,8 @@
     "CubicSectionDirtyMixin",
     "compat.SodiumSectionDirtyMixin",
     "CubicLocalTimeMixin",
-    "CubicClientSkyTickMixin"
+    "CubicClientSkyTickMixin",
+    "compat.PMWeatherVolumeShaderMixin"
   ],
   "injectors": {
     "defaultRequire": 1
