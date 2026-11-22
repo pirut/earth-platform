@@ -148,6 +148,15 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     /** Whether trees' bare log ends at the top of their crowns are covered with leaves; worlds made before build 70 keep vanilla's. */
     protected boolean cappedCrowns() { return false; }
 
+    /** Whether custom regional tree shapes are grown where the world chooses them, rather than vanilla shapes alone. */
+    protected boolean customTrees() { return false; }
+
+    /**
+     * A custom regional tree species to grow at (x, z) for a column whose cover chose {@code kind},
+     * or null to grow vanilla's tree for that family. Called only when {@link #customTrees()} is true.
+     */
+    @Nullable protected RegionalTrees.Species regionalTree(int x, int z, int y, Surface surface, Tree kind, long roll) { return null; }
+
     /** Whether cacti may grow naturally at a column. */
     protected boolean cacti(int x, int z) { return true; }
 
