@@ -648,6 +648,19 @@ public final class GlobeTest {
         near(0, tile[60 * 256 + 60], 0, "open-sea zeros are left for the bathymetry fill");
         near(expected[9 * 256 + 7], tile[9 * 256 + 7], 1e-3, "relief the reference smooths away is kept");
         near(expected[9 * 256 + 8], tile[9 * 256 + 8], 1e-3, "ordinary pixels are untouched");
+
+        // Post-layer impossible-depth guard: repairs < -11,500 m voids while leaving Challenger Deep intact.
+        float[] deep = new float[256 * 256];
+        Arrays.fill(deep, 50f);
+        deep[10 * 256 + 10] = -22_761f;
+        deep[20 * 256 + 20] = -10_994f;
+        TileRepair.repairImpossibleDepths(deep);
+        near(50, deep[10 * 256 + 10], 1e-3, "impossible depth surrounded by land takes neighbour mean");
+        equal(-10_994f, deep[20 * 256 + 20], "Challenger Deep is untouched by impossible-depth guard");
+        float[] openSea = new float[256 * 256];
+        openSea[15 * 256 + 15] = -15_000f;
+        TileRepair.repairImpossibleDepths(openSea);
+        equal(0f, openSea[15 * 256 + 15], "impossible depth surrounded by open sea becomes open sea");
     }
 
     private static void despike() {
@@ -1029,6 +1042,69 @@ public final class GlobeTest {
                 boolean kept = kind.equals("agree") || kind.equals("sunk");
                 check(kept ? fill.weight(10.7, 20.3) == 0 : fill.weight(10.7, 20.3) == 1, kind + " weight");
             }
+
+            // Coastal -32768 void ramps (negative Terrarium over Copernicus land, impossible < -11,500 m abyss,
+            // and deep offshore ramp next to land) take Copernicus, while genuine deep ocean bathymetry (-4,000 m) stays.
+            CopernicusFill.Tiles voidTiles = (z, x, y) -> {
+                float[] t = new float[256 * 256];
+                long s = 256L << z;
+                for (int py = 0; py < 256; py++) {
+                    double lat = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (y * 256L + py + 0.5) / s))));
+                    double inSquare = lat - Math.floor(lat);
+                    for (int px = 0; px < 256; px++) {
+                        double lon = (x * 256L + px + 0.5) * 360.0 / s - 180;
+                        float ground = copernicusGround(lat, lon);
+                        if (ground > 0) t[py * 256 + px] = -2000f;
+                        else if (inSquare > 0.59) t[py * 256 + px] = -15_000f;
+                        else if (inSquare > 0.575) t[py * 256 + px] = -1000f;
+                        else t[py * 256 + px] = -4000f;
+                    }
+                }
+                return t;
+            };
+            var voidFill = new CopernicusFill(dem, voidTiles, 16);
+            float[] landAfter = voidTiles.tile(zoom, tx, landY).clone();
+            voidFill.apply(landAfter, zoom, tx, landY);
+            double landWorst = 0;
+            for (int py = 0; py < 256; py++) {
+                double lat = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (landY * 256L + py + 0.5) / size))));
+                for (int px = 0; px < 256; px++) {
+                    double lon = (tx * 256L + px + 0.5) * 360.0 / size - 180;
+                    landWorst = Math.max(landWorst, Math.abs(landAfter[py * 256 + px] - copernicusGround(lat, lon)));
+                }
+            }
+            check(landWorst < 1, "negative coastal void over Copernicus land takes Copernicus, worst " + landWorst + " m off");
+            check(voidFill.weight(10.595, 20.3) == 1, "impossible -15000 m coastal void gets full weight");
+            check(voidFill.weight(10.585, 20.3) == 1, "offshore void ramp beside coastal void gets full weight");
+            float[] oceanBefore = voidTiles.tile(zoom, tx, seaY), oceanAfter = oceanBefore.clone();
+            voidFill.apply(oceanAfter, zoom, tx, seaY);
+            check(Arrays.equals(oceanBefore, oceanAfter), "genuine -4000 m ocean bathymetry away from coast stays untouched");
+            check(voidFill.weight(10.5, 20.3) == 0, "genuine deep ocean bathymetry keeps weight 0");
+
+            // Gentle nearshore bathymetry shelving down to -4000 m deep ocean stays untouched everywhere.
+            CopernicusFill.Tiles bathyTiles = (z, x, y) -> {
+                float[] t = new float[256 * 256];
+                long s = 256L << z;
+                for (int py = 0; py < 256; py++) {
+                    double lat = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (y * 256L + py + 0.5) / s))));
+                    double inSquare = lat - Math.floor(lat);
+                    for (int px = 0; px < 256; px++) {
+                        double lon = (x * 256L + px + 0.5) * 360.0 / s - 180;
+                        float ground = copernicusGround(lat, lon);
+                        if (ground > 0) t[py * 256 + px] = ground;
+                        else {
+                            double fromCoast = Math.min(inSquare - 0.4, 0.6 - inSquare);
+                            t[py * 256 + px] = fromCoast < 0.03 ? -20f : -4000f;
+                        }
+                    }
+                }
+                return t;
+            };
+            var bathyFill = new CopernicusFill(dem, bathyTiles, 16);
+            float[] bathySeaBefore = bathyTiles.tile(zoom, tx, seaY), bathySeaAfter = bathySeaBefore.clone();
+            bathyFill.apply(bathySeaAfter, zoom, tx, seaY);
+            check(Arrays.equals(bathySeaBefore, bathySeaAfter), "real ocean bathymetry tile left untouched");
+            check(bathyFill.weight(10.585, 20.3) == 0, "gentle nearshore bathymetry keeps weight 0");
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();
@@ -1612,6 +1688,31 @@ public final class GlobeTest {
                     low++;
                 }
                 check(low > 1000, "3DEP fixture tile reaches the low corner: " + low);
+
+                // Corrupt Terrarium coastal pits (< -60 m) and their resampled rims under shallow 3DEP (-2 m)
+                // take 3DEP, while disconnected real nearshore bathymetry (-40 m) stays.
+                float[] pitTile = new float[256 * 256];
+                Arrays.fill(pitTile, -40f);
+                int pitPx = -1, pitPy = -1, bathyPx = -1, bathyPy = -1;
+                for (int j = 0; j < 256; j++) for (int i = 0; i < 256; i++) {
+                    double lat = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (sy * 256.0 + j + 0.5) / world))));
+                    double lon = (sx * 256.0 + i + 0.5) / world * 360 - 180;
+                    double fx = (lon - x0) / p - 0.5, fy = (y0 - lat) / p - 0.5;
+                    if (fx < 920 || fy < 920 || fx > 1010 || fy > 1010) continue;
+                    if (pitPx < 0 && i >= 20 && j >= 20 && i < 236 && j < 236) { pitPx = i; pitPy = j; }
+                    else if (pitPx >= 0 && bathyPx < 0 && Math.abs(i - pitPx) + Math.abs(j - pitPy) > 30) { bathyPx = i; bathyPy = j; }
+                }
+                check(pitPx >= 0 && bathyPx >= 0, "found pit and disconnected bathymetry pixels in 3DEP low corner");
+                // Surround the pit with shallow coastal water (-1 m) so the rim is bounded cleanly.
+                for (int dy = -6; dy <= 6; dy++) for (int dx = -6; dx <= 6; dx++) pitTile[(pitPy + dy) * 256 + (pitPx + dx)] = -1f;
+                pitTile[pitPy * 256 + pitPx] = -144.52f;
+                pitTile[pitPy * 256 + pitPx + 1] = -35f;
+                pitTile[pitPy * 256 + pitPx - 1] = -8f;
+                layer.refine(zoom, sx, sy, pitTile);
+                near(-2, pitTile[pitPy * 256 + pitPx], 1e-3, "corrupt -144.52 m pit core takes shallow 3DEP");
+                near(-2, pitTile[pitPy * 256 + pitPx + 1], 1e-3, "connected -35 m pit rim takes shallow 3DEP");
+                near(-2, pitTile[pitPy * 256 + pitPx - 1], 1e-3, "connected -8 m pit rim takes shallow 3DEP");
+                equal(-40f, pitTile[bathyPy * 256 + bathyPx], "disconnected -40 m bathymetry stays untouched");
 
                 // Outside the listed cells nothing is asked for; coarse tiles are left alone.
                 int before = hits.values().stream().mapToInt(AtomicInteger::get).sum();
