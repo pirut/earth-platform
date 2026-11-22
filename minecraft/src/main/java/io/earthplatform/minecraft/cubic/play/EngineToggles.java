@@ -154,6 +154,7 @@ public final class EngineToggles {
             // client file, compatibility
             on(CLIENT, Group.COMPATIBILITY, "far.lodDepth", RESTART, SODIUM),
             on(CLIENT, Group.COMPATIBILITY, "far.dhPacks", RESTART, SODIUM),
+            on(CLIENT, Group.COMPATIBILITY, "far.terrainPacks", RESTART, SODIUM),
             on(CLIENT, Group.COMPATIBILITY, "far.hiddenCull", RESTART, SODIUM),
             off(CLIENT, Group.COMPATIBILITY, "far.twoPhase", RESTART, EXPERIMENTAL, SODIUM),
             off(CLIENT, Group.COMPATIBILITY, "far.queryCull", RESTART, EXPERIMENTAL, SODIUM),

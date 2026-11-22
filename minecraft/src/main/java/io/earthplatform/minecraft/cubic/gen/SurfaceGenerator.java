@@ -339,6 +339,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** Blocks a forest's crowns stand above the ground where trees are not drawn one by one: a voxel of the 8-block level. */
     private static final int CROWN = 8;
+    /** Solid rock kept below the lowest ground in fine far columns, so cave mouths do not immediately reach {@code vy = 0}. */
+    private static final int CAVE_DEPTH = 32;
 
     private void farColumn(int level, int columnX, int columnZ, FarColumn out, boolean packets, boolean materialize, boolean dense, boolean preview) {
         out.packet = null;
@@ -398,7 +400,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         if (giants) max += Sequoia.TALLEST + 1;
         else if (v <= 4) max += preview ? CROWN : Trees.TALLEST + 1;
         else if (v == 8) max += v;
-        int bottom = (min - v) >> (level + 4), highest = max >> (level + 4);
+        int depth = level <= Far.EDIT_LEVELS ? Math.max(v, CAVE_DEPTH) : v;
+        int bottom = (min - depth) >> (level + 4), highest = max >> (level + 4);
         // Columns taller than the section budget keep their top, where the view is.
         bottom = Math.max(bottom, highest - Far.MAX_SECTIONS + 1);
         int sections = highest - bottom + 1, base = bottom * width;
@@ -754,12 +757,50 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         // Empty sky cubes: nothing generated, not even trees, above the tallest possible tree.
         if (y0 > Math.max(col.max + vegetation.tallest(cx, cz), col.maxWater)) { section.recalcBlockCounts(); return section; }
         double[] caveField = y0 > col.max ? null : below.caveField(x0, y0, z0);
-        int[] floor = new int[256], roof = new int[256];
+        int[] floor = new int[256], roof = new int[256], ceiling = new int[256];
         for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
             int ci = lz * 16 + lx, gi = (lz + 1) * 18 + lx + 1, h = col.height[gi];
             floor[ci] = below.floor(x0 + lx, z0 + lz, h);
             int slope = Math.abs(col.height[gi + 1] - col.height[gi - 1]) + Math.abs(col.height[gi + 18] - col.height[gi - 18]);
             roof[ci] = below.caveRoof(x0 + lx, z0 + lz, h, col.water[gi], slope);
+            ceiling[ci] = h - roof[ci];
+        }
+        if (y0 <= col.max) {
+            int shell = Underground.CLIFF_SHELL;
+            int minNear = col.min, maxNear = col.max;
+            for (int d = -shell; d <= 15 + shell; d += 5) {
+                int p1 = surfaceY(x0 + d, z0 - shell), p2 = surfaceY(x0 + d, z0 + 15 + shell);
+                int p3 = surfaceY(x0 - shell, z0 + d), p4 = surfaceY(x0 + 15 + shell, z0 + d);
+                minNear = Math.min(minNear, Math.min(Math.min(p1, p2), Math.min(p3, p4)));
+                maxNear = Math.max(maxNear, Math.max(Math.max(p1, p2), Math.max(p3, p4)));
+            }
+            if (maxNear - minNear > 1 && y0 + 15 >= minNear - 16) {
+                int side = 16 + 2 * shell;
+                int[] near = new int[side * side];
+                for (int nz = 0; nz < side; nz++) for (int nx = 0; nx < side; nx++) {
+                    int lx = nx - shell, lz = nz - shell;
+                    near[nz * side + nx] = lx >= -1 && lx <= 16 && lz >= -1 && lz <= 16
+                            ? col.height[(lz + 1) * 18 + lx + 1]
+                            : surfaceY(x0 + lx, z0 + lz);
+                }
+                for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
+                    int ci = lz * 16 + lx, r = roof[ci];
+                    if (r <= 0) continue;
+                    int reach = Math.min(r - 1, shell);
+                    int ox = lx + shell, oz = lz + shell, cap = near[oz * side + ox];
+                    for (int dz = -reach; dz <= reach; dz++) {
+                        int span = reach - Math.abs(dz);
+                        int row = (oz + dz) * side + ox;
+                        for (int dx = -span; dx <= span; dx++) {
+                            int dist = Math.abs(dx) + Math.abs(dz);
+                            if (dist == 0) continue;
+                            int c = near[row + dx] + dist;
+                            if (c < cap) cap = c;
+                        }
+                    }
+                    ceiling[ci] = cap - r;
+                }
+            }
         }
         for (int ly = 0; ly < 16; ly++) {
             int y = y0 + ly;
@@ -777,7 +818,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                     if (rock != null && rock.shows(depth, col.height, gi)) state = rock.at(y);
                     else if (rock == null && depth >= 4 && bedrock(surface.under()) && Strata.Layers.face(depth, col.height, gi)) state = surface.under();
                     // Cave mouths open the top blocks only where nothing grows on them.
-                    boolean open = depth >= roof[ci] && (depth > 1 || surface.trees() == 0 && (Underground.rock(surface.top()) || surface.top() == GRAVEL));
+                    boolean open = y <= ceiling[ci] && (depth > 1 || surface.trees() == 0 && (Underground.rock(surface.top()) || surface.top() == GRAVEL));
                     if (open && state != Underground.BEDROCK && Underground.cave(caveField, lx, ly, lz)) state = Underground.cavity(y, floor[ci]);
                 }
                 if (state != AIR) section.setBlockState(lx, ly, lz, state, false);
