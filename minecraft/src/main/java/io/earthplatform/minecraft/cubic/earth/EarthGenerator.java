@@ -2002,7 +2002,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             int colCode = cover(x, z, 1);
             if (colCode == WorldCoverSource.NO_DATA) return true;
             boolean columnWet = colCode == WorldCoverSource.WATER;
-            int fineOverview = columnWet ? coverOverview(z, 1) : WATER_OVERVIEW;
+            int fineOverview = columnWet ? coverOverview(x, z, 1) : WATER_OVERVIEW;
             for (int dir = 0; dir < 4; dir++) {
                 int nsx = sx + (dir == 0 ? 1 : dir == 1 ? -1 : 0);
                 int nsz = sz + (dir == 2 ? 1 : dir == 3 ? -1 : 0);
