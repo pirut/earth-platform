@@ -39,11 +39,13 @@ final class EarthToggles {
             new Toggle("whereOnEarth", EarthConfig.WHERE_ON_EARTH, "Where on Earth guessing rounds (/earth guess)"),
             new Toggle("races", EarthConfig.RACES, "races to famous places (/earth race)"),
             new Toggle("dailyRace", EarthConfig.DAILY_RACE, "a race every day"),
-            new Toggle("webMap", EarthConfig.WEB_MAP, "the live web map"));
+            new Toggle("webMap", EarthConfig.WEB_MAP, "the live web map"),
+            new Toggle("localizedDayNight", EarthConfig.LOCALIZED_DAY_NIGHT, "day/night cycle and seasons from each spot's longitude and latitude"));
     private static final List<Number> NUMBERS = List.of(
             new Number("travelCost", EarthConfig.TRAVEL_LEVELS_PER_1000_KM, 0, 1000, "experience levels per 1000 km in survival"),
             new Number("travelCooldown", EarthConfig.TRAVEL_COOLDOWN, 0, 86_400, "seconds between a survival player's trips"),
-            new Number("webMapPort", EarthConfig.WEB_MAP_PORT, 1, 65_535, "the web map's port"));
+            new Number("webMapPort", EarthConfig.WEB_MAP_PORT, 1, 65_535, "the web map's port"),
+            new Number("yearLengthDays", EarthConfig.YEAR_LENGTH_DAYS, 0, 3650, "in-game days in one seasonal year (0 for perpetual equinox)"));
     private static final List<Text> TEXTS = List.of(
             new Text("webMapAddress", EarthConfig.WEB_MAP_ADDRESS, address -> EarthAdmin.webMapAddress(address) != null,
                     "0.0.0.0 for every network, 127.0.0.1 for this computer only, or one of the server's own IP addresses",
@@ -158,6 +160,7 @@ final class EarthToggles {
         if (!EarthConfig.RACES.get()) EarthRace.off(server);
         if (!EarthConfig.WHERE_ON_EARTH.get()) EarthGuess.end(server);
         EarthAdmin.webMap(server);
+        EarthSolar.syncAll(server);
         // Each player's command list hides what they may not use, so it is sent again.
         for (ServerPlayer player : server.getPlayerList().getPlayers()) server.getCommands().sendCommands(player);
     }

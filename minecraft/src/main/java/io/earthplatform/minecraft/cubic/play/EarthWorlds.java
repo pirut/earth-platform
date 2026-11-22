@@ -69,7 +69,7 @@ public final class EarthWorlds {
     private static final Vec3 HOLD = new Vec3(0.5, 300, 0.5);
 
     /** Version of the Earth payloads; NeoForge refuses a connection whose two sides differ. */
-    public static final String PAYLOADS_VERSION = "earth-1";
+    public static final String PAYLOADS_VERSION = "earth-2";
 
     public static void payloads(Payloads registrar) {
         registrar.toClient(EarthStatus.Payload.TYPE, EarthStatus.Payload.CODEC,
@@ -79,7 +79,9 @@ public final class EarthWorlds {
                 .toClient(EarthMap.Players.TYPE, EarthMap.Players.CODEC,
                         payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthFlight.others(payload); })
                 .toClient(EarthPostcard.Payload.TYPE, EarthPostcard.Payload.CODEC,
-                        payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthPostcardScreen.received(payload); });
+                        payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthPostcardScreen.received(payload); })
+                .toClient(EarthSolar.Payload.TYPE, EarthSolar.Payload.CODEC,
+                        payload -> { if (Loader.INSTANCE.isClient()) io.earthplatform.minecraft.cubic.play.client.EarthSolarClient.received(payload); });
     }
 
     /** A home picked on the Create World screen, for the next new Earth world this game makes. */
@@ -131,7 +133,10 @@ public final class EarthWorlds {
     public static void stopped() { session = null; chosen = null; }
 
     public static void loggedIn(Player entity) {
-        if (session != null && entity instanceof ServerPlayer player) session.check(player);
+        if (entity instanceof ServerPlayer player) {
+            EarthSolar.sync(player);
+            if (session != null) session.check(player);
+        }
     }
 
     public static void respawned(Player entity) {
