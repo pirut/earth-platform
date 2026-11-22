@@ -155,7 +155,9 @@
     "CubicVoidFogMixin",
     "GuiOverlayAccess",
     "EarthCompassSpinMixin",
-    "CubicAnimateTickMixin"
+    "CubicAnimateTickMixin",
+    "CubicSectionDirtyMixin",
+    "compat.SodiumSectionDirtyMixin"
   ],
   "injectors": {
     "defaultRequire": 1
