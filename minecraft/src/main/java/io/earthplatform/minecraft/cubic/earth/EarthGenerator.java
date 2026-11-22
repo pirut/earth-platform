@@ -514,10 +514,10 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         double steep = Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1]));
         CoverMemo memo = cover == null ? null : coverMemo.get();
-        if (voxel >= BRIDGE_VOXEL && cover != null && cover(memo, x, z, voxel) == WorldCoverSource.BUILT_UP) {
+        if (cover != null && bridgeDeck(memo, x, z, voxel)) {
             int surface = bridged(dem, memo, x, z, voxel);
             if (surface != DRY) {
-                out[0] = surface - lakeDepth(x, z, voxel);
+                out[0] = surface == SEA ? lagoonBed(x, z, metres, voxel) : surface - inlandLakeDepth(x, z, surface, voxel);
                 out[1] = surface;
                 return;
             }
@@ -565,8 +565,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
             if (!shadow) {
                 // Over drowned ground, as a reservoir newer than the survey, the bed is the survey's, far below.
-                int depth = lakeDepth(x, z, voxel);
-                if (surface <= SEA + LOWLAND) depth = Math.min(depth, lowland(x, z));
+                int depth = inlandLakeDepth(x, z, surface, voxel);
                 int bed = surface - depth, surveyedBed = Mth.floor(SEA + 0.5 + metres);
                 out[0] = surface > surveyedBed + BANK ? Math.min(bed, surveyedBed) : bed;
                 out[1] = surface;
@@ -919,26 +918,66 @@ public final class EarthGenerator extends SurfaceGenerator {
         return false;
     }
 
-    /** Narrowest far voxel that reads a bridge's deck as the water under it, and blocks a deck's voxels may reach to either side. */
-    private static final int BRIDGE_VOXEL = 8, BRIDGE_REACH = 32;
+    /** Widest bridge deck, in blocks, cleared back to the water under it, and finest probe step in blocks. */
+    static final int BRIDGE_SPAN = 64, BRIDGE_STEP = 4;
+    private static final double SQRT2 = Math.sqrt(2.0);
+
+    @FunctionalInterface interface CoverProbe { int cover(int x, int z); }
+    @FunctionalInterface interface LevelProbe { int level(int x, int z); }
+
+    /** Whether a column's land cover may belong to a bridge deck over water. */
+    private boolean bridgeDeck(CoverMemo memo, int x, int z, int voxel) {
+        int code = cover(memo, x, z, voxel);
+        if (code == WorldCoverSource.BUILT_UP) return true;
+        return code == WorldCoverSource.BARE && nearBuiltUp(memo, x, z, voxel);
+    }
+
+    /** Whether built-up land cover lies within three probe steps of a bare column, keeping open bare ground cheap. */
+    private boolean nearBuiltUp(CoverMemo memo, int x, int z, int voxel) {
+        int step = Math.max(BRIDGE_STEP, voxel), sx = snap(x, step), sz = snap(z, step);
+        if (cover(memo, sx, sz, voxel) == WorldCoverSource.BUILT_UP) return true;
+        for (int s = 1; s <= 3; s++) {
+            int d = s * step;
+            if (cover(memo, sx + d, sz, voxel) == WorldCoverSource.BUILT_UP
+                    || cover(memo, sx - d, sz, voxel) == WorldCoverSource.BUILT_UP
+                    || cover(memo, sx, sz + d, voxel) == WorldCoverSource.BUILT_UP
+                    || cover(memo, sx, sz - d, voxel) == WorldCoverSource.BUILT_UP) return true;
+        }
+        return false;
+    }
 
     /**
-     * Surface of the water a built-up voxel bridges, or {@link #DRY}. Land cover maps a bridge's deck
-     * as built-up, and in the coarse overviews far levels read, a deck a few pixels wide fills whole
-     * voxels across a river, which stood at the deck's height as a dry line from bank to bank, as
-     * the Natchez-Vidalia bridges did over the Mississippi. A built-up voxel that has water on
-     * opposite sides within {@value #BRIDGE_REACH} blocks across built-up voxels, along a row, a
-     * column or a diagonal, the two level within a block, is that water. A dam has its water higher
-     * on one side than the other, and stands.
+     * Surface of the water a bridge-deck column spans, or {@link #DRY}. Land cover maps a bridge's
+     * deck as built-up (sometimes with bare-ground concrete or median pixels), which stood across
+     * rivers and bays as a solid land bridge from bank to bank in both near and far terrain. A deck
+     * column that has water on opposite sides within {@value #BRIDGE_SPAN} blocks total across
+     * built-up or bare cover (including at least one built-up column, so natural bare sandbars stay
+     * dry), along a row, a column or a diagonal, the two level within a block, is that water. A dam
+     * has its water higher on one side than the other, and stands; a built-up island or landmass
+     * wider than {@value #BRIDGE_SPAN} blocks stays dry from edge to edge.
      */
     private int bridged(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel) {
-        int steps = Math.max(1, BRIDGE_REACH / voxel);
+        return bridged(x, z, voxel,
+                (px, pz) -> cover(memo, px, pz, voxel),
+                (px, pz) -> waterLevel(dem, memo, px, pz, voxel));
+    }
+
+    static int bridged(int x, int z, int voxel, CoverProbe cover, LevelProbe water) {
+        int start = cover.cover(x, z);
+        if (start != WorldCoverSource.BUILT_UP && start != WorldCoverSource.BARE) return DRY;
+        boolean startBuilt = start == WorldCoverSource.BUILT_UP;
+        int stride = Math.max(BRIDGE_STEP, voxel);
         for (int k = 0; k < 4; k++) {
-            int dx = RING_STEP_X[k] * voxel, dz = RING_STEP_Z[k] * voxel;
-            int a = waterAcross(dem, memo, x, z, -dx, -dz, steps, voxel);
-            if (a == DRY) continue;
-            int b = waterAcross(dem, memo, x, z, dx, dz, steps, voxel);
-            if (b != DRY && Math.abs(a - b) <= 1) return Math.min(a, b);
+            int dx = RING_STEP_X[k] * stride, dz = RING_STEP_Z[k] * stride;
+            int maxSteps = Math.max(2, k < 2 ? BRIDGE_SPAN / stride : (int) Math.round(BRIDGE_SPAN / (stride * SQRT2)));
+            long a = waterAcross(x, z, -dx, -dz, maxSteps - 1, cover, water);
+            if (a == 0L) continue;
+            int stepsA = (int) ((a >>> 32) & 0xFFFF);
+            long b = waterAcross(x, z, dx, dz, maxSteps - stepsA, cover, water);
+            if (b == 0L) continue;
+            boolean built = startBuilt || (a >>> 48) != 0 || (b >>> 48) != 0;
+            int levelA = (int) a, levelB = (int) b;
+            if (built && Math.abs(levelA - levelB) <= 1) return Math.min(levelA, levelB);
         }
         return DRY;
     }
@@ -946,14 +985,21 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Unit voxel steps along a row, a column and the two diagonals. */
     private static final int[] RING_STEP_X = {1, 0, 1, 1}, RING_STEP_Z = {0, 1, 1, -1};
 
-    /** Surface of the first water from a column out along a step past built-up voxels, or {@link #DRY}. */
-    private int waterAcross(GlobalElevation dem, CoverMemo memo, int x, int z, int dx, int dz, int steps, int voxel) {
+    /**
+     * First water reached from a column along a step past built-up or bare deck cover, packed as
+     * {@code (sawBuiltUp << 48) | (steps << 32) | (level & 0xFFFFFFFFL)}, or {@code 0L} if dry.
+     */
+    private static long waterAcross(int x, int z, int dx, int dz, int steps, CoverProbe cover, LevelProbe water) {
+        boolean built = false;
         for (int i = 1; i <= steps; i++) {
-            int px = x + i * dx, pz = z + i * dz, code = cover(memo, px, pz, voxel);
-            if (code == WorldCoverSource.BUILT_UP) continue;
-            return waterLevel(dem, memo, px, pz, voxel);
+            int px = x + i * dx, pz = z + i * dz, code = cover.cover(px, pz);
+            if (code == WorldCoverSource.BUILT_UP) { built = true; continue; }
+            if (code == WorldCoverSource.BARE) continue;
+            if (code != WorldCoverSource.WATER && code != WorldCoverSource.NO_DATA) return 0L;
+            int level = water.level(px, pz);
+            return level == DRY ? 0L : (built ? 1L << 48 : 0L) | (long) i << 32 | level & 0xFFFFFFFFL;
         }
-        return DRY;
+        return 0L;
     }
 
     /** Surface of the water a column's land cover maps, or {@link #DRY} where it maps none. */
@@ -961,7 +1007,10 @@ public final class EarthGenerator extends SurfaceGenerator {
         int code = cover(memo, x, z, voxel);
         if (code == WorldCoverSource.NO_DATA) return SEA;
         if (code != WorldCoverSource.WATER) return DRY;
-        return seaWater(x, z, voxel) ? SEA : waterSurface(dem, x, z, voxel);
+        int surface = seaWater(x, z, voxel) ? SEA : waterSurface(dem, x, z, voxel);
+        if (surface > SEA && surface <= SEA + 2 && joinsOpenSea(x, z)) return SEA;
+        if (Math.abs(surface - SEA) <= TIDAL && besideSea(x, z)) return SEA;
+        return surface;
     }
 
     /** Ring radii, in voxels, for how far a low bank is from its water; the wider ones only for {@link #CANOPY_BANK}'s. */
@@ -1126,18 +1175,69 @@ public final class EarthGenerator extends SurfaceGenerator {
         return metres < -LAGOON_DEPTH ? bed : Math.max(bed, SEA - Math.min(Math.min(LAGOON_DEPTH, lowland(x, z)), lakeDepth(x, z, voxel)));
     }
 
-    /** Surface, in blocks above the sea's, under which water counts as lowland water for {@link #lowland}. */
+    /** Surface, in blocks above the sea's, under which coastal-plain water also stays within {@link #lowland}. */
     private static final int LOWLAND = 3;
+    /** Maximum depth, in blocks, that a lake or lagoon shelves to. */
+    static final int MAX_LAKE_DEPTH = 40;
+    /** Shallowest basin depth cap (blocks) and flat-country height range (metres) under which basins stay that shallow. */
+    private static final double MIN_BASIN_DEPTH = 2.0, FLAT_RELIEF = 4.0;
 
     /**
-     * Deepest that water at about sea level lies in country as flat as the ground round it: a few
-     * blocks plus half the ground's height range. Marsh and swamp pools, sloughs and coastal bays in
-     * flat lowland, as the Everglades', the Okavango's or the Sundarbans', are a metre or two deep;
-     * shelving from their shores as lakes do, the Everglades' pools lay twenty blocks deep and read
-     * as open sea. Water in hilly or mountain country, as fjords and lochs, keeps its shelving.
+     * Deepest, in blocks, a lake or lagoon lies for the height range (metres) of the ground round
+     * it. Flat plains and marshes (such as the Münsterland, the Everglades or the Okavango) have
+     * only a few metres of local relief and hold shallow water (2–5 blocks) regardless of their
+     * height above sea level; rolling hills hold moderate basins; steep mountain valleys, calderas
+     * and fjords keep the full {@value #MAX_LAKE_DEPTH}-block shelving.
      */
+    static double reliefCap(double relief) {
+        return Mth.clamp(MIN_BASIN_DEPTH + Math.max(0.0, relief - FLAT_RELIEF) * 0.25, MIN_BASIN_DEPTH, MAX_LAKE_DEPTH);
+    }
+
+    /** Deepest that water near sea level lies for the ground's height range round it. */
     private int lowland(double x, double z) {
-        return Mth.clamp((int) Math.round(LOWLAND + relief(x, z) / 2), LOWLAND, 40);
+        return (int) Math.round(reliefCap(relief(x, z)));
+    }
+
+    @FunctionalInterface interface CellProbe { WaterCell cell(int cx, int cz); }
+    private final CellProbe cellProbe = this::waterCell;
+
+    /** Depth cap (in blocks) for one {@link WaterCell}, using neighbouring land cells when the cell itself is mostly open water. */
+    static double cellDepthCap(int cx, int cz, CellProbe cells) {
+        WaterCell cell = cells.cell(cx, cz);
+        if (cell.samples <= RELIEF_WATER_LIMIT) return reliefCap(cell.relief);
+        double sum = 0;
+        int land = 0;
+        for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dz == 0) continue;
+            WaterCell n = cells.cell(cx + dx, cz + dz);
+            if (n.samples <= RELIEF_WATER_LIMIT) { sum += n.relief; land++; }
+        }
+        return land > 0 ? reliefCap(sum / land) : MAX_LAKE_DEPTH;
+    }
+
+    /**
+     * Smoothly interpolated depth cap (in blocks) for an inland lake at {@code (x, z)}, from the
+     * relief of the surrounding {@link WaterCell}s. Bilinear blending avoids underwater cliffs at
+     * cell borders, while wide open-water interiors far from any shore keep full shelving.
+     */
+    private double inlandDepthCap(double x, double z) {
+        return inlandDepthCap(x, z, cellProbe);
+    }
+
+    static double inlandDepthCap(double x, double z, CellProbe cells) {
+        double fx = x / WATER_CELL - 0.5, fz = z / WATER_CELL - 0.5;
+        int ix = Mth.floor(fx), iz = Mth.floor(fz);
+        double tx = fx - ix, tz = fz - iz;
+        double c00 = cellDepthCap(ix, iz, cells), c10 = cellDepthCap(ix + 1, iz, cells);
+        double c01 = cellDepthCap(ix, iz + 1, cells), c11 = cellDepthCap(ix + 1, iz + 1, cells);
+        return Mth.lerp(tz, Mth.lerp(tx, c00, c10), Mth.lerp(tx, c01, c11));
+    }
+
+    /** Depth of an inland lake or river column, capped smoothly by local surrounding terrain relief. */
+    private int inlandLakeDepth(int x, int z, int surface, int voxel) {
+        double cap = inlandDepthCap(x, z);
+        if (surface <= SEA + LOWLAND) cap = Math.min(cap, reliefCap(relief(x, z)));
+        return lakeDepth(x, z, voxel, cap);
     }
 
     // Rivers ---------------------------------------------------------------------------------------
@@ -1977,7 +2077,10 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** Water cells' size in blocks, the elevation zoom and land cover overview (both about 40 m) they read, and their samples across. */
-    private static final int WATER_CELL = 1024, WATER_ZOOM = 12, WATER_OVERVIEW = 2, WATER_SAMPLES = 16;
+    static final int WATER_CELL = 1024;
+    private static final int WATER_ZOOM = 12, WATER_OVERVIEW = 2, WATER_SAMPLES = 16;
+    /** Maximum water samples in a {@link WaterCell} for its own height range to measure surrounding land. */
+    static final int RELIEF_WATER_LIMIT = WATER_SAMPLES * WATER_SAMPLES * 3 / 4;
     /** How far water may stand above the lowest surveyed height near it, and, in steep country, below it. */
     private static final int BANK = 4, DIP = 2;
     /** How far, in blocks, a level taken from the shores looks for the bank beside a column. */
@@ -1991,7 +2094,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * of its samples are the sea ({@link #seaSamples}). The level leaves out the sea's samples that
      * read above sea level, which are coarse fill rather than any lake's or river's height.
      */
-    private record WaterCell(double level, int samples, double relief, long[] sea) {}
+    record WaterCell(double level, int samples, double relief, long[] sea) {}
     private final java.util.concurrent.ConcurrentHashMap<Long, WaterCell> waterCells = new java.util.concurrent.ConcurrentHashMap<>();
 
     private WaterCell waterCell(int cx, int cz) {
@@ -2847,6 +2950,10 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Water depth: shallow by the shore, deepening by about one block in six away from it. The open sea is not shore. */
     private int lakeDepth(int x, int z, int voxel) {
+        return lakeDepth(x, z, voxel, MAX_LAKE_DEPTH);
+    }
+
+    private int lakeDepth(int x, int z, int voxel, double cap) {
         double scale = Math.max(1, voxel / 6.0), inner = 0, distance = -1;
         for (int radius : RINGS) {
             double r = radius * scale;
@@ -2859,8 +2966,15 @@ public final class EarthGenerator extends SurfaceGenerator {
             inner = r;
         }
         if (distance < 0) distance = inner * 1.4;
-        double depth = 1.2 + distance / 6.0 + patches.getValue(x / 23.0, z / 23.0) * Math.min(3, distance / 8.0);
-        return Mth.clamp((int) Math.round(depth), 1, 40);
+        return cappedLakeDepth(distance, patches.getValue(x / 23.0, z / 23.0), cap);
+    }
+
+    /** Lake depth from shore distance, patch noise in [-1, 1], and relief-based depth cap. */
+    static int cappedLakeDepth(double distance, double noise, double cap) {
+        double base = Math.min(1.2 + distance / 6.0, cap);
+        double wobble = noise * Math.min(3.0, Math.min(distance / 8.0, Math.max(0.0, base - 1.0) * 0.25));
+        int maxDepth = Mth.clamp((int) Math.round(cap), 1, MAX_LAKE_DEPTH);
+        return Mth.clamp((int) Math.round(base + wobble), 1, maxDepth);
     }
 
     /**
