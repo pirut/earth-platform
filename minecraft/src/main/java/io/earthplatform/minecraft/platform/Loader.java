@@ -31,6 +31,20 @@ public interface Loader {
     /** Whether a class file is in an installed mod's jar or on the class path, without loading it. */
     boolean hasClass(String className);
 
+    /**
+     * Maps an intermediary class name ({@code a.b.C}) to this runtime's name. NeoForge runs
+     * Mojang names directly; Fabric translates from intermediary through its mapping resolver.
+     */
+    default String runtimeClassName(String intermediary, String mojang) { return mojang; }
+
+    /**
+     * Maps an intermediary method name on {@code intermediaryOwner} (dotted) with an intermediary
+     * descriptor to this runtime's name. NeoForge runs Mojang names directly.
+     */
+    default String runtimeMethodName(String intermediaryOwner, String intermediaryName, String intermediaryDesc, String mojang) {
+        return mojang;
+    }
+
     /** The game folder: config, saves and the Earth data cache live under it. */
     Path gameDir();
 

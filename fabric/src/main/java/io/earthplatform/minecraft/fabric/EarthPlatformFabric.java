@@ -18,7 +18,7 @@ import io.earthplatform.minecraft.cubic.play.EarthMemory;
 import io.earthplatform.minecraft.cubic.play.EarthRules;
 import io.earthplatform.minecraft.cubic.play.EarthWorlds;
 import io.earthplatform.minecraft.cubic.portal.CubicTravel;
-import io.earthplatform.minecraft.fabric.axiom.AxiomCubes;
+import io.earthplatform.minecraft.cubic.compat.axiom.AxiomCubes;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import net.fabricmc.api.ModInitializer;

@@ -41,8 +41,8 @@ final class FarMesher {
      * seam against a coarser or finer level's ground there, which differs by a few voxels at most.
      */
     static final int WALL_DEPTH = 8;
-    /** How far below a column's own top it closes seams against cubes drawn up close, in voxels. */
-    static final int SEAM_DEPTH = 16;
+    /** How far below a column's ground it closes seams against cubes drawn up close, in voxels: deep enough for cave openings. */
+    static final int SEAM_DEPTH = 64;
     /** Face groups: the column's own faces by direction (down, up, north, south, west, east), then its walls north, south, west, east. */
     static final int GROUPS = 10, FIRST_WALL = 6;
     /**

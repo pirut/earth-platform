@@ -47,7 +47,13 @@ public final class FarPackPatch {
         ProgramSet programs = pack.getProgramSet(Iris.getCurrentDimension());
         if (programs == null) return null;
         FarShaders.PackPatch voxy = PATCHES.get(programs);
+        if (voxy != null) return voxy;
         // A pack with a Distant Horizons terrain program and no Voxy code is drawn with that (see FarDhPack).
-        return voxy != null || !FarLod.dhDefined() ? voxy : FarDhPack.patch(programs);
+        if (FarLod.dhDefined()) {
+            FarShaders.PackPatch dh = FarDhPack.patch(programs);
+            if (dh != null) return dh;
+        }
+        // A pack with neither is drawn with its own solid terrain program into the already-bound G-buffer (see FarTerrainPack).
+        return FarTerrainPack.patch(programs);
     }
 }
