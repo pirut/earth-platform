@@ -3,7 +3,10 @@ package io.earthplatform.minecraft.cubic.gen;
 import com.mojang.logging.LogUtils;
 import com.mojang.serialization.MapCodec;
 import io.earthplatform.minecraft.cubic.CubeWorld;
+import net.minecraft.world.level.levelgen.structure.structures.BuriedTreasureStructure;
 import net.minecraft.world.level.levelgen.structure.structures.OceanMonumentStructure;
+import net.minecraft.world.level.levelgen.structure.structures.OceanRuinStructure;
+import net.minecraft.world.level.levelgen.structure.structures.ShipwreckStructure;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.shorts.ShortArrayList;
@@ -15,6 +18,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.IntBinaryOperator;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
@@ -22,6 +26,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
 import net.minecraft.core.Registry;
+import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
@@ -109,8 +114,11 @@ final class VanillaStructures {
     private static final int REACH = 8;
     /** How many chunks out /locate looks for structures another mod places by its own rules, which are asked chunk by chunk. */
     private static final int OWN_PLACEMENT_SEARCH = 128;
-    /** How far terrain adaptation reaches from a piece, sideways and up or down. */
-    private static final int ADAPT = 12, ADAPT_HEIGHT = 64;
+    /** How far terrain adaptation reaches from a piece: sideways, downhill fill depth, and uphill air headroom above a piece's top. */
+    static final int ADAPT = 12, ADAPT_FILL = 16, ADAPT_HEADROOM = 6;
+    /** Surface-structure terrain limits: reject cliffs and steep mountain walls while allowing gentle slopes. */
+    static final int MIN_SLOPE_SPAN = 12, MAX_PIECE_RELIEF = 16, MIN_LOCAL_SLOPE_RELIEF = 6;
+    static final double MAX_SLOPE = 0.60, MAX_LOCAL_SLOPE = 0.90;
     /** Strongholds sit on a spread grid rather than vanilla's rings around the origin, which a planet does not have. */
     private static final int STRONGHOLD_SPACING = 64, STRONGHOLD_SEPARATION = 32, STRONGHOLD_SALT = 0x53544E44;
     private static final BlockState AIR = Blocks.AIR.defaultBlockState(), WATER = Blocks.WATER.defaultBlockState(), STONE = Blocks.STONE.defaultBlockState();
@@ -125,10 +133,12 @@ final class VanillaStructures {
     /** The part of an overlay in one cube: block indices and states, block entity and entity tags. */
     private record Patch(short[] at, BlockState[] states, List<CompoundTag> blockEntities, List<CompoundTag> entities) {}
 
-    private final ServerLevel level;
+    @Nullable private final ServerLevel level;
+    private final RegistryAccess registries;
     private final Host host;
     private final long seed;
     private final RandomState randomState;
+    private final boolean generate;
     private final ChunkGeneratorStructureState state;
     private final List<Kind> kinds;
     /** Each structure's decoration step and index within it, from which vanilla seeds its placement. */
@@ -140,12 +150,25 @@ final class VanillaStructures {
     private final ConcurrentHashMap<Long, StructureStart> realStarts = new ConcurrentHashMap<>();
     @Nullable private Frame view;
 
+    /** Whether natural structure generation is enabled for a level's structure manager. */
+    static boolean shouldGenerate(@Nullable StructureManager structures) {
+        return structures == null || structures.shouldGenerateStructures();
+    }
+
     VanillaStructures(ServerLevel level, Host host, long seed) {
+        this(level, level.registryAccess(), level.getChunkSource().randomState(),
+                shouldGenerate(level.structureManager()), host, seed);
+    }
+
+    VanillaStructures(@Nullable ServerLevel level, RegistryAccess registries, RandomState randomState,
+                      boolean generate, Host host, long seed) {
         this.level = level;
+        this.registries = registries;
         this.host = host;
         this.seed = seed;
-        this.randomState = level.getChunkSource().randomState();
-        Registry<StructureSet> sets = level.registryAccess().registryOrThrow(Registries.STRUCTURE_SET);
+        this.randomState = randomState;
+        this.generate = generate;
+        Registry<StructureSet> sets = registries.registryOrThrow(Registries.STRUCTURE_SET);
         this.state = ChunkGeneratorStructureState.createForFlat(randomState, seed, new FrameBiomes(0), sets.holders().map(h -> (Holder<StructureSet>) h));
         List<Kind> found = new ArrayList<>();
         for (Holder<StructureSet> set : state.possibleStructureSets()) {
@@ -161,7 +184,7 @@ final class VanillaStructures {
         if (added > 0) LOGGER.info("Cubic world: {} structure sets from other mods, {} placed by their own rules, {} at vanilla depths",
                 added, found.stream().filter(k -> k.spread == null).count(), found.stream().filter(k -> k.deep && !DEEP.contains(k.set.getRegisteredName())).count());
         Map<Integer, Integer> counts = new HashMap<>();
-        for (Structure structure : level.registryAccess().registryOrThrow(Registries.STRUCTURE)) {
+        for (Structure structure : registries.registryOrThrow(Registries.STRUCTURE)) {
             int step = structure.step().ordinal();
             seeding.put(structure, new int[]{step, counts.merge(step, 1, Integer::sum) - 1});
         }
@@ -177,7 +200,7 @@ final class VanillaStructures {
     private boolean deep(String id, StructureSet set) {
         if (id.startsWith("minecraft:")) return DEEP.contains(id);
         if (set.structures().isEmpty()) return false;
-        var ops = net.minecraft.resources.RegistryOps.create(com.mojang.serialization.JsonOps.INSTANCE, level.registryAccess());
+        var ops = net.minecraft.resources.RegistryOps.create(com.mojang.serialization.JsonOps.INSTANCE, registries);
         for (StructureSet.StructureSelectionEntry entry : set.structures()) {
             Structure structure = entry.structure().value();
             var json = Structure.DIRECT_CODEC.encodeStart(ops, structure).result()
@@ -196,6 +219,7 @@ final class VanillaStructures {
 
     /** Copies into a cube every structure block, block entity and entity falling in it. */
     void place(LevelChunkSection section, int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
+        if (!generate) return;
         int y0 = cy << 4;
         long key = SectionPos.asLong(cx, cy, cz);
         for (Start start : column(cx, cz)) {
@@ -222,6 +246,7 @@ final class VanillaStructures {
      * the centre of its pieces at real heights, or null. Slow where starts are not yet known.
      */
     @Nullable BlockPos locate(java.util.function.Predicate<Structure> wanted, int x, int z, int radius) {
+        if (!generate) return null;
         int cx = x >> 4, cz = z >> 4;
         // Nearest candidate first, so only the few closest starts are laid out (eyes of ender ask on the server thread)
         List<long[]> candidates = new ArrayList<>();
@@ -287,6 +312,7 @@ final class VanillaStructures {
 
     /** One structure's start in a chunk at real heights, or null. */
     @Nullable StructureStart startOf(Structure structure, int chunkX, int chunkZ) {
+        if (!generate) return null;
         for (Kind kind : kinds) {
             if (kind.set.value().structures().stream().noneMatch(e -> e.structure().value() == structure)) continue;
             if (!kind.placement.isStructureChunk(state, chunkX, chunkZ)) continue;
@@ -352,7 +378,7 @@ final class VanillaStructures {
         Frame frame = new Frame(deep || relative ? host.floor(chunk.getMiddleBlockX(), chunk.getMiddleBlockZ()) - 64 : 0, deep);
         StructureStart made;
         synchronized (STARTS) {
-            made = structure.generate(level.registryAccess(), frame, frame.getBiomeSource(), randomState, level.getStructureManager(),
+            made = structure.generate(registries, frame, frame.getBiomeSource(), randomState, level == null ? null : level.getStructureManager(),
                     seed, chunk, 0, frame.heights, biome -> true);
         }
         if (!made.isValid()) return null;
@@ -375,7 +401,7 @@ final class VanillaStructures {
             int blocks = 0, entities = 0;
             for (Patch patch : overlay.values()) { blocks += patch.at.length; entities += patch.entities.size(); }
             Patch here = overlay.get(cube);
-            text.append(level.registryAccess().registryOrThrow(Registries.STRUCTURE).getKey(start.start.getStructure()))
+            text.append(registries.registryOrThrow(Registries.STRUCTURE).getKey(start.start.getStructure()))
                     .append(" box ").append(start.start.getBoundingBox().moved(0, start.frame.shift, 0))
                     .append(": ").append(blocks).append(" blocks, ").append(entities).append(" entities, ")
                     .append(here == null ? 0 : here.at.length).append(" here, by cube y in this column:");
@@ -412,6 +438,7 @@ final class VanillaStructures {
 
     /** The starts reaching a chunk column, in a fixed order. */
     private List<Start> column(int cx, int cz) {
+        if (!generate) return List.of();
         long key = ChunkPos.asLong(cx, cz);
         List<Start> cached = columns.get(key);
         if (cached != null) return cached;
@@ -485,9 +512,11 @@ final class VanillaStructures {
             }
         }
         if (!made.isValid()) return null;
-        if (made.getStructure() instanceof OceanMonumentStructure && !monumentFloor(made.getBoundingBox())) return null;
+        if (made.getStructure() instanceof OceanMonumentStructure) {
+            if (!monumentFloor(made.getBoundingBox())) return null;
+        } else if (!surfaceGroundFits(kind, made, frame.shift)) return null;
         BoundingBox box = made.getBoundingBox().moved(0, frame.shift, 0);
-        if (made.getStructure().terrainAdaptation() != TerrainAdjustment.NONE) box = box.inflatedBy(ADAPT, ADAPT_HEIGHT, ADAPT);
+        if (made.getStructure().terrainAdaptation() != TerrainAdjustment.NONE) box = box.inflatedBy(ADAPT, ADAPT_FILL + 4, ADAPT);
         else box = box.inflatedBy(4, 4, 4); // features in pieces (trees) reach a little past them
         if (frame.shift == 0) {
             // Temples, huts, igloos, shipwrecks and ocean ruins drop onto the ground only as they are placed
@@ -518,6 +547,89 @@ final class VanillaStructures {
 
     private static final int MONUMENT_DEPTH_MIN = 25, MONUMENT_DEPTH_MAX = 75;
 
+    /**
+     * Whether a surface structure sits on gentle enough ground, rejecting cliffs and steep mountain
+     * walls where buildings would jut out of rock or carve deep trenches. Underground and underwater
+     * structures are left alone.
+     */
+    private boolean surfaceGroundFits(Kind kind, StructureStart made, int shift) {
+        if (kind.deep) return true;
+        Structure structure = made.getStructure();
+        GenerationStep.Decoration step = structure.step();
+        if (step == GenerationStep.Decoration.UNDERGROUND_STRUCTURES
+                || step == GenerationStep.Decoration.STRONGHOLDS
+                || step == GenerationStep.Decoration.UNDERGROUND_DECORATION) return true;
+        if (structure instanceof OceanMonumentStructure
+                || structure instanceof OceanRuinStructure
+                || structure instanceof ShipwreckStructure
+                || structure instanceof BuriedTreasureStructure) return true;
+        BoundingBox full = made.getBoundingBox().moved(0, shift, 0);
+        int cx = full.getCenter().getX(), cz = full.getCenter().getZ();
+        int centerGround = host.ground(cx, cz);
+        if (host.water(cx, cz) > centerGround + 2 && host.biome(cx, centerGround, cz).is(BiomeTags.IS_OCEAN)) return true;
+        if ((kind.relative || structure.terrainAdaptation() == TerrainAdjustment.BURY
+                || structure.terrainAdaptation() == TerrainAdjustment.ENCAPSULATE)
+                && full.maxY() < centerGround - 2) return true;
+        return piecesFit(made.getPieces(), host::ground);
+    }
+
+    /** Whether every piece of a surface structure fits the ground under its footprint. */
+    static boolean piecesFit(List<StructurePiece> pieces, IntBinaryOperator ground) {
+        for (StructurePiece piece : pieces) {
+            boolean rigid = !(piece instanceof PoolElementStructurePiece pool)
+                    || pool.getElement().getProjection() == StructureTemplatePool.Projection.RIGID;
+            if (!footprintFits(piece.getBoundingBox(), rigid, ground)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Whether the ground across a horizontal footprint is gentle enough for a surface piece:
+     * bounded relief across rigid buildings, and bounded full-span and half-span slope across a 3x3 sample grid.
+     */
+    static boolean footprintFits(BoundingBox box, boolean rigid, IntBinaryOperator ground) {
+        int x0 = box.minX(), x2 = box.maxX(), z0 = box.minZ(), z2 = box.maxZ();
+        if (x2 - x0 < MIN_SLOPE_SPAN) {
+            int mid = (x0 + x2) >> 1;
+            x0 = mid - (MIN_SLOPE_SPAN >> 1);
+            x2 = x0 + MIN_SLOPE_SPAN;
+        }
+        if (z2 - z0 < MIN_SLOPE_SPAN) {
+            int mid = (z0 + z2) >> 1;
+            z0 = mid - (MIN_SLOPE_SPAN >> 1);
+            z2 = z0 + MIN_SLOPE_SPAN;
+        }
+        int x1 = (x0 + x2) >> 1, z1 = (z0 + z2) >> 1;
+        int[] xs = {x0, x1, x2}, zs = {z0, z1, z2};
+        int[][] g = new int[3][3];
+        int low = Integer.MAX_VALUE, high = Integer.MIN_VALUE;
+        for (int ix = 0; ix < 3; ix++) for (int iz = 0; iz < 3; iz++) {
+            int h = ground.applyAsInt(xs[ix], zs[iz]);
+            g[ix][iz] = h;
+            low = Math.min(low, h);
+            high = Math.max(high, h);
+        }
+        int relief = high - low;
+        if (rigid && relief > MAX_PIECE_RELIEF) return false;
+        double spanX = x2 - x0, spanZ = z2 - z0;
+        double maxGx = 0, maxGz = 0;
+        for (int i = 0; i < 3; i++) {
+            maxGx = Math.max(maxGx, Math.abs(g[2][i] - g[0][i]) / spanX);
+            maxGz = Math.max(maxGz, Math.abs(g[i][2] - g[i][0]) / spanZ);
+        }
+        if (Math.hypot(maxGx, maxGz) > MAX_SLOPE) return false;
+        if (relief > MIN_LOCAL_SLOPE_RELIEF) {
+            double dx0 = x1 - x0, dx1 = x2 - x1, dz0 = z1 - z0, dz1 = z2 - z1;
+            for (int i = 0; i < 3; i++) {
+                if (Math.abs(g[1][i] - g[0][i]) / dx0 > MAX_LOCAL_SLOPE
+                        || Math.abs(g[2][i] - g[1][i]) / dx1 > MAX_LOCAL_SLOPE
+                        || Math.abs(g[i][1] - g[i][0]) / dz0 > MAX_LOCAL_SLOPE
+                        || Math.abs(g[i][2] - g[i][1]) / dz1 > MAX_LOCAL_SLOPE) return false;
+            }
+        }
+        return true;
+    }
+
     private static final Object STARTS = new Object();
 
     private StructureStart generate(StructureSet.StructureSelectionEntry entry, Frame frame, ChunkPos chunk) {
@@ -528,7 +640,7 @@ final class VanillaStructures {
                 ? biome -> biome.is(BiomeTags.IS_OCEAN) : structure.biomes()::contains;
         // Vanilla lays starts out on one thread; some piece builders (strongholds) keep static state
         synchronized (STARTS) {
-            return structure.generate(level.registryAccess(), frame, frame.getBiomeSource(), randomState, level.getStructureManager(),
+            return structure.generate(registries, frame, frame.getBiomeSource(), randomState, level == null ? null : level.getStructureManager(),
                     seed, chunk, 0, frame.heights, biomes);
         }
     }
@@ -548,7 +660,7 @@ final class VanillaStructures {
                     mine.complete(build(start));
                 } catch (RuntimeException | LinkageError e) {
                     LOGGER.warn("Cubic world: structure {} failed to place at chunk {}, {}",
-                            level.registryAccess().registryOrThrow(Registries.STRUCTURE).getKey(start.start.getStructure()), start.chunkX, start.chunkZ, e);
+                            registries.registryOrThrow(Registries.STRUCTURE).getKey(start.start.getStructure()), start.chunkX, start.chunkZ, e);
                     mine.complete(new Long2ObjectOpenHashMap<>());
                 }
             }
@@ -645,17 +757,17 @@ final class VanillaStructures {
             int floor = floors.getInt(best);
             switch (how) {
                 case BEARD_THIN, BEARD_BOX -> {
-                    int top = floor - 1 - r;
-                    for (int y = top; y > top - ADAPT_HEIGHT; y--) {
+                    int top = floor - 1 - r, bottom = adaptFillBottom(floor);
+                    for (int y = top; y >= bottom; y--) {
                         BlockState was = world.realState(x, y, z);
                         if (was.blocksMotion() && !(was.getBlock() instanceof LeavesBlock)) break;
                         world.putReal(x, y, z, host.fill(x, y, z, top - y));
                     }
                     int from = floor + r, ground = host.ground(x, z);
-                    int to = how == TerrainAdjustment.BEARD_BOX ? box.maxY() - r : Math.max(ground, host.water(x, z)) + 24;
-                    for (int y = from; y <= Math.min(to, from + ADAPT_HEIGHT); y++)
+                    int to = adaptCutTop(how, box.maxY(), r, ground, host.water(x, z));
+                    for (int y = from; y <= to; y++)
                         if (!world.realState(x, y, z).isAir()) world.putReal(x, y, z, AIR);
-                    if (how == TerrainAdjustment.BEARD_THIN && from <= ground && world.realState(x, from - 1, z).blocksMotion())
+                    if (how == TerrainAdjustment.BEARD_THIN && from <= ground && ground <= to && world.realState(x, from - 1, z).blocksMotion())
                         world.putReal(x, from - 1, z, host.fill(x, from - 1, z, 0));
                 }
                 case BURY, ENCAPSULATE -> {
@@ -666,6 +778,17 @@ final class VanillaStructures {
                 default -> {}
             }
         }
+    }
+
+    /** Lowest real Y filled beneath a piece floor by {@link #adapt}, bounding downhill pedestals. */
+    static int adaptFillBottom(int floor) {
+        return floor - ADAPT_FILL;
+    }
+
+    /** Highest real Y cleared to air above a piece by {@link #adapt}, bounding uphill cuts above the piece top. */
+    static int adaptCutTop(TerrainAdjustment how, int boxMaxY, int r, int ground, int water) {
+        if (how == TerrainAdjustment.BEARD_BOX) return boxMaxY - r;
+        return Math.min(Math.max(ground, water) + 4, boxMaxY + ADAPT_HEADROOM);
     }
 
     /** The base terrain for one layout, remembering the cube it last read. */
