@@ -10,7 +10,7 @@ import io.earthplatform.minecraft.cubic.jet.JetHud;
 import io.earthplatform.minecraft.cubic.play.client.EarthCompassHud;
 import io.earthplatform.minecraft.cubic.play.client.EarthFlight;
 import io.earthplatform.minecraft.cubic.play.client.EarthPlayClient;
-import io.earthplatform.minecraft.fabric.axiom.AxiomCubes;
+import io.earthplatform.minecraft.cubic.compat.axiom.AxiomCubes;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;

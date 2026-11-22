@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.fabric.axiom.mixin;
+package io.earthplatform.minecraft.cubic.compat.axiom.mixin;
 
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.levelgen.Heightmap;
