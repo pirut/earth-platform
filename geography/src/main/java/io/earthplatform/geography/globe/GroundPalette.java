@@ -50,8 +50,10 @@ public final class GroundPalette {
             Ground.COARSE_DIRT, Ground.DIRT};
     /** Bare gentle ground in dry lands: dunes, sand sheets and stony plains. */
     public static final Ground[] DESERT_LOOSE = {Ground.SAND, Ground.RED_SAND, Ground.GRAVEL, Ground.COARSE_DIRT};
-    /** Soil showing through thin, dry plant cover. No gravel: grey there is roads and roofs, not ground. */
+    /** Soil showing through thin, dry plant cover in deserts. No gravel: grey there is roads and roofs, not ground. */
     public static final Ground[] SOIL = {Ground.COARSE_DIRT, Ground.DIRT, Ground.PACKED_MUD, Ground.SAND, Ground.RED_SAND};
+    /** Earthy soil showing through dry-season grass and scrub outside true deserts, without loose desert sand. */
+    public static final Ground[] LOAM = {Ground.COARSE_DIRT, Ground.DIRT, Ground.PACKED_MUD};
 
     /** Weight of lightness against hue and chroma. */
     static final double LIGHTNESS_WEIGHT = 0.45;

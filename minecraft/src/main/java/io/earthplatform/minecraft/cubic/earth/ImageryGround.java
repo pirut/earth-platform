@@ -58,27 +58,42 @@ final class ImageryGround {
      * @param jitter a value in [0, 1) fixed for the column
      */
     Surface apply(Surface surface, int code, int x, int z, ClimateZone zone, double steep, int voxel, double jitter) {
+        BlockState top = surface.top();
+        boolean bare = top == STONE || top == ANDESITE || top == GRAVEL || top == COARSE_DIRT || top == SAND || top == RED_SAND;
+        boolean vegetatedCover = code == WorldCoverSource.GRASSLAND || code == WorldCoverSource.CROPLAND || code == WorldCoverSource.SHRUBLAND;
+        boolean open = top == GRASS && vegetatedCover;
+        boolean wooded = top == GRASS && code == WorldCoverSource.TREE_COVER && surface.trees() > 0;
+        if (!bare && !open && !wooded) return surface;
+        return apply(surface, code, x, z, zone, steep, jitter, reading(x, z, voxel));
+    }
+
+    /** Applies a pre-read imagery sample to a column's surface. */
+    Surface apply(Surface surface, int code, int x, int z, ClimateZone zone, double steep, double jitter,
+                  @javax.annotation.Nullable GroundPalette.Reading reading) {
+        if (reading == null || reading.shadow()) return surface;
         // Where two blocks share a colour, each holds broad stretches, hundreds of blocks across, that
         // meet in drifts a few blocks wide, rather than mottling the ground block by block.
         double roll = Math.clamp(0.5 + 0.9 * blend.getValue(x / 160.0, z / 160.0) + 0.25 * blend.getValue(x / 7.0 + 31.7, z / 7.0) + 0.1 * (jitter - 0.5), 0, 0.999);
         BlockState top = surface.top();
         boolean bare = top == STONE || top == ANDESITE || top == GRAVEL || top == COARSE_DIRT || top == SAND || top == RED_SAND;
-        boolean open = top == GRASS && (code == WorldCoverSource.GRASSLAND || code == WorldCoverSource.CROPLAND || code == WorldCoverSource.SHRUBLAND);
+        boolean vegetatedCover = code == WorldCoverSource.GRASSLAND || code == WorldCoverSource.CROPLAND || code == WorldCoverSource.SHRUBLAND;
+        boolean open = top == GRASS && vegetatedCover;
         boolean wooded = top == GRASS && code == WorldCoverSource.TREE_COVER && surface.trees() > 0;
         if (!bare && !open && !wooded) return surface;
-        GroundPalette.Reading reading = reading(x, z, voxel);
-        if (reading == null || reading.shadow()) return surface;
+        boolean desert = zone == ClimateZone.HOT_DESERT || zone == ClimateZone.COLD_DESERT;
         if (bare) {
             // Plants seen in the pixel belong to its neighbours; the rock under them says nothing.
             if (reading.green()) return surface;
             // Red sands and layered rock colours belong to dry lands, hot or cold (the Sahara, the Colorado Plateau).
-            boolean arid = zone == ClimateZone.HOT_DESERT || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.TROPICAL_DRY
-                    || zone == ClimateZone.COLD_DESERT || zone == ClimateZone.COLD_STEPPE;
+            boolean arid = desert || zone == ClimateZone.HOT_STEPPE || zone == ClimateZone.TROPICAL_DRY
+                    || zone == ClimateZone.COLD_STEPPE;
             // Rock stays rock and loose ground loose, as land cover and slope chose; imagery picks which.
             boolean rock = top == STONE || top == ANDESITE;
             // Grey on sand is a road or a roof, not the ground; left alone it never draws lines across a desert.
             if (reading.grey() && (top == SAND || top == RED_SAND)) return surface;
-            GroundPalette.Ground[] set = rock ? (arid ? GroundPalette.DESERT_ROCK : GroundPalette.ROCK) : arid ? GroundPalette.DESERT_LOOSE : GroundPalette.LOOSE;
+            // Dry-season savanna and bushveld soils stay earthy loam outside true deserts rather than turning to sand.
+            GroundPalette.Ground[] set = top == COARSE_DIRT && vegetatedCover && !desert ? GroundPalette.LOAM
+                    : rock ? (arid ? GroundPalette.DESERT_ROCK : GroundPalette.ROCK) : arid ? GroundPalette.DESERT_LOOSE : GroundPalette.LOOSE;
             BlockState matched = BLOCKS[GroundPalette.match(reading, set, roll).ordinal()];
             return matched == top ? surface : with(surface, matched, surface.trees(), surface.grass(), surface.flowers());
         }
@@ -90,9 +105,12 @@ final class ImageryGround {
         }
         // Open land that looks dry and bare shows its soil, in patches as thick as the plants are thin.
         // Grey pixels there are roads, roofs and car parks, which stay grass rather than drawing lines.
+        // Outside true deserts, dry-season savanna and bushveld show earthy soil and keep their trees rather
+        // than turning into treeless desert sand.
         if (vegetation < 0.25 && reading.lightness() > 42 && !reading.grey() && roll > vegetation * 3) {
-            BlockState soil = BLOCKS[GroundPalette.match(reading, GroundPalette.SOIL, roll).ordinal()];
-            return with(surface, soil, 0, 0, 0);
+            GroundPalette.Ground[] set = desert ? GroundPalette.SOIL : GroundPalette.LOAM;
+            BlockState soil = BLOCKS[GroundPalette.match(reading, set, roll).ordinal()];
+            return desert ? with(surface, soil, 0, 0, 0) : with(surface, soil, surface.trees(), surface.grass() / 2, 0);
         }
         return surface;
     }

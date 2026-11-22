@@ -53,7 +53,10 @@ public final class Strata {
      * bare rock and scrub, so grass gives way to the sequence's loose ground, or to the rock.
      */
     private static final List<Block> SOIL = List.of(Blocks.SAND, Blocks.RED_SAND, Blocks.SNOW_BLOCK,
-            Blocks.POWDER_SNOW, Blocks.PODZOL, Blocks.MUD, Blocks.MOSS_BLOCK);
+            Blocks.POWDER_SNOW, Blocks.PODZOL, Blocks.MUD, Blocks.MOSS_BLOCK, Blocks.WATER);
+    /** Vegetated valley-floor soils kept on flat canyon bottoms where land cover maps trees or greenery. */
+    private static final List<Block> VEGETATED = List.of(Blocks.GRASS_BLOCK, Blocks.DIRT, Blocks.COARSE_DIRT,
+            Blocks.PODZOL, Blocks.MUD, Blocks.MOSS_BLOCK);
 
     private static final Block WT = Blocks.WHITE_TERRACOTTA, LGT = Blocks.LIGHT_GRAY_TERRACOTTA, T = Blocks.TERRACOTTA,
             RT = Blocks.RED_TERRACOTTA, OT = Blocks.ORANGE_TERRACOTTA, BT = Blocks.BROWN_TERRACOTTA, YT = Blocks.YELLOW_TERRACOTTA,
@@ -192,11 +195,13 @@ public final class Strata {
     /** A column's strata: its sequence and its datum, in metres and as the block the datum's metre falls in. */
     public final class Layers {
         private final Built built;
-        private final double datum, sea, x, z;
+        private final double datum, sea, x, z, strength;
 
-        private Layers(Built built, double datum, double sea, double x, double z) {
-            this.built = built; this.datum = datum; this.sea = sea; this.x = x; this.z = z;
+        private Layers(Built built, double datum, double sea, double x, double z, double strength) {
+            this.built = built; this.datum = datum; this.sea = sea; this.x = x; this.z = z; this.strength = strength;
         }
+
+        String sequenceName() { return built.sequence.name(); }
 
         /** The rock at block height {@code y}. */
         public BlockState at(int y) {
@@ -216,7 +221,7 @@ public final class Strata {
         }
 
         /** How much of the ground's small-scale noise to keep at {@code metres}: little down in the layered rock, where beds keep it level. */
-        public double calm(double metres) { return 1 - 0.8 * below(metres); }
+        public double calm(double metres) { return 1 - 0.8 * strength * below(metres); }
 
         /**
          * Ground metres stepped by the rock: ledgy beds into benches and risers, cliff makers into
@@ -224,7 +229,7 @@ public final class Strata {
          * they are, so the layers still meet the ground at their true heights.
          */
         public double terrace(double metres) {
-            double w = below(metres);
+            double w = strength * below(metres);
             if (w <= 0) return metres;
             double d = datum - metres;
             int i = Mth.floor(d);
@@ -269,6 +274,12 @@ public final class Strata {
             if (surface.trees() > 0 && steep <= flat && y - sea >= top(x, z) - TOPS) return surface;
             BlockState top = surface.top();
             Block ground = built.sequence.ground();
+            // Flat canyon floors where land cover maps riparian woods or valley greenery (such as Zion's Virgin River)
+            // keep their vegetation instead of being stripped to bare rock; red-sand flat sequences (Monument Valley)
+            // still dress treeless flats in sand while preserving wooded valley bottoms.
+            if (steep <= flat && (surface.trees() > 0 || surface.grass() > 0) && (ground == null || surface.trees() > 0)) {
+                for (Block b : VEGETATED) if (top.is(b)) return surface;
+            }
             // Where the sequence has its own loose ground, as Monument Valley's red sand, its flats are all of it.
             // A flat here is anything short of three block steps across the column, so the corner of a single
             // step, where it turns diagonally, keeps the sand rather than lining every gentle contour with rock.
@@ -297,13 +308,41 @@ public final class Strata {
         double fx = gx - i, fz = gz - j;
         double layered = Mth.lerp(fz, Mth.lerp(fx, zone(i, j).layered(), zone(i + 1, j).layered()),
                 Mth.lerp(fx, zone(i, j + 1).layered(), zone(i + 1, j + 1).layered()));
-        // Layered country ends along a wandering line, not along the cells'.
-        if (layered + 0.3 * wiggle.getValue(x / 1500.0 + 31, z / 1500.0) < 0.5) return null;
-        // Each part of it takes the sequence of the country nearest, so sequences meet along wandering lines too.
-        Zone near = zone(Math.round(gx + 0.4 * wiggle.getValue(z / 2300.0, x / 2300.0 + 17)),
-                Math.round(gz + 0.4 * wiggle.getValue(x / 2300.0 + 53, z / 2300.0)));
+        if (layered <= 0) return null;
+        // Layered country ends along a wandering, frayed band rather than a 1-block knife edge.
+        double edge = layered + 0.24 * wiggle.getValue(x / 1500.0 + 31, z / 1500.0);
+        double fray = 0.08 * wiggle.getValue(x / 85.0 - 11, z / 85.0 + 23)
+                + 0.04 * wiggle.getValue(x / 19.0 + 47, z / 19.0 - 13)
+                + grain(x, z, 1) * 0.04;
+        if (edge + fray < 0.5) return null;
+        // Terracing fades smoothly across the frayed boundary so interleaving columns never step sharply in height.
+        double outerFade = Mth.clamp((edge - 0.66) / 0.10, 0, 1);
+        // Each part of it takes the sequence of the country nearest, frayed at fine scale where sequences meet.
+        double sxSmooth = gx + 0.35 * wiggle.getValue(z / 2300.0, x / 2300.0 + 17);
+        double szSmooth = gz + 0.35 * wiggle.getValue(x / 2300.0 + 53, z / 2300.0);
+        double dxFray = 0.06 * wiggle.getValue(x / 90.0 + 19, z / 90.0 - 37)
+                + 0.03 * wiggle.getValue(x / 21.0 - 7, z / 21.0 + 41)
+                + grain(x, z, 2) * 0.04;
+        double dzFray = 0.06 * wiggle.getValue(x / 90.0 - 53, z / 90.0 + 11)
+                + 0.03 * wiggle.getValue(x / 21.0 + 29, z / 21.0 - 17)
+                + grain(x, z, 3) * 0.04;
+        int seq = sequence(zone(Math.round(sxSmooth + dxFray), Math.round(szSmooth + dzFray)));
+        double seqFade = 1;
+        double border = Math.max(Math.abs(sxSmooth - Math.round(sxSmooth)), Math.abs(szSmooth - Math.round(szSmooth)));
+        if (border > 0.27) {
+            long si = (long) Math.floor(sxSmooth), sj = (long) Math.floor(szSmooth);
+            if (sequence(zone(si, sj)) != seq || sequence(zone(si + 1, sj)) != seq
+                    || sequence(zone(si, sj + 1)) != seq || sequence(zone(si + 1, sj + 1)) != seq) {
+                seqFade = Mth.clamp((0.37 - border) / 0.10, 0, 1);
+            }
+        }
         double datum = datum(x, z) + 3 * wiggle.getValue(x / 700.0, z / 700.0);
-        return new Layers(built[sequence(near)], datum, sea, x, z);
+        return new Layers(built[seq], datum, sea, x, z, Math.min(outerFade, seqFade));
+    }
+
+    /** Deterministic per-column dither in [-1, 1] for feathering strata boundaries. */
+    private static double grain(double x, double z, long salt) {
+        return ((hash(Mth.floor(x), Mth.floor(z), salt) & 1023L) / 511.5) - 1.0;
     }
 
     /** Least fraction of the high ground within reach whose tops stand at the datum, for broad level tops: tablelands. */
