@@ -1,12 +1,12 @@
-package io.earthplatform.minecraft.fabric.axiom;
+package io.earthplatform.minecraft.cubic.compat.axiom;
 
 import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.CubeWorld;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
-import io.earthplatform.minecraft.fabric.axiom.mixin.HeightmapAccess;
-import io.earthplatform.minecraft.fabric.axiom.mixin.LightEngineAccess;
+import io.earthplatform.minecraft.cubic.compat.axiom.mixin.HeightmapAccess;
+import io.earthplatform.minecraft.cubic.compat.axiom.mixin.LightEngineAccess;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
@@ -141,7 +141,7 @@ public final class AxiomCubes {
 
     // Block entities, block states and derived data of a cubic column's carrier chunk -------------
 
-    public static BlockState chunkBlockState(LevelChunk chunk, BlockPos pos) {
+    public static BlockState chunkBlockState(ChunkAccess chunk, BlockPos pos) {
         CubeWorld cubes = cubic(chunk);
         return cubes != null ? cubes.getBlockState(pos) : chunk.getBlockState(pos);
     }
