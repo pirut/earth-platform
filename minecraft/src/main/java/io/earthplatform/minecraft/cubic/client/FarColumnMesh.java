@@ -4,6 +4,7 @@ import static io.earthplatform.minecraft.cubic.client.FarMesher.COARSE_WATER_ALP
 import static io.earthplatform.minecraft.cubic.client.FarMesher.COVER_FROM;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.DIRECTIONS;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.FIRST_WALL;
+import static io.earthplatform.minecraft.cubic.client.FarMesher.GROUND;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.GROUPS;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.LOOK_MASK;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.SEAM_DEPTH;
@@ -133,6 +134,7 @@ final class FarColumnMesh {
             }
         }
         }
+        if (!smooth) emitBottomCap();
         IntArrayList[] groups = new IntArrayList[GROUPS];
         for (int g = 0; g < GROUPS; g++) groups[g] = new IntArrayList();
         int[] grid = null;
@@ -162,19 +164,36 @@ final class FarColumnMesh {
         return new Part(mesh, memory);
     }
 
+    /**
+     * Closes the top of the implicit {@link FarMesher#GROUND} at {@code vy = -1} wherever an air or
+     * water opening or a near-drawn cube reaches the column's base, so cave mouths cannot open into
+     * the sky below the column.
+     */
+    private void emitBottomCap() {
+        if (job.height() == 0) return;
+        long look = -1L;
+        for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+            if (drawn(x, -1, z)) continue;
+            if (!drawn(x, 0, z) && hides(GROUND, at(job, x, 0, z), Direction.UP)) continue;
+            if (look < 0) look = (long) recent.id(GROUND, Direction.UP, null, job.textured()) << 8;
+            opaqueFlat.add(Direction.UP, x, -1, z, -job.drops()[z * 16 + x], look);
+        }
+    }
+
     private void voxel(BlockState state, int x, int vy, int z) {
         int cell = z * 16 + x, drop = job.drops()[cell];
         boolean liquid = seeThrough(state);
         // Under water, sky light fades a level per block of water above, as it does near by.
         int sky = liquid ? 15 : Mth.clamp(15 - (int) (surface[cell] - ((vy + 1) * voxel - drop) / (float) UNIT), 0, 15);
         int bottom = vy * voxel - drop, top = bottom + Math.round(voxel * Far.fill(state));
+        int seamTop = groundRows[cell] >= 0 ? groundRows[cell] : tops[cell];
         Holder<Biome> biome = null;
         for (Direction direction : DIRECTIONS) {
             if (direction.getAxis() == Direction.Axis.Y) {
                 int ny = vy + direction.getStepY();
                 BlockState neighbour = at(job, x, ny, z);
                 if (drawn(x, ny, z)) {
-                    if (liquid && seeThrough(neighbour) || vy < tops[cell] - SEAM_DEPTH) continue;
+                    if (liquid && seeThrough(neighbour) || vy < seamTop - SEAM_DEPTH) continue;
                 } else if (hides(state, neighbour, direction)) continue;
                 if (biome == null) biome = FarMesher.biome(job,x,vy,z);
                 int height = direction == Direction.UP ? top : bottom;
@@ -198,7 +217,7 @@ final class FarColumnMesh {
                 int group;
                 if (drawn(nx, row, nz)) {
                     // The cubes there are drawn up close; water carries on into theirs without a wall.
-                    if (liquid && seeThrough(neighbour) || vy < tops[cell] - SEAM_DEPTH) continue;
+                    if (liquid && seeThrough(neighbour) || vy < seamTop - SEAM_DEPTH) continue;
                     group = direction.get3DDataValue();
                 } else if (hides(state, neighbour, direction)) {
                     if (wall < 0) continue;
