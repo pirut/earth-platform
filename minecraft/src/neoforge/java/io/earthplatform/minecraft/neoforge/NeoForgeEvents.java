@@ -5,6 +5,8 @@ import io.earthplatform.minecraft.cubic.CubicEvents;
 import io.earthplatform.minecraft.cubic.CubicPoiClaims;
 import io.earthplatform.minecraft.cubic.CubicSpawns;
 import io.earthplatform.minecraft.cubic.compat.PortalReturn;
+import io.earthplatform.minecraft.cubic.compat.axiom.AxiomCubes;
+import io.earthplatform.minecraft.platform.Loader;
 import io.earthplatform.minecraft.cubic.compat.SableWind;
 import io.earthplatform.minecraft.cubic.earth.ImageryCalibration;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
@@ -126,10 +128,13 @@ public final class NeoForgeEvents {
         EarthRules.stopped();
     }
 
+    private static final boolean AXIOM = Loader.INSTANCE.hasMod("axiom");
+
     @SubscribeEvent public static void serverTick(ServerTickEvent.Post event) {
         EarthWorlds.tick(event.getServer());
         EarthRules.tick(event.getServer());
         EarthMemory.tick(event.getServer());
+        if (AXIOM) AxiomCubes.flush(false);
     }
 
     // Players ------------------------------------------------------------------------------------

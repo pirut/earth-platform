@@ -1,4 +1,4 @@
-package io.earthplatform.minecraft.fabric.axiom.mixin;
+package io.earthplatform.minecraft.cubic.compat.axiom.mixin;
 
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Pseudo;
@@ -40,6 +40,7 @@ import org.spongepowered.asm.mixin.Pseudo;
         "com.moulberry.axiom.operations.TypeReplaceOperation",
         "com.moulberry.axiom.operations.SimulateGravityOperation",
         "com.moulberry.axiom.operations.HollowOperation",
+        "com.moulberry.axiom.tools.HeightmapApplier",
         "com.moulberry.axiom.tools.biome_painter.BiomePainterTool",
         "com.moulberry.axiom.tools.ChamferClosestBlockMap",
         "com.moulberry.axiom.tools.box_select.BoxSelectTool",

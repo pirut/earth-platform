@@ -117,7 +117,8 @@ public final class TerrariumTileSource implements AutoCloseable {
                     java.util.List<CompletableFuture<Object>> plans = early(zoom, x, y);
                     float[] values = read(zoom, x, y);
                     for (int i = first(plans); i < layers.size(); i++) refine(layers.get(i), zoom, x, y, values, plans.get(i));
-                    if (zoom >= TileDespike.SPIKE_ZOOM) TileDespike.despike(values);
+                    TileRepair.repairImpossibleDepths(values);
+                    if (zoom >= TileDespike.SPIKE_ZOOM) TileDespike.despike(values, zoom, y);
                     synchronized (memory) {
                         memory.putAndTrim(key, values, maxTilesInMemory);
                     }

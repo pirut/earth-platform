@@ -52,7 +52,7 @@ public final class EarthPlayClient {
         });
     }
 
-    public static void loggedOut() { status = null; }
+    public static void loggedOut() { status = null; EarthSolarClient.loggedOut(); }
 
     /** Opens Create World on the Earth world type, unless the player is re-creating a world. */
     public static void createWorld(Screen opened) {

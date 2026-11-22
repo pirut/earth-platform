@@ -5,6 +5,7 @@ import static io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.DRY;
 import com.google.gson.JsonElement;
 import com.mojang.serialization.JsonOps;
 import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.earth.ModdedBiomes;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Surface;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Tree;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -14,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 import java.util.function.IntBinaryOperator;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
@@ -40,6 +42,7 @@ import net.minecraft.world.level.levelgen.feature.configurations.RandomBooleanFe
 import net.minecraft.world.level.levelgen.feature.configurations.RandomFeatureConfiguration;
 import net.minecraft.world.level.levelgen.feature.configurations.RootSystemConfiguration;
 import net.minecraft.world.level.levelgen.feature.configurations.TreeConfiguration;
+import net.minecraft.world.level.levelgen.feature.foliageplacers.FoliagePlacer;
 import net.minecraft.world.level.levelgen.feature.treedecorators.BeehiveDecorator;
 import net.minecraft.world.level.levelgen.feature.treedecorators.TreeDecorator;
 import net.minecraft.world.level.levelgen.placement.PlacedFeature;
@@ -181,12 +184,23 @@ final class Trees {
             if (surface.trees() <= 0) continue;
             Tree kind = surface.tree((int) Math.floorMod(r >>> 16, 10));
             if (roll >= surface.trees() * full(kind) * 256 / 100) continue;
-            if (!fits(surface, kind, h, water)) continue;
+            if (ModdedBiomes.isModdedBiome(surface.biome())) {
+                Planted nativeTree = nativeTree(surface, x, h, z, water, r);
+                if (nativeTree != null) { trees.add(nativeTree); continue; }
+                if (nativeTrees(surface.biome()).trees.length > 0) continue;
+            }
+            RegionalTrees.Species regional = gen.customTrees() ? gen.regionalTree(x, z, h, surface, kind, r) : null;
+            if (!fits(surface, kind, regional, h, water)) continue;
+            if (regional != null) {
+                TreeShape[] grown = RegionalTrees.shapes(regional);
+                if (grown.length > 0) trees.add(sized(x, h + 1, z, grown, r, snowy(surface), false));
+                continue;
+            }
             ConfiguredFeature<?, ?> feature = pick(surface.biome(), kind).choose(RandomSource.create(r));
             if (feature == null) continue;
             TreeShape[] grown = shapes(feature);
             if (grown.length == 0) continue;
-            trees.add(sized(x, h + 1, z, grown, r, snowy(surface)));
+            trees.add(sized(x, h + 1, z, grown, r, snowy(surface), true));
         }
         if (mostAdded() > 0) for (int dz = 0; dz < 16; dz++) for (int dx = 0; dx < 16; dx++) {
             Planted tree = added((cx << 4) + dx, (cz << 4) + dz);
@@ -206,7 +220,7 @@ final class Trees {
      * never past the tallest vanilla tree. So taiga stays low, a temperate wood's oaks and spruces stand as tall as
      * vanilla's shapes allow, and rainforest giants reach the 30 m and more the Amazon's do.
      */
-    private Planted sized(int x, int y, int z, TreeShape[] grown, long r, boolean snow) {
+    private Planted sized(int x, int y, int z, TreeShape[] grown, long r, boolean snow, boolean stretch) {
         int first = (int) Math.floorMod(r >>> 24, grown.length), turn = (int) (r >>> 34 & 3);
         int canopy = gen.canopy(x, z);
         if (canopy < 0) return new Planted(x, y, z, grown[first], turn, r, snow);
@@ -217,7 +231,7 @@ final class Trees {
             TreeShape other = grown[(int) Math.floorMod(more >>> 16 * k, grown.length)];
             if (Math.abs(other.height() - want) < Math.abs(best.height() - want)) best = other;
         }
-        int lift = best.stretches() ? Math.max(0, Math.min(want, TALLEST - 1) - best.height()) : 0;
+        int lift = stretch && best.stretches() ? Math.max(0, Math.min(want, TALLEST - 1) - best.height()) : 0;
         return new Planted(x, y, z, best, turn, r, snow, Math.min(lift, Math.max(2, best.height() * 3 / 5)));
     }
 
@@ -228,10 +242,12 @@ final class Trees {
      * Whether a tree of this kind can stand on a column: on soil, out of water but for mangroves
      * (up to 5 deep) and swamp oaks (up to 2), as vanilla places them.
      */
-    private static boolean fits(Surface surface, Tree kind, int h, int water) {
+    private static boolean fits(Surface surface, Tree kind, @Nullable RegionalTrees.Species regional, int h, int water) {
         int depth = water == DRY ? 0 : water - h;
-        int deepest = kind == Tree.MANGROVE ? 5 : surface.biome().is(Biomes.SWAMP) ? 2 : 0;
-        return depth <= deepest && surface.top().is(BlockTags.DIRT);
+        if (regional == RegionalTrees.Species.PALM)
+            return depth <= 0 && (surface.top().is(BlockTags.DIRT) || surface.top().is(BlockTags.SAND) || ModdedBiomes.isSand(surface.top()));
+        int deepest = kind == Tree.MANGROVE ? 5 : ModdedBiomes.isWetland(surface.biome()) ? 2 : 0;
+        return depth <= deepest && (surface.top().is(BlockTags.DIRT) || surface.top().is(Blocks.PACKED_MUD));
     }
 
     /**
@@ -262,7 +278,10 @@ final class Trees {
                 }
                 if (h - foot > 6) continue;
                 int form = gen.giantForm(x, z);
-                TreeShape[] grown = form < 0 ? Sequoia.shapes() : Giants.shapes(form);
+                BlockState[] palette = gen.giantBlocks(form < 0 ? Giants.SEQUOIA : form);
+                TreeShape[] grown = form < 0
+                        ? (palette == null ? Sequoia.shapes() : Sequoia.shapes(palette[0], palette[2]))
+                        : (palette == null ? Giants.shapes(form) : Giants.shapes(form, palette[0], palette[1], palette[2]));
                 trees.add(new Planted(x, foot + 1, z, grown[(int) Math.floorMod(r >>> 32, grown.length)], (int) (r >>> 50 & 3), r, snowy(surface)));
             }
         Planted[] made = trees.isEmpty() ? NONE : trees.toArray(Planted[]::new);
@@ -286,7 +305,7 @@ final class Trees {
     private static final BlockState[] SOILS = {Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.SAND.defaultBlockState(), Blocks.RED_SAND.defaultBlockState(),
             Blocks.MUD.defaultBlockState(), Blocks.PODZOL.defaultBlockState(), Blocks.MOSS_BLOCK.defaultBlockState(), Blocks.MYCELIUM.defaultBlockState(),
             Blocks.SNOW_BLOCK.defaultBlockState(), Blocks.GRAVEL.defaultBlockState(), Blocks.STONE.defaultBlockState()};
-    private final ConcurrentHashMap<Holder<Biome>, Additions> additions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Holder<Biome>, Additions> additions = new ConcurrentHashMap<>(), natives = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Rooting, Boolean> rootings = new ConcurrentHashMap<>();
     private volatile float mostAdded = -1;
 
@@ -348,7 +367,50 @@ final class Trees {
      * a tree, a huge mushroom or a feature of the mod's own that turns out to grow logs or leaves.
      * Biome modifiers (NeoForge's add_features) and data packs both land in the biome's own list.
      */
+    /** Picks and grows a modded biome's own tree feature at (x, h, z), respecting land-cover density, depth and soil. */
+    @Nullable private Planted nativeTree(Surface surface, int x, int h, int z, int water, long r) {
+        Additions here = nativeTrees(surface.biome());
+        if (here.trees.length == 0 || here.perChunk <= 0) return null;
+        float pick = RandomSource.create(r).nextFloat() * here.perChunk, at = 0;
+        Added chosen = here.trees[here.trees.length - 1];
+        for (Added tree : here.trees) {
+            at += tree.perChunk;
+            if (pick < at) { chosen = tree; break; }
+        }
+        int depth = water == DRY ? 0 : water - h;
+        int deepest = Math.max(chosen.deepest, ModdedBiomes.isWetland(surface.biome()) ? 2 : 0);
+        if (depth > deepest || !roots(chosen, surface.top())) return null;
+        TreeShape[] grown = shapes(chosen.feature, chosen.soil);
+        if (grown.length == 0) return null;
+        return sized(x, h + 1, z, grown, r, snowy(surface), true);
+    }
+
+    /**
+     * Tree features registered in a third-party modded biome's own {@code VEGETAL_DECORATION} list.
+     * Kept separate from {@link #additions} so modded biomes grow their own trees at Earth Platform's
+     * land-cover density instead of double-planting alongside vanilla trees or planting on open meadows.
+     */
+    private Additions nativeTrees(Holder<Biome> biome) {
+        Additions known = natives.get(biome);
+        if (known != null) return known;
+        List<Added> found = new ArrayList<>();
+        var steps = biome.value().getGenerationSettings().features();
+        int step = GenerationStep.Decoration.VEGETAL_DECORATION.ordinal();
+        if (steps.size() > step) for (Holder<PlacedFeature> placed : steps.get(step)) {
+            ConfiguredFeature<?, ?> feature = placed.value().feature().value();
+            if (feature.getFeatures().noneMatch(Trees::treeLike)) continue;
+            Added tree = added(placed.value());
+            if (tree != null && tree.perChunk > 0 && shapes(tree.feature, tree.soil).length > 0) found.add(tree);
+        }
+        float total = 0;
+        for (Added tree : found) total += tree.perChunk;
+        Additions made = found.isEmpty() ? NO_ADDITIONS : new Additions(found.toArray(Added[]::new), total, true);
+        Additions raced = natives.putIfAbsent(biome, made);
+        return raced != null ? raced : made;
+    }
+
     private Additions additions(Holder<Biome> biome) {
+        if (ModdedBiomes.isModdedBiome(biome)) return NO_ADDITIONS;
         Additions known = additions.get(biome);
         if (known != null) return known;
         List<Added> found = new ArrayList<>();
@@ -514,10 +576,9 @@ final class Trees {
         return new Pick(new float[0], new ConfiguredFeature<?, ?>[0], tree(feature));
     }
 
-    /** The feature if it grows a tree or a huge mushroom, else null (a grass patch in bamboo jungle's list). */
-    @Nullable private static ConfiguredFeature<?, ?> tree(Holder<ConfiguredFeature<?, ?>> feature) {
-        Feature<?> kind = feature.value().feature();
-        return kind == Feature.TREE || kind == Feature.HUGE_RED_MUSHROOM || kind == Feature.HUGE_BROWN_MUSHROOM ? feature.value() : null;
+    /** The feature if it grows a tree, else null (excluding huge mushrooms in dark forests and grass patches in bamboo jungles). */
+    @Nullable static ConfiguredFeature<?, ?> tree(Holder<ConfiguredFeature<?, ?>> feature) {
+        return feature.value().feature() == Feature.TREE ? feature.value() : null;
     }
 
     // Growing shapes -----------------------------------------------------------------------------
@@ -571,7 +632,7 @@ final class Trees {
      * shapes. Bee nests are left out and added as the shape is placed, at the feature's own odds.
      * Huge mushrooms get a patch of mycelium under them.
      */
-    private TreeShape[] grow(ConfiguredFeature<?, ?> feature, @Nullable BlockState soil) {
+    TreeShape[] grow(ConfiguredFeature<?, ?> feature, @Nullable BlockState soil) {
         boolean mud = feature.config() instanceof TreeConfiguration tree && tree.rootPlacer.isPresent();
         BlockState top = soil != null ? soil : (mud ? Blocks.MUD : Blocks.GRASS_BLOCK).defaultBlockState(), under = soil != null ? under(soil) : (mud ? Blocks.MUD : Blocks.DIRT).defaultBlockState();
         float bees = bees(feature);
@@ -586,24 +647,106 @@ final class Trees {
                 EarthPlatformMod.LOGGER.warn("Could not grow tree feature {}", feature, failure);
                 break;
             }
-            Long2ObjectOpenHashMap<BlockState> kept = new Long2ObjectOpenHashMap<>();
-            for (var entry : level.blocks.long2ObjectEntrySet()) {
-                BlockState state = entry.getValue();
-                if (state.is(Blocks.BEE_NEST) || state == level.ground(BlockPos.getY(entry.getLongKey()))) continue;
-                kept.put(entry.getLongKey(), state);
-            }
-            // Huge mushrooms stand on a patch of mycelium, the one place it grows outside mushroom islands.
-            if (feature.feature() == Feature.HUGE_RED_MUSHROOM || feature.feature() == Feature.HUGE_BROWN_MUSHROOM)
-                for (int dz = -2; dz <= 2; dz++) for (int dx = -2; dx <= 2; dx++)
-                    if (Math.abs(dx) + Math.abs(dz) <= 1 || Math.abs(dx) + Math.abs(dz) <= 3 && random.nextBoolean())
-                        kept.put(BlockPos.asLong(dx, -1, dz), Blocks.MYCELIUM.defaultBlockState());
-            if (kept.isEmpty()) continue;
-            if (gen.cappedCrowns()) cap(kept);
-            // Other mods' trees must fit the reach cubes look for trees in, and must grow a tree, not a patch of flowers.
-            if (soil != null && (!fits(kept) || kept.values().stream().noneMatch(Trees::woody))) continue;
-            grown.add(new TreeShape(kept, bees));
+            TreeShape shape = capture(level, feature, soil, random, bees);
+            if (shape != null) grown.add(shape);
         }
+        // If a third-party mod broke vanilla TreeFeature.place on our synthetic TreeLevel, grow directly
+        // from the TreeConfiguration (or a minimal fallback crown) so Earth forests never turn treeless.
+        if (grown.isEmpty() && soil == null) return growFallback(feature, top, under, anywhere, bees);
         return grown.toArray(TreeShape[]::new);
+    }
+
+    @Nullable private TreeShape capture(TreeLevel level, ConfiguredFeature<?, ?> feature, @Nullable BlockState soil, RandomSource random, float bees) {
+        Long2ObjectOpenHashMap<BlockState> kept = new Long2ObjectOpenHashMap<>();
+        for (var entry : level.blocks.long2ObjectEntrySet()) {
+            BlockState state = entry.getValue();
+            if (state.is(Blocks.BEE_NEST) || state == level.ground(BlockPos.getY(entry.getLongKey()))) continue;
+            kept.put(entry.getLongKey(), state);
+        }
+        // Huge mushrooms (from third-party mod additions) stand on a patch of mycelium.
+        if (feature.feature() == Feature.HUGE_RED_MUSHROOM || feature.feature() == Feature.HUGE_BROWN_MUSHROOM)
+            for (int dz = -2; dz <= 2; dz++) for (int dx = -2; dx <= 2; dx++)
+                if (Math.abs(dx) + Math.abs(dz) <= 1 || Math.abs(dx) + Math.abs(dz) <= 3 && random.nextBoolean())
+                    kept.put(BlockPos.asLong(dx, -1, dz), Blocks.MYCELIUM.defaultBlockState());
+        if (kept.isEmpty()) return null;
+        if (gen.cappedCrowns()) cap(kept);
+        // Other mods' trees must fit the reach cubes look for trees in, and must grow a tree, not a patch of flowers.
+        if (soil != null && (!fits(kept) || kept.values().stream().noneMatch(Trees::woody))) return null;
+        return new TreeShape(kept, bees);
+    }
+
+    /**
+     * Fallback when {@code feature.place} fails for an Earth forest tree: runs a {@link TreeConfiguration}'s
+     * own root, trunk and foliage placers directly (skipping {@code TreeFeature.place} and decorators), and
+     * if even that fails, builds a simple crown from its log and leaf providers (or oak) so forests never empty.
+     */
+    private TreeShape[] growFallback(ConfiguredFeature<?, ?> feature, BlockState top, BlockState under, Holder<Biome> anywhere, float bees) {
+        List<TreeShape> grown = new ArrayList<>();
+        if (feature.config() instanceof TreeConfiguration tree) {
+            for (int attempt = 0; attempt < VARIANTS * 3 && grown.size() < VARIANTS; attempt++) {
+                RandomSource random = RandomSource.create(0x54524545L + attempt * 0x9E3779B97F4A7C15L);
+                TreeLevel level = new TreeLevel(top, under, anywhere, random);
+                try {
+                    if (!placeDirect(level, random, tree)) continue;
+                } catch (RuntimeException failure) {
+                    EarthPlatformMod.LOGGER.warn("Direct tree placement also failed for {}, using simple fallback", feature, failure);
+                    grown.clear();
+                    break;
+                }
+                TreeShape shape = capture(level, feature, null, random, bees);
+                if (shape != null) grown.add(shape);
+            }
+        }
+        return grown.isEmpty() ? simpleFallback(feature, bees) : grown.toArray(TreeShape[]::new);
+    }
+
+    private static boolean placeDirect(TreeLevel level, RandomSource random, TreeConfiguration tree) {
+        BlockPos origin = tree.rootPlacer.map(r -> r.getTrunkOrigin(BlockPos.ZERO, random)).orElse(BlockPos.ZERO);
+        BiConsumer<BlockPos, BlockState> writer = (pos, state) -> level.setBlock(pos, state, 19);
+        if (tree.rootPlacer.isPresent() && !tree.rootPlacer.get().placeRoots(level, writer, random, BlockPos.ZERO, origin, tree)) return false;
+        int height = tree.trunkPlacer.getTreeHeight(random);
+        int foliageHeight = tree.foliagePlacer.foliageHeight(random, height, tree);
+        int foliageRadius = tree.foliagePlacer.foliageRadius(random, height - foliageHeight);
+        List<FoliagePlacer.FoliageAttachment> attachments = tree.trunkPlacer.placeTrunk(level, writer, random, height, origin, tree);
+        FoliagePlacer.FoliageSetter foliage = new FoliagePlacer.FoliageSetter() {
+            @Override public void set(BlockPos pos, BlockState state) {
+                BlockState leaf = state.hasProperty(LeavesBlock.DISTANCE) ? state.setValue(LeavesBlock.DISTANCE, 1) : state;
+                level.setBlock(pos, leaf, 19);
+            }
+            @Override public boolean isSet(BlockPos pos) { return level.blocks.containsKey(pos.asLong()); }
+        };
+        for (FoliagePlacer.FoliageAttachment attachment : attachments) {
+            tree.foliagePlacer.createFoliage(level, foliage, random, tree, height, attachment, foliageHeight, foliageRadius);
+        }
+        return !level.blocks.isEmpty();
+    }
+
+    private TreeShape[] simpleFallback(ConfiguredFeature<?, ?> feature, float bees) {
+        BlockState log = Blocks.OAK_LOG.defaultBlockState();
+        BlockState leaf = Blocks.OAK_LEAVES.defaultBlockState();
+        if (feature.config() instanceof TreeConfiguration tree) {
+            RandomSource r = RandomSource.create(0x54524545L);
+            try { log = tree.trunkProvider.getState(r, BlockPos.ZERO); } catch (RuntimeException ignored) {}
+            try { leaf = tree.foliageProvider.getState(r, BlockPos.ZERO); } catch (RuntimeException ignored) {}
+        }
+        if (leaf.hasProperty(LeavesBlock.DISTANCE)) leaf = leaf.setValue(LeavesBlock.DISTANCE, 1);
+        TreeShape[] shapes = new TreeShape[3];
+        for (int i = 0; i < shapes.length; i++) {
+            int height = 4 + i;
+            Long2ObjectOpenHashMap<BlockState> kept = new Long2ObjectOpenHashMap<>();
+            for (int dy = height - 2; dy <= height; dy++) {
+                int radius = dy == height ? 1 : 2;
+                for (int dz = -radius; dz <= radius; dz++) for (int dx = -radius; dx <= radius; dx++) {
+                    if (Math.abs(dx) == radius && Math.abs(dz) == radius && (dy == height || ((dx + dz + i) & 1) == 0)) continue;
+                    kept.put(BlockPos.asLong(dx, dy, dz), leaf);
+                }
+            }
+            kept.put(BlockPos.asLong(0, height + 1, 0), leaf);
+            for (int dy = 0; dy < height; dy++) kept.put(BlockPos.asLong(0, dy, 0), log);
+            if (gen.cappedCrowns()) cap(kept);
+            shapes[i] = new TreeShape(kept, bees);
+        }
+        return shapes;
     }
 
     /** Whether a grown tree stays within {@link #REACH} of its origin and {@link #TALLEST} above it. */

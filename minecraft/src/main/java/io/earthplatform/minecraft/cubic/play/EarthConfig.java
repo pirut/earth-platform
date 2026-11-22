@@ -43,6 +43,7 @@ public final class EarthConfig {
     public static final ModConfigSpec.ConfigValue<String> DEFAULT_PROJECTION;
     public static final ModConfigSpec.BooleanValue OFFLINE;
     public static final ModConfigSpec.BooleanValue SATELLITE_IMAGERY;
+    public static final ModConfigSpec.BooleanValue CUSTOM_TREES;
     public static final ModConfigSpec.IntValue CACHE_LIMIT_GB;
     public static final ModConfigSpec.BooleanValue ANYONE_CAN_TRAVEL;
     public static final ModConfigSpec.BooleanValue ANYONE_CAN_USE_HOMES;
@@ -62,6 +63,9 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue RACES;
     public static final ModConfigSpec.BooleanValue WEB_MAP;
     public static final ModConfigSpec.BooleanValue SURVIVAL_MAP;
+    public static final ModConfigSpec.BooleanValue LOCALIZED_DAY_NIGHT;
+    public static final ModConfigSpec.IntValue YEAR_LENGTH_DAYS;
+    public static final ModConfigSpec.BooleanValue MODDED_BIOMES;
 
     /** The settings behind the engine switches (see {@link EngineToggles}), in whichever file each lives. */
     private static final Map<EngineToggles.Toggle, ModConfigSpec.BooleanValue> TOGGLES = new LinkedHashMap<>();
@@ -120,6 +124,10 @@ public final class EarthConfig {
         SATELLITE_IMAGERY = common.comment("Color the ground of new Earth worlds from satellite photos (EOX Sentinel-2 cloudless imagery,",
                         "downloaded like the terrain). Off by default; existing worlds keep what they were made with.")
                 .translation(key("satelliteImagery")).define("satelliteImagery", false);
+        CUSTOM_TREES = common.comment("Grow diverse, climate-adapted regional trees (palms, emergent rainforest canopies, tall boreal pines,",
+                        "Mediterranean cypresses and stone pines, savanna baobabs and flat-top acacias, and taller broadleaf oaks and birches)",
+                        "using vanilla blocks. Set to false for classic vanilla Minecraft trees. Applies to newly generated chunks.")
+                .translation(key("customTrees")).define("customTrees", true);
         ANYONE_CAN_TRAVEL = common.comment("Let every player use /earth goto. When false, only operators can (singleplayer always can).")
                 .translation(key("anyoneCanTravel")).define("anyoneCanTravel", false);
         ANYONE_CAN_USE_HOMES = common.comment("Let every player save a home with /earth sethome and go back with /earth home, and go to the server spawn",
@@ -162,6 +170,15 @@ public final class EarthConfig {
         SURVIVAL_MAP = common.comment("Let players who can't use the travel map open the map (N) anyway, to look around and point a compass",
                         "at a spot, a famous place, their home or another player (/earth compass). It never moves anyone.")
                 .translation(key("survivalMap")).define("survivalMap", true);
+        LOCALIZED_DAY_NIGHT = common.comment("Progress the day/night cycle from each spot's real longitude, latitude and season,",
+                        "so players in Australia and Canada see different times of day and opposite seasons. Off keeps one shared sky everywhere.")
+                .translation(key("localizedDayNight")).define("localizedDayNight", false);
+        YEAR_LENGTH_DAYS = common.comment("In-game days in one full seasonal year when localizedDayNight is on (longer summer days and shorter winter days,",
+                        "flipped between hemispheres). 0 keeps equal 12-hour days and nights everywhere. Default 96.")
+                .translation(key("yearLengthDays")).defineInRange("yearLengthDays", EarthSolar.DEFAULT_YEAR_DAYS, 0, 3650);
+        MODDED_BIOMES = common.comment("Use realistic biomes and surface blocks from installed biome mods (such as Biomes O' Plenty, Regions Unexplored",
+                        "and Oh The Biomes We've Gone) where they fit Earth's climates and landscapes. When false, Earth worlds use vanilla biomes and blocks only.")
+                .translation(key("moddedBiomes")).define("moddedBiomes", true);
         defineToggles(common, EngineToggles.Side.COMMON);
         COMMON_SPEC = common.build();
     }
@@ -332,6 +349,15 @@ public final class EarthConfig {
 
     /** Whether new worlds get satellite imagery, counting a command-line setting. */
     public static boolean imagery() { return Boolean.getBoolean("earthplatform.earth.imagery"); }
+
+    /** Whether Earth worlds grow custom regional tree shapes instead of classic vanilla trees alone. */
+    public static boolean customTrees() { return COMMON_SPEC.isLoaded() ? CUSTOM_TREES.get() : CUSTOM_TREES.getDefault(); }
+
+    /** Whether installed biome mods' realistic biomes and surface blocks are used. */
+    public static boolean moddedBiomes() {
+        try { return COMMON_SPEC.isLoaded() ? MODDED_BIOMES.get() : true; }
+        catch (RuntimeException unloaded) { return true; }
+    }
 
     private static void property(String key, String value) {
         if (!FROM_COMMAND_LINE.contains(key)) System.setProperty(key, value);

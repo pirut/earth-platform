@@ -22,18 +22,22 @@ final class Giants {
             PODZOL = Blocks.PODZOL.defaultBlockState(), COARSE_DIRT = Blocks.COARSE_DIRT.defaultBlockState();
     private static final BlockState[] BARK = {Blocks.MANGROVE_WOOD.defaultBlockState(), Blocks.MANGROVE_WOOD.defaultBlockState(), Blocks.SPRUCE_WOOD.defaultBlockState()},
             FURROW = {Blocks.SPRUCE_WOOD.defaultBlockState(), Blocks.SPRUCE_WOOD.defaultBlockState(), Blocks.DARK_OAK_WOOD.defaultBlockState()};
+    private record VariantKey(int form, BlockState bark, BlockState furrow, BlockState leaves) {}
+
     private static final TreeShape[][] shapes = new TreeShape[3][];
+    private static final java.util.concurrent.ConcurrentHashMap<VariantKey, TreeShape[]> customShapes = new java.util.concurrent.ConcurrentHashMap<>();
 
     private final Long2ObjectOpenHashMap<BlockState> blocks = new Long2ObjectOpenHashMap<>();
     private final Random random;
     private final int salt;
-    private final BlockState bark, furrow;
+    private final BlockState bark, furrow, leaves;
 
-    private Giants(long seed, int form) {
+    private Giants(long seed, BlockState bark, BlockState furrow, BlockState leaves) {
         random = new Random(seed);
         salt = (int) (seed >>> 20);
-        bark = BARK[form];
-        furrow = FURROW[form];
+        this.bark = bark;
+        this.furrow = furrow;
+        this.leaves = leaves;
     }
 
     /** A form's giants, grown once. */
@@ -50,8 +54,23 @@ final class Giants {
         return made;
     }
 
+    /** A form's giants built from a custom wood and leaf palette (such as modded redwood or fir), grown once per palette. */
+    static TreeShape[] shapes(int form, BlockState bark, BlockState furrow, BlockState leaves) {
+        if (bark == BARK[form] && furrow == FURROW[form] && leaves == LEAVES) return shapes(form);
+        return customShapes.computeIfAbsent(new VariantKey(form, bark, furrow, leaves), k -> {
+            TreeShape[] made = new TreeShape[VARIANTS];
+            for (int i = 0; i < VARIANTS; i++)
+                made[i] = grow(0x61A27L * (form + 1) + i * 0x9E3779B97F4A7C15L, form, bark, furrow, leaves);
+            return made;
+        });
+    }
+
     static TreeShape grow(long seed, int form) {
-        Giants tree = new Giants(seed, form);
+        return grow(seed, form, BARK[form], FURROW[form], LEAVES);
+    }
+
+    static TreeShape grow(long seed, int form, BlockState bark, BlockState furrow, BlockState leaves) {
+        Giants tree = new Giants(seed, bark, furrow, leaves);
         double base = form == SEQUOIA ? tree.sequoia() : tree.spire(form == REDWOOD);
         tree.duff(base);
         // Nothing past what a grove's cubes look for: 16 blocks from the axis, and Sequoia.TALLEST above the foot.
@@ -233,7 +252,7 @@ final class Giants {
             int x = x0 + dx, y = y0 + dy, z = z0 + dz;
             if (y < 1) continue;
             double kx = (x - cx) / wide, kz = (z - cz) / wide, ky = (y - cy) / (y >= cy ? high : below);
-            if (kx * kx + kz * kz + ky * ky + rough * noise(x / grain, y / grain, z / grain) <= 1) blocks.putIfAbsent(BlockPos.asLong(x, y, z), LEAVES);
+            if (kx * kx + kz * kz + ky * ky + rough * noise(x / grain, y / grain, z / grain) <= 1) blocks.putIfAbsent(BlockPos.asLong(x, y, z), leaves);
         }
     }
 

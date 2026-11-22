@@ -23,7 +23,10 @@ final class Sequoia {
     private static final BlockState LOG = Blocks.MANGROVE_LOG.defaultBlockState(),
             LEAVES = Blocks.SPRUCE_LEAVES.defaultBlockState(), PODZOL = Blocks.PODZOL.defaultBlockState(),
             COARSE_DIRT = Blocks.COARSE_DIRT.defaultBlockState();
+    private record VariantKey(BlockState log, BlockState leaves) {}
+
     private static volatile TreeShape[] shapes;
+    private static final java.util.concurrent.ConcurrentHashMap<VariantKey, TreeShape[]> customShapes = new java.util.concurrent.ConcurrentHashMap<>();
 
     private Sequoia() {}
 
@@ -36,6 +39,16 @@ final class Sequoia {
             shapes = made;
         }
         return made;
+    }
+
+    /** Sequoias built from a custom log/wood and leaf palette (such as modded redwood), grown once per palette. */
+    static TreeShape[] shapes(BlockState log, BlockState leaves) {
+        if (log == LOG && leaves == LEAVES) return shapes();
+        return customShapes.computeIfAbsent(new VariantKey(log, leaves), k -> {
+            TreeShape[] made = new TreeShape[VARIANTS];
+            for (int i = 0; i < VARIANTS; i++) made[i] = grow(0x5E9A01AL * 31 + i * 0x9E3779B97F4A7C15L, log, leaves);
+            return made;
+        });
     }
 
     /** The trunk's radius at a height: about 4 m near the ground over a flared foot, narrowing to about 1 m at the top. */
@@ -53,6 +66,10 @@ final class Sequoia {
     }
 
     static TreeShape grow(long seed) {
+        return grow(seed, LOG, LEAVES);
+    }
+
+    static TreeShape grow(long seed, BlockState logBlock, BlockState leafBlock) {
         RandomSource random = RandomSource.create(seed);
         int height = 70 + random.nextInt(25);
         double base = 3.0 + random.nextDouble() * 1.4;
@@ -62,7 +79,7 @@ final class Sequoia {
         Long2ObjectOpenHashMap<BlockState> blocks = new Long2ObjectOpenHashMap<>();
 
         // The trunk, with shallow vertical ridges in its bark.
-        BlockState upright = LOG.setValue(RotatedPillarBlock.AXIS, Direction.Axis.Y);
+        BlockState upright = logBlock.hasProperty(RotatedPillarBlock.AXIS) ? logBlock.setValue(RotatedPillarBlock.AXIS, Direction.Axis.Y) : logBlock;
         for (int y = 0; y < height; y++) {
             double r = radius(base, height, y);
             int reach = (int) Math.ceil(r + 0.5);
@@ -75,7 +92,7 @@ final class Sequoia {
         int stubs = 3 + random.nextInt(4);
         for (int i = 0; i < stubs; i++) {
             int y = 12 + random.nextInt(Math.max(1, crownBase - 14));
-            branch(blocks, random, base, height, y, random.nextDouble() * Math.PI * 2, radius(base, height, y) + 2 + random.nextInt(2), 0.3, false);
+            branch(blocks, random, base, height, y, random.nextDouble() * Math.PI * 2, radius(base, height, y) + 2 + random.nextInt(2), 0.3, false, logBlock, leafBlock);
         }
         // The crown: whorls of three or four branches climbing the upper trunk, with foliage hugging the trunk between them.
         for (double y = crownBase; y < height - 4; y += 1.8 + random.nextDouble() * 1.4) {
@@ -85,14 +102,14 @@ final class Sequoia {
                 double angle = start + i * Math.PI * 2 / count + (random.nextDouble() - 0.5);
                 double u = (y - crownBase) / (height - crownBase);
                 double reach = Math.max(radius(base, height, y) + 2, widest * crown(u) * (0.75 + 0.25 * random.nextDouble()));
-                branch(blocks, random, base, height, (int) y, angle, reach, 0.35 + random.nextDouble() * 0.45, true);
+                branch(blocks, random, base, height, (int) y, angle, reach, 0.35 + random.nextDouble() * 0.45, true, logBlock, leafBlock);
             }
             double around = random.nextDouble() * Math.PI * 2, r = radius(base, height, y) + 1;
-            clump(blocks, random, (int) Math.round(r * Math.cos(around)), (int) y + 2, (int) Math.round(r * Math.sin(around)), 2.4);
+            clump(blocks, random, (int) Math.round(r * Math.cos(around)), (int) y + 2, (int) Math.round(r * Math.sin(around)), 2.4, leafBlock);
         }
         // The top: foliage round the trunk's tip.
-        clump(blocks, random, 0, height - 1, 0, 3.2);
-        clump(blocks, random, 0, height - 5, 0, 3.6);
+        clump(blocks, random, 0, height - 1, 0, 3.2, leafBlock);
+        clump(blocks, random, 0, height - 5, 0, 3.6, leafBlock);
 
         // Duff of needles at the foot: podzol with a little coarse dirt, under the ground's own height.
         int litter = (int) Math.ceil(base + 5);
@@ -111,9 +128,10 @@ final class Sequoia {
      * a big one at its end.
      */
     private static void branch(Long2ObjectOpenHashMap<BlockState> blocks, RandomSource random, double base, int height, int y,
-                               double angle, double reach, double rise, boolean leafy) {
+                               double angle, double reach, double rise, boolean leafy, BlockState logBlock, BlockState leafBlock) {
         double cos = Math.cos(angle), sin = Math.sin(angle), start = radius(base, height, y) - 0.5;
-        BlockState log = LOG.setValue(RotatedPillarBlock.AXIS, Math.abs(cos) > Math.abs(sin) ? Direction.Axis.X : Direction.Axis.Z);
+        Direction.Axis axis = Math.abs(cos) > Math.abs(sin) ? Direction.Axis.X : Direction.Axis.Z;
+        BlockState log = logBlock.hasProperty(RotatedPillarBlock.AXIS) ? logBlock.setValue(RotatedPillarBlock.AXIS, axis) : logBlock;
         boolean thick = leafy && reach > 7;
         double nextClump = start + 2.5;
         int x = 0, z = 0, top = y;
@@ -125,20 +143,20 @@ final class Sequoia {
             blocks.put(BlockPos.asLong(x, top, z), log);
             if (thick && s < start + 3) blocks.put(BlockPos.asLong(x, top + 1, z), log);
             if (leafy && s >= nextClump) {
-                clump(blocks, random, x, top + 1, z, 2.2 + random.nextDouble() * 1.0);
+                clump(blocks, random, x, top + 1, z, 2.2 + random.nextDouble() * 1.0, leafBlock);
                 nextClump = s + 1.8 + random.nextDouble() * 1.2;
             }
         }
-        if (leafy) clump(blocks, random, x, top + 1, z, 3.0 + random.nextDouble() * 0.6);
+        if (leafy) clump(blocks, random, x, top + 1, z, 3.0 + random.nextDouble() * 0.6, leafBlock);
     }
 
     /** A flattened clump of foliage about (cx, cy, cz), ragged at its edge, around whatever wood is there. */
-    private static void clump(Long2ObjectOpenHashMap<BlockState> blocks, RandomSource random, int cx, int cy, int cz, double radius) {
+    private static void clump(Long2ObjectOpenHashMap<BlockState> blocks, RandomSource random, int cx, int cy, int cz, double radius, BlockState leafBlock) {
         int r = (int) Math.ceil(radius), ry = (int) Math.ceil(radius * 0.6);
         for (int dy = -ry; dy <= ry; dy++) for (int dz = -r; dz <= r; dz++) for (int dx = -r; dx <= r; dx++) {
             double k = (dx * dx + dz * dz) / (radius * radius) + (dy * dy) / (radius * radius * 0.36);
             if (k > 1 || k > 0.6 && random.nextInt(4) == 0) continue;
-            blocks.putIfAbsent(BlockPos.asLong(cx + dx, cy + dy, cz + dz), LEAVES);
+            blocks.putIfAbsent(BlockPos.asLong(cx + dx, cy + dy, cz + dz), leafBlock);
         }
     }
 
