@@ -2835,6 +2835,22 @@ public final class EarthGenerator extends SurfaceGenerator {
         return 27 - 0.0074 * lat * lat - 0.0065 * Math.max(0, y - SEA) + warmth.getValue(x / 700.0, z / 700.0) * 1.5;
     }
 
+    /**
+     * Non-blocking air temperature in °C at block {@code (x, y, z)}: uses cached CHELSA climate
+     * with elevation lapse rate when resident in memory, otherwise falls back to the latitude and
+     * altitude model without doing disk or network I/O.
+     */
+    public double airTemperature(int x, int y, int z) {
+        if (climate != null) {
+            GeoPoint point = grid.geographic(x + 0.5, z + 0.5);
+            if (Math.abs(point.latitude()) <= 90) {
+                ClimateSource.Climate c = climate.ifLoaded(point.latitude(), point.longitude(), Math.max(-500, y - SEA));
+                if (c != null) return c.meanTemperature();
+            }
+        }
+        return temperature(x, z, y);
+    }
+
     /** A column's climate at height y: its zone, mean and warmest-quarter temperatures (°C) and rainfall (mm a year). */
     private record Local(ClimateZone zone, double temperature, double warmest, double rain, int koppen) {}
 
