@@ -1290,10 +1290,17 @@ public final class GlobeTest {
             }
             try (var offline = new ClimateSource(base, cache, false, 64, 1, Duration.ofSeconds(5))) {
                 int before = hits.values().stream().mapToInt(AtomicInteger::get).sum();
-                near(17.55, offline.at(lat, lon + quarter, 1000).meanTemperature(), 1e-6, "disk cache offline");
+                check(offline.ifLoaded(lat, lon + quarter, 1000) == null, "ifLoaded returns null before memory load without touching disk");
+                equal(0L, offline.stats().diskHits(), "ifLoaded does not read disk on memory miss");
+                var loaded = offline.at(lat, lon + quarter, 1000);
+                near(17.55, loaded.meanTemperature(), 1e-6, "disk cache offline");
+                long diskAfterAt = offline.stats().diskHits();
+                equal(loaded, offline.ifLoaded(lat, lon + quarter, 1000), "ifLoaded matches at() once resident in memory");
+                equal(diskAfterAt, offline.stats().diskHits(), "ifLoaded hit does not touch disk");
                 equal(ClimateSource.CFB, offline.at(34.05, -121.6, 0).koppen(), "prefetched rows offline");
                 equal(ClimateSource.CFB, offline.coarse(33.2, -121.6, 0).koppen(), "coarse rows prefetched across an area read offline");
                 equal(before, hits.values().stream().mapToInt(AtomicInteger::get).sum(), "no transfer when cached");
+                check(offline.ifLoaded(-40, 100, 0) == null, "ifLoaded returns null for uncached row offline");
                 fail(() -> offline.at(-40, 100, 0), MissingTerrainException.class, "uncached row offline");
             }
         } finally {

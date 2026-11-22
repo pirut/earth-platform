@@ -248,6 +248,19 @@ public final class EarthGenerator extends SurfaceGenerator {
     public EarthSettings settings() { return settings; }
     public MercatorGrid grid() { return grid; }
 
+    /**
+     * Real-world climate at a block position if its CHELSA rows are already in memory, or null
+     * without touching disk or network. Safe for server-tick weather queries.
+     */
+    @Nullable
+    public ClimateSource.Climate climateIfLoaded(double x, double y, double z) {
+        if (climate == null || !Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) return null;
+        if (Math.abs(z) > grid.worldWidthBlocks() / 2) return null;
+        GeoPoint point = grid.geographic(x, z);
+        if (Math.abs(point.latitude()) > 90) return null;
+        return climate.ifLoaded(point.latitude(), point.longitude(), Math.max(0.0, y - SEA));
+    }
+
     /** Use regional river surveys in worlds pinned to them. */
     public void enableSurveyedRivers() { surveyedRivers = rivers != null; }
 

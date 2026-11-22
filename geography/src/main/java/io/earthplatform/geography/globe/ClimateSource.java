@@ -154,6 +154,65 @@ public final class ClimateSource implements AutoCloseable {
         return new Climate(koppen, mean / weights - LAPSE_RATE * metres, warm / weights - LAPSE_RATE * metres, rain / weights);
     }
 
+    /**
+     * Same as {@link #at}, but reads only rows and elevation chunks already resident in memory.
+     * Returns null immediately on any cache miss without touching disk or network.
+     */
+    public Climate ifLoaded(double latitude, double longitude, double metres) {
+        if (!(Math.abs(latitude) <= 90) || !Double.isFinite(longitude) || !Double.isFinite(metres)) throw new IllegalArgumentException("Invalid position " + latitude + ", " + longitude);
+        longitude = wrap(longitude);
+        double fx = (longitude - WEST) * PIXELS_PER_DEGREE - 0.5, fy = (NORTH - latitude) * PIXELS_PER_DEGREE - 0.5;
+        int x0 = (int) Math.floor(fx), y0 = (int) Math.floor(fy);
+        double tx = fx - x0, ty = fy - y0;
+        double weights = 0, mean = 0, warm = 0, rain = 0;
+        for (int dy = 0; dy < 2; dy++) {
+            int row = Math.clamp(y0 + dy, 0, HEIGHT - 1);
+            short[] meanRow, warmRow, rainRow, meanNext = null, warmNext = null, rainNext = null;
+            int first = Math.floorMod(x0, WIDTH), chunk = first / DEM_CHUNK, nextChunk = Math.floorMod(x0 + 1, WIDTH) / DEM_CHUNK;
+            if (ROW_CHUNKS) {
+                meanRow = chunkIfLoaded(Layer.MEAN, row, chunk);
+                warmRow = chunkIfLoaded(Layer.WARM, row, chunk);
+                rainRow = chunkIfLoaded(Layer.RAIN, row, chunk);
+                if (meanRow == null || warmRow == null || rainRow == null) return null;
+                if (nextChunk != chunk) {
+                    meanNext = chunkIfLoaded(Layer.MEAN, row, nextChunk);
+                    warmNext = chunkIfLoaded(Layer.WARM, row, nextChunk);
+                    rainNext = chunkIfLoaded(Layer.RAIN, row, nextChunk);
+                    if (meanNext == null || warmNext == null || rainNext == null) return null;
+                }
+            } else {
+                meanRow = rowIfLoaded(Layer.MEAN, row);
+                warmRow = rowIfLoaded(Layer.WARM, row);
+                rainRow = rowIfLoaded(Layer.RAIN, row);
+                if (meanRow == null || warmRow == null || rainRow == null) return null;
+            }
+            for (int dx = 0; dx < 2; dx++) {
+                int column = Math.floorMod(x0 + dx, WIDTH);
+                boolean next = ROW_CHUNKS && dx == 1 && nextChunk != chunk;
+                int at = ROW_CHUNKS ? column - column / DEM_CHUNK * DEM_CHUNK : column;
+                int m = Short.toUnsignedInt((next ? meanNext : meanRow)[at]), w = Short.toUnsignedInt((next ? warmNext : warmRow)[at]),
+                        r = Short.toUnsignedInt((next ? rainNext : rainRow)[at]);
+                if (m == 0 || m == 0xFFFF || w == 0 || w == 0xFFFF || r == 0xFFFF) continue;
+                double weight = (dx == 0 ? 1 - tx : tx) * (dy == 0 ? 1 - ty : ty);
+                if (weight <= 0) continue;
+                float[] dem = demChunkIfLoaded(row, column / DEM_CHUNK);
+                if (dem == null) return null;
+                double sea = LAPSE_RATE * dem[column % DEM_CHUNK];
+                weights += weight;
+                mean += weight * (kelvin(m) + sea);
+                warm += weight * (kelvin(w) + sea);
+                rain += weight * r * 0.1;
+            }
+        }
+        if (weights <= 0) return null;
+        int row = Math.clamp((int) Math.floor(fy + 0.5), 0, HEIGHT - 1), column = Math.floorMod((int) Math.floor(fx + 0.5), WIDTH);
+        short[] koppenPiece = ROW_CHUNKS ? chunkIfLoaded(Layer.KOPPEN, row, column / DEM_CHUNK) : rowIfLoaded(Layer.KOPPEN, row);
+        if (koppenPiece == null) return null;
+        int koppen = Short.toUnsignedInt(koppenPiece[ROW_CHUNKS ? column - column / DEM_CHUNK * DEM_CHUNK : column]);
+        if (koppen > EF) koppen = NO_DATA;
+        return new Climate(koppen, mean / weights - LAPSE_RATE * metres, warm / weights - LAPSE_RATE * metres, rain / weights);
+    }
+
     /** How many rows apart the rows {@link #coarse} reads lie: 32 rows are about 30 km of latitude. */
     public static final int COARSE_ROWS = 32;
 
@@ -398,6 +457,27 @@ public final class ClimateSource implements AutoCloseable {
             }
         }
         mine.put(key, hit);
+        return hit;
+    }
+
+    private short[] rowIfLoaded(Layer layer, int row) {
+        return (short[]) ifCached(key(layer.ordinal(), row, 0));
+    }
+
+    private short[] chunkIfLoaded(Layer layer, int row, int chunk) {
+        return (short[]) ifCached(key(layer.ordinal(), row, chunk + 1));
+    }
+
+    private float[] demChunkIfLoaded(int row, int chunk) {
+        return (float[]) ifCached(key(DEM, row, chunk));
+    }
+
+    private Object ifCached(long key) {
+        Recent mine = recent.get();
+        Object hit = mine.get(key);
+        if (hit != null) return hit;
+        synchronized (memory) { hit = memory.get(key); }
+        if (hit != null) mine.put(key, hit);
         return hit;
     }
 
