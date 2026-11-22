@@ -51,6 +51,28 @@ class DiskCacheTest {
     }
 
     @Test
+    void trimsOlderCurrentSessionFilesOutsideGraceWindowWhenOverLimit() throws Exception {
+        Path oldSession = file("old-session", 100, 1_000);
+        Path earlierThisSession = file("earlier", 100, 5_000);
+        Path recentThisSession = file("recent", 100, 12_000);
+        DiskCache.trim(cache, 150 << 10, 4_000, 10_000);
+        assertFalse(Files.exists(oldSession));
+        assertFalse(Files.exists(earlierThisSession));
+        assertTrue(Files.exists(recentThisSession));
+    }
+
+    @Test
+    void hardCapEvictsEvenRecentBurstFilesWhenExceedingTwiceTheLimit() throws Exception {
+        Path a = file("a", 80, 10_000);
+        Path b = file("b", 80, 11_000);
+        Path c = file("c", 80, 12_000);
+        DiskCache.trim(cache, 100 << 10, 5_000, 9_000);
+        assertFalse(Files.exists(a));
+        assertFalse(Files.exists(b));
+        assertTrue(Files.exists(c));
+    }
+
+    @Test
     void readingAFileMarksItUsed() throws Exception {
         Path read = file("read", 1, 1_000);
         DiskCache.read(read);
