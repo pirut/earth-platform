@@ -184,7 +184,16 @@ public final class OceanCurrent {
 
     /** Next velocity of a boat in the current: carried the way it faces, at the current's speed there. */
     public static Vec3 carry(Vec3 velocity, float yaw, double latitude) {
-        double hx = -Mth.sin(yaw * Mth.DEG_TO_RAD), hz = Mth.cos(yaw * Mth.DEG_TO_RAD), speed = speed(latitude, hx);
+        return carry(velocity, yaw, latitude, 1.0, 0.0);
+    }
+
+    /**
+     * Next velocity of a boat in the current on a projection whose local geographic east points along
+     * the unit vector {@code (eastX, eastZ)} in block space.
+     */
+    public static Vec3 carry(Vec3 velocity, float yaw, double latitude, double eastX, double eastZ) {
+        double hx = -Mth.sin(yaw * Mth.DEG_TO_RAD), hz = Mth.cos(yaw * Mth.DEG_TO_RAD);
+        double speed = speed(latitude, hx * eastX + hz * eastZ);
         return new Vec3(velocity.x + (hx * speed - velocity.x) * RESPONSE, 0, velocity.z + (hz * speed - velocity.z) * RESPONSE);
     }
 

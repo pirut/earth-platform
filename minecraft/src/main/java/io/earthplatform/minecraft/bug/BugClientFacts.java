@@ -1,7 +1,7 @@
 package io.earthplatform.minecraft.bug;
 
 import io.earthplatform.geography.GeoPoint;
-import io.earthplatform.geography.globe.MercatorGrid;
+import io.earthplatform.geography.globe.GlobeProjection;
 import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
 import java.util.Locale;
 import javax.annotation.Nullable;
@@ -26,14 +26,11 @@ final class BugClientFacts {
     static String latitudeLongitude() {
         LocalPlayer player = player();
         if (player == null) return "not in a world";
-        MercatorGrid grid = grid();
+        GlobeProjection grid = grid();
         if (grid == null) return "not an Earth world";
-        try {
-            GeoPoint point = grid.blockCentre(player.getBlockX(), player.getBlockZ());
-            return String.format(Locale.ROOT, "%.5f, %.5f", point.latitude(), point.longitude());
-        } catch (RuntimeException outside) {
-            return "outside the map";
-        }
+        GeoPoint point = grid.tryBlockCentre(player.getBlockX(), player.getBlockZ());
+        if (point == null) return "outside the map";
+        return String.format(Locale.ROOT, "%.5f, %.5f", point.latitude(), point.longitude());
     }
 
     static String biome() {
@@ -59,10 +56,9 @@ final class BugClientFacts {
 
     @Nullable private static LocalPlayer player() { return Minecraft.getInstance().player; }
 
-    /** The Earth's block grid, once the server has sent its scale. Null outside an Earth world. */
-    @Nullable private static MercatorGrid grid() {
+    /** The Earth's projection, once the server has sent its scale. Null outside an Earth world. */
+    @Nullable private static GlobeProjection grid() {
         ClientCubeWorld world = ClientCubeWorld.current();
-        double scale = world == null ? 0 : world.far().metresPerBlock();
-        return scale > 0 ? new MercatorGrid(scale) : null;
+        return world == null ? null : world.far().projection();
     }
 }

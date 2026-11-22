@@ -54,6 +54,7 @@ public final class ClientCubeWorld extends CubeWorld {
     public CubeRenderer renderer() { return renderer; }
     public FarRenderer far() { return far; }
     @Override public double earthMetresPerBlock() { return far.metresPerBlock(); }
+    @Override @javax.annotation.Nullable public io.earthplatform.geography.globe.GlobeProjection earthProjection() { return far.projection(); }
 
     /** Unknown columns count as open sky until the server sends their tops. */
     @Override protected int baselineTop(int x, int z) { return MIN_Y - 1; }

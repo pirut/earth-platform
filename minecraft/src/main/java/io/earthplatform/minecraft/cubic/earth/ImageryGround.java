@@ -1,5 +1,7 @@
 package io.earthplatform.minecraft.cubic.earth;
 
+import io.earthplatform.geography.GeoPoint;
+import io.earthplatform.geography.globe.GlobeProjection;
 import io.earthplatform.geography.globe.GroundPalette;
 import io.earthplatform.geography.globe.ImagerySource;
 import io.earthplatform.geography.globe.MercatorGrid;
@@ -33,14 +35,17 @@ final class ImageryGround {
     }
 
     private final ImagerySource imagery;
-    private final MercatorGrid grid;
+    private final GlobeProjection grid;
+    private final MercatorGrid mercator;
     private final double blocksPerPixel;
     private final SimplexNoise warpX, warpZ, blend;
 
-    ImageryGround(ImagerySource imagery, MercatorGrid grid, long seed) {
+    ImageryGround(ImagerySource imagery, GlobeProjection grid, long seed) {
         this.imagery = imagery;
         this.grid = grid;
-        this.blocksPerPixel = grid.blocksPerPixel(ImagerySource.MAX_ZOOM);
+        this.mercator = grid instanceof MercatorGrid m ? m : null;
+        this.blocksPerPixel = mercator != null ? mercator.blocksPerPixel(ImagerySource.MAX_ZOOM)
+                : grid.worldWidthBlocks() / (256.0 * (1L << ImagerySource.MAX_ZOOM));
         LegacyRandomSource random = new LegacyRandomSource(seed ^ 0x494D41474552L);
         warpX = new SimplexNoise(random); warpZ = new SimplexNoise(random); blend = new SimplexNoise(random);
     }
@@ -122,7 +127,16 @@ final class ImageryGround {
      */
     GroundPalette.Reading reading(int x, int z, int voxel) {
         int zoom = zoom(voxel);
-        double px = grid.pixelX(x + 0.5, zoom), py = grid.pixelY(z + 0.5, zoom);
+        double px, py;
+        if (mercator != null) {
+            px = mercator.pixelX(x + 0.5, zoom);
+            py = mercator.pixelY(z + 0.5, zoom);
+        } else {
+            GeoPoint point = grid.tryGeographic(x + 0.5, z + 0.5);
+            if (point == null || Math.abs(point.latitude()) > MercatorGrid.MAX_LATITUDE) return null;
+            px = MercatorGrid.UNIT.pixelX(MercatorGrid.UNIT.blockX(point), zoom);
+            py = MercatorGrid.UNIT.pixelY(MercatorGrid.UNIT.blockZ(point), zoom);
+        }
         if (zoom == ImagerySource.MAX_ZOOM && voxel < blocksPerPixel) {
             double nx = x / (2.2 * blocksPerPixel), nz = z / (2.2 * blocksPerPixel);
             px += 0.6 * (warpX.getValue(nx, nz) + 0.5 * warpX.getValue(3 * nx, 3 * nz));

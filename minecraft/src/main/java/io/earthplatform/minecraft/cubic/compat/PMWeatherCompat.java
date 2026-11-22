@@ -1,6 +1,8 @@
 package io.earthplatform.minecraft.cubic.compat;
 
+import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.globe.ClimateSource;
+import io.earthplatform.geography.globe.GlobeProjection;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.minecraft.cubic.CubeWorld;
 import io.earthplatform.minecraft.cubic.CubicLevel;
@@ -54,19 +56,45 @@ public final class PMWeatherCompat {
 
     /** Latitude in degrees for a block Z in an Earth cubic world, or NaN for non-Earth levels. */
     public static double latitude(Level level, double z) {
+        return latitude(level, 0.0, z);
+    }
+
+    /** Latitude in degrees for block {@code (x, z)} using the world's active projection, or NaN outside Earth coverage. */
+    public static double latitude(Level level, double x, double z) {
         CubeWorld cubes = CubicLevel.of(level);
-        if (cubes == null) return Double.NaN;
-        double mpb = cubes.earthMetresPerBlock();
-        if (!(mpb > 0.0) || !Double.isFinite(mpb) || !Double.isFinite(z)) return Double.NaN;
-        double halfWorld = Math.PI * MercatorGrid.RADIUS / mpb;
-        double clampedZ = Mth.clamp(z, -halfWorld, halfWorld);
-        return Math.toDegrees(2.0 * Math.atan(Math.exp(-clampedZ * mpb / MercatorGrid.RADIUS)) - Math.PI / 2.0);
+        GeoPoint point = cubes == null ? null : geographic(cubes, x, z);
+        return point == null ? Double.NaN : point.latitude();
     }
 
     /** Returns -1 in the Southern Hemisphere of an Earth world and +1 elsewhere. */
     public static float seasonSign(Level level, double z) {
-        double lat = latitude(level, z);
+        return seasonSign(level, 0.0, z);
+    }
+
+    /** Returns -1 in the Southern Hemisphere at {@code (x, z)} under the active projection and +1 elsewhere. */
+    public static float seasonSign(Level level, double x, double z) {
+        double lat = latitude(level, x, z);
         return Double.isFinite(lat) && lat < 0.0 ? -1.0f : 1.0f;
+    }
+
+    @Nullable
+    private static GeoPoint geographic(CubeWorld cubes, double x, double z) {
+        if (!Double.isFinite(x) || !Double.isFinite(z)) return null;
+        GlobeProjection projection = cubes.earthProjection();
+        if (projection != null) {
+            if (projection.isWebMercator()) {
+                double half = projection.worldWidthBlocks() / 2.0;
+                return projection.geographic(x, Mth.clamp(z, -half, half));
+            }
+            return projection.tryGeographic(x, z);
+        }
+        double mpb = cubes.earthMetresPerBlock();
+        if (!(mpb > 0.0) || !Double.isFinite(mpb)) return null;
+        double halfWorld = Math.PI * MercatorGrid.RADIUS / mpb;
+        double clampedZ = Mth.clamp(z, -halfWorld, halfWorld);
+        double lat = Math.toDegrees(2.0 * Math.atan(Math.exp(-clampedZ * mpb / MercatorGrid.RADIUS)) - Math.PI / 2.0);
+        double lon = wrapLongitude(Math.toDegrees(x * mpb / MercatorGrid.RADIUS));
+        return new GeoPoint(lat, lon);
     }
 
     /**
@@ -78,13 +106,10 @@ public final class PMWeatherCompat {
     public static EarthWeatherProfile profile(Level level, double x, double y, double z) {
         CubeWorld cubes = CubicLevel.of(level);
         if (cubes == null) return null;
-        double mpb = cubes.earthMetresPerBlock();
-        if (!(mpb > 0.0) || !Double.isFinite(mpb) || !Double.isFinite(x) || !Double.isFinite(z)) return null;
-
-        double halfWorld = Math.PI * MercatorGrid.RADIUS / mpb;
-        double clampedZ = Mth.clamp(z, -halfWorld, halfWorld);
-        double lat = Math.toDegrees(2.0 * Math.atan(Math.exp(-clampedZ * mpb / MercatorGrid.RADIUS)) - Math.PI / 2.0);
-        double lon = wrapLongitude(Math.toDegrees(x * mpb / MercatorGrid.RADIUS));
+        GeoPoint point = geographic(cubes, x, z);
+        if (point == null) return null;
+        double lat = point.latitude();
+        double lon = point.longitude();
 
         double sampleY = Double.isFinite(y) ? y : surfaceY(level, Mth.floor(x), Mth.floor(z));
         ClimateSource.Climate climate = null;

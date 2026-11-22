@@ -3,6 +3,7 @@ package io.earthplatform.minecraft.cubic.client;
 import com.mojang.blaze3d.shaders.Uniform;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import io.earthplatform.geography.globe.GlobeProjection;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.minecraft.EarthPlatformMod;
@@ -139,6 +140,7 @@ public final class FarRenderer {
 
     /** An Earth world's metres per block at the equator, or 0 until the server says. */
     private volatile double metresPerBlock;
+    private volatile @Nullable GlobeProjection projection;
     private final ClientCubeWorld world;
     private final Registry<Biome> biomes;
     private final FarFaces faces = new FarFaces();
@@ -1737,7 +1739,7 @@ public final class FarRenderer {
         else if (EarthView.ENABLED || FarAtmosphere.ENABLED) {
             double height = position.y - ground(bx, bz, position.y);
             if (FarAtmosphere.ENABLED) gpu.atmosphere(FarAtmosphere.blend(height));
-            if (EarthView.ENABLED) curve(gpu, height, position.z, false);
+            if (EarthView.ENABLED) curve(gpu, height, position.x, position.z, false);
         }
         // Spatial dither still runs in the shaders every frame; only timed arrivals need a new pick.
         boolean band = FADE && pack && gpu.jittered();
@@ -2904,7 +2906,13 @@ public final class FarRenderer {
 
     /** Sets an Earth world's metres per block at the equator, from the server. */
     public void scale(double metresPerBlock, boolean previews) {
+        scale(metresPerBlock, previews, MercatorGrid.PROJECTION_ID);
+    }
+
+    /** Sets an Earth world's metres per block and projection, from the server. */
+    public void scale(double metresPerBlock, boolean previews, String projectionId) {
         this.metresPerBlock = metresPerBlock;
+        this.projection = metresPerBlock > 0 ? GlobeProjection.of(projectionId, metresPerBlock) : null;
         // The first plan went out before the server said so: plan again now, to ask for the stand-ins at once.
         if (previews && !previewsOffered) planNow = true;
         previewsOffered = previews;
@@ -2913,9 +2921,12 @@ public final class FarRenderer {
     /** An Earth world's metres per block at the equator, or 0 before the server says or outside Earth worlds. */
     public double metresPerBlock() { return metresPerBlock; }
 
+    /** The active Earth projection, or null before the server says or outside Earth worlds. */
+    @Nullable public GlobeProjection projection() { return projection; }
+
     /** Sets this frame's Earth curve, and has the view culled again when the curve comes or goes. */
-    private void curve(FarGpu gpu, double height, double z, boolean pack) {
-        double blocksPerMetre = hazeScale(z);
+    private void curve(FarGpu gpu, double height, double x, double z, boolean pack) {
+        double blocksPerMetre = hazeScale(x, z);
         curvature = EarthView.curvature(height, blocksPerMetre, pack);
         // Without its own water shader, curved ground would part from flat water at every shore.
         if (curvature > 0 && FarWaterShader.get() == null) curvature = 0;
@@ -2962,6 +2973,14 @@ public final class FarRenderer {
      * more blocks farther north. 1 outside Earth worlds.
      */
     public float hazeScale(double z) {
+        return hazeScale(0.0, z);
+    }
+
+    public float hazeScale(double x, double z) {
+        GlobeProjection p = projection;
+        if (p != null && !p.isWebMercator()) {
+            return (float) (1.0 / p.groundMetresPerBlock(x, z));
+        }
         // A world's scale makes a block a metre at home: metres per block there is sec(home latitude).
         double scale = metresPerBlock;
         return scale > 0 ? (float) (Math.cosh(z * scale / MercatorGrid.RADIUS) / scale) : 1.0F;

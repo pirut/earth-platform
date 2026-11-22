@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.net;
 
+import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
@@ -162,15 +163,19 @@ public final class CubePayloads {
      * spans at the equator. Map stretch grows toward the poles, so the client measures its haze in
      * ground metres rather than blocks. {@code previews} says the server answers {@link FarPreviewRequest}.
      */
-    public record EarthScale(double metresPerBlock, boolean previews) implements CustomPacketPayload {
+    public record EarthScale(double metresPerBlock, boolean previews, String projectionId) implements CustomPacketPayload {
+        public EarthScale(double metresPerBlock, boolean previews) {
+            this(metresPerBlock, previews, MercatorGrid.PROJECTION_ID);
+        }
         public static final Type<EarthScale> TYPE = new Type<>(id("earth_scale"));
         public static final StreamCodec<RegistryFriendlyByteBuf, EarthScale> CODEC = StreamCodec.of(
-                (buf, p) -> { buf.writeDouble(p.metresPerBlock); buf.writeBoolean(p.previews); }, buf -> new EarthScale(buf.readDouble(), buf.readBoolean()));
+                (buf, p) -> { buf.writeDouble(p.metresPerBlock); buf.writeBoolean(p.previews); buf.writeUtf(p.projectionId, 64); },
+                buf -> new EarthScale(buf.readDouble(), buf.readBoolean(), buf.readUtf(64)));
         @Override public Type<EarthScale> type() { return TYPE; }
     }
 
     /** Version of this group of payloads; NeoForge refuses a connection whose two sides differ. */
-    public static final String VERSION = "cubic-3";
+    public static final String VERSION = "cubic-4";
 
     public static void register(Payloads registrar) {
         registrar.toClient(CubeData.TYPE, CubeData.CODEC, p -> { if (Loader.INSTANCE.isClient()) CubicClientReceiver.cube(p); });

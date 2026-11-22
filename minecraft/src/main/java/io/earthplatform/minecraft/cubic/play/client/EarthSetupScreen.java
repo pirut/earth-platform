@@ -1,5 +1,7 @@
 package io.earthplatform.minecraft.cubic.play.client;
 
+import io.earthplatform.geography.globe.BteDymaxionProjection;
+import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.minecraft.cubic.earth.EarthSettings;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
 import io.earthplatform.minecraft.cubic.play.EarthPlaces;
@@ -24,11 +26,13 @@ public final class EarthSetupScreen extends Screen {
     private EditBox latitude, longitude;
     private Button done;
     private CycleButton<Boolean> imagery;
+    private CycleButton<String> projection;
     /** True while fields are filled from the list, so typing in them can tell the two apart. */
     private boolean filling;
     /** What was on screen when the globe opened, so coming back keeps it. */
     private double[] kept;
     private Boolean keptImagery;
+    private String keptProjection;
 
     EarthSetupScreen(Screen parent) {
         super(Component.translatable("earthplatform.setup.title"));
@@ -36,17 +40,29 @@ public final class EarthSetupScreen extends Screen {
     }
 
     @Override protected void init() {
-        int listTop = 26 + 10 * font.split(Component.translatable("earthplatform.setup.hint"), width - 40).size() + 4, listBottom = height - 108;
-        list = new PlaceList(minecraft, Math.min(340, width - 20), listBottom - listTop, listTop);
+        int listTop = 26 + 10 * font.split(Component.translatable("earthplatform.setup.hint"), width - 40).size() + 4, listBottom = height - 132;
+        list = new PlaceList(minecraft, Math.min(340, width - 20), Math.max(40, listBottom - listTop), listTop);
         list.setX(width / 2 - list.getWidth() / 2);
         addRenderableWidget(list);
 
+        EarthWorlds.Choice chosen = EarthWorlds.chosen();
+        String initialProjection = keptProjection != null ? keptProjection
+                : chosen != null ? chosen.settings().projection()
+                : EarthConfig.DEFAULT_PROJECTION.get();
+
         addRenderableWidget(Button.builder(Component.translatable("earthplatform.setup.globe"), button -> openGlobe())
                 .tooltip(Tooltip.create(Component.translatable("earthplatform.setup.globe.tooltip")))
-                .bounds(width / 2 - 155, height - 100, 150, 20).build());
+                .bounds(width / 2 - 155, height - 124, 150, 20).build());
         imagery = addRenderableWidget(CycleButton.onOffBuilder(keptImagery != null ? keptImagery : EarthConfig.imagery())
                 .withTooltip(on -> Tooltip.create(Component.translatable("earthplatform.setup.imagery.tooltip")))
-                .create(width / 2 + 5, height - 100, 150, 20, Component.translatable("earthplatform.setup.imagery")));
+                .create(width / 2 + 5, height - 124, 150, 20, Component.translatable("earthplatform.setup.imagery")));
+        projection = addRenderableWidget(CycleButton.<String>builder(EarthSetupScreen::projectionLabel)
+                .withValues(MercatorGrid.PROJECTION_ID, BteDymaxionProjection.PROJECTION_ID)
+                .withInitialValue(initialProjection)
+                .withTooltip(id -> Tooltip.create(Component.translatable(BteDymaxionProjection.PROJECTION_ID.equals(id)
+                        ? "earthplatform.setup.projection.bte_dymaxion.tooltip"
+                        : "earthplatform.setup.projection.web_mercator.tooltip")))
+                .create(width / 2 - 155, height - 100, 310, 20, Component.translatable("earthplatform.setup.projection")));
 
         int y = height - 74;
         latitude = new EditBox(font, width / 2 - 155, y, 100, 20, Component.translatable("earthplatform.setup.latitude"));
@@ -65,7 +81,6 @@ public final class EarthSetupScreen extends Screen {
         done = addRenderableWidget(Button.builder(Component.translatable("gui.done"), button -> finish()).bounds(width / 2 - 155, height - 28, 150, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), button -> onClose()).bounds(width / 2 + 5, height - 28, 150, 20).build());
 
-        EarthWorlds.Choice chosen = EarthWorlds.chosen();
         if (kept != null) {
             fill(kept[0], kept[1]);
             EarthPlaces.near(kept[0], kept[1]).ifPresent(this::select);
@@ -76,11 +91,18 @@ public final class EarthSetupScreen extends Screen {
         }
     }
 
+    private static Component projectionLabel(String id) {
+        return Component.translatable(BteDymaxionProjection.PROJECTION_ID.equals(id)
+                ? "earthplatform.setup.projection.bte_dymaxion"
+                : "earthplatform.setup.projection.web_mercator");
+    }
+
     private void openGlobe() {
         double[] at = point().orElse(new double[]{EarthPlaces.YOSEMITE.latitude(), EarthPlaces.YOSEMITE.longitude()});
         kept = at;
         keptImagery = imagery.getValue();
-        minecraft.setScreen(new EarthGlobeScreen(this, at[0], at[1], (lat, lon) -> kept = new double[]{lat, lon}));
+        keptProjection = projection.getValue();
+        minecraft.setScreen(new EarthGlobeScreen(this, at[0], at[1], keptProjection, (lat, lon) -> kept = new double[]{lat, lon}));
     }
 
     private void select(EarthPlaces.Place place) {
@@ -123,7 +145,7 @@ public final class EarthSetupScreen extends Screen {
             var selected = list.getSelected();
             String name = selected != null ? selected.place.label() : EarthPlaces.near(point[0], point[1]).map(EarthPlaces.Place::label)
                     .orElseGet(() -> townAt(latitude.getValue().trim(), longitude.getValue().trim()));
-            EarthWorlds.choose(new EarthWorlds.Choice(EarthSettings.at(point[0], point[1]), name));
+            EarthWorlds.choose(new EarthWorlds.Choice(EarthSettings.at(point[0], point[1], projection.getValue()), name));
             if (imagery.getValue() != EarthConfig.imagery()) EarthConfig.setImagery(imagery.getValue());
             onClose();
         });
@@ -162,7 +184,7 @@ public final class EarthSetupScreen extends Screen {
             Component stretch = null;
             try {
                 double at = selected != null ? selected.place.latitude() : Double.parseDouble(latitude.getValue().trim());
-                if (Math.abs(at) <= 80) stretch = EarthPlayClient.stretch(0, at);
+                if (Math.abs(at) <= 80) stretch = EarthPlayClient.stretch(0, at, projection.getValue());
             } catch (NumberFormatException unreadable) {}
             gui.drawCenteredString(font, where, width / 2, height - (stretch != null ? 51 : 48), 0x9FD7FF);
             if (stretch != null) gui.drawCenteredString(font, stretch, width / 2, height - 40, 0xA0A0A0);

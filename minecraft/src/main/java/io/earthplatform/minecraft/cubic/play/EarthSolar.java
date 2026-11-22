@@ -1,7 +1,8 @@
 package io.earthplatform.minecraft.cubic.play;
 
 import io.earthplatform.geography.GeoPoint;
-import io.earthplatform.geography.globe.MercatorGrid;
+import io.earthplatform.geography.globe.GlobeProjection;
+import javax.annotation.Nullable;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.ServerCubeWorld;
@@ -154,11 +155,15 @@ public final class EarthSolar {
         return (int) ((1.0 - sun * rain * thunder) * 11.0);
     }
 
-    /** Converts continuous block coordinates to WGS84, clamping Z inside Web Mercator coverage. */
-    public static GeoPoint geographic(MercatorGrid grid, double x, double z) {
-        double half = grid.worldWidthBlocks() / 2.0;
-        double clampedZ = Math.clamp(z, -half, half);
-        return grid.geographic(x, clampedZ);
+    /** Converts continuous block coordinates to WGS84, clamping Z inside Web Mercator coverage or returning null outside bounded projections. */
+    @Nullable
+    public static GeoPoint geographic(GlobeProjection grid, double x, double z) {
+        if (grid.isWebMercator()) {
+            double half = grid.worldWidthBlocks() / 2.0;
+            double clampedZ = Math.clamp(z, -half, half);
+            return grid.geographic(x, clampedZ);
+        }
+        return grid.tryGeographic(x, z);
     }
 
     /** Sends the server's current localized day/night settings to one player. */
@@ -180,6 +185,7 @@ public final class EarthSolar {
         if (level.isClientSide || !EarthConfig.LOCALIZED_DAY_NIGHT.get() || level.dimensionType().hasFixedTime()) return Float.NaN;
         if (!(CubicLevel.of(level) instanceof ServerCubeWorld cubes) || !(cubes.generator() instanceof EarthGenerator earth)) return Float.NaN;
         GeoPoint point = geographic(earth.grid(), x, z);
+        if (point == null) return Float.NaN;
         return timeOfDay(level.getDayTime(), 0.0F, point.latitude(), point.longitude(), EarthConfig.YEAR_LENGTH_DAYS.get());
     }
 

@@ -83,7 +83,7 @@ public final class EarthAdmin {
         GeoPoint centre = here != null ? here : EarthCommands.spawnPoint(source, earth);
         int[] middle = earth.block(centre.latitude(), centre.longitude());
         // Blocks are about a meter; the grid is in blocks, so its reach is close enough to kilometers.
-        double reach = km * 1000 / earth.grid().groundMetresPerBlock(middle[1]);
+        double reach = km * 1000 / earth.grid().groundMetresPerBlock(middle[0], middle[1]);
         List<int[]> points = new ArrayList<>();
         int steps = (int) Math.ceil(reach / PRELOAD_STEP);
         for (int i = -steps; i <= steps; i++) for (int j = -steps; j <= steps; j++) {

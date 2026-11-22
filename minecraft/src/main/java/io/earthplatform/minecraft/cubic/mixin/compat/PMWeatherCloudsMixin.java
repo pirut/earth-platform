@@ -33,7 +33,7 @@ abstract class PMWeatherCloudsMixin {
                                                              @Local(argsOnly = true) Vector2f pos,
                                                              @Share("level") LocalRef<Level> shared) {
         Level level = shared.get();
-        return level != null ? original * PMWeatherCompat.seasonSign(level, pos.y) : original;
+        return level != null ? original * PMWeatherCompat.seasonSign(level, pos.x, pos.y) : original;
     }
 
     @ModifyExpressionValue(method = GET_CLOUD_DENSITY, require = 0,

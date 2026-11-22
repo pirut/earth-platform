@@ -41,4 +41,11 @@ public final class EarthStretch {
         return "The map draws land " + text(stretch) + " times as wide as in life here: a block is "
                 + text(1.0 / stretch) + " m of ground across and 1 m high. It is true to size at this world's home latitude.";
     }
+
+    /** What /earth where says on a locally conformal projection such as BTE Dymaxion. */
+    public static String whereLocal(double groundMetresPerBlock) {
+        double stretch = 1.0 / groundMetresPerBlock;
+        if (close(stretch)) return "BTE Dymaxion projection: true to size here (about 1 m per block).";
+        return "BTE Dymaxion projection: a block is " + text(groundMetresPerBlock) + " m of ground across and 1 m high here.";
+    }
 }

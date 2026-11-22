@@ -118,8 +118,10 @@ public final class EarthMap {
 
     /** Where the player stands, or the world's home when they are not on the Earth itself. */
     private static GeoPoint where(CommandSourceStack source, ServerPlayer player) {
-        if (CubicLevel.of(player.level()) instanceof ServerCubeWorld cubes && cubes.generator() instanceof EarthGenerator earth)
-            return earth.grid().geographic(player.getX(), player.getZ());
+        if (CubicLevel.of(player.level()) instanceof ServerCubeWorld cubes && cubes.generator() instanceof EarthGenerator earth) {
+            GeoPoint here = earth.grid().tryGeographic(player.getX(), player.getZ());
+            return here != null ? here : new GeoPoint(earth.settings().latitude(), earth.settings().longitude());
+        }
         ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
         if (level != null && CubicLevel.of(level) instanceof ServerCubeWorld cubes && cubes.generator() instanceof EarthGenerator earth)
             return new GeoPoint(earth.settings().latitude(), earth.settings().longitude());

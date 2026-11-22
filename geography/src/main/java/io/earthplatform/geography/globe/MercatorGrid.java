@@ -12,17 +12,23 @@ import io.earthplatform.geography.MissingTerrainException;
  * Block coordinates are a linear transform of slippy-map pixel coordinates, so tiled Web Mercator rasters need no
  * per-sample trigonometry. Latitudes beyond ±{@value #MAX_LATITUDE} have no coverage and fail explicitly.
  */
-public record MercatorGrid(double metresPerBlock) {
+public record MercatorGrid(double metresPerBlock) implements GlobeProjection {
     public static final double RADIUS = 6_378_137.0;
     public static final double MAX_LATITUDE = 85.05112877980659;
     public static final String PROJECTION_ID = "web-mercator-v1";
+    /** Unit Web Mercator grid (1 projected metre per block), used to convert geographic coordinates to slippy pixels. */
+    public static final MercatorGrid UNIT = new MercatorGrid(1.0);
 
     public MercatorGrid {
         if (!Double.isFinite(metresPerBlock) || metresPerBlock <= 0) throw new IllegalArgumentException("Invalid meters per block");
     }
 
+    @Override public String id() { return PROJECTION_ID; }
+
     /** Circumference in blocks; also the full north/south extent of the covered square. */
-    public double worldWidthBlocks() { return 2 * Math.PI * RADIUS / metresPerBlock; }
+    @Override public double worldWidthBlocks() { return 2 * Math.PI * RADIUS / metresPerBlock; }
+
+    @Override public boolean wrapsEastWest() { return true; }
 
     public double blockX(GeoPoint point) { return Math.toRadians(point.longitude()) * RADIUS / metresPerBlock; }
 
@@ -33,24 +39,40 @@ public record MercatorGrid(double metresPerBlock) {
         return -Math.log(Math.tan(Math.PI / 4 + phi / 2)) * RADIUS / metresPerBlock;
     }
 
-    /** Geographic coordinate of a continuous block-space position; X wraps around the globe. */
-    public GeoPoint geographic(double x, double z) {
+    @Override public double[] toBlock(double latitude, double longitude) {
+        GeoPoint point = new GeoPoint(latitude, longitude);
+        return new double[]{blockX(point), blockZ(point)};
+    }
+
+    /** Geographic coordinate of a continuous block-space position, or {@code null} beyond ±{@value #MAX_LATITUDE}. */
+    @Override public GeoPoint tryGeographic(double x, double z) {
         if (!Double.isFinite(x) || !Double.isFinite(z)) throw new IllegalArgumentException("Non-finite block position");
         double half = worldWidthBlocks() / 2;
-        if (Math.abs(z) > half) throw new MissingTerrainException("Block Z outside Web Mercator coverage: " + z);
+        if (Math.abs(z) > half) return null;
         double lon = Math.toDegrees(x * metresPerBlock / RADIUS);
         double lat = Math.toDegrees(2 * Math.atan(Math.exp(-z * metresPerBlock / RADIUS)) - Math.PI / 2);
         return new GeoPoint(lat, lon);
     }
 
+    /** Geographic coordinate of a continuous block-space position; X wraps around the globe. */
+    @Override public GeoPoint geographic(double x, double z) {
+        GeoPoint point = tryGeographic(x, z);
+        if (point == null) throw new MissingTerrainException("Block Z outside Web Mercator coverage: " + z);
+        return point;
+    }
+
     /** Centre of the integer block column, matching how a voxel at (x, z) occupies [x, x+1). */
-    public GeoPoint blockCentre(long x, long z) { return geographic(x + 0.5, z + 0.5); }
+    @Override public GeoPoint blockCentre(long x, long z) { return geographic(x + 0.5, z + 0.5); }
 
     /** Mercator scale factor sec(latitude): projected metres per ground metre at this Z. */
     public double scaleFactor(double z) { return Math.cosh(z * metresPerBlock / RADIUS); }
 
     /** Ground metres covered by one block at this Z. */
     public double groundMetresPerBlock(double z) { return metresPerBlock / scaleFactor(z); }
+
+    @Override public double groundMetresPerBlock(double x, double z) { return groundMetresPerBlock(z); }
+
+    @Override public double[] eastUnit(double x, double z) { return new double[]{1.0, 0.0}; }
 
     /** Continuous global slippy-map pixel coordinate (256-pixel tiles) for block-space X at a zoom level. */
     public double pixelX(double x, int zoom) { return (x / worldWidthBlocks() + 0.5) * pixelsAt(zoom); }

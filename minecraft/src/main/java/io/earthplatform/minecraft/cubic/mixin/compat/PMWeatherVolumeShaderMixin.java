@@ -50,7 +50,8 @@ abstract class PMWeatherVolumeShaderMixin {
     private float earthplatform$hemisphereShaderSeason(float original) {
         ClientLevel level = Minecraft.getInstance().level;
         if (level == null) return original;
-        return original * PMWeatherCompat.seasonSign(level, earthplatform$cameraPos().z);
+        Vec3 cam = earthplatform$cameraPos();
+        return original * PMWeatherCompat.seasonSign(level, cam.x, cam.z);
     }
 
     @ModifyExpressionValue(method = "pre", require = 0,

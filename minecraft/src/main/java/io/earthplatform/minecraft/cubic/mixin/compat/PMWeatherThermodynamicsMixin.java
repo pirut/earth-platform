@@ -53,7 +53,7 @@ abstract class PMWeatherThermodynamicsMixin {
     private static float earthplatform$hemisphereSeason(float original,
                                                         @Local(argsOnly = true) Vec3 pos,
                                                         @Local(argsOnly = true) Level level) {
-        return original * PMWeatherCompat.seasonSign(level, pos.z);
+        return original * PMWeatherCompat.seasonSign(level, pos.x, pos.z);
     }
 
     @ModifyExpressionValue(method = "GetSST", require = 0,

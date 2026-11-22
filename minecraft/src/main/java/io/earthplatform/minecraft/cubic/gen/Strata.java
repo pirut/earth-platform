@@ -31,6 +31,8 @@ public final class Strata {
         /** Ground height in metres above the sea at a block position, from a coarse model. */
         double metres(double x, double z);
         double metresPerBlock(double z);
+        /** Ground metres spanned by one block at (x, z); projections with spatially varying scale override this. */
+        default double metresPerBlock(double x, double z) { return metresPerBlock(z); }
         /** Whether the climate at a block position is dry: desert or steppe. */
         boolean arid(double x, double z);
     }
@@ -410,7 +412,7 @@ public final class Strata {
         long key = it.unimi.dsi.fastutil.HashCommon.mix(i << 32 ^ (j & 0xFFFFFFFFL));
         Zone known = zones.get(key);
         if (known != null) return known;
-        double metresPerBlock = globe.metresPerBlock(j * (double) CELL);
+        double metresPerBlock = globe.metresPerBlock(i * (double) CELL, j * (double) CELL);
         double cellMetres = CELL * metresPerBlock;
         int reach = (int) Math.ceil(REACH / cellMetres);
         // Dry country first, anywhere around the corner within its reach: most of the world is not, and needs no more.
@@ -467,7 +469,7 @@ public final class Strata {
         long key = it.unimi.dsi.fastutil.HashCommon.mix(i << 32 ^ (j & 0xFFFFFFFFL));
         Float known = datum.get(key);
         if (known != null) return known;
-        double metresPerBlock = globe.metresPerBlock(j * (double) CELL);
+        double metresPerBlock = globe.metresPerBlock(i * (double) CELL, j * (double) CELL);
         double cellMetres = CELL * metresPerBlock;
         int reach = (int) Math.ceil(REACH / cellMetres);
         float best = -Float.MAX_VALUE;

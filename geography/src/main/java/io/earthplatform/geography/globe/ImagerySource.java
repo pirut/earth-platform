@@ -1,5 +1,6 @@
 package io.earthplatform.geography.globe;
 
+import io.earthplatform.geography.GeoPoint;
 import io.earthplatform.geography.MissingTerrainException;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -145,13 +146,32 @@ public final class ImagerySource implements AutoCloseable {
     }
 
     /** Loads every tile an area needs at a zoom, several at a time, so later reads never wait. */
-    public void prefetch(MercatorGrid grid, double minX, double minZ, double maxX, double maxZ, int zoom) {
-        int x0 = (int) Math.floor(grid.pixelX(minX, zoom) / TILE_SIZE), x1 = (int) Math.floor(grid.pixelX(maxX, zoom) / TILE_SIZE);
-        int y0 = (int) Math.floor(grid.pixelY(minZ, zoom) / TILE_SIZE), y1 = (int) Math.floor(grid.pixelY(maxZ, zoom) / TILE_SIZE);
+    public void prefetch(GlobeProjection grid, double minX, double minZ, double maxX, double maxZ, int zoom) {
         int n = 1 << zoom;
-        java.util.List<int[]> wanted = new java.util.ArrayList<>();
-        for (int ty = Math.max(0, y0); ty <= Math.min(n - 1, y1); ty++) for (int tx = x0; tx <= x1; tx++) wanted.add(new int[]{Math.floorMod(tx, n), ty});
-        wanted.parallelStream().forEach(t -> tile(zoom, t[0], t[1]));
+        if (grid instanceof MercatorGrid mercator) {
+            int x0 = (int) Math.floor(mercator.pixelX(minX, zoom) / TILE_SIZE), x1 = (int) Math.floor(mercator.pixelX(maxX, zoom) / TILE_SIZE);
+            int y0 = (int) Math.floor(mercator.pixelY(minZ, zoom) / TILE_SIZE), y1 = (int) Math.floor(mercator.pixelY(maxZ, zoom) / TILE_SIZE);
+            java.util.List<int[]> wanted = new java.util.ArrayList<>();
+            for (int ty = Math.max(0, y0); ty <= Math.min(n - 1, y1); ty++) for (int tx = x0; tx <= x1; tx++) wanted.add(new int[]{Math.floorMod(tx, n), ty});
+            wanted.parallelStream().forEach(t -> tile(zoom, t[0], t[1]));
+            return;
+        }
+        double tileBlocks = grid.worldWidthBlocks() / n;
+        int stepsX = Math.clamp((int) Math.ceil((maxX - minX) / Math.max(1.0, tileBlocks * 0.5)), 4, 24);
+        int stepsZ = Math.clamp((int) Math.ceil((maxZ - minZ) / Math.max(1.0, tileBlocks * 0.5)), 4, 24);
+        java.util.Set<Long> keys = new java.util.LinkedHashSet<>();
+        for (int j = 0; j <= stepsZ; j++) {
+            double z = minZ + (maxZ - minZ) * j / stepsZ;
+            for (int i = 0; i <= stepsX; i++) {
+                double x = minX + (maxX - minX) * i / stepsX;
+                GeoPoint p = grid.tryGeographic(x, z);
+                if (p == null || Math.abs(p.latitude()) > MercatorGrid.MAX_LATITUDE) continue;
+                int tx = Math.floorMod((int) Math.floor(MercatorGrid.UNIT.pixelX(MercatorGrid.UNIT.blockX(p), zoom) / TILE_SIZE), n);
+                int ty = Math.clamp((int) Math.floor(MercatorGrid.UNIT.pixelY(MercatorGrid.UNIT.blockZ(p), zoom) / TILE_SIZE), 0, n - 1);
+                keys.add((long) tx << 32 | ty & 0xFFFFFFFFL);
+            }
+        }
+        keys.parallelStream().forEach(k -> tile(zoom, (int) (k >> 32), (int) (long) k));
     }
 
     private int[] read(int zoom, int x, int y) throws IOException, InterruptedException {

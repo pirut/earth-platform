@@ -1,7 +1,7 @@
 package io.earthplatform.minecraft.cubic.play.client;
 
 import io.earthplatform.geography.GeoPoint;
-import io.earthplatform.geography.globe.MercatorGrid;
+import io.earthplatform.geography.globe.GlobeProjection;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.client.ClientCubeWorld;
 import io.earthplatform.minecraft.cubic.play.EarthConfig;
@@ -16,7 +16,6 @@ import net.minecraft.world.phys.Vec3;
 /** Client-side localized solar time, driven by camera/player coordinates and synced server settings. */
 public final class EarthSolarClient {
     @Nullable private static volatile EarthSolar.Payload synced;
-    @Nullable private static volatile MercatorGrid cachedGrid;
 
     private EarthSolarClient() {}
 
@@ -28,7 +27,6 @@ public final class EarthSolarClient {
     /** Clears server-synced settings when leaving a world. */
     public static void loggedOut() {
         synced = null;
-        cachedGrid = null;
     }
 
     /** Whether localized day/night is enabled for the active session. */
@@ -54,7 +52,7 @@ public final class EarthSolarClient {
      */
     public static float timeOfDay(ClientLevel level, float partialTick) {
         if (!enabled() || level.dimensionType().hasFixedTime()) return Float.NaN;
-        MercatorGrid grid = grid(level);
+        GlobeProjection grid = grid(level);
         if (grid == null) return Float.NaN;
         Vec3 pos = position();
         if (pos == null) return Float.NaN;
@@ -62,21 +60,15 @@ public final class EarthSolarClient {
                 ? Math.clamp(partialTick, 0.0F, 1.0F)
                 : 0.0F;
         GeoPoint point = EarthSolar.geographic(grid, pos.x, pos.z);
+        if (point == null) return Float.NaN;
         return EarthSolar.timeOfDay(level.getDayTime(), smooth, point.latitude(), point.longitude(), yearDays());
     }
 
     @Nullable
-    private static MercatorGrid grid(ClientLevel level) {
+    private static GlobeProjection grid(ClientLevel level) {
         if (CubicLevel.of(level) == null) return null;
         ClientCubeWorld world = ClientCubeWorld.current();
-        double scale = world == null ? 0 : world.far().metresPerBlock();
-        if (scale <= 0) return null;
-        MercatorGrid grid = cachedGrid;
-        if (grid == null || grid.metresPerBlock() != scale) {
-            grid = new MercatorGrid(scale);
-            cachedGrid = grid;
-        }
-        return grid;
+        return world == null ? null : world.far().projection();
     }
 
     @Nullable
