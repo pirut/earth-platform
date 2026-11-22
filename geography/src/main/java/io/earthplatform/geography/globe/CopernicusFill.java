@@ -94,6 +94,10 @@ public final class CopernicusFill implements ElevationLayer {
     private static final double COPERNICUS_METRES = 40_007_863.0 / 360 / CopernicusSource.ROWS_PER_DEGREE;
     /** Copernicus metres this close to 0 are sea. */
     private static final double SEA_CRUMB = 0.01;
+    /** Negative Terrarium depth beside a coastal land void above which the offshore void ramp takes Copernicus sea. */
+    private static final double VOID_SHALLOW = -40;
+    /** Implausibly deep negative Terrarium directly beside Copernicus land (coastal -32768 void ramp). */
+    private static final double COASTAL_ABYSS = -500, COASTAL_ABYSS_FULL = -800;
     private static final double EARTH_CIRCUMFERENCE = 40_075_016.7;
 
     /** The composite's tiles as they were before any layer, such as {@link TerrariumTileSource#cleaned}. */
@@ -169,7 +173,8 @@ public final class CopernicusFill implements ElevationLayer {
         double west = tileX * 360.0 / (1 << zoom) - 180, east = (tileX + 1) * 360.0 / (1 << zoom) - 180;
         // Parts the tile and its weights' reach touch: a weight near a part's edge reads the next part.
         double margin = 0.02;
-        if (!any(Math.max(-89.9999, south - margin), Math.min(89.9999, north + margin), west - margin, east + margin)) return;
+        if (!any(Math.max(-89.9999, south - margin), Math.min(89.9999, north + margin), west - margin, east + margin)
+                && !hasImpossibleDepth(values)) return;
         double mid = Math.toRadians((north + south) / 2);
         double pixel = EARTH_CIRCUMFERENCE * Math.cos(mid) / size;
         int overview = (int) Math.max(0, Math.min(CopernicusSource.MAX_OVERVIEW, Math.floor(Math.log(pixel / COPERNICUS_METRES) / Math.log(2))));
@@ -182,7 +187,7 @@ public final class CopernicusFill implements ElevationLayer {
                 int i = py * TerrariumTileSource.TILE_SIZE + px;
                 float t = values[i];
                 if (t == 0f) continue;
-                double weight = weight(latitude, longitude[px], memo);
+                double weight = t < TileRepair.IMPOSSIBLE_DEPTH ? 1 : weight(latitude, longitude[px], memo);
                 if (weight <= 0) continue;
                 double c = dem.metres(latitude, longitude[px], overview);
                 if (Double.isNaN(c)) continue;
@@ -193,6 +198,11 @@ public final class CopernicusFill implements ElevationLayer {
                 values[i] = v;
             }
         }
+    }
+
+    private static boolean hasImpossibleDepth(float[] values) {
+        for (float v : values) if (v < TileRepair.IMPOSSIBLE_DEPTH) return true;
+        return false;
     }
 
     /** Works out together the parts {@link #any} would ask of a box one by one; a failure is left for it to meet. */
@@ -378,8 +388,8 @@ public final class CopernicusFill implements ElevationLayer {
         int row0 = partRow * height / PARTS, column0 = partColumn * width / PARTS;
         int rows = (partRow + 1) * height / PARTS - row0, columns = (partColumn + 1) * width / PARTS - column0;
         int m = WIDE, across = columns + 2 * m, down = rows + 2 * m;
-        // The difference and Copernicus over the part and a margin round it, NaN where unknown.
-        float[] difference = new float[across * down], copernicus = new float[across * down];
+        // The difference, Copernicus and Terrarium over the part and a margin round it, NaN where unknown.
+        float[] difference = new float[across * down], copernicus = new float[across * down], raw = new float[across * down];
         // How far Terrarium lies under Copernicus on snow and ice, check pixel by check pixel; 0 elsewhere.
         float[] sunk = new float[across * down];
         // Bands of rows read at once: on a first visit each reads its own tiles and blocks from the network, which
@@ -413,22 +423,42 @@ public final class CopernicusFill implements ElevationLayer {
                     double latitude = south + 1 - (row0 + r - m + 0.5) / height;
                     for (int c = 0; c < across; c++) {
                         int i = r * across + c;
-                        difference[i] = copernicus[i] = Float.NaN;
+                        difference[i] = copernicus[i] = raw[i] = Float.NaN;
                         if (Math.abs(latitude) >= 90) continue;
                         double longitude = west + (column0 + c - m + 0.5) / width;
                         double cop = dem.metres(latitude, longitude, CHECK_OVERVIEW);
                         if (Double.isNaN(cop)) continue;
                         copernicus[i] = (float) cop;
                         double t = terrarium.metres(latitude, longitude);
+                        raw[i] = (float) t;
                         if (t > 0) difference[i] = (float) (t - cop);
                         else if (cop < SEA_CRUMB) difference[i] = 0;
-                        if (t > 0 && cop - t > AGREE && ice != null && ice.at(latitude, longitude)) sunk[i] = (float) (cop - t);
+                        if (t != 0 && (t > 0 || cop > SEA_CRUMB) && cop - t > AGREE && ice != null && ice.at(latitude, longitude))
+                            sunk[i] = (float) (cop - t);
                     }
                 }
             });
         }
         RangeFiles.all(reads);
         Window window = new Window(difference, across, down);
+        // Coastal void ramps: negative Terrarium pixels where Copernicus has land, used to also clear
+        // the offshore side of the same resampled -32768 ramp without touching genuine ocean bathymetry.
+        boolean[] landVoid = null;
+        for (int j = m - SMOOTH; j < m + rows + SMOOTH; j++) for (int k = m - SMOOTH; k < m + columns + SMOOTH; k++) {
+            int idx = j * across + k;
+            float t = raw[idx], cop = copernicus[idx];
+            if (!(t < 0 && cop > SEA_CRUMB) || cop - t <= AGREE) continue;
+            float low = Float.MAX_VALUE, high = -Float.MAX_VALUE;
+            for (int rj = j - SMOOTH; rj <= j + SMOOTH; rj++) for (int rk = k - SMOOTH; rk <= k + SMOOTH; rk++) {
+                float v = copernicus[rj * across + rk];
+                if (v == v) { low = Math.min(low, v); high = Math.max(high, v); }
+            }
+            double allow = high >= low ? RELIEF_SHARE * (high - low) : 0;
+            if (cop - t > DISAGREE + allow) {
+                if (landVoid == null) landVoid = new boolean[across * down];
+                landVoid[idx] = true;
+            }
+        }
         byte[] weights = new byte[rows * columns];
         boolean any = false;
         for (int r = 0; r < rows; r++) for (int c = 0; c < columns; c++) {
@@ -447,6 +477,36 @@ public final class CopernicusFill implements ElevationLayer {
                     weight = Math.max(weight, ramp(fill, AGREE + allow, DISAGREE + allow));
                 }
                 weight = Math.max(weight, ramp(sunk[pr * across + pc], AGREE, DISAGREE));
+            }
+            if (weight < 1) {
+                float t = raw[pr * across + pc], cop = copernicus[pr * across + pc];
+                if (t < TileRepair.IMPOSSIBLE_DEPTH) {
+                    weight = 1;
+                } else if (t < 0) {
+                    float low = Float.MAX_VALUE, high = -Float.MAX_VALUE;
+                    boolean nearImpossible = false, nearLandVoid = false, nearLand = false;
+                    for (int j = pr - SMOOTH; j <= pr + SMOOTH; j++) for (int k = pc - SMOOTH; k <= pc + SMOOTH; k++) {
+                        int n = j * across + k;
+                        float cv = copernicus[n];
+                        if (cv == cv) {
+                            low = Math.min(low, cv);
+                            high = Math.max(high, cv);
+                            if (cv > SEA_CRUMB) nearLand = true;
+                        }
+                        if (raw[n] < TileRepair.IMPOSSIBLE_DEPTH) nearImpossible = true;
+                        if (landVoid != null && landVoid[n]) nearLandVoid = true;
+                    }
+                    if (nearImpossible) {
+                        weight = 1;
+                    } else if (cop > SEA_CRUMB) {
+                        double allow = high >= low ? RELIEF_SHARE * (high - low) : 0;
+                        weight = Math.max(weight, ramp(cop - t, AGREE + allow, DISAGREE + allow));
+                    } else if (nearLandVoid && t < VOID_SHALLOW) {
+                        weight = Math.max(weight, ramp(-t, -VOID_SHALLOW, -2 * VOID_SHALLOW));
+                    } else if (nearLand && t < COASTAL_ABYSS) {
+                        weight = Math.max(weight, ramp(-t, -COASTAL_ABYSS, -COASTAL_ABYSS_FULL));
+                    }
+                }
             }
             int quantised = (int) Math.round(weight * 255);
             weights[r * columns + c] = (byte) quantised;

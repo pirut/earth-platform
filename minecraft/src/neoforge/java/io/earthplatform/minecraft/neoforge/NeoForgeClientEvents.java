@@ -6,6 +6,8 @@ import io.earthplatform.minecraft.cubic.client.Flawless;
 import io.earthplatform.minecraft.cubic.client.PerfExportCommand;
 import io.earthplatform.minecraft.cubic.client.PerformanceDiagnostics;
 import io.earthplatform.minecraft.cubic.compat.CubicCompat;
+import io.earthplatform.minecraft.cubic.compat.axiom.AxiomCubes;
+import io.earthplatform.minecraft.platform.Loader;
 import io.earthplatform.minecraft.cubic.jet.JetHud;
 import io.earthplatform.minecraft.cubic.play.EarthWorlds;
 import io.earthplatform.minecraft.cubic.play.client.EarthCompassHud;
@@ -62,6 +64,8 @@ public final class NeoForgeClientEvents {
 
     @SubscribeEvent public static void tickStart(ClientTickEvent.Pre event) { CubicClient.tickStart(); }
 
+    private static final boolean AXIOM = Loader.INSTANCE.hasMod("axiom");
+
     @SubscribeEvent public static void tick(ClientTickEvent.Post event) {
         CubicClient.tick();
         CubicCompat.tick();
@@ -69,6 +73,7 @@ public final class NeoForgeClientEvents {
         io.earthplatform.minecraft.cubic.play.client.EarthPostcardScreen.clientTick();
         EarthCompassHud.tick();
         JetHud.tick();
+        if (AXIOM) AxiomCubes.flush(true);
     }
 
     @SubscribeEvent public static void respawn(ClientPlayerNetworkEvent.Clone event) { CubicClient.respawn(); }

@@ -32,12 +32,18 @@ public final class OptionalMixins implements IMixinConfigPlugin {
      * same in its NeoForge and Fabric builds, and the Minecraft methods they look for are remapped
      * like the rest of ours.
      */
-    private static final Set<String> ON_FABRIC = Set.of("ComputerCraftTurtleMoveMixin", "ComputerCraftModemRangeMixin");
+    private static final Set<String> ON_FABRIC = Set.of("ComputerCraftTurtleMoveMixin", "ComputerCraftModemRangeMixin", "SodiumSectionDirtyMixin");
+
+    /** Compat mixins targeting vanilla classes that should only apply when their companion mod is loaded. */
+    private static final java.util.Map<String, String> REQUIRES_MOD_CLASS = java.util.Map.of(
+            "PMWeatherServerLevelMixin", "dev.protomanly.pmweather.PMWeather");
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
-        if (FABRIC && mixinClassName.contains(".mixin.compat.")
-                && !ON_FABRIC.contains(mixinClassName.substring(mixinClassName.lastIndexOf('.') + 1))) return false;
+        String simple = mixinClassName.substring(mixinClassName.lastIndexOf('.') + 1);
+        if (FABRIC && mixinClassName.contains(".mixin.compat.") && !ON_FABRIC.contains(simple)) return false;
+        String required = REQUIRES_MOD_CLASS.get(simple);
+        if (required != null) return present.computeIfAbsent(required, Loader.INSTANCE::hasClass);
         for (String prefix : ALWAYS_THERE) if (targetClassName.startsWith(prefix)) return true;
         return present.computeIfAbsent(targetClassName, Loader.INSTANCE::hasClass);
     }

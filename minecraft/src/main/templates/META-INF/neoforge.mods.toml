@@ -87,6 +87,10 @@ config="${mod_id}.cubic.mixins.json"
 [[mixins]]
 config="${mod_id}.neoforge.mixins.json"
 
+# Axiom reads chunk sections and build height directly; active only when Axiom is installed.
+[[mixins]]
+config="${mod_id}.axiom.mixins.json"
+
 # The [[accessTransformers]] block allows you to declare where your AT file is.
 # If this block is omitted, a fallback attempt will be made to load an AT from META-INF/accesstransformer.cfg
 #[[accessTransformers]]

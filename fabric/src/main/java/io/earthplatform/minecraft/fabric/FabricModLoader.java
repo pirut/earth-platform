@@ -31,6 +31,14 @@ public final class FabricModLoader implements Loader {
         return loader != null && loader.getResource(path) != null;
     }
 
+    @Override public String runtimeClassName(String intermediary, String mojang) {
+        return FabricLoader.getInstance().getMappingResolver().mapClassName("intermediary", intermediary);
+    }
+
+    @Override public String runtimeMethodName(String intermediaryOwner, String intermediaryName, String intermediaryDesc, String mojang) {
+        return FabricLoader.getInstance().getMappingResolver().mapMethodName("intermediary", intermediaryOwner, intermediaryName, intermediaryDesc);
+    }
+
     @Override public Path gameDir() { return FabricLoader.getInstance().getGameDir(); }
 
     @Override public boolean isClient() { return FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT; }

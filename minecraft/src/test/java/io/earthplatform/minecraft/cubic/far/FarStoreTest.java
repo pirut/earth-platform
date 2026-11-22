@@ -160,6 +160,23 @@ class FarStoreTest {
         limited.close();
     }
 
+    @Test void liveWritesDuringASingleSessionTrimOldRegionsToStayNearTheLimit(@TempDir Path directory) throws Exception {
+        long limit = 400_000;
+        FarStore store = open(directory, "a", limit);
+        long[] keys = new long[8];
+        for (int i = 0; i < keys.length; i++) {
+            keys[i] = Far.key(2, i * 64 + 1, 1); // distinct region files
+            store.put(keys[i], 0, column(i + 1, 150_000));
+            store.flush();
+        }
+        long total = 0;
+        for (Path file : files(directory)) total += Files.size(file);
+        assertTrue(total <= limit + limit / 8 + 200_000, "live trim should bound total bytes near limit, got " + total);
+        assertNull(store.get(keys[0]), "oldest region should have been evicted during the session");
+        assertArrayEquals(column(keys.length, 150_000), store.get(keys[keys.length - 1]), "most recent region must stay intact");
+        store.close();
+    }
+
     @Test void emptyingTakesEverythingOutAndTheStoreGoesOn(@TempDir Path directory) throws Exception {
         long key = Far.key(2, 1, 1);
         FarStore store = open(directory, "a", 0);
