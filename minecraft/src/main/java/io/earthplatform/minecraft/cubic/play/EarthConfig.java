@@ -59,6 +59,7 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue RACES;
     public static final ModConfigSpec.BooleanValue WEB_MAP;
     public static final ModConfigSpec.BooleanValue SURVIVAL_MAP;
+    public static final ModConfigSpec.BooleanValue MODDED_BIOMES;
 
     /** The settings behind the engine switches (see {@link EngineToggles}), in whichever file each lives. */
     private static final Map<EngineToggles.Toggle, ModConfigSpec.BooleanValue> TOGGLES = new LinkedHashMap<>();
@@ -156,6 +157,9 @@ public final class EarthConfig {
         SURVIVAL_MAP = common.comment("Let players who can't use the travel map open the map (N) anyway, to look around and point a compass",
                         "at a spot, a famous place, their home or another player (/earth compass). It never moves anyone.")
                 .translation(key("survivalMap")).define("survivalMap", true);
+        MODDED_BIOMES = common.comment("Use realistic biomes and surface blocks from installed biome mods (such as Biomes O' Plenty, Regions Unexplored",
+                        "and Oh The Biomes We've Gone) where they fit Earth's climates and landscapes. When false, Earth worlds use vanilla biomes and blocks only.")
+                .translation(key("moddedBiomes")).define("moddedBiomes", true);
         defineToggles(common, EngineToggles.Side.COMMON);
         COMMON_SPEC = common.build();
     }
@@ -321,6 +325,12 @@ public final class EarthConfig {
 
     /** Whether new worlds get satellite imagery, counting a command-line setting. */
     public static boolean imagery() { return Boolean.getBoolean("earthplatform.earth.imagery"); }
+
+    /** Whether installed biome mods' realistic biomes and surface blocks are used. */
+    public static boolean moddedBiomes() {
+        try { return COMMON_SPEC.isLoaded() ? MODDED_BIOMES.get() : true; }
+        catch (RuntimeException unloaded) { return true; }
+    }
 
     private static void property(String key, String value) {
         if (!FROM_COMMAND_LINE.contains(key)) System.setProperty(key, value);

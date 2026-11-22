@@ -5,6 +5,7 @@ import static io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.DRY;
 import com.google.gson.JsonElement;
 import com.mojang.serialization.JsonOps;
 import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.cubic.earth.ModdedBiomes;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Surface;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Tree;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -181,6 +182,11 @@ final class Trees {
             if (surface.trees() <= 0) continue;
             Tree kind = surface.tree((int) Math.floorMod(r >>> 16, 10));
             if (roll >= surface.trees() * full(kind) * 256 / 100) continue;
+            if (ModdedBiomes.isModdedBiome(surface.biome())) {
+                Planted nativeTree = nativeTree(surface, x, h, z, water, r);
+                if (nativeTree != null) { trees.add(nativeTree); continue; }
+                if (nativeTrees(surface.biome()).trees.length > 0) continue;
+            }
             if (!fits(surface, kind, h, water)) continue;
             ConfiguredFeature<?, ?> feature = pick(surface.biome(), kind).choose(RandomSource.create(r));
             if (feature == null) continue;
@@ -230,7 +236,7 @@ final class Trees {
      */
     private static boolean fits(Surface surface, Tree kind, int h, int water) {
         int depth = water == DRY ? 0 : water - h;
-        int deepest = kind == Tree.MANGROVE ? 5 : surface.biome().is(Biomes.SWAMP) ? 2 : 0;
+        int deepest = kind == Tree.MANGROVE ? 5 : ModdedBiomes.isWetland(surface.biome()) ? 2 : 0;
         return depth <= deepest && surface.top().is(BlockTags.DIRT);
     }
 
@@ -262,7 +268,10 @@ final class Trees {
                 }
                 if (h - foot > 6) continue;
                 int form = gen.giantForm(x, z);
-                TreeShape[] grown = form < 0 ? Sequoia.shapes() : Giants.shapes(form);
+                BlockState[] palette = gen.giantBlocks(form < 0 ? Giants.SEQUOIA : form);
+                TreeShape[] grown = form < 0
+                        ? (palette == null ? Sequoia.shapes() : Sequoia.shapes(palette[0], palette[2]))
+                        : (palette == null ? Giants.shapes(form) : Giants.shapes(form, palette[0], palette[1], palette[2]));
                 trees.add(new Planted(x, foot + 1, z, grown[(int) Math.floorMod(r >>> 32, grown.length)], (int) (r >>> 50 & 3), r, snowy(surface)));
             }
         Planted[] made = trees.isEmpty() ? NONE : trees.toArray(Planted[]::new);
@@ -286,7 +295,7 @@ final class Trees {
     private static final BlockState[] SOILS = {Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.SAND.defaultBlockState(), Blocks.RED_SAND.defaultBlockState(),
             Blocks.MUD.defaultBlockState(), Blocks.PODZOL.defaultBlockState(), Blocks.MOSS_BLOCK.defaultBlockState(), Blocks.MYCELIUM.defaultBlockState(),
             Blocks.SNOW_BLOCK.defaultBlockState(), Blocks.GRAVEL.defaultBlockState(), Blocks.STONE.defaultBlockState()};
-    private final ConcurrentHashMap<Holder<Biome>, Additions> additions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Holder<Biome>, Additions> additions = new ConcurrentHashMap<>(), natives = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Rooting, Boolean> rootings = new ConcurrentHashMap<>();
     private volatile float mostAdded = -1;
 
@@ -348,7 +357,50 @@ final class Trees {
      * a tree, a huge mushroom or a feature of the mod's own that turns out to grow logs or leaves.
      * Biome modifiers (NeoForge's add_features) and data packs both land in the biome's own list.
      */
+    /** Picks and grows a modded biome's own tree feature at (x, h, z), respecting land-cover density, depth and soil. */
+    @Nullable private Planted nativeTree(Surface surface, int x, int h, int z, int water, long r) {
+        Additions here = nativeTrees(surface.biome());
+        if (here.trees.length == 0 || here.perChunk <= 0) return null;
+        float pick = RandomSource.create(r).nextFloat() * here.perChunk, at = 0;
+        Added chosen = here.trees[here.trees.length - 1];
+        for (Added tree : here.trees) {
+            at += tree.perChunk;
+            if (pick < at) { chosen = tree; break; }
+        }
+        int depth = water == DRY ? 0 : water - h;
+        int deepest = Math.max(chosen.deepest, ModdedBiomes.isWetland(surface.biome()) ? 2 : 0);
+        if (depth > deepest || !roots(chosen, surface.top())) return null;
+        TreeShape[] grown = shapes(chosen.feature, chosen.soil);
+        if (grown.length == 0) return null;
+        return sized(x, h + 1, z, grown, r, snowy(surface));
+    }
+
+    /**
+     * Tree features registered in a third-party modded biome's own {@code VEGETAL_DECORATION} list.
+     * Kept separate from {@link #additions} so modded biomes grow their own trees at Earth Platform's
+     * land-cover density instead of double-planting alongside vanilla trees or planting on open meadows.
+     */
+    private Additions nativeTrees(Holder<Biome> biome) {
+        Additions known = natives.get(biome);
+        if (known != null) return known;
+        List<Added> found = new ArrayList<>();
+        var steps = biome.value().getGenerationSettings().features();
+        int step = GenerationStep.Decoration.VEGETAL_DECORATION.ordinal();
+        if (steps.size() > step) for (Holder<PlacedFeature> placed : steps.get(step)) {
+            ConfiguredFeature<?, ?> feature = placed.value().feature().value();
+            if (feature.getFeatures().noneMatch(Trees::treeLike)) continue;
+            Added tree = added(placed.value());
+            if (tree != null && tree.perChunk > 0 && shapes(tree.feature, tree.soil).length > 0) found.add(tree);
+        }
+        float total = 0;
+        for (Added tree : found) total += tree.perChunk;
+        Additions made = found.isEmpty() ? NO_ADDITIONS : new Additions(found.toArray(Added[]::new), total, true);
+        Additions raced = natives.putIfAbsent(biome, made);
+        return raced != null ? raced : made;
+    }
+
     private Additions additions(Holder<Biome> biome) {
+        if (ModdedBiomes.isModdedBiome(biome)) return NO_ADDITIONS;
         Additions known = additions.get(biome);
         if (known != null) return known;
         List<Added> found = new ArrayList<>();
