@@ -1252,6 +1252,8 @@ public final class GlobeTest {
         double lat = 84 - (row + 0.5) / 120, lon = -180 + (column + 0.5) / 120, quarter = 0.25 / 120;
         try {
             try (var climate = new ClimateSource(base, cache, true, 64, 2, Duration.ofSeconds(5))) {
+                check(climate.ifLoaded(lat, lon + quarter, 1000) == null, "ifLoaded returns null on cold cache");
+                equal(0, hits.size(), "ifLoaded performs no network I/O on cache miss");
                 var pool = Executors.newFixedThreadPool(8);
                 List<Future<ClimateSource.Climate>> futures = new ArrayList<>();
                 for (int i = 0; i < 16; i++) futures.add(pool.submit(() -> climate.at(lat, lon + quarter, 1000)));
@@ -1264,6 +1266,17 @@ public final class GlobeTest {
                 near(17.55 + 6.5, climate.at(lat, lon + quarter, 0).meanTemperature(), 1e-6, "warmer 1000 m lower");
                 near(17.55 - 13, climate.at(lat, lon + quarter, 3000).meanTemperature(), 1e-6, "colder 2000 m higher");
                 equal(ClimateSource.CSB, climate.at(lat, lon + 3 * quarter, 1000).koppen(), "zone changes past the middle");
+                int hitsBeforePeek = hits.values().stream().mapToInt(AtomicInteger::get).sum();
+                var peeked = climate.ifLoaded(lat, lon + quarter, 1000);
+                check(peeked != null, "ifLoaded hits once warm in memory");
+                equal(ClimateSource.CSA, peeked.koppen(), "ifLoaded zone matches at()");
+                near(17.55, peeked.meanTemperature(), 1e-6, "ifLoaded mean temperature matches at()");
+                near(25.05, peeked.warmestQuarter(), 1e-6, "ifLoaded warmest quarter matches at()");
+                near(500, peeked.precipitation(), 1e-6, "ifLoaded precipitation matches at()");
+                near(17.55 + 6.5, climate.ifLoaded(lat, lon + quarter, 0).meanTemperature(), 1e-6, "ifLoaded warmer 1000 m lower");
+                near(17.55 - 13, climate.ifLoaded(lat, lon + quarter, 3000).meanTemperature(), 1e-6, "ifLoaded colder 2000 m higher");
+                check(climate.ifLoaded(-40, 100, 0) == null, "ifLoaded returns null for uncached row");
+                equal(hitsBeforePeek, hits.values().stream().mapToInt(AtomicInteger::get).sum(), "ifLoaded never fetches on hit or miss");
                 double gapLat = 84 - (row + 10.5) / 120;
                 near(15.05, climate.at(gapLat, lon + quarter, 1000).meanTemperature(), 1e-6, "a gap is skipped, not averaged in");
                 near(climate.at(lat, lon + quarter, 1000).meanTemperature(), climate.at(lat, lon + quarter + 360, 1000).meanTemperature(), 0, "longitude wraps");
@@ -1290,7 +1303,12 @@ public final class GlobeTest {
             }
             try (var offline = new ClimateSource(base, cache, false, 64, 1, Duration.ofSeconds(5))) {
                 int before = hits.values().stream().mapToInt(AtomicInteger::get).sum();
+                check(offline.ifLoaded(lat, lon + quarter, 1000) == null, "ifLoaded returns null before memory is warmed");
+                equal(0L, offline.stats().diskHits(), "ifLoaded performs no disk I/O on memory miss");
                 near(17.55, offline.at(lat, lon + quarter, 1000).meanTemperature(), 1e-6, "disk cache offline");
+                long diskAfterAt = offline.stats().diskHits();
+                near(17.55, offline.ifLoaded(lat, lon + quarter, 1000).meanTemperature(), 1e-6, "ifLoaded reads memory after disk load");
+                equal(diskAfterAt, offline.stats().diskHits(), "ifLoaded performs no extra disk I/O on memory hit");
                 equal(ClimateSource.CFB, offline.at(34.05, -121.6, 0).koppen(), "prefetched rows offline");
                 equal(ClimateSource.CFB, offline.coarse(33.2, -121.6, 0).koppen(), "coarse rows prefetched across an area read offline");
                 equal(before, hits.values().stream().mapToInt(AtomicInteger::get).sum(), "no transfer when cached");
