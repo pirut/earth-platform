@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mojang.serialization.Lifecycle;
@@ -460,7 +462,6 @@ class VanillaStructuresTest {
             assertFalse(structures.ready(2, 0));
             assertTrue(structures.startsAt(2, 0, structure -> structure == temple).isEmpty());
             assertTrue(System.nanoTime() - before < 2_000_000_000L, "the server thread waited on the start lock");
-            assertFalse(structures.placesWithoutWaiting(2, 6, 0), "a cube here would generate behind the start lock");
         } finally {
             release.countDown();
         }
@@ -471,9 +472,6 @@ class VanillaStructuresTest {
         List<StructureStart> found = structures.startsAt(2, 0, structure -> structure == temple);
         assertTrue(found.stream().anyMatch(start -> start.getChunkPos().equals(new ChunkPos(0, 0))));
         assertNotNull(structures.startOf(temple, 0, 0), "and the start by its reference, for mob spawns");
-        // Its structure's blocks are not placed yet, so a cube it reaches still is not made on the spot; one above it may be.
-        assertFalse(structures.placesWithoutWaiting(2, 6, 0));
-        assertTrue(structures.placesWithoutWaiting(2, 40, 0));
     }
 
     @Test void aSavedColumnWhoseLayoutFailsIsNotReadyAndIsLaidOutAgainAfterItsBackoff() throws InterruptedException {
@@ -580,6 +578,136 @@ class VanillaStructuresTest {
         assertEquals(0, structures.queued(), "the failing copy was queued again");
         assertNotNull(structures.startOf(shaft, 0, 0));
         assertEquals(0, structures.queued(), "the failing copy was queued again");
+    }
+
+    @Test void aStartThatThrowsIsAFailureWithBackoffNotAMissingStart() throws InterruptedException {
+        // The temple's start throws once (map data not in yet): the column is not ready, and the start is not cached as none.
+        TestStructure temple = new TestStructure(plains, GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE, 40);
+        RegistryAccess registries = singleStructureRegistries("test_flaky_temple", temple);
+        Thread server = Thread.currentThread();
+        java.util.concurrent.atomic.AtomicInteger failures = new java.util.concurrent.atomic.AtomicInteger(1);
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, hostOf((x, z) -> {
+            if (Thread.currentThread() != server && failures.getAndDecrement() > 0) throw new IllegalStateException("map data not in yet");
+            return 100;
+        }), 1L);
+        structures.serverThread(() -> Thread.currentThread() == server);
+        structures.warm(2, 0);
+        for (long until = System.currentTimeMillis() + 20_000; (structures.queued() > 0 || failures.get() > 0) && System.currentTimeMillis() < until; Thread.sleep(10)) {}
+        assertFalse(structures.ready(2, 0), "an arrival let through with the temple's start taken for none");
+        assertEquals(0, structures.queued(), "asked again inside its backoff");
+        structures.retryAfter(0);
+        for (long until = System.currentTimeMillis() + 20_000; !structures.ready(2, 0) && System.currentTimeMillis() < until; Thread.sleep(10)) {}
+        assertTrue(structures.ready(2, 0));
+        assertTrue(structures.startsAt(2, 0, structure -> structure == temple).stream().anyMatch(start -> start.getChunkPos().equals(new ChunkPos(0, 0))),
+                "the start that threw once was left out for good");
+    }
+
+    @Test void aStartThatAlwaysThrowsIsLeftOutAfterItsTries() {
+        TestStructure broken = new TestStructure(plains, GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE, 12) {
+            @Override protected Optional<GenerationStub> findGenerationPoint(GenerationContext context) { throw new IllegalStateException("another mod's bug"); }
+        };
+        VanillaStructures structures = new VanillaStructures(null, singleStructureRegistries("test_broken_hut", broken), randomState, true, hostOf((x, z) -> 100), 1L);
+        // A cube generating there fails and is made again later; each start is tried a few times, then left out and the cube is made.
+        assertThrows(VanillaStructures.StartFailed.class, () -> structures.clears(8, 8), "a start that threw taken for none at once");
+        int tries = 1;
+        for (; tries < 5000; tries++) {
+            try { structures.clears(8, 8); break; }
+            catch (VanillaStructures.StartFailed again) { /* made again later */ }
+        }
+        assertTrue(tries < 5000, "a start that always throws was never left out");
+        assertTrue(tries >= VanillaStructures.MOST_START_FAILURES - 1, "left out before its tries: " + tries);
+        assertFalse(structures.clears(8, 8));
+        assertTrue(structures.startsAt(0, 0).isEmpty());
+    }
+
+    @Test void aHitInTheOlderGenerationNeverWaitsOnAWriter() throws InterruptedException {
+        VanillaStructures.Generations<String> map = new VanillaStructures.Generations<>(2);
+        map.put(1, "a");
+        map.put(2, "b");
+        map.put(3, "x"); // rolls: 1 is in the older generation
+        java.util.concurrent.CountDownLatch inside = new java.util.concurrent.CountDownLatch(1), release = new java.util.concurrent.CountDownLatch(1);
+        Thread[] writer = new Thread[1];
+        map.whileWriting(() -> {
+            if (Thread.currentThread() != writer[0]) return;
+            inside.countDown();
+            try { release.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        });
+        writer[0] = new Thread(() -> map.put(5, "c"));
+        writer[0].start();
+        try {
+            assertTrue(inside.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            assertTrue(map.writeLocked());
+            // The server thread: a hit in the older generation, and a cache fill, while another thread writes.
+            assertTimeoutPreemptively(java.time.Duration.ofSeconds(2), () -> {
+                assertEquals("a", map.get(1));
+                map.offer(4, "d");
+            }, "a reader waited on a writer");
+        } finally {
+            release.countDown();
+        }
+        writer[0].join(10_000);
+        map.whileWriting(null);
+        assertEquals("a", map.get(1), "still read after the write");
+    }
+
+    @Test void aSavedCubeThroughTheGeneratorGoesOutAtOnceAndItsArrivalWaitsForItsStructures() throws InterruptedException {
+        // The real path: a Highlands world's generator with its own structure host. ServerCubeWorld's reader calls
+        // generator.loaded for a saved cube; the arrival asks generator.structuresReady through ArrivalWait.
+        MappedRegistry<Biome> biomeRegistry = new MappedRegistry<>(Registries.BIOME, Lifecycle.stable());
+        VanillaRegistries.createLookup().lookupOrThrow(Registries.BIOME).listElements()
+                .forEach(h -> biomeRegistry.register(h.key(), h.value(), RegistrationInfo.BUILT_IN));
+        biomeRegistry.freeze();
+        // As a level's registries are: the overworld tag, from which a generator's structure host takes the biomes structures may start in.
+        biomeRegistry.bindTags(Map.of(net.minecraft.tags.BiomeTags.IS_OVERWORLD, biomeRegistry.holders().map(h -> (Holder<Biome>) h).toList()));
+        HighlandsGenerator generator = new HighlandsGenerator(7, biomeRegistry);
+        HolderSet<Biome> anywhere = HolderSet.direct(biomeRegistry.holders().map(h -> (Holder<Biome>) h).toList());
+        java.util.concurrent.atomic.AtomicInteger laidOutOnServer = new java.util.concurrent.atomic.AtomicInteger();
+        Thread[] serverThread = {Thread.currentThread()}; // moved into the timed block's thread below
+        Structure ruin = new TestStructure(anywhere, GenerationStep.Decoration.UNDERGROUND_STRUCTURES, TerrainAdjustment.NONE, 40) {
+            @Override protected Optional<GenerationStub> findGenerationPoint(GenerationContext context) {
+                if (Thread.currentThread() == serverThread[0]) laidOutOnServer.incrementAndGet();
+                return super.findGenerationPoint(context);
+            }
+        };
+        VanillaStructures structures = generator.attachStructures(singleStructureRegistries("test_highland_ruin", ruin), randomState);
+        structures.serverThread(() -> Thread.currentThread() == serverThread[0]);
+        int cx = 2, cz = 0, cy = generator.surfaceY((cx << 4) + 8, (cz << 4) + 8) >> 4;
+        io.earthplatform.minecraft.cubic.ArrivalWait.Place place = new io.earthplatform.minecraft.cubic.ArrivalWait.Place() {
+            @Override public boolean cubesReady() { return true; } // the saved cubes are in
+            @Override public boolean structuresReady() {
+                boolean ready = true;
+                for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) ready &= generator.structuresReady(cx + dx, cz + dz);
+                return ready;
+            }
+        };
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1), holding = new java.util.concurrent.CountDownLatch(1);
+        Thread slow = holdTheStartLock(release, holding);
+        try {
+            assertTrue(holding.await(20, java.util.concurrent.TimeUnit.SECONDS));
+            Thread reader = new Thread(() -> generator.loaded(cx, cy, cz), "Earth cube reader (test)");
+            reader.start();
+            reader.join(5_000);
+            assertFalse(reader.isAlive(), "a saved cube waited on the start lock");
+            Thread caller = Thread.currentThread();
+            assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> {
+                serverThread[0] = Thread.currentThread();
+                assertEquals(io.earthplatform.minecraft.cubic.ArrivalWait.Step.WAIT, io.earthplatform.minecraft.cubic.ArrivalWait.step(io.earthplatform.minecraft.cubic.ArrivalWait.Wait.NEW, place).step());
+                assertEquals(io.earthplatform.minecraft.cubic.ArrivalWait.Step.WAIT, io.earthplatform.minecraft.cubic.ArrivalWait.step(new io.earthplatform.minecraft.cubic.ArrivalWait.Wait(io.earthplatform.minecraft.cubic.ArrivalWait.LIMIT, io.earthplatform.minecraft.cubic.ArrivalWait.LIMIT - 1), place).step());
+                // Past the limit it goes without the structures rather than waiting on.
+                assertEquals(io.earthplatform.minecraft.cubic.ArrivalWait.Step.GO, io.earthplatform.minecraft.cubic.ArrivalWait.step(new io.earthplatform.minecraft.cubic.ArrivalWait.Wait(io.earthplatform.minecraft.cubic.ArrivalWait.LIMIT, io.earthplatform.minecraft.cubic.ArrivalWait.LIMIT), place).step());
+            }, "the server thread waited on the start lock");
+            serverThread[0] = caller;
+        } finally {
+            release.countDown();
+        }
+        slow.join(20_000);
+        io.earthplatform.minecraft.cubic.ArrivalWait.Step step = io.earthplatform.minecraft.cubic.ArrivalWait.Step.WAIT;
+        for (long until = System.currentTimeMillis() + 60_000; step != io.earthplatform.minecraft.cubic.ArrivalWait.Step.GO && System.currentTimeMillis() < until; Thread.sleep(20))
+            step = io.earthplatform.minecraft.cubic.ArrivalWait.step(new io.earthplatform.minecraft.cubic.ArrivalWait.Wait(1, 1), place).step();
+        assertEquals(io.earthplatform.minecraft.cubic.ArrivalWait.Step.GO, step, "the arrival never went");
+        // Once it goes, the first lookup there finds the ruin, answered on the server thread from the laid-out column.
+        assertTrue(generator.structureStarts(cx, cz, structure -> structure == ruin).stream().anyMatch(start -> start.getChunkPos().equals(new ChunkPos(0, 0))));
+        assertEquals(0, laidOutOnServer.get(), "laid out on the server thread");
     }
 
     @Test void probesAreAdmittedOnlyToTheirShareWhileTheWorkersAreHeld() throws InterruptedException {
@@ -770,7 +898,11 @@ class VanillaStructuresTest {
         private final int size;
 
         TestStructure(Holder<Biome> biome, GenerationStep.Decoration step, TerrainAdjustment adaptation, int size) {
-            super(new StructureSettings(HolderSet.direct(biome), Map.of(), step, adaptation));
+            this(HolderSet.direct(biome), step, adaptation, size);
+        }
+
+        TestStructure(HolderSet<Biome> biomes, GenerationStep.Decoration step, TerrainAdjustment adaptation, int size) {
+            super(new StructureSettings(biomes, Map.of(), step, adaptation));
             this.size = size;
         }
 

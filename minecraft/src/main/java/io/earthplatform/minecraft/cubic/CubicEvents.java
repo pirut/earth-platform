@@ -81,21 +81,14 @@ public final class CubicEvents {
     }
 
     /** A travel waiting for the cubes at its landing spot; the player stays where they are meanwhile. */
-    private record Arrival(CommandSourceStack source, ServerPlayer player, int x, int z, int waited, @Nullable int[] view) {}
+    private record Arrival(CommandSourceStack source, ServerPlayer player, double latitude, double longitude, int x, int z, ArrivalWait.Wait waited, @Nullable int[] view) {}
 
-    /**
-     * Ticks of waiting for the workers before the cubes that can be had without waiting on structure
-     * work are loaded on the spot, and ticks before the traveller is moved with what there is.
-     */
-    private static final int ARRIVAL_PATIENCE = 200, ARRIVAL_LIMIT = 1200;
     private static final List<Arrival> ARRIVALS = new ArrayList<>();
 
     /**
-     * Moves each waiting traveller once the workers have the cubes around their landing spot and
-     * the structures there are known, so several players travelling at once never generate those
-     * cubes on the server thread, and the first lookups there (YUNG's temples) answer right. After
-     * {@link #ARRIVAL_PATIENCE} the cubes that are quick to have load on the spot, but never one that
-     * would wait for a structure start: a slow start held the server thread behind its lock.
+     * Moves each waiting traveller as {@link ArrivalWait} allows, onto loaded ground: the server thread
+     * never makes those cubes, so never waits behind a structure start or on map data for them, and the
+     * first lookups where they land answer right. A trip whose cubes cannot be had is given up.
      */
     private static void arrive(ServerLevel level, ServerCubeWorld cubes) {
         for (int i = ARRIVALS.size() - 1; i >= 0; i--) {
@@ -103,14 +96,19 @@ public final class CubicEvents {
             if (arrival.player.isRemoved()) { ARRIVALS.remove(i); continue; }
             CubeGenerator generator = cubes.generator();
             int ground = Math.max(generator.surfaceY(arrival.x, arrival.z), generator.waterY(arrival.x, arrival.z));
-            BlockPos at = new BlockPos(arrival.x, ground, arrival.z);
-            boolean loaded = cubes.readyAround(at) || arrival.waited >= ARRIVAL_PATIENCE && arrival.waited % 20 == 0 && cubes.loadAroundWithoutWaiting(at);
-            if (!(loaded && cubes.structuresReadyAround(at)) && arrival.waited < ARRIVAL_LIMIT) {
-                ARRIVALS.set(i, new Arrival(arrival.source, arrival.player, arrival.x, arrival.z, arrival.waited + 1, arrival.view));
+            ArrivalWait.Next next = ArrivalWait.step(arrival.waited, ArrivalWait.around(cubes, new BlockPos(arrival.x, ground, arrival.z)));
+            Vec3 stand = next.step() == ArrivalWait.Step.GO ? standOn(cubes, arrival.x, arrival.z, false) : null;
+            if (stand == null) {
+                if (next.step() == ArrivalWait.Step.GIVE_UP || arrival.waited.ticks() >= ArrivalWait.GIVE_UP) {
+                    ARRIVALS.remove(i);
+                    arrival.source.sendFailure(Component.literal("Could not load the terrain there in time. Try again in a minute."));
+                    io.earthplatform.minecraft.cubic.play.EarthMap.failed(arrival.player);
+                    continue;
+                }
+                ARRIVALS.set(i, new Arrival(arrival.source, arrival.player, arrival.latitude, arrival.longitude, arrival.x, arrival.z, next.then(), arrival.view));
                 continue;
             }
             ARRIVALS.remove(i);
-            Vec3 stand = standOn(cubes, arrival.x, arrival.z, false);
             float yaw = lookOut(cubes, stand, facing(stand, arrival.view, arrival.player.getYRot()));
             arrival.player.teleportTo(level, stand.x, stand.y, stand.z, yaw, 0.0F);
             io.earthplatform.minecraft.cubic.play.EarthMap.arrived(arrival.player);
@@ -168,7 +166,7 @@ public final class CubicEvents {
      * joining a server don't all land on one block inside each other: a random dry column within
      * the {@code spawnRadius} game rule (vanilla's 10 when it is 0) that is not much higher or lower than the spot itself.
      */
-    private static int[] scatter(ServerCubeWorld cubes, int[] spot) {
+    public static int[] scatter(ServerCubeWorld cubes, int[] spot) {
         if (!(cubes.level() instanceof ServerLevel level)) return spot;
         // An Earth world sets the rule to 0 so vanilla never searches the stand-in overworld for a
         // spawn; the Earth then scatters over vanilla's default instead.
@@ -202,26 +200,31 @@ public final class CubicEvents {
     }
 
     /** The arrival point about a landing spot found before, scattered as {@link #arrival} does. */
-    public static Vec3 arrivalAt(ServerCubeWorld cubes, int[] landing) { return arrivalAt(cubes, landing, true); }
-
-    /** The same; unless {@code loadAll}, cubes there that would wait on structure work are left to the workers. */
-    public static Vec3 arrivalAt(ServerCubeWorld cubes, int[] landing, boolean loadAll) {
+    public static Vec3 arrivalAt(ServerCubeWorld cubes, int[] landing) {
         int[] spot = scatter(cubes, landing);
-        return standOn(cubes, spot[0], spot[1], loadAll);
+        return java.util.Objects.requireNonNull(standOn(cubes, spot[0], spot[1], true));
     }
+
+    /**
+     * A place to stand at a column already scattered (see {@link #scatter}) and waited for, in loaded
+     * cubes only, never making one here; null while there is nowhere loaded to stand yet.
+     */
+    @Nullable public static Vec3 standAt(ServerCubeWorld cubes, int[] spot) { return standOn(cubes, spot[0], spot[1], false); }
 
     /**
      * A place to stand near a column, on the ground or swimming on water, with the cubes there
      * loaded: the nearest spot within a few blocks with room above the ground (grass and a dusting
      * of snow leave room) and not on powder snow, which a player sinks into and freezes in; else on
-     * top of whatever stands there, such as a tree, with a drift underfoot packed firm. Unless
-     * {@code loadAll}, cubes there that would wait on structure work are left to the workers.
+     * top of whatever stands there, such as a tree, with a drift underfoot packed firm. Never in a
+     * cube not loaded, which looks open and would put the player inside the ground once it loads.
+     * Unless {@code loadAll}, the cubes there are the workers' to make, and null is returned while
+     * nowhere loaded will do; with it, the cubes needed are loaded at once.
      */
-    private static Vec3 standOn(ServerCubeWorld cubes, int x, int z, boolean loadAll) {
+    @Nullable private static Vec3 standOn(ServerCubeWorld cubes, int x, int z, boolean loadAll) {
         CubeGenerator generator = cubes.generator();
         int ground = Math.max(generator.surfaceY(x, z), generator.waterY(x, z));
         if (loadAll) cubes.loadAround(new BlockPos(x, ground, z));
-        else cubes.loadAroundWithoutWaiting(new BlockPos(x, ground, z));
+        else cubes.readyAround(new BlockPos(x, ground, z)); // asked of the workers, never made here
         // First somewhere dry and roomy, so nobody arrives in a one-block pit facing a wall, then dry
         // with headroom; swimming only where there is no dry ground (a start on a sea stack or islet).
         for (int pass = 0; pass < 4; pass++)
@@ -230,7 +233,7 @@ public final class CubicEvents {
                 boolean roomy = pass % 2 == 0, dry = generator.waterY(x + dx, z + dz) < generator.surfaceY(x + dx, z + dz);
                 if (pass < 2 && !dry) continue;
                 int y = Math.max(generator.surfaceY(x + dx, z + dz), generator.waterY(x + dx, z + dz)) + 1;
-                if (open(cubes, x + dx, y, z + dz) && open(cubes, x + dx, y + 1, z + dz)
+                if (open(cubes, x + dx, y, z + dz) && open(cubes, x + dx, y + 1, z + dz) && cubes.isLoaded(new BlockPos(x + dx, y - 1, z + dz))
                         && !cubes.getBlockState(new BlockPos(x + dx, y - 1, z + dz)).is(net.minecraft.world.level.block.Blocks.POWDER_SNOW)
                         && (!roomy || roomy(cubes, x + dx, y, z + dz))) {
                     if (!roomy) clearLeaves(cubes, x + dx, y, z + dz);
@@ -243,8 +246,13 @@ public final class CubicEvents {
             clearLeaves(cubes, x, y, z);
             return new Vec3(x + 0.5, y, z + 0.5);
         }
-        while (y < ground + 48 && !(open(cubes, x, y, z) && open(cubes, x, y + 1, z))) y++;
+        while (y < ground + 48 && !(loaded(cubes, x, y, z, loadAll) && open(cubes, x, y, z) && loaded(cubes, x, y + 1, z, loadAll) && open(cubes, x, y + 1, z))) y++;
         BlockPos under = new BlockPos(x, y - 1, z);
+        if (!(open(cubes, x, y, z) && open(cubes, x, y + 1, z) && cubes.isLoaded(under))) {
+            if (!loadAll) return null; // nowhere loaded to stand yet
+            cubes.loadNow(x >> 4, y >> 4, z >> 4);
+            cubes.loadNow(x >> 4, (y + 1) >> 4, z >> 4);
+        }
         if (cubes.getBlockState(under).is(net.minecraft.world.level.block.Blocks.POWDER_SNOW))
             cubes.level().setBlockAndUpdate(under, net.minecraft.world.level.block.Blocks.SNOW_BLOCK.defaultBlockState());
         return new Vec3(x + 0.5, y, z + 0.5);
@@ -281,9 +289,17 @@ public final class CubicEvents {
     }
 
     /** Whether a player fits in a block: air, or a dry one they walk through, such as grass or a thin layer of snow. */
+    /** Whether a block is open to stand in: never one in a cube not loaded, which only looks like air. */
     private static boolean open(ServerCubeWorld cubes, int x, int y, int z) {
         var state = cubes.getBlockState(new BlockPos(x, y, z));
+        if (state == CubeWorld.UNLOADED) return false;
         return state.isAir() || state.canBeReplaced() && state.getFluidState().isEmpty();
+    }
+
+    /** Whether the cube holding a block is loaded; with {@code load}, loading it at once first. */
+    private static boolean loaded(ServerCubeWorld cubes, int x, int y, int z, boolean load) {
+        if (load && !cubes.isLoaded(new BlockPos(x, y, z))) cubes.loadNow(x >> 4, y >> 4, z >> 4);
+        return cubes.isLoaded(new BlockPos(x, y, z));
     }
 
     public static void commands(CommandDispatcher<CommandSourceStack> dispatcher) {
@@ -462,8 +478,12 @@ public final class CubicEvents {
                 return;
             }
             if (player.isRemoved()) return;
+            // A new try of the same trip (a personal spawn's, every 30 s) keeps the wait it had, so its deadline still comes.
+            ArrivalWait.Wait waited = ArrivalWait.Wait.NEW;
+            for (Arrival before : ARRIVALS)
+                if (before.player == player && before.latitude == latitude && before.longitude == longitude) waited = before.waited.carried();
             ARRIVALS.removeIf(waiting -> waiting.player == player);
-            ARRIVALS.add(new Arrival(source, player, spot[0], spot[1], 0, view));
+            ARRIVALS.add(new Arrival(source, player, latitude, longitude, spot[0], spot[1], waited, view));
         }));
         return 1;
     }

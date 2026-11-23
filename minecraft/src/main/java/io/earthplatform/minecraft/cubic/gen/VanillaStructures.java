@@ -175,7 +175,8 @@ final class VanillaStructures {
     /** Columns whose layout for a lookup failed, by when, so they are not tried again every tick. */
     private final ConcurrentHashMap<Long, Long> failed = new ConcurrentHashMap<>();
     private volatile long retryNanos = 30_000_000_000L;
-    private final java.util.concurrent.atomic.AtomicBoolean lookupFailed = new java.util.concurrent.atomic.AtomicBoolean(), copyFailed = new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicBoolean lookupFailed = new java.util.concurrent.atomic.AtomicBoolean(), copyFailed = new java.util.concurrent.atomic.AtomicBoolean(),
+            startFailed = new java.util.concurrent.atomic.AtomicBoolean();
     /** Set when the world closes: work queued for it is dropped. */
     private volatile boolean closed;
     /** Whether the asking thread is the server's, which never waits for starts to be laid out. */
@@ -352,7 +353,9 @@ final class VanillaStructures {
         for (long[] c : candidates) {
             Kind kind = kinds.get((int) c[1]);
             if (!startsIn(kind, (int) c[2], (int) c[3])) continue;
-            Start start = start(kind, (int) c[2], (int) c[3]);
+            Start start;
+            try { start = start(kind, (int) c[2], (int) c[3]); }
+            catch (StartFailed failed) { continue; } // asked again next time
             if (start == null || !wanted.test(start.start.getStructure())) continue;
             BlockPos centre = start.start.getBoundingBox().getCenter().above(start.frame.shift);
             // Pieces that settle onto the ground as they are placed (temples, shipwrecks) still sit at vanilla's start height here
@@ -398,7 +401,7 @@ final class VanillaStructures {
         if (ready == null) {
             List<Start> laid = columns.get(key); // laid out when the column's cubes generated or loaded
             if (laid != null) ready = server ? realIfMade(laid) : real(laid);
-            if (ready != null) known.put(key, ready);
+            if (ready != null) known.offer(key, ready); // the server thread: kept only if no other thread is writing
         }
         if (ready != null) return only(ready, wanted);
         Predicate<Kind> holding = wanted == null ? kind -> true
@@ -413,8 +416,12 @@ final class VanillaStructures {
             if (!backingOff(key)) ask(asked, key, () -> startsLaidOut(cx, cz), probe);
             return List.of();
         }
-        if (wanted != null && !columns.containsKey(key)) return only(real(reaching(cx, cz, holding)), wanted);
-        return only(startsLaidOut(cx, cz), wanted);
+        try {
+            if (wanted != null && !columns.containsKey(key)) return only(real(reaching(cx, cz, holding)), wanted);
+            return only(startsLaidOut(cx, cz), wanted);
+        } catch (StartFailed failed) {
+            return List.of(); // nothing kept: asked again next time
+        }
     }
 
     private static List<StructureStart> only(List<StructureStart> starts, @Nullable Predicate<Structure> wanted) {
@@ -474,28 +481,11 @@ final class VanillaStructures {
         List<Start> laid = columns.get(key);
         List<StructureStart> real = laid == null ? null : realIfMade(laid);
         if (real != null) {
-            known.put(key, real);
+            known.offer(key, real);
             return true;
         }
         if (!backingOff(key)) ask(asked, key, () -> startsLaidOut(cx, cz), false);
         return false;
-    }
-
-    /**
-     * Whether a cube can be generated here and now without waiting on structure work: its column's
-     * starts are laid out and the layout of every start reaching it is placed. Else generating it
-     * would wait on the start lock, or on another thread's layout.
-     */
-    boolean placesWithoutWaiting(int cx, int cy, int cz) {
-        if (!generate) return true;
-        List<Start> laid = columns.get(ChunkPos.asLong(cx, cz));
-        if (laid == null) return false;
-        for (Start start : laid) {
-            if (!placesInto(start.low, start.reach.maxY(), cy)) continue;
-            CompletableFuture<Long2ObjectOpenHashMap<Patch>> overlay = overlays.get(startKey(start.kind, start.chunkX, start.chunkZ));
-            if (overlay == null || !overlay.isDone()) return false;
-        }
-        return true;
     }
 
     private boolean backingOff(long key) {
@@ -591,7 +581,9 @@ final class VanillaStructures {
             }
             if (kind.set.value().structures().stream().noneMatch(e -> e.structure().value() == structure)) continue;
             if (!startsIn(kind, chunkX, chunkZ)) continue;
-            Start start = start(kind, chunkX, chunkZ);
+            Start start;
+            try { start = start(kind, chunkX, chunkZ); }
+            catch (StartFailed failed) { continue; }
             if (start != null && start.start.getStructure() == structure) return real(start);
         }
         return null;
@@ -763,6 +755,12 @@ final class VanillaStructures {
         return List.copyOf(found);
     }
 
+    /**
+     * A structure set's start in a chunk, or null where it has none. A start that throws is not
+     * taken for none: the layout asking fails (a lookup's column backs off, a cube is made again
+     * later), as the failure may pass (map data still coming). Only after {@link #MOST_START_FAILURES}
+     * tries is it given up and left out, so another mod's start that always throws leaves no hole.
+     */
     @Nullable private Start start(Kind kind, int chunkX, int chunkZ) {
         long key = startKey(kind.index, chunkX, chunkZ);
         Optional<Start> cached = starts.get(key);
@@ -773,9 +771,24 @@ final class VanillaStructures {
         } catch (java.util.concurrent.CancellationException closing) {
             throw closing; // the world is closing: not known to be missing
         } catch (RuntimeException e) {
-            LOGGER.warn("Cubic world: structure set {} failed to start in chunk {}, {}", kind.set.getRegisteredName(), chunkX, chunkZ, e);
+            int tries = startFailures.merge(key, 1, Integer::sum);
+            if (tries < MOST_START_FAILURES) {
+                if (startFailures.size() > 4096) startFailures.clear();
+                if (startFailed.compareAndSet(false, true))
+                    LOGGER.warn("Cubic world: structure set {} failed to start in chunk {}, {}; asked again later (logged once)",
+                            kind.set.getRegisteredName(), chunkX, chunkZ, e);
+                throw new StartFailed(e);
+            }
+            LOGGER.warn("Cubic world: structure set {} failed to start in chunk {}, {} {} times; left out",
+                    kind.set.getRegisteredName(), chunkX, chunkZ, tries, e);
         }
+        startFailures.remove(key);
         return starts.putIfAbsent(key, Optional.ofNullable(made)).orElse(null);
+    }
+
+    /** A start that threw, not yet given up: whatever asked fails, and is asked again later. */
+    static final class StartFailed extends RuntimeException {
+        StartFailed(Throwable cause) { super(cause); }
     }
 
     @Nullable private Start makeStart(Kind kind, int chunkX, int chunkZ) {
@@ -940,6 +953,9 @@ final class VanillaStructures {
     }
 
     private static final Object STARTS = new Object();
+    /** Tries of starts that threw, by start key. */
+    private final ConcurrentHashMap<Long, Integer> startFailures = new ConcurrentHashMap<>();
+    static final int MOST_START_FAILURES = 3;
 
     private StructureStart generate(StructureSet.StructureSelectionEntry entry, Frame frame, ChunkPos chunk) {
         Structure structure = entry.structure().value();
@@ -1041,12 +1057,14 @@ final class VanillaStructures {
      * is dropped then. A hit in the older moves to the newer, so what is used stays. Reads take no
      * lock. Writes take this map's lock, held only for a map operation, so a write never lands in a
      * generation a roll has already passed over: a valid start put while another thread rolled was
-     * shadowed by the roller's failed result for the same key.
+     * shadowed by the roller's failed result for the same key. A hit's move only tries the lock, and
+     * {@link #offer} too, so a reader (the server thread) never waits on a writer.
      */
     static final class Generations<V> {
         /** Both generations, published together, so no reader sees one without the other. */
         private record Pair<V>(ConcurrentHashMap<Long, V> newer, ConcurrentHashMap<Long, V> older) {}
         private final int most;
+        private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
         private volatile Pair<V> maps = new Pair<>(new ConcurrentHashMap<>(), new ConcurrentHashMap<>());
         /** For tests: run inside a write, with the lock held, once it has read the generations. */
         @Nullable private volatile Runnable writing;
@@ -1058,19 +1076,38 @@ final class VanillaStructures {
             V found = now.newer.get(key);
             if (found != null) return found;
             found = now.older.get(key);
-            return found == null ? null : putIfAbsent(key, found);
+            if (found == null || !lock.tryLock()) return found; // still read in the older while another thread writes
+            try { return keep(key, found); }
+            finally { lock.unlock(); }
         }
 
         boolean containsKey(long key) { return get(key) != null; }
 
-        synchronized void put(long key, V value) {
-            Pair<V> now = maps;
-            pause();
-            into(now).put(key, value);
+        void put(long key, V value) {
+            lock.lock();
+            try {
+                Pair<V> now = maps;
+                pause();
+                into(now).put(key, value);
+            } finally { lock.unlock(); }
         }
 
         /** The value kept: this one, or one already there in either generation, which wins. */
-        synchronized V putIfAbsent(long key, V value) {
+        V putIfAbsent(long key, V value) {
+            lock.lock();
+            try { return keep(key, value); }
+            finally { lock.unlock(); }
+        }
+
+        /** As {@link #putIfAbsent}, but only if the lock is free: a cache fill nobody has to wait for. */
+        void offer(long key, V value) {
+            if (!lock.tryLock()) return;
+            try { keep(key, value); }
+            finally { lock.unlock(); }
+        }
+
+        /** Lock held. */
+        private V keep(long key, V value) {
             Pair<V> now = maps;
             pause();
             V had = now.newer.get(key);
@@ -1096,6 +1133,9 @@ final class VanillaStructures {
 
         /** For tests. */
         void whileWriting(@Nullable Runnable hook) { writing = hook; }
+
+        /** For tests: whether another thread holds the write lock. */
+        boolean writeLocked() { return lock.isLocked(); }
     }
 
     /** Buckets a laid-out structure by cube. */

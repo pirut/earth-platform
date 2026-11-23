@@ -6,6 +6,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.bug.BugReporting;
 import io.earthplatform.minecraft.cubic.Cubic;
+import io.earthplatform.minecraft.cubic.ArrivalWait;
 import io.earthplatform.minecraft.cubic.CubicEvents;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.CubicSettings;
@@ -169,8 +170,6 @@ public final class EarthWorlds {
         CompletableFuture<Void> preparing;
         /** Where the start's landing search found to stand, found off the server thread with the data. */
         @Nullable volatile int[] landing;
-        /** Ticks before the cubes quick to have load on the spot, and before the players are let in with what there is. */
-        static final int LANDING_PATIENCE = 200, LANDING_LIMIT = 1200;
         boolean ready;
         long retryAt, lastSample, firstWait;
         /** Counts server spawn moves, so a landing search for an old spawn is thrown away. */
@@ -217,7 +216,7 @@ public final class EarthWorlds {
             ready = false;
             preparing = null;
             landing = null;
-            landingTicks = 0;
+            spots.clear();
             retryAt = 0;
             round++;
         }
@@ -265,6 +264,7 @@ public final class EarthWorlds {
                 if (player == null || player.level().dimension() != Level.OVERWORLD) {
                     waiting.remove(id);
                     sent.remove(id);
+                    spots.remove(id);
                     if (player != null) release(player);
                     continue;
                 }
@@ -281,9 +281,11 @@ public final class EarthWorlds {
                     status.send(player, status.payload(EarthStatus.PREPARING, EarthStatus.OK, (int) ((now - firstWait) / 1000), own.get().label()), now);
                     continue;
                 }
-                if (ready && landingLoaded(cubes)) {
+                Vec3 stand = ready ? landed(id, cubes) : null;
+                if (stand != null) {
                     waiting.remove(id);
-                    arrive(player, cubes);
+                    spots.remove(id);
+                    arrive(player, cubes, stand);
                 } else {
                     hold(player);
                     byte problem = EarthStatus.offlineMode() && retryAt > 0 ? EarthStatus.OFFLINE_MODE
@@ -293,25 +295,27 @@ public final class EarthWorlds {
             }
         }
 
-        /** Ticks spent waiting for the cubes at the landing, which the workers make. */
-        int landingTicks;
+        /** A waiting player's own spot, scattered about the landing, and how many ticks they have waited for it. */
+        private record Spot(int[] at, ArrivalWait.Wait waited) {}
+        final java.util.Map<UUID, Spot> spots = new java.util.HashMap<>();
 
         /**
-         * Whether the cubes about the start's landing spot are made and the structures there known:
-         * asked of the workers and waited for, rather than generated on the server thread when the
-         * first player arrives. After {@link #LANDING_PATIENCE} the cubes quick to have load on the
-         * spot, but never one that would wait for a structure start, as a slow one holds its lock.
+         * Where a waiting player may stand now, or null while they wait: about their own spot,
+         * scattered about the landing once, as {@link ArrivalWait} allows, waited for round that
+         * spot (a wide spawn radius scatters past the cubes round the landing) and never in a cube
+         * not loaded. The player is held meanwhile, so waiting on is safe however long it takes.
          */
-        private boolean landingLoaded(ServerCubeWorld cubes) {
-            int[] spot = landing;
-            if (spot == null || landingTicks >= LANDING_LIMIT) return true;
+        @Nullable private Vec3 landed(UUID id, ServerCubeWorld cubes) {
+            int[] found = landing;
+            if (found == null) return CubicEvents.arrival(cubes, view(cubes)); // as before: no landing found ahead
+            Spot spot = spots.computeIfAbsent(id, k -> new Spot(CubicEvents.scatter(cubes, found), ArrivalWait.Wait.NEW));
             var generator = cubes.generator();
-            int ground = Math.max(generator.surfaceY(spot[0], spot[1]), generator.waterY(spot[0], spot[1]));
-            var at = new net.minecraft.core.BlockPos(spot[0], ground, spot[1]);
-            boolean loaded = cubes.readyAround(at) || landingTicks >= LANDING_PATIENCE && landingTicks % 20 == 0 && cubes.loadAroundWithoutWaiting(at);
-            if (loaded && cubes.structuresReadyAround(at)) return true;
-            landingTicks++;
-            return false;
+            int x = spot.at[0], z = spot.at[1];
+            var at = new net.minecraft.core.BlockPos(x, Math.max(generator.surfaceY(x, z), generator.waterY(x, z)), z);
+            ArrivalWait.Next next = ArrivalWait.step(spot.waited, ArrivalWait.around(cubes, at));
+            Vec3 stand = next.step() == ArrivalWait.Step.GO ? CubicEvents.standAt(cubes, spot.at) : null;
+            if (stand == null) spots.put(id, new Spot(spot.at, next.then()));
+            return stand;
         }
 
         /** Fetches the data around the home off the server thread, and checks it is there; retries until it is. */
@@ -369,12 +373,9 @@ public final class EarthWorlds {
             player.onUpdateAbilities();
         }
 
-        private void arrive(ServerPlayer player, ServerCubeWorld cubes) {
+        private void arrive(ServerPlayer player, ServerCubeWorld cubes, Vec3 spot) {
             release(player);
             int[] view = view(cubes);
-            int[] found = landing;
-            // Waited for above: cubes still missing there are the workers', never made here behind a structure start.
-            Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found, false) : CubicEvents.arrival(cubes, view);
             ServerLevel level = server.getLevel(Cubic.LEVEL);
             player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
             player.resetFallDistance();
