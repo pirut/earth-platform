@@ -287,6 +287,7 @@ public final class ServerCubeWorld extends CubeWorld {
             if (saved != null) {
                 CubeCodec.Decoded decoded = codec.read(saved);
                 generator.loaded(x, y, z);
+                primeTops(x, z);
                 return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), CubeCodec.tags(saved, CubeCodec.ENTITIES), true,
                         !saved.getBoolean(CubeCodec.UNTOUCHED), saved.getBoolean(CubeCodec.UNPOPULATED), false, null, openFaces(decoded.section()));
             }
@@ -301,6 +302,33 @@ public final class ServerCubeWorld extends CubeWorld {
             return new Ready(key, x, y, z, section, blockEntities, entities, false, false, surface, y >= band[0] && y <= band[1], null, openFaces(section));
         } catch (RuntimeException failure) {
             return new Ready(key, x, y, z, null, List.of(), List.of(), false, false, false, false, failure, 0);
+        }
+    }
+
+    /** Cube columns whose ground a worker is reading or has read for {@link #primeTops}. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, CompletableFuture<Void>> primed = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Workers. Reads the ground of a saved cube's column, which the server thread reads for the
+     * column's sky tops as it adopts the cube. A generated cube's worker reads it making the cube;
+     * a saved one's read it only by laying its structures out, and since that is done aside the
+     * server thread was left to fetch the terrain itself, waiting seconds a tick after a restart.
+     * A worker with another cube of a column being read waits for it, so no cube goes out first.
+     */
+    private void primeTops(int cubeX, int cubeZ) {
+        long column = CubeKey.column(cubeX, cubeZ);
+        CompletableFuture<Void> mine = new CompletableFuture<>(), reading = primed.putIfAbsent(column, mine);
+        if (reading != null) {
+            reading.join();
+            return;
+        }
+        if (primed.size() > 4096) primed.values().removeIf(future -> future.isDone() && future != mine);
+        try {
+            for (int i = 0; i < 256; i++) generator.skyTopY((cubeX << 4) + (i & 15), (cubeZ << 4) + (i >> 4));
+        } catch (RuntimeException missing) {
+            primed.remove(column, mine); // the server thread finds the data missing as before; the next cube tries again
+        } finally {
+            mine.complete(null);
         }
     }
 
