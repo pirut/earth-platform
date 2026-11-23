@@ -603,7 +603,24 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     @Override public LevelChunkSection generate(int cx, int cy, int cz) { return generate(cx, cy, cz, new ArrayList<>(), new ArrayList<>()); }
 
-    @Override public void attach(ServerLevel level) { vanilla = new VanillaStructures(level, new StructureHost(), seed); }
+    @Override public void attach(ServerLevel level) { detached = false; vanilla = new VanillaStructures(level, new StructureHost(), seed); }
+
+    @Override public void loaded(int cubeX, int cubeY, int cubeZ) {
+        VanillaStructures structures = vanilla;
+        if (structures != null) structures.warm(cubeX, cubeZ);
+    }
+
+    @Override public void detach() {
+        detached = true;
+        VanillaStructures structures = vanilla;
+        if (structures != null) structures.close();
+    }
+
+    /** Set when the world closes, so base cubes queued for structure layouts are not made. */
+    private volatile boolean detached;
+    /** Base cubes queued for structure layouts and not yet made, at most {@link #MOST_PREPARED}. */
+    private final java.util.concurrent.atomic.AtomicInteger preparing = new java.util.concurrent.atomic.AtomicInteger();
+    private static final int MOST_PREPARED = 4096;
 
     @Override public LevelChunkSection generate(int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
         LevelChunkSection section = terrain(cx, cy, cz, blockEntities, entities);
@@ -639,6 +656,18 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     @Override public List<net.minecraft.world.level.levelgen.structure.StructureStart> structureStarts(int chunkX, int chunkZ) {
         VanillaStructures structures = vanilla;
         return structures == null ? List.of() : structures.startsAt(chunkX, chunkZ);
+    }
+
+    @Override public List<net.minecraft.world.level.levelgen.structure.StructureStart> structureStarts(int chunkX, int chunkZ,
+            java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> wanted) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? List.of() : structures.startsAt(chunkX, chunkZ, wanted);
+    }
+
+    @Override public List<net.minecraft.world.level.levelgen.structure.StructureStart> structureStarts(int chunkX, int chunkZ,
+            java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> wanted, boolean probe) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? List.of() : structures.startsAt(chunkX, chunkZ, wanted, probe);
     }
 
     @Override public @Nullable net.minecraft.world.level.levelgen.structure.StructureStart structureStart(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) {
@@ -724,6 +753,11 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return surface(x, z, sample[0], sample[1], Math.abs(east - west) + Math.abs(south - north)).biome();
     }
 
+    /** Threads that make the base cubes a structure layout reads (see {@link StructureHost#prepare}). */
+    private static final java.util.concurrent.ExecutorService STRUCTURE_TERRAIN = java.util.concurrent.Executors.newFixedThreadPool(
+            Math.max(2, Math.min(8, Runtime.getRuntime().availableProcessors() - 2)),
+            io.earthplatform.geography.globe.NamedThreads.numbered("Earth structure terrain", Thread.NORM_PRIORITY - 1));
+
     /** What vanilla structure code reads of this world: the terrain before structures. */
     private final class StructureHost implements VanillaStructures.Host {
         @Override public int ground(int x, int z) { return surfaceY(x, z); }
@@ -738,6 +772,54 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             Surface surface = column(x >> 4, z >> 4).surface[(z & 15) * 16 + (x & 15)];
             return depth <= 0 ? surface.top() : depth < 4 ? surface.under() : below.rock(x, y, z, below.floor(x, z));
         }
+        /**
+         * Makes the base cubes a layout is about to read on a few threads at once. Made one by one as
+         * its pieces asked, the few hundred an ancient city or a big mineshaft reads held the cube that
+         * started it for half a minute or more, and the server thread with it when that cube was loaded
+         * at once. The cubes are the same either way. Past half of what the cache keeps, the layout
+         * makes them as it reads them.
+         */
+        @Override public void prepare(it.unimi.dsi.fastutil.longs.LongCollection cubes) {
+            if (detached || cubes.size() < 2 || cubes.size() > MemoryPressure.scaled(4096) / 2) return;
+            if (preparing.addAndGet(cubes.size()) > MOST_PREPARED) { preparing.addAndGet(-cubes.size()); return; }
+            List<java.util.concurrent.CompletableFuture<?>> making = new ArrayList<>();
+            int queued = 0;
+            try {
+                for (var it = cubes.iterator(); it.hasNext(); ) {
+                    long key = it.nextLong();
+                    if (bases.containsKey(key)) continue;
+                    int cx = SectionPos.x(key), cy = SectionPos.y(key), cz = SectionPos.z(key);
+                    making.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
+                        try {
+                            if (!detached) cube(cx, cy, cz);
+                        } finally {
+                            preparing.decrementAndGet();
+                        }
+                    }, STRUCTURE_TERRAIN));
+                    queued++; // only once it is on the pool, so a refusal releases what it held
+                }
+            } finally {
+                preparing.addAndGet(queued - cubes.size());
+            }
+            // Waits a tenth of a second at a time, so a world closing is not held up behind it.
+            for (var cube : making) {
+                while (!detached) {
+                    try {
+                        cube.get(100, java.util.concurrent.TimeUnit.MILLISECONDS);
+                        break;
+                    } catch (java.util.concurrent.TimeoutException waiting) {
+                        // again
+                    } catch (java.util.concurrent.ExecutionException | java.util.concurrent.CancellationException failed) {
+                        break; // the layout makes it again as it reads it, and reports what fails
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+                if (detached) return;
+            }
+        }
+
         @Nullable @Override public LevelChunkSection cube(int cx, int cy, int cz) {
             Column col = column(cx, cz);
             if (cy << 4 > Math.max(col.max + 16, col.maxWater)) return null;

@@ -49,12 +49,15 @@ import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructurePiece;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
+import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.StructureType;
 import net.minecraft.world.level.levelgen.structure.TerrainAdjustment;
 import net.minecraft.world.level.levelgen.structure.pieces.StructurePieceSerializationContext;
 import net.minecraft.world.level.levelgen.structure.pieces.StructurePieceType;
+import net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement;
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement;
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadType;
+import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -166,6 +169,341 @@ class VanillaStructuresTest {
         assertFalse(VanillaStructures.placesInto(40, 100, -64 >> 4), "as it was: cut off at the pieces' reach");
     }
 
+    // Sets kept away from vanilla's stronghold rings (Dungeons and Taverns' shrines) -------------
+
+    @Test void ringExclusionKeepsToTheStrongholdGridWithoutReadingFarBiomes() {
+        TestStructure shrine = new TestStructure(plains, GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE, 4);
+        TestStructure stronghold = new TestStructure(plains, GenerationStep.Decoration.STRONGHOLDS, TerrainAdjustment.NONE, 4);
+        RegistryAccess registries = ringExcludedRegistries(shrine, stronghold, 15);
+        java.util.concurrent.atomic.AtomicInteger far = new java.util.concurrent.atomic.AtomicInteger();
+        VanillaStructures.Host host = new VanillaStructures.Host() {
+            final VanillaStructures.Host flat = hostOf((x, z) -> 100);
+            @Override public int ground(int x, int z) { return 100; }
+            @Override public int water(int x, int z) { return 62; }
+            @Override public Holder<Biome> biome(int x, int y, int z) {
+                // Vanilla's rings search biomes thousands of blocks out; on Earth each is a download.
+                if (Math.abs(x) > 2048 || Math.abs(z) > 2048) far.incrementAndGet();
+                return plains;
+            }
+            @Override public int floor(int x, int z) { return 100; }
+            @Nullable @Override public LevelChunkSection cube(int cx, int cy, int cz) { return null; }
+            @Override public BlockState fill(int x, int y, int z, int depth) { return Blocks.STONE.defaultBlockState(); }
+            @Override public int seaLevel() { return 63; }
+            @Override public Stream<Holder<Biome>> possibleBiomes() { return flat.possibleBiomes(); }
+        };
+        long seed = 1L;
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, host, seed);
+
+        // Shrines may start in any chunk but within 15 chunks of a stronghold on this world's grid.
+        RandomSpreadStructurePlacement grid = VanillaStructures.strongholdGrid();
+        ChunkPos stronghold0 = grid.getPotentialStructureChunk(seed, 0, 0);
+        StructureStart onStronghold = structures.startOf(shrine, stronghold0.x, stronghold0.z);
+        assertEquals(0, far.get(), "biomes read far from the chunks asked about, for vanilla's rings");
+        assertNull(onStronghold, "a shrine on a stronghold of this world's grid");
+        assertNull(structures.startOf(shrine, stronghold0.x + 15, stronghold0.z - 15), "a shrine 15 chunks from one");
+        ChunkPos clear = null;
+        for (int cx = 0; cx < 256 && clear == null; cx++) {
+            boolean near = false;
+            for (int gz = -1; gz <= 1 && !near; gz++) for (int gx = -1; gx <= 5 && !near; gx++) {
+                ChunkPos s = grid.getPotentialStructureChunk(seed, gx * grid.spacing(), gz * grid.spacing());
+                near = Math.abs(s.x - cx) <= 15 && Math.abs(s.z) <= 15;
+            }
+            if (!near) clear = new ChunkPos(cx, 0);
+        }
+        assertNotNull(clear);
+        assertNotNull(structures.startOf(shrine, clear.x, clear.z), "a shrine more than 15 chunks from every stronghold");
+        assertFalse(structures.startsAt(clear.x, clear.z).isEmpty());
+        assertEquals(0, far.get(), "biomes read far from the chunks asked about");
+    }
+
+    // Players' ticks ask which structure they stand in (YUNG's desert temples, every tick) -----
+
+    @Test void serverThreadLookupsAnswerFromKnownStartsAndLayTheRestOutAside() throws InterruptedException {
+        TestStructure surface = new TestStructure(plains, GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.BEARD_THIN, 12);
+        RegistryAccess registries = singleStructureRegistries("test_temple", surface);
+        Thread server = Thread.currentThread();
+        java.util.concurrent.atomic.AtomicInteger readOnServer = new java.util.concurrent.atomic.AtomicInteger();
+        VanillaStructures.Host host = hostOf((x, z) -> {
+            if (Thread.currentThread() == server) readOnServer.incrementAndGet();
+            return 100;
+        });
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, host, 1L);
+        structures.serverThread(() -> Thread.currentThread() == server);
+
+        // Nothing known yet: answered at once, with nothing laid out on the server thread.
+        assertTrue(structures.startsAt(0, 0).isEmpty());
+        assertNull(structures.startOf(surface, 0, 0));
+        assertEquals(0, readOnServer.get(), "terrain read on the server thread for a lookup");
+
+        // Laid out aside, then known: in the end every start another thread lays out there.
+        int all = new VanillaStructures(null, registries, randomState, true, hostOf((x, z) -> 100), 1L).startsAt(0, 0).size();
+        assertTrue(all > 0);
+        List<StructureStart> found = List.of();
+        for (long until = System.currentTimeMillis() + 20_000; found.size() < all && System.currentTimeMillis() < until; Thread.sleep(20))
+            found = structures.startsAt(0, 0);
+        assertEquals(all, found.size(), "starts laid out aside for the server thread");
+        assertNotNull(structures.startOf(surface, 0, 0));
+        assertEquals(0, readOnServer.get(), "terrain read on the server thread for a lookup");
+
+        // Other threads still lay starts out themselves, the same ones, and only those of the structures asked about.
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        VanillaStructures elsewhere = new VanillaStructures(null, registries, randomState, true, hostOf((x, z) -> { reads.incrementAndGet(); return 100; }), 1L);
+        assertTrue(elsewhere.startsAt(0, 0, structure -> structure != surface).isEmpty());
+        assertEquals(0, reads.get(), "terrain read laying out structures nobody asked about");
+        assertEquals(found.size(), elsewhere.startsAt(0, 0, structure -> structure == surface).size());
+        assertEquals(found.size(), elsewhere.startsAt(0, 0).size());
+    }
+
+    @Test void serverThreadLookupsFindTheStructureFromAnyGeneratedColumnItReaches() {
+        // A temple 40 blocks across from chunk 0, 0, its cubes generated: the start is laid out.
+        TestStructure temple = new TestStructure(plains, GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE, 40);
+        RegistryAccess registries = singleStructureRegistries("test_desert_temple", temple);
+        java.util.concurrent.atomic.AtomicBoolean asServer = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicInteger readOnServer = new java.util.concurrent.atomic.AtomicInteger();
+        Thread server = Thread.currentThread();
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, hostOf((x, z) -> {
+            if (asServer.get() && Thread.currentThread() == server) readOnServer.incrementAndGet();
+            return 100;
+        }), 1L);
+        structures.serverThread(() -> asServer.get() && Thread.currentThread() == server);
+        // Its cubes generated: each cube lays out the starts reaching its own column, as its terrain asks.
+        structures.clears(8, 8);
+        structures.clears(2 * 16 + 8, 8);
+
+        // The first lookup comes from a player two chunks from where it started, inside it (YUNG's Pharaoh dying there).
+        asServer.set(true);
+        List<StructureStart> found = structures.startsAt(2, 0, structure -> structure == temple);
+        assertTrue(found.stream().anyMatch(start -> start.getChunkPos().equals(new ChunkPos(0, 0))), "the temple reaching the player's column");
+        assertTrue(found.stream().allMatch(start -> start.getStructure() == temple));
+        assertEquals(0, readOnServer.get(), "terrain read on the server thread for a lookup");
+    }
+
+    @Test void spawnOverrideLookupsInsideALaidOutStructureAnswerOnTheFirstCall() {
+        // Mob spawns ask for every structure at a place, then each start by the chunk it started in (getMobsAt).
+        TestStructure monument = new TestStructure(plains, GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE, 40);
+        RegistryAccess registries = singleStructureRegistries("test_monument", monument);
+        java.util.concurrent.atomic.AtomicBoolean asServer = new java.util.concurrent.atomic.AtomicBoolean();
+        Thread server = Thread.currentThread();
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, hostOf((x, z) -> 100), 1L);
+        structures.serverThread(() -> asServer.get() && Thread.currentThread() == server);
+        structures.clears(8, 8);
+        structures.clears(16 + 8, 16 + 8); // the generated column the mob would spawn in
+
+        asServer.set(true);
+        assertFalse(structures.startsAt(1, 1).isEmpty(), "every structure at the place");
+        StructureStart start = structures.startOf(monument, 0, 0);
+        assertNotNull(start, "the start by its reference, on the first call");
+        assertEquals(new ChunkPos(0, 0), start.getChunkPos());
+    }
+
+    @Test void closingTheWorldDropsQueuedLookups() throws InterruptedException {
+        TestStructure surface = new TestStructure(plains, GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE, 12);
+        RegistryAccess registries = singleStructureRegistries("test_hut", surface);
+        Thread server = Thread.currentThread();
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger held = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.Set<Integer> laidOut = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        VanillaStructures.Host flat = hostOf((x, z) -> {
+            if (Thread.currentThread() != server) laidOut.add(Math.floorDiv(x >> 4, 500)); // which of the far-apart places
+            return 100;
+        });
+        VanillaStructures.Host host = new VanillaStructures.Host() {
+            @Override public int ground(int x, int z) { return flat.ground(x, z); }
+            @Override public int water(int x, int z) { return 62; }
+            @Override public Holder<Biome> biome(int x, int y, int z) { return plains; }
+            @Override public int floor(int x, int z) { return 100; }
+            @Nullable @Override public LevelChunkSection cube(int cx, int cy, int cz) { return null; }
+            @Override public BlockState fill(int x, int y, int z, int depth) { return Blocks.STONE.defaultBlockState(); }
+            @Override public int seaLevel() {
+                // Each lookup thread's first ask holds it, before it takes the start lock.
+                if (Thread.currentThread() != server && held.getAndIncrement() < 2) {
+                    try { release.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                }
+                return 63;
+            }
+            @Override public Stream<Holder<Biome>> possibleBiomes() { return flat.possibleBiomes(); }
+        };
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, host, 1L);
+        structures.serverThread(() -> Thread.currentThread() == server);
+        try {
+            // Two lookups hold both lookup threads; a third waits in the queue.
+            structures.startsAt(0, 0);
+            structures.startsAt(1000, 0);
+            for (long until = System.currentTimeMillis() + 20_000; held.get() < 2 && System.currentTimeMillis() < until; Thread.sleep(10)) {}
+            assertTrue(held.get() >= 2, "both lookup threads busy");
+            structures.startsAt(2000, 0);
+            structures.close();
+        } finally {
+            release.countDown();
+        }
+        Thread.sleep(1000);
+        // The two already running stop at the start lock, and the one queued never starts: a closed world lays nothing out.
+        assertTrue(laidOut.isEmpty(), "laid out after the world closed: " + laidOut);
+        structures.startsAt(3000, 0);
+        Thread.sleep(200);
+        assertFalse(laidOut.contains(6), "a lookup asked after the world closed was queued");
+    }
+
+    @Test void columnsLoadedFromTheSaveAreLaidOutAsideAndAnsweredOnTheFirstLookup() throws InterruptedException {
+        // After a restart nothing is laid out: the temple's cubes come from the save, not from generation.
+        TestStructure temple = new TestStructure(plains, GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE, 40);
+        RegistryAccess registries = singleStructureRegistries("test_saved_temple", temple);
+        Thread server = Thread.currentThread();
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, hostOf((x, z) -> 100), 1L);
+        structures.serverThread(() -> Thread.currentThread() == server);
+        structures.warm(2, 0); // the storage path: a cube of chunk column 2, 0 read from the save
+        for (long until = System.currentTimeMillis() + 20_000; !structures.laidOut(2, 0) && System.currentTimeMillis() < until; Thread.sleep(10)) {}
+        assertTrue(structures.laidOut(2, 0), "the saved column laid out aside");
+
+        // The first lookup there (YUNG's Pharaoh dying in a temple from the save) finds it.
+        List<StructureStart> found = structures.startsAt(2, 0, structure -> structure == temple);
+        assertTrue(found.stream().anyMatch(start -> start.getChunkPos().equals(new ChunkPos(0, 0))));
+        assertFalse(structures.startsAt(2, 0).isEmpty(), "and every structure there, for mob spawns");
+    }
+
+    @Test void aPlayersOwnLookupIsNotCrowdedOutByMobSpawnProbes() throws InterruptedException {
+        TestStructure hut = new TestStructure(plains, GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE, 12);
+        RegistryAccess registries = singleStructureRegistries("test_probe_hut", hut, 24, 8);
+        Thread server = Thread.currentThread();
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger held = new java.util.concurrent.atomic.AtomicInteger();
+        VanillaStructures.Host flat = hostOf((x, z) -> 100);
+        VanillaStructures.Host host = new VanillaStructures.Host() {
+            @Override public int ground(int x, int z) { return 100; }
+            @Override public int water(int x, int z) { return 62; }
+            @Override public Holder<Biome> biome(int x, int y, int z) { return plains; }
+            @Override public int floor(int x, int z) { return 100; }
+            @Nullable @Override public LevelChunkSection cube(int cx, int cy, int cz) { return null; }
+            @Override public BlockState fill(int x, int y, int z, int depth) { return Blocks.STONE.defaultBlockState(); }
+            @Override public int seaLevel() {
+                if (Thread.currentThread() != server && held.getAndIncrement() < 2) {
+                    try { release.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                }
+                return 63;
+            }
+            @Override public Stream<Holder<Biome>> possibleBiomes() { return flat.possibleBiomes(); }
+        };
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, host, 1L);
+        structures.serverThread(() -> Thread.currentThread() == server);
+        // The player stands where a hut starts.
+        ChunkPos player = new RandomSpreadStructurePlacement(24, 8, RandomSpreadType.LINEAR, 12345).getPotentialStructureChunk(1L, 0, 0);
+        try {
+            // Mob spawns probe every chunk round the players, far more than the queue takes.
+            for (int i = 0; i < VanillaStructures.MOST_QUEUED + 100; i++) structures.startsAt(10_000 + i * 40, 10_000);
+            for (long until = System.currentTimeMillis() + 20_000; held.get() < 2 && System.currentTimeMillis() < until; Thread.sleep(10)) {}
+            // The player's own lookup, for the one structure it asks about, is still taken.
+            assertTrue(structures.startsAt(player.x, player.z, structure -> structure == hut).isEmpty());
+        } finally {
+            release.countDown();
+        }
+        List<StructureStart> found = List.of();
+        for (long until = System.currentTimeMillis() + 60_000; found.isEmpty() && System.currentTimeMillis() < until; Thread.sleep(20))
+            found = structures.startsAt(player.x, player.z, structure -> structure == hut);
+        assertFalse(found.isEmpty(), "the player's lookup was dropped behind mob spawn probes");
+        structures.close();
+    }
+
+    /** A host whose lookup workers wait on {@code release} the first {@code holds} times they ask its sea level, before the start lock. */
+    private static VanillaStructures.Host holdingHost(Thread server, java.util.concurrent.CountDownLatch release, java.util.concurrent.atomic.AtomicInteger held, int holds) {
+        VanillaStructures.Host flat = hostOf((x, z) -> 100);
+        return new VanillaStructures.Host() {
+            @Override public int ground(int x, int z) { return 100; }
+            @Override public int water(int x, int z) { return 62; }
+            @Override public Holder<Biome> biome(int x, int y, int z) { return plains; }
+            @Override public int floor(int x, int z) { return 100; }
+            @Nullable @Override public LevelChunkSection cube(int cx, int cy, int cz) { return null; }
+            @Override public BlockState fill(int x, int y, int z, int depth) { return Blocks.STONE.defaultBlockState(); }
+            @Override public int seaLevel() {
+                if (Thread.currentThread() != server && held.getAndIncrement() < holds) {
+                    try { release.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                }
+                return 63;
+            }
+            @Override public Stream<Holder<Biome>> possibleBiomes() { return flat.possibleBiomes(); }
+        };
+    }
+
+    @Test void aSavedCubeIsHandedOutOnlyOnceItsColumnIsLaidOut() throws InterruptedException {
+        // A returning player: a cube worker reads the temple's cube from the save.
+        TestStructure temple = new TestStructure(plains, GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE, 40);
+        RegistryAccess registries = singleStructureRegistries("test_returning_temple", temple);
+        Thread server = Thread.currentThread();
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger held = new java.util.concurrent.atomic.AtomicInteger();
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, holdingHost(server, release, held, 1), 1L);
+        structures.serverThread(() -> Thread.currentThread() == server);
+        Thread arrival = new Thread(() -> structures.warm(2, 0), "Earth cube worker (test)");
+        arrival.start();
+        try {
+            // While its column is being laid out (held here), the cube is not handed out.
+            for (long until = System.currentTimeMillis() + 20_000; held.get() < 1 && System.currentTimeMillis() < until; Thread.sleep(10)) {}
+            Thread.sleep(200);
+            assertTrue(arrival.isAlive(), "the saved cube was handed out before its column was laid out");
+        } finally {
+            release.countDown();
+        }
+        arrival.join(20_000);
+        assertFalse(arrival.isAlive());
+        // Once it is, the first lookup inside the temple (YUNG's Pharaoh dying there) finds it.
+        List<StructureStart> found = structures.startsAt(2, 0, structure -> structure == temple);
+        assertTrue(found.stream().anyMatch(start -> start.getChunkPos().equals(new ChunkPos(0, 0))));
+        assertNotNull(structures.startOf(temple, 0, 0), "and the start by its reference, for mob spawns");
+    }
+
+    @Test void probesAreAdmittedOnlyToTheirShareWhileTheWorkersAreHeld() throws InterruptedException {
+        TestStructure hut = new TestStructure(plains, GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE, 12);
+        RegistryAccess registries = singleStructureRegistries("test_share_hut", hut); // a start in every chunk, so every job asks and is held
+        Thread server = Thread.currentThread();
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger held = new java.util.concurrent.atomic.AtomicInteger();
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, holdingHost(server, release, held, 2), 1L);
+        structures.serverThread(() -> Thread.currentThread() == server);
+        try {
+            for (int i = 0; i < VanillaStructures.MOST_PROBES + 50; i++) structures.startsAt(20_000 + i * 40, 20_000);
+            for (long until = System.currentTimeMillis() + 20_000; held.get() < 2 && System.currentTimeMillis() < until; Thread.sleep(10)) {}
+            assertEquals(VanillaStructures.MOST_PROBES, structures.queued(), "probes fill only their share");
+            // A typed probe (vanilla's fortress spawn check, getStructureAt) counts as one.
+            structures.startsAt(40_000, 40_000, structure -> structure == hut, true);
+            assertEquals(VanillaStructures.MOST_PROBES, structures.queued(), "a typed probe went past the probes' share");
+            // A lookup for a structure is still admitted.
+            structures.startsAt(41_000, 41_000, structure -> structure == hut);
+            assertEquals(VanillaStructures.MOST_PROBES + 1, structures.queued(), "a lookup was not admitted");
+        } finally {
+            structures.close();
+            release.countDown();
+        }
+    }
+
+    // Big layouts make their base cubes ahead (ancient cities, YUNG's mineshafts) ---------------
+
+    @Test void layoutsMakeAheadTheCubesTheirPiecesAndTerrainAdaptationRead() {
+        // A piece 40 blocks across at Y 100..108 in chunk 0, 0, laid out 1,000 blocks below its frame.
+        BoundingBox box = new BoundingBox(0, 100, 0, 40, 108, 40);
+        int shift = 1000, floor = box.minY() + shift, top = box.maxY() + shift;
+        List<StructurePiece> pieces = List.of(new BoxPiece(box));
+        var adapted = VanillaStructures.reads(pieces, shift, TerrainAdjustment.BEARD_THIN, 0, 0);
+        // Every block adapt reads: the fill down to its bottom, the cut up to its headroom, out to ADAPT sideways.
+        for (int x = -VanillaStructures.ADAPT; x <= 40 + VanillaStructures.ADAPT; x++)
+            for (int z = -VanillaStructures.ADAPT; z <= 40 + VanillaStructures.ADAPT; z++)
+                for (int y = VanillaStructures.adaptFillBottom(floor); y <= top + VanillaStructures.ADAPT_HEADROOM; y++)
+                    assertTrue(adapted.contains(net.minecraft.core.SectionPos.asLong(x >> 4, y >> 4, z >> 4)), "missing " + x + ", " + y + ", " + z);
+        // Buried and encapsulated structures: wrapped 3 blocks round, so not the beard's reach.
+        var buried = VanillaStructures.reads(pieces, shift, TerrainAdjustment.ENCAPSULATE, 0, 0);
+        for (int x = -3; x <= 43; x++) for (int z = -3; z <= 43; z++) for (int y = floor - 3; y <= top + 3; y++)
+            assertTrue(buried.contains(net.minecraft.core.SectionPos.asLong(x >> 4, y >> 4, z >> 4)), "missing " + x + ", " + y + ", " + z);
+        assertTrue(buried.size() < adapted.size());
+        // Without adaptation, the piece's own cubes and those a block round it, nothing far above or below.
+        var plain = VanillaStructures.reads(pieces, shift, TerrainAdjustment.NONE, 0, 0);
+        assertTrue(plain.contains(net.minecraft.core.SectionPos.asLong(0, floor >> 4, 0)));
+        assertFalse(plain.contains(net.minecraft.core.SectionPos.asLong(0, (floor >> 4) - 2, 0)));
+        assertTrue(plain.size() < adapted.size());
+        // Only the chunks a layout places, within REACH of its start.
+        BoundingBox wide = new BoundingBox(-400, 100, 0, 400, 101, 0);
+        var clipped = VanillaStructures.reads(List.of(new BoxPiece(wide)), 0, TerrainAdjustment.NONE, 0, 0);
+        assertFalse(clipped.contains(net.minecraft.core.SectionPos.asLong(-10, 6, 0)));
+        assertTrue(clipped.contains(net.minecraft.core.SectionPos.asLong(-8, 6, 0)));
+    }
+
     // Issue #216: surface slope / relief checks --------------------------------------------------
 
     @Test void footprintFitsAcceptsFlatAndGentleSlopes() {
@@ -242,6 +580,10 @@ class VanillaStructuresTest {
     // Test fixtures ------------------------------------------------------------------------------
 
     private static RegistryAccess singleStructureRegistries(String name, Structure structure) {
+        return singleStructureRegistries(name, structure, 1, 0);
+    }
+
+    private static RegistryAccess singleStructureRegistries(String name, Structure structure, int spacing, int separation) {
         ResourceLocation id = ResourceLocation.fromNamespaceAndPath("minecraft", name);
         MappedRegistry<Structure> structures = new MappedRegistry<>(Registries.STRUCTURE, Lifecycle.stable());
         Holder.Reference<Structure> holder = structures.register(ResourceKey.create(Registries.STRUCTURE, id), structure, RegistrationInfo.BUILT_IN);
@@ -250,10 +592,32 @@ class VanillaStructuresTest {
         MappedRegistry<StructureSet> sets = new MappedRegistry<>(Registries.STRUCTURE_SET, Lifecycle.stable());
         StructureSet set = new StructureSet(
                 List.of(StructureSet.entry(holder)),
-                new RandomSpreadStructurePlacement(1, 0, RandomSpreadType.LINEAR, 12345));
+                new RandomSpreadStructurePlacement(spacing, separation, RandomSpreadType.LINEAR, 12345));
         sets.register(ResourceKey.create(Registries.STRUCTURE_SET, id), set, RegistrationInfo.BUILT_IN);
         sets.freeze();
 
+        return new RegistryAccess.ImmutableRegistryAccess(List.of(structures, sets)).freeze();
+    }
+
+    /** A shrine set in every chunk, kept {@code apart} chunks from a stronghold set on vanilla's concentric rings. */
+    private static RegistryAccess ringExcludedRegistries(Structure shrine, Structure stronghold, int apart) {
+        MappedRegistry<Structure> structures = new MappedRegistry<>(Registries.STRUCTURE, Lifecycle.stable());
+        Holder.Reference<Structure> shrineHolder = structures.register(ResourceKey.create(Registries.STRUCTURE,
+                ResourceLocation.fromNamespaceAndPath("test", "shrine")), shrine, RegistrationInfo.BUILT_IN);
+        Holder.Reference<Structure> strongholdHolder = structures.register(ResourceKey.create(Registries.STRUCTURE,
+                ResourceLocation.withDefaultNamespace("stronghold")), stronghold, RegistrationInfo.BUILT_IN);
+        structures.freeze();
+
+        MappedRegistry<StructureSet> sets = new MappedRegistry<>(Registries.STRUCTURE_SET, Lifecycle.stable());
+        Holder.Reference<StructureSet> rings = sets.register(ResourceKey.create(Registries.STRUCTURE_SET, ResourceLocation.withDefaultNamespace("strongholds")),
+                new StructureSet(List.of(StructureSet.entry(strongholdHolder)), new ConcentricRingsStructurePlacement(32, 3, 128, HolderSet.direct(plains))),
+                RegistrationInfo.BUILT_IN);
+        sets.register(ResourceKey.create(Registries.STRUCTURE_SET, ResourceLocation.fromNamespaceAndPath("test", "shrines")),
+                new StructureSet(List.of(StructureSet.entry(shrineHolder)), new RandomSpreadStructurePlacement(net.minecraft.core.Vec3i.ZERO,
+                        StructurePlacement.FrequencyReductionMethod.DEFAULT, 1f, 78409300,
+                        Optional.of(new StructurePlacement.ExclusionZone(rings, apart)), 1, 0, RandomSpreadType.LINEAR)),
+                RegistrationInfo.BUILT_IN);
+        sets.freeze();
         return new RegistryAccess.ImmutableRegistryAccess(List.of(structures, sets)).freeze();
     }
 

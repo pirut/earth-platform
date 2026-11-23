@@ -72,17 +72,28 @@ abstract class CubicStructureManagerMixin {
     private void earthplatform$startsInChunk(ChunkPos chunk, Predicate<Structure> wanted, CallbackInfoReturnable<List<StructureStart>> result) {
         ServerCubeWorld cubes = earthplatform$cubes();
         if (cubes == null) return;
-        List<StructureStart> found = new ArrayList<>();
-        for (StructureStart start : cubes.generator().structureStarts(chunk.x, chunk.z)) if (wanted.test(start.getStructure())) found.add(start);
-        result.setReturnValue(found);
+        result.setReturnValue(new ArrayList<>(cubes.generator().structureStarts(chunk.x, chunk.z, wanted)));
+    }
+
+    /** As vanilla's, asked as a probe: mob spawns ask it round every player (the fortress check). */
+    @Inject(method = "getStructureAt(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/levelgen/structure/Structure;)Lnet/minecraft/world/level/levelgen/structure/StructureStart;",
+            at = @At("HEAD"), cancellable = true)
+    private void earthplatform$structureAt(BlockPos pos, Structure structure, CallbackInfoReturnable<StructureStart> result) {
+        ServerCubeWorld cubes = earthplatform$cubes();
+        if (cubes == null) return;
+        for (StructureStart start : cubes.generator().structureStarts(pos.getX() >> 4, pos.getZ() >> 4, s -> s == structure, true)) {
+            if (start.getBoundingBox().isInside(pos)) {
+                result.setReturnValue(start);
+                return;
+            }
+        }
+        result.setReturnValue(StructureStart.INVALID_START);
     }
 
     @Inject(method = "startsForStructure(Lnet/minecraft/core/SectionPos;Lnet/minecraft/world/level/levelgen/structure/Structure;)Ljava/util/List;", at = @At("HEAD"), cancellable = true)
     private void earthplatform$startsInSection(SectionPos section, Structure structure, CallbackInfoReturnable<List<StructureStart>> result) {
         ServerCubeWorld cubes = earthplatform$cubes();
         if (cubes == null) return;
-        List<StructureStart> found = new ArrayList<>();
-        for (StructureStart start : cubes.generator().structureStarts(section.x(), section.z())) if (start.getStructure() == structure) found.add(start);
-        result.setReturnValue(found);
+        result.setReturnValue(new ArrayList<>(cubes.generator().structureStarts(section.x(), section.z(), s -> s == structure)));
     }
 }
