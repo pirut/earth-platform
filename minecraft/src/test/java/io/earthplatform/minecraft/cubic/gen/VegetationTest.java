@@ -125,4 +125,36 @@ class VegetationTest {
         TreeShape[] brokenModAddition = trees.grow(crashingBirch, Blocks.GRASS_BLOCK.defaultBlockState());
         assertEquals(0, brokenModAddition.length, "broken third-party mod additions should still be skipped");
     }
+
+    @Test void featuresGrownAsTreesAreGivenAChunkGenerator() {
+        var biomes = SurfacePacketFixtures.biomes();
+        var generator = new SurfaceGenerator(0, biomes, RandomSource.create(0)) {
+            @Override protected void ground(int x, int z, int[] out) { out[0] = 0; out[1] = DRY; }
+            @Override protected Surface surface(int x, int z, int ground, int water, int slope) {
+                return new Surface(biomes.getHolderOrThrow(Biomes.FOREST), GRASS, DIRT, 80, 0, 0, 0, 0, false);
+            }
+            @Override public String id() { return "test_feature_generator"; }
+            @Override public int seaLevel() { return 0; }
+            @Override protected int shoreLevel() { return 0; }
+            @Override protected boolean emeralds(int maxGround) { return false; }
+        };
+        Trees trees = new Trees(generator);
+        // As Aquamirae's camps do: read the generator's sea level, then build up from the origin.
+        Feature<TreeConfiguration> camp = new Feature<>(TreeConfiguration.CODEC) {
+            @Override public boolean place(FeaturePlaceContext<TreeConfiguration> ctx) {
+                int sea = ctx.chunkGenerator().getSeaLevel();
+                assertEquals(ctx.level().getSeaLevel(), sea, "the generator's sea level is the level's");
+                for (int y = 0; y < 6; y++) ctx.level().setBlock(ctx.origin().above(y), Blocks.SPRUCE_LOG.defaultBlockState(), 2);
+                for (int x = -2; x <= 2; x++) for (int z = -2; z <= 2; z++)
+                    ctx.level().setBlock(ctx.origin().offset(x, 6, z), Blocks.SPRUCE_LEAVES.defaultBlockState(), 2);
+                return true;
+            }
+        };
+        TreeConfiguration config = new TreeConfiguration.TreeConfigurationBuilder(
+                BlockStateProvider.simple(Blocks.SPRUCE_LOG), new StraightTrunkPlacer(5, 2, 0),
+                BlockStateProvider.simple(Blocks.SPRUCE_LEAVES), new BlobFoliagePlacer(ConstantInt.of(2), ConstantInt.of(0), 3),
+                new TwoLayersFeatureSize(1, 0, 1)).build();
+        TreeShape[] grown = trees.grow(new ConfiguredFeature<>(camp, config), Blocks.GRASS_BLOCK.defaultBlockState());
+        assertTrue(grown.length > 0, "a mod feature that reads the chunk generator grows instead of failing");
+    }
 }

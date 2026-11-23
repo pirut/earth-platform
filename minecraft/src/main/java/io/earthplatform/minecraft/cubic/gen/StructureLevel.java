@@ -75,11 +75,17 @@ final class StructureLevel implements WorldGenLevel {
     private final long seed;
     private final RandomSource random;
     private final BiomeManager biomes;
-    private final ProtoChunk scratch;
+    private final net.minecraft.core.Registry<Biome> biomeRegistry;
+    /** The chunks code asks this level for (see {@link View}), by chunk position, and the one placeholder section they are made with. */
+    private final Long2ObjectOpenHashMap<View> views = new Long2ObjectOpenHashMap<>();
+    private final net.minecraft.world.level.chunk.LevelChunkSection placeholder;
     private final LevelLightEngine light;
     /** Written blocks by packed real position, block entities likewise, and entity tags at real positions. */
     final Long2ObjectOpenHashMap<BlockState> blocks = new Long2ObjectOpenHashMap<>();
+    /** Block entities as code made them, at the positions it sees (frame ones), by packed real position. */
     private final Long2ObjectOpenHashMap<BlockEntity> blockEntities = new Long2ObjectOpenHashMap<>();
+    /** Where a block entity was removed, so none is made again there for the block. */
+    private final LongOpenHashSet removedBlockEntities = new LongOpenHashSet();
     final List<CompoundTag> entities = new ArrayList<>();
     final LongOpenHashSet postProcess = new LongOpenHashSet();
     /**
@@ -91,7 +97,14 @@ final class StructureLevel implements WorldGenLevel {
     private final int lowest;
 
     StructureLevel(ServerLevel level, Terrain terrain, int shift, int minY, int height, int seaLevel, BlockPos anchor, int lowest, long seed, RandomSource random) {
+        this(level, level.registryAccess().registryOrThrow(Registries.BIOME), terrain, shift, minY, height, seaLevel, anchor, lowest, seed, random);
+    }
+
+    StructureLevel(@Nullable ServerLevel level, net.minecraft.core.Registry<Biome> biomeRegistry, Terrain terrain, int shift, int minY, int height, int seaLevel,
+                   BlockPos anchor, int lowest, long seed, RandomSource random) {
         this.level = level;
+        this.biomeRegistry = biomeRegistry;
+        this.placeholder = new net.minecraft.world.level.chunk.LevelChunkSection(biomeRegistry);
         this.anchorX = anchor.getX(); this.anchorY = anchor.getY(); this.anchorZ = anchor.getZ();
         this.lowest = lowest;
         this.terrain = terrain;
@@ -99,10 +112,6 @@ final class StructureLevel implements WorldGenLevel {
         this.seed = seed;
         this.random = random;
         this.biomes = new BiomeManager(this, BiomeManager.obfuscateSeed(seed));
-        var biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME);
-        this.scratch = new ProtoChunk(ChunkPos.ZERO, UpgradeData.EMPTY, net.minecraft.world.level.LevelHeightAccessor.create(0, 16), biomeRegistry, null) {
-            @Override public void markPosForPostprocessing(BlockPos pos) { postProcess.add(key(real(pos))); }
-        };
         this.light = new LevelLightEngine(new net.minecraft.world.level.chunk.LightChunkGetter() {
             @Override public net.minecraft.world.level.chunk.LightChunk getChunkForLighting(int x, int z) { return null; }
             @Override public net.minecraft.world.level.BlockGetter getLevel() { return StructureLevel.this; }
@@ -123,7 +132,10 @@ final class StructureLevel implements WorldGenLevel {
             BlockEntity entity = entry.getValue();
             BlockState state = blocks.get(entry.getLongKey());
             if (state == null || !state.hasBlockEntity()) continue;
-            tags.add(entity.saveWithFullMetadata(level.registryAccess()));
+            CompoundTag tag = entity.saveWithFullMetadata(registryAccess());
+            BlockPos real = at(entry.getLongKey()); // the block entity itself sits where the frame put it
+            tag.putInt("x", real.getX()); tag.putInt("y", real.getY()); tag.putInt("z", real.getZ());
+            tags.add(tag);
         }
         return tags;
     }
@@ -166,7 +178,8 @@ final class StructureLevel implements WorldGenLevel {
         if (state.hasBlockEntity()) {
             BlockEntity existing = blockEntities.get(key);
             if (existing == null || !existing.isValidBlockState(state)) {
-                BlockEntity created = ((EntityBlock) state.getBlock()).newBlockEntity(r.immutable(), state);
+                removedBlockEntities.remove(key);
+                BlockEntity created = ((EntityBlock) state.getBlock()).newBlockEntity(pos.immutable(), state);
                 if (created != null) blockEntities.put(key, created); else blockEntities.remove(key);
             } else existing.setBlockState(state);
         }
@@ -179,6 +192,22 @@ final class StructureLevel implements WorldGenLevel {
     @Override public boolean isStateAtPosition(BlockPos pos, Predicate<BlockState> predicate) { return predicate.test(getBlockState(pos)); }
     @Override public boolean isFluidAtPosition(BlockPos pos, Predicate<FluidState> predicate) { return predicate.test(getFluidState(pos)); }
 
+    /**
+     * Keeps a block entity some code made itself (through a chunk's own setBlockEntity), at the real
+     * position of the block it stands at, as one this level makes for a block written.
+     */
+    void putBlockEntity(BlockEntity entity) {
+        long key = key(real(entity.getBlockPos()));
+        removedBlockEntities.remove(key);
+        blockEntities.put(key, entity); // the live one, so later changes to it are kept; moved to real heights when saved
+    }
+
+    void removeBlockEntityAt(BlockPos pos) {
+        long key = key(real(pos));
+        blockEntities.remove(key);
+        removedBlockEntities.add(key);
+    }
+
     @Nullable @Override public BlockEntity getBlockEntity(BlockPos pos) {
         BlockPos r = real(pos);
         long key = key(r);
@@ -186,7 +215,8 @@ final class StructureLevel implements WorldGenLevel {
         if (entity != null) return entity;
         BlockState state = blocks.get(key);
         if (state == null || !state.hasBlockEntity()) return null;
-        entity = ((EntityBlock) state.getBlock()).newBlockEntity(r.immutable(), state);
+        if (removedBlockEntities.contains(key)) return null;
+        entity = ((EntityBlock) state.getBlock()).newBlockEntity(pos.immutable(), state);
         if (entity != null) blockEntities.put(key, entity);
         return entity;
     }
@@ -215,7 +245,87 @@ final class StructureLevel implements WorldGenLevel {
 
     // Chunks, biomes, light ----------------------------------------------------------------------
 
-    @Override public ChunkAccess getChunk(int x, int z, ChunkStatus status, boolean required) { return required ? scratch : null; }
+    @Override public ChunkAccess getChunk(int x, int z, ChunkStatus status, boolean required) {
+        if (!required) return null;
+        View view = views.get(ChunkPos.asLong(x, z));
+        if (view == null) views.put(ChunkPos.asLong(x, z), view = new View(x, z));
+        return view;
+    }
+
+    /**
+     * A chunk of this level, at this level's heights, for code that reads and writes a chunk's
+     * sections itself rather than through the level: YUNG's API processors (desert temples' pillars,
+     * strongholds' legs, dungeons' stairs) index the chunk's sections by height. Each section reads
+     * and writes this level's blocks, so those writes are kept as any other.
+     */
+    private final class View extends ProtoChunk {
+        private final net.minecraft.world.level.chunk.LevelChunkSection[] rows;
+
+        View(int cx, int cz) {
+            super(new ChunkPos(cx, cz), UpgradeData.EMPTY, placeholders(net.minecraft.world.level.LevelHeightAccessor.create(minY, height).getSectionsCount()), new net.minecraft.world.ticks.ProtoChunkTicks<>(),
+                    new net.minecraft.world.ticks.ProtoChunkTicks<>(), net.minecraft.world.level.LevelHeightAccessor.create(minY, height), biomeRegistry, null);
+            this.rows = new net.minecraft.world.level.chunk.LevelChunkSection[getSectionsCount()];
+        }
+
+        @Override public net.minecraft.world.level.chunk.LevelChunkSection getSection(int index) {
+            net.minecraft.world.level.chunk.LevelChunkSection row = rows[index];
+            if (row == null) rows[index] = row = new Row(getPos().getMinBlockX(), getMinBuildHeight() + index * 16, getPos().getMinBlockZ());
+            return row;
+        }
+
+        @Override public net.minecraft.world.level.chunk.LevelChunkSection[] getSections() {
+            for (int i = 0; i < rows.length; i++) getSection(i);
+            return rows;
+        }
+
+        @Override public void markPosForPostprocessing(BlockPos pos) { postProcess.add(key(real(pos))); }
+        @Nullable @Override public BlockEntity getBlockEntity(BlockPos pos) { return StructureLevel.this.getBlockEntity(pos); }
+        @Override public void setBlockEntity(BlockEntity entity) { StructureLevel.this.putBlockEntity(entity); }
+        @Override public void removeBlockEntity(BlockPos pos) { removeBlockEntityAt(pos); }
+        // As vanilla's chunks: a block is read in this chunk at its position within it.
+        @Override public BlockState getBlockState(BlockPos pos) { return StructureLevel.this.getBlockState(here(pos)); }
+        @Override public FluidState getFluidState(BlockPos pos) { return StructureLevel.this.getFluidState(here(pos)); }
+        private BlockPos here(BlockPos pos) {
+            return new BlockPos(getPos().getMinBlockX() + (pos.getX() & 15), pos.getY(), getPos().getMinBlockZ() + (pos.getZ() & 15));
+        }
+        @Override public int getHeight(Heightmap.Types type, int x, int z) {
+            return StructureLevel.this.getHeight(type, getPos().getMinBlockX() + (x & 15), getPos().getMinBlockZ() + (z & 15)) - 1;
+        }
+        @Override public Holder<Biome> getNoiseBiome(int qx, int qy, int qz) {
+            return StructureLevel.this.getNoiseBiome((getPos().getMinBlockX() >> 2) + (qx & 3), qy, (getPos().getMinBlockZ() >> 2) + (qz & 3));
+        }
+    }
+
+    private net.minecraft.world.level.chunk.LevelChunkSection[] placeholders(int count) {
+        var sections = new net.minecraft.world.level.chunk.LevelChunkSection[count];
+        java.util.Arrays.fill(sections, placeholder);
+        return sections;
+    }
+
+    /** Sixteen rows of a {@link View}, in this level's (frame) heights. */
+    private final class Row extends net.minecraft.world.level.chunk.LevelChunkSection {
+        private final int x0, y0, z0;
+
+        Row(int x0, int y0, int z0) {
+            super(biomeRegistry);
+            this.x0 = x0; this.y0 = y0; this.z0 = z0;
+        }
+
+        @Override public BlockState getBlockState(int x, int y, int z) { return StructureLevel.this.getBlockState(new BlockPos(x0 + x, y0 + y, z0 + z)); }
+        @Override public FluidState getFluidState(int x, int y, int z) { return getBlockState(x, y, z).getFluidState(); }
+        @Override public BlockState setBlockState(int x, int y, int z, BlockState state) { return setBlockState(x, y, z, state, true); }
+        @Override public BlockState setBlockState(int x, int y, int z, BlockState state, boolean lock) {
+            BlockPos pos = new BlockPos(x0 + x, y0 + y, z0 + z);
+            BlockState old = StructureLevel.this.getBlockState(pos);
+            setBlock(pos, state, 2);
+            return old;
+        }
+        @Override public boolean hasOnlyAir() { return false; }
+        @Override public boolean maybeHas(Predicate<BlockState> predicate) { return true; }
+        @Override public Holder<Biome> getNoiseBiome(int qx, int qy, int qz) {
+            return StructureLevel.this.getNoiseBiome((x0 >> 2) + qx, (y0 >> 2) + qy, (z0 >> 2) + qz);
+        }
+    }
     @Override public boolean hasChunk(int x, int z) { return true; }
     @Override public BiomeManager getBiomeManager() { return biomes; }
     @Override public Holder<Biome> getUncachedNoiseBiome(int qx, int qy, int qz) { return terrain.biome(qx << 2, (qy << 2) + shift, qz << 2); }
@@ -232,7 +342,7 @@ final class StructureLevel implements WorldGenLevel {
     @Override public ServerLevel getLevel() { return level; }
     @Override public long getSeed() { return seed; }
     @Override public RandomSource getRandom() { return random; }
-    @Override public RegistryAccess registryAccess() { return level.registryAccess(); }
+    @Override public RegistryAccess registryAccess() { return level == null ? RegistryAccess.EMPTY : level.registryAccess(); }
     @Override public FeatureFlagSet enabledFeatures() { return level.enabledFeatures(); }
     @Override public LevelData getLevelData() { return level.getLevelData(); }
     @Override public DifficultyInstance getCurrentDifficultyAt(BlockPos pos) {

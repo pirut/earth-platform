@@ -128,8 +128,12 @@ final class VanillaStructures {
      * or null for another mod's own kind of placement, which is asked chunk by chunk.
      */
     private record Kind(int index, Holder<StructureSet> set, StructurePlacement placement, @Nullable RandomSpreadStructurePlacement spread, boolean deep, boolean relative) {}
-    /** A structure start; {@code reach} covers its pieces and terrain adaptation in real coordinates. */
-    private record Start(int kind, int chunkX, int chunkZ, StructureStart start, Frame frame, BoundingBox reach) {}
+    /**
+     * A structure start; {@code reach} covers its pieces and terrain adaptation in real coordinates.
+     * {@code low} is the lowest real height its layout may write: in a frame at vanilla's depths, down
+     * to the frame's bottom, where YUNG's stronghold legs and zombie dungeon legs reach over a void.
+     */
+    private record Start(int kind, int chunkX, int chunkZ, StructureStart start, Frame frame, BoundingBox reach, int low) {}
     /** The part of an overlay in one cube: block indices and states, block entity and entity tags. */
     private record Patch(short[] at, BlockState[] states, List<CompoundTag> blockEntities, List<CompoundTag> entities) {}
 
@@ -220,10 +224,9 @@ final class VanillaStructures {
     /** Copies into a cube every structure block, block entity and entity falling in it. */
     void place(LevelChunkSection section, int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
         if (!generate) return;
-        int y0 = cy << 4;
         long key = SectionPos.asLong(cx, cy, cz);
         for (Start start : column(cx, cz)) {
-            if (start.reach.maxY() < y0 || start.reach.minY() > y0 + 15) continue;
+            if (!placesInto(start.low, start.reach.maxY(), cy)) continue;
             Patch patch = overlay(start).get(key);
             if (patch == null) continue;
             for (int i = 0; i < patch.at.length; i++) {
@@ -405,7 +408,7 @@ final class VanillaStructures {
                     .append(" box ").append(start.start.getBoundingBox().moved(0, start.frame.shift, 0))
                     .append(": ").append(blocks).append(" blocks, ").append(entities).append(" entities, ")
                     .append(here == null ? 0 : here.at.length).append(" here, by cube y in this column:");
-            for (int cy = (start.reach.minY() >> 4); cy <= (start.reach.maxY() >> 4); cy++) {
+            for (int cy = (start.low >> 4); cy <= (start.reach.maxY() >> 4); cy++) {
                 Patch p = overlay.get(SectionPos.asLong(x >> 4, cy, z >> 4));
                 if (p != null) text.append(' ').append(cy).append('=').append(p.at.length);
             }
@@ -528,7 +531,22 @@ final class VanillaStructures {
                 }
             box = new BoundingBox(box.minX(), Math.min(box.minY(), low - 48), box.minZ(), box.maxX(), Math.max(box.maxY(), high + 32), box.maxZ());
         }
-        return new Start(kind.index, chunkX, chunkZ, made, frame, box);
+        return new Start(kind.index, chunkX, chunkZ, made, frame, box, lowestWrite(box.minY(), frame.minY, frame.shift));
+    }
+
+    /**
+     * The lowest real height a layout may write. A frame at vanilla's depths ends at its
+     * {@code frameMinY} (even where the local floor lies at vanilla's Y 64, so the frame is not
+     * shifted), and processors extend legs down to it over a void: placed down there too, or the
+     * legs stop in mid-air at the reach of the pieces. A surface frame reaches the world's bottom.
+     */
+    static int lowestWrite(int reachMinY, int frameMinY, int shift) {
+        return frameMinY > CubeWorld.MIN_Y ? Math.min(reachMinY, frameMinY + shift) : reachMinY;
+    }
+
+    /** Whether a layout writing from {@code low} up to {@code top} (real heights) can write in cubes at {@code cy}. */
+    static boolean placesInto(int low, int top, int cy) {
+        return top >= cy << 4 && low <= (cy << 4) + 15;
     }
 
     /**

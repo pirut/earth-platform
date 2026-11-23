@@ -322,10 +322,21 @@ public abstract class CubeWorld {
         if (ticker != null) ticker.retired = true;
     }
 
-    /** Called from Level.blockEntityChanged so edited inventories reach the save. */
+    /**
+     * Called from Level.blockEntityChanged so edited inventories reach the save. The carrier chunk
+     * there is marked unsaved too, as vanilla marks its chunk: mods keep data in chunk attachments
+     * and change it in place, trusting setChanged to save it (Create Ore Excavation's veins).
+     */
     public void blockEntityChanged(BlockPos pos) {
         Cube cube = cubeAtBlock(pos.getX(), pos.getY(), pos.getZ());
         if (cube != null) cube.markModified();
+        carrierChanged(level.getChunkSource(), pos);
+    }
+
+    /** Marks the carrier chunk at a block unsaved, if it is loaded; never loads one. */
+    static void carrierChanged(@Nullable net.minecraft.world.level.chunk.ChunkSource chunks, BlockPos pos) {
+        net.minecraft.world.level.chunk.ChunkAccess carrier = chunks == null ? null : chunks.getChunkNow(pos.getX() >> 4, pos.getZ() >> 4);
+        if (carrier != null) carrier.setUnsaved(true);
     }
 
     @SuppressWarnings("unchecked")
