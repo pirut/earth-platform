@@ -675,6 +675,21 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         return structures == null ? null : structures.startOf(structure, chunkX, chunkZ);
     }
 
+    @Override public @Nullable net.minecraft.world.level.levelgen.structure.StructureStart structureStart(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ, boolean probe) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? null : structures.startOf(structure, chunkX, chunkZ, probe);
+    }
+
+    @Override public boolean structuresReady(int chunkX, int chunkZ) {
+        VanillaStructures structures = vanilla;
+        return structures == null || structures.ready(chunkX, chunkZ);
+    }
+
+    @Override public boolean generatesWithoutWaiting(int cubeX, int cubeY, int cubeZ) {
+        VanillaStructures structures = vanilla;
+        return structures == null || structures.placesWithoutWaiting(cubeX, cubeY, cubeZ);
+    }
+
     @Override public @Nullable net.minecraft.world.level.levelgen.structure.StructureStart placedStructure(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) {
         VanillaStructures structures = vanilla;
         return structures == null ? null : structures.placed(structure, new net.minecraft.world.level.ChunkPos(chunkX, chunkZ));

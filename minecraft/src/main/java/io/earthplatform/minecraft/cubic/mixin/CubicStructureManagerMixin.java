@@ -57,13 +57,18 @@ abstract class CubicStructureManagerMixin {
         if (cubes != null) result.setReturnValue(!cubes.generator().structureStarts(pos.getX() >> 4, pos.getZ() >> 4).isEmpty());
     }
 
+    /**
+     * As a probe: vanilla asks it of the references {@code getAllStructuresAt} gave (mob spawns round
+     * every player), and Earth's own lookups by section never come here. A start evicted since must
+     * not take the places kept for a player's own lookups.
+     */
     @Inject(method = "fillStartsForStructure", at = @At("HEAD"), cancellable = true)
     private void earthplatform$fill(Structure structure, LongSet references, Consumer<StructureStart> consumer, CallbackInfo info) {
         ServerCubeWorld cubes = earthplatform$cubes();
         if (cubes == null) return;
         info.cancel();
         references.forEach(reference -> {
-            StructureStart start = cubes.generator().structureStart(structure, ChunkPos.getX(reference), ChunkPos.getZ(reference));
+            StructureStart start = cubes.generator().structureStart(structure, ChunkPos.getX(reference), ChunkPos.getZ(reference), true);
             if (start != null && start.isValid()) consumer.accept(start);
         });
     }

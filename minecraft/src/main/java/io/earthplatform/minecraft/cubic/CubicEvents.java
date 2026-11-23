@@ -83,13 +83,19 @@ public final class CubicEvents {
     /** A travel waiting for the cubes at its landing spot; the player stays where they are meanwhile. */
     private record Arrival(CommandSourceStack source, ServerPlayer player, int x, int z, int waited, @Nullable int[] view) {}
 
-    /** At most this many ticks of waiting before the rest of the cubes are loaded on the spot. */
-    private static final int ARRIVAL_PATIENCE = 200;
+    /**
+     * Ticks of waiting for the workers before the cubes that can be had without waiting on structure
+     * work are loaded on the spot, and ticks before the traveller is moved with what there is.
+     */
+    private static final int ARRIVAL_PATIENCE = 200, ARRIVAL_LIMIT = 1200;
     private static final List<Arrival> ARRIVALS = new ArrayList<>();
 
     /**
-     * Moves each waiting traveller once the workers have the cubes around their landing spot, so
-     * several players travelling at once never generate those cubes on the server thread.
+     * Moves each waiting traveller once the workers have the cubes around their landing spot and
+     * the structures there are known, so several players travelling at once never generate those
+     * cubes on the server thread, and the first lookups there (YUNG's temples) answer right. After
+     * {@link #ARRIVAL_PATIENCE} the cubes that are quick to have load on the spot, but never one that
+     * would wait for a structure start: a slow start held the server thread behind its lock.
      */
     private static void arrive(ServerLevel level, ServerCubeWorld cubes) {
         for (int i = ARRIVALS.size() - 1; i >= 0; i--) {
@@ -97,12 +103,14 @@ public final class CubicEvents {
             if (arrival.player.isRemoved()) { ARRIVALS.remove(i); continue; }
             CubeGenerator generator = cubes.generator();
             int ground = Math.max(generator.surfaceY(arrival.x, arrival.z), generator.waterY(arrival.x, arrival.z));
-            if (!cubes.readyAround(new BlockPos(arrival.x, ground, arrival.z)) && arrival.waited < ARRIVAL_PATIENCE) {
+            BlockPos at = new BlockPos(arrival.x, ground, arrival.z);
+            boolean loaded = cubes.readyAround(at) || arrival.waited >= ARRIVAL_PATIENCE && arrival.waited % 20 == 0 && cubes.loadAroundWithoutWaiting(at);
+            if (!(loaded && cubes.structuresReadyAround(at)) && arrival.waited < ARRIVAL_LIMIT) {
                 ARRIVALS.set(i, new Arrival(arrival.source, arrival.player, arrival.x, arrival.z, arrival.waited + 1, arrival.view));
                 continue;
             }
             ARRIVALS.remove(i);
-            Vec3 stand = standOn(cubes, arrival.x, arrival.z);
+            Vec3 stand = standOn(cubes, arrival.x, arrival.z, false);
             float yaw = lookOut(cubes, stand, facing(stand, arrival.view, arrival.player.getYRot()));
             arrival.player.teleportTo(level, stand.x, stand.y, stand.z, yaw, 0.0F);
             io.earthplatform.minecraft.cubic.play.EarthMap.arrived(arrival.player);
@@ -194,21 +202,26 @@ public final class CubicEvents {
     }
 
     /** The arrival point about a landing spot found before, scattered as {@link #arrival} does. */
-    public static Vec3 arrivalAt(ServerCubeWorld cubes, int[] landing) {
+    public static Vec3 arrivalAt(ServerCubeWorld cubes, int[] landing) { return arrivalAt(cubes, landing, true); }
+
+    /** The same; unless {@code loadAll}, cubes there that would wait on structure work are left to the workers. */
+    public static Vec3 arrivalAt(ServerCubeWorld cubes, int[] landing, boolean loadAll) {
         int[] spot = scatter(cubes, landing);
-        return standOn(cubes, spot[0], spot[1]);
+        return standOn(cubes, spot[0], spot[1], loadAll);
     }
 
     /**
      * A place to stand near a column, on the ground or swimming on water, with the cubes there
      * loaded: the nearest spot within a few blocks with room above the ground (grass and a dusting
      * of snow leave room) and not on powder snow, which a player sinks into and freezes in; else on
-     * top of whatever stands there, such as a tree, with a drift underfoot packed firm.
+     * top of whatever stands there, such as a tree, with a drift underfoot packed firm. Unless
+     * {@code loadAll}, cubes there that would wait on structure work are left to the workers.
      */
-    private static Vec3 standOn(ServerCubeWorld cubes, int x, int z) {
+    private static Vec3 standOn(ServerCubeWorld cubes, int x, int z, boolean loadAll) {
         CubeGenerator generator = cubes.generator();
         int ground = Math.max(generator.surfaceY(x, z), generator.waterY(x, z));
-        cubes.loadAround(new BlockPos(x, ground, z));
+        if (loadAll) cubes.loadAround(new BlockPos(x, ground, z));
+        else cubes.loadAroundWithoutWaiting(new BlockPos(x, ground, z));
         // First somewhere dry and roomy, so nobody arrives in a one-block pit facing a wall, then dry
         // with headroom; swimming only where there is no dry ground (a start on a sea stack or islet).
         for (int pass = 0; pass < 4; pass++)

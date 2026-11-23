@@ -332,6 +332,45 @@ public final class ServerCubeWorld extends CubeWorld {
         return ready;
     }
 
+    /**
+     * Server thread. Whether the structures of the chunk columns about a block are known, so the
+     * first lookups there (YUNG's temples, mob spawns) answer right; asks for them aside until they
+     * are. Cubes read from the save leave their columns to be laid out so, and an arrival waits.
+     */
+    public boolean structuresReadyAround(BlockPos pos) {
+        int cx = pos.getX() >> 4, cz = pos.getZ() >> 4;
+        boolean ready = true;
+        for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) ready &= generator.structuresReady(cx + dx, cz + dz);
+        return ready;
+    }
+
+    /**
+     * Server thread. Loads at once the cubes about a block that can be had without waiting on
+     * structure work: saved ones, and ones whose structures are all laid out and placed. The rest
+     * are left to the workers, since making one here would hold the server behind the start lock
+     * for as long as a slow start (an ancient city) takes. True once they are all loaded.
+     */
+    public boolean loadAroundWithoutWaiting(BlockPos pos) {
+        int cx = pos.getX() >> 4, cy = pos.getY() >> 4, cz = pos.getZ() >> 4;
+        boolean ready = true;
+        for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) {
+            int x = cx + dx, y = cy + dy, z = cz + dz;
+            long key = CubeKey.pack(x, y, z);
+            if (cubes.containsKey(key)) continue;
+            if (saved(key) || generator.generatesWithoutWaiting(x, y, z)) loadNow(x, y, z);
+            if (!cubes.containsKey(key)) {
+                ready = false;
+                request(key, true);
+            }
+        }
+        return ready;
+    }
+
+    private boolean saved(long key) {
+        try { return storage.read(key) != null; }
+        catch (IOException | RuntimeException failure) { return false; }
+    }
+
     /** How far round a block column {@link #readyGround} readies the ground, in blocks: the chunks loaded about a player, where mobs spawn. */
     private static final int READY_REACH = 128;
     /** Longest {@link #readyGround} is waited for, in seconds, before the server thread asks for the ground anyway. */

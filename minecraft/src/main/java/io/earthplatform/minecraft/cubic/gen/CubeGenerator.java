@@ -36,6 +36,14 @@ public interface CubeGenerator {
     }
     /** One structure's start in a chunk at real heights, or null. */
     default @javax.annotation.Nullable net.minecraft.world.level.levelgen.structure.StructureStart structureStart(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) { return null; }
+    /** The same, as a mob spawn's probe (true) or a lookup for a structure (false), which share the work queued aside differently. */
+    default @javax.annotation.Nullable net.minecraft.world.level.levelgen.structure.StructureStart structureStart(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ, boolean probe) {
+        return structureStart(structure, chunkX, chunkZ);
+    }
+    /** Server thread: whether a chunk column's structures are known, so lookups there answer right; asks for them aside until they are. */
+    default boolean structuresReady(int chunkX, int chunkZ) { return true; }
+    /** Whether a cube can be generated now without waiting on structure work another thread holds (the start lock, a layout). */
+    default boolean generatesWithoutWaiting(int cubeX, int cubeY, int cubeZ) { return true; }
     /** A start of a structure in a chunk as /place structure makes one, in any biome, at real heights; null where it cannot start. */
     default @javax.annotation.Nullable net.minecraft.world.level.levelgen.structure.StructureStart placedStructure(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) { return null; }
     /** The chunk generator vanilla structure code sees this world through, at real heights, or null where it has none. */

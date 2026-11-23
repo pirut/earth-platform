@@ -169,7 +169,8 @@ public final class EarthWorlds {
         CompletableFuture<Void> preparing;
         /** Where the start's landing search found to stand, found off the server thread with the data. */
         @Nullable volatile int[] landing;
-        static final int LANDING_PATIENCE = 200;
+        /** Ticks before the cubes quick to have load on the spot, and before the players are let in with what there is. */
+        static final int LANDING_PATIENCE = 200, LANDING_LIMIT = 1200;
         boolean ready;
         long retryAt, lastSample, firstWait;
         /** Counts server spawn moves, so a landing search for an old spawn is thrown away. */
@@ -292,19 +293,23 @@ public final class EarthWorlds {
             }
         }
 
-        /** Ticks spent waiting for the cubes at the landing, which the workers make; after that they load on the spot. */
+        /** Ticks spent waiting for the cubes at the landing, which the workers make. */
         int landingTicks;
 
         /**
-         * Whether the cubes about the start's landing spot are made: asked of the workers and waited
-         * for, rather than generated on the server thread when the first player arrives.
+         * Whether the cubes about the start's landing spot are made and the structures there known:
+         * asked of the workers and waited for, rather than generated on the server thread when the
+         * first player arrives. After {@link #LANDING_PATIENCE} the cubes quick to have load on the
+         * spot, but never one that would wait for a structure start, as a slow one holds its lock.
          */
         private boolean landingLoaded(ServerCubeWorld cubes) {
             int[] spot = landing;
-            if (spot == null || landingTicks >= LANDING_PATIENCE) return true;
+            if (spot == null || landingTicks >= LANDING_LIMIT) return true;
             var generator = cubes.generator();
             int ground = Math.max(generator.surfaceY(spot[0], spot[1]), generator.waterY(spot[0], spot[1]));
-            if (cubes.readyAround(new net.minecraft.core.BlockPos(spot[0], ground, spot[1]))) return true;
+            var at = new net.minecraft.core.BlockPos(spot[0], ground, spot[1]);
+            boolean loaded = cubes.readyAround(at) || landingTicks >= LANDING_PATIENCE && landingTicks % 20 == 0 && cubes.loadAroundWithoutWaiting(at);
+            if (loaded && cubes.structuresReadyAround(at)) return true;
             landingTicks++;
             return false;
         }
@@ -368,7 +373,8 @@ public final class EarthWorlds {
             release(player);
             int[] view = view(cubes);
             int[] found = landing;
-            Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found) : CubicEvents.arrival(cubes, view);
+            // Waited for above: cubes still missing there are the workers', never made here behind a structure start.
+            Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found, false) : CubicEvents.arrival(cubes, view);
             ServerLevel level = server.getLevel(Cubic.LEVEL);
             player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
             player.resetFallDistance();
