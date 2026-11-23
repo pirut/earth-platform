@@ -119,6 +119,39 @@ final class TreeLevel implements WorldGenLevel {
     @Override public int getHeight() { return 512; }
     @Override public int getSeaLevel() { return -64; }
 
+    /**
+     * The chunk generator a feature grown here is given, with this level's heights. Vanilla's trees
+     * never ask, but features other mods list among a biome's trees do: Aquamirae's camps read its sea level.
+     */
+    net.minecraft.world.level.chunk.ChunkGenerator generator() { return new Generator(biome); }
+
+    private static final class Generator extends net.minecraft.world.level.chunk.ChunkGenerator {
+        Generator(Holder<Biome> biome) { super(new net.minecraft.world.level.biome.FixedBiomeSource(biome)); }
+        @Override protected com.mojang.serialization.MapCodec<? extends net.minecraft.world.level.chunk.ChunkGenerator> codec() { throw new UnsupportedOperationException("tree level"); }
+        @Override public void applyCarvers(net.minecraft.server.level.WorldGenRegion region, long seed, net.minecraft.world.level.levelgen.RandomState random,
+                                           BiomeManager biomes, net.minecraft.world.level.StructureManager structures, ChunkAccess chunk,
+                                           net.minecraft.world.level.levelgen.GenerationStep.Carving step) {}
+        @Override public void buildSurface(net.minecraft.server.level.WorldGenRegion region, net.minecraft.world.level.StructureManager structures,
+                                           net.minecraft.world.level.levelgen.RandomState random, ChunkAccess chunk) {}
+        @Override public void spawnOriginalMobs(net.minecraft.server.level.WorldGenRegion region) {}
+        @Override public int getGenDepth() { return 512; }
+        @Override public java.util.concurrent.CompletableFuture<ChunkAccess> fillFromNoise(net.minecraft.world.level.levelgen.blending.Blender blender,
+                net.minecraft.world.level.levelgen.RandomState random, net.minecraft.world.level.StructureManager structures, ChunkAccess chunk) {
+            return java.util.concurrent.CompletableFuture.completedFuture(chunk);
+        }
+        @Override public int getSeaLevel() { return -64; }
+        @Override public int getMinY() { return -64; }
+        @Override public int getBaseHeight(int x, int z, Heightmap.Types type, net.minecraft.world.level.LevelHeightAccessor heights,
+                                           net.minecraft.world.level.levelgen.RandomState random) { return 0; }
+        @Override public net.minecraft.world.level.NoiseColumn getBaseColumn(int x, int z, net.minecraft.world.level.LevelHeightAccessor heights,
+                                                                             net.minecraft.world.level.levelgen.RandomState random) {
+            BlockState[] states = new BlockState[64];
+            for (int i = 0; i < states.length; i++) states[i] = i == 63 ? Blocks.GRASS_BLOCK.defaultBlockState() : i >= 60 ? Blocks.DIRT.defaultBlockState() : STONE;
+            return new net.minecraft.world.level.NoiseColumn(-64, states);
+        }
+        @Override public void addDebugScreenInfo(List<String> info, net.minecraft.world.level.levelgen.RandomState random, BlockPos pos) {}
+    }
+
     // The rest of a level, which trees never use -------------------------------------------------
 
     @Nullable @Override public ServerLevel getLevel() { return null; }

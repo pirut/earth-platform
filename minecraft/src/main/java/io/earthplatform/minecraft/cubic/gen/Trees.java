@@ -642,7 +642,7 @@ final class Trees {
             RandomSource random = RandomSource.create(0x54524545L + attempt * 0x9E3779B97F4A7C15L);
             TreeLevel level = new TreeLevel(top, under, anywhere, random);
             try {
-                if (!feature.place(level, null, random, BlockPos.ZERO)) continue;
+                if (!feature.place(level, level.generator(), random, BlockPos.ZERO)) continue;
             } catch (RuntimeException failure) {
                 EarthPlatformMod.LOGGER.warn("Could not grow tree feature {}", feature, failure);
                 break;

@@ -75,7 +75,10 @@ final class StructureLevel implements WorldGenLevel {
     private final long seed;
     private final RandomSource random;
     private final BiomeManager biomes;
-    private final ProtoChunk scratch;
+    private final net.minecraft.core.Registry<Biome> biomeRegistry;
+    /** The chunks code asks this level for (see {@link View}), by chunk position, and the one placeholder section they are made with. */
+    private final Long2ObjectOpenHashMap<View> views = new Long2ObjectOpenHashMap<>();
+    private final net.minecraft.world.level.chunk.LevelChunkSection placeholder;
     private final LevelLightEngine light;
     /** Written blocks by packed real position, block entities likewise, and entity tags at real positions. */
     final Long2ObjectOpenHashMap<BlockState> blocks = new Long2ObjectOpenHashMap<>();
@@ -91,7 +94,14 @@ final class StructureLevel implements WorldGenLevel {
     private final int lowest;
 
     StructureLevel(ServerLevel level, Terrain terrain, int shift, int minY, int height, int seaLevel, BlockPos anchor, int lowest, long seed, RandomSource random) {
+        this(level, level.registryAccess().registryOrThrow(Registries.BIOME), terrain, shift, minY, height, seaLevel, anchor, lowest, seed, random);
+    }
+
+    StructureLevel(@Nullable ServerLevel level, net.minecraft.core.Registry<Biome> biomeRegistry, Terrain terrain, int shift, int minY, int height, int seaLevel,
+                   BlockPos anchor, int lowest, long seed, RandomSource random) {
         this.level = level;
+        this.biomeRegistry = biomeRegistry;
+        this.placeholder = new net.minecraft.world.level.chunk.LevelChunkSection(biomeRegistry);
         this.anchorX = anchor.getX(); this.anchorY = anchor.getY(); this.anchorZ = anchor.getZ();
         this.lowest = lowest;
         this.terrain = terrain;
@@ -99,10 +109,6 @@ final class StructureLevel implements WorldGenLevel {
         this.seed = seed;
         this.random = random;
         this.biomes = new BiomeManager(this, BiomeManager.obfuscateSeed(seed));
-        var biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME);
-        this.scratch = new ProtoChunk(ChunkPos.ZERO, UpgradeData.EMPTY, net.minecraft.world.level.LevelHeightAccessor.create(0, 16), biomeRegistry, null) {
-            @Override public void markPosForPostprocessing(BlockPos pos) { postProcess.add(key(real(pos))); }
-        };
         this.light = new LevelLightEngine(new net.minecraft.world.level.chunk.LightChunkGetter() {
             @Override public net.minecraft.world.level.chunk.LightChunk getChunkForLighting(int x, int z) { return null; }
             @Override public net.minecraft.world.level.BlockGetter getLevel() { return StructureLevel.this; }
@@ -215,7 +221,63 @@ final class StructureLevel implements WorldGenLevel {
 
     // Chunks, biomes, light ----------------------------------------------------------------------
 
-    @Override public ChunkAccess getChunk(int x, int z, ChunkStatus status, boolean required) { return required ? scratch : null; }
+    @Override public ChunkAccess getChunk(int x, int z, ChunkStatus status, boolean required) {
+        if (!required) return null;
+        View view = views.get(ChunkPos.asLong(x, z));
+        if (view == null) views.put(ChunkPos.asLong(x, z), view = new View(x, z));
+        return view;
+    }
+
+    /**
+     * A chunk of this level, at this level's heights, for code that reads and writes a chunk's
+     * sections itself rather than through the level: YUNG's API processors (desert temples' pillars,
+     * strongholds' legs, dungeons' stairs) index the chunk's sections by height. Each section reads
+     * and writes this level's blocks, so those writes are kept as any other.
+     */
+    private final class View extends ProtoChunk {
+        private final net.minecraft.world.level.chunk.LevelChunkSection[] rows;
+
+        View(int cx, int cz) {
+            super(new ChunkPos(cx, cz), UpgradeData.EMPTY, placeholders(net.minecraft.world.level.LevelHeightAccessor.create(minY, height).getSectionsCount()), new net.minecraft.world.ticks.ProtoChunkTicks<>(),
+                    new net.minecraft.world.ticks.ProtoChunkTicks<>(), net.minecraft.world.level.LevelHeightAccessor.create(minY, height), biomeRegistry, null);
+            this.rows = new net.minecraft.world.level.chunk.LevelChunkSection[getSectionsCount()];
+        }
+
+        @Override public net.minecraft.world.level.chunk.LevelChunkSection getSection(int index) {
+            net.minecraft.world.level.chunk.LevelChunkSection row = rows[index];
+            if (row == null) rows[index] = row = new Row(getPos().getMinBlockX(), getMinBuildHeight() + index * 16, getPos().getMinBlockZ());
+            return row;
+        }
+
+        @Override public void markPosForPostprocessing(BlockPos pos) { postProcess.add(key(real(pos))); }
+    }
+
+    private net.minecraft.world.level.chunk.LevelChunkSection[] placeholders(int count) {
+        var sections = new net.minecraft.world.level.chunk.LevelChunkSection[count];
+        java.util.Arrays.fill(sections, placeholder);
+        return sections;
+    }
+
+    /** Sixteen rows of a {@link View}, in this level's (frame) heights. */
+    private final class Row extends net.minecraft.world.level.chunk.LevelChunkSection {
+        private final int x0, y0, z0;
+
+        Row(int x0, int y0, int z0) {
+            super(biomeRegistry);
+            this.x0 = x0; this.y0 = y0; this.z0 = z0;
+        }
+
+        @Override public BlockState getBlockState(int x, int y, int z) { return StructureLevel.this.getBlockState(new BlockPos(x0 + x, y0 + y, z0 + z)); }
+        @Override public FluidState getFluidState(int x, int y, int z) { return getBlockState(x, y, z).getFluidState(); }
+        @Override public BlockState setBlockState(int x, int y, int z, BlockState state) { return setBlockState(x, y, z, state, true); }
+        @Override public BlockState setBlockState(int x, int y, int z, BlockState state, boolean lock) {
+            BlockPos pos = new BlockPos(x0 + x, y0 + y, z0 + z);
+            BlockState old = StructureLevel.this.getBlockState(pos);
+            setBlock(pos, state, 2);
+            return old;
+        }
+        @Override public boolean hasOnlyAir() { return false; }
+    }
     @Override public boolean hasChunk(int x, int z) { return true; }
     @Override public BiomeManager getBiomeManager() { return biomes; }
     @Override public Holder<Biome> getUncachedNoiseBiome(int qx, int qy, int qz) { return terrain.biome(qx << 2, (qy << 2) + shift, qz << 2); }
