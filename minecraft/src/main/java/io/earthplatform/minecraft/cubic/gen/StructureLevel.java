@@ -82,7 +82,10 @@ final class StructureLevel implements WorldGenLevel {
     private final LevelLightEngine light;
     /** Written blocks by packed real position, block entities likewise, and entity tags at real positions. */
     final Long2ObjectOpenHashMap<BlockState> blocks = new Long2ObjectOpenHashMap<>();
+    /** Block entities as code made them, at the positions it sees (frame ones), by packed real position. */
     private final Long2ObjectOpenHashMap<BlockEntity> blockEntities = new Long2ObjectOpenHashMap<>();
+    /** Where a block entity was removed, so none is made again there for the block. */
+    private final LongOpenHashSet removedBlockEntities = new LongOpenHashSet();
     final List<CompoundTag> entities = new ArrayList<>();
     final LongOpenHashSet postProcess = new LongOpenHashSet();
     /**
@@ -129,7 +132,10 @@ final class StructureLevel implements WorldGenLevel {
             BlockEntity entity = entry.getValue();
             BlockState state = blocks.get(entry.getLongKey());
             if (state == null || !state.hasBlockEntity()) continue;
-            tags.add(entity.saveWithFullMetadata(level.registryAccess()));
+            CompoundTag tag = entity.saveWithFullMetadata(registryAccess());
+            BlockPos real = at(entry.getLongKey()); // the block entity itself sits where the frame put it
+            tag.putInt("x", real.getX()); tag.putInt("y", real.getY()); tag.putInt("z", real.getZ());
+            tags.add(tag);
         }
         return tags;
     }
@@ -172,7 +178,8 @@ final class StructureLevel implements WorldGenLevel {
         if (state.hasBlockEntity()) {
             BlockEntity existing = blockEntities.get(key);
             if (existing == null || !existing.isValidBlockState(state)) {
-                BlockEntity created = ((EntityBlock) state.getBlock()).newBlockEntity(r.immutable(), state);
+                removedBlockEntities.remove(key);
+                BlockEntity created = ((EntityBlock) state.getBlock()).newBlockEntity(pos.immutable(), state);
                 if (created != null) blockEntities.put(key, created); else blockEntities.remove(key);
             } else existing.setBlockState(state);
         }
@@ -190,13 +197,15 @@ final class StructureLevel implements WorldGenLevel {
      * position of the block it stands at, as one this level makes for a block written.
      */
     void putBlockEntity(BlockEntity entity) {
-        BlockPos r = real(entity.getBlockPos());
-        BlockEntity kept = entity;
-        if (shift != 0) {
-            kept = BlockEntity.loadStatic(r.immutable(), entity.getBlockState(), entity.saveWithFullMetadata(registryAccess()), registryAccess());
-            if (kept == null) return;
-        }
-        blockEntities.put(key(r), kept);
+        long key = key(real(entity.getBlockPos()));
+        removedBlockEntities.remove(key);
+        blockEntities.put(key, entity); // the live one, so later changes to it are kept; moved to real heights when saved
+    }
+
+    void removeBlockEntityAt(BlockPos pos) {
+        long key = key(real(pos));
+        blockEntities.remove(key);
+        removedBlockEntities.add(key);
     }
 
     @Nullable @Override public BlockEntity getBlockEntity(BlockPos pos) {
@@ -206,7 +215,8 @@ final class StructureLevel implements WorldGenLevel {
         if (entity != null) return entity;
         BlockState state = blocks.get(key);
         if (state == null || !state.hasBlockEntity()) return null;
-        entity = ((EntityBlock) state.getBlock()).newBlockEntity(r.immutable(), state);
+        if (removedBlockEntities.contains(key)) return null;
+        entity = ((EntityBlock) state.getBlock()).newBlockEntity(pos.immutable(), state);
         if (entity != null) blockEntities.put(key, entity);
         return entity;
     }
@@ -271,13 +281,19 @@ final class StructureLevel implements WorldGenLevel {
         @Override public void markPosForPostprocessing(BlockPos pos) { postProcess.add(key(real(pos))); }
         @Nullable @Override public BlockEntity getBlockEntity(BlockPos pos) { return StructureLevel.this.getBlockEntity(pos); }
         @Override public void setBlockEntity(BlockEntity entity) { StructureLevel.this.putBlockEntity(entity); }
-        @Override public void removeBlockEntity(BlockPos pos) { StructureLevel.this.blockEntities.remove(key(real(pos))); }
-        @Override public BlockState getBlockState(BlockPos pos) { return StructureLevel.this.getBlockState(pos); }
-        @Override public FluidState getFluidState(BlockPos pos) { return StructureLevel.this.getFluidState(pos); }
+        @Override public void removeBlockEntity(BlockPos pos) { removeBlockEntityAt(pos); }
+        // As vanilla's chunks: a block is read in this chunk at its position within it.
+        @Override public BlockState getBlockState(BlockPos pos) { return StructureLevel.this.getBlockState(here(pos)); }
+        @Override public FluidState getFluidState(BlockPos pos) { return StructureLevel.this.getFluidState(here(pos)); }
+        private BlockPos here(BlockPos pos) {
+            return new BlockPos(getPos().getMinBlockX() + (pos.getX() & 15), pos.getY(), getPos().getMinBlockZ() + (pos.getZ() & 15));
+        }
         @Override public int getHeight(Heightmap.Types type, int x, int z) {
             return StructureLevel.this.getHeight(type, getPos().getMinBlockX() + (x & 15), getPos().getMinBlockZ() + (z & 15)) - 1;
         }
-        @Override public Holder<Biome> getNoiseBiome(int qx, int qy, int qz) { return StructureLevel.this.getNoiseBiome(qx, qy, qz); }
+        @Override public Holder<Biome> getNoiseBiome(int qx, int qy, int qz) {
+            return StructureLevel.this.getNoiseBiome((getPos().getMinBlockX() >> 2) + (qx & 3), qy, (getPos().getMinBlockZ() >> 2) + (qz & 3));
+        }
     }
 
     private net.minecraft.world.level.chunk.LevelChunkSection[] placeholders(int count) {
@@ -326,7 +342,7 @@ final class StructureLevel implements WorldGenLevel {
     @Override public ServerLevel getLevel() { return level; }
     @Override public long getSeed() { return seed; }
     @Override public RandomSource getRandom() { return random; }
-    @Override public RegistryAccess registryAccess() { return level.registryAccess(); }
+    @Override public RegistryAccess registryAccess() { return level == null ? RegistryAccess.EMPTY : level.registryAccess(); }
     @Override public FeatureFlagSet enabledFeatures() { return level.enabledFeatures(); }
     @Override public LevelData getLevelData() { return level.getLevelData(); }
     @Override public DifficultyInstance getCurrentDifficultyAt(BlockPos pos) {

@@ -90,12 +90,48 @@ class StructureLevelTest {
         assertSame(made, level.getBlockEntity(chest), "a block entity set through the chunk is kept");
         assertSame(made, chunk.getBlockEntity(chest));
         chunk.removeBlockEntity(chest);
-        org.junit.jupiter.api.Assertions.assertNotSame(made, chunk.getBlockEntity(chest), "removed through the chunk");
+        org.junit.jupiter.api.Assertions.assertNull(chunk.getBlockEntity(chest), "removed through the chunk, and not made again");
+        org.junit.jupiter.api.Assertions.assertNull(level.getBlockEntity(chest));
 
         // Heights and biomes are the level's.
         var type = net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE_WG;
         assertEquals(level.getHeight(type, 37, -21) - 1, chunk.getHeight(type, 37, -21));
         assertSame(level.getNoiseBiome(9, 313, -6), chunk.getNoiseBiome(9, 313, -6));
         assertTrue(chunk.getSection(chunk.getSectionIndex(1255)).maybeHas(state -> state == QUARTZ));
+    }
+
+    @Test void blockEntitiesInAShiftedFrameKeepTheirChangesAndSaveAtRealHeights() {
+        // A stronghold's chest in a frame with vanilla's Y 0 at real Y 1,000.
+        StructureLevel level = level(1000, -64, 384);
+        BlockPos chest = new BlockPos(5, -30, 9);
+        BlockState chestState = Blocks.CHEST.defaultBlockState();
+        level.setBlock(chest, chestState, 2);
+        ChunkAccess chunk = level.getChunk(0, 0);
+        var made = new net.minecraft.world.level.block.entity.ChestBlockEntity(chest, chestState);
+        chunk.setBlockEntity(made);
+        // Filled in afterwards, as structure code sets loot on the chest it placed.
+        var loot = net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.LOOT_TABLE,
+                net.minecraft.resources.ResourceLocation.withDefaultNamespace("chests/stronghold_corridor"));
+        made.setLootTable(loot, 42L);
+        var readBack = chunk.getBlockEntity(chest);
+        assertSame(made, readBack, "the live block entity, not a copy");
+        chunk.setBlockEntity(readBack); // read back and set again: no second shift
+
+        java.util.List<net.minecraft.nbt.CompoundTag> tags = level.blockEntityTags();
+        assertEquals(1, tags.size());
+        net.minecraft.nbt.CompoundTag tag = tags.get(0);
+        assertEquals(970, tag.getInt("y"), "saved at its real height");
+        assertEquals(5, tag.getInt("x"));
+        assertEquals("minecraft:chests/stronghold_corridor", tag.getString("LootTable"), "with the change made after it was set");
+    }
+
+    @Test void aChunkReadsBlocksAtPositionsWithinItself() {
+        StructureLevel level = level(0, CubeWorld.MIN_Y, CubeWorld.MAX_Y - CubeWorld.MIN_Y + 1);
+        level.setBlock(new BlockPos(2 * 16 + 5, 1255, -2 * 16 + 7), QUARTZ, 2);
+        ChunkAccess chunk = level.getChunk(2, -2);
+        // Vanilla's chunks read a position within themselves, as heightmap priming passes them.
+        assertEquals(QUARTZ, chunk.getBlockState(new BlockPos(5, 1255, 7)), "a chunk-local position, read in the chunk");
+        assertEquals(QUARTZ, chunk.getBlockState(new BlockPos(2 * 16 + 5, 1255, -2 * 16 + 7)), "and a world one in it");
+        assertSame(level.getNoiseBiome((2 * 16 >> 2) + 1, 313, (-2 * 16 >> 2) + 1), chunk.getNoiseBiome(1, 313, 1));
     }
 }

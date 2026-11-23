@@ -224,7 +224,6 @@ final class VanillaStructures {
     /** Copies into a cube every structure block, block entity and entity falling in it. */
     void place(LevelChunkSection section, int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
         if (!generate) return;
-        int y0 = cy << 4;
         long key = SectionPos.asLong(cx, cy, cz);
         for (Start start : column(cx, cz)) {
             if (!placesInto(start.low, start.reach.maxY(), cy)) continue;
@@ -536,12 +535,13 @@ final class VanillaStructures {
     }
 
     /**
-     * The lowest real height a layout may write. A frame at vanilla's depths ends {@code frameMinY}
-     * below its Y 0, and processors extend legs down to it over a void: placed down there too, or
-     * the legs stop in mid-air at the reach of the pieces.
+     * The lowest real height a layout may write. A frame at vanilla's depths ends at its
+     * {@code frameMinY} (even where the local floor lies at vanilla's Y 64, so the frame is not
+     * shifted), and processors extend legs down to it over a void: placed down there too, or the
+     * legs stop in mid-air at the reach of the pieces. A surface frame reaches the world's bottom.
      */
     static int lowestWrite(int reachMinY, int frameMinY, int shift) {
-        return shift != 0 ? Math.min(reachMinY, frameMinY + shift) : reachMinY;
+        return frameMinY > CubeWorld.MIN_Y ? Math.min(reachMinY, frameMinY + shift) : reachMinY;
     }
 
     /** Whether a layout writing from {@code low} up to {@code top} (real heights) can write in cubes at {@code cy}. */
