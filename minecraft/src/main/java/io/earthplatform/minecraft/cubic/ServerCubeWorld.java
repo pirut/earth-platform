@@ -286,6 +286,7 @@ public final class ServerCubeWorld extends CubeWorld {
             CompoundTag saved = storage.read(key);
             if (saved != null) {
                 CubeCodec.Decoded decoded = codec.read(saved);
+                generator.loaded(x, y, z);
                 return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), CubeCodec.tags(saved, CubeCodec.ENTITIES), true,
                         !saved.getBoolean(CubeCodec.UNTOUCHED), saved.getBoolean(CubeCodec.UNPOPULATED), false, null, openFaces(decoded.section()));
             }
@@ -1115,6 +1116,7 @@ public final class ServerCubeWorld extends CubeWorld {
         try { storage.close(); }
         catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not write cube regions", failure); }
         closed = true;
+        generator.detach();
         surveys.close();
         workers.shutdownNow();
         far.close();

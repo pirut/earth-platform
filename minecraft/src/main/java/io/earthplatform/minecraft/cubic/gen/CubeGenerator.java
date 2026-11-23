@@ -24,6 +24,16 @@ public interface CubeGenerator {
     default @javax.annotation.Nullable net.minecraft.core.BlockPos locate(java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> structure, int x, int z, int radius) { return null; }
     /** Starts of this world's structures reaching a chunk column, at real heights. */
     default List<net.minecraft.world.level.levelgen.structure.StructureStart> structureStarts(int chunkX, int chunkZ) { return List.of(); }
+    /** The same, only of wanted structures; laying out only the structures that could be wanted where it can. */
+    default List<net.minecraft.world.level.levelgen.structure.StructureStart> structureStarts(int chunkX, int chunkZ,
+            java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> wanted) {
+        return structureStarts(chunkX, chunkZ).stream().filter(start -> wanted.test(start.getStructure())).toList();
+    }
+    /** The same, as a mob spawn's probe (true) or a lookup for a structure (false), which share the work queued aside differently. */
+    default List<net.minecraft.world.level.levelgen.structure.StructureStart> structureStarts(int chunkX, int chunkZ,
+            java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> wanted, boolean probe) {
+        return structureStarts(chunkX, chunkZ, wanted);
+    }
     /** One structure's start in a chunk at real heights, or null. */
     default @javax.annotation.Nullable net.minecraft.world.level.levelgen.structure.StructureStart structureStart(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) { return null; }
     /** A start of a structure in a chunk as /place structure makes one, in any biome, at real heights; null where it cannot start. */
@@ -42,6 +52,10 @@ public interface CubeGenerator {
     default @javax.annotation.Nullable net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> biome(int x, int y, int z) { return null; }
     /** Called once the server level the cubes are for exists, before any cube generates there. */
     default void attach(ServerLevel level) {}
+    /** The world closes: drop work queued for it. */
+    default void detach() {}
+    /** A cube was read from the save rather than generated. */
+    default void loaded(int cubeX, int cubeY, int cubeZ) {}
     /** Generated ground height (top solid block) for a column. */
     int surfaceY(int x, int z);
     /**
