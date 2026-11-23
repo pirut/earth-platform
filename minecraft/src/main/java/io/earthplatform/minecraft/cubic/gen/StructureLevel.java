@@ -185,6 +185,20 @@ final class StructureLevel implements WorldGenLevel {
     @Override public boolean isStateAtPosition(BlockPos pos, Predicate<BlockState> predicate) { return predicate.test(getBlockState(pos)); }
     @Override public boolean isFluidAtPosition(BlockPos pos, Predicate<FluidState> predicate) { return predicate.test(getFluidState(pos)); }
 
+    /**
+     * Keeps a block entity some code made itself (through a chunk's own setBlockEntity), at the real
+     * position of the block it stands at, as one this level makes for a block written.
+     */
+    void putBlockEntity(BlockEntity entity) {
+        BlockPos r = real(entity.getBlockPos());
+        BlockEntity kept = entity;
+        if (shift != 0) {
+            kept = BlockEntity.loadStatic(r.immutable(), entity.getBlockState(), entity.saveWithFullMetadata(registryAccess()), registryAccess());
+            if (kept == null) return;
+        }
+        blockEntities.put(key(r), kept);
+    }
+
     @Nullable @Override public BlockEntity getBlockEntity(BlockPos pos) {
         BlockPos r = real(pos);
         long key = key(r);
@@ -249,7 +263,21 @@ final class StructureLevel implements WorldGenLevel {
             return row;
         }
 
+        @Override public net.minecraft.world.level.chunk.LevelChunkSection[] getSections() {
+            for (int i = 0; i < rows.length; i++) getSection(i);
+            return rows;
+        }
+
         @Override public void markPosForPostprocessing(BlockPos pos) { postProcess.add(key(real(pos))); }
+        @Nullable @Override public BlockEntity getBlockEntity(BlockPos pos) { return StructureLevel.this.getBlockEntity(pos); }
+        @Override public void setBlockEntity(BlockEntity entity) { StructureLevel.this.putBlockEntity(entity); }
+        @Override public void removeBlockEntity(BlockPos pos) { StructureLevel.this.blockEntities.remove(key(real(pos))); }
+        @Override public BlockState getBlockState(BlockPos pos) { return StructureLevel.this.getBlockState(pos); }
+        @Override public FluidState getFluidState(BlockPos pos) { return StructureLevel.this.getFluidState(pos); }
+        @Override public int getHeight(Heightmap.Types type, int x, int z) {
+            return StructureLevel.this.getHeight(type, getPos().getMinBlockX() + (x & 15), getPos().getMinBlockZ() + (z & 15)) - 1;
+        }
+        @Override public Holder<Biome> getNoiseBiome(int qx, int qy, int qz) { return StructureLevel.this.getNoiseBiome(qx, qy, qz); }
     }
 
     private net.minecraft.world.level.chunk.LevelChunkSection[] placeholders(int count) {
@@ -277,6 +305,10 @@ final class StructureLevel implements WorldGenLevel {
             return old;
         }
         @Override public boolean hasOnlyAir() { return false; }
+        @Override public boolean maybeHas(Predicate<BlockState> predicate) { return true; }
+        @Override public Holder<Biome> getNoiseBiome(int qx, int qy, int qz) {
+            return StructureLevel.this.getNoiseBiome((x0 >> 2) + qx, (y0 >> 2) + qy, (z0 >> 2) + qz);
+        }
     }
     @Override public boolean hasChunk(int x, int z) { return true; }
     @Override public BiomeManager getBiomeManager() { return biomes; }

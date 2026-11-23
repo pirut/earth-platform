@@ -123,10 +123,14 @@ final class TreeLevel implements WorldGenLevel {
      * The chunk generator a feature grown here is given, with this level's heights. Vanilla's trees
      * never ask, but features other mods list among a biome's trees do: Aquamirae's camps read its sea level.
      */
-    net.minecraft.world.level.chunk.ChunkGenerator generator() { return new Generator(biome); }
+    net.minecraft.world.level.chunk.ChunkGenerator generator() { return new Generator(biome, this::ground); }
 
     private static final class Generator extends net.minecraft.world.level.chunk.ChunkGenerator {
-        Generator(Holder<Biome> biome) { super(new net.minecraft.world.level.biome.FixedBiomeSource(biome)); }
+        private final java.util.function.IntFunction<BlockState> ground;
+        Generator(Holder<Biome> biome, java.util.function.IntFunction<BlockState> ground) {
+            super(new net.minecraft.world.level.biome.FixedBiomeSource(biome));
+            this.ground = ground;
+        }
         @Override protected com.mojang.serialization.MapCodec<? extends net.minecraft.world.level.chunk.ChunkGenerator> codec() { throw new UnsupportedOperationException("tree level"); }
         @Override public void applyCarvers(net.minecraft.server.level.WorldGenRegion region, long seed, net.minecraft.world.level.levelgen.RandomState random,
                                            BiomeManager biomes, net.minecraft.world.level.StructureManager structures, ChunkAccess chunk,
@@ -146,7 +150,7 @@ final class TreeLevel implements WorldGenLevel {
         @Override public net.minecraft.world.level.NoiseColumn getBaseColumn(int x, int z, net.minecraft.world.level.LevelHeightAccessor heights,
                                                                              net.minecraft.world.level.levelgen.RandomState random) {
             BlockState[] states = new BlockState[64];
-            for (int i = 0; i < states.length; i++) states[i] = i == 63 ? Blocks.GRASS_BLOCK.defaultBlockState() : i >= 60 ? Blocks.DIRT.defaultBlockState() : STONE;
+            for (int i = 0; i < states.length; i++) states[i] = ground.apply(i - 64); // the level's own soil over stone, below Y 0
             return new net.minecraft.world.level.NoiseColumn(-64, states);
         }
         @Override public void addDebugScreenInfo(List<String> info, net.minecraft.world.level.levelgen.RandomState random, BlockPos pos) {}

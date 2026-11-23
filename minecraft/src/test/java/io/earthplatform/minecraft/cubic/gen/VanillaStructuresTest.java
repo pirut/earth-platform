@@ -148,6 +148,19 @@ class VanillaStructuresTest {
         assertFalse(underWall.startsAt(0, 0).isEmpty());
     }
 
+    // Legs over a void (YUNG's strongholds and zombie dungeons) ------------------------------
+
+    @Test void layoutsAtVanillaDepthsPlaceDownToTheirFramesBottom() {
+        // A stronghold whose pieces reach down to real Y 1,040, in a frame with vanilla's Y 0 at real Y 1,000.
+        int low = VanillaStructures.lowestWrite(1040, -64, 1000);
+        assertEquals(936, low, "down to the frame's bottom, where a leg over a void stops");
+        assertTrue(VanillaStructures.placesInto(low, 1100, 936 >> 4), "the cube a leg ends in is placed into");
+        assertFalse(VanillaStructures.placesInto(1040, 1100, 936 >> 4), "as it was: legs cut off at the pieces' reach");
+        // Surface structures keep their reach, already some way under the ground.
+        assertEquals(1040, VanillaStructures.lowestWrite(1040, io.earthplatform.minecraft.cubic.CubeWorld.MIN_Y, 0));
+        assertFalse(VanillaStructures.placesInto(1040, 1100, 1200 >> 4), "nor above the top");
+    }
+
     // Issue #216: surface slope / relief checks --------------------------------------------------
 
     @Test void footprintFitsAcceptsFlatAndGentleSlopes() {

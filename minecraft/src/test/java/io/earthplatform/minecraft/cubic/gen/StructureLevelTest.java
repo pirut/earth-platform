@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.gen;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.earthplatform.minecraft.cubic.CubeWorld;
 import net.minecraft.core.BlockPos;
@@ -68,5 +69,33 @@ class StructureLevelTest {
         assertEquals(Blocks.COBBLESTONE.defaultBlockState(), level.realState(5, 960, 9));
         // Chunks keep their own place, so a write in one is not read back in another.
         assertSame(STONE, readSafe(level, leg.offset(16, 0, 0)));
+    }
+
+    @Test void theChunksSectionsArrayAndBlockEntitiesAreTheLevels() {
+        StructureLevel level = level(0, CubeWorld.MIN_Y, CubeWorld.MAX_Y - CubeWorld.MIN_Y + 1);
+        ChunkAccess chunk = level.getChunk(2, -2);
+        // Through the sections array, as code that walks a chunk's sections does.
+        BlockPos at = new BlockPos(37, 1255, -21);
+        LevelChunkSection[] sections = chunk.getSections();
+        sections[chunk.getSectionIndex(at.getY())].setBlockState(at.getX() & 15, at.getY() & 15, at.getZ() & 15, QUARTZ, false);
+        assertEquals(QUARTZ, level.realState(37, 1255, -21), "a write through getSections() is kept");
+        assertEquals(QUARTZ, chunk.getBlockState(at));
+
+        // A block entity set through the chunk is the level's.
+        BlockPos chest = new BlockPos(38, 1256, -22);
+        BlockState chestState = Blocks.CHEST.defaultBlockState();
+        writeSafe(level, chest, chestState);
+        var made = new net.minecraft.world.level.block.entity.ChestBlockEntity(chest, chestState);
+        chunk.setBlockEntity(made);
+        assertSame(made, level.getBlockEntity(chest), "a block entity set through the chunk is kept");
+        assertSame(made, chunk.getBlockEntity(chest));
+        chunk.removeBlockEntity(chest);
+        org.junit.jupiter.api.Assertions.assertNotSame(made, chunk.getBlockEntity(chest), "removed through the chunk");
+
+        // Heights and biomes are the level's.
+        var type = net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE_WG;
+        assertEquals(level.getHeight(type, 37, -21) - 1, chunk.getHeight(type, 37, -21));
+        assertSame(level.getNoiseBiome(9, 313, -6), chunk.getNoiseBiome(9, 313, -6));
+        assertTrue(chunk.getSection(chunk.getSectionIndex(1255)).maybeHas(state -> state == QUARTZ));
     }
 }
