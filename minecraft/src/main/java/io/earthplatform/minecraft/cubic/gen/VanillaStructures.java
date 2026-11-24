@@ -758,20 +758,27 @@ final class VanillaStructures {
     /**
      * A structure set's start in a chunk, or null where it has none. A start that throws is not
      * taken for none: the layout asking fails (a lookup's column backs off, a cube is made again
-     * later), as the failure may pass (map data still coming). Only after {@link #MOST_START_FAILURES}
-     * tries is it given up and left out, so another mod's start that always throws leaves no hole.
+     * later), as the failure may pass (map data still coming). It is not tried again for a while,
+     * and a try counts once however many callers ask meanwhile, so one short outage is one try. Only
+     * after {@link #MOST_START_FAILURES} tries is it given up and left out, so another mod's start
+     * that always throws leaves no hole.
      */
     @Nullable private Start start(Kind kind, int chunkX, int chunkZ) {
         long key = startKey(kind.index, chunkX, chunkZ);
         Optional<Start> cached = starts.get(key);
         if (cached != null) return cached.orElse(null);
+        StartFailure recent = startFailures.get(key);
+        if (recent != null && System.nanoTime() - recent.at < startRetryNanos) throw new StartFailed(null); // inside its backoff: not tried
         Start made = null;
         try {
             made = makeStart(kind, chunkX, chunkZ);
         } catch (java.util.concurrent.CancellationException closing) {
             throw closing; // the world is closing: not known to be missing
         } catch (RuntimeException e) {
-            int tries = startFailures.merge(key, 1, Integer::sum);
+            long now = System.nanoTime();
+            // Callers failing together in one window (generation and lookups, one outage) count as one try.
+            int tries = startFailures.compute(key, (k, had) -> had != null && now - had.at < startRetryNanos ? had
+                    : new StartFailure(had == null ? 1 : had.tries + 1, now)).tries;
             if (tries < MOST_START_FAILURES) {
                 if (startFailures.size() > 4096) startFailures.clear();
                 if (startFailed.compareAndSet(false, true))
@@ -953,9 +960,14 @@ final class VanillaStructures {
     }
 
     private static final Object STARTS = new Object();
-    /** Tries of starts that threw, by start key. */
-    private final ConcurrentHashMap<Long, Integer> startFailures = new ConcurrentHashMap<>();
+    /** Starts that threw, by start key: how many windows they threw in, and when the last began. */
+    private record StartFailure(int tries, long at) {}
+    private final ConcurrentHashMap<Long, StartFailure> startFailures = new ConcurrentHashMap<>();
     static final int MOST_START_FAILURES = 3;
+    private volatile long startRetryNanos = 10_000_000_000L;
+
+    /** For tests: how long a start that threw is left before it is tried again. */
+    void startRetryAfter(long nanos) { startRetryNanos = nanos; }
 
     private StructureStart generate(StructureSet.StructureSelectionEntry entry, Frame frame, ChunkPos chunk) {
         Structure structure = entry.structure().value();

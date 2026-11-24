@@ -591,6 +591,7 @@ class VanillaStructuresTest {
             return 100;
         }), 1L);
         structures.serverThread(() -> Thread.currentThread() == server);
+        structures.startRetryAfter(0);
         structures.warm(2, 0);
         for (long until = System.currentTimeMillis() + 20_000; (structures.queued() > 0 || failures.get() > 0) && System.currentTimeMillis() < until; Thread.sleep(10)) {}
         assertFalse(structures.ready(2, 0), "an arrival let through with the temple's start taken for none");
@@ -607,6 +608,7 @@ class VanillaStructuresTest {
             @Override protected Optional<GenerationStub> findGenerationPoint(GenerationContext context) { throw new IllegalStateException("another mod's bug"); }
         };
         VanillaStructures structures = new VanillaStructures(null, singleStructureRegistries("test_broken_hut", broken), randomState, true, hostOf((x, z) -> 100), 1L);
+        structures.startRetryAfter(0); // each try in a window of its own
         // A cube generating there fails and is made again later; each start is tried a few times, then left out and the cube is made.
         assertThrows(VanillaStructures.StartFailed.class, () -> structures.clears(8, 8), "a start that threw taken for none at once");
         int tries = 1;
@@ -618,6 +620,31 @@ class VanillaStructuresTest {
         assertTrue(tries >= VanillaStructures.MOST_START_FAILURES - 1, "left out before its tries: " + tries);
         assertFalse(structures.clears(8, 8));
         assertTrue(structures.startsAt(0, 0).isEmpty());
+    }
+
+    @Test void oneOutageCountsAsOneTryHoweverManyCallersAsk() {
+        java.util.concurrent.atomic.AtomicInteger tried = new java.util.concurrent.atomic.AtomicInteger();
+        ChunkPos hut = new RandomSpreadStructurePlacement(24, 8, RandomSpreadType.LINEAR, 12345).getPotentialStructureChunk(1L, 0, 0);
+        TestStructure flaky = new TestStructure(plains, GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE, 12) {
+            @Override protected Optional<GenerationStub> findGenerationPoint(GenerationContext context) {
+                if (context.chunkPos().equals(hut)) tried.incrementAndGet(); // the one start watched; others near it throw too
+                throw new IllegalStateException("map data not in yet");
+            }
+        };
+        VanillaStructures structures = new VanillaStructures(null, singleStructureRegistries("test_outage_hut", flaky, 24, 8), randomState, true, hostOf((x, z) -> 100), 1L);
+        // Generation and lookups asking over and over during one outage: the start is tried once, and never left out.
+        for (int i = 0; i < 4 * VanillaStructures.MOST_START_FAILURES; i++)
+            assertThrows(VanillaStructures.StartFailed.class, () -> structures.clears((hut.x << 4) + 8, (hut.z << 4) + 8));
+        assertEquals(1, tried.get(), "tried again inside its backoff");
+        // Windows apart, it counts again, and after its tries it is left out.
+        structures.startRetryAfter(0);
+        int calls = 0;
+        for (; calls < 60; calls++) {
+            try { structures.clears((hut.x << 4) + 8, (hut.z << 4) + 8); break; }
+            catch (VanillaStructures.StartFailed again) { /* asked again later */ }
+        }
+        assertEquals(VanillaStructures.MOST_START_FAILURES, tried.get(), "left out after a different number of tries");
+        assertTrue(calls < 60);
     }
 
     @Test void aHitInTheOlderGenerationNeverWaitsOnAWriter() throws InterruptedException {
@@ -692,9 +719,9 @@ class VanillaStructuresTest {
             assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> {
                 serverThread[0] = Thread.currentThread();
                 assertEquals(io.earthplatform.minecraft.cubic.ArrivalWait.Step.WAIT, io.earthplatform.minecraft.cubic.ArrivalWait.step(io.earthplatform.minecraft.cubic.ArrivalWait.Wait.NEW, place).step());
-                assertEquals(io.earthplatform.minecraft.cubic.ArrivalWait.Step.WAIT, io.earthplatform.minecraft.cubic.ArrivalWait.step(new io.earthplatform.minecraft.cubic.ArrivalWait.Wait(io.earthplatform.minecraft.cubic.ArrivalWait.LIMIT, io.earthplatform.minecraft.cubic.ArrivalWait.LIMIT - 1), place).step());
+                assertEquals(io.earthplatform.minecraft.cubic.ArrivalWait.Step.WAIT, io.earthplatform.minecraft.cubic.ArrivalWait.step(new io.earthplatform.minecraft.cubic.ArrivalWait.Wait(io.earthplatform.minecraft.cubic.ArrivalWait.LIMIT - 1, 0), place).step());
                 // Past the limit it goes without the structures rather than waiting on.
-                assertEquals(io.earthplatform.minecraft.cubic.ArrivalWait.Step.GO, io.earthplatform.minecraft.cubic.ArrivalWait.step(new io.earthplatform.minecraft.cubic.ArrivalWait.Wait(io.earthplatform.minecraft.cubic.ArrivalWait.LIMIT, io.earthplatform.minecraft.cubic.ArrivalWait.LIMIT), place).step());
+                assertEquals(io.earthplatform.minecraft.cubic.ArrivalWait.Step.GO, io.earthplatform.minecraft.cubic.ArrivalWait.step(new io.earthplatform.minecraft.cubic.ArrivalWait.Wait(io.earthplatform.minecraft.cubic.ArrivalWait.LIMIT, 0), place).step());
             }, "the server thread waited on the start lock");
             serverThread[0] = caller;
         } finally {

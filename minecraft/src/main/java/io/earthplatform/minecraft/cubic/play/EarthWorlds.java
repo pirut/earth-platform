@@ -216,6 +216,8 @@ public final class EarthWorlds {
             ready = false;
             preparing = null;
             landing = null;
+            ServerCubeWorld spawnCubes = cubes();
+            if (spawnCubes != null) for (UUID id : spots.keySet()) spawnCubes.release(holder(id));
             spots.clear();
             retryAt = 0;
             round++;
@@ -264,12 +266,22 @@ public final class EarthWorlds {
                 if (player == null || player.level().dimension() != Level.OVERWORLD) {
                     waiting.remove(id);
                     sent.remove(id);
-                    spots.remove(id);
+                    ownSince.remove(id);
+                    ownGivenUp.remove(id);
+                    if (spots.remove(id) != null) cubes.release(holder(id));
                     if (player != null) release(player);
                     continue;
                 }
                 Optional<EarthSpawns.Spot> own = EarthSpawns.of(server).personal(player);
-                if (own.isPresent()) {
+                // A spawn of their own that cannot be landed on in time, tried every 30 s, would hold them for ever:
+                // past the arrival's whole bound it is given up, and they land at the server's spawn instead.
+                if (own.isPresent() && !ownGivenUp.contains(id) && ArrivalWait.overdue(ownSince.computeIfAbsent(id, k -> now), now)) {
+                    ownGivenUp.add(id);
+                    CubicEvents.cancelTrip(cubes, player);
+                    player.sendSystemMessage(Component.literal("Your own spawn could not be loaded in time; landing at the server's spawn instead.")
+                            .withStyle(ChatFormatting.YELLOW));
+                }
+                if (own.isPresent() && !ownGivenUp.contains(id)) {
                     // A spawn of their own: travel there, held up here until the trip lands; tried again if it fails.
                     hold(player);
                     if (now >= sent.getOrDefault(id, 0L)) {
@@ -286,6 +298,7 @@ public final class EarthWorlds {
                     waiting.remove(id);
                     spots.remove(id);
                     arrive(player, cubes, stand);
+                    cubes.release(holder(id)); // the player stands there now, which keeps them
                 } else {
                     hold(player);
                     byte problem = EarthStatus.offlineMode() && retryAt > 0 ? EarthStatus.OFFLINE_MODE
@@ -298,24 +311,37 @@ public final class EarthWorlds {
         /** A waiting player's own spot, scattered about the landing, and how many ticks they have waited for it. */
         private record Spot(int[] at, ArrivalWait.Wait waited) {}
         final java.util.Map<UUID, Spot> spots = new java.util.HashMap<>();
+        /** When each waiting player was first sent toward a spawn of their own, and those whose own spawn was given up. */
+        final java.util.Map<UUID, Long> ownSince = new java.util.HashMap<>();
+        final Set<UUID> ownGivenUp = new HashSet<>();
+
+        /** What keeps a waiting player's landing cubes loaded (see {@link ServerCubeWorld#keepAround}). */
+        static String holder(UUID id) { return "join:" + id; }
 
         /**
          * Where a waiting player may stand now, or null while they wait: about their own spot,
          * scattered about the landing once, as {@link ArrivalWait} allows, waited for round that
          * spot (a wide spawn radius scatters past the cubes round the landing) and never in a cube
-         * not loaded. The player is held meanwhile, so waiting on is safe however long it takes.
+         * not loaded. The cubes there are kept loaded meanwhile, as nobody may be near. The player is
+         * held, so waiting on is safe; a spot whose cubes cannot be had by the arrival's bound is
+         * scattered again, so another column round the landing is tried.
          */
         @Nullable private Vec3 landed(UUID id, ServerCubeWorld cubes) {
+            if (landing == null) landing = CubicEvents.landing(cubes, view(cubes)); // as before: found here when not found ahead
             int[] found = landing;
-            if (found == null) return CubicEvents.arrival(cubes, view(cubes)); // as before: no landing found ahead
             Spot spot = spots.computeIfAbsent(id, k -> new Spot(CubicEvents.scatter(cubes, found), ArrivalWait.Wait.NEW));
             var generator = cubes.generator();
             int x = spot.at[0], z = spot.at[1];
             var at = new net.minecraft.core.BlockPos(x, Math.max(generator.surfaceY(x, z), generator.waterY(x, z)), z);
+            cubes.keepAround(holder(id), at);
             ArrivalWait.Next next = ArrivalWait.step(spot.waited, ArrivalWait.around(cubes, at));
             Vec3 stand = next.step() == ArrivalWait.Step.GO ? CubicEvents.standAt(cubes, spot.at) : null;
-            if (stand == null) spots.put(id, new Spot(spot.at, next.then()));
-            return stand;
+            if (stand != null) return stand;
+            if (next.step() == ArrivalWait.Step.GIVE_UP || spot.waited.ticks() >= ArrivalWait.TOTAL) {
+                spots.remove(id);
+                cubes.release(holder(id));
+            } else spots.put(id, new Spot(spot.at, next.then()));
+            return null;
         }
 
         /** Fetches the data around the home off the server thread, and checks it is there; retries until it is. */
@@ -517,6 +543,10 @@ public final class EarthWorlds {
             return CubicEvents.travel(source, player, spawn.get().latitude(), spawn.get().longitude(), spawn.get().viewLatitude(), spawn.get().viewLongitude());
         int[] view = Session.view(cubes);
         Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found) : CubicEvents.arrival(cubes, view);
+        if (spot == null) {
+            source.sendFailure(Component.literal("Could not load the ground at the server spawn yet. Try again in a minute."));
+            return 0;
+        }
         player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
         if (source.getPlayer() == player) {
             try { return CubicEvents.where(source); } catch (com.mojang.brigadier.exceptions.CommandSyntaxException notAPlayer) { return 1; }

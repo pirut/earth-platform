@@ -63,6 +63,27 @@ public final class EarthRules {
      * settings say: experience levels by distance, and a cooldown between trips. Operators and creative
      * players go free. Tells the player and returns false when they can't pay or must wait.
      */
+    /** What a player paid for a trip on a server tick: levels, and when they could travel before; given back if it does not land. */
+    public record Charge(int levels, long before, int tick) {}
+    private static final Map<UUID, Charge> PAID = new HashMap<>();
+
+    /** The charge a player paid this tick, for the trip now setting off, or null; taken, so it goes with that trip only. */
+    @Nullable public static Charge take(ServerPlayer player) {
+        Charge paid = PAID.remove(player.getUUID());
+        return paid != null && paid.tick() == player.server.getTickCount() ? paid : null;
+    }
+
+    /** Gives back a trip's charge (it timed out, failed or was replaced): its levels, and the cooldown it started. */
+    public static void refund(ServerPlayer player, @Nullable Charge charge) {
+        if (charge == null) return;
+        if (charge.levels() > 0) {
+            player.giveExperienceLevels(charge.levels());
+            player.sendSystemMessage(Component.literal("Gave back the " + charge.levels() + " experience levels the trip cost.").withStyle(ChatFormatting.GRAY));
+        }
+        if (charge.before() == 0) NEXT_TRIP.remove(player.getUUID());
+        else NEXT_TRIP.put(player.getUUID(), charge.before());
+    }
+
     static boolean pay(CommandSourceStack source, ServerPlayer player, double latitude, double longitude) {
         if (source.getPlayer() != player || source.hasPermission(2) || player.isCreative() || player.isSpectator()) return true;
         long now = net.minecraft.Util.getMillis();
@@ -82,6 +103,7 @@ public final class EarthRules {
         }
         int cooldown = EarthConfig.TRAVEL_COOLDOWN.get();
         if (cooldown > 0) NEXT_TRIP.put(player.getUUID(), now + cooldown * 1000L);
+        if (levels > 0 || cooldown > 0) PAID.put(player.getUUID(), new Charge(levels, next, player.server.getTickCount()));
         return true;
     }
 
