@@ -148,6 +148,9 @@ jobs:
     env:
       # In the system temp directory, which Codex's :workspace profile may write (Gradle needs locks there).
       GRADLE_USER_HOME: /tmp/agent-gradle-home
+      # Codex's TMPDIR. The :workspace profile makes the checkout, /tmp and $TMPDIR writable, so
+      # TMPDIR is pinned to /tmp on the Codex step, never the runner's default.
+      CODEX_TMPDIR: /tmp
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -205,13 +208,24 @@ jobs:
           gradle --no-daemon --console=plain compileJava compileTestJava "-PearthBuildCommit=$(git rev-parse HEAD)"
 
       # Codex can write the checkout, .git included, and git config or hooks there could run code
-      # (core.fsmonitor, filter drivers). Copy .git now, outside anything Codex may write
-      # ($RUNNER_TEMP is outside the workspace and /tmp), and build the patch from that copy. The
-      # hash of everything but the objects goes into the job's environment, which the runner keeps
-      # in memory, so "Make the patch" can prove the copy was not changed.
+      # (core.fsmonitor, filter drivers). Copy .git now into $RUNNER_TEMP and build the patch from
+      # that copy. What keeps the copy safe is that $RUNNER_TEMP is outside every root Codex's
+      # sandbox may write (the checkout, /tmp and $TMPDIR); this step checks that first and fails
+      # otherwise. The hash of everything but the objects goes to $GITHUB_ENV for "Make the
+      # patch" to compare. That file also lives under $RUNNER_TEMP, so the hash adds a check
+      # against a mistake in the copy, not a guarantee beyond the sandbox's writable roots.
       - name: Keep a pristine copy of the git metadata
+        env:
+          TMPDIR: ${{ env.CODEX_TMPDIR }}
         run: |
           set -euo pipefail
+          under() { case "$(realpath -m "$1")/" in "$(realpath -m "$2")"/*) return 0 ;; esac; return 1; }
+          for root in "$GITHUB_WORKSPACE" /tmp "$TMPDIR"; do
+            if under "$RUNNER_TEMP" "$root" || under "$root" "$RUNNER_TEMP"; then
+              echo "::error::RUNNER_TEMP ($RUNNER_TEMP) overlaps a root Codex may write ($root); refusing to run Codex."
+              exit 1
+            fi
+          done
           cp -a .git "$RUNNER_TEMP/pristine.git"
           pristine_sum() { ( cd "$RUNNER_TEMP/pristine.git" && { find . -path ./objects -prune -o -print0 | xargs -0 stat -c '%n %F %a %N'; find . -path ./objects -prune -o -type f -print0 | xargs -0 sha256sum; } | LC_ALL=C sort | sha256sum | cut -d ' ' -f 1 ); }
           echo "PRISTINE_GIT_SUM=$(pristine_sum)" >> "$GITHUB_ENV"
@@ -220,6 +234,9 @@ jobs:
       # of the job. Codex sees no GitHub token; the API key stays inside the action's proxy.
       - name: Run Codex
         uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1.13
+        env:
+          # Checked against $RUNNER_TEMP in the step above.
+          TMPDIR: ${{ env.CODEX_TMPDIR }}
         with:
           openai-api-key: ${{ secrets.CODEX_OPENAI_API_KEY }}
           prompt-file: /tmp/agent-prompt/prompt.md
