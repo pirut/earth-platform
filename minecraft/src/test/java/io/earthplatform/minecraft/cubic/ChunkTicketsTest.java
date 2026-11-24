@@ -34,6 +34,8 @@ class ChunkTicketsTest {
         final ArrayDeque<Runnable> io = new ArrayDeque<>();
         int groundY = 1180, groundAsks, keeps;
         boolean groundMissing;
+        /** Chunk columns whose ground read fails, as while their map data is missing. */
+        final LongOpenHashSet failing = new LongOpenHashSet();
 
         @Override public boolean loaded(long key) { return loaded.contains(key); }
         @Override public boolean request(long key) { return !loaded.contains(key) && !requested.contains(key) && requested.add(key); }
@@ -41,7 +43,7 @@ class ChunkTicketsTest {
         @Override public void release(Object holder) { resident.release(holder); }
         @Override public int groundY(int x, int z) {
             groundAsks++;
-            if (groundMissing) throw new IllegalStateException("map data not in yet");
+            if (groundMissing || failing.contains(ChunkPos.asLong(x >> 4, z >> 4))) throw new IllegalStateException("map data not in yet");
             return groundY;
         }
         @Override public void tell(Component line) { told.add(line.getString()); }
@@ -393,6 +395,85 @@ class ChunkTicketsTest {
         assertEquals(1, heights.retain(new LongOpenHashSet(new long[]{chunk})));
         assertNull(heights.of(ground));
         assertEquals(3, heights.of(chunk).size());
+    }
+
+    // Sol's final check.
+
+    @Test void aChunkRemovedAndForcedAgainBetweenTwoLooksIsQueuedOnceAndChargedOnce() {
+        World world = new World();
+        ChunkTickets tickets = tickets(world);
+        tickets.reconcile(20, List.of(forcedAt(0, 0, 1200, 0)), 117);
+        assertEquals(117, tickets.heldCubes());
+        // Removed and forced again at the same height before the next look: the same loader, a new place.
+        tickets.reconcile(40, List.of(forcedAt(0, 0, 1200, 1)), 117);
+        assertTrue(tickets.accountsAdd(), "queued or held once, and charged only for holds that exist");
+        assertEquals(1, tickets.holds());
+        assertEquals(117, tickets.heldCubes());
+        assertEquals(1, world.resident.holders());
+        for (int t = 60; t <= 200; t += 20) tickets.reconcile(t, List.of(forcedAt(0, 0, 1200, 1)), 117);
+        assertTrue(tickets.accountsAdd());
+        assertEquals(1, tickets.holds(), "never let in twice");
+        tickets.reconcile(220, List.of(), 117);
+        assertEquals(0, tickets.holds());
+        assertEquals(0, tickets.heldCubes(), "nothing left charged once it is removed");
+        assertEquals(0, world.resident.holders());
+        assertTrue(tickets.accountsAdd());
+        // And a re-add behind a waiting loader queues behind it, once.
+        tickets.reconcile(240, List.of(forcedAt(0, 0, 1200, 2), forcedAt(5, 0, 1200, 3)), 117);
+        tickets.reconcile(260, List.of(forcedAt(0, 0, 1200, 4), forcedAt(5, 0, 1200, 3)), 117);
+        assertTrue(tickets.accountsAdd());
+        assertEquals(1, tickets.holds());
+        assertTrue(holdsChunk(world, 5, 0, 1200), "the waiting one was first now");
+        assertEquals(117, tickets.heldCubes());
+    }
+
+    private static Ask entityAt(java.util.UUID id, int chunkX, int chunkZ, int y, long seq) {
+        return new Ask(new Hold(Kind.MOD, ChunkPos.asLong(chunkX, chunkZ), id), seq, chunkX, chunkZ, ChunkTickets.FORCED_REACH, y, ChunkTickets.FORCED_V);
+    }
+
+    @Test void anEntityMovingInsideItsCubeKeepsItsHoldAndAnotherCubeIsHeldAtOnce() {
+        World world = new World();
+        ChunkTickets tickets = tickets(world);
+        java.util.UUID turtle = new java.util.UUID(1, 2);
+        tickets.reconcile(20, List.of(entityAt(turtle, 0, 0, 1200, 5)), 117);
+        assertEquals(1, tickets.holds());
+        // An older loader turns up and waits for room.
+        tickets.reconcile(40, List.of(entityAt(turtle, 0, 0, 1200, 5), forcedAt(9, 9, 1200, 1)), 117);
+        assertEquals(1, tickets.leftOut());
+        int keeps = world.keeps;
+        tickets.reconcile(60, List.of(entityAt(turtle, 0, 0, 1205, 5), forcedAt(9, 9, 1200, 1)), 117); // 1200 and 1205: cube 75 both
+        assertEquals(keeps, world.keeps, "inside the same cube nothing changes");
+        assertTrue(holdsChunk(world, 0, 0, 1200));
+        assertFalse(holdsChunk(world, 9, 9, 1200), "the older waiting loader didn't take the room");
+        tickets.reconcile(80, List.of(entityAt(turtle, 0, 0, 1300, 5), forcedAt(9, 9, 1200, 1)), 117); // into cube 81
+        assertTrue(world.resident.holds(CubeKey.pack(0, 1300 >> 4, 0)), "held round its new cube at once");
+        assertFalse(holdsChunk(world, 9, 9, 1200), "still in its place");
+        assertEquals(117, tickets.heldCubes());
+        assertTrue(tickets.accountsAdd());
+    }
+
+    @Test void groundReadsThatFailAtDifferentTimesAreEachTriedAgain() {
+        World world = new World();
+        ChunkTickets tickets = tickets(world);
+        world.failing.add(ChunkPos.asLong(3, 4));
+        world.failing.add(ChunkPos.asLong(30, 4));
+        List<Ask> asks = List.of(console(3, 4, 0), console(30, 4, 1));
+        tickets.reconcile(20, asks, 8192);
+        tickets.tick(21, 384); // both reads start
+        world.io.poll().run(); // the first fails by tick 40
+        tickets.reconcile(40, asks, 8192);
+        for (int t = 41; t < 100; t++) tickets.tick(t, 384);
+        world.io.poll().run(); // the second fails by tick 100
+        tickets.reconcile(100, asks, 8192);
+        world.failing.clear(); // the map data comes in
+        for (int t = 101; t <= 400; t++) {
+            world.runIo();
+            if (t % ChunkTickets.EVERY == 0) tickets.reconcile(t, asks, 8192);
+            tickets.tick(t, 384);
+        }
+        assertEquals(2, tickets.holds(), "both let in once their ground is read again: retries due at 240 and 300");
+        assertTrue(holdsChunk(world, 3, 4, 1180));
+        assertTrue(holdsChunk(world, 30, 4, 1180));
     }
 
     /** Sol's round 1 repro: a chunk forced, then forced again for a second height before the first save. */

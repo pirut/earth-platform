@@ -158,8 +158,6 @@ public final class ChunkTickets {
     private final ConcurrentLinkedQueue<long[]> grounds = new ConcurrentLinkedQueue<>();
     private final AtomicInteger inFlight = new AtomicInteger();
     private int groundReads;
-    /** The tick a failed ground read is due to be tried again, which calls for planning again. */
-    private int retryDue = Integer.MAX_VALUE;
 
     /** Entity owners' last known block Y, for when they are not loaded. */
     private final Map<UUID, Integer> entityY = new HashMap<>();
@@ -221,10 +219,11 @@ public final class ChunkTickets {
         if (closed) return;
         this.tick = tick;
         boolean changed = drainGrounds() || cap != lastCap;
-        if (tick >= retryDue) { changed = true; retryDue = Integer.MAX_VALUE; }
+        // Each failed ground read is tried again on its own time: those due are let go of here, so the plan asks again.
+        if (groundFailedAt.values().removeIf((int failedAt) -> tick - failedAt >= GROUND_RETRY)) changed = true;
         lastCap = cap;
-        if (forced != lastForced) { changed |= diff(forced, true); lastForced = forced; }
-        if (!others.equals(lastOthers)) { changed |= diff(others, false); lastOthers = List.copyOf(others); }
+        if (forced != lastForced) { changed |= diff(forced, true, cap); lastForced = forced; }
+        if (!others.equals(lastOthers)) { changed |= diff(others, false, cap); lastOthers = List.copyOf(others); }
         for (Ask ask : others) if (ask.hold().kind() == Kind.PORTAL) known.get(ask.hold()).seen = tick;
         for (Iterator<Hold> it = lapsed.iterator(); it.hasNext(); ) {
             Entry entry = known.get(it.next());
@@ -238,7 +237,7 @@ public final class ChunkTickets {
     }
 
     /** Brings {@link #known} up to one list of asks, the forced ones or the portal and mod ones. True when anything changed. */
-    private boolean diff(List<Ask> asks, boolean forced) {
+    private boolean diff(List<Ask> asks, boolean forced, int cap) {
         boolean changed = false;
         Set<Hold> now = new HashSet<>(2 * asks.size() + 2);
         for (Ask ask : asks) {
@@ -253,14 +252,21 @@ public final class ChunkTickets {
                 continue;
             }
             if (entry.lapsed) { entry.lapsed = false; lapsed.remove(ask.hold()); changed = true; }
-            if (!entry.ask.equals(ask)) {
-                // Moved (an entity owner) or given a place: queued again in its place.
-                if (entry.held) drop(entry); else waiting.remove(entry.seq);
-                entry.ask = ask;
-                if (ask.seq() >= 0) entry.seq = ask.seq();
-                waiting.put(entry.seq, entry);
-                changed = true;
+            if (entry.ask.equals(ask)) continue;
+            changed = true;
+            long seq = ask.seq() >= 0 ? ask.seq() : entry.seq;
+            if (seq == entry.seq && entry.held) {
+                // An owner that moved (a NeoForge entity): inside the same cube nothing changes; to another, it is held there at once.
+                if (sameBox(entry, ask)) entry.ask = ask;
+                else move(entry, ask, cap);
+                continue;
             }
+            // Forced again (a remove and a re-add between two looks): the old place is let go of, and it queues anew.
+            unqueue(entry);
+            drop(entry);
+            entry.ask = ask;
+            entry.seq = seq;
+            waiting.put(seq, entry);
         }
         for (Iterator<Entry> it = known.values().iterator(); it.hasNext(); ) {
             Entry entry = it.next();
@@ -271,8 +277,8 @@ public final class ChunkTickets {
                 lapsed.add(entry.ask.hold());
             } else {
                 it.remove();
+                unqueue(entry);
                 drop(entry);
-                waiting.remove(entry.seq);
             }
             changed = true;
         }
@@ -289,8 +295,11 @@ public final class ChunkTickets {
         plans++;
         pending = false;
         while (cubeRefs.size() > cap && !held.isEmpty()) {
-            if (lapsed.isEmpty()) drop(held.lastEntry().getValue()); // the newest waits again
-            else dropOldestLapsed();
+            if (lapsed.isEmpty()) {
+                Entry newest = held.lastEntry().getValue();
+                drop(newest);
+                waiting.put(newest.seq, newest); // waits again in its place
+            } else dropOldestLapsed();
         }
         int admitted = 0, ahead = 0;
         boolean full = false, onGround = false;
@@ -322,6 +331,53 @@ public final class ChunkTickets {
         }
     }
 
+    /** Whether an ask keeps the same cubes as a held loader: it differs, if at all, only in its height within the same cube. */
+    private boolean sameBox(Entry entry, Ask ask) {
+        Ask had = entry.ask;
+        return ask.y() != GROUND && Math.floorDiv(ask.y(), 16) == entry.cubeY && ask.chunkX() == had.chunkX() && ask.chunkZ() == had.chunkZ()
+                && ask.reach() == had.reach() && ask.v() == had.v();
+    }
+
+    /** Takes a loader not held out of the queue. */
+    private void unqueue(Entry entry) {
+        if (waiting.get(entry.seq) == entry) waiting.remove(entry.seq);
+    }
+
+    /**
+     * A held loader whose owner moved to another cube (a NeoForge entity): held round the new cube at once, in
+     * its place, if that fits in the room its old cubes leave; else it keeps the old ones. Either way it never
+     * lets go of its room for another loader.
+     */
+    private void move(Entry entry, Ask ask, int cap) {
+        int cubeY = cubeY(ask);
+        long[] keys = cubeY == GROUND ? null : box(ask.chunkX(), ask.chunkZ(), ask.reach(), cubeY, ask.v());
+        long[] oldKeys = entry.keys;
+        int oldY = entry.cubeY;
+        Ask oldAsk = entry.ask;
+        drop(entry);
+        if (keys != null && cubeRefs.size() + fresh(keys) <= cap) {
+            entry.ask = ask;
+            entry.cubeY = cubeY;
+            hold(entry, keys);
+        } else {
+            entry.cubeY = oldY;
+            hold(entry, oldKeys); // with its old ask, so it is tried again at the next change
+            entry.ask = oldAsk;
+        }
+    }
+
+    /** For tests: whether the held cube counts are exactly those of the holds there are, and every loader is queued or held once. */
+    boolean accountsAdd() {
+        Long2IntOpenHashMap counted = new Long2IntOpenHashMap();
+        for (Entry entry : held.values()) for (long key : entry.keys) counted.addTo(key, 1);
+        if (!counted.equals(cubeRefs)) return false;
+        Set<Entry> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (Entry entry : waiting.values()) if (!seen.add(entry) || entry.held) return false;
+        for (Entry entry : held.values()) if (!seen.add(entry) || !entry.held) return false;
+        for (Entry entry : known.values()) if (!entry.lapsed && !seen.contains(entry)) return false;
+        return true;
+    }
+
     /** Lets go of the portal exit whose ticket lapsed longest ago. */
     private void dropOldestLapsed() {
         Iterator<Hold> oldest = lapsed.iterator();
@@ -338,6 +394,7 @@ public final class ChunkTickets {
     }
 
     private void hold(Entry entry, long[] keys) {
+        if (entry.held) throw new IllegalStateException("held twice: " + entry.ask.hold());
         Ask ask = entry.ask;
         host.keep(ask.hold(), keys);
         entry.held = true;
@@ -364,7 +421,6 @@ public final class ChunkTickets {
         entry.held = false;
         entry.keys = null;
         entry.inner = null;
-        if (!entry.lapsed && known.get(entry.ask.hold()) == entry) waiting.put(entry.seq, entry); // still asked for: back in its place
     }
 
     /** The cube Y an ask is kept round, or {@link #GROUND} while its ground is unknown, which is then read. */
@@ -373,8 +429,7 @@ public final class ChunkTickets {
         long column = ChunkPos.asLong(ask.chunkX(), ask.chunkZ());
         if (ground.containsKey(column)) return ground.get(column);
         if (asking.contains(column)) return GROUND;
-        if (groundFailedAt.containsKey(column) && tick - groundFailedAt.get(column) < GROUND_RETRY) return GROUND;
-        groundFailedAt.remove(column);
+        if (groundFailedAt.containsKey(column)) return GROUND; // waiting out its failure; let go of when due
         groundWanted.add(column);
         return GROUND;
     }
@@ -385,10 +440,9 @@ public final class ChunkTickets {
         for (long[] done; (done = grounds.poll()) != null; ) {
             any = true;
             asking.remove(done[0]);
-            if (done[1] == Long.MIN_VALUE) {
-                groundFailedAt.put(done[0], tick);
-                retryDue = Math.min(retryDue, tick + GROUND_RETRY);
-            } else {
+            if (done[1] == Long.MIN_VALUE) groundFailedAt.put(done[0], tick);
+            else {
+                groundFailedAt.remove(done[0]);
                 if (ground.size() > 4096) ground.clear();
                 ground.put(done[0], (int) done[1]);
             }
