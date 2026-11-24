@@ -39,8 +39,9 @@ permissions:
 jobs:
   release:
     # A closed pull request publishes only when it was merged and it carries the build label.
-    # Tag pushes and manual runs are unchanged.
-    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'build')) }}
+    # Agent pull requests (agent/* branches from agent.yml) never publish, even with the label:
+    # this job holds the release secrets. Tag pushes and manual runs are unchanged.
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'build') && !startsWith(github.event.pull_request.head.ref, 'agent/')) }}
     runs-on: ubuntu-latest
     steps:
       # github.sha on a pull_request event is the pull request merge ref. The merge commit on main
