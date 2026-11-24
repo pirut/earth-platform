@@ -72,6 +72,14 @@ public final class Trips {
      * would pull them back.
      */
     public static boolean calledOff(boolean removed, boolean dead, Object setOffFrom, Object now) {
-        return removed || dead || !Objects.equals(setOffFrom, now);
+        return whyCalledOff(removed, dead, setOffFrom, now) != null;
+    }
+
+    /** As {@link #calledOff}: the one line telling the player why, or null when the trip goes on. */
+    @javax.annotation.Nullable public static String whyCalledOff(boolean removed, boolean dead, Object setOffFrom, Object now) {
+        if (removed) return "The trip was called off: you left.";
+        if (dead) return "The trip was called off: you died.";
+        if (!Objects.equals(setOffFrom, now)) return "The trip was called off: you went to another dimension.";
+        return null;
     }
 }

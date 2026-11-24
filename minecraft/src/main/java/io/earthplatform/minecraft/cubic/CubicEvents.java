@@ -101,9 +101,35 @@ public final class CubicEvents {
     /** The trip each player is on now. */
     private static final Trips TRIPS = new Trips();
 
-    /** Whether a trip a player set off from {@code from} is called off now (see {@link Trips#calledOff}). */
-    private static boolean calledOff(ServerPlayer player, ResourceKey<Level> from) {
-        return Trips.calledOff(player.isRemoved(), player.isDeadOrDying(), from, player.level().dimension());
+    /** Why a trip a player set off from {@code from} is called off now, or null (see {@link Trips#whyCalledOff}). */
+    @Nullable private static String whyCalledOff(ServerPlayer player, ResourceKey<Level> from) {
+        return Trips.whyCalledOff(player.isRemoved(), player.isDeadOrDying(), from, player.level().dimension());
+    }
+
+    /** A trip as it set off: its token and the dimension it left from, taken before its first step (a random trip's search for land). */
+    public record TripStart(long token, ResourceKey<Level> from) {}
+
+    /**
+     * Server thread. Whether a trip's step may go on: false, and silently, when a newer trip has
+     * taken its place; false, telling the player in one line and ending the trip, when they died or
+     * went to another dimension since it set off.
+     */
+    private static boolean stillOn(CommandSourceStack source, ServerPlayer player, TripStart start) {
+        UUID id = player.getUUID();
+        if (!TRIPS.current(id, start.token)) return false;
+        String why = whyCalledOff(player, start.from);
+        if (why == null) return true;
+        TRIPS.cancel(id);
+        if (!player.isRemoved()) {
+            source.sendFailure(Component.literal(why));
+            io.earthplatform.minecraft.cubic.play.EarthMap.failed(player);
+        }
+        return false;
+    }
+
+    /** Whether a teleport put the player in {@code level} at {@code at}: false when something (a mod) stopped the move. */
+    public static boolean arrivedAt(ServerPlayer player, ServerLevel level, Vec3 at) {
+        return !player.isRemoved() && player.level() == level && player.position().distanceToSqr(at) < 1.0;
     }
 
     /**
@@ -124,14 +150,10 @@ public final class CubicEvents {
                 TRIPS.remember(id, arrival.latitude, arrival.longitude, arrival.waited);
                 continue;
             }
-            if (calledOff(arrival.player, arrival.from)) {
+            if (whyCalledOff(arrival.player, arrival.from) != null) {
                 ARRIVALS.remove(i);
                 cubes.release(arrival.holder());
-                TRIPS.cancel(id);
-                if (!arrival.player.isRemoved()) {
-                    arrival.source.sendFailure(Component.literal("The trip was called off."));
-                    io.earthplatform.minecraft.cubic.play.EarthMap.failed(arrival.player);
-                }
+                stillOn(arrival.source, arrival.player, new TripStart(arrival.token, arrival.from)); // ends it, telling the player why
                 continue;
             }
             CubeGenerator generator = cubes.generator();
@@ -159,13 +181,16 @@ public final class CubicEvents {
             cubes.landHeld(arrival.holder(), () -> {
                 TRIPS.end(id, arrival.token);
                 TRIPS.landed(id);
-                // Charged now it lands, if the player can still pay; nothing was taken before.
-                if (!io.earthplatform.minecraft.cubic.play.EarthRules.settle(arrival.source, arrival.player, arrival.fare)) {
+                float yaw = lookOut(cubes, stand, facing(stand, arrival.view, arrival.player.getYRot()));
+                // Charged only once the move is confirmed: a mod vetoing the teleport leaves them where they were, unpaid.
+                boolean landed = io.earthplatform.minecraft.cubic.play.EarthRules.land(arrival.source, arrival.player, arrival.fare, () -> {
+                    arrival.player.teleportTo(level, stand.x, stand.y, stand.z, yaw, 0.0F);
+                    return arrivedAt(arrival.player, level, stand);
+                });
+                if (!landed) {
                     io.earthplatform.minecraft.cubic.play.EarthMap.failed(arrival.player);
                     return;
                 }
-                float yaw = lookOut(cubes, stand, facing(stand, arrival.view, arrival.player.getYRot()));
-                arrival.player.teleportTo(level, stand.x, stand.y, stand.z, yaw, 0.0F);
                 io.earthplatform.minecraft.cubic.play.EarthMap.arrived(arrival.player);
                 tellPlace(arrival.source, cubes, BlockPos.containing(stand));
             });
@@ -279,16 +304,22 @@ public final class CubicEvents {
     /** Server thread. Whether a player is on a trip still fetching or waiting to land. */
     public static boolean tripPending(ServerPlayer player) { return TRIPS.pending(player.getUUID()); }
 
-    /** Server thread. A trip sets off whose first step (a random trip's search for land) is the caller's: its token, which supersedes any trip the player was on. */
-    public static long beginTrip(ServerPlayer player) { return TRIPS.begin(player.getUUID()); }
+    /**
+     * Server thread. A trip sets off whose first step (a random trip's search for land) is the
+     * caller's: its token, which supersedes any trip the player was on, and the dimension it leaves
+     * from, both taken now, before that step.
+     */
+    public static TripStart beginTrip(ServerPlayer player) { return new TripStart(TRIPS.begin(player.getUUID()), player.level().dimension()); }
 
-    /** Server thread. Whether a trip begun with {@link #beginTrip} is still the player's, and not called off. */
-    public static boolean tripCurrent(ServerPlayer player, long token) {
-        return TRIPS.current(player.getUUID(), token) && !player.isRemoved() && !player.isDeadOrDying();
-    }
+    /**
+     * Server thread. Whether a trip begun with {@link #beginTrip} may go on: false when a newer
+     * trip took its place, or (telling the player, and ending it) when they died or went to another
+     * dimension during its first step.
+     */
+    public static boolean tripStillOn(CommandSourceStack source, ServerPlayer player, TripStart start) { return stillOn(source, player, start); }
 
     /** Server thread. A trip begun with {@link #beginTrip} ended before travelling (no land was found). */
-    public static void endTrip(ServerPlayer player, long token) { TRIPS.end(player.getUUID(), token); }
+    public static void endTrip(ServerPlayer player, TripStart start) { TRIPS.end(player.getUUID(), start.token); }
 
     /**
      * The world's arrival point, as {@link #arrival}, or null where it cannot be had now: its cubes
@@ -527,18 +558,18 @@ public final class CubicEvents {
 
     /** As below, free. */
     public static int travel(CommandSourceStack source, ServerPlayer player, double latitude, double longitude, double viewLatitude, double viewLongitude) {
-        return travel(source, player, latitude, longitude, viewLatitude, viewLongitude, null, -1);
+        return travel(source, player, latitude, longitude, viewLatitude, viewLongitude, null, null);
     }
 
     /**
      * Travels there and faces a sight, such as the peak a famous place is known for (NaN for none).
      * A famous place may land farther from its point than a bare latitude and longitude does, as a
      * new world's start does, to find good ground.
-     * {@code fare} (null for free) is charged only if it lands. {@code token} is the trip's when its
-     * caller began it (a random trip, after its search for land), or -1 to begin it here.
+     * {@code fare} (null for free) is charged only once it lands. {@code begun} is the trip as its
+     * caller began it (a random trip, before its search for land), or null to begin it here.
      */
     public static int travel(CommandSourceStack source, ServerPlayer player, double latitude, double longitude, double viewLatitude, double viewLongitude,
-                             @Nullable io.earthplatform.minecraft.cubic.play.EarthRules.Fare fare, long token) {
+                             @Nullable io.earthplatform.minecraft.cubic.play.EarthRules.Fare fare, @Nullable TripStart begun) {
         ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
         if (level == null || !(CubicLevel.of(level) instanceof ServerCubeWorld cubes) || !(cubes.generator() instanceof EarthGenerator earth)) {
             source.sendFailure(Component.literal("This save's cubic world is not the Earth."));
@@ -547,14 +578,15 @@ public final class CubicEvents {
         // The server's rules, such as a region border, may refuse the trip.
         String refused = io.earthplatform.minecraft.cubic.play.EarthRules.refuse(player, latitude, longitude);
         if (refused != null) {
-            if (token >= 0) TRIPS.end(player.getUUID(), token);
+            if (begun != null) TRIPS.end(player.getUUID(), begun.token);
             source.sendFailure(Component.literal(refused));
             io.earthplatform.minecraft.cubic.play.EarthMap.failed(player);
             return 0;
         }
         // This trip supersedes any the player was on: their older fetches and arrival are dropped from now.
-        long trip = token >= 0 ? token : TRIPS.begin(player.getUUID());
-        ResourceKey<Level> from = player.level().dimension();
+        TripStart setOff = begun != null ? begun : beginTrip(player);
+        long trip = setOff.token;
+        ResourceKey<Level> from = setOff.from;
         int[] target = earth.block(latitude, longitude);
         int[] view = Double.isNaN(viewLatitude) ? null : earth.block(viewLatitude, viewLongitude);
         source.sendSuccess(() -> Component.literal("Fetching terrain around " + earth.place(target[0], target[1]) + "...").withStyle(ChatFormatting.GRAY), false);
@@ -586,8 +618,7 @@ public final class CubicEvents {
         }, Util.ioPool()).whenComplete((spot, failure) -> source.getServer().execute(() -> {
             UUID id = player.getUUID();
             // A fetch for a trip since superseded or called off (a personal spawn given up, a newer trip) is dropped.
-            if (!TRIPS.current(id, trip)) return;
-            if (calledOff(player, from)) { TRIPS.cancel(id); return; }
+            if (!stillOn(source, player, setOff)) return; // told in one line when a death or another dimension called it off
             if (failure != null) {
                 TRIPS.end(id, trip);
                 // The data's own words, without the exception's class names: most often a data server can't be reached.

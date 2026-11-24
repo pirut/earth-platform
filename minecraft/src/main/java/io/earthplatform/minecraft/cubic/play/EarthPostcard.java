@@ -139,7 +139,7 @@ public final class EarthPostcard {
         double turn = Math.toRadians(spot.bearing()), away = 0.05;
         double viewLatitude = Math.clamp(spot.latitude() + Math.cos(turn) * away, -LIMIT, LIMIT);
         double viewLongitude = spot.longitude() + Math.sin(turn) * away / Math.max(0.1, Math.cos(Math.toRadians(spot.latitude())));
-        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), viewLatitude, viewLongitude, fare, -1);
+        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), viewLatitude, viewLongitude, fare, null);
     }
 
     private static int postcard(CommandSourceStack source) throws CommandSyntaxException {

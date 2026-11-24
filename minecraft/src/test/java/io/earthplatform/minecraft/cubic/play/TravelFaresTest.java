@@ -67,6 +67,38 @@ class TravelFaresTest {
         assertNull(EarthRules.refusal(player, 0, 1_000 + COOLDOWN * 1000L));
     }
 
+    @Test void aVetoedMoveChargesNothingAndStartsNoCooldown() {
+        // A mod cancels the teleport (a Nether-to-Earth /earth goto): the player stays put.
+        Levels player = new Levels(10);
+        int[] moves = {0};
+        String refused = EarthRules.landTrip(player, new EarthRules.Fare(4, true), 1_000, COOLDOWN, () -> { moves[0]++; return false; });
+        assertNotNull(refused, "a vetoed move landed");
+        assertEquals(1, moves[0]);
+        assertEquals(10, player.levels, "charged for a move that did not happen");
+        assertNull(EarthRules.refusal(player, 0, 1_001), "a vetoed move started the cooldown");
+    }
+
+    @Test void aConfirmedMoveIsChargedOnlyAfterItHappens() {
+        Levels player = new Levels(10);
+        int[] levelsAtMove = {-1};
+        assertNull(EarthRules.landTrip(player, new EarthRules.Fare(4, true), 1_000, COOLDOWN, () -> { levelsAtMove[0] = player.levels; return true; }));
+        assertEquals(10, levelsAtMove[0], "charged before the move");
+        assertEquals(6, player.levels);
+        assertNotNull(EarthRules.refusal(player, 0, 1_001), "no cooldown after the trip landed");
+    }
+
+    @Test void aFareThatCannotBePaidNeverMoves() {
+        Levels player = new Levels(1);
+        int[] moves = {0};
+        assertNotNull(EarthRules.landTrip(player, new EarthRules.Fare(4, true), 1_000, COOLDOWN, () -> { moves[0]++; return true; }));
+        assertEquals(0, moves[0], "moved a player who could not pay");
+        assertEquals(1, player.levels);
+        // Free trips move and charge nothing.
+        assertNull(EarthRules.landTrip(player, EarthRules.Fare.FREE, 1_000, COOLDOWN, () -> { moves[0]++; return true; }));
+        assertEquals(1, moves[0]);
+        assertEquals(1, player.levels);
+    }
+
     @Test void freeTripsChargeNothingAndStartNoCooldown() {
         Levels player = new Levels(5);
         assertNull(EarthRules.charge(player, EarthRules.Fare.FREE, 0, COOLDOWN));

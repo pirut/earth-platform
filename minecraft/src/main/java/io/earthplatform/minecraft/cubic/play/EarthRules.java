@@ -101,25 +101,35 @@ public final class EarthRules {
     }
 
     /**
-     * The trip lands: charges its fare (null or free: nothing) and starts the cooldown. False, telling
-     * the player why, when they can no longer pay (they spent the levels meanwhile) or another trip's
-     * cooldown now runs, and the trip does not land.
+     * Lands a trip: makes {@code move} (the teleport, true once the player is confirmed at the
+     * destination), then charges the fare (null or free: nothing) and starts the cooldown. False,
+     * telling the player why, when they can no longer pay or another trip's cooldown now runs (then
+     * no move is made), or when something stopped the move (a mod vetoing the teleport): then they
+     * stay where they are, pay nothing and start no cooldown.
      */
-    public static boolean settle(CommandSourceStack source, ServerPlayer player, @Nullable Fare fare) {
-        String refused = charge(wallet(player), fare, net.minecraft.Util.getMillis(), EarthConfig.TRAVEL_COOLDOWN.get());
+    public static boolean land(CommandSourceStack source, ServerPlayer player, @Nullable Fare fare, java.util.function.BooleanSupplier move) {
+        String refused = landTrip(wallet(player), fare, net.minecraft.Util.getMillis(), EarthConfig.TRAVEL_COOLDOWN.get(), move);
         if (refused != null) {
             source.sendFailure(Component.literal(refused));
             return false;
         }
-        if (fare != null && fare.levels() > 0)
+        if (fare != null && fare.charged() && fare.levels() > 0)
             source.sendSuccess(() -> Component.literal("Paid " + fare.levels() + " experience levels for the trip.").withStyle(ChatFormatting.GRAY), false);
         return true;
     }
 
-    /** For a move that lands at once (a teleport to another player): quoted and charged together. */
-    static boolean pay(CommandSourceStack source, ServerPlayer player, double latitude, double longitude) {
-        Fare fare = quote(source, player, latitude, longitude);
-        return fare != null && settle(source, player, fare);
+    /**
+     * {@link #land} for a fare and a wallet: why the trip did not land, or null once it landed and
+     * was paid for. The fare is checked before the move (nothing taken), and taken only after it.
+     */
+    @Nullable static String landTrip(Wallet wallet, @Nullable Fare fare, long now, int cooldownSeconds, java.util.function.BooleanSupplier move) {
+        if (fare != null && fare.charged()) {
+            String refused = refusal(wallet, fare.levels(), now);
+            if (refused != null) return refused.startsWith("This trip costs")
+                    ? "This trip costs " + fare.levels() + " experience levels and you now have " + wallet.levels() + "; it did not go." : refused;
+        }
+        if (!move.getAsBoolean()) return "The trip did not go: something stopped the move.";
+        return charge(wallet, fare, now, cooldownSeconds);
     }
 
     /** Why a trip costing {@code levels} may not set off now, or null when it may. Takes nothing. */

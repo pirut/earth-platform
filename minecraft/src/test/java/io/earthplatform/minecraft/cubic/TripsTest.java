@@ -60,6 +60,20 @@ class TripsTest {
         assertTrue(Trips.calledOff(true, false, overworld, overworld), "left the server");
     }
 
+    @Test void aCalledOffTripTellsThePlayerWhyInOneLine() {
+        String overworld = "minecraft:overworld", nether = "minecraft:the_nether";
+        assertNull(Trips.whyCalledOff(false, false, overworld, overworld));
+        // A random trip's search, or a terrain fetch, finishing after a Nether portal or a death.
+        assertEquals("The trip was called off: you went to another dimension.", Trips.whyCalledOff(false, false, overworld, nether));
+        assertEquals("The trip was called off: you died.", Trips.whyCalledOff(false, true, overworld, overworld));
+        // Called off, the token is gone: the search's result, or a later fetch, cannot land them.
+        Trips trips = new Trips();
+        long search = trips.begin(player);
+        trips.cancel(player);
+        assertFalse(trips.current(player, search));
+        assertFalse(trips.pending(player));
+    }
+
     @Test void aLandingThatThrowsStillLetsGoOfItsCubes() {
         ResidentCubes resident = new ResidentCubes();
         resident.keep("join:a player", ResidentCubes.around(new net.minecraft.core.BlockPos(0, 64, 0)));

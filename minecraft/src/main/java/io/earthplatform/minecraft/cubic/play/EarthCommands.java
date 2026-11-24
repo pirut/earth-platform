@@ -203,18 +203,18 @@ final class EarthCommands {
 
     /** A trip there, charging {@code fare} (null for free) only as it lands. */
     private static int travel(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot, @Nullable EarthRules.Fare fare) {
-        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), spot.viewLatitude(), spot.viewLongitude(), fare, -1);
+        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), spot.viewLatitude(), spot.viewLongitude(), fare, null);
     }
 
     /**
      * A trip to a spot nobody chose, such as a random one: it searches for good ground as far as a
      * famous place's does, rather than landing on the nearest dry block or the water.
      */
-    static int wander(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot) { return wander(source, player, spot, null, -1); }
+    static int wander(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot) { return wander(source, player, spot, null, null); }
 
-    /** As above, for a trip begun earlier ({@code token}, or -1) and charged {@code fare} (null for free) as it lands. */
-    static int wander(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot, @Nullable EarthRules.Fare fare, long token) {
-        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), spot.latitude(), spot.longitude(), fare, token);
+    /** As above, for a trip begun earlier ({@code begun}, or null) and charged {@code fare} (null for free) once it lands. */
+    static int wander(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot, @Nullable EarthRules.Fare fare, @Nullable CubicEvents.TripStart begun) {
+        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), spot.latitude(), spot.longitude(), fare, begun);
     }
 
     // The server spawn ---------------------------------------------------------------------------
@@ -333,19 +333,20 @@ final class EarthCommands {
             GeoPoint here = where(player);
             GeoPoint centre = here != null ? here : spawnPoint(source, earth);
             RandomSource random = RandomSource.create();
-            long token = CubicEvents.beginTrip(player);
+            // Begun before the search, with where it leaves from: a portal taken or a death meanwhile calls it off.
+            CubicEvents.TripStart start = CubicEvents.beginTrip(player);
             CompletableFuture.supplyAsync(() -> randomLand(earth, random, border, centre, km), Util.ioPool())
                     .whenComplete((spot, failure) -> source.getServer().execute(() -> {
-                        if (!CubicEvents.tripCurrent(player, token)) return;
+                        if (!CubicEvents.tripStillOn(source, player, start)) return;
                         if (failure != null || spot == null) {
-                            CubicEvents.endTrip(player, token);
+                            CubicEvents.endTrip(player, start);
                             if (failure != null) EarthPlatformMod.LOGGER.warn("Random trip failed: {}", failure.toString());
                             source.sendFailure(Component.literal(failure != null ? "Could not reach the elevation data for a random trip. Try again in a minute."
                                     : "Found no land within " + Math.round(km) + " km. Try a bigger distance."));
                             return;
                         }
                         player.sendSystemMessage(Component.literal("Random trip to " + spot.label() + ".").withStyle(ChatFormatting.GREEN));
-                        wander(source, player, spot, fare, token);
+                        wander(source, player, spot, fare, start);
                     }));
         }
         return players.size();
