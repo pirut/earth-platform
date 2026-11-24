@@ -9,13 +9,11 @@ import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -25,6 +23,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
+import java.util.function.LongSupplier;
 import javax.annotation.Nullable;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
@@ -37,7 +36,6 @@ import net.minecraft.server.level.Ticket;
 import net.minecraft.server.level.TicketType;
 import net.minecraft.util.SortedArraySet;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.phys.Vec3;
@@ -56,17 +54,18 @@ import net.minecraft.world.phys.Vec3;
  *       is none (the console, a mod).</li>
  *   <li><b>Portal tickets</b> (an entity through a Nether or End portal): the 5x5 columns vanilla
  *       block-ticks round the exit, two cubes up and down from it, kept a loop's length after the
- *       ticket lapses, below every live ticket.</li>
+ *       ticket lapses, giving way to any loader that needs the room.</li>
  *   <li><b>NeoForge forced chunks</b> ({@code TicketController}, what chunk-loader blocks and
  *       entities use): the chunk and its ring, round the owner block's or entity's height.</li>
  * </ul>
  *
- * <p>The tickets are read every {@link #EVERY} ticks, and only what changed is worked on. The cap ({@code chunkLoaderCubeLimit}) is shared out fairly: owners (the player who ran a
- * {@code /forceload}, a loader block or entity, a portal exit) take turns in the order they first came,
- * and each owner's areas in the order they came, so a hold keeps its cubes while new ones queue behind
- * it, an owner past its share gives way to one under it, and lapsed portal exits come last. Loaders
- * past the cap cost nothing: no ground read, no box. Missing cubes, and the ground of chunks forced with
- * no height, are asked of the workers a few a tick, never made here.
+ * <p>The cap ({@code chunkLoaderCubeLimit}) is first come, first served. Each loader has a place in the
+ * queue, given when it was first forced and saved with its heights (mods' loaders and portal exits take
+ * theirs when first seen). Loaders are let in strictly in that order, each counting only the cubes it
+ * adds to those already held; a held loader is never put out for another, and one that doesn't fit waits,
+ * with everything behind it, and costs nothing while it waits. The tickets are read every {@link #EVERY}
+ * ticks and only what changed is worked on. Missing cubes, and the ground of chunks forced with no height,
+ * are asked of the workers a few a tick, never made here.
  */
 public final class ChunkTickets {
     /** Ticks between looks at the tickets. */
@@ -75,6 +74,8 @@ public final class ChunkTickets {
     static final int REQUESTS_PER_TICK = 32, SCANS_PER_TICK = 128;
     /** Ground reads started a tick, and running at once, for chunks forced with no height. */
     static final int GROUND_PER_TICK = 2, GROUND_IN_FLIGHT = 4;
+    /** Loaders at the front of the queue whose ground is read ahead, while the first waits on its own. */
+    static final int LOOKAHEAD = GROUND_IN_FLIGHT;
     /** Ticks between sweeps for held cubes that are not loaded (a generation that failed, say), to ask again. */
     static final int SWEEP = 200;
     /** Forced and mod chunks: their ring (vanilla block-ticks it), and cubes up and down: what a player gets. */
@@ -84,7 +85,7 @@ public final class ChunkTickets {
     /** Ticks a portal's hold outlasts its ticket: an item loop's trip back, so its cubes stay in between. */
     static final int PORTAL_LINGER = 600;
     /** A height in {@link Ask} meaning the column's ground. */
-    static final int GROUND = Integer.MIN_VALUE;
+    static final int GROUND = ForcedHeights.GROUND;
     /** Ticks before a column whose ground could not be had is asked again. */
     static final int GROUND_RETRY = 200;
     /**
@@ -93,11 +94,8 @@ public final class ChunkTickets {
      * blocks it wrote there, leaving a stump.
      */
     static final int GROW_ACROSS = 1, GROW_DOWN = 1, GROW_UP = 2;
-    /** Asks in a row that don't fit after which planning stops: the rest would not fit either. */
-    static final int MAX_MISSES = 64;
     /** New holds made a look at most; more wait for the next look. */
     static final int NEW_PER_PASS = 16;
-
 
     public enum Kind { FORCED, MOD, PORTAL }
 
@@ -109,9 +107,9 @@ public final class ChunkTickets {
 
     /**
      * A ticket's wish: the columns {@code reach} round a chunk, {@code v} cubes up and down from a block {@code y}, or the
-     * ground; {@code owner} is who shares the cap with others.
+     * ground; {@code seq} is its place in the queue, or -1 for one given when it is first seen.
      */
-    record Ask(Hold hold, Object owner, int chunkX, int chunkZ, int reach, int y, int v) {}
+    record Ask(Hold hold, long seq, int chunkX, int chunkZ, int reach, int y, int v) {}
 
     /** Where the cubes a hold needs come from and go. */
     interface Host {
@@ -126,35 +124,31 @@ public final class ChunkTickets {
         void tell(Component line);
     }
 
+    /** One loader as known here. */
+    private static final class Entry {
+        Ask ask;
+        long seq;
+        boolean held, lapsed, forced;
+        int cubeY, seen;
+        long[] keys, inner;
+        Entry(Ask ask, long seq) { this.ask = ask; this.seq = seq; }
+    }
+
     private final Host host;
     /** Where ground reads run: the cube workers, a fixed pool. */
     private final Executor pool;
+    /** Places in the queue for loaders seen without one (mods' loaders, portal exits): the forced heights' own count. */
+    private LongSupplier seqs;
+    private long localSeq = 1L << 40;
 
-    /** One ask as known here: where it stands in the queue, whether it is held and with which cubes. */
-    private static final class Entry {
-        Ask ask;
-        final int seq;
-        boolean held, waiting, lapsed;
-        /** From the forced list, or the portal and mod list. */
-        boolean forced;
-        int cubeY, seen;
-        long[] keys, inner;
-        Entry(Ask ask, int seq) { this.ask = ask; this.seq = seq; }
-    }
-
-    /** Every live ask, and lapsed portal exits still kept, in the order first seen: who came first keeps its place. */
-    private final LinkedHashMap<Hold, Entry> known = new LinkedHashMap<>();
-    /** Owners in the order first seen; they take turns in this order. */
-    private final LinkedHashMap<Object, Integer> owners = new LinkedHashMap<>();
-    private final Set<Hold> lapsed = new java.util.LinkedHashSet<>();
-    /** Cubes held per owner (lapsed exits aside), and each owner's held areas by when they came. */
-    private final Map<Object, Integer> ownerCubes = new HashMap<>();
-    private final Map<Object, TreeMap<Integer, Entry>> heldByOwner = new HashMap<>();
-    private int nextSeq, holds;
-    /** Holds per cube, and per cube that may random-tick (see {@link #GROW_UP}). */
-    private final Long2IntOpenHashMap cubeRefs = new Long2IntOpenHashMap(), interiorRefs = new Long2IntOpenHashMap();
-    /** Held cubes per cube column. */
-    private final Long2IntOpenHashMap columnRefs = new Long2IntOpenHashMap();
+    private final Map<Hold, Entry> known = new HashMap<>();
+    /** Loaders not held yet, by their place in the queue; and held ones. */
+    private final TreeMap<Long, Entry> waiting = new TreeMap<>(), held = new TreeMap<>();
+    /** Held portal exits whose ticket lapsed, the longest lapsed first. */
+    private final Set<Hold> lapsed = new LinkedHashSet<>();
+    /** Holds per cube, per cube that may random-tick (see {@link #GROW_UP}), and held cubes per cube column. */
+    private final Long2IntOpenHashMap cubeRefs = new Long2IntOpenHashMap(), interiorRefs = new Long2IntOpenHashMap(),
+            columnRefs = new Long2IntOpenHashMap();
 
     /** Ground cube Y per chunk column, for forced chunks without a height; read off this thread. */
     private final Long2IntOpenHashMap ground = new Long2IntOpenHashMap();
@@ -177,19 +171,15 @@ public final class ChunkTickets {
     private int lastCap = -1, leftOut, plans, tick;
     /** New holds left for the next look, past {@link #NEW_PER_PASS}. */
     private boolean pending;
-
-    private boolean closed;
-
-    /** Forced chunks as last seen, to tell a chunk unforced since from one never seen; null before the first look. */
-    @Nullable private LongOpenHashSet seenForced;
-    /** The forced asks as last built, and what they were built from, so an unchanged save is not read again. */
+    private boolean closed, firstLook = true;
+    /** The forced asks as last built, and the heights' version they were built from. */
     private List<Ask> forcedAsks = List.of();
-    private long forcedSignature = Long.MIN_VALUE;
     private int heightsVersion = -1;
 
     ChunkTickets(Host host, Executor pool) {
         this.host = host;
         this.pool = pool;
+        this.seqs = () -> localSeq++;
     }
 
     // Planning ------------------------------------------------------------------------------------
@@ -219,21 +209,13 @@ public final class ChunkTickets {
         return keys;
     }
 
-    /** Cubes a box holds at most, before the world's top and bottom cut it. */
-    static int nominal(Ask ask) {
-        int side = 2 * ask.reach() + 1;
-        return side * side * (2 * ask.v() + 1);
-    }
-
     /** For tests: all asks in one list. */
     void reconcile(int tick, List<Ask> asks, int cap) { reconcile(tick, List.of(), asks, cap); }
 
     /**
      * Looks at the tickets' asks as they stand at {@code tick}: {@code forced} is the same list as last
      * time while the forced chunks are unchanged, {@code others} the portal and mod asks. When nothing
-     * changed this costs next to nothing; otherwise only what changed is worked on: a removed ask lets go
-     * at once, and asks not held yet are placed in what room there is, a few a look, taking room fairly
-     * (see {@link #plan}).
+     * changed this costs next to nothing.
      */
     void reconcile(int tick, List<Ask> forced, List<Ask> others, int cap) {
         if (closed) return;
@@ -241,55 +223,56 @@ public final class ChunkTickets {
         boolean changed = drainGrounds() || cap != lastCap;
         if (tick >= retryDue) { changed = true; retryDue = Integer.MAX_VALUE; }
         lastCap = cap;
-        if (forced != lastForced) { changed |= diff(forced, Kind.FORCED); lastForced = forced; }
-        if (!others.equals(lastOthers)) { changed |= diff(others, null); lastOthers = List.copyOf(others); }
+        if (forced != lastForced) { changed |= diff(forced, true); lastForced = forced; }
+        if (!others.equals(lastOthers)) { changed |= diff(others, false); lastOthers = List.copyOf(others); }
         for (Ask ask : others) if (ask.hold().kind() == Kind.PORTAL) known.get(ask.hold()).seen = tick;
         for (Iterator<Hold> it = lapsed.iterator(); it.hasNext(); ) {
             Entry entry = known.get(it.next());
             if (tick - entry.seen <= PORTAL_LINGER) continue;
             it.remove();
-            if (entry.held) drop(entry);
+            drop(entry);
             known.remove(entry.ask.hold());
             changed = true;
         }
         if (changed || pending) plan(Math.max(0, cap));
     }
 
-    /**
-     * Brings {@link #known} up to one list of asks: the forced ones ({@code kind} FORCED), or the portal and
-     * mod ones (null). True when anything changed.
-     */
-    private boolean diff(List<Ask> asks, @Nullable Kind kind) {
+    /** Brings {@link #known} up to one list of asks, the forced ones or the portal and mod ones. True when anything changed. */
+    private boolean diff(List<Ask> asks, boolean forced) {
         boolean changed = false;
         Set<Hold> now = new HashSet<>(2 * asks.size() + 2);
         for (Ask ask : asks) {
             now.add(ask.hold());
-            if (owners.putIfAbsent(ask.owner(), nextSeq) == null) nextSeq++;
             Entry entry = known.get(ask.hold());
             if (entry == null) {
-                Entry fresh = new Entry(ask, nextSeq++);
-                fresh.forced = kind == Kind.FORCED;
-                known.put(ask.hold(), fresh);
+                entry = new Entry(ask, ask.seq() >= 0 ? ask.seq() : seqs.getAsLong());
+                entry.forced = forced;
+                known.put(ask.hold(), entry);
+                waiting.put(entry.seq, entry);
                 changed = true;
                 continue;
             }
+            if (entry.lapsed) { entry.lapsed = false; lapsed.remove(ask.hold()); changed = true; }
             if (!entry.ask.equals(ask)) {
-                if (entry.held) drop(entry);
+                // Moved (an entity owner) or given a place: queued again in its place.
+                if (entry.held) drop(entry); else waiting.remove(entry.seq);
                 entry.ask = ask;
+                if (ask.seq() >= 0) entry.seq = ask.seq();
+                waiting.put(entry.seq, entry);
                 changed = true;
             }
-            if (entry.lapsed) { entry.lapsed = false; lapsed.remove(ask.hold()); changed = true; }
         }
         for (Iterator<Entry> it = known.values().iterator(); it.hasNext(); ) {
             Entry entry = it.next();
-            if (entry.forced != (kind == Kind.FORCED) || entry.lapsed || now.contains(entry.ask.hold())) continue;
-            if (entry.ask.hold().kind() == Kind.PORTAL) {
-                // An exit whose ticket lapsed stays a while, giving way to every live loader.
+            if (entry.forced != forced || entry.lapsed || now.contains(entry.ask.hold())) continue;
+            if (entry.held && entry.ask.hold().kind() == Kind.PORTAL) {
+                // A held exit whose ticket lapsed stays a while, giving way to any loader that needs its room.
                 entry.lapsed = true;
                 lapsed.add(entry.ask.hold());
             } else {
-                if (entry.held) drop(entry);
                 it.remove();
+                drop(entry);
+                waiting.remove(entry.seq);
             }
             changed = true;
         }
@@ -297,110 +280,58 @@ public final class ChunkTickets {
     }
 
     /**
-     * Shares the cap out. Holds keep their cubes; asks not held yet are placed in what is left, owners
-     * taking turns in the order they came and each owner's areas in the order they came, at most
-     * {@link #NEW_PER_PASS} a look. An ask that doesn't fit takes the room of a lapsed portal exit, else of
-     * the newest area of the owner holding the most, while that owner would still hold at least as much
-     * as this one's after; so a new owner gets a fair share, and nobody's share swings back and forth. A
-     * lower cap lets go of lapsed exits, then of the newest areas of whoever holds the most.
+     * Lets loaders in, strictly in their order, each counting only the cubes it adds to those held. One
+     * that doesn't fit takes the room of lapsed portal exits, else waits with everything behind it; a held
+     * loader is never put out for another. Nothing passes a loader still waiting on its ground, while the
+     * ground of the next few is read ahead. A lower cap lets go of lapsed exits, then of the newest holds.
      */
     private void plan(int cap) {
         plans++;
         pending = false;
-        for (Entry victim; cubeRefs.size() > cap && (victim = victim(null, 0)) != null; ) drop(victim);
-        Map<Object, ArrayDeque<Entry>> byOwner = new HashMap<>();
-        for (Entry entry : known.values()) {
-            if (entry.lapsed || entry.held) continue;
-            byOwner.computeIfAbsent(entry.ask.owner(), owner -> new ArrayDeque<>()).add(entry);
+        while (cubeRefs.size() > cap && !held.isEmpty()) {
+            if (lapsed.isEmpty()) drop(held.lastEntry().getValue()); // the newest waits again
+            else dropOldestLapsed();
         }
-        List<ArrayDeque<Entry>> turns = new ArrayList<>(byOwner.size());
-        for (Object owner : owners.keySet()) {
-            ArrayDeque<Entry> turn = byOwner.get(owner);
-            if (turn != null) turns.add(turn);
-        }
-        int[] room = {0, 0}; // reserved for grounds being read, new holds placed
-        int misses = 0;
-        while (!turns.isEmpty() && misses < MAX_MISSES) {
-            for (Iterator<ArrayDeque<Entry>> it = turns.iterator(); it.hasNext() && misses < MAX_MISSES; ) {
-                ArrayDeque<Entry> turn = it.next();
-                Entry entry = turn.poll();
-                if (turn.isEmpty()) it.remove();
-                int placed = place(entry, cap, room);
-                if (placed == 1) misses = 0;
-                else if (placed == 0 || placed == -2) misses++; // no room: the rest would find none either
+        int admitted = 0, ahead = 0;
+        boolean full = false, onGround = false;
+        for (Iterator<Entry> it = waiting.values().iterator(); it.hasNext(); ) {
+            Entry entry = it.next();
+            Ask ask = entry.ask;
+            int cubeY = cubeY(ask);
+            if (cubeY == GROUND || onGround) {
+                onGround = true;
+                if (++ahead >= LOOKAHEAD) break;
+                continue;
             }
+            if (admitted >= NEW_PER_PASS) { pending = true; break; }
+            long[] keys = box(ask.chunkX(), ask.chunkZ(), ask.reach(), cubeY, ask.v());
+            while (cubeRefs.size() + fresh(keys) > cap && !lapsed.isEmpty()) dropOldestLapsed();
+            if (cubeRefs.size() + fresh(keys) > cap) { full = true; break; }
+            it.remove();
+            entry.cubeY = cubeY;
+            hold(entry, keys);
+            admitted++;
         }
-        int out = 0, live = 0;
-        for (Entry entry : known.values()) {
-            if (entry.lapsed) continue;
-            live++;
-            if (!entry.held && !entry.waiting) out++;
-        }
+        int out = full ? waiting.size() : 0;
         if (out != leftOut) {
-            if (out > 0) host.tell(Component.literal("Earth Platform: " + out + " of " + live + " chunk loaders here are past chunkLoaderCubeLimit (" + cap
-                    + " cubes, in earthplatform-common.toml) and keep only their vanilla chunk, until some are removed or the limit is raised. "
+            if (out > 0) host.tell(Component.literal("Earth Platform: " + out + " chunk loaders here are past chunkLoaderCubeLimit (" + cap
+                    + " cubes, in earthplatform-common.toml) and keep only their vanilla chunk until earlier ones are removed or the limit is raised. "
                     + cubeRefs.size() + " cubes are kept.").withStyle(ChatFormatting.GOLD));
             else if (leftOut > 0) host.tell(Component.literal("Earth Platform: every chunk loader's area fits under chunkLoaderCubeLimit again.").withStyle(ChatFormatting.GREEN));
             leftOut = out;
         }
     }
 
-    /**
-     * Who gives up room for an area of {@code size} cubes of {@code owner} (null: to bring the holds under a
-     * lower cap): a lapsed portal exit, the longest lapsed first; else the newest area of the owner holding
-     * the most, if after giving it up that owner still holds at least what {@code owner} would.
-     */
-    @Nullable private Entry victim(@Nullable Object owner, int size) {
-        Entry stalest = null;
-        for (Hold hold : lapsed) {
-            Entry exit = known.get(hold);
-            if (exit.held && (stalest == null || exit.seen < stalest.seen)) stalest = exit;
-        }
-        if (stalest != null) return stalest;
-        Object richest = null;
-        int most = -1;
-        for (Map.Entry<Object, Integer> share : ownerCubes.entrySet()) {
-            if (share.getKey().equals(owner) || share.getValue() <= most) continue;
-            most = share.getValue();
-            richest = share.getKey();
-        }
-        if (richest == null) return null;
-        TreeMap<Integer, Entry> areas = heldByOwner.get(richest);
-        Entry newest = areas.lastEntry().getValue();
-        if (owner != null && most - newest.keys.length < ownerCubes.getOrDefault(owner, 0) + size) return null;
-        return newest;
+    /** Lets go of the portal exit whose ticket lapsed longest ago. */
+    private void dropOldestLapsed() {
+        Iterator<Hold> oldest = lapsed.iterator();
+        Entry exit = known.remove(oldest.next());
+        oldest.remove();
+        drop(exit);
     }
 
-    /**
-     * Places an entry not held yet: 1 when its cubes fit (taking a fair share of room, see {@link #victim}),
-     * 0 when they don't, -1 while its ground is read (keeping room for it meanwhile), -2 when there is no
-     * room to read its ground, -3 when this look has placed enough.
-     */
-    private int place(Entry entry, int cap, int[] room) {
-        Ask ask = entry.ask;
-        int free = cap - cubeRefs.size() - room[0];
-        int cubeY = cubeY(ask, free);
-        entry.waiting = false;
-        if (cubeY == GROUND) {
-            if (free < nominal(ask) && victim(ask.owner(), nominal(ask)) == null) return -2;
-            room[0] += nominal(ask);
-            entry.waiting = true;
-            return -1;
-        }
-        if (room[1] >= NEW_PER_PASS) { pending = true; entry.waiting = true; room[0] += nominal(ask); return -3; } // placed next look; keeps its room
-        long[] keys = box(ask.chunkX(), ask.chunkZ(), ask.reach(), cubeY, ask.v());
-        for (int swaps = 0; cubeRefs.size() + room[0] + countFresh(keys) > cap; swaps++) {
-            Entry victim = swaps < NEW_PER_PASS ? victim(ask.owner(), keys.length) : null;
-            if (victim == null) return 0;
-            drop(victim);
-        }
-        room[1]++;
-        entry.cubeY = cubeY;
-        hold(entry, keys);
-        return 1;
-    }
-
-    private int countFresh(long[] keys) {
+    /** The cubes of a box not held yet: what holding it would add. */
+    private int fresh(long[] keys) {
         int fresh = 0;
         for (long key : keys) if (!cubeRefs.containsKey(key)) fresh++;
         return fresh;
@@ -417,41 +348,31 @@ public final class ChunkTickets {
             columnRefs.addTo(CubeKey.column(CubeKey.x(key), CubeKey.z(key)), 1);
         }
         for (long key : entry.inner) interiorRefs.addTo(key, 1);
-        if (!entry.lapsed) {
-            ownerCubes.merge(ask.owner(), keys.length, Integer::sum);
-            heldByOwner.computeIfAbsent(ask.owner(), owner -> new TreeMap<>()).put(entry.seq, entry);
-        }
-        holds++;
+        held.put(entry.seq, entry);
     }
 
     private void drop(Entry entry) {
+        if (!entry.held) return;
         for (long key : entry.keys) {
             if (cubeRefs.addTo(key, -1) <= 1) { cubeRefs.remove(key); missing.remove(key); }
             long column = CubeKey.column(CubeKey.x(key), CubeKey.z(key));
             if (columnRefs.addTo(column, -1) <= 1) columnRefs.remove(column);
         }
         for (long key : entry.inner) if (interiorRefs.addTo(key, -1) <= 1) interiorRefs.remove(key);
-        TreeMap<Integer, Entry> areas = heldByOwner.get(entry.ask.owner());
-        if (areas != null && areas.remove(entry.seq) != null) {
-            if (areas.isEmpty()) heldByOwner.remove(entry.ask.owner());
-            if (ownerCubes.merge(entry.ask.owner(), -entry.keys.length, Integer::sum) <= 0) ownerCubes.remove(entry.ask.owner());
-        }
         host.release(entry.ask.hold());
+        held.remove(entry.seq);
         entry.held = false;
         entry.keys = null;
         entry.inner = null;
-        holds--;
+        if (!entry.lapsed && known.get(entry.ask.hold()) == entry) waiting.put(entry.seq, entry); // still asked for: back in its place
     }
 
-    /**
-     * The cube Y an ask is kept round, or {@link #GROUND} while its ground is unknown. The ground is
-     * asked for only when the ask could still fit in the {@code room} left under the cap.
-     */
-    private int cubeY(Ask ask, int room) {
+    /** The cube Y an ask is kept round, or {@link #GROUND} while its ground is unknown, which is then read. */
+    private int cubeY(Ask ask) {
         if (ask.y() != GROUND) return Math.floorDiv(ask.y(), 16);
         long column = ChunkPos.asLong(ask.chunkX(), ask.chunkZ());
         if (ground.containsKey(column)) return ground.get(column);
-        if (room < nominal(ask) || asking.contains(column)) return GROUND;
+        if (asking.contains(column)) return GROUND;
         if (groundFailedAt.containsKey(column) && tick - groundFailedAt.get(column) < GROUND_RETRY) return GROUND;
         groundFailedAt.remove(column);
         groundWanted.add(column);
@@ -467,8 +388,7 @@ public final class ChunkTickets {
             if (done[1] == Long.MIN_VALUE) {
                 groundFailedAt.put(done[0], tick);
                 retryDue = Math.min(retryDue, tick + GROUND_RETRY);
-            }
-            else {
+            } else {
                 if (ground.size() > 4096) ground.clear();
                 ground.put(done[0], (int) done[1]);
             }
@@ -528,15 +448,22 @@ public final class ChunkTickets {
         return true;
     }
 
+    /**
+     * Whether vanilla's weather (snow and ice, lightning) may run in a column: always with a player near; else
+     * only once the column's sky tops are known from the read off the server thread. Until then, as in a column
+     * whose loader waits for the cap, the weather is left out: working the height out would read the terrain
+     * on the server thread.
+     */
+    static boolean weatherRuns(boolean playerNear, boolean topsKnown) { return playerNear || topsKnown; }
+
     /** Lets go of every hold, as the world closes. */
     void close() {
         closed = true;
-        for (Entry entry : known.values()) if (entry.held) host.release(entry.ask.hold());
+        for (Entry entry : held.values()) host.release(entry.ask.hold());
         known.clear();
+        waiting.clear();
+        held.clear();
         lapsed.clear();
-        ownerCubes.clear();
-        heldByOwner.clear();
-        holds = 0;
         cubeRefs.clear();
         interiorRefs.clear();
         columnRefs.clear();
@@ -547,17 +474,16 @@ public final class ChunkTickets {
     public int heldCubes() { return cubeRefs.size(); }
     /** Whether a hold keeps cubes in this cube column. */
     public boolean holdsColumn(long column) { return columnRefs.containsKey(column); }
-    public int holds() { return holds; }
+    public int holds() { return held.size(); }
     public int leftOut() { return leftOut; }
     /** Ground reads started so far, and times the holds were planned. */
     public int groundReads() { return groundReads; }
     public int plans() { return plans; }
 
-    /** For reports: each hold, as its kind, chunk and what it is kept round. */
+    /** For reports: each hold, in its order, as its kind, chunk and what it is kept round. */
     public List<String> describeHolds() {
         List<String> out = new ArrayList<>();
-        for (Entry entry : known.values()) {
-            if (!entry.held) continue;
+        for (Entry entry : held.values()) {
             Hold hold = entry.ask.hold();
             out.add(hold.kind() + " " + ChunkPos.getX(hold.chunk()) + "," + ChunkPos.getZ(hold.chunk()) + " " + (hold.at() instanceof Integer y && y == GROUND ? "ground" : hold.at()));
         }
@@ -577,63 +503,42 @@ public final class ChunkTickets {
 
     // Reading the tickets -------------------------------------------------------------------------
 
-    /**
-     * Forced chunks to force again. The first look after the world loads ({@code seenBefore} null)
-     * returns any chunk that has Earth heights but is missing from vanilla's list, as when that list's
-     * save was lost, so no kept spot quietly goes. Later looks forget the heights of chunks unforced
-     * since the last look, whatever unforced them.
-     */
-    static long[] reconcileForced(LongSet forcedNow, ForcedHeights heights, @Nullable LongSet seenBefore) {
-        if (seenBefore == null) {
-            LongArrayList restore = new LongArrayList();
-            for (long chunk : heights.chunks()) if (!forcedNow.contains(chunk)) restore.add(chunk);
-            return restore.toLongArray();
-        }
-        LongOpenHashSet gone = new LongOpenHashSet();
-        for (LongIterator it = seenBefore.iterator(); it.hasNext(); ) {
-            long chunk = it.nextLong();
-            if (!forcedNow.contains(chunk)) gone.add(chunk);
-        }
-        heights.forget(gone);
-        return new long[0];
-    }
-
     /** A look at a level's tickets: the forced asks (the same list while they are unchanged), and the portal and mod asks. */
     record Asks(List<Ask> forced, List<Ask> others) {}
 
     /**
      * The asks of a level's tickets as they stand. The forced asks are built again only when the forced
-     * chunks or their heights changed, so a big save looked at every second costs next to nothing.
+     * chunks' heights changed (every forced chunk has them: {@link io.earthplatform.minecraft.cubic.mixin.CubicForcedChunksMixin}
+     * keeps them up with {@code setChunkForced}). The first look after the world loads lets go of the heights of
+     * chunks no longer forced (forced off while the mod was away) with one log line, and gives the forced chunks
+     * that have none their ground band, in the order of their coordinates.
      */
     Asks gather(ServerLevel level) {
         ForcedHeights heights = ForcedHeights.of(level);
-        LongSet forcedChunks = level.getForcedChunks();
-        long signature = forcedChunks.size();
-        for (LongIterator it = forcedChunks.iterator(); it.hasNext(); ) signature = signature * 31 + it.nextLong() * 0x9E3779B97F4A7C15L;
-        if (signature != forcedSignature || heights.version() != heightsVersion || seenForced == null) {
-            long[] restore = reconcileForced(forcedChunks, heights, seenForced);
-            for (long chunk : restore) {
-                EarthPlatformMod.LOGGER.warn("Earth Platform: chunk {}, {} kept Earth heights but was missing from the saved forced chunks; forcing it again",
-                        ChunkPos.getX(chunk), ChunkPos.getZ(chunk));
-                level.setChunkForced(ChunkPos.getX(chunk), ChunkPos.getZ(chunk), true);
-            }
-            forcedChunks = level.getForcedChunks();
-            seenForced = new LongOpenHashSet(forcedChunks);
-            List<Ask> asks = new ArrayList<>(forcedChunks.size());
-            for (LongIterator it = forcedChunks.iterator(); it.hasNext(); ) {
+        seqs = heights::nextSeq;
+        if (firstLook) {
+            firstLook = false;
+            LongSet forced = level.getForcedChunks();
+            int gone = heights.retain(forced);
+            if (gone > 0) EarthPlatformMod.LOGGER.info("Earth Platform: let go of the Earth heights of {} chunks no longer forced", gone);
+            LongArrayList bare = new LongArrayList();
+            for (LongIterator it = forced.iterator(); it.hasNext(); ) {
                 long chunk = it.nextLong();
-                int cx = ChunkPos.getX(chunk), cz = ChunkPos.getZ(chunk);
-                List<ForcedHeights.Height> kept = heights.of(chunk);
-                if (kept == null) asks.add(new Ask(new Hold(Kind.FORCED, chunk, GROUND), "forced:" + ForcedHeights.SERVER, cx, cz, FORCED_REACH, GROUND, FORCED_V));
-                else for (ForcedHeights.Height height : kept)
-                    asks.add(new Ask(new Hold(Kind.FORCED, chunk, height.y()), "forced:" + height.owner(), cx, cz, FORCED_REACH, height.y(), FORCED_V));
+                if (!heights.has(chunk)) bare.add(chunk);
             }
-            // Chunks forced in the same breath queue in the order of their coordinates, so neighbours share their rings.
-            asks.sort(Comparator.comparingInt(Ask::chunkZ).thenComparingInt(Ask::chunkX));
-            forcedAsks = List.copyOf(asks);
-            long again = forcedChunks.size();
-            for (LongIterator it = forcedChunks.iterator(); it.hasNext(); ) again = again * 31 + it.nextLong() * 0x9E3779B97F4A7C15L;
-            forcedSignature = again;
+            long[] sorted = bare.toLongArray();
+            java.util.Arrays.sort(sorted); // once: ChunkPos packs z above x, so this is row by row
+            for (long chunk : sorted) heights.ensure(chunk);
+        }
+        if (heights.version() != heightsVersion) {
+            List<Ask> asks = new ArrayList<>(heights.size() + 4);
+            for (Long2ObjectMap.Entry<List<ForcedHeights.Height>> entry : heights.all()) {
+                long chunk = entry.getLongKey();
+                int cx = ChunkPos.getX(chunk), cz = ChunkPos.getZ(chunk);
+                for (ForcedHeights.Height height : entry.getValue())
+                    asks.add(new Ask(new Hold(Kind.FORCED, chunk, height.y()), height.seq(), cx, cz, FORCED_REACH, height.y(), FORCED_V));
+            }
+            forcedAsks = asks;
             heightsVersion = heights.version();
         }
         List<Ask> others = new ArrayList<>();
@@ -649,18 +554,17 @@ public final class ChunkTickets {
                 Object key = ((io.earthplatform.minecraft.cubic.mixin.TicketAccess) (Object) ticket).earthplatform$key();
                 if (portal) {
                     if (key instanceof BlockPos at && exits.add(at.immutable()))
-                        others.add(new Ask(new Hold(Kind.PORTAL, chunk, at.immutable()), at.immutable(), cx, cz, PORTAL_REACH, at.getY(), PORTAL_V));
+                        others.add(new Ask(new Hold(Kind.PORTAL, chunk, at.immutable()), -1, cx, cz, PORTAL_REACH, at.getY(), PORTAL_V));
                     continue;
                 }
                 Object owner = Platform.INSTANCE.forcedTicketOwner(key);
                 if (owner instanceof BlockPos at) {
-                    BlockPos block = at.immutable();
-                    others.add(new Ask(new Hold(Kind.MOD, chunk, block), block, cx, cz, FORCED_REACH, at.getY(), FORCED_V));
+                    others.add(new Ask(new Hold(Kind.MOD, chunk, at.immutable()), -1, cx, cz, FORCED_REACH, at.getY(), FORCED_V));
                 } else if (owner instanceof UUID id) {
                     Entity entity = level.getEntity(id);
                     if (entity != null) entityY.put(id, entity.getBlockY());
                     Integer y = entityY.get(id);
-                    others.add(new Ask(new Hold(Kind.MOD, chunk, id), id, cx, cz, FORCED_REACH, y == null ? GROUND : y, FORCED_V));
+                    others.add(new Ask(new Hold(Kind.MOD, chunk, id), -1, cx, cz, FORCED_REACH, y == null ? GROUND : y, FORCED_V));
                 }
             }
         }
@@ -672,22 +576,19 @@ public final class ChunkTickets {
 
     /**
      * {@code /forceload add} or {@code remove} of one chunk in a cubic level, around {@code original}
-     * (vanilla's {@code setChunkForced}): records the height the command was run from, and who ran it.
-     * A chunk forced already counts as newly forced when this adds a height to it, so the command says so.
+     * (vanilla's {@code setChunkForced}, after which the chunk has its ground band, or none if removed):
+     * records the height the command was run from. A chunk forced already counts as newly forced when
+     * this adds a height to it, so the command says so.
      */
     public static boolean force(ServerLevel level, int chunkX, int chunkZ, boolean add, CommandSourceStack source, BooleanSupplier original) {
         if (!(CubicLevel.of(level) instanceof ServerCubeWorld)) return original.getAsBoolean();
         long chunk = ChunkPos.asLong(chunkX, chunkZ);
-        ForcedHeights heights = ForcedHeights.of(level);
         boolean changed = original.getAsBoolean();
-        if (!add) {
-            heights.clear(chunk);
-            return changed;
-        }
+        if (!add) return changed;
+        ForcedHeights heights = ForcedHeights.of(level);
         Integer y = sourceY(source);
-        String owner = source.getEntity() instanceof Player player ? player.getUUID().toString() : ForcedHeights.SERVER;
-        if (changed) { heights.set(chunk, y, owner); return true; }
-        return y != null && heights.add(chunk, y, owner);
+        if (changed) { if (y != null) heights.set(chunk, y); return true; }
+        return y != null && heights.add(chunk, y);
     }
 
     /**
@@ -735,16 +636,13 @@ public final class ChunkTickets {
         ServerLevel level = source.getLevel();
         if (!(CubicLevel.of(level) instanceof ServerCubeWorld cubes) || !level.getForcedChunks().contains(chunk.toLong())) return;
         List<ForcedHeights.Height> kept = ForcedHeights.of(level).of(chunk.toLong());
+        if (kept == null) kept = List.of(new ForcedHeights.Height(GROUND, 0));
         StringBuilder text = new StringBuilder("Earth keeps ");
-        if (kept == null) {
-            int[] band = cubes.tickets().band(chunk.x, chunk.z, GROUND);
-            text.append(band == null ? "its ground band" : "its ground band, Y " + band[0] + " to " + band[1]);
-        } else {
-            for (int i = 0; i < kept.size(); i++) {
-                int[] band = cubes.tickets().band(chunk.x, chunk.z, kept.get(i).y());
-                if (i > 0) text.append(i == kept.size() - 1 ? " and " : ", ");
-                text.append("Y ").append(band[0]).append(" to ").append(band[1]);
-            }
+        for (int i = 0; i < kept.size(); i++) {
+            int[] band = cubes.tickets().band(chunk.x, chunk.z, kept.get(i).y());
+            if (i > 0) text.append(i == kept.size() - 1 ? " and " : ", ");
+            if (kept.get(i).y() == GROUND) text.append(band == null ? "its ground band" : "its ground band, Y " + band[0] + " to " + band[1]);
+            else text.append("Y ").append(band[0]).append(" to ").append(band[1]);
         }
         text.append(" loaded in and round this chunk.");
         source.sendSuccess(() -> Component.literal(text.toString()), false);

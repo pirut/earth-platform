@@ -14,8 +14,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * Forced chunks in the Earth are saved whatever came after them, and an unforced chunk forgets its
- * Earth heights however it was unforced ({@code /forceload remove all}, a mod). Vanilla's
+ * Forced chunks in the Earth are saved whatever came after them; a forced chunk gets its Earth heights
+ * and place in the queue, and an unforced one forgets them, however it was forced or unforced
+ * ({@code /forceload}, {@code remove all}, a mod). Vanilla's
  * {@code setChunkForced} sets the saved flag to whether the call changed anything, so forcing a chunk
  * already forced (for a second height) cleared the flag the first force set, and a restart lost it.
  */
@@ -26,9 +27,13 @@ abstract class CubicForcedChunksMixin {
         original.call(data, ChunkTickets.forcedDirty(changed, data.isDirty(), CubicLevel.of((ServerLevel) (Object) this) != null));
     }
 
+    /** A chunk forced gets its place in the queue and its ground band (a height replaces it after); one unforced forgets them. */
     @Inject(method = "setChunkForced", at = @At("RETURN"))
-    private void earthplatform$forgetHeights(int chunkX, int chunkZ, boolean add, CallbackInfoReturnable<Boolean> result) {
+    private void earthplatform$heights(int chunkX, int chunkZ, boolean add, CallbackInfoReturnable<Boolean> result) {
         ServerLevel self = (ServerLevel) (Object) this;
-        if (!add && result.getReturnValueZ() && CubicLevel.of(self) != null) ForcedHeights.of(self).clear(ChunkPos.asLong(chunkX, chunkZ));
+        if (!result.getReturnValueZ() || CubicLevel.of(self) == null) return;
+        long chunk = ChunkPos.asLong(chunkX, chunkZ);
+        if (add) ForcedHeights.of(self).ensure(chunk);
+        else ForcedHeights.of(self).clear(chunk);
     }
 }

@@ -9,117 +9,132 @@ import javax.annotation.Nullable;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
-import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.saveddata.SavedData;
 
 /**
- * Server thread. The heights an Earth {@code /forceload} keeps, per forced chunk: the block Y the
- * command was run from, so "keep this spot loaded" keeps the spot and not the whole 32,768-block
- * column, and who ran it, so loaders share the cap fairly (see {@link ChunkTickets}). A chunk forced
- * from the console, or by a mod calling {@code setChunkForced} itself, has none here and keeps its
- * ground band. Saved with the world, beside vanilla's own list of forced chunks.
+ * Server thread. What the Earth keeps of each forced chunk, saved with the world beside vanilla's own
+ * list of forced chunks: the heights it keeps (the block Y {@code /forceload} was run from, so "keep this
+ * spot loaded" keeps the spot and not the whole 32,768-block column), or {@link #GROUND} for its ground
+ * band (forced from the console, or by a mod calling {@code setChunkForced}); and for each, the place in
+ * the queue it took when first forced, so loaders keep their order across a restart (see {@link ChunkTickets}).
  */
 public final class ForcedHeights extends SavedData {
     static final String NAME = "earthplatform_forced_heights";
     /** Heights one chunk may keep: forced again from far enough above or below an earlier one, a chunk keeps both. */
     static final int MAX_PER_CHUNK = 4;
-    /** The owner of heights set from the console or a command block: the server. */
-    static final String SERVER = "";
+    /** A height meaning the chunk's ground band. */
+    public static final int GROUND = Integer.MIN_VALUE;
 
-    /** One kept height and who forced it ({@link #SERVER} for no player). */
-    public record Height(int y, String owner) {}
+    /** One kept height ({@link #GROUND} for the ground band) and its place in the queue. */
+    public record Height(int y, long seq) {}
 
     private final Long2ObjectOpenHashMap<List<Height>> heights = new Long2ObjectOpenHashMap<>();
+    private long nextSeq;
+    /** Counts changes, so a reader can tell the heights changed without reading them. */
+    private int version;
 
     public static ForcedHeights of(ServerLevel level) {
         return level.getDataStorage().computeIfAbsent(new SavedData.Factory<>(ForcedHeights::new, ForcedHeights::load, null), NAME);
     }
 
-    /** The heights kept for a forced chunk, lowest first, or null for its ground band. */
+    /** The heights kept for a forced chunk, lowest first, or null when it has none yet. */
     @Nullable public List<Height> of(long chunk) {
         List<Height> kept = heights.get(chunk);
         return kept == null ? null : List.copyOf(kept);
     }
 
-    /** A chunk just forced: kept at {@code y}, or at its ground band when null. */
-    public void set(long chunk, @Nullable Integer y, String owner) {
-        if (y == null) { clear(chunk); return; }
-        List<Height> one = new ArrayList<>(List.of(new Height(y, owner)));
-        if (!one.equals(heights.put(chunk, one))) setDirty();
+    /** The next place in the queue; saved, so places keep counting up across restarts. */
+    public long nextSeq() {
+        setDirty();
+        return nextSeq++;
+    }
+
+    /** A forced chunk with no heights yet keeps its ground band, behind everything before it. */
+    public void ensure(long chunk) {
+        if (heights.containsKey(chunk)) return;
+        heights.put(chunk, new ArrayList<>(List.of(new Height(GROUND, nextSeq()))));
+        changed();
+    }
+
+    /** A chunk just forced from block Y {@code y}: kept there, in the place it was given when forced. */
+    public void set(long chunk, int y) {
+        List<Height> had = heights.get(chunk);
+        long seq = had != null && !had.isEmpty() ? had.get(0).seq() : nextSeq();
+        heights.put(chunk, new ArrayList<>(List.of(new Height(y, seq))));
+        changed();
     }
 
     /**
      * A chunk already forced, forced again from {@code y}: true when that adds a height, being outside
-     * every height it keeps already (each keeps {@link Cubic#VERTICAL_RADIUS} cubes up and down).
+     * every height it keeps already (each keeps {@link Cubic#VERTICAL_RADIUS} cubes up and down). A chunk
+     * kept at its ground band stays so.
      */
-    public boolean add(long chunk, int y, String owner) {
+    public boolean add(long chunk, int y) {
         List<Height> had = heights.get(chunk);
-        if (had == null) return false; // kept at its ground band: forced from the console or by a mod, left so
-        if (had.size() >= MAX_PER_CHUNK) return false;
-        for (Height kept : had) if (Math.abs((kept.y() >> 4) - (y >> 4)) <= Cubic.VERTICAL_RADIUS) return false;
-        had.add(new Height(y, owner));
+        if (had == null || had.size() >= MAX_PER_CHUNK) return false;
+        for (Height kept : had) if (kept.y() == GROUND || Math.abs((kept.y() >> 4) - (y >> 4)) <= Cubic.VERTICAL_RADIUS) return false;
+        had.add(new Height(y, nextSeq()));
         had.sort(java.util.Comparator.comparingInt(Height::y));
-        setDirty();
+        changed();
         return true;
     }
 
     public void clear(long chunk) {
-        if (heights.remove(chunk) != null) setDirty();
+        if (heights.remove(chunk) != null) changed();
     }
 
-    public void clearAll() {
-        if (!heights.isEmpty()) { heights.clear(); setDirty(); }
+    /** Forgets the heights of chunks not in {@code forced}; how many it forgot. */
+    public int retain(LongSet forced) {
+        int before = heights.size();
+        if (heights.keySet().removeIf((long chunk) -> !forced.contains(chunk))) changed();
+        return before - heights.size();
     }
 
-    /** Chunks with heights kept. */
-    public long[] chunks() { return heights.keySet().toLongArray(); }
+    /** Every chunk with heights, as (chunk, its heights). */
+    public Iterable<Long2ObjectMap.Entry<List<Height>>> all() { return heights.long2ObjectEntrySet(); }
 
-    /** Drops the heights of these chunks, unforced since they were last seen forced. */
-    public void forget(LongSet chunks) {
-        if (heights.isEmpty() || chunks.isEmpty()) return;
-        if (heights.keySet().removeIf((long chunk) -> chunks.contains(chunk))) setDirty();
-    }
-
+    public boolean has(long chunk) { return heights.containsKey(chunk); }
     public int size() { return heights.size(); }
-
-    /** Counts changes, so a reader can tell the heights changed without reading them. */
-    private int version;
     public int version() { return version; }
 
-    @Override public void setDirty(boolean dirty) {
-        super.setDirty(dirty);
-        if (dirty) version++;
+    /** The heights changed: saved, and seen by readers of {@link #version}. */
+    private void changed() {
+        version++;
+        setDirty();
     }
 
-    private static ForcedHeights load(CompoundTag tag, HolderLookup.Provider registries) {
+    static ForcedHeights load(CompoundTag tag, HolderLookup.Provider registries) {
         ForcedHeights loaded = new ForcedHeights();
+        loaded.nextSeq = tag.getLong("next");
         ListTag list = tag.getList("chunks", Tag.TAG_COMPOUND);
         for (int i = 0; i < list.size(); i++) {
             CompoundTag entry = list.getCompound(i);
             int[] ys = entry.getIntArray("y");
-            ListTag owners = entry.getList("owners", Tag.TAG_STRING);
+            long[] seqs = entry.getLongArray("seq");
             List<Height> kept = new ArrayList<>();
-            for (int j = 0; j < Math.min(ys.length, MAX_PER_CHUNK); j++) kept.add(new Height(ys[j], j < owners.size() ? owners.getString(j) : SERVER));
+            for (int j = 0; j < Math.min(ys.length, MAX_PER_CHUNK); j++) {
+                long seq = j < seqs.length ? seqs[j] : loaded.nextSeq++;
+                kept.add(new Height(ys[j], seq));
+                loaded.nextSeq = Math.max(loaded.nextSeq, seq + 1);
+            }
             if (!kept.isEmpty()) loaded.heights.put(entry.getLong("chunk"), kept);
         }
         return loaded;
     }
 
     @Override public CompoundTag save(CompoundTag tag, HolderLookup.Provider registries) {
+        tag.putLong("next", nextSeq);
         ListTag list = new ListTag();
         for (Long2ObjectMap.Entry<List<Height>> entry : heights.long2ObjectEntrySet()) {
             CompoundTag one = new CompoundTag();
             one.putLong("chunk", entry.getLongKey());
             int[] ys = new int[entry.getValue().size()];
-            ListTag owners = new ListTag();
-            for (int i = 0; i < ys.length; i++) {
-                ys[i] = entry.getValue().get(i).y();
-                owners.add(StringTag.valueOf(entry.getValue().get(i).owner()));
-            }
+            long[] seqs = new long[ys.length];
+            for (int i = 0; i < ys.length; i++) { ys[i] = entry.getValue().get(i).y(); seqs[i] = entry.getValue().get(i).seq(); }
             one.putIntArray("y", ys);
-            one.put("owners", owners);
+            one.putLongArray("seq", seqs);
             list.add(one);
         }
         tag.put("chunks", list);

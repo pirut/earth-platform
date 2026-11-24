@@ -216,23 +216,31 @@ public final class ServerCubeWorld extends CubeWorld {
     private final java.util.concurrent.atomic.LongAdder syncTerrainReads = new java.util.concurrent.atomic.LongAdder();
     public long syncTerrainReads() { return syncTerrainReads.sum(); }
 
+    /** Weather left out (snow and ice, lightning) in columns whose height isn't known yet; for checks. */
+    private final java.util.concurrent.atomic.LongAdder weatherLeftOut = new java.util.concurrent.atomic.LongAdder();
+    public long weatherLeftOut() { return weatherLeftOut.sum(); }
+
+    /**
+     * Server thread, from vanilla's chunk tick. Whether its weather (snow and ice, lightning) may run in a cube
+     * column: with a player near, as ever; else only once the column's sky tops are known, read off this thread
+     * for its held cubes (see {@link ChunkTickets#weatherRuns}). A column kept by a chunk ticket before its
+     * cubes are in, or one whose loader waits for the cap, is force-ticked by NeoForge's loaders, and working
+     * out its height for the weather read the terrain here.
+     */
+    public boolean weatherRuns(int chunkX, int chunkZ) {
+        long column = CubeKey.column(chunkX, chunkZ);
+        boolean runs = ChunkTickets.weatherRuns(columnWatched(column, horizontalRadius() + 2), tops.containsKey(column));
+        if (!runs) weatherLeftOut.increment();
+        return runs;
+    }
+
     /**
      * The generator's ground, which the server thread asks for (sending tops, lighting, spawning)
      * beside cubes not yet made: where its data is missing, as with a data server down, that is
      * unknown for now rather than a crash.
      */
     @Override protected int baselineTop(int x, int z) {
-        if (server.getServer().isSameThread()) {
-            // A column only a chunk ticket keeps, with nobody near: never read the terrain here. Vanilla's chunk tick
-            // (snow and ice, lightning) asked its height before its cubes were in, after a restart, and waited on map data.
-            long column = CubeKey.column(x >> 4, z >> 4);
-            if (tickets.holdsColumn(column) && !columnWatched(column, horizontalRadius() + 2)) {
-                CompletableFuture<int[]> read = primeTops(x >> 4, z >> 4);
-                int[] known = read.isDone() && !read.isCompletedExceptionally() ? read.getNow(null) : null;
-                return known != null ? known[(z & 15) << 4 | (x & 15)] : UNKNOWN_TOP;
-            }
-            syncTerrainReads.increment();
-        }
+        if (server.getServer().isSameThread()) syncTerrainReads.increment();
         try { return generator.skyTopY(x, z); }
         catch (io.earthplatform.geography.MissingTerrainException missing) { return UNKNOWN_TOP; }
     }

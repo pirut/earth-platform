@@ -96,6 +96,7 @@
     "NetherPortalAccess",
     "CubicForceLoadMixin",
     "CubicForcedChunksMixin",
+    "CubicTicketWeatherMixin",
     "DistanceManagerAccess",
     "TicketAccess",
     "CubicJetFlightMixin",
