@@ -93,8 +93,17 @@ final class EarthTeleports {
         // The one who moves pays, as for any trip they asked for.
         GeoPoint to = EarthRules.where(target);
         CommandSourceStack payer = mover.createCommandSourceStack();
-        if (!EarthRules.pay(payer, mover, to.latitude(), to.longitude())) return 0;
-        mover.teleportTo(target.serverLevel(), target.getX(), target.getY(), target.getZ(), target.getYRot(), mover.getXRot());
+        EarthRules.Fare fare = EarthRules.quote(payer, mover, to.latitude(), to.longitude());
+        if (fare == null) return 0;
+        net.minecraft.server.level.ServerLevel there = target.serverLevel();
+        net.minecraft.world.phys.Vec3 at = target.position();
+        // Charged only once the move is confirmed: a mod vetoing the teleport leaves them where they were, unpaid.
+        if (!EarthRules.land(payer, mover, fare, () -> {
+            mover.teleportTo(there, at.x, at.y, at.z, target.getYRot(), mover.getXRot());
+            return io.earthplatform.minecraft.cubic.CubicEvents.arrivedAt(mover, there, at);
+        })) return 0;
+        if (io.earthplatform.minecraft.cubic.CubicLevel.of(there) instanceof io.earthplatform.minecraft.cubic.ServerCubeWorld cubes)
+            io.earthplatform.minecraft.cubic.CubicEvents.cancelTrip(cubes, mover); // landed another way: a trip still pending must not pull them off
         mover.resetFallDistance();
         EarthRace.travelled(mover);
         mover.sendSystemMessage(Component.literal("Teleported to " + target.getGameProfile().getName() + ".").withStyle(ChatFormatting.GREEN));

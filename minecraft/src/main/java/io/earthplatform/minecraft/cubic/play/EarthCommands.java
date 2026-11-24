@@ -199,16 +199,22 @@ final class EarthCommands {
                 .orElseGet(() -> new GeoPoint(earth.settings().latitude(), earth.settings().longitude()));
     }
 
-    private static int travel(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot) {
-        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), spot.viewLatitude(), spot.viewLongitude());
+    private static int travel(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot) { return travel(source, player, spot, null); }
+
+    /** A trip there, charging {@code fare} (null for free) only as it lands. */
+    private static int travel(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot, @Nullable EarthRules.Fare fare) {
+        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), spot.viewLatitude(), spot.viewLongitude(), fare, null);
     }
 
     /**
      * A trip to a spot nobody chose, such as a random one: it searches for good ground as far as a
      * famous place's does, rather than landing on the nearest dry block or the water.
      */
-    static int wander(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot) {
-        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), spot.latitude(), spot.longitude());
+    static int wander(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot) { return wander(source, player, spot, null, null); }
+
+    /** As above, for a trip begun earlier ({@code begun}, or null) and charged {@code fare} (null for free) once it lands. */
+    static int wander(CommandSourceStack source, ServerPlayer player, EarthSpawns.Spot spot, @Nullable EarthRules.Fare fare, @Nullable CubicEvents.TripStart begun) {
+        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), spot.latitude(), spot.longitude(), fare, begun);
     }
 
     // The server spawn ---------------------------------------------------------------------------
@@ -277,21 +283,24 @@ final class EarthCommands {
                     .withStyle(ChatFormatting.GRAY), false);
             return ownSpawn(source, player);
         }
-        if (!EarthRules.pay(source, player, home.get().latitude(), home.get().longitude())) return 0;
-        return travel(source, player, home.get());
+        EarthRules.Fare fare = EarthRules.quote(source, player, home.get().latitude(), home.get().longitude());
+        if (fare == null) return 0;
+        return travel(source, player, home.get(), fare);
     }
 
     /** Takes a player to where they spawn: their own or their team's spawn when an operator gave one, else the server spawn. */
     private static int ownSpawn(CommandSourceStack source, ServerPlayer player) {
         Optional<EarthSpawns.Spot> own = EarthSpawns.of(source.getServer()).personal(player);
         if (own.isPresent()) {
-            if (!EarthRules.pay(source, player, own.get().latitude(), own.get().longitude())) return 0;
-            return travel(source, player, own.get());
+            EarthRules.Fare fare = EarthRules.quote(source, player, own.get().latitude(), own.get().longitude());
+            if (fare == null) return 0;
+            return travel(source, player, own.get(), fare);
         }
         EarthGenerator earth = earth(source);
         GeoPoint to = earth == null ? null : spawnPoint(source, earth);
-        if (to != null && !EarthRules.pay(source, player, to.latitude(), to.longitude())) return 0;
-        return EarthWorlds.toSpawn(source, player);
+        EarthRules.Fare fare = to == null ? null : EarthRules.quote(source, player, to.latitude(), to.longitude());
+        if (to != null && fare == null) return 0;
+        return EarthWorlds.toSpawn(source, player, fare);
     }
 
     // Sending and random trips -------------------------------------------------------------------
@@ -309,7 +318,14 @@ final class EarthCommands {
      * within that many kilometers of where they stand (or of the server spawn when they are off the Earth).
      * Land is found off the server thread, since telling it from sea downloads coarse elevation.
      */
-    private static int random(CommandSourceStack source, Collection<ServerPlayer> players, double km) {
+    private static int random(CommandSourceStack source, Collection<ServerPlayer> players, double km) { return random(source, players, km, null); }
+
+    /**
+     * As above, charging {@code fare} (null for free) only as each player lands. Each trip is begun
+     * before its search for land, so a search finishing after a newer trip (or after the player died
+     * or left) is dropped rather than replacing it.
+     */
+    private static int random(CommandSourceStack source, Collection<ServerPlayer> players, double km, @Nullable EarthRules.Fare fare) {
         EarthGenerator earth = earth(source);
         if (earth == null) { source.sendFailure(Component.literal("This world has no Earth.")); return 0; }
         EarthSpawns.Border border = EarthSpawns.of(source.getServer()).border().orElse(null);
@@ -317,17 +333,20 @@ final class EarthCommands {
             GeoPoint here = where(player);
             GeoPoint centre = here != null ? here : spawnPoint(source, earth);
             RandomSource random = RandomSource.create();
+            // Begun before the search, with where it leaves from: a portal taken or a death meanwhile calls it off.
+            CubicEvents.TripStart start = CubicEvents.beginTrip(player);
             CompletableFuture.supplyAsync(() -> randomLand(earth, random, border, centre, km), Util.ioPool())
                     .whenComplete((spot, failure) -> source.getServer().execute(() -> {
-                        if (player.isRemoved()) return;
+                        if (!CubicEvents.tripStillOn(source, player, start)) return;
                         if (failure != null || spot == null) {
+                            CubicEvents.endTrip(player, start);
                             if (failure != null) EarthPlatformMod.LOGGER.warn("Random trip failed: {}", failure.toString());
                             source.sendFailure(Component.literal(failure != null ? "Could not reach the elevation data for a random trip. Try again in a minute."
                                     : "Found no land within " + Math.round(km) + " km. Try a bigger distance."));
                             return;
                         }
                         player.sendSystemMessage(Component.literal("Random trip to " + spot.label() + ".").withStyle(ChatFormatting.GREEN));
-                        wander(source, player, spot);
+                        wander(source, player, spot, fare, start);
                     }));
         }
         return players.size();
@@ -388,8 +407,9 @@ final class EarthCommands {
 
     private static int randomSelf(CommandSourceStack source, double km) throws CommandSyntaxException {
         ServerPlayer player = source.getPlayerOrException();
-        if (!EarthRules.pay(source, player, Double.NaN, Double.NaN)) return 0;
-        return random(source, List.of(player), km);
+        EarthRules.Fare fare = EarthRules.quote(source, player, Double.NaN, Double.NaN);
+        if (fare == null) return 0;
+        return random(source, List.of(player), km, fare);
     }
 
     // Warps --------------------------------------------------------------------------------------
@@ -411,8 +431,9 @@ final class EarthCommands {
         ServerPlayer player = source.getPlayerOrException();
         EarthSpawns.Spot spot = EarthSpawns.of(source.getServer()).warps().get(name);
         if (spot == null) { source.sendFailure(Component.literal("No warp called '" + name + "'. See /earth warps.")); return 0; }
-        if (!EarthRules.pay(source, player, spot.latitude(), spot.longitude())) return 0;
-        return travel(source, player, spot);
+        EarthRules.Fare fare = EarthRules.quote(source, player, spot.latitude(), spot.longitude());
+        if (fare == null) return 0;
+        return travel(source, player, spot, fare);
     }
 
     private static int setWarp(CommandSourceStack source, String name, @Nullable EarthSpawns.Spot spot) {

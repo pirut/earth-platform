@@ -6,6 +6,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.bug.BugReporting;
 import io.earthplatform.minecraft.cubic.Cubic;
+import io.earthplatform.minecraft.cubic.ArrivalWait;
 import io.earthplatform.minecraft.cubic.CubicEvents;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.CubicSettings;
@@ -169,7 +170,6 @@ public final class EarthWorlds {
         CompletableFuture<Void> preparing;
         /** Where the start's landing search found to stand, found off the server thread with the data. */
         @Nullable volatile int[] landing;
-        static final int LANDING_PATIENCE = 200;
         boolean ready;
         long retryAt, lastSample, firstWait;
         /** Counts server spawn moves, so a landing search for an old spawn is thrown away. */
@@ -216,7 +216,9 @@ public final class EarthWorlds {
             ready = false;
             preparing = null;
             landing = null;
-            landingTicks = 0;
+            ServerCubeWorld spawnCubes = cubes();
+            if (spawnCubes != null) for (UUID id : spots.keySet()) spawnCubes.release(holder(id));
+            spots.clear();
             retryAt = 0;
             round++;
         }
@@ -240,7 +242,16 @@ public final class EarthWorlds {
             waiting.add(player.getUUID());
         }
 
-        void forget(UUID player) { waiting.remove(player); sent.remove(player); status.forget(player); }
+        void forget(UUID player) {
+            waiting.remove(player);
+            sent.remove(player);
+            ownSince.remove(player);
+            ownGivenUp.remove(player);
+            status.forget(player);
+            // Left while waiting: the cubes held at their landing go too, so nothing stays resident.
+            ServerCubeWorld spawnCubes = cubes();
+            forgetSpot(spots, player, holder -> { if (spawnCubes != null) spawnCubes.release(holder); });
+        }
 
         void tick() {
             long now = Util.getMillis();
@@ -264,14 +275,25 @@ public final class EarthWorlds {
                 if (player == null || player.level().dimension() != Level.OVERWORLD) {
                     waiting.remove(id);
                     sent.remove(id);
+                    ownSince.remove(id);
+                    ownGivenUp.remove(id);
+                    if (spots.remove(id) != null) cubes.release(holder(id));
                     if (player != null) release(player);
                     continue;
                 }
                 Optional<EarthSpawns.Spot> own = EarthSpawns.of(server).personal(player);
-                if (own.isPresent()) {
+                // A spawn of their own that cannot be landed on in time, tried every 30 s, would hold them for ever:
+                // past the arrival's whole bound it is given up, and they land at the server's spawn instead.
+                if (own.isPresent() && !ownGivenUp.contains(id) && ArrivalWait.overdue(ownSince.computeIfAbsent(id, k -> now), now)) {
+                    ownGivenUp.add(id);
+                    CubicEvents.cancelTrip(cubes, player);
+                    player.sendSystemMessage(Component.literal("Your own spawn could not be loaded in time; landing at the server's spawn instead.")
+                            .withStyle(ChatFormatting.YELLOW));
+                }
+                if (own.isPresent() && !ownGivenUp.contains(id)) {
                     // A spawn of their own: travel there, held up here until the trip lands; tried again if it fails.
                     hold(player);
-                    if (now >= sent.getOrDefault(id, 0L)) {
+                    if (now >= sent.getOrDefault(id, 0L) && !CubicEvents.tripPending(player)) {
                         sent.put(id, now + 30_000);
                         EarthSpawns.Spot spot = own.get();
                         CubicEvents.travel(server.createCommandSourceStack().withSuppressedOutput(), player,
@@ -280,9 +302,14 @@ public final class EarthWorlds {
                     status.send(player, status.payload(EarthStatus.PREPARING, EarthStatus.OK, (int) ((now - firstWait) / 1000), own.get().label()), now);
                     continue;
                 }
-                if (ready && landingLoaded(cubes)) {
-                    waiting.remove(id);
-                    arrive(player, cubes);
+                Vec3 stand = ready ? landed(id, cubes) : null;
+                if (stand != null) {
+                    // The hold goes however landing ends, before the entries that track it (the player stands there now).
+                    cubes.landHeld(holder(id), () -> {
+                        waiting.remove(id);
+                        spots.remove(id);
+                        arrive(player, cubes, stand);
+                    });
                 } else {
                     hold(player);
                     byte problem = EarthStatus.offlineMode() && retryAt > 0 ? EarthStatus.OFFLINE_MODE
@@ -292,21 +319,49 @@ public final class EarthWorlds {
             }
         }
 
-        /** Ticks spent waiting for the cubes at the landing, which the workers make; after that they load on the spot. */
-        int landingTicks;
+        /** A waiting player's own spot, scattered about the landing, and how many ticks they have waited for it. */
+        private record Spot(int[] at, ArrivalWait.Wait waited) {}
+        final java.util.Map<UUID, Spot> spots = new java.util.HashMap<>();
+        /** When each waiting player was first sent toward a spawn of their own, and those whose own spawn was given up. */
+        final java.util.Map<UUID, Long> ownSince = new java.util.HashMap<>();
+        final Set<UUID> ownGivenUp = new HashSet<>();
+
+        /** What keeps a waiting player's landing cubes loaded (see {@link ServerCubeWorld#keepAround}). */
+        static String holder(UUID id) { return "join:" + id; }
 
         /**
-         * Whether the cubes about the start's landing spot are made: asked of the workers and waited
-         * for, rather than generated on the server thread when the first player arrives.
+         * Where a waiting player may stand now, or null while they wait: about their own spot,
+         * scattered about the landing once, as {@link ArrivalWait} allows, waited for round that
+         * spot (a wide spawn radius scatters past the cubes round the landing) and never in a cube
+         * not loaded. The cubes there are kept loaded meanwhile, as nobody may be near. The player is
+         * held, so waiting on is safe; a spot whose cubes cannot be had by the arrival's bound is
+         * scattered again, so another column round the landing is tried.
          */
-        private boolean landingLoaded(ServerCubeWorld cubes) {
-            int[] spot = landing;
-            if (spot == null || landingTicks >= LANDING_PATIENCE) return true;
+        @Nullable private Vec3 landed(UUID id, ServerCubeWorld cubes) {
+            if (landing == null) landing = ArrivalWait.orNone(() -> CubicEvents.landing(cubes, view(cubes))); // found here when not found ahead
+            int[] found = landing;
+            if (found == null) return null; // its terrain is not to be had yet: they wait, held
+            Spot spot = spots.get(id);
+            if (spot == null) {
+                // A failed elevation sample keeps them waiting, held, rather than throwing out of the server tick.
+                int[] scattered = scatterOrWait(() -> CubicEvents.scatter(cubes, found));
+                if (scattered == null) return null;
+                spots.put(id, spot = new Spot(scattered, ArrivalWait.Wait.NEW));
+            }
             var generator = cubes.generator();
-            int ground = Math.max(generator.surfaceY(spot[0], spot[1]), generator.waterY(spot[0], spot[1]));
-            if (cubes.readyAround(new net.minecraft.core.BlockPos(spot[0], ground, spot[1]))) return true;
-            landingTicks++;
-            return false;
+            int x = spot.at[0], z = spot.at[1];
+            Integer ground = ArrivalWait.orNone(() -> Math.max(generator.surfaceY(x, z), generator.waterY(x, z)));
+            if (ground == null) return null;
+            var at = new net.minecraft.core.BlockPos(x, ground, z);
+            cubes.keepAround(holder(id), at);
+            ArrivalWait.Next next = ArrivalWait.step(spot.waited, ArrivalWait.around(cubes, at));
+            Vec3 stand = next.step() == ArrivalWait.Step.GO ? CubicEvents.standAt(cubes, spot.at) : null;
+            if (stand != null) return stand;
+            if (next.step() == ArrivalWait.Step.GIVE_UP || spot.waited.ticks() >= ArrivalWait.TOTAL) {
+                spots.remove(id);
+                cubes.release(holder(id));
+            } else spots.put(id, new Spot(spot.at, next.then()));
+            return null;
         }
 
         /** Fetches the data around the home off the server thread, and checks it is there; retries until it is. */
@@ -364,11 +419,9 @@ public final class EarthWorlds {
             player.onUpdateAbilities();
         }
 
-        private void arrive(ServerPlayer player, ServerCubeWorld cubes) {
+        private void arrive(ServerPlayer player, ServerCubeWorld cubes, Vec3 spot) {
             release(player);
             int[] view = view(cubes);
-            int[] found = landing;
-            Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found) : CubicEvents.arrival(cubes, view);
             ServerLevel level = server.getLevel(Cubic.LEVEL);
             player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
             player.resetFallDistance();
@@ -418,8 +471,10 @@ public final class EarthWorlds {
                 .then(Commands.argument("latitude", DoubleArgumentType.doubleArg(-80, 80))
                         .then(Commands.argument("longitude", DoubleArgumentType.doubleArg(-180, 180)).executes(context -> {
                                     double latitude = DoubleArgumentType.getDouble(context, "latitude"), longitude = DoubleArgumentType.getDouble(context, "longitude");
-                                    if (!EarthRules.pay(context.getSource(), context.getSource().getPlayerOrException(), latitude, longitude)) return 0;
-                                    return CubicEvents.travel(context.getSource(), latitude, longitude);
+                                    ServerPlayer traveller = context.getSource().getPlayerOrException();
+                                    EarthRules.Fare fare = EarthRules.quote(context.getSource(), traveller, latitude, longitude);
+                                    if (fare == null) return 0;
+                                    return CubicEvents.travel(context.getSource(), traveller, latitude, longitude, Double.NaN, Double.NaN, fare, null);
                                 })
                                 // Operators and the console can send someone else.
                                 .then(Commands.argument("player", EntityArgument.player()).requires(source -> source.hasPermission(2))
@@ -454,10 +509,11 @@ public final class EarthWorlds {
     private static int visit(CommandSourceStack source, String query) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         Optional<EarthPlaces.Place> place = EarthPlaces.find(query);
         if (place.isPresent()) {
-            if (!EarthRules.pay(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude())) return 0;
+            EarthRules.Fare fare = EarthRules.quote(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude());
+            if (fare == null) return 0;
             source.sendSuccess(() -> Component.literal("Traveling to " + place.get().label() + ".").withStyle(ChatFormatting.GREEN), false);
             return CubicEvents.travel(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude(),
-                    place.get().viewLatitude(), place.get().viewLongitude());
+                    place.get().viewLatitude(), place.get().viewLongitude(), fare, null);
         }
         // Not a famous place: the biggest town of that name ("Paris", or "Paris, Texas").
         List<EarthTowns.Town> towns = EarthTowns.search(query, 1);
@@ -466,10 +522,11 @@ public final class EarthWorlds {
             return 0;
         }
         EarthTowns.Town town = towns.get(0);
-        if (!EarthRules.pay(source, source.getPlayerOrException(), town.latitude(), town.longitude())) return 0;
+        EarthRules.Fare fare = EarthRules.quote(source, source.getPlayerOrException(), town.latitude(), town.longitude());
+        if (fare == null) return 0;
         source.sendSuccess(() -> Component.literal("Traveling to where " + town.label() + " is. The Earth here is wild land, so there is no town.")
                 .withStyle(ChatFormatting.GREEN), false);
-        return CubicEvents.travel(source, town.latitude(), town.longitude());
+        return CubicEvents.travel(source, source.getPlayerOrException(), town.latitude(), town.longitude(), Double.NaN, Double.NaN, fare, null);
     }
 
     /** Lists the places a name could mean, each a click away for those who may travel. */
@@ -496,7 +553,10 @@ public final class EarthWorlds {
     }
 
     /** Sends a player to the server spawn (the world's start unless operators moved it); replies go to {@code source}. */
-    static int toSpawn(CommandSourceStack source, ServerPlayer player) {
+    static int toSpawn(CommandSourceStack source, ServerPlayer player) { return toSpawn(source, player, null); }
+
+    /** As above, charging {@code fare} (null for free) only as the player lands. */
+    static int toSpawn(CommandSourceStack source, ServerPlayer player, @Nullable EarthRules.Fare fare) {
         ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
         if (level == null || !(CubicLevel.of(level) instanceof ServerCubeWorld cubes)) {
             source.sendFailure(Component.literal("This world has no Earth."));
@@ -507,15 +567,34 @@ public final class EarthWorlds {
         Optional<EarthSpawns.Spot> spawn = Session.spawn(cubes);
         // A moved spawn whose landing is still being found: travel there like any trip.
         if (found == null && spawn.isPresent())
-            return CubicEvents.travel(source, player, spawn.get().latitude(), spawn.get().longitude(), spawn.get().viewLatitude(), spawn.get().viewLongitude());
+            return CubicEvents.travel(source, player, spawn.get().latitude(), spawn.get().longitude(), spawn.get().viewLatitude(), spawn.get().viewLongitude(), fare, null);
         int[] view = Session.view(cubes);
-        Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found) : CubicEvents.arrival(cubes, view);
-        player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
+        Vec3 spot = found != null ? CubicEvents.arrivalAtIfAvailable(cubes, found) : CubicEvents.arrivalIfAvailable(cubes, view);
+        if (spot == null) {
+            source.sendFailure(Component.literal("Could not load the ground at the server spawn yet. Try again in a minute."));
+            return 0;
+        }
+        float yaw = CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot()));
+        // Charged only once the move is confirmed: a mod vetoing the teleport leaves them where they were, unpaid.
+        if (!EarthRules.land(source, player, fare, () -> {
+            player.teleportTo(level, spot.x, spot.y, spot.z, yaw, 0.0F);
+            return CubicEvents.arrivedAt(player, level, spot);
+        })) return 0;
+        CubicEvents.cancelTrip(cubes, player); // landed another way: a trip still pending must not pull them off
         if (source.getPlayer() == player) {
             try { return CubicEvents.where(source); } catch (com.mojang.brigadier.exceptions.CommandSyntaxException notAPlayer) { return 1; }
         }
         source.sendSuccess(() -> Component.literal("Sent " + player.getGameProfile().getName() + " to the server spawn."), true);
         return 1;
+    }
+
+    /** A waiting player's scattered spot, or null (they wait) where the elevation it samples cannot be had now. */
+    @Nullable static int[] scatterOrWait(java.util.function.Supplier<int[]> scatter) { return ArrivalWait.orNone(scatter); }
+
+    /** A waiting player is gone: their spot is forgotten and the cubes held there let go. */
+    static void forgetSpot(java.util.Map<UUID, ?> spots, UUID player, java.util.function.Consumer<Object> release) {
+        spots.remove(player);
+        release.accept(Session.holder(player));
     }
 
     /** The server spawn moved: players arriving from now on land there. */

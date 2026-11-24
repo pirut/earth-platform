@@ -605,6 +605,14 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     @Override public void attach(ServerLevel level) { detached = false; vanilla = new VanillaStructures(level, new StructureHost(), seed); }
 
+    /** For tests: this generator's structures from some registries, as {@link #attach} makes them for a level. */
+    VanillaStructures attachStructures(net.minecraft.core.RegistryAccess registries, net.minecraft.world.level.levelgen.RandomState randomState) {
+        detached = false;
+        VanillaStructures made = new VanillaStructures(null, registries, randomState, true, new StructureHost(), seed);
+        vanilla = made;
+        return made;
+    }
+
     @Override public void loaded(int cubeX, int cubeY, int cubeZ) {
         VanillaStructures structures = vanilla;
         if (structures != null) structures.warm(cubeX, cubeZ);
@@ -674,6 +682,17 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         VanillaStructures structures = vanilla;
         return structures == null ? null : structures.startOf(structure, chunkX, chunkZ);
     }
+
+    @Override public @Nullable net.minecraft.world.level.levelgen.structure.StructureStart structureStart(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ, boolean probe) {
+        VanillaStructures structures = vanilla;
+        return structures == null ? null : structures.startOf(structure, chunkX, chunkZ, probe);
+    }
+
+    @Override public boolean structuresReady(int chunkX, int chunkZ) {
+        VanillaStructures structures = vanilla;
+        return structures == null || structures.ready(chunkX, chunkZ);
+    }
+
 
     @Override public @Nullable net.minecraft.world.level.levelgen.structure.StructureStart placedStructure(net.minecraft.world.level.levelgen.structure.Structure structure, int chunkX, int chunkZ) {
         VanillaStructures structures = vanilla;

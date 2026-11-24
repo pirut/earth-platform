@@ -59,30 +59,99 @@ public final class EarthRules {
     }
 
     /**
-     * Charges a player for a trip they started themselves, in survival or adventure, as the server's
-     * settings say: experience levels by distance, and a cooldown between trips. Operators and creative
-     * players go free. Tells the player and returns false when they can't pay or must wait.
+     * What a trip will cost when it lands: experience levels by distance, and the cooldown between
+     * trips it starts. Nothing is taken when it sets off, so a trip that does not land costs nothing
+     * and there is nothing to give back.
      */
-    static boolean pay(CommandSourceStack source, ServerPlayer player, double latitude, double longitude) {
-        if (source.getPlayer() != player || source.hasPermission(2) || player.isCreative() || player.isSpectator()) return true;
-        long now = net.minecraft.Util.getMillis();
-        long next = NEXT_TRIP.getOrDefault(player.getUUID(), 0L);
-        if (now < next) {
-            source.sendFailure(Component.literal("You can travel again in " + ((next - now + 999) / 1000) + " s."));
-            return false;
-        }
+    public record Fare(int levels, boolean charged) {
+        /** Operators, creative players and trips sent by others: nothing, and no cooldown. */
+        public static final Fare FREE = new Fare(0, false);
+    }
+
+    /** What a fare is charged to: a player's experience levels. */
+    interface Wallet {
+        UUID id();
+        int levels();
+        void spend(int levels);
+    }
+
+    private static Wallet wallet(ServerPlayer player) {
+        return new Wallet() {
+            @Override public UUID id() { return player.getUUID(); }
+            @Override public int levels() { return player.experienceLevel; }
+            @Override public void spend(int levels) { player.giveExperienceLevels(-levels); }
+        };
+    }
+
+    /**
+     * Whether a player may set off on a trip they started themselves, in survival or adventure, as
+     * the server's settings say, and what it will cost when it lands: null, telling them why, when
+     * they must wait or can't pay. Operators, creative players and trips sent by others go free.
+     * Charges nothing.
+     */
+    @Nullable static Fare quote(CommandSourceStack source, ServerPlayer player, double latitude, double longitude) {
+        if (source.getPlayer() != player || source.hasPermission(2) || player.isCreative() || player.isSpectator()) return Fare.FREE;
         int levels = cost(player, latitude, longitude);
-        if (levels > player.experienceLevel) {
-            source.sendFailure(Component.literal("This trip costs " + levels + " experience levels; you have " + player.experienceLevel + "."));
+        String refused = refusal(wallet(player), levels, net.minecraft.Util.getMillis());
+        if (refused != null) {
+            source.sendFailure(Component.literal(refused));
+            return null;
+        }
+        return new Fare(levels, true);
+    }
+
+    /**
+     * Lands a trip: makes {@code move} (the teleport, true once the player is confirmed at the
+     * destination), then charges the fare (null or free: nothing) and starts the cooldown. False,
+     * telling the player why, when they can no longer pay or another trip's cooldown now runs (then
+     * no move is made), or when something stopped the move (a mod vetoing the teleport): then they
+     * stay where they are, pay nothing and start no cooldown.
+     */
+    public static boolean land(CommandSourceStack source, ServerPlayer player, @Nullable Fare fare, java.util.function.BooleanSupplier move) {
+        String refused = landTrip(wallet(player), fare, net.minecraft.Util.getMillis(), EarthConfig.TRAVEL_COOLDOWN.get(), move);
+        if (refused != null) {
+            source.sendFailure(Component.literal(refused));
             return false;
         }
-        if (levels > 0) {
-            player.giveExperienceLevels(-levels);
-            source.sendSuccess(() -> Component.literal("Paid " + levels + " experience levels for the trip.").withStyle(ChatFormatting.GRAY), false);
-        }
-        int cooldown = EarthConfig.TRAVEL_COOLDOWN.get();
-        if (cooldown > 0) NEXT_TRIP.put(player.getUUID(), now + cooldown * 1000L);
+        if (fare != null && fare.charged() && fare.levels() > 0)
+            source.sendSuccess(() -> Component.literal("Paid " + fare.levels() + " experience levels for the trip.").withStyle(ChatFormatting.GRAY), false);
         return true;
+    }
+
+    /**
+     * {@link #land} for a fare and a wallet: why the trip did not land, or null once it landed and
+     * was paid for. The fare is checked before the move (nothing taken), and taken only after it.
+     */
+    @Nullable static String landTrip(Wallet wallet, @Nullable Fare fare, long now, int cooldownSeconds, java.util.function.BooleanSupplier move) {
+        if (fare != null && fare.charged()) {
+            String refused = refusal(wallet, fare.levels(), now);
+            if (refused != null) return refused.startsWith("This trip costs")
+                    ? "This trip costs " + fare.levels() + " experience levels and you now have " + wallet.levels() + "; it did not go." : refused;
+        }
+        if (!move.getAsBoolean()) return "The trip did not go: something stopped the move.";
+        return charge(wallet, fare, now, cooldownSeconds);
+    }
+
+    /** Why a trip costing {@code levels} may not set off now, or null when it may. Takes nothing. */
+    @Nullable static String refusal(Wallet wallet, int levels, long now) {
+        long next = NEXT_TRIP.getOrDefault(wallet.id(), 0L);
+        if (now < next) return "You can travel again in " + ((next - now + 999) / 1000) + " s.";
+        if (levels > wallet.levels()) return "This trip costs " + levels + " experience levels; you have " + wallet.levels() + ".";
+        return null;
+    }
+
+    /**
+     * Charges a trip's fare as it lands and starts the cooldown, or says why it can't land: it still
+     * may not set off (another trip's cooldown runs) or the levels are no longer there.
+     */
+    @Nullable static String charge(Wallet wallet, @Nullable Fare fare, long now, int cooldownSeconds) {
+        if (fare == null || !fare.charged()) return null;
+        String refused = refusal(wallet, fare.levels(), now);
+        if (refused != null) return refused.startsWith("This trip costs")
+                ? "This trip costs " + fare.levels() + " experience levels and you now have " + wallet.levels() + "; it did not go." : refused;
+        if (fare.levels() > 0) wallet.spend(fare.levels());
+        if (cooldownSeconds > 0) NEXT_TRIP.put(wallet.id(), now + cooldownSeconds * 1000L);
+        return null;
     }
 
     /** Levels a trip costs: the server's rate per 1000 km, at least one level when there is a rate; NaN for an unknown destination costs 1000 km. */

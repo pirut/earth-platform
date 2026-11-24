@@ -133,12 +133,13 @@ public final class EarthPostcard {
             return 0;
         }
         ServerPlayer player = source.getPlayerOrException();
-        if (!EarthRules.pay(source, player, spot.latitude(), spot.longitude())) return 0;
+        EarthRules.Fare fare = EarthRules.quote(source, player, spot.latitude(), spot.longitude());
+        if (fare == null) return 0;
         // Face the same way: look at a point a few kilometers off along the bearing.
         double turn = Math.toRadians(spot.bearing()), away = 0.05;
         double viewLatitude = Math.clamp(spot.latitude() + Math.cos(turn) * away, -LIMIT, LIMIT);
         double viewLongitude = spot.longitude() + Math.sin(turn) * away / Math.max(0.1, Math.cos(Math.toRadians(spot.latitude())));
-        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), viewLatitude, viewLongitude);
+        return CubicEvents.travel(source, player, spot.latitude(), spot.longitude(), viewLatitude, viewLongitude, fare, null);
     }
 
     private static int postcard(CommandSourceStack source) throws CommandSyntaxException {
