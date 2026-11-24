@@ -284,7 +284,7 @@ public final class EarthWorlds {
                 if (own.isPresent() && !ownGivenUp.contains(id)) {
                     // A spawn of their own: travel there, held up here until the trip lands; tried again if it fails.
                     hold(player);
-                    if (now >= sent.getOrDefault(id, 0L)) {
+                    if (now >= sent.getOrDefault(id, 0L) && !CubicEvents.tripPending(player)) {
                         sent.put(id, now + 30_000);
                         EarthSpawns.Spot spot = own.get();
                         CubicEvents.travel(server.createCommandSourceStack().withSuppressedOutput(), player,
@@ -295,10 +295,12 @@ public final class EarthWorlds {
                 }
                 Vec3 stand = ready ? landed(id, cubes) : null;
                 if (stand != null) {
-                    waiting.remove(id);
-                    spots.remove(id);
-                    arrive(player, cubes, stand);
-                    cubes.release(holder(id)); // the player stands there now, which keeps them
+                    // The hold goes however landing ends, before the entries that track it (the player stands there now).
+                    cubes.landHeld(holder(id), () -> {
+                        waiting.remove(id);
+                        spots.remove(id);
+                        arrive(player, cubes, stand);
+                    });
                 } else {
                     hold(player);
                     byte problem = EarthStatus.offlineMode() && retryAt > 0 ? EarthStatus.OFFLINE_MODE
@@ -327,8 +329,9 @@ public final class EarthWorlds {
          * scattered again, so another column round the landing is tried.
          */
         @Nullable private Vec3 landed(UUID id, ServerCubeWorld cubes) {
-            if (landing == null) landing = CubicEvents.landing(cubes, view(cubes)); // as before: found here when not found ahead
+            if (landing == null) landing = ArrivalWait.orNone(() -> CubicEvents.landing(cubes, view(cubes))); // found here when not found ahead
             int[] found = landing;
+            if (found == null) return null; // its terrain is not to be had yet: they wait, held
             Spot spot = spots.computeIfAbsent(id, k -> new Spot(CubicEvents.scatter(cubes, found), ArrivalWait.Wait.NEW));
             var generator = cubes.generator();
             int x = spot.at[0], z = spot.at[1];
@@ -451,8 +454,10 @@ public final class EarthWorlds {
                 .then(Commands.argument("latitude", DoubleArgumentType.doubleArg(-80, 80))
                         .then(Commands.argument("longitude", DoubleArgumentType.doubleArg(-180, 180)).executes(context -> {
                                     double latitude = DoubleArgumentType.getDouble(context, "latitude"), longitude = DoubleArgumentType.getDouble(context, "longitude");
-                                    if (!EarthRules.pay(context.getSource(), context.getSource().getPlayerOrException(), latitude, longitude)) return 0;
-                                    return CubicEvents.travel(context.getSource(), latitude, longitude);
+                                    ServerPlayer traveller = context.getSource().getPlayerOrException();
+                                    EarthRules.Fare fare = EarthRules.quote(context.getSource(), traveller, latitude, longitude);
+                                    if (fare == null) return 0;
+                                    return CubicEvents.travel(context.getSource(), traveller, latitude, longitude, Double.NaN, Double.NaN, fare, -1);
                                 })
                                 // Operators and the console can send someone else.
                                 .then(Commands.argument("player", EntityArgument.player()).requires(source -> source.hasPermission(2))
@@ -487,10 +492,11 @@ public final class EarthWorlds {
     private static int visit(CommandSourceStack source, String query) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         Optional<EarthPlaces.Place> place = EarthPlaces.find(query);
         if (place.isPresent()) {
-            if (!EarthRules.pay(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude())) return 0;
+            EarthRules.Fare fare = EarthRules.quote(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude());
+            if (fare == null) return 0;
             source.sendSuccess(() -> Component.literal("Traveling to " + place.get().label() + ".").withStyle(ChatFormatting.GREEN), false);
             return CubicEvents.travel(source, source.getPlayerOrException(), place.get().latitude(), place.get().longitude(),
-                    place.get().viewLatitude(), place.get().viewLongitude());
+                    place.get().viewLatitude(), place.get().viewLongitude(), fare, -1);
         }
         // Not a famous place: the biggest town of that name ("Paris", or "Paris, Texas").
         List<EarthTowns.Town> towns = EarthTowns.search(query, 1);
@@ -499,10 +505,11 @@ public final class EarthWorlds {
             return 0;
         }
         EarthTowns.Town town = towns.get(0);
-        if (!EarthRules.pay(source, source.getPlayerOrException(), town.latitude(), town.longitude())) return 0;
+        EarthRules.Fare fare = EarthRules.quote(source, source.getPlayerOrException(), town.latitude(), town.longitude());
+        if (fare == null) return 0;
         source.sendSuccess(() -> Component.literal("Traveling to where " + town.label() + " is. The Earth here is wild land, so there is no town.")
                 .withStyle(ChatFormatting.GREEN), false);
-        return CubicEvents.travel(source, town.latitude(), town.longitude());
+        return CubicEvents.travel(source, source.getPlayerOrException(), town.latitude(), town.longitude(), Double.NaN, Double.NaN, fare, -1);
     }
 
     /** Lists the places a name could mean, each a click away for those who may travel. */
@@ -529,7 +536,10 @@ public final class EarthWorlds {
     }
 
     /** Sends a player to the server spawn (the world's start unless operators moved it); replies go to {@code source}. */
-    static int toSpawn(CommandSourceStack source, ServerPlayer player) {
+    static int toSpawn(CommandSourceStack source, ServerPlayer player) { return toSpawn(source, player, null); }
+
+    /** As above, charging {@code fare} (null for free) only as the player lands. */
+    static int toSpawn(CommandSourceStack source, ServerPlayer player, @Nullable EarthRules.Fare fare) {
         ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
         if (level == null || !(CubicLevel.of(level) instanceof ServerCubeWorld cubes)) {
             source.sendFailure(Component.literal("This world has no Earth."));
@@ -540,13 +550,15 @@ public final class EarthWorlds {
         Optional<EarthSpawns.Spot> spawn = Session.spawn(cubes);
         // A moved spawn whose landing is still being found: travel there like any trip.
         if (found == null && spawn.isPresent())
-            return CubicEvents.travel(source, player, spawn.get().latitude(), spawn.get().longitude(), spawn.get().viewLatitude(), spawn.get().viewLongitude());
+            return CubicEvents.travel(source, player, spawn.get().latitude(), spawn.get().longitude(), spawn.get().viewLatitude(), spawn.get().viewLongitude(), fare, -1);
         int[] view = Session.view(cubes);
-        Vec3 spot = found != null ? CubicEvents.arrivalAt(cubes, found) : CubicEvents.arrival(cubes, view);
+        Vec3 spot = found != null ? CubicEvents.arrivalAtIfAvailable(cubes, found) : CubicEvents.arrivalIfAvailable(cubes, view);
         if (spot == null) {
             source.sendFailure(Component.literal("Could not load the ground at the server spawn yet. Try again in a minute."));
             return 0;
         }
+        if (!EarthRules.settle(source, player, fare)) return 0;
+        CubicEvents.cancelTrip(cubes, player); // landed another way: a trip still pending must not pull them off
         player.teleportTo(level, spot.x, spot.y, spot.z, CubicEvents.lookOut(cubes, spot, CubicEvents.facing(spot, view, player.getYRot())), 0.0F);
         if (source.getPlayer() == player) {
             try { return CubicEvents.where(source); } catch (com.mojang.brigadier.exceptions.CommandSyntaxException notAPlayer) { return 1; }

@@ -33,8 +33,9 @@ public final class CubicTravel {
         if (player.getRespawnPosition() != null && !target.missingRespawnBlock()) return target;
         ServerLevel cubic = CubicPortals.cubicLevel(player.serverLevel());
         if (cubic == null || !(CubicLevel.of(cubic) instanceof ServerCubeWorld cubes)) return target;
-        Vec3 arrival = CubicEvents.arrival(cubes);
-        if (arrival == null) return target; // the Earth's ground there could not be loaded: vanilla's respawn, rather than into a hole
+        // Its ground could not be loaded, or the landing search found the terrain unavailable: vanilla's respawn, rather than a hole or a crash.
+        Vec3 arrival = CubicEvents.arrivalIfAvailable(cubes, null);
+        if (arrival == null) return target;
         return new DimensionTransition(cubic, arrival, Vec3.ZERO, target.yRot(), 0.0F,
                 target.missingRespawnBlock(), target.postDimensionTransition());
     }

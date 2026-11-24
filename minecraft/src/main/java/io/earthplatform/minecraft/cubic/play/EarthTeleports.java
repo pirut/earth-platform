@@ -94,6 +94,8 @@ final class EarthTeleports {
         GeoPoint to = EarthRules.where(target);
         CommandSourceStack payer = mover.createCommandSourceStack();
         if (!EarthRules.pay(payer, mover, to.latitude(), to.longitude())) return 0;
+        if (io.earthplatform.minecraft.cubic.CubicLevel.of(target.serverLevel()) instanceof io.earthplatform.minecraft.cubic.ServerCubeWorld cubes)
+            io.earthplatform.minecraft.cubic.CubicEvents.cancelTrip(cubes, mover); // landed another way: a trip still pending must not pull them off
         mover.teleportTo(target.serverLevel(), target.getX(), target.getY(), target.getZ(), target.getYRot(), mover.getXRot());
         mover.resetFallDistance();
         EarthRace.travelled(mover);

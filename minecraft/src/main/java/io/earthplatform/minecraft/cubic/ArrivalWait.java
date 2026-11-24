@@ -61,6 +61,19 @@ public final class ArrivalWait {
     /** Whether a wait counted in milliseconds from {@code since} is past {@link #TOTAL} ticks of a 20-tick-a-second server. */
     public static boolean overdue(long since, long now) { return now - since > TOTAL * 50L; }
 
+    /**
+     * The arrival point {@code find} gives, or null where the terrain it needs is unavailable now (a
+     * landing search or scatter reading map data that cannot be had), so the caller falls back.
+     */
+    @javax.annotation.Nullable public static <T> T orNone(java.util.function.Supplier<T> find) {
+        try {
+            return find.get();
+        } catch (RuntimeException unavailable) {
+            io.earthplatform.minecraft.EarthPlatformMod.LOGGER.warn("No arrival point to be had now: {}", unavailable.toString());
+            return null;
+        }
+    }
+
     /** The place round a block of a cubic world. */
     public static Place around(ServerCubeWorld cubes, BlockPos at) {
         return new Place() {

@@ -56,6 +56,12 @@ public final class ResidentCubes {
         }
     }
 
+    /** Runs the landing of what {@code holder} waited for, then lets go of its cubes, however the landing ends (an exception too). */
+    public void landing(Object holder, Runnable land) {
+        try { land.run(); }
+        finally { release(holder); }
+    }
+
     public boolean holds(long cubeKey) { return cubes.containsKey(cubeKey); }
 
     public boolean holdsColumn(long column) { return columns.containsKey(column); }

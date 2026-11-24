@@ -454,6 +454,9 @@ public final class ServerCubeWorld extends CubeWorld {
     /** Server thread. Lets go of the cubes {@code holder} kept; the unload pass drops them once no player is near. */
     public void release(Object holder) { resident.release(holder); }
 
+    /** Server thread. Lands what {@code holder} waited for, then lets go of its cubes however that ends, so none is stranded. */
+    public void landHeld(Object holder, Runnable land) { resident.landing(holder, land); }
+
     /** For checks: how many arrivals keep cubes, and whether a cube is kept. */
     public int residentHolders() { return resident.holders(); }
     public boolean resident(long cubeKey) { return resident.holds(cubeKey); }
@@ -1256,6 +1259,9 @@ public final class ServerCubeWorld extends CubeWorld {
         // its region's lock against the last save.
         closing = true;
         reads.shutdownNow();
+        // A read already reading holds its region until it is done: give it a moment, never longer, then save regardless.
+        try { reads.awaitTermination(2, TimeUnit.SECONDS); }
+        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         for (CompletableFuture<int[]> prime : primed.values()) prime.cancel(false);
         resident.clear();
         for (Cube cube : cubes.values()) store(cube, true);

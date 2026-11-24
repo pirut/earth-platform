@@ -9,6 +9,7 @@ import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.Map;
 import javax.annotation.Nullable;
 import java.util.concurrent.CompletableFuture;
@@ -20,6 +21,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
@@ -69,6 +71,7 @@ public final class CubicEvents {
     public static void unload(LevelAccessor levelAccessor) {
         if (levelAccessor instanceof ServerLevel level && CubicLevel.of(level) instanceof ServerCubeWorld cubes) {
             ARRIVALS.clear(); // trips waiting on this world's cubes, whose holds close with it
+            TRIPS.clear();
             cubes.close();
             ((CubicLevel) level).earthplatform$setCubes(null);
         }
@@ -83,25 +86,54 @@ public final class CubicEvents {
 
     /**
      * A travel waiting for the cubes at its landing spot; the player stays where they are meanwhile.
-     * {@code charge} is what they paid for it, given back if it does not land.
+     * {@code token} is its trip's (see {@link Trips}); {@code from} the dimension it set off from;
+     * {@code fare} what it costs, charged only once it lands.
      */
-    private record Arrival(CommandSourceStack source, ServerPlayer player, double latitude, double longitude, int x, int z, ArrivalWait.Wait waited,
-                           @Nullable int[] view, @Nullable io.earthplatform.minecraft.cubic.play.EarthRules.Charge charge) {
+    private record Arrival(CommandSourceStack source, ServerPlayer player, long token, ResourceKey<Level> from, double latitude, double longitude,
+                           int x, int z, ArrivalWait.Wait waited, @Nullable int[] view, @Nullable io.earthplatform.minecraft.cubic.play.EarthRules.Fare fare) {
         /** What keeps the cubes at the landing loaded while it waits (see {@link ServerCubeWorld#keepAround}). */
         String holder() { return "trip:" + player.getUUID(); }
+
+        Arrival waiting(ArrivalWait.Wait then) { return new Arrival(source, player, token, from, latitude, longitude, x, z, then, view, fare); }
     }
 
     private static final List<Arrival> ARRIVALS = new ArrayList<>();
+    /** The trip each player is on now. */
+    private static final Trips TRIPS = new Trips();
+
+    /** Whether a trip a player set off from {@code from} is called off now (see {@link Trips#calledOff}). */
+    private static boolean calledOff(ServerPlayer player, ResourceKey<Level> from) {
+        return Trips.calledOff(player.isRemoved(), player.isDeadOrDying(), from, player.level().dimension());
+    }
 
     /**
      * Moves each waiting traveller as {@link ArrivalWait} allows, onto loaded ground: the server thread
      * never makes those cubes, so never waits behind a structure start or on map data for them, and the
-     * first lookups where they land answer right. A trip whose cubes cannot be had is given up.
+     * first lookups where they land answer right. A trip whose cubes cannot be had is given up; one
+     * superseded by a newer trip, or whose player died or left for another dimension, is dropped. Its
+     * fare is charged only as it lands.
      */
     private static void arrive(ServerLevel level, ServerCubeWorld cubes) {
         for (int i = ARRIVALS.size() - 1; i >= 0; i--) {
             Arrival arrival = ARRIVALS.get(i);
-            if (arrival.player.isRemoved()) { ARRIVALS.remove(i); cubes.release(arrival.holder()); continue; }
+            UUID id = arrival.player.getUUID();
+            if (!TRIPS.current(id, arrival.token)) {
+                // A newer trip took its place: its wait goes to that one if it is to the same place.
+                ARRIVALS.remove(i);
+                cubes.release(arrival.holder());
+                TRIPS.remember(id, arrival.latitude, arrival.longitude, arrival.waited);
+                continue;
+            }
+            if (calledOff(arrival.player, arrival.from)) {
+                ARRIVALS.remove(i);
+                cubes.release(arrival.holder());
+                TRIPS.cancel(id);
+                if (!arrival.player.isRemoved()) {
+                    arrival.source.sendFailure(Component.literal("The trip was called off."));
+                    io.earthplatform.minecraft.cubic.play.EarthMap.failed(arrival.player);
+                }
+                continue;
+            }
             CubeGenerator generator = cubes.generator();
             int ground = Math.max(generator.surfaceY(arrival.x, arrival.z), generator.waterY(arrival.x, arrival.z));
             BlockPos at = new BlockPos(arrival.x, ground, arrival.z);
@@ -113,20 +145,30 @@ public final class CubicEvents {
                 if (next.step() == ArrivalWait.Step.GIVE_UP || arrival.waited.ticks() >= ArrivalWait.TOTAL) {
                     ARRIVALS.remove(i);
                     cubes.release(arrival.holder());
+                    TRIPS.end(id, arrival.token);
+                    TRIPS.remember(id, arrival.latitude, arrival.longitude, arrival.waited); // a retry of the same place keeps the clock
                     arrival.source.sendFailure(Component.literal("Could not load the terrain there in time. Try again in a minute."));
-                    io.earthplatform.minecraft.cubic.play.EarthRules.refund(arrival.player, arrival.charge);
                     io.earthplatform.minecraft.cubic.play.EarthMap.failed(arrival.player);
                     continue;
                 }
-                ARRIVALS.set(i, new Arrival(arrival.source, arrival.player, arrival.latitude, arrival.longitude, arrival.x, arrival.z, next.then(), arrival.view, arrival.charge));
+                ARRIVALS.set(i, arrival.waiting(next.then()));
                 continue;
             }
             ARRIVALS.remove(i);
-            cubes.release(arrival.holder()); // the player stands there now, which keeps them
-            float yaw = lookOut(cubes, stand, facing(stand, arrival.view, arrival.player.getYRot()));
-            arrival.player.teleportTo(level, stand.x, stand.y, stand.z, yaw, 0.0F);
-            io.earthplatform.minecraft.cubic.play.EarthMap.arrived(arrival.player);
-            tellPlace(arrival.source, cubes, BlockPos.containing(stand));
+            // The hold goes however landing ends (the player stands there now, which keeps the cubes).
+            cubes.landHeld(arrival.holder(), () -> {
+                TRIPS.end(id, arrival.token);
+                TRIPS.landed(id);
+                // Charged now it lands, if the player can still pay; nothing was taken before.
+                if (!io.earthplatform.minecraft.cubic.play.EarthRules.settle(arrival.source, arrival.player, arrival.fare)) {
+                    io.earthplatform.minecraft.cubic.play.EarthMap.failed(arrival.player);
+                    return;
+                }
+                float yaw = lookOut(cubes, stand, facing(stand, arrival.view, arrival.player.getYRot()));
+                arrival.player.teleportTo(level, stand.x, stand.y, stand.z, yaw, 0.0F);
+                io.earthplatform.minecraft.cubic.play.EarthMap.arrived(arrival.player);
+                tellPlace(arrival.source, cubes, BlockPos.containing(stand));
+            });
         }
     }
 
@@ -220,17 +262,46 @@ public final class CubicEvents {
     }
 
     /**
-     * Server thread. Calls off a player's trip still waiting to land (a personal spawn given up for
-     * the server's), letting go of its cubes and giving back what it cost.
+     * Server thread. Calls off whatever trip a player is on, still fetching or waiting to land (a
+     * personal spawn given up for the server's, or another way there taken at once): its later steps
+     * are dropped, and its cubes let go. Nothing was charged for it.
      */
     public static void cancelTrip(ServerCubeWorld cubes, ServerPlayer player) {
+        TRIPS.cancel(player.getUUID());
         for (int i = ARRIVALS.size() - 1; i >= 0; i--) {
             Arrival arrival = ARRIVALS.get(i);
             if (arrival.player != player) continue;
             ARRIVALS.remove(i);
             cubes.release(arrival.holder());
-            io.earthplatform.minecraft.cubic.play.EarthRules.refund(player, arrival.charge);
         }
+    }
+
+    /** Server thread. Whether a player is on a trip still fetching or waiting to land. */
+    public static boolean tripPending(ServerPlayer player) { return TRIPS.pending(player.getUUID()); }
+
+    /** Server thread. A trip sets off whose first step (a random trip's search for land) is the caller's: its token, which supersedes any trip the player was on. */
+    public static long beginTrip(ServerPlayer player) { return TRIPS.begin(player.getUUID()); }
+
+    /** Server thread. Whether a trip begun with {@link #beginTrip} is still the player's, and not called off. */
+    public static boolean tripCurrent(ServerPlayer player, long token) {
+        return TRIPS.current(player.getUUID(), token) && !player.isRemoved() && !player.isDeadOrDying();
+    }
+
+    /** Server thread. A trip begun with {@link #beginTrip} ended before travelling (no land was found). */
+    public static void endTrip(ServerPlayer player, long token) { TRIPS.end(player.getUUID(), token); }
+
+    /**
+     * The world's arrival point, as {@link #arrival}, or null where it cannot be had now: its cubes
+     * failed, or the landing search or scatter found the terrain unavailable (a respawn into the
+     * Earth then takes vanilla's, rather than failing).
+     */
+    @Nullable public static Vec3 arrivalIfAvailable(ServerCubeWorld cubes, @Nullable int[] view) {
+        return ArrivalWait.orNone(() -> arrival(cubes, view));
+    }
+
+    /** As {@link #arrivalAt}, or null where the terrain there is unavailable. */
+    @Nullable public static Vec3 arrivalAtIfAvailable(ServerCubeWorld cubes, int[] landing) {
+        return ArrivalWait.orNone(() -> arrivalAt(cubes, landing));
     }
 
     /**
@@ -454,27 +525,36 @@ public final class CubicEvents {
         return travel(source, player, latitude, longitude, Double.NaN, Double.NaN);
     }
 
+    /** As below, free. */
+    public static int travel(CommandSourceStack source, ServerPlayer player, double latitude, double longitude, double viewLatitude, double viewLongitude) {
+        return travel(source, player, latitude, longitude, viewLatitude, viewLongitude, null, -1);
+    }
+
     /**
      * Travels there and faces a sight, such as the peak a famous place is known for (NaN for none).
      * A famous place may land farther from its point than a bare latitude and longitude does, as a
      * new world's start does, to find good ground.
+     * {@code fare} (null for free) is charged only if it lands. {@code token} is the trip's when its
+     * caller began it (a random trip, after its search for land), or -1 to begin it here.
      */
-    public static int travel(CommandSourceStack source, ServerPlayer player, double latitude, double longitude, double viewLatitude, double viewLongitude) {
+    public static int travel(CommandSourceStack source, ServerPlayer player, double latitude, double longitude, double viewLatitude, double viewLongitude,
+                             @Nullable io.earthplatform.minecraft.cubic.play.EarthRules.Fare fare, long token) {
         ServerLevel level = source.getServer().getLevel(Cubic.LEVEL);
         if (level == null || !(CubicLevel.of(level) instanceof ServerCubeWorld cubes) || !(cubes.generator() instanceof EarthGenerator earth)) {
             source.sendFailure(Component.literal("This save's cubic world is not the Earth."));
             return 0;
         }
-        // What the player paid to set off, this tick, given back if the trip does not land.
-        io.earthplatform.minecraft.cubic.play.EarthRules.Charge charge = io.earthplatform.minecraft.cubic.play.EarthRules.take(player);
         // The server's rules, such as a region border, may refuse the trip.
         String refused = io.earthplatform.minecraft.cubic.play.EarthRules.refuse(player, latitude, longitude);
         if (refused != null) {
-            io.earthplatform.minecraft.cubic.play.EarthRules.refund(player, charge);
+            if (token >= 0) TRIPS.end(player.getUUID(), token);
             source.sendFailure(Component.literal(refused));
             io.earthplatform.minecraft.cubic.play.EarthMap.failed(player);
             return 0;
         }
+        // This trip supersedes any the player was on: their older fetches and arrival are dropped from now.
+        long trip = token >= 0 ? token : TRIPS.begin(player.getUUID());
+        ResourceKey<Level> from = player.level().dimension();
         int[] target = earth.block(latitude, longitude);
         int[] view = Double.isNaN(viewLatitude) ? null : earth.block(viewLatitude, viewLongitude);
         source.sendSuccess(() -> Component.literal("Fetching terrain around " + earth.place(target[0], target[1]) + "...").withStyle(ChatFormatting.GRAY), false);
@@ -504,31 +584,28 @@ public final class CubicEvents {
             });
             return spot;
         }, Util.ioPool()).whenComplete((spot, failure) -> source.getServer().execute(() -> {
+            UUID id = player.getUUID();
+            // A fetch for a trip since superseded or called off (a personal spawn given up, a newer trip) is dropped.
+            if (!TRIPS.current(id, trip)) return;
+            if (calledOff(player, from)) { TRIPS.cancel(id); return; }
             if (failure != null) {
+                TRIPS.end(id, trip);
                 // The data's own words, without the exception's class names: most often a data server can't be reached.
                 Throwable cause = failure instanceof java.util.concurrent.CompletionException && failure.getCause() != null ? failure.getCause() : failure;
                 source.sendFailure(Component.literal(cause instanceof io.earthplatform.geography.MissingTerrainException
                         ? "Could not load terrain there yet: " + cause.getMessage() + ". Try again in a minute."
                         : "Could not load terrain there: " + cause));
-                if (!player.isRemoved()) {
-                    io.earthplatform.minecraft.cubic.play.EarthRules.refund(player, charge);
-                    io.earthplatform.minecraft.cubic.play.EarthMap.failed(player);
-                }
+                io.earthplatform.minecraft.cubic.play.EarthMap.failed(player);
                 return;
             }
-            if (player.isRemoved()) return;
-            // A new try of the same trip (a personal spawn's, every 30 s) keeps the wait it had, so its deadline still comes.
-            // A trip it replaces that was paid for is given back: it never landed.
-            ArrivalWait.Wait waited = ArrivalWait.Wait.NEW;
-            io.earthplatform.minecraft.cubic.play.EarthRules.Charge kept = charge;
-            for (Arrival before : ARRIVALS) {
-                if (before.player != player) continue;
-                if (before.latitude == latitude && before.longitude == longitude) waited = before.waited.carried();
-                if (before.charge != null && kept == null) kept = before.charge; // an unpaid retry of a paid trip keeps its charge
-                else io.earthplatform.minecraft.cubic.play.EarthRules.refund(player, before.charge);
-            }
-            ARRIVALS.removeIf(waiting -> waiting.player == player);
-            ARRIVALS.add(new Arrival(source, player, latitude, longitude, spot[0], spot[1], waited, view, kept));
+            // A new try of the same place (a personal spawn's) keeps the wait a dropped try had, so its deadline still comes.
+            ARRIVALS.removeIf(waiting -> {
+                if (waiting.player != player) return false;
+                cubes.release(waiting.holder());
+                if (waiting.latitude == latitude && waiting.longitude == longitude) TRIPS.remember(id, latitude, longitude, waiting.waited);
+                return true;
+            });
+            ARRIVALS.add(new Arrival(source, player, trip, from, latitude, longitude, spot[0], spot[1], TRIPS.resume(id, latitude, longitude), view, fare));
         }));
         return 1;
     }
