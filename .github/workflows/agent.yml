@@ -6,13 +6,17 @@
 # Three jobs, so the agent never holds a token that can write:
 #   prepare  reads the issue through the API into a prompt file (issues: read). The issue text is
 #            untrusted and only ever travels as a file, never through ${{ }} in a run: step.
-#   agent    runs openai/codex-action on a read-only checkout with no GitHub write token
-#            (contents: read, persist-credentials: false, safety-strategy: drop-sudo). Its only
-#            output is a patch artifact.
-#   open-pr  is deterministic: it rejects a patch that touches .github/ (or git metadata, symlinks,
-#            submodules), applies it, pushes agent/issue-<N>-<opId> and opens a draft pull request
-#            with a GitHub App installation token, so CI runs on it. CI on agent/* branches is
-#            read-only and has no secrets (see ci.yml).
+#   agent    runs openai/codex-action (Codex pinned to one release) on a read-only checkout with no
+#            GitHub write token (contents: read, persist-credentials: false, safety-strategy:
+#            drop-sudo). Its only output is a patch artifact, built with a copy of .git taken before
+#            Codex ran, so nothing the agent wrote under .git is ever read or run.
+#   open-pr  is deterministic: it rejects a patch that touches .github/ in any letter case (or git
+#            metadata, symlinks, submodules, binary files), applies it, pushes
+#            agent/issue-<N>-<opId> and opens a draft pull request ("Refs #N") with a GitHub App
+#            installation token, so CI runs on it. CI on agent/* branches is read-only and has no
+#            secrets (see ci.yml).
+# Agent pull requests never publish a release, even with the "build" label (release.yml skips
+# agent/* branches). To ship an agent fix, merge it, then run Release by hand from the Actions tab.
 #
 # Needs: the CODEX_OPENAI_API_KEY secret (a key from its own OpenAI project with a spend cap), the
 # AGENT_APP_PRIVATE_KEY secret and the AGENT_APP_CLIENT_ID variable (the GitHub App that opens the
@@ -120,11 +124,12 @@ jobs:
             echo "$fence"
             jq -r '"Title: " + .title' "$RUNNER_TEMP/issue.json"
             echo
-            jq -r '.body // ""' "$RUNNER_TEMP/issue.json" | head -c 30000
+            # jq slices strings by character, so a cut never splits a UTF-8 sequence.
+            jq -r '(.body // "")[0:30000]' "$RUNNER_TEMP/issue.json"
             echo
             echo "$fence"
           } > "$RUNNER_TEMP/prompt/prompt.md"
-          jq -r .title "$RUNNER_TEMP/issue.json" | head -c 200 > "$RUNNER_TEMP/prompt/title.txt"
+          jq -r '.title[0:200]' "$RUNNER_TEMP/issue.json" > "$RUNNER_TEMP/prompt/title.txt"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -166,6 +171,8 @@ jobs:
         with:
           gradle-version: '9.2.1'
           cache-read-only: true
+          # The job summary would show build output after agent-written code has run.
+          add-job-summary: never
 
       # Same checked inputs as ci.yml. In /tmp so Codex can read them.
       - name: Fetch the external build inputs
@@ -194,8 +201,20 @@ jobs:
         env:
           LC_ALL: C.UTF-8
         run: |
-          mkdir -p /tmp/agent-out
+          mkdir -p /tmp/agent-codex
           gradle --no-daemon --console=plain compileJava compileTestJava "-PearthBuildCommit=$(git rev-parse HEAD)"
+
+      # Codex can write the checkout, .git included, and git config or hooks there could run code
+      # (core.fsmonitor, filter drivers). Copy .git now, outside anything Codex may write
+      # ($RUNNER_TEMP is outside the workspace and /tmp), and build the patch from that copy. The
+      # hash of everything but the objects goes into the job's environment, which the runner keeps
+      # in memory, so "Make the patch" can prove the copy was not changed.
+      - name: Keep a pristine copy of the git metadata
+        run: |
+          set -euo pipefail
+          cp -a .git "$RUNNER_TEMP/pristine.git"
+          pristine_sum() { ( cd "$RUNNER_TEMP/pristine.git" && { find . -path ./objects -prune -o -print0 | xargs -0 stat -c '%n %F %a %N'; find . -path ./objects -prune -o -type f -print0 | xargs -0 sha256sum; } | LC_ALL=C sort | sha256sum | cut -d ' ' -f 1 ); }
+          echo "PRISTINE_GIT_SUM=$(pristine_sum)" >> "$GITHUB_ENV"
 
       # The last step that runs as the default user with sudo: drop-sudo removes it for the rest
       # of the job. Codex sees no GitHub token; the API key stays inside the action's proxy.
@@ -204,7 +223,10 @@ jobs:
         with:
           openai-api-key: ${{ secrets.CODEX_OPENAI_API_KEY }}
           prompt-file: /tmp/agent-prompt/prompt.md
-          output-file: /tmp/agent-out/final-message.md
+          output-file: /tmp/agent-codex/final-message.md
+          # An exact release, not latest: the action's proxy that holds the API key is installed
+          # from the same version. Bump it on purpose after reading the release notes.
+          codex-version: '0.171.0'
           permission-profile: ':workspace'
           safety-strategy: drop-sudo
           model: ${{ vars.AGENT_CODEX_MODEL }}
@@ -212,20 +234,43 @@ jobs:
           # Command Center dispatches as the GitHub App's bot, which has no collaborator role.
           allow-bot-users: ${{ vars.AGENT_DISPATCH_BOT || 'earth-platform-triage' }}
 
-      # Reads the working tree only; nothing the agent wrote is run here.
+      # Reads the working tree as data only. Git runs against the pristine copy of .git with a fresh
+      # index and no global, system or repository-supplied config, hooks, fsmonitor, external diff
+      # or textconv, so nothing the agent wrote is run. The output goes to a new directory Codex
+      # could not write, and only that directory is uploaded.
       - name: Make the patch
         run: |
           set -euo pipefail
-          mkdir -p /tmp/agent-out
-          git add -A
-          git diff --cached --binary --full-index --no-renames > /tmp/agent-out/agent.patch
-          git diff --cached --stat --no-renames
-          [ -f /tmp/agent-out/final-message.md ] || : > /tmp/agent-out/final-message.md
+          out="$RUNNER_TEMP/agent-out"
+          rm -rf "$out"
+          mkdir -p "$out"
+          pristine_sum() { ( cd "$RUNNER_TEMP/pristine.git" && { find . -path ./objects -prune -o -print0 | xargs -0 stat -c '%n %F %a %N'; find . -path ./objects -prune -o -type f -print0 | xargs -0 sha256sum; } | LC_ALL=C sort | sha256sum | cut -d ' ' -f 1 ); }
+          if [ "$(pristine_sum)" != "$PRISTINE_GIT_SUM" ]; then
+            echo "::error::The pristine copy of .git changed while Codex ran; refusing to build the patch."
+            exit 1
+          fi
+          export GIT_DIR="$RUNNER_TEMP/pristine.git" GIT_WORK_TREE="$GITHUB_WORKSPACE"
+          export GIT_INDEX_FILE="$RUNNER_TEMP/agent.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+          g() { git -c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.untrackedCache=false "$@"; }
+          g read-tree HEAD
+          g add -A
+          g diff --cached --binary --full-index --no-renames --no-ext-diff --no-textconv > "$out/agent.patch"
+          g diff --cached --stat --no-renames --no-ext-diff --no-textconv
+          # The summary only if Codex left a regular file. cp -P copies a symlink as a symlink, so a
+          # link swapped in after the check is caught on the copy, which nothing else can write.
+          src=/tmp/agent-codex/final-message.md
+          if [ -f "$src" ] && [ ! -L "$src" ]; then
+            timeout 10 cp -P --no-preserve=all -- "$src" "$out/final-message.md" || rm -f "$out/final-message.md"
+          fi
+          if [ -L "$out/final-message.md" ] || [ ! -f "$out/final-message.md" ]; then
+            rm -f "$out/final-message.md"
+            : > "$out/final-message.md"
+          fi
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-patch
-          path: /tmp/agent-out/
+          path: ${{ runner.temp }}/agent-out/
           if-no-files-found: error
           retention-days: 7
 
@@ -274,15 +319,21 @@ jobs:
             echo "::error::The patch touches $files files (limit 200); refusing it."
             exit 1
           fi
-          # Paths the agent may never touch: workflows and actions, git metadata.
+          # Paths the agent may never touch: workflows and actions, git metadata. Any letter case,
+          # since a case-insensitive checkout would treat .GitHub as .github.
           if git diff --cached --name-only --no-renames -z \
-            | tr '\0' '\n' | grep -E '(^|/)\.github(/|$)|(^|/)\.git(/|$)|(^|/)\.gitmodules$|(^|/)\.gitattributes$'; then
+            | tr '\0' '\n' | grep -Ei '(^|/)\.github(/|$)|(^|/)\.git(/|$)|(^|/)\.gitmodules$|(^|/)\.gitattributes$'; then
             echo "::error::The patch touches .github/ or git metadata; refusing it."
             exit 1
           fi
           # No symlinks (120000) or submodules (160000) as new modes.
           if git diff --cached --raw --no-renames | awk '{ print $2 }' | grep -E '^(120000|160000)$'; then
             echo "::error::The patch adds a symlink or submodule; refusing it."
+            exit 1
+          fi
+          # No binary files: a reviewer can't read them in the pull request.
+          if git diff --cached --numstat --no-renames | awk -F '\t' '$1 == "-" && $2 == "-" { print $3; found = 1 } END { exit !found }'; then
+            echo "::error::The patch adds or changes binary files; refusing it."
             exit 1
           fi
           echo "BRANCH=agent/issue-$ISSUE_NUMBER-$OPERATION_ID" >> "$GITHUB_ENV"
@@ -307,7 +358,7 @@ jobs:
         run: |
           set -euo pipefail
           bot="${APP_SLUG}[bot]"
-          bot_id=$(gh api "users/$bot" --jq .id)
+          bot_id=$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)
           git -c user.name="$bot" -c user.email="$bot_id+$bot@users.noreply.github.com" \
             commit --quiet --no-verify -m "Agent draft for #$ISSUE_NUMBER" -m "Operation $OPERATION_ID. Run: $RUN_URL"
           # No force push: a branch that already exists means this operation already pushed.
@@ -319,13 +370,17 @@ jobs:
           # The title and the agent's summary come from untrusted text: the title loses
           # characters that could mention or link, and the summary goes inside a code fence
           # longer than any backtick run in it, so nothing in it renders, links or notifies.
-          title=$(tr '\r\n' '  ' < "$RUNNER_TEMP/agent-prompt/title.txt" | sed 's/[][`@#<>]//g' | head -c 80)
-          summary=$(head -c 6000 "$RUNNER_TEMP/agent-out/final-message.md")
+          # jq slices by character, so neither cut splits a UTF-8 sequence.
+          title=$(jq -Rrs 'gsub("[\r\n]"; " ") | gsub("[][`@#<>]"; "") | .[0:80] | sub("\\s+$"; "")' < "$RUNNER_TEMP/agent-prompt/title.txt")
+          summary=$(jq -Rrs '.[0:6000]' < "$RUNNER_TEMP/agent-out/final-message.md")
           longest=$({ printf '%s' "$summary" | grep -o '`\+' || true; } | awk '{ print length }' | sort -n | tail -1)
           longest=${longest:-0}
           fence=$(printf '%*s' "$(( longest > 2 ? longest + 1 : 3 ))" '' | tr ' ' '`')
           {
-            echo "Draft from the coding agent for #$ISSUE_NUMBER. Review it like any other change; agents never merge."
+            echo "Refs #$ISSUE_NUMBER"
+            echo
+            echo "Draft from the coding agent. Review it like any other change; agents never merge, and this"
+            echo "pull request never publishes a release, even with the \`build\` label."
             echo
             echo "- Operation: \`$OPERATION_ID\`"
             echo "- Run: $RUN_URL"

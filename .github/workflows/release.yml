@@ -40,7 +40,8 @@ jobs:
   release:
     # A closed pull request publishes only when it was merged and it carries the build label.
     # Agent pull requests (agent/* branches from agent.yml) never publish, even with the label:
-    # this job holds the release secrets. Tag pushes and manual runs are unchanged.
+    # this job holds the release secrets. To ship an agent fix, merge it and then run this
+    # workflow by hand with the tag. Tag pushes and manual runs are unchanged.
     if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'build') && !startsWith(github.event.pull_request.head.ref, 'agent/')) }}
     runs-on: ubuntu-latest
     steps:
@@ -94,10 +95,14 @@ jobs:
           java-version: '21'
 
       # The repository ignores gradle-wrapper.jar, so use a pinned Gradle instead of ./gradlew.
+      # No Gradle cache here: this job holds the release secrets, and the main-branch cache could
+      # have been written by a job that ran agent code (agent.yml runs on main). A release always
+      # builds from a clean Gradle home.
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         if: steps.tag.outputs.skip != 'true'
         with:
           gradle-version: '9.2.1'
+          cache-disabled: true
 
       # The build compiles against Iris and Sodium and checks the stock Photon pack, all supplied
       # from outside and verified by SHA-256 (verifyOfficialShaderInputs). None of them is bundled.
@@ -137,6 +142,7 @@ jobs:
         if: steps.tag.outputs.skip != 'true'
         with:
           gradle-version: '9.8.2'
+          cache-disabled: true
 
       - name: Build the Fabric jar
         if: steps.tag.outputs.skip != 'true'
