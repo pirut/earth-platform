@@ -74,16 +74,20 @@ public final class CubicPortals {
         if (found == null && !home) return null;
 
         BlockUtil.FoundRectangle exit;
+        // The exit keeps a portal ticket, as vanilla's does: what keeps a portal item loop's far side loaded and ticking.
+        net.minecraft.world.level.portal.DimensionTransition.PostDimensionTransition after;
         if (found != null) {
             BlockState state = cubes.getBlockState(found);
             exit = BlockUtil.getLargestRectangleAround(found, state.getValue(NetherPortalBlock.AXIS), 21, Direction.Axis.Y, 21,
                     pos -> cubes.getBlockState(pos) == state);
+            BlockPos ticketAt = found;
+            after = net.minecraft.world.level.portal.DimensionTransition.PLAY_PORTAL_SOUND.then(arrived -> arrived.placePortalTicket(ticketAt));
         } else {
             Direction.Axis axis = nether.getBlockState(portal).getOptionalValue(NetherPortalBlock.AXIS).orElse(Direction.Axis.X);
             exit = build(cubic, cubes, target.getX(), target.getZ(), axis);
+            after = net.minecraft.world.level.portal.DimensionTransition.PLAY_PORTAL_SOUND.then(net.minecraft.world.level.portal.DimensionTransition.PLACE_PORTAL_TICKET);
         }
-        return NetherPortalAccess.earthplatform$exit(entity, portal, exit, cubic,
-                net.minecraft.world.level.portal.DimensionTransition.PLAY_PORTAL_SOUND);
+        return NetherPortalAccess.earthplatform$exit(entity, portal, exit, cubic, after);
     }
 
     /** The registered portal block closest to a target column within a square, checked against the real block. */

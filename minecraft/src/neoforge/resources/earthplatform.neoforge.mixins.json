@@ -6,7 +6,8 @@
   "mixins": [
     "ElytraFlightMixin",
     "GliderChunkLoadMixin",
-    "MarkAndNotifyMixin"
+    "MarkAndNotifyMixin",
+    "TicketOwnerAccess"
   ],
   "injectors": {
     "defaultRequire": 1
