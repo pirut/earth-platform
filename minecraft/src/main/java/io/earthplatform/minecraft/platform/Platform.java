@@ -62,4 +62,11 @@ public interface Platform {
 
     /** Recent tick times of one dimension in nanoseconds, or null where the loader does not keep them. */
     @Nullable long[] tickTimes(MinecraftServer server, ResourceKey<Level> dimension);
+
+    /**
+     * The owner of a loader's forced-chunk ticket, from the ticket's value: the block (a {@code BlockPos}) or
+     * entity (a {@code UUID}) that keeps the chunk loaded through NeoForge's {@code TicketController}; null for
+     * any other value, and always on Fabric, which has no such tickets.
+     */
+    @Nullable default Object forcedTicketOwner(@Nullable Object ticketValue) { return null; }
 }

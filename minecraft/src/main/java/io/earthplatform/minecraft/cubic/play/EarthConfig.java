@@ -66,6 +66,9 @@ public final class EarthConfig {
     public static final ModConfigSpec.BooleanValue LOCALIZED_DAY_NIGHT;
     public static final ModConfigSpec.IntValue YEAR_LENGTH_DAYS;
     public static final ModConfigSpec.BooleanValue MODDED_BIOMES;
+    public static final ModConfigSpec.IntValue CHUNK_LOADER_CUBES;
+    /** {@link #CHUNK_LOADER_CUBES}' default: about 70 forced chunks apart from each other, or a 20 by 20 forced area. */
+    public static final int DEFAULT_CHUNK_LOADER_CUBES = 8192;
 
     /** The settings behind the engine switches (see {@link EngineToggles}), in whichever file each lives. */
     private static final Map<EngineToggles.Toggle, ModConfigSpec.BooleanValue> TOGGLES = new LinkedHashMap<>();
@@ -179,6 +182,10 @@ public final class EarthConfig {
         MODDED_BIOMES = common.comment("Use realistic biomes and surface blocks from installed biome mods (such as Biomes O' Plenty, Regions Unexplored",
                         "and Oh The Biomes We've Gone) where they fit Earth's climates and landscapes. When false, Earth worlds use vanilla biomes and blocks only.")
                 .translation(key("moddedBiomes")).define("moddedBiomes", true);
+        CHUNK_LOADER_CUBES = common.comment("Most Earth cubes (16x16x16 blocks) that chunk loaders may keep loaded while no player is near:",
+                        "/forceload, Nether portal tickets and mods' chunk loaders. A forced chunk keeps 117 cubes (its ring, 96 blocks up and down);",
+                        "loaders past the limit keep only their vanilla chunk, and operators are told. 0 keeps none.")
+                .translation(key("chunkLoaderCubeLimit")).defineInRange("chunkLoaderCubeLimit", DEFAULT_CHUNK_LOADER_CUBES, 0, 262_144);
         defineToggles(common, EngineToggles.Side.COMMON);
         COMMON_SPEC = common.build();
     }

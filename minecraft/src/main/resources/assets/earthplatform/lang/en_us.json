@@ -340,6 +340,8 @@
   "earthplatform.configuration.yearLengthDays.tooltip": "In-game days in one full seasonal year when localized day/night is on. 0 keeps equal 12-hour days and nights everywhere.",
   "earthplatform.configuration.moddedBiomes": "Use modded biomes and blocks",
   "earthplatform.configuration.moddedBiomes.tooltip": "Use realistic biomes and blocks from installed biome mods (such as Biomes O' Plenty, Regions Unexplored, and Oh The Biomes We've Gone) where they fit Earth's climates and landscapes.",
+  "earthplatform.configuration.chunkLoaderCubeLimit": "Chunk loader cube limit",
+  "earthplatform.configuration.chunkLoaderCubeLimit.tooltip": "Most Earth cubes that /forceload, Nether portals and chunk-loader mods may keep loaded while no player is near. A forced chunk keeps 117 cubes. 0 keeps none.",
   "earthplatform.globe.title": "Choose where your Earth begins",
   "earthplatform.globe.choose": "Start here",
   "earthplatform.globe.hint": "Click the globe to choose a spot.",

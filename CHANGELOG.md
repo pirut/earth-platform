@@ -33,6 +33,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - Caves, ores and vanilla structures, including villages, strongholds, trial chambers and ancient cities; `/locate` and eyes of ender find them.
 - Nether and End through normal portals, with portals on the Earth linking back where you built them.
 - Pistons and sticky pistons, raids from Bad Omen, and bees in generated bee nests.
+- Chunk loading works on the Earth: `/forceload` keeps the spot you ran it from loaded and ticking at your height, so farms, furnaces, hoppers, mobs and machines keep going while you are away. Nether portal item loops and mods' chunk loaders (NeoForge's forced chunks, such as Advanced Peripherals' Chunky Turtle) keep their area loaded too, and forced spots survive a restart.
 
 ### Seeing far
 - Textured voxel far terrain out to about 94,000 blocks, at real height, with see-through far water, so distant ranges such as Denali and Annapurna stand clear on the horizon.

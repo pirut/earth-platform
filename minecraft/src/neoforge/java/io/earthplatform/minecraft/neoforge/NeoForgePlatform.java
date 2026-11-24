@@ -58,4 +58,8 @@ public final class NeoForgePlatform implements Platform {
     @Override public CompoundTag persistentData(net.minecraft.world.entity.Entity entity) { return entity.getPersistentData(); }
 
     @Override @Nullable public long[] tickTimes(MinecraftServer server, ResourceKey<Level> dimension) { return server.getTickTime(dimension); }
+
+    @Override @Nullable public Object forcedTicketOwner(@Nullable Object ticketValue) {
+        return ticketValue instanceof io.earthplatform.minecraft.neoforge.mixin.TicketOwnerAccess owner ? owner.earthplatform$owner() : null;
+    }
 }

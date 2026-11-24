@@ -7,6 +7,9 @@
  *   <li>{@link io.earthplatform.minecraft.cubic.CubeWorld} holds a level's cubes;
  *       {@link io.earthplatform.minecraft.cubic.ServerCubeWorld} makes, loads, saves and sends them
  *       around players, and {@link io.earthplatform.minecraft.cubic.CubeStorage} keeps edited cubes on disk.</li>
+ *   <li>{@link io.earthplatform.minecraft.cubic.ChunkTickets} keeps the cubes round chunk tickets loaded with nobody
+ *       near ({@code /forceload} at the height it was run from, portals, mods' chunk loaders), through
+ *       {@link io.earthplatform.minecraft.cubic.ResidentCubes}.</li>
  *   <li>{@link io.earthplatform.minecraft.cubic.CubicEvents} wires the engine into the game's events;
  *       {@link io.earthplatform.minecraft.cubic.CubicSettings} picks and pins a world's generator and data sources.</li>
  *   <li>{@link io.earthplatform.minecraft.cubic.CubeLight}, {@link io.earthplatform.minecraft.cubic.CubicSpawns},

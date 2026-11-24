@@ -63,7 +63,7 @@ public final class PerformanceDiagnostics {
             }
             record.add("run_mesher",gson.toJsonTree(FarMesher.runStats()));
             JsonObject stages=new JsonObject();
-            Timings[] timers={Timings.FRAME,Timings.FAR_MAKE,Timings.FAR_MESH,Timings.FAR_UPLOAD,Timings.FAR_DRAW,Timings.FAR_WATER,Timings.CUBE_MESH,Timings.CUBE_UPLOAD,Timings.CUBE_DRAW,Timings.CUBE_CAVES,Timings.CUBE_SNAPSHOT,Timings.CUBE_LIGHT,Timings.SERVER_TICK,Timings.CUBE_UNLOAD,Timings.CUBE_FLUSH};
+            Timings[] timers={Timings.FRAME,Timings.FAR_MAKE,Timings.FAR_MESH,Timings.FAR_UPLOAD,Timings.FAR_DRAW,Timings.FAR_WATER,Timings.CUBE_MESH,Timings.CUBE_UPLOAD,Timings.CUBE_DRAW,Timings.CUBE_CAVES,Timings.CUBE_SNAPSHOT,Timings.CUBE_LIGHT,Timings.SERVER_TICK,Timings.CUBE_UNLOAD,Timings.CUBE_FLUSH,Timings.CHUNK_TICKETS};
             String[] names={"frame","far_generation","far_mesh","far_upload","far_draw","far_water","cube_mesh","cube_upload","cube_draw","cube_caves","cube_snapshot","cube_light","server_cubes","cube_unload","cube_flush"};
             for(int i=0;i<timers.length;i++) {
                 var total=timers[i].total();var before=previous.put(timers[i],total);

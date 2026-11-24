@@ -116,6 +116,18 @@ Sodium's Earth page has the player-facing ones (looks, culling, shader pack and 
 
 Nether portals work as usual: a portal built on the Earth leads to the Nether, and coming back puts you at the portal you built. Strongholds generate underground (eyes of ender find them), and leaving the End brings you home to the Earth. Dying in the Nether or the End respawns you at your bed or the Earth's start. The Twilight Forest portal works too, and its return trip brings you back to where you left.
 
+## Chunk loading
+
+On the Earth a chunk is 32,768 blocks tall, so keeping a chunk loaded means keeping a stretch of it: the Earth keeps the cubes (16 by 16 by 16 blocks) round the height that matters, and they tick as if a player stood there. Block entities (furnaces, hoppers, machines), mobs and items, crops and saplings (random ticks), redstone, water and lava all keep going.
+
+- **`/forceload add`** keeps the spot it was run from, at the height of whoever ran it. Stand in your farm at Y 1200 and run `/forceload add ~ ~`: the chunk and the ring of chunks round it stay loaded from 96 blocks below you to 96 blocks above. Ranges (`/forceload add <from> <to>`) work the same way, all at your height. Command blocks use their own height, and `/execute positioned <x> <y> <z> run forceload add <x> <z>` picks a height exactly. Forced again from more than 96 blocks above or below, a chunk keeps both heights (up to four).
+- From the **server console**, which has no height of its own, a chunk keeps its ground band: 96 blocks up and down from the ground. Mods that force a chunk without saying where get the same.
+- **`/forceload query <x> <z>`** shows the heights a chunk keeps; **`/forceload remove`** lets them go. Forced chunks and their heights are saved with the world.
+- **Nether portals.** An entity coming through a portal keeps the 5x5 chunks round the exit loaded for a while, 32 blocks up and down from it, so a portal item loop keeps both its ends loaded, as in vanilla.
+- **Mods' chunk loaders** that use NeoForge's forced chunks (a chunk-loader block, Advanced Peripherals' Chunky Turtle) keep their chunks loaded round the height of the block or entity that loads them. On Fabric, only `/forceload` and portals.
+- Kept cubes load in over a few seconds, through the same workers as everything else, so a `/setblock` straight after `/forceload add` in a place nobody has been may still find it unloaded.
+- **The limit.** `chunkLoaderCubeLimit` in `config/earthplatform-common.toml` caps the cubes all of this may keep (8192 by default; one forced chunk keeps 117, and side by side they share). Past it, the newest loaders keep only their vanilla chunk, and operators are told in chat and in the log. 0 turns it off.
+
 ## Other mods
 
 See [Which other mods work?](FAQ.md#which-other-mods-work) and [Known limitations](FAQ.md#known-limitations) in the FAQ.

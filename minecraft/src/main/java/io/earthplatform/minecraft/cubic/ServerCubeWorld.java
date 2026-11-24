@@ -440,8 +440,26 @@ public final class ServerCubeWorld extends CubeWorld {
         return ready;
     }
 
-    /** Cubes kept loaded for arrivals waiting on them, though no player is near (see {@link ResidentCubes}). */
+    /** Cubes kept loaded for arrivals waiting on them and for chunk tickets, though no player is near (see {@link ResidentCubes}). */
     private final ResidentCubes resident = new ResidentCubes();
+
+    /** Chunk tickets ({@code /forceload}, portals, mods' chunk loaders) turned into cube holds; see {@link ChunkTickets}. */
+    private final ChunkTickets tickets = new ChunkTickets(new ChunkTickets.Host() {
+        @Override public boolean loaded(long cubeKey) { return cubes.containsKey(cubeKey); }
+        @Override public boolean request(long cubeKey) { return ServerCubeWorld.this.request(cubeKey, true); }
+        @Override public void keep(Object holder, long[] keys) { if (!closed) resident.keep(holder, keys); }
+        @Override public void release(Object holder) { resident.release(holder); }
+        @Override public int groundY(int x, int z) { return generator.surfaceY(x, z); }
+        @Override public void tell(Component line) { ChunkTickets.tellOperators(server.getServer(), line); }
+    }, net.minecraft.Util.ioPool());
+
+    /** Most cubes chunk tickets may hold, from the settings. */
+    private static int ticketCap() {
+        try { return io.earthplatform.minecraft.cubic.play.EarthConfig.CHUNK_LOADER_CUBES.get(); }
+        catch (IllegalStateException notLoaded) { return io.earthplatform.minecraft.cubic.play.EarthConfig.DEFAULT_CHUNK_LOADER_CUBES; }
+    }
+
+    public ChunkTickets tickets() { return tickets; }
 
     /**
      * Server thread. Keeps the cubes about a block loaded for {@code holder} (an arrival waiting to
@@ -702,6 +720,11 @@ public final class ServerCubeWorld extends CubeWorld {
             send(watcher, cx, cz, cap);
             if (ticks % 10 == 0) unsend(watcher, h + 1, v + 1, cx, cy, cz, false, cap);
         }
+        // Chunk tickets' cubes come after players' own, a few a tick.
+        long ticketsStart = System.nanoTime();
+        if (ticks % ChunkTickets.EVERY == 0) tickets.reconcile(ticks, tickets.gather(server), ticketCap());
+        tickets.tick(MAX_PENDING - pending.size());
+        Timings.CHUNK_TICKETS.since(ticketsStart);
         flushChanges();
         far.tick(server.players());
         lightCubes();
@@ -1024,14 +1047,19 @@ public final class ServerCubeWorld extends CubeWorld {
         Timings.CUBE_FLUSH.since(start);
     }
 
+    /**
+     * Random ticks (crops, saplings, grass, ice) for loaded cubes near a player's height, as vanilla ticks
+     * the sections near players, and for cubes a chunk ticket holds, near a player or not: a forced farm
+     * grows while nobody is there, as in later versions of the game.
+     */
     private void randomTicks(int v) {
         int speed = server.getGameRules().getInt(GameRules.RULE_RANDOMTICKING);
-        if (speed <= 0 || watchers.isEmpty()) return;
+        if (speed <= 0 || watchers.isEmpty() && resident.holders() == 0) return;
         RandomSource random = server.getRandom();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (Cube cube : cubes.values()) {
             if (!cube.section.isRandomlyTicking() || !server.shouldTickBlocksAt(ChunkPos.asLong(cube.x, cube.z))) continue;
-            if (!watchedVertically(cube.y, v)) continue;
+            if (!watchedVertically(cube.y, v) && !resident.holds(cube.key)) continue;
             int x0 = cube.x << 4, y0 = cube.y << 4, z0 = cube.z << 4;
             for (int i = 0; i < speed; i++) {
                 int bx = random.nextInt(16), by = random.nextInt(16), bz = random.nextInt(16);
@@ -1263,6 +1291,7 @@ public final class ServerCubeWorld extends CubeWorld {
         try { reads.awaitTermination(2, TimeUnit.SECONDS); }
         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         for (CompletableFuture<int[]> prime : primed.values()) prime.cancel(false);
+        tickets.close();
         resident.clear();
         for (Cube cube : cubes.values()) store(cube, true);
         try { storage.close(); }
@@ -1279,7 +1308,8 @@ public final class ServerCubeWorld extends CubeWorld {
         int standing = 0;
         for (Watcher watcher : watchers.values()) standing += watcher.stood.size();
         return generator.id() + ", " + cubes.size() + " cubes loaded, " + standing + " buried cubes stood in for, " + surveys.opened() + " opened by caves, " + pending.size() + " pending (" + generated + " made, " + dropped + " dropped as no longer wanted), " + light.size() + " lit, "
-                + watchers.size() + " watching, " + far.cached() + " far columns cached, " + far.stored() + ", " + far.made() + ", " + far.builds() + (failures > 0 ? ", " + failures + " generation failures" : "");
+                + watchers.size() + " watching, " + tickets.holds() + " chunk-ticket holds of " + tickets.heldCubes() + " cubes"
+                + (tickets.leftOut() > 0 ? " (" + tickets.leftOut() + " over the limit)" : "") + ", " + far.cached() + " far columns cached, " + far.stored() + ", " + far.made() + ", " + far.builds() + (failures > 0 ? ", " + failures + " generation failures" : "");
     }
 
     /** Iterates loaded cubes; exposed for diagnostics. */
