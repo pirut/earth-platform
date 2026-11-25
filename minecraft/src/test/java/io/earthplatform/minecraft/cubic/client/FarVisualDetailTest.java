@@ -57,7 +57,7 @@ class FarVisualDetailTest {
      */
     @Test void nearStandInsWouldClipInFarTerrainsOwnDepth() {
         Matrix4f game = new Matrix4f().perspective(1.2f, 16f / 9, 0.05f, FarRenderer.depthFar());
-        Matrix4f own = FarPlainDepth.projection(game);
+        Matrix4f own = FarPlainDepth.projection(game, FarPlainDepth.near(game, 192));
         for (float z : new float[] {1.6f, 4, 7.9f}) {
             Vector4f inGame = game.transform(new Vector4f(0, -1.6f, -z, 1)), inOwn = own.transform(new Vector4f(0, -1.6f, -z, 1));
             assertTrue(inGame.z >= -inGame.w, "kept in the game's depth at " + z);
@@ -89,7 +89,7 @@ class FarVisualDetailTest {
 
     @Test void farTerrainsOwnDepthKeepsTheViewAndSeparatesWhatTheGamesDepthCannot() {
         Matrix4f game = new Matrix4f().perspective((float) Math.toRadians(7), 16f / 9, 0.05f, FarRenderer.depthFar());
-        Matrix4f own = FarPlainDepth.projection(game);
+        Matrix4f own = FarPlainDepth.projection(game, FarPlainDepth.near(game, 192));
         assertEquals(game.m00(), own.m00());
         assertEquals(game.m11(), own.m11());
         assertEquals(depth(game, 10000), depth(game, 10002), "the game's depth can't tell two-block voxels apart ten kilometres out");

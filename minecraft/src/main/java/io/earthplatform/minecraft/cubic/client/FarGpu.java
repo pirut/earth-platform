@@ -87,8 +87,13 @@ final class FarGpu {
     /** The vanilla three in far terrain's own finer depth, testing the game's blocks by hand (see {@link FarShaders#PRECISE_DEPTH}). */
     @Nullable private Program[] precise;
     @Nullable private boolean[] preciseFailed;
-    /** The game's projection while far terrain draws in its own finer depth (see {@link FarPlainDepth}); null otherwise. */
-    @Nullable private Matrix4f gameProjection;
+    /**
+     * The game's projection while far terrain draws in its own finer depth (see {@link FarPlainDepth}); null otherwise. With
+     * the inverse of the projection it draws in and the game's depth buffer's fixed-point range, which its test against the
+     * game's blocks shares with the merge (see {@link FarLodShaders#FAR_AS_GAME}).
+     */
+    @Nullable private Matrix4f gameProjection, farInverse;
+    private float gameSteps;
     /** Whether this draw bound the copy of the game's depth, to put back at its end. */
     private boolean blocksBound;
     /** 1x1 opaque white texture bound on unit 0 for Tier 3 terrain pack shaders, which receive far terrain colour through vertex colour. */
@@ -437,7 +442,11 @@ final class FarGpu {
             FloatBuffer matrix = stack.mallocFloat(16);
             GL20C.glUniformMatrix4fv(program.location("earth_ModelView"), false, modelView.get(matrix));
             GL20C.glUniformMatrix4fv(program.location("earth_Projection"), false, projection.get(matrix));
-            if (precise()) GL20C.glUniformMatrix4fv(program.location("earth_GameProjection"), false, gameProjection.get(matrix));
+            if (precise()) {
+                GL20C.glUniformMatrix4fv(program.location("earth_GameProjection"), false, gameProjection.get(matrix));
+                GL20C.glUniformMatrix4fv(program.location("earth_FarInverse"), false, farInverse.get(matrix));
+                GL20C.glUniform1f(program.location("earth_GameSteps"), gameSteps);
+            }
             GL20C.glUniform1fv(program.location("earth_Shade"), shade);
             if (program.dh) {
                 // What Iris sets on a pack's Distant Horizons program in place of the old built-in matrices.
@@ -464,9 +473,10 @@ final class FarGpu {
                 GL20C.glUniform1f(program.location("iris_currentAlphaTest"), 0.0F);
             }
         }
-        int bx = (int) Math.floor(camera.x), by = (int) Math.floor(camera.y), bz = (int) Math.floor(camera.z);
+        int bx = CameraSpace.block(camera.x), by = CameraSpace.block(camera.y), bz = CameraSpace.block(camera.z);
         GL20C.glUniform3i(program.location("earth_CameraBlock"), bx, by, bz);
-        GL20C.glUniform3f(program.location("earth_CameraFraction"), (float) (camera.x - bx), (float) (camera.y - by), (float) (camera.z - bz));
+        GL20C.glUniform3f(program.location("earth_CameraFraction"),
+                CameraSpace.fraction(camera.x, bx), CameraSpace.fraction(camera.y, by), CameraSpace.fraction(camera.z, bz));
         GL20C.glUniform1f(program.location("earth_Grow"), grow(projection));
         if (EarthView.ENABLED) GL20C.glUniform1f(program.location("earth_Curvature"), curvature);
         if (FarAtmosphere.ENABLED) GL20C.glUniform1f(program.location("earth_Atmosphere"), atmosphere);
@@ -1071,8 +1081,12 @@ final class FarGpu {
     /** Whether the precise program builds, which far terrain needs before it draws in its own depth. */
     boolean preciseReady() { return preciseProgram(NO_FADE) != null; }
 
-    /** Has the draws that follow use far terrain's own finer depth, against this game projection; null puts them back in the game's. */
-    void plainDepth(@Nullable Matrix4f game) { gameProjection = game; }
+    /** Has the draws that follow use far terrain's own finer depth, against this game projection; {@code null} puts them back in the game's. */
+    void plainDepth(@Nullable FarPlainDepth own) {
+        gameProjection = own == null ? null : own.gameProjection();
+        farInverse = own == null ? null : own.inverse();
+        gameSteps = own == null ? 0 : FarBlockDepth.steps();
+    }
 
     private boolean precise() { return gameProjection != null && !packMode; }
 

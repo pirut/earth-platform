@@ -53,7 +53,10 @@ final class CubeMesher {
     static final List<RenderType> LAYERS = RenderType.chunkBufferLayers();
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
-    /** Copied on the client thread; the worker only reads it. */
+    /**
+     * Copied on the client thread; the worker only reads it. {@code camX}, {@code camY} and {@code camZ} are where the
+     * camera lay from the cube's corner (see {@link CameraSpace#cubeRelative}), never world positions.
+     */
     record Snapshot(long key, int version, int cx, int cy, int cz,
                     @Nullable PalettedContainer<BlockState>[] states, @Nullable PalettedContainerRO<Holder<Biome>>[] biomes,
                     @Nullable int[][] tops, float camX, float camY, float camZ, boolean constantAmbient,
@@ -290,12 +293,19 @@ final class CubeMesher {
             if (builders[i] == null) continue;
             MeshData mesh = builders[i].build();
             if (mesh == null) { memory[i].close(); continue; }
-            if (LAYERS.get(i) == RenderType.translucent()) {
-                mesh.sortQuads(memory[i], VertexSorting.byDistance(s.camX - x0, s.camY - y0, s.camZ - z0));
-            }
+            if (LAYERS.get(i) == RenderType.translucent()) sortTranslucent(mesh, memory[i], s);
             layers.add(new Layer(i, mesh, memory[i]));
         }
         return layers;
+    }
+
+    /**
+     * Sorts a cube's translucent faces farthest first from the camera, where the snapshot says it lies from the cube's
+     * corner (see {@link CameraSpace#cubeCamera}): the faces' own corners are measured from that same corner, so a camera
+     * far from the origin sorts them as exactly as one at it.
+     */
+    static void sortTranslucent(MeshData mesh, ByteBufferBuilder memory, Snapshot s) {
+        mesh.sortQuads(memory, VertexSorting.byDistance(s.camX, s.camY, s.camZ));
     }
 
     /**
