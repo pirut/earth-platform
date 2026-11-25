@@ -112,7 +112,7 @@ final class FarGpu {
      * testing depth before shading. The one-pass program drops fragments and writes depth, so
      * every face under a pixel was shaded, pack code and all, however many lay behind.
      * {@code -Dearthplatform.far.depthPrepass} is {@code true}, {@code false}, or by default
-     * {@code auto}: on except on Apple's GPUs (see {@link #prepassByDefault}).
+     * {@code auto}: on except on Apple's and AMD's GPUs (see {@link #prepassByDefault}).
      */
     private static final String DEPTH_PREPASS = System.getProperty("earthplatform.far.depthPrepass", "auto");
     /** Whether this GL draws the depth pre-pass (see {@link #DEPTH_PREPASS}). */
@@ -168,16 +168,26 @@ final class FarGpu {
      * Whether to draw the depth pre-pass, from the flag and the GL's vendor and renderer. Measured
      * at Sharpest under Photon over Yosemite, it took an RTX 2080 Ti from 51.4 to 62.6 fps (far
      * terrain 13.5 to 10.4 ms of GPU time), while in build 61 it measured about 20% slower on an M4
-     * Pro Mac. So {@code auto} leaves it off on Apple's GPUs.
+     * Pro Mac. So {@code auto} leaves it off on Apple's GPUs. It has only ever been measured on those
+     * two, and a build 80 player on an AMD GPU (Windows) crashed inside AMD's driver ({@code atio6axx.dll},
+     * an access violation outside the JVM, issue 290) as far terrain's pack programs began to draw,
+     * so {@code auto} also leaves it off on AMD's until it has been run there; the flag still turns it on.
      */
     static boolean prepassByDefault(String setting, @Nullable String vendor, @Nullable String renderer) {
         if ("true".equals(setting)) return true;
         if ("false".equals(setting)) return false;
-        return !mentionsApple(vendor) && !mentionsApple(renderer);
+        return !mentionsApple(vendor) && !mentionsApple(renderer) && !mentionsAmd(vendor) && !mentionsAmd(renderer);
     }
 
     private static boolean mentionsApple(@Nullable String text) {
         return text != null && text.toLowerCase(java.util.Locale.ROOT).contains("apple");
+    }
+
+    /** AMD's drivers name themselves "ATI Technologies Inc." (vendor) and "AMD Radeon ..." (renderer). */
+    private static boolean mentionsAmd(@Nullable String text) {
+        if (text == null) return false;
+        String lower = text.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains("ati technologies") || lower.contains("amd") || lower.contains("radeon");
     }
 
     /**
