@@ -157,6 +157,11 @@ final class TreeShape {
     /** Whether the tree can be placed taller than it grew. */
     boolean stretches() { return split > 0; }
 
+    int minX(int turn) { return minX[turn]; }
+    int maxX(int turn) { return maxX[turn]; }
+    int minZ(int turn) { return minZ[turn]; }
+    int maxZ(int turn) { return maxZ[turn]; }
+
     /**
      * Writes the blocks that fall in the box (x0..x1, y0..y1, z0..z1) for a tree whose origin is
      * at (ox, oy, oz), turned {@code turn} quarters; {@code ground} gives a column's ground height.
@@ -195,11 +200,12 @@ final class TreeShape {
         int[] spots = nests[turn];
         if (bees > 0 && spots.length > 0 && (seed >>> 40 & 0xFFFFFF) < bees * 0x1000000) {
             int spot = spots[(int) Math.floorMod(seed >>> 8, spots.length)];
-            int x = ox + dx(spot), y = oy + dy(spot), z = oz + dz(spot);
+            int ny = dy(spot);
+            int x = ox + dx(spot), y = oy + ny + (split > 0 && ny >= split - 1 ? lift : 0), z = oz + dz(spot);
             if (x >= x0 && x <= x1 && y >= y0 && y <= y1 && z >= z0 && z <= z1) sink.put(x, y, z, NEST, CROWN);
         }
         if (snow) for (int p : tops) {
-            int x = ox + turnX(turn, dx(p), dz(p)), y = oy + dy(p) + (dy(p) >= split ? lift : 0), z = oz + turnZ(turn, dx(p), dz(p));
+            int x = ox + turnX(turn, dx(p), dz(p)), y = oy + dy(p) + (dy(p) > split ? lift : 0), z = oz + turnZ(turn, dx(p), dz(p));
             if (x >= x0 && x <= x1 && y >= y0 && y <= y1 && z >= z0 && z <= z1) sink.put(x, y, z, SNOW, CROWN);
         }
     }

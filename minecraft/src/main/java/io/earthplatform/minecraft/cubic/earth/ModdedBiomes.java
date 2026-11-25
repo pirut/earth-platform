@@ -64,71 +64,71 @@ public final class ModdedBiomes {
         int[] foundBiomes = {0};
         int[] foundBlocks = {0};
 
-        redwoodForest = pickBiome(biomes, enabled, oldTaiga, false, foundBiomes,
+        redwoodForest = pickBiome(biomes, enabled, oldTaiga, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:redwood_forest", "regions_unexplored:redwoods", "biomeswevegone:redwood_thicket");
-        oldGrowthConifer = pickBiome(biomes, enabled, oldTaiga, false, foundBiomes,
+        oldGrowthConifer = pickBiome(biomes, enabled, oldTaiga, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:coniferous_forest", "regions_unexplored:pine_taiga", "biomeswevegone:coniferous_forest");
-        bayou = pickBiome(biomes, enabled, swamp, false, foundBiomes,
+        bayou = pickBiome(biomes, enabled, swamp, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:bayou", "regions_unexplored:bayou", "biomeswevegone:bayou");
-        marsh = pickBiome(biomes, enabled, swamp, false, foundBiomes,
+        marsh = pickBiome(biomes, enabled, swamp, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:marsh", "regions_unexplored:marsh", "biomeswevegone:cypress_wetlands");
-        wetland = pickBiome(biomes, enabled, swamp, false, foundBiomes,
+        wetland = pickBiome(biomes, enabled, swamp, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:wetland", "biomesoplenty:floodplain", "regions_unexplored:fen", "biomeswevegone:cypress_swamplands");
-        bog = pickBiome(biomes, enabled, swamp, false, foundBiomes,
+        bog = pickBiome(biomes, enabled, swamp, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:bog", "biomesoplenty:muskeg", "regions_unexplored:fen", "biomeswevegone:pale_bog");
-        hotSprings = pickBiome(biomes, enabled, swamp, false, foundBiomes,
+        hotSprings = pickBiome(biomes, enabled, swamp, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:hot_springs");
-        moor = pickBiome(biomes, enabled, taiga, false, foundBiomes,
+        moor = pickBiome(biomes, enabled, taiga, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:moor", "regions_unexplored:highland_fields");
-        tundra = pickBiome(biomes, enabled, meadow, false, foundBiomes,
-                "biomesoplenty:tundra", "regions_unexplored:tundra", "regions_unexplored:frozen_tundra");
-        coldDesert = pickBiome(biomes, enabled, desert, false, foundBiomes,
+        tundra = pickBiome(biomes, enabled, meadow, Temperature.NON_SNOWY, foundBiomes,
+                "biomesoplenty:tundra", "regions_unexplored:tundra");
+        coldDesert = pickBiome(biomes, enabled, desert, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:cold_desert", "regions_unexplored:steppe");
-        dryland = pickBiome(biomes, enabled, savanna, false, foundBiomes,
+        dryland = pickBiome(biomes, enabled, savanna, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:dryland", "regions_unexplored:outback", "biomeswevegone:atacama_outback");
-        scrubland = pickBiome(biomes, enabled, savanna, false, foundBiomes,
+        scrubland = pickBiome(biomes, enabled, savanna, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:scrubland", "regions_unexplored:dry_bushland", "biomeswevegone:mojave_desert");
-        shrubland = pickBiome(biomes, enabled, plains, false, foundBiomes,
+        shrubland = pickBiome(biomes, enabled, plains, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:shrubland", "regions_unexplored:shrubland");
-        rockyShrubland = pickBiome(biomes, enabled, savanna, false, foundBiomes,
+        rockyShrubland = pickBiome(biomes, enabled, savanna, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:rocky_shrubland", "biomesoplenty:shrubland", "regions_unexplored:shrubland");
-        prairie = pickBiome(biomes, enabled, plains, false, foundBiomes,
+        prairie = pickBiome(biomes, enabled, plains, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:prairie", "regions_unexplored:prairie", "biomeswevegone:prairie");
-        grassland = pickBiome(biomes, enabled, plains, false, foundBiomes,
+        grassland = pickBiome(biomes, enabled, plains, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:grassland", "biomesoplenty:field", "regions_unexplored:grassland");
-        lushSavanna = pickBiome(biomes, enabled, savanna, false, foundBiomes,
+        lushSavanna = pickBiome(biomes, enabled, savanna, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:lush_savanna", "regions_unexplored:baobab_savanna", "biomeswevegone:baobab_savanna");
-        mediterraneanForest = pickBiome(biomes, enabled, forest, false, foundBiomes,
+        mediterraneanForest = pickBiome(biomes, enabled, forest, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:mediterranean_forest");
-        coniferousForest = pickBiome(biomes, enabled, taiga, false, foundBiomes,
+        coniferousForest = pickBiome(biomes, enabled, taiga, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:coniferous_forest", "regions_unexplored:pine_taiga", "biomeswevegone:coniferous_forest");
-        firClearing = pickBiome(biomes, enabled, taiga, false, foundBiomes,
+        firClearing = pickBiome(biomes, enabled, taiga, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:fir_clearing", "biomesoplenty:coniferous_forest", "regions_unexplored:boreal_taiga", "biomeswevegone:coniferous_forest");
-        snowyConiferousForest = pickBiome(biomes, enabled, snowyTaiga, true, foundBiomes,
+        snowyConiferousForest = pickBiome(biomes, enabled, snowyTaiga, Temperature.SNOWY, foundBiomes,
                 "biomesoplenty:snowy_coniferous_forest", "regions_unexplored:frozen_pine_taiga", "biomeswevegone:frosted_coniferous_forest");
-        woodland = pickBiome(biomes, enabled, forest, false, foundBiomes,
+        woodland = pickBiome(biomes, enabled, forest, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:woodland", "regions_unexplored:old_growth_forest", "regions_unexplored:deciduous_forest", "biomeswevegone:temperate_grove");
-        oldGrowthWoodland = pickBiome(biomes, enabled, darkForest, false, foundBiomes,
+        oldGrowthWoodland = pickBiome(biomes, enabled, darkForest, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:old_growth_woodland", "regions_unexplored:old_growth_forest", "biomeswevegone:overgrowth_woodlands");
-        mapleWoods = pickBiome(biomes, enabled, forest, false, foundBiomes,
+        mapleWoods = pickBiome(biomes, enabled, forest, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:maple_woods", "regions_unexplored:maple_forest", "biomeswevegone:maple_taiga");
-        seasonalForest = pickBiome(biomes, enabled, forest, false, foundBiomes,
+        seasonalForest = pickBiome(biomes, enabled, forest, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:seasonal_forest", "regions_unexplored:autumnal_maple_forest");
-        aspenGlade = pickBiome(biomes, enabled, birchForest, false, foundBiomes,
+        aspenGlade = pickBiome(biomes, enabled, birchForest, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:aspen_glade", "regions_unexplored:silver_birch_forest", "biomeswevegone:aspen_boreal");
-        rainforest = pickBiome(biomes, enabled, jungle, false, foundBiomes,
+        rainforest = pickBiome(biomes, enabled, jungle, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:rainforest", "regions_unexplored:rainforest", "biomeswevegone:tropical_rainforest");
-        tropics = pickBiome(biomes, enabled, sparseJungle, false, foundBiomes,
+        tropics = pickBiome(biomes, enabled, sparseJungle, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:tropics", "regions_unexplored:tropics", "biomeswevegone:fragment_jungle");
-        volcano = pickBiome(biomes, enabled, stonyPeaks, false, foundBiomes,
+        volcano = pickBiome(biomes, enabled, stonyPeaks, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:volcano");
-        volcanicPlains = pickBiome(biomes, enabled, stonyPeaks, false, foundBiomes,
+        volcanicPlains = pickBiome(biomes, enabled, stonyPeaks, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:volcanic_plains");
-        highland = pickBiome(biomes, enabled, windsweptHills, false, foundBiomes,
+        highland = pickBiome(biomes, enabled, windsweptHills, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:highland", "regions_unexplored:highland_fields");
-        duneBeach = pickBiome(biomes, enabled, beach, false, foundBiomes,
+        duneBeach = pickBiome(biomes, enabled, beach, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:dune_beach");
-        gravelBeach = pickBiome(biomes, enabled, beach, false, foundBiomes,
+        gravelBeach = pickBiome(biomes, enabled, beach, Temperature.NON_SNOWY, foundBiomes,
                 "biomesoplenty:gravel_beach", "regions_unexplored:gravel_beach");
 
         BlockState sand = Blocks.SAND.defaultBlockState();
@@ -217,13 +217,17 @@ public final class ModdedBiomes {
         };
     }
 
+    private enum Temperature { ANY, SNOWY, NON_SNOWY }
+
     private static Holder<Biome> pickBiome(Registry<Biome> biomes, boolean enabled, Holder<Biome> fallback,
-                                           boolean requireSnowy, int[] matches, String... ids) {
+                                           Temperature temperature, int[] matches, String... ids) {
         if (!enabled) return fallback;
         for (String id : ids) {
             Optional<Holder.Reference<Biome>> found = biomes.getHolder(ResourceKey.create(Registries.BIOME, ResourceLocation.parse(id)));
             if (found.isEmpty()) continue;
-            if (requireSnowy && found.get().value().getBaseTemperature() >= 0.15f) continue;
+            float baseTemp = found.get().value().getBaseTemperature();
+            if (temperature == Temperature.SNOWY && baseTemp >= 0.15f) continue;
+            if (temperature == Temperature.NON_SNOWY && baseTemp < 0.15f) continue;
             matches[0]++;
             return found.get();
         }

@@ -214,6 +214,97 @@ class EarthSurfaceRulesTest {
         assertNotEquals(0, grass.trees());
     }
 
+    @Test
+    void arcticColdPeatlandDoesNotAssignUnfrozenBogOrSwamp() {
+        // Canadian Low Arctic tundra (issue #268): flat terrain, TUNDRA ecoregion, freezing mean annual temp.
+        int[] arcticBasin = earth.block(65.33279, -104.21770);
+        int eco = Ecoregions.get().ecoregion(65.33279, -104.21770);
+        assertEquals(Ecoregions.TUNDRA, Ecoregions.get().biome(eco), "65.33N, 104.22W is TUNDRA ecoregion");
+        var lowArctic = new EarthGenerator.Local(ClimateZone.SUBARCTIC, -10.0, 9.5, 280, ClimateSource.ET);
+        int y = earth.seaLevel() + 120;
+
+        for (int code : new int[]{WorldCoverSource.MOSS_AND_LICHEN, WorldCoverSource.GRASSLAND,
+                WorldCoverSource.SHRUBLAND, WorldCoverSource.WETLAND}) {
+            Surface s = earth.covered(code, arcticBasin[0], arcticBasin[1], y, lowArctic, 0.02, 50, 0, 1);
+            assertNotNull(s);
+            assertFalse(s.biome().is(Biomes.SWAMP), "Arctic tundra basin must not become unfrozen swamp for cover " + code);
+            assertTrue(s.biome().value().getBaseTemperature() < 0.15f,
+                    "Arctic tundra basin should get a freezing snowy biome, got " + s.biome() + " for cover " + code);
+        }
+
+        // Genuine mild boreal mire (Hudson Bay Lowlands: non-tundra boreal ecoregion, non-freezing climate) still forms peatland.
+        int[] hudson = earth.block(53.5, -83.5);
+        int hudsonEco = Ecoregions.get().ecoregion(53.5, -83.5);
+        assertNotEquals(Ecoregions.TUNDRA, Ecoregions.get().biome(hudsonEco));
+        var mildBoreal = new EarthGenerator.Local(ClimateZone.SUBARCTIC, -1.0, 13.0, 650, ClimateSource.DFC);
+        Surface borealBog = earth.covered(WorldCoverSource.WETLAND, hudson[0], hudson[1], earth.seaLevel() + 50, mildBoreal, 0.02, 50, 0, 1);
+        assertNotNull(borealBog);
+        assertTrue(borealBog.biome().is(Biomes.SWAMP), "flat non-freezing boreal wetland should remain peatland");
+    }
+
+    @Test
+    void subpolarOceanicMoorlandAndLowlandsStayTreeless() {
+        // Southern Iceland (issues #280, #281): SUBPOLAR_OCEANIC wet moorland.
+        int[] iceland = earth.block(63.53, -19.51);
+        var subpolarMoor = new EarthGenerator.Local(ClimateZone.SUBPOLAR_OCEANIC, 4.5, 10.5, 1450, ClimateSource.CFC);
+        int y = earth.seaLevel() + 30;
+
+        for (int code : new int[]{WorldCoverSource.MOSS_AND_LICHEN, WorldCoverSource.GRASSLAND, WorldCoverSource.SHRUBLAND}) {
+            Surface s = earth.covered(code, iceland[0], iceland[1], y, subpolarMoor, 0.05, 50, 0, 1);
+            assertNotNull(s);
+            assertEquals(0, s.trees(), "windy subpolar oceanic " + code + " should not scatter stray conifers");
+        }
+
+        // Cool oceanic sea-level grassland with lower rainfall must not falsely match subalpine(-1) firClearing.
+        var coolDryLowland = new EarthGenerator.Local(ClimateZone.OCEANIC, 4.5, 11.0, 650, ClimateSource.CFB);
+        Surface seaLevelGrass = earth.covered(WorldCoverSource.GRASSLAND, iceland[0], iceland[1], earth.seaLevel() + 20, coolDryLowland, 0.05, 50, 0, 1);
+        assertNotNull(seaLevelGrass);
+        assertTrue(seaLevelGrass.trees() <= 1, "sea-level cool oceanic grassland must not spawn subalpine firClearing, got trees=" + seaLevelGrass.trees());
+
+        // High-altitude subalpine grassland (>1000 m above sea level) still gets subalpine conifer clearing.
+        int[] alps = earth.block(46.6, 8.0);
+        Surface highSubalpine = earth.covered(WorldCoverSource.GRASSLAND, alps[0], alps[1], earth.seaLevel() + 1400, coolDryLowland, 0.05, 50, 0, 1);
+        assertNotNull(highSubalpine);
+        assertEquals(12, highSubalpine.trees(), "high-altitude subalpine grassland should keep conifer clearing");
+    }
+
+    @Test
+    void offshoreNoDataSpeckSurroundedBySeaStaysTreelessShore() throws Exception {
+        // Ocean tiles (-5 m everywhere: (127*256 + 251) - 32768 = -5) and NO_DATA land cover (404).
+        BufferedImage oceanImg = new BufferedImage(256, 256, BufferedImage.TYPE_INT_RGB);
+        int oceanRgb = (127 << 16) | (251 << 8);
+        for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) oceanImg.setRGB(x, y, oceanRgb);
+        ByteArrayOutputStream png = new ByteArrayOutputStream();
+        ImageIO.write(oceanImg, "png", png);
+        byte[] oceanBytes = png.toByteArray();
+
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/tiles/", ex -> {
+            ex.sendResponseHeaders(200, oceanBytes.length);
+            try (var out = ex.getResponseBody()) { out.write(oceanBytes); }
+        });
+        server.createContext("/cover/", ex -> {
+            ex.sendResponseHeaders(404, -1);
+            ex.close();
+        });
+        server.start();
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+        try (var oceanTiles = new TerrariumTileSource(base.resolve("/tiles/"), null, true, 16, 2, Duration.ofSeconds(5));
+             var noCover = new WorldCoverSource(base.resolve("/cover/"), null, true, 16, 2, Duration.ofSeconds(5))) {
+            // Tropical coordinates (NE Guam, issue #246) where typical(RAINFOREST) would otherwise be TREE_COVER (trees = 90).
+            EarthGenerator oceanEarth = new EarthGenerator(42L, biomes, EarthSettings.at(13.48916, 144.89254), oceanTiles, noCover, null, null);
+            int[] pos = oceanEarth.block(13.48916, 144.89254);
+            // Dry speck at SEA + 3 (above the SEA + 2 beach strip) with NO_DATA cover surrounded by sea.
+            Surface speck = oceanEarth.surface(pos[0], pos[1], oceanEarth.seaLevel() + 3, EarthGenerator.DRY, 0, 1, null);
+            assertNotNull(speck);
+            assertEquals(0, speck.trees(), "isolated dry NO_DATA speck in tropical sea must not fall back to TREE_COVER");
+            assertTrue(speck.biome().is(Biomes.BEACH) || speck.biome().is(Biomes.STONY_SHORE),
+                    "isolated offshore speck should be treeless shore, got " + speck.biome());
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private static double linear(int srgb) {
         double c = srgb / 255.0;
         return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);

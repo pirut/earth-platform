@@ -127,6 +127,7 @@ final class Trees {
     private final SurfaceGenerator gen;
     private final IntBinaryOperator ground;
     private final ConcurrentHashMap<Long, Planted[]> chunks = new ConcurrentHashMap<>(), giants = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Integer> ceilings = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Holder<Biome>, Optional<Own>> owns = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Tree, Pick> homes = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<ShapeKey, TreeShape[]> shapes = new ConcurrentHashMap<>();
@@ -138,6 +139,34 @@ final class Trees {
 
     /** How high above the ground the trees around this cube column can reach. */
     int tallest(int cx, int cz) { return gen.giants((cx << 4) + 8, (cz << 4) + 8) ? Sequoia.TALLEST : TALLEST; }
+
+    /**
+     * The highest Y any tree block reaching into chunk {@code (cx, cz)} can occupy (from trees rooted in
+     * {@code (cx, cz)} or its 8 neighbouring chunks), or {@link Integer#MIN_VALUE} when no tree reaches it.
+     */
+    int maxTop(int cx, int cz) {
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
+        Integer cached = ceilings.get(key);
+        if (cached != null) return cached;
+        int x0 = cx << 4, z0 = cz << 4, x1 = x0 + 15, z1 = z0 + 15;
+        int top = Integer.MIN_VALUE;
+        for (int nz = cz - 1; nz <= cz + 1; nz++) for (int nx = cx - 1; nx <= cx + 1; nx++) {
+            for (Planted tree : chunk(nx, nz)) top = Math.max(top, topIn(tree, x0, z0, x1, z1));
+            if (gen.giants((nx << 4) + 8, (nz << 4) + 8))
+                for (Planted tree : giants(nx, nz)) top = Math.max(top, topIn(tree, x0, z0, x1, z1));
+        }
+        if (ceilings.size() > 32768) ceilings.clear();
+        ceilings.putIfAbsent(key, top);
+        return top;
+    }
+
+    private static int topIn(Planted tree, int x0, int z0, int x1, int z1) {
+        TreeShape s = tree.shape;
+        int turn = tree.turn;
+        if (tree.x + s.maxX(turn) < x0 || tree.x + s.minX(turn) > x1 || tree.z + s.maxZ(turn) < z0 || tree.z + s.minZ(turn) > z1)
+            return Integer.MIN_VALUE;
+        return tree.y + s.height() + tree.lift;
+    }
 
     /**
      * Writes every tree block in the box (x0..x1, y0..y1, z0..z1): ordinary trees first, then
@@ -185,13 +214,20 @@ final class Trees {
             if (surface.trees() <= 0) continue;
             Tree kind = surface.tree((int) Math.floorMod(r >>> 16, 10));
             if (roll >= surface.trees() * full(kind) * 256 / 100) continue;
+            int canopy = gen.canopy(x, z);
+            if (canopy == 0) {
+                // Explicit 0 m canopy (treeless ground, distinct from -1 no-data): suppress scattered
+                // non-woodland trees and strongly attenuate stray canopy-less woodland pixels.
+                if (surface.trees() < 40) continue;
+                if (roll >= surface.trees() * full(kind) * 256 / 400) continue;
+            }
             if (ModdedBiomes.isModdedBiome(surface.biome())) {
                 Planted nativeTree = nativeTree(surface, x, h, z, water, r);
                 if (nativeTree != null) { trees.add(nativeTree); continue; }
                 if (nativeTrees(surface.biome()).trees.length > 0) continue;
             }
-            RegionalTrees.Species regional = gen.customTrees() ? gen.regionalTree(x, z, h, surface, kind, r) : null;
-            if (!fits(surface, kind, regional, h, water)) continue;
+            RegionalTrees.Species regional = canopy == 0 ? null : (gen.customTrees() ? gen.regionalTree(x, z, h, surface, kind, r) : null);
+            if (!fits(surface, kind, regional, x, h, z, water)) continue;
             if (regional != null) {
                 TreeShape[] grown = RegionalTrees.shapes(regional);
                 if (grown.length > 0) trees.add(sized(x, h + 1, z, grown, r, snowy(surface), false));
@@ -240,15 +276,43 @@ final class Trees {
     static boolean snowy(Surface surface) { return surface.biome().value().getBaseTemperature() < 0.15f; }
 
     /**
-     * Whether a tree of this kind can stand on a column: on soil, out of water but for mangroves
-     * (up to 5 deep) and swamp oaks (up to 2), as vanilla places them.
+     * Whether a tree of this kind can stand on a column: on soil, out of water (and off tiny
+     * water-surrounded specks) except for mangroves (up to 5 deep) and swamp oaks (up to 2).
      */
-    private static boolean fits(Surface surface, Tree kind, @Nullable RegionalTrees.Species regional, int h, int water) {
-        int depth = water == DRY ? 0 : water - h;
-        if (regional == RegionalTrees.Species.PALM)
-            return depth <= 0 && (surface.top().is(BlockTags.DIRT) || surface.top().is(BlockTags.SAND) || ModdedBiomes.isSand(surface.top()));
+    boolean fits(Surface surface, Tree kind, @Nullable RegionalTrees.Species regional, int x, int h, int z, int water) {
+        boolean dry = water == DRY || water < h;
+        if (regional == RegionalTrees.Species.PALM) {
+            return dry && (surface.top().is(BlockTags.DIRT) || surface.top().is(BlockTags.SAND) || ModdedBiomes.isSand(surface.top()))
+                    && dryFooting(x, z, false);
+        }
+        if (!(surface.top().is(BlockTags.DIRT) || surface.top().is(Blocks.PACKED_MUD))) return false;
         int deepest = kind == Tree.MANGROVE ? 5 : ModdedBiomes.isWetland(surface.biome()) ? 2 : 0;
-        return depth <= deepest && (surface.top().is(BlockTags.DIRT) || surface.top().is(Blocks.PACKED_MUD));
+        if (deepest == 0) {
+            boolean wide = kind == Tree.DARK_OAK || kind == Tree.SEQUOIA
+                    || regional == RegionalTrees.Species.RAINFOREST_CANOPY
+                    || regional == RegionalTrees.Species.BAOBAB;
+            return dry && dryFooting(x, z, wide);
+        }
+        int depth = water == DRY ? 0 : water - h;
+        return depth <= deepest;
+    }
+
+    /** Whether a non-aquatic tree has solid dry surroundings rather than sitting on an isolated speck in water. */
+    private boolean dryFooting(int x, int z, boolean wide) {
+        int wet1 = 0;
+        for (int i = 0; i < 4; i++) {
+            int nx = x + SIDE_X[i], nz = z + SIDE_Z[i];
+            int nw = gen.waterY(nx, nz);
+            if (nw != DRY && nw >= gen.surfaceY(nx, nz)) wet1++;
+        }
+        if (wet1 >= (wide ? 1 : 2)) return false;
+        int wet2 = 0;
+        for (int i = 0; i < 4; i++) {
+            int nx = x + SIDE_X[i] * 2, nz = z + SIDE_Z[i] * 2;
+            int nw = gen.waterY(nx, nz);
+            if (nw != DRY && nw >= gen.surfaceY(nx, nz)) wet2++;
+        }
+        return wet2 < 3;
     }
 
     /**
@@ -339,12 +403,15 @@ final class Trees {
         int h = gen.surfaceY(x, z), water = gen.waterY(x, z);
         Surface surface = gen.coverAt(x, z, h, water);
         Additions here = additions(surface.biome());
+        if (gen.canopy(x, z) == 0 && surface.trees() < 40) return null;
         float scale = here.scaled ? surface.trees() / 100f : 1, at = 0;
         for (Added tree : here.trees) {
             at += tree.perChunk * scale * 256;
             if (roll >= at) continue;
-            int depth = water == DRY ? 0 : water - h;
-            if (depth > tree.deepest || !roots(tree, surface.top())) return null;
+            if (tree.deepest <= 0) {
+                if (water != DRY && water >= h || !dryFooting(x, z, false)) return null;
+            } else if (water != DRY && water - h > tree.deepest) return null;
+            if (!roots(tree, surface.top())) return null;
             TreeShape[] grown = shapes(tree.feature, tree.soil);
             if (grown.length == 0) return null;
             return new Planted(x, h + 1, z, grown[(int) Math.floorMod(r >>> 24, grown.length)], (int) (r >>> 34 & 3), r, snowy(surface));
@@ -385,9 +452,11 @@ final class Trees {
             at += tree.perChunk;
             if (pick < at) { chosen = tree; break; }
         }
-        int depth = water == DRY ? 0 : water - h;
         int deepest = Math.max(chosen.deepest, ModdedBiomes.isWetland(surface.biome()) ? 2 : 0);
-        if (depth > deepest || !roots(chosen, surface.top())) return null;
+        if (deepest <= 0) {
+            if (water != DRY && water >= h || !dryFooting(x, z, false)) return null;
+        } else if (water != DRY && water - h > deepest) return null;
+        if (!roots(chosen, surface.top())) return null;
         TreeShape[] grown = shapes(chosen.feature, chosen.soil);
         if (grown.length == 0) return null;
         return sized(x, h + 1, z, grown, r, snowy(surface), true);

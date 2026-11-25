@@ -841,7 +841,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
         @Nullable @Override public LevelChunkSection cube(int cx, int cy, int cz) {
             Column col = column(cx, cz);
-            if (cy << 4 > Math.max(col.max + 16, col.maxWater)) return null;
+            int y0 = cy << 4;
+            if (y0 > Math.max(col.max + vegetation.tallest(cx, cz), col.maxWater) && y0 > vegetation.maxTreeTop(cx, cz)) return null;
             long key = SectionPos.asLong(cx, cy, cz);
             LevelChunkSection cached = bases.get(key);
             if (cached != null) return cached;
@@ -868,8 +869,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         LevelChunkSection section = new LevelChunkSection(
                 new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, AIR, PalettedContainer.Strategy.SECTION_STATES),
                 caveBiome != null ? new PalettedContainer<>(biomeIds, caveBiome, PalettedContainer.Strategy.SECTION_BIOMES) : biomes(col, fallback));
-        // Empty sky cubes: nothing generated, not even trees, above the tallest possible tree.
-        if (y0 > Math.max(col.max + vegetation.tallest(cx, cz), col.maxWater)) { section.recalcBlockCounts(); return section; }
+        // Empty sky cubes: nothing generated above ground, water and any trees reaching in from this or neighbouring chunks.
+        if (y0 > Math.max(col.max + vegetation.tallest(cx, cz), col.maxWater)) {
+            if (y0 <= vegetation.maxTreeTop(cx, cz)) vegetation.placeTrees(section, x0, y0, z0, col.height, col.water, col.surface);
+            section.recalcBlockCounts();
+            return section;
+        }
         double[] caveField = y0 > col.max ? null : below.caveField(x0, y0, z0);
         int[] floor = new int[256], roof = new int[256], ceiling = new int[256];
         for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
