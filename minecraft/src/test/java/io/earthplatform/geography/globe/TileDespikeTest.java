@@ -110,4 +110,57 @@ class TileDespikeTest {
         TileDespike.despike(tile, 12, 3592);
         assertEquals(base[100 * SIDE + 100], tile[100 * SIDE + 100], 15f);
     }
+
+    @Test
+    void v2PreservesRidgeButtressProtrudingAtTileBorderWhileCleaningInteriorSpike() {
+        float[] base = slopingCraterWall();
+        float[] tile = base.clone();
+        // Steep ridge buttress protruding 3 pixels across the western tile border (x = 0..2, y = 120..124).
+        for (int y = 120; y <= 124; y++) {
+            for (int x = 0; x <= 2; x++) {
+                tile[y * SIDE + x] += 180f;
+            }
+        }
+        // Extreme isolated interior photogrammetric spike (3x3, +180 m) at (150, 150).
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                tile[(150 + dy) * SIDE + (150 + dx)] += 180f;
+            }
+        }
+        float[] v1 = tile.clone();
+        TileDespike.despike(v1, 8.0, false);
+        // v1 slices the border-protruding ridge, creating a straight wall at x = 0.
+        assertTrue(v1[122 * SIDE + 1] < base[122 * SIDE + 1] + 50f, "v1 legacy behavior slices border protrusion");
+
+        float[] v2 = tile.clone();
+        TileDespike.despike(v2, 8.0, true);
+        // v2 preserves the entire border-protruding ridge intact.
+        for (int y = 120; y <= 124; y++) {
+            for (int x = 0; x <= 2; x++) {
+                assertEquals(tile[y * SIDE + x], v2[y * SIDE + x], 1e-4f,
+                        "v2 must preserve border ridge at (" + x + "," + y + ")");
+            }
+        }
+        // v2 still cleans the extreme isolated interior spike.
+        assertEquals(base[150 * SIDE + 150], v2[150 * SIDE + 150], 15f, "v2 must still remove interior DEM spike");
+    }
+
+    @Test
+    void v2PreservesNaturalRockSpireWhileCleaningSinglePixelDemSpike() {
+        float[] base = slopingCraterWall();
+        float[] tile = base.clone();
+        // Genuine narrow 24 m wide, 85 m tall rock pinnacle/buttress at 4 m/px (6x6 px).
+        for (int dy = 0; dy < 6; dy++) {
+            for (int dx = 0; dx < 6; dx++) {
+                tile[(80 + dy) * SIDE + (80 + dx)] += 85f;
+            }
+        }
+        // Single-pixel +140 m DEM spike at (180, 180).
+        tile[180 * SIDE + 180] += 140f;
+
+        float[] v2 = tile.clone();
+        TileDespike.despike(v2, 4.0, true);
+        assertEquals(tile[83 * SIDE + 83], v2[83 * SIDE + 83], 1e-4f, "v2 preserves genuine 85 m rock spire");
+        assertEquals(base[180 * SIDE + 180], v2[180 * SIDE + 180], 15f, "v2 cleans isolated single-pixel +140 m DEM spike");
+    }
 }

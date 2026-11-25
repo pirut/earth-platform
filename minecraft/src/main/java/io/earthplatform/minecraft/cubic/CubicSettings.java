@@ -247,9 +247,24 @@ public final class CubicSettings {
      */
     public static String elevation() { return baselineElevation() + "+" + Dgm5Elevation.ID; }
 
-    private static String baselineElevation() {
+    /**
+     * Frozen pre-DGM5 baseline elevation pin used by {@link #bareEarth(String)} for legacy worlds
+     * saved before DGM5, so existing worlds never silently shift ground heights when new worlds upgrade.
+     */
+    static String legacyBaseline() {
         String pin = TerrariumTileSource.DATASET_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.copernicus"))) pin += "+" + CopernicusFill.ICE_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.hrdem"))) pin += "+" + HrdemElevation.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.3dep"))) pin += "+" + UsgsElevation.GRADED_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.rema"))) pin += "+" + RemaElevation.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.ign"))) pin += "+" + IgnElevation.DATASET_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.gsi"))) pin += "+" + GsiElevation.DATASET_ID;
+        return pin;
+    }
+
+    private static String baselineElevation() {
+        String pin = TerrariumTileSource.V2_ID;
+        if (!"false".equals(System.getProperty("earthplatform.earth.copernicus"))) pin += "+" + CopernicusFill.GEOID_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.hrdem"))) pin += "+" + HrdemElevation.DATASET_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.3dep"))) pin += "+" + UsgsElevation.GRADED_ID;
         if (!"false".equals(System.getProperty("earthplatform.earth.rema"))) pin += "+" + RemaElevation.DATASET_ID;
@@ -270,7 +285,10 @@ public final class CubicSettings {
         TerrariumTileSource known = tiles.get(pin);
         if (known != null) return known;
         String[] ids = pin.split("\\+");
-        if (!TerrariumTileSource.DATASET_ID.equals(ids[0])) throw new IllegalStateException("Unsupported elevation '" + pin + "'");
+        boolean v2;
+        if (TerrariumTileSource.DATASET_ID.equals(ids[0])) v2 = false;
+        else if (TerrariumTileSource.V2_ID.equals(ids[0])) v2 = true;
+        else throw new IllegalStateException("Unsupported elevation '" + pin + "'");
         List<ElevationLayer> layers = new ArrayList<>();
         // The Copernicus fill checks the tiles as they were before any layer, so it reads them back
         // from the source made here.
@@ -282,6 +300,11 @@ public final class CubicSettings {
                 layers.add(new CopernicusFill(copernicus(), (zoom, x, y) -> made[0].cleaned(zoom, x, y),
                         (latitude, longitude) -> cover.code(latitude, longitude, ICE_OVERVIEW) == WorldCoverSource.SNOW_AND_ICE, 512));
             }
+            else if (CopernicusFill.GEOID_ID.equals(ids[i])) {
+                WorldCoverSource cover = cover();
+                layers.add(new CopernicusFill(copernicus(), (zoom, x, y) -> made[0].cleaned(zoom, x, y),
+                        (latitude, longitude) -> cover.code(latitude, longitude, ICE_OVERVIEW) == WorldCoverSource.SNOW_AND_ICE, true, 512));
+            }
             else if (UsgsElevation.Reading.of(ids[i]) != null) layers.add(usgs(UsgsElevation.Reading.of(ids[i])));
             else if (RemaElevation.DATASET_ID.equals(ids[i])) layers.add(rema());
             else if (HrdemElevation.DATASET_ID.equals(ids[i])) layers.add(hrdem());
@@ -290,6 +313,7 @@ public final class CubicSettings {
             else if (Dgm5Elevation.ID.equals(ids[i])) layers.add(new Dgm5Elevation());
             else throw new IllegalStateException("Unsupported elevation layer '" + ids[i] + "' in '" + pin + "'");
         }
+        // Always share the raw Terrarium PNG cache so terrarium-v2 worlds never re-download the planet.
         Path cache = cacheFolder().resolve(TerrariumTileSource.DATASET_ID.toLowerCase(Locale.ROOT));
         try {
             // Far terrain over a new area reads several hundred tiles at several zooms; with fewer kept than
@@ -297,7 +321,7 @@ public final class CubicSettings {
             // sixteenth of the heap, from 256 to 1,024 of them. Fetching them is mostly a wait on the round
             // trip, so many go at once.
             known = new TerrariumTileSource(TerrariumTileSource.AWS_TERRAIN_TILES, cache, !Boolean.getBoolean("earthplatform.earth.offline"),
-                    tilesKept(), transfers(16, 48), Duration.ofSeconds(20), layers);
+                    tilesKept(), transfers(16, 48), Duration.ofSeconds(20), layers, v2);
         } catch (IOException failure) {
             throw new UncheckedIOException("Could not open the elevation tile cache at " + cache, failure);
         }
@@ -420,16 +444,39 @@ public final class CubicSettings {
 
     private static Path cacheFolder() { return Loader.INSTANCE.gameDir().resolve("earthplatform").resolve("cache"); }
 
-    /** Old worlds retain the shared ground source. DGM5 replaces the corrected surface where it has data. */
+    /** Old worlds retain the frozen legacy ground source. DGM5 replaces the corrected surface where it has data. */
     private static synchronized BareEarth bareEarth(String pin) {
         String survey = "+" + Dgm5Elevation.ID;
-        String groundPin = pin.endsWith(survey) ? pin : baselineElevation();
+        String groundPin = bareEarthPin(pin);
         return ground.computeIfAbsent(groundPin, id -> {
             boolean surveyed = id.endsWith(survey);
             String correction = surveyed ? id.substring(0, id.length() - survey.length()) : id;
-            return new BareEarth(tiles(correction), cover(), cacheFolder().resolve(BareEarth.ID),
+            return new BareEarth(tiles(correction), cover(), bareEarthCache(cacheFolder(), correction),
                     surveyed ? new Dgm5Elevation() : null);
         });
+    }
+
+    /** Resolves which elevation pin {@link #bareEarth(String)} computes bare-earth fields from. */
+    static String bareEarthPin(String pin) {
+        String survey = "+" + Dgm5Elevation.ID;
+        return pin.endsWith(survey) ? pin : legacyBaseline();
+    }
+
+    /**
+     * Resolves the {@link BareEarth} disk cache directory for an elevation pin. Legacy v1 pins keep the
+     * existing {@code bare-earth-v4} folder; non-legacy pins (using {@value TerrariumTileSource#V2_ID} or
+     * {@value CopernicusFill#GEOID_ID}) use a namespaced subfolder so v1 and v2 caches never cross-contaminate.
+     */
+    static Path bareEarthCache(Path cacheRoot, String elevationPin) {
+        Path base = cacheRoot.resolve(BareEarth.ID);
+        boolean hasV2 = false, hasGeoid = false;
+        for (String token : elevationPin.split("\\+")) {
+            if (TerrariumTileSource.V2_ID.equals(token)) hasV2 = true;
+            else if (CopernicusFill.GEOID_ID.equals(token)) hasGeoid = true;
+        }
+        if (!hasV2 && !hasGeoid) return base;
+        if (hasV2 && hasGeoid) return base.resolve("v2");
+        return base.resolve(hasV2 ? TerrariumTileSource.V2_ID : CopernicusFill.GEOID_ID);
     }
 
     /** Canopy heights shared by every Earth world in this game, cached on disk beside the elevation tiles. */
