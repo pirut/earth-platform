@@ -7,6 +7,7 @@ import io.earthplatform.minecraft.cubic.CubeWorld;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.CubicLevel;
 import io.earthplatform.minecraft.cubic.compat.CubicMaps;
+import io.earthplatform.minecraft.cubic.compat.FlywheelCompat;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.platform.Platform;
 import javax.annotation.Nullable;
@@ -80,6 +81,7 @@ public final class ClientCubeWorld extends CubeWorld {
             BlockEntity entity = getBlockEntity(new BlockPos(tag.getInt("x"), tag.getInt("y"), tag.getInt("z")), true);
             if (entity != null) Platform.INSTANCE.handleUpdateTag(entity, tag, client.registryAccess());
         }
+        if (!cube.blockEntities().isEmpty()) FlywheelCompat.cubeArrived(client, cube.blockEntities().values());
         renderer.cubeArrived(cube.key);
         CubicMaps.columnChanged(client, cube.x, cube.z);
     }

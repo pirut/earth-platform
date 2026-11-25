@@ -11,6 +11,7 @@ import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.ViewOrder;
+import io.earthplatform.minecraft.cubic.compat.FlywheelCompat;
 import io.earthplatform.minecraft.platform.ClientPlatform;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -880,13 +881,14 @@ public final class CubeRenderer {
         Vec3 position = camera.getPosition();
         boolean any = false;
         LongOpenHashSet caves = caveSeen;
+        FlywheelCompat.sync(world.client(), world.cubes());
         for (Cube cube : world.cubes()) {
             if (cube.blockEntities().isEmpty()) continue;
             // In a cube behind rock, as its terrain is, unless the renderer reaches out of it (a beacon's beam).
             boolean hidden = caves != null && !caves.contains(cube.key);
             for (BlockEntity entity : cube.blockEntities().values()) {
                 var renderer = dispatcher.getRenderer(entity);
-                if (renderer == null) continue;
+                if (renderer == null || FlywheelCompat.replacesRenderer(entity)) continue;
                 if (hidden && !renderer.shouldRenderOffScreen(entity)) continue;
                 BlockPos pos = entity.getBlockPos();
                 if (!frustum.isVisible(new AABB(pos).inflate(1.0))) continue;
