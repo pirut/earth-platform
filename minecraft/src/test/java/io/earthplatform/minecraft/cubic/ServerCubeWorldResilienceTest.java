@@ -1160,4 +1160,14 @@ class ServerCubeWorldResilienceTest {
             bg.shutdownNow();
         }
     }
+
+    @Test
+    void finishShutdownDrainWrapsCloseOnlyRuntimeExceptionInIOException() {
+        var emptyQueue = new ServerCubeWorld.UntouchedStoreQueue<String>(
+                () -> false, key -> null, (key, tag) -> {}, entry -> true, (key, err) -> {});
+        IllegalStateException closeRuntime = new IllegalStateException("storage close runtime failure");
+        IOException wrapped = assertThrows(IOException.class,
+                () -> ServerCubeWorld.finishShutdownDrain(emptyQueue, () -> { throw closeRuntime; }));
+        assertSame(closeRuntime, wrapped.getCause());
+    }
 }

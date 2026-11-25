@@ -767,6 +767,7 @@ class HostBackoffAndRangeFilesTest {
                 case "/double-space-unit" -> exchange.getResponseHeaders().set("Content-Range", "bytes  0-3/4");
                 case "/unknown-total" -> exchange.getResponseHeaders().set("Content-Range", "bytes 0-3/*");
                 case "/uppercase-unit" -> exchange.getResponseHeaders().set("Content-Range", "BYTES 0-3/4");
+                case "/mixedcase-unit" -> exchange.getResponseHeaders().set("Content-Range", "Bytes 0-3/4");
                 case "/duplicate-cr" -> {
                     exchange.getResponseHeaders().add("Content-Range", "bytes 0-3/4");
                     exchange.getResponseHeaders().add("Content-Range", "bytes 0-3/4");
@@ -801,7 +802,8 @@ class HostBackoffAndRangeFilesTest {
                     "bytes  0-3/4",
                     "bytes 0-3/* ",
                     "bytes 0-3 / *",
-                    "BYTES 0-3/4",
+                    "byte\u017f 0-3/4",
+                    "items 0-3/4",
                     "bytes 0-3/4/5",
                     "bytes ٠-٣/٤"
             }) {
@@ -809,10 +811,12 @@ class HostBackoffAndRangeFilesTest {
                         () -> RangeFiles.parseContentRange(malformed, sample),
                         "must reject malformed Content-Range: '" + malformed + "'");
             }
-            RangeFiles.ContentRange parsed = RangeFiles.parseContentRange("bytes 0-3/4", sample);
-            assertEquals(0L, parsed.start());
-            assertEquals(3L, parsed.end());
-            assertEquals(4L, parsed.total());
+            for (String validHeader : new String[] {"bytes 0-3/4", "BYTES 0-3/4", "Bytes 0-3/4"}) {
+                RangeFiles.ContentRange parsed = RangeFiles.parseContentRange(validHeader, sample);
+                assertEquals(0L, parsed.start(), validHeader);
+                assertEquals(3L, parsed.end(), validHeader);
+                assertEquals(4L, parsed.total(), validHeader);
+            }
             RangeFiles.ContentRange unknownTotalParsed = RangeFiles.parseContentRange("bytes 0-3/*", sample);
             assertEquals(-1L, unknownTotalParsed.total());
 
@@ -825,7 +829,6 @@ class HostBackoffAndRangeFilesTest {
                     "extra-space-slash",
                     "extra-space-dash",
                     "double-space-unit",
-                    "uppercase-unit",
                     "duplicate-cr"
             }) {
                 MissingTerrainException ex = assertThrows(MissingTerrainException.class,
@@ -840,11 +843,13 @@ class HostBackoffAndRangeFilesTest {
             assertTrue(shortUnknown.getMessage().contains("Content-Range"), shortUnknown.getMessage());
             assertFalse(HostBackoff.isDown(base), "short read with unknown total must NEVER trip HostBackoff");
 
-            // Valid single strict RFC 9110 Content-Range succeeds immediately afterwards.
-            RangeFiles.FetchResult ok = files.fetchResult(base.resolve("valid"), 0, 4);
-            assertTrue(ok.isOk());
-            assertArrayEquals(new byte[] {1, 2, 3, 4}, ok.bytes());
-            assertFalse(HostBackoff.isDown(base));
+            // Valid single strict RFC 9110 Content-Range (including ASCII case-insensitive bytes unit) succeeds.
+            for (String validPath : new String[] {"valid", "uppercase-unit", "mixedcase-unit"}) {
+                RangeFiles.FetchResult ok = files.fetchResult(base.resolve(validPath), 0, 4);
+                assertTrue(ok.isOk(), validPath);
+                assertArrayEquals(new byte[] {1, 2, 3, 4}, ok.bytes(), validPath);
+                assertFalse(HostBackoff.isDown(base), validPath);
+            }
         } finally {
             HostBackoff.clear(base);
             server.stop(0);
@@ -892,38 +897,44 @@ class HostBackoffAndRangeFilesTest {
                 AtomicBoolean keepHammering = new AtomicBoolean(true);
                 CyclicBarrier startTogether = new CyclicBarrier(12);
                 List<Future<?>> futures = new ArrayList<>();
-                for (int t = 0; t < 12; t++) {
-                    futures.add(callers.submit(() -> {
-                        try { startTogether.await(5, TimeUnit.SECONDS); }
-                        catch (Exception e) { throw new RuntimeException(e); }
-                        while (keepHammering.get()) {
-                            try { HostBackoff.reachable(probeUri, "Test"); }
-                            catch (MissingTerrainException expected) { /* host down */ }
-                            Thread.onSpinWait();
-                        }
-                    }));
-                }
+                try {
+                    for (int t = 0; t < 12; t++) {
+                        futures.add(callers.submit(() -> {
+                            try { startTogether.await(5, TimeUnit.SECONDS); }
+                            catch (Exception e) { throw new RuntimeException(e); }
+                            while (keepHammering.get() && !Thread.currentThread().isInterrupted()) {
+                                try { HostBackoff.reachable(probeUri, "Test"); }
+                                catch (MissingTerrainException expected) { /* host down */ }
+                                Thread.onSpinWait();
+                            }
+                        }));
+                    }
 
-                // Wait for the single winning probe to reach the server, then release it while all 12 threads
-                // hammer reachable() across the exact completion boundary (downUntil update + checking=false).
-                assertTrue(entered.await(5, TimeUnit.SECONDS), "probe did not start on round " + round);
-                release.countDown();
-                for (int i = 0; i < 200 && HostBackoff.isCheckingForTest(probeUri); i++) {
-                    Thread.sleep(5);
-                }
-                assertFalse(HostBackoff.isCheckingForTest(probeUri), "probe must finish and clear checking");
-                Thread.sleep(15);
-                keepHammering.set(false);
-                for (Future<?> f : futures) f.get(5, TimeUnit.SECONDS);
+                    // Wait for the single winning probe to reach the server, then release it while all 12 threads
+                    // hammer reachable() across the exact completion boundary (downUntil update + checking=false).
+                    assertTrue(entered.await(5, TimeUnit.SECONDS), "probe did not start on round " + round);
+                    release.countDown();
+                    for (int i = 0; i < 200 && HostBackoff.isCheckingForTest(probeUri); i++) {
+                        Thread.sleep(5);
+                    }
+                    assertFalse(HostBackoff.isCheckingForTest(probeUri), "probe must finish and clear checking");
+                    Thread.sleep(15);
+                    keepHammering.set(false);
+                    for (Future<?> f : futures) f.get(5, TimeUnit.SECONDS);
 
-                assertEquals(round, probeHits.get(),
-                        "concurrent callers across expiry and probe completion must never start an extra probe (round " + round + ")");
-                assertTrue(HostBackoff.isDown(base));
+                    assertEquals(round, probeHits.get(),
+                            "concurrent callers across expiry and probe completion must never start an extra probe (round " + round + ")");
+                    assertTrue(HostBackoff.isDown(base));
+                } finally {
+                    keepHammering.set(false);
+                }
             }
         } finally {
             CountDownLatch release = releaseRef.get();
             if (release != null) release.countDown();
             callers.shutdownNow();
+            try { callers.awaitTermination(5, TimeUnit.SECONDS); }
+            catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
             HostBackoff.clear(base);
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();

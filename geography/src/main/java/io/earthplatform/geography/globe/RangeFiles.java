@@ -218,13 +218,24 @@ final class RangeFiles implements AutoCloseable {
         return true;
     }
 
+    private static boolean isAsciiBytesPrefix(String header) {
+        return header.length() >= 6
+                && (header.charAt(0) == 'b' || header.charAt(0) == 'B')
+                && (header.charAt(1) == 'y' || header.charAt(1) == 'Y')
+                && (header.charAt(2) == 't' || header.charAt(2) == 'T')
+                && (header.charAt(3) == 'e' || header.charAt(3) == 'E')
+                && (header.charAt(4) == 's' || header.charAt(4) == 'S')
+                && header.charAt(5) == ' ';
+    }
+
     /**
      * Validates strict RFC 9110 §14.4 {@code bytes <digits>-<digits>/(<digits>|*)} ASCII grammar
-     * (rejecting signs, extra spaces, leading/trailing whitespace, and non-ASCII digits). Unknown
+     * (matching the {@code bytes} range unit ASCII case-insensitively per RFC 9110 §14.1 while
+     * rejecting signs, extra spaces, leading/trailing whitespace, and non-ASCII digits). Unknown
      * totals ({@code /*}) return {@code total = -1L} and are rejected on short reads where EOF cannot be proven.
      */
     static ContentRange parseContentRange(String header, URI uri) throws InvalidRangeResponseException {
-        if (header == null || !header.startsWith("bytes ")) {
+        if (header == null || !isAsciiBytesPrefix(header)) {
             throw new InvalidRangeResponseException("Unsupported HTTP 206 Content-Range '" + header + "' for " + uri);
         }
         int startPos = 6;

@@ -1786,9 +1786,8 @@ public final class ServerCubeWorld extends CubeWorld {
         }
         if (storageFailure != null) {
             if (storageFailure instanceof IOException io) throw io;
-            if (storageFailure instanceof RuntimeException runtime) throw runtime;
             if (storageFailure instanceof Error error) throw error;
-            throw new IOException("Could not close cube storage", storageFailure);
+            throw new IOException("Failed to close cube storage", storageFailure);
         }
     }
 
