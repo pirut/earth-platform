@@ -359,22 +359,32 @@ public final class FarServer {
         String version = io.earthplatform.minecraft.diagnostics.BuildInfo.version(), commit = io.earthplatform.minecraft.diagnostics.BuildInfo.commit();
         boolean released = !version.equals("development") || !commit.equals("unknown");
         if (STORE.equals("false") || !released && !STORE.equals("true")) return null;
-        return new FarStore(directory, version + "|" + commit + "|" + generator.id() + "|" + Long.toHexString(registryPrint(biomes)),
+        return new FarStore(directory, version + "|" + commit + "|" + generator.id() + "|" + registryPrint(biomes),
                 STORE_BYTES, EarthPlatformMod.LOGGER::info);
     }
 
     /**
-     * A number that changes when block states or biomes get other ids, as when a mod is added or removed: kept
-     * columns hold those ids, so they are only good for the registries they were made with.
+     * What the kept columns' block state and biome ids mean, as {@code blocks=<print>/<count>,biomes=<print>/<count>}:
+     * the names (and, for blocks, how many states each has) in id order. Kept columns hold those ids, so they are only
+     * good for registries that give the same names the same ids; a mod added, removed or registering in another
+     * order changes the print, as it must. The two halves are told apart so a log can say which one changed
+     * (see {@link FarStore}); the print is the same on every boot of the same mods.
      */
-    private static long registryPrint(Registry<Biome> biomes) {
-        long print = Block.BLOCK_STATE_REGISTRY.size();
+    static String registryPrint(Registry<Biome> biomes) {
+        long blocks = Block.BLOCK_STATE_REGISTRY.size();
+        int blockCount = 0;
         for (Block block : net.minecraft.core.registries.BuiltInRegistries.BLOCK) {
-            print = print * 1_000_003L + net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(block).hashCode();
-            print = print * 31 + block.getStateDefinition().getPossibleStates().size();
+            blocks = blocks * 1_000_003L + net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(block).hashCode();
+            blocks = blocks * 31 + block.getStateDefinition().getPossibleStates().size();
+            blockCount++;
         }
-        for (Biome biome : biomes) print = print * 1_000_003L + String.valueOf(biomes.getKey(biome)).hashCode();
-        return print;
+        long biomeHash = 0;
+        int biomeCount = 0;
+        for (Biome biome : biomes) {
+            biomeHash = biomeHash * 1_000_003L + String.valueOf(biomes.getKey(biome)).hashCode();
+            biomeCount++;
+        }
+        return "blocks=" + Long.toHexString(blocks) + "/" + blockCount + ",biomes=" + Long.toHexString(biomeHash) + "/" + biomeCount;
     }
 
     /** A column as {@link FarStore} keeps it: everything but its key. */
