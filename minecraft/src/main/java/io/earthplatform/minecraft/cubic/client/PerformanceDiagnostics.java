@@ -13,7 +13,11 @@ import org.lwjgl.opengl.*;
 /** Current build. Fixed-cost frame capture, bounded async local-only JSONL. */
 public final class PerformanceDiagnostics {
     private static State state;
+    private static boolean disabled;
     private PerformanceDiagnostics() {}
+    /** A timer and the name it is logged under, kept together so they cannot fall out of step. */
+    record Stage(String name,Timings timer) {}
+    static final List<Stage> STAGES=List.of(new Stage("frame",Timings.FRAME),new Stage("far_generation",Timings.FAR_MAKE),new Stage("far_mesh",Timings.FAR_MESH),new Stage("far_upload",Timings.FAR_UPLOAD),new Stage("far_draw",Timings.FAR_DRAW),new Stage("far_water",Timings.FAR_WATER),new Stage("cube_mesh",Timings.CUBE_MESH),new Stage("cube_upload",Timings.CUBE_UPLOAD),new Stage("cube_draw",Timings.CUBE_DRAW),new Stage("cube_caves",Timings.CUBE_CAVES),new Stage("cube_snapshot",Timings.CUBE_SNAPSHOT),new Stage("cube_light",Timings.CUBE_LIGHT),new Stage("server_cubes",Timings.SERVER_TICK),new Stage("cube_unload",Timings.CUBE_UNLOAD),new Stage("cube_flush",Timings.CUBE_FLUSH),new Stage("chunk_tickets",Timings.CHUNK_TICKETS));
     private static final class State {
         final Gson gson=new Gson();
         final FrameWindow frames=new FrameWindow();
@@ -63,13 +67,11 @@ public final class PerformanceDiagnostics {
             }
             record.add("run_mesher",gson.toJsonTree(FarMesher.runStats()));
             JsonObject stages=new JsonObject();
-            Timings[] timers={Timings.FRAME,Timings.FAR_MAKE,Timings.FAR_MESH,Timings.FAR_UPLOAD,Timings.FAR_DRAW,Timings.FAR_WATER,Timings.CUBE_MESH,Timings.CUBE_UPLOAD,Timings.CUBE_DRAW,Timings.CUBE_CAVES,Timings.CUBE_SNAPSHOT,Timings.CUBE_LIGHT,Timings.SERVER_TICK,Timings.CUBE_UNLOAD,Timings.CUBE_FLUSH,Timings.CHUNK_TICKETS};
-            String[] names={"frame","far_generation","far_mesh","far_upload","far_draw","far_water","cube_mesh","cube_upload","cube_draw","cube_caves","cube_snapshot","cube_light","server_cubes","cube_unload","cube_flush"};
-            for(int i=0;i<timers.length;i++) {
-                var total=timers[i].total();var before=previous.put(timers[i],total);
+            for(Stage entry:STAGES) {
+                Timings timer=entry.timer();var total=timer.total();var before=previous.put(timer,total);
                 long count=before==null?total.calls():Math.max(0,total.calls()-before.calls());
                 long nanos=before==null?total.nanos():Math.max(0,total.nanos()-before.nanos());
-                JsonObject stage=new JsonObject();stage.addProperty("calls",count);stage.addProperty("cpu_ms_total",nanos/1e6);stage.addProperty("cpu_ms_mean",count==0?0:nanos/1e6/count);stages.add(names[i],stage);
+                JsonObject stage=new JsonObject();stage.addProperty("calls",count);stage.addProperty("cpu_ms_total",nanos/1e6);stage.addProperty("cpu_ms_mean",count==0?0:nanos/1e6/count);stages.add(entry.name(),stage);
             }
             record.add("stages",stages);
             Map<String,long[]> gpu=new LinkedHashMap<>();
@@ -85,11 +87,17 @@ public final class PerformanceDiagnostics {
         }
     }
     static String clean(String value) {return value==null?"unknown":value.replaceAll("[\\p{Cntrl}]"," ").substring(0,Math.min(256,value.length()));}
+    /** Diagnostics must never crash the game: any failure is logged once and switches them off. */
     public static void frame() {
-        if(!BuildInfo.diagnostics())return;
-        long now=System.nanoTime();Minecraft mc=Minecraft.getInstance();
-        if(state==null)state=new State(mc,now);
-        if(state.lastFrame!=0)state.frames.add(now-state.lastFrame);state.lastFrame=now;
-        if(now-state.nextLog>=0){state.nextLog=now+5_000_000_000L;state.emit(mc);}
+        if(disabled||!BuildInfo.diagnostics())return;
+        try {
+            long now=System.nanoTime();Minecraft mc=Minecraft.getInstance();
+            if(state==null)state=new State(mc,now);
+            if(state.lastFrame!=0)state.frames.add(now-state.lastFrame);state.lastFrame=now;
+            if(now-state.nextLog>=0){state.nextLog=now+5_000_000_000L;state.emit(mc);}
+        } catch(Throwable t) {
+            disabled=true;state=null;
+            try{EarthPlatformMod.LOGGER.error("Performance diagnostics failed and are now off for this session",t);}catch(Throwable ignored){}
+        }
     }
 }
