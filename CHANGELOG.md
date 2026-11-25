@@ -64,6 +64,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 ### Other mods
 - Xaero's Minimap, Xaero's World Map and JourneyMap map the Earth world, including ground above Y 2047.
 - Create contraptions (bearings, pistons and the rest) assemble in the Earth world.
+- Create's shafts, cogwheels and other machines Flywheel draws show in the Earth world after you rejoin, travel, or reload with F3+A or `/flywheel backend`, not only when placed in view, and light up when a torch is placed beside them.
 - Create Aeronautics ships assemble, fly and save in the Earth world, with air pressure from the real atmosphere. The jet stream carries ships east too, the altitude sensor reads from sea level to 10 km, and ships shade mobs at any height.
 - AE2 spatial storage captures and places Earth blocks, and AE2 meteorites generate in the Earth world.
 - Create's mechanical arm, pulley, scaffolding and elevators, Waystones, Mekanism (Digital Miner, multiblocks and pipes), Immersive Engineering's multiblocks and the Twilight Forest portal work in the Earth world.

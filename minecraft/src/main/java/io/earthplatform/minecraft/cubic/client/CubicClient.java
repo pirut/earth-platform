@@ -82,6 +82,8 @@ public final class CubicClient {
             world.far().tick();
         }
         if (flawless && world != null) Flawless.settle(world);
+        // Before LevelRenderer.renderLevel starts Flywheel's frame plan on its workers, as vanilla's light updates come.
+        if (world != null) io.earthplatform.minecraft.cubic.compat.FlywheelCompat.flushLight(world.client());
     }
 
     /**

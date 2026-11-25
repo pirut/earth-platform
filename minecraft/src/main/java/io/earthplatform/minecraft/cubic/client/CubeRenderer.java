@@ -11,6 +11,7 @@ import io.earthplatform.minecraft.cubic.CubeKey;
 import io.earthplatform.minecraft.cubic.Cubic;
 import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.ViewOrder;
+import io.earthplatform.minecraft.cubic.compat.FlywheelCompat;
 import io.earthplatform.minecraft.platform.ClientPlatform;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -72,7 +73,8 @@ public final class CubeRenderer {
     /** Finished meshes of each cube thrown away as stale since it last had one uploaded. */
     private final Long2IntOpenHashMap staleDropped = new Long2IntOpenHashMap();
     private final Long2ObjectOpenHashMap<Mesh> meshes = new Long2ObjectOpenHashMap<>();
-    private final Long2ObjectOpenHashMap<byte[]> light = new Long2ObjectOpenHashMap<>();
+    /** Made on the render thread with the world; other threads read it through {@link #light(BlockPos, LightLayer)}. */
+    private final CubeLightTable light = new CubeLightTable(Thread.currentThread());
     final LongOpenHashSet dirty = new LongOpenHashSet();
     private final Long2IntOpenHashMap dirtySince = new Long2IntOpenHashMap();
     final Long2IntOpenHashMap versions = new Long2IntOpenHashMap();
@@ -250,7 +252,7 @@ public final class CubeRenderer {
         dirty.remove(key);
         dirtySince.remove(key);
         versions.remove(key);
-        light.remove(key);
+        if (light.remove(key)) FlywheelCompat.lightChanged(key);
         compiled.remove(key);
         compiledVersion++;
         setVisibility(key, CubeCaves.OPEN);
@@ -326,7 +328,7 @@ public final class CubeRenderer {
         }
     }
 
-    /** Light the last compile computed for this position, or -1 when its cube is not lit yet. */
+    /** Light the last compile computed for this position, or -1 when its cube is not lit yet. Any thread. */
     int light(BlockPos pos, LightLayer layer) {
         byte[] values = light.get(CubeKey.ofBlock(pos));
         if (values == null) return -1;
@@ -411,7 +413,8 @@ public final class CubeRenderer {
         setVisibility(key, CubeCaves.OPEN);
         Mesh mesh = meshes.remove(key);
         if (mesh != null) mesh.close(regions);
-        light.remove(key);
+        // Its blocks now read the sky's light, so what hangs into it (a rope from a pulley above) relights.
+        if (light.remove(key)) FlywheelCompat.lightChanged(key);
         compiled.add(key);
         compiledVersion++;
     }
@@ -513,7 +516,11 @@ public final class CubeRenderer {
             return false;
         }
         staleDropped.remove(result.key());
-        if (result.light() != null) light.put(result.key(), result.light());
+        if (result.light() != null) {
+            byte[] before = light.put(result.key(), result.light());
+            // Flywheel relights the machines in a section when vanilla says its light changed; cubes never say so.
+            if (!java.util.Arrays.equals(before, result.light())) FlywheelCompat.lightChanged(result.key());
+        }
         setVisibility(result.key(), result.visibility());
         compiled.add(result.key());
         compiledVersion++;
@@ -880,13 +887,14 @@ public final class CubeRenderer {
         Vec3 position = camera.getPosition();
         boolean any = false;
         LongOpenHashSet caves = caveSeen;
+        FlywheelCompat.sync(world.client(), world.cubes());
         for (Cube cube : world.cubes()) {
             if (cube.blockEntities().isEmpty()) continue;
             // In a cube behind rock, as its terrain is, unless the renderer reaches out of it (a beacon's beam).
             boolean hidden = caves != null && !caves.contains(cube.key);
             for (BlockEntity entity : cube.blockEntities().values()) {
                 var renderer = dispatcher.getRenderer(entity);
-                if (renderer == null) continue;
+                if (renderer == null || FlywheelCompat.replacesRenderer(entity)) continue;
                 if (hidden && !renderer.shouldRenderOffScreen(entity)) continue;
                 BlockPos pos = entity.getBlockPos();
                 if (!frustum.isVisible(new AABB(pos).inflate(1.0))) continue;
@@ -912,6 +920,7 @@ public final class CubeRenderer {
         for (Mesh mesh : retiring.values()) mesh.close(regions);
         retiring.clear();
         retireBy.clear();
+        // Only as the level closes, when Flywheel's manager for it goes too (FlywheelCompat.levelClosed): nothing to relight.
         light.clear();
         visibility.clear();
         reached = null;
