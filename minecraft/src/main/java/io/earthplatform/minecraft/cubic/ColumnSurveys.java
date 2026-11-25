@@ -19,8 +19,8 @@ final class ColumnSurveys {
     /** No limit on surveys in flight, as before {@link SurfaceFlight}. */
     static final int ANY = Integer.MAX_VALUE;
     /**
-     * With surface flight on, a failed survey is asked for again up to this many times, the first {@link #RETRY_TICKS}
-     * after it failed and each after twice the wait before. Off, a failed column stays as it failed.
+     * A failed survey is asked for again up to this many times, the first {@link #RETRY_TICKS}
+     * after it failed and each after twice the wait before, whether surface flight is on or off.
      */
     static final int RETRIES = 4, RETRY_TICKS = 100;
     /** Blocks of rock under a cube column's lowest ground (and its four neighbours') before its cubes count as buried. */
@@ -35,7 +35,7 @@ final class ColumnSurveys {
     private final int savedFrom;
     private final Long2IntOpenHashMap lows = new Long2IntOpenHashMap();
     private final Long2IntOpenHashMap surfaceLows = new Long2IntOpenHashMap(), surfaceHighs = new Long2IntOpenHashMap();
-    /** With surface flight on, failed columns: the tries so far over the tick the next may go. */
+    /** Failed columns: the tries so far over the tick the next retry may go. */
     private final Long2LongOpenHashMap failed = new Long2LongOpenHashMap();
     private final LongOpenHashSet pending = new LongOpenHashSet();
     private final ConcurrentLinkedQueue<long[]> ready = new ConcurrentLinkedQueue<>();
@@ -63,10 +63,11 @@ final class ColumnSurveys {
             long column = result[0];
             pending.remove(column);
             lows.put(column, (int) result[1]);
-            if (surfaces) {
-                if (ColumnSurvey.failed(result)) failedAgain(column);
-                else {
-                    failed.remove(column);
+            if (ColumnSurvey.failed(result)) {
+                failedAgain(column);
+            } else {
+                failed.remove(column);
+                if (surfaces) {
                     surfaceLows.put(column, (int) result[2]);
                     surfaceHighs.put(column, (int) result[3]);
                 }
@@ -76,8 +77,10 @@ final class ColumnSurveys {
     }
 
     private void failedAgain(long column) {
-        surfaceLows.remove(column);
-        surfaceHighs.remove(column);
+        if (surfaces) {
+            surfaceLows.remove(column);
+            surfaceHighs.remove(column);
+        }
         int tries = failed.containsKey(column) ? tries(failed.get(column)) + 1 : 1;
         int at = tries > RETRIES ? Integer.MAX_VALUE : tick + (RETRY_TICKS << (tries - 1));
         failed.put(column, (long) tries << 32 | at & 0xFFFFFFFFL);
@@ -163,8 +166,8 @@ final class ColumnSurveys {
         if (surfaces) {
             surfaceLows.long2IntEntrySet().removeIf(entry -> !keep.test(entry.getLongKey()));
             surfaceHighs.long2IntEntrySet().removeIf(entry -> !keep.test(entry.getLongKey()));
-            if (!failed.isEmpty()) failed.long2LongEntrySet().removeIf(entry -> !keep.test(entry.getLongKey()));
         }
+        if (!failed.isEmpty()) failed.long2LongEntrySet().removeIf(entry -> !keep.test(entry.getLongKey()));
         kept.removeIf(key -> !lows.containsKey(CubeKey.column(CubeKey.x(key), CubeKey.z(key))) && !pending.contains(CubeKey.column(CubeKey.x(key), CubeKey.z(key))));
         opened.removeIf(key -> !lows.containsKey(CubeKey.column(CubeKey.x(key), CubeKey.z(key))));
     }

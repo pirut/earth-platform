@@ -11,6 +11,12 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -76,6 +82,19 @@ public final class MemoryPressure {
     private static final AtomicLong nextDrip = new AtomicLong();
     private static final ThreadLocal<Integer> DEPTH = ThreadLocal.withInitial(() -> 0);
     private static final List<WeakReference<Hook>> hooks = new ArrayList<>();
+    static final String SHRINK_THREAD_NAME = "Earth memory shrink";
+    private static final AtomicBoolean shrinkQueued = new AtomicBoolean();
+    private static final ExecutorService SHRINKER = createShrinker();
+
+    private static ExecutorService createShrinker() {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                1, 1, 0L, TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>(),
+                NamedThreads.daemon(SHRINK_THREAD_NAME, Thread.MIN_PRIORITY));
+        // Pre-start the single daemon thread before memory is ever exhausted.
+        executor.prestartCoreThread();
+        return executor;
+    }
 
     private MemoryPressure() {}
 
@@ -201,6 +220,7 @@ public final class MemoryPressure {
      */
     static void looked(long used, long most, int above, boolean wholeHeap, boolean sustainedTight, long now, Consumer<String> log) {
         boolean shed = false;
+        String notice = null;
         synchronized (MemoryPressure.class) {
             usedMib = used >> 20;
             mostMib = most >> 20;
@@ -215,14 +235,46 @@ public final class MemoryPressure {
                     boolean liveSet = sustainedTight && !wholeHeap && above < LOOKS_HIGH;
                     String why = wholeHeap ? ", after a whole-heap collection" : liveSet ? ", with little heap free" : "";
                     String kind = liveSet ? "in use" : "in long-lived use";
-                    log.accept(String.format(Locale.ROOT, "Memory is short (%d of %d MB %s%s): Earth keeps less in memory and makes far terrain more slowly until it frees up",
-                            usedMib, mostMib, kind, why));
+                    notice = String.format(Locale.ROOT, "Memory is short (%d of %d MB %s%s): Earth keeps less in memory and makes far terrain more slowly until it frees up",
+                            usedMib, mostMib, kind, why);
                 }
             } else if (high && !shortNow && share < LOW && now - lastShort >= HOLD_NANOS) {
                 high = false;
             }
         }
-        if (shed) shrinkNow();
+        if (notice != null) log.accept(notice);
+        if (shed) scheduleShrink();
+    }
+
+    /**
+     * Dispatches {@link #shrinkNow} onto a dedicated daemon thread, coalescing concurrent triggers
+     * so cache locks are never acquired synchronously on the JVM GC Notification thread.
+     */
+    static void scheduleShrink() {
+        if (!shrinkQueued.compareAndSet(false, true)) return;
+        try {
+            SHRINKER.execute(() -> {
+                shrinkQueued.set(false);
+                shrinkNow();
+            });
+        } catch (Throwable failure) {
+            shrinkQueued.set(false);
+            throw failure;
+        }
+    }
+
+    /** For tests: waits until all currently scheduled async shrinks have finished. */
+    static void awaitShrink() {
+        try {
+            SHRINKER.submit(() -> {}).get(5, TimeUnit.SECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted waiting for async memory shrink", interrupted);
+        } catch (TimeoutException timedOut) {
+            throw new IllegalStateException("Timed out waiting for async memory shrink", timedOut);
+        } catch (ExecutionException failed) {
+            throw new IllegalStateException("Async memory shrink barrier failed", failed.getCause());
+        }
     }
 
     /** Trims every cache that {@link #keep}s a hook. Safe from any thread; each cache takes its own lock. */
@@ -253,6 +305,7 @@ public final class MemoryPressure {
         heavy.set(0);
         nextDrip.set(0);
         synchronized (hooks) { hooks.clear(); }
+        awaitShrink();
     }
 
     /** For tests: pretend the heap has {@code used} of {@code max} bytes live, and that watching is on. */

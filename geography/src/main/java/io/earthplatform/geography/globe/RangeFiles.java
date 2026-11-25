@@ -1,16 +1,25 @@
 package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -21,8 +30,58 @@ import java.util.concurrent.atomic.AtomicLong;
 final class RangeFiles implements AutoCloseable {
     interface Load<T> { T get() throws IOException, InterruptedException; }
 
+    /** Response-validation failure on HTTP 206 (missing/malformed Content-Range or unexpected length); tile-specific, not a host transport outage. */
+    static final class InvalidRangeResponseException extends IOException {
+        InvalidRangeResponseException(String message) { super(message); }
+        InvalidRangeResponseException(String message, Throwable cause) { super(message, cause); }
+    }
+
+    /** Distinguishes confirmed missing (404) from forbidden (403) so callers never poison disk caches on transient 403s. */
+    enum FetchStatus { OK, NOT_FOUND, FORBIDDEN }
+
+    record FetchResult(FetchStatus status, byte[] bytes) {
+        static final FetchResult NOT_FOUND = new FetchResult(FetchStatus.NOT_FOUND, null);
+        static final FetchResult FORBIDDEN = new FetchResult(FetchStatus.FORBIDDEN, null);
+
+        static FetchResult ok(byte[] bytes) { return new FetchResult(FetchStatus.OK, bytes); }
+        boolean isOk() { return status == FetchStatus.OK; }
+        boolean isNotFound() { return status == FetchStatus.NOT_FOUND; }
+        boolean isForbidden() { return status == FetchStatus.FORBIDDEN; }
+    }
+
+    /** Hard cap on full-body HTTP 200 fallback responses when a server ignores {@code Range}. */
+    static final long MAX_FALLBACK_BYTES = 32L << 20;
+    /** Alias for {@link #MAX_FALLBACK_BYTES}. */
+    static final long MAX_UNRANGED_BODY_BYTES = MAX_FALLBACK_BYTES;
+    /** Maximum error body bytes drained to keep HTTP/1.1 connections reusable across 403/404/5xx responses. */
+    private static final int MAX_ERROR_DRAIN_BYTES = 65_536;
+
+    /** Versioned marker written to {@code .none} disk cache files on confirmed HTTP 404 responses. */
+    static final byte[] CONFIRMED_NOT_FOUND_MARKER = new byte[] {'4', '0', '4', '\n'};
+
+    /** Daemon timer enforcing hard body-read deadlines on {@link HttpResponse.BodyHandlers#ofInputStream()}. */
+    private static final ScheduledExecutorService BODY_TIMEOUTS = createBodyTimeoutScheduler();
+
+    private static ScheduledExecutorService createBodyTimeoutScheduler() {
+        ScheduledThreadPoolExecutor scheduler = new ScheduledThreadPoolExecutor(1, NamedThreads.daemon("earth-range-timeout"));
+        scheduler.setRemoveOnCancelPolicy(true);
+        return scheduler;
+    }
+
+    /** Whether {@code path} holds a versioned confirmed-404 marker rather than a legacy 0-byte {@code .none} file. */
+    static boolean isConfirmedNotFoundMarker(Path path) {
+        try {
+            if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) return false;
+            if (Files.size(path) != CONFIRMED_NOT_FOUND_MARKER.length) return false;
+            return Arrays.equals(DiskCache.read(path), CONFIRMED_NOT_FOUND_MARKER);
+        } catch (IOException unreadable) {
+            return false;
+        }
+    }
+
     private final String what, agent;
     private final Duration timeout;
+    private final long maxFallbackBytes;
     private final HttpClient http;
     private final Semaphore transfers;
     private final ExecutorService executor;
@@ -30,24 +89,39 @@ final class RangeFiles implements AutoCloseable {
 
     /** @param what what is read, for messages ("Land cover"); {@code agent} names the dataset to servers */
     RangeFiles(String what, String agent, String threadName, int maxConcurrentTransfers, Duration timeout) {
+        this(what, agent, threadName, maxConcurrentTransfers, timeout, MAX_FALLBACK_BYTES);
+    }
+
+    RangeFiles(String what, String agent, String threadName, int maxConcurrentTransfers, Duration timeout, long maxFallbackBytes) {
         this.what = what;
         this.agent = agent;
         this.timeout = timeout;
+        this.maxFallbackBytes = Math.max(1L, maxFallbackBytes);
         this.transfers = new Semaphore(maxConcurrentTransfers);
         this.executor = Executors.newFixedThreadPool(maxConcurrentTransfers, NamedThreads.daemon(threadName));
         this.http = HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NEVER).executor(executor).build();
     }
 
-    /** The bytes of a file from offset, or null when the file does not exist. */
+    /** The bytes of a file from offset, or null when the file does not exist (404 or 403). */
     byte[] fetch(URI uri, long offset, int length) throws IOException, InterruptedException {
+        FetchResult result = fetchResult(uri, offset, length);
+        return result.isOk() ? result.bytes() : null;
+    }
+
+    /** Typed range read distinguishing 200/206 bytes from 404 (not found) and 403 (forbidden). */
+    FetchResult fetchResult(URI uri, long offset, int length) throws IOException, InterruptedException {
         DataWaits.before();
         try { return transfer(uri, offset, length); }
         finally { DataWaits.after(); }
     }
 
-    private byte[] transfer(URI uri, long offset, int length) throws IOException, InterruptedException {
+    private FetchResult transfer(URI uri, long offset, int length) throws IOException, InterruptedException {
+        if (offset < 0 || length <= 0 || offset > Long.MAX_VALUE - (long) length) {
+            throw new IllegalArgumentException("Invalid range " + offset + "+" + length);
+        }
+        long rangeEnd = offset + (long) length - 1;
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(timeout).header("User-Agent", "earth-platform/" + agent)
-                .header("Range", "bytes=" + offset + "-" + (offset + length - 1)).GET().build();
+                .header("Range", "bytes=" + offset + "-" + rangeEnd).GET().build();
         IOException last = null;
         // Three tries for ordinary failures; a host asking us to slow down is waited out a few more times.
         for (int attempt = 0, slowed = 0; attempt < 3; attempt++) {
@@ -59,25 +133,54 @@ final class RangeFiles implements AutoCloseable {
                 // Asked again: a host can go down while this transfer waited its turn.
                 HostBackoff.reachable(uri, what);
                 long start = System.nanoTime();
-                HttpResponse<byte[]> response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
-                int status = response.statusCode();
-                if (status >= 500 && !HostBackoff.slowDown(status)) HostBackoff.failed(uri, what, "HTTP " + status);
-                else HostBackoff.answered(uri);
-                if (status == 206 || status == 200) {
-                    downloads.incrementAndGet();
-                    byte[] body = response.body();
-                    Downloads.count(what, body.length, System.nanoTime() - start);
-                    if (status == 200 && (offset != 0 || body.length > length)) body = Arrays.copyOfRange(body, (int) offset, (int) Math.min(body.length, offset + length));
-                    return body;
-                }
-                if (status == 404 || status == 403) return null;
-                last = new IOException("HTTP " + status + " for " + uri);
-                if (HostBackoff.slowDown(status) && ++slowed < HostBackoff.ATTEMPTS) {
-                    HostBackoff.pause(uri, response, slowed, what);
-                    attempt--;
+                HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                InputStream rawStream = response.body();
+                AtomicBoolean bodyTimedOut = new AtomicBoolean();
+                ScheduledFuture<?> bodyDeadline = BODY_TIMEOUTS.schedule(() -> {
+                    bodyTimedOut.set(true);
+                    try { rawStream.close(); }
+                    catch (IOException | RuntimeException ignored) { /* already closed */ }
+                }, Math.max(1L, timeout.toNanos()), TimeUnit.NANOSECONDS);
+                try (InputStream bodyStream = rawStream) {
+                    int status = response.statusCode();
+                    if (status == 206 || status == 200) {
+                        byte[] body = readBoundedBody(
+                                uri,
+                                status,
+                                offset,
+                                length,
+                                response.headers().firstValueAsLong("Content-Length"),
+                                response.headers().allValues("Content-Range"),
+                                bodyStream);
+                        HostBackoff.answered(uri);
+                        downloads.incrementAndGet();
+                        Downloads.count(what, body.length, System.nanoTime() - start);
+                        return FetchResult.ok(body);
+                    }
+                    // Drain small error bodies so HTTP/1.1 keep-alive connections remain reusable.
+                    drainSmall(bodyStream, MAX_ERROR_DRAIN_BYTES);
+                    if (status >= 500 && !HostBackoff.slowDown(status)) HostBackoff.failed(uri, what, "HTTP " + status);
+                    else HostBackoff.answered(uri);
+                    if (status == 404) return FetchResult.NOT_FOUND;
+                    if (status == 403) return FetchResult.FORBIDDEN;
+                    last = new IOException("HTTP " + status + " for " + uri);
+                    if (HostBackoff.slowDown(status) && ++slowed < HostBackoff.ATTEMPTS) {
+                        HostBackoff.pause(uri, response, slowed, what);
+                        attempt--;
+                    }
+                } catch (IOException bodyFailure) {
+                    if (bodyTimedOut.get()) {
+                        throw new HttpTimeoutException("Body read timed out after " + timeout.toMillis() + " ms for " + uri);
+                    }
+                    throw bodyFailure;
+                } finally {
+                    bodyDeadline.cancel(false);
                 }
             } catch (InterruptedIOException interrupted) {
                 throw interrupted;
+            } catch (InvalidRangeResponseException invalid) {
+                last = invalid;
+                // Tile-specific response validation failure: never count as a host-wide transport failure.
             } catch (IOException failure) {
                 last = failure;
                 HostBackoff.failed(uri, what, failure);
@@ -86,6 +189,165 @@ final class RangeFiles implements AutoCloseable {
             }
         }
         throw new MissingTerrainException(what + " download failed after retries: " + uri + " (" + last + ")");
+    }
+
+    private static void drainSmall(InputStream stream, int maxBytes) {
+        byte[] scratch = new byte[Math.min(4096, maxBytes)];
+        int remaining = maxBytes;
+        try {
+            while (remaining > 0) {
+                int read = stream.read(scratch, 0, Math.min(scratch.length, remaining));
+                if (read < 0) return;
+                remaining -= read;
+            }
+        } catch (IOException ignored) {
+            // Best-effort drain for connection reuse; status code is already known.
+        }
+    }
+
+    record ContentRange(long start, long end, long total) {
+        long length() { return end - start + 1; }
+    }
+
+    private static boolean isAsciiDigits(String text, int start, int end) {
+        if (start >= end) return false;
+        for (int i = start; i < end; i++) {
+            char c = text.charAt(i);
+            if (c < '0' || c > '9') return false;
+        }
+        return true;
+    }
+
+    private static boolean isAsciiBytesPrefix(String header) {
+        return header.length() >= 6
+                && (header.charAt(0) == 'b' || header.charAt(0) == 'B')
+                && (header.charAt(1) == 'y' || header.charAt(1) == 'Y')
+                && (header.charAt(2) == 't' || header.charAt(2) == 'T')
+                && (header.charAt(3) == 'e' || header.charAt(3) == 'E')
+                && (header.charAt(4) == 's' || header.charAt(4) == 'S')
+                && header.charAt(5) == ' ';
+    }
+
+    /**
+     * Validates strict RFC 9110 §14.4 {@code bytes <digits>-<digits>/(<digits>|*)} ASCII grammar
+     * (matching the {@code bytes} range unit ASCII case-insensitively per RFC 9110 §14.1 while
+     * rejecting signs, extra spaces, leading/trailing whitespace, and non-ASCII digits). Unknown
+     * totals ({@code /*}) return {@code total = -1L} and are rejected on short reads where EOF cannot be proven.
+     */
+    static ContentRange parseContentRange(String header, URI uri) throws InvalidRangeResponseException {
+        if (header == null || !isAsciiBytesPrefix(header)) {
+            throw new InvalidRangeResponseException("Unsupported HTTP 206 Content-Range '" + header + "' for " + uri);
+        }
+        int startPos = 6;
+        int dash = header.indexOf('-', startPos);
+        int slash = header.indexOf('/', dash + 1);
+        if (dash <= startPos || slash <= dash + 1 || slash >= header.length() - 1) {
+            throw new InvalidRangeResponseException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri);
+        }
+        if (!isAsciiDigits(header, startPos, dash) || !isAsciiDigits(header, dash + 1, slash)) {
+            throw new InvalidRangeResponseException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri);
+        }
+        boolean unknownTotal = slash + 2 == header.length() && header.charAt(slash + 1) == '*';
+        if (!unknownTotal && !isAsciiDigits(header, slash + 1, header.length())) {
+            throw new InvalidRangeResponseException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri);
+        }
+        try {
+            long start = Long.parseLong(header, startPos, dash, 10);
+            long end = Long.parseLong(header, dash + 1, slash, 10);
+            long total;
+            if (unknownTotal) {
+                total = -1L;
+            } else {
+                total = Long.parseLong(header, slash + 1, header.length(), 10);
+                if (total <= 0) {
+                    throw new InvalidRangeResponseException("Non-positive HTTP 206 Content-Range total '" + header + "' for " + uri);
+                }
+            }
+            if (start < 0 || end < start || end == Long.MAX_VALUE) {
+                throw new InvalidRangeResponseException("Invalid HTTP 206 Content-Range bounds '" + header + "' for " + uri);
+            }
+            if (total > 0 && end >= total) {
+                throw new InvalidRangeResponseException("Out-of-bounds HTTP 206 Content-Range '" + header + "' for " + uri);
+            }
+            return new ContentRange(start, end, total);
+        } catch (NumberFormatException malformed) {
+            throw new InvalidRangeResponseException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri, malformed);
+        }
+    }
+
+    private byte[] readBoundedBody(URI uri, int status, long offset, int length,
+                                   OptionalLong contentLength, List<String> contentRangeHeaders,
+                                   InputStream stream) throws IOException {
+        if (status == 200) {
+            // Strictly enforce the independent HTTP 200 fallback cap regardless of requested length.
+            long limit = maxFallbackBytes;
+            if (contentLength.isPresent() && contentLength.getAsLong() > limit) {
+                throw new MissingTerrainException(what + " server returned oversized HTTP 200 body (" + contentLength.getAsLong() + " bytes, limit " + limit + "): " + uri);
+            }
+            if (offset > limit || offset + (long) length > limit) {
+                throw new MissingTerrainException(what + " server ignored Range request (HTTP 200) for oversized range " + offset + "+" + length + " exceeding limit " + limit + ": " + uri);
+            }
+            byte[] scratch = new byte[8192];
+            // Skip prefix up to offset without buffering it.
+            long remainingSkip = offset;
+            while (remainingSkip > 0) {
+                int want = (int) Math.min(scratch.length, remainingSkip);
+                int read = stream.read(scratch, 0, want);
+                if (read < 0) return new byte[0];
+                remainingSkip -= read;
+            }
+            // Buffer at most the requested length bytes and return immediately once filled.
+            int initialCap = Math.min(length, 65536);
+            ByteArrayOutputStream out = new ByteArrayOutputStream(initialCap);
+            int remainingTake = length;
+            while (remainingTake > 0) {
+                int want = Math.min(scratch.length, remainingTake);
+                int read = stream.read(scratch, 0, want);
+                if (read < 0) break;
+                out.write(scratch, 0, read);
+                remainingTake -= read;
+            }
+            return out.toByteArray();
+        }
+        // HTTP 206 partial content: require exactly one valid Content-Range header and enforce exact length & EOF rules.
+        if (contentRangeHeaders.size() != 1) {
+            throw new InvalidRangeResponseException(contentRangeHeaders.isEmpty()
+                    ? "HTTP 206 missing Content-Range header for " + uri
+                    : "HTTP 206 duplicate Content-Range headers (" + contentRangeHeaders.size() + ") for " + uri);
+        }
+        String contentRangeHeader = contentRangeHeaders.get(0);
+        ContentRange range = parseContentRange(contentRangeHeader, uri);
+        if (range.start() != offset) {
+            throw new InvalidRangeResponseException("HTTP 206 Content-Range start " + range.start() + " != requested offset " + offset + " for " + uri);
+        }
+        long rangeLength = range.length();
+        if (rangeLength > (long) length) {
+            throw new InvalidRangeResponseException("HTTP 206 Content-Range length " + rangeLength + " exceeds requested " + length + " for " + uri);
+        }
+        if (rangeLength < (long) length && (range.total() <= 0 || range.end() + 1 != range.total())) {
+            throw new InvalidRangeResponseException("Short HTTP 206 Content-Range '" + contentRangeHeader + "' before EOF (requested " + length + " bytes from " + offset + ") for " + uri);
+        }
+        if (contentLength.isPresent() && contentLength.getAsLong() != rangeLength) {
+            throw new InvalidRangeResponseException("HTTP 206 Content-Length " + contentLength.getAsLong() + " != Content-Range length " + rangeLength + " for " + uri);
+        }
+        long expectedLength = rangeLength;
+        byte[] scratch = new byte[8192];
+        int initialCap = (int) Math.min(Math.max(0L, expectedLength), 65536L);
+        ByteArrayOutputStream out = new ByteArrayOutputStream(initialCap);
+        long totalRead = 0;
+        while (true) {
+            int read = stream.read(scratch, 0, scratch.length);
+            if (read < 0) break;
+            totalRead += read;
+            if (totalRead > expectedLength) {
+                throw new InvalidRangeResponseException("HTTP 206 body exceeded expected length (" + expectedLength + " bytes) for " + uri);
+            }
+            out.write(scratch, 0, read);
+        }
+        if (totalRead != expectedLength) {
+            throw new InvalidRangeResponseException("Truncated HTTP 206 body (" + totalRead + " of " + expectedLength + " bytes) for " + uri);
+        }
+        return out.toByteArray();
     }
 
     /**
