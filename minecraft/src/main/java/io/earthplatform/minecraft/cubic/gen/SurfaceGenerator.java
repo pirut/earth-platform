@@ -80,7 +80,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     private final ConcurrentHashMap<Long, LevelChunkSection> bases = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Column> columns = new ConcurrentHashMap<>();
     private final Vegetation vegetation = new Vegetation(this);
-    @Nullable private TerrainSlabs terrainSlabs;
+    @Nullable private volatile TerrainSlabs terrainSlabs;
 
     /** Cave noise is drawn from {@code random} after whatever the subclass drew from it. */
     protected SurfaceGenerator(long seed, Registry<Biome> biomes, RandomSource random) {
@@ -131,10 +131,22 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     protected boolean giants(int x, int z) { return false; }
 
     /**
+     * Whether giant sequoia groves should be rasterised at a far terrain voxel of width {@code voxel}.
+     * Defaults to {@link #giants(int, int)}.
+     */
+    protected boolean farGiants(int x, int z, int voxel) { return giants(x, z); }
+
+    /**
      * How tall the real trees round a column stand, in metres, where the generator knows; -1 where it does not,
      * and trees grow to the heights vanilla gives them.
      */
     protected int canopy(int x, int z) { return -1; }
+
+    /**
+     * Canopy height in metres for a far terrain voxel of width {@code voxel}, or -1 when unknown or skipped
+     * at coarse distances. Defaults to {@link #canopy(int, int)}.
+     */
+    protected int farCanopy(int x, int z, int voxel) { return canopy(x, z); }
 
     /**
      * Which form a giant tree rooted at a column takes: {@link Giants#SEQUOIA}, {@link Giants#REDWOOD} or
@@ -247,13 +259,34 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** Ground and water of columns asked about before their cube column is made, packed as ground << 32 | water. */
     private final ConcurrentHashMap<Long, java.util.concurrent.atomic.AtomicLongArray> grounds = new ConcurrentHashMap<>();
+    /** Exact maximum ground height per chunk, used as a cheap neighbour bound for sky cubes. */
+    private final ConcurrentHashMap<Long, Integer> maxGrounds = new ConcurrentHashMap<>();
+
+    /** Exact maximum ground height in chunk (cx, cz), scanning all 256 columns without generating surface cover. */
+    final int maxGround(int cx, int cz) {
+        long key = columnKey(cx, cz);
+        Integer known = maxGrounds.get(key);
+        if (known != null) return known;
+        if (maxGrounds.size() > MemoryPressure.scaled(32768)) maxGrounds.clear();
+        return maxGrounds.computeIfAbsent(key, k -> {
+            int x0 = cx << 4, z0 = cz << 4, max = Integer.MIN_VALUE;
+            int[] sample = new int[2];
+            for (int dz = 0; dz < 16; dz++) for (int dx = 0; dx < 16; dx++) {
+                ground(x0 + dx, z0 + dz, sample);
+                max = Math.max(max, sample[0]);
+            }
+            return max;
+        });
+    }
 
     /** Drops column caches that are over the short cap. Called when memory runs short, from the watcher thread. */
     private void shedCaches() {
         if (!MemoryPressure.high()) return;
         if (columns.size() > MemoryPressure.scaled(8192)) columns.clear();
         if (grounds.size() > MemoryPressure.scaled(8192)) grounds.clear();
+        if (maxGrounds.size() > MemoryPressure.scaled(32768)) maxGrounds.clear();
         if (bases.size() > MemoryPressure.scaled(4096)) bases.clear();
+        vegetation.shedCaches();
     }
     /** Keeps {@link #shedCaches} registered for as long as this generator is alive. */
     @SuppressWarnings("unused")
@@ -408,10 +441,10 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                 max = Math.max(max, beside);
             }
         }
-        // Room for trees: drawn as they are out to 4-block voxels, sequoias out to 16.
-        boolean giants = !preview && v <= 16 && giants(x0 + width / 2, z0 + width / 2);
-        if (giants) max += Sequoia.TALLEST + 1;
-        else if (v <= 4) max += preview ? CROWN : Trees.TALLEST + 1;
+        // Room for trees: drawn as they are out to 4-block voxels, sequoias out to 16 (when farGiants allows).
+        boolean giants = !preview && v <= 16 && farGiants(x0 + width / 2, z0 + width / 2, v);
+        if (giants) max += Sequoia.TALLEST + 2;
+        else if (v <= 4) max += preview ? CROWN : Trees.TALLEST + 2;
         else if (v == 8) max += v;
         int depth = level <= Far.EDIT_LEVELS ? Math.max(v, CAVE_DEPTH) : v;
         int bottom = (min - depth) >> (level + 4), highest = max >> (level + 4);
@@ -585,6 +618,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
      */
     private BlockState canopy(Surface surface, int wx, int wz, int v) {
         if (surface.top() != GRASS && surface.top() != MUD && !surface.top().is(Blocks.PODZOL) || surface.trees() <= 0) return null;
+        int trees = Trees.effectiveTrees(surface.trees(), farCanopy(wx, wz, v));
+        if (trees <= 0) return null;
         long r = mix(wx, v, wz);
         Tree kind = surface.tree((int) Math.floorMod(r >>> 24, 10));
         // Thousandths covered, from the trees' attempts per 256 columns. Crowns standing a voxel tall (8 blocks) show
@@ -592,7 +627,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         // the trees drawn nearer. Leaves lying flat on wider voxels show neither, so they cover what a crown's 4-block
         // voxels fill nearer, about 80 columns, overlapping at random: 1 - e^-(trees per column x 80). Otherwise
         // forests turn paler and browner past the last standing crowns.
-        int attempts = surface.trees() * Trees.full(kind);
+        int attempts = trees * Trees.full(kind);
         int covered = v == 8 ? attempts * 3 / 4 : (int) (1000 * (1 - Math.exp(-attempts / 25600.0 * 80)));
         if (Math.floorMod(r, 1000) >= Math.min(950, covered)) return null;
         // Where snow falls it lies on most crowns, as it does on the trees nearer.
@@ -604,6 +639,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     @Override public LevelChunkSection generate(int cx, int cy, int cz) { return generate(cx, cy, cz, new ArrayList<>(), new ArrayList<>()); }
 
     @Override public void attach(ServerLevel level) { detached = false; vanilla = new VanillaStructures(level, new StructureHost(), seed); }
+
+    /** For tests: reads a base cube through {@link StructureHost#cube(int, int, int)}. */
+    @Nullable LevelChunkSection structureCube(int cx, int cy, int cz) { return new StructureHost().cube(cx, cy, cz); }
 
     /** For tests: this generator's structures from some registries, as {@link #attach} makes them for a level. */
     VanillaStructures attachStructures(net.minecraft.core.RegistryAccess registries, net.minecraft.world.level.levelgen.RandomState randomState) {
@@ -841,7 +879,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
         @Nullable @Override public LevelChunkSection cube(int cx, int cy, int cz) {
             Column col = column(cx, cz);
-            if (cy << 4 > Math.max(col.max + 16, col.maxWater)) return null;
+            int y0 = cy << 4;
+            if (y0 > Math.max(col.max + 16, col.maxWater) && !vegetation.hasTreesReaching(cx, cz, y0, col.max)) return null;
             long key = SectionPos.asLong(cx, cy, cz);
             LevelChunkSection cached = bases.get(key);
             if (cached != null) return cached;
@@ -868,8 +907,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         LevelChunkSection section = new LevelChunkSection(
                 new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, AIR, PalettedContainer.Strategy.SECTION_STATES),
                 caveBiome != null ? new PalettedContainer<>(biomeIds, caveBiome, PalettedContainer.Strategy.SECTION_BIOMES) : biomes(col, fallback));
-        // Empty sky cubes: nothing generated, not even trees, above the tallest possible tree.
-        if (y0 > Math.max(col.max + vegetation.tallest(cx, cz), col.maxWater)) { section.recalcBlockCounts(); return section; }
+        // Empty sky cubes: nothing generated above ground, water and any trees reaching in from this or neighbouring chunks.
+        if (y0 > Math.max(col.max + vegetation.tallest(cx, cz), col.maxWater)) {
+            if (vegetation.hasOverhangingTrees(cx, cz, y0, col.max)) vegetation.placeTrees(section, x0, y0, z0, col.height, col.water);
+            section.recalcBlockCounts();
+            return section;
+        }
         double[] caveField = y0 > col.max ? null : below.caveField(x0, y0, z0);
         int[] floor = new int[256], roof = new int[256], ceiling = new int[256];
         for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
@@ -939,8 +982,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             }
         }
         if (!underground) vegetation.decorate(section, x0, y0, z0, col.height, col.water, col.surface);
-        if (terrainSlabs != null && y0 <= col.max + 1 && y0 + 15 > col.min) {
-            terrainSlabs.decorate(section, y0, col.height, col.water, col.surface);
+        TerrainSlabs slabs = terrainSlabs;
+        if (slabs != null && y0 <= col.max + 1 && y0 + 15 > col.min) {
+            slabs.decorate(section, y0, col.height, col.water, col.surface);
         }
         if (y0 <= col.max) below.finish(section, cx, cy, cz, caves, blockEntities, entities);
         section.recalcBlockCounts();

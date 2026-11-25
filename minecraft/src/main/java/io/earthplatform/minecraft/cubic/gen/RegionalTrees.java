@@ -4,6 +4,7 @@ import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Blocks;
@@ -59,7 +60,7 @@ public final class RegionalTrees {
     private static final BlockState COCOA = Blocks.COCOA.defaultBlockState().setValue(CocoaBlock.AGE, 2);
     private static final Direction[] HORIZONTAL = {Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST};
 
-    private static final TreeShape[][] CACHE = new TreeShape[Species.values().length][];
+    private static final AtomicReferenceArray<TreeShape[]> CACHE = new AtomicReferenceArray<>(Species.values().length);
 
     private final Long2ObjectOpenHashMap<BlockState> blocks = new Long2ObjectOpenHashMap<>();
     private final Random random;
@@ -73,14 +74,14 @@ public final class RegionalTrees {
     /** A species' pre-baked variants, grown once on first use. */
     static TreeShape[] shapes(Species species) {
         int id = species.ordinal();
-        TreeShape[] made = CACHE[id];
+        TreeShape[] made = CACHE.get(id);
         if (made == null) synchronized (CACHE) {
-            made = CACHE[id];
+            made = CACHE.get(id);
             if (made == null) {
                 made = new TreeShape[VARIANTS];
                 for (int i = 0; i < VARIANTS; i++)
                     made[i] = grow(0x524547494F4EL * (id + 1) + i * 0x9E3779B97F4A7C15L, species, i);
-                CACHE[id] = made;
+                CACHE.set(id, made);
             }
         }
         return made;

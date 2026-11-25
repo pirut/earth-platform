@@ -33,10 +33,13 @@ final class Sequoia {
     /** The sequoias every grove picks from, grown once. */
     static TreeShape[] shapes() {
         TreeShape[] made = shapes;
-        if (made == null) {
-            made = new TreeShape[VARIANTS];
-            for (int i = 0; i < VARIANTS; i++) made[i] = grow(0x5E9A01AL * 31 + i * 0x9E3779B97F4A7C15L);
-            shapes = made;
+        if (made == null) synchronized (Sequoia.class) {
+            made = shapes;
+            if (made == null) {
+                made = new TreeShape[VARIANTS];
+                for (int i = 0; i < VARIANTS; i++) made[i] = grow(0x5E9A01AL * 31 + i * 0x9E3779B97F4A7C15L);
+                shapes = made;
+            }
         }
         return made;
     }
