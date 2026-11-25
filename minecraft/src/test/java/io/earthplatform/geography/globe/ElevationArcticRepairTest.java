@@ -1152,6 +1152,183 @@ class ElevationArcticRepairTest {
     }
 
     @Test
+    void glo30FillV3PreservesPerCornerMaxWeightAndLandVoidBeforeInterpolation() throws Exception {
+        // Verify per-corner max(weight, landVoid) is computed BEFORE bilinear interpolation both across a part
+        // boundary (west half: row 63 in partRow=1 with weight=1, landVoid=0 vs row 64 in partRow=2 with
+        // weight=0, landVoid=1) and inside a single part (east half: row 64 vs row 65 inside partRow=2).
+        DoubleBinaryOperator ground = (lat, lon) -> {
+            if (lon < -19.5) {
+                if (lat >= 63.502) return 80.0;
+                if (lat > 63.498) return 38.4;
+                return 0.0;
+            }
+            if (lat >= 63.494) return 80.0;
+            if (lat > 63.490) return 38.4;
+            return 0.0;
+        };
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 62; s <= 64; s++)
+            for (int w = -21; w <= -19; w++)
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 512, 128, ground));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            CopernicusFill.Tiles tiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double lon = tileLon(z, x, px);
+                        if (lon > -19.80 && lon < -19.70) {
+                            // Row 63 (63.5039) gets -30 m (>= VOID_SHALLOW = -40 -> weight=1, landVoid=0, landVoid flag set);
+                            // Row 64 (63.4961) sees sea overview-2 with -200 m (< VOID_SHALLOW -> weight=0, landVoid=1).
+                            if (lat >= 63.501 && lat <= 63.52) t[py * SIDE + px] = -30f;
+                            else if (lat >= 63.48 && lat < 63.501) t[py * SIDE + px] = -200f;
+                            else t[py * SIDE + px] = (float) ground.applyAsDouble(lat, lon);
+                        } else if (lon > -19.30 && lon < -19.20) {
+                            // Row 64 (63.4961) gets -30 m (weight=1, landVoid=0);
+                            // Row 65 (63.4883) sees sea overview-2 with -200 m (weight=0, landVoid=1).
+                            if (lat >= 63.493 && lat <= 63.51) t[py * SIDE + px] = -30f;
+                            else if (lat >= 63.475 && lat < 63.493) t[py * SIDE + px] = -200f;
+                            else t[py * SIDE + px] = (float) ground.applyAsDouble(lat, lon);
+                        } else {
+                            t[py * SIDE + px] = (float) ground.applyAsDouble(lat, lon);
+                        }
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3 = new CopernicusFill(dem, tiles, (lat, lon) -> false, true, 32);
+            int zoom = 15;
+
+            // 1. Cross-part boundary midpoint (row 63 in partRow=1 with landVoid==null, weight=1 vs row 64 in partRow=2
+            //    with weight=0, landVoid=1): midpoint weight == 0.5, yet per-corner max(weight, landVoid) == 1.0!
+            assertEquals(1.0, v3.weight(63.50390625, -19.75), 1e-6, "land overview-2 corner (row 63) must have weight == 1");
+            assertEquals(0.0, v3.weight(63.49609375, -19.75), 1e-6, "sea overview-2 corner (row 64) must have weight == 0");
+            int wx = mercatorTileX(zoom, -19.75), wy = mercatorTileY(zoom, 63.500);
+            int wPy = -1, wPx = 128;
+            double bestDist = Double.MAX_VALUE;
+            for (int py = 0; py < SIDE; py++) {
+                double d = Math.abs(tileLat(zoom, wy, py) - 63.500);
+                if (d < bestDist) { bestDist = d; wPy = py; }
+            }
+            double wLat = tileLat(zoom, wy, wPy), wLon = tileLon(zoom, wx, wPx);
+            double wMid = v3.weight(wLat, wLon);
+            assertTrue(wMid > 0.45 && wMid < 0.55, "expected midpoint weight near 0.5, got " + wMid);
+            assertEquals(38.4, dem.metres(wLat, wLon, 0), 0.1, "fine overview-0 at midpoint must be +38.4 m");
+            float[] westTile = tiles.tile(zoom, wx, wy).clone();
+            westTile[wPy * SIDE + wPx] = -200f;
+            v3.apply(westTile, zoom, wx, wy);
+            assertEquals(38.4f, westTile[wPy * SIDE + wPx], 0.1f,
+                    "midpoint between weight=1/landVoid=0 and weight=0/landVoid=1 across part boundary must repair to +38.4 m");
+
+            // Also verify insidePart fast path where here.landVoid == null and weight == 1 (between rows 62 & 63):
+            int iyLand = mercatorTileY(zoom, 63.5078125);
+            int lPy = 128;
+            double lLat = tileLat(zoom, iyLand, lPy), lLon = tileLon(zoom, wx, wPx);
+            assertEquals(1.0, v3.weight(lLat, lLon), 1e-6, "interior partRow=1 land corner must have weight == 1");
+            assertEquals(80.0, dem.metres(lLat, lLon, 0), 0.1, "interior land must be +80.0 m");
+            float[] landTile = tiles.tile(zoom, wx, iyLand).clone();
+            landTile[lPy * SIDE + wPx] = -200f;
+            v3.apply(landTile, zoom, wx, iyLand);
+            assertEquals(80.0f, landTile[lPy * SIDE + wPx], 0.1f,
+                    "insidePart with null landVoid and weight == 1 must still carry out[3] = out[0] = 1 and repair to +80 m");
+
+            // 2. Intra-part midpoint (row 64 weight=1/landVoid=0 vs row 65 weight=0/landVoid=1, both in partRow=2):
+            assertEquals(1.0, v3.weight(63.49609375, -19.25), 1e-6, "land overview-2 corner (row 64) must have weight == 1");
+            assertEquals(0.0, v3.weight(63.48828125, -19.25), 1e-6, "sea overview-2 corner (row 65) must have weight == 0");
+            int ex = mercatorTileX(zoom, -19.25), ey = mercatorTileY(zoom, 63.4921875);
+            int ePy = -1, ePx = 128;
+            bestDist = Double.MAX_VALUE;
+            for (int py = 0; py < SIDE; py++) {
+                double d = Math.abs(tileLat(zoom, ey, py) - 63.4921875);
+                if (d < bestDist) { bestDist = d; ePy = py; }
+            }
+            double eLat = tileLat(zoom, ey, ePy), eLon = tileLon(zoom, ex, ePx);
+            double eMid = v3.weight(eLat, eLon);
+            assertTrue(eMid > 0.45 && eMid < 0.55, "expected intra-part midpoint weight near 0.5, got " + eMid);
+            assertEquals(38.4, dem.metres(eLat, eLon, 0), 0.1, "fine overview-0 at intra-part midpoint must be +38.4 m");
+            float[] eastTile = tiles.tile(zoom, ex, ey).clone();
+            eastTile[ePy * SIDE + ePx] = -200f;
+            v3.apply(eastTile, zoom, ex, ey);
+            assertEquals(38.4f, eastTile[ePy * SIDE + ePx], 0.1f,
+                    "midpoint between weight=1/landVoid=0 and weight=0/landVoid=1 inside same part must repair to +38.4 m");
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3GatesLandVoidWeightAwayFromNegativeCopernicusDepressions() throws Exception {
+        // Inside a nearLandVoid halo (weight == 0, voidWeight == 0, landVoidWeight == 1), positive fine Copernicus land
+        // (+38.4 m) repairs via landVoidWeight, whereas a negative Copernicus elevation < -SEA_CRUMB (-20 m below-sea-level
+        // depression) must NOT apply landVoidWeight and must leave t unrepaired.
+        DoubleBinaryOperator ground = (lat, lon) -> {
+            if (lat >= 63.51) return 80.0;
+            if (lat > 63.498 && lat < 63.502) return lon < -19.25 ? 38.4 : -20.0;
+            return 0.0;
+        };
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 62; s <= 64; s++)
+            for (int w = -21; w <= -19; w++)
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 512, 128, ground));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            CopernicusFill.Tiles tiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double lon = tileLon(z, x, px);
+                        if (lat >= 63.49 && lat <= 63.525 && lon > -19.35 && lon < -19.15) t[py * SIDE + px] = -200f;
+                        else t[py * SIDE + px] = (float) ground.applyAsDouble(lat, lon);
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3 = new CopernicusFill(dem, tiles, (lat, lon) -> false, true, 32);
+            int zoom = 15;
+
+            // Positive control in the same nearLandVoid halo: confirms weight == 0, datum == 0, and landVoidWeight == 1.
+            int posX = mercatorTileX(zoom, -19.30), ty = mercatorTileY(zoom, 63.500);
+            int py = -1, px = 128;
+            for (int r = 0; r < SIDE; r++) {
+                double lat = tileLat(zoom, ty, r);
+                if (lat > 63.4992 && lat < 63.5008) { py = r; break; }
+            }
+            assertTrue(py >= 0, "expected fine pixel inside test strip");
+            double lat = tileLat(zoom, ty, py), posLon = tileLon(zoom, posX, px);
+            assertEquals(0.0, v3.weight(lat, posLon), 1e-6, "control cell must have weight == 0");
+            assertEquals(0.0, v3.datum(lat, posLon), 1e-6, "control cell must have datum == 0");
+            assertEquals(0.0, dem.metres(lat, posLon, 2), 1e-3, "control overview-2 must see sea");
+            assertEquals(38.4, dem.metres(lat, posLon, 0), 0.1, "control fine overview-0 must see +38.4 m land");
+            float[] posTile = tiles.tile(zoom, posX, ty).clone();
+            posTile[py * SIDE + px] = -200f;
+            v3.apply(posTile, zoom, posX, ty);
+            assertEquals(38.4f, posTile[py * SIDE + px], 0.1f,
+                    "control +38.4 m pixel confirms landVoidWeight == 1 is active in this halo");
+
+            // Negative below-sea-level Copernicus depression (-20 m < -SEA_CRUMB) in the same nearLandVoid halo:
+            int negX = mercatorTileX(zoom, -19.20);
+            double negLon = tileLon(zoom, negX, px);
+            assertEquals(0.0, v3.weight(lat, negLon), 1e-6, "depression cell must have weight == 0");
+            assertEquals(0.0, v3.datum(lat, negLon), 1e-6, "depression cell must have datum == 0");
+            assertEquals(0.0, dem.metres(lat, negLon, 2), 1e-3, "depression overview-2 must see sea");
+            assertEquals(-20.0, dem.metres(lat, negLon, 0), 0.1, "depression fine overview-0 must see -20 m");
+            float[] negTile = tiles.tile(zoom, negX, ty).clone();
+            negTile[py * SIDE + px] = -200f;
+            v3.apply(negTile, zoom, negX, ty);
+            assertEquals(-200f, negTile[py * SIDE + px], 1e-4f,
+                    "negative Copernicus elevation < -SEA_CRUMB inside nearLandVoid halo must NOT apply landVoidWeight");
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
     void glo30FillV3OfflineInteriorPartDoesNotQueryUncachedSwNeighbourSquare() throws Exception {
         // Only cache square (63, -20) on disk; SW neighbours (62, -21), (62, -20), (63, -21) are NOT cached.
         DoubleBinaryOperator ground = (lat, lon) -> 120.0 + 15.0 * Math.sin(lat * 4.0);

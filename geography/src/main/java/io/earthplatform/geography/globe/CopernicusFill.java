@@ -292,8 +292,11 @@ public final class CopernicusFill implements ElevationLayer {
                     boolean sea = Double.isNaN(c) || Math.abs(c) < SEA_CRUMB;
                     if (sea) c = 0;
                     // Over confirmed sea (or missing open-ocean square), only confirmed -32768 void ramps blend to 0;
-                    // over fine Copernicus land, carry land weight, confirmed void-ramp evidence, and coastal land-void ramps.
-                    double w = sea ? voidWeight : Math.max(Math.max(weight, voidWeight), landVoidWeight);
+                    // over positive fine Copernicus land (c > SEA_CRUMB), use landVoidWeight (which already carries
+                    // per-corner max(weight, landVoid)); over negative fine Copernicus depressions (c <= -SEA_CRUMB),
+                    // never apply landVoidWeight.
+                    double w = sea ? voidWeight
+                            : (c > SEA_CRUMB ? Math.max(voidWeight, landVoidWeight) : Math.max(weight, voidWeight));
                     if (w <= 0) continue;
                     float v = (float) (t + w * (c - t));
                     if (v == 0f && !(c == 0 && w >= 1)) v = Math.ulp(0f);
@@ -430,7 +433,8 @@ public final class CopernicusFill implements ElevationLayer {
 
     /**
      * Samples bilinear weight ({@code out[0]}), smooth signed regional datum offset ({@code out[1]}),
-     * offshore coastal void-ramp weight ({@code out[2]}), and coastal land-void ramp weight ({@code out[3]}) at a point.
+     * offshore coastal void-ramp weight ({@code out[2]}), and bilinear per-corner max of weight and coastal land-void
+     * ramp weight ({@code out[3]}) at a point.
      */
     private void sample(double latitude, double longitude, Memo memo, double[] out) {
         longitude = CopernicusSource.wrap(longitude);
@@ -495,10 +499,12 @@ public final class CopernicusFill implements ElevationLayer {
             out[2] = ((v00 * (1 - tx) + v01 * tx) * (1 - ty) + (v10 * (1 - tx) + v11 * tx) * ty) / 255;
         }
         if (here.landVoid == null && insidePart) {
-            out[3] = 0;
+            out[3] = out[0];
         } else {
-            double l00 = atByte(here, south, west, y0, x0, CH_LAND_VOID), l01 = atByte(here, south, west, y0, x0 + 1, CH_LAND_VOID);
-            double l10 = atByte(here, south, west, y0 + 1, x0, CH_LAND_VOID), l11 = atByte(here, south, west, y0 + 1, x0 + 1, CH_LAND_VOID);
+            double l00 = Math.max(w00, atByte(here, south, west, y0, x0, CH_LAND_VOID));
+            double l01 = Math.max(w01, atByte(here, south, west, y0, x0 + 1, CH_LAND_VOID));
+            double l10 = Math.max(w10, atByte(here, south, west, y0 + 1, x0, CH_LAND_VOID));
+            double l11 = Math.max(w11, atByte(here, south, west, y0 + 1, x0 + 1, CH_LAND_VOID));
             out[3] = ((l00 * (1 - tx) + l01 * tx) * (1 - ty) + (l10 * (1 - tx) + l11 * tx) * ty) / 255;
         }
     }
