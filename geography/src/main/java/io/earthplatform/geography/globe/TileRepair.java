@@ -23,26 +23,34 @@ final class TileRepair {
     /** Repairs {@code values}, tile (x, y) at {@code shift} zooms finer than {@code reference}, the tile holding it. */
     static void repair(float[] values, float[] reference, int shift, int x, int y) {
         // This tile covers a (256 >> shift)-pixel square of the reference tile starting at (ox, oy).
-        double scale = 1.0 / (1 << shift);
         int span = TILE_SIZE >> shift, ox = (x & ((1 << shift) - 1)) * span, oy = (y & ((1 << shift) - 1)) * span;
+        repairPatch(values, reference, TILE_SIZE, TILE_SIZE, ox, oy, shift);
+    }
+
+    /**
+     * Repairs {@code values} at {@code shift} zooms finer than a reference patch of size {@code refWidth} x {@code refHeight},
+     * where this tile covers a {@code (256 >> shift)}-pixel square starting at {@code (ox, oy)}.
+     */
+    static void repairPatch(float[] values, float[] reference, int refWidth, int refHeight, int ox, int oy, int shift) {
+        double scale = 1.0 / (1 << shift);
         float[] expected = new float[TILE_SIZE * TILE_SIZE];
         boolean[] broken = new boolean[TILE_SIZE * TILE_SIZE];
         boolean any = false;
         for (int py = 0; py < TILE_SIZE; py++) {
-            double ry = Math.max(0, Math.min(TILE_SIZE - 1.001, oy + (py + 0.5) * scale - 0.5));
+            double ry = Math.max(0, Math.min(refHeight - 1.001, oy + (py + 0.5) * scale - 0.5));
             int y0 = (int) ry;
             double fy = ry - y0;
             for (int px = 0; px < TILE_SIZE; px++) {
-                double rx = Math.max(0, Math.min(TILE_SIZE - 1.001, ox + (px + 0.5) * scale - 0.5));
-                int x0 = (int) rx, at = y0 * TILE_SIZE + x0;
+                double rx = Math.max(0, Math.min(refWidth - 1.001, ox + (px + 0.5) * scale - 0.5));
+                int x0 = (int) rx, at = y0 * refWidth + x0;
                 double fx = rx - x0;
                 int i = py * TILE_SIZE + px;
                 expected[i] = (float) ((reference[at] * (1 - fx) + reference[at + 1] * fx) * (1 - fy)
-                    + (reference[at + TILE_SIZE] * (1 - fx) + reference[at + TILE_SIZE + 1] * fx) * fy);
+                    + (reference[at + refWidth] * (1 - fx) + reference[at + refWidth + 1] * fx) * fy);
                 float low = Float.MAX_VALUE, high = -Float.MAX_VALUE;
-                for (int j = Math.max(0, y0 - 1); j <= Math.min(TILE_SIZE - 1, y0 + 2); j++)
-                    for (int k = Math.max(0, x0 - 1); k <= Math.min(TILE_SIZE - 1, x0 + 2); k++) {
-                        float r = reference[j * TILE_SIZE + k];
+                for (int j = Math.max(0, y0 - 1); j <= Math.min(refHeight - 1, y0 + 2); j++)
+                    for (int k = Math.max(0, x0 - 1); k <= Math.min(refWidth - 1, x0 + 2); k++) {
+                        float r = reference[j * refWidth + k];
                         low = Math.min(low, r); high = Math.max(high, r);
                     }
                 broken[i] = values[i] != 0f && (values[i] < IMPOSSIBLE_DEPTH && expected[i] >= IMPOSSIBLE_DEPTH

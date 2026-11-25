@@ -35,23 +35,40 @@ final class TileDespike {
     private static final float STEP_TRIGGER = 25f;
     /** Widest ground footprint, in metres, of an isolated photogrammetric spike or pit. */
     private static final double SPIRE_SPAN_METRES = 45.0;
+    /** Stricter v2 spire limits: protect natural rock spires/buttresses and tile-border ridges. */
+    static final float V2_SPIRE_METRES = 110f;
+    private static final float V2_SPIRE_PROMINENCE = 90f;
+    private static final double V2_SPIRE_SPAN_METRES = 36.0;
+    private static final double V2_JUMP_SLOPE = 5.0;
+    private static final double V2_PROMINENCE_SLOPE = 4.0;
+    /** Pixels from a Mercator tile border within which v2 {@link #despikeSpires} never removes a flood-filled component. */
+    static final int V2_EDGE_MARGIN = 2;
     private static final float[] CUT_FRACTIONS = {0.65f, 0.45f, 0.25f};
 
     /** Despikes a tile using {@link #DEFAULT_PIXEL_METRES} as its pixel ground width. */
     static void despike(float[] values) {
-        despike(values, DEFAULT_PIXEL_METRES);
+        despike(values, DEFAULT_PIXEL_METRES, false);
+    }
+
+    /** Despikes tile {@code (zoom, tileY)} using its Mercator pixel ground width (terrarium-v1 rules). */
+    static void despike(float[] values, int zoom, int tileY) {
+        despike(values, zoom, tileY, false);
     }
 
     /** Despikes tile {@code (zoom, tileY)} using its Mercator pixel ground width. */
-    static void despike(float[] values, int zoom, int tileY) {
+    static void despike(float[] values, int zoom, int tileY, boolean v2) {
         double n = Math.PI * (1 - 2.0 * (tileY * TILE_SIZE + TILE_SIZE * 0.5) / (TILE_SIZE << zoom));
         double pixelMetres = 40_075_016.7 / Math.cosh(n) / (TILE_SIZE << zoom);
-        despike(values, pixelMetres);
+        despike(values, pixelMetres, v2);
     }
 
     static void despike(float[] values, double pixelMetres) {
+        despike(values, pixelMetres, false);
+    }
+
+    static void despike(float[] values, double pixelMetres, boolean v2) {
         despikeBuildings(values);
-        despikeSpires(values, pixelMetres);
+        despikeSpires(values, pixelMetres, v2);
     }
 
     /**
@@ -120,9 +137,10 @@ final class TileDespike {
      * pit) — steeper than real peaks and narrower than cliffs, ridges, eskers and sea stacks — is
      * replaced by an inverse-distance-weighted blend of its perimeter.
      */
-    private static void despikeSpires(float[] values, double pixelMetres) {
+    private static void despikeSpires(float[] values, double pixelMetres, boolean v2) {
         double safePixel = Math.max(0.5, pixelMetres);
-        int maxSpan = Math.max(3, Math.min(24, (int) Math.ceil(SPIRE_SPAN_METRES / safePixel)));
+        double spanMetres = v2 ? V2_SPIRE_SPAN_METRES : SPIRE_SPAN_METRES;
+        int maxSpan = Math.max(3, Math.min(24, (int) Math.ceil(spanMetres / safePixel)));
         int maxArea = maxSpan * maxSpan;
         int[] mark = null, queue = null, comp = null, perim = null;
         float[] perimVals = null, leakHigh = null, leakLow = null;
@@ -165,7 +183,7 @@ final class TileDespike {
                         }
                         int hi = diff > 0 ? a : b, lo = diff > 0 ? b : a;
                         // Try removing an upward spire seeded at hi, then a downward pit seeded at lo.
-                        int res = cleanOutlier(values, hi, lo, 1, safePixel, maxSpan, maxArea,
+                        int res = cleanOutlier(values, hi, lo, 1, safePixel, maxSpan, maxArea, v2,
                                 mark, stamp, queue, comp, perim, perimVals, leakHigh);
                         if (res < 0) {
                             stamp = -res;
@@ -174,7 +192,7 @@ final class TileDespike {
                             continue;
                         }
                         stamp = res;
-                        res = cleanOutlier(values, lo, hi, -1, safePixel, maxSpan, maxArea,
+                        res = cleanOutlier(values, lo, hi, -1, safePixel, maxSpan, maxArea, v2,
                                 mark, stamp, queue, comp, perim, perimVals, leakLow);
                         if (res < 0) {
                             stamp = -res;
@@ -196,7 +214,7 @@ final class TileDespike {
      * was modified.
      */
     private static int cleanOutlier(float[] values, int seed, int other, int sign, double pixelMetres,
-                                    int maxSpan, int maxArea, int[] mark, int stamp, int[] queue,
+                                    int maxSpan, int maxArea, boolean v2, int[] mark, int stamp, int[] queue,
                                     int[] comp, int[] perim, float[] perimVals, float[] leakCut) {
         float vSeed = values[seed], vOther = values[other];
         float step = sign * (vSeed - vOther);
@@ -252,8 +270,15 @@ final class TileDespike {
                 continue;
             }
             if (touchesSea) return stamp;
-            boolean touchesEdge = minX == 0 || maxX == TILE_SIZE - 1 || minY == 0 || maxY == TILE_SIZE - 1;
-            if (perimCount < (touchesEdge ? 6 : 4)) continue;
+            if (v2) {
+                // Never slice ridges or buttresses that touch or lie within V2_EDGE_MARGIN of a Mercator tile border.
+                if (minX < V2_EDGE_MARGIN || maxX >= TILE_SIZE - V2_EDGE_MARGIN
+                        || minY < V2_EDGE_MARGIN || maxY >= TILE_SIZE - V2_EDGE_MARGIN) return stamp;
+                if (perimCount < 4) continue;
+            } else {
+                boolean touchesEdge = minX == 0 || maxX == TILE_SIZE - 1 || minY == 0 || maxY == TILE_SIZE - 1;
+                if (perimCount < (touchesEdge ? 6 : 4)) continue;
+            }
             float extreme = vSeed;
             for (int k = 0; k < compCount; k++) {
                 float v = values[comp[k]];
@@ -265,8 +290,12 @@ final class TileDespike {
             double radiusMetres = Math.max(pixelMetres, 0.5 * Math.hypot(maxX - minX + 1, maxY - minY + 1) * pixelMetres);
             float jump = sign * (extreme - perimMedian);
             float prominence = sign * (extreme - perimEdge);
-            if (jump <= Math.max(SPIRE_METRES, 3.0 * radiusMetres)
-                    || prominence <= Math.max(SPIRE_PROMINENCE, 2.5 * radiusMetres)) continue;
+            float minJump = v2 ? V2_SPIRE_METRES : SPIRE_METRES;
+            float minProm = v2 ? V2_SPIRE_PROMINENCE : SPIRE_PROMINENCE;
+            double jumpSlope = v2 ? V2_JUMP_SLOPE : 3.0;
+            double promSlope = v2 ? V2_PROMINENCE_SLOPE : 2.5;
+            if (jump <= Math.max(minJump, jumpSlope * radiusMetres)
+                    || prominence <= Math.max(minProm, promSlope * radiusMetres)) continue;
             float[] replacement = new float[compCount];
             for (int k = 0; k < compCount; k++) {
                 int p = comp[k], px = p % TILE_SIZE, py = p / TILE_SIZE;
