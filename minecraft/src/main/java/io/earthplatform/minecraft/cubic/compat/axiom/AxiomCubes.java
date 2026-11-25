@@ -117,7 +117,7 @@ public final class AxiomCubes {
             OWNERS.put(cube.section, owner);
         }
         if (owner == null) return section.setBlockState(x, y, z, state, lock);
-        BlockState old = owner.cube.section.setBlockState(x, y, z, state, lock);
+        BlockState old = owner.cube.set(x, y, z, state, lock);
         if (old != state) {
             synchronized (WRITTEN) { WRITTEN.computeIfAbsent(owner.cubes, w -> new LinkedHashSet<>()).add(owner.cube); }
         }

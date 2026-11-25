@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
@@ -28,7 +29,8 @@ import net.minecraft.world.level.material.FluidState;
 /**
  * True-height block authority for one cubic Level, shared by the server and client sides.
  * The Level mixins route block reads, writes, block entities, light and height queries here,
- * so vanilla gameplay code runs unchanged at any Y. Only the owning thread may call it.
+ * so vanilla gameplay code runs unchanged at any Y. Only the owning thread may call it, except for
+ * the block, biome and light reads a world made with shared reads answers from any thread.
  */
 public abstract class CubeWorld {
     public static final BlockState UNLOADED = Blocks.VOID_AIR.defaultBlockState();
@@ -42,8 +44,24 @@ public abstract class CubeWorld {
     protected final Long2ObjectOpenHashMap<int[]> tops = new Long2ObjectOpenHashMap<>();
     private final Map<BlockPos, CubeTicker> tickers = new HashMap<>();
     private Cube last;
+    /**
+     * With shared reads, the loaded cubes and sky tops again, for block, biome and light reads from other
+     * threads (Flywheel builds and relights the client's machines on its worker threads). The owner keeps
+     * them in step with {@link #cubes} and {@link #tops}. A cube's blocks are read through {@link Cube#getShared},
+     * which its writes can't tear; a column's tops are the same int arrays, each value read whole. Null where only
+     * the owner reads.
+     */
+    @Nullable private final ConcurrentHashMap<Long, Cube> sharedCubes;
+    @Nullable private final ConcurrentHashMap<Long, int[]> sharedTops;
 
-    protected CubeWorld(Level level) { this.level = level; this.owner = Thread.currentThread(); }
+    protected CubeWorld(Level level) { this(level, false); }
+
+    protected CubeWorld(Level level, boolean sharedReads) {
+        this.level = level;
+        this.owner = Thread.currentThread();
+        this.sharedCubes = sharedReads ? new ConcurrentHashMap<>() : null;
+        this.sharedTops = sharedReads ? new ConcurrentHashMap<>() : null;
+    }
 
     public Level level() { return level; }
     public int loadedCubes() { return cubes.size(); }
@@ -58,6 +76,12 @@ public abstract class CubeWorld {
         return found;
     }
     public boolean isOwnerThread() { return Thread.currentThread() == owner; }
+
+    /** The cube at a block for a read, from any thread: the owner's own lookup, else the shared one (none without shared reads). */
+    @Nullable protected Cube cubeForRead(int x, int y, int z) {
+        if (Thread.currentThread() == owner) return cubeAtBlock(x, y, z);
+        return sharedCubes == null ? null : sharedCubes.get(CubeKey.ofBlock(x, y, z));
+    }
     public Iterable<Cube> cubes() { return cubes.values(); }
 
     public static boolean inRange(int y) { return y >= MIN_Y && y <= MAX_Y; }
@@ -69,14 +93,19 @@ public abstract class CubeWorld {
     @Nullable public io.earthplatform.geography.globe.GlobeProjection earthProjection() { return null; }
 
     public BlockState getBlockState(BlockPos pos) {
-        Cube cube = cubeAtBlock(pos.getX(), pos.getY(), pos.getZ());
-        return cube == null ? UNLOADED : cube.get(pos.getX(), pos.getY(), pos.getZ());
+        int x = pos.getX(), y = pos.getY(), z = pos.getZ();
+        if (Thread.currentThread() == owner) {
+            Cube cube = cubeAtBlock(x, y, z);
+            return cube == null ? UNLOADED : cube.get(x, y, z);
+        }
+        Cube cube = cubeForRead(x, y, z);
+        return cube == null ? UNLOADED : cube.getShared(x, y, z);
     }
     public FluidState getFluidState(BlockPos pos) { return getBlockState(pos).getFluidState(); }
-    public boolean isLoaded(BlockPos pos) { return cubeAtBlock(pos.getX(), pos.getY(), pos.getZ()) != null; }
+    public boolean isLoaded(BlockPos pos) { return cubeForRead(pos.getX(), pos.getY(), pos.getZ()) != null; }
 
     @Nullable public Holder<Biome> getNoiseBiome(int quartX, int quartY, int quartZ) {
-        Cube cube = cubeAtBlock(quartX << 2, quartY << 2, quartZ << 2);
+        Cube cube = cubeForRead(quartX << 2, quartY << 2, quartZ << 2);
         return cube == null ? null : cube.section.getNoiseBiome(quartX & 3, quartY & 3, quartZ & 3);
     }
 
@@ -110,14 +139,26 @@ public abstract class CubeWorld {
                 if (top == UNKNOWN_TOP) { known = false; top = MIN_Y - 1; }
                 column[i] = top;
             }
-            if (known) tops.put(key, column);
+            if (known) putTops(key, column);
         }
         return column;
     }
 
+    /** Stores a column's tops, for other threads' reads too; returns the ones it replaced. */
+    @Nullable protected int[] putTops(long column, int[] values) {
+        if (sharedTops != null) sharedTops.put(column, values);
+        return tops.put(column, values);
+    }
+
+    protected void clearTops() {
+        tops.clear();
+        if (sharedTops != null) sharedTops.clear();
+    }
+
     /** Highest Y in this column that blocks skylight. */
     public int skyTop(int x, int z) {
-        int[] column = tops.get(CubeKey.column(x >> 4, z >> 4));
+        long key = CubeKey.column(x >> 4, z >> 4);
+        int[] column = Thread.currentThread() == owner ? tops.get(key) : sharedTops == null ? null : sharedTops.get(key);
         return column == null ? baseline(x, z) : column[(z & 15) << 4 | (x & 15)];
     }
 
@@ -201,7 +242,7 @@ public abstract class CubeWorld {
         Cube cube = cubeAtBlock(pos.getX(), pos.getY(), pos.getZ());
         if (cube == null) return null;
         int lx = pos.getX() & 15, ly = pos.getY() & 15, lz = pos.getZ() & 15;
-        BlockState old = cube.section.setBlockState(lx, ly, lz, state);
+        BlockState old = cube.set(lx, ly, lz, state, true);
         if (old == state) return null;
         Block block = state.getBlock();
         cube.markModified();
@@ -309,8 +350,12 @@ public abstract class CubeWorld {
         BlockEntity previous = cube.blockEntities.put(pos.immutable(), entity);
         if (previous != null && previous != entity) { previous.setRemoved(); Platform.INSTANCE.removedBlockEntity(previous); }
         cube.markModified();
+        blockEntityStored(entity);
         return true;
     }
+
+    /** A block entity was stored in a cube, as LevelChunk.setBlockEntity stores one; also when it replaced another. */
+    protected void blockEntityStored(BlockEntity entity) {}
 
     public void removeBlockEntity(BlockPos pos) {
         Cube cube = cubeAtBlock(pos.getX(), pos.getY(), pos.getZ());
@@ -354,6 +399,7 @@ public abstract class CubeWorld {
     /** Drop a cube from memory; its block entities stop ticking. */
     protected void forget(Cube cube) {
         cubes.remove(cube.key);
+        if (sharedCubes != null) sharedCubes.remove(cube.key, cube);
         last = null;
         for (BlockEntity entity : new ArrayList<>(cube.blockEntities.values())) {
             CubeTicker ticker = tickers.remove(entity.getBlockPos());
@@ -368,6 +414,7 @@ public abstract class CubeWorld {
         Cube previous = cubes.get(cube.key);
         if (previous != null && previous != cube) forget(previous);
         cubes.put(cube.key, cube);
+        if (sharedCubes != null) sharedCubes.put(cube.key, cube);
         last = null;
         List<BlockEntity> fresh = new ArrayList<>(cube.blockEntities.values());
         for (BlockEntity entity : fresh) { entity.setLevel(level); entity.clearRemoved(); updateTicker(entity); }

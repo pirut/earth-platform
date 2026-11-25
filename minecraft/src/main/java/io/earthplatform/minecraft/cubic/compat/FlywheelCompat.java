@@ -2,13 +2,17 @@ package io.earthplatform.minecraft.cubic.compat;
 
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cube;
+import io.earthplatform.minecraft.cubic.CubeKey;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.lang.ref.WeakReference;
 import java.util.function.Consumer;
 import javax.annotation.Nullable;
+import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
 /**
@@ -24,15 +28,18 @@ import net.minecraft.world.level.block.entity.BlockEntity;
  * expects the chunk sections to bring them back. Meanwhile Create's own renderer stays blank whenever
  * Flywheel is on, leaving those machines invisible.
  *
- * <p>So each cube's block entities are queued when the cube arrives, and all of them again whenever
- * Flywheel's manager for the level is a new one. Queuing one Flywheel already draws does nothing. Every
- * call goes through method handles, so nothing here loads a Flywheel class, and a Flywheel that no longer
- * matches turns this off with one log line.
+ * <p>So each block entity a cube stores is queued, as a chunk's is, and all of them again whenever
+ * Flywheel's manager for the level is a new one. A cube whose light changed is passed on as vanilla's light
+ * updates are, so the machines in it relight. Queuing one Flywheel already draws does nothing. Every call goes
+ * through method handles, so nothing here loads a Flywheel class, and a Flywheel that no longer matches turns
+ * this off with one log line. Render thread only.
  */
 public final class FlywheelCompat {
     private static final String MANAGER = "dev.engine_room.flywheel.api.visualization.VisualizationManager";
     private static final String VISUAL_MANAGER = "dev.engine_room.flywheel.api.visualization.VisualManager";
     private static final String HELPER = "dev.engine_room.flywheel.lib.visualization.VisualizationHelper";
+    /** Its light updates are not in Flywheel's API; vanilla's light updates reach it through a mixin. */
+    private static final String MANAGER_IMPL = "dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl";
 
     @Nullable private static final Handles HANDLES = Handles.find();
     private static final Sync SYNC = new Sync();
@@ -40,7 +47,8 @@ public final class FlywheelCompat {
 
     private FlywheelCompat() {}
 
-    private record Handles(MethodHandle get, MethodHandle blockEntities, MethodHandle queueAdd, MethodHandle skipVanillaRender) {
+    private record Handles(MethodHandle get, MethodHandle blockEntities, MethodHandle queueAdd, MethodHandle skipVanillaRender,
+            @Nullable MethodHandle onLightUpdate) {
         @Nullable static Handles find() {
             try {
                 ClassLoader loader = FlywheelCompat.class.getClassLoader();
@@ -52,11 +60,22 @@ public final class FlywheelCompat {
                         lookup.findStatic(manager, "get", MethodType.methodType(manager, LevelAccessor.class)),
                         lookup.findVirtual(manager, "blockEntities", MethodType.methodType(visuals)),
                         lookup.findVirtual(visuals, "queueAdd", MethodType.methodType(void.class, Object.class)),
-                        lookup.findStatic(helper, "skipVanillaRender", MethodType.methodType(boolean.class, BlockEntity.class)));
+                        lookup.findStatic(helper, "skipVanillaRender", MethodType.methodType(boolean.class, BlockEntity.class)),
+                        lightUpdates(lookup, loader));
             } catch (ClassNotFoundException | LinkageError absent) {
                 return null;
             } catch (ReflectiveOperationException changed) {
                 EarthPlatformMod.LOGGER.warn("Flywheel is installed but its API changed; machines it draws may not show in Earth", changed);
+                return null;
+            }
+        }
+
+        @Nullable private static MethodHandle lightUpdates(MethodHandles.Lookup lookup, ClassLoader loader) {
+            try {
+                Class<?> impl = Class.forName(MANAGER_IMPL, false, loader);
+                return lookup.findVirtual(impl, "onLightUpdate", MethodType.methodType(void.class, SectionPos.class, LightLayer.class));
+            } catch (ReflectiveOperationException | LinkageError changed) {
+                EarthPlatformMod.LOGGER.warn("Flywheel's light updates changed; machines in Earth may not relight when a light is placed", changed);
                 return null;
             }
         }
@@ -88,19 +107,37 @@ public final class FlywheelCompat {
     private static void fail(Throwable failure) {
         if (failed) return;
         failed = true;
+        SYNC.clear();
         EarthPlatformMod.LOGGER.warn("Flywheel compatibility turned off after an error; machines it draws may not show in Earth", failure);
     }
 
-    /** A cube's block entities have arrived on the client. */
-    public static void cubeArrived(Level level, Iterable<BlockEntity> entities) {
+    /** A cube stored a block entity on the client: new, arrived with its cube, or replacing another in the same block. */
+    public static void blockEntityStored(Level level, BlockEntity entity) {
         Object manager = manager(level);
-        if (manager != null) SYNC.arrived(manager, entities, adder(manager));
+        if (manager != null) SYNC.stored(manager, entity, adder(manager));
     }
 
     /** Once a frame: queues every block entity again when Flywheel's manager for the level is a new one. */
     public static void sync(Level level, Iterable<Cube> cubes) {
         Object manager = manager(level);
         SYNC.frame(manager, () -> blockEntities(cubes), manager == null ? null : adder(manager));
+    }
+
+    /** A cube's light changed: the machines Flywheel draws in it relight, as for a vanilla section's light update. */
+    public static void lightChanged(Level level, long cubeKey) {
+        if (HANDLES == null || HANDLES.onLightUpdate == null || failed) return;
+        Object manager = manager(level);
+        if (manager == null || manager != SYNC.current()) return;
+        try {
+            HANDLES.onLightUpdate.invoke(manager, SectionPos.of(CubeKey.x(cubeKey), CubeKey.y(cubeKey), CubeKey.z(cubeKey)), LightLayer.BLOCK);
+        } catch (Throwable failure) {
+            fail(failure);
+        }
+    }
+
+    /** The client's cubic level is going (leaving the Earth, disconnecting): nothing of it is kept. */
+    public static void levelClosed() {
+        SYNC.clear();
     }
 
     /**
@@ -135,23 +172,26 @@ public final class FlywheelCompat {
     }
 
     /**
-     * When block entities go to Flywheel, apart from Flywheel itself: the manager they were last given to,
-     * and everything again when that manager changes. Flywheel makes a new one each time it resets.
+     * When block entities go to Flywheel, apart from Flywheel itself: the manager they were last given to, and
+     * everything again when that manager changes. Flywheel makes a new one each time it resets. The manager is
+     * held weakly, so it, and the level it holds, never outlive Flywheel's own hold on them.
      */
     static final class Sync {
-        @Nullable private Object current;
+        private WeakReference<Object> current = new WeakReference<>(null);
 
-        @Nullable Object current() { return current; }
+        @Nullable Object current() { return current.get(); }
 
-        <T> void arrived(Object manager, Iterable<T> entities, Consumer<T> add) {
-            if (manager != current) return; // the next frame queues everything for the new manager
-            for (T entity : entities) add.accept(entity);
+        /** Forgets the manager; the next frame with one queues everything again. */
+        void clear() { current = new WeakReference<>(null); }
+
+        <T> void stored(Object manager, T entity, Consumer<T> add) {
+            if (manager == current.get()) add.accept(entity); // otherwise the next frame queues everything for it
         }
 
         /** {@code all} is only walked when the manager changed. */
         <T> void frame(@Nullable Object manager, java.util.function.Supplier<Iterable<T>> all, @Nullable Consumer<T> add) {
-            if (manager == current) return;
-            current = manager;
+            if (manager == current.get()) return;
+            current = new WeakReference<>(manager);
             if (manager == null || add == null) return;
             for (T entity : all.get()) add.accept(entity);
         }

@@ -32,7 +32,8 @@ public final class ClientCubeWorld extends CubeWorld {
     @Nullable private Object shaderIds;
 
     public ClientCubeWorld(ClientLevel level) {
-        super(level);
+        // Shared reads: Flywheel's workers read blocks and light while they build and relight machines.
+        super(level, true);
         this.client = level;
         this.biomes = level.registryAccess().registryOrThrow(Registries.BIOME);
         this.renderer = new CubeRenderer(this);
@@ -65,6 +66,9 @@ public final class ClientCubeWorld extends CubeWorld {
     /** A cube a mod rewrote in place, such as an Axiom edit, is meshed again. */
     @Override protected void onRewritten(Cube cube) { renderer.cubeArrived(cube.key); }
 
+    /** Flywheel hears of it as of one a chunk stored, including one replacing another in the same block. */
+    @Override protected void blockEntityStored(BlockEntity entity) { FlywheelCompat.blockEntityStored(client, entity); }
+
     @Override protected void onStateStored(Cube cube, BlockPos pos, BlockState old, BlockState state) {
         renderer.blockChanged(pos, old, state);
     }
@@ -81,7 +85,6 @@ public final class ClientCubeWorld extends CubeWorld {
             BlockEntity entity = getBlockEntity(new BlockPos(tag.getInt("x"), tag.getInt("y"), tag.getInt("z")), true);
             if (entity != null) Platform.INSTANCE.handleUpdateTag(entity, tag, client.registryAccess());
         }
-        if (!cube.blockEntities().isEmpty()) FlywheelCompat.cubeArrived(client, cube.blockEntities().values());
         renderer.cubeArrived(cube.key);
         CubicMaps.columnChanged(client, cube.x, cube.z);
     }
@@ -111,7 +114,7 @@ public final class ClientCubeWorld extends CubeWorld {
 
     public void tops(CubePayloads.ColumnTops payload) {
         long column = CubeKey.column(payload.cubeX(), payload.cubeZ());
-        int[] old = tops.put(column, payload.tops());
+        int[] old = putTops(column, payload.tops());
         renderer.topsChanged(payload.cubeX(), payload.cubeZ(), old, payload.tops());
         CubicMaps.columnChanged(client, payload.cubeX(), payload.cubeZ());
     }
@@ -131,12 +134,14 @@ public final class ClientCubeWorld extends CubeWorld {
             forget(cube);
             renderer.drop(cube.key);
         }
-        tops.clear();
+        clearTops();
     }
 
     public void close() {
         renderer.close();
         far.close();
         for (Cube cube : new java.util.ArrayList<>(cubes.values())) forget(cube);
+        clearTops();
+        FlywheelCompat.levelClosed();
     }
 }

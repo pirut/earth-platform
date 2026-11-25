@@ -73,7 +73,8 @@ public final class CubeRenderer {
     /** Finished meshes of each cube thrown away as stale since it last had one uploaded. */
     private final Long2IntOpenHashMap staleDropped = new Long2IntOpenHashMap();
     private final Long2ObjectOpenHashMap<Mesh> meshes = new Long2ObjectOpenHashMap<>();
-    private final Long2ObjectOpenHashMap<byte[]> light = new Long2ObjectOpenHashMap<>();
+    /** Made on the render thread with the world; other threads read it through {@link #light(BlockPos, LightLayer)}. */
+    private final CubeLightTable light = new CubeLightTable(Thread.currentThread());
     final LongOpenHashSet dirty = new LongOpenHashSet();
     private final Long2IntOpenHashMap dirtySince = new Long2IntOpenHashMap();
     final Long2IntOpenHashMap versions = new Long2IntOpenHashMap();
@@ -327,7 +328,7 @@ public final class CubeRenderer {
         }
     }
 
-    /** Light the last compile computed for this position, or -1 when its cube is not lit yet. */
+    /** Light the last compile computed for this position, or -1 when its cube is not lit yet. Any thread. */
     int light(BlockPos pos, LightLayer layer) {
         byte[] values = light.get(CubeKey.ofBlock(pos));
         if (values == null) return -1;
@@ -514,7 +515,11 @@ public final class CubeRenderer {
             return false;
         }
         staleDropped.remove(result.key());
-        if (result.light() != null) light.put(result.key(), result.light());
+        if (result.light() != null) {
+            byte[] before = light.put(result.key(), result.light());
+            // Flywheel relights the machines in a section when vanilla says its light changed; cubes never say so.
+            if (!java.util.Arrays.equals(before, result.light())) FlywheelCompat.lightChanged(world.client(), result.key());
+        }
         setVisibility(result.key(), result.visibility());
         compiled.add(result.key());
         compiledVersion++;

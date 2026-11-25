@@ -18,20 +18,22 @@ class FlywheelCompatTest {
         FlywheelCompat.Sync sync = new FlywheelCompat.Sync();
         List<String> queued = new ArrayList<>();
         Object manager = new Object();
-        // A cube that arrives before the first frame goes in with everything else on that frame.
-        sync.arrived(manager, List.of("shaft"), queued::add);
+        // A block entity stored before the first frame goes in with everything else on that frame.
+        sync.stored(manager, "shaft", queued::add);
         assertEquals(List.of(), queued);
         sync.frame(manager, () -> LOADED, queued::add);
         assertEquals(LOADED, queued);
     }
 
-    @Test void arrivalsGoStraightToTheCurrentManager() {
+    @Test void storedBlockEntitiesGoStraightToTheCurrentManager() {
+        // Includes one replacing another in the same block with the same state, which nothing else reports.
         FlywheelCompat.Sync sync = new FlywheelCompat.Sync();
         List<String> queued = new ArrayList<>();
         Object manager = new Object();
         sync.frame(manager, () -> List.<String>of(), queued::add);
-        sync.arrived(manager, List.of("press", "mixer"), queued::add);
-        assertEquals(List.of("press", "mixer"), queued);
+        sync.stored(manager, "press", queued::add);
+        sync.stored(manager, "press replaced", queued::add);
+        assertEquals(List.of("press", "press replaced"), queued);
     }
 
     @Test void sameManagerNeverWalksTheCubesAgain() {
@@ -65,15 +67,41 @@ class FlywheelCompatTest {
         sync.frame(null, counting(walks), null);
         assertNull(sync.current());
         // While Flywheel is off, arrivals wait for the frame that finds it on again.
-        sync.arrived(manager, List.of("press"), queued::add);
+        sync.stored(manager, "press", queued::add);
         queued.clear();
         sync.frame(manager, counting(walks), queued::add);
         assertEquals(LOADED, queued);
         assertEquals(2, walks.get());
     }
 
+    @Test void closingTheLevelForgetsTheManager() {
+        FlywheelCompat.Sync sync = new FlywheelCompat.Sync();
+        List<String> queued = new ArrayList<>();
+        Object manager = new Object();
+        sync.frame(manager, () -> LOADED, queued::add);
+        sync.clear();
+        assertNull(sync.current());
+        queued.clear();
+        sync.frame(manager, () -> LOADED, queued::add);
+        assertEquals(LOADED, queued);
+    }
+
+    @Test void theManagerIsHeldWeakly() {
+        // Flywheel's manager holds the ClientLevel; once Flywheel lets it go, so does this.
+        FlywheelCompat.Sync sync = new FlywheelCompat.Sync();
+        sync.frame(new Object(), () -> LOADED, ignored -> {});
+        for (int i = 0; i < 50 && sync.current() != null; i++) {
+            System.gc();
+            byte[][] pressure = new byte[64][];
+            for (int j = 0; j < pressure.length; j++) pressure[j] = new byte[1 << 16];
+        }
+        assertNull(sync.current());
+    }
+
     @Test void withoutFlywheelNothingIsReplaced() {
         // Flywheel isn't on the test classpath: the class still loads and leaves every renderer alone.
         assertFalse(FlywheelCompat.replacesRenderer(null));
+        FlywheelCompat.lightChanged(null, 0L);
+        FlywheelCompat.levelClosed();
     }
 }
