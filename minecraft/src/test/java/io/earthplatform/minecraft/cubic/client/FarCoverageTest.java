@@ -149,6 +149,40 @@ class FarCoverageTest {
         }
     }
 
+    @Test void neighbourSideDropsAndCubeDrawnMatchFarMesher() {
+        Random random = new Random(90210);
+        for (int level : new int[] {1, 2, 4, 5}) {
+            int v = 1 << level, cubes = Math.max(1, v >> 4), rows = 32;
+            int x0 = -16 * v, z0 = 32 * v, bottom = -1;
+            char[] ownDrops = new char[256];
+            for (int cell = 0; cell < 256; cell++) ownDrops[cell] = (char) random.nextInt(Math.min(65536, v * UNIT));
+            FarMesher.Side[] sides = new FarMesher.Side[4];
+            for (int side = 0; side < 4; side++) {
+                char[] sideDrops = new char[256];
+                for (int cell = 0; cell < 256; cell++) sideDrops[cell] = (char) random.nextInt(Math.min(65536, v * UNIT));
+                sides[side] = new FarMesher.Side(null, bottom, sideDrops);
+            }
+            LongOpenHashSet drawn = new LongOpenHashSet();
+            for (int z = -1; z <= 16; z++) for (int x = -1; x <= 16; x++) {
+                for (int cy = -3; cy <= 6; cy++) {
+                    if (cy == 0 || cy == 3) continue; // vertical boundaries straddling drawn/unloaded cubes
+                    fill(drawn, (x0 + x * v) >> 4, cy, (z0 + z * v) >> 4, cubes);
+                }
+            }
+            FarMesher.Job job = new FarMesher.Job(1, 1, level, 0, x0, z0, bottom, null, ownDrops, sides, null, drawn,
+                    false, null, null, null, null, null);
+            FarCoverage coverage = new FarCoverage(level, x0, z0, bottom, rows, ownDrops, sides, drawn);
+            for (int y = -1; y <= rows; y++) for (int z = -1; z <= 16; z++) for (int x = -1; x <= 16; x++) {
+                assertEquals(FarMesher.drawn(job, x, y, z), coverage.drawn(x, y, z),
+                        "level=" + level + " at (" + x + "," + y + "," + z + ")");
+            }
+            for (int cy = -4; cy <= 7; cy++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+                assertEquals(FarMesher.cubeDrawn(job, x, cy, z), coverage.cubeDrawn(x, cy, z),
+                        "cubeDrawn level=" + level + " at (" + x + "," + cy + "," + z + ")");
+            }
+        }
+    }
+
     private static void fill(LongOpenHashSet drawn, int x0, int y, int z0, int cubes) {
         for (int z = z0; z < z0 + cubes; z++) for (int x = x0; x < x0 + cubes; x++) drawn.add(CubeKey.pack(x, y, z));
     }

@@ -15,23 +15,32 @@ import javax.annotation.Nullable;
  * voxel footprints, then turn their consecutive vertical runs into voxel-row bits. A voxel
  * and its faces only test a bit, rather than repeating the same cube lookups up to seven times.
  * The extra row and column on every edge include the mesher's neighbour queries. Their drops
- * deliberately come from the clamped edge of this column, just as {@link FarMesher#drawn} does.
+ * come from each known cardinal neighbour's {@code side.drops} (falling back to the clamped
+ * edge when absent), matching {@link FarMesher#drawn}.
  */
 final class FarCoverage {
     private static final int WIDTH = 18, DROP_UNIT = 256;
     private final int level, x0, z0, bottom, rows;
     private final char[] drops;
+    @Nullable private final FarMesher.Side[] sides;
     @Nullable private final LongOpenHashSet drawn;
     private final boolean referenceOnly;
     @Nullable private final BitSet[] covered;
+    @Nullable private final int[][] cubeSpans;
 
     FarCoverage(int level, int x0, int z0, int bottom, int rows, char[] drops, @Nullable LongOpenHashSet drawn) {
+        this(level, x0, z0, bottom, rows, drops, null, drawn);
+    }
+
+    FarCoverage(int level, int x0, int z0, int bottom, int rows, char[] drops,
+                @Nullable FarMesher.Side[] sides, @Nullable LongOpenHashSet drawn) {
         this.level = level;
         this.x0 = x0;
         this.z0 = z0;
         this.bottom = bottom;
         this.rows = rows;
         this.drops = drops;
+        this.sides = sides;
         this.drawn = drawn;
         int v = 1 << level, cubes = Math.max(1, v >> 4);
         // Keep the reference's int arithmetic/key wrapping even outside normal world coordinates.
@@ -39,6 +48,7 @@ final class FarCoverage {
         referenceOnly = !fits(x0, z0, bottom, rows, v, cubes);
         if (drawn == null || drawn.isEmpty() || referenceOnly) {
             covered = null;
+            cubeSpans = null;
             return;
         }
 
@@ -69,17 +79,20 @@ final class FarCoverage {
         }
         if (columns.isEmpty()) {
             covered = null;
+            cubeSpans = null;
             return;
         }
 
         Long2ObjectOpenHashMap<int[]> runs = new Long2ObjectOpenHashMap<>();
         for (var entry : columns.long2ObjectEntrySet()) runs.put(entry.getLongKey(), runs(entry.getValue()));
         covered = new BitSet[WIDTH * WIDTH];
+        cubeSpans = new int[256][];
         long baseY = bottom * (16L * v);
         for (int z = -1; z <= 16; z++) for (int x = -1; x <= 16; x++) {
             int[] spans = runs.get(CubeKey.column((x0 + x * v) >> 4, (z0 + z * v) >> 4));
             if (spans == null) continue;
-            int drop = drops[Math.clamp(z, 0, 15) * 16 + Math.clamp(x, 0, 15)];
+            if (x >= 0 && x <= 15 && z >= 0 && z <= 15) cubeSpans[z * 16 + x] = spans;
+            int drop = FarMesher.drop(drops, sides, x, z);
             int ceilDrop = (drop + DROP_UNIT - 1) / DROP_UNIT, floorDrop = drop / DROP_UNIT;
             BitSet bits = null;
             for (int i = 0; i < spans.length; i += 2) {
@@ -102,6 +115,19 @@ final class FarCoverage {
         if (covered == null) return false;
         BitSet bits = covered[(z + 1) * WIDTH + x + 1];
         return bits != null && bits.get(vy + 1);
+    }
+
+    boolean cubeDrawn(int x, int cy, int z) {
+        if (drawn == null || drawn.isEmpty()) return false;
+        if (referenceOnly || x < 0 || x > 15 || z < 0 || z > 15) return cubeReference(x, cy, z);
+        if (cubeSpans == null) return false;
+        int[] spans = cubeSpans[z * 16 + x];
+        if (spans == null) return false;
+        for (int i = 0; i < spans.length; i += 2) {
+            if (cy < spans[i]) return false;
+            if (cy <= spans[i + 1]) return true;
+        }
+        return false;
     }
 
     private static void add(Long2ObjectOpenHashMap<IntArrayList> columns, int x, int y, int z) {
@@ -135,11 +161,20 @@ final class FarCoverage {
     /** The original loop, for unusual queries outside the precomputed mesher footprint. */
     private boolean reference(int x, int vy, int z) {
         int v = 1 << level;
-        int drop = drops[Math.clamp(z, 0, 15) * 16 + Math.clamp(x, 0, 15)];
+        int drop = FarMesher.drop(drops, sides, x, z);
         int bx = x0 + x * v, by = bottom * (16 << level) + vy * v, bz = z0 + z * v;
         int low = by - (drop + DROP_UNIT - 1) / DROP_UNIT, high = by + v - 1 - drop / DROP_UNIT, cubes = Math.max(1, v >> 4);
         for (int cy = low >> 4; cy <= high >> 4; cy++) for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
             for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++) if (!drawn.contains(CubeKey.pack(cx, cy, cz))) return false;
+        return true;
+    }
+
+    private boolean cubeReference(int x, int cy, int z) {
+        int v = 1 << level, cubes = Math.max(1, v >> 4);
+        int bx = x0 + x * v, bz = z0 + z * v;
+        for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
+            for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++)
+                if (!drawn.contains(CubeKey.pack(cx, cy, cz))) return false;
         return true;
     }
 }

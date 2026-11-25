@@ -74,6 +74,8 @@ final class FarColumnMesh {
     final float[] surface;
     /** Each voxel column's ground slope as a {@link FarMesher#normalCode}. */
     final int[] normals;
+    /** Ground top heights (this column and cardinal neighbours) shared by slope normals and downhill seam closure. */
+    final FarMesher.GroundHeights groundHeights;
     /** Each voxel column's highest ground row (not water or trees), or -1. */
     final int[] groundRows = new int[256];
     /** What each voxel column's ground shows on top and on its step risers (see {@link FarMesher#evenCover}), or null for its own block. */
@@ -92,6 +94,9 @@ final class FarColumnMesh {
     private final FarLooks.Recent recent;
 
     FarColumnMesh(Job job) {
+        // Defensive guard if constructed directly (bypassing FarMesher.build): smooth ground reads
+        // sections from this column and its neighbours, so compact packets are materialized first.
+        if (smooth(job) && needsDenseForSmooth(job)) job = job.dense();
         this.job = job;
         recent = FarLooks.Recent.of(job.looks(), job.faces());
         texturedWater = job.textured() && job.level() <= TEXTURED_WATER_LEVELS;
@@ -99,26 +104,51 @@ final class FarColumnMesh {
         voxel = v * UNIT;
         coverage = FarMesher.CACHE_COVERAGE && job.drawn() != null && !job.drawn().isEmpty()
                 ? new FarCoverage(job.level(), job.x0(), job.z0(), job.bottom(),
-                job.height(), job.drops(), job.drawn()) : null;
+                job.height(), job.drops(), job.sides(), job.drawn()) : null;
         tops = tops(job);
         sideTops = sideTops(job);
         sideSurfaces = sideSurfaces(job);
         surface = surface(job, v);
         for (int cell = 0; cell < 256; cell++) groundRows[cell] = groundRow(job, cell & 15, cell >> 4);
-        normals = normals(job, voxel);
+        groundHeights = FarMesher.groundHeights(job, voxel, groundRows);
+        normals = FarMesher.normals(groundHeights, voxel);
         cover = job.level() >= COVER_FROM ? evenCover(job, groundRows) : null;
+    }
+
+    private static boolean needsDenseForSmooth(Job job) {
+        return job.packet() != null || hasPacketSide(job.sides()) || hasPacketSide(job.diagonals());
+    }
+
+    private static boolean hasPacketSide(@Nullable Side[] sides) {
+        if (sides == null) return false;
+        for (Side side : sides) if (side != null && side.sections() == null && side.packet() != null) return true;
+        return false;
     }
 
     Built build() {
         // The ground is drawn as one smooth surface rather than voxels, so only water is meshed voxel by voxel.
         // Trees are part of that surface: a leaf voxel this far out is 32 blocks or more, and as a box it floated over the slope.
         boolean smooth = smooth(job);
-        if(job.packet()!=null) {
-            java.util.BitSet candidates=FarRunCandidates.make(job.packet());
-            for(int bit=candidates.nextSetBit(0);bit>=0;bit=candidates.nextSetBit(bit+1)) {
-                int cell=bit&255,row=bit>>>8,x=cell&15,z=cell>>4;
-                BlockState state=job.packet().block(x,row,z);
-                if(!state.isAir())voxel(state,x,row,z);
+        if (job.packet() != null) {
+            // FarRunCandidates omits hidden opaque interior voxels without consulting drawn cubes or edits,
+            // so a direct call with near-cube masking or edits visits every packet voxel instead.
+            if (job.drawn() != null && !job.drawn().isEmpty() || job.packet().editCount() != 0) {
+                int height = job.packet().height();
+                for (int row = 0; row < height; row++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+                    BlockState state = job.packet().block(x, row, z);
+                    if (state.isAir() || smooth && !seeThrough(state)) continue;
+                    if (drawn(x, row, z)) continue;
+                    voxel(state, x, row, z);
+                }
+            } else {
+                java.util.BitSet candidates = FarRunCandidates.make(job.packet());
+                for (int bit = candidates.nextSetBit(0); bit >= 0; bit = candidates.nextSetBit(bit + 1)) {
+                    int cell = bit & 255, row = bit >>> 8, x = cell & 15, z = cell >> 4;
+                    BlockState state = job.packet().block(x, row, z);
+                    if (state.isAir() || smooth && !seeThrough(state)) continue;
+                    if (drawn(x, row, z)) continue;
+                    voxel(state, x, row, z);
+                }
             }
         } else {
         LevelChunkSection[] sections = job.sections();
@@ -186,6 +216,9 @@ final class FarColumnMesh {
         // Under water, sky light fades a level per block of water above, as it does near by.
         int sky = liquid ? 15 : Mth.clamp(15 - (int) (surface[cell] - ((vy + 1) * voxel - drop) / (float) UNIT), 0, 15);
         int bottom = vy * voxel - drop, top = bottom + Math.round(voxel * Far.fill(state));
+        if (!liquid && vy == groundRows[cell] && job.drawn() != null && !job.drawn().isEmpty()) {
+            top = downhillSeamTop(x, vy, z, top);
+        }
         int seamTop = groundRows[cell] >= 0 ? groundRows[cell] : tops[cell];
         Holder<Biome> biome = null;
         for (Direction direction : DIRECTIONS) {
@@ -205,14 +238,15 @@ final class FarColumnMesh {
             }
             int nx = x + direction.getStepX(), nz = z + direction.getStepZ(), wall = side(nx, nz);
             int neighbourDrop = wall < 0 ? job.drops()[nz * 16 + nx] : sideDrop(wall, nx, nz, drop);
-            // The neighbour's rows sit delta lower than ours: our face meets two of them, split where they meet.
-            int delta = neighbourDrop - drop, lowRow, highRow, split;
-            if (delta >= 0) { lowRow = vy; highRow = vy + 1; split = bottom + voxel - delta; }
-            else { lowRow = vy - 1; highRow = vy; split = bottom - delta; }
-            for (int part = 0; part < 2; part++) {
-                int from = part == 0 ? bottom : Math.max(bottom, split), to = part == 0 ? Math.min(split, top) : top;
+            if (top <= bottom) continue;
+            // Our face spans [bottom, top), which meets every neighbour row overlapping that range
+            // (normally 1-2 rows, or more when top was extended up to a near-cube floor seam).
+            int firstRow = Math.floorDiv(bottom + neighbourDrop, voxel);
+            int lastRow = Math.floorDiv(top - 1 + neighbourDrop, voxel);
+            for (int row = firstRow; row <= lastRow; row++) {
+                int from = Math.max(bottom, row * voxel - neighbourDrop);
+                int to = Math.min(top, (row + 1) * voxel - neighbourDrop);
                 if (to <= from) continue;
-                int row = part == 0 ? lowRow : highRow;
                 BlockState neighbour = at(job, nx, row, nz);
                 int group;
                 if (drawn(nx, row, nz)) {
@@ -263,6 +297,41 @@ final class FarColumnMesh {
 
     private boolean drawn(int x, int vy, int z) {
         return coverage == null ? FarMesher.drawn(job, x, vy, z) : coverage.drawn(x, vy, z);
+    }
+
+    private boolean cubeDrawn(int x, int cy, int z) {
+        return coverage == null ? FarMesher.cubeDrawn(job, x, cy, z) : coverage.cubeDrawn(x, cy, z);
+    }
+
+    /**
+     * Closes the downhill horizontal slit below the lowest loaded near-cube floor {@code y_floor}
+     * (#264): when a ground surface voxel sits immediately below a drawn near cube with its sampled
+     * top strictly below {@code y_floor} and an uphill cardinal neighbour rises to or above
+     * {@code y_floor}, extend the far top strictly up to {@code y_floor} (never above it). Flat
+     * terrain under a floating/high near cube has no neighbour reaching {@code y_floor} and stays
+     * at its sampled height.
+     */
+    private int downhillSeamTop(int x, int vy, int z, int top) {
+        if (!at(job, x, vy + 1, z).isAir()) return top;
+        long baseY256 = (long) job.bottom() * (16L * voxel);
+        long worldTop256 = baseY256 + top;
+        int topCy = (int) Math.floorDiv(worldTop256, 16L * UNIT);
+        if (cubeDrawn(x, topCy, z) || !cubeDrawn(x, topCy + 1, z)) return top;
+        long yFloor256 = (topCy + 1L) * (16L * UNIT);
+        long gap = yFloor256 - worldTop256;
+        if (gap <= 0 || gap > 2L * voxel) return top;
+        long yFloorRel = yFloor256 - baseY256;
+        int at = (z + 1) * 18 + x + 1;
+        int[] heights = groundHeights.height();
+        boolean[] known = groundHeights.known();
+        int maxNeighbour = Integer.MIN_VALUE;
+        if (known[at - 1]) maxNeighbour = Math.max(maxNeighbour, heights[at - 1]);
+        if (known[at + 1]) maxNeighbour = Math.max(maxNeighbour, heights[at + 1]);
+        if (known[at - 18]) maxNeighbour = Math.max(maxNeighbour, heights[at - 18]);
+        if (known[at + 18]) maxNeighbour = Math.max(maxNeighbour, heights[at + 18]);
+        if (maxNeighbour < yFloorRel) return top;
+        if (gap > voxel && (long) top + maxNeighbour < 2L * yFloorRel) return top;
+        return top + (int) gap;
     }
 
     /**

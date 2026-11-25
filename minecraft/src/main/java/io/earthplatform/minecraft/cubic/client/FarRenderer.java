@@ -1265,6 +1265,10 @@ public final class FarRenderer {
             columns.remove(column.key);
             places.remove(column);
             unlink(column);
+            for (int i = 0; i < 4; i++) {
+                Column side = held(column.neighbour(i));
+                if (side != null && side.drawnCubes != null) schedule(side);
+            }
             columnsVersion++;
             if (listed(column)) walkStale = true;
             dueColumns.remove(column);
