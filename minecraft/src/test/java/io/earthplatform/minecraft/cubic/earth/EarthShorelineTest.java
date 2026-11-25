@@ -333,13 +333,14 @@ class EarthShorelineTest {
             }
             byte[] slice;
             if (start == 0) {
-                int len = (int) Math.min(tiffHeader.length, end - start + 1);
+                int len = (int) Math.min(HEADER_OFFSET, end - start + 1);
                 slice = Arrays.copyOf(tiffHeader, len);
             } else {
                 int id = (int) ((start - HEADER_OFFSET) / BLOCK_BYTES);
                 int[] meta = blockMeta[id];
                 slice = renderWorldCoverBlock(meta[0], meta[1], meta[2]);
             }
+            exchange.getResponseHeaders().set("Content-Range", "bytes " + start + "-" + (start + slice.length - 1) + "/" + (HEADER_OFFSET + (long) blockMeta.length * BLOCK_BYTES));
             exchange.sendResponseHeaders(206, slice.length);
             exchange.getResponseBody().write(slice);
             exchange.close();

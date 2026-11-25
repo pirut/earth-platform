@@ -254,6 +254,21 @@ class HostBackoffAndRangeFilesTest {
                 exchange.close();
                 return;
             }
+            if (path.equals("/206-missing-cr")) {
+                byte[] body = {42};
+                exchange.sendResponseHeaders(206, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+                return;
+            }
+            if (path.equals("/206-negative-total")) {
+                byte[] body = {1, 2, 3, 4};
+                exchange.getResponseHeaders().set("Content-Range", "bytes 0-3/-5");
+                exchange.sendResponseHeaders(206, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+                return;
+            }
             if (path.equals("/404-with-body")) {
                 byte[] body = "<Error><Code>NoSuchKey</Code></Error>".getBytes(StandardCharsets.UTF_8);
                 exchange.sendResponseHeaders(404, body.length);
@@ -302,19 +317,30 @@ class HostBackoffAndRangeFilesTest {
             assertTrue(ok.isOk());
             assertArrayEquals(new byte[] {10, 11, 12, 13, 14}, ok.bytes());
 
-            // 7. HTTP 206 wrong Content-Range start offset rejected as IOException (wrapped in MissingTerrainException).
+            // 7. HTTP 206 missing Content-Range (1 byte for 4-byte request) rejected AND does NOT trip HostBackoff!
+            MissingTerrainException missingCr = assertThrows(MissingTerrainException.class,
+                    () -> files.fetchResult(base.resolve("206-missing-cr"), 0, 4));
+            assertTrue(missingCr.getMessage().contains("Content-Range"), missingCr.getMessage());
+            assertFalse(HostBackoff.isDown(base), "3 retries against one malformed-206 URL must NEVER mark host down");
+
+            // 8. HTTP 206 negative Content-Range total (bytes 0-3/-5) rejected AND does NOT trip HostBackoff!
+            MissingTerrainException negTotal = assertThrows(MissingTerrainException.class,
+                    () -> files.fetchResult(base.resolve("206-negative-total"), 0, 4));
+            assertTrue(negTotal.getMessage().contains("Content-Range"), negTotal.getMessage());
+            assertFalse(HostBackoff.isDown(base), "malformed Content-Range total must NEVER mark host down");
+
+            // 9. HTTP 206 wrong Content-Range start offset & short read before EOF rejected without tripping HostBackoff.
             MissingTerrainException wrongOffset = assertThrows(MissingTerrainException.class,
                     () -> files.fetchResult(base.resolve("206-wrong-offset"), 10, 4));
             assertTrue(wrongOffset.getMessage().contains("Content-Range"), wrongOffset.getMessage());
-            HostBackoff.clear(base);
+            assertFalse(HostBackoff.isDown(base));
 
-            // 8. HTTP 206 short read before EOF rejected.
             MissingTerrainException shortNonEof = assertThrows(MissingTerrainException.class,
                     () -> files.fetchResult(base.resolve("206-short-not-eof"), 10, 16));
             assertTrue(shortNonEof.getMessage().contains("Content-Range"), shortNonEof.getMessage());
-            HostBackoff.clear(base);
+            assertFalse(HostBackoff.isDown(base), "response-validation errors must leave unrelated healthy tiles unaffected");
 
-            // 9. HTTP 206 short read AT genuine EOF accepted cleanly!
+            // 10. HTTP 206 short read AT genuine EOF accepted cleanly even immediately after malformed-206 failures!
             RangeFiles.FetchResult eofSlice = files.fetchResult(base.resolve("206-short-eof"), 10, 100);
             assertTrue(eofSlice.isOk());
             assertArrayEquals(new byte[] {10, 11, 12, 13, 14}, eofSlice.bytes());
@@ -438,12 +464,26 @@ class HostBackoffAndRangeFilesTest {
                 assertEquals(1, legacy404Hits.get());
                 assertArrayEquals(RangeFiles.CONFIRMED_NOT_FOUND_MARKER, Files.readAllBytes(cache.resolve("legacy-404.none")));
 
-                // (c) 403 -> deletes legacy .none and records TTL negative cache.
+                // (c) 403 -> preserves legacy .none for offline sessions and records in-memory TTL (no .403 file).
                 assertNull(cogs.grid(5, 0, 1005, 1995));
                 assertEquals(1, legacy403Hits.get());
-                assertFalse(Files.exists(cache.resolve("legacy-403.none")));
+                assertTrue(Files.exists(cache.resolve("legacy-403.none")), "ambiguous 403 must preserve legacy .none for offline sessions");
+                assertFalse(Files.exists(cache.resolve("file-403.403")), "new 403 must write no .403 file to disk");
                 assertNull(cogs.grid(5, 0, 1005, 1995));
-                assertEquals(1, legacy403Hits.get(), "403 cached in memory for TTL after legacy .none removed");
+                assertEquals(1, legacy403Hits.get(), "403 cached in memory for TTL");
+
+                // Verify preserved legacy .none still works in offline mode!
+                try (FloatCogs offlineAfter403 = new FloatCogs("TestCOG", "test-cog-v1", "test-cog-off2", base, names, -9999f, cache, false, 4, 2, Duration.ofSeconds(5))) {
+                    assertNull(offlineAfter403.grid(5, 0, 1005, 1995), "preserved legacy .none must still work offline");
+                    assertEquals(1, legacy403Hits.get());
+                }
+
+                // (d) Disk .header written during an active 403 TTL is read immediately without hitting the network!
+                cogs.setForbiddenTtlNanos(TimeUnit.MINUTES.toNanos(10));
+                Files.write(cache.resolve("legacy-403.header"), cog);
+                FloatCogs.Grid fromDiskDuringTtl = cogs.grid(5, 0, 1005, 1995);
+                assertNotNull(fromDiskDuringTtl, "disk .header written during active 403 TTL must be read immediately");
+                assertEquals(1, legacy403Hits.get(), "reading disk .header during 403 TTL must not hit network");
             }
         } finally {
             HostBackoff.clear(base);
@@ -472,6 +512,7 @@ class HostBackoffAndRangeFilesTest {
         AtomicInteger sq404Hits = new AtomicInteger();
         AtomicInteger mid403Hits = new AtomicInteger();
         AtomicInteger legacyOkHits = new AtomicInteger();
+        AtomicInteger legacy403Hits = new AtomicInteger();
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.setExecutor(Executors.newFixedThreadPool(4));
@@ -509,6 +550,7 @@ class HostBackoffAndRangeFilesTest {
                 return;
             }
             if (path.contains(sqLegacy403)) {
+                legacy403Hits.incrementAndGet();
                 exchange.sendResponseHeaders(403, -1);
                 exchange.close();
                 return;
@@ -536,10 +578,11 @@ class HostBackoffAndRangeFilesTest {
                  CopernicusSource s2 = new CopernicusSource(base, cache2, false, 4, 2, Duration.ofSeconds(5))) {
                 s1.setForbiddenTtlNanos(TimeUnit.MILLISECONDS.toNanos(120));
 
-                // 1. s1 sees 403 on sq403 -> cached in s1's instance TTL without writing .none.
+                // 1. s1 sees 403 on sq403 -> cached strictly in s1's instance TTL without writing .none or .403.
                 assertFalse(s1.covers(10.5, 20.5));
                 assertEquals(1, sq403Hits.get());
                 assertFalse(Files.exists(cache1.resolve(sq403 + ".none")));
+                assertFalse(Files.exists(cache1.resolve(sq403 + ".403")), "new 403 must write no durable .403 file");
 
                 // 2. s2 (separate instance with disk .header cached!) MUST NOT be poisoned by s1's 403 and reads disk first!
                 assertTrue(s2.covers(10.5, 20.5), "disk-cached .header in another instance must not be poisoned by s1 403");
@@ -560,7 +603,7 @@ class HostBackoffAndRangeFilesTest {
                 assertEquals(2, mid403Hits.get());
                 assertFalse(Files.exists(cache1.resolve(sqMid403 + ".none")));
 
-                // 6. Legacy 0-byte .none online revalidation: 206 deletes & caches, 404 upgrades to "404\n", 403 deletes & records TTL.
+                // 6. Legacy 0-byte .none online revalidation: 206 deletes & caches, 404 upgrades to "404\n", 403 preserves legacy .none & records TTL.
                 assertTrue(s1.covers(13.5, 23.5));
                 assertEquals(123.5, s1.metres(13.5, 23.5, 0), 1e-4);
                 assertFalse(Files.exists(cache1.resolve(sqLegacyOk + ".none")));
@@ -569,10 +612,133 @@ class HostBackoffAndRangeFilesTest {
                 assertFalse(s1.covers(14.5, 24.5));
                 assertArrayEquals(RangeFiles.CONFIRMED_NOT_FOUND_MARKER, Files.readAllBytes(cache1.resolve(sqLegacy404 + ".none")));
 
+                s1.setForbiddenTtlNanos(TimeUnit.MINUTES.toNanos(10));
                 assertFalse(s1.covers(15.5, 25.5));
-                assertFalse(Files.exists(cache1.resolve(sqLegacy403 + ".none")));
+                assertTrue(Files.exists(cache1.resolve(sqLegacy403 + ".none")),
+                        "ambiguous 403 on legacy .none must preserve legacy .none for offline use");
+                assertFalse(Files.exists(cache1.resolve(sqLegacy403 + ".403")),
+                        "ambiguous 403 must not write durable .403 file");
+
+                assertEquals(1, legacy403Hits.get());
+                try (CopernicusSource offlineAfter403 = new CopernicusSource(base, cache1, false, 4, 2, Duration.ofSeconds(5))) {
+                    assertFalse(offlineAfter403.covers(15.5, 25.5), "preserved legacy .none must still be honored offline");
+                    assertEquals(1, legacy403Hits.get());
+                }
+
+                // 7. A .header written to disk during an active 403 TTL is read immediately without hitting network!
+                Files.write(cache1.resolve(sqLegacy403 + ".header"), dem);
+                assertTrue(s1.covers(15.5, 25.5), "disk .header written during active 403 TTL must be read immediately");
+                assertEquals(1, legacy403Hits.get(), "reading disk .header during 403 TTL must not hit network");
             }
         } finally {
+            HostBackoff.clear(base);
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+
+    @Test
+    void recoveryProbeStalledBodyAbortsAtDeadlineAndAlternatingRequestsRotateStably() throws Exception {
+        CountDownLatch releaseStall = new CountDownLatch(1);
+        AtomicInteger stallProbeHits = new AtomicInteger();
+        AtomicInteger brokenAHits = new AtomicInteger();
+        AtomicInteger healthyBHits = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if (path.equals("/stalled-probe")) {
+                stallProbeHits.incrementAndGet();
+                exchange.getResponseHeaders().set("Content-Range", "bytes 0-1023/1024");
+                exchange.sendResponseHeaders(206, 1024);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(1);
+                    out.flush();
+                    releaseStall.await(15, TimeUnit.SECONDS);
+                } catch (Exception ignored) {
+                    // Expected once probe body deadline closes stream.
+                }
+                return;
+            }
+            if (path.equals("/broken-a")) {
+                brokenAHits.incrementAndGet();
+                exchange.sendResponseHeaders(500, -1);
+                exchange.close();
+                return;
+            }
+            if (path.equals("/healthy-b")) {
+                healthyBHits.incrementAndGet();
+                byte[] body = {9};
+                exchange.getResponseHeaders().set("Content-Range", "bytes 0-0/1");
+                exchange.sendResponseHeaders(206, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+                return;
+            }
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        server.start();
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/");
+        URI stalled = base.resolve("stalled-probe");
+        URI brokenA = base.resolve("broken-a");
+        URI healthyB = base.resolve("healthy-b");
+        try {
+            HostBackoff.setCheckTimeoutForTest(Duration.ofMillis(180));
+
+            // Part A: Stalled probe body aborts at deadline (does NOT falsely recover host or hang forever),
+            // allowing the next probe to rotate to healthyB and recover!
+            HostBackoff.clear(base);
+            HostBackoff.answered(stalled); // remember stalled as lastHealthy so probe #1 hits it
+            HostBackoff.failed(healthyB, "Test", new java.io.IOException("transient"));
+            HostBackoff.failed(stalled, "Test", new java.net.http.HttpConnectTimeoutException("down"));
+            assertTrue(HostBackoff.isDown(base));
+
+            long t0 = System.nanoTime();
+            HostBackoff.expireBackoffForTest(base);
+            assertThrows(MissingTerrainException.class, () -> HostBackoff.reachable(stalled, "Test"));
+            // Wait past the 180ms probe deadline for probe #1 to abort cleanly.
+            Thread.sleep(360);
+            assertTrue(stallProbeHits.get() >= 1, "first probe must have hit stalled-probe");
+            assertTrue(HostBackoff.isDown(base), "stalled probe body must NOT mark host healthy");
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0) < 3_000);
+
+            // Second probe rotates to healthyB and recovers!
+            HostBackoff.expireBackoffForTest(base);
+            assertThrows(MissingTerrainException.class, () -> HostBackoff.reachable(stalled, "Test"));
+            for (int i = 0; i < 100 && HostBackoff.isDown(base); i++) Thread.sleep(20);
+            assertFalse(HostBackoff.isDown(base), "next healthy candidate must recover host after stalled probe aborts");
+            assertTrue(healthyBHits.get() >= 1);
+
+            // Part B: Alternating requests (brokenA, healthyB, brokenA, healthyB) during outage
+            // rotate stably across canonical paths and NEVER pin selection on brokenA!
+            HostBackoff.clear(base);
+            brokenAHits.set(0);
+            healthyBHits.set(0);
+            // Seed outage with brokenA first, then healthyB as a candidate (no lastHealthy).
+            HostBackoff.failed(brokenA, "Test", new java.io.IOException("err1"));
+            HostBackoff.failed(healthyB, "Test", new java.net.http.HttpConnectTimeoutException("down"));
+            assertTrue(HostBackoff.isDown(base));
+
+            // Probe 1 requested via brokenA -> tries brokenA (500).
+            HostBackoff.expireBackoffForTest(base);
+            assertThrows(MissingTerrainException.class, () -> HostBackoff.reachable(brokenA, "Test"));
+            for (int i = 0; i < 50 && brokenAHits.get() == 0; i++) Thread.sleep(20);
+            Thread.sleep(50);
+            assertEquals(1, brokenAHits.get());
+            assertTrue(HostBackoff.isDown(base));
+
+            // Probe 2 requested via healthyB (alternating!) -> MUST advance to healthyB instead of re-probing brokenA!
+            HostBackoff.expireBackoffForTest(base);
+            assertThrows(MissingTerrainException.class, () -> HostBackoff.reachable(healthyB, "Test"));
+            for (int i = 0; i < 100 && HostBackoff.isDown(base); i++) Thread.sleep(20);
+            assertFalse(HostBackoff.isDown(base), "alternating requests must reach healthyB and recover host");
+            assertEquals(1, brokenAHits.get(), "brokenA must not be re-probed before untried healthyB");
+            assertTrue(healthyBHits.get() >= 1);
+        } finally {
+            releaseStall.countDown();
+            HostBackoff.setCheckTimeoutForTest(null);
             HostBackoff.clear(base);
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();

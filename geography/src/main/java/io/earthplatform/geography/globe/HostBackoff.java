@@ -1,8 +1,12 @@
 package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -10,8 +14,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -45,25 +52,43 @@ public final class HostBackoff {
     static final long FIRST_DOWN_MS = 5_000, LONGEST_DOWN_MS = 60_000;
     private static final int MAX_TRACKED_PATHS = 64;
     private static final int MAX_PROBE_CANDIDATES = 16;
+    private static final int MAX_PROBE_DRAIN_BYTES = 65_536;
+
+    private record ProbeCandidate(String path, URI uri) {}
 
     private static final class Health {
         final AtomicLong failedTransport = new AtomicLong(), streakTransportStart = new AtomicLong();
         final AtomicLong failed5xx = new AtomicLong(), streak5xxStart = new AtomicLong();
         final Set<String> failingPaths = ConcurrentHashMap.newKeySet();
         final Set<String> recentBadPaths = ConcurrentHashMap.newKeySet();
-        final CopyOnWriteArrayList<URI> probeCandidates = new CopyOnWriteArrayList<>();
-        final AtomicInteger probeCursor = new AtomicInteger();
-        volatile URI lastHealthyUri;
+        final CopyOnWriteArrayList<ProbeCandidate> probeCandidates = new CopyOnWriteArrayList<>();
+        final Set<String> probeCandidatePaths = ConcurrentHashMap.newKeySet();
+        final Set<String> triedProbePaths = ConcurrentHashMap.newKeySet();
+        volatile ProbeCandidate lastHealthy;
         volatile long downUntil, downFor, downSince;
         final AtomicBoolean checking = new AtomicBoolean();
         volatile String what;
     }
 
     private static final Map<String, Health> HEALTH = new ConcurrentHashMap<>();
-    private static final java.time.Duration CHECK_TIMEOUT = java.time.Duration.ofSeconds(20);
+    static final Duration DEFAULT_CHECK_TIMEOUT = Duration.ofSeconds(20);
+    private static volatile Duration checkTimeout = DEFAULT_CHECK_TIMEOUT;
     private static volatile java.net.http.HttpClient checker;
+    private static final ScheduledExecutorService PROBE_TIMEOUTS = createProbeTimeoutScheduler();
+
+    private static ScheduledExecutorService createProbeTimeoutScheduler() {
+        ScheduledThreadPoolExecutor scheduler = new ScheduledThreadPoolExecutor(1, NamedThreads.daemon("earth-host-check-timeout"));
+        scheduler.setRemoveOnCancelPolicy(true);
+        return scheduler;
+    }
 
     private HostBackoff() {}
+
+    /** Package-private for tests: overrides recovery probe timeout (pass {@code null} to restore default). */
+    static void setCheckTimeoutForTest(Duration timeout) {
+        checkTimeout = timeout == null ? DEFAULT_CHECK_TIMEOUT : timeout;
+        checker = null;
+    }
 
     static String hostKey(URI uri) {
         String authority = uri.getAuthority();
@@ -80,19 +105,16 @@ public final class HostBackoff {
         return why instanceof String s && s.startsWith("HTTP 5");
     }
 
-    private static void rememberProbeCandidate(Health health, URI uri) {
-        String key = pathKey(uri);
-        for (URI existing : health.probeCandidates) {
-            if (pathKey(existing).equals(key)) return;
-        }
+    private static void rememberProbeCandidate(Health health, String path, URI uri) {
+        if (health.probeCandidatePaths.contains(path)) return;
         synchronized (health.probeCandidates) {
-            for (URI existing : health.probeCandidates) {
-                if (pathKey(existing).equals(key)) return;
-            }
+            if (health.probeCandidatePaths.contains(path)) return;
             if (health.probeCandidates.size() >= MAX_PROBE_CANDIDATES) {
-                health.probeCandidates.remove(0);
+                ProbeCandidate evicted = health.probeCandidates.remove(0);
+                health.probeCandidatePaths.remove(evicted.path());
             }
-            health.probeCandidates.add(uri);
+            health.probeCandidates.add(new ProbeCandidate(path, uri));
+            health.probeCandidatePaths.add(path);
         }
     }
 
@@ -103,82 +125,117 @@ public final class HostBackoff {
     static void reachable(URI uri, String what) {
         Health health = HEALTH.get(hostKey(uri));
         if (health == null || health.downFor == 0) return;
-        rememberProbeCandidate(health, uri);
+        String path = pathKey(uri);
+        rememberProbeCandidate(health, path, uri);
         if (System.currentTimeMillis() >= health.downUntil && health.checking.compareAndSet(false, true)) {
-            check(chooseProbeUri(uri, health), health);
+            check(chooseProbeUri(uri, path, health), health);
         }
         throw new MissingTerrainException(what + " server " + uri.getHost() + " can't be reached; trying it again shortly");
     }
 
     /**
-     * Selects a recovery probe URI: prefers the remembered healthy URI first (even if it briefly
-     * returned 5xx during the outage), then rotates across distinct candidate URIs on subsequent
-     * failed probes so a client repeatedly requesting one broken tile never pins the host down.
+     * Selects a recovery probe URI in stable canonical-path order: prefers the remembered healthy URI
+     * first, then advances through untried canonical-path candidates in stable insertion order (adding
+     * the current request only at the end if not already covered) so alternating requests can never pin
+     * probing on one broken tile and skip a healthy candidate.
      */
-    private static URI chooseProbeUri(URI requested, Health health) {
-        List<URI> candidates = new ArrayList<>();
+    private static URI chooseProbeUri(URI requested, String reqPath, Health health) {
+        List<ProbeCandidate> candidates = new ArrayList<>(health.probeCandidates.size() + 2);
         Set<String> seen = new HashSet<>();
-        URI healthy = health.lastHealthyUri;
-        if (healthy != null && seen.add(pathKey(healthy))) {
+        ProbeCandidate healthy = health.lastHealthy;
+        if (healthy != null && seen.add(healthy.path())) {
             candidates.add(healthy);
         }
-        String reqKey = pathKey(requested);
-        if (!health.recentBadPaths.contains(reqKey) && seen.add(reqKey)) {
-            candidates.add(requested);
-        }
-        for (URI candidate : health.probeCandidates) {
-            String key = pathKey(candidate);
-            if (!health.recentBadPaths.contains(key) && seen.add(key)) {
+        for (ProbeCandidate candidate : health.probeCandidates) {
+            if (!health.recentBadPaths.contains(candidate.path()) && seen.add(candidate.path())) {
                 candidates.add(candidate);
             }
         }
-        if (seen.add(reqKey)) {
-            candidates.add(requested);
-        }
-        for (URI candidate : health.probeCandidates) {
-            if (seen.add(pathKey(candidate))) {
+        for (ProbeCandidate candidate : health.probeCandidates) {
+            if (seen.add(candidate.path())) {
                 candidates.add(candidate);
             }
         }
-        int index = Math.floorMod(health.probeCursor.getAndIncrement(), candidates.size());
-        return candidates.get(index);
+        if (seen.add(reqPath)) {
+            candidates.add(new ProbeCandidate(reqPath, requested));
+        }
+        for (ProbeCandidate candidate : candidates) {
+            if (health.triedProbePaths.add(candidate.path())) {
+                return candidate.uri();
+            }
+        }
+        // Full rotation completed: start a fresh round from index 0.
+        health.triedProbePaths.clear();
+        ProbeCandidate first = candidates.get(0);
+        health.triedProbePaths.add(first.path());
+        return first.uri();
     }
 
-    /** Asks the host for the first byte of a healthy (or rotated) file; any non-5xx answer means it is back. */
+    /** Asks the host for the first byte of a healthy (or rotated) file with a hard body deadline; any non-5xx answer means it is back. */
     private static void check(URI uri, Health health) {
         Thread.ofVirtual().name("earth-host-check").start(() -> {
+            boolean recovered = false;
             try {
+                Duration timeout = checkTimeout;
                 java.net.http.HttpClient http = checker;
-                if (http == null) checker = http = java.net.http.HttpClient.newBuilder().connectTimeout(CHECK_TIMEOUT)
+                if (http == null) checker = http = java.net.http.HttpClient.newBuilder().connectTimeout(timeout)
                         .followRedirects(java.net.http.HttpClient.Redirect.NEVER).build();
-                java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(uri).timeout(CHECK_TIMEOUT)
+                java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(uri).timeout(timeout)
                         .header("User-Agent", "earth-platform/check").header("Range", "bytes=0-0").GET().build();
-                int status = http.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
-                if (status < 500 || slowDown(status)) { answered(uri); return; }
+                HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                InputStream rawStream = response.body();
+                AtomicBoolean bodyTimedOut = new AtomicBoolean();
+                ScheduledFuture<?> bodyDeadline = PROBE_TIMEOUTS.schedule(() -> {
+                    bodyTimedOut.set(true);
+                    try { rawStream.close(); }
+                    catch (IOException | RuntimeException ignored) { /* already closed */ }
+                }, Math.max(1L, timeout.toNanos()), TimeUnit.NANOSECONDS);
+                try (InputStream bodyStream = rawStream) {
+                    int status = response.statusCode();
+                    byte[] scratch = new byte[4096];
+                    int remaining = MAX_PROBE_DRAIN_BYTES;
+                    while (remaining > 0) {
+                        int read = bodyStream.read(scratch, 0, Math.min(scratch.length, remaining));
+                        if (read < 0) break;
+                        remaining -= read;
+                    }
+                    if (bodyTimedOut.get()) {
+                        throw new HttpTimeoutException("Recovery probe body timed out after " + timeout.toMillis() + " ms for " + uri);
+                    }
+                    if (status < 500 || slowDown(status)) {
+                        answered(uri);
+                        recovered = true;
+                    }
+                } finally {
+                    bodyDeadline.cancel(false);
+                }
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
-            } catch (java.io.IOException | RuntimeException failure) {
+            } catch (IOException | RuntimeException failure) {
                 // Still down.
             } finally {
+                if (!recovered) {
+                    health.downFor = Math.min(LONGEST_DOWN_MS, health.downFor * 2);
+                    health.downUntil = System.currentTimeMillis() + health.downFor;
+                }
                 health.checking.set(false);
             }
-            health.downFor = Math.min(LONGEST_DOWN_MS, health.downFor * 2);
-            health.downUntil = System.currentTimeMillis() + health.downFor;
         });
     }
 
     /** The host answered (any non-5xx HTTP status): it is up. */
     static void answered(URI uri) {
         Health health = HEALTH.computeIfAbsent(hostKey(uri), h -> new Health());
-        health.lastHealthyUri = uri;
-        rememberProbeCandidate(health, uri);
-        health.recentBadPaths.remove(pathKey(uri));
+        String path = pathKey(uri);
+        health.lastHealthy = new ProbeCandidate(path, uri);
+        rememberProbeCandidate(health, path, uri);
+        health.recentBadPaths.remove(path);
         health.failedTransport.set(0);
         health.streakTransportStart.set(0);
         health.failed5xx.set(0);
         health.streak5xxStart.set(0);
         health.failingPaths.clear();
-        health.probeCursor.set(0);
+        health.triedProbePaths.clear();
         if (health.downFor != 0) {
             long seconds = (System.currentTimeMillis() - health.downSince) / 1000;
             health.downFor = 0;
@@ -192,12 +249,12 @@ public final class HostBackoff {
         String host = String.valueOf(uri.getHost());
         Health health = HEALTH.computeIfAbsent(hostKey(uri), h -> new Health());
         health.what = what;
-        rememberProbeCandidate(health, uri);
+        String path = pathKey(uri);
+        rememberProbeCandidate(health, path, uri);
         long now = System.currentTimeMillis();
         // Already down: transfers started before it went down still report in, and change nothing.
         if (health.downFor != 0) return;
         if (isHttp5xx(why)) {
-            String path = pathKey(uri);
             if (health.recentBadPaths.size() >= MAX_TRACKED_PATHS) health.recentBadPaths.clear();
             health.recentBadPaths.add(path);
             if (health.failingPaths.size() < MAX_TRACKED_PATHS) health.failingPaths.add(path);
@@ -213,11 +270,11 @@ public final class HostBackoff {
             boolean connectTimeout = why instanceof java.net.http.HttpConnectTimeoutException;
             long count = health.failedTransport.incrementAndGet();
             if (count < DOWN_AFTER && !connectTimeout) return;
-            if (now - streak < DOWN_STREAK_MS && !(why instanceof java.net.http.HttpTimeoutException)) return;
+            if (now - streak < DOWN_STREAK_MS && !(why instanceof HttpTimeoutException)) return;
         }
         synchronized (health) {
             if (health.downFor != 0) return;
-            health.probeCursor.set(0);
+            health.triedProbePaths.clear();
             health.downSince = now;
             health.downFor = FIRST_DOWN_MS;
             health.downUntil = now + FIRST_DOWN_MS;

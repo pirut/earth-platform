@@ -218,7 +218,10 @@ public final class CopernicusSource implements AutoCloseable {
         CompletableFuture<Header> known = headers.get(square);
         // Every read asks for its square's header: skip the wait once it is in.
         if (known != null && known.isDone() && !known.isCompletedExceptionally()) return known.join();
-        if (isForbiddenCached(square)) return Header.MISSING;
+        if (isForbiddenCached(square)) {
+            Path cached = cacheRoot == null ? null : cacheRoot.resolve(name(south(square), west(square)) + ".header");
+            if (cached == null || !Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) return Header.MISSING;
+        }
         CompletableFuture<Header> mine = new CompletableFuture<>(), shared = headers.putIfAbsent(square, mine);
         if (shared == null) {
             try {
@@ -247,11 +250,11 @@ public final class CopernicusSource implements AutoCloseable {
         String name = name(south(square), west(square));
         Path cached = cacheRoot == null ? null : cacheRoot.resolve(name + ".header");
         Path missing = cacheRoot == null ? null : cacheRoot.resolve(name + ".none");
-        Path offlineForbidden = cacheRoot == null ? null : cacheRoot.resolve(name + ".403");
         // Check local disk .header cache first before applying any negative-cache or network logic.
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
                 Header header = parse(DiskCache.read(cached));
+                forbiddenUntil.remove(square);
                 files.diskHits.incrementAndGet();
                 return header;
             } catch (IOException | RuntimeException corrupt) {
@@ -265,9 +268,6 @@ public final class CopernicusSource implements AutoCloseable {
             legacyNone = true;
         }
         if (!allowNetwork) {
-            // Public S3 open-ocean squares return HTTP 403; offline mode honors the .403 hint without
-            // permanently poisoning online reloads (which ignore .403 and rely on instance-scoped TTL).
-            if (offlineForbidden != null && Files.exists(offlineForbidden)) return Header.MISSING;
             throw new MissingTerrainException("Copernicus elevation " + name + " not cached and network access is disabled");
         }
         if (isForbiddenCached(square)) return Header.FORBIDDEN;
@@ -276,14 +276,12 @@ public final class CopernicusSource implements AutoCloseable {
         while (true) {
             RangeFiles.FetchResult result = files.fetchResult(target, 0, size);
             if (result.isNotFound()) {
-                if (offlineForbidden != null) Files.deleteIfExists(offlineForbidden);
                 if (missing != null) DiskCache.write(missing, RangeFiles.CONFIRMED_NOT_FOUND_MARKER);
                 return Header.MISSING;
             }
             if (result.isForbidden()) {
                 if (size > HEADER_BYTES) throw new MissingTerrainException("Copernicus elevation " + name + " temporarily forbidden while reading header (HTTP 403)");
-                if (legacyNone && missing != null) Files.deleteIfExists(missing);
-                if (offlineForbidden != null) DiskCache.write(offlineForbidden, new byte[] {'4', '0', '3', '\n'});
+                // Keep newly observed 403s strictly in memory and preserve any legacy .none marker for future offline sessions.
                 rememberForbidden(square);
                 return Header.FORBIDDEN;
             }
@@ -292,7 +290,6 @@ public final class CopernicusSource implements AutoCloseable {
                 Header header = parse(bytes);
                 forbiddenUntil.remove(square);
                 if (legacyNone && missing != null) Files.deleteIfExists(missing);
-                if (offlineForbidden != null) Files.deleteIfExists(offlineForbidden);
                 if (cached != null) DiskCache.write(cached, bytes);
                 return header;
             } catch (HeaderTooShort tooShort) {

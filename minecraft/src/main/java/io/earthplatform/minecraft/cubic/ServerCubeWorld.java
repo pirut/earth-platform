@@ -358,12 +358,13 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     /**
-     * Drains any pending untouched store for {@code key} before dispatching {@code readTask} so a
-     * quick unload -> reload never reads stale storage data ahead of the latest untouched snapshot.
+     * Attempts a non-blocking drain of any pending untouched store for {@code key} before dispatching
+     * {@code readTask}: if the pending snapshot is still encoding or failed to write, defers the reload
+     * (returning {@code false}) without blocking the server thread or reading stale storage.
      */
     static boolean submitReadRequest(long key, LongOpenHashSet pending, UntouchedStoreQueue<?> untouchedStores,
                                      Executor reads, Runnable readTask) {
-        untouchedStores.drainKey(key);
+        if (!untouchedStores.tryDrainKeyNow(key)) return false;
         pending.add(key);
         try {
             reads.execute(readTask);
@@ -462,16 +463,51 @@ public final class ServerCubeWorld extends CubeWorld {
 
     /** Synchronous load for places that must exist this tick, such as an arrival point. */
     @Nullable public Cube loadNow(int x, int y, int z) {
+        if (closed) return null;
         long key = CubeKey.pack(x, y, z);
         Cube cube = cubes.get(key);
         if (cube != null) return cube;
-        return loadNowUncached(key, untouchedStores, () -> produce(key, x, y, z), this::adoptReady, cubes::get);
+        return loadNowUncached(key, untouchedStores, () -> produce(key, x, y, z), this::adoptReady, this::readoptPending, cubes::get);
     }
 
-    /** Drains any pending untouched store for {@code key} before synchronous {@code produce}/{@code adopt}. */
+    /**
+     * Re-adopts an authoritative pending untouched snapshot directly into {@link #cubes} when its
+     * storage write failed during synchronous reload so stale storage is never loaded over it.
+     */
+    private void readoptPending(UntouchedStoreQueue.Entry<?> entry) {
+        Cube cube = entry.cube();
+        cube.modified = true;
+        cube.dirty = true;
+        if (entry.owedAnimals()) unpopulated.add(cube.key);
+        else unpopulated.remove(cube.key);
+        if (!entry.entities().isEmpty()) unplacedEntities.put(cube.key, new ArrayList<>(entry.entities()));
+        else unplacedEntities.remove(cube.key);
+        adopt(cube);
+        server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
+        CubicPoiClaims.reclaim(server, SectionPos.of(cube.x, cube.y, cube.z));
+        refreshTops(cube);
+        staleLightAround(cube.x, cube.y, cube.z);
+    }
+
+    /**
+     * Drains any pending untouched store for {@code key} before synchronous {@code produce}/{@code adopt}.
+     * If draining fails (write error or timeout), never falls through to stale storage: re-adopts the
+     * authoritative pending cube directly when no worker is concurrently encoding it, or fails cleanly
+     * when a worker encode is still in flight.
+     */
     @Nullable static <R> Cube loadNowUncached(long key, UntouchedStoreQueue<?> untouchedStores,
-                                              Supplier<R> producer, Consumer<R> adopter, LongFunction<Cube> lookup) {
-        untouchedStores.drainKey(key);
+                                              Supplier<R> producer, Consumer<R> adopter,
+                                              Consumer<UntouchedStoreQueue.Entry<?>> readopter,
+                                              LongFunction<Cube> lookup) {
+        if (!untouchedStores.drainKey(key)) {
+            UntouchedStoreQueue.Entry<?> pendingEntry = untouchedStores.takeReAdoptable(key);
+            if (pendingEntry != null) {
+                readopter.accept(pendingEntry);
+                return lookup.apply(key);
+            }
+            throw new IllegalStateException("Pending untouched save for cube " + CubeKey.toString(key)
+                    + " is still in flight and could not be drained before synchronous reload");
+        }
         adopter.accept(producer.get());
         return lookup.apply(key);
     }
@@ -603,12 +639,19 @@ public final class ServerCubeWorld extends CubeWorld {
      * kept; the store happens on the server thread.
      */
     public void pregenerate(int cubeX, int cubeZ) {
-        if (closed) return;
+        if (closed || closing) return;
         int[] band = surfaceBand(cubeX, cubeZ);
+        LongArrayList candidates = new LongArrayList(Math.max(0, band[1] - band[0] + 1));
+        for (int y = band[0]; y <= band[1]; y++) candidates.add(CubeKey.pack(cubeX, y, cubeZ));
+        // Coordinate on the server thread before off-thread storage reads so loaded/pending keys are skipped or flushed first.
+        LongArrayList allowed = coordinatePregenerateKeys(candidates);
+        if (allowed.isEmpty()) return;
         LongArrayList keys = new LongArrayList();
         List<CompoundTag> tags = new ArrayList<>();
-        for (int y = band[0]; y <= band[1]; y++) {
-            long key = CubeKey.pack(cubeX, y, cubeZ);
+        for (int i = 0; i < allowed.size(); i++) {
+            if (closed || closing) return;
+            long key = allowed.getLong(i);
+            int y = CubeKey.y(key);
             try { if (storage.read(key) != null) continue; }
             catch (IOException failure) { continue; }
             List<CompoundTag> blockEntities = new ArrayList<>(), entities = new ArrayList<>();
@@ -625,20 +668,70 @@ public final class ServerCubeWorld extends CubeWorld {
         }
         if (tags.isEmpty()) return;
         server.getServer().execute(() -> {
-            if (closed) return;
-            for (int i = 0; i < tags.size(); i++) {
-                long key = keys.getLong(i);
-                // A cube loaded meanwhile is saved from its own state when it unloads.
-                if (cubes.containsKey(key) || untouchedStores.hasPending(key)) continue;
-                try { storage.put(key, tags.get(i)); }
-                catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure); }
-            }
+            int stored = commitPregenerated(keys, tags, () -> closed, cubes::containsKey, untouchedStores, storage);
             // Written as it goes, so a long run does not hold every region in memory until the next save.
-            if ((pregenerated += tags.size()) >= 2048) {
+            if (stored > 0 && (pregenerated += stored) >= 2048) {
                 pregenerated = 0;
                 storage.flushLater();
             }
         });
+    }
+
+    private LongArrayList coordinatePregenerateKeys(LongArrayList candidates) {
+        if (server.getServer().isSameThread()) {
+            return filterPregenerateKeys(candidates, () -> closed || closing, cubes::containsKey, untouchedStores);
+        }
+        CompletableFuture<LongArrayList> checked = new CompletableFuture<>();
+        server.getServer().execute(() -> {
+            try {
+                checked.complete(filterPregenerateKeys(candidates, () -> closed || closing, cubes::containsKey, untouchedStores));
+            } catch (Throwable failure) {
+                checked.completeExceptionally(failure);
+            }
+        });
+        try {
+            return checked.get(5, TimeUnit.SECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return new LongArrayList();
+        } catch (ExecutionException | TimeoutException unavailable) {
+            return new LongArrayList();
+        }
+    }
+
+    /** Server thread: filters out keys already loaded or with an un-committed untouched snapshot before off-thread pregen reads storage. */
+    static LongArrayList filterPregenerateKeys(LongArrayList candidates, BooleanSupplier isClosed,
+                                               LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores) {
+        LongArrayList allowed = new LongArrayList(candidates.size());
+        if (isClosed.getAsBoolean()) return allowed;
+        for (int i = 0; i < candidates.size(); i++) {
+            long key = candidates.getLong(i);
+            if (isLoaded.test(key)) continue;
+            if (untouchedStores.hasPending(key) && !untouchedStores.tryDrainKeyNow(key)) continue;
+            allowed.add(key);
+        }
+        return allowed;
+    }
+
+    /** Server thread: writes pregenerated tags only if the key is neither loaded, pending in untouchedStores, nor already written to storage. */
+    static int commitPregenerated(LongArrayList keys, List<CompoundTag> tags, BooleanSupplier isClosed,
+                                  LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores,
+                                  CubeStorage storage) {
+        if (isClosed.getAsBoolean()) return 0;
+        int stored = 0;
+        for (int i = 0; i < tags.size(); i++) {
+            long key = keys.getLong(i);
+            // A cube loaded meanwhile, still pending an untouched write, or committed between read and write must never be overwritten.
+            if (isLoaded.test(key) || untouchedStores.hasPending(key)) continue;
+            try {
+                if (storage.read(key) != null) continue;
+                storage.put(key, tags.get(i));
+                stored++;
+            } catch (IOException failure) {
+                EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure);
+            }
+        }
+        return stored;
     }
 
     private void adoptReady(Ready result) {
@@ -1359,8 +1452,10 @@ public final class ServerCubeWorld extends CubeWorld {
 
     /**
      * Stores a cube saved just as generated, encoding it on a worker: {@code cube.dirty} stays true
-     * until {@code storage.put} actually commits, and {@link #save()}/{@link #close()} drain any
-     * pending untouched writes so entity/unpopulated updates are never lost.
+     * until {@code storage.put} actually commits. {@link #save()} commits already-encoded entries via
+     * {@link UntouchedStoreQueue#commitReady()} without blocking or encoding synchronously on the server
+     * thread, while {@link #close()} finishes all pending writes with retries via
+     * {@link UntouchedStoreQueue#drainAll()} before closing storage.
      */
     private void storeUntouched(Cube cube) {
         long key = cube.key;
@@ -1410,9 +1505,8 @@ public final class ServerCubeWorld extends CubeWorld {
         tickets.close();
         resident.clear();
         for (Cube cube : cubes.values()) store(cube, true);
-        untouchedStores.drainAll();
-        try { storage.close(); }
-        catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not write cube regions", failure); }
+        try { finishShutdownDrain(untouchedStores, storage::close); }
+        catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not finish saving cube regions on shutdown", failure); }
         closed = true;
         generator.detach();
         surveys.close();
@@ -1618,11 +1712,38 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     /**
+     * Drains all pending untouched cube writes (waiting for in-flight workers and executing remaining
+     * retries) before closing storage, always closing storage even on drain error and surfacing any
+     * persistent shutdown save failure as an {@link IOException}.
+     */
+    static void finishShutdownDrain(UntouchedStoreQueue<?> untouchedStores, AutoCloseable storageCloser) throws IOException {
+        UntouchedStoreQueue.DrainResult drainResult = untouchedStores.drainAll();
+        IOException storageError = null;
+        try {
+            storageCloser.close();
+        } catch (IOException failure) {
+            storageError = failure;
+        } catch (Exception failure) {
+            storageError = new IOException("Could not close cube storage", failure);
+        }
+        if (!drainResult.ok()) {
+            IOException drainError = new IOException(
+                    "Could not save " + drainResult.failedCount() + " pending untouched cube(s) before closing storage",
+                    drainResult.firstFailure());
+            if (storageError != null) drainError.addSuppressed(storageError);
+            throw drainError;
+        }
+        if (storageError != null) throw storageError;
+    }
+
+    /**
      * Tracks in-flight async untouched cube serializations on the server thread: {@code cube.dirty} is
      * cleared only after {@code writer} commits, {@link #commitReady()} commits only worker-completed
-     * entries and retries failed evicted snapshots during {@code save()}, {@link #drainKey(long)}
-     * flushes a single key before reload reads storage, and {@link #drainAll()} finishes pending
-     * entries on {@code close()} without ever invoking an encoder concurrently with a running worker.
+     * entries and resubmits encode-failed/rejected entries off-thread without ever encoding on the server
+     * thread, {@link #tryDrainKeyNow(long)} provides non-blocking reload gating for {@code request()},
+     * {@link #drainKey(long)} + {@link #takeReAdoptable(long)} guard synchronous {@code loadNow()}, and
+     * {@link #drainAll()} finishes all in-flight encodes and remaining retries on {@code close()} without
+     * ever invoking an encoder concurrently with a running worker.
      */
     static final class UntouchedStoreQueue<T> {
         static final int MAX_EVICTED_RETRIES = 3;
@@ -1631,33 +1752,49 @@ public final class ServerCubeWorld extends CubeWorld {
         @FunctionalInterface interface Writer<T> { void write(long key, T tag) throws IOException; }
         @FunctionalInterface interface ErrorLogger { void log(long key, Throwable failure); }
 
+        record DrainResult(int failedCount, @Nullable Throwable firstFailure) {
+            static final DrainResult OK = new DrainResult(0, null);
+            boolean ok() { return failedCount == 0; }
+        }
+
+        private static final class Attempt<T> {
+            final AtomicBoolean claimed = new AtomicBoolean();
+            final CompletableFuture<T> encoded = new CompletableFuture<>();
+            boolean handled;
+        }
+
         static final class Entry<T> {
             private final long key;
             private final Cube cube;
             private final boolean owedAnimals;
             private final List<CompoundTag> entities;
             private final Supplier<T> encoder;
-            final AtomicBoolean claimed = new AtomicBoolean();
-            final CompletableFuture<T> encoded = new CompletableFuture<>();
+            private final Executor workerPool;
+            private final Executor serverThread;
+            private Attempt<T> attempt = new Attempt<>();
             private T cachedTag;
             private boolean rejected;
             private boolean encodeFailed;
             private boolean writeFailed;
-            private boolean workerCommitHandled;
-            private boolean workerFailureHandled;
             private int failures;
+            @Nullable private Throwable lastFailure;
 
-            Entry(Cube cube, boolean owedAnimals, List<CompoundTag> entities, Supplier<T> encoder) {
+            Entry(Cube cube, boolean owedAnimals, List<CompoundTag> entities, Supplier<T> encoder,
+                  Executor workerPool, Executor serverThread) {
                 this.key = cube.key;
                 this.cube = cube;
                 this.owedAnimals = owedAnimals;
                 this.entities = entities;
                 this.encoder = encoder;
+                this.workerPool = workerPool;
+                this.serverThread = serverThread;
             }
 
             long key() { return key; }
+            Cube cube() { return cube; }
             boolean owedAnimals() { return owedAnimals; }
             List<CompoundTag> entities() { return entities; }
+            boolean isWorkerInFlight() { return attempt.claimed.get() && !attempt.encoded.isDone(); }
         }
 
         private final Long2ObjectOpenHashMap<Entry<T>> pending = new Long2ObjectOpenHashMap<>();
@@ -1692,24 +1829,37 @@ public final class ServerCubeWorld extends CubeWorld {
                     && !existing.encodeFailed && !existing.writeFailed && !existing.rejected) {
                 return;
             }
-            Entry<T> entry = new Entry<>(cube, owedAnimals, entities, encoder);
+            Entry<T> entry = new Entry<>(cube, owedAnimals, entities, encoder, workerPool, serverThread);
             pending.put(cube.key, entry);
+            submitAttempt(entry, entry.attempt);
+        }
+
+        private void submitAttempt(Entry<T> entry, Attempt<T> attempt) {
             try {
-                workerPool.execute(() -> {
-                    if (!entry.claimed.compareAndSet(false, true)) return;
+                entry.workerPool.execute(() -> {
+                    if (!attempt.claimed.compareAndSet(false, true)) return;
                     try {
                         T tag = entry.encoder.get();
-                        entry.encoded.complete(tag);
-                        serverThread.execute(() -> onWorkerSuccess(entry, tag));
+                        attempt.encoded.complete(tag);
+                        entry.serverThread.execute(() -> onWorkerSuccess(entry, attempt, tag));
                     } catch (Throwable failure) {
-                        entry.encoded.completeExceptionally(failure);
-                        serverThread.execute(() -> onWorkerFailure(entry, failure));
+                        attempt.encoded.completeExceptionally(failure);
+                        entry.serverThread.execute(() -> onWorkerFailure(entry, attempt, failure));
                     }
                 });
             } catch (RejectedExecutionException rejected) {
-                // Kept in pending so commitReady()/drainKey()/drainAll() encodes and writes it synchronously.
                 entry.rejected = true;
+                entry.lastFailure = rejected;
             }
+        }
+
+        private void resubmitOffThread(Entry<T> entry) {
+            if (entry.isWorkerInFlight()) return;
+            Attempt<T> next = new Attempt<>();
+            entry.attempt = next;
+            entry.encodeFailed = false;
+            entry.rejected = false;
+            submitAttempt(entry, next);
         }
 
         void supersede(long key) {
@@ -1720,23 +1870,32 @@ public final class ServerCubeWorld extends CubeWorld {
             return pending.containsKey(key);
         }
 
-        private void onWorkerSuccess(Entry<T> entry, T tag) {
-            if (entry.workerCommitHandled) return;
-            entry.workerCommitHandled = true;
+        private boolean isInvalidated(Entry<T> entry, @Nullable Cube now) {
+            return entry.cube.edited || (now != null && now != entry.cube);
+        }
+
+        private void onWorkerSuccess(Entry<T> entry, Attempt<T> attempt, T tag) {
+            if (entry.attempt != attempt || attempt.handled) return;
+            attempt.handled = true;
             entry.cachedTag = tag;
-            commit(entry, tag);
+            commit(entry, tag, false);
         }
 
-        private void onWorkerFailure(Entry<T> entry, Throwable failure) {
-            if (entry.workerFailureHandled) return;
-            entry.workerFailureHandled = true;
-            fail(entry, failure);
+        private void onWorkerFailure(Entry<T> entry, Attempt<T> attempt, Throwable failure) {
+            if (entry.attempt != attempt || attempt.handled) return;
+            attempt.handled = true;
+            fail(entry, failure, false);
         }
 
-        private void fail(Entry<T> entry, Throwable failure) {
+        private void fail(Entry<T> entry, Throwable failure, boolean retainOnFailure) {
             if (pending.get(entry.key) != entry) return;
+            entry.lastFailure = failure;
             errorLogger.log(entry.key, failure);
             Cube now = currentCube.apply(entry.key);
+            if (retainOnFailure && !isClosed.getAsBoolean() && !isInvalidated(entry, now)) {
+                entry.encodeFailed = true;
+                return;
+            }
             // If the cube is already evicted, retain the latest snapshot in pending for bounded retries.
             if (now == null && !isClosed.getAsBoolean() && !entry.cube.edited && ++entry.failures <= MAX_EVICTED_RETRIES) {
                 entry.encodeFailed = true;
@@ -1745,151 +1904,325 @@ public final class ServerCubeWorld extends CubeWorld {
             pending.remove(entry.key);
         }
 
-        private void commit(Entry<T> entry, T tag) {
-            if (pending.get(entry.key) != entry) return;
+        /**
+         * Attempts to write {@code tag} for {@code entry}. Returns {@code true} only if {@code writer.write()}
+         * succeeded or the entry was already invalidated/superseded; returns {@code false} if closed or write failed.
+         */
+        private boolean commit(Entry<T> entry, T tag, boolean retainOnFailure) {
+            if (pending.get(entry.key) != entry) return true;
             Cube now = currentCube.apply(entry.key);
-            if (isClosed.getAsBoolean() || entry.cube.edited || (now != null && now != entry.cube)) {
+            if (isClosed.getAsBoolean()) {
                 pending.remove(entry.key);
-                return;
+                entry.lastFailure = new IOException("Cube world closed before saving pending cube " + CubeKey.toString(entry.key));
+                return false;
+            }
+            if (isInvalidated(entry, now)) {
+                pending.remove(entry.key);
+                return true;
             }
             try {
                 writer.write(entry.key, tag);
                 pending.remove(entry.key);
                 entry.writeFailed = false;
+                entry.lastFailure = null;
                 if (!entry.cube.edited && (now == null || metadataUnchanged.test(entry))) {
                     entry.cube.dirty = false;
                 }
+                return true;
             } catch (IOException | RuntimeException failure) {
+                entry.lastFailure = failure;
                 errorLogger.log(entry.key, failure);
+                entry.cachedTag = tag;
+                entry.writeFailed = true;
+                if (retainOnFailure) {
+                    return false;
+                }
                 // Do not discard the only retryable snapshot of an already-evicted cube on transient write error.
                 if (now == null && !isClosed.getAsBoolean() && !entry.cube.edited && ++entry.failures <= MAX_EVICTED_RETRIES) {
-                    entry.cachedTag = tag;
-                    entry.writeFailed = true;
-                    return;
+                    return false;
                 }
                 pending.remove(entry.key);
+                return false;
             }
         }
 
         /**
-         * Server thread ({@code save()}): commits only entries whose worker encoding already finished
-         * (plus retries previously failed evicted or rejected entries), leaving unclaimed/in-progress
-         * entries to workers so {@code save()} never encodes untouched cubes synchronously.
+         * Server thread ({@code save()}): drops invalidated entries, commits only entries whose worker
+         * encoding already finished (plus write-retry entries with a cached tag), and resubmits any
+         * encode-failed or rejected entries off-thread without ever calling {@code encoder.get()} on
+         * the server thread.
          */
         void commitReady() {
             if (pending.isEmpty()) return;
             List<Entry<T>> snapshot = new ArrayList<>(pending.values());
             for (Entry<T> entry : snapshot) {
                 if (pending.get(entry.key) != entry) continue;
+                Cube now = currentCube.apply(entry.key);
+                if (isClosed.getAsBoolean() || isInvalidated(entry, now)) {
+                    pending.remove(entry.key);
+                    continue;
+                }
                 if (entry.writeFailed && entry.cachedTag != null) {
-                    commit(entry, entry.cachedTag);
+                    commit(entry, entry.cachedTag, false);
                     continue;
                 }
-                if (entry.encodeFailed) {
-                    retryEncodeSync(entry);
+                if (entry.encodeFailed || entry.rejected) {
+                    resubmitOffThread(entry);
                     continue;
                 }
-                if (entry.rejected) {
-                    drainEntry(entry);
-                    continue;
-                }
-                if (!entry.encoded.isDone()) continue;
+                Attempt<T> attempt = entry.attempt;
+                if (!attempt.encoded.isDone()) continue;
                 try {
-                    T tag = entry.encoded.get();
-                    entry.workerCommitHandled = true;
-                    entry.cachedTag = tag;
-                    commit(entry, tag);
+                    T tag = attempt.encoded.get();
+                    if (!attempt.handled) {
+                        attempt.handled = true;
+                        entry.cachedTag = tag;
+                        commit(entry, tag, false);
+                    }
                 } catch (ExecutionException failed) {
-                    if (!entry.workerFailureHandled) {
-                        entry.workerFailureHandled = true;
-                        fail(entry, failed.getCause() != null ? failed.getCause() : failed);
+                    if (!attempt.handled) {
+                        attempt.handled = true;
+                        fail(entry, failed.getCause() != null ? failed.getCause() : failed, false);
+                        if (pending.get(entry.key) == entry && entry.encodeFailed) {
+                            resubmitOffThread(entry);
+                        }
                     }
                 } catch (CancellationException cancelled) {
-                    if (!entry.workerFailureHandled) {
-                        entry.workerFailureHandled = true;
-                        fail(entry, cancelled);
+                    if (!attempt.handled) {
+                        attempt.handled = true;
+                        fail(entry, cancelled, false);
+                        if (pending.get(entry.key) == entry && entry.encodeFailed) {
+                            resubmitOffThread(entry);
+                        }
                     }
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
+                    entry.lastFailure = interrupted;
                     errorLogger.log(entry.key, interrupted);
                 }
             }
         }
 
-        /** O(1) fast path when {@code key} is not pending; otherwise drains and writes {@code key} before storage read. */
-        void drainKey(long key) {
+        /**
+         * Non-blocking reload check for async {@code request()}: returns {@code true} if nothing is pending
+         * (or invalidated), or if an already-encoded snapshot committed cleanly to {@code writer}. Returns
+         * {@code false} without blocking or encoding on the server thread if encoding is still in flight or
+         * writing failed, so the caller defers reload instead of reading stale storage.
+         */
+        boolean tryDrainKeyNow(long key) {
             Entry<T> entry = pending.get(key);
-            if (entry == null) return;
-            drainEntry(entry);
-        }
-
-        /** Blocking drain for {@code close()}: finishes all pending untouched entries without concurrent encoding. */
-        void drainAll() {
-            if (pending.isEmpty()) return;
-            List<Entry<T>> snapshot = new ArrayList<>(pending.values());
-            for (Entry<T> entry : snapshot) {
-                if (pending.get(entry.key) != entry) continue;
-                drainEntry(entry);
+            if (entry == null) return true;
+            Cube now = currentCube.apply(key);
+            if (isClosed.getAsBoolean()) {
+                pending.remove(key);
+                return false;
+            }
+            if (isInvalidated(entry, now)) {
+                pending.remove(key);
+                return true;
+            }
+            if (entry.writeFailed && entry.cachedTag != null) {
+                return commit(entry, entry.cachedTag, false);
+            }
+            if (entry.encodeFailed || entry.rejected) {
+                resubmitOffThread(entry);
+                return false;
+            }
+            Attempt<T> attempt = entry.attempt;
+            if (!attempt.encoded.isDone()) return false;
+            try {
+                T tag = attempt.encoded.get();
+                attempt.handled = true;
+                entry.cachedTag = tag;
+                return commit(entry, tag, false);
+            } catch (ExecutionException failed) {
+                if (!attempt.handled) {
+                    attempt.handled = true;
+                    fail(entry, failed.getCause() != null ? failed.getCause() : failed, false);
+                    if (pending.get(key) == entry && entry.encodeFailed) {
+                        resubmitOffThread(entry);
+                    }
+                }
+                return false;
+            } catch (CancellationException cancelled) {
+                if (!attempt.handled) {
+                    attempt.handled = true;
+                    fail(entry, cancelled, false);
+                    if (pending.get(key) == entry && entry.encodeFailed) {
+                        resubmitOffThread(entry);
+                    }
+                }
+                return false;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                entry.lastFailure = interrupted;
+                errorLogger.log(entry.key, interrupted);
+                return false;
             }
         }
 
-        private void retryEncodeSync(Entry<T> entry) {
+        /**
+         * Blocking drain for synchronous {@code loadNow()}: returns {@code true} ONLY when nothing is pending
+         * (or invalidated) or the pending snapshot committed cleanly to {@code writer}. When {@code false} is
+         * returned, the pending snapshot remains authoritative and callers must call {@link #takeReAdoptable(long)}
+         * rather than reading stale storage.
+         */
+        boolean drainKey(long key) {
+            Entry<T> entry = pending.get(key);
+            if (entry == null) return true;
+            Cube now = currentCube.apply(key);
+            if (isClosed.getAsBoolean()) {
+                pending.remove(key);
+                return false;
+            }
+            if (isInvalidated(entry, now)) {
+                pending.remove(key);
+                return true;
+            }
+            return drainEntryOnce(entry, true);
+        }
+
+        /**
+         * If {@code key} still has an authoritative pending snapshot that is NOT currently being encoded on
+         * a worker thread, removes it from {@code pending}, marks its cube dirty, and returns it for direct
+         * re-adoption into {@code cubes}. Returns {@code null} if a worker encode is still in flight or closed.
+         */
+        @Nullable Entry<T> takeReAdoptable(long key) {
+            if (isClosed.getAsBoolean()) return null;
+            Entry<T> entry = pending.get(key);
+            if (entry == null || entry.isWorkerInFlight()) return null;
+            pending.remove(key);
+            entry.cube.modified = true;
+            entry.cube.dirty = true;
+            return entry;
+        }
+
+        /**
+         * Blocking drain for {@code close()}: finishes all pending untouched entries (waiting for in-flight
+         * worker encodes without concurrent encoding and executing remaining write/encode retries) before
+         * storage is closed, returning the count and first cause of any entries that still could not be saved.
+         */
+        DrainResult drainAll() {
+            if (pending.isEmpty()) return DrainResult.OK;
+            int failedCount = 0;
+            Throwable firstFailure = null;
+            // Drain non-in-flight entries first so in-flight worker encodes can finish concurrently.
+            List<Entry<T>> firstPass = new ArrayList<>(pending.values());
+            for (Entry<T> entry : firstPass) {
+                if (pending.get(entry.key) != entry) continue;
+                if (entry.isWorkerInFlight()) continue;
+                if (!drainEntryWithRetries(entry)) {
+                    failedCount++;
+                    if (firstFailure == null) firstFailure = entry.lastFailure;
+                }
+            }
+            List<Entry<T>> secondPass = new ArrayList<>(pending.values());
+            for (Entry<T> entry : secondPass) {
+                if (pending.get(entry.key) != entry) continue;
+                if (!drainEntryWithRetries(entry)) {
+                    failedCount++;
+                    if (firstFailure == null) firstFailure = entry.lastFailure;
+                }
+            }
+            return new DrainResult(failedCount, firstFailure);
+        }
+
+        private boolean drainEntryWithRetries(Entry<T> entry) {
+            if (pending.get(entry.key) != entry) return true;
+            Cube now = currentCube.apply(entry.key);
+            if (isClosed.getAsBoolean()) {
+                pending.remove(entry.key);
+                entry.lastFailure = new IOException("Cube world closed before saving pending cube " + CubeKey.toString(entry.key));
+                return false;
+            }
+            if (isInvalidated(entry, now)) {
+                pending.remove(entry.key);
+                return true;
+            }
+            if (drainEntryOnce(entry, false)) return true;
+            int maxLoops = MAX_EVICTED_RETRIES + 2;
+            while (pending.get(entry.key) == entry && !entry.isWorkerInFlight() && maxLoops-- > 0) {
+                if (entry.writeFailed && entry.cachedTag != null) {
+                    if (commit(entry, entry.cachedTag, false)) return true;
+                } else if (entry.encodeFailed || entry.rejected) {
+                    if (retryEncodeSync(entry, false)) return true;
+                } else {
+                    break;
+                }
+            }
+            return false;
+        }
+
+        private boolean retryEncodeSync(Entry<T> entry, boolean retainOnFailure) {
             try {
                 T tag = entry.encoder.get();
                 entry.encodeFailed = false;
+                entry.rejected = false;
                 entry.cachedTag = tag;
-                commit(entry, tag);
+                return commit(entry, tag, retainOnFailure);
             } catch (Throwable failure) {
-                fail(entry, failure);
+                fail(entry, failure, retainOnFailure);
+                return false;
             }
         }
 
-        private void drainEntry(Entry<T> entry) {
-            if (pending.get(entry.key) != entry) return;
+        private boolean drainEntryOnce(Entry<T> entry, boolean retainOnFailure) {
+            if (pending.get(entry.key) != entry) return true;
             if (entry.writeFailed && entry.cachedTag != null) {
-                commit(entry, entry.cachedTag);
-                return;
+                return commit(entry, entry.cachedTag, retainOnFailure);
             }
             if (entry.encodeFailed) {
-                retryEncodeSync(entry);
-                return;
+                return retryEncodeSync(entry, retainOnFailure);
             }
-            if (entry.claimed.compareAndSet(false, true)) {
+            Attempt<T> attempt = entry.attempt;
+            if (attempt.claimed.compareAndSet(false, true)) {
                 try {
                     T tag = entry.encoder.get();
+                    entry.rejected = false;
                     entry.cachedTag = tag;
-                    entry.encoded.complete(tag);
-                    entry.workerCommitHandled = true;
-                    commit(entry, tag);
+                    attempt.encoded.complete(tag);
+                    attempt.handled = true;
+                    return commit(entry, tag, retainOnFailure);
                 } catch (Throwable failure) {
-                    entry.encoded.completeExceptionally(failure);
-                    entry.workerFailureHandled = true;
-                    fail(entry, failure);
+                    attempt.encoded.completeExceptionally(failure);
+                    attempt.handled = true;
+                    fail(entry, failure, retainOnFailure);
+                    return false;
                 }
-                return;
             }
             // Already claimed by a worker: wait for its future and NEVER invoke entry.encoder.get() concurrently.
             try {
-                T tag = entry.encoded.get(drainTimeoutMillis, TimeUnit.MILLISECONDS);
-                entry.workerCommitHandled = true;
+                T tag = attempt.encoded.get(drainTimeoutMillis, TimeUnit.MILLISECONDS);
+                attempt.handled = true;
                 entry.cachedTag = tag;
-                commit(entry, tag);
+                return commit(entry, tag, retainOnFailure);
             } catch (ExecutionException failed) {
-                if (!entry.workerFailureHandled) {
-                    entry.workerFailureHandled = true;
-                    fail(entry, failed.getCause() != null ? failed.getCause() : failed);
+                Throwable cause = failed.getCause() != null ? failed.getCause() : failed;
+                if (!attempt.handled) {
+                    attempt.handled = true;
+                    fail(entry, cause, retainOnFailure);
+                } else {
+                    entry.lastFailure = cause;
                 }
+                return false;
             } catch (TimeoutException timedOut) {
                 // Worker is still encoding the same PalettedContainer: leave entry pending/dirty instead of concurrent encode.
+                entry.lastFailure = timedOut;
                 errorLogger.log(entry.key, timedOut);
+                return false;
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
+                entry.lastFailure = interrupted;
                 errorLogger.log(entry.key, interrupted);
+                return false;
             } catch (CancellationException cancelled) {
-                if (!entry.workerFailureHandled) {
-                    entry.workerFailureHandled = true;
-                    fail(entry, cancelled);
+                if (!attempt.handled) {
+                    attempt.handled = true;
+                    fail(entry, cancelled, retainOnFailure);
+                } else {
+                    entry.lastFailure = cancelled;
                 }
+                return false;
             }
         }
 

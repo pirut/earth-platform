@@ -30,6 +30,12 @@ import java.util.concurrent.atomic.AtomicLong;
 final class RangeFiles implements AutoCloseable {
     interface Load<T> { T get() throws IOException, InterruptedException; }
 
+    /** Response-validation failure on HTTP 206 (missing/malformed Content-Range or unexpected length); tile-specific, not a host transport outage. */
+    static final class InvalidRangeResponseException extends IOException {
+        InvalidRangeResponseException(String message) { super(message); }
+        InvalidRangeResponseException(String message, Throwable cause) { super(message, cause); }
+    }
+
     /** Distinguishes confirmed missing (404) from forbidden (403) so callers never poison disk caches on transient 403s. */
     enum FetchStatus { OK, NOT_FOUND, FORBIDDEN }
 
@@ -172,6 +178,9 @@ final class RangeFiles implements AutoCloseable {
                 }
             } catch (InterruptedIOException interrupted) {
                 throw interrupted;
+            } catch (InvalidRangeResponseException invalid) {
+                last = invalid;
+                // Tile-specific response validation failure: never count as a host-wide transport failure.
             } catch (IOException failure) {
                 last = failure;
                 HostBackoff.failed(uri, what, failure);
@@ -200,31 +209,39 @@ final class RangeFiles implements AutoCloseable {
         long length() { return end - start + 1; }
     }
 
-    private static ContentRange parseContentRange(String header, URI uri) throws IOException {
+    private static ContentRange parseContentRange(String header, URI uri) throws InvalidRangeResponseException {
         String trimmed = header.trim();
         if (!trimmed.regionMatches(true, 0, "bytes ", 0, 6)) {
-            throw new IOException("Unsupported HTTP 206 Content-Range '" + header + "' for " + uri);
+            throw new InvalidRangeResponseException("Unsupported HTTP 206 Content-Range '" + header + "' for " + uri);
         }
         String spec = trimmed.substring(6).trim();
         int slash = spec.indexOf('/');
         int dash = spec.indexOf('-');
         if (slash < 0 || dash <= 0 || dash >= slash - 1) {
-            throw new IOException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri);
+            throw new InvalidRangeResponseException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri);
         }
         try {
             long start = Long.parseLong(spec.substring(0, dash).trim());
             long end = Long.parseLong(spec.substring(dash + 1, slash).trim());
             String totalText = spec.substring(slash + 1).trim();
-            long total = "*".equals(totalText) ? -1L : Long.parseLong(totalText);
-            if (start < 0 || end < start || end == Long.MAX_VALUE) {
-                throw new IOException("Invalid HTTP 206 Content-Range bounds '" + header + "' for " + uri);
+            long total;
+            if ("*".equals(totalText)) {
+                total = -1L;
+            } else {
+                total = Long.parseLong(totalText);
+                if (total <= 0) {
+                    throw new InvalidRangeResponseException("Non-positive HTTP 206 Content-Range total '" + header + "' for " + uri);
+                }
             }
-            if (total >= 0 && end >= total) {
-                throw new IOException("Out-of-bounds HTTP 206 Content-Range '" + header + "' for " + uri);
+            if (start < 0 || end < start || end == Long.MAX_VALUE) {
+                throw new InvalidRangeResponseException("Invalid HTTP 206 Content-Range bounds '" + header + "' for " + uri);
+            }
+            if (total > 0 && end >= total) {
+                throw new InvalidRangeResponseException("Out-of-bounds HTTP 206 Content-Range '" + header + "' for " + uri);
             }
             return new ContentRange(start, end, total);
         } catch (NumberFormatException malformed) {
-            throw new IOException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri, malformed);
+            throw new InvalidRangeResponseException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri, malformed);
         }
     }
 
@@ -262,46 +279,40 @@ final class RangeFiles implements AutoCloseable {
             }
             return out.toByteArray();
         }
-        // HTTP 206 partial content: validate Content-Range when present and enforce requested length bound.
-        long expectedLength = -1L;
-        if (contentRangeHeader.isPresent()) {
-            ContentRange range = parseContentRange(contentRangeHeader.get(), uri);
-            if (range.start() != offset) {
-                throw new IOException("HTTP 206 Content-Range start " + range.start() + " != requested offset " + offset + " for " + uri);
-            }
-            long rangeLength = range.length();
-            if (rangeLength > (long) length) {
-                throw new IOException("HTTP 206 Content-Range length " + rangeLength + " exceeds requested " + length + " for " + uri);
-            }
-            if (rangeLength < (long) length && (range.total() < 0 || range.end() + 1 != range.total())) {
-                throw new IOException("Short HTTP 206 Content-Range '" + contentRangeHeader.get() + "' before EOF (requested " + length + " bytes from " + offset + ") for " + uri);
-            }
-            if (contentLength.isPresent() && contentLength.getAsLong() != rangeLength) {
-                throw new IOException("HTTP 206 Content-Length " + contentLength.getAsLong() + " != Content-Range length " + rangeLength + " for " + uri);
-            }
-            expectedLength = rangeLength;
-        } else if (contentLength.isPresent()) {
-            if (contentLength.getAsLong() > (long) length) {
-                throw new IOException("HTTP 206 Content-Length " + contentLength.getAsLong() + " exceeds requested " + length + " for " + uri);
-            }
-            expectedLength = contentLength.getAsLong();
+        // HTTP 206 partial content: require a valid Content-Range header and enforce exact length & EOF rules.
+        if (contentRangeHeader.isEmpty()) {
+            throw new InvalidRangeResponseException("HTTP 206 missing Content-Range header for " + uri);
         }
-        long maxRead = expectedLength >= 0 ? expectedLength : (long) length;
+        ContentRange range = parseContentRange(contentRangeHeader.get(), uri);
+        if (range.start() != offset) {
+            throw new InvalidRangeResponseException("HTTP 206 Content-Range start " + range.start() + " != requested offset " + offset + " for " + uri);
+        }
+        long rangeLength = range.length();
+        if (rangeLength > (long) length) {
+            throw new InvalidRangeResponseException("HTTP 206 Content-Range length " + rangeLength + " exceeds requested " + length + " for " + uri);
+        }
+        if (rangeLength < (long) length && (range.total() <= 0 || range.end() + 1 != range.total())) {
+            throw new InvalidRangeResponseException("Short HTTP 206 Content-Range '" + contentRangeHeader.get() + "' before EOF (requested " + length + " bytes from " + offset + ") for " + uri);
+        }
+        if (contentLength.isPresent() && contentLength.getAsLong() != rangeLength) {
+            throw new InvalidRangeResponseException("HTTP 206 Content-Length " + contentLength.getAsLong() + " != Content-Range length " + rangeLength + " for " + uri);
+        }
+        long expectedLength = rangeLength;
         byte[] scratch = new byte[8192];
-        int initialCap = (int) Math.min(Math.max(0L, maxRead), 65536L);
+        int initialCap = (int) Math.min(Math.max(0L, expectedLength), 65536L);
         ByteArrayOutputStream out = new ByteArrayOutputStream(initialCap);
         long totalRead = 0;
         while (true) {
             int read = stream.read(scratch, 0, scratch.length);
             if (read < 0) break;
             totalRead += read;
-            if (totalRead > maxRead) {
-                throw new IOException("HTTP 206 body exceeded expected length (" + maxRead + " bytes) for " + uri);
+            if (totalRead > expectedLength) {
+                throw new InvalidRangeResponseException("HTTP 206 body exceeded expected length (" + expectedLength + " bytes) for " + uri);
             }
             out.write(scratch, 0, read);
         }
-        if (expectedLength >= 0 && totalRead != expectedLength) {
-            throw new IOException("Truncated HTTP 206 body (" + totalRead + " of " + expectedLength + " bytes) for " + uri);
+        if (totalRead != expectedLength) {
+            throw new InvalidRangeResponseException("Truncated HTTP 206 body (" + totalRead + " of " + expectedLength + " bytes) for " + uri);
         }
         return out.toByteArray();
     }

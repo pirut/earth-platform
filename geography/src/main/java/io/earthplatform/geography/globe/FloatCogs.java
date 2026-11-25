@@ -416,7 +416,10 @@ final class FloatCogs implements AutoCloseable {
         // Asked for every pixel read: a header already read is returned at once, without naming the file.
         CompletableFuture<Header> known = headers.get(file);
         if (known != null && known.isDone() && !known.isCompletedExceptionally()) return known.join();
-        if (isForbiddenCached(file)) return Header.MISSING;
+        if (isForbiddenCached(file)) {
+            Path cached = cached(names.apply(file), ".header");
+            if (cached == null || !Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) return Header.MISSING;
+        }
         CompletableFuture<Header> mine = new CompletableFuture<>(), shared = headers.putIfAbsent(file, mine);
         if (shared == null) {
             try {
@@ -449,6 +452,7 @@ final class FloatCogs implements AutoCloseable {
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
                 Header header = CogHeader.parse(Pieces.of(DiskCache.read(cached)), skipLevels);
+                forbiddenUntil.remove(file);
                 files.diskHits.incrementAndGet();
                 return header;
             } catch (IOException | RuntimeException corrupt) {
@@ -461,15 +465,15 @@ final class FloatCogs implements AutoCloseable {
             // Legacy 0-byte (or unversioned) .none file: revalidate once online.
             legacyNone = true;
         }
-        if (isForbiddenCached(file)) return Header.FORBIDDEN;
         if (!allowNetwork) throw new MissingTerrainException(what + " " + name + " not cached and network access is disabled");
+        if (isForbiddenCached(file)) return Header.FORBIDDEN;
         RangeFiles.FetchResult startResult = files.fetchResult(base.resolve(name), 0, HEADER_BYTES);
         if (startResult.isNotFound()) {
             if (missing != null) DiskCache.write(missing, RangeFiles.CONFIRMED_NOT_FOUND_MARKER);
             return Header.MISSING;
         }
         if (startResult.isForbidden()) {
-            if (legacyNone && missing != null) Files.deleteIfExists(missing);
+            // Preserve any legacy .none marker for future offline sessions; record 403 strictly in memory.
             rememberForbidden(file);
             return Header.FORBIDDEN;
         }
