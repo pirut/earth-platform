@@ -14,26 +14,48 @@ import org.lwjgl.opengl.GL30C;
 import org.lwjgl.system.MemoryStack;
 
 /**
- * Far terrain without a shader pack, drawn in a depth of its own: 32-bit float with an eight-block
- * near plane. The game's depth, with its 0.05-block near plane, gives a whole depth step to a
- * hundred blocks or more ten kilometres out, so it can't tell where a far slope meets a cloud. The
- * colour goes straight into the game's target, and once far terrain has drawn its depth is merged
- * into the game's, for the water and clouds after it. Only while the layered clouds draw, which
- * clip against {@link #texture}, unless {@code far.plainDepth} is off. Render thread only; one per
- * far renderer.
+ * Far terrain without a shader pack, drawn in a depth of its own: 32-bit float, with a near plane
+ * a fraction of the game's blocks' reach out (see {@link #near}). The game's depth, with its
+ * 0.05-block near plane, gives a whole depth step to 30 blocks at 5 km and 480 at 20 km, so two far
+ * faces a block or ten apart land on one depth and fight each other, most visibly zoomed in; a near
+ * plane hundreds of times farther gives steps hundreds of times finer, with no {@code ARB_clip_control}
+ * (macOS stops at OpenGL 4.1). The colour goes straight into the game's target, and once far terrain
+ * has drawn its depth is merged into the game's, for the water and clouds after it. Every frame
+ * without a shader pack or the camera under a fluid, unless {@code far.plainDepth} is off; the
+ * layered clouds clip against {@link #texture}. Render thread only; one per far renderer.
  */
 final class FarPlainDepth {
-    /** Far terrain's own near plane, in blocks. */
-    private static final float NEAR = 8;
+    /** Far terrain's own least near plane, in blocks, and what it keeps where the reach is unknown. */
+    static final float NEAR = 8;
+    /**
+     * How much of the game's blocks' reach far terrain's near plane may take. Far terrain that is
+     * nearer than the plane clips, so it must stay under what the nearest far terrain shows at in
+     * view depth: the reach times the cosine of the widest angle off the view axis, 0.33 in the
+     * corner of a 110 degree field of view on 16:9. Past the game's blocks, the stand-ins at the
+     * player's feet and the columns inside the reach draw in the game's own depth instead.
+     */
+    static final float NEAR_SHARE = 0.3F;
+    /** The game's depth: 24 bits, so a step is 2^-24 of the range. */
+    static final double STEP = 1.0 / (1 << 24);
     private int texture, framebuffer, vao, merge, width, height, drawnFrom;
     private int gameUnit, farUnit, farInverse, gameMatrix;
     private boolean failed;
     private final Matrix4f game = new Matrix4f(), far = new Matrix4f(), inverse = new Matrix4f();
 
-    /** The game's projection with far terrain's own near and far planes: the same view, finer depth. */
-    static Matrix4f projection(Matrix4f game) {
-        float reach = FarRenderer.depthFar();
-        return new Matrix4f(game).m22((reach + NEAR) / (NEAR - reach)).m32(2 * reach * NEAR / (NEAR - reach));
+    /**
+     * Far terrain's near plane in blocks: {@link #NEAR_SHARE} of the game's blocks' reach, never under
+     * {@link #NEAR}. A far near plane is what makes the depth fine: the step at a distance d is
+     * about {@code d * d / near * 2^-24}.
+     */
+    static float near(float blocksReach) { return Math.max(NEAR, NEAR_SHARE * blocksReach); }
+
+    /**
+     * The game's projection with far terrain's own near and far planes: the same view (so a zoom
+     * leaves it alone: it changes only the first two diagonal entries), finer depth.
+     */
+    static Matrix4f projection(Matrix4f game, float blocksReach) {
+        float far = FarRenderer.depthFar(), near = near(blocksReach);
+        return new Matrix4f(game).m22((far + near) / (near - far)).m32(2 * far * near / (near - far));
     }
 
     /** The game's projection this frame's far terrain was drawn against. */
@@ -48,11 +70,13 @@ final class FarPlainDepth {
     /** Has far terrain draw in its own depth, from the game's target; false leaves it in the game's. */
     boolean begin(Matrix4f projection) {
         var target = Minecraft.getInstance().getMainRenderTarget();
-        return begin(projection, target.width, target.height);
+        return begin(projection, target.width, target.height, FarLod.nearReach());
     }
 
-    /** The same for a target this size. */
-    boolean begin(Matrix4f projection, int targetWidth, int targetHeight) {
+    /** The same for a target this size, with the least near plane. */
+    boolean begin(Matrix4f projection, int targetWidth, int targetHeight) { return begin(projection, targetWidth, targetHeight, 0); }
+
+    private boolean begin(Matrix4f projection, int targetWidth, int targetHeight, float blocksReach) {
         if (failed) return false;
         RenderSystem.assertOnRenderThread();
         drawnFrom = GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
@@ -66,7 +90,7 @@ final class FarPlainDepth {
         // The game's blocks, which far terrain tests itself against (see FarShaders#PRECISE_DEPTH) and is merged with at the end.
         if (!FarBlockDepth.copy(targetWidth, targetHeight)) return false;
         game.set(projection);
-        far.set(projection(projection));
+        far.set(projection(projection, blocksReach));
         int active = GlStateManager._getActiveTexture();
         GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
         int bound = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);

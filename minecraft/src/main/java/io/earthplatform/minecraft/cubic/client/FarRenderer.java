@@ -14,7 +14,6 @@ import io.earthplatform.minecraft.cubic.Timings;
 import io.earthplatform.minecraft.cubic.ViewOrder;
 import io.earthplatform.minecraft.cubic.far.Far;
 import io.earthplatform.minecraft.cubic.net.CubePayloads;
-import io.earthplatform.minecraft.cubic.play.client.EarthClouds;
 import io.earthplatform.minecraft.cubic.mixin.FrustumAccess;
 import io.earthplatform.minecraft.diagnostics.BuildInfo;
 import io.earthplatform.minecraft.cubic.gen.FarSurfacePacket;
@@ -151,8 +150,8 @@ public final class FarRenderer {
     private boolean unsupported;
     private final Long2ObjectOpenHashMap<Column> columns = new Long2ObjectOpenHashMap<>();
     /**
-     * Far terrain without a pack in its own finer depth, for the layered clouds to clip against (see
-     * {@link FarPlainDepth}): only while they draw, and not with {@code -Dearthplatform.far.plainDepth=false}.
+     * Far terrain without a pack in its own finer depth, so its faces and the clouds clip against
+     * each other cleanly at any zoom (see {@link FarPlainDepth}): not with {@code -Dearthplatform.far.plainDepth=false}.
      */
     private static final boolean PLAIN_DEPTH = !"false".equals(System.getProperty("earthplatform.far.plainDepth"));
     @Nullable private FarPlainDepth plainDepth;
@@ -1788,11 +1787,10 @@ public final class FarRenderer {
         // Applying the terrain shader binds a shader pack's terrain buffers, which the far terrain draws into too.
         shader.setDefaultUniforms(VertexFormat.Mode.QUADS, modelView, projection, Minecraft.getInstance().getWindow());
         shader.apply();
-        // For the layered clouds to clip against, far terrain without a pack draws in its own finer
-        // depth, only while they draw (see EarthClouds#layeredDrawing); it begins after the columns
-        // inside the reach, which stay in the game's depth.
-        boolean precise = PLAIN_DEPTH && !pack && camera.getFluidInCamera() == FogType.NONE && EarthClouds.layeredDrawing()
-                && gpu.preciseReady();
+        // Far terrain without a pack draws in its own finer depth, so two faces a block or ten apart
+        // kilometres out keep their order, zoomed or not (see FarPlainDepth); it begins after the
+        // columns inside the reach, which stay in the game's depth.
+        boolean precise = PLAIN_DEPTH && !pack && camera.getFluidInCamera() == FogType.NONE && gpu.preciseReady();
         float[] shade = new float[6];
         for (Direction direction : Direction.values()) shade[direction.get3DDataValue()] = world.client().getShade(direction, true);
         float reach = FarLod.nearReach();
