@@ -2,7 +2,9 @@ package io.earthplatform.minecraft.cubic.gen;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -216,35 +218,45 @@ class FloraAndTreeAuditTest {
     }
 
     @Test void dryTrunkDoesNotOverwriteSeagrassWaterColumn() {
-        // Dry dark-oak shoreline right next to warm shallow water containing seagrass (fluid is WATER, block is not Blocks.WATER).
-        var forest = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.DARK_FOREST),
-                Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.DIRT.defaultBlockState(), 150, 0, 0, 0, 0, false, SurfaceGenerator.Tree.DARK_OAK);
+        // Dry shoreline at y = 0 with branching acacia/cherry trees (trunks/branches reach x >= 8 at y = 4..6)
+        // directly beside warm shallow ocean (bed y = 3, water y = 7 -> seagrass at y = 4, tall seagrass at y = 4..5).
+        // This fixture guarantees dry-land TreeShape.TRUNK writes actually target seagrass blocks, which WOULD
+        // have overwritten seagrass under the old Blocks.WATER check.
+        var savanna = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.SAVANNA),
+                Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.DIRT.defaultBlockState(), 150, 0, 0, 0, 0, false, SurfaceGenerator.Tree.ACACIA);
         var ocean = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.WARM_OCEAN),
                 Blocks.SAND.defaultBlockState(), Blocks.SAND.defaultBlockState(), 0, 0, 0, 0, 0, false);
         var generator = new SurfaceGenerator(101L, biomes, RandomSource.create(101L)) {
             @Override protected void ground(int x, int z, int[] out) {
-                if (x < 8) { out[0] = 4; out[1] = DRY; }
-                else { out[0] = 2; out[1] = 4; }
+                if (x < 8) { out[0] = 0; out[1] = DRY; }
+                else { out[0] = 3; out[1] = 7; }
             }
             @Override protected Surface surface(int x, int z, int ground, int water, int slope) {
-                return x < 8 ? forest : ocean;
+                return x < 8 ? savanna : ocean;
             }
             @Override protected boolean customTrees() { return false; }
             @Override public String id() { return "test_seagrass_guard"; }
-            @Override public int seaLevel() { return 4; }
-            @Override protected int shoreLevel() { return 4; }
+            @Override public int seaLevel() { return 7; }
+            @Override protected int shoreLevel() { return 7; }
             @Override protected boolean emeralds(int maxGround) { return false; }
         };
-        int seagrassPreserved = 0;
-        for (int cz = 0; cz < 6; cz++) {
+        Trees probe = new Trees(generator);
+        int dryTrunkHitsOnSeagrass = 0;
+        for (int cz = 0; cz < 16; cz++) {
             LevelChunkSection section = generator.generate(0, 0, cz, new ArrayList<>(), new ArrayList<>());
-            for (int lz = 0; lz < 16; lz++) for (int lx = 8; lx < 16; lx++) {
-                BlockState at3 = section.getBlockState(lx, 3, lz);
-                assertFalse(at3.is(BlockTags.LOGS), "dry tree trunk must not overwrite water/seagrass at (" + lx + ",3," + lz + ")");
-                if (at3.is(Blocks.SEAGRASS) || at3.is(Blocks.TALL_SEAGRASS)) seagrassPreserved++;
-            }
+            int z0 = cz << 4;
+            int[] hits = {0};
+            probe.place(0, 0, z0, 15, 15, z0 + 15, false, true, (wx, wy, wz, state, kind, aquatic) -> {
+                if (aquatic || kind != TreeShape.TRUNK || wx < 8 || wy < 4 || wy > 7) return;
+                BlockState placed = section.getBlockState(wx, wy, wz - z0);
+                assertFalse(placed.is(BlockTags.LOGS),
+                        "dry tree trunk must not overwrite water/seagrass at (" + wx + "," + wy + "," + wz + ")");
+                if (placed.is(Blocks.SEAGRASS) || placed.is(Blocks.TALL_SEAGRASS)) hits[0]++;
+            });
+            dryTrunkHitsOnSeagrass += hits[0];
         }
-        assertTrue(seagrassPreserved > 0, "shallow warm ocean beside shoreline should keep seagrass intact");
+        assertTrue(dryTrunkHitsOnSeagrass > 0,
+                "fixture must actually attempt dry TRUNK writes onto seagrass blocks and preserve every one");
     }
 
     @Test void zeroCanopySuppressesScatteredAndAttenuatesWoodlandConsistentlyWithCoarseLodAndRegionalSpecies() {
@@ -445,6 +457,99 @@ class FloraAndTreeAuditTest {
         // High sky cube cy = 12 (y = 192..207) well above even cliff trees stays empty air.
         LevelChunkSection highSky = generator.generate(0, 12, 0, new ArrayList<>(), new ArrayList<>());
         assertTrue(highSky.hasOnlyAir(), "sky cube far above all neighbouring trees should stay empty");
+    }
+
+    @Test void narrowNeighborRidgeBetweenSubsamplePointsMatchesColdAndWarmCacheIdentically() {
+        // Chunk (0, 0) is flat plains at y = 10. Neighbour chunk (1, 0) is flat at y = 10 at EVERY {0, 4, 8, 12, 15}
+        // subsample coordinate, but has a narrow high ridge at dx in {1, 2, 3}, dz in {1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14}
+        // at y = 80 supporting dense forest whose crowns overhang chunk (0, 0) in sky cube cy = 5 (y = 80..95).
+        var plain = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.PLAINS),
+                Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.DIRT.defaultBlockState(), 0, 0, 0, 0, 0, false);
+        var ridgeForest = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.FOREST),
+                Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.DIRT.defaultBlockState(), 150, 0, 0, 0, 0, false);
+        java.util.function.Supplier<SurfaceGenerator> makeGen = () -> new SurfaceGenerator(777L, biomes, RandomSource.create(777L)) {
+            private boolean onRidge(int x, int z) {
+                int dx = x - 16, dz = Math.floorMod(z, 16);
+                return x >= 17 && x <= 19 && dz != 0 && dz != 4 && dz != 8 && dz != 12 && dz != 15 && dx >= 1 && dx <= 3;
+            }
+            @Override protected void ground(int x, int z, int[] out) {
+                out[0] = onRidge(x, z) ? 80 : 10;
+                out[1] = DRY;
+            }
+            @Override protected Surface surface(int x, int z, int ground, int water, int slope) {
+                return onRidge(x, z) ? ridgeForest : plain;
+            }
+            @Override protected boolean customTrees() { return false; }
+            @Override public String id() { return "test_narrow_ridge"; }
+            @Override public int seaLevel() { return 0; }
+            @Override protected int shoreLevel() { return 0; }
+            @Override protected boolean emeralds(int maxGround) { return false; }
+        };
+
+        SurfaceGenerator cold = makeGen.get();
+        SurfaceGenerator warm = makeGen.get();
+        int coldLeaves = 0;
+        for (int cz = 0; cz < 8; cz++) {
+            // Warm neighbour chunk (1, cz) before generating sky cube (0, 5, cz) on the warm generator only.
+            warm.generate(1, 5, cz, new ArrayList<>(), new ArrayList<>());
+            LevelChunkSection coldSky = cold.generate(0, 5, cz, new ArrayList<>(), new ArrayList<>());
+            LevelChunkSection warmSky = warm.generate(0, 5, cz, new ArrayList<>(), new ArrayList<>());
+            for (int ly = 0; ly < 16; ly++) for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
+                BlockState cb = coldSky.getBlockState(lx, ly, lz);
+                BlockState wb = warmSky.getBlockState(lx, ly, lz);
+                assertEquals(wb, cb,
+                        "cold-cache and warm-cache sky cube (0,5," + cz + ") must match identically at (" + lx + "," + ly + "," + lz + ")");
+                if (cb.is(BlockTags.LEAVES)) coldLeaves++;
+            }
+        }
+        assertTrue(coldLeaves > 0, "narrow ridge between {0,4,8,12,15} sample points must preserve overhanging crowns on cold cache");
+    }
+
+    @Test void structureHostCubeExposesTallLocalTreesAboveFastCutoff() {
+        // Flat ground at y = 10 (col.max + 16 = 26). Tall jungle trees rooted locally in (cx, cz) reach cube cy = 2 (y = 32..47).
+        var jungle = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.JUNGLE),
+                Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.DIRT.defaultBlockState(), 150, 0, 0, 0, 0, false, SurfaceGenerator.Tree.JUNGLE);
+        var generator = new SurfaceGenerator(909L, biomes, RandomSource.create(909L)) {
+            @Override protected void ground(int x, int z, int[] out) { out[0] = 10; out[1] = DRY; }
+            @Override protected Surface surface(int x, int z, int ground, int water, int slope) { return jungle; }
+            @Override protected int canopy(int x, int z) { return 30; }
+            @Override protected boolean customTrees() { return false; }
+            @Override public String id() { return "test_structure_host_tall_local"; }
+            @Override public int seaLevel() { return 0; }
+            @Override protected int shoreLevel() { return 0; }
+            @Override protected boolean emeralds(int maxGround) { return false; }
+        };
+
+        int checkedTallCubes = 0;
+        for (int cx = 0; cx < 8; cx++) {
+            LevelChunkSection generated = generator.generate(cx, 2, 0, new ArrayList<>(), new ArrayList<>());
+            if (generated.hasOnlyAir()) continue;
+            checkedTallCubes++;
+            LevelChunkSection hostCube = generator.structureCube(cx, 2, 0);
+            assertNotNull(hostCube, "StructureHost.cube() must not return null when tall local tree reaches cy=2 in chunk " + cx);
+            int treeBlocks = 0;
+            for (int ly = 0; ly < 16; ly++) for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
+                BlockState expected = generated.getBlockState(lx, ly, lz);
+                BlockState actual = hostCube.getBlockState(lx, ly, lz);
+                assertEquals(expected, actual, "StructureHost.cube() must expose tall local tree blocks identically");
+                if (actual.is(BlockTags.LOGS) || actual.is(BlockTags.LEAVES)) treeBlocks++;
+            }
+            assertTrue(treeBlocks > 0, "StructureHost.cube() at cy=2 must contain tree blocks");
+        }
+        assertTrue(checkedTallCubes > 0, "tall jungle trees on flat y=10 ground must reach cube cy=2 (y>=32)");
+
+        // Treeless flat plains at y = 10 still fast-rejects cy = 2 to null.
+        var plain = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.PLAINS),
+                Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.DIRT.defaultBlockState(), 0, 0, 0, 0, 0, false);
+        var plainsGen = new SurfaceGenerator(909L, biomes, RandomSource.create(909L)) {
+            @Override protected void ground(int x, int z, int[] out) { out[0] = 10; out[1] = DRY; }
+            @Override protected Surface surface(int x, int z, int ground, int water, int slope) { return plain; }
+            @Override public String id() { return "test_structure_host_plains"; }
+            @Override public int seaLevel() { return 0; }
+            @Override protected int shoreLevel() { return 0; }
+            @Override protected boolean emeralds(int maxGround) { return false; }
+        };
+        assertNull(plainsGen.structureCube(0, 2, 0), "treeless flat plains at y=10 should still return null for cy=2");
     }
 
     @Test void skyCubesOverFlatTerrainAndOceanDoNotMaterializeNeighborTreeChunks() {

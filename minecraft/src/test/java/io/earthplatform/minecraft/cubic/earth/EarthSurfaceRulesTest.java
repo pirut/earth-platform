@@ -13,6 +13,7 @@ import java.io.ByteArrayOutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import javax.imageio.ImageIO;
+import io.earthplatform.geography.globe.CanopySource;
 import io.earthplatform.geography.globe.ClimateSource;
 import io.earthplatform.geography.globe.GroundPalette;
 import io.earthplatform.geography.globe.MercatorGrid;
@@ -260,20 +261,28 @@ class EarthSurfaceRulesTest {
         // Pick a subpolar coordinate where ForestTypes has broadleaf data so typed() is exercised.
         EarthGenerator typedEarth = new EarthGenerator(1234L, biomes, EarthSettings.at(0, 0), tiles, cover, null, null);
         typedEarth.enableForestTypes();
-        int[] broadleafSpot = iceland;
         ForestTypes ft = ForestTypes.get();
-        if (ft != null) {
-            double[] mix = new double[2];
+        assertNotNull(ft, "bundled ForestTypes data must be present");
+        int[] broadleafSpot = null;
+        double[] mix = new double[2];
+        typedEarth.setStandOverride(12.0);
+        try {
             outer:
-            for (double lat = 63.0; lat <= 69.0; lat += 0.5) {
-                for (double lon = -22.0; lon <= 18.0; lon += 1.0) {
-                    if (ft.at(lat, lon, mix) && mix[0] < 0.05) {
-                        broadleafSpot = typedEarth.block(lat, lon);
+            for (double lat = 60.0; lat <= 70.0; lat += 0.25) {
+                for (double lon = -24.0; lon <= 24.0; lon += 0.5) {
+                    if (!ft.at(lat, lon, mix) || mix[0] >= 0.05) continue;
+                    int[] cand = typedEarth.block(lat, lon);
+                    Surface probe = typedEarth.covered(WorldCoverSource.TREE_COVER, cand[0], cand[1], y, subpolarMoor, 0.05, 50, 0, 1);
+                    if (probe != null && probe.biome().is(Biomes.BIRCH_FOREST)) {
+                        broadleafSpot = cand;
                         break outer;
                     }
                 }
             }
+        } finally {
+            typedEarth.setStandOverride(null);
         }
+        assertNotNull(broadleafSpot, "must find a subpolar broadleaf ForestTypes coordinate that resolves to BIRCH_FOREST");
 
         try {
             // 1. stand == -1 (no-data / missing canopy): preserve old fallback densities.
@@ -323,8 +332,10 @@ class EarthSurfaceRulesTest {
             Surface tallUntyped = earth.covered(WorldCoverSource.TREE_COVER, iceland[0], iceland[1], y, subpolarMoor, 0.05, 50, 0, 1);
             assertEquals(70, tallUntyped.trees(), "tall 12 m subpolar TREE_COVER must keep full density 70");
             assertEquals(110, tallUntyped.grass(), "tall 12 m subpolar TREE_COVER must keep original grass density");
-            assertEquals(70, typedEarth.covered(WorldCoverSource.TREE_COVER, broadleafSpot[0], broadleafSpot[1], y, subpolarMoor, 0.05, 50, 0, 1).trees(),
-                    "tall 12 m typed subpolar TREE_COVER must keep full density 70");
+            Surface tallTyped = typedEarth.covered(WorldCoverSource.TREE_COVER, broadleafSpot[0], broadleafSpot[1], y, subpolarMoor, 0.05, 50, 0, 1);
+            assertEquals(70, tallTyped.trees(), "tall 12 m typed subpolar TREE_COVER must keep full density 70");
+            assertTrue(tallTyped.biome().is(Biomes.BIRCH_FOREST),
+                    "tall 12 m typed subpolar TREE_COVER at broadleafSpot must return BIRCH_FOREST, got " + tallTyped.biome());
         } finally {
             earth.setStandOverride(null);
             typedEarth.setStandOverride(null);
@@ -381,24 +392,110 @@ class EarthSurfaceRulesTest {
     }
 
     @Test
-    void marshyMangroveDeltaDryWaterPixelNearSeaDoesNotBecomeBeachSand() throws Exception {
-        // Sundarbans mangrove estuary (Ecoregions.MANGROVE): sea at dx < -10 (-5 m), flat estuary land at dx >= -10 (+1 m),
-        // with a dry-DEM WATER creek pixel at (0, 0) surrounded by MANGROVES cover.
+    void marshyMangroveDeltaDryWaterAndNoDataPixelsAndOffshoreSpecks() throws Exception {
+        // 1. Sundarbans mangrove estuary (Ecoregions.MANGROVE): sea at dx < -10 (-5 m), flat estuary land at dx >= -10 (+1 m).
+        // Both dry-DEM WATER and dry-DEM NO_DATA creek pixels near sea (at SEA + 1 and SEA + 3) must stay mangrove/marsh, NOT beach sand!
         double sundarbansLat = 22.0, sundarbansLon = 89.2;
-        try (var world = new EarthShorelineTest.SyntheticWorld(biomes, sundarbansLat, sundarbansLon,
-                (dx, dz) -> dx < -10 ? -5.0 : 1.0,
-                (dx, dz) -> dx < -10 ? WorldCoverSource.WATER
-                        : (Math.abs(dx) <= 4 && Math.abs(dz) <= 4 ? WorldCoverSource.WATER : WorldCoverSource.MANGROVES))) {
-            EarthGenerator gen = world.generator;
-            // Dry-DEM WATER pixel 10 blocks from sea (inside seaWithin(32)) at SEA + 1 and SEA + 3 must stay mangrove/marsh, NOT beach sand!
-            for (int y : new int[]{gen.seaLevel() + 1, gen.seaLevel() + 3}) {
-                Surface s = gen.surface(world.homeX, world.homeZ, y, EarthGenerator.DRY, 0, 1, null);
-                assertNotNull(s);
-                assertFalse(s.biome().is(Biomes.BEACH), "mangrove delta dry WATER pixel must not become BEACH at y=" + y);
-                assertNotEquals(Blocks.SAND.defaultBlockState(), s.top(), "mangrove delta dry WATER pixel must not get beach sand at y=" + y);
-                assertTrue(s.biome().is(Biomes.MANGROVE_SWAMP) || s.biome().is(Biomes.SWAMP),
-                        "mangrove delta dry WATER pixel should stay mangrove/marsh, got " + s.biome());
+        for (int centerCover : new int[]{WorldCoverSource.WATER, WorldCoverSource.NO_DATA}) {
+            try (var world = new EarthShorelineTest.SyntheticWorld(biomes, sundarbansLat, sundarbansLon,
+                    (dx, dz) -> dx < -10 ? -5.0 : 1.0,
+                    (dx, dz) -> dx < -10 ? WorldCoverSource.WATER
+                            : (Math.abs(dx) <= 4 && Math.abs(dz) <= 4 ? centerCover : WorldCoverSource.MANGROVES))) {
+                EarthGenerator gen = world.generator;
+                for (int y : new int[]{gen.seaLevel() + 1, gen.seaLevel() + 3}) {
+                    Surface s = gen.surface(world.homeX, world.homeZ, y, EarthGenerator.DRY, 0, 1, null);
+                    assertNotNull(s);
+                    assertFalse(s.biome().is(Biomes.BEACH), "mangrove delta dry cover=" + centerCover + " must not become BEACH at y=" + y);
+                    assertNotEquals(Blocks.SAND.defaultBlockState(), s.top(), "mangrove delta dry cover=" + centerCover + " must not get beach sand at y=" + y);
+                    assertTrue(s.biome().is(Biomes.MANGROVE_SWAMP) || s.biome().is(Biomes.SWAMP),
+                            "mangrove delta dry cover=" + centerCover + " should stay mangrove/marsh, got " + s.biome());
+                }
             }
+        }
+
+        // 2. Exposed sea-surrounded offshore speck with a MANGROVES/WETLAND sample 8 blocks away must stay beach sand (not marsh/mud).
+        for (int centerCover : new int[]{WorldCoverSource.WATER, WorldCoverSource.NO_DATA}) {
+            try (var world = new EarthShorelineTest.SyntheticWorld(biomes, sundarbansLat, sundarbansLon,
+                    (dx, dz) -> (Math.abs(dx) <= 2 && Math.abs(dz) <= 2) || (dx >= 7 && dx <= 12 && Math.abs(dz) <= 3) ? 1.0 : -5.0,
+                    (dx, dz) -> (dx >= 7 && dx <= 12 && Math.abs(dz) <= 3) ? WorldCoverSource.MANGROVES
+                            : (Math.abs(dx) <= 2 && Math.abs(dz) <= 2 ? centerCover : WorldCoverSource.WATER))) {
+                EarthGenerator gen = world.generator;
+                for (int y : new int[]{gen.seaLevel() + 1, gen.seaLevel() + 3}) {
+                    Surface s = gen.surface(world.homeX, world.homeZ, y, EarthGenerator.DRY, 0, 1, null);
+                    assertNotNull(s);
+                    assertTrue(s.biome().is(Biomes.BEACH) || s.biome().is(Biomes.STONY_SHORE),
+                            "sea-surrounded offshore speck with marsh 8 blocks away must stay beach, got " + s.biome() + " (cover=" + centerCover + ", y=" + y + ")");
+                    assertEquals(0, s.trees(), "sea-surrounded offshore speck must stay treeless");
+                }
+            }
+        }
+
+        // 3. Coarse far LOD (voxel >= SHORE_VOXEL = 64) dry WATER pixel inside a marsh/mangrove estuary must NOT trigger
+        // fine-resolution seaSurrounded() (zero Terrarium elevation tile requests).
+        try (var world = new EarthShorelineTest.SyntheticWorld(biomes, sundarbansLat, sundarbansLon,
+                (dx, dz) -> Math.abs(dx) <= 2 && Math.abs(dz) <= 2 ? 1.0 : -5.0,
+                (dx, dz) -> WorldCoverSource.WATER)) {
+            EarthGenerator gen = world.generator;
+            Surface coarse = gen.surface(world.homeX, world.homeZ, gen.seaLevel() + 1, EarthGenerator.DRY, 0, 64, null);
+            assertNotNull(coarse);
+            assertEquals(0, world.terrariumRequests.get(),
+                    "coarse far LOD (voxel=64) dry WATER pixel must not trigger fine-resolution seaSurrounded/waterY elevation fetches");
+            assertTrue(coarse.biome().is(Biomes.MANGROVE_SWAMP) || coarse.biome().is(Biomes.SWAMP),
+                    "coarse far LOD mangrove estuary pixel should keep marshyFallback without calling seaSurrounded, got " + coarse.biome());
+        }
+    }
+
+    @Test
+    void quickPreviewAndCoarseFarLodSkipCanopyFetchesWhileVoxel8StillSuppressesZeroCanopy() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger canopyRequests = new java.util.concurrent.atomic.AtomicInteger();
+        HttpServer canopyServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        canopyServer.createContext("/canopy/", ex -> {
+            canopyRequests.incrementAndGet();
+            ex.sendResponseHeaders(404, -1);
+            ex.close();
+        });
+        canopyServer.start();
+        URI canopyBase = URI.create("http://127.0.0.1:" + canopyServer.getAddress().getPort() + "/canopy/");
+        try (var canopySource = new CanopySource(canopyBase, null, true, 16, 2, Duration.ofSeconds(5))) {
+            EarthGenerator gen = new EarthGenerator(1234L, biomes, EarthSettings.at(0, 0), tiles, cover, null, null);
+            gen.data(canopySource, false, false);
+            int[] iceland = gen.block(64.5, -18.5);
+            int y = gen.seaLevel() + 100;
+            var subpolarMoor = new EarthGenerator.Local(ClimateZone.SUBPOLAR_OCEANIC, 3.0, 9.5, 1200, ClimateSource.CFC);
+
+            // Coarse far LOD (voxel > 8) must return -1 and never query CanopySource.
+            assertEquals(-1, gen.farCanopy(iceland[0], iceland[1], 16), "voxel=16 must skip canopy lookup");
+            assertEquals(-1, gen.farCanopy(iceland[0], iceland[1], 64), "voxel=64 must skip canopy lookup");
+            assertEquals(70, gen.covered(WorldCoverSource.TREE_COVER, iceland[0], iceland[1], y, subpolarMoor, 0.05, 50, 0, 16).trees(),
+                    "voxel=16 subpolar TREE_COVER must use -1 fallback without querying canopy");
+            assertEquals(1, gen.covered(WorldCoverSource.MOSS_AND_LICHEN, iceland[0], iceland[1], y, subpolarMoor, 0.05, 50, 0, 32).trees(),
+                    "voxel=32 subpolar moor must use -1 fallback without querying canopy");
+            assertEquals(0, canopyRequests.get(), "coarse far LOD (voxel > 8) must issue zero CanopySource requests");
+
+            // quick() preview must return -1 even at voxel <= 8 and never query CanopySource.
+            gen.previewing(5);
+            try {
+                assertEquals(-1, gen.canopy(iceland[0], iceland[1]), "quick() preview must skip fine canopy lookup");
+                assertEquals(-1, gen.farCanopy(iceland[0], iceland[1], 8), "quick() preview must skip voxel=8 canopy lookup");
+                assertEquals(70, gen.covered(WorldCoverSource.TREE_COVER, iceland[0], iceland[1], y, subpolarMoor, 0.05, 50, 0, 8).trees(),
+                        "quick() preview subpolar TREE_COVER must use -1 fallback without querying canopy");
+            } finally {
+                gen.previewing(0);
+            }
+            assertEquals(0, canopyRequests.get(), "quick() preview must issue zero CanopySource requests");
+
+            // voxel == 8 outside quick() still honours measured 0 m canopy (level-3 seam alignment), while voxel > 8 still returns -1.
+            gen.setStandOverride(0.0);
+            try {
+                assertEquals(0, gen.farCanopy(iceland[0], iceland[1], 8), "voxel=8 must honour 0 m canopy outside quick()");
+                assertEquals(0, gen.covered(WorldCoverSource.TREE_COVER, iceland[0], iceland[1], y, subpolarMoor, 0.05, 50, 0, 8).trees(),
+                        "voxel=8 with 0 m canopy must suppress subpolar TREE_COVER");
+                assertEquals(-1, gen.farCanopy(iceland[0], iceland[1], 16), "voxel=16 must still skip canopy even when standOverride is set");
+            } finally {
+                gen.setStandOverride(null);
+            }
+        } finally {
+            canopyServer.stop(0);
         }
     }
 

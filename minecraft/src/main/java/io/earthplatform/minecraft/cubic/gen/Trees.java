@@ -105,8 +105,10 @@ final class Trees {
 
     /**
      * Effective tree density after canopy-height suppression: explicit 0 m canopy (treeless ground,
-     * distinct from -1 no-data) suppresses scattered non-woodland trees (density <= 10) and attenuates
-     * sparse/dense woodland consistently across fine placement, modded additions and coarse LOD crowns.
+     * distinct from -1 no-data) hard-zeroes scattered/non-woodland covers (density {@code <= 10}, used
+     * by moors, shrublands, grasslands and clearings) while attenuating true woodland/forest covers
+     * ({@code > 10}) to a quarter (minimum 1), consistently across fine placement, modded additions and
+     * coarse LOD crowns.
      */
     static int effectiveTrees(int trees, int canopy) {
         if (trees <= 0) return 0;
@@ -146,7 +148,7 @@ final class Trees {
     private final SurfaceGenerator gen;
     private final IntBinaryOperator ground;
     private final ConcurrentHashMap<Long, Planted[]> chunks = new ConcurrentHashMap<>(), giants = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, Integer> ceilings = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Integer> ceilings = new ConcurrentHashMap<>(), treeCeilings = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Holder<Biome>, Optional<Own>> owns = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Tree, Pick> homes = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<ShapeKey, TreeShape[]> shapes = new ConcurrentHashMap<>();
@@ -156,8 +158,11 @@ final class Trees {
         this.ground = gen::surfaceY;
     }
 
-    /** How high above the ground the trees around this cube column can reach. */
-    int tallest(int cx, int cz) { return gen.giants((cx << 4) + 8, (cz << 4) + 8) ? Sequoia.TALLEST : TALLEST; }
+    /**
+     * Maximum Y offset above a chunk's highest ground that any block placed by a tree rooted there
+     * (including giants, stretched trunks and crown snow) can reach.
+     */
+    int tallest(int cx, int cz) { return (gen.giants((cx << 4) + 8, (cz << 4) + 8) ? Sequoia.TALLEST : TALLEST) + 2; }
 
     /**
      * Whether any tree rooted in a neighbouring chunk reaches into chunk {@code (cx, cz)} at or above
@@ -175,9 +180,24 @@ final class Trees {
             if (nx == cx && nz == cz) continue;
             upperBound = Math.max(upperBound, gen.maxGround(nx, nz) + tallest(nx, nz));
         }
-        if (upperBound <= baseTop || y0 > upperBound + 2) return false;
+        if (upperBound <= baseTop || y0 > upperBound) return false;
         if (ceilings.size() > MemoryPressure.scaled(32768)) ceilings.clear();
         int top = ceilings.computeIfAbsent(key, k -> computeOverhangTop(cx, cz, baseTop));
+        return y0 <= top;
+    }
+
+    /**
+     * Whether any tree (rooted in {@code (cx, cz)} itself or overhanging from a neighbouring chunk)
+     * reaches into chunk {@code (cx, cz)} at or above {@code y0}. Above {@code colMax + tallest(cx, cz)},
+     * delegates to {@link #hasOverhangingTrees} so sky cubes over flat terrain stay free.
+     */
+    boolean hasTreesReaching(int cx, int cz, int y0, int colMax) {
+        if (y0 > colMax + tallest(cx, cz)) return hasOverhangingTrees(cx, cz, y0, colMax);
+        long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
+        Integer cached = treeCeilings.get(key);
+        if (cached != null) return y0 <= cached;
+        if (treeCeilings.size() > MemoryPressure.scaled(32768)) treeCeilings.clear();
+        int top = treeCeilings.computeIfAbsent(key, k -> computeTreeTop(cx, cz, colMax));
         return y0 <= top;
     }
 
@@ -194,12 +214,27 @@ final class Trees {
         return top;
     }
 
+    private int computeTreeTop(int cx, int cz, int colMax) {
+        int x0 = cx << 4, z0 = cz << 4, x1 = x0 + 15, z1 = z0 + 15;
+        int cutoff = colMax + 16;
+        int top = Integer.MIN_VALUE;
+        for (int nz = cz - 1; nz <= cz + 1; nz++) for (int nx = cx - 1; nx <= cx + 1; nx++) {
+            int maxG = (nx == cx && nz == cz) ? colMax : gen.maxGround(nx, nz);
+            if (maxG + tallest(nx, nz) <= cutoff) continue;
+            for (Planted tree : chunk(nx, nz)) top = Math.max(top, topIn(tree, x0, z0, x1, z1));
+            if (gen.giants((nx << 4) + 8, (nz << 4) + 8))
+                for (Planted tree : giants(nx, nz)) top = Math.max(top, topIn(tree, x0, z0, x1, z1));
+        }
+        return top;
+    }
+
     /** Drops cached tree chunks, giant groves and ceilings under memory pressure. */
     void shedCaches() {
         int cap = MemoryPressure.scaled(32768);
         if (chunks.size() > cap) chunks.clear();
         if (giants.size() > cap) giants.clear();
         if (ceilings.size() > cap) ceilings.clear();
+        if (treeCeilings.size() > cap) treeCeilings.clear();
     }
 
     private static int topIn(Planted tree, int x0, int z0, int x1, int z1) {
@@ -257,6 +292,7 @@ final class Trees {
             Surface surface = gen.coverAt(x, z, h, water);
             if (surface.trees() <= 0) continue;
             Tree kind = surface.tree((int) Math.floorMod(r >>> 16, 10));
+            // Cheap pre-filter before gen.canopy(x, z): effectiveTrees never exceeds surface.trees().
             if (roll >= surface.trees() * full(kind) * 256 / 100) continue;
             int effective = effectiveTrees(surface.trees(), gen.canopy(x, z));
             if (effective <= 0 || roll >= effective * full(kind) * 256 / 100) continue;
@@ -449,6 +485,7 @@ final class Trees {
         int h = gen.surfaceY(x, z), water = gen.waterY(x, z);
         Surface surface = gen.coverAt(x, z, h, water);
         Additions here = additions(surface.biome());
+        if (here.trees.length == 0) return null;
         int canopy = gen.canopy(x, z);
         int effective = effectiveTrees(surface.trees(), canopy);
         if (canopy == 0 && effective <= 0) return null;

@@ -240,6 +240,7 @@ class EarthShorelineTest {
         private final String squareName;
         private final DoubleBinaryOperator elevationAt;
         private final IntBinaryOperator coverAt;
+        final java.util.concurrent.atomic.AtomicInteger terrariumRequests = new java.util.concurrent.atomic.AtomicInteger();
         private final ConcurrentHashMap<String, byte[]> pngCache = new ConcurrentHashMap<>();
         private final byte[] tiffHeader;
         private final int[][] blockMeta; // [globalId] -> {overview, tileRow, tileCol}
@@ -283,6 +284,7 @@ class EarthShorelineTest {
         }
 
         private void serveTerrarium(HttpExchange exchange) throws IOException {
+            terrariumRequests.incrementAndGet();
             String path = exchange.getRequestURI().getPath();
             String key = path.substring("/terrarium/".length());
             byte[] png = pngCache.computeIfAbsent(key, this::renderTerrariumTile);

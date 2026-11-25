@@ -102,6 +102,9 @@ final class Vegetation {
     /** Whether any tree rooted in a neighbouring chunk reaches into chunk (cx, cz) at or above {@code y0}. */
     boolean hasOverhangingTrees(int cx, int cz, int y0, int colMax) { return trees.hasOverhangingTrees(cx, cz, y0, colMax); }
 
+    /** Whether any local or neighbouring tree reaches into chunk {@code (cx, cz)} at or above {@code y0}. */
+    boolean hasTreesReaching(int cx, int cz, int y0, int colMax) { return trees.hasTreesReaching(cx, cz, y0, colMax); }
+
     /** Drops cached tree chunks and ceilings when memory runs short. */
     void shedCaches() { trees.shedCaches(); }
 
@@ -331,6 +334,7 @@ final class Vegetation {
     private static void put(LevelChunkSection section, int lx, int ly, int lz, int[] height, int[] water, BlockState state, byte kind, boolean aquatic) {
         BlockState here = section.getBlockState(lx, ly, lz);
         var fluid = here.getFluidState();
+        // Check Fluids.WATER / FLOWING_WATER alongside FluidTags.WATER so unit tests running before tag binding still detect waterlogged flora.
         boolean inWater = fluid.is(FluidTags.WATER) || fluid.is(Fluids.WATER) || fluid.is(Fluids.FLOWING_WATER);
         int gi = (lz + 1) * 18 + lx + 1;
         switch (kind) {

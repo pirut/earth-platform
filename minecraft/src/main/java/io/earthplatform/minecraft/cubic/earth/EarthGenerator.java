@@ -3471,11 +3471,15 @@ public final class EarthGenerator extends SurfaceGenerator {
         long r = mix(x, 7, z);
         int roll = (int) Math.floorMod(r, 100);
         // Marsh and mangrove coasts, as on a delta, run down to the water as marsh, not a strip of beach sand.
-        int rawCover = local == null ? WorldCoverSource.NO_DATA : cover(x, z, voxel);
-        if (y <= SEA + 2 && voxel < SHORE_VOXEL && nearSea(x, z, voxel)
-                && !(local != null && (marshy(rawCover) || rawCover == WorldCoverSource.WATER && marshyFallback(x, z, voxel, rawCover) != WorldCoverSource.NO_DATA))) {
-            if (steep > 1) return new Surface(stonyShore, STONE, STONE, 0, 0, 0, 0, 0, false);
-            return beachSurface(x, z, t, steep, false, 0, modded);
+        if (y <= SEA + 2 && voxel < SHORE_VOXEL && nearSea(x, z, voxel)) {
+            int shoreCover = local == null ? WorldCoverSource.NO_DATA : cover(x, z, voxel);
+            boolean shoreMarsh = local != null && (marshy(shoreCover)
+                    || (shoreCover == WorldCoverSource.WATER || shoreCover == WorldCoverSource.NO_DATA)
+                    && marshyFallback(x, z, voxel, shoreCover) != WorldCoverSource.NO_DATA);
+            if (!shoreMarsh) {
+                if (steep > 1) return new Surface(stonyShore, STONE, STONE, 0, 0, 0, 0, 0, false);
+                return beachSurface(x, z, t, steep, false, 0, modded);
+            }
         }
         if (local != null) {
             int code = groundCover(x, z, voxel);
@@ -3490,7 +3494,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if ((code == WorldCoverSource.WATER || code == WorldCoverSource.NO_DATA)
                         && marsh == WorldCoverSource.NO_DATA
                         && (y <= SEA + 4 && (voxel < SHORE_VOXEL && nearSea(x, z, voxel) || seaWithin(x, z, 32, voxel))
-                        || y <= SEA + 8 && voxel < SHORE_VOXEL && seaSurrounded(x, z))) {
+                        || y <= SEA + 8 && voxel < SHORE_VOXEL && !quick() && seaSurrounded(x, z))) {
                     covered = steep > 0.8 ? new Surface(stonyShore, STONE, STONE, 0, 0, 0, 0, 0, false)
                             : beachSurface(x, z, t, steep, false, 0, modded);
                 } else {
@@ -3756,7 +3760,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 || code == WorldCoverSource.WETLAND || code == PARKLAND;
         if (eco != 0 && ground && !cliff && level(steep, 0.4, x, z, voxel) && t >= 10) {
             int biome = Ecoregions.get().biome(eco);
-            if (biome == Ecoregions.MANGROVE && y <= SEA + 4) return covered(WorldCoverSource.MANGROVES, x, z, y, local, steep, roll, slope, voxel);
+            if (biome == Ecoregions.MANGROVE && y <= SEA + 4) return covered(WorldCoverSource.MANGROVES, x, z, y, local, steep, roll, slope, voxel, modded);
             if (biome == Ecoregions.FLOODED_GRASSLAND) {
                 // A frost-free marsh coast, as the Everglades' Florida Bay and Ten Thousand Islands: mangrove islands among the creeks.
                 if (mangroveClimate(local) && y <= SEA + 1 && patch > 0.4 && lagoon(x, z, waterY(x, z), 1))
@@ -3788,7 +3792,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             case WorldCoverSource.TREE_COVER -> {
                 // Forest climbs steep slopes, rooted in duff and stony soil; only the steepest faces are bare.
                 if (steep > 1.7) return rock();
-                Surface s = forest(local, patch, x, z, y, modded);
+                Surface s = forest(local, patch, x, z, y, voxel, modded);
                 if (steep > 1.3 && crag < (steep - 1.3) * 2 - 0.3) return new Surface(s.biome(), STONE, STONE, 0, 0, 0, 0, 0, false);
                 // Duff in patches, grass between, so from afar the slope stays green rather than speckled brown.
                 if (steep > 0.8) return new Surface(s.biome(), patch > 0.35 ? PODZOL : GRASS, DIRT, s.trees() * 3 / 4, s.spruce(), s.birch(),
@@ -3797,7 +3801,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
             case PARKLAND -> {
                 if (cliff) return rock();
-                Surface s = forest(local, patch, x, z, y, modded);
+                Surface s = forest(local, patch, x, z, y, voxel, modded);
                 if (rocky != null) return new Surface(stonyPeaks, rocky, STONE, 0, 0, 0, 0, 0, false);
                 return new Surface(s.biome(), GRASS, DIRT, Math.min(s.trees(), 12), s.spruce(), s.birch(), 330, 360, s.ferns(), s.broadleaf());
             }
@@ -3805,7 +3809,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (cliff || rocky != null && t < -3) return rock();
                 BlockState top = rocky != null ? rocky : patch > 0.4 || roll < 20 ? COARSE_DIRT : GRASS;
                 int trees = slope > 6 || top != GRASS ? 0 : 1;
-                if (moor) return moor(code, x, z, local, patch, roll, rocky, modded);
+                if (moor) return moor(code, x, z, local, patch, roll, rocky, voxel, modded);
                 // Krummholz and dwarf pine below the treeline of temperate mountains, as in the Japanese Alps.
                 if (subalpine(y, local) && !montaneGrassland(x, z)) return new Surface(modded.firClearing, top, DIRT, 40 * trees, 10, 0, 250, 270, true);
                 return switch (zone) {
@@ -3824,7 +3828,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                     case MEDITERRANEAN -> parched(local) ? garrigue(x, z, local, patch, rocky, trees, modded)
                             : new Surface(modded.shrubland, top, DIRT, 9 * trees, t < 10 ? 5 : 0, 0, 330, 350, false);
                     case SUBPOLAR_OCEANIC -> {
-                        double height = standHeight(x, z);
+                        double height = standHeight(x, z, voxel);
                         int subpolarTrees = t < -3 ? 0 : height < 0 ? trees : height < 4 ? 0 : trees;
                         yield new Surface(t < -3 ? snowyPlains : modded.shrubland, top, DIRT, subpolarTrees, 2, 8, 250, 260, false);
                     }
@@ -3851,7 +3855,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (t < -3) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
                 // Monsoon rice country is green, not savanna olive with acacias.
                 if (bare > 1) return new Surface(plains, top, DIRT, 1, 0, 0, 330, 360, false);
-                return grassland(top, x, z, y, local, patch, moor, roll, rocky, modded);
+                return grassland(top, x, z, y, local, patch, moor, roll, rocky, voxel, modded);
             }
             case WorldCoverSource.GRASSLAND -> {
                 if (cliff || rocky != null && t < -3) return rock();
@@ -3859,7 +3863,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (coldSnowy(x, z, local)) return new Surface(snowyPlains, top, DIRT, 0, 0, 0, 160, 170, false);
                 // Cold steppe, as in Mongolia and the Great Basin: tufts of grass on bare ground, about a third grass.
                 if (dry && top == GRASS && (patch > 0.35 || roll < 60)) return sagebrush(scrubGround(x, z), 0, modded);
-                return grassland(top, x, z, y, local, patch, moor, roll, rocky, modded);
+                return grassland(top, x, z, y, local, patch, moor, roll, rocky, voxel, modded);
             }
             case WorldCoverSource.BARE -> {
                 // Bare ground low by the sea is beach and dune, as Whitehaven's silica sand, not rock: the beach rule
@@ -3873,7 +3877,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 boolean arid = hot || dry;
                 // Bare ground in wet lowlands is cleared land (quarries, airfields, building sites): it goes back to grass.
                 if (!arid && !cliff && steep < 0.7 && local.rain() > 700 && y < SEA + 300 && t > 0)
-                    return covered(WorldCoverSource.GRASSLAND, x, z, y, local, steep, roll, slope, voxel);
+                    return covered(WorldCoverSource.GRASSLAND, x, z, y, local, steep, roll, slope, voxel, modded);
                 if (arid && (cliff || steep > 0.9)) return new Surface(badlands, band(y), TERRACOTTA, 0, 0, 0, 0, 0, false);
                 // The Colorado Plateau's red rock: slickrock and red sand on the flats, as in Monument Valley.
                 if (arid && redRock(x, z)) {
@@ -3928,7 +3932,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 }
                 // A snowfield's edge is ragged, melting back into the rock around it in tongues and patches rather than
                 // following the map's 10 m pixels.
-                if (patch < 0.1 && snowEdge(x, z, voxel, 6) || patch < -0.3 && snowEdge(x, z, voxel, 16)) return covered(WorldCoverSource.BARE, x, z, y, local, steep, roll, slope, voxel);
+                if (patch < 0.1 && snowEdge(x, z, voxel, 6) || patch < -0.3 && snowEdge(x, z, voxel, 16)) return covered(WorldCoverSource.BARE, x, z, y, local, steep, roll, slope, voxel, modded);
                 // Below the snowline summer melts the winter's snow off a glacier's tongue, baring its ice: pale blue, with
                 // deep blue where it is cleanest and patches of old snow, as Perito Moreno's and Greenland's
                 // edges are, where all snow stood as one flat white. The line frays over the patches rather than
@@ -3962,7 +3966,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
             case WorldCoverSource.MOSS_AND_LICHEN -> {
                 if (cliff || rocky != null && t < -2) return rock();
-                if (moor) return moor(code, x, z, local, patch, roll, rocky, modded);
+                if (moor) return moor(code, x, z, local, patch, roll, rocky, voxel, modded);
                 BlockState top = rocky != null ? rocky : patch > 0.2 ? MOSS : roll < 30 ? GRAVEL : GRASS;
                 // Arctic tundra lies under snow; high mountain lichen fields, warm for a few weeks each summer, mostly do not.
                 boolean snowy = coldSnowy(x, z, local);
@@ -4055,8 +4059,8 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** Open grass in a climate: savanna, steppe, meadow, prairie or moor. */
-    private Surface grassland(BlockState top, int x, int z, int y, Local local, double patch, boolean moor, int roll, @Nullable BlockState rocky, ModdedBiomes modded) {
-        if (moor) return moor(WorldCoverSource.GRASSLAND, x, z, local, patch, roll, rocky, modded);
+    private Surface grassland(BlockState top, int x, int z, int y, Local local, double patch, boolean moor, int roll, @Nullable BlockState rocky, int voxel, ModdedBiomes modded) {
+        if (moor) return moor(WorldCoverSource.GRASSLAND, x, z, local, patch, roll, rocky, voxel, modded);
         // Subalpine meadows among conifers.
         if (subalpine(y, local) && top == GRASS && !montaneGrassland(x, z)) return new Surface(modded.firClearing, top, DIRT, 12, 10, 0, 300, 340, true);
         return switch (local.zone()) {
@@ -4104,24 +4108,30 @@ public final class EarthGenerator extends SurfaceGenerator {
     /**
      * Returns {@link WorldCoverSource#MANGROVES} or {@link WorldCoverSource#WETLAND} when a dry coastal
      * {@code WATER}/{@code NO_DATA} pixel lies inside a marsh or mangrove estuary/delta, else {@code NO_DATA}.
+     * Exposed sea-surrounded offshore specks stay beach sand even when a marsh sample lies 8 blocks away,
+     * and {@link #seaSurrounded} is skipped on coarse far LODs ({@code voxel >= SHORE_VOXEL}) and quick previews.
      */
-    private int marshyFallback(int x, int z, int voxel, int code) {
-        int here = cover(x, z, voxel);
-        if (marshy(here)) return here;
-        int step = Math.max(8, voxel);
-        for (int i = 0; i < 8; i += 2) {
-            int near = cover(x + (int) (RING_X[i] * step), z + (int) (RING_Z[i] * step), voxel);
-            if (marshy(near)) return near;
-        }
-        if (code == WorldCoverSource.WATER && !seaSurrounded(x, z)) {
-            int eco = ecoregion(x, z);
-            if (eco != 0) {
-                int biome = Ecoregions.get().biome(eco);
-                if (biome == Ecoregions.MANGROVE) return WorldCoverSource.MANGROVES;
-                if (biome == Ecoregions.FLOODED_GRASSLAND) return WorldCoverSource.WETLAND;
+    private int marshyFallback(int x, int z, int voxel, int coverCode) {
+        int candidate = WorldCoverSource.NO_DATA;
+        if (marshy(coverCode)) candidate = coverCode;
+        else {
+            int step = Math.max(8, voxel);
+            for (int i = 0; i < 8; i += 2) {
+                int near = cover(x + (int) (RING_X[i] * step), z + (int) (RING_Z[i] * step), voxel);
+                if (marshy(near)) { candidate = near; break; }
+            }
+            if (candidate == WorldCoverSource.NO_DATA) {
+                int eco = ecoregion(x, z);
+                if (eco != 0) {
+                    int biome = Ecoregions.get().biome(eco);
+                    if (biome == Ecoregions.MANGROVE) candidate = WorldCoverSource.MANGROVES;
+                    else if (biome == Ecoregions.FLOODED_GRASSLAND) candidate = WorldCoverSource.WETLAND;
+                }
             }
         }
-        return WorldCoverSource.NO_DATA;
+        if (candidate == WorldCoverSource.NO_DATA) return WorldCoverSource.NO_DATA;
+        if (voxel < SHORE_VOXEL && !quick() && seaSurrounded(x, z)) return WorldCoverSource.NO_DATA;
+        return candidate;
     }
 
     /**
@@ -4159,7 +4169,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (local.zone() != ClimateZone.SUBARCTIC || code != WorldCoverSource.WETLAND && code != WorldCoverSource.MOSS_AND_LICHEN
                 && code != WorldCoverSource.SHRUBLAND && code != WorldCoverSource.GRASSLAND) return false;
         // Arctic tundra basins (tundra ecoregion or below the 10 C treeline) stay tundra rather than boreal bogs;
-        // cold boreal lowlands (Hudson Bay, West Siberia) keep peatlands even when annual mean < -3 C.
+        // local.warmest() is warmest-quarter mean (ET/EF handle exact Köppen), so cold boreal lowlands
+        // (Hudson Bay, West Siberia) keep peatlands even when annual mean < -3 C.
         if (local.warmest() < 10 || local.koppen() == ClimateSource.ET || local.koppen() == ClimateSource.EF) return false;
         if (eco != 0 && Ecoregions.get().biome(eco) == Ecoregions.TUNDRA) return false;
         // How level the ground lies is read from fine tiles: a quick stand-in leaves mires as the open ground round them.
@@ -4225,11 +4236,11 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** Heather moor: dark, brown ground of peat and podzol among the grass, with ferns, few flowers and fewer trees. */
-    private Surface moor(int code, int x, int z, Local local, double patch, int roll, @Nullable BlockState rocky, ModdedBiomes modded) {
+    private Surface moor(int code, int x, int z, Local local, double patch, int roll, @Nullable BlockState rocky, int voxel, ModdedBiomes modded) {
         BlockState top = rocky != null ? rocky : patch > 0.55 || roll < 15 ? PODZOL : patch < -0.6 && roll < 50 ? COARSE_DIRT : GRASS;
         boolean subpolar = local.zone() == ClimateZone.SUBPOLAR_OCEANIC || local.warmest() < 11.5;
         boolean openCover = code == WorldCoverSource.MOSS_AND_LICHEN || code == WorldCoverSource.GRASSLAND;
-        double height = standHeight(x, z);
+        double height = standHeight(x, z, voxel);
         int trees;
         if (height < 0) trees = 1;
         else if (subpolar || openCover) trees = height >= 4 ? 1 : 0;
@@ -4734,8 +4745,11 @@ public final class EarthGenerator extends SurfaceGenerator {
         return null;
     }
 
-    /** Stand canopy height in metres, or -1 when canopy data is absent or has no reading. */
-    private double standHeight(int x, int z) {
+    /** Stand canopy height in metres, or -1 when canopy data is absent, skipped in quick preview / coarse far LOD, or has no reading. */
+    private double standHeight(int x, int z) { return standHeight(x, z, 1); }
+
+    private double standHeight(int x, int z, int voxel) {
+        if (quick() || voxel > 8) return -1;
         Double override = standOverride;
         if (override != null) return override;
         return canopy == null ? -1 : stand(x, z);
@@ -4744,6 +4758,11 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** How tall the trees round a column stand, in metres; -1 where there is no map or it has no reading. */
     @Override protected int canopy(int x, int z) {
         double height = standHeight(x, z);
+        return height < 0 ? -1 : (int) Math.round(height);
+    }
+
+    @Override protected int farCanopy(int x, int z, int voxel) {
+        double height = standHeight(x, z, voxel);
         return height < 0 ? -1 : (int) Math.round(height);
     }
 
@@ -4842,7 +4861,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** The forest of a climate: rainforest, bamboo, dry tropical woodland, pine, oak, birch, dark oak, cherry or taiga. */
-    private Surface forest(Local local, double patch, int x, int z, int y, ModdedBiomes modded) {
+    private Surface forest(Local local, double patch, int x, int z, int y, int voxel, ModdedBiomes modded) {
         // Giant sequoias and coast redwoods among old conifers, on duff, in the real groves.
         if (sequoias(x, z, y)) {
             boolean redwood = canopy == null || local.rain() < 1500 || local.temperature() >= 10.5;
@@ -4852,7 +4871,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             return new Surface(modded.oldGrowthConifer, patch > 0.3 ? PODZOL : GRASS, DIRT, 80, 8, 0, 110, 120, true);
         // Subpolar oceanic dwarf birch/scrub with measured low canopy (0..6 m) stays sparse/treeless even when forest types mark broadleaf.
         if (local.zone() == ClimateZone.SUBPOLAR_OCEANIC) {
-            double height = standHeight(x, z);
+            double height = standHeight(x, z, voxel);
             if (height >= 0 && height <= 6)
                 return new Surface(modded.grassland, GRASS, DIRT, height < 2 ? 0 : 18, 3, 7, 200, 220, true);
         }

@@ -137,6 +137,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     protected int canopy(int x, int z) { return -1; }
 
     /**
+     * Canopy height in metres for a far terrain voxel of width {@code voxel}, or -1 when unknown or skipped
+     * at coarse distances. Defaults to {@link #canopy(int, int)}.
+     */
+    protected int farCanopy(int x, int z, int voxel) { return canopy(x, z); }
+
+    /**
      * Which form a giant tree rooted at a column takes: {@link Giants#SEQUOIA}, {@link Giants#REDWOOD} or
      * {@link Giants#FIR}; or -1 for the one sequoia worlds made before build 70 have.
      */
@@ -247,22 +253,19 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** Ground and water of columns asked about before their cube column is made, packed as ground << 32 | water. */
     private final ConcurrentHashMap<Long, java.util.concurrent.atomic.AtomicLongArray> grounds = new ConcurrentHashMap<>();
-    /** Sampled upper ground height per chunk, used as a cheap neighbour bound for sky cubes. */
+    /** Exact maximum ground height per chunk, used as a cheap neighbour bound for sky cubes. */
     private final ConcurrentHashMap<Long, Integer> maxGrounds = new ConcurrentHashMap<>();
-    private static final int[] GROUND_SAMPLE = {0, 4, 8, 12, 15};
 
-    /** Sampled maximum ground height in chunk (cx, cz), reading cached columns first without generating surface cover. */
+    /** Exact maximum ground height in chunk (cx, cz), scanning all 256 columns without generating surface cover. */
     final int maxGround(int cx, int cz) {
         long key = columnKey(cx, cz);
-        Column cached = columns.get(key);
-        if (cached != null) return cached.max;
         Integer known = maxGrounds.get(key);
         if (known != null) return known;
         if (maxGrounds.size() > MemoryPressure.scaled(32768)) maxGrounds.clear();
         return maxGrounds.computeIfAbsent(key, k -> {
             int x0 = cx << 4, z0 = cz << 4, max = Integer.MIN_VALUE;
             int[] sample = new int[2];
-            for (int dz : GROUND_SAMPLE) for (int dx : GROUND_SAMPLE) {
+            for (int dz = 0; dz < 16; dz++) for (int dx = 0; dx < 16; dx++) {
                 ground(x0 + dx, z0 + dz, sample);
                 max = Math.max(max, sample[0]);
             }
@@ -609,7 +612,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
      */
     private BlockState canopy(Surface surface, int wx, int wz, int v) {
         if (surface.top() != GRASS && surface.top() != MUD && !surface.top().is(Blocks.PODZOL) || surface.trees() <= 0) return null;
-        int trees = Trees.effectiveTrees(surface.trees(), canopy(wx, wz));
+        int trees = Trees.effectiveTrees(surface.trees(), farCanopy(wx, wz, v));
         if (trees <= 0) return null;
         long r = mix(wx, v, wz);
         Tree kind = surface.tree((int) Math.floorMod(r >>> 24, 10));
@@ -630,6 +633,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     @Override public LevelChunkSection generate(int cx, int cy, int cz) { return generate(cx, cy, cz, new ArrayList<>(), new ArrayList<>()); }
 
     @Override public void attach(ServerLevel level) { detached = false; vanilla = new VanillaStructures(level, new StructureHost(), seed); }
+
+    /** For tests: reads a base cube through {@link StructureHost#cube(int, int, int)}. */
+    @Nullable LevelChunkSection structureCube(int cx, int cy, int cz) { return new StructureHost().cube(cx, cy, cz); }
 
     /** For tests: this generator's structures from some registries, as {@link #attach} makes them for a level. */
     VanillaStructures attachStructures(net.minecraft.core.RegistryAccess registries, net.minecraft.world.level.levelgen.RandomState randomState) {
@@ -868,7 +874,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
         @Nullable @Override public LevelChunkSection cube(int cx, int cy, int cz) {
             Column col = column(cx, cz);
             int y0 = cy << 4;
-            if (y0 > Math.max(col.max + 16, col.maxWater) && !vegetation.hasOverhangingTrees(cx, cz, y0, col.max)) return null;
+            if (y0 > Math.max(col.max + 16, col.maxWater) && !vegetation.hasTreesReaching(cx, cz, y0, col.max)) return null;
             long key = SectionPos.asLong(cx, cy, cz);
             LevelChunkSection cached = bases.get(key);
             if (cached != null) return cached;
