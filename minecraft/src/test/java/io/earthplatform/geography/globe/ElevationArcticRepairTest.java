@@ -1025,6 +1025,42 @@ class ElevationArcticRepairTest {
                 }
             }
             assertTrue(checkedMixed > 1000, "expected mixed-overview deep coastal bathymetry pixels checked, got " + checkedMixed);
+
+            // 3. Positive coastal pixel (+2 m) over fine Copernicus sea (cop == 0) with zero datum and no void sentinel
+            //    inside the negOverSea nearLandVoid halo (rows 64..65, centers 63.4961 & 63.4883) adjacent to the mixed
+            //    overview-2 +36 m / -900 m cell: weight must stay 0 so the +2 m pixel stays +2 m (not flattened to 0 m).
+            assertEquals(0.0, v3.weight(63.493, -19.25), 1e-6,
+                    "nearLandVoid on negOverSea cells must not leak into weight");
+            assertEquals(0.0, v3.datum(63.493, -19.25), 1e-6,
+                    "zero-datum coastal fixture must keep datum at 0");
+            int tyCoastalPos = mercatorTileY(zoom, 63.493);
+            float[] finePos = tiles.tile(zoom, txMixed, tyCoastalPos).clone();
+            int seededPos = 0;
+            for (int py = 0; py < SIDE; py++) {
+                double lat = tileLat(zoom, tyCoastalPos, py);
+                if (lat > 63.496 || lat < 63.489) continue;
+                for (int px = 0; px < SIDE; px++) {
+                    double lon = tileLon(zoom, txMixed, px);
+                    if (dem.metres(lat, lon, 0) > 0.01) continue;
+                    finePos[py * SIDE + px] = 2f;
+                    seededPos++;
+                }
+            }
+            assertTrue(seededPos > 1000, "expected >1000 positive coastal pixels seeded over fine sea, got " + seededPos);
+            v3.apply(finePos, zoom, txMixed, tyCoastalPos);
+            int checkedPos = 0;
+            for (int py = 0; py < SIDE; py++) {
+                double lat = tileLat(zoom, tyCoastalPos, py);
+                if (lat > 63.496 || lat < 63.489) continue;
+                for (int px = 0; px < SIDE; px++) {
+                    double lon = tileLon(zoom, txMixed, px);
+                    if (dem.metres(lat, lon, 0) > 0.01) continue;
+                    assertEquals(2f, finePos[py * SIDE + px], 1e-4f,
+                            "positive +2 m coastal pixel over fine sea adjacent to mixed-overview landVoid must not be flattened to 0 m");
+                    checkedPos++;
+                }
+            }
+            assertEquals(seededPos, checkedPos);
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();

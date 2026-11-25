@@ -85,8 +85,9 @@ public final class CopernicusFill implements ElevationLayer {
         Part part;
         // The last check row and column asked about, with the side length it was over, and their parts.
         int rowAt = -1, rowOf, partRow, columnAt = -1, columnOf, partColumn;
-        final double[] wd = new double[3];
+        final double[] wd = new double[4];
     }
+    private static final int CH_WEIGHT = 0, CH_OFFSHORE_VOID = 1, CH_LAND_VOID = 2;
     /** Check pixels either side whose difference is averaged for a fill. */
     static final int SMOOTH = 2;
     /** Average height in metres above Copernicus, beside its relief, up to which the tiles stand, and from which Copernicus does. */
@@ -168,13 +169,13 @@ public final class CopernicusFill implements ElevationLayer {
     }
 
     /**
-     * One part of a degree square's weights (and optional offshore-void weights and regional datum lattice in
-     * {@value #GEOID_ID}) at the check overview: rows {@code row0} on and columns {@code column0} on of a square
-     * {@code width} x {@code height} check pixels, row-major from the north; null where all are 0.
+     * One part of a degree square's weights (and optional offshore-void weights, land-void weights, and regional datum
+     * lattice in {@value #GEOID_ID}) at the check overview: rows {@code row0} on and columns {@code column0} on of a
+     * square {@code width} x {@code height} check pixels, row-major from the north; null where all are 0.
      */
     record Part(int width, int height, int row0, int column0, int rows, int columns,
-                byte[] weights, byte[] offshoreVoid, DatumGrid datum) {
-        static final Part NONE = new Part(0, 0, 0, 0, 0, 0, null, null, null);
+                byte[] weights, byte[] offshoreVoid, byte[] landVoid, DatumGrid datum) {
+        static final Part NONE = new Part(0, 0, 0, 0, 0, 0, null, null, null, null);
     }
 
     private final CopernicusSource dem;
@@ -224,10 +225,10 @@ public final class CopernicusFill implements ElevationLayer {
             for (double longitude : new double[] {west, (west + east) / 2, east})
                 reads.add(() -> {
                     double at = Math.max(-89.9999, Math.min(89.9999, latitude));
-                    // Only blocks apply reads: where a weight, offshore void, or regional datum stands.
-                    double[] wd = new double[3];
+                    // Only blocks apply reads: where a weight, offshore void, land void, or regional datum stands.
+                    double[] wd = new double[4];
                     sample(at, longitude, null, wd);
-                    if (wd[0] > 0 || wd[2] > 0 || (geoid && wd[1] != 0)) dem.metres(at, longitude, overview);
+                    if (wd[0] > 0 || wd[2] > 0 || wd[3] > 0 || (geoid && wd[1] != 0)) dem.metres(at, longitude, overview);
                 });
         RangeFiles.all(reads);
     }
@@ -268,7 +269,7 @@ public final class CopernicusFill implements ElevationLayer {
             }
             return;
         }
-        double[] wd = new double[3];
+        double[] wd = new double[4];
         for (int py = 0; py < TerrariumTileSource.TILE_SIZE; py++) {
             double latitude = latitude(tileY * 256L + py + 0.5, size);
             for (int px = 0; px < TerrariumTileSource.TILE_SIZE; px++) {
@@ -284,15 +285,15 @@ public final class CopernicusFill implements ElevationLayer {
                     continue;
                 }
                 sample(latitude, longitude[px], memo, wd);
-                double weight = wd[0], datum = wd[1], voidWeight = wd[2];
+                double weight = wd[0], datum = wd[1], voidWeight = wd[2], landVoidWeight = wd[3];
                 if (t < 0f) {
-                    if (weight <= 0 && voidWeight <= 0) continue;
+                    if (weight <= 0 && voidWeight <= 0 && landVoidWeight <= 0) continue;
                     double c = dem.metres(latitude, longitude[px], overview);
                     boolean sea = Double.isNaN(c) || Math.abs(c) < SEA_CRUMB;
                     if (sea) c = 0;
                     // Over confirmed sea (or missing open-ocean square), only confirmed -32768 void ramps blend to 0;
-                    // over fine Copernicus land, carry both land weight and confirmed void-ramp evidence.
-                    double w = sea ? voidWeight : Math.max(weight, voidWeight);
+                    // over fine Copernicus land, carry land weight, confirmed void-ramp evidence, and coastal land-void ramps.
+                    double w = sea ? voidWeight : Math.max(Math.max(weight, voidWeight), landVoidWeight);
                     if (w <= 0) continue;
                     float v = (float) (t + w * (c - t));
                     if (v == 0f && !(c == 0 && w >= 1)) v = Math.ulp(0f);
@@ -393,7 +394,7 @@ public final class CopernicusFill implements ElevationLayer {
                 for (int pr = part(top, height); pr <= part(bottom, height); pr++)
                     for (int pc = part(left, width); pc <= part(right, width); pc++) {
                         Part p = part(s, square, width, height, pr, pc);
-                        if (p.weights != null || p.offshoreVoid != null || (includeDatum && p.datum != null)) return true;
+                        if (p.weights != null || p.offshoreVoid != null || p.landVoid != null || (includeDatum && p.datum != null)) return true;
                     }
             }
         return false;
@@ -416,20 +417,20 @@ public final class CopernicusFill implements ElevationLayer {
     /** The smooth regional datum offset (metres) at a point for {@value #GEOID_ID}, or 0 for earlier pins. */
     double datum(double latitude, double longitude) {
         if (!geoid) return 0;
-        double[] out = new double[3];
+        double[] out = new double[4];
         sample(latitude, longitude, null, out);
         return out[1];
     }
 
     private double weight(double latitude, double longitude, Memo memo) {
-        double[] out = memo != null ? memo.wd : new double[3];
+        double[] out = memo != null ? memo.wd : new double[4];
         sample(latitude, longitude, memo, out);
         return out[0];
     }
 
     /**
-     * Samples bilinear weight ({@code out[0]}), smooth signed regional datum offset ({@code out[1]}), and
-     * offshore coastal void-ramp weight ({@code out[2]}) at a point.
+     * Samples bilinear weight ({@code out[0]}), smooth signed regional datum offset ({@code out[1]}),
+     * offshore coastal void-ramp weight ({@code out[2]}), and coastal land-void ramp weight ({@code out[3]}) at a point.
      */
     private void sample(double latitude, double longitude, Memo memo, double[] out) {
         longitude = CopernicusSource.wrap(longitude);
@@ -447,7 +448,7 @@ public final class CopernicusFill implements ElevationLayer {
         } else {
             dims = dem.size(latitude, longitude, CHECK_OVERVIEW);
         }
-        if (dims == null) { out[0] = 0; out[1] = 0; out[2] = 0; return; }
+        if (dims == null) { out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 0; return; }
         int width = dims[0], height = dims[1];
         double fy = (south + 1 - latitude) * height - 0.5, fx = (longitude - west) * width - 0.5;
         int y0 = (int) Math.floor(fy), x0 = (int) Math.floor(fx);
@@ -474,32 +475,40 @@ public final class CopernicusFill implements ElevationLayer {
         } else {
             here = part(south, west, width, height, partRow, partColumn);
         }
-        double w00 = atByte(here, south, west, y0, x0, false), w01 = atByte(here, south, west, y0, x0 + 1, false);
-        double w10 = atByte(here, south, west, y0 + 1, x0, false), w11 = atByte(here, south, west, y0 + 1, x0 + 1, false);
+        double w00 = atByte(here, south, west, y0, x0, CH_WEIGHT), w01 = atByte(here, south, west, y0, x0 + 1, CH_WEIGHT);
+        double w10 = atByte(here, south, west, y0 + 1, x0, CH_WEIGHT), w11 = atByte(here, south, west, y0 + 1, x0 + 1, CH_WEIGHT);
         out[0] = ((w00 * (1 - tx) + w01 * tx) * (1 - ty) + (w10 * (1 - tx) + w11 * tx) * ty) / 255;
         if (!geoid) {
             out[1] = 0;
             out[2] = 0;
+            out[3] = 0;
             return;
         }
         out[1] = here.datum == null ? 0 : here.datum.at(latitude, longitude);
-        if (here.offshoreVoid == null
-                && y0 >= here.row0 && y0 + 1 < here.row0 + here.rows
-                && x0 >= here.column0 && x0 + 1 < here.column0 + here.columns) {
+        boolean insidePart = y0 >= here.row0 && y0 + 1 < here.row0 + here.rows
+                && x0 >= here.column0 && x0 + 1 < here.column0 + here.columns;
+        if (here.offshoreVoid == null && insidePart) {
             out[2] = 0;
         } else {
-            double v00 = atByte(here, south, west, y0, x0, true), v01 = atByte(here, south, west, y0, x0 + 1, true);
-            double v10 = atByte(here, south, west, y0 + 1, x0, true), v11 = atByte(here, south, west, y0 + 1, x0 + 1, true);
+            double v00 = atByte(here, south, west, y0, x0, CH_OFFSHORE_VOID), v01 = atByte(here, south, west, y0, x0 + 1, CH_OFFSHORE_VOID);
+            double v10 = atByte(here, south, west, y0 + 1, x0, CH_OFFSHORE_VOID), v11 = atByte(here, south, west, y0 + 1, x0 + 1, CH_OFFSHORE_VOID);
             out[2] = ((v00 * (1 - tx) + v01 * tx) * (1 - ty) + (v10 * (1 - tx) + v11 * tx) * ty) / 255;
+        }
+        if (here.landVoid == null && insidePart) {
+            out[3] = 0;
+        } else {
+            double l00 = atByte(here, south, west, y0, x0, CH_LAND_VOID), l01 = atByte(here, south, west, y0, x0 + 1, CH_LAND_VOID);
+            double l10 = atByte(here, south, west, y0 + 1, x0, CH_LAND_VOID), l11 = atByte(here, south, west, y0 + 1, x0 + 1, CH_LAND_VOID);
+            out[3] = ((l00 * (1 - tx) + l01 * tx) * (1 - ty) + (l10 * (1 - tx) + l11 * tx) * ty) / 255;
         }
     }
 
     /**
-     * A check pixel's weight (or offshore coastal void-ramp weight when {@code offshoreVoid}) of a square by row and
-     * column, from the part given when it holds it, else the part that does; either may lie past the square's edge:
-     * then the nearest pixel there, or 0 in an open-ocean square with no Copernicus file.
+     * A check pixel's weight channel ({@link #CH_WEIGHT}, {@link #CH_OFFSHORE_VOID}, or {@link #CH_LAND_VOID}) of a
+     * square by row and column, from the part given when it holds it, else the part that does; either may lie past the
+     * square's edge: then the nearest pixel there, or 0 in an open-ocean square with no Copernicus file.
      */
-    private double atByte(Part here, int south, int west, int row, int column, boolean offshoreVoid) {
+    private double atByte(Part here, int south, int west, int row, int column, int channel) {
         int width = here.width, height = here.height;
         boolean moved = false;
         if (row < 0 || column < 0 || row >= height || column >= width) {
@@ -521,7 +530,11 @@ public final class CopernicusFill implements ElevationLayer {
         }
         if (moved || row < here.row0 || column < here.column0 || row >= here.row0 + here.rows || column >= here.column0 + here.columns)
             here = part(south, west, width, height, part(row, height), part(column, width));
-        byte[] table = offshoreVoid ? here.offshoreVoid : here.weights;
+        byte[] table = switch (channel) {
+            case CH_OFFSHORE_VOID -> here.offshoreVoid;
+            case CH_LAND_VOID -> here.landVoid;
+            default -> here.weights;
+        };
         return table == null ? 0 : table[(row - here.row0) * here.columns + column - here.column0] & 0xFF;
     }
 
@@ -789,8 +802,8 @@ public final class CopernicusFill implements ElevationLayer {
             }
         }
         byte[] weights = new byte[rows * columns];
-        byte[] offshoreVoid = null;
-        boolean any = false, anyOffshoreVoid = false;
+        byte[] offshoreVoid = null, landVoidWeights = null;
+        boolean any = false, anyOffshoreVoid = false, anyLandVoid = false;
         for (int r = 0; r < rows; r++) {
             double lat = south + 1.0 - (row0 + r + 0.5) / height;
             for (int c = 0; c < columns; c++) {
@@ -838,7 +851,7 @@ public final class CopernicusFill implements ElevationLayer {
                         weight = Math.max(weight, ramp(sunk[pr * across + pc], AGREE, DISAGREE));
                     }
                 }
-                double voidWeight = 0;
+                double voidWeight = 0, landVoidWeight = 0;
                 if (!geoid) {
                     if (weight < 1) {
                         float t = rawT, cop = rawCop;
@@ -893,8 +906,9 @@ public final class CopernicusFill implements ElevationLayer {
                             voidWeight = 1;
                             if (!negOverSea) weight = 1;
                         } else if (nearLandVoid && t < VOID_SHALLOW) {
-                            // Retain land-void mismatch heuristic for fine Copernicus land repair, never for fine sea.
-                            weight = Math.max(weight, ramp(-t, -VOID_SHALLOW, -2 * VOID_SHALLOW));
+                            // Track land-void ramp separately so negOverSea cells never leak into weight and flatten
+                            // adjacent positive coastal pixels over fine sea; consumed only on t < 0 fine land.
+                            landVoidWeight = ramp(-t, -VOID_SHALLOW, -2 * VOID_SHALLOW);
                         }
                         if (cop > SEA_CRUMB && weight < 1) {
                             double allow = high >= low ? RELIEF_SHARE * (high - low) : 0;
@@ -913,9 +927,21 @@ public final class CopernicusFill implements ElevationLayer {
                         anyOffshoreVoid = true;
                     }
                 }
+                if (landVoidWeight > 0) {
+                    int ql = (int) Math.round(landVoidWeight * 255);
+                    if (ql > 0) {
+                        if (landVoidWeights == null) landVoidWeights = new byte[rows * columns];
+                        landVoidWeights[r * columns + c] = (byte) ql;
+                        anyLandVoid = true;
+                    }
+                }
             }
         }
-        return new Part(width, height, row0, column0, rows, columns, any ? weights : null, anyOffshoreVoid ? offshoreVoid : null, datumOut);
+        return new Part(width, height, row0, column0, rows, columns,
+                any ? weights : null,
+                anyOffshoreVoid ? offshoreVoid : null,
+                anyLandVoid ? landVoidWeights : null,
+                datumOut);
     }
 
     /**
