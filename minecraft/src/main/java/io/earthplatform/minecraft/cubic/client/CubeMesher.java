@@ -53,7 +53,10 @@ final class CubeMesher {
     static final List<RenderType> LAYERS = RenderType.chunkBufferLayers();
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
-    /** Copied on the client thread; the worker only reads it. */
+    /**
+     * Copied on the client thread; the worker only reads it. {@code camX}, {@code camY} and {@code camZ} are where the
+     * camera lay from the cube's corner (see {@link CameraSpace#cubeRelative}), never world positions.
+     */
     record Snapshot(long key, int version, int cx, int cy, int cz,
                     @Nullable PalettedContainer<BlockState>[] states, @Nullable PalettedContainerRO<Holder<Biome>>[] biomes,
                     @Nullable int[][] tops, float camX, float camY, float camZ, boolean constantAmbient,
@@ -291,7 +294,7 @@ final class CubeMesher {
             MeshData mesh = builders[i].build();
             if (mesh == null) { memory[i].close(); continue; }
             if (LAYERS.get(i) == RenderType.translucent()) {
-                mesh.sortQuads(memory[i], VertexSorting.byDistance(s.camX - x0, s.camY - y0, s.camZ - z0));
+                mesh.sortQuads(memory[i], VertexSorting.byDistance(s.camX, s.camY, s.camZ));
             }
             layers.add(new Layer(i, mesh, memory[i]));
         }

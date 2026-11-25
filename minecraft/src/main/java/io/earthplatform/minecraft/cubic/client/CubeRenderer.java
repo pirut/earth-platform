@@ -460,7 +460,8 @@ public final class CubeRenderer {
         }
         int version = versions.get(key);
         CubeMesher.Snapshot snapshot = new CubeMesher.Snapshot(key, version, x, y, z, states, biomes, tops,
-                (float) camera.x, (float) camera.y, (float) camera.z, world.client().effects().constantAmbientLight(),
+                CameraSpace.cubeRelative(camera.x, x << 4), CameraSpace.cubeRelative(camera.y, y << 4), CameraSpace.cubeRelative(camera.z, z << 4),
+                world.client().effects().constantAmbientLight(),
                 ShaderBlocks.ids(), modelData(center),
                 center.blockEntities().isEmpty() ? Map.of() : new HashMap<>(center.blockEntities()));
         building.add(key);

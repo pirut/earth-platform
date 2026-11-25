@@ -464,9 +464,10 @@ final class FarGpu {
                 GL20C.glUniform1f(program.location("iris_currentAlphaTest"), 0.0F);
             }
         }
-        int bx = (int) Math.floor(camera.x), by = (int) Math.floor(camera.y), bz = (int) Math.floor(camera.z);
+        int bx = CameraSpace.block(camera.x), by = CameraSpace.block(camera.y), bz = CameraSpace.block(camera.z);
         GL20C.glUniform3i(program.location("earth_CameraBlock"), bx, by, bz);
-        GL20C.glUniform3f(program.location("earth_CameraFraction"), (float) (camera.x - bx), (float) (camera.y - by), (float) (camera.z - bz));
+        GL20C.glUniform3f(program.location("earth_CameraFraction"),
+                CameraSpace.fraction(camera.x, bx), CameraSpace.fraction(camera.y, by), CameraSpace.fraction(camera.z, bz));
         GL20C.glUniform1f(program.location("earth_Grow"), grow(projection));
         if (EarthView.ENABLED) GL20C.glUniform1f(program.location("earth_Curvature"), curvature);
         if (FarAtmosphere.ENABLED) GL20C.glUniform1f(program.location("earth_Atmosphere"), atmosphere);
