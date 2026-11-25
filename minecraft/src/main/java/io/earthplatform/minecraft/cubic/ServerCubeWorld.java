@@ -1353,7 +1353,8 @@ public final class ServerCubeWorld extends CubeWorld {
         // its region's lock against the last save.
         closing = true;
         reads.shutdownNow();
-        // A read already reading holds its region until it is done: give it a moment, never longer, then save regardless.
+        // A read already reading holds its region's reading lock until it is done: give it a moment, never longer. The
+        // storage's own close has its own deadline, and sets aside the edits of a region it could not read.
         try { reads.awaitTermination(2, TimeUnit.SECONDS); }
         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         for (CompletableFuture<int[]> prime : primed.values()) prime.cancel(false);
