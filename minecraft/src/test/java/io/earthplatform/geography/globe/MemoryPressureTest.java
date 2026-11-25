@@ -78,6 +78,7 @@ class MemoryPressureTest {
         for (int i = 0; i < 64; i++) map.putAndTrim(i, i, 64);
         assertEquals(64, map.size());
         look(3.6, 2, false, 0);
+        MemoryPressure.awaitShrink();
         assertEquals(16, map.size(), "already full caches drop when memory runs short, not on the next put");
         map.putAndTrim(64, 64, 64);
         assertEquals(16, map.size());
@@ -142,6 +143,44 @@ class MemoryPressureTest {
             release.countDown();
             MemoryPressure.simulate(GB, 4 * GB);
             for (Thread thread : threads) thread.join(2_000);
+        }
+    }
+
+    @Test
+    void shrinkCallbacksExecuteOffCallerThreadAndCoalesceConcurrentTriggers() throws Exception {
+        Thread caller = Thread.currentThread();
+        java.util.concurrent.atomic.AtomicReference<Thread> shrinkThread = new java.util.concurrent.atomic.AtomicReference<>();
+        AtomicInteger runs = new AtomicInteger();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        MemoryPressure.Hook hook = MemoryPressure.keep(() -> {
+            shrinkThread.set(Thread.currentThread());
+            int run = runs.incrementAndGet();
+            if (run == 1) {
+                entered.countDown();
+                try { release.await(5, TimeUnit.SECONDS); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            }
+        });
+        try {
+            // Trigger via looked() (same entry point as GC notification listener).
+            look(3.6, 0, false, true, 0);
+            assertTrue(entered.await(5, TimeUnit.SECONDS), "shrink hook runs asynchronously");
+            assertNotNull(shrinkThread.get());
+            assertNotSame(caller, shrinkThread.get(), "cache shrink must not run on caller/GC notification thread");
+            assertTrue(shrinkThread.get().isDaemon(), "shrink thread must be a daemon");
+            assertEquals(MemoryPressure.SHRINK_THREAD_NAME, shrinkThread.get().getName());
+
+            // Fire many concurrent triggers while the first shrink is still running; they must coalesce.
+            for (int i = 0; i < 25; i++) MemoryPressure.scheduleShrink();
+            release.countDown();
+            MemoryPressure.awaitShrink();
+            assertTrue(runs.get() <= 2, "concurrent triggers coalesce to at most one follow-up run, saw " + runs.get());
+            assertTrue(runs.get() >= 1);
+        } finally {
+            release.countDown();
+            // Keep hook reachable until the end of the test.
+            assertNotNull(hook);
         }
     }
 }

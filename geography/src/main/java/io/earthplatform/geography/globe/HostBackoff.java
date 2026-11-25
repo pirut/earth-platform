@@ -4,41 +4,48 @@ import io.earthplatform.geography.MissingTerrainException;
 import java.net.URI;
 import java.net.http.HttpResponse;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * A shared pause for a data host that asked us to slow down (HTTP 429 or 503). Every transfer to that
- * host waits it out, so a busy server backs off as one instead of each worker retrying at once.
- *
- * <p>Also the shared word on a host that can't be reached at all: refused, timed out or failing on
- * every try. Once a host is down its transfers fail at once rather than each waiting out its own
- * timeouts, so a host that hangs can't tie up every worker, and one transfer at a time checks
- * whether it is back, a little less often the longer it stays down.
+ * Shared pauses and outage checks per data host. When a server replies 429 or 503 it wants fewer
+ * requests, so every transfer to that host waits out the pause together; when a host stops
+ * answering altogether (or fails across multiple distinct paths with 5xx), every transfer to it
+ * fails at once instead of tying up worker threads in timeouts, while a background check watches
+ * for it to come back.
  */
 public final class HostBackoff {
-    /** Slow-down replies to wait out before a piece counts as failed. */
+    /** How many slow-down replies (429 / 503) one transfer will wait out before giving up. */
     static final int ATTEMPTS = 5;
-    /** The longest single pause, whatever the host's Retry-After says. */
+    /** Longest single pause honoured from a Retry-After header or doubling backoff. */
     static final long MAX_PAUSE_MS = 30_000;
 
     private static final Map<String, AtomicLong> UNTIL = new ConcurrentHashMap<>();
     private static final Map<String, AtomicLong> LOGGED = new ConcurrentHashMap<>();
 
     /**
-     * Failed tries in a row, with no answer between them, that mark a host down, and how long they must
+     * How many tries in a row must fail before a host counts as down, and how long that streak must
      * go on for: many transfers broken off together by one blip are retried at once and come back.
      * Timeouts count at once, as each has already waited, and one connection timeout is enough.
+     * HTTP 5xx replies also require {@link #DOWN_AFTER_PATHS} distinct failing paths so one broken
+     * tile URL cannot blackhole every healthy tile on the same host.
      */
     static final int DOWN_AFTER = 3;
+    static final int DOWN_AFTER_PATHS = 3;
     static final long DOWN_STREAK_MS = 1_000;
     /** How long a host stays down before it is checked again, doubling up to the longest. */
     static final long FIRST_DOWN_MS = 5_000, LONGEST_DOWN_MS = 60_000;
+    private static final int MAX_TRACKED_PATHS = 64;
 
     private static final class Health {
         final AtomicLong failed = new AtomicLong(), streakStart = new AtomicLong();
+        final Set<String> failingPaths = ConcurrentHashMap.newKeySet();
+        final Set<String> recentBadPaths = ConcurrentHashMap.newKeySet();
+        volatile URI lastHealthyUri;
         volatile long downUntil, downFor, downSince;
-        final java.util.concurrent.atomic.AtomicBoolean checking = new java.util.concurrent.atomic.AtomicBoolean();
+        final AtomicBoolean checking = new AtomicBoolean();
         volatile String what;
     }
 
@@ -48,18 +55,43 @@ public final class HostBackoff {
 
     private HostBackoff() {}
 
+    static String hostKey(URI uri) {
+        String authority = uri.getAuthority();
+        return authority != null ? authority : String.valueOf(uri.getHost());
+    }
+
+    private static String pathKey(URI uri) {
+        String path = uri.getRawPath();
+        String query = uri.getRawQuery();
+        return query == null ? String.valueOf(path) : path + "?" + query;
+    }
+
+    private static boolean isHttp5xx(Object why) {
+        return why instanceof String s && s.startsWith("HTTP 5");
+    }
+
     /**
      * Fails at once while the uri's host is down. When it is due another check, that is started off to
      * the side: no caller ever waits on a host that is down, the server thread included.
      */
     static void reachable(URI uri, String what) {
-        Health health = HEALTH.get(String.valueOf(uri.getAuthority()));
+        Health health = HEALTH.get(hostKey(uri));
         if (health == null || health.downFor == 0) return;
-        if (System.currentTimeMillis() >= health.downUntil && health.checking.compareAndSet(false, true)) check(uri, health);
+        if (System.currentTimeMillis() >= health.downUntil && health.checking.compareAndSet(false, true)) {
+            check(chooseProbeUri(uri, health), health);
+        }
         throw new MissingTerrainException(what + " server " + uri.getHost() + " can't be reached; trying it again shortly");
     }
 
-    /** Asks the host for the first byte of a file it was failing on; any answer means it is back. */
+    private static URI chooseProbeUri(URI requested, Health health) {
+        if (health.recentBadPaths.contains(pathKey(requested))) {
+            URI healthy = health.lastHealthyUri;
+            if (healthy != null && !health.recentBadPaths.contains(pathKey(healthy))) return healthy;
+        }
+        return requested;
+    }
+
+    /** Asks the host for the first byte of a healthy (or requested) file; any non-5xx answer means it is back. */
     private static void check(URI uri, Health health) {
         Thread.ofVirtual().name("earth-host-check").start(() -> {
             try {
@@ -82,12 +114,14 @@ public final class HostBackoff {
         });
     }
 
-    /** The host answered (any HTTP status): it is up. */
+    /** The host answered (any non-5xx HTTP status): it is up. */
     static void answered(URI uri) {
-        Health health = HEALTH.get(String.valueOf(uri.getAuthority()));
-        if (health == null) return;
+        Health health = HEALTH.computeIfAbsent(hostKey(uri), h -> new Health());
+        health.lastHealthyUri = uri;
+        health.recentBadPaths.remove(pathKey(uri));
         health.failed.set(0);
         health.streakStart.set(0);
+        health.failingPaths.clear();
         if (health.downFor != 0) {
             long seconds = (System.currentTimeMillis() - health.downSince) / 1000;
             health.downFor = 0;
@@ -99,16 +133,25 @@ public final class HostBackoff {
     /** A try failed without an answer (refused, timed out, broken off) or with a server error. */
     static void failed(URI uri, String what, Object why) {
         String host = String.valueOf(uri.getHost());
-        Health health = HEALTH.computeIfAbsent(String.valueOf(uri.getAuthority()), h -> new Health());
+        Health health = HEALTH.computeIfAbsent(hostKey(uri), h -> new Health());
         health.what = what;
         long now = System.currentTimeMillis();
         // Already down: transfers started before it went down still report in, and change nothing.
         if (health.downFor != 0) return;
+        boolean http5xx = isHttp5xx(why);
+        if (http5xx) {
+            String path = pathKey(uri);
+            if (health.recentBadPaths.size() >= MAX_TRACKED_PATHS) health.recentBadPaths.clear();
+            health.recentBadPaths.add(path);
+            if (health.failingPaths.size() < MAX_TRACKED_PATHS) health.failingPaths.add(path);
+        }
         // Many transfers can fail together: the streak starts with whichever of them reports first.
         long streak = health.streakStart.updateAndGet(start -> start == 0 ? now : start);
         // A connection that could not even be made in the whole timeout is down already: no need for more tries.
         boolean connectTimeout = why instanceof java.net.http.HttpConnectTimeoutException;
-        if (health.failed.incrementAndGet() < DOWN_AFTER && !connectTimeout) return;
+        long count = health.failed.incrementAndGet();
+        if (http5xx && health.failingPaths.size() < DOWN_AFTER_PATHS) return;
+        if (count < DOWN_AFTER && !connectTimeout) return;
         if (now - streak < DOWN_STREAK_MS && !(why instanceof java.net.http.HttpTimeoutException)) return;
         synchronized (health) {
             if (health.downFor != 0) return;
@@ -127,11 +170,25 @@ public final class HostBackoff {
         return false;
     }
 
+    /** Whether {@code uri}'s host is currently marked down; package-private for tests. */
+    static boolean isDown(URI uri) {
+        Health health = HEALTH.get(hostKey(uri));
+        return health != null && health.downFor != 0;
+    }
+
+    /** Package-private for tests: clears host state for {@code uri}'s authority. */
+    static void clear(URI uri) {
+        String key = hostKey(uri);
+        HEALTH.remove(key);
+        UNTIL.remove(key);
+        LOGGED.remove(key);
+    }
+
     static boolean slowDown(int status) { return status == 429 || status == 503; }
 
     /** Waits until the uri's host is no longer paused. */
     static void await(URI uri) throws InterruptedException {
-        AtomicLong until = UNTIL.get(String.valueOf(uri.getHost()));
+        AtomicLong until = UNTIL.get(hostKey(uri));
         if (until == null) return;
         for (long wait; (wait = until.get() - System.currentTimeMillis()) > 0; ) Thread.sleep(Math.min(wait, MAX_PAUSE_MS));
     }
@@ -139,10 +196,11 @@ public final class HostBackoff {
     /** Pauses the host after a slow-down reply: its Retry-After seconds when given, else 1 s doubling per attempt. */
     static void pause(URI uri, HttpResponse<?> response, int attempt, String what) {
         long ms = pauseMillis(response.headers().firstValue("Retry-After").orElse(null), attempt);
+        String key = hostKey(uri);
         String host = String.valueOf(uri.getHost());
         long until = System.currentTimeMillis() + ms;
-        UNTIL.computeIfAbsent(host, h -> new AtomicLong()).accumulateAndGet(until, Math::max);
-        AtomicLong logged = LOGGED.computeIfAbsent(host, h -> new AtomicLong());
+        UNTIL.computeIfAbsent(key, h -> new AtomicLong()).accumulateAndGet(until, Math::max);
+        AtomicLong logged = LOGGED.computeIfAbsent(key, h -> new AtomicLong());
         long now = System.currentTimeMillis(), last = logged.get();
         if (now - last > 60_000 && logged.compareAndSet(last, now))
             System.getLogger("earthplatform").log(System.Logger.Level.WARNING, "{0} host {1} asked us to slow down (HTTP {2}); pausing downloads from it for {3} s",
