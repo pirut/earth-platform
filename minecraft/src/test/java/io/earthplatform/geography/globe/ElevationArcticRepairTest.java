@@ -140,6 +140,7 @@ class ElevationArcticRepairTest {
             String[] span = range.substring("bytes=".length()).split("-");
             int from = Integer.parseInt(span[0]), to = Math.min(file.length - 1, Integer.parseInt(span[1]));
             byte[] body = Arrays.copyOfRange(file, from, to + 1);
+            exchange.getResponseHeaders().set("Content-Range", "bytes " + from + "-" + to + "/" + file.length);
             exchange.sendResponseHeaders(206, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
@@ -792,6 +793,7 @@ class ElevationArcticRepairTest {
             String[] span = range.substring("bytes=".length()).split("-");
             int from = Integer.parseInt(span[0]), to = Math.min(file.length - 1, Integer.parseInt(span[1]));
             byte[] body = Arrays.copyOfRange(file, from, to + 1);
+            exchange.getResponseHeaders().set("Content-Range", "bytes " + from + "-" + to + "/" + file.length);
             exchange.sendResponseHeaders(206, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
