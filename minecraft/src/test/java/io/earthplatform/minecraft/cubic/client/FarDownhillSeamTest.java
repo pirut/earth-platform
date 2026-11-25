@@ -899,11 +899,11 @@ class FarDownhillSeamTest {
             char[] eastDrops = new char[256];
             fillColumn(level, bottom, eastTops, eastSections, eastDrops);
 
-            FarMesher.Side[] sides = new FarMesher.Side[4];
-            sides[3] = new FarMesher.Side(eastSections, bottom, eastDrops);
-
             LongOpenHashSet drawn = new LongOpenHashSet();
             for (int cx = 0; cx <= 2; cx++) for (int cz = 0; cz <= 1; cz++) drawn.add(CubeKey.pack(cx, 4, cz));
+
+            FarMesher.Side[] sides = new FarMesher.Side[4];
+            sides[3] = new FarMesher.Side(eastSections, bottom, eastDrops, null, drawn);
 
             FarMesher.Built built = FarMesher.build(makeJob(level, 0, 0, bottom, ownSections, ownDrops, sides, null, drawn, faces, null, Integer.MAX_VALUE));
             try {
@@ -1047,6 +1047,147 @@ class FarDownhillSeamTest {
             } finally {
                 built.free();
             }
+        }
+    }
+
+    @Test void twoColumnL4RendererStyleCoverageSnapshotsEmitNoBuriedFacesOnSharedPlane() throws Exception {
+        FarFaces faces = syntheticFaces(Blocks.STONE.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        // Two adjacent L4 columns (v = 16, width = 256): W covers x=[0, 255] (cx=0..15), E covers x=[256, 511] (cx=16..31).
+        // Each border cell (W:(15, z) and E:(0, z)) sits at Y = 62 and qualifies for extension to y_floor = 64
+        // solely via an uphill cell 1 voxel deeper inside its OWN column (W:(14, z) at cx = 14, E:(1, z) at cx = 17),
+        // which lies OUTSIDE the other column's 1-voxel renderer-style drawnCubes snapshot.
+        int level = 4, bottom = 0, baseY = 0;
+        int[] westTops = new int[256];
+        int[] eastTops = new int[256];
+        for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+            westTops[z * 16 + x] = x == 15 ? 62 : 66;
+            eastTops[z * 16 + x] = x == 0 ? 62 : 66;
+        }
+        LevelChunkSection[] westSections = new LevelChunkSection[1];
+        char[] westDrops = new char[256];
+        fillColumn(level, bottom, westTops, westSections, westDrops);
+        LevelChunkSection[] eastSections = new LevelChunkSection[1];
+        char[] eastDrops = new char[256];
+        fillColumn(level, bottom, eastTops, eastSections, eastDrops);
+
+        // Global compiled cubes at cy = 4 (y_floor = 64): cx = 14..17, cz = 0..15 (cy = 3 unloaded).
+        // Partition into exact FarRenderer.cubesByColumn 1-voxel-margin snapshots:
+        // W's 1-voxel margin is cx = -1..16 (so cx = 17 is excluded); E's is cx = 15..32 (so cx = 14 is excluded).
+        LongOpenHashSet drawnW = new LongOpenHashSet();
+        LongOpenHashSet drawnE = new LongOpenHashSet();
+        int v = 1 << level;
+        for (int cx = 14; cx <= 17; cx++) for (int cz = 0; cz < 16; cz++) {
+            long cube = CubeKey.pack(cx, 4, cz);
+            int bx = cx << 4, bz = cz << 4;
+            int minColX = Far.column(bx - v, level), maxColX = Far.column(bx + 15 + v, level);
+            int minColZ = Far.column(bz - v, level), maxColZ = Far.column(bz + 15 + v, level);
+            if (0 >= minColX && 0 <= maxColX && 0 >= minColZ && 0 <= maxColZ) drawnW.add(cube);
+            if (1 >= minColX && 1 <= maxColX && 0 >= minColZ && 0 <= maxColZ) drawnE.add(cube);
+        }
+        assertFalse(drawnW.contains(CubeKey.pack(17, 4, 8)), "W's renderer snapshot must exclude cx = 17");
+        assertFalse(drawnE.contains(CubeKey.pack(14, 4, 8)), "E's renderer snapshot must exclude cx = 14");
+
+        FarMesher.Side[] westSides = new FarMesher.Side[4];
+        westSides[3] = new FarMesher.Side(eastSections, bottom, eastDrops, null, drawnE);
+        FarMesher.Side[] eastSides = new FarMesher.Side[4];
+        eastSides[2] = new FarMesher.Side(westSections, bottom, westDrops, null, drawnW);
+
+        FarMesher.Built builtW = FarMesher.build(makeJob(level, 0, 0, bottom, westSections, westDrops, westSides, null, drawnW, faces, null, Integer.MAX_VALUE));
+        FarMesher.Built builtE = FarMesher.build(makeJob(level, 256, 0, bottom, eastSections, eastDrops, eastSides, null, drawnE, faces, null, Integer.MAX_VALUE));
+        try {
+            List<UnpackedQuad> quadsW = unpack(builtW);
+            List<UnpackedQuad> quadsE = unpack(builtE);
+            assertEquals(64 * 16, maxUpWorldY16At(quadsW, baseY, 15, 8), "W border cell (15, 8) must extend 62 -> 64");
+            assertEquals(64 * 16, maxUpWorldY16At(quadsE, baseY, 0, 8), "E border cell (0, 8) must extend 62 -> 64");
+
+            int eastOwnGroup = Direction.EAST.get3DDataValue();
+            int westOwnGroup = Direction.WEST.get3DDataValue();
+            long buriedW = quadsW.stream()
+                    .filter(q -> q.group() == eastOwnGroup && q.dir() == Direction.EAST
+                            && q.x() == 16 && 8 >= q.z() && 8 < q.z() + q.width()
+                            && baseY * 16 + q.y16() + q.extent() > 62 * 16
+                            && baseY * 16 + q.y16() < 64 * 16)
+                    .count();
+            long buriedE = quadsE.stream()
+                    .filter(q -> q.group() == westOwnGroup && q.dir() == Direction.WEST
+                            && q.x() == 0 && 8 >= q.z() && 8 < q.z() + q.width()
+                            && baseY * 16 + q.y16() + q.extent() > 62 * 16
+                            && baseY * 16 + q.y16() < 64 * 16)
+                    .count();
+            assertEquals(0L, buriedW, "W must emit ZERO always-drawn EAST faces on shared boundary over [62, 64)");
+            assertEquals(0L, buriedE, "E must emit ZERO always-drawn WEST faces on shared boundary over [62, 64)");
+
+            boolean hasWallW = quadsW.stream().anyMatch(q -> q.group() == FarMesher.FIRST_WALL + 3 && q.dir() == Direction.EAST
+                    && q.x() == 16 && 8 >= q.z() && 8 < q.z() + q.width()
+                    && baseY * 16 + q.y16() <= 62 * 16 && baseY * 16 + q.y16() + q.extent() >= 64 * 16);
+            boolean hasWallE = quadsE.stream().anyMatch(q -> q.group() == FarMesher.FIRST_WALL + 2 && q.dir() == Direction.WEST
+                    && q.x() == 0 && 8 >= q.z() && 8 < q.z() + q.width()
+                    && baseY * 16 + q.y16() <= 62 * 16 && baseY * 16 + q.y16() + q.extent() >= 64 * 16);
+            assertTrue(hasWallW, "W must keep [62, 64) in east wall group for level transitions");
+            assertTrue(hasWallE, "E must keep [62, 64) in west wall group for level transitions");
+        } finally {
+            builtW.free();
+            builtE.free();
+        }
+    }
+
+    @Test void blockyEdgeBesideSmoothL5NeighbourKeepsExposedRiserVisible() throws Exception {
+        FarFaces faces = syntheticFaces(Blocks.STONE.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        // L5 (v = 32, smoothFrom = 5):
+        // West column W has 2 sections (rows 0..31 -> [0, 1024)) with edge at Y = 512.
+        // East column E has 1 section (rows 0..15 -> [0, 512)) with edge at Y = 511.
+        // Drawn cubes at cy = 32 (y = [512, 528)) overlap W's [0, 1024) so W meshes BLOCKY,
+        // while y = 512 is at/above E's top 512 so E meshes SMOOTH and never runs downhill seam extension.
+        int level = 5, bottom = 0, baseY = 0, smoothFrom = 5;
+        int[] westTops = new int[256];
+        int[] eastTops = new int[256];
+        Arrays.fill(westTops, 512);
+        Arrays.fill(eastTops, 511);
+
+        LevelChunkSection[] westSections = new LevelChunkSection[2];
+        char[] westDrops = new char[256];
+        fillColumn(level, bottom, westTops, westSections, westDrops);
+        LevelChunkSection[] eastSections = new LevelChunkSection[1];
+        char[] eastDrops = new char[256];
+        fillColumn(level, bottom, eastTops, eastSections, eastDrops);
+
+        LongOpenHashSet drawn = new LongOpenHashSet();
+        // Covers W's east edge (x = 15 -> cx = 30..31) and E's west edge (x = 0 -> cx = 32..33) at cy = 32.
+        for (int cx = 30; cx <= 33; cx++) for (int cz = 0; cz < 32; cz++) drawn.add(CubeKey.pack(cx, 32, cz));
+
+        FarMesher.Side[] westSides = new FarMesher.Side[4];
+        westSides[3] = new FarMesher.Side(eastSections, bottom, eastDrops, null, drawn);
+        FarMesher.Side[] eastSides = new FarMesher.Side[4];
+        eastSides[2] = new FarMesher.Side(westSections, bottom, westDrops, null, drawn);
+
+        FarMesher.Job jobW = makeJob(level, 0, 0, bottom, westSections, westDrops, westSides, null, drawn, faces, null, smoothFrom);
+        FarMesher.Job jobE = makeJob(level, 512, 0, bottom, eastSections, eastDrops, eastSides, null, drawn, faces, null, smoothFrom);
+        assertFalse(FarMesher.smooth(jobW), "W must mesh blocky because cy = 32 overlaps [0, 1024)");
+        assertTrue(FarMesher.smooth(jobE), "E must mesh smooth because cy = 32 starts at E's top 512");
+
+        FarMesher.Built builtW = FarMesher.build(jobW);
+        FarMesher.Built builtE = FarMesher.build(jobE);
+        try {
+            assertNull(builtW.grid(), "W must produce blocky geometry");
+            assertNotNull(builtE.grid(), "E must produce smooth geometry");
+            List<UnpackedQuad> quadsW = unpack(builtW);
+            int eastOwnGroup = Direction.EAST.get3DDataValue();
+            int eastWallGroup = FarMesher.FIRST_WALL + 3;
+            boolean hasVisibleRiser = quadsW.stream().anyMatch(q ->
+                    q.group() == eastOwnGroup && q.dir() == Direction.EAST
+                            && q.x() == 16 && 8 >= q.z() && 8 < q.z() + q.width()
+                            && baseY * 16 + q.y16() == 511 * 16
+                            && baseY * 16 + q.y16() + q.extent() == 512 * 16);
+            boolean hiddenInWall = quadsW.stream().anyMatch(q ->
+                    q.group() == eastWallGroup && q.dir() == Direction.EAST
+                            && q.x() == 16 && 8 >= q.z() && 8 < q.z() + q.width()
+                            && baseY * 16 + q.y16() + q.extent() > 511 * 16
+                            && baseY * 16 + q.y16() < 512 * 16);
+            assertTrue(hasVisibleRiser, "blocky W edge at Y=512 beside smooth E edge at Y=511 must keep [511, 512) riser in visible EAST group");
+            assertFalse(hiddenInWall, "exposed [511, 512) riser beside smooth neighbour must NOT be hidden in east wall group");
+        } finally {
+            builtW.free();
+            builtE.free();
         }
     }
 }

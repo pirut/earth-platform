@@ -493,7 +493,7 @@ public final class FarRenderer {
             return section == null ? net.minecraft.world.level.block.Blocks.AIR.defaultBlockState() : section.getBlockState(x, row & 15, z);
         }
 
-        FarMesher.Side side() { return new FarMesher.Side(sections, bottom, drops, packet); }
+        FarMesher.Side side() { return new FarMesher.Side(sections, bottom, drops, packet, drawnCubes); }
 
         int baseY() { return bottom * Far.width(level); }
 
@@ -1477,6 +1477,16 @@ public final class FarRenderer {
         column.drawnCubes = set;
         if (set != null) masked.add(column);
         else masked.remove(column);
+        scheduleMasked(column, lost);
+        // Cardinal neighbours with drawn cubes read this column's drawnCubes snapshot to predict
+        // its smoothing and border downhill-seam extensions; remesh them when this snapshot changes.
+        for (int i = 0; i < 4; i++) {
+            Column side = beside(column, i);
+            if (side != null && side.drawnCubes != null) scheduleMasked(side, lost);
+        }
+    }
+
+    private void scheduleMasked(Column column, boolean lost) {
         if (lost && column.drawnPick == pickSerial) {
             due(column, ticks);
             return;

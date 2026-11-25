@@ -58,8 +58,13 @@ final class FarMesher {
     private FarMesher() {}
 
     /** A same-level column next to this one: north, south, west, east. */
-    record Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops, @Nullable FarSurfacePacket packet) {
-        Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops) { this(sections, bottom, drops, null); }
+    record Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops, @Nullable FarSurfacePacket packet,
+                @Nullable LongOpenHashSet drawn) {
+        Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops) { this(sections, bottom, drops, null, null); }
+        Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops, @Nullable FarSurfacePacket packet) {
+            this(sections, bottom, drops, packet, null);
+        }
+        int height() { return packet == null ? (sections == null ? 0 : sections.length * 16) : packet.height(); }
     }
 
     /** Everything a worker needs; sections are never changed after they arrive, so sharing them is safe. */
@@ -97,7 +102,7 @@ final class FarMesher {
         Side[] dense=sides;
         for(int i=0;i<dense.length;i++) if(dense[i]!=null && dense[i].packet!=null) {
             if(dense==sides)dense=sides.clone();
-            Side side=dense[i];dense[i]=new Side(side.packet.materializeForMeshing().toArray(LevelChunkSection[]::new),side.bottom,side.drops);
+            Side side=dense[i];dense[i]=new Side(side.packet.materializeForMeshing().toArray(LevelChunkSection[]::new),side.bottom,side.drops,null,side.drawn);
         }
         return dense;
     }
@@ -182,12 +187,16 @@ final class FarMesher {
 
     /** True when a column's ground is drawn as a smooth surface: a level from its job's first smooth one, with nothing of its ground drawn up close. */
     static boolean smooth(Job job) {
-        if (job.level <= Far.EDIT_LEVELS || job.level < job.smoothFrom) return false;
-        if (job.drawn == null || job.drawn.isEmpty()) return true;
-        int voxel = Far.voxel(job.level), bottom = job.bottom * 16 * voxel, top = bottom + job.height() * voxel;
-        for (long key : job.drawn) {
+        return smooth(job.level, job.smoothFrom, job.bottom, job.height(), job.drawn);
+    }
+
+    static boolean smooth(int level, int smoothFrom, int bottom, int rows, @Nullable LongOpenHashSet drawn) {
+        if (level <= Far.EDIT_LEVELS || level < smoothFrom) return false;
+        if (drawn == null || drawn.isEmpty()) return true;
+        int voxel = Far.voxel(level), baseY = bottom * 16 * voxel, top = baseY + rows * voxel;
+        for (long key : drawn) {
             int y = CubeKey.y(key) << 4;
-            if (y + 16 > bottom && y < top) return false;
+            if (y + 16 > baseY && y < top) return false;
         }
         // Cubes drawn far above or below the column's own height cut no blocky square into its ground.
         return true;
@@ -567,11 +576,13 @@ final class FarMesher {
      * water voxel lowered into a cube still loading would otherwise vanish and leave a hole down to the sky.
      */
     static boolean drawn(Job job, int x, int vy, int z) {
-        LongOpenHashSet drawn = job.drawn;
-        if (drawn == null) return false;
-        int v = 1 << job.level;
-        int drop = drop(job.drops, job.sides, x, z);
-        int bx = job.x0 + x * v, by = job.bottom * (Far.SIZE << job.level) + vy * v, bz = job.z0 + z * v;
+        return drawn(job.drawn, job.level, job.x0, job.z0, job.bottom, x, vy, z, drop(job.drops, job.sides, x, z));
+    }
+
+    static boolean drawn(@Nullable LongOpenHashSet drawn, int level, int x0, int z0, int bottom, int x, int vy, int z, int drop) {
+        if (drawn == null || drawn.isEmpty()) return false;
+        int v = 1 << level;
+        int bx = x0 + x * v, by = bottom * (Far.SIZE << level) + vy * v, bz = z0 + z * v;
         int low = by - Mth.positiveCeilDiv(drop, Far.DROP_UNIT), high = by + v - 1 - drop / Far.DROP_UNIT, cubes = Math.max(1, v >> 4);
         for (int cy = low >> 4; cy <= high >> 4; cy++) for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
             for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++) if (!drawn.contains(CubeKey.pack(cx, cy, cz))) return false;
@@ -580,10 +591,13 @@ final class FarMesher {
 
     /** True when every near cube covered by voxel column {@code (x, z)} at cube row {@code cy} is drawn. */
     static boolean cubeDrawn(Job job, int x, int cy, int z) {
-        LongOpenHashSet drawn = job.drawn;
+        return cubeDrawn(job.drawn, job.level, job.x0, job.z0, x, cy, z);
+    }
+
+    static boolean cubeDrawn(@Nullable LongOpenHashSet drawn, int level, int x0, int z0, int x, int cy, int z) {
         if (drawn == null || drawn.isEmpty()) return false;
-        int v = 1 << job.level, cubes = Math.max(1, v >> 4);
-        int bx = job.x0 + x * v, bz = job.z0 + z * v;
+        int v = 1 << level, cubes = Math.max(1, v >> 4);
+        int bx = x0 + x * v, bz = z0 + z * v;
         for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
             for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++)
                 if (!drawn.contains(CubeKey.pack(cx, cy, cz))) return false;
@@ -592,10 +606,13 @@ final class FarMesher {
 
     /** True when any near cube overlapped by voxel column {@code (x, z)} at cube row {@code cy} is drawn. */
     static boolean anyCubeDrawn(Job job, int x, int cy, int z) {
-        LongOpenHashSet drawn = job.drawn;
+        return anyCubeDrawn(job.drawn, job.level, job.x0, job.z0, x, cy, z);
+    }
+
+    static boolean anyCubeDrawn(@Nullable LongOpenHashSet drawn, int level, int x0, int z0, int x, int cy, int z) {
         if (drawn == null || drawn.isEmpty()) return false;
-        int v = 1 << job.level, cubes = Math.max(1, v >> 4);
-        int bx = job.x0 + x * v, bz = job.z0 + z * v;
+        int v = 1 << level, cubes = Math.max(1, v >> 4);
+        int bx = x0 + x * v, bz = z0 + z * v;
         for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
             for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++)
                 if (drawn.contains(CubeKey.pack(cx, cy, cz))) return true;

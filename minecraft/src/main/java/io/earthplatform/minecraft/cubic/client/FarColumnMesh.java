@@ -43,6 +43,7 @@ import io.earthplatform.minecraft.cubic.client.FarMesher.Side;
 import io.earthplatform.minecraft.cubic.client.FarMesher.WaterLook;
 import io.earthplatform.minecraft.cubic.far.Far;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -101,8 +102,7 @@ final class FarColumnMesh {
         boolean hasDrawn = job.drawn() != null && !job.drawn().isEmpty();
         // Match FarMesher.buildPrepared: smooth ground, near-cube masking and packet edit overlays
         // materialize dense sections up front so surface(), groundRow() and meshing stay exact.
-        if (smooth && needsDenseForSmooth(job)
-                || job.packet() != null && (hasDrawn || job.packet().editCount() != 0)) {
+        if (smooth || job.packet() != null && (hasDrawn || job.packet().editCount() != 0)) {
             job = job.dense();
         }
         this.job = job;
@@ -122,16 +122,6 @@ final class FarColumnMesh {
         normals = FarMesher.normals(groundHeights, voxel);
         cover = job.level() >= COVER_FROM ? evenCover(job, groundRows) : null;
         extendedTops = !smooth && hasDrawn ? computeExtendedTops() : null;
-    }
-
-    private static boolean needsDenseForSmooth(Job job) {
-        return job.packet() != null || hasPacketSide(job.sides()) || hasPacketSide(job.diagonals());
-    }
-
-    private static boolean hasPacketSide(@Nullable Side[] sides) {
-        if (sides == null) return false;
-        for (Side side : sides) if (side != null && side.sections() == null && side.packet() != null) return true;
-        return false;
     }
 
     Built build() {
@@ -250,10 +240,7 @@ final class FarColumnMesh {
                 if (to <= from) continue;
                 BlockState neighbour = at(job, nx, row, nz);
                 if (nbExtTop > nbOrigTop && from < nbExtTop && to > nbOrigTop && neighbour.isAir()) {
-                    if (from < nbOrigTop) {
-                        biome = emitSideSlice(state, biome, direction, x, vy, z, cell, nx, row, nz, wall, liquid, sky, seamTop, from, nbOrigTop, neighbour, false);
-                        from = nbOrigTop;
-                    }
+                    assert from >= nbOrigTop;
                     int hiddenTo = Math.min(to, nbExtTop);
                     biome = emitSideSlice(state, biome, direction, x, vy, z, cell, nx, row, nz, wall, liquid, sky, seamTop, from, hiddenTo, neighbour, true);
                     if (hiddenTo < to) {
@@ -348,8 +335,11 @@ final class FarColumnMesh {
         for (int wall = 0; wall < 4 && sides != null; wall++) {
             Side next = sides[wall];
             if (next == null || next.sections() == null && next.packet() == null || next.drops() == null) continue;
+            LongOpenHashSet sideDrawn = next.drawn();
+            if (sideDrawn == null || sideDrawn.isEmpty()) continue;
+            int sideRows = next.height();
+            if (FarMesher.smooth(job.level(), job.smoothFrom(), next.bottom(), sideRows, sideDrawn)) continue;
             int rowShift = (next.bottom() - job.bottom()) * 16;
-            int sideRows = next.packet() == null ? next.sections().length * 16 : next.packet().height();
             long sideCeiling = (long) (sideRows + rowShift) * voxel;
             for (int along = 0; along < 16; along++) {
                 int nx = wall == 2 ? -1 : wall == 3 ? 16 : along;
@@ -357,10 +347,11 @@ final class FarColumnMesh {
                 int sx = nx & 15, sz = nz & 15;
                 int sideRow = FarMesher.groundRow(next, sx, sz);
                 if (sideRow < 0) continue;
+                int sideDrop = next.drops()[sz * 16 + sx];
+                if (FarMesher.drawn(sideDrawn, job.level(), job.x0(), job.z0(), next.bottom(), nx, sideRow, nz, sideDrop)) continue;
                 int gy = sideRow + rowShift;
-                if (drawn(nx, gy, nz)) continue;
                 int at = (nz + 1) * 18 + nx + 1, origTop = groundHeights.height()[at];
-                int top = downhillSeamTop(nx, gy, nz, at(job, nx, gy, nz), next.drops()[sz * 16 + sx], origTop, sideCeiling, wall, next);
+                int top = downhillSeamTop(nx, gy, nz, at(job, nx, gy, nz), sideDrop, origTop, sideCeiling, wall, next);
                 if (top > origTop) { ext[at] = top; any = true; }
             }
         }
@@ -382,7 +373,11 @@ final class FarColumnMesh {
         long baseY256 = (long) job.bottom() * (16L * voxel);
         long worldTop256 = baseY256 + top;
         int topCy = (int) Math.floorDiv(worldTop256, 16L * UNIT);
-        if (anyCubeDrawn(x, topCy, z) || !cubeDrawn(x, topCy + 1, z)) return top;
+        boolean cellAnyDrawn = side == null ? anyCubeDrawn(x, topCy, z)
+                : FarMesher.anyCubeDrawn(side.drawn(), job.level(), job.x0(), job.z0(), x, topCy, z);
+        boolean aboveFullDrawn = side == null ? cubeDrawn(x, topCy + 1, z)
+                : FarMesher.cubeDrawn(side.drawn(), job.level(), job.x0(), job.z0(), x, topCy + 1, z);
+        if (cellAnyDrawn || !aboveFullDrawn) return top;
         long yFloor256 = (topCy + 1L) * (16L * UNIT);
         long gap = yFloor256 - worldTop256;
         long maxGap = Math.min(2L * voxel, 4L * UNIT);
@@ -417,7 +412,9 @@ final class FarColumnMesh {
             if (nb < yFloorRel) continue;
             if ((long) nb - top > maxRise) continue;
             if (gap > midpointLimit && (long) top + nb < 2L * yFloorRel) continue;
-            if (!anyCubeDrawn(nx, topCy + 1, nz)) continue;
+            boolean nbCubeDrawn = side == null ? anyCubeDrawn(nx, topCy + 1, nz)
+                    : FarMesher.anyCubeDrawn(side.drawn(), job.level(), job.x0(), job.z0(), nx, topCy + 1, nz);
+            if (!nbCubeDrawn) continue;
             uphill = true;
             break;
         }
