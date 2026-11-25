@@ -16,6 +16,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -37,8 +40,17 @@ import net.minecraft.nbt.NbtIo;
  * generated again, so new edits there save normally. One that can't be read at all (permissions, a
  * failing disk) is left exactly as it is and never written for the rest of the session, so fixing it
  * and restarting brings its contents back.
+ *
+ * <p>Reading a region's file never holds the region against writing: a read that hangs (a failing disk, a
+ * network drive) stalls only what needs that region's older cubes. An edit made to a region still being read
+ * is kept aside until the read is done, a save does not wait for the read past {@link #loadWaitNanos}, and
+ * {@link #close} gives up on the writer after {@link #closeWaitNanos}, leaving such edits beside the region as
+ * {@code <name>.unsaved-<time>} instead of stalling shutdown for as long as the disk does.
  */
 public final class CubeStorage {
+    /** Reads a region file's bytes; the real one reads the disk, a test's may hang. */
+    @FunctionalInterface interface Reader { byte[] read(Path file) throws IOException; }
+
     /** A region file that could not be read: set aside as {@code keptAs}, or left alone and not saved to when that is null. */
     public record Problem(Path file, @Nullable Path keptAs) {}
 
@@ -58,7 +70,23 @@ public final class CubeStorage {
 
     private volatile Consumer<Problem> problems = problem -> {};
 
-    public CubeStorage(Path directory) { this.directory = directory; }
+    /** How long a save waits for a region still being read, before it leaves that region for the next save. */
+    private static final long LOAD_WAIT_NANOS = 2_000_000_000L;
+    /** How long {@link #close} waits for the last write: longer than a slow disk takes, shorter than a host's patience. */
+    private static final long CLOSE_WAIT_NANOS = 30_000_000_000L;
+    private final Reader reader;
+    private final long loadWaitNanos, closeWaitNanos;
+    /** Set by {@link #close}: a region whose read is still going then has its edits written aside. */
+    private volatile boolean closing;
+
+    public CubeStorage(Path directory) { this(directory, Files::readAllBytes, LOAD_WAIT_NANOS, CLOSE_WAIT_NANOS); }
+
+    CubeStorage(Path directory, Reader reader, long loadWaitNanos, long closeWaitNanos) {
+        this.directory = directory;
+        this.reader = reader;
+        this.loadWaitNanos = loadWaitNanos;
+        this.closeWaitNanos = closeWaitNanos;
+    }
 
     /** Called once per bad region file, on whichever thread first read it. */
     public void onProblem(Consumer<Problem> listener) { problems = listener; }
@@ -189,15 +217,30 @@ public final class CubeStorage {
 
     /** Owner thread: writes every changed region now, after any write already under way. */
     public void flush() throws IOException {
-        try { writer.submit(() -> { writeAll(); return null; }).get(); }
+        flush(Long.MAX_VALUE);
+    }
+
+    private void flush(long waitNanos) throws IOException {
+        try {
+            var write = writer.submit(() -> { writeAll(); return null; });
+            if (waitNanos == Long.MAX_VALUE) write.get();
+            else write.get(waitNanos, TimeUnit.NANOSECONDS);
+        }
         catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IOException(failure); }
         catch (ExecutionException failure) { throw failure.getCause() instanceof IOException io ? io : new IOException(failure.getCause()); }
+        catch (TimeoutException stuck) {
+            EarthPlatformMod.LOGGER.error("Cube regions were not written within {} s of shutting down (a disk that is not answering?); "
+                    + "edits in regions it did not reach may be lost, and those it was still reading are beside them as .unsaved files", TimeUnit.NANOSECONDS.toSeconds(waitNanos));
+            writer.shutdownNow();
+            return;
+        }
         letGo();
     }
 
-    /** Owner thread: the last write, then no more. */
+    /** Owner thread: the last write, then no more. Waits for the disk no longer than {@code closeWaitNanos}. */
     public void close() throws IOException {
-        try { flush(); }
+        closing = true;
+        try { flush(closeWaitNanos); }
         finally { writer.shutdown(); }
     }
 
@@ -213,25 +256,57 @@ public final class CubeStorage {
 
     private final class Region {
         private final Path file;
-        private Map<Long, CompoundTag> cubes;
+        /** Held while the file is read, and only then: nothing that writes the region waits on it for longer than {@link #loadWaitNanos}. */
+        private final ReentrantLock reading = new ReentrantLock();
+        /** Null until the file has been read; after that, only touched holding this region's monitor. */
+        private volatile Map<Long, CompoundTag> cubes;
+        /** Edits made before the file was read, which join the cubes when it is. Under the monitor. */
+        private final Map<Long, CompoundTag> early = new HashMap<>();
         private boolean dirty, writing;
         /** The file could not be read and is left alone: edits here live only until the server stops. */
-        private boolean blocked;
-        private long used = System.nanoTime();
+        private volatile boolean blocked;
+        private volatile long used = System.nanoTime();
 
         Region(Path file) { this.file = file; }
 
-        private Map<Long, CompoundTag> load() {
+        /**
+         * The region's cubes, reading the file first if nobody has. The read happens outside the monitor, so a read that
+         * hangs holds nothing a save needs. Waits at most {@code waitNanos} for a read another thread has under way
+         * ({@link Long#MAX_VALUE}: for as long as it takes); null when that wait ran out.
+         */
+        @Nullable private Map<Long, CompoundTag> loaded(long waitNanos) {
             used = System.nanoTime();
-            if (cubes != null) return cubes;
-            cubes = new HashMap<>();
+            Map<Long, CompoundTag> have = cubes;
+            if (have != null) return have;
+            try {
+                if (waitNanos == Long.MAX_VALUE) reading.lock();
+                else if (!reading.tryLock(waitNanos, TimeUnit.NANOSECONDS)) return null;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+            try {
+                if (cubes != null) return cubes;
+                Map<Long, CompoundTag> read = read();
+                synchronized (this) {
+                    read.putAll(early);
+                    early.clear();
+                    cubes = read;
+                }
+                return read;
+            } finally {
+                reading.unlock();
+            }
+        }
+
+        /** The file's cubes, or an empty map when there is no file or it can't be used (see {@link #block}, {@link #setAside}). */
+        private Map<Long, CompoundTag> read() {
             byte[] bytes;
-            try { bytes = Files.readAllBytes(file); }
-            catch (NoSuchFileException absent) { return cubes; }
-            catch (IOException failure) { block(failure); return cubes; }
-            try { cubes = parse(bytes); }
-            catch (IOException | RuntimeException failure) { setAside(failure); }
-            return cubes;
+            try { bytes = reader.read(file); }
+            catch (NoSuchFileException absent) { return new HashMap<>(); }
+            catch (IOException failure) { block(failure); return new HashMap<>(); }
+            try { return parse(bytes); }
+            catch (IOException | RuntimeException failure) { setAside(failure); return new HashMap<>(); }
         }
 
         /** Keeps the damaged file under a new name and starts the region empty, so its area generates again and saves normally. */
@@ -256,27 +331,57 @@ public final class CubeStorage {
             problems.accept(new Problem(file, null));
         }
 
-        synchronized Map<Long, CompoundTag> copy() { return new HashMap<>(load()); }
-
-        synchronized CompoundTag get(long key) { return load().get(key); }
-
-        synchronized long[] keys() {
-            long[] keys = new long[load().size()];
-            int i = 0;
-            for (long key : cubes.keySet()) keys[i++] = key;
-            return keys;
+        Map<Long, CompoundTag> copy() {
+            Map<Long, CompoundTag> all = loaded(Long.MAX_VALUE);
+            synchronized (this) { return new HashMap<>(all); }
         }
 
-        synchronized void put(long key, CompoundTag tag) { load().put(key, tag); dirty = true; }
+        CompoundTag get(long key) {
+            Map<Long, CompoundTag> all = loaded(Long.MAX_VALUE);
+            synchronized (this) { return all.get(key); }
+        }
+
+        long[] keys() {
+            Map<Long, CompoundTag> all = loaded(Long.MAX_VALUE);
+            synchronized (this) {
+                long[] keys = new long[all.size()];
+                int i = 0;
+                for (long key : all.keySet()) keys[i++] = key;
+                return keys;
+            }
+        }
+
+        /**
+         * An edit. Reads the file first when no read of it is going (as before); when one is, the edit waits with the
+         * others in {@link #early} and joins the cubes when the read ends, so the owner thread never waits on the disk
+         * behind another thread's read.
+         */
+        void put(long key, CompoundTag tag) {
+            loaded(0);
+            synchronized (this) {
+                if (cubes != null) cubes.put(key, tag);
+                else early.put(key, tag);
+                dirty = true;
+            }
+        }
 
         /**
          * Unused for a while with everything written, so dropping it and reading the file again later loses nothing.
-         * A blocked region is kept, so a file fixed while the server runs is still not written over.
+         * A blocked region is kept, so a file fixed while the server runs is still not written over; so is one being read.
          */
-        synchronized boolean idle(long now) { return !blocked && !dirty && !writing && now - used > KEEP_NANOS; }
+        synchronized boolean idle(long now) { return !blocked && !dirty && !writing && !reading.isLocked() && now - used > KEEP_NANOS; }
 
-        /** Writer thread: snapshots the cubes under the lock, then compresses and writes without holding it. */
+        /**
+         * Writer thread: snapshots the cubes under the lock, then compresses and writes without holding it. A region
+         * with edits whose file is still being read is left for the next write, or, on the last, has its edits written
+         * beside it, since the file's own cubes can't be had to write the region whole.
+         */
         void flush() throws IOException {
+            synchronized (this) { if (!dirty || blocked) return; }
+            if (loaded(loadWaitNanos) == null) {
+                if (closing) keepUnmerged();
+                return;
+            }
             CompoundTag all = new CompoundTag();
             synchronized (this) {
                 if (!dirty || blocked) return;
@@ -287,17 +392,7 @@ public final class CubeStorage {
             }
             boolean written = false;
             try {
-                CompoundTag root = new CompoundTag();
-                root.putInt("v", CubeCodec.VERSION);
-                root.put("cubes", all);
-                Path temp = file.resolveSibling(file.getFileName() + ".tmp");
-                NbtIo.writeCompressed(root, temp);
-                // On disk before it takes the old file's place: renamed while still in the system's buffers, a power
-                // cut could leave an empty file where the region was, and with it every edit in the region.
-                try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(temp, java.nio.file.StandardOpenOption.WRITE)) {
-                    channel.force(true);
-                }
-                Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                write(all, file);
                 written = true;
             } finally {
                 synchronized (this) {
@@ -305,6 +400,33 @@ public final class CubeStorage {
                     if (!written) dirty = true;
                 }
             }
+        }
+
+        /** The edits made before the file was read, as a region file of their own, so shutdown loses none of them. */
+        private void keepUnmerged() throws IOException {
+            CompoundTag all = new CompoundTag();
+            synchronized (this) {
+                if (early.isEmpty()) return;
+                for (var entry : early.entrySet()) all.put(Long.toString(entry.getKey()), entry.getValue());
+            }
+            Path aside = file.resolveSibling(file.getFileName() + ".unsaved-" + LocalDateTime.now().format(STAMP));
+            write(all, aside);
+            EarthPlatformMod.LOGGER.error("Region file {} was still being read when the world closed, so its edits were saved as {} instead; "
+                    + "its cubes are in the region file as before", file, aside);
+        }
+
+        private void write(CompoundTag all, Path target) throws IOException {
+            CompoundTag root = new CompoundTag();
+            root.putInt("v", CubeCodec.VERSION);
+            root.put("cubes", all);
+            Path temp = target.resolveSibling(target.getFileName() + ".tmp");
+            NbtIo.writeCompressed(root, temp);
+            // On disk before it takes the old file's place: renamed while still in the system's buffers, a power
+            // cut could leave an empty file where the region was, and with it every edit in the region.
+            try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(temp, java.nio.file.StandardOpenOption.WRITE)) {
+                channel.force(true);
+            }
+            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         }
     }
 }
