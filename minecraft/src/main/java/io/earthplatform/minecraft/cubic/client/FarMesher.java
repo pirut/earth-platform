@@ -58,8 +58,13 @@ final class FarMesher {
     private FarMesher() {}
 
     /** A same-level column next to this one: north, south, west, east. */
-    record Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops, @Nullable FarSurfacePacket packet) {
-        Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops) { this(sections, bottom, drops, null); }
+    record Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops, @Nullable FarSurfacePacket packet,
+                @Nullable LongOpenHashSet drawn) {
+        Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops) { this(sections, bottom, drops, null, null); }
+        Side(@Nullable LevelChunkSection[] sections, int bottom, char[] drops, @Nullable FarSurfacePacket packet) {
+            this(sections, bottom, drops, packet, null);
+        }
+        int height() { return packet == null ? (sections == null ? 0 : sections.length * 16) : packet.height(); }
     }
 
     /** Everything a worker needs; sections are never changed after they arrive, so sharing them is safe. */
@@ -97,7 +102,7 @@ final class FarMesher {
         Side[] dense=sides;
         for(int i=0;i<dense.length;i++) if(dense[i]!=null && dense[i].packet!=null) {
             if(dense==sides)dense=sides.clone();
-            Side side=dense[i];dense[i]=new Side(side.packet.materializeForMeshing().toArray(LevelChunkSection[]::new),side.bottom,side.drops);
+            Side side=dense[i];dense[i]=new Side(side.packet.materializeForMeshing().toArray(LevelChunkSection[]::new),side.bottom,side.drops,null,side.drawn);
         }
         return dense;
     }
@@ -182,12 +187,16 @@ final class FarMesher {
 
     /** True when a column's ground is drawn as a smooth surface: a level from its job's first smooth one, with nothing of its ground drawn up close. */
     static boolean smooth(Job job) {
-        if (job.level <= Far.EDIT_LEVELS || job.level < job.smoothFrom) return false;
-        if (job.drawn == null || job.drawn.isEmpty()) return true;
-        int voxel = Far.voxel(job.level), bottom = job.bottom * 16 * voxel, top = bottom + job.height() * voxel;
-        for (long key : job.drawn) {
+        return smooth(job.level, job.smoothFrom, job.bottom, job.height(), job.drawn);
+    }
+
+    static boolean smooth(int level, int smoothFrom, int bottom, int rows, @Nullable LongOpenHashSet drawn) {
+        if (level <= Far.EDIT_LEVELS || level < smoothFrom) return false;
+        if (drawn == null || drawn.isEmpty()) return true;
+        int voxel = Far.voxel(level), baseY = bottom * 16 * voxel, top = baseY + rows * voxel;
+        for (long key : drawn) {
             int y = CubeKey.y(key) << 4;
-            if (y + 16 > bottom && y < top) return false;
+            if (y + 16 > baseY && y < top) return false;
         }
         // Cubes drawn far above or below the column's own height cut no blocky square into its ground.
         return true;
@@ -250,7 +259,7 @@ final class FarMesher {
     static int groundRow(Job job,int x,int z) {
         return job.packet==null ? groundRow(job.sections,x,z) : job.packet.top(z*16+x,state->!state.isAir() && !seeThrough(state) && !foliage(state));
     }
-    private static int groundRow(Side side,int x,int z) {
+    static int groundRow(Side side,int x,int z) {
         return side.packet==null ? groundRow(side.sections,x,z) : side.packet.top(z*16+x,state->!state.isAir() && !seeThrough(state) && !foliage(state));
     }
 
@@ -332,18 +341,15 @@ final class FarMesher {
         return surface;
     }
 
-    /**
-     * The ground's slope at each voxel column, from the ground heights either side of it, so a
-     * stepped hillside is lit, with or without a shader pack, as the slope it stands for instead
-     * of as stripes of lit tops and dark risers. Columns next door give the heights past the
-     * edges, where they are known.
-     */
-    static int[] normals(Job job, int voxel) {
+    /** Ground top heights in 1/{@link #UNIT} blocks above this column's base, on an 18 x 18 grid including cardinal neighbours. */
+    record GroundHeights(int[] height, boolean[] known) {}
+
+    static GroundHeights groundHeights(Job job, int voxel, int[] groundRows) {
         int[] ground = new int[18 * 18];
         boolean[] known = new boolean[18 * 18];
         for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
             int cell = z * 16 + x;
-            ground[(z + 1) * 18 + x + 1] = (groundRow(job, x, z) + 1) * voxel - job.drops[cell];
+            ground[(z + 1) * 18 + x + 1] = (groundRows[cell] + 1) * voxel - job.drops[cell];
             known[(z + 1) * 18 + x + 1] = true;
         }
         for (int side = 0; side < 4 && job.sides != null; side++) {
@@ -357,13 +363,24 @@ final class FarMesher {
                 known[gz * 18 + gx] = true;
             }
         }
+        return new GroundHeights(ground, known);
+    }
+
+    /**
+     * The ground's slope at each voxel column, from the ground heights either side of it, so a
+     * stepped hillside is lit, with or without a shader pack, as the slope it stands for instead
+     * of as stripes of lit tops and dark risers. Columns next door give the heights past the
+     * edges, where they are known.
+     */
+    static int[] normals(GroundHeights heights, int voxel) {
         int[] normals = new int[256];
         for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
             int at = (z + 1) * 18 + x + 1;
-            normals[z * 16 + x] = normalCode(slope(ground, known, at, 1, voxel), slope(ground, known, at, 18, voxel));
+            normals[z * 16 + x] = normalCode(slope(heights.height, heights.known, at, 1, voxel), slope(heights.height, heights.known, at, 18, voxel));
         }
         return normals;
     }
+
 
     /** Rise over run across a voxel column along one axis, from whichever neighbours are known. */
     private static float slope(int[] ground, boolean[] known, int at, int step, int voxel) {
@@ -531,20 +548,75 @@ final class FarMesher {
     }
 
     /**
+     * The drop of a voxel column here or on the facing edge of a cardinal neighbour column;
+     * missing neighbours, corners and out-of-footprint queries fall back to this column's clamped edge.
+     */
+    static int drop(char[] drops, @Nullable Side[] sides, int x, int z) {
+        if (x >= 0 && x <= 15 && z >= 0 && z <= 15) return drops[z * 16 + x];
+        if (sides != null) {
+            int wall = -1;
+            if (z >= 0 && z <= 15) {
+                if (x == -1) wall = 2;
+                else if (x == 16) wall = 3;
+            } else if (x >= 0 && x <= 15) {
+                if (z == -1) wall = 0;
+                else if (z == 16) wall = 1;
+            }
+            if (wall >= 0) {
+                Side side = sides[wall];
+                if (side != null && side.drops != null) return side.drops[(z & 15) * 16 + (x & 15)];
+            }
+        }
+        return drops[Mth.clamp(z, 0, 15) * 16 + Mth.clamp(x, 0, 15)];
+    }
+
+    /**
      * True when the cubes under a voxel are all drawn by the cube renderer. A voxel is drawn lowered by its column's
      * drop, so it can reach into the cube below its own row: with only the air cube above the ground compiled, a far
      * water voxel lowered into a cube still loading would otherwise vanish and leave a hole down to the sky.
      */
     static boolean drawn(Job job, int x, int vy, int z) {
-        LongOpenHashSet drawn = job.drawn;
-        if (drawn == null) return false;
-        int v = 1 << job.level;
-        int drop = job.drops[Mth.clamp(z, 0, 15) * 16 + Mth.clamp(x, 0, 15)];
-        int bx = job.x0 + x * v, by = job.bottom * (Far.SIZE << job.level) + vy * v, bz = job.z0 + z * v;
+        return drawn(job.drawn, job.level, job.x0, job.z0, job.bottom, x, vy, z, drop(job.drops, job.sides, x, z));
+    }
+
+    static boolean drawn(@Nullable LongOpenHashSet drawn, int level, int x0, int z0, int bottom, int x, int vy, int z, int drop) {
+        if (drawn == null || drawn.isEmpty()) return false;
+        int v = 1 << level;
+        int bx = x0 + x * v, by = bottom * (Far.SIZE << level) + vy * v, bz = z0 + z * v;
         int low = by - Mth.positiveCeilDiv(drop, Far.DROP_UNIT), high = by + v - 1 - drop / Far.DROP_UNIT, cubes = Math.max(1, v >> 4);
         for (int cy = low >> 4; cy <= high >> 4; cy++) for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
             for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++) if (!drawn.contains(CubeKey.pack(cx, cy, cz))) return false;
         return true;
+    }
+
+    /** True when every near cube covered by voxel column {@code (x, z)} at cube row {@code cy} is drawn. */
+    static boolean cubeDrawn(Job job, int x, int cy, int z) {
+        return cubeDrawn(job.drawn, job.level, job.x0, job.z0, x, cy, z);
+    }
+
+    static boolean cubeDrawn(@Nullable LongOpenHashSet drawn, int level, int x0, int z0, int x, int cy, int z) {
+        if (drawn == null || drawn.isEmpty()) return false;
+        int v = 1 << level, cubes = Math.max(1, v >> 4);
+        int bx = x0 + x * v, bz = z0 + z * v;
+        for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
+            for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++)
+                if (!drawn.contains(CubeKey.pack(cx, cy, cz))) return false;
+        return true;
+    }
+
+    /** True when any near cube overlapped by voxel column {@code (x, z)} at cube row {@code cy} is drawn. */
+    static boolean anyCubeDrawn(Job job, int x, int cy, int z) {
+        return anyCubeDrawn(job.drawn, job.level, job.x0, job.z0, x, cy, z);
+    }
+
+    static boolean anyCubeDrawn(@Nullable LongOpenHashSet drawn, int level, int x0, int z0, int x, int cy, int z) {
+        if (drawn == null || drawn.isEmpty()) return false;
+        int v = 1 << level, cubes = Math.max(1, v >> 4);
+        int bx = x0 + x * v, bz = z0 + z * v;
+        for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
+            for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++)
+                if (drawn.contains(CubeKey.pack(cx, cy, cz))) return true;
+        return false;
     }
 
     /** Corners in order top-left, bottom-left, bottom-right, top-right as seen from outside. */

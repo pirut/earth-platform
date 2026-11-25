@@ -149,6 +149,111 @@ class FarCoverageTest {
         }
     }
 
+    @Test void neighbourSideDropsAndCubeDrawnMatchFarMesher() {
+        Random random = new Random(90210);
+        for (int level : new int[] {1, 2, 4, 5}) {
+            int v = 1 << level, cubes = Math.max(1, v >> 4), rows = 32;
+            int x0 = -16 * v, z0 = 32 * v, bottom = -1;
+            char[] ownDrops = new char[256];
+            for (int cell = 0; cell < 256; cell++) ownDrops[cell] = (char) random.nextInt(Math.min(65536, v * UNIT));
+            FarMesher.Side[] sides = new FarMesher.Side[4];
+            for (int side = 0; side < 4; side++) {
+                char[] sideDrops = new char[256];
+                for (int cell = 0; cell < 256; cell++) sideDrops[cell] = (char) random.nextInt(Math.min(65536, v * UNIT));
+                sides[side] = new FarMesher.Side(null, bottom, sideDrops);
+            }
+            LongOpenHashSet drawn = new LongOpenHashSet();
+            for (int z = -1; z <= 16; z++) for (int x = -1; x <= 16; x++) {
+                for (int cy = -3; cy <= 6; cy++) {
+                    if (cy == 0 || cy == 3) continue; // vertical boundaries straddling drawn/unloaded cubes
+                    fill(drawn, (x0 + x * v) >> 4, cy, (z0 + z * v) >> 4, cubes);
+                }
+            }
+            FarMesher.Job job = new FarMesher.Job(1, 1, level, 0, x0, z0, bottom, null, ownDrops, sides, null, drawn,
+                    false, null, null, null, null, null);
+            FarCoverage coverage = new FarCoverage(level, x0, z0, bottom, rows, ownDrops, sides, drawn);
+            for (int y = -1; y <= rows; y++) for (int z = -1; z <= 16; z++) for (int x = -1; x <= 16; x++) {
+                assertEquals(FarMesher.drawn(job, x, y, z), coverage.drawn(x, y, z),
+                        "level=" + level + " at (" + x + "," + y + "," + z + ")");
+            }
+            for (int cy = -4; cy <= 7; cy++) for (int z = -1; z <= 16; z++) for (int x = -1; x <= 16; x++) {
+                assertEquals(FarMesher.cubeDrawn(job, x, cy, z), coverage.cubeDrawn(x, cy, z),
+                        "cubeDrawn level=" + level + " at (" + x + "," + cy + "," + z + ")");
+                assertEquals(FarMesher.anyCubeDrawn(job, x, cy, z), coverage.anyCubeDrawn(x, cy, z),
+                        "anyCubeDrawn level=" + level + " at (" + x + "," + cy + "," + z + ")");
+            }
+        }
+    }
+
+    @Test void anyCubeDrawnMatchesFarMesherOnPartialCoarseAndReferencePaths() {
+        Random random = new Random(314159);
+        for (int level : new int[] {1, 4, 5, 6, 8}) {
+            int v = 1 << level, cubes = Math.max(1, v >> 4), rows = 32;
+            // Deliberately unaligned negative coordinates to exercise floorDiv grouping.
+            int x0 = -16 * v - 5, z0 = -8 * v - 11, bottom = -1;
+            char[] drops = new char[256];
+            // Partial-only set: at coarse levels (cubes > 1), NO cell is fully covered (columns is empty),
+            // yet anyCubeDrawn must still return true wherever at least 1 near cube overlaps the footprint.
+            LongOpenHashSet partialOnly = new LongOpenHashSet();
+            for (int z = -1; z <= 16; z += 3) for (int x = -1; x <= 16; x += 3) {
+                int bx = (x0 + x * v) >> 4, bz = (z0 + z * v) >> 4;
+                partialOnly.add(CubeKey.pack(bx + random.nextInt(cubes), 2, bz + random.nextInt(cubes)));
+                if (cubes > 1) {
+                    // Add 1..cubes*cubes-1 cubes at cy = 5 (never full).
+                    partialOnly.add(CubeKey.pack(bx, 5, bz));
+                    partialOnly.add(CubeKey.pack(bx + cubes - 1, 5, bz));
+                }
+            }
+            FarMesher.Job partialJob = new FarMesher.Job(1, 1, level, 0, x0, z0, bottom, null, drops, null, null, partialOnly,
+                    false, null, null, null, null, null);
+            FarCoverage partialCov = new FarCoverage(level, x0, z0, bottom, rows, drops, partialOnly);
+            for (int cy : new int[] {1, 2, 3, 5, 6}) {
+                for (int z = -1; z <= 16; z++) for (int x = -1; x <= 16; x++) {
+                    assertEquals(FarMesher.cubeDrawn(partialJob, x, cy, z), partialCov.cubeDrawn(x, cy, z),
+                            "partial cubeDrawn level=" + level + " at (" + x + "," + cy + "," + z + ")");
+                    assertEquals(FarMesher.anyCubeDrawn(partialJob, x, cy, z), partialCov.anyCubeDrawn(x, cy, z),
+                            "partial anyCubeDrawn level=" + level + " at (" + x + "," + cy + "," + z + ")");
+                }
+                // Out-of-halo queries exercise cubeReference / anyCubeReference.
+                for (int x : new int[] {-4, 18}) {
+                    assertEquals(FarMesher.cubeDrawn(partialJob, x, cy, 2), partialCov.cubeDrawn(x, cy, 2));
+                    assertEquals(FarMesher.anyCubeDrawn(partialJob, x, cy, 2), partialCov.anyCubeDrawn(x, cy, 2));
+                }
+            }
+            if (cubes > 1) {
+                assertFalse(partialCov.cubeDrawn(-1, 2, -1), "1 of " + (cubes * cubes) + " cubes must not count as full");
+                assertTrue(partialCov.anyCubeDrawn(-1, 2, -1), "1 of " + (cubes * cubes) + " cubes must count as any");
+            }
+
+            // Mixed partial + full coverage in adjacent vertical cube rows (L5 seam scenario).
+            LongOpenHashSet mixed = new LongOpenHashSet(partialOnly);
+            fill(mixed, (x0 + 4 * v) >> 4, 3, (z0 + 4 * v) >> 4, cubes);
+            mixed.add(CubeKey.pack((x0 + 4 * v) >> 4, 2, (z0 + 4 * v) >> 4));
+            FarMesher.Job mixedJob = new FarMesher.Job(1, 1, level, 0, x0, z0, bottom, null, drops, null, null, mixed,
+                    false, null, null, null, null, null);
+            FarCoverage mixedCov = new FarCoverage(level, x0, z0, bottom, rows, drops, mixed);
+            for (int cy = 1; cy <= 6; cy++) for (int z = -1; z <= 16; z++) for (int x = -1; x <= 16; x++) {
+                assertEquals(FarMesher.cubeDrawn(mixedJob, x, cy, z), mixedCov.cubeDrawn(x, cy, z));
+                assertEquals(FarMesher.anyCubeDrawn(mixedJob, x, cy, z), mixedCov.anyCubeDrawn(x, cy, z));
+            }
+        }
+
+        // Reference-only overflow coordinates must also match FarMesher.anyCubeDrawn / cubeDrawn.
+        char[] drops = new char[256];
+        int base = 33_554_416;
+        LongOpenHashSet overflow = new LongOpenHashSet();
+        overflow.add(CubeKey.pack((base >> 4), (base >> 4), (base >> 4)));
+        FarMesher.Job overflowJob = new FarMesher.Job(1, 1, 5, 0, base, base, base, null, drops, null, null, overflow,
+                false, null, null, null, null, null);
+        FarCoverage overflowCov = new FarCoverage(5, base, base, base, 32, drops, overflow);
+        for (int cy = (base >> 4) - 1; cy <= (base >> 4) + 1; cy++) {
+            for (int z : new int[] {-1, 0, 1}) for (int x : new int[] {-1, 0, 1}) {
+                assertEquals(FarMesher.cubeDrawn(overflowJob, x, cy, z), overflowCov.cubeDrawn(x, cy, z));
+                assertEquals(FarMesher.anyCubeDrawn(overflowJob, x, cy, z), overflowCov.anyCubeDrawn(x, cy, z));
+            }
+        }
+    }
+
     private static void fill(LongOpenHashSet drawn, int x0, int y, int z0, int cubes) {
         for (int z = z0; z < z0 + cubes; z++) for (int x = x0; x < x0 + cubes; x++) drawn.add(CubeKey.pack(x, y, z));
     }
