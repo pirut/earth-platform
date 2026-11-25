@@ -638,6 +638,21 @@ final class FarShaders {
             }
             """;
 
+    /**
+     * Under {@link #PRECISE_DEPTH}: drops a far fragment unless it wins its pixel against the game's blocks by the
+     * test the merge makes with it (see {@link FarLodShaders#FAR_AS_GAME}), so a fragment keeps its colour only where
+     * the merged depth is then its own, never over a block whose depth the merge keeps. The game's blocks' depth is
+     * the copy {@link FarBlockDepth} made, and the game's own depth test is not there to do it.
+     */
+    static final String BEHIND_BLOCKS = FarLodShaders.FAR_AS_GAME + """
+            uniform sampler2D earth_Blocks;
+
+            void earth_behindBlocks() {
+                float blocks = texelFetch(earth_Blocks, ivec2(gl_FragCoord.xy), 0).r;
+                if (!earth_farWins(gl_FragCoord.z, gl_FragCoord.xy, vec2(textureSize(earth_Blocks, 0)), blocks)) discard;
+            }
+            """;
+
     /** Vanilla look: lightmap, side shading and linear fog, as rendertype_solid does; with the high-altitude haze when it is on. */
     static final String FRAGMENT = ATMOSPHERE + SAMPLE + SHADE + """
             uniform sampler2D earth_Lightmap;
@@ -646,24 +661,14 @@ final class FarShaders {
             uniform float earth_FogEnd;
             uniform vec4 earth_FogColor;
             in float earth_edge;
-            #if defined(EARTH_ATMOSPHERE) || defined(EARTH_PRECISE_DEPTH)
+            #ifdef EARTH_ATMOSPHERE
             in vec3 earth_position;
             #endif
 
             out vec4 earth_fragColor;
 
             #ifdef EARTH_PRECISE_DEPTH
-            uniform mat4 earth_ModelView;
-            uniform mat4 earth_GameProjection;
-            // The game's depth as its own blocks left it, before any far terrain (see FarBlockDepth).
-            uniform sampler2D earth_Blocks;
-
-            // Drops the fragment behind one of the game's blocks, in the game's projection, as its depth test would.
-            void earth_behindBlocks() {
-                vec4 clip = earth_GameProjection * earth_ModelView * vec4(earth_position, 1.0);
-                float blocks = texelFetch(earth_Blocks, ivec2(gl_FragCoord.xy), 0).r;
-                if (blocks < 1.0 && clip.z / clip.w * 0.5 + 0.5 > blocks + 1e-7) discard;
-            }
+            """ + BEHIND_BLOCKS + """
             #endif
 
             void main() {

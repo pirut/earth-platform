@@ -32,26 +32,54 @@ final class FarLodShaders {
             """;
 
     /**
+     * Far terrain's own depth as the game's depth buffer would hold it, and the one comparison with the
+     * game's blocks that both the merge ({@link #MERGE}) and a far fragment's own test against them (see
+     * {@link FarShaders#FRAGMENT}) make, so the colour a fragment keeps and the depth the merge writes
+     * can never disagree: a fragment draws its colour only where the merge then writes its depth.
+     * {@code earth_GameSteps} is the game's depth buffer's fixed-point range (zero for a float one), so
+     * both sides compare what the buffer would store, not the float in front of it.
+     */
+    static final String FAR_AS_GAME = """
+            uniform mat4 earth_FarInverse;
+            uniform mat4 earth_GameProjection;
+            uniform float earth_GameSteps;
+
+            float earth_stored(float depth) {
+                return earth_GameSteps > 0.0 ? floor(depth * earth_GameSteps + 0.5) : depth;
+            }
+
+            float earth_farAsGame(float far, vec2 pixel, vec2 size) {
+                vec4 view = earth_FarInverse * vec4(vec3(pixel / size, far) * 2.0 - 1.0, 1.0);
+                vec4 clip = earth_GameProjection * vec4(view.xyz / view.w, 1.0);
+                return clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0);
+            }
+
+            /** Whether far terrain's depth at this pixel is nearer, as stored, than the game's block's there: it wins the pixel. */
+            bool earth_farWins(float far, vec2 pixel, vec2 size, float blocks) {
+                return blocks >= 1.0 || earth_stored(earth_farAsGame(far, pixel, size)) < earth_stored(blocks);
+            }
+            """;
+
+    /**
      * The nearer of the game's depth and far terrain's, in the game's projection; also kept as a
      * colour to compare with later. Far terrain's faces' own depth is used rather than its
-     * smoothed slopes', which can lie over a narrow river.
+     * smoothed slopes', which can lie over a narrow river. Far terrain wins a pixel by the same
+     * test ({@link #FAR_AS_GAME}) the fragment drew its colour by.
      */
     static final String MERGE = """
             #version 330 core
             uniform sampler2D earth_Game;
             uniform sampler2D earth_Far;
-            uniform mat4 earth_FarInverse;
-            uniform mat4 earth_GameProjection;
-            in vec2 earth_uv;
+            """ + FAR_AS_GAME + """
             void main() {
                 ivec2 texel = ivec2(gl_FragCoord.xy);
                 float game = texelFetch(earth_Game, texel, 0).r;
                 float far = texelFetch(earth_Far, texel, 0).r;
                 float merged = game;
                 if (far < 1.0) {
-                    vec4 view = earth_FarInverse * vec4(vec3(earth_uv, far) * 2.0 - 1.0, 1.0);
-                    vec4 clip = earth_GameProjection * vec4(view.xyz / view.w, 1.0);
-                    merged = min(game, clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0));
+                    vec2 size = vec2(textureSize(earth_Game, 0));
+                    if (earth_farWins(far, gl_FragCoord.xy, size, game))
+                        merged = min(game, earth_farAsGame(far, gl_FragCoord.xy, size));
                 }
                 gl_FragDepth = merged;
             }

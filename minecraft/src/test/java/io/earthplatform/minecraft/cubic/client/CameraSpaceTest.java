@@ -2,6 +2,13 @@ package io.earthplatform.minecraft.cubic.client;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.mojang.blaze3d.vertex.BufferBuilder;
+import com.mojang.blaze3d.vertex.ByteBufferBuilder;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.MeshData;
+import com.mojang.blaze3d.vertex.VertexFormat;
+import java.nio.ByteBuffer;
+import java.util.Map;
 import org.joml.Matrix4d;
 import org.joml.Matrix4f;
 import org.joml.Vector3d;
@@ -164,5 +171,49 @@ class CameraSpaceTest {
         double near = 0.05, far = 600_000.0, distance = 5000;
         double step = distance * distance * (far - near) / (far * near * ((1 << 24) - 1));
         assertTrue(step > 10 && step < 100, "step " + step);
+    }
+
+    /** Which of the quads (in the order they were added) the mesher's own sort draws first: the farthest from the camera. */
+    private static int drawnFirst(CubeMesher.Snapshot snapshot, float... quadZ) {
+        try (ByteBufferBuilder memory = new ByteBufferBuilder(4096)) {
+            BufferBuilder builder = new BufferBuilder(memory, VertexFormat.Mode.QUADS, DefaultVertexFormat.BLOCK);
+            for (float z : quadZ) for (float[] corner : new float[][] {{0, 0}, {1, 0}, {1, 1}, {0, 1}})
+                builder.addVertex(corner[0], corner[1], z).setColor(-1).setUv(0, 0).setLight(0).setNormal(0, 0, 1);
+            try (MeshData mesh = builder.build()) {
+                assertNotNull(mesh);
+                CubeMesher.sortTranslucent(mesh, memory, snapshot);
+                ByteBuffer indices = mesh.indexBuffer();
+                assertNotNull(indices);
+                int first = mesh.drawState().indexType() == VertexFormat.IndexType.SHORT ? indices.getShort(indices.position()) : indices.getInt(indices.position());
+                return first / 4;
+            }
+        }
+    }
+
+    private static CubeMesher.Snapshot snapshot(int cx, int cy, int cz, float[] from) {
+        return new CubeMesher.Snapshot(1L, 0, cx, cy, cz, null, null, null, from[0], from[1], from[2], false, null, Map.of(), Map.of());
+    }
+
+    /**
+     * Through the mesher's own sort call, with the camera made as the cube renderer makes it: two glass faces a few tenths
+     * of a block either side of the camera's real place sort the right way round at the far camera, and the old
+     * {@code (float) camera - corner} origin sorted them the wrong way. If the mesher stopped sorting from the cube-relative
+     * camera (or subtracted the corner twice) this fails.
+     */
+    @Test void theMeshersOwnSortOrdersTranslucentFacesFromTheRealCameraFarFromTheOrigin() {
+        int cx = CameraSpace.block(FAR[0]) >> 4, cy = CameraSpace.block(FAR[1]) >> 4, cz = CameraSpace.block(FAR[2]) >> 4;
+        float[] exact = CameraSpace.cubeCamera(FAR[0], FAR[1], FAR[2], cx, cy, cz);
+        float[] legacy = {(float) FAR[0] - (cx << 4), (float) FAR[1] - (cy << 4), (float) FAR[2] - (cz << 4)};
+        assertTrue(Math.abs(legacy[2] - exact[2]) > 0.1, "the old origin is off here: " + (legacy[2] - exact[2]));
+        // Face 0 lies behind the camera by a fifth of a block, face 1 in front by a tenth: face 0 is the farther, so it draws first.
+        float behind = exact[2] - 0.20F, ahead = exact[2] + 0.10F;
+        assertEquals(0, drawnFirst(snapshot(cx, cy, cz, exact), behind, ahead));
+        assertEquals(1, drawnFirst(snapshot(cx, cy, cz, exact), ahead, behind));
+        // The same two faces from the old origin, which the cube renderer no longer hands the mesher, come out the other way round.
+        assertEquals(1, drawnFirst(snapshot(cx, cy, cz, legacy), behind, ahead));
+        // And from the origin there is no difference between the two ways.
+        int ox = CameraSpace.block(ORIGIN[0]) >> 4, oy = CameraSpace.block(ORIGIN[1]) >> 4, oz = CameraSpace.block(ORIGIN[2]) >> 4;
+        float[] near = CameraSpace.cubeCamera(ORIGIN[0], ORIGIN[1], ORIGIN[2], ox, oy, oz);
+        assertEquals(0, drawnFirst(snapshot(ox, oy, oz, near), near[2] - 0.20F, near[2] + 0.10F));
     }
 }

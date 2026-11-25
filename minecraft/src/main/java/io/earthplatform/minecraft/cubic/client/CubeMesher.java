@@ -293,12 +293,19 @@ final class CubeMesher {
             if (builders[i] == null) continue;
             MeshData mesh = builders[i].build();
             if (mesh == null) { memory[i].close(); continue; }
-            if (LAYERS.get(i) == RenderType.translucent()) {
-                mesh.sortQuads(memory[i], VertexSorting.byDistance(s.camX, s.camY, s.camZ));
-            }
+            if (LAYERS.get(i) == RenderType.translucent()) sortTranslucent(mesh, memory[i], s);
             layers.add(new Layer(i, mesh, memory[i]));
         }
         return layers;
+    }
+
+    /**
+     * Sorts a cube's translucent faces farthest first from the camera, where the snapshot says it lies from the cube's
+     * corner (see {@link CameraSpace#cubeCamera}): the faces' own corners are measured from that same corner, so a camera
+     * far from the origin sorts them as exactly as one at it.
+     */
+    static void sortTranslucent(MeshData mesh, ByteBufferBuilder memory, Snapshot s) {
+        mesh.sortQuads(memory, VertexSorting.byDistance(s.camX, s.camY, s.camZ));
     }
 
     /**

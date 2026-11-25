@@ -459,9 +459,9 @@ public final class CubeRenderer {
             tops[(dz + 1) * 3 + (dx + 1)] = column == null ? null : column.clone();
         }
         int version = versions.get(key);
+        float[] from = CameraSpace.cubeCamera(camera.x, camera.y, camera.z, x, y, z);
         CubeMesher.Snapshot snapshot = new CubeMesher.Snapshot(key, version, x, y, z, states, biomes, tops,
-                CameraSpace.cubeRelative(camera.x, x << 4), CameraSpace.cubeRelative(camera.y, y << 4), CameraSpace.cubeRelative(camera.z, z << 4),
-                world.client().effects().constantAmbientLight(),
+                from[0], from[1], from[2], world.client().effects().constantAmbientLight(),
                 ShaderBlocks.ids(), modelData(center),
                 center.blockEntities().isEmpty() ? Map.of() : new HashMap<>(center.blockEntities()));
         building.add(key);

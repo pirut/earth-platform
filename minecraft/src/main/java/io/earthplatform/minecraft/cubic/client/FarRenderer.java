@@ -1870,10 +1870,10 @@ public final class FarRenderer {
                 }
             }
             // The game's depth copied from here on holds the stand-ins too, which far terrain then tests itself against and is merged with.
-            precise = preciseDepth(precise, standIns, apart) && plainDepth().begin(projection);
+            precise = preciseDepth(precise, standIns, apart) && plainDepth().begin(projection, reach);
             if (precise) {
                 farProjection = plainDepth.projection();
-                gpu.plainDepth(plainDepth.gameProjection());
+                gpu.plainDepth(plainDepth);
                 plainDepthPass = LevelPasses.current();
             }
             if (gpu.begin(pack, pack ? ShaderBlocks.voxyPatch() : null, modelView, farProjection, position, shade, frame, false, false)) {

@@ -16,6 +16,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11C;
+import org.lwjgl.opengl.GL13C;
 import org.lwjgl.opengl.GL15C;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL30C;
@@ -164,117 +165,315 @@ class FarPlainDepthGlTest {
         return new Matrix4f(view).mul(new Matrix4f().m01(-sx).m21(-sz).m31((float) (sx * x + sz * z - EarthView.drop(x, z, curvature))));
     }
 
-    /**
-     * Far terrain's own depth: the colour drawn stays the game's, the nearer depth is merged in, the
-     * game's blocks keep theirs, the draw state comes back, and all of it again after a resize.
-     */
-    @Test void ownDepthMergesKeepsTheColourAndRestoresTheDrawAcrossResizes() {
-        int colour = GL11C.glGenTextures(), depth = GL11C.glGenTextures(), target = GL30C.glGenFramebuffers();
-        FarPlainDepth own = new FarPlainDepth();
-        Matrix4f game = new Matrix4f().perspective(1, 1, 0.05f, FarRenderer.depthFar());
-        try {
-            for (int size : new int[] {4, 8}) {
-                GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, target);
-                texture(colour, GL11C.GL_RGBA8, GL11C.GL_RGBA, size, size);
-                texture(depth, GL30C.GL_DEPTH_COMPONENT24, GL11C.GL_DEPTH_COMPONENT, size, size);
-                GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, colour, 0);
-                GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, depth, 0);
-                GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
-                GL11C.glReadBuffer(GL30C.GL_COLOR_ATTACHMENT0);
-                assertEquals(GL30C.GL_FRAMEBUFFER_COMPLETE, GL30C.glCheckFramebufferStatus(GL30C.GL_FRAMEBUFFER));
-                GL11C.glViewport(0, 0, size, size);
-                GL30C.glClearBufferfv(GL11C.GL_COLOR, 0, new float[] {.2f, .4f, .6f, 1});
-                GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[] {1});
-                // The game's blocks on the left half.
-                GL11C.glEnable(GL11C.GL_SCISSOR_TEST);
-                GL11C.glScissor(0, 0, size / 2, size);
-                GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[] {.25f});
-                GL11C.glDisable(GL11C.GL_SCISSOR_TEST);
-                assertTrue(own.begin(game, size, size));
-                assertNotEquals(target, GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING));
-                // Far terrain 10 km off, everywhere, in its own depth.
-                Vector4f clip = own.projection().transform(new Vector4f(0, 0, -10000, 1));
-                GL11C.glDepthMask(true);
-                GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[] {clip.z / clip.w * .5f + .5f});
-                GL11C.glDepthFunc(GL11C.GL_LESS);
-                GL11C.glDepthMask(false);
-                GL11C.glEnable(GL11C.GL_CULL_FACE);
-                own.end();
-                assertEquals(target, GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING));
-                assertEquals(GL11C.GL_LESS, GL11C.glGetInteger(GL11C.GL_DEPTH_FUNC));
-                assertFalse(GL11C.glGetBoolean(GL11C.GL_DEPTH_WRITEMASK));
-                assertTrue(GL11C.glIsEnabled(GL11C.GL_CULL_FACE));
-                float[] pixel = new float[4];
-                GL11C.glReadPixels(0, 0, 1, 1, GL11C.GL_RGBA, GL11C.GL_FLOAT, pixel);
-                assertArrayEquals(new float[] {.2f, .4f, .6f, 1}, pixel, .005f, "the game's colour is untouched");
-                float[] stored = new float[1];
-                GL11C.glReadPixels(0, 0, 1, 1, GL11C.GL_DEPTH_COMPONENT, GL11C.GL_FLOAT, stored);
-                assertEquals(.25f, stored[0], 2e-7, "the game's blocks keep their depth");
-                GL11C.glReadPixels(size - 1, 0, 1, 1, GL11C.GL_DEPTH_COMPONENT, GL11C.GL_FLOAT, stored);
-                Vector4f expected = game.transform(new Vector4f(0, 0, -10000, 1));
-                assertEquals(expected.z / expected.w * .5f + .5f, stored[0], 2e-7, "far terrain's depth merged in the game's projection");
-                assertEquals(GL11C.GL_NO_ERROR, GL11C.glGetError());
-                GL11C.glDepthMask(true);
-                GL11C.glDisable(GL11C.GL_CULL_FACE);
-            }
-        } finally {
-            own.close();
+    /** A quad of four corners in the projection's own space (so far terrain's near plane clips it as in the game), drawn by corner index. */
+    private static final String QUAD = "#version 330 core\nuniform mat4 earth_Matrix; uniform vec3 earth_Corners[4];\n"
+            + "void main() { const int order[6] = int[6](0, 1, 2, 0, 2, 3); gl_Position = earth_Matrix * vec4(earth_Corners[order[gl_VertexID]], 1.0); }";
+    /** Far terrain's fragment, as FarShaders has it: the production decision against the game's blocks, then a colour. */
+    private static final String FAR = "#version 330 core\n" + FarShaders.BEHIND_BLOCKS
+            + "uniform vec4 earth_Colour; out vec4 earth_fragColor; void main() { earth_behindBlocks(); earth_fragColor = earth_Colour; }";
+    private static final String BLOCK = "#version 330 core\nuniform vec4 earth_Colour; out vec4 earth_fragColor; void main() { earth_fragColor = earth_Colour; }";
+
+    private static final float[] RED = {1, 0, 0, 1}, GREEN = {0, 1, 0, 1}, GREY = {.2f, .4f, .6f, 1};
+
+    /** A whole-screen quad (or the left half of it) a distance out along the view's axis, wide enough to cover the view at that depth. */
+    private static float[] plane(double depth, boolean leftHalf, double halfWidth, double halfHeight) {
+        float z = (float) -depth, x = (float) halfWidth, y = (float) halfHeight;
+        return new float[] {-x, -y, z, leftHalf ? 0 : x, -y, z, leftHalf ? 0 : x, y, z, -x, y, z};
+    }
+
+    private static void drawQuad(int program, Matrix4f matrix, float[] corners, float[] colour, int vao) {
+        GL20C.glUseProgram(program);
+        GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(program, "earth_Matrix"), false, matrix.get(new float[16]));
+        GL20C.glUniform3fv(GL20C.glGetUniformLocation(program, "earth_Corners"), corners);
+        GL20C.glUniform4fv(GL20C.glGetUniformLocation(program, "earth_Colour"), colour);
+        GL30C.glBindVertexArray(vao);
+        GL11C.glDrawArrays(GL11C.GL_TRIANGLES, 0, 6);
+    }
+
+    /** A framebuffer of this size with a colour and a 24-bit depth texture, as the game's main target is. */
+    private record Target(int framebuffer, int colour, int depth) {
+        static Target make(int width, int height) {
+            Target target = new Target(GL30C.glGenFramebuffers(), GL11C.glGenTextures(), GL11C.glGenTextures());
+            GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, target.framebuffer);
+            texture(target.colour, GL11C.GL_RGBA8, GL11C.GL_RGBA, width, height);
+            texture(target.depth, GL30C.GL_DEPTH_COMPONENT24, GL11C.GL_DEPTH_COMPONENT, width, height);
+            GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, target.colour, 0);
+            GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, target.depth, 0);
+            GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
+            GL11C.glReadBuffer(GL30C.GL_COLOR_ATTACHMENT0);
+            assertEquals(GL30C.GL_FRAMEBUFFER_COMPLETE, GL30C.glCheckFramebufferStatus(GL30C.GL_FRAMEBUFFER));
+            GL11C.glViewport(0, 0, width, height);
+            return target;
+        }
+
+        void clear() {
+            GL11C.glDepthMask(true);
+            GL11C.glDisable(GL11C.GL_SCISSOR_TEST);
+            GL30C.glClearBufferfv(GL11C.GL_COLOR, 0, GREY);
+            GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[] {1});
+        }
+
+        void delete() {
             GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, 0);
-            GL30C.glDeleteFramebuffers(target);
+            GL30C.glDeleteFramebuffers(framebuffer);
             GL11C.glDeleteTextures(colour);
             GL11C.glDeleteTextures(depth);
         }
     }
 
+    private static float[] pixel(int x, int y) {
+        float[] colour = new float[4];
+        GL11C.glReadPixels(x, y, 1, 1, GL11C.GL_RGBA, GL11C.GL_FLOAT, colour);
+        return colour;
+    }
+
+    private static long storedDepth(int x, int y) {
+        float[] depth = new float[1];
+        GL11C.glReadPixels(x, y, 1, 1, GL11C.GL_DEPTH_COMPONENT, GL11C.GL_FLOAT, depth);
+        return Math.round(depth[0] * ((1 << 24) - 1));
+    }
+
+    private static boolean is(float[] pixel, float[] colour) {
+        for (int i = 0; i < 3; i++) if (Math.abs(pixel[i] - colour[i]) > .02f) return false;
+        return true;
+    }
+
+    /** Binds what far terrain's own fragments test themselves against, as FarGpu does for its draw. */
+    private static void bindBlocksFor(int program, FarPlainDepth own) {
+        GlStateManager._activeTexture(GL13C.GL_TEXTURE1);
+        GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, FarBlockDepth.texture());
+        GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
+        GL20C.glUseProgram(program);
+        GL20C.glUniform1i(GL20C.glGetUniformLocation(program, "earth_Blocks"), 1);
+        GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(program, "earth_GameProjection"), false, own.gameProjection().get(new float[16]));
+        GL20C.glUniformMatrix4fv(GL20C.glGetUniformLocation(program, "earth_FarInverse"), false, own.inverse().get(new float[16]));
+        GL20C.glUniform1f(GL20C.glGetUniformLocation(program, "earth_GameSteps"), FarBlockDepth.steps());
+    }
+
     /**
-     * A stand-in 1.6 blocks from the camera, drawn in the game's projection before far terrain's own
-     * depth begins, as FarRenderer draws the columns inside the reach: it is kept in the game's
-     * depth through the copy and the merge, and covers the far terrain behind it.
+     * Far terrain's own depth, through its production entry: the colour drawn stays the game's, the nearer depth is merged
+     * in the game's projection, the game's blocks keep theirs, the draw state comes back, and all of it again after a resize.
+     * Far terrain is drawn for real: a quad 10 km out through far terrain's own projection and the production fragment test.
      */
-    @Test void standInsDrawnFirstInTheGamesDepthSurviveTheMerge() {
+    @Test void ownDepthMergesKeepsTheGamesColourAndRestoresTheDrawAcrossResizes() {
+        FarPlainDepth own = new FarPlainDepth();
+        Matrix4f game = new Matrix4f().perspective(1, 1, 0.05f, FarRenderer.depthFar());
+        int vao = GL30C.glGenVertexArrays(), quad = GlShaders.link(QUAD, "#version 330 core\nuniform vec4 earth_Colour; out vec4 c; void main() { c = earth_Colour; }", "block quad");
+        int far = GlShaders.link(QUAD, FAR, "far quad");
+        try {
+            for (int size : new int[] {4, 8}) {
+                Target target = Target.make(size, size);
+                try {
+                    target.clear();
+                    GL11C.glEnable(GL11C.GL_DEPTH_TEST);
+                    GL11C.glDepthFunc(GL11C.GL_LESS);
+                    // The game's blocks on the left half, 40 blocks out, drawn in the game's own projection.
+                    drawQuad(quad, game, plane(40, true, 100, 100), RED, vao);
+                    long blocks = storedDepth(0, 0);
+                    assertTrue(blocks < (1 << 24) - 1);
+                    assertTrue(own.begin(game, 192), "the production entry takes the target at its own size");
+                    assertNotEquals(target.framebuffer, GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING));
+                    // Far terrain 10 km off, everywhere, in its own depth.
+                    bindBlocksFor(far, own);
+                    GL11C.glDepthMask(true);
+                    drawQuad(far, own.projection(), plane(10_000, false, 20_000, 20_000), GREEN, vao);
+                    GL11C.glDepthFunc(GL11C.GL_LESS);
+                    GL11C.glDepthMask(false);
+                    GL11C.glEnable(GL11C.GL_CULL_FACE);
+                    own.end();
+                    assertEquals(target.framebuffer, GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING));
+                    assertEquals(GL11C.GL_LESS, GL11C.glGetInteger(GL11C.GL_DEPTH_FUNC));
+                    assertFalse(GL11C.glGetBoolean(GL11C.GL_DEPTH_WRITEMASK));
+                    assertTrue(GL11C.glIsEnabled(GL11C.GL_CULL_FACE));
+                    assertTrue(is(pixel(0, 0), RED), "the game's blocks keep their colour: far terrain 10 km out is behind them");
+                    assertEquals(blocks, storedDepth(0, 0), "and their depth");
+                    assertTrue(is(pixel(size - 1, 0), GREEN), "far terrain draws where the game's blocks are not");
+                    Vector4f expected = game.transform(new Vector4f(0, 0, -10000, 1));
+                    assertEquals(Math.round((expected.z / expected.w * .5f + .5f) * ((1 << 24) - 1)), storedDepth(size - 1, 0), 2, "far terrain's depth merged in the game's projection");
+                    assertEquals(GL11C.GL_NO_ERROR, GL11C.glGetError());
+                } finally {
+                    GL11C.glDepthMask(true);
+                    GL11C.glDisable(GL11C.GL_CULL_FACE);
+                    GL11C.glDisable(GL11C.GL_DEPTH_TEST);
+                    target.delete();
+                }
+            }
+        } finally {
+            own.close();
+            GL20C.glUseProgram(0);
+            GL30C.glBindVertexArray(0);
+            GL30C.glDeleteVertexArrays(vao);
+            GL20C.glDeleteProgram(quad);
+            GL20C.glDeleteProgram(far);
+        }
+    }
+
+    /**
+     * A stand-in 1.6 blocks from the camera, drawn in the game's projection before far terrain's own depth begins, as
+     * FarRenderer draws the columns inside the reach: it keeps both its colour and its depth through the copy, far terrain's
+     * draw and the merge, and the far terrain behind it, drawn for real, does not overwrite its colour.
+     */
+    @Test void standInsDrawnFirstInTheGamesDepthKeepTheirColourAndDepthThroughFarTerrainsDraw() {
         int size = 8;
-        int colour = GL11C.glGenTextures(), depth = GL11C.glGenTextures(), target = GL30C.glGenFramebuffers(), vao = GL30C.glGenVertexArrays();
         FarPlainDepth own = new FarPlainDepth();
         Matrix4f game = new Matrix4f().perspective(1.2f, 1, 0.05f, FarRenderer.depthFar());
-        Vector4f near = game.transform(new Vector4f(0, 0, -1.6f, 1));
-        int program = GlShaders.link("#version 330 core\nuniform float depth; void main() { vec2 c = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));"
-                + " gl_Position = vec4(c * 2.0 - 1.0, depth, 1.0); }", "#version 330 core\nout vec4 colour; void main() { colour = vec4(1.0); }", "stand-in");
+        int vao = GL30C.glGenVertexArrays(), quad = GlShaders.link(QUAD, BLOCK, "stand-in"), far = GlShaders.link(QUAD, FAR, "far quad");
+        Target target = Target.make(size, size);
         try {
-            GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, target);
-            texture(colour, GL11C.GL_RGBA8, GL11C.GL_RGBA, size, size);
-            texture(depth, GL30C.GL_DEPTH_COMPONENT24, GL11C.GL_DEPTH_COMPONENT, size, size);
-            GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, colour, 0);
-            GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, depth, 0);
-            GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
-            GL11C.glViewport(0, 0, size, size);
-            GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[] {1});
-            // The stand-in, in the game's projection.
+            target.clear();
             GL11C.glEnable(GL11C.GL_DEPTH_TEST);
             GL11C.glDepthFunc(GL11C.GL_LESS);
             GL11C.glDepthMask(true);
-            GL20C.glUseProgram(program);
-            GL20C.glUniform1f(GL20C.glGetUniformLocation(program, "depth"), near.z / near.w);
-            GL30C.glBindVertexArray(vao);
-            GL11C.glDrawArrays(GL11C.GL_TRIANGLES, 0, 3);
-            GL20C.glUseProgram(0);
-            assertTrue(own.begin(game, size, size));
-            Vector4f clip = own.projection().transform(new Vector4f(0, 0, -10000, 1));
-            GL30C.glClearBufferfv(GL11C.GL_DEPTH, 0, new float[] {clip.z / clip.w * .5f + .5f});
+            drawQuad(quad, game, plane(1.6, true, 10, 10), RED, vao);
+            long standIn = storedDepth(0, 0);
+            assertTrue(own.begin(game, 192));
+            bindBlocksFor(far, own);
+            // Far terrain right behind it and far behind it, nearest first: neither may show over the stand-in.
+            for (double depth : new double[] {1.7, 5, 300, 10_000}) drawQuad(far, own.projection(), plane(depth, false, 10_000, 10_000), GREEN, vao);
             own.end();
-            float[] stored = new float[1];
-            GL11C.glReadPixels(size / 2, size / 2, 1, 1, GL11C.GL_DEPTH_COMPONENT, GL11C.GL_FLOAT, stored);
-            assertEquals(near.z / near.w * .5f + .5f, stored[0], 1e-6, "the stand-in keeps its depth in front of far terrain");
+            assertTrue(is(pixel(0, 0), RED), "the stand-in's colour");
+            assertEquals(standIn, storedDepth(0, 0), "the stand-in's depth");
             assertEquals(GL11C.GL_NO_ERROR, GL11C.glGetError());
         } finally {
             own.close();
             GL11C.glDisable(GL11C.GL_DEPTH_TEST);
+            GL20C.glUseProgram(0);
             GL30C.glBindVertexArray(0);
             GL30C.glDeleteVertexArrays(vao);
-            GL20C.glDeleteProgram(program);
+            GL20C.glDeleteProgram(quad);
+            GL20C.glDeleteProgram(far);
+            target.delete();
+        }
+    }
+
+    /**
+     * Far terrain against the game's blocks at the seam: far terrain a few hundred blocks out, swept from clearly in front of
+     * a block to clearly behind it through the depth step. Wherever a fragment's colour replaces the block's, the merged depth
+     * is the fragment's, and wherever the block's colour stays, so does its depth; never the one without the other.
+     */
+    @Test void farTerrainsColourAndTheMergedDepthAgreeAtTheSeamWithTheGamesBlocks() {
+        int size = 4;
+        FarPlainDepth own = new FarPlainDepth();
+        Matrix4f game = new Matrix4f().perspective(1.2f, 1, 0.05f, FarRenderer.depthFar());
+        int vao = GL30C.glGenVertexArrays(), quad = GlShaders.link(QUAD, BLOCK, "block"), far = GlShaders.link(QUAD, FAR, "far quad");
+        Target target = Target.make(size, size);
+        int wins = 0, loses = 0;
+        try {
+            // The game's step at 300 blocks is about 0.1 block, so a sweep of 0.8 either side crosses a few of them.
+            for (double blockDepth : new double[] {300, 300.037, 1200, 40}) for (int i = -40; i <= 40; i++) {
+                double offset = i * (blockDepth * blockDepth / 0.05 / (1 << 24)) / 10;
+                target.clear();
+                GL11C.glEnable(GL11C.GL_DEPTH_TEST);
+                GL11C.glDepthFunc(GL11C.GL_LESS);
+                GL11C.glDepthMask(true);
+                drawQuad(quad, game, plane(blockDepth, true, 2000, 2000), RED, vao);
+                long blocks = storedDepth(0, 0);
+                assertTrue(own.begin(game, 192));
+                bindBlocksFor(far, own);
+                drawQuad(far, own.projection(), plane(blockDepth + offset, true, 2000, 2000), GREEN, vao);
+                own.end();
+                boolean farColour = is(pixel(0, 0), GREEN);
+                assertTrue(farColour || is(pixel(0, 0), RED), "a colour of the two");
+                long merged = storedDepth(0, 0);
+                if (farColour) {
+                    wins++;
+                    assertTrue(merged < blocks, "far terrain's colour is only drawn where the merged depth is nearer than the block's: offset " + offset + " at " + blockDepth
+                            + ", block " + blocks + ", merged " + merged);
+                } else {
+                    loses++;
+                    assertEquals(blocks, merged, "the block keeps its colour and its depth: offset " + offset + " at " + blockDepth);
+                }
+                assertEquals(GL11C.GL_NO_ERROR, GL11C.glGetError());
+            }
+            assertTrue(wins > 30 && loses > 30, "the sweep crosses the seam: far wins " + wins + ", loses " + loses);
+        } finally {
+            own.close();
+            GL11C.glDisable(GL11C.GL_DEPTH_TEST);
+            GL20C.glUseProgram(0);
+            GL30C.glBindVertexArray(0);
+            GL30C.glDeleteVertexArrays(vao);
+            GL20C.glDeleteProgram(quad);
+            GL20C.glDeleteProgram(far);
+            target.delete();
+        }
+    }
+
+    /**
+     * The production near plane keeps far terrain on screen in the corners of a very wide view: a plane 40 blocks deep, whose
+     * edges are 200 blocks off sideways at 110 degrees on 32:9, is drawn through far terrain's own projection and fills the
+     * screen. The first near plane (0.3 of the reach, 57.6) clipped its edges away.
+     */
+    @Test void aWideViewsCornersKeepTheFarTerrainThatIsNearInDepth() {
+        int width = 64, height = 18;
+        FarPlainDepth own = new FarPlainDepth();
+        Matrix4f game = new Matrix4f().perspective((float) Math.toRadians(110), width / (float) height, 0.05f, FarRenderer.depthFar());
+        int vao = GL30C.glGenVertexArrays(), far = GlShaders.link(QUAD, FAR, "far quad");
+        Target target = Target.make(width, height);
+        try {
+            target.clear();
+            GL11C.glEnable(GL11C.GL_DEPTH_TEST);
+            GL11C.glDepthFunc(GL11C.GL_LESS);
+            GL11C.glDepthMask(true);
+            assertTrue(own.begin(game, 192));
+            assertTrue(own.projection().m32() / (own.projection().m22() - 1) < 40, "the plane is nearer than the plane's own depth: " + own.projection().m32() / (own.projection().m22() - 1));
+            bindBlocksFor(far, own);
+            drawQuad(far, own.projection(), plane(40, false, 40 * 5.5, 40 * 1.5), GREEN, vao);
+            own.end();
+            for (int[] at : new int[][] {{0, 0}, {width - 1, 0}, {0, height - 1}, {width - 1, height - 1}, {width / 2, height / 2}})
+                assertTrue(is(pixel(at[0], at[1]), GREEN), "far terrain at " + at[0] + ", " + at[1]);
+        } finally {
+            own.close();
+            GL11C.glDisable(GL11C.GL_DEPTH_TEST);
+            GL20C.glUseProgram(0);
+            GL30C.glBindVertexArray(0);
+            GL30C.glDeleteVertexArrays(vao);
+            GL20C.glDeleteProgram(far);
+            target.delete();
+        }
+    }
+
+    /** A framebuffer far terrain cannot copy and draw into at its own size or sampling is left alone, with nothing changed and no error. */
+    @Test void aTargetItCannotUseIsLeftAloneWithoutStaleDepth() {
+        FarPlainDepth own = new FarPlainDepth();
+        Matrix4f game = new Matrix4f().perspective(1.2f, 1, 0.05f, FarRenderer.depthFar());
+        int colour = GL30C.glGenRenderbuffers(), depth = GL30C.glGenRenderbuffers(), target = GL30C.glGenFramebuffers();
+        int colourTexture = GL11C.glGenTextures(), depthTexture = GL11C.glGenTextures();
+        try {
+            // A multisampled world target, as some mods draw the world into.
+            GL30C.glBindRenderbuffer(GL30C.GL_RENDERBUFFER, colour);
+            GL30C.glRenderbufferStorageMultisample(GL30C.GL_RENDERBUFFER, 4, GL11C.GL_RGBA8, 16, 16);
+            GL30C.glBindRenderbuffer(GL30C.GL_RENDERBUFFER, depth);
+            GL30C.glRenderbufferStorageMultisample(GL30C.GL_RENDERBUFFER, 4, GL30C.GL_DEPTH_COMPONENT32F, 16, 16);
+            GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, target);
+            GL30C.glFramebufferRenderbuffer(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL30C.GL_RENDERBUFFER, colour);
+            GL30C.glFramebufferRenderbuffer(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL30C.GL_RENDERBUFFER, depth);
+            GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
+            assertEquals(GL30C.GL_FRAMEBUFFER_COMPLETE, GL30C.glCheckFramebufferStatus(GL30C.GL_FRAMEBUFFER));
+            assertFalse(own.begin(game, 192), "a multisampled target stays in the game's depth");
+            assertEquals(target, GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING));
+            assertFalse(FarBlockDepth.copy(), "and its depth is not copied");
+            // A colour and a depth that are not the same size.
+            GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, target);
+            texture(colourTexture, GL11C.GL_RGBA8, GL11C.GL_RGBA, 16, 16);
+            texture(depthTexture, GL30C.GL_DEPTH_COMPONENT24, GL11C.GL_DEPTH_COMPONENT, 8, 8);
+            GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, colourTexture, 0);
+            GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, depthTexture, 0);
+            assertFalse(own.begin(game, 192), "mismatched attachments stay in the game's depth");
+            assertFalse(FarBlockDepth.copy());
+            // The same target made whole is taken, at its own 16 by 16 size, whatever the game's main target is.
+            texture(depthTexture, GL30C.GL_DEPTH_COMPONENT24, GL11C.GL_DEPTH_COMPONENT, 16, 16);
+            GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D, depthTexture, 0);
+            assertTrue(own.begin(game, 192));
+            own.end();
+            assertEquals(GL11C.GL_NO_ERROR, GL11C.glGetError());
+        } finally {
+            own.close();
             GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, 0);
             GL30C.glDeleteFramebuffers(target);
-            GL11C.glDeleteTextures(colour);
-            GL11C.glDeleteTextures(depth);
+            GL30C.glDeleteRenderbuffers(colour);
+            GL30C.glDeleteRenderbuffers(depth);
+            GL11C.glDeleteTextures(colourTexture);
+            GL11C.glDeleteTextures(depthTexture);
         }
     }
 
@@ -295,7 +494,7 @@ class FarPlainDepthGlTest {
             long best = Long.MAX_VALUE;
             for (int frame = 0; frame < 30; frame++) {
                 GL15C.glBeginQuery(GL33C.GL_TIME_ELAPSED, query);
-                assertTrue(own.begin(game, width, height));
+                assertTrue(own.begin(game, 192));
                 own.end();
                 GL15C.glEndQuery(GL33C.GL_TIME_ELAPSED);
                 long nanos = GL33C.glGetQueryObjecti64(query, GL15C.GL_QUERY_RESULT);

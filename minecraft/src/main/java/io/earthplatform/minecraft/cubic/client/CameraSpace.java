@@ -37,4 +37,12 @@ final class CameraSpace {
      * does, put it up to a block (two past 16.7 million) from where it is, so glass and water sorted from the wrong side.
      */
     static float cubeRelative(double camera, int cubeCorner) { return (float) (camera - cubeCorner); }
+
+    /**
+     * Where the camera lies from a cube's corner, on all three axes, as {@link CubeMesher.Snapshot} carries it: the cube's
+     * translucent faces are sorted from this origin (see {@link CubeMesher#sortTranslucent}), measured from the same corner.
+     */
+    static float[] cubeCamera(double cameraX, double cameraY, double cameraZ, int cubeX, int cubeY, int cubeZ) {
+        return new float[] {cubeRelative(cameraX, cubeX << 4), cubeRelative(cameraY, cubeY << 4), cubeRelative(cameraZ, cubeZ << 4)};
+    }
 }

@@ -22,6 +22,9 @@ class FarDepthPrecisionTest {
         return new Matrix4f().perspective((float) Math.toRadians(fovDegrees), 16f / 9, GAME_NEAR, far());
     }
 
+    /** Far terrain's own projection for a game projection, with the near plane the renderer works out from it. */
+    private static Matrix4f own(Matrix4f game, float reach) { return FarPlainDepth.projection(game, FarPlainDepth.near(game, reach)); }
+
     /** Depth in [0, 1] of a point straight ahead at a distance, before it is stored. */
     private static double ideal(Matrix4f projection, double distance) {
         return (-projection.m22() + projection.m32() / distance) * 0.5 + 0.5;
@@ -71,8 +74,8 @@ class FarDepthPrecisionTest {
 
     @Test void farTerrainsOwnDepthIsHundredsOfTimesFiner() {
         for (float reach : new float[] {96, 192, 256, 512}) {
-            float near = FarPlainDepth.near(reach);
-            Matrix4f own = FarPlainDepth.projection(game(70), reach);
+            float near = FarPlainDepth.near(game(70), reach);
+            Matrix4f own = own(game(70), reach);
             System.out.printf("DEPTH_STEP own (near %.1f, reach %.0f): 1 km %.3f, 5 km %.3f, 20 km %.2f, 100 km %.1f blocks%n", near, reach,
                     step(near, 1000), step(near, 5000), step(near, 20000), step(near, 100000));
             assertTrue(step(near, 5000) < 0.1, "5 km at reach " + reach);
@@ -83,7 +86,7 @@ class FarDepthPrecisionTest {
     }
 
     @Test void surfacesOneAndSixteenBlocksApartCollideInTheGamesDepthAndNotInFarTerrainsOwn() {
-        Matrix4f game = game(70), own = FarPlainDepth.projection(game, VIEW_REACH);
+        Matrix4f game = game(70), own = own(game, VIEW_REACH);
         for (double distance : new double[] {5000, 20000}) {
             for (double gap : new double[] {1, 16}) {
                 double before = gameCollides(game, distance, gap), after = ownCollides(own, distance, gap);
@@ -96,13 +99,13 @@ class FarDepthPrecisionTest {
     }
 
     @Test void orderIsKeptNearerFirst() {
-        Matrix4f own = FarPlainDepth.projection(game(70), VIEW_REACH);
+        Matrix4f own = own(game(70), VIEW_REACH);
         for (double distance : new double[] {2000, 5000, 20000})
             for (int i = 0; i < 200; i++) assertTrue(inOwn(own, distance + i) < inOwn(own, distance + i + 1), distance + " + " + i);
     }
 
     @Test void atOneHundredKilometresOnlyTheLargerGapIsKept() {
-        Matrix4f game = game(70), own = FarPlainDepth.projection(game, VIEW_REACH);
+        Matrix4f game = game(70), own = own(game, VIEW_REACH);
         System.out.printf("DEPTH_COLLIDE 100 km: 1 block game %.0f%% own %.0f%%; 16 blocks game %.0f%% own %.0f%%%n",
                 gameCollides(game, 100000, 1) * 100, ownCollides(own, 100000, 1) * 100, gameCollides(game, 100000, 16) * 100, ownCollides(own, 100000, 16) * 100);
         assertEquals(0.0, ownCollides(own, 100000, 16));
@@ -111,13 +114,13 @@ class FarDepthPrecisionTest {
 
     /** A zoom narrows the field of view, which changes only the projection's first two diagonal entries, so depth stays as it was. */
     @Test void zoomMagnifiesButDoesNotChangeDepth() {
-        Matrix4f wide = game(70), own = FarPlainDepth.projection(wide, VIEW_REACH);
+        Matrix4f wide = game(70), own = own(wide, VIEW_REACH);
         for (double fov : new double[] {1, 2, 5, 10}) {
-            Matrix4f zoomed = game(fov), zoomedOwn = FarPlainDepth.projection(zoomed, VIEW_REACH);
+            Matrix4f zoomed = game(fov), zoomedOwn = own(zoomed, VIEW_REACH);
             assertEquals(wide.m22(), zoomed.m22());
             assertEquals(wide.m32(), zoomed.m32());
-            assertEquals(own.m22(), zoomedOwn.m22());
-            assertEquals(own.m32(), zoomedOwn.m32());
+            // A narrower view puts the nearest far terrain deeper in view, so its near plane is no nearer and its depth no coarser.
+            assertTrue(FarPlainDepth.near(zoomed, VIEW_REACH) >= FarPlainDepth.near(wide, VIEW_REACH));
             assertEquals(gameCollides(wide, 5000, 1), gameCollides(zoomed, 5000, 1));
             assertEquals(0.0, ownCollides(zoomedOwn, 5000, 1));
             // What it changes is how big a block is on screen, so a fight a pixel wide at 70 degrees is a patch of pixels.
@@ -128,16 +131,18 @@ class FarDepthPrecisionTest {
         }
     }
 
-    /** Far terrain nearer than its near plane clips, so the plane has to stay under the nearest far terrain in view depth. */
-    @Test void nearPlaneStaysUnderTheNearestFarTerrainEvenInTheCornerOfAWideView() {
-        double aspect = 16.0 / 9, half = Math.toRadians(110) / 2;
-        double corner = Math.atan(Math.hypot(Math.tan(half) * aspect, Math.tan(half)));
-        for (float reach : new float[] {32, 96, 192, 512}) {
-            // Far terrain starts at the game's blocks' reach, and shows in view depth no nearer than reach * cos(corner).
-            assertTrue(FarPlainDepth.near(reach) <= Math.max(FarPlainDepth.NEAR, reach * Math.cos(corner)), "reach " + reach);
-        }
-        assertEquals(FarPlainDepth.NEAR, FarPlainDepth.near(0));
-        assertEquals(57.6f, FarPlainDepth.near(192), 1e-4);
+    /** The near plane the renderer really uses at a default 70 degree view and reach: the depth steps the PR's table is made of. */
+    @Test void theNearPlaneTheRendererWorksOutGivesTheStepsTheDocsQuote() {
+        Matrix4f game = game(70);
+        float near = FarPlainDepth.near(game, VIEW_REACH);
+        System.out.printf("DEPTH_NEAR 70 degrees, 16:9, reach %.0f: near %.1f; step 1 km %.4f, 5 km %.3f, 20 km %.2f blocks%n", VIEW_REACH, near,
+                step(near, 1000), step(near, 5000), step(near, 20000));
+        assertTrue(near > 40 && near < 48, "near " + near);
+        assertTrue(step(near, 5000) < 0.04);
+        assertTrue(step(near, 20000) < 0.7);
+        // A wide, a narrow and a very wide view: the plane follows the view, and never leaves the nearest far terrain clipped (see FarPlainProjectionTest).
+        assertTrue(FarPlainDepth.near(game(110), VIEW_REACH) < near);
+        assertTrue(FarPlainDepth.near(game(30), VIEW_REACH) > near);
     }
 
     @Test void theFloatFormatAloneWouldNotHaveHelped() {
