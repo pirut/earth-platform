@@ -252,7 +252,7 @@ public final class CubeRenderer {
         dirty.remove(key);
         dirtySince.remove(key);
         versions.remove(key);
-        light.remove(key);
+        if (light.remove(key)) FlywheelCompat.lightChanged(key);
         compiled.remove(key);
         compiledVersion++;
         setVisibility(key, CubeCaves.OPEN);
@@ -413,7 +413,8 @@ public final class CubeRenderer {
         setVisibility(key, CubeCaves.OPEN);
         Mesh mesh = meshes.remove(key);
         if (mesh != null) mesh.close(regions);
-        light.remove(key);
+        // Its blocks now read the sky's light, so what hangs into it (a rope from a pulley above) relights.
+        if (light.remove(key)) FlywheelCompat.lightChanged(key);
         compiled.add(key);
         compiledVersion++;
     }
@@ -518,7 +519,7 @@ public final class CubeRenderer {
         if (result.light() != null) {
             byte[] before = light.put(result.key(), result.light());
             // Flywheel relights the machines in a section when vanilla says its light changed; cubes never say so.
-            if (!java.util.Arrays.equals(before, result.light())) FlywheelCompat.lightChanged(world.client(), result.key());
+            if (!java.util.Arrays.equals(before, result.light())) FlywheelCompat.lightChanged(result.key());
         }
         setVisibility(result.key(), result.visibility());
         compiled.add(result.key());
@@ -919,6 +920,7 @@ public final class CubeRenderer {
         for (Mesh mesh : retiring.values()) mesh.close(regions);
         retiring.clear();
         retireBy.clear();
+        // Only as the level closes, when Flywheel's manager for it goes too (FlywheelCompat.levelClosed): nothing to relight.
         light.clear();
         visibility.clear();
         reached = null;

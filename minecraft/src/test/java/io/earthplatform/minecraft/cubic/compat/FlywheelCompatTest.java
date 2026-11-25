@@ -98,10 +98,34 @@ class FlywheelCompatTest {
         assertNull(sync.current());
     }
 
+    @Test void lightChangesWaitForTheFlushAndGoOnceEach() {
+        // Queued while the terrain draws; sent at the start of the next level pass, before Flywheel's frame plan.
+        FlywheelCompat.LightQueue queue = new FlywheelCompat.LightQueue();
+        queue.add(7L);
+        queue.add(7L);
+        queue.add(-3L);
+        assertEquals(2, queue.size());
+        List<Long> sent = new ArrayList<>();
+        queue.flush(sent::add);
+        assertEquals(2, sent.size());
+        assertTrue(sent.containsAll(List.of(7L, -3L)));
+        assertTrue(queue.isEmpty());
+        queue.flush(key -> fail("nothing queued"));
+    }
+
+    @Test void aFailedSendStillEmptiesTheQueue() {
+        FlywheelCompat.LightQueue queue = new FlywheelCompat.LightQueue();
+        queue.add(1L);
+        queue.add(2L);
+        assertThrows(IllegalStateException.class, () -> queue.flush(key -> { throw new IllegalStateException(); }));
+        assertTrue(queue.isEmpty());
+    }
+
     @Test void withoutFlywheelNothingIsReplaced() {
         // Flywheel isn't on the test classpath: the class still loads and leaves every renderer alone.
         assertFalse(FlywheelCompat.replacesRenderer(null));
-        FlywheelCompat.lightChanged(null, 0L);
+        FlywheelCompat.lightChanged(0L);
+        FlywheelCompat.flushLight(null);
         FlywheelCompat.levelClosed();
     }
 }

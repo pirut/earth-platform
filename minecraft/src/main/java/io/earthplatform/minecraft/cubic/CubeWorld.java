@@ -48,8 +48,8 @@ public abstract class CubeWorld {
      * With shared reads, the loaded cubes and sky tops again, for block, biome and light reads from other
      * threads (Flywheel builds and relights the client's machines on its worker threads). The owner keeps
      * them in step with {@link #cubes} and {@link #tops}. A cube's blocks are read through {@link Cube#getShared},
-     * which its writes can't tear; a column's tops are the same int arrays, each value read whole. Null where only
-     * the owner reads.
+     * which its writes can't tear; a column's tops are never changed once shared, only replaced ({@link #setTop}).
+     * Null where only the owner reads.
      */
     @Nullable private final ConcurrentHashMap<Long, Cube> sharedCubes;
     @Nullable private final ConcurrentHashMap<Long, int[]> sharedTops;
@@ -189,7 +189,16 @@ public abstract class CubeWorld {
         int[] column = topsFor(x >> 4, z >> 4);
         int i = (z & 15) << 4 | (x & 15);
         int old = column[i];
-        if (old != top) { column[i] = top; topChanged(x, z, old, top); }
+        if (old == top) return;
+        if (sharedTops != null) {
+            // Other threads may hold this array: they get a changed copy, published whole, never an edit in place.
+            column = column.clone();
+            column[i] = top;
+            putTops(CubeKey.column(x >> 4, z >> 4), column);
+        } else {
+            column[i] = top;
+        }
+        topChanged(x, z, old, top);
     }
 
     /** First sky-blocking Y at or below {@code y}; an unloaded cube counts as solid. */
@@ -411,10 +420,11 @@ public abstract class CubeWorld {
 
     /** Insert a ready cube and bring its block entities to life. */
     protected void adopt(Cube cube) {
+        // Published before the old one goes, so other threads never find the cube missing; forget only unmaps its own.
+        if (sharedCubes != null) sharedCubes.put(cube.key, cube);
         Cube previous = cubes.get(cube.key);
         if (previous != null && previous != cube) forget(previous);
         cubes.put(cube.key, cube);
-        if (sharedCubes != null) sharedCubes.put(cube.key, cube);
         last = null;
         List<BlockEntity> fresh = new ArrayList<>(cube.blockEntities.values());
         for (BlockEntity entity : fresh) { entity.setLevel(level); entity.clearRemoved(); updateTicker(entity); }

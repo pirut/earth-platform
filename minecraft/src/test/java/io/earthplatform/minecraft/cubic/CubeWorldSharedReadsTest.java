@@ -110,6 +110,50 @@ class CubeWorldSharedReadsTest {
         assertTrue(first.isRemoved());
     }
 
+    /** A cube sent again replaces the loaded one; readers on other threads never find it missing meanwhile. */
+    @Test void replacingACubeNeverLeavesAHole() throws Exception {
+        CubeWorld cubes = world(true);
+        cubes.adopt(railCube());
+        AtomicBoolean done = new AtomicBoolean();
+        AtomicInteger reads = new AtomicInteger(), missing = new AtomicInteger();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        CountDownLatch started = new CountDownLatch(3);
+        List<Thread> readers = new ArrayList<>();
+        for (int r = 0; r < 3; r++) {
+            Thread reader = new Thread(() -> {
+                started.countDown();
+                try {
+                    while (!done.get()) {
+                        if (cubes.getBlockState(RAIL).getBlock() != Blocks.RAIL || !cubes.isLoaded(RAIL)) missing.incrementAndGet();
+                        reads.incrementAndGet();
+                    }
+                } catch (Throwable t) {
+                    failure.compareAndSet(null, t);
+                }
+            });
+            reader.start();
+            readers.add(reader);
+        }
+        started.await();
+        for (int round = 0; round < 20_000; round++) cubes.adopt(railCube());
+        done.set(true);
+        for (Thread reader : readers) reader.join();
+        if (failure.get() != null) fail(failure.get());
+        assertEquals(0, missing.get());
+        assertTrue(reads.get() > 0);
+    }
+
+    @Test void setTopNeverChangesASharedArray() {
+        CubeWorld cubes = world(true);
+        long column = CubeKey.column(RAIL.getX() >> 4, RAIL.getZ() >> 4);
+        int[] shared = new int[256];
+        cubes.putTops(column, shared);
+        cubes.setTop(RAIL.getX(), RAIL.getZ(), 1500);
+        assertEquals(0, shared[(RAIL.getZ() & 15) << 4 | (RAIL.getX() & 15)], "the array readers hold is left as it was");
+        assertEquals(1500, cubes.skyTop(RAIL.getX(), RAIL.getZ()));
+        assertNotSame(shared, cubes.columnTops(RAIL.getX() >> 4, RAIL.getZ() >> 4));
+    }
+
     /** The owner loads, unloads and edits cubes while other threads read them. */
     @Test void readersDuringLoadsAndEditsSeeOnlyRealStates() throws Exception {
         CubeWorld cubes = world(true);
@@ -126,7 +170,11 @@ class CubeWorldSharedReadsTest {
                     while (!done.get()) {
                         BlockState seen = cubes.getBlockState(RAIL);
                         if (seen != rail && seen != stone && seen != CubeWorld.UNLOADED) wrong.incrementAndGet();
-                        cubes.getBrightness(LightLayer.SKY, RAIL);
+                        // Sky tops: the baseline (0), or one of the two the owner writes through setTop.
+                        int top = cubes.skyTop(RAIL.getX(), RAIL.getZ());
+                        if (top != 0 && top != 1500 && top != 1700) wrong.incrementAndGet();
+                        int sky = cubes.getBrightness(LightLayer.SKY, RAIL);
+                        if (sky != 0 && sky != 15) wrong.incrementAndGet();
                         reads.incrementAndGet();
                     }
                 } catch (Throwable t) {
@@ -142,6 +190,8 @@ class CubeWorldSharedReadsTest {
             Cube cube = railCube();
             cubes.adopt(cube);
             cubes.putTops(column, new int[256]);
+            // The roof over the rail rises and falls, through the owner's own sky-top edits.
+            for (int edit = 0; edit < 4; edit++) cubes.setTop(RAIL.getX(), RAIL.getZ(), edit % 2 == 0 ? 1500 : 1700);
             // Neighbouring cubes, so the owner's maps grow and rehash under the readers.
             for (int n = 1; n <= 8; n++) cubes.adopt(new Cube(cube.x + n, cube.y, cube.z, new LevelChunkSection(biomes)));
             // Each write grows the palette of a fresh section, the case that tears an unguarded read.

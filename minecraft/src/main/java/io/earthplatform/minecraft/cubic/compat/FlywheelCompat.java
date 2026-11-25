@@ -3,6 +3,8 @@ package io.earthplatform.minecraft.cubic.compat;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.cubic.Cube;
 import io.earthplatform.minecraft.cubic.CubeKey;
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
@@ -43,6 +45,12 @@ public final class FlywheelCompat {
 
     @Nullable private static final Handles HANDLES = Handles.find();
     private static final Sync SYNC = new Sync();
+    /**
+     * Cubes whose light changed since the last level pass. Cube light lands while the terrain draws, when
+     * Flywheel's frame plan may be reading its light sets on worker threads, so they are passed on only at the
+     * start of the next pass, before the plan starts (see {@link #flushLight}).
+     */
+    private static final LightQueue PENDING_LIGHT = new LightQueue();
     private static boolean failed;
 
     private FlywheelCompat() {}
@@ -123,21 +131,53 @@ public final class FlywheelCompat {
         SYNC.frame(manager, () -> blockEntities(cubes), manager == null ? null : adder(manager));
     }
 
-    /** A cube's light changed: the machines Flywheel draws in it relight, as for a vanilla section's light update. */
-    public static void lightChanged(Level level, long cubeKey) {
-        if (HANDLES == null || HANDLES.onLightUpdate == null || failed) return;
+    /** A cube's light changed or went: queued until the next {@link #flushLight}. */
+    public static void lightChanged(long cubeKey) {
+        if (HANDLES == null || HANDLES.onLightUpdate == null || failed || SYNC.current() == null) return;
+        PENDING_LIGHT.add(cubeKey);
+    }
+
+    /**
+     * At the start of a level pass, before LevelRenderer.renderLevel starts Flywheel's frame plan and after the last
+     * one finished: the machines in each queued cube relight, as for a vanilla section's light update.
+     */
+    public static void flushLight(Level level) {
+        if (PENDING_LIGHT.isEmpty()) return;
         Object manager = manager(level);
-        if (manager == null || manager != SYNC.current()) return;
-        try {
-            HANDLES.onLightUpdate.invoke(manager, SectionPos.of(CubeKey.x(cubeKey), CubeKey.y(cubeKey), CubeKey.z(cubeKey)), LightLayer.BLOCK);
-        } catch (Throwable failure) {
-            fail(failure);
-        }
+        if (manager == null || manager != SYNC.current() || HANDLES.onLightUpdate == null) { PENDING_LIGHT.clear(); return; }
+        PENDING_LIGHT.flush(key -> {
+            if (failed) return;
+            try {
+                HANDLES.onLightUpdate.invoke(manager, SectionPos.of(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key)), LightLayer.BLOCK);
+            } catch (Throwable failure) {
+                fail(failure);
+            }
+        });
     }
 
     /** The client's cubic level is going (leaving the Earth, disconnecting): nothing of it is kept. */
     public static void levelClosed() {
         SYNC.clear();
+        PENDING_LIGHT.clear();
+    }
+
+    /** Cube keys waiting for their light update: each once, however often its light changed. Render thread. */
+    static final class LightQueue {
+        private final LongOpenHashSet keys = new LongOpenHashSet();
+
+        void add(long key) { keys.add(key); }
+        boolean isEmpty() { return keys.isEmpty(); }
+        int size() { return keys.size(); }
+        void clear() { keys.clear(); }
+
+        /** Sends each queued key and empties the queue, even if sending fails part way. */
+        void flush(java.util.function.LongConsumer send) {
+            try {
+                for (LongIterator it = keys.iterator(); it.hasNext(); ) send.accept(it.nextLong());
+            } finally {
+                keys.clear();
+            }
+        }
     }
 
     /**

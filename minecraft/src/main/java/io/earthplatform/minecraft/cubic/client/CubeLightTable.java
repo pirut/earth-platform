@@ -24,10 +24,10 @@ final class CubeLightTable {
         return owned.put(key, light);
     }
 
-    /** Owner only. */
-    void remove(long key) {
-        owned.remove(key);
+    /** Owner only. Whether there was light to remove. */
+    boolean remove(long key) {
         shared.remove(key);
+        return owned.remove(key) != null;
     }
 
     /** Owner only. */
