@@ -1349,26 +1349,35 @@ public final class ServerCubeWorld extends CubeWorld {
 
     public void close() {
         if (closed) return;
-        // Reads still queued, and terrain reads for them, are dropped first: a read waiting on a slow disk held
-        // its region's lock against the last save.
-        closing = true;
-        reads.shutdownNow();
-        // A read already reading holds its region until it is done: give it a moment, never longer. The storage's own close
-        // has one deadline for everything, and logs the edits of any region it could not save.
-        try { reads.awaitTermination(2, TimeUnit.SECONDS); }
-        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-        for (CompletableFuture<int[]> prime : primed.values()) prime.cancel(false);
-        tickets.close();
-        resident.clear();
-        for (Cube cube : cubes.values()) store(cube, true);
-        try { storage.close(); }
-        catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not write cube regions", failure); }
-        closed = true;
-        generator.detach();
-        surveys.close();
-        workers.shutdownNow();
-        far.close();
-        for (Cube cube : new ArrayList<>(cubes.values())) forget(cube);
+        // An interrupt on this thread must not cut the last save short: hold it, close everything, hand it back.
+        boolean interrupted = Thread.interrupted();
+        try {
+            // Reads still queued, and terrain reads for them, are dropped first: a read waiting on a slow disk held
+            // its region's lock against the last save.
+            closing = true;
+            reads.shutdownNow();
+            // A read already reading holds its region until it is done: give it a moment, never longer. The storage's own close
+            // waits only on regions that stop making progress, and logs the edits of any region it could not save.
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (true) {
+                try { reads.awaitTermination(Math.max(1, until - System.nanoTime()), TimeUnit.NANOSECONDS); break; }
+                catch (InterruptedException interrupt) { interrupted = true; }
+            }
+            for (CompletableFuture<int[]> prime : primed.values()) prime.cancel(false);
+            tickets.close();
+            resident.clear();
+            for (Cube cube : cubes.values()) store(cube, true);
+            try { storage.close(); }
+            catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not write cube regions", failure); }
+            closed = true;
+            generator.detach();
+            surveys.close();
+            workers.shutdownNow();
+            far.close();
+            for (Cube cube : new ArrayList<>(cubes.values())) forget(cube);
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
+        }
     }
 
     public String describe() {

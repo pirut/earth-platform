@@ -14,6 +14,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import net.minecraft.nbt.CompoundTag;
@@ -74,13 +76,29 @@ class CubeStorageShutdownTest {
         try (var out = Files.newOutputStream(pipe)) { if (content != null) out.write(content); }
     }
 
+    /** Fails when a released worker is still there after a generous wait: it must end by itself once its read returns. */
     private static void waitUntilGone(String threadName) throws InterruptedException {
         for (int i = 0; i < 200; i++) {
             boolean alive = Thread.getAllStackTraces().keySet().stream().anyMatch(t -> t.isAlive() && t.getName().equals(threadName));
             if (!alive) return;
             Thread.sleep(25);
         }
+        fail("the released worker \"" + threadName + "\" is still alive");
     }
+
+    private static void awaitUninterruptibly(CountDownLatch latch) {
+        while (true) { try { latch.await(); return; } catch (InterruptedException ignored) {} }
+    }
+
+    private static void sleepMillis(long millis) {
+        try { Thread.sleep(millis); } catch (InterruptedException failure) { throw new AssertionError(failure); }
+    }
+
+    private static final long KEEP = TimeUnit.MINUTES.toNanos(1);
+
+    private static long millis(long ms) { return TimeUnit.MILLISECONDS.toNanos(ms); }
+
+    private static long cubeOfRegion(int index) { return CubeKey.pack(index * 8, 0, 0); }
 
     // ---- A cold read that never returns, at the final save ----
 
@@ -260,5 +278,207 @@ class CubeStorageShutdownTest {
         }
         assertEquals(2, names.stream().distinct().count(), "temp files seen: " + names);
         assertEquals(List.of(), files(directory, ".tmp"));
+    }
+
+    // ---- Blocker 1: close never returns while a worker is inside the commit step ----
+
+    @Test void closeDoesNotReturnWhileAWorkerIsInsideTheRename(@TempDir Path directory) throws Exception {
+        Path world = Files.createDirectory(directory.resolve("world"));
+        seed(world, EDITED, UNCHANGED);
+        CountDownLatch inside = new CountDownLatch(1), letGo = new CountDownLatch(1);
+        CubeStorage old = new CubeStorage(world, millis(300), KEEP, file -> {}, file -> { inside.countDown(); awaitUninterruptibly(letGo); });
+        assertEquals(1, old.read(EDITED).getInt("revision"));
+        old.put(EDITED, tag(2));
+        try (var pool = Executors.newSingleThreadExecutor()) {
+            Future<?> closing = pool.submit(() -> { old.close(); return null; });
+            try {
+                assertTrue(inside.await(5, TimeUnit.SECONDS), "a worker reached the rename");
+                // Longer than the stall timeout and than any bounded wait for the lock: the rename has begun, close must wait for it.
+                assertThrows(TimeoutException.class, () -> closing.get(2500, TimeUnit.MILLISECONDS), "close returned with a rename still to come");
+            } finally {
+                letGo.countDown();
+            }
+            closing.get(10, TimeUnit.SECONDS);
+        }
+        assertEquals(2, revisionIn(world.resolve(REGION), EDITED), "the rename that had begun finished before close returned");
+        assertEquals(List.of(), files(world, ".tmp"));
+
+        // The world is reopened and saved: nothing of the old storage is left to land over it.
+        CubeStorage reopened = new CubeStorage(world);
+        assertEquals(2, reopened.read(EDITED).getInt("revision"));
+        reopened.put(EDITED, tag(5));
+        reopened.close();
+        Thread.sleep(300);
+        assertEquals(5, revisionIn(world.resolve(REGION), EDITED));
+        assertEquals(99, revisionIn(world.resolve(REGION), UNCHANGED));
+    }
+
+    @Test void closeDoesNotReturnWhileACorruptFileIsBeingSetAside(@TempDir Path directory) throws Exception {
+        Path world = Files.createDirectory(directory.resolve("world"));
+        Files.write(world.resolve(REGION), new byte[] {1, 2, 3});
+        CountDownLatch inside = new CountDownLatch(1), letGo = new CountDownLatch(1);
+        CubeStorage old = new CubeStorage(world, millis(300), KEEP, file -> {}, file -> { inside.countDown(); awaitUninterruptibly(letGo); });
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            Future<?> reading = pool.submit(() -> { old.read(EDITED); return null; });
+            assertTrue(inside.await(5, TimeUnit.SECONDS), "the reader reached the move of the damaged file");
+            Future<?> closing = pool.submit(() -> { old.close(); return null; });
+            try {
+                assertThrows(TimeoutException.class, () -> closing.get(2500, TimeUnit.MILLISECONDS), "close returned with a move still to come");
+            } finally {
+                letGo.countDown();
+            }
+            closing.get(10, TimeUnit.SECONDS);
+            reading.get(10, TimeUnit.SECONDS);
+        }
+        assertEquals(1, files(world, ".corrupt").size(), "the damaged file was set aside by the move close waited for");
+        assertFalse(Files.exists(world.resolve(REGION)));
+    }
+
+    // ---- Blocker 2: an interrupt cannot cut a final save or a flush short ----
+
+    @Test void anInterruptedOwnerThreadStillSavesTheLastEditsOnClose(@TempDir Path directory) throws Exception {
+        // A write takes a moment, so an interrupted close that stopped waiting would return before it ends.
+        CubeStorage storage = new CubeStorage(directory, millis(5000), KEEP, file -> sleepMillis(200), file -> {});
+        storage.put(EDITED, tag(1));
+        storage.flush();
+        assertEquals(1, revisionIn(directory.resolve(REGION), EDITED));
+        storage.put(EDITED, tag(2));
+        Thread.currentThread().interrupt();
+        try {
+            storage.close();
+            assertTrue(Thread.currentThread().isInterrupted(), "the interrupt is handed back");
+        } finally {
+            Thread.interrupted();
+        }
+        assertEquals(2, revisionIn(directory.resolve(REGION), EDITED), "the edit queued before the interrupt was saved");
+        assertEquals(List.of(), storage.unsavedReport());
+    }
+
+    @Test void anInterruptedOwnerThreadStillFlushes(@TempDir Path directory) throws Exception {
+        CubeStorage storage = new CubeStorage(directory, millis(5000), KEEP, file -> sleepMillis(200), file -> {});
+        storage.put(EDITED, tag(1));
+        Thread.currentThread().interrupt();
+        try {
+            storage.flush();
+            assertTrue(Thread.currentThread().isInterrupted(), "the interrupt is handed back");
+        } finally {
+            Thread.interrupted();
+        }
+        assertEquals(1, revisionIn(directory.resolve(REGION), EDITED), "on disk when flush returned");
+        storage.close();
+    }
+
+    // ---- Blocker 3: only stalled work is cut off, never healthy progress ----
+
+    /** A storage whose every region write takes {@code delayMillis} once armed, and a world of {@code regions} regions on disk at revision 1. */
+    private static CubeStorage slowWorld(Path world, int regions, long delayMillis, long stall, AtomicBoolean armed) throws IOException {
+        CubeStorage storage = new CubeStorage(world, stall, KEEP, file -> { if (armed.get()) sleepMillis(delayMillis); }, file -> {});
+        for (int i = 1; i <= regions; i++) storage.put(cubeOfRegion(i), tag(1));
+        storage.flush();
+        return storage;
+    }
+
+    private static void assertAllAt(Path world, int regions, int revision) throws IOException {
+        for (int i = 1; i <= regions; i++) assertEquals(revision, revisionIn(world.resolve(regionOf(cubeOfRegion(i))), cubeOfRegion(i)), "region " + i);
+    }
+
+    @Test void aBacklogOfHealthyWritesLongerThanTheStallTimeoutIsFullySavedOnClose(@TempDir Path directory) throws Exception {
+        int regions = 80;
+        AtomicBoolean armed = new AtomicBoolean();
+        long stall = millis(600);
+        CubeStorage storage = slowWorld(directory, regions, 50, stall, armed);
+        armed.set(true);
+        for (int i = 1; i <= regions; i++) storage.put(cubeOfRegion(i), tag(2));
+        long start = System.nanoTime();
+        assertTimeoutPreemptively(Duration.ofSeconds(60), () -> storage.close());
+        assertTrue(System.nanoTime() - start > stall, "the backlog took longer than the stall timeout, as it must for this test to mean anything");
+        assertAllAt(directory, regions, 2);
+        assertEquals(List.of(), storage.unsavedReport());
+    }
+
+    @Test void flushWaitsForAHealthyBacklogLongerThanTheStallTimeoutAndLeavesNothingPending(@TempDir Path directory) throws Exception {
+        int regions = 80;
+        AtomicBoolean armed = new AtomicBoolean();
+        long stall = millis(600);
+        CubeStorage storage = slowWorld(directory, regions, 50, stall, armed);
+        armed.set(true);
+        for (int i = 1; i <= regions; i++) storage.put(cubeOfRegion(i), tag(2));
+        long start = System.nanoTime();
+        assertTimeoutPreemptively(Duration.ofSeconds(60), () -> storage.flush());
+        assertTrue(System.nanoTime() - start > stall, "the backlog took longer than the stall timeout");
+        // Straight after flush, with no close: the files hold the edits.
+        assertAllAt(directory, regions, 2);
+        armed.set(false);
+        storage.close();
+        assertEquals(List.of(), storage.unsavedReport());
+    }
+
+    @Test void aWedgedRegionIsGivenUpOnWhileAHealthyBacklogKeepsBeingSaved(@TempDir Path directory) throws Exception {
+        Path pipe = pipe(directory, REGION);
+        int regions = 80;
+        long stall = millis(600);
+        AtomicBoolean armed = new AtomicBoolean();
+        // The healthy regions are read already, so they are free to write: the final save works through them in turn.
+        CubeStorage storage = slowWorld(directory, regions, 50, stall, armed);
+        armed.set(true);
+        try {
+            storage.put(EDITED, tag(2));
+            for (int i = 1; i <= regions; i++) storage.put(cubeOfRegion(i), tag(2));
+            long start = System.nanoTime();
+            assertTimeoutPreemptively(Duration.ofSeconds(60), () -> storage.close());
+            assertTrue(System.nanoTime() - start > stall, "the healthy backlog outlasted the wedged region's stall timeout");
+            assertAllAt(directory, regions, 2);
+            List<String> report = storage.unsavedReport();
+            assertEquals(1, report.size(), "report " + report);
+            assertTrue(report.get(0).contains(REGION), report.get(0));
+        } finally {
+            release(pipe, null);
+            waitUntilGone("Earth cube region save " + REGION);
+        }
+    }
+
+    @Test void flushLeavesEveryEditOnDiskWhenItReturns(@TempDir Path directory) throws Exception {
+        CubeStorage storage = new CubeStorage(directory);
+        for (int round = 1; round <= 3; round++) {
+            for (int i = 1; i <= 12; i++) storage.put(cubeOfRegion(i), tag(round));
+            storage.flush();
+            assertAllAt(directory, 12, round);
+        }
+        storage.close();
+    }
+
+    // ---- Eviction never drops an edit that is not on disk ----
+
+    @Test void aRegionWithPendingEditsIsNotEvictedAndReadsBackTheLatestEdit(@TempDir Path directory) throws Exception {
+        Path world = Files.createDirectory(directory.resolve("world"));
+        seed(world, EDITED, UNCHANGED);
+        CountDownLatch inWrite = new CountDownLatch(1), letGo = new CountDownLatch(1);
+        AtomicInteger writes = new AtomicInteger();
+        // Regions are let go as soon as they are idle (keep time 0), and the first write is held open.
+        CubeStorage storage = new CubeStorage(world, millis(10_000), 0L, file -> {
+            if (writes.getAndIncrement() != 0) return;
+            inWrite.countDown();
+            awaitUninterruptibly(letGo);
+        }, file -> {});
+        try {
+            assertEquals(1, storage.read(EDITED).getInt("revision"));
+            storage.put(EDITED, tag(2));
+            storage.flushLater();
+            assertTrue(inWrite.await(5, TimeUnit.SECONDS), "the write of revision 2 is under way");
+            storage.put(EDITED, tag(3)); // pending, not yet in any write
+            for (int i = 0; i < 5; i++) storage.flushLater(); // every call also tries to let idle regions go
+            assertEquals(3, storage.read(EDITED).getInt("revision"), "not evicted, so not read back stale from the file");
+            assertEquals(99, storage.read(UNCHANGED).getInt("revision"));
+        } finally {
+            letGo.countDown();
+        }
+        storage.flush();
+        assertEquals(3, revisionIn(world.resolve(REGION), EDITED));
+        // Written and idle now: it may go, and the edit is read back from the file.
+        storage.flushLater();
+        assertEquals(3, storage.read(EDITED).getInt("revision"));
+        storage.close();
+        assertEquals(3, revisionIn(world.resolve(REGION), EDITED));
+        assertEquals(99, revisionIn(world.resolve(REGION), UNCHANGED));
     }
 }
