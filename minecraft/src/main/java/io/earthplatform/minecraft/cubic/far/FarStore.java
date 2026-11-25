@@ -111,7 +111,8 @@ public final class FarStore implements AutoCloseable {
             try { found = Files.readString(file, StandardCharsets.UTF_8); }
             catch (NoSuchFileException absent) { /* a new store */ }
             if (!wanted.equals(found)) {
-                if (found != null && !closed) log.accept("Far terrain kept on disk was made by another build; it is made again as it is seen");
+                if (found != null && !closed) log.accept("Far terrain kept on disk was made by another build or another set of blocks and biomes ("
+                        + changed(found, wanted) + "); it is made again as it is seen");
                 clear();
                 storedBytes = 0;
                 writtenSinceTrim = 0;
@@ -124,6 +125,33 @@ public final class FarStore implements AutoCloseable {
         } catch (IOException | RuntimeException failure) {
             log.accept("Far terrain is not kept on disk this session: " + failure);
         }
+    }
+
+    /**
+     * Which parts of a stamp differ, for the log: the stamp is {@code format|version|commit|generator|registry print}, and
+     * the registry print is {@code blocks=...,biomes=...}. Nothing in it is private: a build, a generator and hashes.
+     */
+    static String changed(String found, String wanted) {
+        String[] names = {"format", "version", "commit", "generator", "blocks", "biomes"};
+        List<String> before = parts(found), now = parts(wanted);
+        List<String> differences = new ArrayList<>();
+        for (int i = 0; i < Math.max(before.size(), now.size()); i++) {
+            String was = i < before.size() ? before.get(i) : "none", is = i < now.size() ? now.get(i) : "none";
+            if (!was.equals(is)) differences.add((i < names.length ? names[i] : "part " + i) + " " + was + " -> " + is);
+        }
+        return differences.isEmpty() ? "no part differs" : String.join(", ", differences);
+    }
+
+    private static List<String> parts(String stamp) {
+        List<String> parts = new ArrayList<>();
+        for (String part : stamp.split("\\|")) {
+            if (part.startsWith("blocks=")) {
+                for (String half : part.split(",")) parts.add(half.substring(half.indexOf('=') + 1));
+            } else {
+                parts.add(part);
+            }
+        }
+        return parts;
     }
 
     private void clear() throws IOException {
