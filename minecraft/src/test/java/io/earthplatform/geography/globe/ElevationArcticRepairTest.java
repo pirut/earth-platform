@@ -6,6 +6,8 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.ByteArrayOutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.time.Duration;
@@ -752,12 +754,14 @@ class ElevationArcticRepairTest {
             }
 
             // 3. Missing-square coverage boundary at lon = -20.0° (west square -21 is missing): smooth taper to 0, NO jump!
-            assertEquals(0.0, v3.datum(59.75, -20.0 - 1e-4), 1e-6, "missing square must return datum 0");
-            double justInside = v3.datum(59.75, -20.0 + 1e-4);
-            double inland = v3.datum(59.75, -19.95);
-            assertTrue(inland > 35.0, "inland datum should be full regional offset, got " + inland);
+            assertEquals(0.0, v3.datum(60.55, -20.0 - 1e-4), 1e-6, "missing square must return datum 0");
+            double justInside = v3.datum(60.55, -20.0 + 1e-4);
+            double inland = v3.datum(60.55, -19.95);
+            assertTrue(inland > 35.0, "inland datum north of latitude taper should be full regional offset, got " + inland);
             assertTrue(Math.abs(justInside) < 1.5,
                     "datum must smoothly taper to 0 at missing-square coverage edge (no 55 m jump), got " + justInside);
+            assertTrue(Math.abs(v3.datum(59.75, -20.0 + 1e-4)) < 1.5,
+                    "datum inside latitude taper must also smoothly taper to 0 at missing-square coverage edge");
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();
@@ -945,6 +949,352 @@ class ElevationArcticRepairTest {
             } finally {
                 pool.shutdownNow();
             }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3PreservesValidDeepCoastalBathymetryWithoutVoidSentinel() throws Exception {
+        // Sharp coastline on an overview-2 boundary (lat = 63.5): north is +100 m land, south is sea (0 m in Copernicus)
+        // with genuine -900 m deep coastal bathymetry and NO -32768 void sentinel anywhere.
+        DoubleBinaryOperator ground = (lat, lon) -> lat >= 63.5 ? 100.0 : 0.0;
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 62; s <= 64; s++)
+            for (int w = -21; w <= -19; w++)
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 512, 128, ground));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            CopernicusFill.Tiles tiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        t[py * SIDE + px] = lat >= 63.5 ? 100f : -900f;
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3 = new CopernicusFill(dem, tiles, (lat, lon) -> false, true, 16);
+            int zoom = 15;
+            int tx = mercatorTileX(zoom, -19.5), ty = mercatorTileY(zoom, 63.496);
+            float[] fine = tiles.tile(zoom, tx, ty).clone();
+            v3.apply(fine, zoom, tx, ty);
+            int checked = 0;
+            for (int py = 0; py < SIDE; py++) {
+                double lat = tileLat(zoom, ty, py);
+                if (lat >= 63.499) continue;
+                for (int px = 0; px < SIDE; px++) {
+                    assertEquals(-900f, fine[py * SIDE + px], 1e-4f,
+                            "valid -900 m deep coastal bathymetry without void sentinel must never be erased to 0f");
+                    checked++;
+                }
+            }
+            assertTrue(checked > 1000, "expected deep coastal bathymetry pixels checked, got " + checked);
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3RepairsNarrowFjordVoidRampOverMixedOverviewAndFineLandOverSeaOverview() throws Exception {
+        // Case A (lon < -19.5): narrow fjord where overview-2 center (63.50390625) sees +60 m land (rawCop > SEA_CRUMB)
+        //   while overview-0 row 255 (lat in (63.500, 63.502)) resolves fine sea (0 m), with a -32768 void sentinel nearby.
+        // Case B (lon >= -19.5): coastal islet where overview-2 centers (63.5039, 63.4961) see sea (rawCop == 0),
+        //   main land sits north of 63.51 (+80 m), and overview-0 resolves +38.4 m land inside (63.498, 63.502),
+        //   under an explicit -200 m coastal land void ramp.
+        DoubleBinaryOperator ground = (lat, lon) -> {
+            if (lon < -19.5) {
+                return (lat > 63.498 && lat < 63.502) ? 0.0 : 60.0;
+            }
+            if (lat >= 63.51) return 80.0;
+            if (lat > 63.498 && lat < 63.502) return 38.4;
+            return 0.0;
+        };
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 62; s <= 64; s++)
+            for (int w = -21; w <= -19; w++)
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 512, 128, ground));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            CopernicusFill.Tiles tiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double lon = tileLon(z, x, px);
+                        if (lon < -19.5) {
+                            // Narrow-fjord -32768 void sentinel just north of the strip + -200 m ramp over the strip.
+                            if (lat >= 63.508 && lat <= 63.516 && lon > -19.78 && lon < -19.72) t[py * SIDE + px] = -32768f;
+                            else if (lat >= 63.49 && lat <= 63.52 && lon > -19.80 && lon < -19.70) t[py * SIDE + px] = -200f;
+                            else t[py * SIDE + px] = 60f;
+                        } else {
+                            // Explicit -200 m coastal void ramp straddling land (>= 63.51) and overview-2 sea (< 63.51).
+                            if (lat >= 63.49 && lat <= 63.525 && lon > -19.30 && lon < -19.20) t[py * SIDE + px] = -200f;
+                            else t[py * SIDE + px] = (float) ground.applyAsDouble(lat, lon);
+                        }
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3 = new CopernicusFill(dem, tiles, (lat, lon) -> false, true, 16);
+            int zoom = 15;
+
+            // Case A: overview-2 sees land (+60 m), fine overview-0 sees sea (0 m); -200 m ramp must repair to exact 0f.
+            int fx = mercatorTileX(zoom, -19.75), fy = mercatorTileY(zoom, 63.500);
+            int fPy = -1, fPx = 128;
+            for (int py = 0; py < SIDE; py++) {
+                double lat = tileLat(zoom, fy, py);
+                if (lat > 63.4992 && lat < 63.5008) { fPy = py; break; }
+            }
+            assertTrue(fPy >= 0, "expected fine pixel inside narrow fjord sea strip");
+            double fjordLat = tileLat(zoom, fy, fPy), fjordLon = tileLon(zoom, fx, fPx);
+            assertTrue(dem.metres(fjordLat, fjordLon, 2) > 10.0, "overview-2 must see mixed/land (> SEA_CRUMB)");
+            assertEquals(0.0, dem.metres(fjordLat, fjordLon, 0), 1e-3, "fine overview-0 must resolve sea");
+            float[] fjordTile = tiles.tile(zoom, fx, fy).clone();
+            fjordTile[fPy * SIDE + fPx] = -200f;
+            v3.apply(fjordTile, zoom, fx, fy);
+            assertEquals(0f, fjordTile[fPy * SIDE + fPx], 0f,
+                    "narrow-fjord -32768 void ramp where overview-2 sees land must still repair fine sea pixel to 0f");
+
+            // Case B: overview-2 sees sea (0 m), fine overview-0 resolves +38.4 m land; -200 m ramp must repair to +38.4 m!
+            int ix = mercatorTileX(zoom, -19.25), iy = mercatorTileY(zoom, 63.500);
+            int iPy = -1, iPx = 128;
+            for (int py = 0; py < SIDE; py++) {
+                double lat = tileLat(zoom, iy, py);
+                if (lat > 63.4992 && lat < 63.5008) { iPy = py; break; }
+            }
+            assertTrue(iPy >= 0, "expected fine pixel inside coastal islet");
+            double isletLat = tileLat(zoom, iy, iPy), isletLon = tileLon(zoom, ix, iPx);
+            assertEquals(0.0, dem.metres(isletLat, isletLon, 2), 1e-3, "overview-2 must see sea (rawCop == 0)");
+            assertEquals(38.4, dem.metres(isletLat, isletLon, 0), 0.1, "fine overview-0 must resolve +38.4 m land");
+            float[] isletTile = tiles.tile(zoom, ix, iy).clone();
+            isletTile[iPy * SIDE + iPx] = -200f;
+            v3.apply(isletTile, zoom, ix, iy);
+            assertEquals(38.4f, isletTile[iPy * SIDE + iPx], 0.5f,
+                    "explicit -200 m void ramp over overview-2 sea must repair fine Copernicus land to +38.4 m");
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3OfflineInteriorPartDoesNotQueryUncachedSwNeighbourSquare() throws Exception {
+        // Only cache square (63, -20) on disk; SW neighbours (62, -21), (62, -20), (63, -21) are NOT cached.
+        DoubleBinaryOperator ground = (lat, lon) -> 120.0 + 15.0 * Math.sin(lat * 4.0);
+        Map<String, byte[]> files = Map.of(
+                CopernicusSource.name(63, -20) + ".tif", syntheticCog(63, -20, 512, 128, ground));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        Path cacheRoot = Files.createTempDirectory("cop-offline-interior");
+        try {
+            // Prime disk cache for square (63, -20) ONLY while online.
+            try (var online = new CopernicusSource(base, cacheRoot, true, 32, 4, Duration.ofSeconds(5))) {
+                assertTrue(online.covers(63.5, -19.5));
+                assertFalse(Double.isNaN(online.metres(63.62, -19.62, 2)));
+                assertFalse(Double.isNaN(online.metres(63.62, -19.62, 0)));
+            }
+            // Reopen strictly OFFLINE (allowNetwork = false): any lookup of (62, -21), (62, -20), or (63, -21) throws!
+            try (var offline = new CopernicusSource(base, cacheRoot, false, 32, 4, Duration.ofSeconds(5))) {
+                CopernicusFill.Tiles shifted = (z, x, y) -> {
+                    float[] t = new float[SIDE * SIDE];
+                    for (int py = 0; py < SIDE; py++) {
+                        double lat = tileLat(z, y, py);
+                        for (int px = 0; px < SIDE; px++) {
+                            t[py * SIDE + px] = (float) (ground.applyAsDouble(lat, tileLon(z, x, px)) + 55.0);
+                        }
+                    }
+                    return t;
+                };
+                CopernicusFill v3 = new CopernicusFill(offline, shifted, (lat, lon) -> false, true, 16);
+                // Interior part (partRow=1, partColumn=1 -> lat in [63.5, 63.75], lon in [-19.75, -19.5]):
+                // must complete cleanly offline without touching uncached SW neighbour squares!
+                assertEquals(55.0, v3.datum(63.62, -19.62), 1.0, "offline interior part must estimate datum cleanly");
+                int zoom = 15;
+                int tx = mercatorTileX(zoom, -19.62), ty = mercatorTileY(zoom, 63.62);
+                float[] fine = shifted.tile(zoom, tx, ty).clone();
+                assertDoesNotThrow(() -> v3.apply(fine, zoom, tx, ty),
+                        "offline interior part must not throw MissingTerrainException for uncached SW neighbour");
+                double expected = ground.applyAsDouble(tileLat(zoom, ty, 128), tileLon(zoom, tx, 128));
+                assertEquals(expected, fine[128 * SIDE + 128], 1.5, "offline interior part must calibrate cleanly");
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+            try (var walk = Files.walk(cacheRoot)) {
+                walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+            }
+        }
+    }
+
+    @Test
+    void glo30FillV3RejectsForestCanopyNegativeOffsetAtBothTemperateAndBorealLatitudes() throws Exception {
+        // Coherent -14 m bare-earth lidar vs DSM canopy offset at 45°N (inside SRTM) AND 62°N (boreal north of 60°N),
+        // alongside coastal low beaches (3 m) and sea (0 m), must both yield datum == 0 and leave coast untouched.
+        DoubleBinaryOperator ground = (lat, lon) -> {
+            double inLat = lat - Math.floor(lat);
+            if (inLat < 0.25) return 0.0;
+            if (inLat < 0.30) return 3.0; // low coastal beach
+            return 140.0 + 10.0 * Math.sin(lat * 5.0);
+        };
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s : new int[] {44, 45, 46, 61, 62, 63})
+            for (int w = -21; w <= -19; w++)
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 512, 128, ground));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 64, 4, Duration.ofSeconds(5))) {
+            CopernicusFill.Tiles forestTiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double g = ground.applyAsDouble(lat, tileLon(z, x, px));
+                        // Tall forest canopy: bare-earth Terrarium sits 14 m below Copernicus DSM on forested inland,
+                        // while beach/sea are aligned.
+                        t[py * SIDE + px] = g > 20.0 ? (float) (g - 14.0) : (float) g;
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3 = new CopernicusFill(dem, forestTiles, (lat, lon) -> false, true, 32);
+
+            assertEquals(0.0, v3.datum(45.6, -19.5), 1e-6, "45°N temperate forest (-14 m) must produce datum == 0");
+            assertEquals(0.0, v3.datum(62.6, -19.5), 1e-6, "62°N boreal forest (-14 m) must produce datum == 0");
+            assertEquals(0.0, v3.weight(45.6, -19.5), 1e-6, "45°N forest must not blend to canopy DSM");
+            assertEquals(0.0, v3.weight(62.6, -19.5), 1e-6, "62°N forest must not blend to canopy DSM");
+
+            // Coastal beaches at both 45°N and 62°N stay completely untouched!
+            int zoom = 15;
+            for (double beachLat : new double[] {45.275, 62.275}) {
+                int tx = mercatorTileX(zoom, -19.5), ty = mercatorTileY(zoom, beachLat);
+                float[] before = forestTiles.tile(zoom, tx, ty).clone();
+                float[] after = before.clone();
+                v3.apply(after, zoom, tx, ty);
+                assertArrayEquals(before, after, 0f, "coastal beach at " + beachLat + "°N must stay untouched");
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3CalibratesCoherentNegativeGlacierDatumWhileRepairingLocalizedSunkPit() throws Exception {
+        DoubleBinaryOperator ground = (lat, lon) -> 200.0 + 20.0 * Math.sin((lat - 64.0) * 5.0) + 10.0 * Math.cos((lon + 20.0) * 4.0);
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 63; s <= 65; s++)
+            for (int w = -21; w <= -19; w++)
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 512, 128, ground));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            double datumOffset = -55.0;
+            CopernicusFill.Tiles glacierTiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double lon = tileLon(z, x, px);
+                        double g = ground.applyAsDouble(lat, lon);
+                        boolean pit = Math.abs(lat - 64.25) < 0.008 && Math.abs(lon - (-19.5)) < 0.008;
+                        t[py * SIDE + px] = (float) (g + datumOffset - (pit ? 30.0 : 0.0));
+                    }
+                }
+                return t;
+            };
+            // Entire region is mapped as snow/ice in WorldCover.
+            CopernicusFill v3 = new CopernicusFill(dem, glacierTiles, (lat, lon) -> true, true, 16);
+
+            // 1. Coherent -55 m glacier offset at 64.75°N calibrates datum ≈ -55 m (NOT discarded by ice.at())
+            //    and preserves a sharp +20 m fine-resolution glacier feature!
+            assertEquals(datumOffset, v3.datum(64.75, -19.5), 1.5, "coherent -55 m glacier offset must calibrate datum");
+            assertEquals(0.0, v3.weight(64.75, -19.5), 1e-3, "coherent -55 m glacier must keep Copernicus blend weight 0");
+            int zoom = 15;
+            int tx = mercatorTileX(zoom, -19.5), ty = mercatorTileY(zoom, 64.75);
+            float[] fine = new float[SIDE * SIDE];
+            float[] expected = new float[SIDE * SIDE];
+            for (int py = 0; py < SIDE; py++) {
+                double lat = tileLat(zoom, ty, py);
+                for (int px = 0; px < SIDE; px++) {
+                    double g = ground.applyAsDouble(lat, tileLon(zoom, tx, px));
+                    double ridge = (px >= 120 && px <= 135) ? 20.0 : 0.0;
+                    expected[py * SIDE + px] = (float) (g + ridge);
+                    fine[py * SIDE + px] = (float) (g + ridge + datumOffset);
+                }
+            }
+            v3.apply(fine, zoom, tx, ty);
+            assertEquals(20.0, fine[128 * SIDE + 128] - fine[128 * SIDE + 100], 1.0,
+                    "coherent negative glacier datum must preserve +20 m fine glacier feature");
+            assertEquals(expected[128 * SIDE + 128], fine[128 * SIDE + 128], 1.5f,
+                    "fine glacier feature must be lifted to orthometric height");
+
+            // 2. Localized -30 m sunk glacier pit at (64.25, -19.5) still repairs cleanly to Copernicus!
+            assertEquals(1.0, v3.weight(64.25, -19.5), 1e-3, "localized sunk glacier pit must still get full repair weight");
+            int pitY = mercatorTileY(zoom, 64.25);
+            float[] pitTile = glacierTiles.tile(zoom, tx, pitY).clone();
+            v3.apply(pitTile, zoom, tx, pitY);
+            int bestPy = 0, bestPx = 0;
+            for (int py = 0; py < SIDE; py++)
+                if (Math.abs(tileLat(zoom, pitY, py) - 64.25) < Math.abs(tileLat(zoom, pitY, bestPy) - 64.25)) bestPy = py;
+            for (int px = 0; px < SIDE; px++)
+                if (Math.abs(tileLon(zoom, tx, px) - (-19.5)) < Math.abs(tileLon(zoom, tx, bestPx) - (-19.5))) bestPx = px;
+            double expectedCop = ground.applyAsDouble(tileLat(zoom, pitY, bestPy), tileLon(zoom, tx, bestPx));
+            assertEquals(expectedCop, pitTile[bestPy * SIDE + bestPx], 2.0, "localized sunk glacier pit must repair to Copernicus");
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void terrariumV2PolarNorthEdgeCornerClampsOnlyYAndStillWrapsXNeighbour() throws Exception {
+        // North-west corner of the Mercator z11 grid: refX = 0, refY = 0 (wrapped west neighbour is refX = 2047, refY = 0!).
+        int refTiles = 1 << TerrariumTileSource.REFERENCE_ZOOM;
+        int refX = 0, refY = 0;
+        int westWrappedX = refTiles - 1;
+        int z15X = 0, z15Y = 0; // ox == 0, oy == 0: touches BOTH north Mercator edge (ny = -1) AND antimeridian west wrap!
+        float[] z11Parent = new float[SIDE * SIDE];
+        Arrays.fill(z11Parent, 100f);
+        float[] z11WestWrapped = new float[SIDE * SIDE];
+        Arrays.fill(z11WestWrapped, 500f);
+        float[] z15Raw = new float[SIDE * SIDE];
+        Arrays.fill(z15Raw, 100f);
+        // 10x100 void block flush against NW corner (py = 0..9, px = 0..99, wider than TileSeams's 12" whole-degree
+        // voidSlot reach at lon = -180°): pixel (0, 0) reaches repairWithBorder and samples (gy = -1, gx = -1).
+        // With Y-only clamping + X wrapping, both (gy=-1, gx=-1) and (gy=0, gx=-1) read 500 m -> ~287.5 m;
+        // falling back to parent reference[0][0] = 100 m on ny < 0 would instead give ~199.6 m!
+        for (int py = 0; py <= 9; py++)
+            for (int px = 0; px <= 99; px++)
+                z15Raw[py * SIDE + px] = -20_000f;
+
+        byte[] parentPng = TerrariumTileSource.encode(z11Parent);
+        byte[] westPng = TerrariumTileSource.encode(z11WestWrapped);
+        byte[] z15Png = TerrariumTileSource.encode(z15Raw);
+
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/tiles/", exchange -> {
+            String path = exchange.getRequestURI().getPath().substring("/tiles/".length());
+            byte[] body;
+            if (path.equals("15/" + z15X + "/" + z15Y + ".png")) body = z15Png;
+            else if (path.equals("11/" + westWrappedX + "/" + refY + ".png")) body = westPng;
+            else body = parentPng;
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/tiles/");
+        try (var v2 = new TerrariumTileSource(base, null, true, 64, 4, Duration.ofSeconds(5), List.of(), true)) {
+            float[] repaired = v2.tile(15, z15X, z15Y);
+            assertEquals(287.5f, repaired[0], 5f,
+                    "north Mercator edge corner must clamp only Y and retain wrapped X neighbour (~287.5 m, not ~199.6 m)");
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();

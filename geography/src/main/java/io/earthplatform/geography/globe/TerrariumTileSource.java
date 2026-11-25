@@ -196,8 +196,8 @@ public final class TerrariumTileSource implements AutoCloseable {
      * Repairs a fine tile lying on or near the edge of its {@link #REFERENCE_ZOOM} reference tile using a
      * 2-pixel border from adjacent un-layered {@link #cleaned} reference tiles so bilinear sampling and
      * the 4x4 relief window stay continuous across z11 boundaries. Only the Mercator Y grid edge clamps
-     * to the parent tile; transient neighbour misses propagate {@link MissingTerrainException} so callers
-     * retry rather than caching a clamped tile.
+     * the source row while still wrapping X into east/west neighbours; transient neighbour misses propagate
+     * {@link MissingTerrainException} so callers retry rather than caching a clamped tile.
      */
     private void repairWithBorder(float[] values, float[] reference, int rx, int ry, int shift, int span, int ox, int oy) {
         int pad = 2, side = span + 2 * pad;
@@ -211,6 +211,16 @@ public final class TerrariumTileSource implements AutoCloseable {
             int gy = oy - pad + pj;
             int dy = Math.floorDiv(gy, TILE_SIZE);
             int ly = Math.floorMod(gy, TILE_SIZE);
+            int ny = ry + dy;
+            if (ny < 0) {
+                dy = 0;
+                ly = 0;
+                ny = 0;
+            } else if (ny >= refTiles) {
+                dy = 0;
+                ly = TILE_SIZE - 1;
+                ny = refTiles - 1;
+            }
             for (int pk = 0; pk < side; pk++) {
                 int gx = ox - pad + pk;
                 int dx = Math.floorDiv(gx, TILE_SIZE);
@@ -218,19 +228,9 @@ public final class TerrariumTileSource implements AutoCloseable {
                 int slot = (dy + 1) * 3 + (dx + 1);
                 if (!tried[slot]) {
                     tried[slot] = true;
-                    int ny = ry + dy;
-                    if (ny >= 0 && ny < refTiles) {
-                        neighbours[slot] = cleaned(REFERENCE_ZOOM, Math.floorMod(rx + dx, refTiles), ny);
-                    }
+                    neighbours[slot] = cleaned(REFERENCE_ZOOM, Math.floorMod(rx + dx, refTiles), ny);
                 }
-                float[] src = neighbours[slot];
-                if (src != null) {
-                    patch[pj * side + pk] = src[ly * TILE_SIZE + lx];
-                } else {
-                    int cy = Math.max(0, Math.min(TILE_SIZE - 1, gy));
-                    int cx = Math.max(0, Math.min(TILE_SIZE - 1, gx));
-                    patch[pj * side + pk] = reference[cy * TILE_SIZE + cx];
-                }
+                patch[pj * side + pk] = neighbours[slot][ly * TILE_SIZE + lx];
             }
         }
         TileRepair.repairPatch(values, patch, side, side, pad, pad, shift);

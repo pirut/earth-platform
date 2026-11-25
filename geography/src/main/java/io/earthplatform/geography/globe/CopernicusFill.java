@@ -97,6 +97,11 @@ public final class CopernicusFill implements ElevationLayer {
     static final int WIDE = 20;
     /** Wide average height in metres above Copernicus up to which the tiles stand, and from which Copernicus does. */
     static final double OFFSET_AGREE = 8, OFFSET_DISAGREE = 16;
+    /** Stronger threshold for negative regional datum shifts so tall boreal forest canopy under bare-earth lidar never triggers a false negative datum. */
+    private static final double NEGATIVE_OFFSET_AGREE = 22, NEGATIVE_OFFSET_DISAGREE = 30;
+    /** Polar latitude taper bounds (degrees) outside SRTM's orthometric 56°S..60°N coverage. */
+    private static final double DATUM_NORTH_FROM = 59.0, DATUM_NORTH_TO = 60.5;
+    private static final double DATUM_SOUTH_FROM = 55.5, DATUM_SOUTH_TO = 57.0;
     /**
      * Global geographic lattice for regional datum estimation in {@value #GEOID_ID}: {@value #DATUM_GRID} nodes per
      * degree (30 arcseconds, ~926 m in latitude) so every 1° square border and 0.25° part border lies on exact lattice
@@ -283,10 +288,11 @@ public final class CopernicusFill implements ElevationLayer {
                 if (t < 0f) {
                     if (weight <= 0 && voidWeight <= 0) continue;
                     double c = dem.metres(latitude, longitude[px], overview);
-                    if (Double.isNaN(c)) continue;
-                    if (Math.abs(c) < SEA_CRUMB) c = 0;
-                    // Over confirmed sea, only explicit offshore -32768 void ramps blend to 0; valid bathymetry stays intact.
-                    double w = c == 0 ? voidWeight : weight;
+                    boolean sea = Double.isNaN(c) || Math.abs(c) < SEA_CRUMB;
+                    if (sea) c = 0;
+                    // Over confirmed sea (or missing open-ocean square), only confirmed -32768 void ramps blend to 0;
+                    // over fine Copernicus land, carry both land weight and confirmed void-ramp evidence.
+                    double w = sea ? voidWeight : Math.max(weight, voidWeight);
                     if (w <= 0) continue;
                     float v = (float) (t + w * (c - t));
                     if (v == 0f && !(c == 0 && w >= 1)) v = Math.ulp(0f);
@@ -295,7 +301,7 @@ public final class CopernicusFill implements ElevationLayer {
                 }
                 if (weight <= 0 && datum == 0) continue;
                 double base = t - datum;
-                boolean seaCandidate = datum != 0 && (base <= FJORD_PIXEL_MIN || (datum < 0 && t <= FJORD_PIXEL_MIN));
+                boolean seaCandidate = Math.abs(datum) >= 1.0 && (base <= FJORD_PIXEL_MIN || (datum < 0 && t <= FJORD_PIXEL_MIN));
                 if (weight <= 0 && !seaCandidate) {
                     float v = (float) base;
                     values[i] = v == 0f ? Math.ulp(0f) : v;
@@ -564,10 +570,11 @@ public final class CopernicusFill implements ElevationLayer {
         float[] difference = new float[across * down], copernicus = new float[across * down], raw = new float[across * down];
         // How far Terrarium lies under Copernicus on snow and ice, check pixel by check pixel; 0 elsewhere.
         float[] sunk = new float[across * down];
-        // Canonical geographic datum sampling grid covering the full WIDE-padded box (geoid mode only).
+        // Canonical geographic datum sampling grid covering the full WIDE-padded box (geoid mode outside SRTM only).
         int gyMin = 0, gyMax = 0, gxMin = 0, gxMax = 0;
         int syMin = 0, syMax = 0, sxMin = 0, sxMax = 0, sRows = 0, sCols = 0;
         float[] canonDiff = null;
+        boolean sampleDatum = false;
         if (geoid) {
             double padNorth = south + 1.0 - (row0 - m + 0.5) / height;
             double padSouth = south + 1.0 - (row0 + down - 1 - m + 0.5) / height;
@@ -577,25 +584,29 @@ public final class CopernicusFill implements ElevationLayer {
             gyMax = (int) Math.floor(padNorth * DATUM_GRID) + 1;
             gxMin = (int) Math.floor(padWest * DATUM_GRID);
             gxMax = (int) Math.floor(padEast * DATUM_GRID) + 1;
-            syMin = gyMin * DATUM_SAMPLE_SUB - DATUM_SAMPLE_RADIUS;
-            syMax = gyMax * DATUM_SAMPLE_SUB + DATUM_SAMPLE_RADIUS;
-            sxMin = gxMin * DATUM_SAMPLE_SUB - DATUM_SAMPLE_RADIUS;
-            sxMax = gxMax * DATUM_SAMPLE_SUB + DATUM_SAMPLE_RADIUS;
-            sRows = syMax - syMin + 1;
-            sCols = sxMax - sxMin + 1;
-            canonDiff = new float[sRows * sCols];
+            // Fast path: skip canonical datum sampling completely when every lattice node lies strictly inside SRTM (-55.5..+59.0°).
+            sampleDatum = gyMax > DATUM_NORTH_FROM * DATUM_GRID || gyMin < -DATUM_SOUTH_FROM * DATUM_GRID;
+            if (sampleDatum) {
+                syMin = gyMin * DATUM_SAMPLE_SUB - DATUM_SAMPLE_RADIUS;
+                syMax = gyMax * DATUM_SAMPLE_SUB + DATUM_SAMPLE_RADIUS;
+                sxMin = gxMin * DATUM_SAMPLE_SUB - DATUM_SAMPLE_RADIUS;
+                sxMax = gxMax * DATUM_SAMPLE_SUB + DATUM_SAMPLE_RADIUS;
+                sRows = syMax - syMin + 1;
+                sCols = sxMax - sxMin + 1;
+                canonDiff = new float[sRows * sCols];
+            }
         }
         // Bands of rows read at once: on a first visit each reads its own tiles and blocks from the network, which
         // one after another kept a place's first tiles waiting seconds on this check.
         int bands = Math.min(CHECK_BANDS, down);
-        List<Runnable> reads = new ArrayList<>(bands + (geoid ? CHECK_BANDS : 0));
+        List<Runnable> reads = new ArrayList<>(bands + (sampleDatum ? CHECK_BANDS : 0));
         // The tiles under the part load beside Copernicus's block rather than after it; a failure is left for the bands to meet.
         long size = (long) TerrariumTileSource.TILE_SIZE << CHECK_ZOOM;
         double topLat = south + 1 - (row0 - m - 1.0) / height;
         double bottomLat = south + 1 - (row0 + down - m + 1.0) / height;
         double leftLon = west + (column0 - m - 1.0) / width;
         double rightLon = west + (column0 + across - m + 1.0) / width;
-        if (geoid) {
+        if (sampleDatum) {
             topLat = Math.max(topLat, (double) syMax / DATUM_SAMPLE_GRID);
             bottomLat = Math.min(bottomLat, (double) syMin / DATUM_SAMPLE_GRID);
             leftLon = Math.min(leftLon, (double) sxMin / DATUM_SAMPLE_GRID);
@@ -643,7 +654,7 @@ public final class CopernicusFill implements ElevationLayer {
                 }
             });
         }
-        if (geoid) {
+        if (sampleDatum) {
             final float[] canon = canonDiff;
             final int fSyMin = syMin, fSxMin = sxMin, fSRows = sRows, fSCols = sCols;
             int sBands = Math.min(CHECK_BANDS, fSRows);
@@ -667,8 +678,6 @@ public final class CopernicusFill implements ElevationLayer {
                             if (!(t > 0)) continue;
                             double d = t - cop;
                             if (Math.abs(d) > MAX_DATUM_OFFSET) continue;
-                            // Exclude sunk snow/ice pits from regional datum estimation without querying WorldCover on aligned land.
-                            if (cop - t > AGREE && ice != null && ice.at(lat, lon)) continue;
                             canon[rowOff + sc] = (float) d;
                         }
                     }
@@ -679,16 +688,7 @@ public final class CopernicusFill implements ElevationLayer {
         DatumGrid fullDatum = null, datumOut = null;
         Window window, landWindow = null, seaWindow = null, seaPosWindow = null;
         if (geoid) {
-            int minS = Math.max(-90, Math.floorDiv(gyMin, DATUM_GRID) - 1);
-            int maxS = Math.min(89, Math.floorDiv(gyMax, DATUM_GRID));
-            int minW = Math.floorDiv(gxMin, DATUM_GRID) - 1;
-            int maxW = Math.floorDiv(gxMax, DATUM_GRID);
-            int covRows = Math.max(0, maxS - minS + 1), covCols = Math.max(0, maxW - minW + 1);
-            boolean[] covered = new boolean[covRows * covCols];
-            for (int s = minS; s <= maxS; s++)
-                for (int w = minW; w <= maxW; w++)
-                    covered[(s - minS) * covCols + (w - minW)] = dem.covers(s + 0.5, wrapWest(w) + 0.5);
-            fullDatum = estimateDatum(canonDiff, syMin, sxMin, sCols, gyMin, gyMax, gxMin, gxMax, minS, maxS, minW, covCols, covered);
+            if (sampleDatum) fullDatum = estimateDatum(canonDiff, syMin, sxMin, sCols, gyMin, gyMax, gxMin, gxMax);
             if (fullDatum != null) {
                 double partNorth = south + 1.0 - (double) row0 / height;
                 double partSouth = south + 1.0 - (double) (row0 + rows) / height;
@@ -839,39 +839,66 @@ public final class CopernicusFill implements ElevationLayer {
                     }
                 }
                 double voidWeight = 0;
-                if (weight < 1) {
+                if (!geoid) {
+                    if (weight < 1) {
+                        float t = rawT, cop = rawCop;
+                        if (t < TileRepair.IMPOSSIBLE_DEPTH) {
+                            weight = 1;
+                        } else if (t < 0) {
+                            float low = Float.MAX_VALUE, high = -Float.MAX_VALUE;
+                            boolean nearImpossible = false, nearLandVoid = false, nearLand = false;
+                            for (int j = pr - SMOOTH; j <= pr + SMOOTH; j++) for (int k = pc - SMOOTH; k <= pc + SMOOTH; k++) {
+                                int n = j * across + k;
+                                float cv = copernicus[n];
+                                if (cv == cv) {
+                                    low = Math.min(low, cv);
+                                    high = Math.max(high, cv);
+                                    if (cv > SEA_CRUMB) nearLand = true;
+                                }
+                                if (raw[n] < TileRepair.IMPOSSIBLE_DEPTH) nearImpossible = true;
+                                if (landVoid != null && landVoid[n]) nearLandVoid = true;
+                            }
+                            if (nearImpossible) {
+                                weight = 1;
+                            } else if (cop > SEA_CRUMB) {
+                                double allow = high >= low ? RELIEF_SHARE * (high - low) : 0;
+                                weight = Math.max(weight, ramp(cop - t, AGREE + allow, DISAGREE + allow));
+                            } else if (nearLandVoid && t < VOID_SHALLOW) {
+                                weight = Math.max(weight, ramp(-t, -VOID_SHALLOW, -2 * VOID_SHALLOW));
+                            } else if (nearLand && t < COASTAL_ABYSS) {
+                                weight = Math.max(weight, ramp(-t, -COASTAL_ABYSS, -COASTAL_ABYSS_FULL));
+                            }
+                        }
+                    }
+                } else if (rawT < 0f) {
                     float t = rawT, cop = rawCop;
                     if (t < TileRepair.IMPOSSIBLE_DEPTH) {
-                        if (negOverSea) voidWeight = 1;
-                        else weight = 1;
-                    } else if (t < 0) {
+                        voidWeight = 1;
+                        if (!negOverSea) weight = 1;
+                    } else {
                         float low = Float.MAX_VALUE, high = -Float.MAX_VALUE;
-                        boolean nearImpossible = false, nearLandVoid = false, nearLand = false;
+                        boolean nearImpossible = false, nearLandVoid = false;
                         for (int j = pr - SMOOTH; j <= pr + SMOOTH; j++) for (int k = pc - SMOOTH; k <= pc + SMOOTH; k++) {
                             int n = j * across + k;
                             float cv = copernicus[n];
                             if (cv == cv) {
                                 low = Math.min(low, cv);
                                 high = Math.max(high, cv);
-                                if (cv > SEA_CRUMB) nearLand = true;
                             }
                             if (raw[n] < TileRepair.IMPOSSIBLE_DEPTH) nearImpossible = true;
                             if (landVoid != null && landVoid[n]) nearLandVoid = true;
                         }
-                        double vw = 0;
                         if (nearImpossible) {
-                            vw = 1;
-                        } else if (cop > SEA_CRUMB) {
-                            double allow = high >= low ? RELIEF_SHARE * (high - low) : 0;
-                            weight = Math.max(weight, ramp(cop - t, AGREE + allow, DISAGREE + allow));
+                            voidWeight = 1;
                         } else if (nearLandVoid && t < VOID_SHALLOW) {
-                            vw = ramp(-t, -VOID_SHALLOW, -2 * VOID_SHALLOW);
-                        } else if (nearLand && t < COASTAL_ABYSS) {
-                            vw = ramp(-t, -COASTAL_ABYSS, -COASTAL_ABYSS_FULL);
+                            voidWeight = ramp(-t, -VOID_SHALLOW, -2 * VOID_SHALLOW);
                         }
-                        if (vw > 0) {
-                            if (negOverSea) voidWeight = vw;
-                            else weight = Math.max(weight, vw);
+                        if (!negOverSea && weight < 1) {
+                            if (voidWeight > 0) weight = Math.max(weight, voidWeight);
+                            if (cop > SEA_CRUMB && weight < 1) {
+                                double allow = high >= low ? RELIEF_SHARE * (high - low) : 0;
+                                weight = Math.max(weight, ramp(cop - t, AGREE + allow, DISAGREE + allow));
+                            }
                         }
                     }
                 }
@@ -899,17 +926,22 @@ public final class CopernicusFill implements ElevationLayer {
      * nodes touching a missing open-ocean Copernicus square evaluate to 0 so datum tapers smoothly to 0 at
      * coverage boundaries.
      */
-    private static DatumGrid estimateDatum(float[] canonDiff, int syMin, int sxMin, int sCols,
-                                           int gyMin, int gyMax, int gxMin, int gxMax,
-                                           int minS, int maxS, int minW, int covCols, boolean[] covered) {
-        // Conservative early exit: a node with n >= MIN_LAND_SAMPLES and |median| > OFFSET_AGREE requires
-        // at least (MIN_LAND_SAMPLES + 1) / 2 samples exceeding OFFSET_AGREE in magnitude.
+    private DatumGrid estimateDatum(float[] canonDiff, int syMin, int sxMin, int sCols,
+                                    int gyMin, int gyMax, int gxMin, int gxMax) {
+        // Conservative early exit: a node with n >= MIN_LAND_SAMPLES and positive median > OFFSET_AGREE
+        // (or negative median < -NEGATIVE_OFFSET_AGREE) requires at least (MIN_LAND_SAMPLES + 1) / 2 such samples.
         int minTrigger = (MIN_LAND_SAMPLES + 1) / 2;
         int shifted = 0;
         for (float d : canonDiff) {
-            if (Math.abs(d) > OFFSET_AGREE && ++shifted >= minTrigger) break;
+            if ((d > OFFSET_AGREE || d < -NEGATIVE_OFFSET_AGREE) && ++shifted >= minTrigger) break;
         }
         if (shifted < minTrigger) return null;
+        int minS = Math.max(-90, Math.floorDiv(gyMin - 1, DATUM_GRID));
+        int maxS = Math.min(89, Math.floorDiv(gyMax, DATUM_GRID));
+        int minW = Math.floorDiv(gxMin - 1, DATUM_GRID);
+        int maxW = Math.floorDiv(gxMax, DATUM_GRID);
+        int covRows = Math.max(0, maxS - minS + 1), covCols = Math.max(0, maxW - minW + 1);
+        byte[] coverState = null;
         int cRows = gyMax - gyMin + 1;
         int cCols = gxMax - gxMin + 1;
         float[] coarse = new float[cRows * cCols];
@@ -918,10 +950,12 @@ public final class CopernicusFill implements ElevationLayer {
         boolean anyDatum = false;
         for (int cr = 0; cr < cRows; cr++) {
             int gy = gyMin + cr;
+            double nodeLat = gy / (double) DATUM_GRID;
+            double latBand = Math.max(ramp(nodeLat, DATUM_NORTH_FROM, DATUM_NORTH_TO), ramp(-nodeLat, DATUM_SOUTH_FROM, DATUM_SOUTH_TO));
+            if (latBand == 0) continue;
             int scy = gy * DATUM_SAMPLE_SUB - syMin;
             for (int cc = 0; cc < cCols; cc++) {
                 int gx = gxMin + cc;
-                if (!nodeCovered(gy, gx, minS, maxS, minW, covCols, covered)) continue;
                 int scx = gx * DATUM_SAMPLE_SUB - sxMin;
                 int n = 0;
                 for (int j = scy - DATUM_SAMPLE_RADIUS; j <= scy + DATUM_SAMPLE_RADIUS; j++) {
@@ -935,7 +969,9 @@ public final class CopernicusFill implements ElevationLayer {
                 Arrays.sort(sample, 0, n);
                 double median = (n & 1) == 1 ? sample[n / 2] : 0.5 * (sample[n / 2 - 1] + sample[n / 2]);
                 double absMedian = Math.abs(median);
-                if (absMedian <= OFFSET_AGREE) continue;
+                double minAgree = median > 0 ? OFFSET_AGREE : NEGATIVE_OFFSET_AGREE;
+                double maxDisagree = median > 0 ? OFFSET_DISAGREE : NEGATIVE_OFFSET_DISAGREE;
+                if (absMedian <= minAgree) continue;
                 int q1 = n / 4, q3 = n - q1;
                 // Reject windows mixing strong opposing signs across the interquartile range.
                 if (median > 0 ? sample[q1] < -OFFSET_AGREE : sample[q3 - 1] > OFFSET_AGREE) continue;
@@ -944,18 +980,20 @@ public final class CopernicusFill implements ElevationLayer {
                 double trimmed = sum / (q3 - q1);
                 if (Math.signum(trimmed) != Math.signum(median)) continue;
                 double absTrimmed = Math.abs(trimmed);
-                if (absTrimmed <= OFFSET_AGREE) continue;
+                if (absTrimmed <= minAgree) continue;
                 for (int k = 0; k < n; k++) dev[k] = (float) Math.abs(sample[k] - median);
                 Arrays.sort(dev, 0, n);
                 double mad = (n & 1) == 1 ? dev[n / 2] : 0.5 * (dev[n / 2 - 1] + dev[n / 2]);
                 // Semi-IQR catches bimodal step boundaries (>50% shifted, ~40% aligned) where MAD alone collapses to 0.
                 double spread = Math.max(mad, 0.5 * (sample[q3 - 1] - sample[q1]));
-                double offsetWeight = ramp(absTrimmed, OFFSET_AGREE, OFFSET_DISAGREE);
+                double offsetWeight = ramp(absTrimmed, minAgree, maxDisagree);
                 double madAllow = Math.max(DATUM_MAD_MIN, DATUM_MAD_SHARE * absTrimmed);
                 double madReject = Math.max(DATUM_MAD_MAX, DATUM_MAD_REJECT_SHARE * absTrimmed);
                 double coherence = 1.0 - ramp(spread, madAllow, madReject);
-                float nodeDatum = (float) (trimmed * offsetWeight * coherence);
+                float nodeDatum = (float) (trimmed * offsetWeight * coherence * latBand);
                 if (nodeDatum != 0f) {
+                    if (coverState == null) coverState = new byte[covRows * covCols];
+                    if (!nodeCovered(gy, gx, minS, maxS, minW, covCols, coverState)) continue;
                     coarse[cr * cCols + cc] = nodeDatum;
                     anyDatum = true;
                 }
@@ -964,17 +1002,23 @@ public final class CopernicusFill implements ElevationLayer {
         return anyDatum ? new DatumGrid(gyMin, gxMin, cRows, cCols, coarse) : null;
     }
 
-    /** Whether every Copernicus 1° square touching global lattice node {@code (gy, gx)} has coverage. */
-    private static boolean nodeCovered(int gy, int gx, int minS, int maxS, int minW, int covCols, boolean[] covered) {
+    /** Whether every Copernicus 1° square touching global lattice node {@code (gy, gx)} has coverage, queried lazily. */
+    private boolean nodeCovered(int gy, int gx, int minS, int maxS, int minW, int covCols, byte[] coverState) {
         int s0 = Math.floorDiv(gy, DATUM_GRID);
-        int sFrom = Math.floorMod(gy, DATUM_GRID) == 0 ? s0 - 1 : s0;
+        int sFrom = Math.floorDiv(gy - 1, DATUM_GRID);
         int w0 = Math.floorDiv(gx, DATUM_GRID);
-        int wFrom = Math.floorMod(gx, DATUM_GRID) == 0 ? w0 - 1 : w0;
+        int wFrom = Math.floorDiv(gx - 1, DATUM_GRID);
         for (int s = sFrom; s <= s0; s++) {
             if (s < -90 || s > 89) continue;
             if (s < minS || s > maxS) return false;
             for (int w = wFrom; w <= w0; w++) {
-                if (!covered[(s - minS) * covCols + (w - minW)]) return false;
+                int idx = (s - minS) * covCols + (w - minW);
+                byte state = coverState[idx];
+                if (state == 0) {
+                    state = (byte) (dem.covers(s + 0.5, wrapWest(w) + 0.5) ? 1 : -1);
+                    coverState[idx] = state;
+                }
+                if (state < 0) return false;
             }
         }
         return true;
