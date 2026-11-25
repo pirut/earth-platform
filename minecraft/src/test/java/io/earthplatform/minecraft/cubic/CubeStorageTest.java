@@ -4,13 +4,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import net.minecraft.nbt.CompoundTag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import java.time.Duration;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CubeStorageTest {
@@ -111,87 +108,5 @@ class CubeStorageTest {
         assertEquals(1, names(directory).size(), "files " + names(directory));
 
         assertEquals(1, new CubeStorage(directory).read(CUBE).getInt("mark"), "after a restart the original contents load");
-    }
-
-    /** A reader that hangs on one region file until released, as a stalled disk or network drive does, and reads the rest normally. */
-    private static final class Wedge implements CubeStorage.Reader {
-        final String stuckFile;
-        final CountDownLatch inside = new CountDownLatch(1), release = new CountDownLatch(1);
-        Wedge(String stuckFile) { this.stuckFile = stuckFile; }
-        @Override public byte[] read(Path file) throws java.io.IOException {
-            if (file.getFileName().toString().equals(stuckFile)) {
-                inside.countDown();
-                // Not interruptible, as a read stuck in the kernel is not.
-                while (true) {
-                    try { release.await(); break; } catch (InterruptedException ignored) {}
-                }
-            }
-            return Files.readAllBytes(file);
-        }
-    }
-
-    /** CUBE's region (0, 1, -1) also holds this; OTHER is in another. */
-    private static final long SAME_REGION = CubeKey.pack(4, 10, -4);
-
-    private static String regionOf(long cube) {
-        return "r." + (CubeKey.x(cube) >> 3) + "." + (CubeKey.y(cube) >> 3) + "." + (CubeKey.z(cube) >> 3) + ".nbt";
-    }
-
-    @Test void shutdownDoesNotWaitForARegionReadThatNeverReturns(@TempDir Path directory) throws Exception {
-        CubeStorage first = new CubeStorage(directory);
-        first.put(CUBE, marked(1));
-        first.put(OTHER, marked(2));
-        first.close();
-        byte[] original = Files.readAllBytes(directory.resolve(regionOf(CUBE)));
-
-        Wedge wedge = new Wedge(regionOf(CUBE));
-        CubeStorage storage = new CubeStorage(directory, wedge, 100_000_000L, 3_000_000_000L);
-        Thread reader = new Thread(() -> { try { storage.read(CUBE); } catch (Exception ignored) {} }, "wedged read");
-        reader.setDaemon(true);
-        reader.start();
-        assertTrue(wedge.inside.await(10, TimeUnit.SECONDS), "the read never began");
-        try {
-            // The owner thread's edits and the shutdown neither wait on the read.
-            assertTimeoutPreemptively(Duration.ofSeconds(8), () -> {
-                storage.put(SAME_REGION, marked(3));
-                storage.put(OTHER, marked(4));
-                storage.flushLater();
-                storage.close();
-            });
-            // The region that could be written was; the wedged one's file is as it was, and its edit is beside it.
-            assertEquals(4, new CubeStorage(directory).read(OTHER).getInt("mark"));
-            assertArrayEquals(original, Files.readAllBytes(directory.resolve(regionOf(CUBE))));
-            List<String> aside = names(directory).stream().filter(name -> name.contains(".unsaved-")).toList();
-            assertEquals(1, aside.size(), "files " + names(directory));
-            assertTrue(aside.get(0).startsWith(regionOf(CUBE) + ".unsaved-"));
-        } finally {
-            wedge.release.countDown();
-            reader.join(10_000);
-        }
-    }
-
-    @Test void anEditMadeWhileTheRegionIsBeingReadJoinsItsCubesWhenTheReadEnds(@TempDir Path directory) throws Exception {
-        CubeStorage first = new CubeStorage(directory);
-        first.put(CUBE, marked(1));
-        first.close();
-
-        Wedge wedge = new Wedge(regionOf(CUBE));
-        CubeStorage storage = new CubeStorage(directory, wedge, 100_000_000L, 3_000_000_000L);
-        Thread reader = new Thread(() -> { try { storage.read(CUBE); } catch (Exception ignored) {} }, "slow read");
-        reader.setDaemon(true);
-        reader.start();
-        assertTrue(wedge.inside.await(10, TimeUnit.SECONDS));
-        storage.put(SAME_REGION, marked(3));
-        storage.flush();
-        assertEquals(0, names(directory).stream().filter(name -> name.contains(".unsaved-")).count(), "nothing is set aside before the world closes");
-        wedge.release.countDown();
-        reader.join(10_000);
-        // The read is over: the edit is with the region's own cubes, and the next write holds both.
-        assertEquals(1, storage.read(CUBE).getInt("mark"));
-        assertEquals(3, storage.read(SAME_REGION).getInt("mark"));
-        storage.close();
-        CubeStorage again = new CubeStorage(directory);
-        assertEquals(1, again.read(CUBE).getInt("mark"));
-        assertEquals(3, again.read(SAME_REGION).getInt("mark"));
     }
 }
