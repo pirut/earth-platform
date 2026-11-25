@@ -1207,7 +1207,8 @@ class ElevationArcticRepairTest {
             //    with weight=0, landVoid=1): midpoint weight == 0.5, yet per-corner max(weight, landVoid) == 1.0!
             assertEquals(1.0, v3.weight(63.50390625, -19.75), 1e-6, "land overview-2 corner (row 63) must have weight == 1");
             assertEquals(0.0, v3.weight(63.49609375, -19.75), 1e-6, "sea overview-2 corner (row 64) must have weight == 0");
-            int wx = mercatorTileX(zoom, -19.75), wy = mercatorTileY(zoom, 63.500);
+            // Shift slightly east of -19.75 (overview-2 col 32 part boundary) so x0..x0+1 stay inside partColumn=1.
+            int wx = mercatorTileX(zoom, -19.74), wy = mercatorTileY(zoom, 63.500);
             int wPy = -1, wPx = 128;
             double bestDist = Double.MAX_VALUE;
             for (int py = 0; py < SIDE; py++) {
@@ -1228,7 +1229,15 @@ class ElevationArcticRepairTest {
             int iyLand = mercatorTileY(zoom, 63.5078125);
             int lPy = 128;
             double lLat = tileLat(zoom, iyLand, lPy), lLon = tileLon(zoom, wx, wPx);
+            int lX0 = (int) Math.floor((lLon - Math.floor(lLon)) * 128 - 0.5);
+            int lY0 = (int) Math.floor((Math.floor(lLat) + 1 - lLat) * 128 - 0.5);
+            assertEquals(lX0 * CopernicusFill.PARTS / 128, (lX0 + 1) * CopernicusFill.PARTS / 128,
+                    "fast-path check x0..x0+1 must stay strictly inside one partColumn");
+            assertEquals(lY0 * CopernicusFill.PARTS / 128, (lY0 + 1) * CopernicusFill.PARTS / 128,
+                    "fast-path check y0..y0+1 must stay strictly inside one partRow");
             assertEquals(1.0, v3.weight(lLat, lLon), 1e-6, "interior partRow=1 land corner must have weight == 1");
+            assertNull(v3.part(63, -20, 128, 128, lY0 * CopernicusFill.PARTS / 128, lX0 * CopernicusFill.PARTS / 128).landVoid(),
+                    "fast-path check part must have null landVoid");
             assertEquals(80.0, dem.metres(lLat, lLon, 0), 0.1, "interior land must be +80.0 m");
             float[] landTile = tiles.tile(zoom, wx, iyLand).clone();
             landTile[lPy * SIDE + wPx] = -200f;
@@ -1239,7 +1248,8 @@ class ElevationArcticRepairTest {
             // 2. Intra-part midpoint (row 64 weight=1/landVoid=0 vs row 65 weight=0/landVoid=1, both in partRow=2):
             assertEquals(1.0, v3.weight(63.49609375, -19.25), 1e-6, "land overview-2 corner (row 64) must have weight == 1");
             assertEquals(0.0, v3.weight(63.48828125, -19.25), 1e-6, "sea overview-2 corner (row 65) must have weight == 0");
-            int ex = mercatorTileX(zoom, -19.25), ey = mercatorTileY(zoom, 63.4921875);
+            // Shift slightly east of -19.25 (overview-2 col 96 part boundary) so x0..x0+1 stay inside partColumn=3.
+            int ex = mercatorTileX(zoom, -19.24), ey = mercatorTileY(zoom, 63.4921875);
             int ePy = -1, ePx = 128;
             bestDist = Double.MAX_VALUE;
             for (int py = 0; py < SIDE; py++) {
@@ -1247,6 +1257,12 @@ class ElevationArcticRepairTest {
                 if (d < bestDist) { bestDist = d; ePy = py; }
             }
             double eLat = tileLat(zoom, ey, ePy), eLon = tileLon(zoom, ex, ePx);
+            int eX0 = (int) Math.floor((eLon - Math.floor(eLon)) * 128 - 0.5);
+            int eY0 = (int) Math.floor((Math.floor(eLat) + 1 - eLat) * 128 - 0.5);
+            assertEquals(eX0 * CopernicusFill.PARTS / 128, (eX0 + 1) * CopernicusFill.PARTS / 128,
+                    "intra-part check x0..x0+1 must stay strictly inside one partColumn");
+            assertEquals(eY0 * CopernicusFill.PARTS / 128, (eY0 + 1) * CopernicusFill.PARTS / 128,
+                    "intra-part check y0..y0+1 must stay strictly inside one partRow");
             double eMid = v3.weight(eLat, eLon);
             assertTrue(eMid > 0.45 && eMid < 0.55, "expected intra-part midpoint weight near 0.5, got " + eMid);
             assertEquals(38.4, dem.metres(eLat, eLon, 0), 0.1, "fine overview-0 at intra-part midpoint must be +38.4 m");
