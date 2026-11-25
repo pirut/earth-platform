@@ -66,7 +66,7 @@ public final class HostBackoff {
         final Set<String> triedProbePaths = ConcurrentHashMap.newKeySet();
         volatile ProbeCandidate lastHealthy;
         volatile long downUntil, downFor, downSince;
-        final AtomicBoolean checking = new AtomicBoolean();
+        boolean checking; // guarded by synchronized (this)
         volatile String what;
     }
 
@@ -127,8 +127,18 @@ public final class HostBackoff {
         if (health == null || health.downFor == 0) return;
         String path = pathKey(uri);
         rememberProbeCandidate(health, path, uri);
-        if (System.currentTimeMillis() >= health.downUntil && health.checking.compareAndSet(false, true)) {
-            check(chooseProbeUri(uri, path, health), health);
+        URI probeUri = null;
+        long outageSince = 0L;
+        synchronized (health) {
+            if (health.downFor == 0) return;
+            if (System.currentTimeMillis() >= health.downUntil && !health.checking) {
+                health.checking = true;
+                outageSince = health.downSince;
+                probeUri = chooseProbeUri(uri, path, health);
+            }
+        }
+        if (probeUri != null) {
+            check(probeUri, health, outageSince);
         }
         throw new MissingTerrainException(what + " server " + uri.getHost() + " can't be reached; trying it again shortly");
     }
@@ -172,55 +182,64 @@ public final class HostBackoff {
     }
 
     /** Asks the host for the first byte of a healthy (or rotated) file with a hard body deadline; any non-5xx answer means it is back. */
-    private static void check(URI uri, Health health) {
-        Thread.ofVirtual().name("earth-host-check").start(() -> {
-            boolean recovered = false;
-            try {
-                Duration timeout = checkTimeout;
-                java.net.http.HttpClient http = checker;
-                if (http == null) checker = http = java.net.http.HttpClient.newBuilder().connectTimeout(timeout)
-                        .followRedirects(java.net.http.HttpClient.Redirect.NEVER).build();
-                java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(uri).timeout(timeout)
-                        .header("User-Agent", "earth-platform/check").header("Range", "bytes=0-0").GET().build();
-                HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
-                InputStream rawStream = response.body();
-                AtomicBoolean bodyTimedOut = new AtomicBoolean();
-                ScheduledFuture<?> bodyDeadline = PROBE_TIMEOUTS.schedule(() -> {
-                    bodyTimedOut.set(true);
-                    try { rawStream.close(); }
-                    catch (IOException | RuntimeException ignored) { /* already closed */ }
-                }, Math.max(1L, timeout.toNanos()), TimeUnit.NANOSECONDS);
-                try (InputStream bodyStream = rawStream) {
-                    int status = response.statusCode();
-                    byte[] scratch = new byte[4096];
-                    int remaining = MAX_PROBE_DRAIN_BYTES;
-                    while (remaining > 0) {
-                        int read = bodyStream.read(scratch, 0, Math.min(scratch.length, remaining));
-                        if (read < 0) break;
-                        remaining -= read;
+    private static void check(URI uri, Health health, long outageSince) {
+        try {
+            Thread.ofVirtual().name("earth-host-check").start(() -> {
+                boolean recovered = false;
+                try {
+                    Duration timeout = checkTimeout;
+                    java.net.http.HttpClient http = checker;
+                    if (http == null) checker = http = java.net.http.HttpClient.newBuilder().connectTimeout(timeout)
+                            .followRedirects(java.net.http.HttpClient.Redirect.NEVER).build();
+                    java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(uri).timeout(timeout)
+                            .header("User-Agent", "earth-platform/check").header("Range", "bytes=0-0").GET().build();
+                    HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                    InputStream rawStream = response.body();
+                    AtomicBoolean bodyTimedOut = new AtomicBoolean();
+                    ScheduledFuture<?> bodyDeadline = PROBE_TIMEOUTS.schedule(() -> {
+                        bodyTimedOut.set(true);
+                        try { rawStream.close(); }
+                        catch (IOException | RuntimeException ignored) { /* already closed */ }
+                    }, Math.max(1L, timeout.toNanos()), TimeUnit.NANOSECONDS);
+                    try (InputStream bodyStream = rawStream) {
+                        int status = response.statusCode();
+                        byte[] scratch = new byte[4096];
+                        int remaining = MAX_PROBE_DRAIN_BYTES;
+                        while (remaining > 0) {
+                            int read = bodyStream.read(scratch, 0, Math.min(scratch.length, remaining));
+                            if (read < 0) break;
+                            remaining -= read;
+                        }
+                        if (bodyTimedOut.get()) {
+                            throw new HttpTimeoutException("Recovery probe body timed out after " + timeout.toMillis() + " ms for " + uri);
+                        }
+                        if (status < 500 || slowDown(status)) {
+                            answered(uri);
+                            recovered = true;
+                        }
+                    } finally {
+                        bodyDeadline.cancel(false);
                     }
-                    if (bodyTimedOut.get()) {
-                        throw new HttpTimeoutException("Recovery probe body timed out after " + timeout.toMillis() + " ms for " + uri);
-                    }
-                    if (status < 500 || slowDown(status)) {
-                        answered(uri);
-                        recovered = true;
-                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                } catch (IOException | RuntimeException failure) {
+                    // Still down.
                 } finally {
-                    bodyDeadline.cancel(false);
+                    synchronized (health) {
+                        if (!recovered && health.downFor != 0 && health.downSince == outageSince) {
+                            health.downFor = Math.min(LONGEST_DOWN_MS, health.downFor * 2);
+                            health.downUntil = System.currentTimeMillis() + health.downFor;
+                        }
+                        health.checking = false;
+                    }
                 }
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-            } catch (IOException | RuntimeException failure) {
-                // Still down.
-            } finally {
-                if (!recovered) {
-                    health.downFor = Math.min(LONGEST_DOWN_MS, health.downFor * 2);
-                    health.downUntil = System.currentTimeMillis() + health.downFor;
-                }
-                health.checking.set(false);
+            });
+        } catch (Throwable failedToStart) {
+            synchronized (health) {
+                health.checking = false;
             }
-        });
+            throw failedToStart;
+        }
     }
 
     /** The host answered (any non-5xx HTTP status): it is up. */
@@ -236,11 +255,19 @@ public final class HostBackoff {
         health.streak5xxStart.set(0);
         health.failingPaths.clear();
         health.triedProbePaths.clear();
-        if (health.downFor != 0) {
-            long seconds = (System.currentTimeMillis() - health.downSince) / 1000;
-            health.downFor = 0;
+        long downSeconds = -1L;
+        String what = null;
+        synchronized (health) {
+            if (health.downFor != 0) {
+                downSeconds = (System.currentTimeMillis() - health.downSince) / 1000;
+                what = health.what;
+                health.downFor = 0;
+                health.downUntil = 0L;
+            }
+        }
+        if (downSeconds >= 0L) {
             System.getLogger("earthplatform").log(System.Logger.Level.INFO, "{0} host {1} is reachable again after {2} s; downloads resume",
-                    health.what, uri.getHost(), seconds);
+                    what, uri.getHost(), downSeconds);
         }
     }
 
@@ -299,7 +326,20 @@ public final class HostBackoff {
     /** Package-private for tests: immediately makes the next recovery probe due. */
     static void expireBackoffForTest(URI uri) {
         Health health = HEALTH.get(hostKey(uri));
-        if (health != null) health.downUntil = 0L;
+        if (health != null) {
+            synchronized (health) {
+                health.downUntil = 0L;
+            }
+        }
+    }
+
+    /** Package-private for tests: whether a recovery probe is currently in flight for {@code uri}'s host. */
+    static boolean isCheckingForTest(URI uri) {
+        Health health = HEALTH.get(hostKey(uri));
+        if (health == null) return false;
+        synchronized (health) {
+            return health.checking;
+        }
     }
 
     /** Package-private for tests: clears host state for {@code uri}'s authority. */

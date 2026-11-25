@@ -54,6 +54,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
 import java.util.function.LongFunction;
+import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
@@ -483,6 +484,7 @@ public final class ServerCubeWorld extends CubeWorld {
         if (!entry.entities().isEmpty()) unplacedEntities.put(cube.key, new ArrayList<>(entry.entities()));
         else unplacedEntities.remove(cube.key);
         adopt(cube);
+        surveys.openBehind(cube.x, cube.y, cube.z, openFaces(cube.section), quietCap());
         server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
         CubicPoiClaims.reclaim(server, SectionPos.of(cube.x, cube.y, cube.z));
         refreshTops(cube);
@@ -677,25 +679,62 @@ public final class ServerCubeWorld extends CubeWorld {
         });
     }
 
+    private static final long PREGENERATE_COORDINATION_TIMEOUT_MILLIS = 5_000L;
+
     private LongArrayList coordinatePregenerateKeys(LongArrayList candidates) {
-        if (server.getServer().isSameThread()) {
-            return filterPregenerateKeys(candidates, () -> closed || closing, cubes::containsKey, untouchedStores);
+        return coordinatePregenerateKeys(
+                candidates,
+                server.getServer().isSameThread(),
+                server.getServer(),
+                () -> closed || closing,
+                cubes::containsKey,
+                untouchedStores,
+                PREGENERATE_COORDINATION_TIMEOUT_MILLIS);
+    }
+
+    /**
+     * Coordinates pregeneration key filtering on the server thread before off-thread storage reads.
+     * On timeout, interruption, or server-thread failure, cancels the queued task so it becomes a no-op
+     * if executed later and propagates a {@link RuntimeException} (so callers such as Chunky record the
+     * column failure rather than treating it as successfully generated), unless the world is closing/closed.
+     */
+    static LongArrayList coordinatePregenerateKeys(LongArrayList candidates, boolean onServerThread,
+                                                   Executor serverThread, BooleanSupplier isClosed,
+                                                   LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores,
+                                                   long timeoutMillis) {
+        if (onServerThread) {
+            return filterPregenerateKeys(candidates, isClosed, isLoaded, untouchedStores);
         }
         CompletableFuture<LongArrayList> checked = new CompletableFuture<>();
-        server.getServer().execute(() -> {
+        AtomicBoolean cancelled = new AtomicBoolean();
+        serverThread.execute(() -> {
+            if (cancelled.get() || checked.isCancelled()) return;
             try {
-                checked.complete(filterPregenerateKeys(candidates, () -> closed || closing, cubes::containsKey, untouchedStores));
+                checked.complete(filterPregenerateKeys(candidates, isClosed, isLoaded, untouchedStores));
             } catch (Throwable failure) {
                 checked.completeExceptionally(failure);
             }
         });
         try {
-            return checked.get(5, TimeUnit.SECONDS);
+            return checked.get(Math.max(1L, timeoutMillis), TimeUnit.MILLISECONDS);
         } catch (InterruptedException interrupted) {
+            cancelled.set(true);
+            checked.cancel(false);
             Thread.currentThread().interrupt();
-            return new LongArrayList();
-        } catch (ExecutionException | TimeoutException unavailable) {
-            return new LongArrayList();
+            if (isClosed.getAsBoolean()) return new LongArrayList();
+            throw new IllegalStateException("Interrupted waiting for server thread during pregeneration", interrupted);
+        } catch (TimeoutException timedOut) {
+            cancelled.set(true);
+            checked.cancel(false);
+            if (isClosed.getAsBoolean()) return new LongArrayList();
+            throw new IllegalStateException("Timed out waiting " + timeoutMillis + " ms for server thread during pregeneration", timedOut);
+        } catch (ExecutionException failed) {
+            cancelled.set(true);
+            checked.cancel(false);
+            Throwable cause = failed.getCause() != null ? failed.getCause() : failed;
+            if (cause instanceof RuntimeException runtime) throw runtime;
+            if (cause instanceof Error error) throw error;
+            throw new IllegalStateException("Server thread pregeneration coordination failed", cause);
         }
     }
 
@@ -1717,23 +1756,40 @@ public final class ServerCubeWorld extends CubeWorld {
      * persistent shutdown save failure as an {@link IOException}.
      */
     static void finishShutdownDrain(UntouchedStoreQueue<?> untouchedStores, AutoCloseable storageCloser) throws IOException {
-        UntouchedStoreQueue.DrainResult drainResult = untouchedStores.drainAll();
-        IOException storageError = null;
+        UntouchedStoreQueue.DrainResult drainResult = UntouchedStoreQueue.DrainResult.OK;
+        Throwable drainFailure = null;
+        Throwable storageFailure = null;
         try {
-            storageCloser.close();
-        } catch (IOException failure) {
-            storageError = failure;
-        } catch (Exception failure) {
-            storageError = new IOException("Could not close cube storage", failure);
+            drainResult = untouchedStores.drainAll();
+        } catch (Throwable failure) {
+            drainFailure = failure;
+        } finally {
+            try {
+                storageCloser.close();
+            } catch (Throwable failure) {
+                storageFailure = failure;
+            }
+        }
+        if (drainFailure != null) {
+            if (storageFailure != null) drainFailure.addSuppressed(storageFailure);
+            if (drainFailure instanceof IOException io) throw io;
+            if (drainFailure instanceof RuntimeException runtime) throw runtime;
+            if (drainFailure instanceof Error error) throw error;
+            throw new IOException("Unexpected failure draining pending untouched cubes", drainFailure);
         }
         if (!drainResult.ok()) {
             IOException drainError = new IOException(
                     "Could not save " + drainResult.failedCount() + " pending untouched cube(s) before closing storage",
                     drainResult.firstFailure());
-            if (storageError != null) drainError.addSuppressed(storageError);
+            if (storageFailure != null) drainError.addSuppressed(storageFailure);
             throw drainError;
         }
-        if (storageError != null) throw storageError;
+        if (storageFailure != null) {
+            if (storageFailure instanceof IOException io) throw io;
+            if (storageFailure instanceof RuntimeException runtime) throw runtime;
+            if (storageFailure instanceof Error error) throw error;
+            throw new IOException("Could not close cube storage", storageFailure);
+        }
     }
 
     /**
@@ -1748,6 +1804,8 @@ public final class ServerCubeWorld extends CubeWorld {
     static final class UntouchedStoreQueue<T> {
         static final int MAX_EVICTED_RETRIES = 3;
         static final long DEFAULT_DRAIN_TIMEOUT_MILLIS = 5_000L;
+        static final long INITIAL_RETRY_BACKOFF_NANOS = TimeUnit.SECONDS.toNanos(1);
+        static final long MAX_RETRY_BACKOFF_NANOS = TimeUnit.SECONDS.toNanos(30);
 
         @FunctionalInterface interface Writer<T> { void write(long key, T tag) throws IOException; }
         @FunctionalInterface interface ErrorLogger { void log(long key, Throwable failure); }
@@ -1777,6 +1835,8 @@ public final class ServerCubeWorld extends CubeWorld {
             private boolean encodeFailed;
             private boolean writeFailed;
             private int failures;
+            private long nextRetryAtNanos;
+            private boolean retryScheduled;
             @Nullable private Throwable lastFailure;
 
             Entry(Cube cube, boolean owedAnimals, List<CompoundTag> entities, Supplier<T> encoder,
@@ -1804,20 +1864,40 @@ public final class ServerCubeWorld extends CubeWorld {
         private final Predicate<Entry<T>> metadataUnchanged;
         private final ErrorLogger errorLogger;
         private final long drainTimeoutMillis;
+        private final LongSupplier clockNanos;
 
         UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
                             Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger) {
-            this(isClosed, currentCube, writer, metadataUnchanged, errorLogger, DEFAULT_DRAIN_TIMEOUT_MILLIS);
+            this(isClosed, currentCube, writer, metadataUnchanged, errorLogger, DEFAULT_DRAIN_TIMEOUT_MILLIS, System::nanoTime);
         }
 
         UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
                             Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger, long drainTimeoutMillis) {
+            this(isClosed, currentCube, writer, metadataUnchanged, errorLogger, drainTimeoutMillis, System::nanoTime);
+        }
+
+        UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
+                            Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger, long drainTimeoutMillis,
+                            LongSupplier clockNanos) {
             this.isClosed = isClosed;
             this.currentCube = currentCube;
             this.writer = writer;
             this.metadataUnchanged = metadataUnchanged;
             this.errorLogger = errorLogger;
             this.drainTimeoutMillis = Math.max(1L, drainTimeoutMillis);
+            this.clockNanos = Objects.requireNonNull(clockNanos, "clockNanos");
+        }
+
+        private void scheduleRetryBackoff(Entry<T> entry) {
+            if (entry.failures < Integer.MAX_VALUE) entry.failures++;
+            int shift = Math.min(Math.max(0, entry.failures - 1), 16);
+            long delay = Math.min(MAX_RETRY_BACKOFF_NANOS, INITIAL_RETRY_BACKOFF_NANOS << shift);
+            entry.nextRetryAtNanos = clockNanos.getAsLong() + delay;
+            entry.retryScheduled = true;
+        }
+
+        private boolean isRetryDue(Entry<T> entry) {
+            return !entry.retryScheduled || (clockNanos.getAsLong() - entry.nextRetryAtNanos >= 0L);
         }
 
         void enqueue(Cube cube, boolean owedAnimals, List<CompoundTag> entities, Supplier<T> encoder,
@@ -1850,6 +1930,7 @@ public final class ServerCubeWorld extends CubeWorld {
             } catch (RejectedExecutionException rejected) {
                 entry.rejected = true;
                 entry.lastFailure = rejected;
+                scheduleRetryBackoff(entry);
             }
         }
 
@@ -1859,6 +1940,7 @@ public final class ServerCubeWorld extends CubeWorld {
             entry.attempt = next;
             entry.encodeFailed = false;
             entry.rejected = false;
+            entry.retryScheduled = false;
             submitAttempt(entry, next);
         }
 
@@ -1892,13 +1974,14 @@ public final class ServerCubeWorld extends CubeWorld {
             entry.lastFailure = failure;
             errorLogger.log(entry.key, failure);
             Cube now = currentCube.apply(entry.key);
-            if (retainOnFailure && !isClosed.getAsBoolean() && !isInvalidated(entry, now)) {
-                entry.encodeFailed = true;
+            if (isClosed.getAsBoolean() || isInvalidated(entry, now)) {
+                pending.remove(entry.key);
                 return;
             }
-            // If the cube is already evicted, retain the latest snapshot in pending for bounded retries.
-            if (now == null && !isClosed.getAsBoolean() && !entry.cube.edited && ++entry.failures <= MAX_EVICTED_RETRIES) {
+            // Never discard an evicted (or caller-retained) authoritative snapshot when encode retries fail.
+            if (retainOnFailure || now == null) {
                 entry.encodeFailed = true;
+                scheduleRetryBackoff(entry);
                 return;
             }
             pending.remove(entry.key);
@@ -1907,6 +1990,8 @@ public final class ServerCubeWorld extends CubeWorld {
         /**
          * Attempts to write {@code tag} for {@code entry}. Returns {@code true} only if {@code writer.write()}
          * succeeded or the entry was already invalidated/superseded; returns {@code false} if closed or write failed.
+         * Evicted authoritative snapshots are retained in {@code pending} with exponential retry backoff until
+         * committed, invalidated, or re-adopted.
          */
         private boolean commit(Entry<T> entry, T tag, boolean retainOnFailure) {
             if (pending.get(entry.key) != entry) return true;
@@ -1924,6 +2009,9 @@ public final class ServerCubeWorld extends CubeWorld {
                 writer.write(entry.key, tag);
                 pending.remove(entry.key);
                 entry.writeFailed = false;
+                entry.encodeFailed = false;
+                entry.rejected = false;
+                entry.retryScheduled = false;
                 entry.lastFailure = null;
                 if (!entry.cube.edited && (now == null || metadataUnchanged.test(entry))) {
                     entry.cube.dirty = false;
@@ -1934,11 +2022,13 @@ public final class ServerCubeWorld extends CubeWorld {
                 errorLogger.log(entry.key, failure);
                 entry.cachedTag = tag;
                 entry.writeFailed = true;
-                if (retainOnFailure) {
+                if (isClosed.getAsBoolean() || isInvalidated(entry, now)) {
+                    pending.remove(entry.key);
                     return false;
                 }
-                // Do not discard the only retryable snapshot of an already-evicted cube on transient write error.
-                if (now == null && !isClosed.getAsBoolean() && !entry.cube.edited && ++entry.failures <= MAX_EVICTED_RETRIES) {
+                // Never discard an evicted (or caller-retained) authoritative snapshot when write retries fail.
+                if (retainOnFailure || now == null) {
+                    scheduleRetryBackoff(entry);
                     return false;
                 }
                 pending.remove(entry.key);
@@ -1963,11 +2053,15 @@ public final class ServerCubeWorld extends CubeWorld {
                     continue;
                 }
                 if (entry.writeFailed && entry.cachedTag != null) {
-                    commit(entry, entry.cachedTag, false);
+                    if (isRetryDue(entry)) {
+                        commit(entry, entry.cachedTag, false);
+                    }
                     continue;
                 }
                 if (entry.encodeFailed || entry.rejected) {
-                    resubmitOffThread(entry);
+                    if (isRetryDue(entry)) {
+                        resubmitOffThread(entry);
+                    }
                     continue;
                 }
                 Attempt<T> attempt = entry.attempt;
@@ -1983,7 +2077,7 @@ public final class ServerCubeWorld extends CubeWorld {
                     if (!attempt.handled) {
                         attempt.handled = true;
                         fail(entry, failed.getCause() != null ? failed.getCause() : failed, false);
-                        if (pending.get(entry.key) == entry && entry.encodeFailed) {
+                        if (pending.get(entry.key) == entry && entry.encodeFailed && isRetryDue(entry)) {
                             resubmitOffThread(entry);
                         }
                     }
@@ -1991,7 +2085,7 @@ public final class ServerCubeWorld extends CubeWorld {
                     if (!attempt.handled) {
                         attempt.handled = true;
                         fail(entry, cancelled, false);
-                        if (pending.get(entry.key) == entry && entry.encodeFailed) {
+                        if (pending.get(entry.key) == entry && entry.encodeFailed && isRetryDue(entry)) {
                             resubmitOffThread(entry);
                         }
                     }
@@ -2022,10 +2116,13 @@ public final class ServerCubeWorld extends CubeWorld {
                 return true;
             }
             if (entry.writeFailed && entry.cachedTag != null) {
+                if (!isRetryDue(entry)) return false;
                 return commit(entry, entry.cachedTag, false);
             }
             if (entry.encodeFailed || entry.rejected) {
-                resubmitOffThread(entry);
+                if (isRetryDue(entry)) {
+                    resubmitOffThread(entry);
+                }
                 return false;
             }
             Attempt<T> attempt = entry.attempt;
@@ -2039,7 +2136,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 if (!attempt.handled) {
                     attempt.handled = true;
                     fail(entry, failed.getCause() != null ? failed.getCause() : failed, false);
-                    if (pending.get(key) == entry && entry.encodeFailed) {
+                    if (pending.get(key) == entry && entry.encodeFailed && isRetryDue(entry)) {
                         resubmitOffThread(entry);
                     }
                 }
@@ -2048,7 +2145,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 if (!attempt.handled) {
                     attempt.handled = true;
                     fail(entry, cancelled, false);
-                    if (pending.get(key) == entry && entry.encodeFailed) {
+                    if (pending.get(key) == entry && entry.encodeFailed && isRetryDue(entry)) {
                         resubmitOffThread(entry);
                     }
                 }
@@ -2108,16 +2205,19 @@ public final class ServerCubeWorld extends CubeWorld {
             Throwable firstFailure = null;
             // Drain non-in-flight entries first so in-flight worker encodes can finish concurrently.
             List<Entry<T>> firstPass = new ArrayList<>(pending.values());
+            List<Entry<T>> deferred = new ArrayList<>();
             for (Entry<T> entry : firstPass) {
                 if (pending.get(entry.key) != entry) continue;
-                if (entry.isWorkerInFlight()) continue;
+                if (entry.isWorkerInFlight()) {
+                    deferred.add(entry);
+                    continue;
+                }
                 if (!drainEntryWithRetries(entry)) {
                     failedCount++;
                     if (firstFailure == null) firstFailure = entry.lastFailure;
                 }
             }
-            List<Entry<T>> secondPass = new ArrayList<>(pending.values());
-            for (Entry<T> entry : secondPass) {
+            for (Entry<T> entry : deferred) {
                 if (pending.get(entry.key) != entry) continue;
                 if (!drainEntryWithRetries(entry)) {
                     failedCount++;
@@ -2139,9 +2239,10 @@ public final class ServerCubeWorld extends CubeWorld {
                 pending.remove(entry.key);
                 return true;
             }
+            boolean alreadyFailed = entry.writeFailed || entry.encodeFailed || entry.rejected;
             if (drainEntryOnce(entry, false)) return true;
-            int maxLoops = MAX_EVICTED_RETRIES + 2;
-            while (pending.get(entry.key) == entry && !entry.isWorkerInFlight() && maxLoops-- > 0) {
+            int remainingRetries = alreadyFailed ? MAX_EVICTED_RETRIES - 1 : MAX_EVICTED_RETRIES;
+            while (pending.get(entry.key) == entry && !entry.isWorkerInFlight() && remainingRetries-- > 0) {
                 if (entry.writeFailed && entry.cachedTag != null) {
                     if (commit(entry, entry.cachedTag, false)) return true;
                 } else if (entry.encodeFailed || entry.rejected) {

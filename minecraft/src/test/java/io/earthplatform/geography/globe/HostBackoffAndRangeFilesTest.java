@@ -14,8 +14,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -739,6 +744,186 @@ class HostBackoffAndRangeFilesTest {
         } finally {
             releaseStall.countDown();
             HostBackoff.setCheckTimeoutForTest(null);
+            HostBackoff.clear(base);
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void rangeFilesRejectsMalformedContentRangeGrammarAndDuplicateHeadersWithoutTrippingHostBackoff() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            byte[] payload = {1, 2, 3, 4};
+            switch (path) {
+                case "/signed-spaced" -> exchange.getResponseHeaders().set("Content-Range", "bytes +0-3 / +4");
+                case "/plus-start" -> exchange.getResponseHeaders().set("Content-Range", "bytes +0-3/4");
+                case "/plus-end" -> exchange.getResponseHeaders().set("Content-Range", "bytes 0-+3/4");
+                case "/plus-total" -> exchange.getResponseHeaders().set("Content-Range", "bytes 0-3/+4");
+                case "/extra-space-slash" -> exchange.getResponseHeaders().set("Content-Range", "bytes 0-3 / 4");
+                case "/extra-space-dash" -> exchange.getResponseHeaders().set("Content-Range", "bytes 0 - 3/4");
+                case "/double-space-unit" -> exchange.getResponseHeaders().set("Content-Range", "bytes  0-3/4");
+                case "/unknown-total" -> exchange.getResponseHeaders().set("Content-Range", "bytes 0-3/*");
+                case "/uppercase-unit" -> exchange.getResponseHeaders().set("Content-Range", "BYTES 0-3/4");
+                case "/duplicate-cr" -> {
+                    exchange.getResponseHeaders().add("Content-Range", "bytes 0-3/4");
+                    exchange.getResponseHeaders().add("Content-Range", "bytes 0-3/4");
+                }
+                case "/valid" -> exchange.getResponseHeaders().set("Content-Range", "bytes 0-3/4");
+                default -> {
+                    exchange.sendResponseHeaders(404, -1);
+                    exchange.close();
+                    return;
+                }
+            }
+            exchange.sendResponseHeaders(206, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/");
+        HostBackoff.clear(base);
+        try (RangeFiles files = new RangeFiles("Test", "test", "test-range-r3", 2, Duration.ofSeconds(3))) {
+            // Direct parser grammar checks including leading/trailing whitespace and non-ASCII digits.
+            URI sample = base.resolve("sample");
+            for (String malformed : new String[] {
+                    "bytes +0-3 / +4",
+                    " bytes 0-3/4",
+                    "bytes 0-3/4 ",
+                    "bytes +0-3/4",
+                    "bytes 0-+3/4",
+                    "bytes 0-3/+4",
+                    "bytes 0-3/-4",
+                    "bytes 0-3 / 4",
+                    "bytes 0 -3/4",
+                    "bytes  0-3/4",
+                    "bytes 0-3/* ",
+                    "bytes 0-3 / *",
+                    "BYTES 0-3/4",
+                    "bytes 0-3/4/5",
+                    "bytes ٠-٣/٤"
+            }) {
+                assertThrows(RangeFiles.InvalidRangeResponseException.class,
+                        () -> RangeFiles.parseContentRange(malformed, sample),
+                        "must reject malformed Content-Range: '" + malformed + "'");
+            }
+            RangeFiles.ContentRange parsed = RangeFiles.parseContentRange("bytes 0-3/4", sample);
+            assertEquals(0L, parsed.start());
+            assertEquals(3L, parsed.end());
+            assertEquals(4L, parsed.total());
+            RangeFiles.ContentRange unknownTotalParsed = RangeFiles.parseContentRange("bytes 0-3/*", sample);
+            assertEquals(-1L, unknownTotalParsed.total());
+
+            // End-to-end HTTP 206 checks: every malformed or duplicate Content-Range fails without tripping HostBackoff!
+            for (String badPath : new String[] {
+                    "signed-spaced",
+                    "plus-start",
+                    "plus-end",
+                    "plus-total",
+                    "extra-space-slash",
+                    "extra-space-dash",
+                    "double-space-unit",
+                    "uppercase-unit",
+                    "duplicate-cr"
+            }) {
+                MissingTerrainException ex = assertThrows(MissingTerrainException.class,
+                        () -> files.fetchResult(base.resolve(badPath), 0, 4),
+                        "HTTP 206 with " + badPath + " must fail validation");
+                assertTrue(ex.getMessage().contains("Content-Range"), badPath + ": " + ex.getMessage());
+                assertFalse(HostBackoff.isDown(base), "validation error on " + badPath + " must NEVER trip HostBackoff");
+            }
+            // Short read with unknown total (/*) must be rejected without tripping HostBackoff.
+            MissingTerrainException shortUnknown = assertThrows(MissingTerrainException.class,
+                    () -> files.fetchResult(base.resolve("unknown-total"), 0, 16));
+            assertTrue(shortUnknown.getMessage().contains("Content-Range"), shortUnknown.getMessage());
+            assertFalse(HostBackoff.isDown(base), "short read with unknown total must NEVER trip HostBackoff");
+
+            // Valid single strict RFC 9110 Content-Range succeeds immediately afterwards.
+            RangeFiles.FetchResult ok = files.fetchResult(base.resolve("valid"), 0, 4);
+            assertTrue(ok.isOk());
+            assertArrayEquals(new byte[] {1, 2, 3, 4}, ok.bytes());
+            assertFalse(HostBackoff.isDown(base));
+        } finally {
+            HostBackoff.clear(base);
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void hostBackoffSynchronizesProbeClaimAndCompletionAcrossExpiryBoundary() throws Exception {
+        AtomicInteger probeHits = new AtomicInteger();
+        AtomicReference<CountDownLatch> enteredRef = new AtomicReference<>();
+        AtomicReference<CountDownLatch> releaseRef = new AtomicReference<>();
+
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/", exchange -> {
+            probeHits.incrementAndGet();
+            CountDownLatch entered = enteredRef.get();
+            if (entered != null) entered.countDown();
+            CountDownLatch release = releaseRef.get();
+            if (release != null) {
+                try { release.await(5, TimeUnit.SECONDS); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        server.start();
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/");
+        URI probeUri = base.resolve("fail.tif");
+        HostBackoff.clear(base);
+        ExecutorService callers = Executors.newFixedThreadPool(12);
+        try {
+            HostBackoff.failed(probeUri, "Test", new java.net.http.HttpConnectTimeoutException("down"));
+            assertTrue(HostBackoff.isDown(base));
+
+            int rounds = 6;
+            for (int round = 1; round <= rounds; round++) {
+                CountDownLatch entered = new CountDownLatch(1);
+                CountDownLatch release = new CountDownLatch(1);
+                enteredRef.set(entered);
+                releaseRef.set(release);
+
+                HostBackoff.expireBackoffForTest(probeUri);
+                AtomicBoolean keepHammering = new AtomicBoolean(true);
+                CyclicBarrier startTogether = new CyclicBarrier(12);
+                List<Future<?>> futures = new ArrayList<>();
+                for (int t = 0; t < 12; t++) {
+                    futures.add(callers.submit(() -> {
+                        try { startTogether.await(5, TimeUnit.SECONDS); }
+                        catch (Exception e) { throw new RuntimeException(e); }
+                        while (keepHammering.get()) {
+                            try { HostBackoff.reachable(probeUri, "Test"); }
+                            catch (MissingTerrainException expected) { /* host down */ }
+                            Thread.onSpinWait();
+                        }
+                    }));
+                }
+
+                // Wait for the single winning probe to reach the server, then release it while all 12 threads
+                // hammer reachable() across the exact completion boundary (downUntil update + checking=false).
+                assertTrue(entered.await(5, TimeUnit.SECONDS), "probe did not start on round " + round);
+                release.countDown();
+                for (int i = 0; i < 200 && HostBackoff.isCheckingForTest(probeUri); i++) {
+                    Thread.sleep(5);
+                }
+                assertFalse(HostBackoff.isCheckingForTest(probeUri), "probe must finish and clear checking");
+                Thread.sleep(15);
+                keepHammering.set(false);
+                for (Future<?> f : futures) f.get(5, TimeUnit.SECONDS);
+
+                assertEquals(round, probeHits.get(),
+                        "concurrent callers across expiry and probe completion must never start an extra probe (round " + round + ")");
+                assertTrue(HostBackoff.isDown(base));
+            }
+        } finally {
+            CountDownLatch release = releaseRef.get();
+            if (release != null) release.countDown();
+            callers.shutdownNow();
             HostBackoff.clear(base);
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();

@@ -15,8 +15,8 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -150,7 +150,7 @@ final class RangeFiles implements AutoCloseable {
                                 offset,
                                 length,
                                 response.headers().firstValueAsLong("Content-Length"),
-                                response.headers().firstValue("Content-Range"),
+                                response.headers().allValues("Content-Range"),
                                 bodyStream);
                         HostBackoff.answered(uri);
                         downloads.incrementAndGet();
@@ -205,30 +205,49 @@ final class RangeFiles implements AutoCloseable {
         }
     }
 
-    private record ContentRange(long start, long end, long total) {
+    record ContentRange(long start, long end, long total) {
         long length() { return end - start + 1; }
     }
 
-    private static ContentRange parseContentRange(String header, URI uri) throws InvalidRangeResponseException {
-        String trimmed = header.trim();
-        if (!trimmed.regionMatches(true, 0, "bytes ", 0, 6)) {
+    private static boolean isAsciiDigits(String text, int start, int end) {
+        if (start >= end) return false;
+        for (int i = start; i < end; i++) {
+            char c = text.charAt(i);
+            if (c < '0' || c > '9') return false;
+        }
+        return true;
+    }
+
+    /**
+     * Validates strict RFC 9110 §14.4 {@code bytes <digits>-<digits>/(<digits>|*)} ASCII grammar
+     * (rejecting signs, extra spaces, leading/trailing whitespace, and non-ASCII digits). Unknown
+     * totals ({@code /*}) return {@code total = -1L} and are rejected on short reads where EOF cannot be proven.
+     */
+    static ContentRange parseContentRange(String header, URI uri) throws InvalidRangeResponseException {
+        if (header == null || !header.startsWith("bytes ")) {
             throw new InvalidRangeResponseException("Unsupported HTTP 206 Content-Range '" + header + "' for " + uri);
         }
-        String spec = trimmed.substring(6).trim();
-        int slash = spec.indexOf('/');
-        int dash = spec.indexOf('-');
-        if (slash < 0 || dash <= 0 || dash >= slash - 1) {
+        int startPos = 6;
+        int dash = header.indexOf('-', startPos);
+        int slash = header.indexOf('/', dash + 1);
+        if (dash <= startPos || slash <= dash + 1 || slash >= header.length() - 1) {
+            throw new InvalidRangeResponseException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri);
+        }
+        if (!isAsciiDigits(header, startPos, dash) || !isAsciiDigits(header, dash + 1, slash)) {
+            throw new InvalidRangeResponseException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri);
+        }
+        boolean unknownTotal = slash + 2 == header.length() && header.charAt(slash + 1) == '*';
+        if (!unknownTotal && !isAsciiDigits(header, slash + 1, header.length())) {
             throw new InvalidRangeResponseException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri);
         }
         try {
-            long start = Long.parseLong(spec.substring(0, dash).trim());
-            long end = Long.parseLong(spec.substring(dash + 1, slash).trim());
-            String totalText = spec.substring(slash + 1).trim();
+            long start = Long.parseLong(header, startPos, dash, 10);
+            long end = Long.parseLong(header, dash + 1, slash, 10);
             long total;
-            if ("*".equals(totalText)) {
+            if (unknownTotal) {
                 total = -1L;
             } else {
-                total = Long.parseLong(totalText);
+                total = Long.parseLong(header, slash + 1, header.length(), 10);
                 if (total <= 0) {
                     throw new InvalidRangeResponseException("Non-positive HTTP 206 Content-Range total '" + header + "' for " + uri);
                 }
@@ -246,7 +265,7 @@ final class RangeFiles implements AutoCloseable {
     }
 
     private byte[] readBoundedBody(URI uri, int status, long offset, int length,
-                                   OptionalLong contentLength, Optional<String> contentRangeHeader,
+                                   OptionalLong contentLength, List<String> contentRangeHeaders,
                                    InputStream stream) throws IOException {
         if (status == 200) {
             // Strictly enforce the independent HTTP 200 fallback cap regardless of requested length.
@@ -279,11 +298,14 @@ final class RangeFiles implements AutoCloseable {
             }
             return out.toByteArray();
         }
-        // HTTP 206 partial content: require a valid Content-Range header and enforce exact length & EOF rules.
-        if (contentRangeHeader.isEmpty()) {
-            throw new InvalidRangeResponseException("HTTP 206 missing Content-Range header for " + uri);
+        // HTTP 206 partial content: require exactly one valid Content-Range header and enforce exact length & EOF rules.
+        if (contentRangeHeaders.size() != 1) {
+            throw new InvalidRangeResponseException(contentRangeHeaders.isEmpty()
+                    ? "HTTP 206 missing Content-Range header for " + uri
+                    : "HTTP 206 duplicate Content-Range headers (" + contentRangeHeaders.size() + ") for " + uri);
         }
-        ContentRange range = parseContentRange(contentRangeHeader.get(), uri);
+        String contentRangeHeader = contentRangeHeaders.get(0);
+        ContentRange range = parseContentRange(contentRangeHeader, uri);
         if (range.start() != offset) {
             throw new InvalidRangeResponseException("HTTP 206 Content-Range start " + range.start() + " != requested offset " + offset + " for " + uri);
         }
@@ -292,7 +314,7 @@ final class RangeFiles implements AutoCloseable {
             throw new InvalidRangeResponseException("HTTP 206 Content-Range length " + rangeLength + " exceeds requested " + length + " for " + uri);
         }
         if (rangeLength < (long) length && (range.total() <= 0 || range.end() + 1 != range.total())) {
-            throw new InvalidRangeResponseException("Short HTTP 206 Content-Range '" + contentRangeHeader.get() + "' before EOF (requested " + length + " bytes from " + offset + ") for " + uri);
+            throw new InvalidRangeResponseException("Short HTTP 206 Content-Range '" + contentRangeHeader + "' before EOF (requested " + length + " bytes from " + offset + ") for " + uri);
         }
         if (contentLength.isPresent() && contentLength.getAsLong() != rangeLength) {
             throw new InvalidRangeResponseException("HTTP 206 Content-Length " + contentLength.getAsLong() + " != Content-Range length " + rangeLength + " for " + uri);

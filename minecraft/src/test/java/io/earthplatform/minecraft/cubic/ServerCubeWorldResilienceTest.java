@@ -30,7 +30,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -383,6 +385,7 @@ class ServerCubeWorldResilienceTest {
         List<Runnable> workerTasks = new ArrayList<>();
         ConcurrentLinkedQueue<Runnable> serverTasks = new ConcurrentLinkedQueue<>();
 
+        AtomicLong clockNanos = new AtomicLong(1_000_000_000L);
         var queue = new ServerCubeWorld.UntouchedStoreQueue<String>(
                 closed::get,
                 loaded::get,
@@ -392,7 +395,8 @@ class ServerCubeWorldResilienceTest {
                 },
                 entry -> metadataSame.get(),
                 (key, err) -> errors.add(err),
-                80L);
+                80L,
+                clockNanos::get);
 
         // 1. save() (commitReady) commits ONLY already-done entries without running unclaimed encoders on server thread!
         Cube readyCube = new Cube(1, 2, 3, null);
@@ -452,9 +456,12 @@ class ServerCubeWorldResilienceTest {
         assertEquals(1, queue.pendingCount(), "evicted cube snapshot must be retained in pending after transient write failure");
         assertTrue(evictedCube.dirty);
 
-        // Next save() retries writing the cached encoded tag and succeeds without re-running encoder!
+        // Next save() respects backoff until retry delay elapses, then writes cached encoded tag without re-encoding!
         queue.commitReady();
-        assertEquals("tag-evicted", written.get(evictedCube.key), "evicted cube succeeds on next save()");
+        assertFalse(written.containsKey(evictedCube.key), "immediate save() inside backoff window must not hammer storage");
+        clockNanos.addAndGet(ServerCubeWorld.UntouchedStoreQueue.INITIAL_RETRY_BACKOFF_NANOS);
+        queue.commitReady();
+        assertEquals("tag-evicted", written.get(evictedCube.key), "evicted cube succeeds on next save() after backoff");
         assertEquals(1, evictedEncodeCalls.get(), "write retry must reuse encoded tag without re-encoding");
         assertFalse(evictedCube.dirty);
         assertEquals(0, queue.pendingCount());
@@ -614,6 +621,7 @@ class ServerCubeWorldResilienceTest {
         List<Runnable> workerTasks = new ArrayList<>();
         ConcurrentLinkedQueue<Runnable> serverTasks = new ConcurrentLinkedQueue<>();
 
+        AtomicLong clockNanos = new AtomicLong(1_000_000_000L);
         var queue = new ServerCubeWorld.UntouchedStoreQueue<String>(
                 () -> false,
                 loaded::get,
@@ -623,7 +631,8 @@ class ServerCubeWorldResilienceTest {
                 },
                 entry -> true,
                 (key, err) -> errors.add(err),
-                80L);
+                80L,
+                clockNanos::get);
 
         // 1. Async request() when pending write fails: defers without reading stale storage; succeeds once committed!
         Cube cube1 = new Cube(10, 20, 30, null);
@@ -643,8 +652,11 @@ class ServerCubeWorldResilienceTest {
         assertFalse(pending.contains(cube1.key));
         assertEquals(1, queue.pendingCount());
 
-        // Storage recovers: next async request() commits non-blockingly and dispatches reload reading fresh-v2!
+        // Storage recovers: once retry backoff elapses, next async request() commits non-blockingly and reloads fresh-v2!
         failWrites.set(false);
+        assertFalse(ServerCubeWorld.submitReadRequest(cube1.key, pending, queue, Runnable::run, readDispatches::incrementAndGet),
+                "async request() inside backoff window must defer without hammering storage");
+        clockNanos.addAndGet(ServerCubeWorld.UntouchedStoreQueue.INITIAL_RETRY_BACKOFF_NANOS);
         AtomicReference<String> reloaded = new AtomicReference<>();
         assertTrue(ServerCubeWorld.submitReadRequest(cube1.key, pending, queue, Runnable::run, () -> {
             readDispatches.incrementAndGet();
@@ -804,6 +816,7 @@ class ServerCubeWorldResilienceTest {
         List<Runnable> workerTasks = new ArrayList<>();
         ConcurrentLinkedQueue<Runnable> serverTasks = new ConcurrentLinkedQueue<>();
 
+        AtomicLong clockNanos = new AtomicLong(1_000_000_000L);
         var queue = new ServerCubeWorld.UntouchedStoreQueue<String>(
                 () -> false,
                 loaded::get,
@@ -813,7 +826,8 @@ class ServerCubeWorldResilienceTest {
                 },
                 entry -> true,
                 (key, err) -> errors.add(err),
-                80L);
+                80L,
+                clockNanos::get);
 
         // 1. save() (commitReady) resubmits encode-failed & rejected entries off-thread without calling encoder on server thread!
         Cube failEncodeCube = new Cube(20, 30, 40, null);
@@ -846,8 +860,11 @@ class ServerCubeWorldResilienceTest {
         assertEquals(1, failEncodeCalls.get());
         assertEquals(0, rejectedEncodeCalls.get());
 
-        // save() (commitReady) MUST resubmit BOTH off-thread and NEVER invoke encoder.get() synchronously on server thread!
+        // save() (commitReady) respects backoff, then MUST resubmit BOTH off-thread and NEVER invoke encoder.get() on server thread!
         rejectWorker.set(false);
+        queue.commitReady();
+        assertTrue(workerTasks.isEmpty(), "save() must not resubmit before retry backoff expires");
+        clockNanos.addAndGet(ServerCubeWorld.UntouchedStoreQueue.INITIAL_RETRY_BACKOFF_NANOS);
         queue.commitReady();
         assertEquals(1, failEncodeCalls.get(), "save() must NEVER run encode-failed encoder synchronously on server thread");
         assertEquals(0, rejectedEncodeCalls.get(), "save() must NEVER run rejected encoder synchronously on server thread");
@@ -892,5 +909,255 @@ class ServerCubeWorldResilienceTest {
         assertTrue(storageClosedOnFail.get(), "storage must still be closed even when shutdown drain fails");
         assertTrue(surfaced.getMessage().contains("1 pending untouched cube"), surfaced.getMessage());
         assertInstanceOf(IOException.class, surfaced.getCause());
+    }
+
+    @Test
+    void evictedSnapshotRetainedPastExhaustedRetriesWithBoundedBackoffAndProtectedFromPregenAndStaleReload(@TempDir Path worldDir) throws Exception {
+        Map<Long, Cube> loaded = new HashMap<>();
+        AtomicInteger writeAttempts = new AtomicInteger();
+        AtomicInteger encodeAttempts = new AtomicInteger();
+        AtomicLong clockNanos = new AtomicLong(1_000_000_000L);
+        List<Throwable> errors = new ArrayList<>();
+        List<Runnable> workerTasks = new ArrayList<>();
+        ConcurrentLinkedQueue<Runnable> serverTasks = new ConcurrentLinkedQueue<>();
+
+        var queue = new ServerCubeWorld.UntouchedStoreQueue<String>(
+                () -> false,
+                loaded::get,
+                (key, tag) -> {
+                    writeAttempts.incrementAndGet();
+                    throw new IOException("persistent disk error");
+                },
+                entry -> true,
+                (key, err) -> errors.add(err),
+                80L,
+                clockNanos::get);
+
+        // Cube A: evicted cube experiencing 6 consecutive write failures (> MAX_EVICTED_RETRIES = 3).
+        Cube writeFailCube = new Cube(30, 40, 50, null);
+        writeFailCube.modified = true;
+        writeFailCube.dirty = true;
+        queue.enqueue(writeFailCube, false, List.of(), () -> "fresh-write-fail", workerTasks::add, serverTasks::add);
+        workerTasks.remove(0).run();
+        serverTasks.poll().run(); // Failure #1 -> 1s backoff
+        assertEquals(1, writeAttempts.get());
+        assertTrue(queue.hasPending(writeFailCube.key));
+
+        // Immediate repeated commitReady() & tryDrainKeyNow() calls inside backoff MUST NOT hammer storage!
+        for (int i = 0; i < 10; i++) {
+            queue.commitReady();
+            assertFalse(queue.tryDrainKeyNow(writeFailCube.key));
+        }
+        assertEquals(1, writeAttempts.get(), "backoff must prevent per-tick write retry hammering");
+
+        // Advance clock through exponential backoff steps (1s, 2s, 4s, 8s, 16s -> 6 total failures, past old 4-try drop limit).
+        long[] expectedDelaysSec = {1, 2, 4, 8, 16};
+        for (int i = 0; i < expectedDelaysSec.length; i++) {
+            long delayNanos = TimeUnit.SECONDS.toNanos(expectedDelaysSec[i]);
+            clockNanos.addAndGet(delayNanos - 1L);
+            queue.commitReady();
+            assertFalse(queue.tryDrainKeyNow(writeFailCube.key));
+            assertEquals(i + 1, writeAttempts.get(), "must not retry 1ns before backoff step " + expectedDelaysSec[i] + "s expires");
+
+            clockNanos.addAndGet(1L);
+            assertFalse(queue.tryDrainKeyNow(writeFailCube.key));
+            assertEquals(i + 2, writeAttempts.get(), "must retry once backoff step " + expectedDelaysSec[i] + "s expires");
+        }
+        assertTrue(queue.hasPending(writeFailCube.key), "evicted snapshot MUST remain retained in pending after >4 write failures");
+
+        // Cube B: evicted cube experiencing 5 consecutive encode failures (> MAX_EVICTED_RETRIES = 3).
+        Cube encodeFailCube = new Cube(31, 41, 51, null);
+        encodeFailCube.modified = true;
+        encodeFailCube.dirty = true;
+        queue.enqueue(encodeFailCube, false, List.of(), () -> {
+            encodeAttempts.incrementAndGet();
+            throw new RuntimeException("persistent encode error");
+        }, workerTasks::add, serverTasks::add);
+        workerTasks.remove(0).run();
+        serverTasks.poll().run(); // Encode failure #1 -> 1s backoff
+        assertEquals(1, encodeAttempts.get());
+        for (int i = 0; i < 4; i++) {
+            clockNanos.addAndGet(TimeUnit.SECONDS.toNanos(1L << i));
+            queue.commitReady();
+            assertEquals(1, workerTasks.size(), "must resubmit exactly one worker task after backoff");
+            workerTasks.remove(0).run();
+            serverTasks.poll().run();
+            assertEquals(i + 2, encodeAttempts.get());
+            // Immediate calls inside backoff must NOT resubmit.
+            queue.commitReady();
+            assertFalse(queue.tryDrainKeyNow(encodeFailCube.key));
+            assertTrue(workerTasks.isEmpty(), "backoff must prevent per-tick encode resubmission");
+        }
+        assertTrue(queue.hasPending(encodeFailCube.key), "evicted snapshot MUST remain retained in pending after >4 encode failures");
+        assertEquals(2, queue.pendingCount());
+
+        // Pregenerate MUST NOT overwrite either retained snapshot!
+        LongArrayList pregenAllowed = ServerCubeWorld.filterPregenerateKeys(
+                LongArrayList.of(writeFailCube.key, encodeFailCube.key),
+                () -> false,
+                loaded::containsKey,
+                queue);
+        assertTrue(pregenAllowed.isEmpty(), "pregenerate filter must skip snapshots retained after exhausted retries");
+        CubeStorage diskStorage = new CubeStorage(worldDir);
+        try {
+            int stored = ServerCubeWorld.commitPregenerated(
+                    LongArrayList.of(writeFailCube.key, encodeFailCube.key),
+                    List.of(new CompoundTag(), new CompoundTag()),
+                    () -> false,
+                    loaded::containsKey,
+                    queue,
+                    diskStorage);
+            assertEquals(0, stored, "pregenerate commit must never overwrite retained snapshots");
+        } finally {
+            diskStorage.close();
+        }
+
+        // Async reload MUST defer and never read stale storage!
+        LongOpenHashSet asyncPending = new LongOpenHashSet();
+        AtomicInteger staleReads = new AtomicInteger();
+        assertFalse(ServerCubeWorld.submitReadRequest(writeFailCube.key, asyncPending, queue, Runnable::run, staleReads::incrementAndGet));
+        assertFalse(ServerCubeWorld.submitReadRequest(encodeFailCube.key, asyncPending, queue, Runnable::run, staleReads::incrementAndGet));
+        assertEquals(0, staleReads.get(), "async reload must never read stale storage for retained failed snapshots");
+
+        // Sync loadNowUncached() cleanly re-adopts Cube A directly with modified=true, dirty=true!
+        Cube readopted = ServerCubeWorld.loadNowUncached(
+                writeFailCube.key,
+                queue,
+                () -> {
+                    fail("sync loadNow must not read stale storage when retained snapshot cannot write");
+                    return null;
+                },
+                tag -> fail("sync loadNow must not adopt stale storage"),
+                entry -> loaded.put(entry.key(), entry.cube()),
+                loaded::get);
+        assertSame(writeFailCube, readopted);
+        assertTrue(readopted.modified && readopted.dirty);
+        assertFalse(queue.hasPending(writeFailCube.key));
+        assertEquals(1, queue.pendingCount());
+
+        // Shutdown finishShutdownDrain() ignores live backoff on Cube B, performs bounded MAX_EVICTED_RETRIES final attempts,
+        // closes storage, and surfaces IOException reporting the persistent failure!
+        int encodesBeforeClose = encodeAttempts.get();
+        AtomicBoolean storageClosed = new AtomicBoolean();
+        IOException shutdownFailure = assertThrows(IOException.class,
+                () -> ServerCubeWorld.finishShutdownDrain(queue, () -> storageClosed.set(true)));
+        assertTrue(storageClosed.get());
+        assertEquals(encodesBeforeClose + ServerCubeWorld.UntouchedStoreQueue.MAX_EVICTED_RETRIES, encodeAttempts.get(),
+                "shutdown drainAll must ignore live backoff and execute bounded MAX_EVICTED_RETRIES final attempts");
+        assertTrue(shutdownFailure.getMessage().contains("1 pending untouched cube"), shutdownFailure.getMessage());
+        assertTrue(queue.hasPending(encodeFailCube.key), "failed evicted snapshot remains retained");
+    }
+
+    @Test
+    void pregenerateCoordinationTimeoutCancelsQueuedTaskAndThrowsInsteadOfSilentNoOp() {
+        List<Runnable> serverQueue = new ArrayList<>();
+        AtomicInteger isLoadedCalls = new AtomicInteger();
+        var untouched = new ServerCubeWorld.UntouchedStoreQueue<String>(
+                () -> false, k -> null, (k, tag) -> {}, entry -> true, (k, err) -> {});
+        LongArrayList candidates = LongArrayList.of(CubeKey.pack(1, 2, 3), CubeKey.pack(1, 3, 3));
+
+        IllegalStateException timedOut = assertThrows(IllegalStateException.class, () ->
+                ServerCubeWorld.coordinatePregenerateKeys(
+                        candidates,
+                        false,
+                        serverQueue::add,
+                        () -> false,
+                        key -> {
+                            isLoadedCalls.incrementAndGet();
+                            return false;
+                        },
+                        untouched,
+                        25L));
+        assertInstanceOf(TimeoutException.class, timedOut.getCause());
+        assertEquals(1, serverQueue.size());
+
+        // Running the stale queued server-thread task later must be a complete no-op because it was cancelled!
+        serverQueue.remove(0).run();
+        assertEquals(0, isLoadedCalls.get(), "cancelled pregenerate coordination task must not execute work later");
+
+        // When world is already closing/closed on timeout, cancels task and returns empty cleanly.
+        AtomicBoolean closing = new AtomicBoolean(true);
+        LongArrayList closedResult = ServerCubeWorld.coordinatePregenerateKeys(
+                candidates,
+                false,
+                serverQueue::add,
+                closing::get,
+                key -> {
+                    isLoadedCalls.incrementAndGet();
+                    return false;
+                },
+                untouched,
+                25L);
+        assertTrue(closedResult.isEmpty());
+        serverQueue.remove(0).run();
+        assertEquals(0, isLoadedCalls.get());
+    }
+
+    @Test
+    void finishShutdownDrainClosesStorageInFinallyWhenDrainAllThrowsAndDrainAllNeverDoubleCounts() throws Exception {
+        // Part 1: finishShutdownDrain() still closes storage in finally when drainAll() throws an unchecked exception,
+        // attaching any storage close failure as suppressed.
+        IllegalStateException drainBoom = new IllegalStateException("unchecked drain failure");
+        IOException closeBoom = new IOException("storage close failure");
+        var throwingQueue = new ServerCubeWorld.UntouchedStoreQueue<String>(
+                () -> false,
+                key -> { throw drainBoom; },
+                (key, tag) -> {},
+                entry -> true,
+                (key, err) -> {});
+        Cube cube = new Cube(40, 50, 60, null);
+        cube.modified = true;
+        cube.dirty = true;
+        List<Runnable> workerTasks = new ArrayList<>();
+        throwingQueue.enqueue(cube, false, List.of(), () -> "tag", workerTasks::add, Runnable::run);
+
+        AtomicBoolean storageClosed = new AtomicBoolean();
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> ServerCubeWorld.finishShutdownDrain(throwingQueue, () -> {
+                    storageClosed.set(true);
+                    throw closeBoom;
+                }));
+        assertSame(drainBoom, thrown);
+        assertTrue(storageClosed.get(), "storageCloser.close() must ALWAYS run inside finally even if drainAll() throws unchecked");
+        assertEquals(1, thrown.getSuppressed().length);
+        assertSame(closeBoom, thrown.getSuppressed()[0]);
+
+        // Part 2: drainAll() with one failing non-in-flight evicted entry + one failing in-flight evicted entry
+        // must count each entry ONCE (failedCount == 2, never double-counted across firstPass and secondPass).
+        AtomicInteger failAWriteAttempts = new AtomicInteger();
+        var countQueue = new ServerCubeWorld.UntouchedStoreQueue<String>(
+                () -> false,
+                key -> null,
+                (key, tag) -> {
+                    if ("tag-a".equals(tag)) failAWriteAttempts.incrementAndGet();
+                    throw new IOException("write failed for " + tag);
+                },
+                entry -> true,
+                (key, err) -> {},
+                80L);
+        Cube cubeA = new Cube(41, 51, 61, null);
+        Cube cubeB = new Cube(42, 52, 62, null);
+        countQueue.enqueue(cubeA, false, List.of(), () -> "tag-a", workerTasks::add, r -> {});
+        CountDownLatch bStarted = new CountDownLatch(1);
+        CountDownLatch bRelease = new CountDownLatch(1);
+        ExecutorService bg = Executors.newSingleThreadExecutor();
+        try {
+            countQueue.enqueue(cubeB, false, List.of(), () -> {
+                bStarted.countDown();
+                try { bRelease.await(5, TimeUnit.SECONDS); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                return "tag-b";
+            }, bg, r -> {});
+            assertTrue(bStarted.await(5, TimeUnit.SECONDS));
+            CompletableFuture.delayedExecutor(20, TimeUnit.MILLISECONDS).execute(bRelease::countDown);
+
+            var result = countQueue.drainAll();
+            assertEquals(2, result.failedCount(), "drainAll must never double-process or double-count firstPass failures");
+            assertEquals(1 + ServerCubeWorld.UntouchedStoreQueue.MAX_EVICTED_RETRIES, failAWriteAttempts.get(),
+                    "firstPass entry must not be retried a second time during deferred secondPass");
+        } finally {
+            bRelease.countDown();
+            bg.shutdownNow();
+        }
     }
 }
