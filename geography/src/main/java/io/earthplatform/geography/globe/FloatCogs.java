@@ -446,7 +446,6 @@ final class FloatCogs implements AutoCloseable {
     private Header readHeader(int file) throws IOException, InterruptedException {
         String name = names.apply(file);
         Path cached = cached(name, ".header"), missing = cached(name, ".none");
-        if (missing != null && Files.exists(missing)) return Header.MISSING;
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
                 Header header = CogHeader.parse(Pieces.of(DiskCache.read(cached)), skipLevels);
@@ -456,14 +455,21 @@ final class FloatCogs implements AutoCloseable {
                 Files.deleteIfExists(cached);
             }
         }
+        boolean legacyNone = false;
+        if (missing != null && Files.exists(missing)) {
+            if (RangeFiles.isConfirmedNotFoundMarker(missing) || !allowNetwork) return Header.MISSING;
+            // Legacy 0-byte (or unversioned) .none file: revalidate once online.
+            legacyNone = true;
+        }
         if (isForbiddenCached(file)) return Header.FORBIDDEN;
         if (!allowNetwork) throw new MissingTerrainException(what + " " + name + " not cached and network access is disabled");
         RangeFiles.FetchResult startResult = files.fetchResult(base.resolve(name), 0, HEADER_BYTES);
         if (startResult.isNotFound()) {
-            if (missing != null) DiskCache.write(missing, new byte[0]);
+            if (missing != null) DiskCache.write(missing, RangeFiles.CONFIRMED_NOT_FOUND_MARKER);
             return Header.MISSING;
         }
         if (startResult.isForbidden()) {
+            if (legacyNone && missing != null) Files.deleteIfExists(missing);
             rememberForbidden(file);
             return Header.FORBIDDEN;
         }
@@ -475,6 +481,7 @@ final class FloatCogs implements AutoCloseable {
             try {
                 Header header = CogHeader.parse(pieces, skipLevels);
                 forbiddenUntil.remove(file);
+                if (legacyNone && missing != null) Files.deleteIfExists(missing);
                 if (cached != null) DiskCache.write(cached, pieces.bytes());
                 return header;
             } catch (UnsupportedFile unsupported) {

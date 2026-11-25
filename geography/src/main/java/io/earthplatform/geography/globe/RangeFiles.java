@@ -9,10 +9,17 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -36,12 +43,39 @@ final class RangeFiles implements AutoCloseable {
         boolean isForbidden() { return status == FetchStatus.FORBIDDEN; }
     }
 
-    /** Hard cap on full-body HTTP 200 responses when a server ignores {@code Range}, preventing OOM and 32-bit overflow. */
-    static final long MAX_UNRANGED_BODY_BYTES = 32L << 20;
+    /** Hard cap on full-body HTTP 200 fallback responses when a server ignores {@code Range}. */
+    static final long MAX_FALLBACK_BYTES = 32L << 20;
+    /** Alias for {@link #MAX_FALLBACK_BYTES}. */
+    static final long MAX_UNRANGED_BODY_BYTES = MAX_FALLBACK_BYTES;
+    /** Maximum error body bytes drained to keep HTTP/1.1 connections reusable across 403/404/5xx responses. */
+    private static final int MAX_ERROR_DRAIN_BYTES = 65_536;
+
+    /** Versioned marker written to {@code .none} disk cache files on confirmed HTTP 404 responses. */
+    static final byte[] CONFIRMED_NOT_FOUND_MARKER = new byte[] {'4', '0', '4', '\n'};
+
+    /** Daemon timer enforcing hard body-read deadlines on {@link HttpResponse.BodyHandlers#ofInputStream()}. */
+    private static final ScheduledExecutorService BODY_TIMEOUTS = createBodyTimeoutScheduler();
+
+    private static ScheduledExecutorService createBodyTimeoutScheduler() {
+        ScheduledThreadPoolExecutor scheduler = new ScheduledThreadPoolExecutor(1, NamedThreads.daemon("earth-range-timeout"));
+        scheduler.setRemoveOnCancelPolicy(true);
+        return scheduler;
+    }
+
+    /** Whether {@code path} holds a versioned confirmed-404 marker rather than a legacy 0-byte {@code .none} file. */
+    static boolean isConfirmedNotFoundMarker(Path path) {
+        try {
+            if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) return false;
+            if (Files.size(path) != CONFIRMED_NOT_FOUND_MARKER.length) return false;
+            return Arrays.equals(DiskCache.read(path), CONFIRMED_NOT_FOUND_MARKER);
+        } catch (IOException unreadable) {
+            return false;
+        }
+    }
 
     private final String what, agent;
     private final Duration timeout;
-    private final long maxUnrangedBytes;
+    private final long maxFallbackBytes;
     private final HttpClient http;
     private final Semaphore transfers;
     private final ExecutorService executor;
@@ -49,14 +83,14 @@ final class RangeFiles implements AutoCloseable {
 
     /** @param what what is read, for messages ("Land cover"); {@code agent} names the dataset to servers */
     RangeFiles(String what, String agent, String threadName, int maxConcurrentTransfers, Duration timeout) {
-        this(what, agent, threadName, maxConcurrentTransfers, timeout, MAX_UNRANGED_BODY_BYTES);
+        this(what, agent, threadName, maxConcurrentTransfers, timeout, MAX_FALLBACK_BYTES);
     }
 
-    RangeFiles(String what, String agent, String threadName, int maxConcurrentTransfers, Duration timeout, long maxUnrangedBytes) {
+    RangeFiles(String what, String agent, String threadName, int maxConcurrentTransfers, Duration timeout, long maxFallbackBytes) {
         this.what = what;
         this.agent = agent;
         this.timeout = timeout;
-        this.maxUnrangedBytes = Math.max(1L, maxUnrangedBytes);
+        this.maxFallbackBytes = Math.max(1L, maxFallbackBytes);
         this.transfers = new Semaphore(maxConcurrentTransfers);
         this.executor = Executors.newFixedThreadPool(maxConcurrentTransfers, NamedThreads.daemon(threadName));
         this.http = HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NEVER).executor(executor).build();
@@ -76,8 +110,10 @@ final class RangeFiles implements AutoCloseable {
     }
 
     private FetchResult transfer(URI uri, long offset, int length) throws IOException, InterruptedException {
-        if (offset < 0 || length < 0) throw new IllegalArgumentException("Invalid range " + offset + "+" + length);
-        long rangeEnd = length == 0 ? offset : offset + (long) length - 1;
+        if (offset < 0 || length <= 0 || offset > Long.MAX_VALUE - (long) length) {
+            throw new IllegalArgumentException("Invalid range " + offset + "+" + length);
+        }
+        long rangeEnd = offset + (long) length - 1;
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(timeout).header("User-Agent", "earth-platform/" + agent)
                 .header("Range", "bytes=" + offset + "-" + rangeEnd).GET().build();
         IOException last = null;
@@ -92,16 +128,33 @@ final class RangeFiles implements AutoCloseable {
                 HostBackoff.reachable(uri, what);
                 long start = System.nanoTime();
                 HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
-                try (InputStream bodyStream = response.body()) {
+                InputStream rawStream = response.body();
+                AtomicBoolean bodyTimedOut = new AtomicBoolean();
+                ScheduledFuture<?> bodyDeadline = BODY_TIMEOUTS.schedule(() -> {
+                    bodyTimedOut.set(true);
+                    try { rawStream.close(); }
+                    catch (IOException | RuntimeException ignored) { /* already closed */ }
+                }, Math.max(1L, timeout.toNanos()), TimeUnit.NANOSECONDS);
+                try (InputStream bodyStream = rawStream) {
                     int status = response.statusCode();
-                    if (status >= 500 && !HostBackoff.slowDown(status)) HostBackoff.failed(uri, what, "HTTP " + status);
-                    else HostBackoff.answered(uri);
                     if (status == 206 || status == 200) {
-                        byte[] body = readBoundedBody(uri, status, offset, length, response.headers().firstValueAsLong("Content-Length"), bodyStream);
+                        byte[] body = readBoundedBody(
+                                uri,
+                                status,
+                                offset,
+                                length,
+                                response.headers().firstValueAsLong("Content-Length"),
+                                response.headers().firstValue("Content-Range"),
+                                bodyStream);
+                        HostBackoff.answered(uri);
                         downloads.incrementAndGet();
                         Downloads.count(what, body.length, System.nanoTime() - start);
                         return FetchResult.ok(body);
                     }
+                    // Drain small error bodies so HTTP/1.1 keep-alive connections remain reusable.
+                    drainSmall(bodyStream, MAX_ERROR_DRAIN_BYTES);
+                    if (status >= 500 && !HostBackoff.slowDown(status)) HostBackoff.failed(uri, what, "HTTP " + status);
+                    else HostBackoff.answered(uri);
                     if (status == 404) return FetchResult.NOT_FOUND;
                     if (status == 403) return FetchResult.FORBIDDEN;
                     last = new IOException("HTTP " + status + " for " + uri);
@@ -109,6 +162,13 @@ final class RangeFiles implements AutoCloseable {
                         HostBackoff.pause(uri, response, slowed, what);
                         attempt--;
                     }
+                } catch (IOException bodyFailure) {
+                    if (bodyTimedOut.get()) {
+                        throw new HttpTimeoutException("Body read timed out after " + timeout.toMillis() + " ms for " + uri);
+                    }
+                    throw bodyFailure;
+                } finally {
+                    bodyDeadline.cancel(false);
                 }
             } catch (InterruptedIOException interrupted) {
                 throw interrupted;
@@ -122,17 +182,65 @@ final class RangeFiles implements AutoCloseable {
         throw new MissingTerrainException(what + " download failed after retries: " + uri + " (" + last + ")");
     }
 
-    private byte[] readBoundedBody(URI uri, int status, long offset, int length, OptionalLong contentLength, InputStream stream) throws IOException {
-        long limit = Math.max(maxUnrangedBytes, (long) length);
-        if (contentLength.isPresent() && contentLength.getAsLong() > limit) {
-            throw new MissingTerrainException(what + " server returned oversized HTTP " + status + " body (" + contentLength.getAsLong() + " bytes, limit " + limit + "): " + uri);
+    private static void drainSmall(InputStream stream, int maxBytes) {
+        byte[] scratch = new byte[Math.min(4096, maxBytes)];
+        int remaining = maxBytes;
+        try {
+            while (remaining > 0) {
+                int read = stream.read(scratch, 0, Math.min(scratch.length, remaining));
+                if (read < 0) return;
+                remaining -= read;
+            }
+        } catch (IOException ignored) {
+            // Best-effort drain for connection reuse; status code is already known.
         }
+    }
+
+    private record ContentRange(long start, long end, long total) {
+        long length() { return end - start + 1; }
+    }
+
+    private static ContentRange parseContentRange(String header, URI uri) throws IOException {
+        String trimmed = header.trim();
+        if (!trimmed.regionMatches(true, 0, "bytes ", 0, 6)) {
+            throw new IOException("Unsupported HTTP 206 Content-Range '" + header + "' for " + uri);
+        }
+        String spec = trimmed.substring(6).trim();
+        int slash = spec.indexOf('/');
+        int dash = spec.indexOf('-');
+        if (slash < 0 || dash <= 0 || dash >= slash - 1) {
+            throw new IOException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri);
+        }
+        try {
+            long start = Long.parseLong(spec.substring(0, dash).trim());
+            long end = Long.parseLong(spec.substring(dash + 1, slash).trim());
+            String totalText = spec.substring(slash + 1).trim();
+            long total = "*".equals(totalText) ? -1L : Long.parseLong(totalText);
+            if (start < 0 || end < start || end == Long.MAX_VALUE) {
+                throw new IOException("Invalid HTTP 206 Content-Range bounds '" + header + "' for " + uri);
+            }
+            if (total >= 0 && end >= total) {
+                throw new IOException("Out-of-bounds HTTP 206 Content-Range '" + header + "' for " + uri);
+            }
+            return new ContentRange(start, end, total);
+        } catch (NumberFormatException malformed) {
+            throw new IOException("Malformed HTTP 206 Content-Range '" + header + "' for " + uri, malformed);
+        }
+    }
+
+    private byte[] readBoundedBody(URI uri, int status, long offset, int length,
+                                   OptionalLong contentLength, Optional<String> contentRangeHeader,
+                                   InputStream stream) throws IOException {
         if (status == 200) {
+            // Strictly enforce the independent HTTP 200 fallback cap regardless of requested length.
+            long limit = maxFallbackBytes;
+            if (contentLength.isPresent() && contentLength.getAsLong() > limit) {
+                throw new MissingTerrainException(what + " server returned oversized HTTP 200 body (" + contentLength.getAsLong() + " bytes, limit " + limit + "): " + uri);
+            }
             if (offset > limit || offset + (long) length > limit) {
-                throw new MissingTerrainException(what + " server ignored Range request (HTTP 200) for offset " + offset + "+" + length + " exceeding limit " + limit + ": " + uri);
+                throw new MissingTerrainException(what + " server ignored Range request (HTTP 200) for oversized range " + offset + "+" + length + " exceeding limit " + limit + ": " + uri);
             }
             byte[] scratch = new byte[8192];
-            long totalRead = 0;
             // Skip prefix up to offset without buffering it.
             long remainingSkip = offset;
             while (remainingSkip > 0) {
@@ -140,10 +248,9 @@ final class RangeFiles implements AutoCloseable {
                 int read = stream.read(scratch, 0, want);
                 if (read < 0) return new byte[0];
                 remainingSkip -= read;
-                totalRead += read;
             }
-            // Buffer at most the requested length bytes.
-            int initialCap = (int) Math.min(Math.max(0, length), 65536);
+            // Buffer at most the requested length bytes and return immediately once filled.
+            int initialCap = Math.min(length, 65536);
             ByteArrayOutputStream out = new ByteArrayOutputStream(initialCap);
             int remainingTake = length;
             while (remainingTake > 0) {
@@ -152,34 +259,49 @@ final class RangeFiles implements AutoCloseable {
                 if (read < 0) break;
                 out.write(scratch, 0, read);
                 remainingTake -= read;
-                totalRead += read;
-            }
-            // When Content-Length was absent (chunked transfer), ensure the unranged stream stays within the cap.
-            if (contentLength.isEmpty() && remainingTake == 0) {
-                while (true) {
-                    int read = stream.read(scratch, 0, scratch.length);
-                    if (read < 0) break;
-                    totalRead += read;
-                    if (totalRead > limit) {
-                        throw new MissingTerrainException(what + " server ignored Range request with oversized streamed HTTP 200 body (>" + limit + " bytes): " + uri);
-                    }
-                }
             }
             return out.toByteArray();
         }
-        // HTTP 206 partial content: read bounded by limit.
+        // HTTP 206 partial content: validate Content-Range when present and enforce requested length bound.
+        long expectedLength = -1L;
+        if (contentRangeHeader.isPresent()) {
+            ContentRange range = parseContentRange(contentRangeHeader.get(), uri);
+            if (range.start() != offset) {
+                throw new IOException("HTTP 206 Content-Range start " + range.start() + " != requested offset " + offset + " for " + uri);
+            }
+            long rangeLength = range.length();
+            if (rangeLength > (long) length) {
+                throw new IOException("HTTP 206 Content-Range length " + rangeLength + " exceeds requested " + length + " for " + uri);
+            }
+            if (rangeLength < (long) length && (range.total() < 0 || range.end() + 1 != range.total())) {
+                throw new IOException("Short HTTP 206 Content-Range '" + contentRangeHeader.get() + "' before EOF (requested " + length + " bytes from " + offset + ") for " + uri);
+            }
+            if (contentLength.isPresent() && contentLength.getAsLong() != rangeLength) {
+                throw new IOException("HTTP 206 Content-Length " + contentLength.getAsLong() + " != Content-Range length " + rangeLength + " for " + uri);
+            }
+            expectedLength = rangeLength;
+        } else if (contentLength.isPresent()) {
+            if (contentLength.getAsLong() > (long) length) {
+                throw new IOException("HTTP 206 Content-Length " + contentLength.getAsLong() + " exceeds requested " + length + " for " + uri);
+            }
+            expectedLength = contentLength.getAsLong();
+        }
+        long maxRead = expectedLength >= 0 ? expectedLength : (long) length;
         byte[] scratch = new byte[8192];
-        int initialCap = (int) Math.min(Math.max(0, contentLength.orElse(length)), 65536);
+        int initialCap = (int) Math.min(Math.max(0L, maxRead), 65536L);
         ByteArrayOutputStream out = new ByteArrayOutputStream(initialCap);
         long totalRead = 0;
         while (true) {
             int read = stream.read(scratch, 0, scratch.length);
             if (read < 0) break;
             totalRead += read;
-            if (totalRead > limit) {
-                throw new MissingTerrainException(what + " HTTP 206 body exceeded limit (" + limit + " bytes): " + uri);
+            if (totalRead > maxRead) {
+                throw new IOException("HTTP 206 body exceeded expected length (" + maxRead + " bytes) for " + uri);
             }
             out.write(scratch, 0, read);
+        }
+        if (expectedLength >= 0 && totalRead != expectedLength) {
+            throw new IOException("Truncated HTTP 206 body (" + totalRead + " of " + expectedLength + " bytes) for " + uri);
         }
         return out.toByteArray();
     }

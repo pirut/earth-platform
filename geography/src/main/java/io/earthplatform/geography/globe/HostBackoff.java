@@ -3,18 +3,23 @@ package io.earthplatform.geography.globe;
 import io.earthplatform.geography.MissingTerrainException;
 import java.net.URI;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Shared pauses and outage checks per data host. When a server replies 429 or 503 it wants fewer
  * requests, so every transfer to that host waits out the pause together; when a host stops
- * answering altogether (or fails across multiple distinct paths with 5xx), every transfer to it
- * fails at once instead of tying up worker threads in timeouts, while a background check watches
- * for it to come back.
+ * answering altogether (or fails across multiple distinct canonical paths with 5xx), every transfer
+ * to it fails at once instead of tying up worker threads in timeouts, while a background check
+ * watches for it to come back.
  */
 public final class HostBackoff {
     /** How many slow-down replies (429 / 503) one transfer will wait out before giving up. */
@@ -29,8 +34,9 @@ public final class HostBackoff {
      * How many tries in a row must fail before a host counts as down, and how long that streak must
      * go on for: many transfers broken off together by one blip are retried at once and come back.
      * Timeouts count at once, as each has already waited, and one connection timeout is enough.
-     * HTTP 5xx replies also require {@link #DOWN_AFTER_PATHS} distinct failing paths so one broken
-     * tile URL cannot blackhole every healthy tile on the same host.
+     * HTTP 5xx replies are tracked separately from transport errors and require
+     * {@link #DOWN_AFTER_PATHS} distinct canonical failing paths so one broken tile URL cannot
+     * blackhole every healthy tile on the same host or prime an unrelated connection reset.
      */
     static final int DOWN_AFTER = 3;
     static final int DOWN_AFTER_PATHS = 3;
@@ -38,11 +44,15 @@ public final class HostBackoff {
     /** How long a host stays down before it is checked again, doubling up to the longest. */
     static final long FIRST_DOWN_MS = 5_000, LONGEST_DOWN_MS = 60_000;
     private static final int MAX_TRACKED_PATHS = 64;
+    private static final int MAX_PROBE_CANDIDATES = 16;
 
     private static final class Health {
-        final AtomicLong failed = new AtomicLong(), streakStart = new AtomicLong();
+        final AtomicLong failedTransport = new AtomicLong(), streakTransportStart = new AtomicLong();
+        final AtomicLong failed5xx = new AtomicLong(), streak5xxStart = new AtomicLong();
         final Set<String> failingPaths = ConcurrentHashMap.newKeySet();
         final Set<String> recentBadPaths = ConcurrentHashMap.newKeySet();
+        final CopyOnWriteArrayList<URI> probeCandidates = new CopyOnWriteArrayList<>();
+        final AtomicInteger probeCursor = new AtomicInteger();
         volatile URI lastHealthyUri;
         volatile long downUntil, downFor, downSince;
         final AtomicBoolean checking = new AtomicBoolean();
@@ -60,14 +70,30 @@ public final class HostBackoff {
         return authority != null ? authority : String.valueOf(uri.getHost());
     }
 
-    private static String pathKey(URI uri) {
-        String path = uri.getRawPath();
-        String query = uri.getRawQuery();
-        return query == null ? String.valueOf(path) : path + "?" + query;
+    /** Canonical path key (query strings stripped and {@code .}/{@code ..} segments resolved). */
+    static String pathKey(URI uri) {
+        String path = uri.normalize().getPath();
+        return path != null ? path : "";
     }
 
     private static boolean isHttp5xx(Object why) {
         return why instanceof String s && s.startsWith("HTTP 5");
+    }
+
+    private static void rememberProbeCandidate(Health health, URI uri) {
+        String key = pathKey(uri);
+        for (URI existing : health.probeCandidates) {
+            if (pathKey(existing).equals(key)) return;
+        }
+        synchronized (health.probeCandidates) {
+            for (URI existing : health.probeCandidates) {
+                if (pathKey(existing).equals(key)) return;
+            }
+            if (health.probeCandidates.size() >= MAX_PROBE_CANDIDATES) {
+                health.probeCandidates.remove(0);
+            }
+            health.probeCandidates.add(uri);
+        }
     }
 
     /**
@@ -77,21 +103,48 @@ public final class HostBackoff {
     static void reachable(URI uri, String what) {
         Health health = HEALTH.get(hostKey(uri));
         if (health == null || health.downFor == 0) return;
+        rememberProbeCandidate(health, uri);
         if (System.currentTimeMillis() >= health.downUntil && health.checking.compareAndSet(false, true)) {
             check(chooseProbeUri(uri, health), health);
         }
         throw new MissingTerrainException(what + " server " + uri.getHost() + " can't be reached; trying it again shortly");
     }
 
+    /**
+     * Selects a recovery probe URI: prefers the remembered healthy URI first (even if it briefly
+     * returned 5xx during the outage), then rotates across distinct candidate URIs on subsequent
+     * failed probes so a client repeatedly requesting one broken tile never pins the host down.
+     */
     private static URI chooseProbeUri(URI requested, Health health) {
-        if (health.recentBadPaths.contains(pathKey(requested))) {
-            URI healthy = health.lastHealthyUri;
-            if (healthy != null && !health.recentBadPaths.contains(pathKey(healthy))) return healthy;
+        List<URI> candidates = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        URI healthy = health.lastHealthyUri;
+        if (healthy != null && seen.add(pathKey(healthy))) {
+            candidates.add(healthy);
         }
-        return requested;
+        String reqKey = pathKey(requested);
+        if (!health.recentBadPaths.contains(reqKey) && seen.add(reqKey)) {
+            candidates.add(requested);
+        }
+        for (URI candidate : health.probeCandidates) {
+            String key = pathKey(candidate);
+            if (!health.recentBadPaths.contains(key) && seen.add(key)) {
+                candidates.add(candidate);
+            }
+        }
+        if (seen.add(reqKey)) {
+            candidates.add(requested);
+        }
+        for (URI candidate : health.probeCandidates) {
+            if (seen.add(pathKey(candidate))) {
+                candidates.add(candidate);
+            }
+        }
+        int index = Math.floorMod(health.probeCursor.getAndIncrement(), candidates.size());
+        return candidates.get(index);
     }
 
-    /** Asks the host for the first byte of a healthy (or requested) file; any non-5xx answer means it is back. */
+    /** Asks the host for the first byte of a healthy (or rotated) file; any non-5xx answer means it is back. */
     private static void check(URI uri, Health health) {
         Thread.ofVirtual().name("earth-host-check").start(() -> {
             try {
@@ -118,10 +171,14 @@ public final class HostBackoff {
     static void answered(URI uri) {
         Health health = HEALTH.computeIfAbsent(hostKey(uri), h -> new Health());
         health.lastHealthyUri = uri;
+        rememberProbeCandidate(health, uri);
         health.recentBadPaths.remove(pathKey(uri));
-        health.failed.set(0);
-        health.streakStart.set(0);
+        health.failedTransport.set(0);
+        health.streakTransportStart.set(0);
+        health.failed5xx.set(0);
+        health.streak5xxStart.set(0);
         health.failingPaths.clear();
+        health.probeCursor.set(0);
         if (health.downFor != 0) {
             long seconds = (System.currentTimeMillis() - health.downSince) / 1000;
             health.downFor = 0;
@@ -135,26 +192,32 @@ public final class HostBackoff {
         String host = String.valueOf(uri.getHost());
         Health health = HEALTH.computeIfAbsent(hostKey(uri), h -> new Health());
         health.what = what;
+        rememberProbeCandidate(health, uri);
         long now = System.currentTimeMillis();
         // Already down: transfers started before it went down still report in, and change nothing.
         if (health.downFor != 0) return;
-        boolean http5xx = isHttp5xx(why);
-        if (http5xx) {
+        if (isHttp5xx(why)) {
             String path = pathKey(uri);
             if (health.recentBadPaths.size() >= MAX_TRACKED_PATHS) health.recentBadPaths.clear();
             health.recentBadPaths.add(path);
             if (health.failingPaths.size() < MAX_TRACKED_PATHS) health.failingPaths.add(path);
+            long streak = health.streak5xxStart.updateAndGet(start -> start == 0 ? now : start);
+            long count = health.failed5xx.incrementAndGet();
+            if (health.failingPaths.size() < DOWN_AFTER_PATHS) return;
+            if (count < DOWN_AFTER) return;
+            if (now - streak < DOWN_STREAK_MS) return;
+        } else {
+            // Many transfers can fail together: the streak starts with whichever of them reports first.
+            long streak = health.streakTransportStart.updateAndGet(start -> start == 0 ? now : start);
+            // A connection that could not even be made in the whole timeout is down already: no need for more tries.
+            boolean connectTimeout = why instanceof java.net.http.HttpConnectTimeoutException;
+            long count = health.failedTransport.incrementAndGet();
+            if (count < DOWN_AFTER && !connectTimeout) return;
+            if (now - streak < DOWN_STREAK_MS && !(why instanceof java.net.http.HttpTimeoutException)) return;
         }
-        // Many transfers can fail together: the streak starts with whichever of them reports first.
-        long streak = health.streakStart.updateAndGet(start -> start == 0 ? now : start);
-        // A connection that could not even be made in the whole timeout is down already: no need for more tries.
-        boolean connectTimeout = why instanceof java.net.http.HttpConnectTimeoutException;
-        long count = health.failed.incrementAndGet();
-        if (http5xx && health.failingPaths.size() < DOWN_AFTER_PATHS) return;
-        if (count < DOWN_AFTER && !connectTimeout) return;
-        if (now - streak < DOWN_STREAK_MS && !(why instanceof java.net.http.HttpTimeoutException)) return;
         synchronized (health) {
             if (health.downFor != 0) return;
+            health.probeCursor.set(0);
             health.downSince = now;
             health.downFor = FIRST_DOWN_MS;
             health.downUntil = now + FIRST_DOWN_MS;
@@ -174,6 +237,12 @@ public final class HostBackoff {
     static boolean isDown(URI uri) {
         Health health = HEALTH.get(hostKey(uri));
         return health != null && health.downFor != 0;
+    }
+
+    /** Package-private for tests: immediately makes the next recovery probe due. */
+    static void expireBackoffForTest(URI uri) {
+        Health health = HEALTH.get(hostKey(uri));
+        if (health != null) health.downUntil = 0L;
     }
 
     /** Package-private for tests: clears host state for {@code uri}'s authority. */

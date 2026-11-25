@@ -43,12 +43,11 @@ public final class CopernicusSource implements AutoCloseable {
     static final long FORBIDDEN_TTL_NANOS = TimeUnit.MINUTES.toNanos(10);
     private static final int MAX_FORBIDDEN_ENTRIES = 16_384;
     /**
-     * Bounded in-memory TTL negative cache for HTTP 403 responses (keyed by URI): keeps public S3
-     * open-ocean missing-key 403s fast without writing permanent {@code .none} files to disk so
-     * transient 403s self-heal after TTL.
+     * Instance-scoped, bounded in-memory TTL negative cache for HTTP 403 responses (keyed by
+     * integer square): keeps public S3 open-ocean missing-key 403s fast with zero URI allocations
+     * and no cross-instance poisoning, while allowing transient 403s to self-heal after TTL.
      */
-    private static final ConcurrentHashMap<URI, Long> FORBIDDEN_UNTIL = new ConcurrentHashMap<>();
-
+    private final ConcurrentHashMap<Integer, Long> forbiddenUntil = new ConcurrentHashMap<>();
     private volatile long forbiddenTtlNanos = FORBIDDEN_TTL_NANOS;
     private final URI base;
     private final Path cacheRoot;
@@ -198,40 +197,35 @@ public final class CopernicusSource implements AutoCloseable {
         this.forbiddenTtlNanos = Math.max(0L, ttlNanos);
     }
 
-    static void clearForbiddenCacheForTest() {
-        FORBIDDEN_UNTIL.clear();
-    }
-
-    private static boolean isForbiddenCached(URI uri) {
-        Long until = FORBIDDEN_UNTIL.get(uri);
+    private boolean isForbiddenCached(int square) {
+        Long until = forbiddenUntil.get(square);
         if (until == null) return false;
         if (System.nanoTime() - until < 0) return true;
-        FORBIDDEN_UNTIL.remove(uri, until);
+        forbiddenUntil.remove(square, until);
         return false;
     }
 
-    private void rememberForbidden(URI uri) {
+    private void rememberForbidden(int square) {
         long now = System.nanoTime();
-        if (FORBIDDEN_UNTIL.size() >= MAX_FORBIDDEN_ENTRIES) {
-            FORBIDDEN_UNTIL.entrySet().removeIf(e -> now - e.getValue() >= 0);
-            if (FORBIDDEN_UNTIL.size() >= MAX_FORBIDDEN_ENTRIES) FORBIDDEN_UNTIL.clear();
+        if (forbiddenUntil.size() >= MAX_FORBIDDEN_ENTRIES) {
+            forbiddenUntil.entrySet().removeIf(e -> now - e.getValue() >= 0);
+            if (forbiddenUntil.size() >= MAX_FORBIDDEN_ENTRIES) forbiddenUntil.clear();
         }
-        FORBIDDEN_UNTIL.put(uri, now + forbiddenTtlNanos);
+        forbiddenUntil.put(square, now + forbiddenTtlNanos);
     }
 
     private Header header(int square) {
         CompletableFuture<Header> known = headers.get(square);
         // Every read asks for its square's header: skip the wait once it is in.
         if (known != null && known.isDone() && !known.isCompletedExceptionally()) return known.join();
-        URI target = uri(name(south(square), west(square)));
-        if (isForbiddenCached(target)) return Header.MISSING;
+        if (isForbiddenCached(square)) return Header.MISSING;
         CompletableFuture<Header> mine = new CompletableFuture<>(), shared = headers.putIfAbsent(square, mine);
         if (shared == null) {
             try {
                 Header loaded = readHeader(square);
                 if (loaded == Header.FORBIDDEN) {
                     mine.complete(Header.MISSING);
-                    // Do not pin 403 forever in headers: rely on FORBIDDEN_UNTIL so it self-heals after TTL.
+                    // Do not pin 403 forever in headers: rely on forbiddenUntil so it self-heals after TTL.
                     headers.remove(square, mine);
                 } else {
                     mine.complete(loaded);
@@ -253,7 +247,8 @@ public final class CopernicusSource implements AutoCloseable {
         String name = name(south(square), west(square));
         Path cached = cacheRoot == null ? null : cacheRoot.resolve(name + ".header");
         Path missing = cacheRoot == null ? null : cacheRoot.resolve(name + ".none");
-        if (missing != null && Files.exists(missing)) return Header.MISSING;
+        Path offlineForbidden = cacheRoot == null ? null : cacheRoot.resolve(name + ".403");
+        // Check local disk .header cache first before applying any negative-cache or network logic.
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
                 Header header = parse(DiskCache.read(cached));
@@ -263,25 +258,41 @@ public final class CopernicusSource implements AutoCloseable {
                 Files.deleteIfExists(cached);
             }
         }
+        boolean legacyNone = false;
+        if (missing != null && Files.exists(missing)) {
+            if (RangeFiles.isConfirmedNotFoundMarker(missing) || !allowNetwork) return Header.MISSING;
+            // Legacy 0-byte (or unversioned) .none file: revalidate once online.
+            legacyNone = true;
+        }
+        if (!allowNetwork) {
+            // Public S3 open-ocean squares return HTTP 403; offline mode honors the .403 hint without
+            // permanently poisoning online reloads (which ignore .403 and rely on instance-scoped TTL).
+            if (offlineForbidden != null && Files.exists(offlineForbidden)) return Header.MISSING;
+            throw new MissingTerrainException("Copernicus elevation " + name + " not cached and network access is disabled");
+        }
+        if (isForbiddenCached(square)) return Header.FORBIDDEN;
         URI target = uri(name);
-        if (isForbiddenCached(target)) return Header.FORBIDDEN;
-        if (!allowNetwork) throw new MissingTerrainException("Copernicus elevation " + name + " not cached and network access is disabled");
         int size = HEADER_BYTES;
         while (true) {
             RangeFiles.FetchResult result = files.fetchResult(target, 0, size);
             if (result.isNotFound()) {
-                if (missing != null) DiskCache.write(missing, new byte[0]);
+                if (offlineForbidden != null) Files.deleteIfExists(offlineForbidden);
+                if (missing != null) DiskCache.write(missing, RangeFiles.CONFIRMED_NOT_FOUND_MARKER);
                 return Header.MISSING;
             }
             if (result.isForbidden()) {
                 if (size > HEADER_BYTES) throw new MissingTerrainException("Copernicus elevation " + name + " temporarily forbidden while reading header (HTTP 403)");
-                rememberForbidden(target);
+                if (legacyNone && missing != null) Files.deleteIfExists(missing);
+                if (offlineForbidden != null) DiskCache.write(offlineForbidden, new byte[] {'4', '0', '3', '\n'});
+                rememberForbidden(square);
                 return Header.FORBIDDEN;
             }
             byte[] bytes = result.bytes();
             try {
                 Header header = parse(bytes);
-                FORBIDDEN_UNTIL.remove(target);
+                forbiddenUntil.remove(square);
+                if (legacyNone && missing != null) Files.deleteIfExists(missing);
+                if (offlineForbidden != null) Files.deleteIfExists(offlineForbidden);
                 if (cached != null) DiskCache.write(cached, bytes);
                 return header;
             } catch (HeaderTooShort tooShort) {

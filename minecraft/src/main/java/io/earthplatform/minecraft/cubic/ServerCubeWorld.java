@@ -12,11 +12,13 @@ import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.net.Throttle;
 import io.earthplatform.minecraft.platform.Platform;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongPredicate;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.longs.LongSets;
 import java.io.IOException;
@@ -38,15 +40,18 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.IntFunction;
 import java.util.function.LongFunction;
 import java.util.function.Predicate;
@@ -313,50 +318,60 @@ public final class ServerCubeWorld extends CubeWorld {
     private boolean request(long key, boolean always) {
         if (closed || cubes.containsKey(key) || pending.contains(key)) return false;
         if (failureRetries.isBlocked(key, ticks)) return false;
-        pending.add(key);
         int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
-        // Read from the save first, on threads of their own, so a saved cube never waits behind cubes being generated.
-        try {
-            reads.execute(() -> {
-                if (closing) { droppedKeys.add(key); return; } // a read queued as the world closes would hold its region's lock against the last save
-                if (!always && !wanted(x, y, z)) { droppedKeys.add(key); dropped.increment(); return; }
-                Ready saved = readSaved(key, x, y, z);
-                if (saved != null) {
-                    primeTops(x, z).whenComplete((tops, failure) -> {
-                        if (closing) {
+        // Drain any pending async untouched store for this key before reading storage, then read on the reader pool.
+        return submitReadRequest(key, pending, untouchedStores, reads, () -> {
+            if (closing) { droppedKeys.add(key); return; } // a read queued as the world closes would hold its region's lock against the last save
+            if (!always && !wanted(x, y, z)) { droppedKeys.add(key); dropped.increment(); return; }
+            Ready saved = readSaved(key, x, y, z);
+            if (saved != null) {
+                primeTops(x, z).whenComplete((tops, failure) -> {
+                    if (closing) {
+                        droppedKeys.add(key);
+                        return;
+                    }
+                    if (failure != null) {
+                        Throwable cause = failure instanceof CompletionException && failure.getCause() != null ? failure.getCause() : failure;
+                        if (cause instanceof CancellationException) {
                             droppedKeys.add(key);
-                            return;
+                        } else {
+                            RuntimeException runtime = cause instanceof RuntimeException r ? r : new RuntimeException(cause);
+                            ready.add(new Ready(key, x, y, z, null, List.of(), List.of(), false, false, false, false, runtime, 0, null));
                         }
-                        if (failure != null) {
-                            Throwable cause = failure instanceof CompletionException && failure.getCause() != null ? failure.getCause() : failure;
-                            if (cause instanceof CancellationException) {
-                                droppedKeys.add(key);
-                            } else {
-                                RuntimeException runtime = cause instanceof RuntimeException r ? r : new RuntimeException(cause);
-                                ready.add(new Ready(key, x, y, z, null, List.of(), List.of(), false, false, false, false, runtime, 0, null));
-                            }
-                            return;
-                        }
-                        ready.add(saved.withBaseline(tops));
-                        generated.increment();
-                    });
-                    return;
-                }
-                try {
-                    workers.execute(() -> {
-                        TickShare.giveWay();
-                        if (always || wanted(x, y, z)) { ready.add(generateCube(key, x, y, z)); generated.increment(); }
-                        else { droppedKeys.add(key); dropped.increment(); }
-                    });
-                } catch (RejectedExecutionException rejected) {
-                    droppedKeys.add(key);
-                }
-            });
+                        return;
+                    }
+                    ready.add(saved.withBaseline(tops));
+                    generated.increment();
+                });
+                return;
+            }
+            try {
+                workers.execute(() -> {
+                    TickShare.giveWay();
+                    if (always || wanted(x, y, z)) { ready.add(generateCube(key, x, y, z)); generated.increment(); }
+                    else { droppedKeys.add(key); dropped.increment(); }
+                });
+            } catch (RejectedExecutionException rejected) {
+                droppedKeys.add(key);
+            }
+        });
+    }
+
+    /**
+     * Drains any pending untouched store for {@code key} before dispatching {@code readTask} so a
+     * quick unload -> reload never reads stale storage data ahead of the latest untouched snapshot.
+     */
+    static boolean submitReadRequest(long key, LongOpenHashSet pending, UntouchedStoreQueue<?> untouchedStores,
+                                     Executor reads, Runnable readTask) {
+        untouchedStores.drainKey(key);
+        pending.add(key);
+        try {
+            reads.execute(readTask);
+            return true;
         } catch (RejectedExecutionException rejected) {
             pending.remove(key);
             return false;
         }
-        return true;
     }
 
     /** Workers: whether a cube is still near a player, as of the last tick. */
@@ -450,8 +465,15 @@ public final class ServerCubeWorld extends CubeWorld {
         long key = CubeKey.pack(x, y, z);
         Cube cube = cubes.get(key);
         if (cube != null) return cube;
-        adoptReady(produce(key, x, y, z));
-        return cubes.get(key);
+        return loadNowUncached(key, untouchedStores, () -> produce(key, x, y, z), this::adoptReady, cubes::get);
+    }
+
+    /** Drains any pending untouched store for {@code key} before synchronous {@code produce}/{@code adopt}. */
+    @Nullable static <R> Cube loadNowUncached(long key, UntouchedStoreQueue<?> untouchedStores,
+                                              Supplier<R> producer, Consumer<R> adopter, LongFunction<Cube> lookup) {
+        untouchedStores.drainKey(key);
+        adopter.accept(producer.get());
+        return lookup.apply(key);
     }
 
     /** Loads the cubes around a block synchronously, for checks such as a respawn bed. */
@@ -607,7 +629,7 @@ public final class ServerCubeWorld extends CubeWorld {
             for (int i = 0; i < tags.size(); i++) {
                 long key = keys.getLong(i);
                 // A cube loaded meanwhile is saved from its own state when it unloads.
-                if (cubes.containsKey(key)) continue;
+                if (cubes.containsKey(key) || untouchedStores.hasPending(key)) continue;
                 try { storage.put(key, tags.get(i)); }
                 catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure); }
             }
@@ -624,21 +646,8 @@ public final class ServerCubeWorld extends CubeWorld {
         if (cubes.containsKey(result.key)) return;
         if (result.section == null) {
             // In-memory per-session exponential backoff: never persist an empty placeholder cube.
-            FailureRetries.RetryState state = failureRetries.recordFailure(result.key, ticks, result.failure);
             failures++;
-            if (result.failure != null) {
-                PerfFailures.record(PerfFailures.Stage.FAR_GENERATION, FailureRetries.rootCause(result.failure));
-            }
-            if (failureRetries.shouldLog(ticks, result.failure)) {
-                int delaySeconds = Math.max(1, (state.nextRetryTick() - ticks) / 20);
-                if (state.deterministic()) {
-                    EarthPlatformMod.LOGGER.error("Unexpected failure generating cube {} (attempt {}, retrying in {}s, {} failures so far)",
-                            CubeKey.toString(result.key), state.attempts(), delaySeconds, failures, result.failure);
-                } else {
-                    EarthPlatformMod.LOGGER.warn("Could not generate cube {} due to missing terrain data (attempt {}, retrying in {}s, {} failures so far)",
-                            CubeKey.toString(result.key), state.attempts(), delaySeconds, failures, result.failure);
-                }
-            }
+            recordNearFailure(failureRetries, result.key, ticks, failures, result.failure);
             return;
         }
         failureRetries.recordSuccess(result.key);
@@ -664,6 +673,26 @@ public final class ServerCubeWorld extends CubeWorld {
         if (result.baseline != null && !tops.containsKey(column)) tops.put(column, result.baseline.clone()); // read off this thread
         refreshTops(cube);
         staleLightAround(cube.x, cube.y, cube.z);
+    }
+
+    /** Records a near-cube generation failure under {@link PerfFailures.Stage#NEAR_GENERATION} with backoff and rate-limited logging. */
+    static FailureRetries.RetryState recordNearFailure(FailureRetries failureRetries, long key, int currentTick,
+                                                       long totalFailures, @Nullable Throwable failure) {
+        FailureRetries.RetryState state = failureRetries.recordFailure(key, currentTick, failure);
+        if (failure != null) {
+            PerfFailures.record(PerfFailures.Stage.NEAR_GENERATION, FailureRetries.rootCause(failure));
+        }
+        if (failureRetries.shouldLog(currentTick, failure)) {
+            int delaySeconds = Math.max(1, (state.nextRetryTick() - currentTick) / 20);
+            if (state.deterministic()) {
+                EarthPlatformMod.LOGGER.error("Unexpected failure generating cube {} (attempt {}, retrying in {}s, {} failures so far)",
+                        CubeKey.toString(key), state.attempts(), delaySeconds, totalFailures, failure);
+            } else {
+                EarthPlatformMod.LOGGER.warn("Could not generate cube {} due to missing terrain data (attempt {}, retrying in {}s, {} failures so far)",
+                        CubeKey.toString(key), state.attempts(), delaySeconds, totalFailures, failure);
+            }
+        }
+        return state;
     }
 
     // Ticking ------------------------------------------------------------------------------------
@@ -1078,18 +1107,29 @@ public final class ServerCubeWorld extends CubeWorld {
     private void unload(int h, int v) {
         List<Cube> drop = new ArrayList<>();
         for (long key : ResidentCubes.unloadable(cubes.keySet(), key -> watched(key, h, v, cubes.get(key).edited), resident)) drop.add(cubes.get(key));
-        if (drop.isEmpty()) return;
-        for (Cube cube : drop) {
+        unloadMaintenance(drop, cube -> {
             store(cube);
             forget(cube);
             ((io.earthplatform.minecraft.cubic.CubicPoiStore) server.getPoiManager()).earthplatform$forget(SectionPos.asLong(cube.x, cube.y, cube.z));
-        }
-        // Keep sky tops near players only; far columns are rebuilt from the generator and cubes.
-        tops.long2ObjectEntrySet().removeIf(entry -> !columnWatched(entry.getLongKey(), h * 3) && !resident.holdsColumn(entry.getLongKey()));
-        surveys.prune(column -> columnWatched(column, h * 3) || resident.holdsColumn(column));
-        long start = System.nanoTime();
-        storage.flushLater();
-        Timings.CUBE_FLUSH.since(start);
+        }, tops, surveys, column -> columnWatched(column, h * 3) || resident.holdsColumn(column), () -> {
+            long start = System.nanoTime();
+            storage.flushLater();
+            Timings.CUBE_FLUSH.since(start);
+        });
+    }
+
+    /**
+     * Evicts {@code drop}, prunes unwatched sky tops and column surveys even when zero cubes are
+     * evicted (so failed surveys for departed columns retry cleanly on return), and flushes storage
+     * when at least one cube was unloaded.
+     */
+    static void unloadMaintenance(List<Cube> drop, Consumer<Cube> evict, Long2ObjectOpenHashMap<int[]> tops,
+                                  ColumnSurveys surveys, LongPredicate keepColumn, Runnable flushLater) {
+        for (Cube cube : drop) evict.accept(cube);
+        // Keep sky tops and surveys near players only; far columns are rebuilt from the generator and cubes.
+        tops.long2ObjectEntrySet().removeIf(entry -> !keepColumn.test(entry.getLongKey()));
+        surveys.prune(keepColumn);
+        if (!drop.isEmpty()) flushLater.run();
     }
 
     /**
@@ -1352,7 +1392,7 @@ public final class ServerCubeWorld extends CubeWorld {
 
     public void save() {
         for (Cube cube : cubes.values()) store(cube);
-        untouchedStores.drainAll();
+        untouchedStores.commitReady();
         flushStorage();
         far.flush();
     }
@@ -1412,18 +1452,14 @@ public final class ServerCubeWorld extends CubeWorld {
         record RetryState(int attempts, int nextRetryTick, boolean deterministic) {}
 
         private final int maxEntries;
-        private final LinkedHashMap<Long, RetryState> states;
+        private final Long2ObjectLinkedOpenHashMap<RetryState> states;
         private final LinkedHashMap<String, Integer> lastLogBySignature;
 
         FailureRetries() { this(MAX_ENTRIES); }
 
         FailureRetries(int maxEntries) {
             this.maxEntries = Math.max(1, maxEntries);
-            this.states = new LinkedHashMap<>(64, 0.75f, true) {
-                @Override protected boolean removeEldestEntry(Map.Entry<Long, RetryState> eldest) {
-                    return size() > FailureRetries.this.maxEntries;
-                }
-            };
+            this.states = new Long2ObjectLinkedOpenHashMap<>(Math.min(64, this.maxEntries));
             this.lastLogBySignature = new LinkedHashMap<>(16, 0.75f, true) {
                 @Override protected boolean removeEldestEntry(Map.Entry<String, Integer> eldest) {
                     return size() > MAX_LOG_SIGNATURES;
@@ -1461,7 +1497,7 @@ public final class ServerCubeWorld extends CubeWorld {
         }
 
         boolean isBlocked(long key, int currentTick) {
-            RetryState state = states.get(key);
+            RetryState state = states.getAndMoveToLast(key);
             return state != null && currentTick < state.nextRetryTick();
         }
 
@@ -1472,7 +1508,8 @@ public final class ServerCubeWorld extends CubeWorld {
             int[] schedule = deterministic ? DETERMINISTIC_BACKOFF_TICKS : TRANSIENT_BACKOFF_TICKS;
             int delay = schedule[Math.min(attempts - 1, schedule.length - 1)];
             RetryState next = new RetryState(attempts, currentTick + delay, deterministic);
-            states.put(key, next);
+            states.putAndMoveToLast(key, next);
+            while (states.size() > maxEntries) states.removeFirst();
             return next;
         }
 
@@ -1582,10 +1619,15 @@ public final class ServerCubeWorld extends CubeWorld {
 
     /**
      * Tracks in-flight async untouched cube serializations on the server thread: {@code cube.dirty} is
-     * cleared only after {@code writer} commits, and {@link #drainAll()} finishes or encodes pending
-     * entries synchronously before {@code save()}/{@code close()} flush storage.
+     * cleared only after {@code writer} commits, {@link #commitReady()} commits only worker-completed
+     * entries and retries failed evicted snapshots during {@code save()}, {@link #drainKey(long)}
+     * flushes a single key before reload reads storage, and {@link #drainAll()} finishes pending
+     * entries on {@code close()} without ever invoking an encoder concurrently with a running worker.
      */
     static final class UntouchedStoreQueue<T> {
+        static final int MAX_EVICTED_RETRIES = 3;
+        static final long DEFAULT_DRAIN_TIMEOUT_MILLIS = 5_000L;
+
         @FunctionalInterface interface Writer<T> { void write(long key, T tag) throws IOException; }
         @FunctionalInterface interface ErrorLogger { void log(long key, Throwable failure); }
 
@@ -1597,6 +1639,13 @@ public final class ServerCubeWorld extends CubeWorld {
             private final Supplier<T> encoder;
             final AtomicBoolean claimed = new AtomicBoolean();
             final CompletableFuture<T> encoded = new CompletableFuture<>();
+            private T cachedTag;
+            private boolean rejected;
+            private boolean encodeFailed;
+            private boolean writeFailed;
+            private boolean workerCommitHandled;
+            private boolean workerFailureHandled;
+            private int failures;
 
             Entry(Cube cube, boolean owedAnimals, List<CompoundTag> entities, Supplier<T> encoder) {
                 this.key = cube.key;
@@ -1617,14 +1666,21 @@ public final class ServerCubeWorld extends CubeWorld {
         private final Writer<T> writer;
         private final Predicate<Entry<T>> metadataUnchanged;
         private final ErrorLogger errorLogger;
+        private final long drainTimeoutMillis;
 
         UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
                             Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger) {
+            this(isClosed, currentCube, writer, metadataUnchanged, errorLogger, DEFAULT_DRAIN_TIMEOUT_MILLIS);
+        }
+
+        UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
+                            Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger, long drainTimeoutMillis) {
             this.isClosed = isClosed;
             this.currentCube = currentCube;
             this.writer = writer;
             this.metadataUnchanged = metadataUnchanged;
             this.errorLogger = errorLogger;
+            this.drainTimeoutMillis = Math.max(1L, drainTimeoutMillis);
         }
 
         void enqueue(Cube cube, boolean owedAnimals, List<CompoundTag> entities, Supplier<T> encoder,
@@ -1632,7 +1688,8 @@ public final class ServerCubeWorld extends CubeWorld {
             Entry<T> existing = pending.get(cube.key);
             if (existing != null && existing.cube == cube
                     && existing.owedAnimals == owedAnimals
-                    && Objects.equals(existing.entities, entities)) {
+                    && Objects.equals(existing.entities, entities)
+                    && !existing.encodeFailed && !existing.writeFailed && !existing.rejected) {
                 return;
             }
             Entry<T> entry = new Entry<>(cube, owedAnimals, entities, encoder);
@@ -1643,14 +1700,15 @@ public final class ServerCubeWorld extends CubeWorld {
                     try {
                         T tag = entry.encoder.get();
                         entry.encoded.complete(tag);
-                        serverThread.execute(() -> commit(entry, tag));
+                        serverThread.execute(() -> onWorkerSuccess(entry, tag));
                     } catch (Throwable failure) {
                         entry.encoded.completeExceptionally(failure);
-                        serverThread.execute(() -> fail(entry, failure));
+                        serverThread.execute(() -> onWorkerFailure(entry, failure));
                     }
                 });
             } catch (RejectedExecutionException rejected) {
-                // Kept in pending so drainAll() encodes and writes it synchronously on save()/close().
+                // Kept in pending so commitReady()/drainKey()/drainAll() encodes and writes it synchronously.
+                entry.rejected = true;
             }
         }
 
@@ -1658,47 +1716,179 @@ public final class ServerCubeWorld extends CubeWorld {
             pending.remove(key);
         }
 
+        boolean hasPending(long key) {
+            return pending.containsKey(key);
+        }
+
+        private void onWorkerSuccess(Entry<T> entry, T tag) {
+            if (entry.workerCommitHandled) return;
+            entry.workerCommitHandled = true;
+            entry.cachedTag = tag;
+            commit(entry, tag);
+        }
+
+        private void onWorkerFailure(Entry<T> entry, Throwable failure) {
+            if (entry.workerFailureHandled) return;
+            entry.workerFailureHandled = true;
+            fail(entry, failure);
+        }
+
         private void fail(Entry<T> entry, Throwable failure) {
-            if (pending.get(entry.key) == entry) pending.remove(entry.key);
+            if (pending.get(entry.key) != entry) return;
             errorLogger.log(entry.key, failure);
+            Cube now = currentCube.apply(entry.key);
+            // If the cube is already evicted, retain the latest snapshot in pending for bounded retries.
+            if (now == null && !isClosed.getAsBoolean() && !entry.cube.edited && ++entry.failures <= MAX_EVICTED_RETRIES) {
+                entry.encodeFailed = true;
+                return;
+            }
+            pending.remove(entry.key);
         }
 
         private void commit(Entry<T> entry, T tag) {
             if (pending.get(entry.key) != entry) return;
-            pending.remove(entry.key);
             Cube now = currentCube.apply(entry.key);
-            if (isClosed.getAsBoolean() || entry.cube.edited || (now != null && now != entry.cube)) return;
+            if (isClosed.getAsBoolean() || entry.cube.edited || (now != null && now != entry.cube)) {
+                pending.remove(entry.key);
+                return;
+            }
             try {
                 writer.write(entry.key, tag);
+                pending.remove(entry.key);
+                entry.writeFailed = false;
                 if (!entry.cube.edited && (now == null || metadataUnchanged.test(entry))) {
                     entry.cube.dirty = false;
                 }
             } catch (IOException | RuntimeException failure) {
                 errorLogger.log(entry.key, failure);
+                // Do not discard the only retryable snapshot of an already-evicted cube on transient write error.
+                if (now == null && !isClosed.getAsBoolean() && !entry.cube.edited && ++entry.failures <= MAX_EVICTED_RETRIES) {
+                    entry.cachedTag = tag;
+                    entry.writeFailed = true;
+                    return;
+                }
+                pending.remove(entry.key);
             }
         }
 
+        /**
+         * Server thread ({@code save()}): commits only entries whose worker encoding already finished
+         * (plus retries previously failed evicted or rejected entries), leaving unclaimed/in-progress
+         * entries to workers so {@code save()} never encodes untouched cubes synchronously.
+         */
+        void commitReady() {
+            if (pending.isEmpty()) return;
+            List<Entry<T>> snapshot = new ArrayList<>(pending.values());
+            for (Entry<T> entry : snapshot) {
+                if (pending.get(entry.key) != entry) continue;
+                if (entry.writeFailed && entry.cachedTag != null) {
+                    commit(entry, entry.cachedTag);
+                    continue;
+                }
+                if (entry.encodeFailed) {
+                    retryEncodeSync(entry);
+                    continue;
+                }
+                if (entry.rejected) {
+                    drainEntry(entry);
+                    continue;
+                }
+                if (!entry.encoded.isDone()) continue;
+                try {
+                    T tag = entry.encoded.get();
+                    entry.workerCommitHandled = true;
+                    entry.cachedTag = tag;
+                    commit(entry, tag);
+                } catch (ExecutionException failed) {
+                    if (!entry.workerFailureHandled) {
+                        entry.workerFailureHandled = true;
+                        fail(entry, failed.getCause() != null ? failed.getCause() : failed);
+                    }
+                } catch (CancellationException cancelled) {
+                    if (!entry.workerFailureHandled) {
+                        entry.workerFailureHandled = true;
+                        fail(entry, cancelled);
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    errorLogger.log(entry.key, interrupted);
+                }
+            }
+        }
+
+        /** O(1) fast path when {@code key} is not pending; otherwise drains and writes {@code key} before storage read. */
+        void drainKey(long key) {
+            Entry<T> entry = pending.get(key);
+            if (entry == null) return;
+            drainEntry(entry);
+        }
+
+        /** Blocking drain for {@code close()}: finishes all pending untouched entries without concurrent encoding. */
         void drainAll() {
             if (pending.isEmpty()) return;
             List<Entry<T>> snapshot = new ArrayList<>(pending.values());
             for (Entry<T> entry : snapshot) {
                 if (pending.get(entry.key) != entry) continue;
+                drainEntry(entry);
+            }
+        }
+
+        private void retryEncodeSync(Entry<T> entry) {
+            try {
+                T tag = entry.encoder.get();
+                entry.encodeFailed = false;
+                entry.cachedTag = tag;
+                commit(entry, tag);
+            } catch (Throwable failure) {
+                fail(entry, failure);
+            }
+        }
+
+        private void drainEntry(Entry<T> entry) {
+            if (pending.get(entry.key) != entry) return;
+            if (entry.writeFailed && entry.cachedTag != null) {
+                commit(entry, entry.cachedTag);
+                return;
+            }
+            if (entry.encodeFailed) {
+                retryEncodeSync(entry);
+                return;
+            }
+            if (entry.claimed.compareAndSet(false, true)) {
                 try {
-                    T tag;
-                    if (entry.claimed.compareAndSet(false, true)) {
-                        tag = entry.encoder.get();
-                        entry.encoded.complete(tag);
-                    } else {
-                        try {
-                            tag = entry.encoded.get(5, TimeUnit.SECONDS);
-                        } catch (Exception waitFailed) {
-                            if (waitFailed instanceof InterruptedException) Thread.currentThread().interrupt();
-                            tag = entry.encoder.get();
-                        }
-                    }
+                    T tag = entry.encoder.get();
+                    entry.cachedTag = tag;
+                    entry.encoded.complete(tag);
+                    entry.workerCommitHandled = true;
                     commit(entry, tag);
                 } catch (Throwable failure) {
+                    entry.encoded.completeExceptionally(failure);
+                    entry.workerFailureHandled = true;
                     fail(entry, failure);
+                }
+                return;
+            }
+            // Already claimed by a worker: wait for its future and NEVER invoke entry.encoder.get() concurrently.
+            try {
+                T tag = entry.encoded.get(drainTimeoutMillis, TimeUnit.MILLISECONDS);
+                entry.workerCommitHandled = true;
+                entry.cachedTag = tag;
+                commit(entry, tag);
+            } catch (ExecutionException failed) {
+                if (!entry.workerFailureHandled) {
+                    entry.workerFailureHandled = true;
+                    fail(entry, failed.getCause() != null ? failed.getCause() : failed);
+                }
+            } catch (TimeoutException timedOut) {
+                // Worker is still encoding the same PalettedContainer: leave entry pending/dirty instead of concurrent encode.
+                errorLogger.log(entry.key, timedOut);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                errorLogger.log(entry.key, interrupted);
+            } catch (CancellationException cancelled) {
+                if (!entry.workerFailureHandled) {
+                    entry.workerFailureHandled = true;
+                    fail(entry, cancelled);
                 }
             }
         }

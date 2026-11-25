@@ -12,7 +12,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -81,7 +84,17 @@ public final class MemoryPressure {
     private static final List<WeakReference<Hook>> hooks = new ArrayList<>();
     static final String SHRINK_THREAD_NAME = "Earth memory shrink";
     private static final AtomicBoolean shrinkQueued = new AtomicBoolean();
-    private static final ExecutorService SHRINKER = Executors.newSingleThreadExecutor(NamedThreads.daemon(SHRINK_THREAD_NAME, Thread.MIN_PRIORITY));
+    private static final ExecutorService SHRINKER = createShrinker();
+
+    private static ExecutorService createShrinker() {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                1, 1, 0L, TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>(),
+                NamedThreads.daemon(SHRINK_THREAD_NAME, Thread.MIN_PRIORITY));
+        // Pre-start the single daemon thread before memory is ever exhausted.
+        executor.prestartCoreThread();
+        return executor;
+    }
 
     private MemoryPressure() {}
 
@@ -239,10 +252,15 @@ public final class MemoryPressure {
      */
     static void scheduleShrink() {
         if (!shrinkQueued.compareAndSet(false, true)) return;
-        SHRINKER.execute(() -> {
+        try {
+            SHRINKER.execute(() -> {
+                shrinkQueued.set(false);
+                shrinkNow();
+            });
+        } catch (Throwable failure) {
             shrinkQueued.set(false);
-            shrinkNow();
-        });
+            throw failure;
+        }
     }
 
     /** For tests: waits until all currently scheduled async shrinks have finished. */
@@ -251,8 +269,11 @@ public final class MemoryPressure {
             SHRINKER.submit(() -> {}).get(5, TimeUnit.SECONDS);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-        } catch (Exception ignored) {
-            // Best-effort barrier for tests.
+            throw new IllegalStateException("Interrupted waiting for async memory shrink", interrupted);
+        } catch (TimeoutException timedOut) {
+            throw new IllegalStateException("Timed out waiting for async memory shrink", timedOut);
+        } catch (ExecutionException failed) {
+            throw new IllegalStateException("Async memory shrink barrier failed", failed.getCause());
         }
     }
 

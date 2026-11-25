@@ -171,12 +171,12 @@ class MemoryPressureTest {
             assertTrue(shrinkThread.get().isDaemon(), "shrink thread must be a daemon");
             assertEquals(MemoryPressure.SHRINK_THREAD_NAME, shrinkThread.get().getName());
 
-            // Fire many concurrent triggers while the first shrink is still running; they must coalesce.
+            // Fire many concurrent triggers while the first shrink is still running; they must coalesce
+            // into exactly one follow-up run (2 callbacks total: initial + 1 coalesced follow-up).
             for (int i = 0; i < 25; i++) MemoryPressure.scheduleShrink();
             release.countDown();
             MemoryPressure.awaitShrink();
-            assertTrue(runs.get() <= 2, "concurrent triggers coalesce to at most one follow-up run, saw " + runs.get());
-            assertTrue(runs.get() >= 1);
+            assertEquals(2, runs.get(), "concurrent triggers must coalesce to exactly one follow-up run");
         } finally {
             release.countDown();
             // Keep hook reachable until the end of the test.
