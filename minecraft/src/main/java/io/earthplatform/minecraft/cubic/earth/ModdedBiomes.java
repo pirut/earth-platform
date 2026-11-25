@@ -217,7 +217,7 @@ public final class ModdedBiomes {
         };
     }
 
-    private enum Temperature { ANY, SNOWY, NON_SNOWY }
+    private enum Temperature { SNOWY, NON_SNOWY }
 
     private static Holder<Biome> pickBiome(Registry<Biome> biomes, boolean enabled, Holder<Biome> fallback,
                                            Temperature temperature, int[] matches, String... ids) {

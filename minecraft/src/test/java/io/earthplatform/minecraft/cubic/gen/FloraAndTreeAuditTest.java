@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
@@ -20,6 +21,7 @@ import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.tags.TagKey;
 import net.minecraft.util.RandomSource;
 import net.minecraft.util.valueproviders.ConstantInt;
@@ -30,7 +32,10 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.RotatedPillarBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
 import net.minecraft.world.level.levelgen.feature.Feature;
 import net.minecraft.world.level.levelgen.feature.FeaturePlaceContext;
@@ -45,6 +50,7 @@ import org.junit.jupiter.api.Test;
 
 class FloraAndTreeAuditTest {
     private static Map<TagKey<Block>, List<Holder<Block>>> previousTags;
+    private static Map<TagKey<Fluid>, List<Holder<Fluid>>> previousFluidTags;
     private static Registry<Biome> biomes;
 
     @BeforeAll static void boot() {
@@ -61,11 +67,19 @@ class FloraAndTreeAuditTest {
                 Blocks.ACACIA_LOG, Blocks.DARK_OAK_LOG, Blocks.MANGROVE_LOG, Blocks.CHERRY_LOG));
         tags.put(BlockTags.LEAVES, blocks.stream().filter(b -> b instanceof LeavesBlock).map(blocks::wrapAsHolder).toList());
         tags.put(BlockTags.REPLACEABLE_BY_TREES, holders(Blocks.SHORT_GRASS, Blocks.FERN, Blocks.VINE, Blocks.GLOW_LICHEN));
+        tags.put(BlockTags.MANGROVE_ROOTS_CAN_GROW_THROUGH, holders(Blocks.MUD, Blocks.MUDDY_MANGROVE_ROOTS, Blocks.MANGROVE_ROOTS));
+        tags.put(BlockTags.MANGROVE_LOGS_CAN_GROW_THROUGH, holders(Blocks.MUD, Blocks.MUDDY_MANGROVE_ROOTS, Blocks.MANGROVE_ROOTS, Blocks.MANGROVE_LOG));
         blocks.bindTags(tags);
+        var fluids = BuiltInRegistries.FLUID;
+        previousFluidTags = fluids.getTags().collect(Collectors.toMap(p -> p.getFirst(), p -> p.getSecond().stream().toList()));
+        var fluidTags = new HashMap<>(previousFluidTags);
+        fluidTags.put(FluidTags.WATER, List.of(fluids.wrapAsHolder(Fluids.WATER), fluids.wrapAsHolder(Fluids.FLOWING_WATER)));
+        fluids.bindTags(fluidTags);
     }
 
     @AfterAll static void restoreTags() {
         if (previousTags != null) BuiltInRegistries.BLOCK.bindTags(previousTags);
+        if (previousFluidTags != null) BuiltInRegistries.FLUID.bindTags(previousFluidTags);
     }
 
     private static List<Holder<Block>> holders(Block... blocks) {
@@ -167,13 +181,151 @@ class FloraAndTreeAuditTest {
         }
     }
 
-    @Test void zeroCanopySuppressesStrayMoorlandTreesWhileUnknownAndPositiveGrow() {
-        assertEquals(0, countTreeBlocksWithCanopy(0, 12),
-                "explicit 0 m canopy must suppress scattered non-woodland trees");
-        assertTrue(countTreeBlocksWithCanopy(-1, 12) > 0,
-                "unknown (-1) canopy must keep growing trees normally");
-        assertTrue(countTreeBlocksWithCanopy(12, 12) > 0,
-                "positive canopy height must keep growing trees normally");
+    @Test void submergedMangrovePlacesRootsAndMuddyRootsOnSubmergedBedThroughCubeGeneration() {
+        var mangrove = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.MANGROVE_SWAMP),
+                Blocks.MUD.defaultBlockState(), Blocks.MUD.defaultBlockState(), 100, 0, 0, 0, 0, false, SurfaceGenerator.Tree.MANGROVE);
+        var generator = new SurfaceGenerator(77L, biomes, RandomSource.create(77L)) {
+            @Override protected void ground(int x, int z, int[] out) { out[0] = 2; out[1] = 4; }
+            @Override protected Surface surface(int x, int z, int ground, int water, int slope) { return mangrove; }
+            @Override protected boolean customTrees() { return false; }
+            @Override public String id() { return "test_submerged_mangrove"; }
+            @Override public int seaLevel() { return 4; }
+            @Override protected int shoreLevel() { return 4; }
+            @Override protected boolean emeralds(int maxGround) { return false; }
+        };
+
+        int muddyRootsOnBed = 0, waterloggedRoots = 0, mangroveLogs = 0, mangroveLeaves = 0;
+        for (int cz = 0; cz < 4; cz++) for (int cx = 0; cx < 4; cx++) {
+            LevelChunkSection section = generator.generate(cx, 0, cz, new ArrayList<>(), new ArrayList<>());
+            for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
+                if (section.getBlockState(lx, 2, lz).is(Blocks.MUDDY_MANGROVE_ROOTS)) muddyRootsOnBed++;
+                for (int ly = 3; ly <= 4; ly++) {
+                    BlockState st = section.getBlockState(lx, ly, lz);
+                    if (st.is(Blocks.MANGROVE_ROOTS) && st.getValue(BlockStateProperties.WATERLOGGED)) waterloggedRoots++;
+                }
+                for (int ly = 3; ly < 16; ly++) {
+                    BlockState st = section.getBlockState(lx, ly, lz);
+                    if (st.is(Blocks.MANGROVE_LOG)) mangroveLogs++;
+                    if (st.is(Blocks.MANGROVE_LEAVES)) mangroveLeaves++;
+                }
+            }
+        }
+        assertTrue(mangroveLogs > 0 && mangroveLeaves > 0, "submerged mangroves must grow logs and canopy");
+        assertTrue(waterloggedRoots > 0, "submerged mangroves must place waterlogged mangrove roots in water");
+        assertTrue(muddyRootsOnBed > 0, "submerged mangroves must keep muddy mangrove roots (TreeShape.GROUND) on submerged bed");
+    }
+
+    @Test void dryTrunkDoesNotOverwriteSeagrassWaterColumn() {
+        // Dry dark-oak shoreline right next to warm shallow water containing seagrass (fluid is WATER, block is not Blocks.WATER).
+        var forest = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.DARK_FOREST),
+                Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.DIRT.defaultBlockState(), 150, 0, 0, 0, 0, false, SurfaceGenerator.Tree.DARK_OAK);
+        var ocean = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.WARM_OCEAN),
+                Blocks.SAND.defaultBlockState(), Blocks.SAND.defaultBlockState(), 0, 0, 0, 0, 0, false);
+        var generator = new SurfaceGenerator(101L, biomes, RandomSource.create(101L)) {
+            @Override protected void ground(int x, int z, int[] out) {
+                if (x < 8) { out[0] = 4; out[1] = DRY; }
+                else { out[0] = 2; out[1] = 4; }
+            }
+            @Override protected Surface surface(int x, int z, int ground, int water, int slope) {
+                return x < 8 ? forest : ocean;
+            }
+            @Override protected boolean customTrees() { return false; }
+            @Override public String id() { return "test_seagrass_guard"; }
+            @Override public int seaLevel() { return 4; }
+            @Override protected int shoreLevel() { return 4; }
+            @Override protected boolean emeralds(int maxGround) { return false; }
+        };
+        int seagrassPreserved = 0;
+        for (int cz = 0; cz < 6; cz++) {
+            LevelChunkSection section = generator.generate(0, 0, cz, new ArrayList<>(), new ArrayList<>());
+            for (int lz = 0; lz < 16; lz++) for (int lx = 8; lx < 16; lx++) {
+                BlockState at3 = section.getBlockState(lx, 3, lz);
+                assertFalse(at3.is(BlockTags.LOGS), "dry tree trunk must not overwrite water/seagrass at (" + lx + ",3," + lz + ")");
+                if (at3.is(Blocks.SEAGRASS) || at3.is(Blocks.TALL_SEAGRASS)) seagrassPreserved++;
+            }
+        }
+        assertTrue(seagrassPreserved > 0, "shallow warm ocean beside shoreline should keep seagrass intact");
+    }
+
+    @Test void zeroCanopySuppressesScatteredAndAttenuatesWoodlandConsistentlyWithCoarseLodAndRegionalSpecies() {
+        // Scattered non-woodland (<= 10) is hard-zeroed when canopy == 0.
+        assertEquals(0, countTreeBlocksWithCanopy(0, 10),
+                "explicit 0 m canopy must suppress scattered non-woodland trees (density <= 10)");
+        assertTrue(countTreeBlocksWithCanopy(-1, 10) > 0,
+                "unknown (-1) canopy must keep growing scattered trees normally");
+        assertTrue(countTreeBlocksWithCanopy(12, 10) > 0,
+                "positive canopy height must keep growing scattered trees normally");
+
+        // Sparse woodland (11..39) and dense woodland (>= 40) are attenuated rather than hard-zeroed.
+        int sparseZero = countTreeBlocksWithCanopy(0, 24);
+        int sparseUnknown = countTreeBlocksWithCanopy(-1, 24);
+        assertTrue(sparseZero > 0 && sparseZero < sparseUnknown,
+                "sparse woodland (density 24) with canopy == 0 should attenuate rather than hard-zero: zero=" + sparseZero + " unknown=" + sparseUnknown);
+        int denseZero = countTreeBlocksWithCanopy(0, 80);
+        int denseUnknown = countTreeBlocksWithCanopy(-1, 80);
+        assertTrue(denseZero > 0 && denseZero < denseUnknown,
+                "dense woodland (density 80) with canopy == 0 should attenuate: zero=" + denseZero + " unknown=" + denseUnknown);
+
+        // Coarse LOD (v = 8, level 3) must agree with fine placement when canopy == 0 vs -1.
+        assertEquals(0, countCoarseLodLeafVoxels(0, 10),
+                "coarse LOD must suppress scattered non-woodland crowns when canopy == 0");
+        assertTrue(countCoarseLodLeafVoxels(-1, 10) > 0,
+                "coarse LOD must keep scattered crowns when canopy is unknown (-1)");
+
+        // Surviving woodland under canopy == 0 must preserve its regional species rather than reverting to vanilla oak.
+        var forest = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.FOREST),
+                Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.DIRT.defaultBlockState(), 80, 0, 0, 0, 0, false);
+        var regionalGen = new SurfaceGenerator(321L, biomes, RandomSource.create(321L)) {
+            @Override protected void ground(int x, int z, int[] out) { out[0] = 2; out[1] = DRY; }
+            @Override protected Surface surface(int x, int z, int ground, int water, int slope) { return forest; }
+            @Override protected int canopy(int x, int z) { return 0; }
+            @Override protected boolean customTrees() { return true; }
+            @Override protected RegionalTrees.Species regionalTree(int x, int z, int y, Surface surface, Tree kind, long roll) {
+                return RegionalTrees.Species.FLAT_ACACIA;
+            }
+            @Override public String id() { return "test_regional_canopy_zero"; }
+            @Override public int seaLevel() { return 0; }
+            @Override protected int shoreLevel() { return 0; }
+            @Override protected boolean emeralds(int maxGround) { return false; }
+        };
+        int acaciaLogs = 0, oakLogs = 0;
+        for (int cz = 0; cz < 4; cz++) for (int cx = 0; cx < 4; cx++) {
+            LevelChunkSection section = regionalGen.generate(cx, 0, cz, new ArrayList<>(), new ArrayList<>());
+            for (int ly = 3; ly < 16; ly++) for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
+                BlockState st = section.getBlockState(lx, ly, lz);
+                if (st.is(Blocks.ACACIA_LOG)) acaciaLogs++;
+                if (st.is(Blocks.OAK_LOG)) oakLogs++;
+            }
+        }
+        assertTrue(acaciaLogs > 0, "surviving canopy == 0 woodland must keep its regional species (FLAT_ACACIA)");
+        assertEquals(0, oakLogs, "surviving canopy == 0 woodland must not revert to stray vanilla oak");
+    }
+
+    private int countCoarseLodLeafVoxels(int canopyMetres, int treeDensity) {
+        var surface = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.TAIGA),
+                Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.DIRT.defaultBlockState(), treeDensity, 10, 0, 0, 0, false);
+        var generator = new SurfaceGenerator(123L, biomes, RandomSource.create(123L)) {
+            @Override protected void ground(int x, int z, int[] out) { out[0] = 8; out[1] = DRY; }
+            @Override protected Surface surface(int x, int z, int ground, int water, int slope) { return surface; }
+            @Override protected int canopy(int x, int z) { return canopyMetres; }
+            @Override public String id() { return "test_lod_canopy_" + canopyMetres; }
+            @Override public int seaLevel() { return 0; }
+            @Override protected int shoreLevel() { return 0; }
+            @Override protected boolean emeralds(int maxGround) { return false; }
+        };
+        int leaves = 0;
+        FarColumn col = new FarColumn();
+        for (int cz = 0; cz < 4; cz++) for (int cx = 0; cx < 4; cx++) {
+            col.sections.clear();
+            generator.farColumn(3, cx, cz, col);
+            for (LevelChunkSection section : col.sections) {
+                if (section == null) continue;
+                for (int ly = 0; ly < 16; ly++) for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
+                    if (section.getBlockState(lx, ly, lz).is(BlockTags.LEAVES)) leaves++;
+                }
+            }
+        }
+        return leaves;
     }
 
     private int countTreeBlocksWithCanopy(int canopyMetres, int treeDensity) {
@@ -221,12 +373,32 @@ class FloraAndTreeAuditTest {
         shape.place(0, oy, 0, 0, 0L, true, lift, -8, 0, -8, 8, 40, 8, (x, z) -> oy - 1,
                 (x, y, z, state, kind) -> placed.put(BlockPos.asLong(x, y, z), state));
 
-        // 1. Bee nest must move with lift to oy + 2 + lift = 18 (directly under lifted crown at y=19), NOT stay at oy + 2 = 12.
-        List<Integer> nestYs = new ArrayList<>();
-        for (var entry : placed.long2ObjectEntrySet()) {
-            if (entry.getValue().is(Blocks.BEE_NEST)) nestYs.add(BlockPos.getY(entry.getLongKey()));
+        // 1. Every placed bee nest across all seeds and turns must be directly cardinally adjacent to a log block.
+        //    Bole-adjacent spots lift to oy + 2 + lift; horizontal side-branch spots stay unlifted at oy + 2.
+        int liftedNests = 0, unliftedBranchNests = 0;
+        for (int turn = 0; turn < 4; turn++) for (int s = 0; s < 32; s++) {
+            Long2ObjectOpenHashMap<BlockState> world = new Long2ObjectOpenHashMap<>();
+            shape.place(0, oy, 0, turn, (long) s << 8, true, lift, -8, 0, -8, 8, 40, 8, (x, z) -> oy - 1,
+                    (x, y, z, state, kind) -> world.put(BlockPos.asLong(x, y, z), state));
+            int nestsFound = 0;
+            for (var entry : world.long2ObjectEntrySet()) {
+                if (!entry.getValue().is(Blocks.BEE_NEST)) continue;
+                nestsFound++;
+                int nx = BlockPos.getX(entry.getLongKey()), ny = BlockPos.getY(entry.getLongKey()), nz = BlockPos.getZ(entry.getLongKey());
+                boolean besideLog = false;
+                for (Direction d : Direction.Plane.HORIZONTAL) {
+                    BlockState adj = world.get(BlockPos.asLong(nx + d.getStepX(), ny, nz + d.getStepZ()));
+                    if (adj != null && adj.is(BlockTags.LOGS)) { besideLog = true; break; }
+                }
+                assertTrue(besideLog, "bee nest at (" + nx + "," + ny + "," + nz + ") turn=" + turn + " seed=" + s + " must be cardinally adjacent to a log");
+                if (ny == oy + 2 + lift) liftedNests++;
+                else if (ny == oy + 2) unliftedBranchNests++;
+                else throw new AssertionError("unexpected bee nest Y: " + ny);
+            }
+            assertEquals(1, nestsFound, "expected exactly one bee nest per placement");
         }
-        assertEquals(List.of(oy + 2 + lift), nestYs, "bee nest on stretched tree must lift with the crown");
+        assertTrue(liftedNests > 0, "bole-adjacent bee nests must lift with stretched crown");
+        assertTrue(unliftedBranchNests > 0, "side-branch bee nests at split-1 must stay attached to unlifted branch");
 
         // 2. Snow for unlifted branch at (2, oy + 2, 0) must rest directly on it at (2, oy + 3, 0), NOT float at oy + 3 + lift.
         assertEquals(Blocks.SNOW.defaultBlockState(), placed.get(BlockPos.asLong(2, oy + 3, 0)),
@@ -273,6 +445,39 @@ class FloraAndTreeAuditTest {
         // High sky cube cy = 12 (y = 192..207) well above even cliff trees stays empty air.
         LevelChunkSection highSky = generator.generate(0, 12, 0, new ArrayList<>(), new ArrayList<>());
         assertTrue(highSky.hasOnlyAir(), "sky cube far above all neighbouring trees should stay empty");
+    }
+
+    @Test void skyCubesOverFlatTerrainAndOceanDoNotMaterializeNeighborTreeChunks() {
+        var forest = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.FOREST),
+                Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.DIRT.defaultBlockState(), 100, 0, 0, 0, 0, false);
+        var ocean = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(Biomes.OCEAN),
+                Blocks.GRAVEL.defaultBlockState(), Blocks.GRAVEL.defaultBlockState(), 0, 0, 0, 0, 0, false);
+
+        for (boolean isOcean : new boolean[]{false, true}) {
+            AtomicInteger neighborSurfaceCalls = new AtomicInteger();
+            var generator = new SurfaceGenerator(888L, biomes, RandomSource.create(888L)) {
+                @Override protected void ground(int x, int z, int[] out) {
+                    out[0] = isOcean ? -20 : 10;
+                    out[1] = isOcean ? 63 : DRY;
+                }
+                @Override protected Surface surface(int x, int z, int ground, int water, int slope) {
+                    if (x < 0 || x >= 16 || z < 0 || z >= 16) neighborSurfaceCalls.incrementAndGet();
+                    return isOcean ? ocean : forest;
+                }
+                @Override protected boolean customTrees() { return false; }
+                @Override public String id() { return isOcean ? "test_sky_ocean" : "test_sky_flat"; }
+                @Override public int seaLevel() { return 63; }
+                @Override protected int shoreLevel() { return 63; }
+                @Override protected boolean emeralds(int maxGround) { return false; }
+            };
+
+            for (int cy : new int[]{5, 8, 12}) {
+                LevelChunkSection sky = generator.generate(0, cy, 0, new ArrayList<>(), new ArrayList<>());
+                assertTrue(sky.hasOnlyAir(), "sky cube cy=" + cy + " over " + (isOcean ? "ocean" : "flat terrain") + " must be air");
+            }
+            assertEquals(0, neighborSurfaceCalls.get(),
+                    "sky cubes over " + (isOcean ? "ocean" : "flat terrain") + " must not materialize neighbour tree chunks");
+        }
     }
 
     @Test void treesShapesCacheKeyDistinguishesSoilDeterministically() {

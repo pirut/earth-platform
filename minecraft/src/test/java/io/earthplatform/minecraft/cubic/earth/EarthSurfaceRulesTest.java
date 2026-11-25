@@ -232,27 +232,102 @@ class EarthSurfaceRulesTest {
                     "Arctic tundra basin should get a freezing snowy biome, got " + s.biome() + " for cover " + code);
         }
 
-        // Genuine mild boreal mire (Hudson Bay Lowlands: non-tundra boreal ecoregion, non-freezing climate) still forms peatland.
+        // Non-tundra ecoregion below the 10 C treeline (warmest < 10) is also excluded from unfrozen peatland.
         int[] hudson = earth.block(53.5, -83.5);
         int hudsonEco = Ecoregions.get().ecoregion(53.5, -83.5);
         assertNotEquals(Ecoregions.TUNDRA, Ecoregions.get().biome(hudsonEco));
-        var mildBoreal = new EarthGenerator.Local(ClimateZone.SUBARCTIC, -1.0, 13.0, 650, ClimateSource.DFC);
-        Surface borealBog = earth.covered(WorldCoverSource.WETLAND, hudson[0], hudson[1], earth.seaLevel() + 50, mildBoreal, 0.02, 50, 0, 1);
-        assertNotNull(borealBog);
-        assertTrue(borealBog.biome().is(Biomes.SWAMP), "flat non-freezing boreal wetland should remain peatland");
+        var subTreeline = new EarthGenerator.Local(ClimateZone.SUBARCTIC, -4.5, 9.5, 500, ClimateSource.DFC);
+        Surface belowTreeline = earth.covered(WorldCoverSource.WETLAND, hudson[0], hudson[1], earth.seaLevel() + 50, subTreeline, 0.02, 50, 0, 1);
+        assertNotNull(belowTreeline);
+        assertFalse(belowTreeline.biome().is(Biomes.SWAMP), "sub-treeline (warmest < 10 C) basin must not form peatland");
+
+        // Cold boreal Hudson Bay Lowlands (SUBARCTIC, warmest >= 10 C, annual mean < -3 C) still forms peatland!
+        var coldBoreal = new EarthGenerator.Local(ClimateZone.SUBARCTIC, -4.5, 12.0, 550, ClimateSource.DFC);
+        Surface coldBorealBog = earth.covered(WorldCoverSource.WETLAND, hudson[0], hudson[1], earth.seaLevel() + 50, coldBoreal, 0.02, 50, 0, 1);
+        assertNotNull(coldBorealBog);
+        assertTrue(coldBorealBog.biome().is(Biomes.SWAMP), "flat cold boreal Hudson Bay wetland (warmest >= 10 C, mean < -3 C) must remain peatland");
     }
 
     @Test
-    void subpolarOceanicMoorlandAndLowlandsStayTreeless() {
-        // Southern Iceland (issues #280, #281): SUBPOLAR_OCEANIC wet moorland.
+    void subpolarOceanicCanopyNoDataZeroLowAndTallWithForestTypes() {
+        // Southern Iceland (issues #280, #281) and non-volcanic subpolar moor (Shetland) + coastal Norway broadleaf.
         int[] iceland = earth.block(63.53, -19.51);
+        int[] moorSpot = earth.block(60.20, -1.20);
         var subpolarMoor = new EarthGenerator.Local(ClimateZone.SUBPOLAR_OCEANIC, 4.5, 10.5, 1450, ClimateSource.CFC);
+        var subpolarDryShrub = new EarthGenerator.Local(ClimateZone.SUBPOLAR_OCEANIC, 4.5, 10.5, 650, ClimateSource.CFC);
         int y = earth.seaLevel() + 30;
 
-        for (int code : new int[]{WorldCoverSource.MOSS_AND_LICHEN, WorldCoverSource.GRASSLAND, WorldCoverSource.SHRUBLAND}) {
-            Surface s = earth.covered(code, iceland[0], iceland[1], y, subpolarMoor, 0.05, 50, 0, 1);
-            assertNotNull(s);
-            assertEquals(0, s.trees(), "windy subpolar oceanic " + code + " should not scatter stray conifers");
+        // Pick a subpolar coordinate where ForestTypes has broadleaf data so typed() is exercised.
+        EarthGenerator typedEarth = new EarthGenerator(1234L, biomes, EarthSettings.at(0, 0), tiles, cover, null, null);
+        typedEarth.enableForestTypes();
+        int[] broadleafSpot = iceland;
+        ForestTypes ft = ForestTypes.get();
+        if (ft != null) {
+            double[] mix = new double[2];
+            outer:
+            for (double lat = 63.0; lat <= 69.0; lat += 0.5) {
+                for (double lon = -22.0; lon <= 18.0; lon += 1.0) {
+                    if (ft.at(lat, lon, mix) && mix[0] < 0.05) {
+                        broadleafSpot = typedEarth.block(lat, lon);
+                        break outer;
+                    }
+                }
+            }
+        }
+
+        try {
+            // 1. stand == -1 (no-data / missing canopy): preserve old fallback densities.
+            earth.setStandOverride(-1.0);
+            typedEarth.setStandOverride(-1.0);
+            for (int code : new int[]{WorldCoverSource.MOSS_AND_LICHEN, WorldCoverSource.GRASSLAND, WorldCoverSource.SHRUBLAND}) {
+                Surface s = earth.covered(code, moorSpot[0], moorSpot[1], y, subpolarMoor, 0.05, 50, 0, 1);
+                assertNotNull(s);
+                assertEquals(1, s.trees(), "unknown canopy (-1) in moor must preserve fallback density 1 for " + code);
+            }
+            // Find a GRASS-top dry SHRUBLAND column so slope/top don't zero trees.
+            int shrubX = iceland[0];
+            while (earth.covered(WorldCoverSource.SHRUBLAND, shrubX, iceland[1], y, subpolarDryShrub, 0.05, 50, 0, 1).top() != Blocks.GRASS_BLOCK.defaultBlockState()) shrubX++;
+            assertTrue(earth.covered(WorldCoverSource.SHRUBLAND, shrubX, iceland[1], y, subpolarDryShrub, 0.05, 50, 0, 1).trees() > 0,
+                    "unknown canopy (-1) in subpolar SHRUBLAND must preserve non-zero fallback density");
+            assertEquals(70, earth.covered(WorldCoverSource.TREE_COVER, iceland[0], iceland[1], y, subpolarMoor, 0.05, 50, 0, 1).trees(),
+                    "unknown canopy (-1) subpolar TREE_COVER must keep full density 70");
+            assertEquals(70, typedEarth.covered(WorldCoverSource.TREE_COVER, broadleafSpot[0], broadleafSpot[1], y, subpolarMoor, 0.05, 50, 0, 1).trees(),
+                    "unknown canopy (-1) typed subpolar TREE_COVER must keep density 70");
+
+            // 2. stand == 0 (measured treeless): suppress moor, SHRUBLAND, and TREE_COVER (even with ForestTypes active!).
+            earth.setStandOverride(0.0);
+            typedEarth.setStandOverride(0.0);
+            for (int code : new int[]{WorldCoverSource.MOSS_AND_LICHEN, WorldCoverSource.GRASSLAND, WorldCoverSource.SHRUBLAND}) {
+                Surface s = earth.covered(code, moorSpot[0], moorSpot[1], y, subpolarMoor, 0.05, 50, 0, 1);
+                assertEquals(0, s.trees(), "measured 0 m canopy must suppress trees in moor for " + code);
+            }
+            assertEquals(0, earth.covered(WorldCoverSource.SHRUBLAND, shrubX, iceland[1], y, subpolarDryShrub, 0.05, 50, 0, 1).trees(),
+                    "measured 0 m canopy must suppress trees in subpolar SHRUBLAND");
+            assertEquals(0, earth.covered(WorldCoverSource.TREE_COVER, iceland[0], iceland[1], y, subpolarMoor, 0.05, 50, 0, 1).trees(),
+                    "measured 0 m canopy must suppress trees in subpolar TREE_COVER");
+            assertEquals(0, typedEarth.covered(WorldCoverSource.TREE_COVER, broadleafSpot[0], broadleafSpot[1], y, subpolarMoor, 0.05, 50, 0, 1).trees(),
+                    "measured 0 m canopy must suppress subpolar TREE_COVER even with ForestTypes active");
+
+            // 3. stand == 4 (measured low canopy): moor & shrub allow 1, TREE_COVER thins to 18 (even with ForestTypes active!).
+            earth.setStandOverride(4.0);
+            typedEarth.setStandOverride(4.0);
+            assertEquals(1, earth.covered(WorldCoverSource.MOSS_AND_LICHEN, moorSpot[0], moorSpot[1], y, subpolarMoor, 0.05, 50, 0, 1).trees());
+            assertTrue(earth.covered(WorldCoverSource.SHRUBLAND, shrubX, iceland[1], y, subpolarDryShrub, 0.05, 50, 0, 1).trees() > 0);
+            assertEquals(18, earth.covered(WorldCoverSource.TREE_COVER, iceland[0], iceland[1], y, subpolarMoor, 0.05, 50, 0, 1).trees());
+            assertEquals(18, typedEarth.covered(WorldCoverSource.TREE_COVER, broadleafSpot[0], broadleafSpot[1], y, subpolarMoor, 0.05, 50, 0, 1).trees(),
+                    "low 4 m subpolar TREE_COVER must stay sparse (18) even when ForestTypes marks broadleaf");
+
+            // 4. stand == 12 (tall subpolar forest, e.g. Magellanic Nothofagus / coastal Norway): full density 70.
+            earth.setStandOverride(12.0);
+            typedEarth.setStandOverride(12.0);
+            Surface tallUntyped = earth.covered(WorldCoverSource.TREE_COVER, iceland[0], iceland[1], y, subpolarMoor, 0.05, 50, 0, 1);
+            assertEquals(70, tallUntyped.trees(), "tall 12 m subpolar TREE_COVER must keep full density 70");
+            assertEquals(110, tallUntyped.grass(), "tall 12 m subpolar TREE_COVER must keep original grass density");
+            assertEquals(70, typedEarth.covered(WorldCoverSource.TREE_COVER, broadleafSpot[0], broadleafSpot[1], y, subpolarMoor, 0.05, 50, 0, 1).trees(),
+                    "tall 12 m typed subpolar TREE_COVER must keep full density 70");
+        } finally {
+            earth.setStandOverride(null);
+            typedEarth.setStandOverride(null);
         }
 
         // Cool oceanic sea-level grassland with lower rainfall must not falsely match subalpine(-1) firClearing.
@@ -302,6 +377,28 @@ class EarthSurfaceRulesTest {
                     "isolated offshore speck should be treeless shore, got " + speck.biome());
         } finally {
             server.stop(0);
+        }
+    }
+
+    @Test
+    void marshyMangroveDeltaDryWaterPixelNearSeaDoesNotBecomeBeachSand() throws Exception {
+        // Sundarbans mangrove estuary (Ecoregions.MANGROVE): sea at dx < -10 (-5 m), flat estuary land at dx >= -10 (+1 m),
+        // with a dry-DEM WATER creek pixel at (0, 0) surrounded by MANGROVES cover.
+        double sundarbansLat = 22.0, sundarbansLon = 89.2;
+        try (var world = new EarthShorelineTest.SyntheticWorld(biomes, sundarbansLat, sundarbansLon,
+                (dx, dz) -> dx < -10 ? -5.0 : 1.0,
+                (dx, dz) -> dx < -10 ? WorldCoverSource.WATER
+                        : (Math.abs(dx) <= 4 && Math.abs(dz) <= 4 ? WorldCoverSource.WATER : WorldCoverSource.MANGROVES))) {
+            EarthGenerator gen = world.generator;
+            // Dry-DEM WATER pixel 10 blocks from sea (inside seaWithin(32)) at SEA + 1 and SEA + 3 must stay mangrove/marsh, NOT beach sand!
+            for (int y : new int[]{gen.seaLevel() + 1, gen.seaLevel() + 3}) {
+                Surface s = gen.surface(world.homeX, world.homeZ, y, EarthGenerator.DRY, 0, 1, null);
+                assertNotNull(s);
+                assertFalse(s.biome().is(Biomes.BEACH), "mangrove delta dry WATER pixel must not become BEACH at y=" + y);
+                assertNotEquals(Blocks.SAND.defaultBlockState(), s.top(), "mangrove delta dry WATER pixel must not get beach sand at y=" + y);
+                assertTrue(s.biome().is(Biomes.MANGROVE_SWAMP) || s.biome().is(Biomes.SWAMP),
+                        "mangrove delta dry WATER pixel should stay mangrove/marsh, got " + s.biome());
+            }
         }
     }
 

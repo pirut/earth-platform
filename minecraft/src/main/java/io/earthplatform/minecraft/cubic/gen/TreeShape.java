@@ -61,6 +61,8 @@ final class TreeShape {
     private final int split;
     private final int[] bole;
 
+    /** Flag packed into a bee-nest spot when its supporting log moves up by {@code lift} on a stretched tree. */
+    private static final int LIFT_NEST = 1 << 30;
     private static int pack(int dx, int dy, int dz) { return (dx + 512) | (dz + 512) << 10 | (dy + 512) << 20; }
     private static int dx(int p) { return (p & 1023) - 512; }
     private static int dz(int p) { return (p >> 10 & 1023) - 512; }
@@ -129,6 +131,8 @@ final class TreeShape {
             minX[turn] = Math.min(ax, bx); maxX[turn] = Math.max(ax, bx);
             minZ[turn] = Math.min(az, bz); maxZ[turn] = Math.max(az, bz);
         }
+        IntOpenHashSet boleSet = new IntOpenHashSet();
+        for (int idx : bole) boleSet.add(at[idx]);
         // As vanilla's beehive decorator: beside a log just under the crown, on a side other than
         // north, facing south with open air in front.
         int nestY = lowestLeaf == Integer.MAX_VALUE ? lowestLog + 1 : Math.max(lowestLeaf - 1, lowestLog + 1);
@@ -139,10 +143,15 @@ final class TreeShape {
             IntArrayList spots = new IntArrayList();
             for (int p : logs) {
                 if (dy(p) != nestY) continue;
+                boolean lifts = split > 0 && (nestY >= split || nestY == split - 1 && boleSet.contains(p));
                 int x = turnX(turn, dx(p), dz(p)), z = turnZ(turn, dx(p), dz(p));
                 for (Direction side : new Direction[]{Direction.EAST, Direction.SOUTH, Direction.WEST}) {
                     int sx = x + side.getStepX(), sz = z + side.getStepZ();
-                    if (!turned.contains(pack(sx, nestY, sz)) && !turned.contains(pack(sx, nestY, sz + 1))) spots.add(pack(sx, nestY, sz));
+                    if (!turned.contains(pack(sx, nestY, sz)) && !turned.contains(pack(sx, nestY, sz + 1))) {
+                        int packed = pack(sx, nestY, sz);
+                        if (lifts) packed |= LIFT_NEST;
+                        spots.add(packed);
+                    }
                 }
             }
             nests[turn] = spots.toIntArray();
@@ -200,8 +209,7 @@ final class TreeShape {
         int[] spots = nests[turn];
         if (bees > 0 && spots.length > 0 && (seed >>> 40 & 0xFFFFFF) < bees * 0x1000000) {
             int spot = spots[(int) Math.floorMod(seed >>> 8, spots.length)];
-            int ny = dy(spot);
-            int x = ox + dx(spot), y = oy + ny + (split > 0 && ny >= split - 1 ? lift : 0), z = oz + dz(spot);
+            int x = ox + dx(spot), y = oy + dy(spot) + ((spot & LIFT_NEST) != 0 ? lift : 0), z = oz + dz(spot);
             if (x >= x0 && x <= x1 && y >= y0 && y <= y1 && z >= z0 && z <= z1) sink.put(x, y, z, NEST, CROWN);
         }
         if (snow) for (int p : tops) {
