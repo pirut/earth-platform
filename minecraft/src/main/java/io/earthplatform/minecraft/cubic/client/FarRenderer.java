@@ -1265,6 +1265,8 @@ public final class FarRenderer {
             columns.remove(column.key);
             places.remove(column);
             unlink(column);
+            // A masked neighbour now sees this evicted side as absent: neighbour at() reads air,
+            // border drops fall back to its own edge, and border seam faces/extensions can change.
             for (int i = 0; i < 4; i++) {
                 Column side = held(column.neighbour(i));
                 if (side != null && side.drawnCubes != null) schedule(side);

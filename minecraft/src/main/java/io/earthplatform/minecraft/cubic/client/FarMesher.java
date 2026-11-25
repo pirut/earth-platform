@@ -250,7 +250,7 @@ final class FarMesher {
     static int groundRow(Job job,int x,int z) {
         return job.packet==null ? groundRow(job.sections,x,z) : job.packet.top(z*16+x,state->!state.isAir() && !seeThrough(state) && !foliage(state));
     }
-    private static int groundRow(Side side,int x,int z) {
+    static int groundRow(Side side,int x,int z) {
         return side.packet==null ? groundRow(side.sections,x,z) : side.packet.top(z*16+x,state->!state.isAir() && !seeThrough(state) && !foliage(state));
     }
 
@@ -372,11 +372,6 @@ final class FarMesher {
         return normals;
     }
 
-    static int[] normals(Job job, int voxel) {
-        int[] groundRows = new int[256];
-        for (int cell = 0; cell < 256; cell++) groundRows[cell] = groundRow(job, cell & 15, cell >> 4);
-        return normals(groundHeights(job, voxel, groundRows), voxel);
-    }
 
     /** Rise over run across a voxel column along one axis, from whichever neighbours are known. */
     private static float slope(int[] ground, boolean[] known, int at, int step, int voxel) {
@@ -593,6 +588,18 @@ final class FarMesher {
             for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++)
                 if (!drawn.contains(CubeKey.pack(cx, cy, cz))) return false;
         return true;
+    }
+
+    /** True when any near cube overlapped by voxel column {@code (x, z)} at cube row {@code cy} is drawn. */
+    static boolean anyCubeDrawn(Job job, int x, int cy, int z) {
+        LongOpenHashSet drawn = job.drawn;
+        if (drawn == null || drawn.isEmpty()) return false;
+        int v = 1 << job.level, cubes = Math.max(1, v >> 4);
+        int bx = job.x0 + x * v, bz = job.z0 + z * v;
+        for (int cz = bz >> 4; cz < (bz >> 4) + cubes; cz++)
+            for (int cx = bx >> 4; cx < (bx >> 4) + cubes; cx++)
+                if (drawn.contains(CubeKey.pack(cx, cy, cz))) return true;
+        return false;
     }
 
     /** Corners in order top-left, bottom-left, bottom-right, top-right as seen from outside. */
