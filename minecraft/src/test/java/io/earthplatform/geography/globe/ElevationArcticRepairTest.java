@@ -957,9 +957,16 @@ class ElevationArcticRepairTest {
 
     @Test
     void glo30FillV3PreservesValidDeepCoastalBathymetryWithoutVoidSentinel() throws Exception {
-        // Sharp coastline on an overview-2 boundary (lat = 63.5): north is +100 m land, south is sea (0 m in Copernicus)
-        // with genuine -900 m deep coastal bathymetry and NO -32768 void sentinel anywhere.
-        DoubleBinaryOperator ground = (lat, lon) -> lat >= 63.5 ? 100.0 : 0.0;
+        // West half (lon < -19.5): sharp coastline aligned on an overview-2 boundary (lat = 63.5).
+        // East half (lon >= -19.5): steep off-grid coastline where coastal overview-2 row 63 (center 63.50390625)
+        // averages +36 m land while Terrarium has genuine -900 m bathymetry (triggering landVoid / nearLandVoid)
+        // with NO -32768 void sentinel anywhere.
+        DoubleBinaryOperator ground = (lat, lon) -> {
+            if (lon < -19.5) return lat >= 63.5 ? 100.0 : 0.0;
+            if (lat >= 63.508) return 100.0;
+            if (lat >= 63.503) return 36.0;
+            return 0.0;
+        };
         Map<String, byte[]> files = new HashMap<>();
         for (int s = 62; s <= 64; s++)
             for (int w = -21; w <= -19; w++)
@@ -972,27 +979,52 @@ class ElevationArcticRepairTest {
                 for (int py = 0; py < SIDE; py++) {
                     double lat = tileLat(z, y, py);
                     for (int px = 0; px < SIDE; px++) {
-                        t[py * SIDE + px] = lat >= 63.5 ? 100f : -900f;
+                        double lon = tileLon(z, x, px);
+                        double coast = lon < -19.5 ? 63.5 : 63.506;
+                        t[py * SIDE + px] = lat >= coast ? 100f : -900f;
                     }
                 }
                 return t;
             };
             CopernicusFill v3 = new CopernicusFill(dem, tiles, (lat, lon) -> false, true, 16);
             int zoom = 15;
-            int tx = mercatorTileX(zoom, -19.5), ty = mercatorTileY(zoom, 63.496);
-            float[] fine = tiles.tile(zoom, tx, ty).clone();
-            v3.apply(fine, zoom, tx, ty);
-            int checked = 0;
+
+            // 1. Aligned overview-2 coastline (west half): fine sea preserves -900 m untouched.
+            int txAligned = mercatorTileX(zoom, -19.75), tyAligned = mercatorTileY(zoom, 63.496);
+            float[] fineAligned = tiles.tile(zoom, txAligned, tyAligned).clone();
+            v3.apply(fineAligned, zoom, txAligned, tyAligned);
+            int checkedAligned = 0;
             for (int py = 0; py < SIDE; py++) {
-                double lat = tileLat(zoom, ty, py);
+                double lat = tileLat(zoom, tyAligned, py);
                 if (lat >= 63.499) continue;
                 for (int px = 0; px < SIDE; px++) {
-                    assertEquals(-900f, fine[py * SIDE + px], 1e-4f,
+                    assertEquals(-900f, fineAligned[py * SIDE + px], 1e-4f,
                             "valid -900 m deep coastal bathymetry without void sentinel must never be erased to 0f");
-                    checked++;
+                    checkedAligned++;
                 }
             }
-            assertTrue(checked > 1000, "expected deep coastal bathymetry pixels checked, got " + checked);
+            assertTrue(checkedAligned > 1000, "expected aligned deep coastal bathymetry pixels checked, got " + checkedAligned);
+
+            // 2. Off-grid mixed-overview coastline (east half): overview-2 sees +36 m mixed land while Terrarium is -900 m
+            //    (marking landVoid/nearLandVoid), yet fine sea (cop == 0) must still preserve exact -900 m!
+            assertEquals(36.0, dem.metres(63.50390625, -19.25, 2), 0.1,
+                    "off-grid coastal overview-2 cell must average +36 m mixed land to trigger landVoid");
+            int txMixed = mercatorTileX(zoom, -19.25), tyMixed = mercatorTileY(zoom, 63.500);
+            float[] fineMixed = tiles.tile(zoom, txMixed, tyMixed).clone();
+            v3.apply(fineMixed, zoom, txMixed, tyMixed);
+            int checkedMixed = 0;
+            for (int py = 0; py < SIDE; py++) {
+                double lat = tileLat(zoom, tyMixed, py);
+                if (lat >= 63.502) continue;
+                for (int px = 0; px < SIDE; px++) {
+                    double lon = tileLon(zoom, txMixed, px);
+                    if (dem.metres(lat, lon, 0) > 0.01) continue;
+                    assertEquals(-900f, fineMixed[py * SIDE + px], 1e-4f,
+                            "mixed-overview landVoid without void sentinel must never erase fine -900 m bathymetry to 0f");
+                    checkedMixed++;
+                }
+            }
+            assertTrue(checkedMixed > 1000, "expected mixed-overview deep coastal bathymetry pixels checked, got " + checkedMixed);
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();
@@ -1178,6 +1210,27 @@ class ElevationArcticRepairTest {
                 v3.apply(after, zoom, tx, ty);
                 assertArrayEquals(before, after, 0f, "coastal beach at " + beachLat + "°N must stay untouched");
             }
+
+            // Directly pin NEGATIVE_OFFSET_AGREE = 22 with a stronger -18 m coherent boreal canopy offset at 62°N.
+            CopernicusFill.Tiles tallCanopyTiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double g = ground.applyAsDouble(lat, tileLon(z, x, px));
+                        t[py * SIDE + px] = g > 20.0 ? (float) (g - 18.0) : (float) g;
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3Tall = new CopernicusFill(dem, tallCanopyTiles, (lat, lon) -> false, true, 32);
+            assertEquals(0.0, v3Tall.datum(62.6, -19.5), 1e-6, "62°N -18 m coherent offset must stay below NEGATIVE_OFFSET_AGREE = 22");
+            assertEquals(0.0, v3Tall.weight(62.6, -19.5), 1e-6, "62°N -18 m boreal canopy must not blend to Copernicus DSM");
+            int btx = mercatorTileX(zoom, -19.5), bty = mercatorTileY(zoom, 62.275);
+            float[] tallBefore = tallCanopyTiles.tile(zoom, btx, bty).clone();
+            float[] tallAfter = tallBefore.clone();
+            v3Tall.apply(tallAfter, zoom, btx, bty);
+            assertArrayEquals(tallBefore, tallAfter, 0f, "62°N coastal beach under -18 m boreal canopy must stay untouched");
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();
@@ -1295,6 +1348,145 @@ class ElevationArcticRepairTest {
             float[] repaired = v2.tile(15, z15X, z15Y);
             assertEquals(287.5f, repaired[0], 5f,
                     "north Mercator edge corner must clamp only Y and retain wrapped X neighbour (~287.5 m, not ~199.6 m)");
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3SubMetreDatumAppliesLandFloorAndSeaZeroWithoutZeroingPositiveCoast() throws Exception {
+        // Square (63, -20) has a +55 m regional datum offset while western neighbour (63, -21) is missing,
+        // so datum tapers smoothly to 0 at lon = -20.0, producing 0 < datum < 1.0 with weight == 0.0 just inside.
+        DoubleBinaryOperator ground = (lat, lon) -> {
+            if (lat > 63.495 && lat < 63.505) return 0.0;      // narrow confirmed sea strip
+            if (lat >= 63.505 && lat < 63.520) return 0.05;    // low Copernicus-confirmed coastal land (> SEA_CRUMB)
+            return 100.0;
+        };
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 62; s <= 64; s++)
+            for (int w = -20; w <= -19; w++) // intentionally omit w = -21
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 256, 512, 128, ground));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            CopernicusFill.Tiles tiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double g = ground.applyAsDouble(lat, tileLon(z, x, px));
+                        t[py * SIDE + px] = g == 0.0 ? 0f : (float) (g + 55.0);
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3 = new CopernicusFill(dem, tiles, (lat, lon) -> false, true, 32);
+
+            int zoom = 15;
+            int tx = mercatorTileX(zoom, -19.99988);
+            int tySea = mercatorTileY(zoom, 63.500);
+            int tyLand = mercatorTileY(zoom, 63.512);
+
+            // Locate a z15 column just inside lon = -20.0 where 0.5 < datum < 0.95 and weight == 0.0.
+            int targetPx = -1;
+            double seaLat = tileLat(zoom, tySea, 128);
+            double landLat = tileLat(zoom, tyLand, 128);
+            for (int px = 0; px < SIDE; px++) {
+                double lon = tileLon(zoom, tx, px);
+                if (lon <= -20.0 || lon >= -19.998) continue;
+                double dSea = v3.datum(seaLat, lon), dLand = v3.datum(landLat, lon);
+                if (dSea > 0.5 && dSea < 0.95 && dLand > 0.5 && dLand < 0.95
+                        && v3.weight(seaLat, lon) == 0.0 && v3.weight(landLat, lon) == 0.0) {
+                    targetPx = px;
+                    break;
+                }
+            }
+            assertTrue(targetPx >= 0, "expected z15 column with 0.5 < datum < 0.95 and weight == 0.0");
+            double targetLon = tileLon(zoom, tx, targetPx);
+            double dSea = v3.datum(seaLat, targetLon);
+            double dLand = v3.datum(landLat, targetLon);
+            assertTrue(dSea > 0.5 && dSea < 1.0 && dLand > 0.5 && dLand < 1.0,
+                    "sub-metre datum expected, got sea=" + dSea + ", land=" + dLand);
+            assertEquals(0.0, v3.weight(seaLat, targetLon), 1e-6, "expected weight == 0 over sea test pixel");
+            assertEquals(0.0, v3.weight(landLat, targetLon), 1e-6, "expected weight == 0 over land test pixel");
+            assertEquals(0.0, dem.metres(seaLat, targetLon, 0), 1e-4, "expected fine Copernicus sea");
+            double cLand = dem.metres(landLat, targetLon, 0);
+            assertTrue(cLand > 0.01 && cLand < 0.4, "expected low fine Copernicus land > SEA_CRUMB, got " + cLand);
+
+            // 1. Low +0.4 m pixel over Copernicus land with sub-metre datum (+0.5..0.95 m, weight == 0)
+            //    must NOT be submerged negative (must stay >= LAND_FLOOR).
+            float[] landTile = tiles.tile(zoom, tx, tyLand).clone();
+            landTile[128 * SIDE + targetPx] = 0.4f;
+            v3.apply(landTile, zoom, tx, tyLand);
+            assertTrue(landTile[128 * SIDE + targetPx] >= 0.01f,
+                    "sub-metre datum over Copernicus land must apply LAND_FLOOR instead of going negative, got "
+                            + landTile[128 * SIDE + targetPx]);
+
+            // 2. Low +0.4 m pixel over Copernicus sea becomes exact 0f; +2.0 m coastal pixel over sea
+            //    with weight == 0 is NOT zeroed by seaCandidate (stays 2.0 - datum > 1.0 m).
+            float[] seaTile = tiles.tile(zoom, tx, tySea).clone();
+            int pyLow = 128, pyPos = 129;
+            double posLat = tileLat(zoom, tySea, pyPos);
+            assertEquals(0.0, dem.metres(posLat, targetLon, 0), 1e-4, "expected fine Copernicus sea at pyPos");
+            double dPos = v3.datum(posLat, targetLon);
+            seaTile[pyLow * SIDE + targetPx] = 0.4f;
+            seaTile[pyPos * SIDE + targetPx] = 2.0f;
+            v3.apply(seaTile, zoom, tx, tySea);
+            assertEquals(0f, seaTile[pyLow * SIDE + targetPx], 0f,
+                    "sub-metre datum pushing +0.4 m over Copernicus sea below 0 must emit exact 0f");
+            assertEquals((float) (2.0 - dPos), seaTile[pyPos * SIDE + targetPx], 0.02f,
+                    "positive +2.0 m coastal pixel with sub-metre datum and weight == 0 must NOT be zeroed by seaCandidate");
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3TapersRegionalDatumAcrossNorthAndSouthSrtmBoundaries() throws Exception {
+        // Strong +55 m coherent offset across both North (59..60°N) and South (-56..-55°S) SRTM boundaries.
+        DoubleBinaryOperator ground = (lat, lon) -> 150.0 + 15.0 * Math.sin(lat * 4.0) + 10.0 * Math.cos(lon * 3.0);
+        Map<String, byte[]> files = new HashMap<>();
+        int[] souths = {57, 58, 59, 60, 61, -58, -57, -56, -55, -54};
+        for (int s : souths)
+            for (int w = -21; w <= -19; w++)
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 512, 128, ground));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 64, 4, Duration.ofSeconds(5))) {
+            CopernicusFill.Tiles shifted = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        t[py * SIDE + px] = (float) (ground.applyAsDouble(lat, tileLon(z, x, px)) + 55.0);
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3 = new CopernicusFill(dem, shifted, (lat, lon) -> false, true, 64);
+
+            // Inside SRTM (<= 59.0°N and >= -55.0°S): datum must be exact 0.
+            assertEquals(0.0, v3.datum(58.5, -19.5), 1e-6, "inside SRTM at 58.5°N must have datum == 0");
+            assertEquals(0.0, v3.datum(59.0, -19.5), 1e-6, "at 59.0°N taper start must have datum == 0");
+            assertEquals(0.0, v3.datum(-54.5, -19.5), 1e-6, "inside SRTM at -54.5°S must have datum == 0");
+            assertEquals(0.0, v3.datum(-55.0, -19.5), 1e-6, "at -55.0°S taper start must have datum == 0");
+
+            // Right at the SRTM boundaries (60.0°N and -56.0°S): full +55 m datum with no residual step!
+            assertEquals(55.0, v3.datum(60.0, -19.5), 1.0, "60.0°N SRTM boundary must reach full regional datum");
+            assertEquals(55.0, v3.datum(-56.0, -19.5), 1.0, "-56.0°S SRTM boundary must reach full regional datum");
+
+            // Smooth monotonic intermediate ramp across 59.0..60.0°N and -55.0..-56.0°S.
+            double n25 = v3.datum(59.25, -19.5), n50 = v3.datum(59.5, -19.5), n75 = v3.datum(59.75, -19.5);
+            assertTrue(n25 > 0.0 && n25 < n50 && n50 < n75 && n75 < 55.0,
+                    "north SRTM taper must increase monotonically: " + n25 + ", " + n50 + ", " + n75);
+            assertEquals(27.5, n50, 1.5, "59.5°N midpoint must sit at half regional datum");
+
+            double s25 = v3.datum(-55.25, -19.5), s50 = v3.datum(-55.5, -19.5), s75 = v3.datum(-55.75, -19.5);
+            assertTrue(s25 > 0.0 && s25 < s50 && s50 < s75 && s75 < 55.0,
+                    "south SRTM taper must increase monotonically: " + s25 + ", " + s50 + ", " + s75);
+            assertEquals(27.5, s50, 1.5, "-55.5°S midpoint must sit at half regional datum");
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();

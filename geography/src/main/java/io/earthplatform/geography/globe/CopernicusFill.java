@@ -99,9 +99,9 @@ public final class CopernicusFill implements ElevationLayer {
     static final double OFFSET_AGREE = 8, OFFSET_DISAGREE = 16;
     /** Stronger threshold for negative regional datum shifts so tall boreal forest canopy under bare-earth lidar never triggers a false negative datum. */
     private static final double NEGATIVE_OFFSET_AGREE = 22, NEGATIVE_OFFSET_DISAGREE = 30;
-    /** Polar latitude taper bounds (degrees) outside SRTM's orthometric 56°S..60°N coverage. */
-    private static final double DATUM_NORTH_FROM = 59.0, DATUM_NORTH_TO = 60.5;
-    private static final double DATUM_SOUTH_FROM = 55.5, DATUM_SOUTH_TO = 57.0;
+    /** Polar latitude taper bounds (degrees) reaching 1.0 right at SRTM's orthometric 56°S..60°N boundaries. */
+    private static final double DATUM_NORTH_FROM = 59.0, DATUM_NORTH_TO = 60.0;
+    private static final double DATUM_SOUTH_FROM = 55.0, DATUM_SOUTH_TO = 56.0;
     /**
      * Global geographic lattice for regional datum estimation in {@value #GEOID_ID}: {@value #DATUM_GRID} nodes per
      * degree (30 arcseconds, ~926 m in latitude) so every 1° square border and 0.25° part border lies on exact lattice
@@ -302,7 +302,7 @@ public final class CopernicusFill implements ElevationLayer {
                 if (weight <= 0 && datum == 0) continue;
                 double base = t - datum;
                 boolean seaCandidate = Math.abs(datum) >= 1.0 && (base <= FJORD_PIXEL_MIN || (datum < 0 && t <= FJORD_PIXEL_MIN));
-                if (weight <= 0 && !seaCandidate) {
+                if (weight <= 0 && !seaCandidate && base > 0) {
                     float v = (float) base;
                     values[i] = v == 0f ? Math.ulp(0f) : v;
                     continue;
@@ -312,7 +312,7 @@ public final class CopernicusFill implements ElevationLayer {
                 if (Double.isNaN(c) || c == 0) {
                     // Over confirmed sea (or open-ocean missing square), emit exact 0f rather than carving negative
                     // trenches or leaving 0..5 m ArcticDEM sea shelves.
-                    if (seaCandidate) {
+                    if (seaCandidate || base <= 0) {
                         values[i] = 0f;
                         continue;
                     }
@@ -584,7 +584,7 @@ public final class CopernicusFill implements ElevationLayer {
             gyMax = (int) Math.floor(padNorth * DATUM_GRID) + 1;
             gxMin = (int) Math.floor(padWest * DATUM_GRID);
             gxMax = (int) Math.floor(padEast * DATUM_GRID) + 1;
-            // Fast path: skip canonical datum sampling completely when every lattice node lies strictly inside SRTM (-55.5..+59.0°).
+            // Fast path: skip canonical datum sampling completely when every lattice node lies within the zero-taper SRTM interior [-55.0°, +59.0°].
             sampleDatum = gyMax > DATUM_NORTH_FROM * DATUM_GRID || gyMin < -DATUM_SOUTH_FROM * DATUM_GRID;
             if (sampleDatum) {
                 syMin = gyMin * DATUM_SAMPLE_SUB - DATUM_SAMPLE_RADIUS;
@@ -889,16 +889,16 @@ public final class CopernicusFill implements ElevationLayer {
                             if (landVoid != null && landVoid[n]) nearLandVoid = true;
                         }
                         if (nearImpossible) {
+                            // Only independent void-sentinel evidence may clear fine-resolution sea pixels.
                             voidWeight = 1;
+                            if (!negOverSea) weight = 1;
                         } else if (nearLandVoid && t < VOID_SHALLOW) {
-                            voidWeight = ramp(-t, -VOID_SHALLOW, -2 * VOID_SHALLOW);
+                            // Retain land-void mismatch heuristic for fine Copernicus land repair, never for fine sea.
+                            weight = Math.max(weight, ramp(-t, -VOID_SHALLOW, -2 * VOID_SHALLOW));
                         }
-                        if (!negOverSea && weight < 1) {
-                            if (voidWeight > 0) weight = Math.max(weight, voidWeight);
-                            if (cop > SEA_CRUMB && weight < 1) {
-                                double allow = high >= low ? RELIEF_SHARE * (high - low) : 0;
-                                weight = Math.max(weight, ramp(cop - t, AGREE + allow, DISAGREE + allow));
-                            }
+                        if (cop > SEA_CRUMB && weight < 1) {
+                            double allow = high >= low ? RELIEF_SHARE * (high - low) : 0;
+                            weight = Math.max(weight, ramp(cop - t, AGREE + allow, DISAGREE + allow));
                         }
                     }
                 }
