@@ -80,7 +80,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     private final ConcurrentHashMap<Long, LevelChunkSection> bases = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Column> columns = new ConcurrentHashMap<>();
     private final Vegetation vegetation = new Vegetation(this);
-    @Nullable private TerrainSlabs terrainSlabs;
+    @Nullable private volatile TerrainSlabs terrainSlabs;
 
     /** Cave noise is drawn from {@code random} after whatever the subclass drew from it. */
     protected SurfaceGenerator(long seed, Registry<Biome> biomes, RandomSource random) {
@@ -939,8 +939,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             }
         }
         if (!underground) vegetation.decorate(section, x0, y0, z0, col.height, col.water, col.surface);
-        if (terrainSlabs != null && y0 <= col.max + 1 && y0 + 15 > col.min) {
-            terrainSlabs.decorate(section, y0, col.height, col.water, col.surface);
+        TerrainSlabs slabs = terrainSlabs;
+        if (slabs != null && y0 <= col.max + 1 && y0 + 15 > col.min) {
+            slabs.decorate(section, y0, col.height, col.water, col.surface);
         }
         if (y0 <= col.max) below.finish(section, cx, cy, cz, caves, blockEntities, entities);
         section.recalcBlockCounts();

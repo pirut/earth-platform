@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.gen;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
@@ -24,7 +25,7 @@ final class Giants {
             FURROW = {Blocks.SPRUCE_WOOD.defaultBlockState(), Blocks.SPRUCE_WOOD.defaultBlockState(), Blocks.DARK_OAK_WOOD.defaultBlockState()};
     private record VariantKey(int form, BlockState bark, BlockState furrow, BlockState leaves) {}
 
-    private static final TreeShape[][] shapes = new TreeShape[3][];
+    private static final AtomicReferenceArray<TreeShape[]> shapes = new AtomicReferenceArray<>(3);
     private static final java.util.concurrent.ConcurrentHashMap<VariantKey, TreeShape[]> customShapes = new java.util.concurrent.ConcurrentHashMap<>();
 
     private final Long2ObjectOpenHashMap<BlockState> blocks = new Long2ObjectOpenHashMap<>();
@@ -42,13 +43,13 @@ final class Giants {
 
     /** A form's giants, grown once. */
     static TreeShape[] shapes(int form) {
-        TreeShape[] made = shapes[form];
+        TreeShape[] made = shapes.get(form);
         if (made == null) synchronized (shapes) {
-            made = shapes[form];
+            made = shapes.get(form);
             if (made == null) {
                 made = new TreeShape[VARIANTS];
                 for (int i = 0; i < VARIANTS; i++) made[i] = grow(0x61A27L * (form + 1) + i * 0x9E3779B97F4A7C15L, form);
-                shapes[form] = made;
+                shapes.set(form, made);
             }
         }
         return made;

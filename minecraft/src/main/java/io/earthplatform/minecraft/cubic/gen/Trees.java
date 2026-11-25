@@ -121,6 +121,7 @@ final class Trees {
         }
     }
     private record Own(Tree family, Pick pick) {}
+    private record ShapeKey(ConfiguredFeature<?, ?> feature, @Nullable BlockState soil) {}
 
     private static final Planted[] NONE = new Planted[0];
     private final SurfaceGenerator gen;
@@ -128,7 +129,7 @@ final class Trees {
     private final ConcurrentHashMap<Long, Planted[]> chunks = new ConcurrentHashMap<>(), giants = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Holder<Biome>, Optional<Own>> owns = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Tree, Pick> homes = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<ConfiguredFeature<?, ?>, TreeShape[]> shapes = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<ShapeKey, TreeShape[]> shapes = new ConcurrentHashMap<>();
 
     Trees(SurfaceGenerator gen) {
         this.gen = gen;
@@ -307,19 +308,26 @@ final class Trees {
             Blocks.SNOW_BLOCK.defaultBlockState(), Blocks.GRAVEL.defaultBlockState(), Blocks.STONE.defaultBlockState()};
     private final ConcurrentHashMap<Holder<Biome>, Additions> additions = new ConcurrentHashMap<>(), natives = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Rooting, Boolean> rootings = new ConcurrentHashMap<>();
+    private final Object mostAddedLock = new Object();
     private volatile float mostAdded = -1;
 
     /** The most added-tree attempts per chunk in any biome, at the densest cover; 0 where no mod adds trees. */
     private float mostAdded() {
         float most = mostAdded;
         if (most >= 0) return most;
-        most = 0;
-        for (Holder<Biome> biome : gen.biomeIds) {
-            Additions here = additions(biome);
-            most = Math.max(most, here.perChunk * (here.scaled ? 1.5f : 1));
+        synchronized (mostAddedLock) {
+            most = mostAdded;
+            if (most >= 0) return most;
+            most = 0;
+            for (Holder<Biome> biome : gen.biomeIds) {
+                Additions here = additions(biome);
+                most = Math.max(most, here.perChunk * (here.scaled ? 1.5f : 1));
+            }
+            if (most > 0) EarthPlatformMod.LOGGER.info("Earth trees: other mods add trees to {} biomes", additions.values().stream().filter(a -> a.trees.length > 0).count());
+            most = Math.min(most, 64);
+            mostAdded = most;
+            return most;
         }
-        if (most > 0) EarthPlatformMod.LOGGER.info("Earth trees: other mods add trees to {} biomes", additions.values().stream().filter(a -> a.trees.length > 0).count());
-        return mostAdded = Math.min(most, 64);
     }
 
     /** The added tree whose origin is a column, if one stands there. */
@@ -586,11 +594,8 @@ final class Trees {
     private TreeShape[] shapes(ConfiguredFeature<?, ?> feature) { return shapes(feature, null); }
 
     /** A feature's shapes, grown the first time: vanilla's on grass (mud for mangroves), another mod's on {@code soil}. */
-    private TreeShape[] shapes(ConfiguredFeature<?, ?> feature, @Nullable BlockState soil) {
-        TreeShape[] grown = shapes.get(feature);
-        if (grown != null) return grown;
-        shapes.putIfAbsent(feature, grow(feature, soil));
-        return shapes.get(feature);
+    TreeShape[] shapes(ConfiguredFeature<?, ?> feature, @Nullable BlockState soil) {
+        return shapes.computeIfAbsent(new ShapeKey(feature, soil), k -> grow(k.feature(), k.soil()));
     }
 
     /**

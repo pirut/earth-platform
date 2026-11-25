@@ -143,7 +143,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Nullable private Boolean customTreesOverride;
     private final SimplexNoise relief, crags, wetBroad, wetLocal, warmth, warpX, warpZ, patches;
     private final Registry<Biome> biomeRegistry;
-    private ModdedBiomes modded;
+    private volatile ModdedBiomes modded;
     private final Holder<Biome> ocean, deepOcean, coldOcean, deepColdOcean, frozenOcean, lukewarmOcean, deepLukewarmOcean, warmOcean,
             beach, snowyBeach, stonyShore, snowySlopes, frozenPeaks, stonyPeaks, meadow, taiga, oldTaiga, forest,
             plains, jungle, desert, savanna, river, frozenRiver, swamp, mangroveSwamp, snowyPlains, birchForest,
