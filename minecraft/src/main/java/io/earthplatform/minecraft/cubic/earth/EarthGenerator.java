@@ -3265,7 +3265,47 @@ public final class EarthGenerator extends SurfaceGenerator {
             inner = r;
         }
         if (distance < 0) distance = inner * 1.4;
+        // A small pond, however steep the ground round it, is not a deep basin (#287): bound the depth by the
+        // water body's size, read only where the shore distance alone would make it deeper than a pond.
+        if (1.2 + distance / 6.0 > POND_DEPTH_FREE) {
+            double radius = bodyRadius((px, pz) -> {
+                int code = cover(px, pz, voxel);
+                return code == WorldCoverSource.WATER || code == WorldCoverSource.NO_DATA;
+            }, x, z, scale);
+            cap = Math.min(cap, bodyDepthCap(radius));
+        }
         return cappedLakeDepth(distance, patches.getValue(x / 23.0, z / 23.0), cap);
+    }
+
+    @FunctionalInterface interface WaterProbe { boolean water(double x, double z); }
+
+    /** Ray lengths, in blocks at voxel 6, that {@link #bodyRadius} walks out along; water past the last is open. */
+    private static final double[] BODY_RAYS = {5, 14, 36, 90, 180, 360, 720, 1440};
+    /** Depth, in blocks, a pond's shore distance may take it to before its size is read, and its depth per block of radius. */
+    private static final double POND_DEPTH_FREE = 4.0, POND_DEPTH_SLOPE = 1.0 / 12.0, POND_DEPTH_BASE = 2.0;
+
+    /**
+     * Mean distance, in blocks, from a water column to the shore along eight rays, each ending at the
+     * first land; a ray that finds none counts the longest. A pond reads tens of blocks, a lake
+     * hundreds or more.
+     */
+    static double bodyRadius(WaterProbe water, double x, double z, double scale) {
+        double sum = 0;
+        for (int k = 0; k < 8; k++) {
+            double length = BODY_RAYS[BODY_RAYS.length - 1] * scale, inner = 0;
+            for (double ray : BODY_RAYS) {
+                double r = ray * scale;
+                if (!water.water(x + RING_X[k] * r, z + RING_Z[k] * r)) { length = (inner + r) / 2; break; }
+                inner = r;
+            }
+            sum += length;
+        }
+        return sum / 8;
+    }
+
+    /** Deepest, in blocks, a water body of this mean shore radius may lie: ponds stay shallow, lakes of 450+ blocks free. */
+    static double bodyDepthCap(double radius) {
+        return POND_DEPTH_BASE + radius * POND_DEPTH_SLOPE;
     }
 
     /** Lake depth from shore distance, patch noise in [-1, 1], and relief-based depth cap. */
