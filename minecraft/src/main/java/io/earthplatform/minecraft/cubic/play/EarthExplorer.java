@@ -30,7 +30,8 @@ import net.minecraft.world.level.saveddata.SavedData;
  * spawn and the whole way round it, and the ocean current. The tab's files are in {@code data/earthplatform/advancement/earth};
  * all but its root are awarded from here, as the server looks at its players each second. Heights
  * are the generated ground's, so a tower or a mine shaft doesn't count. Nothing is awarded during a
- * Where on Earth round, where a toast for the Arctic Circle would give the answer away.
+ * Where on Earth round, where a toast for the Arctic Circle would give the answer away. Datapacks'
+ * {@code earthplatform:reached_place} criteria ({@link PlaceTrigger}) are looked at in the same pass.
  */
 public final class EarthExplorer {
     /** Farther than anyone travels in a second (a glider in the jet stream goes under 1,700 blocks): a teleport. */
@@ -71,6 +72,8 @@ public final class EarthExplorer {
         if (here.latitude() >= POLAR) award(player, "arctic_circle");
         if (here.latitude() <= -POLAR) award(player, "antarctic_circle");
         if (country != null) journeys.visit(player, country.name());
+        // Datapacks and quest mods name real places; this is the only place their criteria are looked at.
+        PlaceTrigger.INSTANCE.fire(player, here.latitude(), here.longitude(), player.getY() - earth.seaLevel());
         GeoPoint spawn = EarthCompass.spawnOf(player, earth);
         if (EarthRules.kilometers(spawn.latitude(), spawn.longitude(), here.latitude(), here.longitude()) >= FAR_KM) award(player, "far_from_home");
         if (EarthRules.kilometers(-spawn.latitude(), spawn.longitude() + 180, here.latitude(), here.longitude()) <= ANTIPODE_KM) award(player, "antipodes");

@@ -17,6 +17,7 @@ import io.earthplatform.minecraft.cubic.play.EarthExplorer;
 import io.earthplatform.minecraft.cubic.play.EarthMemory;
 import io.earthplatform.minecraft.cubic.play.EarthRules;
 import io.earthplatform.minecraft.cubic.play.EarthWorlds;
+import io.earthplatform.minecraft.cubic.play.PlaceTrigger;
 import io.earthplatform.minecraft.cubic.portal.CubicTravel;
 import io.earthplatform.minecraft.cubic.compat.axiom.AxiomCubes;
 import java.util.IdentityHashMap;
@@ -32,6 +33,8 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -59,6 +62,9 @@ public final class EarthPlatformFabric implements ModInitializer {
         NeoForgeConfigRegistry.INSTANCE.register(EarthPlatformMod.MOD_ID, ModConfig.Type.CLIENT, EarthConfig.CLIENT_SPEC);
         NeoForgeConfigRegistry.INSTANCE.register(EarthPlatformMod.MOD_ID, ModConfig.Type.COMMON, EarthConfig.COMMON_SPEC);
         EarthConfig.setup();
+
+        // The reached_place advancement criterion, which datapacks name in their advancements.
+        Registry.register(BuiltInRegistries.TRIGGER_TYPES, PlaceTrigger.ID, PlaceTrigger.INSTANCE);
 
         CubePayloads.register(new FabricPayloads());
         EarthWorlds.payloads(new FabricPayloads());
