@@ -1484,7 +1484,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * voxel. Up close the read point wanders by about half a pixel, so class borders curve. Water
      * on a glacier with only snow and ice round it is more of the ice ({@link #iceWater}).
      */
-    private int cover(double x, double z, int voxel) { return water(rawCover(x, z, voxel)); }
+    int cover(double x, double z, int voxel) { return water(rawCover(x, z, voxel)); }
 
     /** The cover of a column, or {@link #RIVER} where only the river map has water. */
     private int rawCover(double x, double z, int voxel) {
@@ -3387,7 +3387,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * and three to six varying column by column so the beach strip's inland edge breaks up into the ground behind it
      * rather than running as a line a fixed distance from the water).
      */
-    private boolean nearSea(int x, int z, int voxel) {
+    boolean nearSea(int x, int z, int voxel) {
         if (voxel == 1 && (waterY(x + 1, z) == SEA || waterY(x - 1, z) == SEA || waterY(x, z + 1) == SEA || waterY(x, z - 1) == SEA
                 || waterY(x + 2, z) == SEA || waterY(x - 2, z) == SEA || waterY(x, z + 2) == SEA || waterY(x, z - 2) == SEA))
             return true;
@@ -3396,7 +3396,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /** Whether a dry column sits on a tiny offshore speck surrounded by sea on at least three sides. */
-    private boolean seaSurrounded(int x, int z) {
+    boolean seaSurrounded(int x, int z) {
         int sea = 0;
         if (waterY(x + 4, z) == SEA) sea++;
         if (waterY(x - 4, z) == SEA) sea++;
@@ -3487,14 +3487,14 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (built) code = townWild(x, z, voxel);
             Surface covered = code == WorldCoverSource.NO_DATA ? null : covered(code, x, z, y, local, steep, roll, slope, voxel, modded);
             if (covered == null) {
-                int marsh = code == WorldCoverSource.WATER || code == WorldCoverSource.NO_DATA
-                        ? marshyFallback(x, z, voxel, code) : WorldCoverSource.NO_DATA;
                 // Never turn an offshore WATER/NO_DATA reef or DEM speck beside the sea into typical() forest,
-                // but exempt marsh/mangrove estuaries and river deltas from beach sand patches.
-                if ((code == WorldCoverSource.WATER || code == WorldCoverSource.NO_DATA)
-                        && marsh == WorldCoverSource.NO_DATA
+                // but exempt marsh/mangrove estuaries and river deltas from beach sand patches without
+                // overriding inland/high-elevation NO_DATA columns (e.g. steep Pantanal uplands).
+                boolean coastalFallback = (code == WorldCoverSource.WATER || code == WorldCoverSource.NO_DATA)
                         && (y <= SEA + 4 && (voxel < SHORE_VOXEL && nearSea(x, z, voxel) || seaWithin(x, z, 32, voxel))
-                        || y <= SEA + 8 && voxel < SHORE_VOXEL && !quick() && seaSurrounded(x, z))) {
+                        || y <= SEA + 8 && voxel < SHORE_VOXEL && !quick() && seaSurrounded(x, z));
+                int marsh = coastalFallback ? marshyFallback(x, z, voxel, code) : WorldCoverSource.NO_DATA;
+                if (coastalFallback && marsh == WorldCoverSource.NO_DATA) {
                     covered = steep > 0.8 ? new Surface(stonyShore, STONE, STONE, 0, 0, 0, 0, 0, false)
                             : beachSurface(x, z, t, steep, false, 0, modded);
                 } else {
@@ -4609,6 +4609,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** The canopy map's height in metres at the middle of a 16-block column, or -1 where it has no reading. */
     private int canopyColumn(int cx, int cz) {
+        if (canopy == null || quick()) return -1;
         long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         Byte known = canopyColumns.get(key);
         if (known == null) {
@@ -4639,6 +4640,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** How tall the stand round a block column is, in metres, blended between the columns round it; -1 where unknown. */
     private double stand(int x, int z) {
+        if (canopy == null || quick()) return -1;
         int ix = x - 8 >> 4, iz = z - 8 >> 4;
         double tx = (x - 8 - (ix << 4)) / 16.0, tz = (z - 8 - (iz << 4)) / 16.0, sum = 0, weight = 0;
         for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
@@ -4771,8 +4773,8 @@ public final class EarthGenerator extends SurfaceGenerator {
      * and more, as in the Olympics' and the Cascades' rainforests and the Sierra Nevada's sugar pine and fir belt.
      * Such forest is big conifers whatever the climate alone would grow, and it is what giant groves stand in.
      */
-    private boolean oldGrowth(int x, int z) {
-        if (canopy == null) return false;
+    private boolean oldGrowth(int x, int z, int voxel) {
+        if (canopy == null || quick() || voxel > 8) return false;
         return coniferCountry(x, z) && stand(x + sway(x, z, 2), z + sway(x, z, 3)) >= OLD_GROWTH;
     }
 
@@ -4794,6 +4796,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      */
     @Override protected boolean giants(int x, int z) {
         if (canopy == null) return oldRegion(x, z, OldRegions::sequoiaBelt);
+        if (quick()) return false;
         int gx = x >> GIANT_CELL_BITS, gz = z >> GIANT_CELL_BITS;
         long key = it.unimi.dsi.fastutil.HashCommon.mix((long) gx << 32 | gz & 0xFFFFFFFFL);
         Boolean known = giantCells.get(key);
@@ -4802,6 +4805,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             giantCells.put(key, known);
         }
         return known;
+    }
+
+    @Override protected boolean farGiants(int x, int z, int voxel) {
+        if (canopy == null) return giants(x, z);
+        return !quick() && voxel <= 8 && giants(x, z);
     }
 
     private boolean giantCell(int gx, int gz) {
@@ -4826,9 +4834,9 @@ public final class EarthGenerator extends SurfaceGenerator {
      * Whether a forest column is in a grove of giant trees: where the canopy map shows conifers standing at giant
      * height, wherever on Earth that is. Worlds made before the map keep the Sierra Nevada's real sequoia groves.
      */
-    private boolean sequoias(int x, int z, int y) {
+    private boolean sequoias(int x, int z, int y, int voxel) {
         if (canopy == null) { GeoPoint p = grid.tryGeographic(x, z); return p != null && OldRegions.grove(p, y - SEA); }
-        if (!giants(x, z) || !coniferCountry(x, z)) return false;
+        if (quick() || voxel > 8 || !giants(x, z) || !coniferCountry(x, z)) return false;
         // Read a few dozen blocks aside, by broad noise: the map is stitched from strips of imagery that read heights
         // a little differently, and a grove must not end along a strip's straight edge. Then blended between the
         // columns round it, so a grove's edge is a curve and not a staircase of 16-block squares.
@@ -4863,11 +4871,11 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** The forest of a climate: rainforest, bamboo, dry tropical woodland, pine, oak, birch, dark oak, cherry or taiga. */
     private Surface forest(Local local, double patch, int x, int z, int y, int voxel, ModdedBiomes modded) {
         // Giant sequoias and coast redwoods among old conifers, on duff, in the real groves.
-        if (sequoias(x, z, y)) {
+        if (sequoias(x, z, y, voxel)) {
             boolean redwood = canopy == null || local.rain() < 1500 || local.temperature() >= 10.5;
             return new Surface(redwood ? modded.redwoodForest : modded.oldGrowthConifer, patch > -0.2 ? PODZOL : GRASS, DIRT, 70, 7, 0, 90, 100, true, Tree.SEQUOIA);
         }
-        if (oldGrowth(x, z) && local.zone() != ClimateZone.RAINFOREST && local.zone() != ClimateZone.TROPICAL_DRY)
+        if (oldGrowth(x, z, voxel) && local.zone() != ClimateZone.RAINFOREST && local.zone() != ClimateZone.TROPICAL_DRY)
             return new Surface(modded.oldGrowthConifer, patch > 0.3 ? PODZOL : GRASS, DIRT, 80, 8, 0, 110, 120, true);
         // Subpolar oceanic dwarf birch/scrub with measured low canopy (0..6 m) stays sparse/treeless even when forest types mark broadleaf.
         if (local.zone() == ClimateZone.SUBPOLAR_OCEANIC) {

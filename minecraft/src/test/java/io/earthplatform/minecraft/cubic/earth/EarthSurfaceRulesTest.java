@@ -19,6 +19,7 @@ import io.earthplatform.geography.globe.GroundPalette;
 import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
+import io.earthplatform.minecraft.cubic.gen.FarColumn;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Surface;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator.Tree;
 import java.time.Duration;
@@ -393,23 +394,52 @@ class EarthSurfaceRulesTest {
 
     @Test
     void marshyMangroveDeltaDryWaterAndNoDataPixelsAndOffshoreSpecks() throws Exception {
-        // 1. Sundarbans mangrove estuary (Ecoregions.MANGROVE): sea at dx < -10 (-5 m), flat estuary land at dx >= -10 (+1 m).
-        // Both dry-DEM WATER and dry-DEM NO_DATA creek pixels near sea (at SEA + 1 and SEA + 3) must stay mangrove/marsh, NOT beach sand!
+        // 1. Sundarbans mangrove estuary (Ecoregions.MANGROVE): sea at dx <= -2 (-5 m), flat estuary land at dx > -2 (+1 m).
+        // Both a genuine shoreline dry WATER pixel (where coverAt() warp overlaps the shore) and a genuine shoreline
+        // NO_DATA pixel (with cover == NO_DATA, y <= SEA + 2, nearSea() == true, and !seaSurrounded()) must be exempted
+        // from the early beach decision and coastal beach fallback, staying mangrove/marsh instead of beach sand!
         double sundarbansLat = 22.0, sundarbansLon = 89.2;
-        for (int centerCover : new int[]{WorldCoverSource.WATER, WorldCoverSource.NO_DATA}) {
-            try (var world = new EarthShorelineTest.SyntheticWorld(biomes, sundarbansLat, sundarbansLon,
-                    (dx, dz) -> dx < -10 ? -5.0 : 1.0,
-                    (dx, dz) -> dx < -10 ? WorldCoverSource.WATER
-                            : (Math.abs(dx) <= 4 && Math.abs(dz) <= 4 ? centerCover : WorldCoverSource.MANGROVES))) {
-                EarthGenerator gen = world.generator;
-                for (int y : new int[]{gen.seaLevel() + 1, gen.seaLevel() + 3}) {
-                    Surface s = gen.surface(world.homeX, world.homeZ, y, EarthGenerator.DRY, 0, 1, null);
-                    assertNotNull(s);
-                    assertFalse(s.biome().is(Biomes.BEACH), "mangrove delta dry cover=" + centerCover + " must not become BEACH at y=" + y);
-                    assertNotEquals(Blocks.SAND.defaultBlockState(), s.top(), "mangrove delta dry cover=" + centerCover + " must not get beach sand at y=" + y);
-                    assertTrue(s.biome().is(Biomes.MANGROVE_SWAMP) || s.biome().is(Biomes.SWAMP),
-                            "mangrove delta dry cover=" + centerCover + " should stay mangrove/marsh, got " + s.biome());
+        try (var world = new EarthShorelineTest.SyntheticWorld(biomes, sundarbansLat, sundarbansLon,
+                (dx, dz) -> dx <= -2 ? -5.0 : 1.0,
+                (dx, dz) -> dx <= -2 ? WorldCoverSource.WATER : WorldCoverSource.MANGROVES)) {
+            EarthGenerator gen = world.generator;
+            int waterX = Integer.MIN_VALUE, waterZ = Integer.MIN_VALUE;
+            for (int dz = 0; dz <= 128 && waterX == Integer.MIN_VALUE; dz++) {
+                int x = world.homeX, z = world.homeZ + dz;
+                if (gen.cover(x, z, 1) == WorldCoverSource.WATER && gen.nearSea(x, z, 1) && !gen.seaSurrounded(x, z)) {
+                    waterX = x;
+                    waterZ = z;
                 }
+            }
+            assertNotEquals(Integer.MIN_VALUE, waterX,
+                    "mangrove shoreline fixture must find a genuine dry WATER column with nearSea() && !seaSurrounded()");
+            for (int y : new int[]{gen.seaLevel() + 1, gen.seaLevel() + 3}) {
+                Surface s = gen.surface(waterX, waterZ, y, EarthGenerator.DRY, 0, 1, null);
+                assertNotNull(s);
+                assertFalse(s.biome().is(Biomes.BEACH), "mangrove delta dry WATER must not become BEACH at y=" + y);
+                assertNotEquals(Blocks.SAND.defaultBlockState(), s.top(), "mangrove delta dry WATER must not get beach sand at y=" + y);
+                assertTrue(s.biome().is(Biomes.MANGROVE_SWAMP) || s.biome().is(Biomes.SWAMP),
+                        "mangrove delta dry WATER should stay mangrove/marsh, got " + s.biome());
+            }
+        }
+        try (var world = new EarthShorelineTest.SyntheticWorld(biomes, sundarbansLat, sundarbansLon,
+                (dx, dz) -> dx <= -2 ? -5.0 : 1.0,
+                (dx, dz) -> (Math.abs(dx) <= 24 && Math.abs(dz) <= 24) ? WorldCoverSource.NO_DATA
+                        : (dx <= -2 ? WorldCoverSource.WATER : WorldCoverSource.MANGROVES))) {
+            EarthGenerator gen = world.generator;
+            assertEquals(WorldCoverSource.NO_DATA, gen.cover(world.homeX, world.homeZ, 1),
+                    "estuary NO_DATA fixture center must genuinely sample NO_DATA");
+            assertTrue(gen.nearSea(world.homeX, world.homeZ, 1),
+                    "estuary NO_DATA fixture center must have nearSea() == true to exercise the early beach decision");
+            assertFalse(gen.seaSurrounded(world.homeX, world.homeZ),
+                    "estuary NO_DATA fixture center on flat shoreline must not be seaSurrounded()");
+            for (int y : new int[]{gen.seaLevel() + 1, gen.seaLevel() + 3}) {
+                Surface s = gen.surface(world.homeX, world.homeZ, y, EarthGenerator.DRY, 0, 1, null);
+                assertNotNull(s);
+                assertFalse(s.biome().is(Biomes.BEACH), "mangrove delta dry NO_DATA must not become BEACH at y=" + y);
+                assertNotEquals(Blocks.SAND.defaultBlockState(), s.top(), "mangrove delta dry NO_DATA must not get beach sand at y=" + y);
+                assertTrue(s.biome().is(Biomes.MANGROVE_SWAMP) || s.biome().is(Biomes.SWAMP),
+                        "mangrove delta dry NO_DATA should stay mangrove/marsh, got " + s.biome());
             }
         }
 
@@ -494,6 +524,87 @@ class EarthSurfaceRulesTest {
             } finally {
                 gen.setStandOverride(null);
             }
+        } finally {
+            canopyServer.stop(0);
+        }
+    }
+
+    @Test
+    void highElevationInlandNoDataInFloodedGrasslandKeepsRockAndClimateSurface() throws Exception {
+        // Steep synthetic Pantanal upland (Ecoregions.FLOODED_GRASSLAND) at y = SEA + 200 with NO_DATA cover
+        // must use the normal rock/climate fallback rather than marshyFallback() swamp mud.
+        double pantanalLat = -17.5, pantanalLon = -57.0;
+        assertEquals(Ecoregions.FLOODED_GRASSLAND, Ecoregions.get().biome(Ecoregions.get().ecoregion(pantanalLat, pantanalLon)),
+                "fixture coordinate must lie in FLOODED_GRASSLAND (Pantanal)");
+        try (var world = new EarthShorelineTest.SyntheticWorld(biomes, pantanalLat, pantanalLon,
+                (dx, dz) -> 200.0 + dx * 2.0,
+                (dx, dz) -> WorldCoverSource.NO_DATA)) {
+            EarthGenerator gen = world.generator;
+            assertEquals(WorldCoverSource.NO_DATA, gen.cover(world.homeX, world.homeZ, 1),
+                    "Pantanal upland fixture must sample NO_DATA cover");
+            Surface s = gen.surface(world.homeX, world.homeZ, gen.seaLevel() + 200, EarthGenerator.DRY, 6, 1, null);
+            assertNotNull(s);
+            assertFalse(s.biome().is(Biomes.SWAMP) || s.biome().is(Biomes.MANGROVE_SWAMP),
+                    "high-elevation inland NO_DATA in Pantanal must not turn into swamp/mangrove, got " + s.biome());
+            assertNotEquals(Blocks.MUD.defaultBlockState(), s.top(),
+                    "steep high-elevation inland NO_DATA in Pantanal must not get swamp mud");
+            assertTrue(s.top().is(Blocks.STONE) || s.top().is(Blocks.ANDESITE) || s.top().is(Blocks.DIORITE) || s.top().is(Blocks.GRAVEL),
+                    "steep high-elevation inland NO_DATA in Pantanal should keep rock surface, got " + s.top());
+        }
+    }
+
+    @Test
+    void coniferQuickPreviewAndCoarseFarRenderSkipCanopyHttpRequests() throws Exception {
+        // Cold-cache conifer country (Sierra Nevada, Ecoregions.TEMPERATE_CONIFER):
+        // both a quick() preview and a v = 16 (level 4) farColumn render must issue ZERO CanopySource HTTP requests
+        // across sequoias(), oldGrowth(), standHeight(), farCanopy(), and farGiants().
+        double sierraLat = 36.56, sierraLon = -118.75;
+        assertEquals(Ecoregions.TEMPERATE_CONIFER, Ecoregions.get().biome(Ecoregions.get().ecoregion(sierraLat, sierraLon)),
+                "fixture coordinate must lie in TEMPERATE_CONIFER (Sierra Nevada)");
+        java.util.concurrent.atomic.AtomicInteger canopyRequests = new java.util.concurrent.atomic.AtomicInteger();
+        HttpServer canopyServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        canopyServer.createContext("/canopy/", ex -> {
+            canopyRequests.incrementAndGet();
+            ex.sendResponseHeaders(404, -1);
+            ex.close();
+        });
+        canopyServer.start();
+        URI canopyBase = URI.create("http://127.0.0.1:" + canopyServer.getAddress().getPort() + "/canopy/");
+        try (var world = new EarthShorelineTest.SyntheticWorld(biomes, sierraLat, sierraLon,
+                (dx, dz) -> 1500.0,
+                (dx, dz) -> WorldCoverSource.TREE_COVER);
+             var canopySource = new CanopySource(canopyBase, null, true, 16, 2, Duration.ofSeconds(5))) {
+            EarthGenerator gen = world.generator;
+            gen.data(canopySource, false, false);
+
+            // 1. Cold-cache quick() preview at level 2 (v = 4) in conifer country.
+            int previewColX = Math.floorDiv(world.homeX, 16 * 4);
+            int previewColZ = Math.floorDiv(world.homeZ, 16 * 4);
+            gen.farPreview(2, previewColX, previewColZ, new FarColumn());
+            assertEquals(0, canopyRequests.get(),
+                    "cold-cache conifer quick() preview must issue zero CanopySource HTTP requests");
+
+            // 2. Direct giants() during quick() preview must also stay silent.
+            gen.previewing(2);
+            try {
+                assertFalse(gen.giants(world.homeX, world.homeZ), "giants() must return false during quick() preview");
+            } finally {
+                gen.previewing(0);
+            }
+            assertEquals(0, canopyRequests.get(),
+                    "giants() during quick() preview must issue zero CanopySource HTTP requests");
+
+            // 3. Real v = 16 (level 4) far render path (farSurface + farCanopy + SurfaceGenerator farGiants).
+            int farColX = Math.floorDiv(world.homeX, 16 * 16);
+            int farColZ = Math.floorDiv(world.homeZ, 16 * 16);
+            gen.farColumn(4, farColX, farColZ, new FarColumn());
+            assertEquals(0, canopyRequests.get(),
+                    "cold-cache conifer v = 16 (level 4) farColumn render must issue zero CanopySource HTTP requests");
+
+            // 4. Positive control: outside quick() at voxel == 8, conifer country does query CanopySource.
+            gen.farGiants(world.homeX, world.homeZ, 8);
+            assertTrue(canopyRequests.get() > 0,
+                    "positive control: fine/voxel=8 conifer lookup outside quick() must reach CanopySource");
         } finally {
             canopyServer.stop(0);
         }

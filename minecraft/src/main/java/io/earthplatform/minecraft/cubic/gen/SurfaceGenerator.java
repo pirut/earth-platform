@@ -131,6 +131,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     protected boolean giants(int x, int z) { return false; }
 
     /**
+     * Whether giant sequoia groves should be rasterised at a far terrain voxel of width {@code voxel}.
+     * Defaults to {@link #giants(int, int)}.
+     */
+    protected boolean farGiants(int x, int z, int voxel) { return giants(x, z); }
+
+    /**
      * How tall the real trees round a column stand, in metres, where the generator knows; -1 where it does not,
      * and trees grow to the heights vanilla gives them.
      */
@@ -435,10 +441,10 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                 max = Math.max(max, beside);
             }
         }
-        // Room for trees: drawn as they are out to 4-block voxels, sequoias out to 16.
-        boolean giants = !preview && v <= 16 && giants(x0 + width / 2, z0 + width / 2);
-        if (giants) max += Sequoia.TALLEST + 1;
-        else if (v <= 4) max += preview ? CROWN : Trees.TALLEST + 1;
+        // Room for trees: drawn as they are out to 4-block voxels, sequoias out to 16 (when farGiants allows).
+        boolean giants = !preview && v <= 16 && farGiants(x0 + width / 2, z0 + width / 2, v);
+        if (giants) max += Sequoia.TALLEST + 2;
+        else if (v <= 4) max += preview ? CROWN : Trees.TALLEST + 2;
         else if (v == 8) max += v;
         int depth = level <= Far.EDIT_LEVELS ? Math.max(v, CAVE_DEPTH) : v;
         int bottom = (min - depth) >> (level + 4), highest = max >> (level + 4);
