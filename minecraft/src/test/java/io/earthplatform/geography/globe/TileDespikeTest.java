@@ -163,4 +163,25 @@ class TileDespikeTest {
         assertEquals(tile[83 * SIDE + 83], v2[83 * SIDE + 83], 1e-4f, "v2 preserves genuine 85 m rock spire");
         assertEquals(base[180 * SIDE + 180], v2[180 * SIDE + 180], 15f, "v2 cleans isolated single-pixel +140 m DEM spike");
     }
+
+    @Test
+    void v2UniformlyRemovesFlatLandBuildingsAtTileBorderWithoutStubsOrHalfSlicing() {
+        float[] tile = new float[SIDE * SIDE];
+        java.util.Arrays.fill(tile, 100f);
+        // 2-pixel flat-land building flush against western border (x = 0..1, y = 60).
+        tile[60 * SIDE + 0] = 160f;
+        tile[60 * SIDE + 1] = 160f;
+        // 3-pixel flat-land building spanning x = 0..2, y = 120 (previously half-sliced to 280, 280, 100).
+        tile[120 * SIDE + 0] = 280f;
+        tile[120 * SIDE + 1] = 280f;
+        tile[120 * SIDE + 2] = 280f;
+
+        float[] v2 = tile.clone();
+        TileDespike.despike(v2, 8.0, true);
+        assertEquals(100f, v2[60 * SIDE + 0], 1e-4f, "v2 must remove 2-px border building at x=0");
+        assertEquals(100f, v2[60 * SIDE + 1], 1e-4f, "v2 must remove 2-px border building at x=1");
+        assertEquals(100f, v2[120 * SIDE + 0], 1e-4f, "v2 must uniformly remove 3-px border building at x=0");
+        assertEquals(100f, v2[120 * SIDE + 1], 1e-4f, "v2 must uniformly remove 3-px border building at x=1");
+        assertEquals(100f, v2[120 * SIDE + 2], 1e-4f, "v2 must uniformly remove 3-px border building at x=2");
+    }
 }

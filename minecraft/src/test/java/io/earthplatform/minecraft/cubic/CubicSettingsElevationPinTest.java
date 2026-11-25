@@ -44,6 +44,14 @@ class CubicSettingsElevationPinTest {
 
         String dgm5V2 = CubicSettings.elevation();
         assertEquals(dgm5V2, CubicSettings.bareEarthPin(dgm5V2), "new v2 save keeps its v2 pin");
+
+        // Any pin containing terrarium-v2 or glo30-fill-v3 passes through directly even without DGM5.
+        String v2NoDgm5 = TerrariumTileSource.V2_ID + "+" + CopernicusFill.ICE_ID;
+        String geoidNoDgm5 = TerrariumTileSource.DATASET_ID + "+" + CopernicusFill.GEOID_ID;
+        String bothNoDgm5 = TerrariumTileSource.V2_ID + "+" + CopernicusFill.GEOID_ID;
+        assertEquals(v2NoDgm5, CubicSettings.bareEarthPin(v2NoDgm5), "terrarium-v2 pin without DGM5 passes through");
+        assertEquals(geoidNoDgm5, CubicSettings.bareEarthPin(geoidNoDgm5), "glo30-fill-v3 pin without DGM5 passes through");
+        assertEquals(bothNoDgm5, CubicSettings.bareEarthPin(bothNoDgm5), "terrarium-v2+glo30-fill-v3 pin without DGM5 passes through");
     }
 
     @Test
@@ -52,13 +60,13 @@ class CubicSettingsElevationPinTest {
         Path legacyBase = root.resolve(BareEarth.ID);
 
         assertEquals(legacyBase, CubicSettings.bareEarthCache(root, CubicSettings.legacyBaseline()),
-                "legacy v1 pin keeps existing bare-earth-v4 folder");
+                "legacy v1 pin keeps existing bare-earth-v1 folder");
         assertEquals(legacyBase, CubicSettings.bareEarthCache(root, TerrariumTileSource.DATASET_ID + "+" + CopernicusFill.DATASET_ID),
-                "v1+glo30-fill-v1 keeps existing bare-earth-v4 folder");
+                "v1+glo30-fill-v1 keeps existing bare-earth-v1 folder");
 
         Path v2Cache = CubicSettings.bareEarthCache(root, CubicSettings.elevation());
         assertNotEquals(legacyBase, v2Cache, "v2 pin must use a namespaced subfolder");
-        assertTrue(v2Cache.startsWith(legacyBase), "v2 cache should live inside bare-earth-v4/");
+        assertTrue(v2Cache.startsWith(legacyBase), "v2 cache should live inside bare-earth-v1/");
 
         Path v2Only = CubicSettings.bareEarthCache(root, TerrariumTileSource.V2_ID + "+" + CopernicusFill.ICE_ID);
         Path geoidOnly = CubicSettings.bareEarthCache(root, TerrariumTileSource.DATASET_ID + "+" + CopernicusFill.GEOID_ID);

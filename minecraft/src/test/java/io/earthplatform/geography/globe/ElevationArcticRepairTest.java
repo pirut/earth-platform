@@ -14,8 +14,13 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import io.earthplatform.geography.MissingTerrainException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.DoubleBinaryOperator;
 import java.util.zip.Deflater;
 import org.junit.jupiter.api.Test;
@@ -36,22 +41,28 @@ class ElevationArcticRepairTest {
 
     /** Builds a 4-level tiled float32 deflated COG matching {@link CopernicusSource}'s reader. */
     private static byte[] syntheticCog(int south, int west, int size, int tile, DoubleBinaryOperator ground) {
+        return syntheticCog(south, west, size, size, tile, ground);
+    }
+
+    /** Builds a 4-level tiled float32 deflated COG with explicit width and height (for latitude-band width tests). */
+    private static byte[] syntheticCog(int south, int west, int width0, int height0, int tile, DoubleBinaryOperator ground) {
         int levels = 4;
         List<byte[]> blocks = new ArrayList<>();
-        int[] firstBlock = new int[levels], width = new int[levels];
+        int[] firstBlock = new int[levels], width = new int[levels], height = new int[levels];
         for (int level = 0; level < levels; level++) {
-            int w = size >> level;
+            int w = width0 >> level, h = height0 >> level;
             width[level] = w;
+            height[level] = h;
             firstBlock[level] = blocks.size();
-            int across = Math.ceilDiv(w, tile);
-            for (int br = 0; br < across; br++) for (int bc = 0; bc < across; bc++) {
+            int across = Math.ceilDiv(w, tile), down = Math.ceilDiv(h, tile);
+            for (int br = 0; br < down; br++) for (int bc = 0; bc < across; bc++) {
                 byte[] raw = new byte[tile * tile * 4];
                 for (int y = 0; y < tile; y++) {
                     int at = y * tile * 4;
                     for (int x = 0; x < tile; x++) {
                         int row = br * tile + y, col = bc * tile + x;
-                        float v = row < w && col < w
-                                ? (float) ground.applyAsDouble(south + 1 - (row + 0.5) / w, west + (col + 0.5) / w)
+                        float v = row < h && col < w
+                                ? (float) ground.applyAsDouble(south + 1 - (row + 0.5) / h, west + (col + 0.5) / w)
                                 : 0f;
                         int bits = Float.floatToIntBits(v);
                         for (int plane = 0; plane < 4; plane++) raw[at + plane * tile + x] = (byte) (bits >>> (24 - 8 * plane));
@@ -72,7 +83,7 @@ class ElevationArcticRepairTest {
         int headerEnd = 8;
         int[] ifdAt = new int[levels], arraysAt = new int[levels];
         for (int level = 0; level < levels; level++) {
-            int n = Math.ceilDiv(width[level], tile) * Math.ceilDiv(width[level], tile);
+            int n = Math.ceilDiv(width[level], tile) * Math.ceilDiv(height[level], tile);
             ifdAt[level] = headerEnd;
             arraysAt[level] = headerEnd + ifdBytes;
             headerEnd += ifdBytes + n * 8;
@@ -85,11 +96,11 @@ class ElevationArcticRepairTest {
         int[] blockAt = new int[blocks.size()];
         for (int i = 0; i < blocks.size(); i++) { blockAt[i] = data; data += blocks.get(i).length; }
         for (int level = 0; level < levels; level++) {
-            int n = Math.ceilDiv(width[level], tile) * Math.ceilDiv(width[level], tile);
+            int n = Math.ceilDiv(width[level], tile) * Math.ceilDiv(height[level], tile);
             file.position(ifdAt[level]);
             file.putShort((short) entries);
             int[][] tags = {
-                    {256, 4, 1, width[level]}, {257, 4, 1, width[level]}, {258, 3, 1, 32}, {259, 3, 1, 8},
+                    {256, 4, 1, width[level]}, {257, 4, 1, height[level]}, {258, 3, 1, 32}, {259, 3, 1, 8},
                     {277, 3, 1, 1}, {317, 3, 1, 3}, {322, 3, 1, tile}, {323, 3, 1, tile},
                     {324, 4, n, n == 1 ? blockAt[firstBlock[level]] : arraysAt[level]},
                     {325, 4, n, n == 1 ? blocks.get(firstBlock[level]).length : arraysAt[level] + 4 * n},
@@ -385,6 +396,555 @@ class ElevationArcticRepairTest {
             // Genuine -20,000 m void pixels (both interior and z11-border) are cleanly repaired!
             assertEquals(100f, tileV2[128 * SIDE + 128], 1f, "v2 repairs interior void cleanly");
             assertEquals(100f, tileV2[128 * SIDE + 0], 5f, "v2 repairs z11-border void cleanly using neighbour z11");
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3PreservesValidBathymetryNextToFilledFjordWhileRepairingLandVoids() throws Exception {
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 62; s <= 64; s++)
+            for (int w = -21; w <= -19; w++)
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 512, 128, ElevationArcticRepairTest::smoothGround));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            // Sea band (0.4, 0.6): west half (lon < -19.5) is a +85 m filled fjord; east half is valid -20 m bathymetry.
+            CopernicusFill.Tiles tiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double lon = tileLon(z, x, px);
+                        double g = smoothGround(lat, lon);
+                        if (g == 0.0) {
+                            t[py * SIDE + px] = lon < -19.5 ? 85f : -20f;
+                        } else {
+                            // Put an explicit coastal land void (-200 m) on land at lon in (-19.4, -19.3), lat in (63.7, 63.8).
+                            t[py * SIDE + px] = (lat > 63.7 && lat < 63.8 && lon > -19.4 && lon < -19.3) ? -200f : (float) g;
+                        }
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3 = new CopernicusFill(dem, tiles, (lat, lon) -> false, true, 16);
+
+            // Tile straddling the filled-fjord / -20 m bathymetry boundary at (63.5, -19.5).
+            int zoom = 13;
+            int tx = mercatorTileX(zoom, -19.5), ty = mercatorTileY(zoom, 63.5);
+            float[] tile = tiles.tile(zoom, tx, ty).clone();
+            v3.apply(tile, zoom, tx, ty);
+            int bathyChecked = 0, fjordCleared = 0;
+            for (int py = 0; py < SIDE; py++) {
+                double lat = tileLat(zoom, ty, py);
+                if (lat - Math.floor(lat) <= 0.42 || lat - Math.floor(lat) >= 0.58) continue;
+                for (int px = 0; px < SIDE; px++) {
+                    double lon = tileLon(zoom, tx, px);
+                    float v = tile[py * SIDE + px];
+                    if (lon > -19.49) {
+                        assertEquals(-20f, v, 1e-4f, "valid -20 m bathymetry next to filled fjord must never be erased");
+                        bathyChecked++;
+                    }
+                }
+            }
+            // Check the adjacent western tile (fully inside the +85 m filled fjord) is cleared to exact 0f.
+            float[] westTile = tiles.tile(zoom, tx - 1, ty).clone();
+            v3.apply(westTile, zoom, tx - 1, ty);
+            for (int py = 0; py < SIDE; py++) {
+                double lat = tileLat(zoom, ty, py);
+                if (lat - Math.floor(lat) <= 0.42 || lat - Math.floor(lat) >= 0.58) continue;
+                for (int px = 0; px < SIDE; px++) {
+                    if (westTile[py * SIDE + px] == 0f) fjordCleared++;
+                }
+            }
+            assertTrue(bathyChecked > 100, "expected valid bathymetry samples, got " + bathyChecked);
+            assertTrue(fjordCleared > 100, "expected filled fjord pixels cleared to 0f, got " + fjordCleared);
+
+            // Explicit land void (-200 m where Copernicus has ~80 m land) must still be repaired!
+            int vx = mercatorTileX(zoom, -19.35), vy = mercatorTileY(zoom, 63.75);
+            float[] voidTile = tiles.tile(zoom, vx, vy).clone();
+            v3.apply(voidTile, zoom, vx, vy);
+            double expectedLand = smoothGround(tileLat(zoom, vy, 128), tileLon(zoom, vx, 128));
+            assertEquals(expectedLand, voidTile[128 * SIDE + 128], 5.0, "explicit land void must still be repaired to Copernicus");
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3EmitsOpenSeaForCoastalRampsArtifactsAndArcticDemSeaShelves() throws Exception {
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 62; s <= 64; s++)
+            for (int w = -21; w <= -19; w++)
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 512, 128, ElevationArcticRepairTest::smoothGround));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            // Land has +55 m datum offset; sea band (0.4, 0.6) has 0f in check tiles.
+            CopernicusFill.Tiles checkTiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double g = smoothGround(lat, tileLon(z, x, px));
+                        t[py * SIDE + px] = g == 0.0 ? 0f : (float) (g + 55.0);
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3 = new CopernicusFill(dem, checkTiles, (lat, lon) -> false, true, 16);
+
+            // Pick a z15 tile just offshore of the 63.60 coastline (lat ~63.595) where cop == 0 and datum ~+55 m!
+            int zoom = 15;
+            int tx = mercatorTileX(zoom, -19.5), ty = mercatorTileY(zoom, 63.595);
+            double midLat = tileLat(zoom, ty, 128), midLon = tileLon(zoom, tx, 128);
+            assertEquals(0.0, dem.metres(midLat, midLon, 0), 1e-3, "test pixel must be confirmed sea in Copernicus");
+            assertTrue(v3.datum(midLat, midLon) > 40.0, "test pixel near coast should carry positive regional datum, got " + v3.datum(midLat, midLon));
+
+            float[] fine = new float[SIDE * SIDE];
+            Arrays.fill(fine, 0f);
+            // Positive coastal ramp (10 m), artifact (30 m), and ArcticDEM sea/fjord pixels (datum ± 3 m: 58 m & 52 m).
+            fine[128 * SIDE + 125] = 10f;
+            fine[128 * SIDE + 126] = 30f;
+            fine[128 * SIDE + 127] = 58f;
+            fine[128 * SIDE + 128] = 52f;
+            v3.apply(fine, zoom, tx, ty);
+
+            assertEquals(0f, fine[128 * SIDE + 125], 0f, "coastal ramp (10 m) over sea with +55 m datum must become exact 0f");
+            assertEquals(0f, fine[128 * SIDE + 126], 0f, "coastal artifact (30 m) over sea with +55 m datum must become exact 0f");
+            assertEquals(0f, fine[128 * SIDE + 127], 0f, "ArcticDEM sea pixel (datum + 3 m) must become exact 0f, not +3 m shelf");
+            assertEquals(0f, fine[128 * SIDE + 128], 0f, "ArcticDEM sea pixel (datum - 3 m) must become exact 0f, not -3 m trench");
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3PreservesCopernicusCoastalLandDepressionAndCorrectsDatumOverSubtraction() throws Exception {
+        // Custom ground:
+        // - lat >= 63.5: coastal land at +15 m near lon < -19.5, +100 m elsewhere; Terrarium = cop + 55 m (offset region)
+        // - lat in (63.2, 63.5): aligned land at +100 m (Terrarium == cop == 100 m) to test datum spillover over-subtraction!
+        // - lat <= 63.2: below-sea-level land depression at -10 m in Copernicus
+        DoubleBinaryOperator ground = (lat, lon) -> {
+            if (lat <= 63.2) return -10.0;
+            if (lat >= 63.5 && lon < -19.5) return 15.0;
+            return 100.0;
+        };
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 62; s <= 64; s++)
+            for (int w = -21; w <= -19; w++)
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 512, 128, ground));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            CopernicusFill.Tiles tiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double lon = tileLon(z, x, px);
+                        double g = ground.applyAsDouble(lat, lon);
+                        // Offset region north of 63.5 (+55 m); aligned region south of 63.5 (0 m offset).
+                        t[py * SIDE + px] = lat >= 63.5 ? (float) (g + 55.0) : (float) g;
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3 = new CopernicusFill(dem, tiles, (lat, lon) -> false, true, 16);
+
+            // 1. Copernicus-confirmed coastal land (c = 15 m) under over-subtracted datum (t = 50, datum = +55 -> base = -5 <= 0)
+            //    must preserve c = 15 m (NOT flatten to 0.01 m!).
+            int zoom = 15;
+            int tx = mercatorTileX(zoom, -19.7), ty = mercatorTileY(zoom, 63.7);
+            float[] coastal = tiles.tile(zoom, tx, ty).clone();
+            coastal[128 * SIDE + 128] = 50f;
+            v3.apply(coastal, zoom, tx, ty);
+            assertEquals(15f, coastal[128 * SIDE + 128], 1.0f,
+                    "Copernicus-confirmed 15 m coastal land under base <= 0 must preserve c, not 0.01 m");
+
+            // 2. Datum spillover onto aligned land just south of 63.5 must correct back toward Copernicus (100 m)
+            //    instead of sinking by tens of metres!
+            int sx = mercatorTileX(zoom, -19.3), sy = mercatorTileY(zoom, 63.495);
+            float[] spillover = tiles.tile(zoom, sx, sy).clone();
+            v3.apply(spillover, zoom, sx, sy);
+            float minSpill = Float.MAX_VALUE;
+            for (int py = 0; py < SIDE; py++) {
+                double lat = tileLat(zoom, sy, py);
+                if (lat >= 63.5) continue;
+                for (int px = 0; px < SIDE; px++) minSpill = Math.min(minSpill, spillover[py * SIDE + px]);
+            }
+            assertTrue(minSpill > 85f, "datum spillover onto aligned 100 m land must not sink ground deeply, min=" + minSpill);
+
+            // 3. Below-sea-level land depression (c = -10 m) under positive datum must never dig deeper than Copernicus.
+            CopernicusFill.Tiles shiftedDepression = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double lon = tileLon(z, x, px);
+                        double g = ground.applyAsDouble(lat, lon);
+                        t[py * SIDE + px] = g > 0 ? (float) (g + 55.0) : 5f;
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3Dep = new CopernicusFill(dem, shiftedDepression, (lat, lon) -> false, true, 16);
+            int dx = mercatorTileX(zoom, -19.3), dy = mercatorTileY(zoom, 63.195);
+            float[] depTile = shiftedDepression.tile(zoom, dx, dy).clone();
+            v3Dep.apply(depTile, zoom, dx, dy);
+            for (int py = 0; py < SIDE; py++) {
+                double lat = tileLat(zoom, dy, py);
+                if (lat >= 63.19) continue;
+                assertTrue(depTile[py * SIDE + 128] >= -10.5f,
+                        "datum subtraction must never dig below Copernicus -10 m depression, got " + depTile[py * SIDE + 128]);
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3HandlesSignedNegativeRegionalDatumOffset() throws Exception {
+        // Land >= 120 m so a -55 m regional datum keeps Terrarium positive (65+ m); sea band (0.4, 0.6) is 0 m.
+        DoubleBinaryOperator ground = (lat, lon) -> {
+            double inLat = lat - Math.floor(lat);
+            if (inLat > 0.4 && inLat < 0.6) return 0.0;
+            return 160.0 + 25.0 * Math.sin((lat - 63.0) * 6.0) + 10.0 * Math.cos((lon + 20.0) * 5.0);
+        };
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 62; s <= 64; s++)
+            for (int w = -21; w <= -19; w++)
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 512, 128, ground));
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            double datumOffset = -55.0;
+            CopernicusFill.Tiles tiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double lon = tileLon(z, x, px);
+                        double g = ground.applyAsDouble(lat, lon);
+                        if (g == 0.0) t[py * SIDE + px] = lon < -19.5 ? 0f : -20f;
+                        else t[py * SIDE + px] = lat >= 63.6 ? (float) (g + datumOffset) : (float) g;
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3 = new CopernicusFill(dem, tiles, (lat, lon) -> false, true, 16);
+
+            // North land has -55 m coherent datum; south land is aligned (0 m datum).
+            assertEquals(datumOffset, v3.datum(63.75, -19.5), 1.0, "must estimate signed negative datum ~-55 m");
+            assertEquals(0.0, v3.weight(63.75, -19.5), 1e-3, "coherent negative datum keeps Copernicus blend weight 0");
+            assertEquals(0.0, v3.datum(63.2, -19.5), 1e-3, "aligned southern land keeps datum 0");
+
+            // Fine tile on shifted land with sharp 40 m cliff relief is lifted UP by +55 m with cliff intact!
+            int zoom = 15;
+            int tx = mercatorTileX(zoom, -19.5), ty = mercatorTileY(zoom, 63.75);
+            float[] fine = new float[SIDE * SIDE];
+            float[] expected = new float[SIDE * SIDE];
+            for (int py = 0; py < SIDE; py++) {
+                double lat = tileLat(zoom, ty, py);
+                for (int px = 0; px < SIDE; px++) {
+                    double g = ground.applyAsDouble(lat, tileLon(zoom, tx, px));
+                    double relief = (px >= 120 && px <= 125) ? -20.0 : (px >= 126 && px <= 135 ? 20.0 : 0.0);
+                    expected[py * SIDE + px] = (float) (g + relief);
+                    fine[py * SIDE + px] = (float) (g + relief + datumOffset);
+                }
+            }
+            v3.apply(fine, zoom, tx, ty);
+            assertEquals(40.0, fine[128 * SIDE + 130] - fine[128 * SIDE + 122], 1.0, "negative datum shift must preserve 40 m cliff");
+            assertEquals(expected[128 * SIDE + 130], fine[128 * SIDE + 130], 1.5f, "cliff lifted to orthometric datum");
+
+            // Near-coast sea tile under negative datum: 0f and -20f stay untouched; +2f sea noise becomes 0f (not +57 m!).
+            int seaY = mercatorTileY(zoom, 63.595);
+            float[] seaTile = new float[SIDE * SIDE];
+            Arrays.fill(seaTile, 0f);
+            seaTile[128 * SIDE + 126] = 0f;
+            seaTile[128 * SIDE + 127] = -20f;
+            seaTile[128 * SIDE + 128] = 2f;
+            v3.apply(seaTile, zoom, tx, seaY);
+            assertEquals(0f, seaTile[128 * SIDE + 126], 0f, "open sea stays 0f under negative datum");
+            assertEquals(-20f, seaTile[128 * SIDE + 127], 1e-4f, "valid bathymetry stays -20f under negative datum");
+            assertEquals(0f, seaTile[128 * SIDE + 128], 0f, "tiny +2 m sea noise over sea must not lift to +57 m");
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3EliminatesSeamsAcrossPartDegreeWidthChangeAndCoverageBoundaries() throws Exception {
+        // Test all three seam classes in one fast local COG fixture:
+        // - Square (59, -20): 512x512 (128x128 at CHECK_OVERVIEW=2)
+        // - Square (60, -20): 256x512 (64x128 at CHECK_OVERVIEW=2 — latitude-band column width halves!)
+        // - Square (59, -21) & (60, -21): MISSING (open ocean 404 — coverage edge at lon = -20.0!)
+        // - Also include (58, -20), (61, -20), (59, -19), (60, -19) for smooth interiors.
+        DoubleBinaryOperator ground = (lat, lon) -> {
+            // Small island around (59.25, -19.5) surrounded by sea so node (59.25, -19.5) sees ~16 land samples
+            // (12 shifted + 4 aligned), genuinely exercising the < 16 early-exit boundary across the 0.25° part border!
+            if (lat < 59.45) {
+                boolean island = Math.abs(lat - 59.25) < 0.009 && Math.abs(lon - (-19.5)) < 0.009;
+                if (!island) return 0.0;
+            }
+            return 100.0 + 20.0 * Math.sin(lat * 4.0) + 10.0 * Math.cos(lon * 4.0);
+        };
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 58; s <= 61; s++) {
+            for (int w = -20; w <= -19; w++) {
+                int w0 = s >= 60 ? 256 : 512;
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, w0, 512, 128, ground));
+            }
+        }
+        HttpServer server = cogServer(files);
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            // Spatially varying datum: +55 m everywhere north of 59.5, EXCEPT a small isolated 10-sample shifted patch
+            // straddling the 0.25° part border at (59.25, -19.5) to exercise the 8..15 sample early-exit boundary!
+            CopernicusFill.Tiles tiles = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double lon = tileLon(z, x, px);
+                        double g = ground.applyAsDouble(lat, lon);
+                        double shift = 0.0;
+                        if (lat >= 59.5) {
+                            // Smoothly modulated regional shift +35..+55 m crossing the 60.0° width-change border & 59.75° part border.
+                            shift = 45.0 + 10.0 * Math.sin((lon + 20.0) * Math.PI);
+                        } else if (g > 0.0 && Math.abs(lat - 59.25) < 0.009 && lon >= -19.506 && lon <= -19.493) {
+                            // ~12 (< 16) canonical land samples shifted by +55 m straddling the 59.25° part border!
+                            shift = 55.0;
+                        }
+                        t[py * SIDE + px] = (float) (g + shift);
+                    }
+                }
+                return t;
+            };
+            CopernicusFill v3 = new CopernicusFill(dem, tiles, (lat, lon) -> false, true, 64);
+
+            // 1. 0.25° part boundary continuity (datum AND weight) at 59.75° (WIDE = 20 margin) & 59.25° (8..15 sample edge case).
+            double eps = 1e-5;
+            for (double lon = -19.8; lon <= -19.2; lon += 0.1) {
+                assertEquals(v3.datum(59.75 - eps, lon), v3.datum(59.75 + eps, lon), 0.1,
+                        "datum must be continuous across 0.25° part border at 59.75, lon=" + lon);
+                assertEquals(v3.weight(59.75 - eps, lon), v3.weight(59.75 + eps, lon), 0.02,
+                        "weight must be continuous across 0.25° part border at 59.75, lon=" + lon);
+            }
+            assertEquals(v3.datum(59.25 - eps, -19.5), v3.datum(59.25 + eps, -19.5), 0.1,
+                    "datum must agree across 0.25° part border even for 8..15 shifted samples");
+            assertEquals(v3.weight(59.25 - eps, -19.5), v3.weight(59.25 + eps, -19.5), 0.02,
+                    "weight must agree across 0.25° part border even for 8..15 shifted samples");
+
+            // 2. 1° degree-square boundary continuity across column-width change (128 -> 64 cols/deg at lat = 60.0°).
+            for (double lon = -19.85; lon <= -19.15; lon += 0.1) {
+                double southDatum = v3.datum(60.0 - eps, lon);
+                double northDatum = v3.datum(60.0 + eps, lon);
+                assertTrue(southDatum > 30.0, "expected active datum south of 60°, got " + southDatum);
+                assertEquals(southDatum, northDatum, 0.15,
+                        "datum must be continuous across 1° square border with width change at lon=" + lon);
+            }
+
+            // 3. Missing-square coverage boundary at lon = -20.0° (west square -21 is missing): smooth taper to 0, NO jump!
+            assertEquals(0.0, v3.datum(59.75, -20.0 - 1e-4), 1e-6, "missing square must return datum 0");
+            double justInside = v3.datum(59.75, -20.0 + 1e-4);
+            double inland = v3.datum(59.75, -19.95);
+            assertTrue(inland > 35.0, "inland datum should be full regional offset, got " + inland);
+            assertTrue(Math.abs(justInside) < 1.5,
+                    "datum must smoothly taper to 0 at missing-square coverage edge (no 55 m jump), got " + justInside);
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void glo30FillV3SkipsWorldCoverOnAlignedLandRepairsSunkIceOnShiftedGlacierAndPrefetchesDatum() throws Exception {
+        Map<String, byte[]> files = new HashMap<>();
+        for (int s = 62; s <= 64; s++)
+            for (int w = -21; w <= -19; w++)
+                files.put(CopernicusSource.name(s, w) + ".tif", syntheticCog(s, w, 512, 128, ElevationArcticRepairTest::smoothGround));
+        AtomicInteger cogRequests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.createContext("/cop/", exchange -> {
+            cogRequests.incrementAndGet();
+            String path = exchange.getRequestURI().getPath().substring("/cop/".length());
+            int slash = path.indexOf('/');
+            String key = slash >= 0 ? path.substring(slash + 1) : path;
+            byte[] file = files.get(key);
+            if (file == null) {
+                exchange.sendResponseHeaders(404, -1);
+                exchange.close();
+                return;
+            }
+            String range = exchange.getRequestHeaders().getFirst("Range");
+            String[] span = range.substring("bytes=".length()).split("-");
+            int from = Integer.parseInt(span[0]), to = Math.min(file.length - 1, Integer.parseInt(span[1]));
+            byte[] body = Arrays.copyOfRange(file, from, to + 1);
+            exchange.sendResponseHeaders(206, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/cop/");
+        try (var dem = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+            // 1. Aligned land: WorldCover ice.at() must NOT be called at all!
+            AtomicInteger alignedIceCalls = new AtomicInteger();
+            CopernicusFill.Tiles aligned = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) t[py * SIDE + px] = (float) smoothGround(lat, tileLon(z, x, px));
+                }
+                return t;
+            };
+            CopernicusFill v3Aligned = new CopernicusFill(dem, aligned, (lat, lon) -> {
+                alignedIceCalls.incrementAndGet();
+                return false;
+            }, true, 16);
+            int zoom = 15;
+            int tx = mercatorTileX(zoom, -19.5), ty = mercatorTileY(zoom, 63.75);
+            v3Aligned.apply(aligned.tile(zoom, tx, ty).clone(), zoom, tx, ty);
+            assertEquals(0, alignedIceCalls.get(), "WorldCover ice.at() must never be queried on aligned land");
+
+            // 2. Datum-shifted (+55 m) glacier with a -30 m sunk pit (t = cop + 55 - 30 = cop + 25):
+            //    loop 1 has cop - t = -25 <= AGREE, loop 2 uncovers cop - tAdj = +30 > AGREE and queries ice.at().
+            CopernicusFill.Tiles shiftedGlacier = (z, x, y) -> {
+                float[] t = new float[SIDE * SIDE];
+                for (int py = 0; py < SIDE; py++) {
+                    double lat = tileLat(z, y, py);
+                    for (int px = 0; px < SIDE; px++) {
+                        double lon = tileLon(z, x, px);
+                        double g = smoothGround(lat, lon);
+                        if (g == 0.0) { t[py * SIDE + px] = 0f; continue; }
+                        boolean pit = Math.abs(lat - 63.75) < 0.008 && Math.abs(lon - (-19.5)) < 0.008;
+                        t[py * SIDE + px] = (float) (g + 55.0 - (pit ? 30.0 : 0.0));
+                    }
+                }
+                return t;
+            };
+            CopernicusFill.Ice glacierIce = (lat, lon) -> Math.abs(lat - 63.75) < 0.012 && Math.abs(lon - (-19.5)) < 0.012;
+            CopernicusFill v3Glacier = new CopernicusFill(dem, shiftedGlacier, glacierIce, true, 16);
+            assertEquals(1.0, v3Glacier.weight(63.75, -19.5), 1e-3, "sunk ice on datum-shifted glacier must get full Copernicus weight");
+            float[] glacierTile = shiftedGlacier.tile(zoom, tx, ty).clone();
+            v3Glacier.apply(glacierTile, zoom, tx, ty);
+            int bestPy = 0, bestPx = 0;
+            for (int py = 0; py < SIDE; py++)
+                if (Math.abs(tileLat(zoom, ty, py) - 63.75) < Math.abs(tileLat(zoom, ty, bestPy) - 63.75)) bestPy = py;
+            for (int px = 0; px < SIDE; px++)
+                if (Math.abs(tileLon(zoom, tx, px) - (-19.5)) < Math.abs(tileLon(zoom, tx, bestPx) - (-19.5))) bestPx = px;
+            double expectedCop = smoothGround(tileLat(zoom, ty, bestPy), tileLon(zoom, tx, bestPx));
+            assertEquals(expectedCop, glacierTile[bestPy * SIDE + bestPx], 2.0, "sunk ice pit must be lifted back to Copernicus");
+
+            // 3. prefetch() on a datum-shifted tile (weight == 0, datum != 0) must prefetch full-res Copernicus blocks.
+            try (var demPrefetch = new CopernicusSource(base, null, true, 32, 4, Duration.ofSeconds(5))) {
+                CopernicusFill.Tiles pureShifted = (z, x, y) -> {
+                    float[] t = new float[SIDE * SIDE];
+                    for (int py = 0; py < SIDE; py++) {
+                        double lat = tileLat(z, y, py);
+                        for (int px = 0; px < SIDE; px++) {
+                            double g = smoothGround(lat, tileLon(z, x, px));
+                            t[py * SIDE + px] = g == 0.0 ? 0f : (float) (g + 55.0);
+                        }
+                    }
+                    return t;
+                };
+                CopernicusFill v3Prefetch = new CopernicusFill(demPrefetch, pureShifted, (lat, lon) -> false, true, 16);
+                // First prime the check parts only, then verify prefetch fetches the finer overview block!
+                assertEquals(55.0, v3Prefetch.datum(63.75, -19.5), 1.5);
+                assertEquals(0.0, v3Prefetch.weight(63.75, -19.5), 1e-3);
+                int beforePrefetch = cogRequests.get();
+                v3Prefetch.prefetch(zoom, tx, ty);
+                assertTrue(cogRequests.get() > beforePrefetch,
+                        "prefetch() in glo30-fill-v3 must prefetch Copernicus blocks when datum != 0");
+            }
+        } finally {
+            server.stop(0);
+            ((ExecutorService) server.getExecutor()).shutdownNow();
+        }
+    }
+
+    @Test
+    void terrariumV2PropagatesTransientNeighbourZ11MissWithoutPoisoningCacheAndSharesConcurrentCleaned() throws Exception {
+        int refX = 1000, refY = 600;
+        int z15X = refX << 4, z15Y = refY << 4; // ox == 0, oy == 0 on western z11 border!
+        float[] z11Parent = new float[SIDE * SIDE];
+        Arrays.fill(z11Parent, 100f);
+        float[] z11West = new float[SIDE * SIDE];
+        Arrays.fill(z11West, 500f);
+        float[] z15Raw = new float[SIDE * SIDE];
+        Arrays.fill(z15Raw, 100f);
+        // 10x10 void block flush against western border (px = 0..9, py = 123..133) so (0, 128) relies purely on expected[i]
+        // (bilinear blend of west z11 = 500 m and parent z11 = 100 m -> ~287.5 m, vs 100 m if wrongly clamped!).
+        for (int py = 123; py <= 133; py++)
+            for (int px = 0; px <= 9; px++)
+                z15Raw[py * SIDE + px] = -20_000f;
+
+        byte[] parentPng = TerrariumTileSource.encode(z11Parent);
+        byte[] westPng = TerrariumTileSource.encode(z11West);
+        byte[] z15Png = TerrariumTileSource.encode(z15Raw);
+
+        AtomicBoolean failWest = new AtomicBoolean(true);
+        AtomicInteger concurrentCleanHits = new AtomicInteger();
+        CountDownLatch slowRelease = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newFixedThreadPool(8));
+        server.createContext("/tiles/", exchange -> {
+            String path = exchange.getRequestURI().getPath().substring("/tiles/".length());
+            if (path.equals("11/" + (refX - 1) + "/" + refY + ".png") && failWest.get()) {
+                exchange.sendResponseHeaders(404, -1);
+                exchange.close();
+                return;
+            }
+            if (path.equals("11/" + (refX + 5) + "/" + refY + ".png")) {
+                concurrentCleanHits.incrementAndGet();
+                try { slowRelease.await(); } catch (InterruptedException ignored) {}
+            }
+            byte[] body;
+            if (path.equals("15/" + z15X + "/" + z15Y + ".png")) body = z15Png;
+            else if (path.equals("11/" + (refX - 1) + "/" + refY + ".png")) body = westPng;
+            else body = parentPng;
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/tiles/");
+        try (var v2 = new TerrariumTileSource(base, null, true, 64, 8, Duration.ofSeconds(5), List.of(), true)) {
+            // 1. Transient neighbour z11 failure must propagate MissingTerrainException and NOT cache a clamped tile!
+            long failuresBefore = v2.stats().failures();
+            assertThrows(MissingTerrainException.class, () -> v2.tile(15, z15X, z15Y),
+                    "transient neighbour z11 miss must propagate instead of caching clamped parent");
+            assertTrue(v2.stats().failures() > failuresBefore, "failures counter must increment on cleaned()/tile() miss");
+
+            // 2. Once neighbour z11 recovers, retry succeeds and uses the real 500 m western neighbour (~287.5 m, NOT 100 m!).
+            failWest.set(false);
+            float[] recovered = v2.tile(15, z15X, z15Y);
+            assertEquals(287.5f, recovered[128 * SIDE + 0], 5f,
+                    "recovered z15 border repair must use 500 m western neighbour (~287.5 m), not poisoned 100 m clamp");
+
+            // 3. Concurrent cleaned() requests for the same tile share one single download.
+            ExecutorService pool = Executors.newFixedThreadPool(6);
+            try {
+                List<Future<float[]>> futures = new ArrayList<>();
+                for (int i = 0; i < 6; i++) {
+                    futures.add(pool.submit(() -> v2.cleaned(11, refX + 5, refY)));
+                }
+                Thread.sleep(100);
+                slowRelease.countDown();
+                float[] first = futures.get(0).get();
+                for (Future<float[]> f : futures) assertSame(first, f.get(), "concurrent cleaned() must share single-flight result");
+                assertEquals(1, concurrentCleanHits.get(), "concurrent cleaned() must only download tile once");
+            } finally {
+                pool.shutdownNow();
+            }
         } finally {
             server.stop(0);
             ((ExecutorService) server.getExecutor()).shutdownNow();

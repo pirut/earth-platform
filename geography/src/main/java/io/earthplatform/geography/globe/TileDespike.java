@@ -41,7 +41,7 @@ final class TileDespike {
     private static final double V2_SPIRE_SPAN_METRES = 36.0;
     private static final double V2_JUMP_SLOPE = 5.0;
     private static final double V2_PROMINENCE_SLOPE = 4.0;
-    /** Pixels from a Mercator tile border within which v2 never removes a spire or building cluster. */
+    /** Pixels from a Mercator tile border within which v2 {@link #despikeSpires} never removes a flood-filled component. */
     static final int V2_EDGE_MARGIN = 2;
     private static final float[] CUT_FRACTIONS = {0.65f, 0.45f, 0.25f};
 
@@ -67,7 +67,7 @@ final class TileDespike {
     }
 
     static void despike(float[] values, double pixelMetres, boolean v2) {
-        despikeBuildings(values, v2);
+        despikeBuildings(values);
         despikeSpires(values, pixelMetres, v2);
     }
 
@@ -81,7 +81,7 @@ final class TileDespike {
      * eskers, lake shores and coastal bluffs fill more of that window or slope through it, so they
      * stay. Open-sea zeros neither count nor change.
      */
-    private static void despikeBuildings(float[] values, boolean v2) {
+    private static void despikeBuildings(float[] values) {
         float[] fixed = null, window = new float[(2 * SPIKE_REACH + 1) * (2 * SPIKE_REACH + 1)];
         // The lowest pixel and the number of pixels in each window, from those along each row's stretch first.
         float[] rowLow = new float[TILE_SIZE * TILE_SIZE];
@@ -96,8 +96,7 @@ final class TileDespike {
             rowLow[py * TILE_SIZE + px] = low;
             rowCount[py * TILE_SIZE + px] = (byte) n;
         }
-        int minEdge = v2 ? SPIKE_REACH : 0, maxEdge = v2 ? TILE_SIZE - SPIKE_REACH : TILE_SIZE;
-        for (int py = minEdge; py < maxEdge; py++) for (int px = minEdge; px < maxEdge; px++) {
+        for (int py = 0; py < TILE_SIZE; py++) for (int px = 0; px < TILE_SIZE; px++) {
             int i = py * TILE_SIZE + px;
             float value = values[i];
             // Land only: under water a shoal standing above the bed is real.

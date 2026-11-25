@@ -456,15 +456,25 @@ public final class CubicSettings {
         });
     }
 
-    /** Resolves which elevation pin {@link #bareEarth(String)} computes bare-earth fields from. */
+    /**
+     * Resolves which elevation pin {@link #bareEarth(String)} computes bare-earth fields from. Pre-DGM5 legacy
+     * pins stay frozen on {@link #legacyBaseline()}; any pin containing {@value Dgm5Elevation#ID},
+     * {@value TerrariumTileSource#V2_ID}, or {@value CopernicusFill#GEOID_ID} passes through directly.
+     */
     static String bareEarthPin(String pin) {
-        String survey = "+" + Dgm5Elevation.ID;
-        return pin.endsWith(survey) ? pin : legacyBaseline();
+        for (String token : pin.split("\\+")) {
+            if (Dgm5Elevation.ID.equals(token)
+                    || TerrariumTileSource.V2_ID.equals(token)
+                    || CopernicusFill.GEOID_ID.equals(token)) {
+                return pin;
+            }
+        }
+        return legacyBaseline();
     }
 
     /**
      * Resolves the {@link BareEarth} disk cache directory for an elevation pin. Legacy v1 pins keep the
-     * existing {@code bare-earth-v4} folder; non-legacy pins (using {@value TerrariumTileSource#V2_ID} or
+     * existing {@value BareEarth#ID} folder; non-legacy pins (using {@value TerrariumTileSource#V2_ID} or
      * {@value CopernicusFill#GEOID_ID}) use a namespaced subfolder so v1 and v2 caches never cross-contaminate.
      */
     static Path bareEarthCache(Path cacheRoot, String elevationPin) {

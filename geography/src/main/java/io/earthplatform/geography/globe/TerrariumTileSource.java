@@ -182,12 +182,7 @@ public final class TerrariumTileSource implements AutoCloseable {
             TileRepair.repair(values, reference, shift, x, y);
             return;
         }
-        float[] reference;
-        try {
-            reference = cleaned(REFERENCE_ZOOM, rx, ry);
-        } catch (MissingTerrainException missing) {
-            return;
-        }
+        float[] reference = cleaned(REFERENCE_ZOOM, rx, ry);
         int span = TILE_SIZE >> shift;
         int ox = (x & ((1 << shift) - 1)) * span, oy = (y & ((1 << shift) - 1)) * span;
         if (ox >= 2 && ox + span + 2 <= TILE_SIZE && oy >= 2 && oy + span + 2 <= TILE_SIZE) {
@@ -200,7 +195,9 @@ public final class TerrariumTileSource implements AutoCloseable {
     /**
      * Repairs a fine tile lying on or near the edge of its {@link #REFERENCE_ZOOM} reference tile using a
      * 2-pixel border from adjacent un-layered {@link #cleaned} reference tiles so bilinear sampling and
-     * the 4x4 relief window stay continuous across z11 boundaries.
+     * the 4x4 relief window stay continuous across z11 boundaries. Only the Mercator Y grid edge clamps
+     * to the parent tile; transient neighbour misses propagate {@link MissingTerrainException} so callers
+     * retry rather than caching a clamped tile.
      */
     private void repairWithBorder(float[] values, float[] reference, int rx, int ry, int shift, int span, int ox, int oy) {
         int pad = 2, side = span + 2 * pad;
@@ -223,11 +220,7 @@ public final class TerrariumTileSource implements AutoCloseable {
                     tried[slot] = true;
                     int ny = ry + dy;
                     if (ny >= 0 && ny < refTiles) {
-                        try {
-                            neighbours[slot] = cleaned(REFERENCE_ZOOM, Math.floorMod(rx + dx, refTiles), ny);
-                        } catch (MissingTerrainException missing) {
-                            neighbours[slot] = null;
-                        }
+                        neighbours[slot] = cleaned(REFERENCE_ZOOM, Math.floorMod(rx + dx, refTiles), ny);
                     }
                 }
                 float[] src = neighbours[slot];
@@ -240,63 +233,7 @@ public final class TerrariumTileSource implements AutoCloseable {
                 }
             }
         }
-        double scale = 1.0 / (1 << shift);
-        float[] expected = new float[TILE_SIZE * TILE_SIZE];
-        boolean[] broken = new boolean[TILE_SIZE * TILE_SIZE];
-        boolean any = false;
-        double maxCoord = side - 2.001;
-        for (int py = 0; py < TILE_SIZE; py++) {
-            double ryLocal = Math.max(1.0, Math.min(maxCoord, pad + (py + 0.5) * scale - 0.5));
-            int y0 = (int) Math.floor(ryLocal);
-            double fy = ryLocal - y0;
-            for (int px = 0; px < TILE_SIZE; px++) {
-                double rxLocal = Math.max(1.0, Math.min(maxCoord, pad + (px + 0.5) * scale - 0.5));
-                int x0 = (int) Math.floor(rxLocal);
-                double fx = rxLocal - x0;
-                int at = y0 * side + x0;
-                int i = py * TILE_SIZE + px;
-                expected[i] = (float) ((patch[at] * (1 - fx) + patch[at + 1] * fx) * (1 - fy)
-                        + (patch[at + side] * (1 - fx) + patch[at + side + 1] * fx) * fy);
-                float low = Float.MAX_VALUE, high = -Float.MAX_VALUE;
-                for (int j = y0 - 1; j <= y0 + 2; j++)
-                    for (int k = x0 - 1; k <= x0 + 2; k++) {
-                        float r = patch[j * side + k];
-                        low = Math.min(low, r);
-                        high = Math.max(high, r);
-                    }
-                broken[i] = values[i] != 0f && (values[i] < TileRepair.IMPOSSIBLE_DEPTH && expected[i] >= TileRepair.IMPOSSIBLE_DEPTH
-                        || Math.abs(values[i] - expected[i]) > TileRepair.BROKEN_METRES + high - low);
-                any |= broken[i];
-            }
-        }
-        if (!any) return;
-        float[] fixed = new float[TILE_SIZE * TILE_SIZE];
-        for (int i = 0; i < fixed.length; i++) {
-            if (!broken[i]) continue;
-            int px = i % TILE_SIZE, py = i / TILE_SIZE, n = 0;
-            double detail = 0;
-            for (int d = -4; d <= 4; d++) {
-                if (d == 0) continue;
-                int qx = px + d, qy = py + d;
-                if (qx >= 0 && qx < TILE_SIZE) {
-                    int qi = py * TILE_SIZE + qx;
-                    if (!broken[qi] && values[qi] != 0f && values[qi] >= TileRepair.IMPOSSIBLE_DEPTH) {
-                        detail += values[qi] - expected[qi];
-                        n++;
-                    }
-                }
-                if (qy >= 0 && qy < TILE_SIZE) {
-                    int qi = qy * TILE_SIZE + px;
-                    if (!broken[qi] && values[qi] != 0f && values[qi] >= TileRepair.IMPOSSIBLE_DEPTH) {
-                        detail += values[qi] - expected[qi];
-                        n++;
-                    }
-                }
-            }
-            float value = (float) (expected[i] + (n == 0 ? 0 : detail / n));
-            fixed[i] = value == 0f ? Math.ulp(0f) : value;
-        }
-        for (int i = 0; i < fixed.length; i++) if (broken[i]) values[i] = fixed[i];
+        TileRepair.repairPatch(values, patch, side, side, pad, pad, shift);
     }
 
     /**
@@ -346,6 +283,7 @@ public final class TerrariumTileSource implements AutoCloseable {
                     mine.complete(values);
                     return values;
                 } catch (Throwable failure) {
+                    failures.incrementAndGet();
                     mine.completeExceptionally(failure);
                     if (failure instanceof MissingTerrainException missing) throw missing;
                     if (failure instanceof InterruptedException interrupted) {
@@ -389,11 +327,20 @@ public final class TerrariumTileSource implements AutoCloseable {
             int rx = x >> shift, ry = y >> shift;
             long refKey = key(REFERENCE_ZOOM, rx, ry);
             if (v2) {
-                boolean known;
-                synchronized (cleanMemory) { known = cleanMemory.containsKey(refKey); }
-                if (!known && !cleanInFlight.containsKey(refKey)) Thread.ofVirtual().start(() -> {
-                    try { cleaned(REFERENCE_ZOOM, rx, ry); } catch (RuntimeException missing) { /* repair() does without */ }
-                });
+                prefetchCleaned(rx, ry);
+                int span = TILE_SIZE >> shift;
+                int ox = (x & ((1 << shift) - 1)) * span, oy = (y & ((1 << shift) - 1)) * span;
+                int minDx = ox < 2 ? -1 : 0, maxDx = ox + span + 2 > TILE_SIZE ? 1 : 0;
+                int minDy = oy < 2 ? -1 : 0, maxDy = oy + span + 2 > TILE_SIZE ? 1 : 0;
+                int refTiles = 1 << REFERENCE_ZOOM;
+                for (int dy = minDy; dy <= maxDy; dy++) {
+                    int ny = ry + dy;
+                    if (ny < 0 || ny >= refTiles) continue;
+                    for (int dx = minDx; dx <= maxDx; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        prefetchCleaned(Math.floorMod(rx + dx, refTiles), ny);
+                    }
+                }
             } else {
                 boolean known;
                 synchronized (memory) { known = memory.containsKey(refKey); }
@@ -416,6 +363,15 @@ public final class TerrariumTileSource implements AutoCloseable {
         }
         earlyNeighbours(zoom, x, y);
         return plans;
+    }
+
+    private void prefetchCleaned(int rx, int ry) {
+        long refKey = key(REFERENCE_ZOOM, rx, ry);
+        boolean known;
+        synchronized (cleanMemory) { known = cleanMemory.containsKey(refKey); }
+        if (!known && !cleanInFlight.containsKey(refKey)) Thread.ofVirtual().start(() -> {
+            try { cleaned(REFERENCE_ZOOM, rx, ry); } catch (RuntimeException missing) { /* repair() meets it */ }
+        });
     }
 
     /**
