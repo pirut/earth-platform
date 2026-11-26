@@ -5,6 +5,7 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.netty.buffer.Unpooled;
 import java.util.ArrayList;
 import java.util.List;
+import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderLookup;
@@ -149,8 +150,51 @@ public final class CubeCodec {
         return entry;
     }
 
-    /** Any thread: reads optional pending block/fluid ticks; absent lists yield empty and unknown registry IDs are skipped safely. */
+    /** Filters pending ticks to only those whose absolute block coordinates lie inside {@code cubeKey}. */
+    public static PendingTicks filterForCube(long cubeKey, @Nullable PendingTicks ticks) {
+        if (ticks == null || ticks.isEmpty()) return PendingTicks.EMPTY;
+        List<PendingTick<Block>> blocks = ticks.blocks();
+        List<PendingTick<Block>> keptBlocks = null;
+        for (int i = 0; i < blocks.size(); i++) {
+            PendingTick<Block> tick = blocks.get(i);
+            boolean inside = CubeWorld.inRange(tick.y())
+                    && CubeKey.pack(tick.x() >> 4, tick.y() >> 4, tick.z() >> 4) == cubeKey;
+            if (!inside) {
+                if (keptBlocks == null) keptBlocks = new ArrayList<>(blocks.subList(0, i));
+            } else if (keptBlocks != null) {
+                keptBlocks.add(tick);
+            }
+        }
+        List<PendingTick<Fluid>> fluids = ticks.fluids();
+        List<PendingTick<Fluid>> keptFluids = null;
+        for (int i = 0; i < fluids.size(); i++) {
+            PendingTick<Fluid> tick = fluids.get(i);
+            boolean inside = CubeWorld.inRange(tick.y())
+                    && CubeKey.pack(tick.x() >> 4, tick.y() >> 4, tick.z() >> 4) == cubeKey;
+            if (!inside) {
+                if (keptFluids == null) keptFluids = new ArrayList<>(fluids.subList(0, i));
+            } else if (keptFluids != null) {
+                keptFluids.add(tick);
+            }
+        }
+        if (keptBlocks == null && keptFluids == null) return ticks;
+        List<PendingTick<Block>> finalBlocks = keptBlocks != null ? keptBlocks : blocks;
+        List<PendingTick<Fluid>> finalFluids = keptFluids != null ? keptFluids : fluids;
+        return finalBlocks.isEmpty() && finalFluids.isEmpty()
+                ? PendingTicks.EMPTY
+                : new PendingTicks(finalBlocks, finalFluids);
+    }
+
+    /** Any thread: reads optional pending block/fluid ticks validated against the cube coordinates stored in {@code tag}. */
     public static PendingTicks readPendingTicks(CompoundTag tag) {
+        return readPendingTicks(tag, CubeKey.pack(tag.getInt("x"), tag.getInt("y"), tag.getInt("z")));
+    }
+
+    /**
+     * Any thread: reads optional pending block/fluid ticks belonging to {@code cubeKey}; absent lists
+     * yield empty, unknown registry IDs and coordinates outside {@code cubeKey} are dropped safely.
+     */
+    public static PendingTicks readPendingTicks(CompoundTag tag, long cubeKey) {
         boolean hasBlocks = tag.contains(BLOCK_TICKS, Tag.TAG_LIST);
         boolean hasFluids = tag.contains(FLUID_TICKS, Tag.TAG_LIST);
         if (!hasBlocks && !hasFluids) return PendingTicks.EMPTY;
@@ -165,8 +209,10 @@ public final class CubeCodec {
                     if (id == null) continue;
                     var block = BuiltInRegistries.BLOCK.getOptional(id);
                     if (block.isEmpty()) continue;
+                    int x = entry.getInt("x"), y = entry.getInt("y"), z = entry.getInt("z");
+                    if (!CubeWorld.inRange(y) || CubeKey.pack(x >> 4, y >> 4, z >> 4) != cubeKey) continue;
                     parsed.add(new PendingTick<>(
-                            new BlockPos(entry.getInt("x"), entry.getInt("y"), entry.getInt("z")),
+                            new BlockPos(x, y, z),
                             block.get(),
                             Math.max(0, entry.getInt("delay")),
                             TickPriority.byValue(entry.getInt("priority"))));
@@ -185,8 +231,10 @@ public final class CubeCodec {
                     if (id == null) continue;
                     var fluid = BuiltInRegistries.FLUID.getOptional(id);
                     if (fluid.isEmpty() || fluid.get() == Fluids.EMPTY) continue;
+                    int x = entry.getInt("x"), y = entry.getInt("y"), z = entry.getInt("z");
+                    if (!CubeWorld.inRange(y) || CubeKey.pack(x >> 4, y >> 4, z >> 4) != cubeKey) continue;
                     parsed.add(new PendingTick<>(
-                            new BlockPos(entry.getInt("x"), entry.getInt("y"), entry.getInt("z")),
+                            new BlockPos(x, y, z),
                             fluid.get(),
                             Math.max(0, entry.getInt("delay")),
                             TickPriority.byValue(entry.getInt("priority"))));
@@ -219,13 +267,18 @@ public final class CubeCodec {
      * the cube (someone's build) survives instead of the whole cube being regenerated.
      */
     public Decoded read(CompoundTag tag) {
+        return read(tag, CubeKey.pack(tag.getInt("x"), tag.getInt("y"), tag.getInt("z")));
+    }
+
+    /** Any thread: decodes a saved cube tag, validating pending ticks against {@code expectedCubeKey}. */
+    public Decoded read(CompoundTag tag, long expectedCubeKey) {
         PalettedContainer<BlockState> states = STATES.parse(NbtOps.INSTANCE, tag.get("blocks"))
                 .promotePartial(error -> missing(tag, error)).getOrThrow();
         PalettedContainerRO<Holder<Biome>> biomeData = biomes.parse(NbtOps.INSTANCE, tag.get("biomes"))
                 .promotePartial(error -> missing(tag, error)).getOrThrow();
         LevelChunkSection section = new LevelChunkSection(states, biomeData);
         section.recalcBlockCounts();
-        return new Decoded(section, tags(tag, "block_entities"), readPendingTicks(tag));
+        return new Decoded(section, tags(tag, "block_entities"), readPendingTicks(tag, expectedCubeKey));
     }
 
     private static void missing(CompoundTag tag, String error) {

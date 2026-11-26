@@ -57,6 +57,16 @@ final class Structures {
             cached(dungeons, cx + dx, cy + dy, cz + dz, this::planDungeon).ifPresent(d -> drawDungeon(d, cut));
     }
 
+    /** For tests: returns {@code {first.x, first.y, first.z}} if a geode originates in cube {@code (cx, cy, cz)}, else null. */
+    @Nullable int[] geodeOriginForTest(int cx, int cy, int cz) {
+        return cached(geodes, cx, cy, cz, this::planGeode)
+                .map(g -> {
+                    Point first = g.points.get(0);
+                    return new int[]{first.x, first.y, first.z};
+                })
+                .orElse(null);
+    }
+
     private interface Planner<T> { Optional<T> plan(int x, int y, int z); }
 
     private static <T> Optional<T> cached(ConcurrentHashMap<Long, Optional<T>> cache, int x, int y, int z, Planner<T> planner) {

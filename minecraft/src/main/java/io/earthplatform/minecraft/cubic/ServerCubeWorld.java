@@ -131,8 +131,9 @@ public final class ServerCubeWorld extends CubeWorld {
     private final LongOpenHashSet unpopulated = new LongOpenHashSet();
     /** Entities that freshly generated cubes start with (chest minecarts), placed once their chunk ticks entities. */
     private final Long2ObjectOpenHashMap<List<CompoundTag>> unplacedEntities = new Long2ObjectOpenHashMap<>();
-    /** Generation-captured structure block and fluid ticks, scheduled once the cube's chunk ticks and its 6 face neighbors are loaded. */
+    /** Generation-captured structure block and fluid ticks, owned by their cube until due and executed once the cube's chunk ticks and its 6 face neighbors are loaded. */
     private final Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pendingTicks = new Long2ObjectOpenHashMap<>();
+    private final PendingTickDispatcher pendingTickDispatcher = new PendingTickDispatcher();
     private int ticks;
     private boolean closed;
 
@@ -304,11 +305,17 @@ public final class ServerCubeWorld extends CubeWorld {
         }
     }
 
+    @Override protected void adopt(Cube cube) {
+        super.adopt(cube);
+        pendingTickDispatcher.noteResidencyChange();
+    }
+
     @Override protected void forget(Cube cube) {
         super.forget(cube);
         light.remove(cube.key);
         lightStamps.remove(cube.key);
         pendingTicks.remove(cube.key);
+        pendingTickDispatcher.onUnloaded(cube.key);
     }
 
     @Override public void blockChanged(BlockPos pos) {
@@ -407,7 +414,7 @@ public final class ServerCubeWorld extends CubeWorld {
         try {
             CompoundTag saved = storage.read(key);
             if (saved == null) return null;
-            CubeCodec.Decoded decoded = codec.read(saved);
+            CubeCodec.Decoded decoded = codec.read(saved, key);
             generator.loaded(x, y, z);
             return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), CubeCodec.tags(saved, CubeCodec.ENTITIES), decoded.pendingTicks(), true,
                     !saved.getBoolean(CubeCodec.UNTOUCHED), saved.getBoolean(CubeCodec.UNPOPULATED), false, null, openFaces(decoded.section()), null);
@@ -496,8 +503,14 @@ public final class ServerCubeWorld extends CubeWorld {
         if (!entry.entities().isEmpty()) unplacedEntities.put(cube.key, new ArrayList<>(entry.entities()));
         else unplacedEntities.remove(cube.key);
         adopt(cube);
-        if (!entry.pendingTicks().isEmpty()) pendingTicks.put(cube.key, entry.pendingTicks());
-        else pendingTicks.remove(cube.key);
+        CubeCodec.PendingTicks validTicks = CubeCodec.filterForCube(cube.key, entry.pendingTicks());
+        if (!validTicks.isEmpty()) {
+            pendingTicks.put(cube.key, validTicks);
+            pendingTickDispatcher.onAdded(cube.key);
+        } else {
+            pendingTicks.remove(cube.key);
+            pendingTickDispatcher.onUnloaded(cube.key);
+        }
         surveys.openBehind(cube.x, cube.y, cube.z, openFaces(cube.section), quietCap());
         server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
         CubicPoiClaims.reclaim(server, SectionPos.of(cube.x, cube.y, cube.z));
@@ -803,11 +816,10 @@ public final class ServerCubeWorld extends CubeWorld {
         }
         failureRetries.recordSuccess(result.key);
         Cube cube = new Cube(result.x, result.y, result.z, result.section);
+        CubeCodec.PendingTicks validTicks = CubeCodec.filterForCube(result.key, result.pendingTicks);
         // Generated ground is saved, as vanilla saves every chunk it generates: a fresh cube in the surface band when it
-        // unloads, and any cube once play changes it.
-        cube.modified = true;
-        cube.dirty = !result.saved && result.kept;
-        cube.edited = result.edited;
+        // unloads, any fresh cube with undrained structure ticks (keeping UNTOUCHED intact), and any cube once play changes it.
+        initializeAdoptedCubeFlags(cube, result.saved, result.kept, result.edited, validTicks);
         if (result.surface) unpopulated.add(result.key);
         if (!result.entities.isEmpty()) unplacedEntities.put(result.key, result.entities);
         for (CompoundTag tag : result.blockEntities) {
@@ -816,7 +828,10 @@ public final class ServerCubeWorld extends CubeWorld {
             if (entity != null) cube.blockEntities.put(pos, entity);
         }
         adopt(cube);
-        if (!result.pendingTicks.isEmpty()) pendingTicks.put(result.key, result.pendingTicks);
+        if (!validTicks.isEmpty()) {
+            pendingTicks.put(result.key, validTicks);
+            pendingTickDispatcher.onAdded(result.key);
+        }
         surveys.openBehind(cube.x, cube.y, cube.z, result.open, quietCap());
         // Points of interest at cubic heights live only in memory: rebuild them from the blocks.
         server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
@@ -825,6 +840,19 @@ public final class ServerCubeWorld extends CubeWorld {
         if (result.baseline != null && !tops.containsKey(column)) tops.put(column, result.baseline.clone()); // read off this thread
         refreshTops(cube);
         staleLightAround(cube.x, cube.y, cube.z);
+    }
+
+    /**
+     * Initializes persistence flags for an adopted cube: fresh cubes outside the surface save band
+     * with pending structure ticks are marked unsaved (preserving {@code UNTOUCHED}) so undrained
+     * ticks survive unload before dispatch.
+     */
+    static void initializeAdoptedCubeFlags(Cube cube, boolean saved, boolean kept, boolean edited,
+                                           @Nullable CubeCodec.PendingTicks pendingTicks) {
+        cube.modified = true;
+        cube.dirty = !saved && kept;
+        cube.edited = edited;
+        if (!saved && pendingTicks != null && !pendingTicks.isEmpty()) cube.markUnsaved();
     }
 
     /** Records a near-cube generation failure under {@link PerfFailures.Stage#NEAR_GENERATION} with backoff and rate-limited logging. */
@@ -1366,7 +1394,11 @@ public final class ServerCubeWorld extends CubeWorld {
         }
     }
 
-    /** Adds the entities fresh cubes start with, once their chunk ticks entities, and marks those cubes modified so entities are never spawned twice. */
+    /**
+     * Adds the entities fresh cubes start with, once their chunk ticks entities, and marks those
+     * cubes unsaved (preserving {@code UNTOUCHED} so {@link FarServer} and buried-cube culling
+     * still treat them as generated terrain) so entities are never spawned twice.
+     */
     private void placeEntities() {
         if (unplacedEntities.isEmpty()) return;
         for (long key : unplacedEntities.keySet().toLongArray()) {
@@ -1377,30 +1409,34 @@ public final class ServerCubeWorld extends CubeWorld {
                 Entity entity = EntityType.loadEntityRecursive(tag, server, e -> e);
                 if (entity != null) server.addFreshEntityWithPassengers(entity);
             }
-            cube.markModified();
+            // Keep UNTOUCHED intact (markUnsaved, not markModified) while persisting empty entities on save/unload.
+            cube.markUnsaved();
         }
     }
 
-    /** Schedules generation-captured structure ticks once each cube's carrier chunk ticks and all 6 face neighbors are loaded. */
+    /**
+     * Advances and executes cube-owned generation-captured structure ticks on the server thread once
+     * each cube's carrier chunk ticks blocks and its 6 in-world face neighbors are resident. Delayed
+     * ticks remain owned by their cube until due, so unload/reload preserves remaining delays and
+     * never executes against an unloaded cube.
+     */
     private void dispatchPendingTicks() {
         if (pendingTicks.isEmpty() || !server.tickRateManager().runsNormally()) return;
-        PendingTickDispatcher.dispatchReady(
+        pendingTickDispatcher.tick(
                 pendingTicks,
                 cubes::containsKey,
                 (cx, cz) -> server.shouldTickBlocksAt(ChunkPos.asLong(cx, cz)),
                 tick -> {
-                    BlockPos pos = new BlockPos(tick.x(), tick.y(), tick.z());
                     Cube cube = cubeAtBlock(tick.x(), tick.y(), tick.z());
-                    if (cube != null && cube.get(tick.x(), tick.y(), tick.z()).is(tick.type())) {
-                        server.scheduleTick(pos, tick.type(), tick.delay(), tick.priority());
-                    }
+                    if (cube == null || !PendingTickDispatcher.neighborsLoaded(cube.x, cube.y, cube.z, cubes::containsKey)) return;
+                    BlockState state = cube.get(tick.x(), tick.y(), tick.z());
+                    if (state.is(tick.type())) state.tick(server, tick.pos(), server.getRandom());
                 },
                 tick -> {
-                    BlockPos pos = new BlockPos(tick.x(), tick.y(), tick.z());
                     Cube cube = cubeAtBlock(tick.x(), tick.y(), tick.z());
-                    if (cube != null && cube.get(tick.x(), tick.y(), tick.z()).getFluidState().is(tick.type())) {
-                        server.scheduleTick(pos, tick.type(), tick.delay(), tick.priority());
-                    }
+                    if (cube == null || !PendingTickDispatcher.neighborsLoaded(cube.x, cube.y, cube.z, cubes::containsKey)) return;
+                    FluidState fluid = cube.get(tick.x(), tick.y(), tick.z()).getFluidState();
+                    if (fluid.is(tick.type())) fluid.tick(server, tick.pos());
                 },
                 key -> {
                     Cube cube = cubes.get(key);
@@ -1409,12 +1445,33 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     /**
-     * Neighbor-gated dispatcher for generation-captured structure block and fluid ticks: waits until
-     * the cube's carrier chunk ticks blocks and all in-range 6-face-adjacent cubes are loaded so
-     * structure fluids and redstone never spill into {@link CubeWorld#UNLOADED}.
+     * Cube-owned, neighbor-gated scheduler and executor for generation-captured structure block and
+     * fluid ticks: keeps delayed ticks in {@code pendingTicks} (decrementing remaining delay only
+     * while the cube + all in-range 6 face neighbors are resident and its carrier chunk ticks) and
+     * executes due ticks directly in stable ascending {@link net.minecraft.world.ticks.TickPriority}
+     * order so structure fluids and redstone never run against {@link CubeWorld#UNLOADED} and
+     * remaining delays survive unload/reload. Tracks residency changes so edge-of-volume cubes with
+     * missing neighbors are not re-scanned every tick.
      */
     static final class PendingTickDispatcher {
-        private PendingTickDispatcher() {}
+        private final LongOpenHashSet readyNeighbors = new LongOpenHashSet();
+        private long residencyVersion;
+        private long scannedVersion = -1L;
+        private int lastScannedCount;
+
+        void noteResidencyChange() { residencyVersion++; }
+
+        void onAdded(long key) {
+            readyNeighbors.add(key);
+            residencyVersion++;
+        }
+
+        void onUnloaded(long key) {
+            readyNeighbors.remove(key);
+            residencyVersion++;
+        }
+
+        int lastScannedCount() { return lastScannedCount; }
 
         static boolean neighborsLoaded(int cx, int cy, int cz, LongPredicate cubeLoaded) {
             if (!cubeLoaded.test(CubeKey.pack(cx - 1, cy, cz)) || !cubeLoaded.test(CubeKey.pack(cx + 1, cy, cz))) return false;
@@ -1424,30 +1481,102 @@ public final class ServerCubeWorld extends CubeWorld {
             return true;
         }
 
-        static int dispatchReady(
+        int tick(
                 Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pendingTicks,
                 LongPredicate cubeLoaded,
                 BiPredicate<Integer, Integer> chunkTicking,
-                Consumer<CubeCodec.PendingTick<Block>> scheduleBlock,
-                Consumer<CubeCodec.PendingTick<Fluid>> scheduleFluid,
-                LongConsumer onDrained) {
-            if (pendingTicks.isEmpty()) return 0;
-            int dispatched = 0;
-            for (long key : pendingTicks.keySet().toLongArray()) {
+                Consumer<CubeCodec.PendingTick<Block>> executeBlock,
+                Consumer<CubeCodec.PendingTick<Fluid>> executeFluid,
+                LongConsumer onChanged) {
+            if (pendingTicks.isEmpty()) {
+                readyNeighbors.clear();
+                scannedVersion = residencyVersion;
+                lastScannedCount = 0;
+                return 0;
+            }
+            boolean rescanAll = scannedVersion != residencyVersion;
+            long[] candidates;
+            if (rescanAll) {
+                candidates = pendingTicks.keySet().toLongArray();
+                readyNeighbors.clear();
+                scannedVersion = residencyVersion;
+            } else {
+                if (readyNeighbors.isEmpty()) {
+                    lastScannedCount = 0;
+                    return 0;
+                }
+                candidates = readyNeighbors.toLongArray();
+            }
+            lastScannedCount = candidates.length;
+            int executed = 0;
+            for (long key : candidates) {
+                CubeCodec.PendingTicks ticks = pendingTicks.get(key);
+                if (ticks == null || ticks.isEmpty()) {
+                    pendingTicks.remove(key);
+                    readyNeighbors.remove(key);
+                    continue;
+                }
                 if (!cubeLoaded.test(key)) {
                     pendingTicks.remove(key);
+                    readyNeighbors.remove(key);
                     continue;
                 }
                 int cx = CubeKey.x(key), cy = CubeKey.y(key), cz = CubeKey.z(key);
-                if (!chunkTicking.test(cx, cz) || !neighborsLoaded(cx, cy, cz, cubeLoaded)) continue;
-                CubeCodec.PendingTicks ticks = pendingTicks.remove(key);
-                if (ticks == null || ticks.isEmpty()) continue;
-                for (CubeCodec.PendingTick<Block> tick : ticks.blocks()) scheduleBlock.accept(tick);
-                for (CubeCodec.PendingTick<Fluid> tick : ticks.fluids()) scheduleFluid.accept(tick);
-                onDrained.accept(key);
-                dispatched++;
+                if (!neighborsLoaded(cx, cy, cz, cubeLoaded)) {
+                    readyNeighbors.remove(key);
+                    continue;
+                }
+                readyNeighbors.add(key);
+                if (!chunkTicking.test(cx, cz)) continue;
+
+                List<CubeCodec.PendingTick<Block>> dueBlocks = null;
+                List<CubeCodec.PendingTick<Block>> remainingBlocks = null;
+                for (CubeCodec.PendingTick<Block> tick : ticks.blocks()) {
+                    if (tick.delay() <= 0) {
+                        if (dueBlocks == null) dueBlocks = new ArrayList<>();
+                        dueBlocks.add(tick);
+                    } else {
+                        if (remainingBlocks == null) remainingBlocks = new ArrayList<>();
+                        remainingBlocks.add(new CubeCodec.PendingTick<>(tick.pos(), tick.type(), tick.delay() - 1, tick.priority()));
+                    }
+                }
+                List<CubeCodec.PendingTick<Fluid>> dueFluids = null;
+                List<CubeCodec.PendingTick<Fluid>> remainingFluids = null;
+                for (CubeCodec.PendingTick<Fluid> tick : ticks.fluids()) {
+                    if (tick.delay() <= 0) {
+                        if (dueFluids == null) dueFluids = new ArrayList<>();
+                        dueFluids.add(tick);
+                    } else {
+                        if (remainingFluids == null) remainingFluids = new ArrayList<>();
+                        remainingFluids.add(new CubeCodec.PendingTick<>(tick.pos(), tick.type(), tick.delay() - 1, tick.priority()));
+                    }
+                }
+                if (remainingBlocks == null && remainingFluids == null) {
+                    pendingTicks.remove(key);
+                    readyNeighbors.remove(key);
+                } else {
+                    pendingTicks.put(key, new CubeCodec.PendingTicks(
+                            remainingBlocks == null ? List.of() : remainingBlocks,
+                            remainingFluids == null ? List.of() : remainingFluids));
+                }
+                onChanged.accept(key);
+
+                if (dueBlocks != null) {
+                    if (dueBlocks.size() > 1) dueBlocks.sort(Comparator.comparingInt(t -> t.priority().getValue()));
+                    for (CubeCodec.PendingTick<Block> tick : dueBlocks) {
+                        executeBlock.accept(tick);
+                        executed++;
+                    }
+                }
+                if (dueFluids != null) {
+                    if (dueFluids.size() > 1) dueFluids.sort(Comparator.comparingInt(t -> t.priority().getValue()));
+                    for (CubeCodec.PendingTick<Fluid> tick : dueFluids) {
+                        executeFluid.accept(tick);
+                        executed++;
+                    }
+                }
             }
-            return dispatched;
+            return executed;
         }
     }
 

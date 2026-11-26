@@ -110,16 +110,24 @@ final class StructureLevel implements WorldGenLevel {
      * Computes tight section-aligned frame {@code {minY, height}} bounds covering a structure's
      * real vertical reach {@code [reachMinY, reachMaxY]} with 16-block padding, clamped to the
      * frame and cubic world range so {@link View#getSections()} allocates ~8–24 sections rather
-     * than the full 2,048-section cubic height.
+     * than the full 2,048-section cubic height. Returns {@code null} when the reach or frame has
+     * no intersection with {@code [CubeWorld.MIN_Y, CubeWorld.MAX_Y]}.
      */
-    static int[] bounds(int reachMinY, int reachMaxY, int frameMinY, int frameHeight, int shift) {
-        int lo = (Math.min(reachMinY, reachMaxY) - 16 - shift) & ~15;
-        int top = (Math.max(reachMinY, reachMaxY) + 16 - shift + 16) & ~15;
+    @Nullable static int[] bounds(int reachMinY, int reachMaxY, int frameMinY, int frameHeight, int shift) {
+        if (frameHeight <= 0) return null;
+        int realReachMin = Math.min(reachMinY, reachMaxY);
+        int realReachMax = Math.max(reachMinY, reachMaxY);
+        if (realReachMax < CubeWorld.MIN_Y || realReachMin > CubeWorld.MAX_Y) return null;
+        int clampedMin = Math.max(realReachMin, CubeWorld.MIN_Y);
+        int clampedMax = Math.min(realReachMax, CubeWorld.MAX_Y);
+        int lo = (clampedMin - 16 - shift) & ~15;
+        int top = (clampedMax + 16 - shift + 16) & ~15;
         int worldLo = (CubeWorld.MIN_Y - shift) & ~15;
         int worldTop = (CubeWorld.MAX_Y + 1 - shift + 15) & ~15;
         int clampMin = Math.max(frameMinY & ~15, worldLo);
         int clampMax = Math.min((frameMinY + frameHeight + 15) & ~15, worldTop);
-        lo = Math.max(lo, clampMin);
+        if (clampMax < clampMin + 16) return null;
+        lo = Math.min(Math.max(lo, clampMin), clampMax - 16);
         top = Math.min(top, clampMax);
         if (top <= lo) top = lo + 16;
         return new int[]{lo, top - lo};
@@ -135,7 +143,7 @@ final class StructureLevel implements WorldGenLevel {
         this.biomeRegistry = biomeRegistry;
         this.placeholder = new net.minecraft.world.level.chunk.LevelChunkSection(biomeRegistry);
         this.anchorX = anchor.getX(); this.anchorY = anchor.getY(); this.anchorZ = anchor.getZ();
-        this.lowest = lowest;
+        this.lowest = Math.max(lowest, CubeWorld.MIN_Y);
         this.terrain = terrain;
         this.shift = shift; this.minY = minY; this.height = height; this.seaLevel = seaLevel;
         this.seed = seed;
@@ -216,7 +224,7 @@ final class StructureLevel implements WorldGenLevel {
         void record(BlockPos framePos, T type, int delay, TickPriority priority) {
             if (type == null || (fluid && type == Fluids.EMPTY)) return;
             BlockPos realPos = real(framePos).immutable();
-            if (realPos.getY() < lowest) return;
+            if (!inPlacementBounds(realPos.getY())) return;
             int clampedDelay = Math.max(0, delay);
             TickPriority effectivePriority = priority == null ? TickPriority.NORMAL : priority;
             TickKey<T> key = new TickKey<>(realPos, type);
@@ -233,7 +241,7 @@ final class StructureLevel implements WorldGenLevel {
         }
 
         @Override public void schedule(ScheduledTick<T> tick) {
-            int delay = (int) Math.max(0L, tick.triggerTick() - baseGameTime());
+            int delay = (int) Math.min(Integer.MAX_VALUE, Math.max(0L, tick.triggerTick() - baseGameTime()));
             record(tick.pos(), tick.type(), delay, tick.priority());
         }
 
@@ -248,6 +256,11 @@ final class StructureLevel implements WorldGenLevel {
 
     // Blocks -------------------------------------------------------------------------------------
 
+    /** Exact real-Y placement bounds, kept separate from outward 16-block section allocation. */
+    private boolean inPlacementBounds(int realY) {
+        return realY >= lowest && realY <= CubeWorld.MAX_Y;
+    }
+
     /** The block at a real position, written or as generated. */
     BlockState realState(int x, int y, int z) {
         BlockState written = blocks.get(key(x, y, z));
@@ -255,14 +268,23 @@ final class StructureLevel implements WorldGenLevel {
     }
 
     /** Writes a plain block (no block entity) at a real position. */
-    void putReal(int x, int y, int z, BlockState state) { blocks.put(key(x, y, z), state); }
+    void putReal(int x, int y, int z, BlockState state) {
+        if (!inPlacementBounds(y)) return;
+        blocks.put(key(x, y, z), state);
+    }
 
-    /** Settles the shapes of blocks marked for it (fences, stairs, panes) against their neighbours, as a chunk does on loading. */
+    /**
+     * Settles the shapes of blocks marked for it (fences, stairs, panes) against their neighbours,
+     * and schedules a delay-0 fluid tick for any non-empty fluid at a marked position, as a chunk
+     * does on loading.
+     */
     void postProcessAll() {
         for (long at : postProcess.toLongArray()) {
             BlockPos pos = at(at).below(shift);
             BlockState state = getBlockState(pos), settled = Block.updateFromNeighbourShapes(state, this, pos);
             if (settled != state) blocks.put(at, settled);
+            FluidState fluid = settled.getFluidState();
+            if (!fluid.isEmpty()) fluidTicks.record(pos, fluid.getType(), 0, TickPriority.NORMAL);
         }
     }
 
@@ -275,7 +297,7 @@ final class StructureLevel implements WorldGenLevel {
 
     @Override public boolean setBlock(BlockPos pos, BlockState state, int flags, int recursionLeft) {
         BlockPos r = real(pos);
-        if (r.getY() < lowest) return false;
+        if (!inPlacementBounds(r.getY())) return false;
         long key = key(r);
         BlockState old = blocks.get(key);
         if (old == null) old = terrain.block(r.getX(), r.getY(), r.getZ());
@@ -303,7 +325,9 @@ final class StructureLevel implements WorldGenLevel {
      * position of the block it stands at, as one this level makes for a block written.
      */
     void putBlockEntity(BlockEntity entity) {
-        long key = key(real(entity.getBlockPos()));
+        BlockPos r = real(entity.getBlockPos());
+        if (!inPlacementBounds(r.getY())) return;
+        long key = key(r);
         removedBlockEntities.remove(key);
         blockEntities.put(key, entity); // the live one, so later changes to it are kept; moved to real heights when saved
     }
@@ -394,7 +418,10 @@ final class StructureLevel implements WorldGenLevel {
             return rows;
         }
 
-        @Override public void markPosForPostprocessing(BlockPos pos) { postProcess.add(key(real(pos))); }
+        @Override public void markPosForPostprocessing(BlockPos pos) {
+            BlockPos r = real(pos);
+            if (inPlacementBounds(r.getY())) postProcess.add(key(r));
+        }
         @Override public TickContainerAccess<Block> getBlockTicks() { return StructureLevel.this.blockTicks; }
         @Override public TickContainerAccess<Fluid> getFluidTicks() { return StructureLevel.this.fluidTicks; }
         @Nullable @Override public BlockEntity getBlockEntity(BlockPos pos) { return StructureLevel.this.getBlockEntity(pos); }

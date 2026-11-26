@@ -141,6 +141,11 @@ final class ModOres {
         if (dimensionType != null) this.dimensionType = dimensionType;
     }
 
+    /** Lowest real Y a feature placed in a chunk with {@code chunkFloor} can write (vanilla {@code VANILLA_MIN}). */
+    static int minRealY(int chunkFloor) {
+        return VANILLA_MIN + (chunkFloor - 64);
+    }
+
     /** Writes this cube's share of every mod ore vein that can reach it. */
     void place(LevelChunkSection section, int cx, int cy, int cz) {
         List<Added> ores = added();
@@ -161,8 +166,7 @@ final class ModOres {
             int nx = cx + dx, nz = cz + dz;
             int chunkCenterX = (nx << 4) + 8, chunkCenterZ = (nz << 4) + 8;
             int chunkFloor = under.floor(chunkCenterX, chunkCenterZ, terrain.surfaceY(chunkCenterX, chunkCenterZ));
-            // Vanilla frame bottom is VANILLA_MIN (-64) + (chunkFloor - 64) = chunkFloor - 128.
-            if (y1 < chunkFloor - 128) continue;
+            if (y1 < minRealY(chunkFloor)) continue;
             for (int index : active) {
                 Added ore = ores.get(index);
                 for (Drop drop : drops(nx, nz, index, ore, chunkFloor)) {
@@ -331,6 +335,7 @@ final class ModOres {
         }
 
         private boolean accept(int x, int vanillaY, int z, BlockState state) {
+            if (vanillaY < VANILLA_MIN || vanillaY >= VANILLA_MIN + VANILLA_HEIGHT) return false;
             if (state.isAir() || !state.getFluidState().isEmpty()) return false;
             int y = vanillaY + shift;
             if (y >= terrain.surfaceY(x, z)) return false;
@@ -362,8 +367,8 @@ final class ModOres {
         @Override public boolean destroyBlock(BlockPos pos, boolean drop, @Nullable Entity entity, int recursionLeft) { return false; }
         @Override public boolean isStateAtPosition(BlockPos pos, Predicate<BlockState> predicate) { return predicate.test(getBlockState(pos)); }
         @Override public boolean isFluidAtPosition(BlockPos pos, Predicate<FluidState> predicate) { return predicate.test(getFluidState(pos)); }
-        /** Ore features write through the chunk section, and only inside the area they were given. */
-        @Override public boolean ensureCanWrite(BlockPos pos) { return true; }
+        /** Ore features write through the chunk section, and only inside the vanilla frame's height bounds. */
+        @Override public boolean ensureCanWrite(BlockPos pos) { return !isOutsideBuildHeight(pos); }
         @Nullable @Override public BlockEntity getBlockEntity(BlockPos pos) { return null; }
 
         @Override public int getHeight(Heightmap.Types type, int x, int z) {
