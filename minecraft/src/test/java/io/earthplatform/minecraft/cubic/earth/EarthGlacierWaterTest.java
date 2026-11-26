@@ -861,10 +861,11 @@ class EarthGlacierWaterTest {
 
     @Test
     void singleDiagonalShadowContactDoesNotDemoteSteepSideReachOrBreakWaterfall() {
-        // Majority-shadow-adjacent FALL_POOL gating: a 66-sample steep mountain side reach (waterSlope = 0.1875 > 0.15)
-        // that brushes a Phase 1 shadow core at only 1..2 contacts (shadowAdjacent * 2 < 66) must remain an eligible
-        // FALL_POOL so an adjacent waterfall never loses its falls[] levels.
-        // Test both rows 13..18 (strictly 1 diagonal contact with the 692 m sample at (34, 12)) and rows 12..17.
+        // At-least-half shadow-adjacent FALL_POOL gating: a 66-sample steep mountain side reach (waterSlope = 0.1875 > 0.15)
+        // that joins the unmasked 6-sample top row of the shadow core during fallingWater (72 samples total, with Phase 1
+        // shadow starting at coreTopRow + 1 giving shadowAdjacent = 6 or 7 out of 72, well below half) must remain an
+        // eligible FALL_POOL so an adjacent waterfall never loses its falls[] levels.
+        // Test both coreTopRow = 13 (diagonal contact at (34, 12)-(35, 13)) and coreTopRow = 12 (cardinal contact at (34, 12)-(35, 12)).
         for (int coreTopRow : new int[]{13, 12}) {
             int span = 48;
             float[] water = new float[span * span], ground = new float[span * span];
@@ -872,7 +873,8 @@ class EarthGlacierWaterTest {
             Arrays.fill(water, Float.NaN);
             Arrays.fill(ground, 150f);
 
-            // Shadow core at cols 35..40, rows coreTopRow..coreTopRow+5 (0.78 grade, 36 wideWater samples).
+            // Shadow core at cols 35..40, rows coreTopRow..coreTopRow+5 (0.78 grade, 16 wideWater samples; Phase 1
+            // shadow starts at coreTopRow + 1 while row coreTopRow is shadowed in Phase 2).
             for (int j = coreTopRow; j <= coreTopRow + 5; j++) {
                 for (int i = 35; i <= 40; i++) {
                     int at = j * span + i;
@@ -929,7 +931,7 @@ class EarthGlacierWaterTest {
 
             assertNotNull(result.shadow(), "shadow core must produce shadow mask (coreTopRow=" + coreTopRow + ")");
             assertTrue(result.shadow()[coreTopRow * span + 35],
-                    "shadow core NW corner (35," + coreTopRow + ") must be Phase 1 shadowed");
+                    "shadow core NW corner (35," + coreTopRow + ") must be shadowed (Phase 2 above Phase 1 row " + (coreTopRow + 1) + ")");
             assertTrue(result.fallsComputed(), "falls must be precomputed when shadow core exists");
             assertNotNull(result.falls(), "waterfall must remain intact when steep side reach barely brushes shadow core");
             float[] expected = {300f, 300f, 200f, 200f};
@@ -1259,22 +1261,24 @@ class EarthGlacierWaterTest {
     @Test
     void phaseTwoShadowTailIsInvariantUnderCoreOrderingAcrossMixedGlacialAndNonGlacialCores() {
         // Odd span = 25 so row 12 is an exact N-S reflection axis (rj = 24 - j).
-        // Both the glacial North core (rows 4..8) and non-glacial South core (rows 16..20) sit exactly 4 steps away
-        // from the shared steep (> 0.30) junction cell (8, 12), which leads east into a 0.22-grade branch (cols 9..12,
-        // depths 5..8). In a single-pass first-come BFS, scanning the glacial core first claims (8, 12) with the 0.30
-        // threshold and blocks the non-glacial core from entering the 0.22-grade branch; two-pass Phase 2 must shadow
-        // the branch identically regardless of core scan order.
+        // Phase 1 shadow cores occupy rows 5..7 (glacial North) and rows 17..19 (non-glacial South).
+        // Two steep (> 0.30) vertical arms along col 7 (rows 8..11 and 16..13) converge onto a SOLE 1-cell steep
+        // 8-connected bottleneck at (8, 12) at exact step 5 from BOTH Phase 1 cores (with (7, 12), (8, 11), (8, 13),
+        // (9, 11), and (9, 13) dry so neither arm can bypass (8, 12) diagonally into (9, 12)). The 0.22-grade east
+        // branch runs along row 12, cols 9..11 (steps 6..8 <= SHADOW_TAIL_STEPS = 8). In a single-pass first-come BFS,
+        // scanning the glacial core first claims (8, 12) with the 0.30 threshold and blocks the non-glacial core from
+        // entering (9, 12)..(11, 12); two-pass Phase 2 must shadow the branch identically regardless of core scan order.
         int span = 25;
         float[] waterA = new float[span * span], groundA = new float[span * span];
         boolean[] iceA = new boolean[span * span], seaA = new boolean[span * span];
         Arrays.fill(waterA, Float.NaN);
         Arrays.fill(groundA, 100f);
 
-        // North core (rows 4..8, cols 6..11): glacial-front steep shadow (0.47 grade, surrounded by SNOW_AND_ICE).
+        // North core (rows 4..8, cols 6..11; Phase 1 core = rows 5..7): glacial-front steep shadow (0.47 grade).
         for (int j = 4; j <= 8; j++) {
             for (int i = 6; i <= 11; i++) {
                 int at = j * span + i;
-                waterA[at] = 700f - (j - 4) * 30f; // row 4 = 700, row 8 = 580
+                waterA[at] = 700f - (j - 4) * 30f; // row 4 = 700, row 7 = 610, row 8 = 580
                 groundA[at] = Float.NaN;
             }
         }
@@ -1287,35 +1291,55 @@ class EarthGlacierWaterTest {
                 }
             }
         }
-        // South core (rows 16..20, cols 6..11): non-glacial steep shadow (0.47 grade, bare rock).
+        // South core (rows 16..20, cols 6..11; Phase 1 core = rows 17..19): non-glacial steep shadow (0.47 grade).
         for (int j = 16; j <= 20; j++) {
             for (int i = 6; i <= 11; i++) {
                 int at = j * span + i;
-                waterA[at] = 380f - (j - 16) * 30f; // row 16 = 380, row 20 = 260
+                waterA[at] = 380f - (j - 16) * 30f; // row 16 = 380, row 17 = 350, row 20 = 260
                 groundA[at] = Float.NaN;
             }
         }
-        // Steep (> 0.30) bridge along col 8, rows 9..15 (25 m/sample at 64 m spacing -> ws = 0.39 > 0.30),
-        // placing the shared steep junction (8, 12) = 480 m at exact step 4 from BOTH cores.
-        for (int j = 9; j <= 15; j++) {
-            int at = j * span + 8;
-            waterA[at] = 555f - (j - 9) * 25f;
+        // Upper steep (> 0.30) arm along col 7, rows 9..11 (steps 2..4 from Phase 1 row 7 via (7, 8) at step 1).
+        for (int j = 9; j <= 11; j++) {
+            int at = j * span + 7;
+            waterA[at] = 555f - (j - 9) * 25f; // (7,9)=555, (7,10)=530, (7,11)=505
             groundA[at] = Float.NaN;
         }
-        // 0.22-grade branch going east from the equidistant steep junction (8, 12) along row 12, cols 9..12
-        // (steps 5..8 <= SHADOW_TAIL_STEPS = 8; 14 / 64 = 0.21875 strictly in (0.15, 0.30]).
-        for (int i = 9; i <= 12; i++) {
-            int at = 12 * span + i;
-            waterA[at] = 480f - (i - 8) * 14f;
+        // Lower steep (> 0.30) arm along col 7, rows 15..13 (steps 2..4 from Phase 1 row 17 via (7, 16) at step 1).
+        for (int j = 13; j <= 15; j++) {
+            int at = j * span + 7;
+            waterA[at] = 455f - (j - 13) * 25f; // (7,13)=455, (7,14)=430, (7,15)=405
+            groundA[at] = Float.NaN;
+        }
+        // Sole 1-cell steep (> 0.30) bottleneck at (8, 12) = 480 m (step 5 from BOTH Phase 1 cores via diagonal
+        // step from (7, 11) and (7, 13)); (7, 12), (8, 11), (8, 13), (9, 11), and (9, 13) remain dry so (9, 12) is
+        // strictly unreachable without passing through (8, 12).
+        waterA[12 * span + 8] = 480f;
+        groundA[12 * span + 8] = Float.NaN;
+        // 0.22-grade branch going east from the bottleneck along row 12, cols 9..11 (steps 6..8 <= SHADOW_TAIL_STEPS):
+        // (9, 12) = 455 m gives (8, 12) a 25/64 = 0.391 slope (> 0.30), while min(|455-480|, |441-455|)/64 = 14/64 = 0.219.
+        float[] branchElev = {455f, 441f, 427f};
+        for (int k = 0; k < branchElev.length; k++) {
+            int at = 12 * span + (9 + k);
+            waterA[at] = branchElev[k];
             groundA[at] = Float.NaN;
         }
 
-        // Preconditions: junction (8, 12) is strictly steeper than SHADOW_GLACIAL_FLAT_GRAD (0.30) so a glacial BFS
-        // can claim it, while every cell of the east branch lies strictly in (SHADOW_FLAT_GRAD, SHADOW_GLACIAL_FLAT_GRAD].
+        // Preconditions: bottleneck isolation + steepness of arms/bottleneck (> 0.30) + intermediate east branch (0.15, 0.30].
+        assertTrue(Float.isNaN(waterA[12 * span + 7]), "precondition: (7,12) must be dry");
+        assertTrue(Float.isNaN(waterA[11 * span + 8]) && Float.isNaN(waterA[13 * span + 8]),
+                "precondition: (8,11) and (8,13) must be dry");
+        assertTrue(Float.isNaN(waterA[11 * span + 9]) && Float.isNaN(waterA[13 * span + 9]),
+                "precondition: (9,11) and (9,13) must be dry so (9,12) is only reachable via (8,12)");
+        for (int j : new int[]{9, 10, 11, 13, 14, 15}) {
+            double armSlope = EarthGenerator.waterSlope(waterA, span, j * span + 7, 64.0);
+            assertTrue(armSlope > EarthGenerator.SHADOW_GLACIAL_FLAT_GRAD,
+                    "precondition: arm cell (7," + j + ") must have slope > 0.30, got " + armSlope);
+        }
         double junctionSlope = EarthGenerator.waterSlope(waterA, span, 12 * span + 8, 64.0);
         assertTrue(junctionSlope > EarthGenerator.SHADOW_GLACIAL_FLAT_GRAD,
-                "precondition: shared junction (8,12) must have slope > 0.30, got " + junctionSlope);
-        for (int i = 9; i <= 12; i++) {
+                "precondition: sole bottleneck (8,12) must have slope > 0.30, got " + junctionSlope);
+        for (int i = 9; i <= 11; i++) {
             double bs = EarthGenerator.waterSlope(waterA, span, 12 * span + i, 64.0);
             assertTrue(bs > EarthGenerator.SHADOW_FLAT_GRAD && bs <= EarthGenerator.SHADOW_GLACIAL_FLAT_GRAD,
                     "precondition: branch cell (" + i + ",12) must have slope in (0.15, 0.30], got " + bs);
@@ -1344,12 +1368,12 @@ class EarthGlacierWaterTest {
 
         assertNotNull(resA.shadow());
         assertNotNull(resB.shadow());
-        assertTrue(resA.shadow()[12 * span + 8], "shared steep junction (8,12) must be shadowed");
-        for (int i = 9; i <= 12; i++) {
+        assertTrue(resA.shadow()[12 * span + 8], "sole steep bottleneck (8,12) must be shadowed");
+        for (int i = 9; i <= 11; i++) {
             assertTrue(resA.shadow()[12 * span + i],
-                    "0.22-grade branch cell (" + i + ",12) off shared steep junction must be shadowed when glacial core scans first");
+                    "0.22-grade branch cell (" + i + ",12) off sole bottleneck must be shadowed when glacial core scans first");
             assertTrue(resB.shadow()[12 * span + i],
-                    "0.22-grade branch cell (" + i + ",12) off shared steep junction must be shadowed when non-glacial core scans first");
+                    "0.22-grade branch cell (" + i + ",12) off sole bottleneck must be shadowed when non-glacial core scans first");
         }
         for (int j = 0; j < span; j++) {
             int rj = span - 1 - j;

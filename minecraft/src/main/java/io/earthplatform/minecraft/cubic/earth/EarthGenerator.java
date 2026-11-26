@@ -992,11 +992,11 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /**
-     * LOD-invariant 8-direction continuous 1-block ray march from column centre {@code (x + 0.5, z + 0.5)} for
-     * continuously connected flat water ({@link #physicalSlope} {@code <= SHADOW_FLAT_GRAD}) within
+     * LOD-invariant 8-direction exact 2D grid DDA (Amanatides &amp; Woo) from column centre {@code (x + 0.5, z + 0.5)}
+     * for continuously connected flat water ({@link #physicalSlope} {@code <= SHADOW_FLAT_GRAD}) within
      * {@value #FLAT_PROBE_METRES} physical metres, capped at {@value #FLAT_PROBE_MAX_BLOCKS} blocks so 32 m stays
-     * exact up to 82.8° N without bounding-box blowup near the poles. Checks cover continuity at every 1-block step
-     * (stopping immediately on any dry gap {@code >= 1} block wide) while sampling DEM slope only every
+     * exact up to 82.8° N without bounding-box blowup near the poles. Visits every traversed column (stopping
+     * immediately on any dry column or 45° diagonal dry wall) while sampling DEM slope only every
      * {@value #FLAT_PROBE_SLOPE_STEP_METRES} physical metres and at the ray endpoint. Uses {@link #cover} at near
      * LOD ({@code voxel <= RIVER_VOXEL}) so narrow {@code RIVER}-only streams are followed, and
      * {@link #isWorldCoverWater} above {@link #RIVER_VOXEL} so far-LOD workers never touch
@@ -1016,27 +1016,37 @@ public final class EarthGenerator extends SurfaceGenerator {
         double demStepBlocks = Math.max(1.0, FLAT_PROBE_SLOPE_STEP_METRES * invMpb);
         double[] probe = new double[3];
         for (int d = 0; d < 8; d++) {
-            int lastPx = x, lastPz = z;
-            int lastDemPx = x, lastDemPz = z;
+            double dirX = dx[d], dirZ = dz[d];
+            int stepX = dirX > 1e-9 ? 1 : (dirX < -1e-9 ? -1 : 0);
+            int stepZ = dirZ > 1e-9 ? 1 : (dirZ < -1e-9 ? -1 : 0);
+            double tDeltaX = stepX != 0 ? 1.0 / Math.abs(dirX) : Double.POSITIVE_INFINITY;
+            double tDeltaZ = stepZ != 0 ? 1.0 / Math.abs(dirZ) : Double.POSITIVE_INFINITY;
+            double tMaxX = stepX != 0 ? 0.5 * tDeltaX : Double.POSITIVE_INFINITY;
+            double tMaxZ = stepZ != 0 ? 0.5 * tDeltaZ : Double.POSITIVE_INFINITY;
+            int px = x, pz = z;
             double nextDemR = demStepBlocks;
-            for (double r = 1.0; ; r += 1.0) {
-                boolean last = r >= maxBlocks - 1e-6;
-                double clampedR = last ? maxBlocks : r;
-                int px = Mth.floor(x + 0.5 + dx[d] * clampedR);
-                int pz = Mth.floor(z + 0.5 + dz[d] * clampedR);
-                if (px != lastPx || pz != lastPz) {
-                    lastPx = px;
-                    lastPz = pz;
-                    if (!isConnectedWater(memo, px, pz, voxel)) break;
+            while (Math.min(tMaxX, tMaxZ) <= maxBlocks + 1e-6) {
+                if (Math.abs(tMaxX - tMaxZ) <= 1e-9) {
+                    int nx = px + stepX, nz = pz + stepZ;
+                    if (!isConnectedWater(memo, nx, pz, voxel) && !isConnectedWater(memo, px, nz, voxel)) break;
+                    px = nx;
+                    pz = nz;
+                    tMaxX += tDeltaX;
+                    tMaxZ += tDeltaZ;
+                } else if (tMaxX < tMaxZ) {
+                    px += stepX;
+                    tMaxX += tDeltaX;
+                } else {
+                    pz += stepZ;
+                    tMaxZ += tDeltaZ;
                 }
-                if ((clampedR + 1e-6 >= nextDemR || last) && (px != lastDemPx || pz != lastDemPz)) {
-                    lastDemPx = px;
-                    lastDemPz = pz;
+                if (!isConnectedWater(memo, px, pz, voxel)) break;
+                double tExit = Math.min(Math.min(tMaxX, tMaxZ), maxBlocks);
+                if (tExit + 1e-6 >= nextDemR || tExit >= maxBlocks - 1e-6) {
                     dem.sample(px + 0.5, pz + 0.5, probe);
                     if (physicalSlope(px, pz, probe[0], probe[1]) <= SHADOW_FLAT_GRAD) return true;
-                    while (nextDemR <= clampedR + 1e-6) nextDemR += demStepBlocks;
+                    while (nextDemR <= tExit + 1e-6) nextDemR += demStepBlocks;
                 }
-                if (last) break;
             }
         }
         return false;
@@ -3350,7 +3360,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         float[] height = new float[count];
         for (int at = 0; at < count; at++) height[at] = seaAt[at] || shadow != null && shadow[at] ? Float.NaN : sunk != null && !Float.isNaN(sunk[at]) ? sunk[at] : glacial != null && !Float.isNaN(glacial[at]) ? glacial[at] : water[at];
         // Reaches: water joined within a drop, each with its size and the lowest quarter of its heights.
-        // Pieces whose samples are majority 8-adjacent to a Phase 1 shadow core (shadowAdjacent * 2 >= size)
+        // Pieces where at least half of samples are 8-adjacent to a Phase 1 shadow core (shadowAdjacent * 2 >= size)
         // must be at least half flat/leveled (flatCount * 2 >= size) to qualify as a FALL_POOL so a shadow
         // core's unmasked 1-sample-wide contour rim (even with a 1-cell flat tip) cannot masquerade as an
         // upper lake, while steep rivers brushing a shadow core at a few contacts keep exact FALL_POOL behavior.

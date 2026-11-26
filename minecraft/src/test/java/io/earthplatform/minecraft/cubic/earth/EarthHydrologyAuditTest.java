@@ -1716,7 +1716,7 @@ class EarthHydrologyAuditTest {
         EarthShorelineTest.bootRegistries();
         // Part A: Real 1-pixel (~4.3 m) East-West dry rock gap at 62.5° N (Trollveggen latitude, where 1 WorldCover
         //         pixel in longitude is 9.28 * cos(62.5°) ≈ 4.3 m = ~4.3 blocks) between a sloping shadow (dx <= 174)
-        //         and a flat pool (dx >= 180, 100 m) MUST stop the 4 m ray step and NOT protect the shadow column,
+        //         and a flat pool (dx >= 180, 100 m) MUST stop the DDA ray march and NOT protect the shadow column,
         //         even though the flat pool lies only 8 m away across the dry gap.
         try (EarthShorelineTest.SyntheticWorld gapWorld = new EarthShorelineTest.SyntheticWorld(
                 EarthShorelineTest.biomes, 62.5, 7.7,
@@ -1731,7 +1731,7 @@ class EarthHydrologyAuditTest {
             v2.enableHydrologyV2();
 
             // Locate the sloped shadow column immediately west of the ~4.3 m dry gap (accounting for cover warp):
-            // dist = 4 m probes +4 blocks east (lands inside the dry gap), while +8 blocks east is the flat pool.
+            // +4 blocks east lands inside the dry gap, while +8 blocks east is the flat pool.
             int probeZ = gapWorld.homeZ;
             int probeX = Integer.MIN_VALUE;
             for (int off = 155; off <= 195; off++) {
@@ -1802,9 +1802,9 @@ class EarthHydrologyAuditTest {
             waterServer.stop(0);
         }
 
-        // Part C: Mid-ray dry rock rib (18..23 m) between wet sloping water (0..16 m) and flat water (>= 24 m)
-        //         MUST stop continuous 1-block ray marching and strip to DRY at voxel = 1, voxel = 8, AND voxel = 64
-        //         (discrete {4, 8, 12, 16, 24, 32} jumps previously skipped right over 18..23 m).
+        // Part C: Mid-ray dry rock rib strictly inside (16, 24) m between wet sloping water (0..16 m) and flat wet
+        //         water (>= 24 m) MUST stop the 2D DDA ray march and strip to DRY at voxel = 1, voxel = 8, AND voxel = 64
+        //         (discrete {4, 8, 12, 16, 24, 32} jumps previously skipped right over (16, 24) m).
         EarthSettings midGapSettings = EarthSettings.at(62.5, 7.7);
         MercatorGrid midGapGrid = new MercatorGrid(midGapSettings.metresPerBlock());
         int midHomeX = (int) Math.floor(midGapGrid.blockX(new GeoPoint(62.5, 7.7)));
@@ -1815,6 +1815,10 @@ class EarthHydrologyAuditTest {
         double ov0CenterLon = midSquareWest + (ov2Col * 4.0 + 2.5) / WorldCoverSource.PIXELS_PER_DEGREE;
         int gapStart = (int) Math.round(midGapGrid.blockX(new GeoPoint(0, ov2CenterLon)) - midHomeX);
         int gapEnd = (int) Math.round(midGapGrid.blockX(new GeoPoint(0, ov0CenterLon)) - midHomeX);
+        java.lang.reflect.Method zoomMethod = EarthGenerator.class.getDeclaredMethod("zoom", int.class);
+        zoomMethod.setAccessible(true);
+        java.lang.reflect.Method elevationMethod = EarthGenerator.class.getDeclaredMethod("elevation", int.class, int.class);
+        elevationMethod.setAccessible(true);
         try (EarthShorelineTest.SyntheticWorld midGapWorld = new EarthShorelineTest.SyntheticWorld(
                 EarthShorelineTest.biomes, 62.5, 7.7,
                 (dx, dz) -> dx < gapEnd + 1 ? 100.0 + (gapEnd + 1 - dx) * 0.45 : 100.0,
@@ -1831,45 +1835,151 @@ class EarthHydrologyAuditTest {
             int midGapX = Integer.MIN_VALUE;
             for (int off = gapStart - 30; off <= gapStart - 10; off++) {
                 int x = midGapWorld.homeX + off;
-                boolean wet0to16 = true;
-                for (int r = 0; r <= 16; r++) {
-                    if (!v2.isWorldCoverWater(x + r, probeZ, 1)) {
-                        wet0to16 = false;
+                boolean okV1V8 = true;
+                for (int voxel : new int[]{1, 8}) {
+                    for (int r : new int[]{0, 4, 8, 12, 16, 24, 32}) {
+                        if (!v2.isWorldCoverWater(x + r, probeZ, voxel)) {
+                            okV1V8 = false;
+                            break;
+                        }
+                    }
+                    if (!okV1V8) break;
+                    boolean dryInMid = false;
+                    for (int r = 17; r <= 23; r++) {
+                        if (!v2.isWorldCoverWater(x + r, probeZ, voxel)) {
+                            dryInMid = true;
+                            break;
+                        }
+                    }
+                    if (!dryInMid) {
+                        okV1V8 = false;
                         break;
                     }
                 }
-                if (!wet0to16) continue;
-                boolean dry18to23 = false;
-                for (int r = 18; r <= 23; r++) {
-                    if (!v2.isWorldCoverWater(x + r, probeZ, 1)) {
-                        dry18to23 = true;
-                        break;
-                    }
-                }
-                if (!dry18to23) continue;
-                if (v2.isWorldCoverWater(x + 24, probeZ, 1)
-                        && (x + 24 - midGapWorld.homeX) >= gapEnd + 1
-                        && v2.isWorldCoverWater(x, probeZ, 8)
-                        && v2.isWorldCoverWater(x, probeZ, 64)) {
+                if (!okV1V8) continue;
+                if ((x + 24 - midGapWorld.homeX) >= gapEnd + 1 && v2.isWorldCoverWater(x, probeZ, 64)) {
                     midGapX = x;
                     break;
                 }
             }
             assertNotEquals(Integer.MIN_VALUE, midGapX,
-                    "precondition: must locate sloping column with wet 0..16 m, dry rib in 18..23 m, and flat water at 24 m");
+                    "precondition: must locate sloping column with wet {0,4,8,12,16,24,32}, dry rib in 17..23 m at voxel=1 & 8, and wet origin at voxel=64");
+            // Verify DEM slope precondition at BOTH voxel = 1 and voxel = 8: origin is steep (> SHADOW_FLAT_GRAD)
+            // and the old probe target at +24 m (voxel=1) or +24/+32 m (voxel=8) is genuinely flat (<= SHADOW_FLAT_GRAD).
+            double[] demSample = new double[3];
+            for (int[] lv : new int[][]{{0, 1}, {3, 8}}) {
+                int zLevel = (int) zoomMethod.invoke(v2, Math.max(1, lv[0]));
+                GlobalElevation dem = (GlobalElevation) elevationMethod.invoke(v2, zLevel, lv[1]);
+                double mpbOrigin = midGapGrid.groundMetresPerBlock(midGapX + 0.5, probeZ + 0.5);
+                dem.sample(midGapX + 0.5, probeZ + 0.5, demSample);
+                double originSlope = Math.hypot(demSample[0], demSample[1]) / mpbOrigin;
+                assertTrue(originSlope > EarthGenerator.SHADOW_FLAT_GRAD,
+                        "precondition: origin must be steep at voxel=" + lv[1] + ", got slope " + originSlope);
+                dem.sample(midGapX + 24.5, probeZ + 0.5, demSample);
+                double slope24 = Math.hypot(demSample[0], demSample[1]) / midGapGrid.groundMetresPerBlock(midGapX + 24.5, probeZ + 0.5);
+                dem.sample(midGapX + 32.5, probeZ + 0.5, demSample);
+                double slope32 = Math.hypot(demSample[0], demSample[1]) / midGapGrid.groundMetresPerBlock(midGapX + 32.5, probeZ + 0.5);
+                assertTrue(slope24 <= EarthGenerator.SHADOW_FLAT_GRAD || slope32 <= EarthGenerator.SHADOW_FLAT_GRAD,
+                        "precondition: old discrete probe must see flat water at +24 m or +32 m for voxel=" + lv[1]
+                                + " (slope24=" + slope24 + ", slope32=" + slope32 + ")");
+            }
             assertTrue(v2.inShadowReach(midGapX, probeZ, Double.NaN, 100.0),
                     "precondition: mid-ray gap column must lie inside the shadow reach");
 
             int[] outV1 = new int[2], outV8 = new int[2], outV64 = new int[2];
             v2.ground(midGapX, probeZ, outV1);
             v2.farGround(3, midGapX, probeZ, outV8);
+            // At voxel = 64 (overview 2, ~17 m pixels at 62.5° N), the dry rib spans wider than the 8 m (16, 24) gap,
+            // while midGapX itself remains mapped water and must still strip to DRY.
             v2.farGround(6, midGapX, probeZ, outV64);
             assertEquals(SurfaceGenerator.DRY, outV1[1],
-                    "mid-ray dry rock rib at 18..23 m must stop ray march and strip shadow column to DRY at voxel = 1");
+                    "mid-ray dry rock rib in 17..23 m must stop DDA ray march and strip shadow column to DRY at voxel = 1");
             assertEquals(SurfaceGenerator.DRY, outV8[1],
-                    "mid-ray dry rock rib at 18..23 m must stop ray march and strip shadow column to DRY at voxel = 8");
+                    "mid-ray dry rock rib in 17..23 m must stop DDA ray march and strip shadow column to DRY at voxel = 8");
             assertEquals(SurfaceGenerator.DRY, outV64[1],
-                    "mid-ray dry rock rib at 18..23 m must stop ray march and strip shadow column to DRY at voxel = 64");
+                    "dry rock rib must stop DDA ray march and strip shadow column to DRY at voxel = 64");
+        }
+
+        // Part D: Rotated-ray exact 2D DDA single-column dry-gap test.
+        //         With a tilted DEM gradient along (-0.8, -0.6) * 0.45, one of the 8 DDA rays runs downhill along
+        //         (+0.8, +0.6) from (ox + 0.5, oz + 0.5): tMaxX = 0.625 < tMaxZ = 0.8333 so exact DDA visits (ox + 1, oz)
+        //         FIRST and stops on the dry column, whereas a naive r += 1.0 march jumped directly to (ox + 1, oz + 1)
+        //         and reached flat water at r = 4 ((ox + 3, oz + 2)).
+        int cutX = 140, cutZ = 0;
+        double[] flatS = { Double.NaN };
+        try (EarthShorelineTest.SyntheticWorld rotatedWorld = new EarthShorelineTest.SyntheticWorld(
+                EarthShorelineTest.biomes, 62.5, 7.7,
+                (dx, dz) -> {
+                    double s = 0.8 * dx + 0.6 * dz;
+                    return s < flatS[0] ? 100.0 + (flatS[0] - s) * 0.45 : 100.0;
+                },
+                (dx, dz) -> {
+                    if (dx < -1150 || dx > 320 || Math.abs(dz) > 850
+                            || 0.8 * dx + 0.6 * dz > 0.8 * cutX + 0.6 * cutZ + 40.0) return WorldCoverSource.BARE;
+                    // 2x2 checkerboard dry blocks meeting at (cutX, cutZ): NE blocks (ox + 1, oz) along (+0.8, +0.6)
+                    // and (+0.99, -0.14); SW blocks (ox, oz + 1) along (+0.14, +0.99); SE stays continuously wet.
+                    if (dx >= cutX && dx <= cutX + 24 && dz >= cutZ - 24 && dz < cutZ) return WorldCoverSource.BARE;
+                    if (dx >= cutX - 24 && dx < cutX && dz >= cutZ && dz <= cutZ + 24) return WorldCoverSource.BARE;
+                    return WorldCoverSource.WATER;
+                })) {
+            EarthGenerator v2 = new EarthGenerator(1234L, EarthShorelineTest.biomes, rotatedWorld.generator.settings(),
+                    rotatedWorld.tiles, rotatedWorld.cover, null, null);
+            v2.enableHydrologyV2();
+
+            int ox = Integer.MIN_VALUE, oz = Integer.MIN_VALUE;
+            outer:
+            for (int dzOff = -15; dzOff <= 15; dzOff++) {
+                for (int dxOff = -15; dxOff <= 15; dxOff++) {
+                    int x = rotatedWorld.homeX + cutX + dxOff;
+                    int z = rotatedWorld.homeZ + cutZ + dzOff;
+                    if (v2.isWorldCoverWater(x, z, 1)
+                            && !v2.isWorldCoverWater(x + 1, z, 1)
+                            && !v2.isWorldCoverWater(x, z + 1, 1)
+                            && v2.isWorldCoverWater(x + 1, z + 1, 1)
+                            && v2.isWorldCoverWater(x + 2, z + 1, 1)
+                            && v2.isWorldCoverWater(x + 2, z + 2, 1)
+                            && v2.isWorldCoverWater(x + 3, z + 2, 1)) {
+                        ox = x;
+                        oz = z;
+                        break outer;
+                    }
+                }
+            }
+            assertNotEquals(Integer.MIN_VALUE, ox,
+                    "precondition: must locate NW wet corner (ox,oz) with dry (ox+1,oz) & (ox,oz+1) and wet SE ray path");
+
+            // Place the flat-water hinge halfway between (ox, oz) and r = 4 ((ox + 3, oz + 2), delta-s = 3.6).
+            double s0 = 0.8 * (ox - rotatedWorld.homeX) + 0.6 * (oz - rotatedWorld.homeZ);
+            flatS[0] = s0 + 1.8;
+
+            int z1 = (int) zoomMethod.invoke(v2, 1);
+            GlobalElevation dem1 = (GlobalElevation) elevationMethod.invoke(v2, z1, 1);
+            double[] gOrigin = new double[3], gFlat = new double[3];
+            dem1.sample(ox + 0.5, oz + 0.5, gOrigin);
+            double mpb = midGapGrid.groundMetresPerBlock(ox + 0.5, oz + 0.5);
+            double originSlope = Math.hypot(gOrigin[0], gOrigin[1]) / mpb;
+            assertTrue(originSlope > EarthGenerator.SHADOW_FLAT_GRAD,
+                    "precondition: rotated-ray origin must be steep (> 0.15), got " + originSlope);
+            double norm = Math.hypot(gOrigin[0], gOrigin[1]);
+            double downX = -gOrigin[0] / norm, downZ = -gOrigin[1] / norm;
+            assertTrue(downX > downZ && downZ > 0.0,
+                    "precondition: downhill ray must satisfy dirX > dirZ > 0 so DDA crosses (ox+1,oz) first, got (" + downX + "," + downZ + ")");
+            assertEquals(1, (int) Math.floor(0.5 + downX),
+                    "precondition: naive r = 1.0 step would land on dx = +1");
+            assertEquals(1, (int) Math.floor(0.5 + downZ),
+                    "precondition: naive r = 1.0 step would land on dz = +1 (skipping dry (ox+1,oz))");
+
+            dem1.sample(ox + 3.5, oz + 2.5, gFlat);
+            double flatSlope = Math.hypot(gFlat[0], gFlat[1]) / midGapGrid.groundMetresPerBlock(ox + 3.5, oz + 2.5);
+            assertTrue(flatSlope <= EarthGenerator.SHADOW_FLAT_GRAD,
+                    "precondition: water at r = 4 ((ox+3,oz+2)) must be flat (<= 0.15), got " + flatSlope);
+            assertTrue(v2.inShadowReach(ox, oz, Double.NaN, 100.0),
+                    "precondition: rotated-ray column must lie inside the shadow reach");
+
+            int[] rotOut = new int[2];
+            v2.ground(ox, oz, rotOut);
+            assertEquals(SurfaceGenerator.DRY, rotOut[1],
+                    "exact 2D DDA must cross dry (ox+1,oz) along (+0.8,+0.6) instead of jumping to (ox+1,oz+1) and strip to DRY");
         }
     }
 
