@@ -737,7 +737,6 @@ public final class EarthGenerator extends SurfaceGenerator {
             int surface = river ? riverSurface(x, z) : lakeSurface(dem, x, z, voxel, lakeFlags);
             boolean isGlacial = lakeFlags != null && lakeFlags[0];
             boolean isFalling = lakeFlags != null && lakeFlags[1];
-            boolean isShadowReach = lakeFlags != null ? lakeFlags[2] : (hydrologyV2 && inShadowReach(x, z));
             // Shadowed cliffs can map as water; water never lies on a steep slope well above its own level. Only
             // mountains cast such shadows: in flat country a steep rise under water is a seam between surveys, and
             // keeping it as land stood thin stone walls in rivers. Water over a retreated glacier tongue sits below
@@ -747,17 +746,6 @@ public final class EarthGenerator extends SurfaceGenerator {
             // on bare summits, and the river map traced them across Fuji's crater rim as ragged pools; a river's level is
             // the lowest ground round it, down the slope beyond the rim, so they sank into pits with pillars standing in them.
             if (!shadow && river && relief(x, z) > MOUNTAINS && crest(x, z)) shadow = true;
-            // Large mountain-shadow optical water masks span both cliffs and moderate talus aprons with no flat surface.
-            // Strip unbacked water inside a detected sloping shadow reach in hydrology v2.
-            if (!shadow && hydrologyV2 && isShadowReach && !isGlacial && !isFalling) {
-                shadow = unbackedShadowWater(x, z, voxel);
-            }
-            // Steep mountain rock walls cast deep shadows that satellite optical water masks mistake for rivers or patches.
-            // Strip unbacked steep-cliff water in hydrology v2 unless glacial, falling-reach, surveyed, drainage-backed,
-            // or continuously connected to a nearby gentler water reach.
-            if (!shadow && hydrologyV2 && steep > CLIFF_SHADOW_STEEP) {
-                shadow = cliffShadowWater(dem, memo, x, z, voxel, sample[0], sample[1], steep, isGlacial, isFalling);
-            }
             // Water by the coast is the sea, and so is water at sea level that joins it, as estuaries and lagoons do,
             // which otherwise stood a block above the sea around it wherever the survey read a little over 0 m.
             // So is water within a few metres of sea level right beside the sea, as the ponds and creeks among
@@ -768,12 +756,22 @@ public final class EarthGenerator extends SurfaceGenerator {
             // Water standing well above the sea right beside it, which the sea's samples just failed to reach, is
             // the sea's edge too: the survey climbs out of the sea a little offshore along steep coasts, and the
             // shore's last few blocks of water took a lake's level up that slope, on the cliff's top.
-            if (!shadow && (sample[2] > 0.02 && surface <= SEA || surface <= SEA + 2 && joinsOpenSea(x, z)
-                    || Math.abs(surface - SEA) <= TIDAL && besideSea(x, z) || surface <= SEA + 2 * TIDAL && seaWater(x, z, voxel)
-                    || surface > SEA + TIDAL && besideSea(x, z) && seaBeside(x, z, voxel) && seaGround(dem, x, z, metres, steep, voxel))) {
+            // Checked before hydrology-v2 shadow stripping so coastal fjord water near a mountain shadow stays SEA.
+            if (!shadow && isCoastalSea(dem, x, z, metres, sample[2], steep, voxel, surface)) {
                 out[0] = lagoonBed(x, z, metres, voxel);
                 out[1] = SEA;
                 return;
+            }
+            // Large mountain-shadow optical water masks span both cliffs and moderate talus aprons with no flat surface.
+            // Strip unbacked sloping water inside a detected mountain-shadow reach in hydrology v2.
+            if (!shadow && isShadowReachCandidate(x, z, river, lakeFlags, surface)) {
+                shadow = shouldStripShadowReach(dem, memo, x, z, voxel, sample[0], sample[1], steep);
+            }
+            // Steep mountain rock walls cast deep shadows that satellite optical water masks mistake for rivers or patches.
+            // Strip unbacked steep-cliff water in hydrology v2 unless glacial, falling-reach, surveyed, drainage-backed,
+            // or continuously connected to a nearby gentler water reach.
+            if (!shadow && hydrologyV2 && steep > CLIFF_SHADOW_STEEP) {
+                shadow = cliffShadowWater(dem, memo, x, z, voxel, sample[0], sample[1], steep, isGlacial, isFalling);
             }
             // A pond on ground a sea cliff's face cuts away goes with the ground, rather than hanging on the face.
             if (!shadow && surface > SEA + 1 && voxel <= CLIFF_VOXEL) {
@@ -852,15 +850,69 @@ public final class EarthGenerator extends SurfaceGenerator {
         return !drainageBacked && !nearbyGentleWater;
     }
 
-    /** Whether water in a detected sloping mountain-shadow reach lacks surveyed-river or drainage backing. */
-    private boolean unbackedShadowWater(int x, int z, int voxel) {
+    /** Whether a water column qualifies as coastal sea under the same rules in {@link #surveyed}, {@link #waterLevel}, and {@link #shore}. */
+    private boolean isCoastalSea(GlobalElevation dem, int x, int z, double metres, double seaMask, double steep, int voxel, int surface) {
+        return seaMask > 0.02 && surface <= SEA
+                || surface <= SEA + 2 && joinsOpenSea(x, z)
+                || Math.abs(surface - SEA) <= TIDAL && besideSea(x, z)
+                || surface <= SEA + 2 * TIDAL && seaWater(x, z, voxel)
+                || surface > SEA + TIDAL && besideSea(x, z) && seaBeside(x, z, voxel) && seaGround(dem, x, z, metres, steep, voxel);
+    }
+
+    /** Whether a column in hydrology v2 falls inside a detected sloping mountain-shadow reach (excluding glacial/falling reaches). */
+    private boolean isShadowReachCandidate(double x, double z, boolean river, @Nullable boolean[] lakeFlags, int surface) {
+        if (!hydrologyV2) return false;
+        if (river) return inShadowReach(x, z, Double.NaN, surface - (SEA + 0.5));
+        return lakeFlags != null && lakeFlags[2] && !lakeFlags[0] && !lakeFlags[1];
+    }
+
+    /**
+     * Whether water inside a detected sloping mountain-shadow reach should be stripped to dry rock.
+     * Checking {@code steep <= SHADOW_FLAT_GRAD} and {@link #hasNearbyGentleWater} with {@link #SHADOW_FLAT_GRAD}
+     * protects flat cirque tarns, valley banks, and connected flat reaches at ALL LODs ({@code voxel = 1..128})
+     * without touching {@link io.earthplatform.geography.globe.Drainage} above {@link #RIVER_VOXEL} (matching
+     * {@link #cliffShadowWater}'s far-LOD contract).
+     */
+    private boolean shouldStripShadowReach(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel,
+                                           double gx, double gz, double steep) {
+        if (steep <= SHADOW_FLAT_GRAD) return false;
         if (relief(x, z) <= MOUNTAINS) return false;
         if (surveyedRivers && voxel <= RIVER_VOXEL && EstonianRivers.contains(grid, x + 0.5, z + 0.5, voxel)) return false;
+        if (hasNearbyGentleWater(dem, memo, x, z, voxel, gx, gz, SHADOW_FLAT_GRAD)) return false;
         if (rivers != null && voxel <= RIVER_VOXEL) {
-            GeoPoint p = grid.tryGeographic(x + 0.5, z + 0.5);
+            GeoPoint p = warpedCoverPoint(x, z, voxel);
             if (p != null && rivers.drained(p.latitude(), p.longitude())) return false;
         }
         return true;
+    }
+
+    /**
+     * Resolves a water column's surface level in {@link #hydrologyV2}, applying coastal-sea precedence before
+     * shadow-reach stripping so {@link #surveyed}, {@link #waterLevel}, and {@link #shore} share one decision.
+     * Returns {@link #DRY} when stripped as a sloping mountain shadow, or {@link #SEA} when {@code classifySea}
+     * is true and the column is coastal sea.
+     */
+    private int inlandWaterSurfaceV2(GlobalElevation dem, CoverMemo memo, int sx, int sz, double px, double pz,
+                                     int voxel, boolean classifySea) {
+        boolean river = rivers != null && rawCover(memo, sx, sz, voxel) == RIVER;
+        boolean[] lakeFlags = river ? null : new boolean[3];
+        int surface = river ? riverSurface(px, pz) : lakeSurface(dem, px, pz, voxel, lakeFlags);
+        if (surface <= SEA + 2 && joinsOpenSea(sx, sz)
+                || Math.abs(surface - SEA) <= TIDAL && besideSea(sx, sz)) {
+            return classifySea ? SEA : surface;
+        }
+        if (isShadowReachCandidate(px, pz, river, lakeFlags, surface)) {
+            double[] sample = new double[3];
+            double metres = dem.sample(sx + 0.5, sz + 0.5, sample);
+            double steep = Math.min(2.5, Math.sqrt(sample[0] * sample[0] + sample[1] * sample[1]));
+            if (isCoastalSea(dem, sx, sz, metres, sample[2], steep, voxel, surface)) {
+                return classifySea ? SEA : surface;
+            }
+            if (shouldStripShadowReach(dem, memo, sx, sz, voxel, sample[0], sample[1], steep)) {
+                return DRY;
+            }
+        }
+        return surface;
     }
 
     private boolean cliffShadowWater(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel,
@@ -893,6 +945,10 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     private boolean hasNearbyGentleWater(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel, double gx, double gz) {
+        return hasNearbyGentleWater(dem, memo, x, z, voxel, gx, gz, GENTLE_WATER_STEEP);
+    }
+
+    private boolean hasNearbyGentleWater(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel, double gx, double gz, double maxSteep) {
         double norm = Math.hypot(gx, gz);
         double ux = norm > 1e-6 ? gx / norm : 1.0;
         double uz = norm > 1e-6 ? gz / norm : 0.0;
@@ -910,7 +966,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 int px = Mth.floor(x + dx[d] * r), pz = Mth.floor(z + dz[d] * r);
                 if (!isWorldCoverWater(memo, px, pz, voxel)) break;
                 dem.sample(px + 0.5, pz + 0.5, probe);
-                if (Math.hypot(probe[0], probe[1]) <= GENTLE_WATER_STEEP) return true;
+                if (Math.hypot(probe[0], probe[1]) <= maxSteep) return true;
                 prevR = r;
             }
         }
@@ -1311,11 +1367,18 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (code == WorldCoverSource.NO_DATA) return SEA;
         if (code != WorldCoverSource.WATER) return DRY;
         if (seaWater(x, z, voxel)) return SEA;
-        if (hydrologyV2 && inShadowReach(x, z) && unbackedShadowWater(x, z, voxel)) return DRY;
-        int surface = waterSurface(dem, x, z, voxel);
-        if (surface > SEA && surface <= SEA + 2 && joinsOpenSea(x, z)) return SEA;
-        if (Math.abs(surface - SEA) <= TIDAL && besideSea(x, z)) return SEA;
-        return surface;
+        if (!hydrologyV2) {
+            int surface = waterSurface(dem, x, z, voxel);
+            if (surface > SEA && surface <= SEA + 2 && joinsOpenSea(x, z)) return SEA;
+            if (Math.abs(surface - SEA) <= TIDAL && besideSea(x, z)) return SEA;
+            return surface;
+        }
+        return inlandWaterSurfaceV2(dem, memo, x, z, x, z, voxel, true);
+    }
+
+    int waterLevelAt(int level, int x, int z) {
+        int voxel = 1 << level;
+        return waterLevel(elevation(zoom(Math.max(1, level)), voxel), coverMemo.get(), x, z, voxel);
     }
 
     /** Ring radii, in voxels, for how far a low bank is from its water; the wider ones only for {@link #CANOPY_BANK}'s. */
@@ -1767,6 +1830,29 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     boolean isWorldCoverWater(int ix, int iz, int voxel) { return isWorldCoverWater(coverMemo.get(), ix, iz, voxel); }
 
+    /** Warps cover-sampling coordinates with the fine-voxel jitter shared by {@link #coverAt}, {@link #isWorldCoverWater}, and {@link #warpedCoverPoint}. */
+    private double warpCoverX(double x, double z, int voxel, double metresPerBlock) {
+        if (voxel > 8) return x;
+        double amplitude = 0.55 * PIXEL_METRES / metresPerBlock;
+        double nx = x / 13.0, nz = z / 13.0;
+        return x + (warpX.getValue(nx, nz) + 0.5 * warpX.getValue(nx * 2.7, nz * 2.7)) * amplitude;
+    }
+
+    private double warpCoverZ(double x, double z, int voxel, double metresPerBlock) {
+        if (voxel > 8) return z;
+        double amplitude = 0.55 * PIXEL_METRES / metresPerBlock;
+        double nx = x / 13.0, nz = z / 13.0;
+        return z + (warpZ.getValue(nx, nz) + 0.5 * warpZ.getValue(nx * 2.7, nz * 2.7)) * amplitude;
+    }
+
+    @Nullable
+    GeoPoint warpedCoverPoint(double x, double z, int voxel) {
+        double metresPerBlock = grid.groundMetresPerBlock(x, z);
+        double wx = warpCoverX(x, z, voxel, metresPerBlock);
+        double wz = warpCoverZ(x, z, voxel, metresPerBlock);
+        return grid.tryGeographic(wx + 0.5, wz + 0.5);
+    }
+
     /**
      * WorldCover-only water probe matching {@link #coverAt}'s warp, overview, and glacier-ice filter
      * without invoking {@link RiverMap}, {@link SurfaceWaterSource}, or {@link Drainage}.
@@ -1776,14 +1862,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         long key = (long) (ix & 0x7FFFFFF) << 31 | (long) (iz & 0x7FFFFFF) << 4 | Integer.numberOfTrailingZeros(voxel) & 15;
         int slot = (int) (key * 0x9E3779B97F4A7C15L >>> 52);
         if (memo.keys[slot] == key && memo.codes[slot] == WorldCoverSource.WATER) return true;
-        double x = ix, z = iz;
-        double metresPerBlock = grid.groundMetresPerBlock(x, z);
-        if (voxel <= 8) {
-            double amplitude = 0.55 * PIXEL_METRES / metresPerBlock;
-            double nx = x / 13.0, nz = z / 13.0;
-            x += (warpX.getValue(nx, nz) + 0.5 * warpX.getValue(nx * 2.7, nz * 2.7)) * amplitude;
-            z += (warpZ.getValue(nx, nz) + 0.5 * warpZ.getValue(nx * 2.7, nz * 2.7)) * amplitude;
-        }
+        double metresPerBlock = grid.groundMetresPerBlock(ix, iz);
+        double x = warpCoverX(ix, iz, voxel, metresPerBlock), z = warpCoverZ(ix, iz, voxel, metresPerBlock);
         int overview = overview(metresPerBlock, voxel);
         GeoPoint point = grid.tryGeographic(x + 0.5, z + 0.5);
         if (point == null) return false;
@@ -1809,12 +1889,9 @@ public final class EarthGenerator extends SurfaceGenerator {
     private int coverAt(double x, double z, int voxel) {
         double riverX = x + 0.5, riverZ = z + 0.5;
         double metresPerBlock = grid.groundMetresPerBlock(x, z);
-        if (voxel <= 8) {
-            double amplitude = 0.55 * PIXEL_METRES / metresPerBlock;
-            double nx = x / 13.0, nz = z / 13.0;
-            x += (warpX.getValue(nx, nz) + 0.5 * warpX.getValue(nx * 2.7, nz * 2.7)) * amplitude;
-            z += (warpZ.getValue(nx, nz) + 0.5 * warpZ.getValue(nx * 2.7, nz * 2.7)) * amplitude;
-        }
+        double wx = warpCoverX(x, z, voxel, metresPerBlock), wz = warpCoverZ(x, z, voxel, metresPerBlock);
+        x = wx;
+        z = wz;
         int overview = overview(metresPerBlock, voxel);
         GeoPoint point = grid.tryGeographic(x + 0.5, z + 0.5);
         if (point == null) return WorldCoverSource.NO_DATA;
@@ -2428,8 +2505,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         int local = Mth.floor(SEA + 0.5 + (hydrologyV2 ? drownedRef : lowest));
         // Levels are read a little to one side or the other, so where water steps down its edge wanders, rather
         // than running in straight lines along the cells and samples.
-        double wx = x + (warpX.getValue(x / 70.0, z / 70.0) + 0.5 * warpX.getValue(x / 23.0, z / 23.0)) * WANDER,
-                wz = z + (warpZ.getValue(x / 70.0, z / 70.0) + 0.5 * warpZ.getValue(x / 23.0, z / 23.0)) * WANDER;
+        double wx = warpReachX(x, z), wz = warpReachZ(x, z);
         double fx = wx / WATER_CELL - 0.5, fz = wz / WATER_CELL - 0.5;
         int ix = Mth.floor(fx), iz = Mth.floor(fz);
         double tx = fx - ix, tz = fz - iz, sum = 0, weight = 0, relief = 0, top = Double.NEGATIVE_INFINITY;
@@ -2452,6 +2528,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (cell.samples == 0) continue;
             relief = Math.max(relief, cell.relief);
             Reaches reaches = reachLevels(ix + (c & 1), iz + (c >> 1));
+            if (reaches.levels.length == 0) continue;
             int pick = -1;
             for (int k = 0; k < reaches.levels.length; k++) {
                 if (hydrologyV2 && reaches.drownedLevels[k] && drownedRef - reaches.levels[k] > DROP) continue;
@@ -2574,10 +2651,21 @@ public final class EarthGenerator extends SurfaceGenerator {
         return drowned ? surface : Math.min(surface, local + BANK);
     }
 
-    /** Whether a column's nearest surveyed sample within {@link #NEAR} belongs to a detected sloping mountain-shadow reach. */
-    private boolean inShadowReach(double x, double z) {
-        double wx = x + (warpX.getValue(x / 70.0, z / 70.0) + 0.5 * warpX.getValue(x / 23.0, z / 23.0)) * WANDER,
-                wz = z + (warpZ.getValue(x / 70.0, z / 70.0) + 0.5 * warpZ.getValue(x / 23.0, z / 23.0)) * WANDER;
+    /** Warps world coordinates with the reach-boundary wander shared by {@link #lakeSurface} and {@link #inShadowReach}. */
+    private double warpReachX(double x, double z) {
+        return x + (warpX.getValue(x / 70.0, z / 70.0) + 0.5 * warpX.getValue(x / 23.0, z / 23.0)) * WANDER;
+    }
+
+    private double warpReachZ(double x, double z) {
+        return z + (warpZ.getValue(x / 70.0, z / 70.0) + 0.5 * warpZ.getValue(x / 23.0, z / 23.0)) * WANDER;
+    }
+
+    /**
+     * Whether a column's nearest surveyed sample within {@link #NEAR} belongs to a detected sloping
+     * mountain-shadow reach, applying the same drowned-reservoir elevation-band filter as {@link #lakeSurface}.
+     */
+    boolean inShadowReach(double x, double z, double cellLevel, double drownedRef) {
+        double wx = warpReachX(x, z), wz = warpReachZ(x, z);
         double spacing = (double) WATER_CELL / WATER_SAMPLES, sx = wx / spacing - 0.5, sz = wz / spacing - 0.5;
         int bx = Mth.floor(sx), bz = Mth.floor(sz);
         double nearestShadow = NEAR * NEAR, nearestWet = NEAR * NEAR;
@@ -2587,7 +2675,11 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (d2 >= NEAR * NEAR) continue;
             Reaches reaches = reachLevels(Math.floorDiv(si, WATER_SAMPLES), Math.floorDiv(sj, WATER_SAMPLES));
             if ((reaches.shadow[k >> 6] >>> (k & 63) & 1) != 0 && d2 < nearestShadow) nearestShadow = d2;
-            if (!Float.isNaN(reaches.samples[k]) && d2 < nearestWet) nearestWet = d2;
+            float height = reaches.samples[k];
+            if (Float.isNaN(height)) continue;
+            boolean drownedAt = (reaches.drowned[k >> 6] >>> (k & 63) & 1) != 0;
+            if (drownedAt && !Double.isNaN(drownedRef) && isLowerDrownedOutsideBand(height, cellLevel, drownedRef)) continue;
+            if (d2 < nearestWet) nearestWet = d2;
         }
         return nearestShadow < NEAR * NEAR && nearestShadow <= nearestWet;
     }
@@ -2782,9 +2874,11 @@ public final class EarthGenerator extends SurfaceGenerator {
      * level, and so is all water joined to it that lies below that level, as the arms it backs up
      * into side valleys.
      */
-    /** Steepest coarse 64-block sample gradient that still counts as a flat water surface, and minimum vertical span of a sloping mountain-shadow body. */
+    /** Steepest reach-grid water slope that still counts as flat (ordinary and glacier-front), minimum shadow vertical span, and max narrow-tail flood steps. */
     static final double SHADOW_FLAT_GRAD = 0.15;
+    static final double SHADOW_GLACIAL_FLAT_GRAD = 0.30;
     static final double SHADOW_MIN_SPAN = 3.0 * DROP;
+    static final int SHADOW_TAIL_STEPS = 8;
 
     /** Result of {@link #drownedGround}: drowned reservoir levels, retreating-glacier proglacial lake levels, and sloping mountain-shadow mask. */
     record SteppedWater(@Nullable float[] sunk, @Nullable float[] glacial, @Nullable boolean[] shadow) {}
@@ -2802,41 +2896,74 @@ public final class EarthGenerator extends SurfaceGenerator {
         return evaluated > 0 && flat * 10 < evaluated && spanMetres > SHADOW_MIN_SPAN;
     }
 
-    /** Coarse 4-neighbour surface slope at sample {@code at} across the 64-block reach grid, or NaN on borders / missing neighbours. */
-    private static double sampleGrad(float[] water, float[] ground, int span, int at) {
+    /**
+     * Water-only surface slope (rise per physical ground metre) at sample {@code at} across the reach grid.
+     * Never inspects {@code ground[]} so steep dry valley walls beside a flat river or lake cannot inflate
+     * the water's slope. Falls back to the steepest diagonal wet neighbour only when no cardinal wet
+     * neighbour exists; returns {@code NaN} when {@code at} is dry, isolated, or {@code spacingMetres} is invalid.
+     */
+    static double waterSlope(float[] water, int span, int at, double spacingMetres) {
+        if (spacingMetres <= 0.0 || !Double.isFinite(spacingMetres)) return Double.NaN;
+        float h = water[at];
+        if (Float.isNaN(h)) return Double.NaN;
         int i = at % span, j = at / span;
-        if (i <= 0 || j <= 0 || i >= span - 1 || j >= span - 1) return Double.NaN;
-        int l = at - 1, r = at + 1, u = at - span, d = at + span;
-        float hl = !Float.isNaN(water[l]) ? water[l] : ground[l];
-        float hr = !Float.isNaN(water[r]) ? water[r] : ground[r];
-        float hu = !Float.isNaN(water[u]) ? water[u] : ground[u];
-        float hd = !Float.isNaN(water[d]) ? water[d] : ground[d];
-        if (Float.isNaN(hl) || Float.isNaN(hr) || Float.isNaN(hu) || Float.isNaN(hd)) return Double.NaN;
-        double run = 2.0 * ((double) WATER_CELL / WATER_SAMPLES);
-        return Math.hypot((hr - hl) / run, (hd - hu) / run);
+        float hl = i > 0 ? water[at - 1] : Float.NaN;
+        float hr = i < span - 1 ? water[at + 1] : Float.NaN;
+        float hu = j > 0 ? water[at - span] : Float.NaN;
+        float hd = j < span - 1 ? water[at + span] : Float.NaN;
+        double gx = Double.NaN;
+        if (!Float.isNaN(hl) && !Float.isNaN(hr)) gx = (hr - hl) / (2.0 * spacingMetres);
+        else if (!Float.isNaN(hl)) gx = (h - hl) / spacingMetres;
+        else if (!Float.isNaN(hr)) gx = (hr - h) / spacingMetres;
+        double gz = Double.NaN;
+        if (!Float.isNaN(hu) && !Float.isNaN(hd)) gz = (hd - hu) / (2.0 * spacingMetres);
+        else if (!Float.isNaN(hu)) gz = (h - hu) / spacingMetres;
+        else if (!Float.isNaN(hd)) gz = (hd - h) / spacingMetres;
+        if (Double.isFinite(gx) && Double.isFinite(gz)) return Math.hypot(gx, gz);
+        if (Double.isFinite(gx)) return Math.abs(gx);
+        if (Double.isFinite(gz)) return Math.abs(gz);
+        double diag = Double.NaN;
+        double diagRun = spacingMetres * SQRT2;
+        for (int dj = -1; dj <= 1; dj += 2) for (int di = -1; di <= 1; di += 2) {
+            int ni = i + di, nj = j + dj;
+            if (ni < 0 || nj < 0 || ni >= span || nj >= span) continue;
+            float hn = water[nj * span + ni];
+            if (Float.isNaN(hn)) continue;
+            double slope = Math.abs(hn - h) / diagRun;
+            if (Double.isNaN(diag) || slope > diag) diag = slope;
+        }
+        return diag;
     }
 
     private SteppedWater drownedGround(int cx, int cz, int span, float[] water, float[] ground, boolean[] iceAt, Runnable dryGround, boolean[] seaAt,
-                                       it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue) {
-        return drownedGround(span, water, ground, iceAt, dryGround, seaAt, (wi, wj, di, dj) -> shoreHeight(cx, cz, wi, wj, di, dj), queue, hydrologyV2);
+                                       it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue, double spacingMetres) {
+        return drownedGround(span, water, ground, iceAt, dryGround, seaAt, (wi, wj, di, dj) -> shoreHeight(cx, cz, wi, wj, di, dj), queue, hydrologyV2, spacingMetres);
     }
 
     static SteppedWater drownedGround(int span, float[] water, float[] ground, boolean[] iceAt, Runnable dryGround, boolean[] seaAt,
                                       ShoreHeight shore, it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue) {
-        return drownedGround(span, water, ground, iceAt, dryGround, seaAt, shore, queue, false);
+        return drownedGround(span, water, ground, iceAt, dryGround, seaAt, shore, queue, false, (double) WATER_CELL / WATER_SAMPLES);
     }
 
     static SteppedWater drownedGround(int span, float[] water, float[] ground, boolean[] iceAt, Runnable dryGround, boolean[] seaAt,
                                       ShoreHeight shore, it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue, boolean detectShadows) {
+        return drownedGround(span, water, ground, iceAt, dryGround, seaAt, shore, queue, detectShadows, (double) WATER_CELL / WATER_SAMPLES);
+    }
+
+    static SteppedWater drownedGround(int span, float[] water, float[] ground, boolean[] iceAt, Runnable dryGround, boolean[] seaAt,
+                                      ShoreHeight shore, it.unimi.dsi.fastutil.ints.IntArrayFIFOQueue queue, boolean detectShadows, double spacingMetres) {
         float[] sunk = null, glacial = null;
         boolean[] shadow = null;
+        it.unimi.dsi.fastutil.ints.IntArrayList shadowCores = null;
         int[] owner = null;
         boolean[] seen = new boolean[span * span];
         it.unimi.dsi.fastutil.ints.IntArrayList body = new it.unimi.dsi.fastutil.ints.IntArrayList();
         it.unimi.dsi.fastutil.doubles.DoubleArrayList shores = new it.unimi.dsi.fastutil.doubles.DoubleArrayList();
         it.unimi.dsi.fastutil.floats.FloatArrayList levels = new it.unimi.dsi.fastutil.floats.FloatArrayList();
+        // Phase 1: classify all stepped wide-water bodies into shadow cores, glacial lakes, or drowned reservoirs
+        // without running narrow-tail floods mid-scan (eliminating scan-order asymmetry).
         for (int start = 0; start < span * span; start++) {
-            if (seen[start] || Float.isNaN(water[start]) || seaAt[start] || shadow != null && shadow[start] || !wideWater(water, span, start % span, start / span)) continue;
+            if (seen[start] || Float.isNaN(water[start]) || seaAt[start] || !wideWater(water, span, start % span, start / span)) continue;
             seen[start] = true;
             queue.enqueue(start);
             body.clear();
@@ -2847,7 +2974,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (!wideWater(water, span, i, j)) continue;
                 for (int d = 0; d < 8; d += 2) {
                     int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d], n = nj * span + ni;
-                    if (ni < 0 || nj < 0 || ni >= span || nj >= span || seen[n] || Float.isNaN(water[n]) || seaAt[n] || shadow != null && shadow[n]) continue;
+                    if (ni < 0 || nj < 0 || ni >= span || nj >= span || seen[n] || Float.isNaN(water[n]) || seaAt[n]) continue;
                     if (Math.abs(water[n] - water[at]) > DROP) {
                         if (!wideWater(water, span, ni, nj)) continue;
                         crossings++;
@@ -2861,41 +2988,6 @@ public final class EarthGenerator extends SurfaceGenerator {
             double[] bodyWater = new double[body.size()];
             for (int m = 0; m < body.size(); m++) bodyWater[m] = water[body.getInt(m)];
             java.util.Arrays.sort(bodyWater);
-            if (detectShadows) {
-                int evaluated = 0, flat = 0;
-                for (int m = 0; m < body.size(); m++) {
-                    double g = sampleGrad(water, ground, span, body.getInt(m));
-                    if (Double.isNaN(g)) continue;
-                    evaluated++;
-                    if (g <= SHADOW_FLAT_GRAD) flat++;
-                }
-                double bodySpan = bodyWater[bodyWater.length - 1] - bodyWater[0];
-                if (isSlopingShadowBody(evaluated, flat, bodySpan)) {
-                    if (shadow == null) shadow = new boolean[span * span];
-                    for (int m = 0; m < body.size(); m++) {
-                        int at = body.getInt(m);
-                        shadow[at] = true;
-                        queue.enqueue(at);
-                    }
-                    while (!queue.isEmpty()) {
-                        int at = queue.dequeueInt(), i = at % span, j = at / span;
-                        for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
-                            int ni = i + di, nj = j + dj;
-                            if (ni < 0 || nj < 0 || ni >= span || nj >= span) continue;
-                            int n = nj * span + ni;
-                            if (shadow[n] || Float.isNaN(water[n]) || seaAt[n]) continue;
-                            if (sunk != null && !Float.isNaN(sunk[n]) || glacial != null && !Float.isNaN(glacial[n])) continue;
-                            double g = sampleGrad(water, ground, span, n);
-                            if (!Double.isNaN(g) && g > SHADOW_FLAT_GRAD) {
-                                shadow[n] = true;
-                                seen[n] = true;
-                                queue.enqueue(n);
-                            }
-                        }
-                    }
-                    continue;
-                }
-            }
             double lowWater = bodyWater[bodyWater.length / 8];
             shores.clear();
             int elevatedShores = 0, elevatedIceShores = 0;
@@ -2913,11 +3005,39 @@ public final class EarthGenerator extends SurfaceGenerator {
                     }
                 }
             }
+            boolean glacierFront = isGlacierFront(elevatedShores, elevatedIceShores);
+            if (detectShadows) {
+                double flatGrad = glacierFront ? SHADOW_GLACIAL_FLAT_GRAD : SHADOW_FLAT_GRAD;
+                double[] slopes = new double[body.size()];
+                int evaluated = 0, flat = 0;
+                for (int m = 0; m < body.size(); m++) {
+                    double ws = waterSlope(water, span, body.getInt(m), spacingMetres);
+                    slopes[m] = ws;
+                    if (Double.isNaN(ws)) continue;
+                    evaluated++;
+                    if (ws <= flatGrad) flat++;
+                }
+                double bodySpan = bodyWater[bodyWater.length - 1] - bodyWater[0];
+                if (isSlopingShadowBody(evaluated, flat, bodySpan)) {
+                    if (shadow == null) shadow = new boolean[span * span];
+                    if (shadowCores == null) shadowCores = new it.unimi.dsi.fastutil.ints.IntArrayList();
+                    // Only mark sloping samples (> flatGrad) so any connected flat pool stays wet as its own reach.
+                    for (int m = 0; m < body.size(); m++) {
+                        double ws = slopes[m];
+                        if (!Double.isNaN(ws) && ws > flatGrad) {
+                            int at = body.getInt(m);
+                            shadow[at] = true;
+                            shadowCores.add(at);
+                        }
+                    }
+                    continue;
+                }
+            }
             if (shores.isEmpty()) continue;
             // A proglacial lake where a glacier retreated after the elevation survey steps up over the old ice
             // tongue into SNOW_AND_ICE walls; unlike a flooded reservoir, its true surface lies at the low lake
             // level rather than the elevated ice shore.
-            if (isGlacierFront(elevatedShores, elevatedIceShores)) {
+            if (glacierFront) {
                 if (glacial == null) {
                     glacial = new float[span * span];
                     java.util.Arrays.fill(glacial, Float.NaN);
@@ -2935,6 +3055,38 @@ public final class EarthGenerator extends SurfaceGenerator {
             }
             for (int m = 0; m < body.size(); m++) { sunk[body.getInt(m)] = (float) around[around.length / 2]; owner[body.getInt(m)] = levels.size(); }
             levels.add((float) around[around.length / 2]);
+        }
+        // Phase 2: scan-order-independent bounded narrow-tail flood from shadow cores (never entering wideWater,
+        // sunk, glacial, or flat samples), before the sunk back-up flood runs.
+        if (shadowCores != null && !shadowCores.isEmpty()) {
+            int[] depth = new int[span * span];
+            java.util.Arrays.fill(depth, -1);
+            for (int m = 0; m < shadowCores.size(); m++) {
+                int at = shadowCores.getInt(m);
+                depth[at] = 0;
+                queue.enqueue(at);
+            }
+            while (!queue.isEmpty()) {
+                int at = queue.dequeueInt();
+                int nextDepth = depth[at] + 1;
+                if (nextDepth > SHADOW_TAIL_STEPS) continue;
+                int i = at % span, j = at / span;
+                for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
+                    if (di == 0 && dj == 0) continue;
+                    int ni = i + di, nj = j + dj;
+                    if (ni < 0 || nj < 0 || ni >= span || nj >= span) continue;
+                    int n = nj * span + ni;
+                    if (shadow[n] || Float.isNaN(water[n]) || seaAt[n]) continue;
+                    if (sunk != null && !Float.isNaN(sunk[n]) || glacial != null && !Float.isNaN(glacial[n])) continue;
+                    if (wideWater(water, span, ni, nj)) continue;
+                    double ws = waterSlope(water, span, n, spacingMetres);
+                    if (!Double.isNaN(ws) && ws > SHADOW_FLAT_GRAD) {
+                        shadow[n] = true;
+                        depth[n] = nextDepth;
+                        queue.enqueue(n);
+                    }
+                }
+            }
         }
         if (sunk == null) return new SteppedWater(null, glacial, shadow);
         // Each body backs up into the water joined to it that lies below its level, nearest body first.
@@ -3323,7 +3475,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * shores' level: the middle of the heights where its water meets dry land, half a sample
      * either side of the shore.
      */
-    private Reaches reachLevels(int cx, int cz) {
+    Reaches reachLevels(int cx, int cz) {
         long key = it.unimi.dsi.fastutil.HashCommon.mix((long) cx << 32 | cz & 0xFFFFFFFFL);
         Reaches known = reaches.get(key);
         if (known != null) return known;
@@ -3385,7 +3537,9 @@ public final class EarthGenerator extends SurfaceGenerator {
                 }
             }
         };
-        SteppedWater stepped = drownedGround(cx, cz, span, water, ground, iceAt, dryGround, seaAt, queue);
+        double spacingMetres = ((double) WATER_CELL / WATER_SAMPLES)
+                * grid.groundMetresPerBlock((cx + 0.5) * WATER_CELL, (cz + 0.5) * WATER_CELL);
+        SteppedWater stepped = drownedGround(cx, cz, span, water, ground, iceAt, dryGround, seaAt, queue, spacingMetres);
         float[] sunk = stepped.sunk(), glacial = stepped.glacial();
         boolean[] shadow = stepped.shadow();
         float[] falls = fallingWater(span, water, sunk, glacial, shadow, seaAt, queue);
@@ -3473,10 +3627,10 @@ public final class EarthGenerator extends SurfaceGenerator {
                 if (hydrologyV2) {
                     int evaluated = 0, flat = 0;
                     for (int m = 0; m < visited.size(); m++) {
-                        double g = sampleGrad(water, ground, span, visited.getInt(m));
-                        if (Double.isNaN(g)) continue;
+                        double ws = waterSlope(water, span, visited.getInt(m), spacingMetres);
+                        if (Double.isNaN(ws)) continue;
                         evaluated++;
-                        if (g <= SHADOW_FLAT_GRAD) flat++;
+                        if (ws <= SHADOW_GLACIAL_FLAT_GRAD) flat++;
                     }
                     slopingShadow = isSlopingShadowBody(evaluated, flat, heights[count - 1] - heights[0]);
                 }
@@ -3504,10 +3658,17 @@ public final class EarthGenerator extends SurfaceGenerator {
         Integer[] order = new Integer[levels.size()];
         for (int k = 0; k < order.length; k++) order[k] = k;
         java.util.Arrays.sort(order, (p, q) -> Double.compare(levels.getDouble(p), levels.getDouble(q)));
-        double[] sorted = new double[Math.max(1, order.length)];
-        boolean[] sunkSorted = new boolean[sorted.length];
-        if (order.length == 0) sorted[0] = dry(cx, cz) ? 0 : waterCell(cx, cz).level;
-        for (int k = 0; k < order.length; k++) { sorted[k] = levels.getDouble(order[k]); sunkSorted[k] = drownedLevels.getBoolean(order[k]); }
+        double[] sorted;
+        boolean[] sunkSorted;
+        if (hydrologyV2 && order.length == 0 && shadowBits != NO_SEA) {
+            sorted = new double[0];
+            sunkSorted = new boolean[0];
+        } else {
+            sorted = new double[Math.max(1, order.length)];
+            sunkSorted = new boolean[sorted.length];
+            if (order.length == 0) sorted[0] = dry(cx, cz) ? 0 : waterCell(cx, cz).level;
+            for (int k = 0; k < order.length; k++) { sorted[k] = levels.getDouble(order[k]); sunkSorted[k] = drownedLevels.getBoolean(order[k]); }
+        }
         return new Reaches(sorted, sunkSorted, samples, drowned, falling, glacialBits, shadowBits, sunk == null ? null : drownedLand(span, first, ground, sunk));
     }
 
@@ -3806,7 +3967,12 @@ public final class EarthGenerator extends SurfaceGenerator {
                 double r = step == 0 ? near : far;
                 double px = x + RING_X[k] * r, pz = z + RING_Z[k] * r;
                 int sx = hydrologyV2 ? Mth.floor(px) : (int) px, sz = hydrologyV2 ? Mth.floor(pz) : (int) pz;
-                if (cover(memo, sx, sz, voxel) == WorldCoverSource.WATER && !seaWater(px, pz, voxel)) best = Math.max(best, waterSurface(dem, px, pz, voxel));
+                if (cover(memo, sx, sz, voxel) == WorldCoverSource.WATER && !seaWater(px, pz, voxel)) {
+                    int surface = hydrologyV2
+                            ? inlandWaterSurfaceV2(dem, memo, sx, sz, px, pz, voxel, false)
+                            : waterSurface(dem, px, pz, voxel);
+                    if (surface != DRY) best = Math.max(best, surface);
+                }
             }
         }
         return best;

@@ -1049,4 +1049,455 @@ class EarthHydrologyAuditTest {
             waterServer.stop(0);
         }
     }
+
+    @SuppressWarnings("unchecked")
+    private static void injectCustomRiverTiles(RiverMap map, GeoPoint center, byte strengthByte,
+                                               java.util.function.BiPredicate<Integer, Integer> drainedAtPixel) throws Exception {
+        Field field = RiverMap.class.getDeclaredField("memory");
+        field.setAccessible(true);
+        Map<Long, Object> memory = (Map<Long, Object>) field.get(map);
+        Constructor<?> tracedCtor = Class.forName(RiverMap.class.getName() + "$Traced")
+                .getDeclaredConstructor(long.class, byte[].class, byte[].class, long[].class);
+        tracedCtor.setAccessible(true);
+
+        int tile = 256, cell = 16;
+        int col0 = Math.floorMod((int) Math.floor((center.longitude() + 180.0) * SurfaceWaterSource.PIXELS_PER_DEGREE),
+                SurfaceWaterSource.ACROSS);
+        int row0 = (int) Math.floor((SurfaceWaterSource.NORTH - center.latitude()) * SurfaceWaterSource.PIXELS_PER_DEGREE);
+        int tx0 = col0 / tile, ty0 = row0 / tile;
+        for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+            int tx = tx0 + dx, ty = ty0 + dy;
+            if (ty < 0 || ty * tile >= SurfaceWaterSource.DOWN) continue;
+            int wtx = Math.floorMod(tx, SurfaceWaterSource.ACROSS / tile);
+            long key = (long) ty << 32 | wtx;
+            byte[] strength = new byte[tile * tile];
+            byte[] cells = new byte[(tile / cell) * (tile / cell)];
+            Arrays.fill(strength, strengthByte);
+            Arrays.fill(cells, strengthByte);
+            long[] drained = new long[(tile * tile) / 64];
+            for (int r = 0; r < tile; r++) {
+                int globalRow = ty * tile + r;
+                for (int c = 0; c < tile; c++) {
+                    int globalCol = wtx * tile + c;
+                    if (drainedAtPixel.test(globalCol, globalRow)) {
+                        int k = r * tile + c;
+                        drained[k >>> 6] |= 1L << (k & 63);
+                    }
+                }
+            }
+            memory.put(key, tracedCtor.newInstance(key, strength, cells, drained));
+        }
+    }
+
+    private static int riverCol(GeoPoint p) {
+        return Math.floorMod((int) Math.floor((p.longitude() + 180.0) * SurfaceWaterSource.PIXELS_PER_DEGREE),
+                SurfaceWaterSource.ACROSS);
+    }
+
+    private static int riverRow(GeoPoint p) {
+        return (int) Math.floor((SurfaceWaterSource.NORTH - p.latitude()) * SurfaceWaterSource.PIXELS_PER_DEGREE);
+    }
+
+    private static boolean anyBitSet(long[] bits) {
+        for (long word : bits) if (word != 0L) return true;
+        return false;
+    }
+
+    @Test
+    void mixedFlatPoolConnectedToSlopingShadowProducesNormalFlatReachInV2() throws Exception {
+        EarthShorelineTest.bootRegistries();
+        // Large 0.45-grade sloping mountain shadow apron (dz in [-1100, -100], |dx| <= 750) directly
+        // joined to a 320x320 flat pool (dz in [-100, 220], |dx| <= 160, flat at 100 m).
+        try (EarthShorelineTest.SyntheticWorld world = new EarthShorelineTest.SyntheticWorld(
+                (dx, dz) -> dz < -100.0 ? 100.0 + (-100.0 - dz) * 0.45 : 100.0,
+                (dx, dz) -> {
+                    if (dz >= -1100 && dz < -100 && Math.abs(dx) <= 750) return WorldCoverSource.WATER;
+                    if (dz >= -100 && dz <= 220 && Math.abs(dx) <= 160) return WorldCoverSource.WATER;
+                    return WorldCoverSource.BARE;
+                })) {
+            EarthGenerator v2 = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null);
+            v2.enableHydrologyV2();
+
+            int[] apron = new int[2];
+            v2.ground(world.homeX, world.homeZ - 650, apron);
+            assertEquals(SurfaceGenerator.DRY, apron[1],
+                    "sloping shadow apron must be stripped to DRY in v2");
+
+            int[] pool = new int[2];
+            v2.ground(world.homeX, world.homeZ + 60, pool);
+            assertNotEquals(SurfaceGenerator.DRY, pool[1],
+                    "connected flat pool must remain WET in v2");
+            assertEquals(EarthGenerator.SEA + 100, pool[1], 3,
+                    "connected flat pool must keep its 100 m flat level");
+
+            int poolCx = Math.floorDiv(world.homeX, EarthGenerator.WATER_CELL);
+            int poolCz = Math.floorDiv(world.homeZ + 60, EarthGenerator.WATER_CELL);
+            EarthGenerator.Reaches reaches = v2.reachLevels(poolCx, poolCz);
+            boolean hasFlatReach = false;
+            for (double lvl : reaches.levels()) {
+                if (Math.abs(lvl - 100.0) <= 5.0) hasFlatReach = true;
+            }
+            assertTrue(hasFlatReach,
+                    "connected flat pool must form a real ~100 m reach in computeReachLevels, got " + Arrays.toString(reaches.levels()));
+        }
+    }
+
+    @Test
+    void computeReachLevelsGlacialGuardRejectsSteepShadowAndPreservesTwentyPercentGlacier() throws Exception {
+        EarthShorelineTest.bootRegistries();
+        // High-latitude (72 deg N) terrain evaluated with equatorial 1 m/block Web Mercator settings:
+        // groundMetresPerBlock = cos(72 deg) ~= 0.309 m/block -> spacingMetres ~= 19.8 m per 64-block sample.
+        // A 0.38 physical slope rises 7.5 m <= DROP (8 m) per sample (0 crossings -> skips drownedGround!)
+        // yet exceeds SHADOW_GLACIAL_FLAT_GRAD (0.30), so computeReachLevels must reject glacialBits.
+        // The same geometry at 0.22 physical slope (<= 0.30) must keep glacialBits.
+        double lat = 73.5, lon = 16.5;
+        EarthSettings eqSettings = EarthSettings.at(0.0, 0.0);
+        MercatorGrid eqGrid = new MercatorGrid(eqSettings.metresPerBlock());
+        GeoPoint target = new GeoPoint(lat, lon);
+        int gx = (int) Math.floor(eqGrid.blockX(target));
+        int gz = (int) Math.floor(eqGrid.blockZ(target));
+        int cx = Math.floorDiv(gx, EarthGenerator.WATER_CELL);
+        int cz = Math.floorDiv(gz, EarthGenerator.WATER_CELL);
+        GeoPoint cellCenter = eqGrid.tryGeographic((cx + 0.5) * EarthGenerator.WATER_CELL, (cz + 0.5) * EarthGenerator.WATER_CELL);
+        assertNotNull(cellCenter);
+
+        for (boolean steepShadow : new boolean[]{true, false}) {
+            double slope = steepShadow ? 0.38 : 0.22;
+            try (EarthShorelineTest.SyntheticWorld world = new EarthShorelineTest.SyntheticWorld(
+                    EarthShorelineTest.biomes, cellCenter.latitude(), cellCenter.longitude(),
+                    (dx, dz) -> dz < 200.0 ? 100.0 + (200.0 - dz) * slope : 100.0,
+                    (dx, dz) -> {
+                        if (dz >= -100 && dz <= 120 && Math.abs(dx) <= 180) return WorldCoverSource.WATER;
+                        if (dz < -100 && dz >= -280 && Math.abs(dx) <= 260) return WorldCoverSource.SNOW_AND_ICE;
+                        return WorldCoverSource.BARE;
+                    })) {
+                EarthGenerator v2 = new EarthGenerator(1234L, EarthShorelineTest.biomes, eqSettings,
+                        world.tiles, world.cover, null, null);
+                v2.enableHydrologyV2();
+                EarthGenerator.Reaches reaches = v2.reachLevels(cx, cz);
+                boolean hasGlacial = anyBitSet(reaches.glacial());
+                if (steepShadow) {
+                    assertFalse(hasGlacial,
+                            "0.38 physical slope with < DROWNED_CROSSINGS touching SNOW_AND_ICE must NOT receive glacialBits");
+                } else {
+                    assertTrue(hasGlacial,
+                            "0.22 physical slope retreating glacier tongue with < DROWNED_CROSSINGS touching SNOW_AND_ICE must keep glacialBits");
+                }
+            }
+        }
+    }
+
+    @Test
+    void coastalFjordShoreNearSlopingShadowStaysSeaInSurveyedAndWaterLevel() throws Exception {
+        EarthShorelineTest.bootRegistries();
+        // Fjord geometry: open sea for dz >= 260 (NO_DATA, -15 m), coastal fjord water in dz in [65, 260],
+        // narrow 45-block dry rock shoreline at dz in (20, 65), and giant sloping mountain shadow immediately north
+        // (dz in [-750, 20], |dx| <= 650, slope 0.45). Fjord shore columns at dz = 68..110 sit within NEAR (~115 blocks)
+        // of the mountain shadow reach while remaining coastal sea.
+        try (EarthShorelineTest.SyntheticWorld world = new EarthShorelineTest.SyntheticWorld(
+                (dx, dz) -> {
+                    if (dz >= 260.0) return -15.0;
+                    if (dz >= 80.0) return -1.5;
+                    if (dz >= 65.0) return 0.5 + (80.0 - dz) * 0.25;
+                    return 4.25 + (65.0 - dz) * 0.45;
+                },
+                (dx, dz) -> {
+                    if (dz >= 260) return WorldCoverSource.NO_DATA;
+                    if (dz >= 65 && Math.abs(dx) <= 1000) return WorldCoverSource.WATER;
+                    if (dz >= -750 && dz <= 20 && Math.abs(dx) <= 650) return WorldCoverSource.WATER;
+                    return WorldCoverSource.BARE;
+                })) {
+            EarthGenerator v2 = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null);
+            v2.enableHydrologyV2();
+
+            // Sloping mountain shadow above the fjord is stripped to DRY in both ground() and waterLevelAt().
+            int[] shadowOut = new int[2];
+            v2.ground(world.homeX, world.homeZ - 350, shadowOut);
+            assertEquals(SurfaceGenerator.DRY, shadowOut[1], "high mountain shadow above fjord must be stripped to DRY");
+            assertEquals(SurfaceGenerator.DRY, v2.waterLevelAt(0, world.homeX, world.homeZ - 350),
+                    "waterLevelAt on stripped mountain shadow above fjord must return DRY");
+
+            // Coastal fjord shore columns within NEAR of the shadow stay SEA in BOTH surveyed() and waterLevel().
+            for (int dz : new int[]{68, 75, 110}) {
+                int[] shoreOut = new int[2];
+                v2.ground(world.homeX, world.homeZ + dz, shoreOut);
+                assertEquals(EarthGenerator.SEA, shoreOut[1],
+                        "coastal fjord shore at dz=" + dz + " within NEAR of shadow must stay SEA in surveyed()");
+                assertEquals(EarthGenerator.SEA, v2.waterLevelAt(0, world.homeX, world.homeZ + dz),
+                        "coastal fjord shore at dz=" + dz + " within NEAR of shadow must stay SEA in waterLevel()");
+            }
+        }
+    }
+
+    @Test
+    void flatCirqueTarnAndConnectedFlatReachStayWetAtNearAndFarLodWithoutDrainageCalls() throws Exception {
+        EarthShorelineTest.bootRegistries();
+        AtomicInteger surfaceWaterRequests = new AtomicInteger();
+        AtomicInteger drainageTileCalls = new AtomicInteger();
+        HttpServer waterServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        waterServer.createContext("/water/", exchange -> {
+            surfaceWaterRequests.incrementAndGet();
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        waterServer.start();
+
+        // Continuous mountain-wall-to-cirque-floor geometry:
+        // - Mountain slope (dz < 180, slope 0.45) meeting a flat cirque/valley floor (dz >= 180, elevation 100 m).
+        // - Giant sloping mountain shadow (dz in [-1150, 175], |dx| <= 850, all on the 0.45 slope).
+        // - Small flat cirque tarn (< REACH_SAMPLES, 90x90 blocks centered at (300, 230), dz in [185, 275], flat 100 m)
+        //   separated from the shadow by a dry lip yet within NEAR of the shadow reach.
+        // - Connected flat pool (dz in [180, 360], dx in [-380, -220], flat 100 m -> < 10% of combined body)
+        //   continuously joined through water to the sloped wall (dz <= 180) —
+        //   probe at (-300, 160) is 20 blocks from the flat pool (within near-LOD 32-block probe) and (-300, 80)
+        //   is 100 blocks from the flat pool (within far-LOD voxel=64 256-block probe!).
+        try (EarthShorelineTest.SyntheticWorld world = new EarthShorelineTest.SyntheticWorld(
+                (dx, dz) -> dz < 180.0 ? 100.0 + (180.0 - dz) * 0.45 : 100.0,
+                (dx, dz) -> {
+                    if (dz >= -1150 && dz <= 175 && Math.abs(dx) <= 850) return WorldCoverSource.WATER;
+                    if (Math.abs(dx - 300) <= 45 && dz >= 185 && dz <= 275) return WorldCoverSource.WATER;
+                    if (dz > 175 && dz <= 360 && dx >= -380 && dx <= -220) return WorldCoverSource.WATER;
+                    return WorldCoverSource.BARE;
+                });
+             SurfaceWaterSource sws = new SurfaceWaterSource(
+                     URI.create("http://127.0.0.1:" + waterServer.getAddress().getPort() + "/water/"),
+                     null, true, 4, 1, Duration.ofSeconds(5))) {
+            Drainage spyDrainage = new Drainage(
+                    (zoom, tx, ty) -> {
+                        drainageTileCalls.incrementAndGet();
+                        throw new AssertionError("unexpected Drainage tile fetch");
+                    },
+                    (lat, lon) -> 1000.0, 4);
+            RiverMap spyRivers = new RiverMap(sws, spyDrainage, 8, true);
+
+            EarthGenerator v2Far = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null, spyRivers);
+            v2Far.enableHydrologyV2();
+
+            // 1. Coarse far LOD (voxel = 64) with spyRivers: disconnected shadow strips, flat tarn & connected edge stay WET,
+            //    with ZERO Drainage or SurfaceWaterSource calls.
+            int[] farShadow = new int[2], tarnFar = new int[2], connectedFar = new int[2];
+            v2Far.farGround(6, world.homeX, world.homeZ - 400, farShadow);
+            v2Far.farGround(6, world.homeX + 300, world.homeZ + 230, tarnFar);
+            v2Far.farGround(6, world.homeX - 300, world.homeZ + 80, connectedFar);
+            assertEquals(SurfaceGenerator.DRY, farShadow[1], "disconnected sloping shadow must strip at voxel=64");
+            assertNotEquals(SurfaceGenerator.DRY, tarnFar[1], "flat cirque tarn must stay WET at voxel=64");
+            assertNotEquals(SurfaceGenerator.DRY, connectedFar[1],
+                    "sloped water edge connected to flat lake must stay WET at voxel=64");
+            assertEquals(0, drainageTileCalls.get(),
+                    "coarse far-LOD (voxel=64) must never query Drainage");
+            assertEquals(0, surfaceWaterRequests.get(),
+                    "coarse far-LOD (voxel=64) must never query SurfaceWaterSource");
+
+            // 2. Near LOD (voxel = 1): disconnected shadow strips, flat tarn & connected edge stay WET without Drainage.
+            EarthGenerator v2Near = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null);
+            v2Near.enableHydrologyV2();
+            int[] nearShadow = new int[2], tarnNear = new int[2], connectedNear = new int[2];
+            v2Near.ground(world.homeX, world.homeZ - 400, nearShadow);
+            v2Near.ground(world.homeX + 300, world.homeZ + 230, tarnNear);
+            v2Near.ground(world.homeX - 300, world.homeZ + 160, connectedNear);
+            assertTrue(v2Near.inShadowReach(world.homeX + 300, world.homeZ + 230, Double.NaN, 100.0),
+                    "flat cirque tarn must lie within NEAR of the shadow reach so flat-slope protection is genuinely exercised");
+            assertEquals(SurfaceGenerator.DRY, nearShadow[1], "disconnected sloping shadow must strip at voxel=1");
+            assertNotEquals(SurfaceGenerator.DRY, tarnNear[1], "flat cirque tarn must stay WET at voxel=1");
+            assertNotEquals(SurfaceGenerator.DRY, connectedNear[1],
+                    "sloped water edge connected to flat lake must stay WET at voxel=1");
+        } finally {
+            waterServer.stop(0);
+        }
+    }
+
+    @Test
+    void waterBackedByDrainageWithoutRiverStrengthRespectsWarpedCoverCoordinates() throws Exception {
+        EarthShorelineTest.bootRegistries();
+        HttpServer waterServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        waterServer.createContext("/water/", exchange -> {
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        waterServer.start();
+
+        try (EarthShorelineTest.SyntheticWorld world = new EarthShorelineTest.SyntheticWorld(
+                (dx, dz) -> dz < 200.0 ? 100.0 + (200.0 - dz) * 0.45 : 100.0,
+                (dx, dz) -> {
+                    if (dz >= -650 && dz <= 100 && Math.abs(dx) <= 650) return WorldCoverSource.WATER;
+                    return WorldCoverSource.BARE;
+                });
+             SurfaceWaterSource sws = new SurfaceWaterSource(
+                     URI.create("http://127.0.0.1:" + waterServer.getAddress().getPort() + "/water/"),
+                     null, true, 4, 1, Duration.ofSeconds(5))) {
+            Drainage noopDrainage = new Drainage((z, tx, ty) -> { throw new AssertionError("cached tile expected"); },
+                    (lat, lon) -> 1000.0, 4);
+            EarthGenerator probeGen = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null);
+            MercatorGrid grid = new MercatorGrid(world.generator.settings().metresPerBlock());
+
+            // Find a column inside the sloping shadow where voxel=1 cover warp crosses a RiverMap pixel boundary.
+            int testX = Integer.MIN_VALUE, testZ = world.homeZ - 300;
+            int warpedCol = -1, warpedRow = -1, rawCol = -1, rawRow = -1;
+            for (int dx = -40; dx <= 40; dx++) {
+                int x = world.homeX + dx;
+                GeoPoint raw = grid.tryGeographic(x + 0.5, testZ + 0.5);
+                GeoPoint warped = probeGen.warpedCoverPoint(x, testZ, 1);
+                assertNotNull(raw);
+                assertNotNull(warped);
+                int rc = riverCol(raw), rr = riverRow(raw), wc = riverCol(warped), wr = riverRow(warped);
+                if (rc != wc || rr != wr) {
+                    testX = x;
+                    rawCol = rc; rawRow = rr;
+                    warpedCol = wc; warpedRow = wr;
+                    break;
+                }
+            }
+            assertNotEquals(Integer.MIN_VALUE, testX,
+                    "expected a column where voxel=1 cover warp crosses a RiverMap pixel boundary");
+            GeoPoint center = grid.tryGeographic(testX + 0.5, testZ + 0.5);
+            final int fWarpedCol = warpedCol, fWarpedRow = warpedRow, fRawCol = rawCol, fRawRow = rawRow;
+
+            // Case 1: strength == 0 (so rawCover stays WorldCover WATER, NOT RIVER) and drained == true ONLY at warped pixel.
+            RiverMap warpedOnlyDrained = new RiverMap(sws, noopDrainage, 16, true);
+            injectCustomRiverTiles(warpedOnlyDrained, center, (byte) 0, (c, r) -> c == fWarpedCol && r == fWarpedRow);
+            EarthGenerator v2Warped = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null, warpedOnlyDrained);
+            v2Warped.enableHydrologyV2();
+            int[] outWarped = new int[2];
+            v2Warped.ground(testX, testZ, outWarped);
+            assertNotEquals(SurfaceGenerator.DRY, outWarped[1],
+                    "WorldCover WATER (strength==0) with drained==true at warpedCoverPoint must stay WET");
+
+            // Case 2: strength == 0 and drained == true ONLY at unwarped pixel (false at warped pixel) -> must strip to DRY.
+            RiverMap rawOnlyDrained = new RiverMap(sws, noopDrainage, 16, true);
+            injectCustomRiverTiles(rawOnlyDrained, center, (byte) 0, (c, r) -> c == fRawCol && r == fRawRow);
+            EarthGenerator v2RawOnly = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null, rawOnlyDrained);
+            v2RawOnly.enableHydrologyV2();
+            int[] outRawOnly = new int[2];
+            v2RawOnly.ground(testX, testZ, outRawOnly);
+            assertEquals(SurfaceGenerator.DRY, outRawOnly[1],
+                    "WorldCover WATER with drained==false at warpedCoverPoint (even if true at unwarped point) must strip to DRY");
+        } finally {
+            waterServer.stop(0);
+        }
+    }
+
+    @Test
+    void bridgedWaterLevelAndShoreStayConsistentWithStrippedShadowAndLegacyUnchanged() throws Exception {
+        EarthShorelineTest.bootRegistries();
+        // Sloping mountain shadow (dz in [-650, 100], dx in [-650, 650], slope 0.45):
+        // - BUILT_UP road strip across the shadow at dx in [-103, -97], dz in [-400, -200] to exercise bridged() -> waterLevel().
+        // - Dry rock hollow 5 blocks south of the shadow edge at (0, 105) dipped 3 m below the shadow rim to exercise shore().
+        java.util.function.DoubleBinaryOperator elev = (dx, dz) -> {
+            double base = dz < 200.0 ? 100.0 + (200.0 - dz) * 0.45 : 100.0;
+            if (Math.abs(dx) <= 4 && Math.abs(dz - 105) <= 4) return base - 3.0;
+            return base;
+        };
+        try (EarthShorelineTest.SyntheticWorld shadowWorld = new EarthShorelineTest.SyntheticWorld(
+                elev,
+                (dx, dz) -> {
+                    if (Math.abs(dx + 100) <= 3 && dz >= -400 && dz <= -200) return WorldCoverSource.BUILT_UP;
+                    if (dz >= -650 && dz <= 100 && Math.abs(dx) <= 650) return WorldCoverSource.WATER;
+                    return WorldCoverSource.BARE;
+                });
+             EarthShorelineTest.SyntheticWorld dryControl = new EarthShorelineTest.SyntheticWorld(
+                     elev,
+                     (dx, dz) -> {
+                         if (Math.abs(dx + 100) <= 3 && dz >= -400 && dz <= -200) return WorldCoverSource.BUILT_UP;
+                         return WorldCoverSource.BARE;
+                     })) {
+            // 1. Hydrology v2: bridge over stripped shadow sees DRY; shore() does NOT lift dry rock hollow beside shadow.
+            EarthGenerator v2Shadow = new EarthGenerator(1234L, EarthShorelineTest.biomes, shadowWorld.generator.settings(),
+                    shadowWorld.tiles, shadowWorld.cover, null, null);
+            v2Shadow.enableHydrologyV2();
+            EarthGenerator v2Control = new EarthGenerator(1234L, EarthShorelineTest.biomes, dryControl.generator.settings(),
+                    dryControl.tiles, dryControl.cover, null, null);
+            v2Control.enableHydrologyV2();
+
+            assertEquals(SurfaceGenerator.DRY, v2Shadow.waterLevelAt(0, shadowWorld.homeX - 92, shadowWorld.homeZ - 300),
+                    "v2 waterLevel() on stripped sloping shadow must return DRY");
+            int[] v2Road = new int[2];
+            v2Shadow.ground(shadowWorld.homeX - 100, shadowWorld.homeZ - 300, v2Road);
+            assertEquals(SurfaceGenerator.DRY, v2Road[1],
+                    "v2 road across stripped sloping shadow must stay DRY (not bridged over phantom water)");
+
+            int[] v2HollowShadow = new int[2], v2HollowControl = new int[2];
+            v2Shadow.ground(shadowWorld.homeX, shadowWorld.homeZ + 105, v2HollowShadow);
+            v2Control.ground(dryControl.homeX, dryControl.homeZ + 105, v2HollowControl);
+            assertEquals(SurfaceGenerator.DRY, v2HollowShadow[1], "dry rock hollow beside shadow must stay DRY");
+            assertEquals(v2HollowControl[0], v2HollowShadow[0],
+                    "v2 shore() must not lift dry rock hollow adjacent to a stripped sloping mountain shadow");
+
+            // 2. Legacy (!hydrologyV2): waterLevel() stays WET and road across shadow is still bridged.
+            assertNotEquals(SurfaceGenerator.DRY, shadowWorld.generator.waterLevelAt(0, shadowWorld.homeX - 92, shadowWorld.homeZ - 300),
+                    "legacy (!hydrologyV2) waterLevel() must remain WET on sloping shadow");
+            int[] legacyRoad = new int[2];
+            shadowWorld.ground(-100, -300, legacyRoad);
+            assertNotEquals(SurfaceGenerator.DRY, legacyRoad[1],
+                    "legacy (!hydrologyV2) road across sloping shadow preserves legacy bridged behavior");
+        }
+    }
+
+    @Test
+    void pureShadowCellReturnsEmptyReachLevelsWithoutLeakingIntoAdjacentUplandPond() throws Exception {
+        EarthShorelineTest.bootRegistries();
+        // Align a pure-shadow WATER_CELL directly to the west of a cell containing only a small sub-grid
+        // upland pond (24x24 blocks, < REACH_SAMPLES) sitting on a 600 m bench, far above the shadow cell's
+        // ~200 m raw waterCell.level and outside NEAR of the shadow samples.
+        EarthSettings settings = EarthSettings.at(36.2, -75.8);
+        MercatorGrid grid = new MercatorGrid(settings.metresPerBlock());
+        GeoPoint home = new GeoPoint(36.2, -75.8);
+        int homeX = (int) Math.floor(grid.blockX(home));
+        int homeZ = (int) Math.floor(grid.blockZ(home));
+        int shadowCx = Math.floorDiv(homeX, EarthGenerator.WATER_CELL);
+        int shadowCz = Math.floorDiv(homeZ, EarthGenerator.WATER_CELL);
+        int cellMinDx = shadowCx * EarthGenerator.WATER_CELL - homeX;
+        int cellMaxDx = cellMinDx + EarthGenerator.WATER_CELL;
+        int cellMinDz = shadowCz * EarthGenerator.WATER_CELL - homeZ;
+        int cellMaxDz = cellMinDz + EarthGenerator.WATER_CELL;
+        // Put the sub-grid upland pond just past the east border of the shadow cell, > NEAR (~115 blocks) east
+        // of the shadow's eastern edge so lakeSurface() queries the shadow cell in its 2x2 cell interpolation.
+        int shadowEastDx = cellMaxDx - 128;
+        int pondDx = cellMaxDx + 40;
+        int pondDz = (cellMinDz + cellMaxDz) / 2;
+
+        try (EarthShorelineTest.SyntheticWorld world = new EarthShorelineTest.SyntheticWorld(
+                (dx, dz) -> {
+                    if (dx >= cellMaxDx - 40) return 600.0;
+                    return 100.0 + Math.max(0.0, cellMaxDz + 400.0 - dz) * 0.45;
+                },
+                (dx, dz) -> {
+                    if (dx >= cellMinDx - 256 && dx <= shadowEastDx && dz >= cellMinDz - 256 && dz <= cellMaxDz + 256) {
+                        return WorldCoverSource.WATER;
+                    }
+                    if (Math.abs(dx - pondDx) <= 16 && Math.abs(dz - pondDz) <= 16) {
+                        return WorldCoverSource.WATER;
+                    }
+                    return WorldCoverSource.BARE;
+                })) {
+            // Hydrology v2: pure-shadow cell must emit empty levels[] and never pull the adjacent 600 m pond down.
+            EarthGenerator v2 = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null);
+            v2.enableHydrologyV2();
+
+            EarthGenerator.Reaches v2Reaches = v2.reachLevels(shadowCx, shadowCz);
+            assertTrue(anyBitSet(v2Reaches.shadow()), "precondition: shadow cell must have shadowBits set");
+            assertEquals(0, v2Reaches.levels().length,
+                    "pure-shadow cell in v2 must return empty levels[] instead of falling back to waterCell.level");
+            assertEquals(0, v2Reaches.drownedLevels().length,
+                    "pure-shadow cell in v2 must return empty drownedLevels[]");
+
+            int[] pondOut = new int[2];
+            v2.ground(world.homeX + pondDx, world.homeZ + pondDz, pondOut);
+            assertNotEquals(SurfaceGenerator.DRY, pondOut[1], "sub-grid upland pond must stay WET");
+            assertTrue(pondOut[1] >= EarthGenerator.SEA + 595 && pondOut[1] <= EarthGenerator.SEA + 605,
+                    "sub-grid upland pond must keep its ~600 m local elevation rather than leaking shadow cell level, got " + pondOut[1]);
+
+            // Legacy (!hydrologyV2): pure-shadow cell still produces non-empty legacy reaches (zero legacy change).
+            EarthGenerator.Reaches legacyReaches = world.generator.reachLevels(shadowCx, shadowCz);
+            assertTrue(legacyReaches.levels().length >= 1,
+                    "legacy (!hydrologyV2) reachLevels must preserve non-empty levels[]");
+        }
+    }
 }
