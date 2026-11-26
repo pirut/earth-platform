@@ -61,10 +61,12 @@ public final class RiverMap {
     /** Radius, in pixels, of the widest water left out as a lake or wide river (it fits a disc this wide). */
     static final int WIDE = 3;
     private static final int TILE = 256, MARGIN = 56, SPAN = TILE + 2 * MARGIN, CELL = 16;
-    /** V2 halo margin and window span, strictly exceeding {@link #MAX_CHAIN_REACH} plus seed walk/morphology tail. */
-    static final int V2_MARGIN = 144, V2_SPAN = TILE + 2 * V2_MARGIN;
+    /** V2 halo margin and window span, strictly exceeding {@link #MAX_CHAIN_REACH} plus {@link #LOCAL_CONNECT_RADIUS}, seed walk, and morphology tail. */
+    static final int V2_MARGIN = 180, V2_SPAN = TILE + 2 * V2_MARGIN;
     /** Maximum Euclidean distance from a seed end a v2 hop chain may travel, guaranteeing both sides of a seam see the seed. */
     static final int MAX_CHAIN_REACH = 96;
+    /** Half-width of the Chebyshev box around a candidate join's midpoint for strictly local connectivity checks in v2. */
+    static final int LOCAL_CONNECT_RADIUS = 40;
     /** Border strip kept seed-free in v2 so artificial window-clipped river ends never initiate hop chains. */
     private static final int V2_EDGE = 16;
     private static final float SOLID = 0.5f;
@@ -579,6 +581,10 @@ public final class RiverMap {
 
     private static void join(float[] f, boolean[] solid, int span, int originX, int originY, boolean globalJoin, boolean reverseOrder) {
         boolean[] skeleton = thin(solid, span);
+        if (globalJoin) {
+            joinGlobal(f, solid, skeleton, span, originX, originY, reverseOrder);
+            return;
+        }
         int[] line = label(skeleton, span);
         int lines = 0;
         for (int l : line) lines = Math.max(lines, l);
@@ -586,8 +592,7 @@ public final class RiverMap {
         for (int l : line) size[l]++;
         for (int l = 0; l <= lines; l++) root[l] = l;
         List<End> ends = new ArrayList<>();
-        int edge = globalJoin ? Math.min(V2_EDGE, span / 8) : 4;
-        for (int y = edge; y < span - edge; y++) for (int x = edge; x < span - edge; x++) {
+        for (int y = 4; y < span - 4; y++) for (int x = 4; x < span - 4; x++) {
             if (!skeleton[y * span + x] || size[line[y * span + x]] < LONG || !end(skeleton, span, x, y)) continue;
             // Walk back along the line, over the corners of its stair steps; a short spur off a junction is no end.
             int px = x, py = y, steps = 0;
@@ -626,11 +631,6 @@ public final class RiverMap {
         for (int y = 0; y < span; y++) rowStart[y + 1] += rowStart[y];
         columns = new int[rowStart[span]];
         for (int k = 0, at = 0; k < line.length; k++) if (line[k] != 0) columns[at++] = k % span;
-        if (globalJoin) {
-            if (reverseOrder) Collections.reverse(ends);
-            joinGlobal(f, solid, line, size, root, ends, rowStart, columns, span, originX, originY, reverseOrder);
-            return;
-        }
         for (End start : ends) {
             End at = start;
             for (int hop = 0; hop < HOPS; hop++) {
@@ -670,22 +670,12 @@ public final class RiverMap {
         }
     }
 
-    private record HopEnd(int x, int y, double dx, double dy, double width, int line, int hop, int seedX, int seedY) {}
+    private record HopEnd(int x, int y, double dx, double dy, double width, int hop, int seedX, int seedY) {}
 
-    private record Candidate(HopEnd at, int tx, int ty, int target, double score,
+    private record Candidate(HopEnd at, int tx, int ty, double score,
                              int firstX, int firstY, int secondX, int secondY,
                              int atGlobalX, int atGlobalY, int targetGlobalX, int targetGlobalY,
-                             int seedGlobalX, int seedGlobalY) implements Comparable<Candidate> {
-        @Override public int compareTo(Candidate other) {
-            return compareCandidateKeys(
-                    this.score, this.firstX, this.firstY, this.secondX, this.secondY,
-                    this.at.hop, this.atGlobalX, this.atGlobalY, this.targetGlobalX, this.targetGlobalY,
-                    this.seedGlobalX, this.seedGlobalY,
-                    other.score, other.firstX, other.firstY, other.secondX, other.secondY,
-                    other.at.hop, other.atGlobalX, other.atGlobalY, other.targetGlobalX, other.targetGlobalY,
-                    other.seedGlobalX, other.seedGlobalY);
-        }
-    }
+                             int seedGlobalX, int seedGlobalY) {}
 
     private static int compareGlobalPoint(int ax, int ay, int bx, int by) {
         int cmp = Integer.compare(ax, bx);
@@ -715,9 +705,85 @@ public final class RiverMap {
         return Math.floorMod(originX + localX, SurfaceWaterSource.ACROSS);
     }
 
-    private static Candidate bestCandidate(HopEnd at, boolean[] solid, int[] line, int[] root,
+    /**
+     * Collects up to {@code limit} pixels of the 8-connected skeleton component containing {@code (sx, sy)}.
+     * Strictly local (visits at most {@code limit} pixels within Chebyshev distance {@code < limit}).
+     */
+    private static int collectComponentUpTo(boolean[] skeleton, int span, int sx, int sy, int limit, int[] out) {
+        int start = sy * span + sx;
+        if (!skeleton[start]) return 0;
+        out[0] = start;
+        int head = 0, count = 1;
+        while (head < count && count < limit) {
+            int k = out[head++], x = k % span, y = k / span;
+            for (int d = 0; d < 8 && count < limit; d++) {
+                int qx = x + NX[d], qy = y + NY[d];
+                if (!at(skeleton, span, qx, qy)) continue;
+                int q = qy * span + qx;
+                boolean seen = false;
+                for (int i = 0; i < count; i++) {
+                    if (out[i] == q) { seen = true; break; }
+                }
+                if (!seen) out[count++] = q;
+            }
+        }
+        return count;
+    }
+
+    private static boolean containsPixel(int[] pixels, int count, int pixel) {
+        for (int i = 0; i < count; i++) {
+            if (pixels[i] == pixel) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Whether {@code (ax, ay)} and {@code (bx, by)} are 8-connected on the immutable {@code skeleton}
+     * within a strictly local Chebyshev box of radius {@value #LOCAL_CONNECT_RADIUS} centred on their midpoint.
+     */
+    private static boolean locallyConnected(boolean[] skeleton, int span, int ax, int ay, int bx, int by,
+                                            int[] stampGrid, int[] queue, int[] stampRef) {
+        if (ax == bx && ay == by) return true;
+        int mx = (ax + bx) >> 1, my = (ay + by) >> 1;
+        int boxX0 = mx - LOCAL_CONNECT_RADIUS, boxY0 = my - LOCAL_CONNECT_RADIUS;
+        int minX = Math.max(0, boxX0), maxX = Math.min(span - 1, mx + LOCAL_CONNECT_RADIUS);
+        int minY = Math.max(0, boxY0), maxY = Math.min(span - 1, my + LOCAL_CONNECT_RADIUS);
+        if (ax < minX || ax > maxX || ay < minY || ay > maxY || bx < minX || bx > maxX || by < minY || by > maxY) {
+            return false;
+        }
+        int stamp = ++stampRef[0];
+        if (stamp == Integer.MAX_VALUE) {
+            java.util.Arrays.fill(stampGrid, 0);
+            stamp = stampRef[0] = 1;
+        }
+        int side = 2 * LOCAL_CONNECT_RADIUS + 1;
+        int startLocal = (ay - boxY0) * side + (ax - boxX0);
+        int goalLocal = (by - boxY0) * side + (bx - boxX0);
+        stampGrid[startLocal] = stamp;
+        int head = 0, tail = 0;
+        queue[tail++] = startLocal;
+        while (head < tail) {
+            int cur = queue[head++];
+            int lx = cur % side, ly = cur / side;
+            int x = boxX0 + lx, y = boxY0 + ly;
+            for (int d = 0; d < 8; d++) {
+                int nx = x + NX[d], ny = y + NY[d];
+                if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
+                if (!skeleton[ny * span + nx]) continue;
+                int nextLocal = (ny - boxY0) * side + (nx - boxX0);
+                if (nextLocal == goalLocal) return true;
+                if (stampGrid[nextLocal] == stamp) continue;
+                stampGrid[nextLocal] = stamp;
+                queue[tail++] = nextLocal;
+            }
+        }
+        return false;
+    }
+
+    private static Candidate bestCandidate(HopEnd at, boolean[] solid, boolean[] skeleton,
+                                           int[] visitedGlimpses, int visitedCount,
+                                           int[] stampGrid, int[] bfsQueue, int[] stampRef,
                                            int[] rowStart, int[] columns, int span, int originX, int originY, boolean reverseOrder) {
-        int own = find(root, at.line);
         int gax = globalX(originX, at.x), gay = originY + at.y;
         int seedGX = globalX(originX, at.seedX), seedGY = originY + at.seedY;
         long reachSquared = (long) MAX_CHAIN_REACH * MAX_CHAIN_REACH;
@@ -731,9 +797,9 @@ public final class RiverMap {
             while (cMax < rowStart[y + 1] && columns[cMax] <= at.x + JOIN) cMax++;
             int cStart = reverseOrder ? cMax - 1 : cMin, cEnd = reverseOrder ? cMin - 1 : cMax, cStep = reverseOrder ? -1 : 1;
             for (int c = cStart; c != cEnd; c += cStep) {
-                int x = columns[c], l = line[y * span + x];
+                int x = columns[c];
                 double gx = x - at.x, gy = y - at.y, squared = gx * gx + gy * gy;
-                if (squared > JOIN * JOIN || squared < 1 || find(root, l) == own) continue;
+                if (squared > JOIN * JOIN || squared < 1) continue;
                 long sdx = x - at.seedX, sdy = y - at.seedY;
                 if (sdx * sdx + sdy * sdy > reachSquared) continue;
                 double d = Math.hypot(gx, gy), ahead = (at.dx * gx + at.dy * gy) / d;
@@ -741,6 +807,12 @@ public final class RiverMap {
                 double score = d * (2 - ahead);
                 if (score > bestScore) continue;
                 if (wet(solid, span, x, y) > NARROW) continue;
+                if (containsPixel(visitedGlimpses, visitedCount, y * span + x)) continue;
+                if (locallyConnected(skeleton, span, at.x, at.y, x, y, stampGrid, bfsQueue, stampRef)) continue;
+                if (at.hop > 0 && Math.abs(x - at.seedX) <= LOCAL_CONNECT_RADIUS && Math.abs(y - at.seedY) <= LOCAL_CONNECT_RADIUS
+                        && locallyConnected(skeleton, span, at.seedX, at.seedY, x, y, stampGrid, bfsQueue, stampRef)) {
+                    continue;
+                }
                 int gbx = globalX(originX, x), gby = originY + y;
                 boolean aFirst = compareGlobalPoint(gax, gay, gbx, gby) <= 0;
                 int fx = aFirst ? gax : gbx, fy = aFirst ? gay : gby;
@@ -751,7 +823,7 @@ public final class RiverMap {
                         best.at.hop, best.atGlobalX, best.atGlobalY, best.targetGlobalX, best.targetGlobalY,
                         best.seedGlobalX, best.seedGlobalY) < 0) {
                     bestScore = score;
-                    best = new Candidate(at, x, y, l, score, fx, fy, sx, sy, gax, gay, gbx, gby, seedGX, seedGY);
+                    best = new Candidate(at, x, y, score, fx, fy, sx, sy, gax, gay, gbx, gby, seedGX, seedGY);
                 }
             }
         }
@@ -759,75 +831,110 @@ public final class RiverMap {
     }
 
     /**
-     * Global-coordinate, order-invariant gap joining ({@value #V2_ID}): seeds inside the
-     * {@value #V2_EDGE}-px-inset window with a bounded {@value #MAX_CHAIN_REACH}-px chain reach
-     * strictly inside {@value #V2_MARGIN}, resolves both per-end candidate selection and PQ dispatch
-     * under a single total global comparator, uses endpoint-symmetric tangents, width and meander
-     * phase whenever both endpoints are identified, and paints curves in canonical orientation with
-     * translation-invariant relative offsets.
+     * Strictly local, global-coordinate, order-invariant gap joining ({@value #V2_ID}):
+     * avoids window-wide component labelling and window-wide union-find completely. Segment length
+     * ({@value #LONG}) and already-connected checks ({@value #LOCAL_CONNECT_RADIUS}) are bounded local
+     * BFS queries over the immutable skeleton, each seed traces its own bounded ({@value #MAX_CHAIN_REACH}-px)
+     * hop chain without mutating cross-seed connectivity state, and curves are painted in canonical
+     * global orientation with endpoint-symmetric tangents, width and meander phase.
      */
-    private static void joinGlobal(float[] f, boolean[] solid, int[] line, int[] size, int[] root,
-                                   List<End> ends, int[] rowStart, int[] columns, int span, int originX, int originY, boolean reverseOrder) {
+    private static void joinGlobal(float[] f, boolean[] solid, boolean[] skeleton, int span, int originX, int originY, boolean reverseOrder) {
+        int[] compScratch = new int[LONG];
+        List<End> ends = new ArrayList<>();
+        int edge = Math.min(V2_EDGE, span / 8);
+        for (int y = edge; y < span - edge; y++) for (int x = edge; x < span - edge; x++) {
+            if (!skeleton[y * span + x] || !end(skeleton, span, x, y)) continue;
+            if (collectComponentUpTo(skeleton, span, x, y, LONG, compScratch) < LONG) continue;
+            int px = x, py = y, steps = 0;
+            List<Integer> seen = new ArrayList<>(List.of(y * span + x));
+            while (steps < WALK) {
+                int bx = -1, by = -1, count = 0;
+                int[] cx = new int[8], cy = new int[8];
+                for (int d = 0; d < 8; d++) {
+                    int qx = px + NX[d], qy = py + NY[d];
+                    if (!at(skeleton, span, qx, qy) || seen.contains(qy * span + qx)) continue;
+                    cx[count] = qx; cy[count++] = qy;
+                }
+                boolean together = count > 0;
+                for (int i = 0; i < count; i++) for (int j = i + 1; j < count; j++)
+                    together &= Math.abs(cx[i] - cx[j]) <= 1 && Math.abs(cy[i] - cy[j]) <= 1;
+                if (!together) break;
+                double far = -1;
+                for (int i = 0; i < count; i++) {
+                    seen.add(cy[i] * span + cx[i]);
+                    double d = Math.hypot(cx[i] - x, cy[i] - y);
+                    if (d > far) { far = d; bx = cx[i]; by = cy[i]; }
+                }
+                px = bx; py = by; steps++;
+            }
+            if (steps < 3) continue;
+            double dx = x - px, dy = y - py, length = Math.hypot(dx, dy);
+            if (length == 0) continue;
+            int wet = wet(solid, span, x, y);
+            if (wet > NARROW) continue;
+            ends.add(new End(x, y, dx / length, dy / length, Math.max(1, wet / 5.0), 0));
+        }
+        int[] rowStart = new int[span + 1];
+        for (int k = 0; k < skeleton.length; k++) if (skeleton[k]) rowStart[k / span + 1]++;
+        for (int y = 0; y < span; y++) rowStart[y + 1] += rowStart[y];
+        int[] columns = new int[rowStart[span]];
+        for (int k = 0, at = 0; k < skeleton.length; k++) if (skeleton[k]) columns[at++] = k % span;
+
         Map<Integer, End> endByPixel = new HashMap<>(ends.size() * 2 + 1);
         for (End e : ends) endByPixel.put(e.y * span + e.x, e);
-        java.util.PriorityQueue<Candidate> queue = new java.util.PriorityQueue<>();
-        for (End start : ends) {
-            Candidate candidate = bestCandidate(new HopEnd(start.x, start.y, start.dx, start.dy, start.width, start.line, 0, start.x, start.y),
-                    solid, line, root, rowStart, columns, span, originX, originY, reverseOrder);
-            if (candidate != null) queue.add(candidate);
-        }
+        if (reverseOrder) Collections.reverse(ends);
+
+        int bfsSide = 2 * LOCAL_CONNECT_RADIUS + 1;
+        int[] stampGrid = new int[bfsSide * bfsSide];
+        int[] bfsQueue = new int[bfsSide * bfsSide];
+        int[] stampRef = {0};
+        int[] visitedGlimpses = new int[HOPS * LONG];
         int processed = 0;
-        while (!queue.isEmpty()) {
+        for (End start : ends) {
             if ((processed++ & 255) == 0 && Thread.currentThread().isInterrupted()) {
                 throw new MissingTerrainException("Interrupted while joining rivers");
             }
-            Candidate cand = queue.poll();
-            HopEnd at = cand.at;
-            int own = find(root, at.line), targetRoot = find(root, cand.target);
-            if (own == targetRoot) {
-                Candidate next = bestCandidate(at, solid, line, root, rowStart, columns, span, originX, originY, reverseOrder);
-                if (next != null) queue.add(next);
-                continue;
-            }
-            int tx = cand.tx, ty = cand.ty, target = cand.target;
-            double gx = tx - at.x, gy = ty - at.y, d = Math.hypot(gx, gy);
-            double hx = at.dx + gx / d, hy = at.dy + gy / d, h = Math.hypot(hx, hy);
-            hx /= h; hy /= h;
-            End targetEnd = endByPixel.get(ty * span + tx);
-            boolean symmetric = targetEnd != null && (targetEnd.dx * (-gx) + targetEnd.dy * (-gy)) > 0;
-            double tax = at.dx * d, tay = at.dy * d;
-            double tbx = symmetric ? -targetEnd.dx * d : hx * d;
-            double tby = symmetric ? -targetEnd.dy * d : hy * d;
-            double width = symmetric ? 0.5 * (at.width + targetEnd.width) : at.width;
-            int phase = (int) Math.floorMod(cand.firstX * 31L + cand.firstY * 17L, 7L);
-            boolean aFirst = cand.atGlobalX == cand.firstX && cand.atGlobalY == cand.firstY;
-            if (aFirst) {
-                paintGlobal(f, span, at.x, at.y, tax, tay, tx, ty, tbx, tby, width, phase);
-            } else {
-                paintGlobal(f, span, tx, ty, -tbx, -tby, at.x, at.y, -tax, -tay, width, phase);
-            }
-            root[targetRoot] = own;
-            if (size[target] >= LONG || at.hop + 1 >= HOPS) continue;
-            // Go on from the glimpse's far side, breaking exact projection ties by global coordinates.
-            int fx = tx, fy = ty;
-            int gxFar = globalX(originX, fx), gyFar = originY + fy;
-            double furthest = Double.NEGATIVE_INFINITY;
-            int fyMin = Math.max(0, ty - LONG), fyMax = Math.min(span - 1, ty + LONG);
-            int fxMin = Math.max(0, tx - LONG), fxMax = Math.min(span - 1, tx + LONG);
-            int fyStart = reverseOrder ? fyMax : fyMin, fyEnd = reverseOrder ? fyMin - 1 : fyMax + 1, fyStep = reverseOrder ? -1 : 1;
-            int fxStart = reverseOrder ? fxMax : fxMin, fxEnd = reverseOrder ? fxMin - 1 : fxMax + 1, fxStep = reverseOrder ? -1 : 1;
-            for (int y = fyStart; y != fyEnd; y += fyStep)
-                for (int x = fxStart; x != fxEnd; x += fxStep) {
-                    if (line[y * span + x] != target) continue;
+            HopEnd at = new HopEnd(start.x, start.y, start.dx, start.dy, start.width, 0, start.x, start.y);
+            int visitedCount = 0;
+            for (int hop = 0; hop < HOPS; hop++) {
+                Candidate cand = bestCandidate(at, solid, skeleton, visitedGlimpses, visitedCount,
+                        stampGrid, bfsQueue, stampRef, rowStart, columns, span, originX, originY, reverseOrder);
+                if (cand == null) break;
+                int tx = cand.tx, ty = cand.ty;
+                double gx = tx - at.x, gy = ty - at.y, d = Math.hypot(gx, gy);
+                double hx = at.dx + gx / d, hy = at.dy + gy / d, h = Math.hypot(hx, hy);
+                hx /= h; hy /= h;
+                End targetEnd = endByPixel.get(ty * span + tx);
+                boolean symmetric = targetEnd != null && (targetEnd.dx * (-gx) + targetEnd.dy * (-gy)) > 0;
+                double tax = at.dx * d, tay = at.dy * d;
+                double tbx = symmetric ? -targetEnd.dx * d : hx * d;
+                double tby = symmetric ? -targetEnd.dy * d : hy * d;
+                double width = symmetric ? 0.5 * (at.width + targetEnd.width) : at.width;
+                int phase = (int) Math.floorMod(cand.firstX * 31L + cand.firstY * 17L, 7L);
+                boolean aFirst = cand.atGlobalX == cand.firstX && cand.atGlobalY == cand.firstY;
+                if (aFirst) {
+                    paintGlobal(f, span, at.x, at.y, tax, tay, tx, ty, tbx, tby, width, phase);
+                } else {
+                    paintGlobal(f, span, tx, ty, -tbx, -tby, at.x, at.y, -tax, -tay, width, phase);
+                }
+                int compCount = collectComponentUpTo(skeleton, span, tx, ty, LONG, compScratch);
+                if (compCount >= LONG || hop + 1 >= HOPS) break;
+                for (int i = 0; i < compCount; i++) visitedGlimpses[visitedCount++] = compScratch[i];
+                // Go on from the glimpse's far side, breaking exact projection ties by global coordinates.
+                int fx = tx, fy = ty;
+                int gxFar = globalX(originX, fx), gyFar = originY + fy;
+                double furthest = Double.NEGATIVE_INFINITY;
+                int iStart = reverseOrder ? compCount - 1 : 0, iEnd = reverseOrder ? -1 : compCount, iStep = reverseOrder ? -1 : 1;
+                for (int i = iStart; i != iEnd; i += iStep) {
+                    int pixel = compScratch[i], x = pixel % span, y = pixel / span;
                     double along = (x - tx) * hx + (y - ty) * hy;
                     int cgx = globalX(originX, x), cgy = originY + y;
                     if (along > furthest || (along == furthest && compareGlobalPoint(cgx, cgy, gxFar, gyFar) < 0)) {
                         furthest = along; fx = x; fy = y; gxFar = cgx; gyFar = cgy;
                     }
                 }
-            HopEnd nextEnd = new HopEnd(fx, fy, hx, hy, at.width, target, at.hop + 1, at.seedX, at.seedY);
-            Candidate next = bestCandidate(nextEnd, solid, line, root, rowStart, columns, span, originX, originY, reverseOrder);
-            if (next != null) queue.add(next);
+                at = new HopEnd(fx, fy, hx, hy, at.width, hop + 1, start.x, start.y);
+            }
         }
     }
 

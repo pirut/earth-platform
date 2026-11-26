@@ -567,7 +567,7 @@ public final class CubicSettings {
 
     private static boolean hydrologyV2(String hydrologyId, Path file) {
         try { return isHydrologyV2(hydrologyId); }
-        catch (IllegalStateException failure) { throw new IllegalStateException("Unsupported hydrology '" + hydrologyId + "' in " + file); }
+        catch (IllegalStateException failure) { throw new IllegalStateException("Unsupported hydrology '" + hydrologyId + "' in " + file, failure); }
     }
 
     /** The {@code earth.rivers} pin for new Earth worlds: global-coordinate, order-invariant gap joining. */
@@ -584,7 +584,7 @@ public final class CubicSettings {
 
     private static boolean globalRiverJoin(String riversId, Path file) {
         try { return isGlobalRiverJoin(riversId); }
-        catch (IllegalStateException failure) { throw new IllegalStateException("Unsupported rivers '" + riversId + "' in " + file); }
+        catch (IllegalStateException failure) { throw new IllegalStateException("Unsupported rivers '" + riversId + "' in " + file, failure); }
     }
 
     /** Narrow rivers seen from space, for worlds made before streams from the elevation (legacy v1). */

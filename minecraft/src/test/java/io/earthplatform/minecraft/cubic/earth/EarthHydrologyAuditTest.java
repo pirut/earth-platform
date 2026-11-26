@@ -181,6 +181,89 @@ class EarthHydrologyAuditTest {
     }
 
     @Test
+    void hydroCacheConcurrentStressEnforcesStrictCapacityAndReplacementMonotonicity() throws Exception {
+        MemoryPressureTestBridge.reset();
+        try {
+            int capacity = 32;
+            HydroCache<Integer> cache = new HydroCache<>(capacity);
+            int trackedKeys = 16;
+            AtomicInteger[] committed = new AtomicInteger[trackedKeys];
+            Object[] keyLocks = new Object[trackedKeys];
+            for (int i = 0; i < trackedKeys; i++) {
+                committed[i] = new AtomicInteger(0);
+                keyLocks[i] = new Object();
+            }
+
+            int threads = 10;
+            int opsPerThread = 4_000;
+            CountDownLatch start = new CountDownLatch(1);
+            java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
+
+            try (ExecutorService pool = Executors.newFixedThreadPool(threads)) {
+                List<Future<?>> futures = new ArrayList<>();
+                for (int t = 0; t < threads; t++) {
+                    final int tid = t;
+                    futures.add(pool.submit(() -> {
+                        try {
+                            start.await(5, TimeUnit.SECONDS);
+                            java.util.SplittableRandom rng = new java.util.SplittableRandom(0x9E3779B97F4A7C15L * (tid + 1));
+                            for (int i = 0; i < opsPerThread && failure.get() == null; i++) {
+                                int op = rng.nextInt(100);
+                                if (op < 35) {
+                                    // Monotonic putOrReplace on tracked keys.
+                                    int k = rng.nextInt(trackedKeys);
+                                    synchronized (keyLocks[k]) {
+                                        int nextVal = committed[k].get() + 1;
+                                        cache.putOrReplace(k, nextVal);
+                                        committed[k].set(nextVal);
+                                    }
+                                } else if (op < 65) {
+                                    // Read tracked key and assert monotonicity against latest completed putOrReplace.
+                                    int k = rng.nextInt(trackedKeys);
+                                    int minExpected = committed[k].get();
+                                    Integer observed = cache.get(k);
+                                    if (observed != null && observed < minExpected) {
+                                        fail("stale value resurrected for key " + k + ": observed=" + observed
+                                                + " < committed=" + minExpected);
+                                    }
+                                } else if (op < 90) {
+                                    // Churn untracked keys via put() + get() to drive constant rotations and old-hit promotions.
+                                    long churnKey = trackedKeys + rng.nextInt(capacity * 4);
+                                    cache.put(churnKey, (int) churnKey);
+                                    cache.get(trackedKeys + rng.nextInt(capacity * 4));
+                                } else {
+                                    cache.shed();
+                                }
+                                int young = cache.youngSize();
+                                int total = cache.size();
+                                if (young > capacity) {
+                                    fail("young generation exceeded capacity: " + young + " > " + capacity);
+                                }
+                                if (total > 2 * capacity) {
+                                    fail("total size exceeded 2*capacity: " + total + " > " + (2 * capacity));
+                                }
+                            }
+                        } catch (Throwable thrown) {
+                            failure.compareAndSet(null, thrown);
+                        }
+                    }));
+                }
+                start.countDown();
+                for (Future<?> f : futures) {
+                    f.get(30, TimeUnit.SECONDS);
+                }
+            }
+            if (failure.get() != null) {
+                fail("concurrent HydroCache stress invariant violated", failure.get());
+            }
+            assertTrue(cache.youngSize() <= capacity, "final young size must stay <= capacity");
+            assertTrue(cache.size() <= 2 * capacity, "final total size must stay <= 2*capacity");
+        } finally {
+            MemoryPressureTestBridge.reset();
+        }
+    }
+
+    @Test
     void hydroCacheStaysBoundedAndRespondsToMemoryPressureHookAutomatically() throws Exception {
         MemoryPressureTestBridge.reset();
         try {
@@ -564,6 +647,147 @@ class EarthHydrologyAuditTest {
             }
             assertTrue(eastShoreY >= lake[1], "east shore bank should rise to lake level " + lake[1] + ", got " + eastShoreY);
             assertTrue(westShoreY >= lake[1], "west shore bank should rise to lake level " + lake[1] + ", got " + westShoreY);
+        }
+    }
+
+    @Test
+    void cliffShadowFineLodCheapProbesNeverInvokeRiverMapOrDrainage() throws Exception {
+        EarthShorelineTest.bootRegistries();
+        AtomicInteger surfaceWaterRequests = new AtomicInteger();
+        AtomicInteger drainageTileCalls = new AtomicInteger();
+
+        HttpServer waterServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        waterServer.createContext("/water/", exchange -> {
+            surfaceWaterRequests.incrementAndGet();
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        waterServer.start();
+
+        // Oblique 0.778-slope mountain wall (s = dx + dz < -280) above flat 220 m bench (s in [-280, 0]) and 20 m valley.
+        java.util.function.BiFunction<Double, Double, Double> terrain = (dx, dz) -> {
+            double s = dx + dz;
+            if (s < -280) return 220.0 + (-280.0 - s) * 0.55;
+            if (s <= 0) return 220.0;
+            return 20.0;
+        };
+
+        // Case A (connected): water ends just uphill at s = -294 so d=0 (+gradient uphill) hits DRY rock at midR=8
+        // (s ~ -298), while d=1 (-gradient downhill) stays continuously wet onto the flat 220 m bench.
+        // Cheap probes must use raw WorldCover without calling RiverMap.strength(), and once d=1 exempts the pixel,
+        // rivers.drained() must not be called either.
+        // Case B (disconnected): dry rock strip separates cliff shadow from bench pond; d=1 probes dry rock at s ~ -263.
+        // With drainage == null (so rivers.drained() returns false without touching SurfaceWaterSource), stripping the
+        // cliff shadow must still make zero SurfaceWaterSource requests.
+        try (EarthShorelineTest.SyntheticWorld connected = new EarthShorelineTest.SyntheticWorld(
+                terrain::apply,
+                (dx, dz) -> {
+                    int s = dx + dz;
+                    return (s >= -294 && s <= -140 && Math.abs(dx - dz) <= 1500)
+                            ? WorldCoverSource.WATER : WorldCoverSource.BARE;
+                });
+             EarthShorelineTest.SyntheticWorld disconnected = new EarthShorelineTest.SyntheticWorld(
+                     terrain::apply,
+                     (dx, dz) -> {
+                         int s = dx + dz;
+                         if (s >= -480 && s <= -274 && Math.abs(dx - dz) <= 1500) return WorldCoverSource.WATER;
+                         if (s >= -251 && s <= -140 && Math.abs(dx - dz) <= 1500) return WorldCoverSource.WATER;
+                         return WorldCoverSource.BARE;
+                     });
+             SurfaceWaterSource sws = new SurfaceWaterSource(
+                     URI.create("http://127.0.0.1:" + waterServer.getAddress().getPort() + "/water/"),
+                     null, true, 4, 1, Duration.ofSeconds(5))) {
+            Drainage spyDrainage = new Drainage(
+                    (zoom, tx, ty) -> {
+                        drainageTileCalls.incrementAndGet();
+                        throw new AssertionError("connected gentle-water exemption must not trigger Drainage");
+                    },
+                    (lat, lon) -> 1000.0, 4);
+
+            RiverMap spyRiversWithDrainage = new RiverMap(sws, spyDrainage, 8, true);
+            EarthGenerator v2Connected = new EarthGenerator(1234L, EarthShorelineTest.biomes, connected.generator.settings(),
+                    connected.tiles, connected.cover, null, null, spyRiversWithDrainage);
+            v2Connected.enableHydrologyV2();
+            assertFalse(v2Connected.cliffShadowWaterAt(0, connected.homeX - 143, connected.homeZ - 143, false, false),
+                    "continuously connected gentle bench water must exempt steep cliff pixel at fine LOD");
+            assertEquals(0, surfaceWaterRequests.get(),
+                    "hasNearbyGentleWater dry-midpoint probe must never query SurfaceWaterSource via RiverMap.strength");
+            assertEquals(0, drainageTileCalls.get(),
+                    "exempted steep cliff pixel must never query Drainage");
+
+            RiverMap spyRiversNoDrainage = new RiverMap(sws, null, 8, true);
+            EarthGenerator v2Disconnected = new EarthGenerator(1234L, EarthShorelineTest.biomes, disconnected.generator.settings(),
+                    disconnected.tiles, disconnected.cover, null, null, spyRiversNoDrainage);
+            v2Disconnected.enableHydrologyV2();
+            assertTrue(v2Disconnected.cliffShadowWaterAt(0, disconnected.homeX - 143, disconnected.homeZ - 143, false, false),
+                    "disconnected cliff shadow must be stripped at fine LOD");
+            assertEquals(0, surfaceWaterRequests.get(),
+                    "hasNearbyGentleWater dry-rock probes on disconnected cliff shadow must never query SurfaceWaterSource");
+        } finally {
+            waterServer.stop(0);
+        }
+    }
+
+    @Test
+    void benchEdgeSubGridUplandPondWithDry100mDropKeeps150mLevelInV2() throws Exception {
+        EarthShorelineTest.bootRegistries();
+        // Same 100 m drowned reservoir on the west (dx in [-480, -40], |dz| <= 320) and 150 m bench (dx in [0, 160],
+        // |dz| <= 160) with a dry 100 m drop immediately west of the bench (dx < 0). Place the sub-grid upland pond
+        // right at the bench rim (dx in [4, 28], |dz| <= 12) so a wet pond pixel near dx = 6 has its dry -8 cardinal
+        // probe fall off the cliff to 100 m. Under hydrologyV2, dry cardinal probes must not drag drownedRef / local
+        // down to 100 m and defeat the drowned-reservoir guards.
+        try (EarthShorelineTest.SyntheticWorld world = new EarthShorelineTest.SyntheticWorld(
+                (dx, dz) -> {
+                    if (dx >= -480 && dx <= -40 && Math.abs(dz) <= 320) {
+                        if (dx >= -360 && dx <= -160 && Math.abs(dz) <= 180) return 60.0;
+                        if (dx >= -420 && dx <= -100 && Math.abs(dz) <= 250) return 75.0;
+                        return 90.0;
+                    }
+                    if (dx >= 0 && dx <= 160 && Math.abs(dz) <= 160) return 150.0;
+                    return 100.0;
+                },
+                (dx, dz) -> {
+                    if (dx >= -480 && dx <= -40 && Math.abs(dz) <= 320) return WorldCoverSource.WATER;
+                    if (dx >= 4 && dx <= 28 && Math.abs(dz) <= 12) return WorldCoverSource.WATER;
+                    return WorldCoverSource.GRASSLAND;
+                })) {
+            EarthGenerator v2 = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null);
+            v2.enableHydrologyV2();
+
+            // Verify drowned reservoir bed and reservoir shore still adopt the ~100 m reservoir level.
+            int[] reservoirBed = new int[2];
+            v2.ground(world.homeX - 260, world.homeZ, reservoirBed);
+            assertNotEquals(SurfaceGenerator.DRY, reservoirBed[1], "drowned reservoir bed must stay wet");
+            assertTrue(reservoirBed[1] >= EarthGenerator.SEA + 94 && reservoirBed[1] <= EarthGenerator.SEA + 106,
+                    "drowned reservoir bed surface should sit near +100 m, got " + reservoirBed[1]);
+
+            int[] reservoirShore = new int[2];
+            v2.ground(world.homeX - 44, world.homeZ, reservoirShore);
+            assertNotEquals(SurfaceGenerator.DRY, reservoirShore[1], "drowned reservoir shore must stay wet");
+            assertTrue(reservoirShore[1] >= EarthGenerator.SEA + 94 && reservoirShore[1] <= EarthGenerator.SEA + 106,
+                    "drowned reservoir shore surface should sit near +100 m, got " + reservoirShore[1]);
+
+            // Probe bench-edge pond pixel whose west -8 neighbor falls off the dry cliff to ~100 m.
+            int benchEdgeDx = -1;
+            int[] v2Pond = new int[2];
+            int[] westNeighbor = new int[2];
+            for (int dx = 2; dx <= 7; dx++) {
+                v2.ground(world.homeX + dx, world.homeZ, v2Pond);
+                v2.ground(world.homeX + dx - 8, world.homeZ, westNeighbor);
+                if (v2Pond[1] != SurfaceGenerator.DRY
+                        && v2Pond[0] >= EarthGenerator.SEA + 145
+                        && westNeighbor[1] == SurfaceGenerator.DRY
+                        && westNeighbor[0] <= EarthGenerator.SEA + 105) {
+                    benchEdgeDx = dx;
+                    break;
+                }
+            }
+            assertTrue(benchEdgeDx >= 2,
+                    "fixture must locate a wet bench-edge pond column on +150 m rim with a dry <=105 m drop 8 blocks west");
+            assertTrue(v2Pond[1] >= EarthGenerator.SEA + 145,
+                    "bench-edge sub-grid upland pond at dx=" + benchEdgeDx
+                            + " must stay near +150 m instead of sinking to 100 m drowned reservoir, got " + v2Pond[1]);
         }
     }
 }

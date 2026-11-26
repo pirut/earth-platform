@@ -66,18 +66,19 @@ public final class Drainage {
     private final LruMap<Long, Region> memory = new LruMap<>(16);
     private final Map<Long, InFlight> inFlight = new ConcurrentHashMap<>();
     /** One drained tile: per pixel, the direction (0 to 7) a kept stream steps on in, or -1; and the ground it drains. */
-    private record Region(byte[] step, float[] area) {}
+    record Region(byte[] step, float[] area) {}
 
     /**
      * Single-flight region computation decoupled from any single caller's cancellation: cancelling one
      * waiter detaches it immediately without interrupting a shared producer still needed by other callers,
      * while cancelling the last active waiter interrupts the unshared work cleanly.
      */
-    private static final class InFlight {
+    static final class InFlight {
         final CompletableFuture<Region> future = new CompletableFuture<>();
         private FutureTask<Region> task;
         private int waiters;
         private boolean cancelled;
+        private boolean finished;
 
         synchronized boolean attach() {
             if (cancelled) return false;
@@ -95,10 +96,24 @@ public final class Drainage {
         }
 
         synchronized boolean detach() {
-            if (--waiters > 0 || future.isDone()) return false;
+            if (--waiters > 0 || finished) return false;
             cancelled = true;
             if (task != null) task.cancel(true);
             return true;
+        }
+
+        synchronized boolean tryPublish(Region made, Runnable publishAction) {
+            if (cancelled || finished) return false;
+            finished = true;
+            publishAction.run();
+            future.complete(made);
+            return true;
+        }
+
+        synchronized void completeFailure(Throwable failure) {
+            if (cancelled || finished) return;
+            finished = true;
+            future.completeExceptionally(failure);
         }
 
         synchronized int waiterCount() { return waiters; }
@@ -108,6 +123,10 @@ public final class Drainage {
         int total = 0;
         for (InFlight flight : inFlight.values()) total += flight.waiterCount();
         return total;
+    }
+
+    int cachedRegions() {
+        synchronized (memory) { return memory.size(); }
     }
 
     /** @param rain yearly precipitation, or null to count all ground as wet */
@@ -248,13 +267,15 @@ public final class Drainage {
             FutureTask<Region> task = new FutureTask<>(() -> {
                 try {
                     Region made = drain(tx, ty);
-                    synchronized (memory) {
-                        memory.putAndTrim(key, made, maxRegions);
-                    }
-                    owned.future.complete(made);
-                    return made;
+                    boolean published = owned.tryPublish(made, () -> {
+                        synchronized (memory) {
+                            memory.putAndTrim(key, made, maxRegions);
+                        }
+                        inFlight.remove(key, owned);
+                    });
+                    return published ? made : null;
                 } catch (Throwable failure) {
-                    owned.future.completeExceptionally(failure);
+                    owned.completeFailure(failure);
                     return null;
                 } finally {
                     inFlight.remove(key, owned);

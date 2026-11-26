@@ -247,6 +247,111 @@ class RiverMapSeamAndCancelTest {
     }
 
     @Test
+    void distantDetourAcrossSeamAndAntimeridianMatchesBitForBitInV2() {
+        // Exact Sol R2 counterexample: two facing tips at (-10, 100) and (+10, 100) relative to the seam
+        // connected by a narrow detour through x = -200, y = 50. West sees the full detour (x = -200 is inside
+        // west's interior), while east clips it at -V2_MARGIN (-180). Strictly local connectivity must agree bit-for-bit.
+        int worldW = TILE * 2 + 2 * V2_MARGIN;
+        int worldH = V2_SPAN;
+        int[] world = new int[worldW * worldH];
+        int seamX = V2_MARGIN + TILE;
+        int tipY = V2_MARGIN + 100;
+        int detourY = V2_MARGIN + 50;
+
+        // West arm from (-200, 100) to (-10, 100), detour north at x = -200 to y = 50,
+        // east along y = 50 to (+40, 50), south at x = +40 to (+40, 100), west to (+10, 100).
+        for (int x = seamX - 200; x <= seamX - 10; x++) world[tipY * worldW + x] = 90;
+        for (int y = detourY; y <= tipY; y++) world[y * worldW + (seamX - 200)] = 90;
+        for (int x = seamX - 200; x <= seamX + 40; x++) world[detourY * worldW + x] = 90;
+        for (int y = detourY; y <= tipY; y++) world[y * worldW + (seamX + 40)] = 90;
+        for (int x = seamX + 10; x <= seamX + 40; x++) world[tipY * worldW + x] = 90;
+
+        int[] winWest = extractWindow(world, worldW, 0, 0, V2_SPAN);
+        int[] winEast = extractWindow(world, worldW, TILE, 0, V2_SPAN);
+
+        // Normal tile seam
+        assertSeamMatchesAndBridges(winWest, winEast, 10_240 - V2_MARGIN, 10_240 + TILE - V2_MARGIN,
+                20_480 - V2_MARGIN, "normal distant detour");
+        // Antimeridian wrap seam
+        assertSeamMatchesAndBridges(winWest, winEast, SurfaceWaterSource.ACROSS - TILE - V2_MARGIN, -V2_MARGIN,
+                50_000 - V2_MARGIN, "antimeridian distant detour");
+    }
+
+    @Test
+    void braidedChannelsConnectingAtPlus200PxMatchBitForBitAcrossSeamInV2() {
+        // Exact Claude R2 counterexample: two parallel braided channels L1 and L2 cross the seam and connect
+        // at x = +200 (visible inside east tile, clipped outside west tile's +V2_MARGIN = +180). A spur of L1
+        // points across the seam toward L2; both tiles must agree bit-for-bit across the seam.
+        int worldW = TILE * 2 + 2 * V2_MARGIN;
+        int worldH = V2_SPAN;
+        int[] world = new int[worldW * worldH];
+        int seamX = V2_MARGIN + TILE;
+        int y1 = V2_MARGIN + 90;
+        int y2 = V2_MARGIN + 114;
+
+        // Channel L1 from -80 to +200 along y1, with a diagonal stub from (-26, y1) heading SE toward (-6, y1 + 10).
+        for (int x = seamX - 80; x <= seamX + 200; x++) world[y1 * worldW + x] = 90;
+        for (int step = 0; step <= 20; step++) {
+            int x = seamX - 26 + step;
+            int y = y1 + step / 2;
+            world[y * worldW + x] = 90;
+        }
+        // Channel L2 from +8 to +200 along y2, connected to L1 via vertical bar at x = +200.
+        for (int x = seamX + 8; x <= seamX + 200; x++) world[y2 * worldW + x] = 90;
+        for (int y = y1; y <= y2; y++) world[y * worldW + (seamX + 200)] = 90;
+
+        int[] winWest = extractWindow(world, worldW, 0, 0, V2_SPAN);
+        int[] winEast = extractWindow(world, worldW, TILE, 0, V2_SPAN);
+
+        assertSeamMatchesAndBridges(winWest, winEast, 10_240 - V2_MARGIN, 10_240 + TILE - V2_MARGIN,
+                20_480 - V2_MARGIN, "braided +200px");
+    }
+
+    @Test
+    void localSmallUBendIsNotShortCircuitedInV2() {
+        int span = V2_SPAN;
+        int[] occ = new int[span * span];
+        int tipY = V2_MARGIN + 100;
+        int topY = tipY - 15; // radius 15 px detour, well inside LOCAL_CONNECT_RADIUS (40 px)
+        int leftX = V2_MARGIN + 60;
+        int rightX = V2_MARGIN + 100;
+
+        // Two facing tips at (leftX + 12, tipY) and (rightX - 12, tipY), 16 px apart, connected behind by 15-px arc.
+        for (int x = leftX; x <= leftX + 12; x++) occ[tipY * span + x] = 90;
+        for (int x = rightX - 12; x <= rightX; x++) occ[tipY * span + x] = 90;
+        for (int y = topY; y <= tipY; y++) {
+            occ[y * span + leftX] = 90;
+            occ[y * span + rightX] = 90;
+        }
+        for (int x = leftX; x <= rightX; x++) occ[topY * span + x] = 90;
+
+        float[] strength = RiverMap.trace(occ, null, span, 10_240, 20_480, true);
+        for (int x = leftX + 15; x <= rightX - 15; x++) {
+            assertEquals(0.0f, strength[tipY * span + x],
+                    "local 15-px U-bend must NOT be short-circuited at x=" + x);
+        }
+    }
+
+    private static void assertSeamMatchesAndBridges(int[] winWest, int[] winEast,
+                                                    int westOriginX, int eastOriginX, int originY, String label) {
+        float[] fWest = RiverMap.trace(winWest, null, V2_SPAN, westOriginX, originY, true);
+        float[] fEast = RiverMap.trace(winEast, null, V2_SPAN, eastOriginX, originY, true);
+
+        int bridgedAcrossSeam = 0;
+        for (int y = V2_MARGIN; y < V2_MARGIN + TILE; y++) {
+            for (int dx = -20; dx < 20; dx++) {
+                float a = fWest[y * V2_SPAN + V2_MARGIN + TILE + dx];
+                float b = fEast[y * V2_SPAN + V2_MARGIN + dx];
+                assertEquals(Float.floatToRawIntBits(a), Float.floatToRawIntBits(b),
+                        label + " seam mismatch at dx=" + dx + ", y=" + y + ": " + a + " vs " + b);
+                if (dx >= -8 && dx < 8 && a >= RiverMap.EDGE) bridgedAcrossSeam++;
+            }
+        }
+        assertTrue(bridgedAcrossSeam > 10,
+                label + " must bridge non-zero pixels across seam, got " + bridgedAcrossSeam);
+    }
+
+    @Test
     void mirroredEqualScoreTiesAndReversedEnumerationMatchBitForBitInV2() {
         int span = V2_SPAN;
         int[] occurrence = new int[span * span];
@@ -414,12 +519,16 @@ class RiverMapSeamAndCancelTest {
 
         try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
             CountDownLatch followerReady = new CountDownLatch(1);
+            CountDownLatch caller1Exited = new CountDownLatch(1);
+            CountDownLatch caller2Exited = new CountDownLatch(1);
             Future<Throwable> caller1 = pool.submit(() -> {
                 try {
                     drainage.links(45.0, 10.0, 45.001, 10.001, (la, lo, tla, tlo, area) -> {});
                     return null;
                 } catch (Throwable t) {
                     return t;
+                } finally {
+                    caller1Exited.countDown();
                 }
             });
             assertTrue(producerEntered.await(5, TimeUnit.SECONDS), "owner must enter drainage tile load");
@@ -431,6 +540,8 @@ class RiverMapSeamAndCancelTest {
                     return null;
                 } catch (Throwable t) {
                     return t;
+                } finally {
+                    caller2Exited.countDown();
                 }
             });
             assertTrue(followerReady.await(5, TimeUnit.SECONDS));
@@ -442,15 +553,129 @@ class RiverMapSeamAndCancelTest {
             assertEquals(2, drainage.inFlightWaiters(), "both callers must be attached to the same shared in-flight region");
 
             Future<Throwable> cancelled = cancelFollower ? caller2 : caller1;
+            CountDownLatch cancelledExited = cancelFollower ? caller2Exited : caller1Exited;
             Future<Throwable> survivor = cancelFollower ? caller1 : caller2;
 
             assertTrue(cancelled.cancel(true), "cancelling waiter future must succeed");
+            assertTrue(cancelledExited.await(5, TimeUnit.SECONDS),
+                    "cancelled caller must exit promptly before the blocked producer is released");
+            assertEquals(1, drainage.inFlightWaiters(), "only the surviving waiter should remain attached");
             assertFalse(producerInterrupted.get(), "cancelling one shared waiter must NOT interrupt shared producer");
 
             releaseProducer.countDown();
             Throwable survivorResult = survivor.get(5, TimeUnit.SECONDS);
             assertNull(survivorResult, "surviving waiter must complete cleanly, got " + survivorResult);
             assertFalse(producerInterrupted.get(), "shared producer must have completed without interruption");
+        }
+    }
+
+    @Test
+    void cancelledDrainageProducerPastLastCheckpointDoesNotPublishOrClobberReplacementFlight() throws Exception {
+        // 1. Direct deterministic InFlight mutual-exclusion check: once the last waiter detaches and cancels
+        // the flight, a late tryPublish past the final interruption checkpoint MUST NOT write to memory or
+        // complete the future. Conversely, if tryPublish wins first, a subsequent detach must not cancel it.
+        Drainage.InFlight cancelledFlight = new Drainage.InFlight();
+        assertTrue(cancelledFlight.attach());
+        assertTrue(cancelledFlight.detach(), "detaching the sole waiter must mark the flight cancelled");
+        AtomicBoolean publishedAfterCancel = new AtomicBoolean();
+        Drainage.Region dummy = new Drainage.Region(new byte[1], new float[1]);
+        assertFalse(cancelledFlight.tryPublish(dummy, () -> publishedAfterCancel.set(true)),
+                "cancelled flight must reject late publication");
+        assertFalse(publishedAfterCancel.get(), "publish action must not run on cancelled flight");
+        assertFalse(cancelledFlight.future.isDone(), "cancelled flight future must not complete");
+        assertFalse(cancelledFlight.attach(), "new waiters must not attach to a cancelled flight");
+
+        Drainage.InFlight publishedFlight = new Drainage.InFlight();
+        assertTrue(publishedFlight.attach());
+        AtomicBoolean publishedBeforeDetach = new AtomicBoolean();
+        assertTrue(publishedFlight.tryPublish(dummy, () -> publishedBeforeDetach.set(true)),
+                "active flight must publish cleanly");
+        assertTrue(publishedBeforeDetach.get());
+        assertTrue(publishedFlight.future.isDone());
+        assertFalse(publishedFlight.detach(), "detach after publication must not cancel the completed flight");
+
+        // 2. End-to-end replacement flight check: caller 1 cancels and exits; caller 2 launches a replacement
+        // flight for the same key while producer 1 unwinds without clobbering memory or caller 2's flight.
+        CountDownLatch flight1Entered = new CountDownLatch(1);
+        CountDownLatch releaseFlight1 = new CountDownLatch(1);
+        CountDownLatch flight1Exited = new CountDownLatch(1);
+        CountDownLatch flight2Entered = new CountDownLatch(1);
+        CountDownLatch releaseFlight2 = new CountDownLatch(1);
+        AtomicBoolean secondFlightStarted = new AtomicBoolean();
+
+        Drainage drainage = new Drainage(
+                (zoom, x, y) -> {
+                    if (!secondFlightStarted.get()) {
+                        flight1Entered.countDown();
+                        try {
+                            // Deliberately wait uninterruptibly on releaseFlight1 to simulate a late producer.
+                            boolean done = false;
+                            while (!done) {
+                                try {
+                                    done = releaseFlight1.await(5, TimeUnit.SECONDS);
+                                } catch (InterruptedException ignored) {
+                                    // Keep waiting until released to exercise post-cancel unwinding.
+                                }
+                            }
+                        } finally {
+                            flight1Exited.countDown();
+                        }
+                        return new float[TerrariumTileSource.TILE_SIZE * TerrariumTileSource.TILE_SIZE];
+                    }
+                    flight2Entered.countDown();
+                    try {
+                        if (!releaseFlight2.await(5, TimeUnit.SECONDS)) {
+                            throw new MissingTerrainException("timed out waiting for replacement flight release");
+                        }
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new MissingTerrainException("replacement flight interrupted");
+                    }
+                    return new float[TerrariumTileSource.TILE_SIZE * TerrariumTileSource.TILE_SIZE];
+                },
+                (lat, lon) -> 800.0,
+                4);
+
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            CountDownLatch caller1Exited = new CountDownLatch(1);
+            Future<Throwable> caller1 = pool.submit(() -> {
+                try {
+                    drainage.links(45.0, 10.0, 45.001, 10.001, (la, lo, tla, tlo, area) -> {});
+                    return null;
+                } catch (Throwable t) {
+                    return t;
+                } finally {
+                    caller1Exited.countDown();
+                }
+            });
+            assertTrue(flight1Entered.await(5, TimeUnit.SECONDS));
+            assertTrue(caller1.cancel(true));
+            assertTrue(caller1Exited.await(5, TimeUnit.SECONDS), "cancelled caller 1 must exit immediately");
+            assertEquals(0, drainage.inFlightWaiters(), "cancelled flight must have detached all waiters");
+            assertEquals(0, drainage.cachedRegions(), "cancelled flight must not have populated memory");
+
+            // Start replacement flight for the same region while flight 1 is still finishing.
+            secondFlightStarted.set(true);
+            Future<Throwable> caller2 = pool.submit(() -> {
+                try {
+                    drainage.links(45.0, 10.0, 45.001, 10.001, (la, lo, tla, tlo, area) -> {});
+                    return null;
+                } catch (Throwable t) {
+                    return t;
+                }
+            });
+            assertTrue(flight2Entered.await(5, TimeUnit.SECONDS), "replacement flight must start cleanly");
+
+            // Release flight 1 now; it must NOT publish to memory or disturb replacement flight 2.
+            releaseFlight1.countDown();
+            assertTrue(flight1Exited.await(5, TimeUnit.SECONDS));
+            assertEquals(0, drainage.cachedRegions(), "cancelled flight 1 must not publish into cache");
+            assertEquals(1, drainage.inFlightWaiters(), "replacement flight 2 must remain active");
+
+            releaseFlight2.countDown();
+            Throwable caller2Result = caller2.get(5, TimeUnit.SECONDS);
+            assertNull(caller2Result, "replacement flight caller must succeed cleanly, got " + caller2Result);
+            assertEquals(1, drainage.cachedRegions(), "replacement flight must publish into cache");
         }
     }
 
