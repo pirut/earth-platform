@@ -661,22 +661,40 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     /**
+     * Thrown when off-thread pregeneration cannot be coordinated or committed because the Earth world
+     * is closing or the server thread is no longer scheduling tasks. Callers such as Chunky must let
+     * this propagate rather than counting an unwritten column as complete.
+     */
+    public static final class PregenerationRejectedException extends IllegalStateException {
+        public PregenerationRejectedException(String message) {
+            super(message);
+        }
+
+        public PregenerationRejectedException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    /**
      * Any thread; blocks on map data. Generates and saves the cubes of a column that a visit would
      * save ({@link #surfaceBand}), for pre-generation mods such as Chunky. Cubes already saved are
      * kept; the store happens on the server thread.
      */
     public void pregenerate(int cubeX, int cubeZ) {
-        if (closed || closing) return;
+        if (closed || closing) throw new PregenerationRejectedException("Earth world is closing");
         int[] band = surfaceBand(cubeX, cubeZ);
         LongArrayList candidates = new LongArrayList(Math.max(0, band[1] - band[0] + 1));
         for (int y = band[0]; y <= band[1]; y++) candidates.add(CubeKey.pack(cubeX, y, cubeZ));
         // Coordinate on the server thread before off-thread storage reads so loaded/pending keys are skipped or flushed first.
         LongArrayList allowed = coordinatePregenerateKeys(candidates);
-        if (allowed.isEmpty()) return;
+        if (allowed.isEmpty()) {
+            if (closed || closing) throw new PregenerationRejectedException("Earth world is closing");
+            return;
+        }
         LongArrayList keys = new LongArrayList();
         List<CompoundTag> tags = new ArrayList<>();
         for (int i = 0; i < allowed.size(); i++) {
-            if (closed || closing) return;
+            if (closed || closing) throw new PregenerationRejectedException("Earth world is closing");
             long key = allowed.getLong(i);
             int y = CubeKey.y(key);
             try { if (storage.read(key) != null) continue; }
@@ -699,17 +717,31 @@ public final class ServerCubeWorld extends CubeWorld {
             tags.add(tag);
         }
         if (tags.isEmpty()) return;
-        server.getServer().execute(() -> {
-            if (!server.getServer().isSameThread()) {
-                if (closed || closing) return;
-                throw new IllegalStateException("Server thread is no longer scheduling tasks");
-            }
+        if (closed || closing) throw new PregenerationRejectedException("Earth world is closing");
+        submitPregeneratedCommit(server.getServer(), server.getServer()::isSameThread, () -> closed || closing, () -> {
             int stored = commitPregenerated(keys, tags, () -> closed || closing, cubes::containsKey, untouchedStores, storage);
             // Written as it goes, so a long run does not hold every region in memory until the next save.
             if (stored > 0 && (pregenerated += stored) >= 2048) {
                 pregenerated = 0;
                 storage.flushLater();
             }
+        });
+    }
+
+    /**
+     * Schedules the server-thread commit for a pregenerated column. When {@code serverThread.execute}
+     * falls back to inline execution on the caller thread during shutdown ({@code !isServerThread}),
+     * rejects the column with {@link PregenerationRejectedException} instead of touching server-thread
+     * state off-thread or returning normally. Never throws on the server thread.
+     */
+    static void submitPregeneratedCommit(Executor serverThread, BooleanSupplier isServerThread,
+                                         BooleanSupplier isClosed, Runnable commitOnServerThread) {
+        serverThread.execute(() -> {
+            if (!isServerThread.getAsBoolean()) {
+                throw new PregenerationRejectedException(
+                        isClosed.getAsBoolean() ? "Earth world is closing" : "Server thread is no longer scheduling tasks");
+            }
+            commitOnServerThread.run();
         });
     }
 
@@ -730,8 +762,8 @@ public final class ServerCubeWorld extends CubeWorld {
     /**
      * Coordinates pregeneration key filtering on the server thread before off-thread storage reads.
      * On timeout, interruption, or server-thread failure, cancels the queued task so it becomes a no-op
-     * if executed later and propagates a {@link RuntimeException} (so callers such as Chunky record the
-     * column failure rather than treating it as successfully generated), unless the world is closing/closed.
+     * if executed later and propagates a {@link PregenerationRejectedException} (so callers such as Chunky
+     * record the column failure rather than treating it as successfully generated), unless the world is closing/closed.
      */
     static LongArrayList coordinatePregenerateKeys(LongArrayList candidates, boolean onServerThread,
                                                    Executor serverThread, BooleanSupplier isClosed,
@@ -758,7 +790,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 if (isClosed.getAsBoolean()) {
                     checked.complete(new LongArrayList());
                 } else {
-                    checked.completeExceptionally(new IllegalStateException("Server thread is no longer scheduling tasks"));
+                    checked.completeExceptionally(new PregenerationRejectedException("Server thread is no longer scheduling tasks"));
                 }
                 return;
             }
@@ -775,19 +807,19 @@ public final class ServerCubeWorld extends CubeWorld {
             checked.cancel(false);
             Thread.currentThread().interrupt();
             if (isClosed.getAsBoolean()) return new LongArrayList();
-            throw new IllegalStateException("Interrupted waiting for server thread during pregeneration", interrupted);
+            throw new PregenerationRejectedException("Interrupted waiting for server thread during pregeneration", interrupted);
         } catch (TimeoutException timedOut) {
             cancelled.set(true);
             checked.cancel(false);
             if (isClosed.getAsBoolean()) return new LongArrayList();
-            throw new IllegalStateException("Timed out waiting " + timeoutMillis + " ms for server thread during pregeneration", timedOut);
+            throw new PregenerationRejectedException("Timed out waiting " + timeoutMillis + " ms for server thread during pregeneration", timedOut);
         } catch (ExecutionException failed) {
             cancelled.set(true);
             checked.cancel(false);
             Throwable cause = failed.getCause() != null ? failed.getCause() : failed;
             if (cause instanceof RuntimeException runtime) throw runtime;
             if (cause instanceof Error error) throw error;
-            throw new IllegalStateException("Server thread pregeneration coordination failed", cause);
+            throw new PregenerationRejectedException("Server thread pregeneration coordination failed", cause);
         }
     }
 

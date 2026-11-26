@@ -8,6 +8,7 @@ import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -51,15 +52,30 @@ public final class ChunkyCompat {
     @Nullable public static CompletableFuture<Void> generate(ServerLevel level, int chunkX, int chunkZ) {
         ServerCubeWorld cubes = cubes(level);
         if (cubes == null) return null;
-        return CompletableFuture.runAsync(() -> pregenerate(cubes, chunkX, chunkZ), WORKERS);
+        return generateAsync(chunkX, chunkZ, () -> pregenerateColumn(cubes, chunkX, chunkZ), WORKERS);
+    }
+
+    static CompletableFuture<Void> generateAsync(int chunkX, int chunkZ, Runnable action, Executor executor) {
+        return CompletableFuture.runAsync(() -> runPregenerate(chunkX, chunkZ, action), executor);
     }
 
     static void pregenerate(ServerCubeWorld cubes, int chunkX, int chunkZ) {
+        runPregenerate(chunkX, chunkZ, () -> pregenerateColumn(cubes, chunkX, chunkZ));
+    }
+
+    private static void pregenerateColumn(ServerCubeWorld cubes, int chunkX, int chunkZ) {
         int x = (chunkX << 4) + 8, z = (chunkZ << 4) + 8;
+        CubeGenerator generator = cubes.generator();
+        if (CELLS.add(cell(x, z))) generator.prepare(Math.floorDiv(x, CELL) * CELL + CELL / 2, Math.floorDiv(z, CELL) * CELL + CELL / 2);
+        cubes.pregenerate(chunkX, chunkZ);
+    }
+
+    static void runPregenerate(int chunkX, int chunkZ, Runnable action) {
         try {
-            CubeGenerator generator = cubes.generator();
-            if (CELLS.add(cell(x, z))) generator.prepare(Math.floorDiv(x, CELL) * CELL + CELL / 2, Math.floorDiv(z, CELL) * CELL + CELL / 2);
-            cubes.pregenerate(chunkX, chunkZ);
+            action.run();
+        } catch (ServerCubeWorld.PregenerationRejectedException rejected) {
+            // Propagate shutdown / scheduling rejections so Chunky never marks an unwritten column complete.
+            throw rejected;
         } catch (RuntimeException failure) {
             // Chunky carries on with the next chunk; with a data server down, each one fails, so tell it now and then.
             int failures = FAILURES.incrementAndGet();
@@ -69,6 +85,10 @@ public final class ChunkyCompat {
                         chunkX, chunkZ, failures, failure);
             }
         }
+    }
+
+    static int failureCount() {
+        return FAILURES.get();
     }
 
     private static long cell(int x, int z) {

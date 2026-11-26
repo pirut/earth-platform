@@ -1353,4 +1353,50 @@ class ServerCubeWorldResilienceTest {
         assertEquals(0, currentCubeCalls.get(), "untouchedStores must never be drained off server thread when closing");
         assertEquals(1, untouched.pendingCount());
     }
+
+    @Test
+    void submitPregeneratedCommitRejectsOffThreadInlineExecutionAndRunsOnServerThread() {
+        AtomicInteger commitCalls = new AtomicInteger();
+
+        // 1. Off-thread inline fallback before isClosed == true must reject without running commitOnServerThread.
+        ServerCubeWorld.PregenerationRejectedException notScheduling = assertThrows(
+                ServerCubeWorld.PregenerationRejectedException.class,
+                () -> ServerCubeWorld.submitPregeneratedCommit(
+                        Runnable::run,
+                        () -> false,
+                        () -> false,
+                        commitCalls::incrementAndGet));
+        assertTrue(notScheduling.getMessage().contains("no longer scheduling"), notScheduling.getMessage());
+        assertEquals(0, commitCalls.get(), "commit must never execute off server thread");
+
+        // 2. Off-thread inline fallback after isClosed == true must also reject without running commitOnServerThread.
+        ServerCubeWorld.PregenerationRejectedException closing = assertThrows(
+                ServerCubeWorld.PregenerationRejectedException.class,
+                () -> ServerCubeWorld.submitPregeneratedCommit(
+                        Runnable::run,
+                        () -> false,
+                        () -> true,
+                        commitCalls::incrementAndGet));
+        assertTrue(closing.getMessage().contains("closing"), closing.getMessage());
+        assertEquals(0, commitCalls.get(), "commit must never execute off server thread when closing");
+
+        // 3. On the server thread (isServerThread == true), commitOnServerThread runs normally and never throws,
+        //    even if isClosed flipped true after enqueueing (commitPregenerated handles isClosed cleanly).
+        List<Runnable> serverQueue = new ArrayList<>();
+        ServerCubeWorld.submitPregeneratedCommit(
+                serverQueue::add,
+                () -> true,
+                () -> false,
+                commitCalls::incrementAndGet);
+        assertEquals(1, serverQueue.size());
+        assertDoesNotThrow(() -> serverQueue.remove(0).run());
+        assertEquals(1, commitCalls.get());
+
+        ServerCubeWorld.submitPregeneratedCommit(
+                Runnable::run,
+                () -> true,
+                () -> true,
+                commitCalls::incrementAndGet);
+        assertEquals(2, commitCalls.get(), "server thread must never throw PregenerationRejectedException");
+    }
 }
