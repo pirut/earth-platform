@@ -419,23 +419,27 @@ class UndergroundAuditRegressionTest {
             // 1. Initial settle via warm().
             structures.warm(0, 0);
             for (long until = System.currentTimeMillis() + 20_000;
-                 !structures.ready(0, 0) && System.currentTimeMillis() < until;
+                 (!structures.ready(0, 0) || structures.queued() > 0) && System.currentTimeMillis() < until;
                  Thread.sleep(10)) {}
             assertTrue(structures.ready(0, 0));
+            assertEquals(0, structures.queued());
             assertEquals(earthGround, structures.startsAt(0, 0).get(0).getBoundingBox().minY());
 
             // 2. Evict realStarts while known and overlayCache STILL retain the column/overlay -> warm() must re-settle.
+            // Wait for warm()'s async work via queued() and assert settled bounds via startsAt() BEFORE invoking ready(),
+            // isolating warm() so a regression that returned early on a known hit would genuinely fail here.
             structures.clearRealStartsForTest();
             assertTrue(structures.laidOut(0, 0), "known must still hold the column after realStarts eviction");
             structures.warm(0, 0);
             for (long until = System.currentTimeMillis() + 20_000;
-                 !structures.ready(0, 0) && System.currentTimeMillis() < until;
+                 structures.queued() > 0 && System.currentTimeMillis() < until;
                  Thread.sleep(10)) {}
-            assertTrue(structures.ready(0, 0), "ready() must become true once warm() finishes re-settling");
+            assertEquals(0, structures.queued(), "warm() background re-settlement must complete");
             assertEquals(earthGround, structures.startsAt(0, 0).get(0).getBoundingBox().minY(),
                     "warm() must re-settle shift == 0 minY bounds after realStarts eviction");
             assertEquals(earthGround + 7, structures.startsAt(0, 0).get(0).getBoundingBox().maxY(),
                     "warm() must re-settle shift == 0 maxY bounds after realStarts eviction");
+            assertTrue(structures.ready(0, 0), "ready() must immediately be true once warm() finishes re-settling");
 
             // 3. Evict realStarts again while known still holds the column -> ready() must report false and re-settle.
             structures.clearRealStartsForTest();

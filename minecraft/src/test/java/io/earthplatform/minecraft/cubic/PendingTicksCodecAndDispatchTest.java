@@ -169,58 +169,55 @@ class PendingTicksCodecAndDispatchTest {
         Cube cube = new Cube(cx, cy, cz, emptySection());
         CubeCodec.PendingTick<Block> bTick = new CubeCodec.PendingTick<>(new BlockPos((cx << 4) + 2, (cy << 4) + 3, (cz << 4) + 4), Blocks.GRAVEL, 1, TickPriority.NORMAL);
         CubeCodec.PendingTick<Fluid> fTick = new CubeCodec.PendingTick<>(new BlockPos((cx << 4) + 8, (cy << 4) + 8, (cz << 4) + 8), Fluids.WATER, 0, TickPriority.NORMAL);
-        Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pending = new Long2ObjectOpenHashMap<>();
-        pending.put(center, new CubeCodec.PendingTicks(List.of(bTick), List.of(fTick)));
-
         LongOpenHashSet loaded = new LongOpenHashSet();
         loaded.add(center);
         for (long n : neighbors) loaded.add(n);
 
         ServerCubeWorld.PendingTickDispatcher dispatcher = new ServerCubeWorld.PendingTickDispatcher();
-        dispatcher.onAdded(center);
+        dispatcher.put(center, new CubeCodec.PendingTicks(List.of(bTick), List.of(fTick)));
 
         List<CubeCodec.PendingTick<Block>> firedBlocks = new ArrayList<>();
         List<CubeCodec.PendingTick<Fluid>> firedFluids = new ArrayList<>();
         List<Long> changedKeys = new ArrayList<>();
 
         // 1. All 6 neighbors loaded, but carrier chunk is NOT ticking -> held without decrementing delay.
-        assertEquals(0, dispatcher.tick(pending, loaded::contains, (x, z) -> false, firedBlocks::add, firedFluids::add, changedKeys::add));
-        assertEquals(1, pending.get(center).blocks().get(0).delay());
+        assertEquals(0, dispatcher.tick(loaded::contains, (x, z) -> false, firedBlocks::add, firedFluids::add, changedKeys::add));
+        assertEquals(1, dispatcher.get(center).blocks().get(0).delay());
         assertTrue(firedBlocks.isEmpty());
         assertTrue(firedFluids.isEmpty());
 
         // 2. Carrier chunk ticking, but each single missing face neighbor holds dispatch.
         for (long missing : neighbors) {
             loaded.remove(missing);
-            dispatcher.onUnloaded(missing);
-            assertEquals(0, dispatcher.tick(pending, loaded::contains, (x, z) -> true, firedBlocks::add, firedFluids::add, changedKeys::add),
+            dispatcher.remove(missing);
+            assertEquals(0, dispatcher.tick(loaded::contains, (x, z) -> true, firedBlocks::add, firedFluids::add, changedKeys::add),
                     "must wait when neighbor " + CubeKey.toString(missing) + " is unloaded");
-            assertEquals(1, pending.get(center).blocks().get(0).delay());
+            assertEquals(1, dispatcher.get(center).blocks().get(0).delay());
             loaded.add(missing);
             dispatcher.noteResidencyChange();
         }
 
         // 3. First gated tick: delay-0 fluid executes immediately; delay-1 block decrements to 0 and stays cube-owned.
-        assertEquals(1, dispatcher.tick(pending, loaded::contains, (x, z) -> true, firedBlocks::add, firedFluids::add, key -> {
+        assertEquals(1, dispatcher.tick(loaded::contains, (x, z) -> true, firedBlocks::add, firedFluids::add, key -> {
             changedKeys.add(key);
             cube.markUnsaved();
         }));
         assertEquals(List.of(fTick), firedFluids);
         assertTrue(firedBlocks.isEmpty(), "delay-1 tick must stay cube-owned until its delay reaches 0");
-        assertTrue(pending.containsKey(center));
-        assertEquals(0, pending.get(center).blocks().get(0).delay());
+        assertTrue(dispatcher.containsKey(center));
+        assertEquals(0, dispatcher.get(center).blocks().get(0).delay());
         assertTrue(cube.dirty && cube.modified && !cube.edited, "markUnsaved must keep UNTOUCHED intact");
 
-        // 4. Second gated tick: block tick now due -> fires once and clears pending map.
-        assertEquals(1, dispatcher.tick(pending, loaded::contains, (x, z) -> true, firedBlocks::add, firedFluids::add, changedKeys::add));
-        assertFalse(pending.containsKey(center));
+        // 4. Second gated tick: block tick now due -> fires once and clears pending queue.
+        assertEquals(1, dispatcher.tick(loaded::contains, (x, z) -> true, firedBlocks::add, firedFluids::add, changedKeys::add));
+        assertFalse(dispatcher.containsKey(center));
         assertEquals(1, firedBlocks.size());
         assertEquals(bTick.pos(), firedBlocks.get(0).pos());
         assertEquals(bTick.type(), firedBlocks.get(0).type());
         assertEquals(0, firedBlocks.get(0).delay());
 
         // 5. Subsequent ticks never replay.
-        assertEquals(0, dispatcher.tick(pending, loaded::contains, (x, z) -> true, firedBlocks::add, firedFluids::add, changedKeys::add));
+        assertEquals(0, dispatcher.tick(loaded::contains, (x, z) -> true, firedBlocks::add, firedFluids::add, changedKeys::add));
         assertEquals(1, firedBlocks.size());
         assertEquals(1, firedFluids.size());
     }
@@ -240,35 +237,32 @@ class PendingTicksCodecAndDispatchTest {
         liveCubes.put(key, cube);
         BlockPos pos = new BlockPos((cx << 4) + 5, (cy << 4) + 6, (cz << 4) + 7);
         CubeCodec.PendingTick<Block> delayed = new CubeCodec.PendingTick<>(pos, Blocks.SAND, 3, TickPriority.HIGH);
-        Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pending = new Long2ObjectOpenHashMap<>();
-        pending.put(key, new CubeCodec.PendingTicks(List.of(delayed), List.of()));
 
         LongOpenHashSet loaded = new LongOpenHashSet();
         loaded.add(key);
         for (long n : allNeighbors) loaded.add(n);
 
         ServerCubeWorld.PendingTickDispatcher dispatcher = new ServerCubeWorld.PendingTickDispatcher();
-        dispatcher.onAdded(key);
+        dispatcher.put(key, new CubeCodec.PendingTicks(List.of(delayed), List.of()));
         List<CubeCodec.PendingTick<Block>> fired = new ArrayList<>();
         java.util.function.LongConsumer markUnsaved = k -> ServerCubeWorld.PendingTickDispatcher.markCubeUnsaved(k, liveCubes::get);
 
         // Tick 1 while resident + neighbor-gated: delay 3 -> 2, does not fire, production onChanged marks cube unsaved.
-        assertEquals(0, dispatcher.tick(pending, loaded::contains, (x, z) -> true, fired::add, f -> {}, markUnsaved));
+        assertEquals(0, dispatcher.tick(loaded::contains, (x, z) -> true, fired::add, f -> {}, markUnsaved));
         assertTrue(fired.isEmpty());
         assertTrue(cube.dirty && cube.modified && !cube.edited);
-        assertEquals(2, pending.get(key).blocks().get(0).delay());
+        assertEquals(2, dispatcher.get(key).blocks().get(0).delay());
 
         // Source cube unloads while carrier chunk continues ticking -> save via real CubeCodec.write() + writePendingTicks().
-        CompoundTag savedOnUnload = encodeLiveCube(cube, pending.get(key));
+        CompoundTag savedOnUnload = encodeLiveCube(cube, dispatcher.get(key));
         assertTrue(savedOnUnload.getBoolean(CubeCodec.UNTOUCHED));
         loaded.remove(key);
         liveCubes.remove(key);
-        pending.remove(key);
-        dispatcher.onUnloaded(key);
+        dispatcher.remove(key);
 
         // Carrier chunk keeps ticking for several ticks while source cube is unloaded -> never executes!
         for (int i = 0; i < 5; i++) {
-            assertEquals(0, dispatcher.tick(pending, loaded::contains, (x, z) -> true, fired::add, f -> {}, markUnsaved));
+            assertEquals(0, dispatcher.tick(loaded::contains, (x, z) -> true, fired::add, f -> {}, markUnsaved));
         }
         assertTrue(fired.isEmpty(), "unloaded cube must never execute pending ticks");
 
@@ -283,35 +277,34 @@ class PendingTicksCodecAndDispatchTest {
         loaded.add(key);
         liveCubes.put(key, reloadedCube);
         loaded.remove(missingNeighbor);
-        pending.put(key, reloaded.pendingTicks());
-        dispatcher.onAdded(key);
-        assertEquals(0, dispatcher.tick(pending, loaded::contains, (x, z) -> true, fired::add, f -> {}, markUnsaved));
-        assertEquals(2, pending.get(key).blocks().get(0).delay(), "countdown must pause while a face neighbor is missing");
+        dispatcher.put(key, reloaded.pendingTicks());
+        assertEquals(0, dispatcher.tick(loaded::contains, (x, z) -> true, fired::add, f -> {}, markUnsaved));
+        assertEquals(2, dispatcher.get(key).blocks().get(0).delay(), "countdown must pause while a face neighbor is missing");
         assertFalse(reloadedCube.dirty, "paused cube must not be marked unsaved");
 
         // Neighbor loads -> countdown resumes: 2 -> 1 -> 0 -> executes, marking reloadedCube unsaved via production onChanged!
         loaded.add(missingNeighbor);
         dispatcher.noteResidencyChange();
-        assertEquals(0, dispatcher.tick(pending, loaded::contains, (x, z) -> true, fired::add, f -> {}, markUnsaved));
-        assertEquals(1, pending.get(key).blocks().get(0).delay());
+        assertEquals(0, dispatcher.tick(loaded::contains, (x, z) -> true, fired::add, f -> {}, markUnsaved));
+        assertEquals(1, dispatcher.get(key).blocks().get(0).delay());
         assertTrue(reloadedCube.dirty && reloadedCube.modified && !reloadedCube.edited,
                 "production onChanged callback must mark reloaded cube unsaved without setting edited");
-        assertEquals(0, dispatcher.tick(pending, loaded::contains, (x, z) -> true, fired::add, f -> {}, markUnsaved));
-        assertEquals(0, pending.get(key).blocks().get(0).delay());
+        assertEquals(0, dispatcher.tick(loaded::contains, (x, z) -> true, fired::add, f -> {}, markUnsaved));
+        assertEquals(0, dispatcher.get(key).blocks().get(0).delay());
         assertTrue(fired.isEmpty());
 
         reloadedCube.dirty = false;
-        assertEquals(1, dispatcher.tick(pending, loaded::contains, (x, z) -> true, fired::add, f -> {}, markUnsaved));
+        assertEquals(1, dispatcher.tick(loaded::contains, (x, z) -> true, fired::add, f -> {}, markUnsaved));
         assertTrue(reloadedCube.dirty && reloadedCube.modified && !reloadedCube.edited,
                 "draining final due tick must mark reloaded cube unsaved via production onChanged");
         assertEquals(1, fired.size());
         assertEquals(pos, fired.get(0).pos());
         assertEquals(Blocks.SAND, fired.get(0).type());
         assertEquals(TickPriority.HIGH, fired.get(0).priority());
-        assertFalse(pending.containsKey(key));
+        assertFalse(dispatcher.containsKey(key));
 
         // Re-saving via real CubeCodec.write() + writePendingTicks() after drain clears tick tags so reload never replays.
-        CompoundTag savedAfterDrain = encodeLiveCube(reloadedCube, pending.getOrDefault(key, CubeCodec.PendingTicks.EMPTY));
+        CompoundTag savedAfterDrain = encodeLiveCube(reloadedCube, dispatcher.getOrDefault(key, CubeCodec.PendingTicks.EMPTY));
         assertFalse(savedAfterDrain.contains(CubeCodec.BLOCK_TICKS));
         assertFalse(savedAfterDrain.contains(CubeCodec.FLUID_TICKS));
         assertTrue(codec.read(savedAfterDrain, key).pendingTicks().isEmpty());
@@ -332,25 +325,22 @@ class PendingTicksCodecAndDispatchTest {
         CubeCodec.PendingTick<Block> extHigh = new CubeCodec.PendingTick<>(new BlockPos(3, 65, 1), Blocks.REDSTONE_TORCH, 0, TickPriority.EXTREMELY_HIGH);
         CubeCodec.PendingTick<Block> highSecond = new CubeCodec.PendingTick<>(new BlockPos(4, 65, 1), Blocks.SAND, 0, TickPriority.HIGH);
 
-        Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pending = new Long2ObjectOpenHashMap<>();
-        pending.put(key, new CubeCodec.PendingTicks(List.of(low, highFirst, extHigh, highSecond), List.of()));
-
         ServerCubeWorld.PendingTickDispatcher dispatcher = new ServerCubeWorld.PendingTickDispatcher();
-        dispatcher.onAdded(key);
+        dispatcher.put(key, new CubeCodec.PendingTicks(List.of(low, highFirst, extHigh, highSecond), List.of()));
         List<CubeCodec.PendingTick<Block>> order = new ArrayList<>();
 
         // Initial scan finds the edge cube is missing a neighbor.
-        assertEquals(0, dispatcher.tick(pending, loaded::contains, (x, z) -> true, order::add, f -> {}, k -> {}));
+        assertEquals(0, dispatcher.tick(loaded::contains, (x, z) -> true, order::add, f -> {}, k -> {}));
         assertEquals(1, dispatcher.lastScannedCount());
 
         // Subsequent ticks with unchanged residency must NOT re-scan unready edge cubes.
-        assertEquals(0, dispatcher.tick(pending, loaded::contains, (x, z) -> true, order::add, f -> {}, k -> {}));
+        assertEquals(0, dispatcher.tick(loaded::contains, (x, z) -> true, order::add, f -> {}, k -> {}));
         assertEquals(0, dispatcher.lastScannedCount(), "unready edge cube must not be rescanned without residency change");
 
         // Once the missing neighbor loads, residency change triggers scan and executes in stable ascending priority order.
         loaded.add(missing);
         dispatcher.noteResidencyChange();
-        assertEquals(4, dispatcher.tick(pending, loaded::contains, (x, z) -> true, order::add, f -> {}, k -> {}));
+        assertEquals(4, dispatcher.tick(loaded::contains, (x, z) -> true, order::add, f -> {}, k -> {}));
         assertEquals(List.of(extHigh, highFirst, highSecond, low), order,
                 "due ticks must execute in ascending TickPriority order with stable tie-breaking");
     }
@@ -506,17 +496,13 @@ class PendingTicksCodecAndDispatchTest {
         CubeCodec.PendingTick<Fluid> highFluidB = new CubeCodec.PendingTick<>(
                 new BlockPos((bx << 4) + 5, (by << 4) + 5, (bz << 4) + 5), Fluids.WATER, 0, TickPriority.EXTREMELY_HIGH);
 
-        Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pending = new Long2ObjectOpenHashMap<>();
-        pending.put(keyA, new CubeCodec.PendingTicks(List.of(lowBlockA), List.of(lowFluidA)));
-        pending.put(keyB, new CubeCodec.PendingTicks(List.of(highBlockB), List.of(highFluidB)));
-
         ServerCubeWorld.PendingTickDispatcher dispatcher = new ServerCubeWorld.PendingTickDispatcher();
-        dispatcher.onAdded(keyA);
-        dispatcher.onAdded(keyB);
+        dispatcher.put(keyA, new CubeCodec.PendingTicks(List.of(lowBlockA), List.of(lowFluidA)));
+        dispatcher.put(keyB, new CubeCodec.PendingTicks(List.of(highBlockB), List.of(highFluidB)));
 
         List<CubeCodec.PendingTick<Block>> blockOrder = new ArrayList<>();
         List<CubeCodec.PendingTick<Fluid>> fluidOrder = new ArrayList<>();
-        assertEquals(4, dispatcher.tick(pending, loaded::contains, (x, z) -> true, blockOrder::add, fluidOrder::add, k -> {}));
+        assertEquals(4, dispatcher.tick(loaded::contains, (x, z) -> true, blockOrder::add, fluidOrder::add, k -> {}));
         assertEquals(List.of(highBlockB, lowBlockA), blockOrder,
                 "EXTREMELY_HIGH block tick in cube B must execute before LOW block tick in cube A");
         assertEquals(List.of(highFluidB, lowFluidA), fluidOrder,
@@ -571,31 +557,25 @@ class PendingTicksCodecAndDispatchTest {
         BlockPos cBlockPos = new BlockPos((cx << 4) + 1, (cy << 4) + 1, (cz << 4) + 1);
         BlockPos cFluidPos = new BlockPos((cx << 4) + 3, (cy << 4) + 1, (cz << 4) + 1);
 
-        Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pending = new Long2ObjectOpenHashMap<>();
-        pending.put(keyA, new CubeCodec.PendingTicks(
+        ServerCubeWorld.PendingTickDispatcher dispatcher = new ServerCubeWorld.PendingTickDispatcher();
+        dispatcher.put(keyA, new CubeCodec.PendingTicks(
                 List.of(
                         new CubeCodec.PendingTick<>(aMatchBlock, Blocks.SAND, 0, TickPriority.EXTREMELY_HIGH),
                         new CubeCodec.PendingTick<>(aMismatchBlock, Blocks.GRAVEL, 0, TickPriority.HIGH)),
                 List.of(
                         new CubeCodec.PendingTick<>(aMatchFluid, Fluids.WATER, 0, TickPriority.EXTREMELY_HIGH),
                         new CubeCodec.PendingTick<>(aMismatchFluid, Fluids.LAVA, 0, TickPriority.HIGH))));
-        pending.put(keyB, new CubeCodec.PendingTicks(
+        dispatcher.put(keyB, new CubeCodec.PendingTicks(
                 List.of(new CubeCodec.PendingTick<>(bBlockPos, Blocks.SAND, 0, TickPriority.LOW)),
                 List.of(new CubeCodec.PendingTick<>(bFluidPos, Fluids.WATER, 0, TickPriority.LOW))));
-        pending.put(keyC, new CubeCodec.PendingTicks(
+        dispatcher.put(keyC, new CubeCodec.PendingTicks(
                 List.of(new CubeCodec.PendingTick<>(cBlockPos, Blocks.SAND, 0, TickPriority.LOW)),
                 List.of(new CubeCodec.PendingTick<>(cFluidPos, Fluids.WATER, 0, TickPriority.LOW))));
-
-        ServerCubeWorld.PendingTickDispatcher dispatcher = new ServerCubeWorld.PendingTickDispatcher();
-        dispatcher.onAdded(keyA);
-        dispatcher.onAdded(keyB);
-        dispatcher.onAdded(keyC);
 
         List<BlockPos> ranBlocks = new ArrayList<>();
         List<BlockPos> ranFluids = new ArrayList<>();
 
         dispatcher.tick(
-                pending,
                 loaded::contains,
                 (x, z) -> true,
                 tick -> ServerCubeWorld.PendingTickDispatcher.runIfLiveBlockTick(
@@ -607,8 +587,9 @@ class PendingTicksCodecAndDispatchTest {
                                 // and unload one face neighbor of cube C.
                                 loaded.remove(keyB);
                                 liveCubes.remove(keyB);
-                                pending.remove(keyB);
+                                dispatcher.remove(keyB);
                                 loaded.remove(neighborOfC);
+                                dispatcher.remove(neighborOfC);
                             }
                         }),
                 tick -> ServerCubeWorld.PendingTickDispatcher.runIfLiveFluidTick(
@@ -621,21 +602,21 @@ class PendingTicksCodecAndDispatchTest {
         assertEquals(List.of(aMatchFluid), ranFluids,
                 "only matching live fluid tick with resident cube and 6 neighbors must execute");
         assertTrue(cubeA.dirty && cubeA.modified && !cubeA.edited, "cubeA must be marked unsaved without edited");
-        assertFalse(pending.containsKey(keyA), "cubeA due ticks must be drained after execution");
-        assertFalse(pending.containsKey(keyB), "forgotten cubeB must have no pending ticks");
+        assertFalse(dispatcher.containsKey(keyA), "cubeA due ticks must be drained after execution");
+        assertFalse(dispatcher.containsKey(keyB), "forgotten cubeB must have no pending ticks");
 
         // Cube C lost a neighbor mid-pass: its due block and fluid ticks MUST remain in pendingTicks (not lost)
         // and cube C must be dropped from readyNeighbors until residency changes.
-        assertTrue(pending.containsKey(keyC), "cubeC due ticks must survive a mid-pass neighbor unload");
-        assertEquals(1, pending.get(keyC).blocks().size(), "cubeC due block tick must remain queued at delay 0");
-        assertEquals(0, pending.get(keyC).blocks().get(0).delay());
-        assertEquals(1, pending.get(keyC).fluids().size(), "cubeC due fluid tick must remain queued at delay 0");
-        assertEquals(0, pending.get(keyC).fluids().get(0).delay());
+        assertTrue(dispatcher.containsKey(keyC), "cubeC due ticks must survive a mid-pass neighbor unload");
+        assertEquals(1, dispatcher.get(keyC).blocks().size(), "cubeC due block tick must remain queued at delay 0");
+        assertEquals(0, dispatcher.get(keyC).blocks().get(0).delay());
+        assertEquals(1, dispatcher.get(keyC).fluids().size(), "cubeC due fluid tick must remain queued at delay 0");
+        assertEquals(0, dispatcher.get(keyC).fluids().get(0).delay());
         assertFalse(cubeC.dirty, "skipped cubeC must not be marked unsaved before its ticks execute");
 
         // While neighborOfC remains unloaded with no residency change, cubeC is not rescanned and does not execute.
         assertEquals(0, dispatcher.tick(
-                pending, loaded::contains, (x, z) -> true,
+                loaded::contains, (x, z) -> true,
                 tick -> ServerCubeWorld.PendingTickDispatcher.runIfLiveBlockTick(
                         tick, liveCubes::get, loaded::contains, (state, pos) -> ranBlocks.add(pos)),
                 tick -> ServerCubeWorld.PendingTickDispatcher.runIfLiveFluidTick(
@@ -647,7 +628,7 @@ class PendingTicksCodecAndDispatchTest {
         loaded.add(neighborOfC);
         dispatcher.noteResidencyChange();
         assertEquals(2, dispatcher.tick(
-                pending, loaded::contains, (x, z) -> true,
+                loaded::contains, (x, z) -> true,
                 tick -> ServerCubeWorld.PendingTickDispatcher.runIfLiveBlockTick(
                         tick, liveCubes::get, loaded::contains, (state, pos) -> ranBlocks.add(pos)),
                 tick -> ServerCubeWorld.PendingTickDispatcher.runIfLiveFluidTick(
@@ -657,7 +638,7 @@ class PendingTicksCodecAndDispatchTest {
                 "cubeC due block tick must resume and execute after its neighbor reloads");
         assertEquals(List.of(aMatchFluid, cFluidPos), ranFluids,
                 "cubeC due fluid tick must resume and execute after its neighbor reloads");
-        assertFalse(pending.containsKey(keyC), "cubeC pending ticks must be drained once resumed and executed");
+        assertFalse(dispatcher.containsKey(keyC), "cubeC pending ticks must be drained once resumed and executed");
         assertTrue(cubeC.dirty && cubeC.modified && !cubeC.edited, "cubeC must be marked unsaved without edited");
 
         // Remove neighborOfC again for the direct helper checks below.
@@ -679,5 +660,131 @@ class PendingTicksCodecAndDispatchTest {
         assertFalse(ServerCubeWorld.PendingTickDispatcher.runIfLiveFluidTick(
                 new CubeCodec.PendingTick<>(aMismatchFluid, Fluids.LAVA, 0, TickPriority.NORMAL),
                 liveCubes::get, loaded::contains, (f, p) -> fail("mismatched fluid state must not run")));
+    }
+    @Test void midPassForgetAndReadoptWithValueEqualReplacementTickDoesNotConsumeReplacement() {
+        int ax = 0, ay = 4, az = 0;
+        int bx = 10, by = 4, bz = 10;
+        long keyA = CubeKey.pack(ax, ay, az);
+        long keyB = CubeKey.pack(bx, by, bz);
+
+        Cube cubeA = new Cube(ax, ay, az, emptySection());
+        Cube cubeB = new Cube(bx, by, bz, emptySection());
+        Long2ObjectOpenHashMap<Cube> liveCubes = new Long2ObjectOpenHashMap<>();
+        liveCubes.put(keyA, cubeA);
+        liveCubes.put(keyB, cubeB);
+
+        LongOpenHashSet loaded = new LongOpenHashSet();
+        addCubeWithSixNeighbors(loaded, ax, ay, az);
+        addCubeWithSixNeighbors(loaded, bx, by, bz);
+
+        BlockPos aBlockPos = new BlockPos((ax << 4) + 1, (ay << 4) + 1, (az << 4) + 1);
+        BlockPos aFluidPos = new BlockPos((ax << 4) + 2, (ay << 4) + 1, (az << 4) + 1);
+        BlockPos bBlockPos = new BlockPos((bx << 4) + 1, (by << 4) + 1, (bz << 4) + 1);
+        BlockPos bFluidPos = new BlockPos((bx << 4) + 2, (by << 4) + 1, (bz << 4) + 1);
+
+        CubeCodec.PendingTick<Block> aBlock = new CubeCodec.PendingTick<>(aBlockPos, Blocks.SAND, 0, TickPriority.EXTREMELY_HIGH);
+        CubeCodec.PendingTick<Fluid> aFluid = new CubeCodec.PendingTick<>(aFluidPos, Fluids.WATER, 0, TickPriority.EXTREMELY_HIGH);
+        CubeCodec.PendingTick<Block> bBlockOriginal = new CubeCodec.PendingTick<>(bBlockPos, Blocks.SAND, 0, TickPriority.LOW);
+        CubeCodec.PendingTick<Fluid> bFluidOriginal = new CubeCodec.PendingTick<>(bFluidPos, Fluids.WATER, 0, TickPriority.LOW);
+
+        CubeCodec.PendingTick<Block> bBlockReplacement = new CubeCodec.PendingTick<>(bBlockPos, Blocks.SAND, 0, TickPriority.LOW);
+        CubeCodec.PendingTick<Fluid> bFluidReplacement = new CubeCodec.PendingTick<>(bFluidPos, Fluids.WATER, 0, TickPriority.LOW);
+        assertEquals(bBlockOriginal, bBlockReplacement);
+        assertEquals(bFluidOriginal, bFluidReplacement);
+
+        ServerCubeWorld.PendingTickDispatcher dispatcher = new ServerCubeWorld.PendingTickDispatcher();
+        dispatcher.put(keyA, new CubeCodec.PendingTicks(List.of(aBlock), List.of(aFluid)));
+        dispatcher.put(keyB, new CubeCodec.PendingTicks(List.of(bBlockOriginal), List.of(bFluidOriginal)));
+
+        List<CubeCodec.PendingTick<Block>> ranBlocks = new ArrayList<>();
+        List<CubeCodec.PendingTick<Fluid>> ranFluids = new ArrayList<>();
+
+        // Pass 1: cube A's callback forgets cube B and immediately re-adopts cube B with fresh, value-equal ticks.
+        int pass1 = dispatcher.tick(
+                loaded::contains,
+                (x, z) -> true,
+                tick -> {
+                    ranBlocks.add(tick);
+                    if (tick == aBlock) {
+                        dispatcher.remove(keyB);
+                        Cube reAdoptedB = new Cube(bx, by, bz, emptySection());
+                        liveCubes.put(keyB, reAdoptedB);
+                        dispatcher.put(keyB, new CubeCodec.PendingTicks(List.of(bBlockReplacement), List.of(bFluidReplacement)));
+                    }
+                },
+                ranFluids::add,
+                key -> ServerCubeWorld.PendingTickDispatcher.markCubeUnsaved(key, liveCubes::get));
+
+        assertEquals(2, pass1, "only cube A's block and fluid ticks may execute during pass 1");
+        assertEquals(List.of(aBlock), ranBlocks, "stale pass entry for cube B must not consume replacement block tick");
+        assertEquals(List.of(aFluid), ranFluids, "stale pass entry for cube B must not consume replacement fluid tick");
+        assertFalse(dispatcher.containsKey(keyA));
+        assertTrue(dispatcher.containsKey(keyB), "replacement queue for re-adopted cube B must remain intact");
+        assertEquals(List.of(bBlockReplacement), dispatcher.get(keyB).blocks());
+        assertEquals(List.of(bFluidReplacement), dispatcher.get(keyB).fluids());
+        assertFalse(liveCubes.get(keyB).dirty, "re-adopted cube B must not be marked unsaved before its replacement ticks run");
+
+        // Pass 2: the replacement ticks in the newly adopted queue execute cleanly.
+        int pass2 = dispatcher.tick(
+                loaded::contains,
+                (x, z) -> true,
+                ranBlocks::add,
+                ranFluids::add,
+                key -> ServerCubeWorld.PendingTickDispatcher.markCubeUnsaved(key, liveCubes::get));
+
+        assertEquals(2, pass2, "replacement block and fluid ticks must execute on the next pass");
+        assertEquals(List.of(aBlock, bBlockReplacement), ranBlocks);
+        assertEquals(List.of(aFluid, bFluidReplacement), ranFluids);
+        assertFalse(dispatcher.containsKey(keyB));
+        assertTrue(liveCubes.get(keyB).dirty && liveCubes.get(keyB).modified && !liveCubes.get(keyB).edited);
+    }
+
+    @Test void drainingFullCube4096DueTicksPreservesPriorityOrderAndDrainsCleanly() {
+        int cx = 2, cy = 3, cz = -1;
+        long key = CubeKey.pack(cx, cy, cz);
+        LongOpenHashSet loaded = new LongOpenHashSet();
+        addCubeWithSixNeighbors(loaded, cx, cy, cz);
+
+        TickPriority[] priorities = TickPriority.values();
+        List<CubeCodec.PendingTick<Block>> input = new ArrayList<>(4096);
+        int idx = 0;
+        for (int ly = 0; ly < 16; ly++) {
+            for (int lz = 0; lz < 16; lz++) {
+                for (int lx = 0; lx < 16; lx++) {
+                    // Cycle priorities in reverse so sorting must reorder across the full cube while preserving tie order.
+                    TickPriority priority = priorities[priorities.length - 1 - (idx % priorities.length)];
+                    BlockPos pos = new BlockPos((cx << 4) + lx, (cy << 4) + ly, (cz << 4) + lz);
+                    input.add(new CubeCodec.PendingTick<>(pos, (idx & 1) == 0 ? Blocks.SAND : Blocks.GRAVEL, 0, priority));
+                    idx++;
+                }
+            }
+        }
+        assertEquals(4096, input.size());
+
+        List<CubeCodec.PendingTick<Block>> expectedOrder = new ArrayList<>(input);
+        expectedOrder.sort(java.util.Comparator.comparingInt(t -> t.priority().getValue()));
+
+        ServerCubeWorld.PendingTickDispatcher dispatcher = new ServerCubeWorld.PendingTickDispatcher();
+        dispatcher.put(key, new CubeCodec.PendingTicks(input, List.of()));
+
+        List<CubeCodec.PendingTick<Block>> executed = new ArrayList<>(4096);
+        int[] firstMidPassRemaining = {-1};
+        int count = dispatcher.tick(
+                loaded::contains,
+                (x, z) -> true,
+                tick -> {
+                    if (executed.isEmpty()) {
+                        firstMidPassRemaining[0] = dispatcher.get(key).blocks().size();
+                    }
+                    executed.add(tick);
+                },
+                f -> fail("no fluid ticks were queued"),
+                k -> {});
+
+        assertEquals(4096, count, "all 4,096 due ticks must execute in a single pass");
+        assertEquals(4095, firstMidPassRemaining[0], "mid-pass snapshot must immediately exclude the consumed tick");
+        assertEquals(expectedOrder, executed, "all 4,096 ticks must execute in stable ascending TickPriority order");
+        assertFalse(dispatcher.containsKey(key), "cube queue must be removed once all 4,096 ticks drain");
+        assertTrue(dispatcher.isEmpty());
     }
 }

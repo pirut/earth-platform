@@ -132,7 +132,6 @@ public final class ServerCubeWorld extends CubeWorld {
     /** Entities that freshly generated cubes start with (chest minecarts), placed once their chunk ticks entities. */
     private final Long2ObjectOpenHashMap<List<CompoundTag>> unplacedEntities = new Long2ObjectOpenHashMap<>();
     /** Generation-captured structure block and fluid ticks, owned by their cube until due and executed once the cube's chunk ticks and its 6 face neighbors are loaded. */
-    private final Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pendingTicks = new Long2ObjectOpenHashMap<>();
     private final PendingTickDispatcher pendingTickDispatcher = new PendingTickDispatcher();
     private int ticks;
     private boolean closed;
@@ -232,7 +231,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 this.storage::put,
                 entry -> entry.owedAnimals() == unpopulated.contains(entry.key())
                         && Objects.equals(entry.entities(), unplacedEntities.getOrDefault(entry.key(), List.of()))
-                        && Objects.equals(entry.pendingTicks(), pendingTicks.getOrDefault(entry.key(), CubeCodec.PendingTicks.EMPTY)),
+                        && Objects.equals(entry.pendingTicks(), pendingTickDispatcher.getOrDefault(entry.key(), CubeCodec.PendingTicks.EMPTY)),
                 (key, failure) -> EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure));
         workers.execute(() -> {
             try {
@@ -314,8 +313,7 @@ public final class ServerCubeWorld extends CubeWorld {
         super.forget(cube);
         light.remove(cube.key);
         lightStamps.remove(cube.key);
-        pendingTicks.remove(cube.key);
-        pendingTickDispatcher.onUnloaded(cube.key);
+        pendingTickDispatcher.remove(cube.key);
     }
 
     @Override public void blockChanged(BlockPos pos) {
@@ -504,13 +502,7 @@ public final class ServerCubeWorld extends CubeWorld {
         else unplacedEntities.remove(cube.key);
         adopt(cube);
         CubeCodec.PendingTicks validTicks = CubeCodec.filterForCube(cube.key, entry.pendingTicks());
-        if (!validTicks.isEmpty()) {
-            pendingTicks.put(cube.key, validTicks);
-            pendingTickDispatcher.onAdded(cube.key);
-        } else {
-            pendingTicks.remove(cube.key);
-            pendingTickDispatcher.onUnloaded(cube.key);
-        }
+        pendingTickDispatcher.put(cube.key, validTicks);
         surveys.openBehind(cube.x, cube.y, cube.z, openFaces(cube.section), quietCap());
         server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
         CubicPoiClaims.reclaim(server, SectionPos.of(cube.x, cube.y, cube.z));
@@ -828,10 +820,7 @@ public final class ServerCubeWorld extends CubeWorld {
             if (entity != null) cube.blockEntities.put(pos, entity);
         }
         adopt(cube);
-        if (!validTicks.isEmpty()) {
-            pendingTicks.put(result.key, validTicks);
-            pendingTickDispatcher.onAdded(result.key);
-        }
+        if (!validTicks.isEmpty()) pendingTickDispatcher.put(result.key, validTicks);
         surveys.openBehind(cube.x, cube.y, cube.z, result.open, quietCap());
         // Points of interest at cubic heights live only in memory: rebuild them from the blocks.
         server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
@@ -1421,9 +1410,8 @@ public final class ServerCubeWorld extends CubeWorld {
      * never executes against an unloaded cube.
      */
     private void dispatchPendingTicks() {
-        if (pendingTicks.isEmpty() || !server.tickRateManager().runsNormally()) return;
+        if (pendingTickDispatcher.isEmpty() || !server.tickRateManager().runsNormally()) return;
         pendingTickDispatcher.tick(
-                pendingTicks,
                 cubes::containsKey,
                 (cx, cz) -> server.shouldTickBlocksAt(ChunkPos.asLong(cx, cz)),
                 tick -> PendingTickDispatcher.runIfLiveBlockTick(
@@ -1437,32 +1425,138 @@ public final class ServerCubeWorld extends CubeWorld {
 
     /**
      * Cube-owned, neighbor-gated scheduler and executor for generation-captured structure block and
-     * fluid ticks: keeps delayed ticks in {@code pendingTicks} (decrementing remaining delay only
-     * while the cube + all in-range 6 face neighbors are resident and its carrier chunk ticks) and
-     * executes due ticks across all ready cubes in stable ascending
-     * {@link net.minecraft.world.ticks.TickPriority} order so structure fluids and redstone never
-     * run against {@link CubeWorld#UNLOADED} and remaining delays survive unload/reload. Tracks
-     * residency changes so edge-of-volume cubes with missing neighbors are not re-scanned every tick.
+     * fluid ticks: owns per-cube mutable queues (decrementing remaining delay only while the cube +
+     * all in-range 6 face neighbors are resident and its carrier chunk ticks) and executes due ticks
+     * across all ready cubes in stable ascending {@link net.minecraft.world.ticks.TickPriority} order
+     * with O(1) node unlinking and strict queue/node reference identity so structure fluids and
+     * redstone never run against {@link CubeWorld#UNLOADED}, replacement queues are never consumed
+     * by stale pass entries, and remaining delays survive unload/reload. Tracks residency changes so
+     * edge-of-volume cubes with missing neighbors are not re-scanned every tick.
      */
     static final class PendingTickDispatcher {
-        private record DueTick<T>(long cubeKey, CubeCodec.PendingTick<T> tick) {}
+        private static final class TickNode<T> {
+            CubeCodec.PendingTick<T> tick;
+            TickNode<T> prev;
+            TickNode<T> next;
+            boolean active = true;
 
+            TickNode(CubeCodec.PendingTick<T> tick) {
+                this.tick = tick;
+            }
+        }
+
+        private static final class TickList<T> {
+            private TickNode<T> head;
+            private TickNode<T> tail;
+            private int size;
+
+            TickList(List<CubeCodec.PendingTick<T>> ticks) {
+                for (int i = 0; i < ticks.size(); i++) {
+                    append(ticks.get(i));
+                }
+            }
+
+            private void append(CubeCodec.PendingTick<T> tick) {
+                TickNode<T> node = new TickNode<>(tick);
+                if (tail == null) {
+                    head = tail = node;
+                } else {
+                    node.prev = tail;
+                    tail.next = node;
+                    tail = node;
+                }
+                size++;
+            }
+
+            boolean isEmpty() { return size == 0; }
+
+            void unlink(TickNode<T> node) {
+                if (!node.active) return;
+                node.active = false;
+                if (node.prev != null) node.prev.next = node.next;
+                else head = node.next;
+                if (node.next != null) node.next.prev = node.prev;
+                else tail = node.prev;
+                node.prev = null;
+                node.next = null;
+                size--;
+            }
+
+            List<CubeCodec.PendingTick<T>> snapshot() {
+                if (size == 0) return List.of();
+                List<CubeCodec.PendingTick<T>> out = new ArrayList<>(size);
+                for (TickNode<T> node = head; node != null; node = node.next) {
+                    out.add(node.tick);
+                }
+                return out;
+            }
+        }
+
+        private static final class CubeQueue {
+            final TickList<Block> blocks;
+            final TickList<Fluid> fluids;
+            @Nullable private CubeCodec.PendingTicks cachedSnapshot;
+
+            CubeQueue(CubeCodec.PendingTicks ticks) {
+                this.blocks = new TickList<>(ticks.blocks());
+                this.fluids = new TickList<>(ticks.fluids());
+                this.cachedSnapshot = ticks;
+            }
+
+            boolean isEmpty() { return blocks.isEmpty() && fluids.isEmpty(); }
+
+            void invalidateSnapshot() { cachedSnapshot = null; }
+
+            CubeCodec.PendingTicks snapshot() {
+                CubeCodec.PendingTicks snap = cachedSnapshot;
+                if (snap == null) {
+                    snap = isEmpty()
+                            ? CubeCodec.PendingTicks.EMPTY
+                            : new CubeCodec.PendingTicks(blocks.snapshot(), fluids.snapshot());
+                    cachedSnapshot = snap;
+                }
+                return snap;
+            }
+        }
+
+        private record DueTick<T>(long cubeKey, CubeQueue ownerQueue, TickNode<T> node) {}
+
+        private final Long2ObjectOpenHashMap<CubeQueue> queues = new Long2ObjectOpenHashMap<>();
         private final LongOpenHashSet readyNeighbors = new LongOpenHashSet();
         private long residencyVersion;
         private long scannedVersion = -1L;
         private int lastScannedCount;
 
-        void noteResidencyChange() { residencyVersion++; }
+        boolean isEmpty() { return queues.isEmpty(); }
 
-        void onAdded(long key) {
+        boolean containsKey(long key) { return queues.containsKey(key); }
+
+        @Nullable CubeCodec.PendingTicks get(long key) {
+            CubeQueue queue = queues.get(key);
+            return queue == null ? null : queue.snapshot();
+        }
+
+        CubeCodec.PendingTicks getOrDefault(long key, CubeCodec.PendingTicks fallback) {
+            CubeQueue queue = queues.get(key);
+            return queue == null ? fallback : queue.snapshot();
+        }
+
+        void put(long key, @Nullable CubeCodec.PendingTicks ticks) {
+            if (ticks == null || ticks.isEmpty()) {
+                remove(key);
+                return;
+            }
+            queues.put(key, new CubeQueue(ticks));
             readyNeighbors.add(key);
             residencyVersion++;
         }
 
-        void onUnloaded(long key) {
+        void remove(long key) {
+            queues.remove(key);
             readyNeighbors.remove(key);
-            residencyVersion++;
         }
+
+        void noteResidencyChange() { residencyVersion++; }
 
         int lastScannedCount() { return lastScannedCount; }
 
@@ -1509,13 +1603,12 @@ public final class ServerCubeWorld extends CubeWorld {
         }
 
         int tick(
-                Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pendingTicks,
                 LongPredicate cubeLoaded,
                 BiPredicate<Integer, Integer> chunkTicking,
                 Consumer<CubeCodec.PendingTick<Block>> executeBlock,
                 Consumer<CubeCodec.PendingTick<Fluid>> executeFluid,
                 LongConsumer onChanged) {
-            if (pendingTicks.isEmpty()) {
+            if (queues.isEmpty()) {
                 readyNeighbors.clear();
                 scannedVersion = residencyVersion;
                 lastScannedCount = 0;
@@ -1524,7 +1617,7 @@ public final class ServerCubeWorld extends CubeWorld {
             boolean rescanAll = scannedVersion != residencyVersion;
             long[] candidates;
             if (rescanAll) {
-                candidates = pendingTicks.keySet().toLongArray();
+                candidates = queues.keySet().toLongArray();
                 readyNeighbors.clear();
                 scannedVersion = residencyVersion;
             } else {
@@ -1540,14 +1633,14 @@ public final class ServerCubeWorld extends CubeWorld {
             List<DueTick<Block>> dueBlocks = null;
             List<DueTick<Fluid>> dueFluids = null;
             for (long key : candidates) {
-                CubeCodec.PendingTicks ticks = pendingTicks.get(key);
-                if (ticks == null || ticks.isEmpty()) {
-                    pendingTicks.remove(key);
+                CubeQueue queue = queues.get(key);
+                if (queue == null || queue.isEmpty()) {
+                    queues.remove(key);
                     readyNeighbors.remove(key);
                     continue;
                 }
                 if (!cubeLoaded.test(key)) {
-                    pendingTicks.remove(key);
+                    queues.remove(key);
                     readyNeighbors.remove(key);
                     continue;
                 }
@@ -1560,135 +1653,84 @@ public final class ServerCubeWorld extends CubeWorld {
                 if (!chunkTicking.test(cx, cz)) continue;
 
                 boolean decremented = false;
-                List<CubeCodec.PendingTick<Block>> currentBlocks = ticks.blocks();
-                List<CubeCodec.PendingTick<Block>> nextBlocks = null;
-                for (int i = 0; i < currentBlocks.size(); i++) {
-                    CubeCodec.PendingTick<Block> tick = currentBlocks.get(i);
+                for (TickNode<Block> node = queue.blocks.head; node != null; node = node.next) {
+                    CubeCodec.PendingTick<Block> tick = node.tick;
                     if (tick.delay() <= 0) {
                         if (dueBlocks == null) dueBlocks = new ArrayList<>();
-                        dueBlocks.add(new DueTick<>(key, tick));
-                        if (nextBlocks != null) nextBlocks.add(tick);
+                        dueBlocks.add(new DueTick<>(key, queue, node));
                     } else {
-                        if (nextBlocks == null) {
-                            nextBlocks = new ArrayList<>(currentBlocks.size());
-                            for (int j = 0; j < i; j++) nextBlocks.add(currentBlocks.get(j));
-                        }
-                        nextBlocks.add(new CubeCodec.PendingTick<>(tick.pos(), tick.type(), tick.delay() - 1, tick.priority()));
+                        node.tick = new CubeCodec.PendingTick<>(tick.pos(), tick.type(), tick.delay() - 1, tick.priority());
                         decremented = true;
                     }
                 }
-                List<CubeCodec.PendingTick<Fluid>> currentFluids = ticks.fluids();
-                List<CubeCodec.PendingTick<Fluid>> nextFluids = null;
-                for (int i = 0; i < currentFluids.size(); i++) {
-                    CubeCodec.PendingTick<Fluid> tick = currentFluids.get(i);
+                for (TickNode<Fluid> node = queue.fluids.head; node != null; node = node.next) {
+                    CubeCodec.PendingTick<Fluid> tick = node.tick;
                     if (tick.delay() <= 0) {
                         if (dueFluids == null) dueFluids = new ArrayList<>();
-                        dueFluids.add(new DueTick<>(key, tick));
-                        if (nextFluids != null) nextFluids.add(tick);
+                        dueFluids.add(new DueTick<>(key, queue, node));
                     } else {
-                        if (nextFluids == null) {
-                            nextFluids = new ArrayList<>(currentFluids.size());
-                            for (int j = 0; j < i; j++) nextFluids.add(currentFluids.get(j));
-                        }
-                        nextFluids.add(new CubeCodec.PendingTick<>(tick.pos(), tick.type(), tick.delay() - 1, tick.priority()));
+                        node.tick = new CubeCodec.PendingTick<>(tick.pos(), tick.type(), tick.delay() - 1, tick.priority());
                         decremented = true;
                     }
                 }
                 if (decremented) {
-                    pendingTicks.put(key, new CubeCodec.PendingTicks(
-                            nextBlocks != null ? nextBlocks : currentBlocks,
-                            nextFluids != null ? nextFluids : currentFluids));
+                    queue.invalidateSnapshot();
                     onChanged.accept(key);
                 }
             }
 
             int executed = 0;
             if (dueBlocks != null) {
-                if (dueBlocks.size() > 1) dueBlocks.sort(Comparator.comparingInt(d -> d.tick().priority().getValue()));
+                if (dueBlocks.size() > 1) dueBlocks.sort(Comparator.comparingInt(d -> d.node().tick.priority().getValue()));
                 for (DueTick<Block> due : dueBlocks) {
                     long key = due.cubeKey();
+                    if (queues.get(key) != due.ownerQueue() || !due.node().active) continue;
                     if (!cubeLoaded.test(key) || !neighborsLoaded(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), cubeLoaded)) {
                         readyNeighbors.remove(key);
                         continue;
                     }
-                    if (!consumeDueBlockTick(pendingTicks, readyNeighbors, key, due.tick())) continue;
+                    consumeDueBlockTick(key, due.ownerQueue(), due.node());
                     onChanged.accept(key);
-                    executeBlock.accept(due.tick());
+                    executeBlock.accept(due.node().tick);
                     executed++;
                 }
             }
             if (dueFluids != null) {
-                if (dueFluids.size() > 1) dueFluids.sort(Comparator.comparingInt(d -> d.tick().priority().getValue()));
+                if (dueFluids.size() > 1) dueFluids.sort(Comparator.comparingInt(d -> d.node().tick.priority().getValue()));
                 for (DueTick<Fluid> due : dueFluids) {
                     long key = due.cubeKey();
+                    if (queues.get(key) != due.ownerQueue() || !due.node().active) continue;
                     if (!cubeLoaded.test(key) || !neighborsLoaded(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), cubeLoaded)) {
                         readyNeighbors.remove(key);
                         continue;
                     }
-                    if (!consumeDueFluidTick(pendingTicks, readyNeighbors, key, due.tick())) continue;
+                    consumeDueFluidTick(key, due.ownerQueue(), due.node());
                     onChanged.accept(key);
-                    executeFluid.accept(due.tick());
+                    executeFluid.accept(due.node().tick);
                     executed++;
                 }
             }
             return executed;
         }
 
-        private static <T> int findTickIndex(List<CubeCodec.PendingTick<T>> list, CubeCodec.PendingTick<T> target) {
-            for (int i = 0; i < list.size(); i++) {
-                if (list.get(i) == target) return i;
-            }
-            for (int i = 0; i < list.size(); i++) {
-                if (list.get(i).equals(target)) return i;
-            }
-            return -1;
-        }
-
-        private static <T> List<CubeCodec.PendingTick<T>> withoutIndex(List<CubeCodec.PendingTick<T>> list, int removeIndex) {
-            if (list.size() == 1) return List.of();
-            List<CubeCodec.PendingTick<T>> remaining = new ArrayList<>(list.size() - 1);
-            for (int i = 0; i < list.size(); i++) {
-                if (i != removeIndex) remaining.add(list.get(i));
-            }
-            return remaining;
-        }
-
-        private static boolean consumeDueBlockTick(
-                Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pendingTicks,
-                LongOpenHashSet readyNeighbors,
-                long key,
-                CubeCodec.PendingTick<Block> target) {
-            CubeCodec.PendingTicks current = pendingTicks.get(key);
-            if (current == null) return false;
-            int idx = findTickIndex(current.blocks(), target);
-            if (idx < 0) return false;
-            List<CubeCodec.PendingTick<Block>> remainingBlocks = withoutIndex(current.blocks(), idx);
-            if (remainingBlocks.isEmpty() && current.fluids().isEmpty()) {
-                pendingTicks.remove(key);
+        private void consumeDueBlockTick(long key, CubeQueue ownerQueue, TickNode<Block> node) {
+            ownerQueue.blocks.unlink(node);
+            if (ownerQueue.isEmpty()) {
+                queues.remove(key);
                 readyNeighbors.remove(key);
             } else {
-                pendingTicks.put(key, new CubeCodec.PendingTicks(remainingBlocks, current.fluids()));
+                ownerQueue.invalidateSnapshot();
             }
-            return true;
         }
 
-        private static boolean consumeDueFluidTick(
-                Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pendingTicks,
-                LongOpenHashSet readyNeighbors,
-                long key,
-                CubeCodec.PendingTick<Fluid> target) {
-            CubeCodec.PendingTicks current = pendingTicks.get(key);
-            if (current == null) return false;
-            int idx = findTickIndex(current.fluids(), target);
-            if (idx < 0) return false;
-            List<CubeCodec.PendingTick<Fluid>> remainingFluids = withoutIndex(current.fluids(), idx);
-            if (current.blocks().isEmpty() && remainingFluids.isEmpty()) {
-                pendingTicks.remove(key);
+        private void consumeDueFluidTick(long key, CubeQueue ownerQueue, TickNode<Fluid> node) {
+            ownerQueue.fluids.unlink(node);
+            if (ownerQueue.isEmpty()) {
+                queues.remove(key);
                 readyNeighbors.remove(key);
             } else {
-                pendingTicks.put(key, new CubeCodec.PendingTicks(current.blocks(), remainingFluids));
+                ownerQueue.invalidateSnapshot();
             }
-            return true;
         }
     }
 
@@ -1806,7 +1848,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 list.addAll(owed);
                 tag.put(CubeCodec.ENTITIES, list);
             }
-            CubeCodec.writePendingTicks(tag, pendingTicks.get(cube.key));
+            CubeCodec.writePendingTicks(tag, pendingTickDispatcher.get(cube.key));
             storage.put(cube.key, tag);
             cube.dirty = false;
             // Edited rock now comes back from the save, not the generator, so it is never stood in for.
@@ -1840,7 +1882,7 @@ public final class ServerCubeWorld extends CubeWorld {
         boolean owedAnimals = unpopulated.contains(key);
         List<CompoundTag> owed = unplacedEntities.get(key);
         List<CompoundTag> entities = owed == null ? List.of() : List.copyOf(owed);
-        CubeCodec.PendingTicks owedTicks = pendingTicks.getOrDefault(key, CubeCodec.PendingTicks.EMPTY);
+        CubeCodec.PendingTicks owedTicks = pendingTickDispatcher.getOrDefault(key, CubeCodec.PendingTicks.EMPTY);
         untouchedStores.enqueue(cube, owedAnimals, entities, owedTicks, () -> {
             CompoundTag tag = codec.writeGenerated(x, y, z, section, blockEntities, owedTicks);
             if (owedAnimals) tag.putBoolean(CubeCodec.UNPOPULATED, true);
