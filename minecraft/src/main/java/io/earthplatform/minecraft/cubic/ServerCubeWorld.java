@@ -232,11 +232,17 @@ public final class ServerCubeWorld extends CubeWorld {
                 entry -> entry.owedAnimals() == unpopulated.contains(entry.key())
                         && Objects.equals(entry.entities(), unplacedEntities.getOrDefault(entry.key(), List.of()))
                         && Objects.equals(entry.pendingTicks(), pendingTickDispatcher.getOrDefault(entry.key(), CubeCodec.PendingTicks.EMPTY)),
-                (key, failure) -> EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure));
+                (key, failure) -> EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure),
+                UntouchedStoreQueue.DEFAULT_DRAIN_TIMEOUT_MILLIS,
+                System::nanoTime,
+                server.getServer()::isSameThread);
         workers.execute(() -> {
             try {
                 long[] found = storage.savedFrom(SKY_CUBE).toLongArray();
-                if (found.length > 0) server.getServer().execute(() -> skyBuilds.addAll(LongArrayList.wrap(found)));
+                if (found.length > 0) server.getServer().execute(() -> {
+                    if (!server.getServer().isSameThread() || closed || closing) return;
+                    skyBuilds.addAll(LongArrayList.wrap(found));
+                });
             } catch (IOException | RuntimeException failure) {
                 EarthPlatformMod.LOGGER.error("Could not list builds in the sky", failure);
             }
@@ -694,7 +700,11 @@ public final class ServerCubeWorld extends CubeWorld {
         }
         if (tags.isEmpty()) return;
         server.getServer().execute(() -> {
-            int stored = commitPregenerated(keys, tags, () -> closed, cubes::containsKey, untouchedStores, storage);
+            if (!server.getServer().isSameThread()) {
+                if (closed || closing) return;
+                throw new IllegalStateException("Server thread is no longer scheduling tasks");
+            }
+            int stored = commitPregenerated(keys, tags, () -> closed || closing, cubes::containsKey, untouchedStores, storage);
             // Written as it goes, so a long run does not hold every region in memory until the next save.
             if (stored > 0 && (pregenerated += stored) >= 2048) {
                 pregenerated = 0;
@@ -709,6 +719,7 @@ public final class ServerCubeWorld extends CubeWorld {
         return coordinatePregenerateKeys(
                 candidates,
                 server.getServer().isSameThread(),
+                server.getServer()::isSameThread,
                 server.getServer(),
                 () -> closed || closing,
                 cubes::containsKey,
@@ -726,6 +737,14 @@ public final class ServerCubeWorld extends CubeWorld {
                                                    Executor serverThread, BooleanSupplier isClosed,
                                                    LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores,
                                                    long timeoutMillis) {
+        return coordinatePregenerateKeys(candidates, onServerThread, () -> true, serverThread, isClosed, isLoaded, untouchedStores, timeoutMillis);
+    }
+
+    static LongArrayList coordinatePregenerateKeys(LongArrayList candidates, boolean onServerThread,
+                                                   BooleanSupplier isServerThread,
+                                                   Executor serverThread, BooleanSupplier isClosed,
+                                                   LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores,
+                                                   long timeoutMillis) {
         if (onServerThread) {
             return filterPregenerateKeys(candidates, isClosed, isLoaded, untouchedStores);
         }
@@ -733,6 +752,16 @@ public final class ServerCubeWorld extends CubeWorld {
         AtomicBoolean cancelled = new AtomicBoolean();
         serverThread.execute(() -> {
             if (cancelled.get() || checked.isCancelled()) return;
+            // MinecraftServer (BlockableEventLoop) runs execute() inline on the caller thread once stopServer()
+            // disables scheduling; never touch server-thread state (cubes, untouchedStores) off-thread.
+            if (!isServerThread.getAsBoolean()) {
+                if (isClosed.getAsBoolean()) {
+                    checked.complete(new LongArrayList());
+                } else {
+                    checked.completeExceptionally(new IllegalStateException("Server thread is no longer scheduling tasks"));
+                }
+                return;
+            }
             try {
                 checked.complete(filterPregenerateKeys(candidates, isClosed, isLoaded, untouchedStores));
             } catch (Throwable failure) {
@@ -2258,20 +2287,27 @@ public final class ServerCubeWorld extends CubeWorld {
         private final ErrorLogger errorLogger;
         private final long drainTimeoutMillis;
         private final LongSupplier clockNanos;
+        private final BooleanSupplier isServerThread;
 
         UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
                             Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger) {
-            this(isClosed, currentCube, writer, metadataUnchanged, errorLogger, DEFAULT_DRAIN_TIMEOUT_MILLIS, System::nanoTime);
+            this(isClosed, currentCube, writer, metadataUnchanged, errorLogger, DEFAULT_DRAIN_TIMEOUT_MILLIS, System::nanoTime, () -> true);
         }
 
         UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
                             Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger, long drainTimeoutMillis) {
-            this(isClosed, currentCube, writer, metadataUnchanged, errorLogger, drainTimeoutMillis, System::nanoTime);
+            this(isClosed, currentCube, writer, metadataUnchanged, errorLogger, drainTimeoutMillis, System::nanoTime, () -> true);
         }
 
         UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
                             Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger, long drainTimeoutMillis,
                             LongSupplier clockNanos) {
+            this(isClosed, currentCube, writer, metadataUnchanged, errorLogger, drainTimeoutMillis, clockNanos, () -> true);
+        }
+
+        UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
+                            Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger, long drainTimeoutMillis,
+                            LongSupplier clockNanos, BooleanSupplier isServerThread) {
             this.isClosed = isClosed;
             this.currentCube = currentCube;
             this.writer = writer;
@@ -2279,6 +2315,7 @@ public final class ServerCubeWorld extends CubeWorld {
             this.errorLogger = errorLogger;
             this.drainTimeoutMillis = Math.max(1L, drainTimeoutMillis);
             this.clockNanos = Objects.requireNonNull(clockNanos, "clockNanos");
+            this.isServerThread = Objects.requireNonNull(isServerThread, "isServerThread");
         }
 
         private void scheduleRetryBackoff(Entry<T> entry) {
@@ -2318,14 +2355,24 @@ public final class ServerCubeWorld extends CubeWorld {
             try {
                 entry.workerPool.execute(() -> {
                     if (!attempt.claimed.compareAndSet(false, true)) return;
+                    T tag;
                     try {
-                        T tag = entry.encoder.get();
-                        attempt.encoded.complete(tag);
-                        entry.serverThread.execute(() -> onWorkerSuccess(entry, attempt, tag));
+                        tag = entry.encoder.get();
                     } catch (Throwable failure) {
                         attempt.encoded.completeExceptionally(failure);
-                        entry.serverThread.execute(() -> onWorkerFailure(entry, attempt, failure));
+                        entry.serverThread.execute(() -> {
+                            // MinecraftServer (BlockableEventLoop) runs execute() inline on the caller thread
+                            // once stopServer() disables scheduling; leave entry pending for Server thread drain.
+                            if (!isServerThread.getAsBoolean()) return;
+                            onWorkerFailure(entry, attempt, failure);
+                        });
+                        return;
                     }
+                    attempt.encoded.complete(tag);
+                    entry.serverThread.execute(() -> {
+                        if (!isServerThread.getAsBoolean()) return;
+                        onWorkerSuccess(entry, attempt, tag);
+                    });
                 });
             } catch (RejectedExecutionException rejected) {
                 entry.rejected = true;

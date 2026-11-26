@@ -17,6 +17,7 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -1169,5 +1171,186 @@ class ServerCubeWorldResilienceTest {
         IOException wrapped = assertThrows(IOException.class,
                 () -> ServerCubeWorld.finishShutdownDrain(emptyQueue, () -> { throw closeRuntime; }));
         assertSame(closeRuntime, wrapped.getCause());
+    }
+
+    @Test
+    void untouchedStoreQueueIgnoresInlineShutdownCallbacksAndDrainsAllOnServerThread() throws Exception {
+        // Simulates MinecraftServer (BlockableEventLoop): once stopServer() disables scheduling,
+        // execute(Runnable) runs the callback inline on the calling worker thread instead of queueing it.
+        Thread serverThread = Thread.currentThread();
+        AtomicBoolean schedulingEnabled = new AtomicBoolean(true);
+        ConcurrentLinkedQueue<Runnable> queuedForServer = new ConcurrentLinkedQueue<>();
+        AtomicInteger inlineFallbackHits = new AtomicInteger();
+        Executor eventLoop = task -> {
+            if (schedulingEnabled.get()) {
+                queuedForServer.add(task);
+            } else {
+                if (Thread.currentThread() != serverThread) inlineFallbackHits.incrementAndGet();
+                task.run();
+            }
+        };
+
+        Map<Long, String> written = new HashMap<>();
+        AtomicInteger offThreadCurrentCube = new AtomicInteger();
+        AtomicInteger offThreadWrites = new AtomicInteger();
+        AtomicInteger offThreadMetadata = new AtomicInteger();
+        AtomicInteger offThreadErrors = new AtomicInteger();
+        List<Throwable> errors = Collections.synchronizedList(new ArrayList<>());
+
+        var queue = new ServerCubeWorld.UntouchedStoreQueue<String>(
+                () -> false,
+                key -> {
+                    if (Thread.currentThread() != serverThread) offThreadCurrentCube.incrementAndGet();
+                    return null;
+                },
+                (key, tag) -> {
+                    if (Thread.currentThread() != serverThread) offThreadWrites.incrementAndGet();
+                    written.put(key, tag);
+                },
+                entry -> {
+                    if (Thread.currentThread() != serverThread) offThreadMetadata.incrementAndGet();
+                    return true;
+                },
+                (key, failure) -> {
+                    if (Thread.currentThread() != serverThread) offThreadErrors.incrementAndGet();
+                    errors.add(failure);
+                },
+                5_000L,
+                System::nanoTime,
+                () -> Thread.currentThread() == serverThread);
+
+        int totalCubes = 96;
+        int preCompletedCount = 24;
+        int transientFailCount = 4;
+        List<Cube> cubes = new ArrayList<>(totalCubes);
+        CountDownLatch preWaveDone = new CountDownLatch(preCompletedCount);
+        CountDownLatch releaseConcurrentWave = new CountDownLatch(1);
+        CountDownLatch concurrentWaveStarted = new CountDownLatch(6);
+        ExecutorService workers = Executors.newFixedThreadPool(6);
+        try {
+            // Switch event loop to inline fallback as stopServer() begins.
+            schedulingEnabled.set(false);
+            for (int i = 0; i < totalCubes; i++) {
+                int idx = i;
+                Cube cube = new Cube(100 + idx, 10 + (idx % 7), 200 + (idx / 7), null);
+                cube.modified = true;
+                cube.dirty = true;
+                cubes.add(cube);
+                AtomicBoolean failOnce = new AtomicBoolean(idx < transientFailCount);
+                queue.enqueue(cube, false, List.of(), () -> {
+                    if (idx < preCompletedCount) {
+                        try {
+                            if (failOnce.compareAndSet(true, false)) {
+                                throw new RuntimeException("transient-worker-encode-" + idx);
+                            }
+                            return "cube-" + idx;
+                        } finally {
+                            preWaveDone.countDown();
+                        }
+                    }
+                    concurrentWaveStarted.countDown();
+                    try {
+                        releaseConcurrentWave.await(5, TimeUnit.SECONDS);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                    if ((idx & 1) == 0) Thread.yield();
+                    return "cube-" + idx;
+                }, workers, eventLoop);
+            }
+
+            // Wait for wave 1 (including transient failures) to hit inline worker callbacks before drainAll() starts,
+            // and for all 6 workers to be actively running wave 2 concurrently with drainAll().
+            assertTrue(preWaveDone.await(5, TimeUnit.SECONDS));
+            assertTrue(concurrentWaveStarted.await(5, TimeUnit.SECONDS));
+            releaseConcurrentWave.countDown();
+
+            var result = queue.drainAll();
+            workers.shutdown();
+            assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS));
+
+            // Drain any tasks that might have been queued before scheduling stopped: must be harmless no-ops.
+            for (Runnable task; (task = queuedForServer.poll()) != null; ) task.run();
+
+            assertTrue(result.ok(), "drainAll must succeed cleanly without losing cubes: " + result.firstFailure());
+            assertEquals(0, queue.pendingCount(), "all pending cubes must be drained");
+            assertEquals(0, offThreadCurrentCube.get(), "currentCube must never be called off server thread");
+            assertEquals(0, offThreadWrites.get(), "writer.write must never be called off server thread");
+            assertEquals(0, offThreadMetadata.get(), "metadataUnchanged must never be called off server thread");
+            assertEquals(0, offThreadErrors.get(), "errorLogger must never be called off server thread");
+            assertTrue(inlineFallbackHits.get() > 0, "test must exercise inline worker-thread execute() fallback");
+            assertEquals(transientFailCount, errors.size(),
+                    "only the expected transient worker encode failures should be logged on server thread: " + errors);
+            assertEquals(totalCubes, written.size(), "100% of cubes must be written cleanly on server thread");
+            for (int i = 0; i < totalCubes; i++) {
+                Cube cube = cubes.get(i);
+                assertEquals("cube-" + i, written.get(cube.key));
+                assertFalse(cube.dirty, "cube " + i + " dirty flag must be cleared after server-thread commit");
+            }
+        } finally {
+            releaseConcurrentWave.countDown();
+            workers.shutdownNow();
+        }
+    }
+
+    @Test
+    void coordinatePregenerateKeysRejectsInlineOffThreadExecutionDuringShutdown() {
+        AtomicInteger isLoadedCalls = new AtomicInteger();
+        AtomicInteger currentCubeCalls = new AtomicInteger();
+        List<Runnable> workerTasks = new ArrayList<>();
+        var untouched = new ServerCubeWorld.UntouchedStoreQueue<String>(
+                () -> false,
+                key -> {
+                    currentCubeCalls.incrementAndGet();
+                    return null;
+                },
+                (key, tag) -> fail("must not write off-thread"),
+                entry -> true,
+                (key, err) -> fail("unexpected error: " + err));
+        Cube pendingCube = new Cube(7, 8, 9, null);
+        pendingCube.modified = true;
+        pendingCube.dirty = true;
+        untouched.enqueue(pendingCube, false, List.of(), () -> "pending", workerTasks::add, r -> {});
+        LongArrayList candidates = LongArrayList.of(pendingCube.key, CubeKey.pack(7, 9, 9));
+
+        // 1. stopServer() disabled scheduling before ServerCubeWorld.close() set closing=true:
+        //    BlockableEventLoop.execute() runs inline on the caller thread (isServerThread == false).
+        //    Must NOT touch isLoaded or untouchedStores off-thread and must throw so Chunky does not mark column done.
+        IllegalStateException rejected = assertThrows(IllegalStateException.class, () ->
+                ServerCubeWorld.coordinatePregenerateKeys(
+                        candidates,
+                        false,
+                        () -> false,
+                        Runnable::run,
+                        () -> false,
+                        key -> {
+                            isLoadedCalls.incrementAndGet();
+                            return false;
+                        },
+                        untouched,
+                        100L));
+        assertTrue(rejected.getMessage().contains("no longer scheduling"), rejected.getMessage());
+        assertEquals(0, isLoadedCalls.get(), "isLoaded must never be accessed off server thread");
+        assertEquals(0, currentCubeCalls.get(), "untouchedStores must never be drained off server thread");
+        assertEquals(1, untouched.pendingCount(), "pending entry must remain untouched");
+
+        // 2. When the world is already closing/closed and execute() runs inline off-thread:
+        //    still must NEVER touch isLoaded or untouchedStores off-thread, and returns empty cleanly.
+        LongArrayList closedResult = ServerCubeWorld.coordinatePregenerateKeys(
+                candidates,
+                false,
+                () -> false,
+                Runnable::run,
+                () -> true,
+                key -> {
+                    isLoadedCalls.incrementAndGet();
+                    return false;
+                },
+                untouched,
+                100L);
+        assertTrue(closedResult.isEmpty());
+        assertEquals(0, isLoadedCalls.get(), "isLoaded must never be accessed off server thread when closing");
+        assertEquals(0, currentCubeCalls.get(), "untouchedStores must never be drained off server thread when closing");
+        assertEquals(1, untouched.pendingCount());
     }
 }
