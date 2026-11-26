@@ -999,13 +999,18 @@ public final class EarthGenerator extends SurfaceGenerator {
     /**
      * Pure 8-direction exact 2D grid DDA (Amanatides &amp; Woo) from column centre {@code (x + 0.5, z + 0.5)}
      * with exact corner ties ({@code tMaxX == tMaxZ}) and exact half-open {@code [tEnter, tExit)} radial ownership.
-     * Steps through continuously connected water columns up to {@code maxBlocks} (rejecting any dry column or
-     * exact corner-tie dry wall where both flanking orthogonal columns are dry) and probes {@code isFlat}
-     * whenever the column owns a {@code demStepBlocks} multiple ({@code nextDemR < tExit}) or the ray endpoint
-     * ({@code tExit > maxBlocks}).
+     * Uses a mathematically equivalent DEM-first two-pass pre-filter per ray: Pass 1 walks the exact DDA calling
+     * only {@code isFlat} whenever a column owns a {@code demStepBlocks} multiple ({@code nextDemR < tExit}) or
+     * the ray endpoint ({@code tExit > maxBlocks}), stopping at the first flat probe (skipping all {@code isWater}
+     * lookups when no probed column on the ray is flat); Pass 2 verifies continuous water connectivity along the
+     * exact same DDA steps up to and including that first flat column (rejecting any dry column or exact
+     * corner-tie dry wall where both flanking orthogonal columns are dry).
      */
     static boolean hasNearbyFlatWater(int x, int z, double gx, double gz, double maxBlocks, double demStepBlocks,
                                       GridColumnPredicate isWater, GridColumnPredicate isFlat) {
+        if (!(demStepBlocks > 0.0) || !Double.isFinite(demStepBlocks)) {
+            throw new IllegalArgumentException("demStepBlocks must be positive and finite: " + demStepBlocks);
+        }
         double norm = Math.hypot(gx, gz);
         double ux = norm > 1e-6 ? gx / norm : 1.0;
         double uz = norm > 1e-6 ? gz / norm : 0.0;
@@ -1019,16 +1024,57 @@ public final class EarthGenerator extends SurfaceGenerator {
             int stepZ = dirZ > 0.0 ? 1 : (dirZ < 0.0 ? -1 : 0);
             double tDeltaX = stepX != 0 ? 1.0 / Math.abs(dirX) : Double.POSITIVE_INFINITY;
             double tDeltaZ = stepZ != 0 ? 1.0 / Math.abs(dirZ) : Double.POSITIVE_INFINITY;
+
+            // Pass 1 (DEM-only pre-filter): locate the first flat DEM probe along this ray without calling isWater.
             int stepsX = 0, stepsZ = 0;
             double tMaxX = stepX != 0 ? 0.5 * tDeltaX : Double.POSITIVE_INFINITY;
             double tMaxZ = stepZ != 0 ? 0.5 * tDeltaZ : Double.POSITIVE_INFINITY;
             int px = x, pz = z;
             int demSteps = 1;
             double nextDemR = demStepBlocks;
+            int step = 0;
+            int flatStep = -1;
             while (Math.min(tMaxX, tMaxZ) <= maxBlocks) {
                 if (tMaxX == tMaxZ) {
+                    px += stepX;
+                    pz += stepZ;
+                    tMaxX = (++stepsX + 0.5) * tDeltaX;
+                    tMaxZ = (++stepsZ + 0.5) * tDeltaZ;
+                } else if (tMaxX < tMaxZ) {
+                    px += stepX;
+                    tMaxX = (++stepsX + 0.5) * tDeltaX;
+                } else {
+                    pz += stepZ;
+                    tMaxZ = (++stepsZ + 0.5) * tDeltaZ;
+                }
+                step++;
+                double tExit = Math.min(tMaxX, tMaxZ);
+                boolean endpoint = tExit > maxBlocks;
+                if (nextDemR < tExit || endpoint) {
+                    if (isFlat.test(px, pz)) {
+                        flatStep = step;
+                        break;
+                    }
+                    while (nextDemR < tExit) nextDemR = ++demSteps * demStepBlocks;
+                }
+            }
+            if (flatStep < 0) continue;
+
+            // Pass 2 (exact cover continuity): re-walk the exact DDA steps 0..flatStep-1 verifying continuous water.
+            stepsX = 0;
+            stepsZ = 0;
+            tMaxX = stepX != 0 ? 0.5 * tDeltaX : Double.POSITIVE_INFINITY;
+            tMaxZ = stepZ != 0 ? 0.5 * tDeltaZ : Double.POSITIVE_INFINITY;
+            px = x;
+            pz = z;
+            boolean continuous = true;
+            for (int i = 0; i < flatStep; i++) {
+                if (tMaxX == tMaxZ) {
                     int nx = px + stepX, nz = pz + stepZ;
-                    if (!isWater.test(nx, pz) && !isWater.test(px, nz)) break;
+                    if (!isWater.test(nx, pz) && !isWater.test(px, nz)) {
+                        continuous = false;
+                        break;
+                    }
                     px = nx;
                     pz = nz;
                     tMaxX = (++stepsX + 0.5) * tDeltaX;
@@ -1040,14 +1086,12 @@ public final class EarthGenerator extends SurfaceGenerator {
                     pz += stepZ;
                     tMaxZ = (++stepsZ + 0.5) * tDeltaZ;
                 }
-                if (!isWater.test(px, pz)) break;
-                double tExit = Math.min(tMaxX, tMaxZ);
-                boolean endpoint = tExit > maxBlocks;
-                if (nextDemR < tExit || endpoint) {
-                    if (isFlat.test(px, pz)) return true;
-                    while (nextDemR < tExit) nextDemR = ++demSteps * demStepBlocks;
+                if (!isWater.test(px, pz)) {
+                    continuous = false;
+                    break;
                 }
             }
+            if (continuous) return true;
         }
         return false;
     }
@@ -1928,7 +1972,7 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     private int rawCover(CoverMemo memo, int ix, int iz, int voxel) {
         long key = (long) (ix & 0x7FFFFFF) << 31 | (long) (iz & 0x7FFFFFF) << 4 | Integer.numberOfTrailingZeros(voxel) & 15;
-        int slot = (int) (key * 0x9E3779B97F4A7C15L >>> 52);
+        int slot = (int) (key * 0x9E3779B97F4A7C15L >>> COVER_MEMO_SHIFT);
         if (memo.keys[slot] == key) return memo.codes[slot];
         int code = coverAt(ix, iz, voxel);
         memo.keys[slot] = key;
@@ -1968,22 +2012,38 @@ public final class EarthGenerator extends SurfaceGenerator {
     private boolean isWorldCoverWater(CoverMemo memo, int ix, int iz, int voxel) {
         if (cover == null) return false;
         long key = (long) (ix & 0x7FFFFFF) << 31 | (long) (iz & 0x7FFFFFF) << 4 | Integer.numberOfTrailingZeros(voxel) & 15;
-        int slot = (int) (key * 0x9E3779B97F4A7C15L >>> 52);
-        if (memo.keys[slot] == key && memo.codes[slot] == WorldCoverSource.WATER) return true;
+        int slot = (int) (key * 0x9E3779B97F4A7C15L >>> COVER_MEMO_SHIFT);
+        if (memo.wcKeys[slot] == key) return memo.wcWater[slot];
+        if (memo.keys[slot] == key && memo.codes[slot] == WorldCoverSource.WATER) {
+            memo.wcKeys[slot] = key;
+            memo.wcWater[slot] = true;
+            return true;
+        }
         double metresPerBlock = grid.groundMetresPerBlock(ix, iz);
         double x = warpCoverX(ix, iz, voxel, metresPerBlock), z = warpCoverZ(ix, iz, voxel, metresPerBlock);
         int overview = overview(metresPerBlock, voxel);
         GeoPoint point = grid.tryGeographic(x + 0.5, z + 0.5);
-        if (point == null) return false;
-        if (cover.code(point.latitude(), point.longitude(), overview) != WorldCoverSource.WATER) return false;
-        return !iceWater(x, z, overview, metresPerBlock);
+        boolean water = point != null
+                && cover.code(point.latitude(), point.longitude(), overview) == WorldCoverSource.WATER
+                && !iceWater(x, z, overview, metresPerBlock);
+        memo.wcKeys[slot] = key;
+        memo.wcWater[slot] = water;
+        return water;
     }
 
-    /** Recent land cover answers on one thread, by column and voxel size. */
+    private static final int COVER_MEMO_SIZE = 1 << 14;
+    private static final int COVER_MEMO_SHIFT = 64 - 14;
+
+    /** Recent land cover and WorldCover-water answers on one thread, by column and voxel size. */
     private static final class CoverMemo {
-        final long[] keys = new long[4096];
-        final int[] codes = new int[4096];
-        CoverMemo() { Arrays.fill(keys, -1L); }
+        final long[] keys = new long[COVER_MEMO_SIZE];
+        final int[] codes = new int[COVER_MEMO_SIZE];
+        final long[] wcKeys = new long[COVER_MEMO_SIZE];
+        final boolean[] wcWater = new boolean[COVER_MEMO_SIZE];
+        CoverMemo() {
+            Arrays.fill(keys, -1L);
+            Arrays.fill(wcKeys, -1L);
+        }
     }
     private final ThreadLocal<CoverMemo> coverMemo = ThreadLocal.withInitial(CoverMemo::new);
 

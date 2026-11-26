@@ -2043,6 +2043,11 @@ class EarthHydrologyAuditTest {
         assertTrue(
                 EarthGenerator.hasNearbyFlatWater(0, 0, -sqrtHalf, -sqrtHalf, 32.0, 4.0, step10OneFlankWet, (px, pz) -> px >= 10 && pz >= 10),
                 "exact-45° corner tie at step 10 must pass when flanking column (10,9) is wet");
+        EarthGenerator.GridColumnPredicate step10OtherFlankWet =
+                (px, pz) -> px >= 0 && pz >= 0 && !(px == 10 && pz == 9);
+        assertTrue(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -sqrtHalf, -sqrtHalf, 32.0, 4.0, step10OtherFlankWet, (px, pz) -> px >= 10 && pz >= 10),
+                "exact-45° corner tie at step 10 must pass when symmetric flanking column (9,10) is wet");
 
         // 3a. Exact half-open [tEnter, tExit) maxBlocks boundary on cardinal ray:
         //     column +32 owns [31.5, 32.5), so maxBlocks = 31.4999995 must NOT enter or probe +32,
@@ -2094,6 +2099,27 @@ class EarthHydrologyAuditTest {
         assertTrue(
                 EarthGenerator.hasNearbyFlatWater(0, 0, -1.0, 0.0, 10.0, 3.5, (px, pz) -> pz == 0 && px >= 0 && px <= 6, (px, pz) -> px == 4 && pz == 0),
                 "column (4,0) with tEnter == nextDemR (3.5) must own r = 3.5 under half-open [tEnter, tExit)");
+
+        // 4. DEM-first pre-filter: when isFlat is false everywhere, hasNearbyFlatWater must invoke isWater 0 times.
+        AtomicInteger waterCalls = new AtomicInteger();
+        assertFalse(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -1.0, 0.0, 32.0, 4.0, (px, pz) -> {
+                    waterCalls.incrementAndGet();
+                    return true;
+                }, (px, pz) -> false),
+                "hasNearbyFlatWater must return false when no DEM probe is flat");
+        assertEquals(0, waterCalls.get(),
+                "DEM-first pre-filter must make zero isWater calls when no DEM probe is flat");
+
+        // 5. Non-positive or non-finite demStepBlocks must fail fast.
+        assertThrows(IllegalArgumentException.class,
+                () -> EarthGenerator.hasNearbyFlatWater(0, 0, -1.0, 0.0, 32.0, 0.0, (px, pz) -> true, (px, pz) -> false));
+        assertThrows(IllegalArgumentException.class,
+                () -> EarthGenerator.hasNearbyFlatWater(0, 0, -1.0, 0.0, 32.0, -4.0, (px, pz) -> true, (px, pz) -> false));
+        assertThrows(IllegalArgumentException.class,
+                () -> EarthGenerator.hasNearbyFlatWater(0, 0, -1.0, 0.0, 32.0, Double.NaN, (px, pz) -> true, (px, pz) -> false));
+        assertThrows(IllegalArgumentException.class,
+                () -> EarthGenerator.hasNearbyFlatWater(0, 0, -1.0, 0.0, 32.0, Double.POSITIVE_INFINITY, (px, pz) -> true, (px, pz) -> false));
     }
 
     @Test
