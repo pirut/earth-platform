@@ -119,6 +119,7 @@
     "CubicTeleportMixin",
     "CubicItemFrameMixin",
     "CubicBeaconMixin",
+    "CubicMapItemMixin",
     "CubicWitherSkullMixin",
     "CubicDripleafMixin",
     "CubicDripstoneMixin",

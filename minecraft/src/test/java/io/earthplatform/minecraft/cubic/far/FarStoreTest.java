@@ -210,4 +210,41 @@ class FarStoreTest {
         assertTrue(FarServer.mayQueue(FarServer.QUEUED - 1));
         assertFalse(FarServer.mayQueue(FarServer.QUEUED));
     }
+
+    @Test void aChangedStampEmptiesTheStoreAndTheLogSaysWhichPartChanged(@TempDir Path directory) throws Exception {
+        long key = Far.key(3, 5, -9);
+        FarStore store = open(directory, "0.1.0-beta.81|abc|earth-v1|blocks=aa/10,biomes=bb/5", 0);
+        store.put(key, 0, column(1, 500));
+        store.flush();
+        store.close();
+
+        List<String> messages = new ArrayList<>();
+        FarStore again = new FarStore(directory, "0.1.0-beta.81|abc|earth-v1|blocks=cc/11,biomes=bb/5", 0, messages::add);
+        again.flush();
+        assertNull(again.get(key));
+        assertEquals(1, messages.size(), messages.toString());
+        // Only the part that differs is named.
+        assertTrue(messages.get(0).contains("(blocks aa/10 -> cc/11)"), messages.get(0));
+        again.close();
+    }
+
+    @Test void theSameStampKeepsTheColumnsAndSaysNothing(@TempDir Path directory) throws Exception {
+        long key = Far.key(3, 5, -9);
+        String stamp = "0.1.0-beta.82|abc|earth-v1|blocks=aa/10,biomes=bb/5";
+        FarStore store = open(directory, stamp, 0);
+        store.put(key, 0, column(1, 500));
+        store.flush();
+        store.close();
+        List<String> messages = new ArrayList<>();
+        FarStore again = new FarStore(directory, stamp, 0, messages::add);
+        again.flush();
+        assertArrayEquals(column(1, 500), again.get(key));
+        assertTrue(messages.isEmpty(), messages.toString());
+        again.close();
+    }
+
+    @Test void changedNamesOnlyTheDifferingParts() {
+        assertEquals("version 1 -> 2", FarStore.changed("1|1|abc|earth-v1|blocks=a/1,biomes=b/2", "1|2|abc|earth-v1|blocks=a/1,biomes=b/2"));
+        assertEquals("biomes b/2 -> c/3", FarStore.changed("1|1|abc|earth-v1|blocks=a/1,biomes=b/2", "1|1|abc|earth-v1|blocks=a/1,biomes=c/3"));
+    }
 }

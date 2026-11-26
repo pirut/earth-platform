@@ -18,7 +18,9 @@ import io.earthplatform.minecraft.cubic.play.EarthExplorer;
 import io.earthplatform.minecraft.cubic.play.EarthMemory;
 import io.earthplatform.minecraft.cubic.play.EarthRules;
 import io.earthplatform.minecraft.cubic.play.EarthWorlds;
+import io.earthplatform.minecraft.cubic.play.PlaceTrigger;
 import io.earthplatform.minecraft.cubic.portal.CubicTravel;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.SpawnPlacements;
@@ -44,6 +46,7 @@ import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.network.event.RegisterConfigurationTasksEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.registries.RegisterEvent;
 
 /** NeoForge's events, on both sides, handed to the game code. */
 @EventBusSubscriber(modid = EarthPlatformMod.MOD_ID)
@@ -59,6 +62,11 @@ public final class NeoForgeEvents {
             CubePayloads.register(new NeoForgePayloads(event.registrar(CubePayloads.VERSION)));
             EarthWorlds.payloads(new NeoForgePayloads(event.registrar(EarthWorlds.PAYLOADS_VERSION)));
             NeoForgeBuildCheck.register(event.registrar("1"));
+        }
+
+        /** The {@code earthplatform:reached_place} advancement criterion, which datapacks name in their advancements. */
+        @SubscribeEvent public static void criteria(RegisterEvent event) {
+            event.register(Registries.TRIGGER_TYPE, PlaceTrigger.ID, () -> PlaceTrigger.INSTANCE);
         }
 
         @SubscribeEvent public static void configurationTasks(RegisterConfigurationTasksEvent event) { NeoForgeBuildCheck.tasks(event); }

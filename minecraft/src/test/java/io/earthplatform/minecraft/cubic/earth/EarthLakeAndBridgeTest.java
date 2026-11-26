@@ -185,4 +185,42 @@ class EarthLakeAndBridgeTest {
         LevelProbe water = (x, z) -> bridge.cover(x, z) == WorldCoverSource.WATER ? deadSeaLevel : DRY;
         assertEquals(deadSeaLevel, EarthGenerator.bridged(0, 10, 1, bridge, water));
     }
+
+    /** Circular water body of the given radius, in blocks, centred at the origin. */
+    private static EarthGenerator.WaterProbe disc(double radius) {
+        return (x, z) -> x * x + z * z <= radius * radius;
+    }
+
+    /** Deepest centre depth of a lake of this radius under a mountain-relief cap, as {@code lakeDepth} caps it. */
+    private static int centreDepth(double radius, double distance) {
+        double cap = Math.min(EarthGenerator.reliefCap(300.0), EarthGenerator.bodyDepthCap(EarthGenerator.bodyRadius(disc(radius), 0, 0, 1.0)));
+        return EarthGenerator.cappedLakeDepth(distance, 0.0, cap);
+    }
+
+    @Test void mountainFootPondStaysShallow() {
+        // #287: a ~60-block pond at the foot of Wachusett Mountain sits in high relief (full 40-block cap).
+        assertEquals(MAX_LAKE_DEPTH, EarthGenerator.reliefCap(300.0), 1e-6);
+        double radius = EarthGenerator.bodyRadius(disc(60), 0, 0, 1.0);
+        assertTrue(radius < 80, "pond mean shore radius " + radius);
+        int uncapped = EarthGenerator.cappedLakeDepth(60.0, 0.0, MAX_LAKE_DEPTH);
+        int capped = centreDepth(60, 60.0);
+        assertTrue(uncapped >= 10, "uncapped pond depth " + uncapped);
+        assertTrue(capped <= 7, "pond depth should be a few blocks, got " + capped);
+    }
+
+    @Test void largeDeepLakeIsUnchanged() {
+        // Crater Lake / Tahoe / Great Lakes scale: kilometres across, so the size cap never binds.
+        for (double radius : new double[] {500, 3000, 20000}) {
+            double cap = EarthGenerator.bodyDepthCap(EarthGenerator.bodyRadius(disc(radius), 0, 0, 1.0));
+            assertTrue(cap >= MAX_LAKE_DEPTH, "radius " + radius + " cap " + cap);
+            assertEquals(EarthGenerator.cappedLakeDepth(126.0, 0.0, MAX_LAKE_DEPTH), centreDepth(radius, 126.0));
+        }
+        // A coarse voxel scales the rays with it, so a lake that is large at voxel 1 stays large.
+        assertTrue(EarthGenerator.bodyDepthCap(EarthGenerator.bodyRadius(disc(6000), 0, 0, 10.0)) >= MAX_LAKE_DEPTH);
+    }
+
+    @Test void mediumLakeDepthGrowsWithSize() {
+        assertTrue(centreDepth(60, 60.0) <= centreDepth(150, 126.0));
+        assertTrue(centreDepth(150, 126.0) <= centreDepth(500, 126.0));
+    }
 }
