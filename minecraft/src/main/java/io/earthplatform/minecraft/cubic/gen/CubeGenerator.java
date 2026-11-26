@@ -1,9 +1,12 @@
 package io.earthplatform.minecraft.cubic.gen;
 
+import io.earthplatform.minecraft.cubic.CubeCodec;
 import java.util.List;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.material.Fluid;
 
 /**
  * Deterministic cube source. Implementations are called from several worker threads at once and
@@ -19,6 +22,14 @@ public interface CubeGenerator {
      */
     default LevelChunkSection generate(int cubeX, int cubeY, int cubeZ, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
         return generate(cubeX, cubeY, cubeZ);
+    }
+    /**
+     * The same cube, also collecting scheduled block and fluid ticks emitted by generated structures
+     * (at absolute real positions inside the cube) so the server can dispatch them once neighbors load.
+     */
+    default LevelChunkSection generate(int cubeX, int cubeY, int cubeZ, List<CompoundTag> blockEntities, List<CompoundTag> entities,
+                                       List<CubeCodec.PendingTick<Block>> blockTicks, List<CubeCodec.PendingTick<Fluid>> fluidTicks) {
+        return generate(cubeX, cubeY, cubeZ, blockEntities, entities);
     }
     /** The nearest generated structure of a kind (a structure id) within {@code radius} chunks, or null. Slow; call off-thread. */
     default @javax.annotation.Nullable net.minecraft.core.BlockPos locate(java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> structure, int x, int z, int radius) { return null; }

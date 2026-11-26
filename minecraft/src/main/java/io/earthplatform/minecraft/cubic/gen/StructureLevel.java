@@ -1,9 +1,12 @@
 package io.earthplatform.minecraft.cubic.gen;
 
+import io.earthplatform.minecraft.cubic.CubeCodec;
+import io.earthplatform.minecraft.cubic.CubeWorld;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.function.Predicate;
 import javax.annotation.Nullable;
@@ -27,6 +30,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeManager;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -44,17 +48,20 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.lighting.LevelLightEngine;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.ticks.BlackholeTickAccess;
 import net.minecraft.world.ticks.LevelTickAccess;
+import net.minecraft.world.ticks.ScheduledTick;
+import net.minecraft.world.ticks.TickContainerAccess;
+import net.minecraft.world.ticks.TickPriority;
 
 /**
  * A world-generation level that vanilla structure and feature code writes into, as it writes
  * into a chunk region during normal generation. It reads the cubic world's terrain as generated
- * (before anything is placed on it) plus its own writes, and records every block, block entity
- * and entity written, for the cubes they fall in to copy.
+ * (before anything is placed on it) plus its own writes, and records every block, block entity,
+ * entity and scheduled block/fluid tick written, for the cubes they fall in to copy.
  *
  * <p>Vanilla code sees the world in a frame: positions it uses are {@code shift} blocks below
  * the real ones, so structures whose heights vanilla fixes (an ancient city at Y -27) land at
@@ -69,7 +76,7 @@ final class StructureLevel implements WorldGenLevel {
         Holder<Biome> biome(int x, int y, int z);
     }
 
-    private final ServerLevel level;
+    private final @Nullable ServerLevel level;
     private final Terrain terrain;
     final int shift, minY, height, seaLevel;
     private final long seed;
@@ -88,6 +95,9 @@ final class StructureLevel implements WorldGenLevel {
     private final LongOpenHashSet removedBlockEntities = new LongOpenHashSet();
     final List<CompoundTag> entities = new ArrayList<>();
     final LongOpenHashSet postProcess = new LongOpenHashSet();
+    /** Scheduled block and fluid ticks captured from both level-level and chunk-level ({@link View}) calls. */
+    private final CapturingTicks<Block> blockTicks = new CapturingTicks<>(false);
+    private final CapturingTicks<Fluid> fluidTicks = new CapturingTicks<>(true);
     /**
      * Keys pack positions relative to this point: x and z in 16 bits each, y in 32, since a packed
      * BlockPos only holds y -2048..2047 and structures sit far higher (or reach kilometres down).
@@ -95,6 +105,33 @@ final class StructureLevel implements WorldGenLevel {
     private final int anchorX, anchorY, anchorZ;
     /** Writes below this real height are dropped: an ocean monument's legs would otherwise reach a seabed kilometres down. */
     private final int lowest;
+
+    /**
+     * Computes tight section-aligned frame {@code {minY, height}} bounds covering a structure's
+     * real vertical reach {@code [reachMinY, reachMaxY]} with 16-block padding, clamped to the
+     * frame and cubic world range so {@link View#getSections()} allocates ~8–24 sections rather
+     * than the full 2,048-section cubic height. Returns {@code null} when the reach or frame has
+     * no intersection with {@code [CubeWorld.MIN_Y, CubeWorld.MAX_Y]}.
+     */
+    @Nullable static int[] bounds(int reachMinY, int reachMaxY, int frameMinY, int frameHeight, int shift) {
+        if (frameHeight <= 0) return null;
+        int realReachMin = Math.min(reachMinY, reachMaxY);
+        int realReachMax = Math.max(reachMinY, reachMaxY);
+        if (realReachMax < CubeWorld.MIN_Y || realReachMin > CubeWorld.MAX_Y) return null;
+        int clampedMin = Math.max(realReachMin, CubeWorld.MIN_Y);
+        int clampedMax = Math.min(realReachMax, CubeWorld.MAX_Y);
+        int lo = (clampedMin - 16 - shift) & ~15;
+        int top = (clampedMax + 16 - shift + 16) & ~15;
+        int worldLo = (CubeWorld.MIN_Y - shift) & ~15;
+        int worldTop = (CubeWorld.MAX_Y + 1 - shift + 15) & ~15;
+        int clampMin = Math.max(frameMinY & ~15, worldLo);
+        int clampMax = Math.min((frameMinY + frameHeight + 15) & ~15, worldTop);
+        if (clampMax < clampMin + 16) return null;
+        lo = Math.min(Math.max(lo, clampMin), clampMax - 16);
+        top = Math.min(top, clampMax);
+        if (top <= lo) top = lo + 16;
+        return new int[]{lo, top - lo};
+    }
 
     StructureLevel(ServerLevel level, Terrain terrain, int shift, int minY, int height, int seaLevel, BlockPos anchor, int lowest, long seed, RandomSource random) {
         this(level, level.registryAccess().registryOrThrow(Registries.BIOME), terrain, shift, minY, height, seaLevel, anchor, lowest, seed, random);
@@ -106,7 +143,7 @@ final class StructureLevel implements WorldGenLevel {
         this.biomeRegistry = biomeRegistry;
         this.placeholder = new net.minecraft.world.level.chunk.LevelChunkSection(biomeRegistry);
         this.anchorX = anchor.getX(); this.anchorY = anchor.getY(); this.anchorZ = anchor.getZ();
-        this.lowest = lowest;
+        this.lowest = Math.max(lowest, CubeWorld.MIN_Y);
         this.terrain = terrain;
         this.shift = shift; this.minY = minY; this.height = height; this.seaLevel = seaLevel;
         this.seed = seed;
@@ -140,7 +177,89 @@ final class StructureLevel implements WorldGenLevel {
         return tags;
     }
 
+    /**
+     * Captured block ticks at real coordinates, deduplicated (shortest delay / highest priority)
+     * and filtered against the final block state so overwritten blocks do not emit stale ticks.
+     */
+    List<CubeCodec.PendingTick<Block>> capturedBlockTicks() {
+        if (blockTicks.entries.isEmpty()) return List.of();
+        List<CubeCodec.PendingTick<Block>> out = new ArrayList<>(blockTicks.entries.size());
+        for (CubeCodec.PendingTick<Block> tick : blockTicks.entries.values()) {
+            BlockPos pos = tick.pos();
+            if (!CubeWorld.inRange(pos.getY())) continue;
+            if (realState(pos.getX(), pos.getY(), pos.getZ()).is(tick.type())) out.add(tick);
+        }
+        return out;
+    }
+
+    /**
+     * Captured fluid ticks at real coordinates, deduplicated (shortest delay / highest priority)
+     * and filtered against the final fluid state so overwritten fluids do not emit stale ticks.
+     */
+    List<CubeCodec.PendingTick<Fluid>> capturedFluidTicks() {
+        if (fluidTicks.entries.isEmpty()) return List.of();
+        List<CubeCodec.PendingTick<Fluid>> out = new ArrayList<>(fluidTicks.entries.size());
+        for (CubeCodec.PendingTick<Fluid> tick : fluidTicks.entries.values()) {
+            if (tick.type() == Fluids.EMPTY) continue;
+            BlockPos pos = tick.pos();
+            if (!CubeWorld.inRange(pos.getY())) continue;
+            if (realState(pos.getX(), pos.getY(), pos.getZ()).getFluidState().is(tick.type())) out.add(tick);
+        }
+        return out;
+    }
+
+    private long baseGameTime() {
+        return level == null ? 0L : level.getLevelData().getGameTime();
+    }
+
+    private record TickKey<T>(BlockPos pos, T type) {}
+
+    /** Lightweight capturing tick access used for both level-level and chunk ({@link View}) tick scheduling. */
+    private final class CapturingTicks<T> implements LevelTickAccess<T>, TickContainerAccess<T> {
+        private final boolean fluid;
+        final LinkedHashMap<TickKey<T>, CubeCodec.PendingTick<T>> entries = new LinkedHashMap<>();
+
+        CapturingTicks(boolean fluid) { this.fluid = fluid; }
+
+        void record(BlockPos framePos, T type, int delay, TickPriority priority) {
+            if (type == null || (fluid && type == Fluids.EMPTY)) return;
+            BlockPos realPos = real(framePos).immutable();
+            if (!inPlacementBounds(realPos.getY())) return;
+            int clampedDelay = Math.max(0, delay);
+            TickPriority effectivePriority = priority == null ? TickPriority.NORMAL : priority;
+            TickKey<T> key = new TickKey<>(realPos, type);
+            CubeCodec.PendingTick<T> prev = entries.get(key);
+            if (prev == null) {
+                entries.put(key, new CubeCodec.PendingTick<>(realPos, type, clampedDelay, effectivePriority));
+            } else {
+                int bestDelay = Math.min(prev.delay(), clampedDelay);
+                TickPriority bestPriority = effectivePriority.getValue() < prev.priority().getValue() ? effectivePriority : prev.priority();
+                if (bestDelay != prev.delay() || bestPriority != prev.priority()) {
+                    entries.put(key, new CubeCodec.PendingTick<>(realPos, type, bestDelay, bestPriority));
+                }
+            }
+        }
+
+        @Override public void schedule(ScheduledTick<T> tick) {
+            int delay = (int) Math.min(Integer.MAX_VALUE, Math.max(0L, tick.triggerTick() - baseGameTime()));
+            record(tick.pos(), tick.type(), delay, tick.priority());
+        }
+
+        @Override public boolean hasScheduledTick(BlockPos pos, T type) {
+            return entries.containsKey(new TickKey<>(real(pos).immutable(), type));
+        }
+
+        @Override public boolean willTickThisTick(BlockPos pos, T type) { return false; }
+
+        @Override public int count() { return entries.size(); }
+    }
+
     // Blocks -------------------------------------------------------------------------------------
+
+    /** Exact real-Y placement bounds, kept separate from outward 16-block section allocation. */
+    private boolean inPlacementBounds(int realY) {
+        return realY >= lowest && realY <= CubeWorld.MAX_Y;
+    }
 
     /** The block at a real position, written or as generated. */
     BlockState realState(int x, int y, int z) {
@@ -149,14 +268,23 @@ final class StructureLevel implements WorldGenLevel {
     }
 
     /** Writes a plain block (no block entity) at a real position. */
-    void putReal(int x, int y, int z, BlockState state) { blocks.put(key(x, y, z), state); }
+    void putReal(int x, int y, int z, BlockState state) {
+        if (!inPlacementBounds(y)) return;
+        blocks.put(key(x, y, z), state);
+    }
 
-    /** Settles the shapes of blocks marked for it (fences, stairs, panes) against their neighbours, as a chunk does on loading. */
+    /**
+     * Settles the shapes of blocks marked for it (fences, stairs, panes) against their neighbours,
+     * and schedules a delay-0 fluid tick for any non-empty fluid at a marked position, as a chunk
+     * does on loading.
+     */
     void postProcessAll() {
         for (long at : postProcess.toLongArray()) {
             BlockPos pos = at(at).below(shift);
-            BlockState state = getBlockState(pos), settled = net.minecraft.world.level.block.Block.updateFromNeighbourShapes(state, this, pos);
+            BlockState state = getBlockState(pos), settled = Block.updateFromNeighbourShapes(state, this, pos);
             if (settled != state) blocks.put(at, settled);
+            FluidState fluid = settled.getFluidState();
+            if (!fluid.isEmpty()) fluidTicks.record(pos, fluid.getType(), 0, TickPriority.NORMAL);
         }
     }
 
@@ -169,7 +297,7 @@ final class StructureLevel implements WorldGenLevel {
 
     @Override public boolean setBlock(BlockPos pos, BlockState state, int flags, int recursionLeft) {
         BlockPos r = real(pos);
-        if (r.getY() < lowest) return false;
+        if (!inPlacementBounds(r.getY())) return false;
         long key = key(r);
         BlockState old = blocks.get(key);
         if (old == null) old = terrain.block(r.getX(), r.getY(), r.getZ());
@@ -197,7 +325,9 @@ final class StructureLevel implements WorldGenLevel {
      * position of the block it stands at, as one this level makes for a block written.
      */
     void putBlockEntity(BlockEntity entity) {
-        long key = key(real(entity.getBlockPos()));
+        BlockPos r = real(entity.getBlockPos());
+        if (!inPlacementBounds(r.getY())) return;
+        long key = key(r);
         removedBlockEntities.remove(key);
         blockEntities.put(key, entity); // the live one, so later changes to it are kept; moved to real heights when saved
     }
@@ -232,12 +362,23 @@ final class StructureLevel implements WorldGenLevel {
 
     // Entities -----------------------------------------------------------------------------------
 
+    private void shiftEntityTree(Entity root) {
+        if (shift == 0) return;
+        root.getSelfAndPassengers().forEach(e -> e.setPos(e.getX(), e.getY() + shift, e.getZ()));
+    }
+
     @Override public boolean addFreshEntity(Entity entity) {
-        if (shift != 0) entity.setPos(entity.getX(), entity.getY() + shift, entity.getZ());
+        shiftEntityTree(entity);
         CompoundTag tag = new CompoundTag();
         if (entity.saveAsPassenger(tag)) entities.add(tag);
         return true;
     }
+
+    @Override public void addFreshEntityWithPassengers(Entity entity) {
+        // Shift root + all recursive passengers once, then serialize the root once (passengers stay nested in "Passengers").
+        addFreshEntity(entity);
+    }
+
     @Override public <T extends Entity> List<T> getEntities(EntityTypeTest<Entity, T> test, AABB box, Predicate<? super T> predicate) { return Collections.emptyList(); }
     @Override public List<Entity> getEntities(@Nullable Entity except, AABB box, @Nullable Predicate<? super Entity> predicate) { return Collections.emptyList(); }
     @Override public List<? extends Player> players() { return Collections.emptyList(); }
@@ -246,7 +387,6 @@ final class StructureLevel implements WorldGenLevel {
     // Chunks, biomes, light ----------------------------------------------------------------------
 
     @Override public ChunkAccess getChunk(int x, int z, ChunkStatus status, boolean required) {
-        if (!required) return null;
         View view = views.get(ChunkPos.asLong(x, z));
         if (view == null) views.put(ChunkPos.asLong(x, z), view = new View(x, z));
         return view;
@@ -278,7 +418,12 @@ final class StructureLevel implements WorldGenLevel {
             return rows;
         }
 
-        @Override public void markPosForPostprocessing(BlockPos pos) { postProcess.add(key(real(pos))); }
+        @Override public void markPosForPostprocessing(BlockPos pos) {
+            BlockPos r = real(pos);
+            if (inPlacementBounds(r.getY())) postProcess.add(key(r));
+        }
+        @Override public TickContainerAccess<Block> getBlockTicks() { return StructureLevel.this.blockTicks; }
+        @Override public TickContainerAccess<Fluid> getFluidTicks() { return StructureLevel.this.fluidTicks; }
         @Nullable @Override public BlockEntity getBlockEntity(BlockPos pos) { return StructureLevel.this.getBlockEntity(pos); }
         @Override public void setBlockEntity(BlockEntity entity) { StructureLevel.this.putBlockEntity(entity); }
         @Override public void removeBlockEntity(BlockPos pos) { removeBlockEntityAt(pos); }
@@ -351,11 +496,15 @@ final class StructureLevel implements WorldGenLevel {
     @Override public MinecraftServer getServer() { return level.getServer(); }
     @Override public ChunkSource getChunkSource() { return level.getChunkSource(); }
     @Override public WorldBorder getWorldBorder() { return level.getWorldBorder(); }
-    @Override public DimensionType dimensionType() { return level.dimensionType(); }
+    @Override public DimensionType dimensionType() { return level == null ? ModOres.DEFAULT_DIMENSION_TYPE : level.dimensionType(); }
     @Override public boolean isClientSide() { return false; }
     @Override public long nextSubTickCount() { return 0; }
-    @Override public LevelTickAccess<net.minecraft.world.level.block.Block> getBlockTicks() { return BlackholeTickAccess.emptyLevelList(); }
-    @Override public LevelTickAccess<Fluid> getFluidTicks() { return BlackholeTickAccess.emptyLevelList(); }
+    @Override public LevelTickAccess<Block> getBlockTicks() { return blockTicks; }
+    @Override public LevelTickAccess<Fluid> getFluidTicks() { return fluidTicks; }
+    @Override public void scheduleTick(BlockPos pos, Block block, int delay, TickPriority priority) { blockTicks.record(pos, block, delay, priority); }
+    @Override public void scheduleTick(BlockPos pos, Block block, int delay) { blockTicks.record(pos, block, delay, TickPriority.NORMAL); }
+    @Override public void scheduleTick(BlockPos pos, Fluid fluid, int delay, TickPriority priority) { fluidTicks.record(pos, fluid, delay, priority); }
+    @Override public void scheduleTick(BlockPos pos, Fluid fluid, int delay) { fluidTicks.record(pos, fluid, delay, TickPriority.NORMAL); }
     @Override public void playSound(@Nullable Player player, BlockPos pos, SoundEvent sound, SoundSource source, float volume, float pitch) {}
     @Override public void addParticle(ParticleOptions particle, double x, double y, double z, double dx, double dy, double dz) {}
     @Override public void levelEvent(@Nullable Player player, int type, BlockPos pos, int data) {}

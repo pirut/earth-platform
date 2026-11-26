@@ -49,12 +49,22 @@ final class Structures {
     /** Draws every structure part inside a cube, in vanilla's order: geodes, then dungeons. */
     void place(LevelChunkSection section, int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
         Cut cut = new Cut(section, cx, cy, cz, blockEntities, entities);
-        for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
+        for (int dy = -2; dy <= 1; dy++) for (int dz = -2; dz <= 1; dz++) for (int dx = -2; dx <= 1; dx++)
             cached(geodes, cx + dx, cy + dy, cz + dz, this::planGeode).ifPresent(g -> drawGeode(g, cut));
         for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
             cached(fossils, cx + dx, cy + dy, cz + dz, this::planFossil).ifPresent(f -> drawFossil(f, cut));
         for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
             cached(dungeons, cx + dx, cy + dy, cz + dz, this::planDungeon).ifPresent(d -> drawDungeon(d, cut));
+    }
+
+    /** For tests: returns {@code {first.x, first.y, first.z}} if a geode originates in cube {@code (cx, cy, cz)}, else null. */
+    @Nullable int[] geodeOriginForTest(int cx, int cy, int cz) {
+        return cached(geodes, cx, cy, cz, this::planGeode)
+                .map(g -> {
+                    Point first = g.points.get(0);
+                    return new int[]{first.x, first.y, first.z};
+                })
+                .orElse(null);
     }
 
     private interface Planner<T> { Optional<T> plan(int x, int y, int z); }
@@ -200,9 +210,15 @@ final class Structures {
 
     private void drawGeode(Geode g, Cut cut) {
         Point first = g.points.get(0);
-        for (int y = Math.max(cut.y0, first.y - 16); y <= Math.min(cut.y0 + 15, first.y + 12); y++)
-            for (int z = Math.max(cut.z0, first.z - 16); z <= Math.min(cut.z0 + 15, first.z + 12); z++)
-                for (int x = Math.max(cut.x0, first.x - 16); x <= Math.min(cut.x0 + 15, first.x + 12); x++) {
+        int minY = Math.max(cut.y0, first.y - 16), maxY = Math.min(cut.y0 + 15, first.y + 12);
+        if (minY > maxY) return;
+        int minZ = Math.max(cut.z0, first.z - 16), maxZ = Math.min(cut.z0 + 15, first.z + 12);
+        if (minZ > maxZ) return;
+        int minX = Math.max(cut.x0, first.x - 16), maxX = Math.min(cut.x0 + 15, first.x + 12);
+        if (minX > maxX) return;
+        for (int y = minY; y <= maxY; y++)
+            for (int z = minZ; z <= maxZ; z++)
+                for (int x = minX; x <= maxX; x++) {
                     Shell shell = shell(g, x, y, z);
                     if (shell == Shell.NONE) continue;
                     long r = ground.mix(x ^ g.salt, y, z);
@@ -215,9 +231,9 @@ final class Structures {
                     cut.set(x, y, z, state);
                 }
         // Crystals grow from some budding blocks into the hollow, on the first open side.
-        for (int y = Math.max(cut.y0, first.y - 16); y <= Math.min(cut.y0 + 15, first.y + 12); y++)
-            for (int z = Math.max(cut.z0, first.z - 16); z <= Math.min(cut.z0 + 15, first.z + 12); z++)
-                for (int x = Math.max(cut.x0, first.x - 16); x <= Math.min(cut.x0 + 15, first.x + 12); x++) {
+        for (int y = minY; y <= maxY; y++)
+            for (int z = minZ; z <= maxZ; z++)
+                for (int x = minX; x <= maxX; x++) {
                     if (!cut.get(x, y, z).isAir() || shell(g, x, y, z) != Shell.AIR) continue;
                     for (Direction d : Direction.values()) {
                         int bx = x - d.getStepX(), by = y - d.getStepY(), bz = z - d.getStepZ();
