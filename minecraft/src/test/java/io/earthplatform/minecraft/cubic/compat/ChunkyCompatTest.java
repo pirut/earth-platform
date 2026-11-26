@@ -8,8 +8,16 @@ import io.earthplatform.minecraft.cubic.ServerCubeWorldTestBridge;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class ChunkyCompatTest {
@@ -53,10 +61,12 @@ class ChunkyCompatTest {
                 4,
                 -7,
                 () -> ServerCubeWorldTestBridge.submitPregeneratedCommit(
+                        false,
+                        () -> false,
                         Runnable::run,
                         () -> false,
-                        () -> false,
-                        () -> fail("commit must not execute off server thread")),
+                        () -> fail("commit must not execute off server thread"),
+                        100L),
                 Runnable::run);
 
         assertTrue(beforeClose.isCompletedExceptionally());
@@ -70,10 +80,12 @@ class ChunkyCompatTest {
                 4,
                 -7,
                 () -> ServerCubeWorldTestBridge.submitPregeneratedCommit(
-                        Runnable::run,
+                        false,
                         () -> false,
+                        Runnable::run,
                         () -> true,
-                        () -> fail("commit must not execute off server thread when closing")),
+                        () -> fail("commit must not execute off server thread when closing"),
+                        100L),
                 Runnable::run);
 
         assertTrue(whileClosing.isCompletedExceptionally());
@@ -84,6 +96,47 @@ class ChunkyCompatTest {
 
         assertEquals(failuresBefore, ChunkyCompat.failureCount(),
                 "shutdown rejections must not increment tile-server failure counter");
+    }
+
+    @Test
+    void generateAsyncFailsWhenWorldClosesAfterQueuingCommitOnServerThread() throws Exception {
+        int failuresBefore = ChunkyCompat.failureCount();
+        AtomicBoolean closing = new AtomicBoolean(false);
+        AtomicInteger commitCalls = new AtomicInteger();
+        BlockingQueue<Runnable> serverQueue = new LinkedBlockingQueue<>();
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            CompletableFuture<Void> future = ChunkyCompat.generateAsync(
+                    4,
+                    -7,
+                    () -> ServerCubeWorldTestBridge.submitPregeneratedCommit(
+                            false,
+                            () -> true,
+                            serverQueue::add,
+                            closing::get,
+                            commitCalls::incrementAndGet,
+                            5_000L),
+                    worker);
+
+            Runnable queuedTask = serverQueue.poll(5, TimeUnit.SECONDS);
+            assertNotNull(queuedTask, "commit task must be queued on server thread");
+            assertFalse(future.isDone(), "Chunky future must not complete before the server-thread commit finishes");
+
+            // World starts closing after the commit task was queued but before the server thread executes it.
+            closing.set(true);
+            assertDoesNotThrow(queuedTask::run, "queued server-thread commit task must never throw into server executor");
+            assertEquals(0, commitCalls.get(), "commit callback must never run once world is closing");
+
+            ExecutionException execution = assertThrows(ExecutionException.class, () -> future.get(5, TimeUnit.SECONDS));
+            ServerCubeWorld.PregenerationRejectedException rejected =
+                    assertInstanceOf(ServerCubeWorld.PregenerationRejectedException.class, execution.getCause());
+            assertTrue(rejected.getMessage().contains("closing"), rejected.getMessage());
+            assertTrue(future.isCompletedExceptionally());
+            assertEquals(failuresBefore, ChunkyCompat.failureCount(),
+                    "shutdown rejection must not increment tile-server failure counter");
+        } finally {
+            worker.shutdownNow();
+        }
     }
 
     @Test

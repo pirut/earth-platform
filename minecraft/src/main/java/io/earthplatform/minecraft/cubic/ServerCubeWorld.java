@@ -716,33 +716,117 @@ public final class ServerCubeWorld extends CubeWorld {
             keys.add(key);
             tags.add(tag);
         }
-        if (tags.isEmpty()) return;
         if (closed || closing) throw new PregenerationRejectedException("Earth world is closing");
-        submitPregeneratedCommit(server.getServer(), server.getServer()::isSameThread, () -> closed || closing, () -> {
-            int stored = commitPregenerated(keys, tags, () -> closed || closing, cubes::containsKey, untouchedStores, storage);
-            // Written as it goes, so a long run does not hold every region in memory until the next save.
-            if (stored > 0 && (pregenerated += stored) >= 2048) {
-                pregenerated = 0;
-                storage.flushLater();
-            }
-        });
+        if (tags.isEmpty()) return;
+        submitPregeneratedCommit(
+                server.getServer().isSameThread(),
+                server.getServer()::isSameThread,
+                server.getServer(),
+                () -> closed || closing,
+                () -> {
+                    int stored = commitPregenerated(keys, tags, () -> closed || closing, cubes::containsKey, untouchedStores, storage);
+                    // Written as it goes, so a long run does not hold every region in memory until the next save.
+                    if (stored > 0 && (pregenerated += stored) >= 2048) {
+                        pregenerated = 0;
+                        storage.flushLater();
+                    }
+                },
+                PREGENERATE_COORDINATION_TIMEOUT_MILLIS);
     }
 
     /**
-     * Schedules the server-thread commit for a pregenerated column. When {@code serverThread.execute}
-     * falls back to inline execution on the caller thread during shutdown ({@code !isServerThread}),
-     * rejects the column with {@link PregenerationRejectedException} instead of touching server-thread
-     * state off-thread or returning normally. Never throws on the server thread.
+     * Schedules the server-thread commit for a pregenerated column and captures its outcome in the returned
+     * future. Never lets unchecked exceptions or shutdown rejections escape into the server executor or out
+     * of the direct server-thread branch.
      */
-    static void submitPregeneratedCommit(Executor serverThread, BooleanSupplier isServerThread,
-                                         BooleanSupplier isClosed, Runnable commitOnServerThread) {
-        serverThread.execute(() -> {
-            if (!isServerThread.getAsBoolean()) {
-                throw new PregenerationRejectedException(
-                        isClosed.getAsBoolean() ? "Earth world is closing" : "Server thread is no longer scheduling tasks");
+    static CompletableFuture<Void> schedulePregeneratedCommit(boolean onServerThread,
+                                                              BooleanSupplier isServerThread,
+                                                              Executor serverThread,
+                                                              BooleanSupplier isClosed,
+                                                              Runnable commitOnServerThread,
+                                                              AtomicBoolean cancelled) {
+        CompletableFuture<Void> committed = new CompletableFuture<>();
+        if (onServerThread) {
+            if (cancelled.get()) {
+                committed.cancel(false);
+                return committed;
             }
-            commitOnServerThread.run();
-        });
+            try {
+                if (isClosed.getAsBoolean()) {
+                    committed.completeExceptionally(new PregenerationRejectedException("Earth world is closing"));
+                    return committed;
+                }
+                commitOnServerThread.run();
+                committed.complete(null);
+            } catch (Throwable failure) {
+                committed.completeExceptionally(failure);
+            }
+            return committed;
+        }
+        try {
+            serverThread.execute(() -> {
+                if (cancelled.get() || committed.isCancelled()) return;
+                try {
+                    // MinecraftServer (BlockableEventLoop) runs execute() inline on the caller thread once stopServer()
+                    // disables scheduling; never touch server-thread state off-thread.
+                    if (!isServerThread.getAsBoolean()) {
+                        committed.completeExceptionally(new PregenerationRejectedException(
+                                isClosed.getAsBoolean() ? "Earth world is closing" : "Server thread is no longer scheduling tasks"));
+                        return;
+                    }
+                    if (isClosed.getAsBoolean()) {
+                        committed.completeExceptionally(new PregenerationRejectedException("Earth world is closing"));
+                        return;
+                    }
+                    commitOnServerThread.run();
+                    committed.complete(null);
+                } catch (Throwable failure) {
+                    committed.completeExceptionally(failure);
+                }
+            });
+        } catch (RejectedExecutionException rejected) {
+            committed.completeExceptionally(new PregenerationRejectedException(
+                    isClosed.getAsBoolean() ? "Earth world is closing" : "Server thread rejected pregeneration commit",
+                    rejected));
+        }
+        return committed;
+    }
+
+    /**
+     * Submits and awaits the server-thread commit for a pregenerated column. Rejects with
+     * {@link PregenerationRejectedException} if the world closes before the commit runs, if scheduling
+     * falls back inline off-thread during shutdown, or if waiting times out or is interrupted (cancelling
+     * the queued task so any late execution is a no-op).
+     */
+    static void submitPregeneratedCommit(boolean onServerThread, BooleanSupplier isServerThread,
+                                         Executor serverThread, BooleanSupplier isClosed,
+                                         Runnable commitOnServerThread, long timeoutMillis) {
+        AtomicBoolean cancelled = new AtomicBoolean();
+        CompletableFuture<Void> committed = schedulePregeneratedCommit(
+                onServerThread, isServerThread, serverThread, isClosed, commitOnServerThread, cancelled);
+        try {
+            committed.get(Math.max(1L, timeoutMillis), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            cancelled.set(true);
+            committed.cancel(false);
+            Thread.currentThread().interrupt();
+            throw new PregenerationRejectedException(
+                    isClosed.getAsBoolean() ? "Earth world is closing" : "Interrupted waiting for server thread commit during pregeneration",
+                    interrupted);
+        } catch (TimeoutException timedOut) {
+            cancelled.set(true);
+            committed.cancel(false);
+            throw new PregenerationRejectedException(
+                    isClosed.getAsBoolean() ? "Earth world is closing" : "Timed out waiting " + timeoutMillis + " ms for server thread commit during pregeneration",
+                    timedOut);
+        } catch (ExecutionException failed) {
+            cancelled.set(true);
+            committed.cancel(false);
+            Throwable cause = failed.getCause() != null ? failed.getCause() : failed;
+            if (cause instanceof RuntimeException runtime) throw runtime;
+            if (cause instanceof Error error) throw error;
+            throw new PregenerationRejectedException("Server thread pregeneration commit failed", cause);
+        }
     }
 
     private static final long PREGENERATE_COORDINATION_TIMEOUT_MILLIS = 5_000L;
@@ -772,34 +856,65 @@ public final class ServerCubeWorld extends CubeWorld {
         return coordinatePregenerateKeys(candidates, onServerThread, () -> true, serverThread, isClosed, isLoaded, untouchedStores, timeoutMillis);
     }
 
-    static LongArrayList coordinatePregenerateKeys(LongArrayList candidates, boolean onServerThread,
-                                                   BooleanSupplier isServerThread,
-                                                   Executor serverThread, BooleanSupplier isClosed,
-                                                   LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores,
-                                                   long timeoutMillis) {
-        if (onServerThread) {
-            return filterPregenerateKeys(candidates, isClosed, isLoaded, untouchedStores);
-        }
+    /**
+     * Schedules or runs pregeneration key filtering and captures any {@link Throwable} in the returned
+     * future on both direct ({@code onServerThread == true}) and queued paths.
+     */
+    static CompletableFuture<LongArrayList> coordinatePregenerateKeysAsync(LongArrayList candidates, boolean onServerThread,
+                                                                           BooleanSupplier isServerThread,
+                                                                           Executor serverThread, BooleanSupplier isClosed,
+                                                                           LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores,
+                                                                           AtomicBoolean cancelled) {
         CompletableFuture<LongArrayList> checked = new CompletableFuture<>();
-        AtomicBoolean cancelled = new AtomicBoolean();
-        serverThread.execute(() -> {
-            if (cancelled.get() || checked.isCancelled()) return;
-            // MinecraftServer (BlockableEventLoop) runs execute() inline on the caller thread once stopServer()
-            // disables scheduling; never touch server-thread state (cubes, untouchedStores) off-thread.
-            if (!isServerThread.getAsBoolean()) {
-                if (isClosed.getAsBoolean()) {
-                    checked.complete(new LongArrayList());
-                } else {
-                    checked.completeExceptionally(new PregenerationRejectedException("Server thread is no longer scheduling tasks"));
-                }
-                return;
+        if (onServerThread) {
+            if (cancelled.get()) {
+                checked.cancel(false);
+                return checked;
             }
             try {
                 checked.complete(filterPregenerateKeys(candidates, isClosed, isLoaded, untouchedStores));
             } catch (Throwable failure) {
                 checked.completeExceptionally(failure);
             }
-        });
+            return checked;
+        }
+        try {
+            serverThread.execute(() -> {
+                if (cancelled.get() || checked.isCancelled()) return;
+                try {
+                    // MinecraftServer (BlockableEventLoop) runs execute() inline on the caller thread once stopServer()
+                    // disables scheduling; never touch server-thread state (cubes, untouchedStores) off-thread.
+                    if (!isServerThread.getAsBoolean()) {
+                        if (isClosed.getAsBoolean()) {
+                            checked.complete(new LongArrayList());
+                        } else {
+                            checked.completeExceptionally(new PregenerationRejectedException("Server thread is no longer scheduling tasks"));
+                        }
+                        return;
+                    }
+                    checked.complete(filterPregenerateKeys(candidates, isClosed, isLoaded, untouchedStores));
+                } catch (Throwable failure) {
+                    checked.completeExceptionally(failure);
+                }
+            });
+        } catch (RejectedExecutionException rejected) {
+            if (isClosed.getAsBoolean()) {
+                checked.complete(new LongArrayList());
+            } else {
+                checked.completeExceptionally(new PregenerationRejectedException("Server thread rejected pregeneration coordination", rejected));
+            }
+        }
+        return checked;
+    }
+
+    static LongArrayList coordinatePregenerateKeys(LongArrayList candidates, boolean onServerThread,
+                                                   BooleanSupplier isServerThread,
+                                                   Executor serverThread, BooleanSupplier isClosed,
+                                                   LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores,
+                                                   long timeoutMillis) {
+        AtomicBoolean cancelled = new AtomicBoolean();
+        CompletableFuture<LongArrayList> checked = coordinatePregenerateKeysAsync(
+                candidates, onServerThread, isServerThread, serverThread, isClosed, isLoaded, untouchedStores, cancelled);
         try {
             return checked.get(Math.max(1L, timeoutMillis), TimeUnit.MILLISECONDS);
         } catch (InterruptedException interrupted) {

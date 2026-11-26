@@ -1355,48 +1355,233 @@ class ServerCubeWorldResilienceTest {
     }
 
     @Test
-    void submitPregeneratedCommitRejectsOffThreadInlineExecutionAndRunsOnServerThread() {
+    void submitPregeneratedCommitRejectsOffThreadInlineExecutionAndRunsOnServerThread() throws Exception {
         AtomicInteger commitCalls = new AtomicInteger();
 
         // 1. Off-thread inline fallback before isClosed == true must reject without running commitOnServerThread.
         ServerCubeWorld.PregenerationRejectedException notScheduling = assertThrows(
                 ServerCubeWorld.PregenerationRejectedException.class,
                 () -> ServerCubeWorld.submitPregeneratedCommit(
+                        false,
+                        () -> false,
                         Runnable::run,
                         () -> false,
-                        () -> false,
-                        commitCalls::incrementAndGet));
+                        commitCalls::incrementAndGet,
+                        100L));
         assertTrue(notScheduling.getMessage().contains("no longer scheduling"), notScheduling.getMessage());
         assertEquals(0, commitCalls.get(), "commit must never execute off server thread");
 
         // 2. Off-thread inline fallback after isClosed == true must also reject without running commitOnServerThread.
-        ServerCubeWorld.PregenerationRejectedException closing = assertThrows(
+        ServerCubeWorld.PregenerationRejectedException closingInline = assertThrows(
                 ServerCubeWorld.PregenerationRejectedException.class,
                 () -> ServerCubeWorld.submitPregeneratedCommit(
-                        Runnable::run,
+                        false,
                         () -> false,
+                        Runnable::run,
                         () -> true,
-                        commitCalls::incrementAndGet));
-        assertTrue(closing.getMessage().contains("closing"), closing.getMessage());
+                        commitCalls::incrementAndGet,
+                        100L));
+        assertTrue(closingInline.getMessage().contains("closing"), closingInline.getMessage());
         assertEquals(0, commitCalls.get(), "commit must never execute off server thread when closing");
 
-        // 3. On the server thread (isServerThread == true), commitOnServerThread runs normally and never throws,
-        //    even if isClosed flipped true after enqueueing (commitPregenerated handles isClosed cleanly).
+        // 3. Queued commit running on the server thread while open completes normally.
         List<Runnable> serverQueue = new ArrayList<>();
-        ServerCubeWorld.submitPregeneratedCommit(
-                serverQueue::add,
+        CompletableFuture<Void> queuedOpen = ServerCubeWorld.schedulePregeneratedCommit(
+                false,
                 () -> true,
+                serverQueue::add,
                 () -> false,
-                commitCalls::incrementAndGet);
+                commitCalls::incrementAndGet,
+                new AtomicBoolean());
         assertEquals(1, serverQueue.size());
+        assertFalse(queuedOpen.isDone());
         assertDoesNotThrow(() -> serverQueue.remove(0).run());
+        assertDoesNotThrow(() -> queuedOpen.get(1, TimeUnit.SECONDS));
         assertEquals(1, commitCalls.get());
 
+        // 4. Queued commit when world flips closing before the server thread executes it:
+        //    never throws into the server executor, skips commit callback, and fails future with PregenerationRejectedException.
+        AtomicBoolean worldClosing = new AtomicBoolean(false);
+        CompletableFuture<Void> queuedClosing = ServerCubeWorld.schedulePregeneratedCommit(
+                false,
+                () -> true,
+                serverQueue::add,
+                worldClosing::get,
+                commitCalls::incrementAndGet,
+                new AtomicBoolean());
+        assertEquals(1, serverQueue.size());
+        worldClosing.set(true);
+        assertDoesNotThrow(() -> serverQueue.remove(0).run(), "server-thread task must never throw on closing");
+        assertEquals(1, commitCalls.get(), "commit callback must not run after world begins closing");
+        ExecutionException closingExec = assertThrows(ExecutionException.class, queuedClosing::get);
+        ServerCubeWorld.PregenerationRejectedException queuedRejected =
+                assertInstanceOf(ServerCubeWorld.PregenerationRejectedException.class, closingExec.getCause());
+        assertTrue(queuedRejected.getMessage().contains("closing"), queuedRejected.getMessage());
+
+        // 5. Direct server-thread path (onServerThread == true): runs when open, rejects cleanly via future when closing.
         ServerCubeWorld.submitPregeneratedCommit(
+                true,
+                () -> true,
+                Runnable::run,
+                () -> false,
+                commitCalls::incrementAndGet,
+                100L);
+        assertEquals(2, commitCalls.get());
+
+        CompletableFuture<Void> directClosing = assertDoesNotThrow(() -> ServerCubeWorld.schedulePregeneratedCommit(
+                true,
+                () -> true,
                 Runnable::run,
                 () -> true,
+                commitCalls::incrementAndGet,
+                new AtomicBoolean()));
+        assertEquals(2, commitCalls.get(), "direct server-thread commit must not run when closing");
+        ExecutionException directClosingExec = assertThrows(ExecutionException.class, directClosing::get);
+        assertInstanceOf(ServerCubeWorld.PregenerationRejectedException.class, directClosingExec.getCause());
+    }
+
+    @Test
+    void pregeneratedCommitCapturesCallbackFailuresWithoutThrowingIntoServerExecutor() {
+        IllegalStateException boom = new IllegalStateException("commit callback boom");
+        List<Runnable> serverQueue = new ArrayList<>();
+
+        // 1. Queued path: running the queued task on the server executor must NOT throw; failure is captured in future.
+        CompletableFuture<Void> queuedFuture = ServerCubeWorld.schedulePregeneratedCommit(
+                false,
                 () -> true,
-                commitCalls::incrementAndGet);
-        assertEquals(2, commitCalls.get(), "server thread must never throw PregenerationRejectedException");
+                serverQueue::add,
+                () -> false,
+                () -> { throw boom; },
+                new AtomicBoolean());
+        assertEquals(1, serverQueue.size());
+        assertDoesNotThrow(() -> serverQueue.remove(0).run(),
+                "unchecked commit callback failure must never escape into the server executor");
+        assertTrue(queuedFuture.isCompletedExceptionally());
+        ExecutionException queuedExec = assertThrows(ExecutionException.class, queuedFuture::get);
+        assertSame(boom, queuedExec.getCause());
+
+        // 2. Direct server-thread path: schedulePregeneratedCommit captures the failure in the returned future instead of throwing.
+        CompletableFuture<Void> directFuture = assertDoesNotThrow(() -> ServerCubeWorld.schedulePregeneratedCommit(
+                true,
+                () -> true,
+                Runnable::run,
+                () -> false,
+                () -> { throw boom; },
+                new AtomicBoolean()));
+        assertTrue(directFuture.isCompletedExceptionally());
+        ExecutionException directExec = assertThrows(ExecutionException.class, directFuture::get);
+        assertSame(boom, directExec.getCause());
+
+        // 3. submitPregeneratedCommit unwraps and rethrows the exact failure to the caller on both paths.
+        IllegalStateException thrownDirect = assertThrows(IllegalStateException.class, () ->
+                ServerCubeWorld.submitPregeneratedCommit(
+                        true,
+                        () -> true,
+                        Runnable::run,
+                        () -> false,
+                        () -> { throw boom; },
+                        100L));
+        assertSame(boom, thrownDirect);
+
+        IllegalStateException thrownQueued = assertThrows(IllegalStateException.class, () ->
+                ServerCubeWorld.submitPregeneratedCommit(
+                        false,
+                        () -> true,
+                        Runnable::run,
+                        () -> false,
+                        () -> { throw boom; },
+                        100L));
+        assertSame(boom, thrownQueued);
+    }
+
+    @Test
+    void submitPregeneratedCommitTimeoutCancelsQueuedTaskAndThrowsRejected() {
+        List<Runnable> serverQueue = new ArrayList<>();
+        AtomicInteger commitCalls = new AtomicInteger();
+
+        ServerCubeWorld.PregenerationRejectedException timedOut = assertThrows(
+                ServerCubeWorld.PregenerationRejectedException.class,
+                () -> ServerCubeWorld.submitPregeneratedCommit(
+                        false,
+                        () -> true,
+                        serverQueue::add,
+                        () -> false,
+                        commitCalls::incrementAndGet,
+                        25L));
+        assertInstanceOf(TimeoutException.class, timedOut.getCause());
+        assertEquals(1, serverQueue.size());
+
+        // Running the stale queued task later must be a complete no-op because timeout cancelled it.
+        assertDoesNotThrow(() -> serverQueue.remove(0).run());
+        assertEquals(0, commitCalls.get(), "cancelled pregenerated commit task must not execute work later");
+
+        // Even if the world is closing when the commit times out, must still reject so Chunky never marks an unwritten column done.
+        ServerCubeWorld.PregenerationRejectedException closingTimedOut = assertThrows(
+                ServerCubeWorld.PregenerationRejectedException.class,
+                () -> ServerCubeWorld.submitPregeneratedCommit(
+                        false,
+                        () -> true,
+                        serverQueue::add,
+                        () -> true,
+                        commitCalls::incrementAndGet,
+                        25L));
+        assertTrue(closingTimedOut.getMessage().contains("closing"), closingTimedOut.getMessage());
+        assertInstanceOf(TimeoutException.class, closingTimedOut.getCause());
+        assertEquals(1, serverQueue.size());
+        assertDoesNotThrow(() -> serverQueue.remove(0).run());
+        assertEquals(0, commitCalls.get());
+    }
+
+    @Test
+    void coordinatePregenerateKeysAsyncCapturesFailuresOnDirectAndQueuedServerThreadPaths() {
+        var untouched = new ServerCubeWorld.UntouchedStoreQueue<String>(
+                () -> false, k -> null, (k, tag) -> {}, entry -> true, (k, err) -> {});
+        LongArrayList candidates = LongArrayList.of(CubeKey.pack(3, 4, 5));
+        IllegalStateException boom = new IllegalStateException("isLoaded failure");
+
+        // 1. Direct server-thread path (onServerThread == true) must capture filterPregenerateKeys failures in the future.
+        CompletableFuture<LongArrayList> directFuture = assertDoesNotThrow(() ->
+                ServerCubeWorld.coordinatePregenerateKeysAsync(
+                        candidates,
+                        true,
+                        () -> true,
+                        Runnable::run,
+                        () -> false,
+                        key -> { throw boom; },
+                        untouched,
+                        new AtomicBoolean()));
+        assertTrue(directFuture.isCompletedExceptionally());
+        ExecutionException directExec = assertThrows(ExecutionException.class, directFuture::get);
+        assertSame(boom, directExec.getCause());
+
+        // coordinatePregenerateKeys still unwraps and propagates the exact failure.
+        IllegalStateException unwrapped = assertThrows(IllegalStateException.class, () ->
+                ServerCubeWorld.coordinatePregenerateKeys(
+                        candidates,
+                        true,
+                        () -> true,
+                        Runnable::run,
+                        () -> false,
+                        key -> { throw boom; },
+                        untouched,
+                        100L));
+        assertSame(boom, unwrapped);
+
+        // 2. Queued server-thread path must also never throw into the server executor when isLoaded throws.
+        List<Runnable> serverQueue = new ArrayList<>();
+        CompletableFuture<LongArrayList> queuedFuture = ServerCubeWorld.coordinatePregenerateKeysAsync(
+                candidates,
+                false,
+                () -> true,
+                serverQueue::add,
+                () -> false,
+                key -> { throw boom; },
+                untouched,
+                new AtomicBoolean());
+        assertEquals(1, serverQueue.size());
+        assertDoesNotThrow(() -> serverQueue.remove(0).run());
+        assertTrue(queuedFuture.isCompletedExceptionally());
+        ExecutionException queuedExec = assertThrows(ExecutionException.class, queuedFuture::get);
+        assertSame(boom, queuedExec.getCause());
     }
 }
