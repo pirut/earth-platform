@@ -187,7 +187,8 @@ public final class EarthGenerator extends SurfaceGenerator {
 
         void put(long key, V value) {
             synchronized (this) {
-                if (this.gen.young.containsKey(key)) return;
+                Gen<V> g = this.gen;
+                if (g.young.containsKey(key) || g.old.containsKey(key)) return;
                 insertLocked(key, value);
             }
         }
@@ -1745,6 +1746,8 @@ public final class EarthGenerator extends SurfaceGenerator {
         return code;
     }
 
+    boolean isWorldCoverWater(int ix, int iz, int voxel) { return isWorldCoverWater(coverMemo.get(), ix, iz, voxel); }
+
     /**
      * WorldCover-only water probe matching {@link #coverAt}'s warp, overview, and glacier-ice filter
      * without invoking {@link RiverMap}, {@link SurfaceWaterSource}, or {@link Drainage}.
@@ -1753,7 +1756,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (cover == null) return false;
         long key = (long) (ix & 0x7FFFFFF) << 31 | (long) (iz & 0x7FFFFFF) << 4 | Integer.numberOfTrailingZeros(voxel) & 15;
         int slot = (int) (key * 0x9E3779B97F4A7C15L >>> 52);
-        if (memo.keys[slot] == key) return memo.codes[slot] == WorldCoverSource.WATER;
+        if (memo.keys[slot] == key && memo.codes[slot] == WorldCoverSource.WATER) return true;
         double x = ix, z = iz;
         double metresPerBlock = grid.groundMetresPerBlock(x, z);
         if (voxel <= 8) {

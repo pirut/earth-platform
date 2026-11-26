@@ -11,6 +11,7 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.HexFormat;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -303,8 +304,21 @@ class RiverMapSeamAndCancelTest {
         int[] winWest = extractWindow(world, worldW, 0, 0, V2_SPAN);
         int[] winEast = extractWindow(world, worldW, TILE, 0, V2_SPAN);
 
-        assertSeamMatchesAndBridges(winWest, winEast, 10_240 - V2_MARGIN, 10_240 + TILE - V2_MARGIN,
+        float[] fWest = assertSeamMatchesAndBridges(winWest, winEast, 10_240 - V2_MARGIN, 10_240 + TILE - V2_MARGIN,
                 20_480 - V2_MARGIN, "braided +200px");
+
+        // Count newly painted wet pixels strictly inside the dry gap between the spur tip (-6, y1 + 10)
+        // and L2 (+8, y2), excluding the pre-existing L1 channel along y1.
+        int gapBridged = 0;
+        for (int y = y1 + 11; y < y2; y++) {
+            for (int dx = -5; dx <= 7; dx++) {
+                int idx = y * V2_SPAN + V2_MARGIN + TILE + dx;
+                assertEquals(0, winWest[idx], "fixture gap must start dry at dx=" + dx + ", y=" + y);
+                if (fWest[idx] >= RiverMap.EDGE) gapBridged++;
+            }
+        }
+        assertTrue(gapBridged > 0,
+                "braided +200px must paint join pixels across the dry gap between spur and L2, got " + gapBridged);
     }
 
     @Test
@@ -332,8 +346,8 @@ class RiverMapSeamAndCancelTest {
         }
     }
 
-    private static void assertSeamMatchesAndBridges(int[] winWest, int[] winEast,
-                                                    int westOriginX, int eastOriginX, int originY, String label) {
+    private static float[] assertSeamMatchesAndBridges(int[] winWest, int[] winEast,
+                                                       int westOriginX, int eastOriginX, int originY, String label) {
         float[] fWest = RiverMap.trace(winWest, null, V2_SPAN, westOriginX, originY, true);
         float[] fEast = RiverMap.trace(winEast, null, V2_SPAN, eastOriginX, originY, true);
 
@@ -349,6 +363,7 @@ class RiverMapSeamAndCancelTest {
         }
         assertTrue(bridgedAcrossSeam > 10,
                 label + " must bridge non-zero pixels across seam, got " + bridgedAcrossSeam);
+        return fWest;
     }
 
     @Test
@@ -594,31 +609,44 @@ class RiverMapSeamAndCancelTest {
         assertTrue(publishedFlight.future.isDone());
         assertFalse(publishedFlight.detach(), "detach after publication must not cancel the completed flight");
 
+        Drainage.InFlight failingPublishFlight = new Drainage.InFlight();
+        assertTrue(failingPublishFlight.attach());
+        RuntimeException publishFailure = new RuntimeException("simulated publish failure");
+        assertThrows(RuntimeException.class, () -> failingPublishFlight.tryPublish(dummy, () -> {
+            throw publishFailure;
+        }));
+        failingPublishFlight.completeFailure(publishFailure);
+        assertTrue(failingPublishFlight.future.isCompletedExceptionally(),
+                "failure inside tryPublish publishAction must leave flight unfinished so completeFailure resolves waiters");
+        ExecutionException observedFailure = assertThrows(ExecutionException.class,
+                () -> failingPublishFlight.future.get(1, TimeUnit.SECONDS));
+        assertSame(publishFailure, observedFailure.getCause());
+
         // 2. End-to-end replacement flight check: caller 1 cancels and exits; caller 2 launches a replacement
-        // flight for the same key while producer 1 unwinds without clobbering memory or caller 2's flight.
-        CountDownLatch flight1Entered = new CountDownLatch(1);
+        // flight for the same key while producer 1 unwinds completely (through post-drain tryPublish/finally)
+        // without clobbering memory or caller 2's flight.
+        int tilesPerDrain = (2 * Drainage.SPREAD + 1) * (2 * Drainage.SPREAD + 1);
+        CountDownLatch flight1Entered = new CountDownLatch(tilesPerDrain);
         CountDownLatch releaseFlight1 = new CountDownLatch(1);
-        CountDownLatch flight1Exited = new CountDownLatch(1);
+        CountDownLatch flight1ProducerFinished = new CountDownLatch(1);
         CountDownLatch flight2Entered = new CountDownLatch(1);
         CountDownLatch releaseFlight2 = new CountDownLatch(1);
+        CountDownLatch flight2ProducerFinished = new CountDownLatch(1);
         AtomicBoolean secondFlightStarted = new AtomicBoolean();
+        AtomicInteger finishedProducers = new AtomicInteger();
 
         Drainage drainage = new Drainage(
                 (zoom, x, y) -> {
                     if (!secondFlightStarted.get()) {
                         flight1Entered.countDown();
-                        try {
-                            // Deliberately wait uninterruptibly on releaseFlight1 to simulate a late producer.
-                            boolean done = false;
-                            while (!done) {
-                                try {
-                                    done = releaseFlight1.await(5, TimeUnit.SECONDS);
-                                } catch (InterruptedException ignored) {
-                                    // Keep waiting until released to exercise post-cancel unwinding.
-                                }
+                        // Deliberately wait uninterruptibly on releaseFlight1 to simulate a late producer.
+                        boolean done = false;
+                        while (!done) {
+                            try {
+                                done = releaseFlight1.await(5, TimeUnit.SECONDS);
+                            } catch (InterruptedException ignored) {
+                                // Keep waiting until released to exercise post-cancel unwinding.
                             }
-                        } finally {
-                            flight1Exited.countDown();
                         }
                         return new float[TerrariumTileSource.TILE_SIZE * TerrariumTileSource.TILE_SIZE];
                     }
@@ -635,6 +663,10 @@ class RiverMapSeamAndCancelTest {
                 },
                 (lat, lon) -> 800.0,
                 4);
+        drainage.onProducerFinished = () -> {
+            if (finishedProducers.incrementAndGet() == 1) flight1ProducerFinished.countDown();
+            else flight2ProducerFinished.countDown();
+        };
 
         try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
             CountDownLatch caller1Exited = new CountDownLatch(1);
@@ -648,7 +680,7 @@ class RiverMapSeamAndCancelTest {
                     caller1Exited.countDown();
                 }
             });
-            assertTrue(flight1Entered.await(5, TimeUnit.SECONDS));
+            assertTrue(flight1Entered.await(5, TimeUnit.SECONDS), "all flight 1 tile loaders must park before cancel");
             assertTrue(caller1.cancel(true));
             assertTrue(caller1Exited.await(5, TimeUnit.SECONDS), "cancelled caller 1 must exit immediately");
             assertEquals(0, drainage.inFlightWaiters(), "cancelled flight must have detached all waiters");
@@ -666,15 +698,18 @@ class RiverMapSeamAndCancelTest {
             });
             assertTrue(flight2Entered.await(5, TimeUnit.SECONDS), "replacement flight must start cleanly");
 
-            // Release flight 1 now; it must NOT publish to memory or disturb replacement flight 2.
+            // Release flight 1 and wait until producer 1's entire task (including post-drain tryPublish/finally)
+            // has completely exited while replacement flight 2 is still blocked.
             releaseFlight1.countDown();
-            assertTrue(flight1Exited.await(5, TimeUnit.SECONDS));
+            assertTrue(flight1ProducerFinished.await(5, TimeUnit.SECONDS),
+                    "cancelled producer 1 must finish post-drain unwinding while flight 2 is still blocked");
             assertEquals(0, drainage.cachedRegions(), "cancelled flight 1 must not publish into cache");
             assertEquals(1, drainage.inFlightWaiters(), "replacement flight 2 must remain active");
 
             releaseFlight2.countDown();
             Throwable caller2Result = caller2.get(5, TimeUnit.SECONDS);
             assertNull(caller2Result, "replacement flight caller must succeed cleanly, got " + caller2Result);
+            assertTrue(flight2ProducerFinished.await(5, TimeUnit.SECONDS), "replacement producer 2 must finish cleanly");
             assertEquals(1, drainage.cachedRegions(), "replacement flight must publish into cache");
         }
     }

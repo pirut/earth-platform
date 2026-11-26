@@ -61,7 +61,12 @@ public final class RiverMap {
     /** Radius, in pixels, of the widest water left out as a lake or wide river (it fits a disc this wide). */
     static final int WIDE = 3;
     private static final int TILE = 256, MARGIN = 56, SPAN = TILE + 2 * MARGIN, CELL = 16;
-    /** V2 halo margin and window span, strictly exceeding {@link #MAX_CHAIN_REACH} plus {@link #LOCAL_CONNECT_RADIUS}, seed walk, and morphology tail. */
+    /**
+     * V2 halo margin and window span ({@code 180 > 96 + 40 + 10 + 16 = 162}, leaving room for
+     * {@link #MAX_CHAIN_REACH}, {@link #LOCAL_CONNECT_RADIUS}, {@link #WALK}, {@link #V2_EDGE},
+     * and morphology/spline slack for chains heading toward the tile; assumes chains reaching the
+     * tile do not detour far past their seed away from the tile).
+     */
     static final int V2_MARGIN = 180, V2_SPAN = TILE + 2 * V2_MARGIN;
     /** Maximum Euclidean distance from a seed end a v2 hop chain may travel, guaranteeing both sides of a seam see the seed. */
     static final int MAX_CHAIN_REACH = 96;

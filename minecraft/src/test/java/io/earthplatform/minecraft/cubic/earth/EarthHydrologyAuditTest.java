@@ -181,6 +181,21 @@ class EarthHydrologyAuditTest {
     }
 
     @Test
+    void hydroCachePutDoesNotOverwriteExistingOldGenerationValue() {
+        MemoryPressureTestBridge.reset();
+        try {
+            HydroCache<Integer> cache = new HydroCache<>(2);
+            cache.putOrReplace(1L, 2);
+            cache.put(2L, 0);
+            cache.put(3L, 0); // rotates: young={3:0}, old={1:2, 2:0}
+            cache.put(1L, 1); // delayed put for key sitting in old must not overwrite 2 with 1
+            assertEquals(2, cache.get(1L), "put() must not overwrite an existing entry sitting in old");
+        } finally {
+            MemoryPressureTestBridge.reset();
+        }
+    }
+
+    @Test
     void hydroCacheConcurrentStressEnforcesStrictCapacityAndReplacementMonotonicity() throws Exception {
         MemoryPressureTestBridge.reset();
         try {
@@ -258,6 +273,70 @@ class EarthHydrologyAuditTest {
             }
             assertTrue(cache.youngSize() <= capacity, "final young size must stay <= capacity");
             assertTrue(cache.size() <= 2 * capacity, "final total size must stay <= 2*capacity");
+
+            // Overlapping-key concurrent stress: with capacity+1 distinct pre-populated keys and no shed(),
+            // young U old always retains every key across continuous rotations, so stale put(k, 0) calls
+            // repeatedly hit keys sitting in old and must never overwrite newer putOrReplace values.
+            int overlapCap = 8;
+            int overlapKeys = overlapCap + 1;
+            HydroCache<Integer> overlapCache = new HydroCache<>(overlapCap);
+            AtomicInteger[] overlapCommitted = new AtomicInteger[overlapKeys];
+            Object[] overlapLocks = new Object[overlapKeys];
+            for (int i = 0; i < overlapKeys; i++) {
+                overlapCommitted[i] = new AtomicInteger(1);
+                overlapLocks[i] = new Object();
+                overlapCache.putOrReplace(i, 1);
+            }
+            CountDownLatch overlapStart = new CountDownLatch(1);
+            java.util.concurrent.atomic.AtomicReference<Throwable> overlapFailure = new java.util.concurrent.atomic.AtomicReference<>();
+            try (ExecutorService pool = Executors.newFixedThreadPool(threads)) {
+                List<Future<?>> futures = new ArrayList<>();
+                for (int t = 0; t < threads; t++) {
+                    final int tid = t;
+                    futures.add(pool.submit(() -> {
+                        try {
+                            overlapStart.await(5, TimeUnit.SECONDS);
+                            java.util.SplittableRandom rng = new java.util.SplittableRandom(0xBF58476D1CE4E5B9L * (tid + 1));
+                            for (int i = 0; i < opsPerThread && overlapFailure.get() == null; i++) {
+                                int k = rng.nextInt(overlapKeys);
+                                int op = rng.nextInt(100);
+                                if (op < 35) {
+                                    synchronized (overlapLocks[k]) {
+                                        int nextVal = overlapCommitted[k].get() + 1;
+                                        overlapCache.putOrReplace(k, nextVal);
+                                        overlapCommitted[k].set(nextVal);
+                                    }
+                                } else if (op < 70) {
+                                    // Stale put on the same overlapping key must never clobber young or old.
+                                    overlapCache.put(k, 0);
+                                } else {
+                                    int minExpected = overlapCommitted[k].get();
+                                    Integer observed = overlapCache.get(k);
+                                    if (observed == null || observed < minExpected) {
+                                        fail("overlapping put() clobbered key " + k + ": observed=" + observed
+                                                + " < committed=" + minExpected);
+                                    }
+                                }
+                                if (overlapCache.youngSize() > overlapCap) {
+                                    fail("overlap young generation exceeded capacity: " + overlapCache.youngSize());
+                                }
+                                if (overlapCache.size() > 2 * overlapCap) {
+                                    fail("overlap total size exceeded 2*capacity: " + overlapCache.size());
+                                }
+                            }
+                        } catch (Throwable thrown) {
+                            overlapFailure.compareAndSet(null, thrown);
+                        }
+                    }));
+                }
+                overlapStart.countDown();
+                for (Future<?> f : futures) {
+                    f.get(30, TimeUnit.SECONDS);
+                }
+            }
+            if (overlapFailure.get() != null) {
+                fail("overlapping-key HydroCache stress invariant violated", overlapFailure.get());
+            }
         } finally {
             MemoryPressureTestBridge.reset();
         }
@@ -788,6 +867,35 @@ class EarthHydrologyAuditTest {
             assertTrue(v2Pond[1] >= EarthGenerator.SEA + 145,
                     "bench-edge sub-grid upland pond at dx=" + benchEdgeDx
                             + " must stay near +150 m instead of sinking to 100 m drowned reservoir, got " + v2Pond[1]);
+        }
+    }
+
+    @Test
+    void isWorldCoverWaterIgnoresStrayRejectedCacheHistory() throws Exception {
+        EarthShorelineTest.bootRegistries();
+        // Steep 50% slope with a small WorldCover WATER patch at home that strayWater() rejects to BARE.
+        // Warming coverMemo via cover() caches BARE; isWorldCoverWater() must still return true,
+        // independent of thread-local cache history.
+        try (EarthShorelineTest.SyntheticWorld world = new EarthShorelineTest.SyntheticWorld(
+                (dx, dz) -> 200.0 + dx * 0.5,
+                (dx, dz) -> (Math.abs(dx) <= 15 && Math.abs(dz) <= 15)
+                        ? WorldCoverSource.WATER : WorldCoverSource.BARE)) {
+            EarthGenerator v2 = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null);
+            v2.enableHydrologyV2();
+
+            assertTrue(v2.isWorldCoverWater(world.homeX, world.homeZ, 1),
+                    "cold isWorldCoverWater must report WorldCover WATER pixel as water");
+            assertEquals(WorldCoverSource.BARE, v2.cover(world.homeX, world.homeZ, 1),
+                    "strayWater must reject small steep-slope water patch to BARE and warm coverMemo");
+            assertTrue(v2.isWorldCoverWater(world.homeX, world.homeZ, 1),
+                    "warmed coverMemo holding stray-rejected BARE must not flip isWorldCoverWater to false");
+
+            assertFalse(v2.isWorldCoverWater(world.homeX + 80, world.homeZ, 1),
+                    "cold dry BARE pixel must report false");
+            assertEquals(WorldCoverSource.BARE, v2.cover(world.homeX + 80, world.homeZ, 1));
+            assertFalse(v2.isWorldCoverWater(world.homeX + 80, world.homeZ, 1),
+                    "warm dry BARE pixel must remain false");
         }
     }
 }

@@ -65,6 +65,7 @@ public final class Drainage {
     private final int maxRegions;
     private final LruMap<Long, Region> memory = new LruMap<>(16);
     private final Map<Long, InFlight> inFlight = new ConcurrentHashMap<>();
+    volatile Runnable onProducerFinished;
     /** One drained tile: per pixel, the direction (0 to 7) a kept stream steps on in, or -1; and the ground it drains. */
     record Region(byte[] step, float[] area) {}
 
@@ -104,8 +105,8 @@ public final class Drainage {
 
         synchronized boolean tryPublish(Region made, Runnable publishAction) {
             if (cancelled || finished) return false;
-            finished = true;
             publishAction.run();
+            finished = true;
             future.complete(made);
             return true;
         }
@@ -279,6 +280,8 @@ public final class Drainage {
                     return null;
                 } finally {
                     inFlight.remove(key, owned);
+                    Runnable hook = onProducerFinished;
+                    if (hook != null) hook.run();
                 }
             });
             owned.start(task);
