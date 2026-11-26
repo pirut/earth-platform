@@ -1,12 +1,15 @@
 package io.earthplatform.minecraft.cubic.gen;
 
 import com.mojang.serialization.MapCodec;
+import io.earthplatform.geography.MissingTerrainException;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -27,7 +30,9 @@ import net.minecraft.server.level.WorldGenRegion;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.BiomeTags;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
+import net.minecraft.util.valueproviders.UniformInt;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.DifficultyInstance;
 import net.minecraft.world.entity.Entity;
@@ -56,6 +61,7 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.ProtoChunk;
 import net.minecraft.world.level.chunk.UpgradeData;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.entity.EntityTypeTest;
 import net.minecraft.world.level.gameevent.GameEvent;
@@ -91,6 +97,12 @@ import net.minecraft.world.ticks.TickPriority;
 final class ModOres {
     /** Vanilla's overworld, the heights ore features were written against. */
     private static final int VANILLA_MIN = -64, VANILLA_HEIGHT = 384;
+    /** Default overworld dimension type when no live {@link ServerLevel} has been attached yet (e.g. unit tests). */
+    static final DimensionType DEFAULT_DIMENSION_TYPE = new DimensionType(
+            OptionalLong.empty(), true, false, false, true, 1.0, true, false,
+            VANILLA_MIN, VANILLA_HEIGHT, VANILLA_HEIGHT,
+            BlockTags.INFINIBURN_OVERWORLD, BuiltinDimensionTypes.OVERWORLD_EFFECTS, 0.0f,
+            new DimensionType.MonsterSettings(false, true, UniformInt.of(0, 7), 0));
     /**
      * How many chunks out a vein is allowed to reach. Layered stones (ochrum and its kin) are
      * about 32 blocks across, so a chunk two away can still drop a block in this one.
@@ -105,32 +117,57 @@ final class ModOres {
     private final Holder<Biome> anyBiome;
     private final ChunkGenerator generator;
     private final int oreStep = GenerationStep.Decoration.UNDERGROUND_ORES.ordinal();
+    private volatile RegistryAccess registries;
+    private volatile DimensionType dimensionType;
     /** Null until the first cube asks. Empty when no mod adds ores, which is the usual test world. */
     private volatile List<Added> added;
-    private final ConcurrentHashMap<Key, List<Drop>> placed = new ConcurrentHashMap<>();
+    private final VanillaStructures.Generations<ConcurrentHashMap<Integer, List<Drop>>> placed = new VanillaStructures.Generations<>(2048);
 
     ModOres(SurfaceGenerator terrain, Underground under, long seed, Registry<Biome> biomes) {
         this.terrain = terrain;
         this.under = under;
         this.seed = seed;
         this.biomes = biomes;
+        this.registries = new RegistryAccess.ImmutableRegistryAccess(List.of(biomes));
+        this.dimensionType = DEFAULT_DIMENSION_TYPE;
         Holder<Biome> plains = biomes.getHolder(Biomes.PLAINS).orElse(null);
         this.anyBiome = plains != null ? plains : biomes.holders().findFirst().orElseThrow();
         this.generator = new OreGenerator();
+    }
+
+    /** Wires the live world's registries and dimension type once attached to a {@link ServerLevel}. */
+    void attach(@Nullable RegistryAccess registries, @Nullable DimensionType dimensionType) {
+        if (registries != null) this.registries = registries;
+        if (dimensionType != null) this.dimensionType = dimensionType;
     }
 
     /** Writes this cube's share of every mod ore vein that can reach it. */
     void place(LevelChunkSection section, int cx, int cy, int cz) {
         List<Added> ores = added();
         if (ores.isEmpty()) return;
-        int y0 = cy << 4, y1 = y0 + 15;
+        int x0 = cx << 4, y0 = cy << 4, z0 = cz << 4, y1 = y0 + 15;
+        // Exact set of biomes in this cube (biomeAt depends only on x, z and cube cy).
+        Set<Biome> cubeBiomes = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
+            cubeBiomes.add(terrain.biomeAt(x0 + lx, y0, z0 + lz).value());
+        }
+        List<Integer> active = new ArrayList<>(ores.size());
+        for (int i = 0; i < ores.size(); i++) {
+            Added ore = ores.get(i);
+            if (!ore.failed.get() && anyBiomeMatches(ore.biomes, cubeBiomes)) active.add(i);
+        }
+        if (active.isEmpty()) return;
         for (int dz = -REACH; dz <= REACH; dz++) for (int dx = -REACH; dx <= REACH; dx++) {
             int nx = cx + dx, nz = cz + dz;
-            for (int i = 0; i < ores.size(); i++) {
-                Added ore = ores.get(i);
-                for (Drop drop : drops(nx, nz, i, ore)) {
+            int chunkCenterX = (nx << 4) + 8, chunkCenterZ = (nz << 4) + 8;
+            int chunkFloor = under.floor(chunkCenterX, chunkCenterZ, terrain.surfaceY(chunkCenterX, chunkCenterZ));
+            // Vanilla frame bottom is VANILLA_MIN (-64) + (chunkFloor - 64) = chunkFloor - 128.
+            if (y1 < chunkFloor - 128) continue;
+            for (int index : active) {
+                Added ore = ores.get(index);
+                for (Drop drop : drops(nx, nz, index, ore, chunkFloor)) {
                     if (drop.y < y0 || drop.y > y1 || (drop.x >> 4) != cx || (drop.z >> 4) != cz) continue;
-                    if (!kept(ore.feature, drop)) continue;
+                    if (!kept(ore, drop)) continue;
                     BlockState here = section.getBlockState(drop.x & 15, drop.y & 15, drop.z & 15);
                     // Veins already in this cube may have turned the stone into an ore of vanilla's. Leave that.
                     if (here.isAir() || !here.getFluidState().isEmpty() || !replaces(drop.was, here)) continue;
@@ -138,6 +175,11 @@ final class ModOres {
                 }
             }
         }
+    }
+
+    private static boolean anyBiomeMatches(Set<Biome> allowed, Set<Biome> present) {
+        for (Biome biome : present) if (allowed.contains(biome)) return true;
+        return false;
     }
 
     /** Stone the feature saw, or the same kind of rock a small vein has since put there. */
@@ -150,27 +192,21 @@ final class ModOres {
      * and the biome there lists this feature. Cave biomes count: a modifier on the overworld tag
      * includes them, and a modifier on plains alone does not fill the deep dark.
      */
-    private boolean kept(PlacedFeature feature, Drop drop) {
+    private boolean kept(Added ore, Drop drop) {
         if (drop.y >= terrain.surfaceY(drop.x, drop.z)) return false;
-        return lists(terrain.biomeAt(drop.x, drop.y, drop.z), feature);
+        return ore.biomes.contains(terrain.biomeAt(drop.x, drop.y, drop.z).value());
     }
 
-    private boolean lists(Holder<Biome> biome, PlacedFeature feature) {
-        var steps = biome.value().getGenerationSettings().features();
-        if (steps.size() <= oreStep) return false;
-        for (Holder<PlacedFeature> placed : steps.get(oreStep)) if (placed.value() == feature) return true;
-        return false;
+    private List<Drop> drops(int chunkX, int chunkZ, int index, Added ore, int chunkFloor) {
+        long chunkKey = ChunkPos.asLong(chunkX, chunkZ);
+        ConcurrentHashMap<Integer, List<Drop>> byOre = placed.get(chunkKey);
+        if (byOre == null) byOre = placed.putIfAbsent(chunkKey, new ConcurrentHashMap<>());
+        return byOre.computeIfAbsent(index, key -> generate(chunkX, chunkZ, index, ore, chunkFloor));
     }
 
-    private List<Drop> drops(int chunkX, int chunkZ, int index, Added ore) {
-        if (placed.size() > 16384) placed.clear();
-        return placed.computeIfAbsent(new Key(chunkX, chunkZ, index), key -> generate(chunkX, chunkZ, index, ore));
-    }
-
-    private List<Drop> generate(int chunkX, int chunkZ, int index, Added ore) {
+    private List<Drop> generate(int chunkX, int chunkZ, int index, Added ore, int chunkFloor) {
         if (ore.failed.get()) return List.of();
-        int x = (chunkX << 4) + 8, z = (chunkZ << 4) + 8;
-        int shift = under.floor(x, z, terrain.surfaceY(x, z)) - 64;
+        int shift = chunkFloor - 64;
         LinkedHashMap<Pos, Drop> writes = new LinkedHashMap<>();
         OreLevel level = new OreLevel(shift, writes);
         WorldgenRandom random = new WorldgenRandom(new XoroshiroRandomSource(0L));
@@ -178,12 +214,23 @@ final class ModOres {
         random.setFeatureSeed(decoration, index, oreStep);
         try {
             ore.feature.placeWithBiomeCheck(level, generator, random, new BlockPos(chunkX << 4, 0, chunkZ << 4));
+        } catch (MissingTerrainException missing) {
+            throw missing;
         } catch (RuntimeException | LinkageError failure) {
+            if (isMissingTerrain(failure)) throw failure;
             if (ore.failed.compareAndSet(false, true))
                 EarthPlatformMod.LOGGER.warn("Earth ores: {} failed to place and was left out", ore.name, failure);
             return List.of();
         }
         return List.copyOf(writes.values());
+    }
+
+    private static boolean isMissingTerrain(Throwable failure) {
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Throwable cur = failure; cur != null && seen.add(cur); cur = cur.getCause()) {
+            if (cur instanceof MissingTerrainException) return true;
+        }
+        return false;
     }
 
     private List<Added> added() {
@@ -198,7 +245,7 @@ final class ModOres {
     /** Placed features mods add at the ore step, once each, overworld biomes only. */
     private List<Added> scan() {
         boolean restrict = tagsBound();
-        Set<PlacedFeature> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        Map<PlacedFeature, Set<Biome>> biomesByFeature = new IdentityHashMap<>();
         List<Added> found = new ArrayList<>();
         for (Holder<Biome> biome : biomes.holders().toList()) {
             if (restrict && !biome.is(BiomeTags.IS_OVERWORLD)) continue;
@@ -206,11 +253,16 @@ final class ModOres {
             if (steps.size() <= oreStep) continue;
             for (Holder<PlacedFeature> placed : steps.get(oreStep)) {
                 PlacedFeature feature = placed.value();
-                if (!seen.add(feature)) continue;
                 String namespace = placed.unwrapKey().map(key -> key.location().getNamespace()).orElse("");
                 if (namespace.equals("minecraft") || namespace.equals(EarthPlatformMod.MOD_ID)) continue;
-                String name = placed.unwrapKey().map(key -> key.location().toString()).orElse(featureName(feature));
-                found.add(new Added(feature, name, new AtomicBoolean()));
+                Set<Biome> allowed = biomesByFeature.get(feature);
+                if (allowed == null) {
+                    allowed = Collections.newSetFromMap(new IdentityHashMap<>());
+                    biomesByFeature.put(feature, allowed);
+                    String name = placed.unwrapKey().map(key -> key.location().toString()).orElse(featureName(feature));
+                    found.add(new Added(feature, name, allowed, new AtomicBoolean()));
+                }
+                allowed.add(biome.value());
             }
         }
         if (!found.isEmpty()) EarthPlatformMod.LOGGER.info("Earth ores: other mods add {}", found.stream().map(ore -> ore.name).toList());
@@ -235,8 +287,7 @@ final class ModOres {
         return id == null ? "modded ore" : id.toString();
     }
 
-    private record Added(PlacedFeature feature, String name, AtomicBoolean failed) {}
-    private record Key(int x, int z, int index) {}
+    private record Added(PlacedFeature feature, String name, Set<Biome> biomes, AtomicBoolean failed) {}
     private record Pos(int x, int y, int z) {}
     /** {@code was} is the block the feature replaced, in earth coordinates. */
     private record Drop(int x, int y, int z, BlockState state, BlockState was) {}
@@ -283,13 +334,26 @@ final class ModOres {
             if (state.isAir() || !state.getFluidState().isEmpty()) return false;
             int y = vanillaY + shift;
             if (y >= terrain.surfaceY(x, z)) return false;
-            BlockState was = at(x, y, z);
-            if (was.isAir() || !was.getFluidState().isEmpty() || was.equals(state)) return false;
-            writes.put(new Pos(x, y, z), new Drop(x, y, z, state, was));
+            Pos pos = new Pos(x, y, z);
+            Drop prev = writes.get(pos);
+            BlockState was = prev != null ? prev.was : at(x, y, z);
+            if (was.isAir() || !was.getFluidState().isEmpty()) return false;
+            BlockState current = prev != null ? prev.state : was;
+            if (current.equals(state)) return false;
+            if (state.equals(was)) {
+                writes.remove(pos);
+                return true;
+            }
+            writes.put(pos, new Drop(x, y, z, state, was));
             return true;
         }
 
-        @Override public BlockState getBlockState(BlockPos pos) { return at(pos.getX(), pos.getY() + shift, pos.getZ()); }
+        private BlockState read(int x, int y, int z) {
+            Drop written = writes.get(new Pos(x, y, z));
+            return written != null ? written.state : at(x, y, z);
+        }
+
+        @Override public BlockState getBlockState(BlockPos pos) { return read(pos.getX(), pos.getY() + shift, pos.getZ()); }
         @Override public FluidState getFluidState(BlockPos pos) { return getBlockState(pos).getFluidState(); }
         @Override public boolean setBlock(BlockPos pos, BlockState state, int flags, int recursionLeft) {
             return accept(pos.getX(), pos.getY(), pos.getZ(), state);
@@ -336,14 +400,14 @@ final class ModOres {
         @Nullable @Override public ServerLevel getLevel() { return null; }
         @Override public long getSeed() { return seed; }
         @Override public RandomSource getRandom() { return random; }
-        @Override public RegistryAccess registryAccess() { return RegistryAccess.EMPTY; }
+        @Override public RegistryAccess registryAccess() { return ModOres.this.registries; }
         @Override public FeatureFlagSet enabledFeatures() { return FeatureFlags.VANILLA_SET; }
         @Nullable @Override public LevelData getLevelData() { return null; }
         @Override public DifficultyInstance getCurrentDifficultyAt(BlockPos pos) { return new DifficultyInstance(Difficulty.NORMAL, 0L, 0L, 0f); }
         @Nullable @Override public MinecraftServer getServer() { return null; }
         @Nullable @Override public ChunkSource getChunkSource() { return null; }
         @Override public WorldBorder getWorldBorder() { return new WorldBorder(); }
-        @Nullable @Override public DimensionType dimensionType() { return null; }
+        @Override public DimensionType dimensionType() { return ModOres.this.dimensionType; }
         @Override public boolean isClientSide() { return false; }
         @Override public long nextSubTickCount() { return 0; }
         @Override public LevelTickAccess<Block> getBlockTicks() { return BlackholeTickAccess.emptyLevelList(); }
@@ -380,7 +444,7 @@ final class ModOres {
                 this.baseY = baseY;
             }
             @Override public BlockState getBlockState(int lx, int ly, int lz) {
-                return at((cx << 4) + lx, baseY + ly + shift, (cz << 4) + lz);
+                return OreLevel.this.read((cx << 4) + lx, baseY + ly + shift, (cz << 4) + lz);
             }
             @Override public BlockState setBlockState(int lx, int ly, int lz, BlockState state, boolean lock) {
                 BlockState old = getBlockState(lx, ly, lz);

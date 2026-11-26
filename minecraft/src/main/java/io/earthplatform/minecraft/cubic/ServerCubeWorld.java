@@ -50,9 +50,11 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
+import java.util.function.BiPredicate;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
+import java.util.function.LongConsumer;
 import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
@@ -80,6 +82,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
 import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.storage.LevelResource;
 
@@ -128,6 +131,8 @@ public final class ServerCubeWorld extends CubeWorld {
     private final LongOpenHashSet unpopulated = new LongOpenHashSet();
     /** Entities that freshly generated cubes start with (chest minecarts), placed once their chunk ticks entities. */
     private final Long2ObjectOpenHashMap<List<CompoundTag>> unplacedEntities = new Long2ObjectOpenHashMap<>();
+    /** Generation-captured structure block and fluid ticks, scheduled once the cube's chunk ticks and its 6 face neighbors are loaded. */
+    private final Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pendingTicks = new Long2ObjectOpenHashMap<>();
     private int ticks;
     private boolean closed;
 
@@ -168,10 +173,10 @@ public final class ServerCubeWorld extends CubeWorld {
      */
     /** A cube made or read off the server thread; {@code baseline} is its column's generated sky tops, read there too, or null. */
     private record Ready(long key, int x, int y, int z, @Nullable LevelChunkSection section, List<CompoundTag> blockEntities,
-                         List<CompoundTag> entities, boolean saved, boolean edited, boolean surface, boolean kept, @Nullable RuntimeException failure, int open,
+                         List<CompoundTag> entities, CubeCodec.PendingTicks pendingTicks, boolean saved, boolean edited, boolean surface, boolean kept, @Nullable RuntimeException failure, int open,
                          @Nullable int[] baseline) {
         Ready withBaseline(@Nullable int[] tops) {
-            return new Ready(key, x, y, z, section, blockEntities, entities, saved, edited, surface, kept, failure, open, tops);
+            return new Ready(key, x, y, z, section, blockEntities, entities, pendingTicks, saved, edited, surface, kept, failure, open, tops);
         }
     }
     private record Lit(long key, int stamp, @Nullable byte[] values) {}
@@ -225,7 +230,8 @@ public final class ServerCubeWorld extends CubeWorld {
                 cubes::get,
                 this.storage::put,
                 entry -> entry.owedAnimals() == unpopulated.contains(entry.key())
-                        && Objects.equals(entry.entities(), unplacedEntities.getOrDefault(entry.key(), List.of())),
+                        && Objects.equals(entry.entities(), unplacedEntities.getOrDefault(entry.key(), List.of()))
+                        && Objects.equals(entry.pendingTicks(), pendingTicks.getOrDefault(entry.key(), CubeCodec.PendingTicks.EMPTY)),
                 (key, failure) -> EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure));
         workers.execute(() -> {
             try {
@@ -302,6 +308,7 @@ public final class ServerCubeWorld extends CubeWorld {
         super.forget(cube);
         light.remove(cube.key);
         lightStamps.remove(cube.key);
+        pendingTicks.remove(cube.key);
     }
 
     @Override public void blockChanged(BlockPos pos) {
@@ -337,7 +344,7 @@ public final class ServerCubeWorld extends CubeWorld {
                             droppedKeys.add(key);
                         } else {
                             RuntimeException runtime = cause instanceof RuntimeException r ? r : new RuntimeException(cause);
-                            ready.add(new Ready(key, x, y, z, null, List.of(), List.of(), false, false, false, false, runtime, 0, null));
+                            ready.add(new Ready(key, x, y, z, null, List.of(), List.of(), CubeCodec.PendingTicks.EMPTY, false, false, false, false, runtime, 0, null));
                         }
                         return;
                     }
@@ -402,7 +409,7 @@ public final class ServerCubeWorld extends CubeWorld {
             if (saved == null) return null;
             CubeCodec.Decoded decoded = codec.read(saved);
             generator.loaded(x, y, z);
-            return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), CubeCodec.tags(saved, CubeCodec.ENTITIES), true,
+            return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), CubeCodec.tags(saved, CubeCodec.ENTITIES), decoded.pendingTicks(), true,
                     !saved.getBoolean(CubeCodec.UNTOUCHED), saved.getBoolean(CubeCodec.UNPOPULATED), false, null, openFaces(decoded.section()), null);
         } catch (IOException | RuntimeException failure) {
             EarthPlatformMod.LOGGER.error("Could not read saved cube {}; regenerating it", CubeKey.toString(key), failure);
@@ -414,13 +421,18 @@ public final class ServerCubeWorld extends CubeWorld {
     private Ready generateCube(long key, int x, int y, int z) {
         try {
             List<CompoundTag> blockEntities = new ArrayList<>(), entities = new ArrayList<>();
-            LevelChunkSection section = generator.generate(x, y, z, blockEntities, entities);
+            List<CubeCodec.PendingTick<Block>> blockTicks = new ArrayList<>();
+            List<CubeCodec.PendingTick<Fluid>> fluidTicks = new ArrayList<>();
+            LevelChunkSection section = generator.generate(x, y, z, blockEntities, entities, blockTicks, fluidTicks);
+            CubeCodec.PendingTicks ticks = blockTicks.isEmpty() && fluidTicks.isEmpty()
+                    ? CubeCodec.PendingTicks.EMPTY
+                    : new CubeCodec.PendingTicks(List.copyOf(blockTicks), List.copyOf(fluidTicks));
             int[] band = surfaceBand(x, z);
             boolean surface = band[0] + SAVED_BELOW == y;
-            return new Ready(key, x, y, z, section, blockEntities, entities, false, false, surface, y >= band[0] && y <= band[1], null, openFaces(section),
+            return new Ready(key, x, y, z, section, blockEntities, entities, ticks, false, false, surface, y >= band[0] && y <= band[1], null, openFaces(section),
                     server.getServer().isSameThread() ? null : baselineNow(x, z));
         } catch (RuntimeException failure) {
-            return new Ready(key, x, y, z, null, List.of(), List.of(), false, false, false, false, failure, 0, null);
+            return new Ready(key, x, y, z, null, List.of(), List.of(), CubeCodec.PendingTicks.EMPTY, false, false, false, false, failure, 0, null);
         }
     }
 
@@ -484,6 +496,8 @@ public final class ServerCubeWorld extends CubeWorld {
         if (!entry.entities().isEmpty()) unplacedEntities.put(cube.key, new ArrayList<>(entry.entities()));
         else unplacedEntities.remove(cube.key);
         adopt(cube);
+        if (!entry.pendingTicks().isEmpty()) pendingTicks.put(cube.key, entry.pendingTicks());
+        else pendingTicks.remove(cube.key);
         surveys.openBehind(cube.x, cube.y, cube.z, openFaces(cube.section), quietCap());
         server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
         CubicPoiClaims.reclaim(server, SectionPos.of(cube.x, cube.y, cube.z));
@@ -657,8 +671,13 @@ public final class ServerCubeWorld extends CubeWorld {
             try { if (storage.read(key) != null) continue; }
             catch (IOException failure) { continue; }
             List<CompoundTag> blockEntities = new ArrayList<>(), entities = new ArrayList<>();
-            LevelChunkSection section = generator.generate(cubeX, y, cubeZ, blockEntities, entities);
-            CompoundTag tag = codec.writeGenerated(cubeX, y, cubeZ, section, blockEntities);
+            List<CubeCodec.PendingTick<Block>> blockTicks = new ArrayList<>();
+            List<CubeCodec.PendingTick<Fluid>> fluidTicks = new ArrayList<>();
+            LevelChunkSection section = generator.generate(cubeX, y, cubeZ, blockEntities, entities, blockTicks, fluidTicks);
+            CubeCodec.PendingTicks ticks = blockTicks.isEmpty() && fluidTicks.isEmpty()
+                    ? CubeCodec.PendingTicks.EMPTY
+                    : new CubeCodec.PendingTicks(List.copyOf(blockTicks), List.copyOf(fluidTicks));
+            CompoundTag tag = codec.writeGenerated(cubeX, y, cubeZ, section, blockEntities, ticks);
             if (y == band[0] + SAVED_BELOW) tag.putBoolean(CubeCodec.UNPOPULATED, true);
             if (!entities.isEmpty()) {
                 net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
@@ -797,6 +816,7 @@ public final class ServerCubeWorld extends CubeWorld {
             if (entity != null) cube.blockEntities.put(pos, entity);
         }
         adopt(cube);
+        if (!result.pendingTicks.isEmpty()) pendingTicks.put(result.key, result.pendingTicks);
         surveys.openBehind(cube.x, cube.y, cube.z, result.open, quietCap());
         // Points of interest at cubic heights live only in memory: rebuild them from the blocks.
         server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
@@ -934,6 +954,7 @@ public final class ServerCubeWorld extends CubeWorld {
         flushChanges();
         far.tick(server.players());
         lightCubes();
+        dispatchPendingTicks();
         if (ticks % 20 == 0) populate();
         if (ticks % 40 == 0) unloadUnwatched(h + 2, v + 2);
         randomTicks(h, v);
@@ -1345,7 +1366,7 @@ public final class ServerCubeWorld extends CubeWorld {
         }
     }
 
-    /** Adds the entities fresh cubes start with, once their chunk ticks entities, and keeps those cubes saved from then on. */
+    /** Adds the entities fresh cubes start with, once their chunk ticks entities, and marks those cubes modified so entities are never spawned twice. */
     private void placeEntities() {
         if (unplacedEntities.isEmpty()) return;
         for (long key : unplacedEntities.keySet().toLongArray()) {
@@ -1354,9 +1375,79 @@ public final class ServerCubeWorld extends CubeWorld {
             if (!server.isNaturalSpawningAllowed(new ChunkPos(cube.x, cube.z))) continue;
             for (CompoundTag tag : unplacedEntities.remove(key)) {
                 Entity entity = EntityType.loadEntityRecursive(tag, server, e -> e);
-                if (entity != null) server.addFreshEntity(entity);
+                if (entity != null) server.addFreshEntityWithPassengers(entity);
             }
-            cube.markUnsaved();
+            cube.markModified();
+        }
+    }
+
+    /** Schedules generation-captured structure ticks once each cube's carrier chunk ticks and all 6 face neighbors are loaded. */
+    private void dispatchPendingTicks() {
+        if (pendingTicks.isEmpty() || !server.tickRateManager().runsNormally()) return;
+        PendingTickDispatcher.dispatchReady(
+                pendingTicks,
+                cubes::containsKey,
+                (cx, cz) -> server.shouldTickBlocksAt(ChunkPos.asLong(cx, cz)),
+                tick -> {
+                    BlockPos pos = new BlockPos(tick.x(), tick.y(), tick.z());
+                    Cube cube = cubeAtBlock(tick.x(), tick.y(), tick.z());
+                    if (cube != null && cube.get(tick.x(), tick.y(), tick.z()).is(tick.type())) {
+                        server.scheduleTick(pos, tick.type(), tick.delay(), tick.priority());
+                    }
+                },
+                tick -> {
+                    BlockPos pos = new BlockPos(tick.x(), tick.y(), tick.z());
+                    Cube cube = cubeAtBlock(tick.x(), tick.y(), tick.z());
+                    if (cube != null && cube.get(tick.x(), tick.y(), tick.z()).getFluidState().is(tick.type())) {
+                        server.scheduleTick(pos, tick.type(), tick.delay(), tick.priority());
+                    }
+                },
+                key -> {
+                    Cube cube = cubes.get(key);
+                    if (cube != null) cube.markUnsaved();
+                });
+    }
+
+    /**
+     * Neighbor-gated dispatcher for generation-captured structure block and fluid ticks: waits until
+     * the cube's carrier chunk ticks blocks and all in-range 6-face-adjacent cubes are loaded so
+     * structure fluids and redstone never spill into {@link CubeWorld#UNLOADED}.
+     */
+    static final class PendingTickDispatcher {
+        private PendingTickDispatcher() {}
+
+        static boolean neighborsLoaded(int cx, int cy, int cz, LongPredicate cubeLoaded) {
+            if (!cubeLoaded.test(CubeKey.pack(cx - 1, cy, cz)) || !cubeLoaded.test(CubeKey.pack(cx + 1, cy, cz))) return false;
+            if (!cubeLoaded.test(CubeKey.pack(cx, cy, cz - 1)) || !cubeLoaded.test(CubeKey.pack(cx, cy, cz + 1))) return false;
+            if (CubeWorld.inRange((cy - 1) << 4) && !cubeLoaded.test(CubeKey.pack(cx, cy - 1, cz))) return false;
+            if (CubeWorld.inRange((cy + 1) << 4) && !cubeLoaded.test(CubeKey.pack(cx, cy + 1, cz))) return false;
+            return true;
+        }
+
+        static int dispatchReady(
+                Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pendingTicks,
+                LongPredicate cubeLoaded,
+                BiPredicate<Integer, Integer> chunkTicking,
+                Consumer<CubeCodec.PendingTick<Block>> scheduleBlock,
+                Consumer<CubeCodec.PendingTick<Fluid>> scheduleFluid,
+                LongConsumer onDrained) {
+            if (pendingTicks.isEmpty()) return 0;
+            int dispatched = 0;
+            for (long key : pendingTicks.keySet().toLongArray()) {
+                if (!cubeLoaded.test(key)) {
+                    pendingTicks.remove(key);
+                    continue;
+                }
+                int cx = CubeKey.x(key), cy = CubeKey.y(key), cz = CubeKey.z(key);
+                if (!chunkTicking.test(cx, cz) || !neighborsLoaded(cx, cy, cz, cubeLoaded)) continue;
+                CubeCodec.PendingTicks ticks = pendingTicks.remove(key);
+                if (ticks == null || ticks.isEmpty()) continue;
+                for (CubeCodec.PendingTick<Block> tick : ticks.blocks()) scheduleBlock.accept(tick);
+                for (CubeCodec.PendingTick<Fluid> tick : ticks.fluids()) scheduleFluid.accept(tick);
+                onDrained.accept(key);
+                dispatched++;
+            }
+            return dispatched;
         }
     }
 
@@ -1466,7 +1557,7 @@ public final class ServerCubeWorld extends CubeWorld {
         untouchedStores.supersede(cube.key);
         try {
             CompoundTag tag = codec.write(cube, server.registryAccess());
-            // Owed first animals or starting entities stay owed to the next visit.
+            // Owed first animals, starting entities, or structure ticks stay owed to the next visit.
             if (unpopulated.contains(cube.key)) tag.putBoolean(CubeCodec.UNPOPULATED, true);
             List<CompoundTag> owed = unplacedEntities.get(cube.key);
             if (owed != null && !owed.isEmpty()) {
@@ -1474,6 +1565,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 list.addAll(owed);
                 tag.put(CubeCodec.ENTITIES, list);
             }
+            CubeCodec.writePendingTicks(tag, pendingTicks.get(cube.key));
             storage.put(cube.key, tag);
             cube.dirty = false;
             // Edited rock now comes back from the save, not the generator, so it is never stood in for.
@@ -1507,8 +1599,9 @@ public final class ServerCubeWorld extends CubeWorld {
         boolean owedAnimals = unpopulated.contains(key);
         List<CompoundTag> owed = unplacedEntities.get(key);
         List<CompoundTag> entities = owed == null ? List.of() : List.copyOf(owed);
-        untouchedStores.enqueue(cube, owedAnimals, entities, () -> {
-            CompoundTag tag = codec.writeGenerated(x, y, z, section, blockEntities);
+        CubeCodec.PendingTicks owedTicks = pendingTicks.getOrDefault(key, CubeCodec.PendingTicks.EMPTY);
+        untouchedStores.enqueue(cube, owedAnimals, entities, owedTicks, () -> {
+            CompoundTag tag = codec.writeGenerated(x, y, z, section, blockEntities, owedTicks);
             if (owedAnimals) tag.putBoolean(CubeCodec.UNPOPULATED, true);
             if (!entities.isEmpty()) {
                 net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
@@ -1825,6 +1918,7 @@ public final class ServerCubeWorld extends CubeWorld {
             private final Cube cube;
             private final boolean owedAnimals;
             private final List<CompoundTag> entities;
+            private final CubeCodec.PendingTicks pendingTicks;
             private final Supplier<T> encoder;
             private final Executor workerPool;
             private final Executor serverThread;
@@ -1840,10 +1934,16 @@ public final class ServerCubeWorld extends CubeWorld {
 
             Entry(Cube cube, boolean owedAnimals, List<CompoundTag> entities, Supplier<T> encoder,
                   Executor workerPool, Executor serverThread) {
+                this(cube, owedAnimals, entities, CubeCodec.PendingTicks.EMPTY, encoder, workerPool, serverThread);
+            }
+
+            Entry(Cube cube, boolean owedAnimals, List<CompoundTag> entities, CubeCodec.PendingTicks pendingTicks,
+                  Supplier<T> encoder, Executor workerPool, Executor serverThread) {
                 this.key = cube.key;
                 this.cube = cube;
                 this.owedAnimals = owedAnimals;
                 this.entities = entities;
+                this.pendingTicks = pendingTicks == null ? CubeCodec.PendingTicks.EMPTY : pendingTicks;
                 this.encoder = encoder;
                 this.workerPool = workerPool;
                 this.serverThread = serverThread;
@@ -1853,6 +1953,7 @@ public final class ServerCubeWorld extends CubeWorld {
             Cube cube() { return cube; }
             boolean owedAnimals() { return owedAnimals; }
             List<CompoundTag> entities() { return entities; }
+            CubeCodec.PendingTicks pendingTicks() { return pendingTicks; }
             boolean isWorkerInFlight() { return attempt.claimed.get() && !attempt.encoded.isDone(); }
         }
 
@@ -1901,14 +2002,21 @@ public final class ServerCubeWorld extends CubeWorld {
 
         void enqueue(Cube cube, boolean owedAnimals, List<CompoundTag> entities, Supplier<T> encoder,
                      Executor workerPool, Executor serverThread) {
+            enqueue(cube, owedAnimals, entities, CubeCodec.PendingTicks.EMPTY, encoder, workerPool, serverThread);
+        }
+
+        void enqueue(Cube cube, boolean owedAnimals, List<CompoundTag> entities, CubeCodec.PendingTicks pendingTicks,
+                     Supplier<T> encoder, Executor workerPool, Executor serverThread) {
+            CubeCodec.PendingTicks normalizedTicks = pendingTicks == null ? CubeCodec.PendingTicks.EMPTY : pendingTicks;
             Entry<T> existing = pending.get(cube.key);
             if (existing != null && existing.cube == cube
                     && existing.owedAnimals == owedAnimals
                     && Objects.equals(existing.entities, entities)
+                    && Objects.equals(existing.pendingTicks, normalizedTicks)
                     && !existing.encodeFailed && !existing.writeFailed && !existing.rejected) {
                 return;
             }
-            Entry<T> entry = new Entry<>(cube, owedAnimals, entities, encoder, workerPool, serverThread);
+            Entry<T> entry = new Entry<>(cube, owedAnimals, entities, normalizedTicks, encoder, workerPool, serverThread);
             pending.put(cube.key, entry);
             submitAttempt(entry, entry.attempt);
         }

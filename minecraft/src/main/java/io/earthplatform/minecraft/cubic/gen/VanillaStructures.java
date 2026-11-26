@@ -2,6 +2,8 @@ package io.earthplatform.minecraft.cubic.gen;
 
 import com.mojang.logging.LogUtils;
 import com.mojang.serialization.MapCodec;
+import io.earthplatform.geography.MissingTerrainException;
+import io.earthplatform.minecraft.cubic.CubeCodec;
 import io.earthplatform.minecraft.cubic.CubeWorld;
 import net.minecraft.world.level.levelgen.structure.structures.BuriedTreasureStructure;
 import net.minecraft.world.level.levelgen.structure.structures.OceanMonumentStructure;
@@ -13,12 +15,15 @@ import it.unimi.dsi.fastutil.longs.LongCollection;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.shorts.ShortArrayList;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntBinaryOperator;
 import java.util.function.Predicate;
@@ -46,6 +51,7 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeManager;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -72,6 +78,7 @@ import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStruct
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadType;
 import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement;
 import net.minecraft.world.level.levelgen.structure.pools.StructureTemplatePool;
+import net.minecraft.world.level.material.Fluid;
 import org.slf4j.Logger;
 
 /**
@@ -86,8 +93,8 @@ import org.slf4j.Logger;
  * heights (vanilla's Y 70 in mountains, its bottom underground).
  *
  * <p>Each structure is laid out once, on the terrain as generated, into an overlay of blocks,
- * block entities and entities bucketed by cube. A cube copies its part of every overlay
- * reaching it, so cubes come out the same whichever order they generate in.
+ * block entities, entities and pending ticks bucketed by cube. A cube copies its part of every
+ * overlay reaching it, so cubes come out the same whichever order they generate in.
  */
 final class VanillaStructures {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -140,11 +147,13 @@ final class VanillaStructures {
      * to the frame's bottom, where YUNG's stronghold legs and zombie dungeon legs reach over a void.
      */
     private record Start(int kind, int chunkX, int chunkZ, StructureStart start, Frame frame, BoundingBox reach, int low) {}
-    /** The part of an overlay in one cube: block indices and states, block entity and entity tags. */
-    private record Patch(short[] at, BlockState[] states, List<CompoundTag> blockEntities, List<CompoundTag> entities) {}
+    /** The part of an overlay in one cube: block indices and states, block entity and entity tags, and pending ticks. */
+    record Patch(short[] at, BlockState[] states, List<CompoundTag> blockEntities, List<CompoundTag> entities,
+                 List<CubeCodec.PendingTick<Block>> blockTicks, List<CubeCodec.PendingTick<Fluid>> fluidTicks) {}
 
     @Nullable private final ServerLevel level;
     private final RegistryAccess registries;
+    @Nullable private final Registry<Biome> biomeRegistry;
     private final Host host;
     private final long seed;
     private final RandomState randomState;
@@ -154,9 +163,13 @@ final class VanillaStructures {
     /** Each structure's decoration step and index within it, from which vanilla seeds its placement. */
     private final Map<Structure, int[]> seeding = new HashMap<>();
     private final Generations<Optional<Start>> starts = new Generations<>(16384);
+    /** Single-flight deduplication for cold start computations so concurrent workers never re-run the same start. */
+    private final ConcurrentHashMap<Long, CompletableFuture<Optional<Start>>> computingStarts = new ConcurrentHashMap<>();
     /** The starts reaching chunk columns. */
     private final Generations<List<Start>> columns = new Generations<>(4096);
-    private final ConcurrentHashMap<Long, CompletableFuture<Long2ObjectOpenHashMap<Patch>>> overlays = new ConcurrentHashMap<>();
+    /** Bounded generational overlay cache (never wiped wholesale) + single-flight in-flight builders. */
+    private final Generations<Long2ObjectOpenHashMap<Patch>> overlayCache = new Generations<>(256);
+    private final ConcurrentHashMap<Long, CompletableFuture<Long2ObjectOpenHashMap<Patch>>> buildingOverlays = new ConcurrentHashMap<>();
     /** Copies of deep starts moved to real heights, for vanilla's checks of what lies inside a structure. */
     private final Generations<StructureStart> realStarts = new Generations<>(4096);
     /**
@@ -199,6 +212,9 @@ final class VanillaStructures {
                       boolean generate, Host host, long seed) {
         this.level = level;
         this.registries = registries;
+        this.biomeRegistry = level != null
+                ? level.registryAccess().registryOrThrow(Registries.BIOME)
+                : registries.registry(Registries.BIOME).orElse(null);
         this.host = host;
         this.seed = seed;
         this.randomState = randomState;
@@ -300,6 +316,13 @@ final class VanillaStructures {
 
     /** Copies into a cube every structure block, block entity and entity falling in it. */
     void place(LevelChunkSection section, int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
+        place(section, cx, cy, cz, blockEntities, entities, null, null);
+    }
+
+    /** Copies into a cube every structure block, block entity, entity and scheduled tick falling in it. */
+    void place(LevelChunkSection section, int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities,
+               @Nullable List<CubeCodec.PendingTick<Block>> blockTicks,
+               @Nullable List<CubeCodec.PendingTick<Fluid>> fluidTicks) {
         if (!generate) return;
         long key = SectionPos.asLong(cx, cy, cz);
         for (Start start : column(cx, cz)) {
@@ -310,14 +333,26 @@ final class VanillaStructures {
                 int at = patch.at[i];
                 section.setBlockState(at & 15, at >> 8 & 15, at >> 4 & 15, patch.states[i], false);
             }
-            if (!blockEntities.isEmpty()) {
-                // Whatever the terrain had at a written position is gone.
+            if (patch.at.length > 0 && (!blockEntities.isEmpty()
+                    || (blockTicks != null && !blockTicks.isEmpty())
+                    || (fluidTicks != null && !fluidTicks.isEmpty()))) {
+                // Whatever the terrain or an earlier structure had at a written position is gone.
                 Set<Integer> written = new java.util.HashSet<>();
                 for (short at : patch.at) written.add((int) at);
-                blockEntities.removeIf(tag -> written.contains((tag.getInt("y") & 15) << 8 | (tag.getInt("z") & 15) << 4 | tag.getInt("x") & 15));
+                if (!blockEntities.isEmpty()) {
+                    blockEntities.removeIf(tag -> written.contains((tag.getInt("y") & 15) << 8 | (tag.getInt("z") & 15) << 4 | tag.getInt("x") & 15));
+                }
+                if (blockTicks != null && !blockTicks.isEmpty()) {
+                    blockTicks.removeIf(t -> written.contains((t.y() & 15) << 8 | (t.z() & 15) << 4 | t.x() & 15));
+                }
+                if (fluidTicks != null && !fluidTicks.isEmpty()) {
+                    fluidTicks.removeIf(t -> written.contains((t.y() & 15) << 8 | (t.z() & 15) << 4 | t.x() & 15));
+                }
             }
             for (CompoundTag tag : patch.blockEntities) blockEntities.add(tag.copy());
             for (CompoundTag tag : patch.entities) entities.add(tag.copy());
+            if (blockTicks != null && !patch.blockTicks.isEmpty()) blockTicks.addAll(patch.blockTicks);
+            if (fluidTicks != null && !patch.fluidTicks.isEmpty()) fluidTicks.addAll(patch.fluidTicks);
         }
     }
 
@@ -711,8 +746,16 @@ final class VanillaStructures {
 
     // Placement: which structures start where -----------------------------------------------------
 
-    private static long startKey(int kind, int chunkX, int chunkZ) {
-        return (long) kind << 56 | ((long) chunkX & 0xFFFFFFFL) << 28 | (long) chunkZ & 0xFFFFFFFL;
+    /**
+     * Collision-free 64-bit cache key for {@code (kind, chunkX, chunkZ)}: 20 bits for structure
+     * set index (up to 1,048,576 sets) and 22 signed bits each for chunk X/Z (±2,097,151 chunks =
+     * ±33.55M blocks), passed through {@link it.unimi.dsi.fastutil.HashCommon#mix(long)} (bijective).
+     */
+    static long startKey(int kind, int chunkX, int chunkZ) {
+        long raw = ((long) (kind & 0xFFFFF) << 44)
+                | (((long) chunkX & 0x3FFFFFL) << 22)
+                | ((long) chunkZ & 0x3FFFFFL);
+        return it.unimi.dsi.fastutil.HashCommon.mix(raw);
     }
 
     /** The starts reaching a chunk column, in a fixed order. */
@@ -756,41 +799,89 @@ final class VanillaStructures {
     }
 
     /**
-     * A structure set's start in a chunk, or null where it has none. A start that throws is not
-     * taken for none: the layout asking fails (a lookup's column backs off, a cube is made again
-     * later), as the failure may pass (map data still coming). It is not tried again for a while,
-     * and a try counts once however many callers ask meanwhile, so one short outage is one try. Only
-     * after {@link #MOST_START_FAILURES} tries is it given up and left out, so another mod's start
-     * that always throws leaves no hole.
+     * A structure set's start in a chunk, or null where it has none. Concurrent callers for the
+     * same cold key share a single computation via {@link #computingStarts}. A start that throws is
+     * not taken for none: the layout asking fails (a lookup's column backs off, a cube is made
+     * again later), as the failure may pass (map data still coming). Transient
+     * {@link MissingTerrainException} never counts toward permanent give-up. Only after
+     * {@link #MOST_START_FAILURES} non-terrain failure windows is a start given up and left out.
      */
     @Nullable private Start start(Kind kind, int chunkX, int chunkZ) {
         long key = startKey(kind.index, chunkX, chunkZ);
         Optional<Start> cached = starts.get(key);
         if (cached != null) return cached.orElse(null);
+        CompletableFuture<Optional<Start>> inFlight = computingStarts.get(key);
+        if (inFlight != null) return joinUnwrapping(inFlight).orElse(null);
         StartFailure recent = startFailures.get(key);
         if (recent != null && System.nanoTime() - recent.at < startRetryNanos) throw new StartFailed(null); // inside its backoff: not tried
-        Start made = null;
+        CompletableFuture<Optional<Start>> mine = new CompletableFuture<>();
+        inFlight = computingStarts.putIfAbsent(key, mine);
+        if (inFlight != null) return joinUnwrapping(inFlight).orElse(null);
         try {
-            made = makeStart(kind, chunkX, chunkZ);
-        } catch (java.util.concurrent.CancellationException closing) {
-            throw closing; // the world is closing: not known to be missing
-        } catch (RuntimeException e) {
-            long now = System.nanoTime();
-            // Callers failing together in one window (generation and lookups, one outage) count as one try.
-            int tries = startFailures.compute(key, (k, had) -> had != null && now - had.at < startRetryNanos ? had
-                    : new StartFailure(had == null ? 1 : had.tries + 1, now)).tries;
-            if (tries < MOST_START_FAILURES) {
-                if (startFailures.size() > 4096) startFailures.clear();
-                if (startFailed.compareAndSet(false, true))
-                    LOGGER.warn("Cubic world: structure set {} failed to start in chunk {}, {}; asked again later (logged once)",
-                            kind.set.getRegisteredName(), chunkX, chunkZ, e);
-                throw new StartFailed(e);
+            Optional<Start> afterLock = starts.get(key);
+            if (afterLock != null) {
+                mine.complete(afterLock);
+                return afterLock.orElse(null);
             }
-            LOGGER.warn("Cubic world: structure set {} failed to start in chunk {}, {} {} times; left out",
-                    kind.set.getRegisteredName(), chunkX, chunkZ, tries, e);
+            Start made = null;
+            try {
+                made = makeStart(kind, chunkX, chunkZ);
+            } catch (java.util.concurrent.CancellationException closing) {
+                mine.completeExceptionally(closing);
+                throw closing; // the world is closing: not known to be missing
+            } catch (MissingTerrainException missing) {
+                mine.completeExceptionally(missing);
+                throw missing; // transient terrain gap: never count toward permanent give-up
+            } catch (RuntimeException e) {
+                if (isMissingTerrain(e)) {
+                    mine.completeExceptionally(e);
+                    throw e;
+                }
+                long now = System.nanoTime();
+                // Callers failing together in one window (generation and lookups, one outage) count as one try.
+                int tries = startFailures.compute(key, (k, had) -> had != null && now - had.at < startRetryNanos ? had
+                        : new StartFailure(had == null ? 1 : had.tries + 1, now)).tries;
+                if (tries < MOST_START_FAILURES) {
+                    if (startFailures.size() > 4096) startFailures.clear();
+                    if (startFailed.compareAndSet(false, true))
+                        LOGGER.warn("Cubic world: structure set {} failed to start in chunk {}, {}; asked again later (logged once)",
+                                kind.set.getRegisteredName(), chunkX, chunkZ, e);
+                    StartFailed failed = new StartFailed(e);
+                    mine.completeExceptionally(failed);
+                    throw failed;
+                }
+                LOGGER.warn("Cubic world: structure set {} failed to start in chunk {}, {} {} times; left out",
+                        kind.set.getRegisteredName(), chunkX, chunkZ, tries, e);
+            } catch (Error err) {
+                mine.completeExceptionally(err);
+                throw err;
+            }
+            startFailures.remove(key);
+            Optional<Start> kept = starts.putIfAbsent(key, Optional.ofNullable(made));
+            mine.complete(kept);
+            return kept.orElse(null);
+        } finally {
+            computingStarts.remove(key, mine);
         }
-        startFailures.remove(key);
-        return starts.putIfAbsent(key, Optional.ofNullable(made)).orElse(null);
+    }
+
+    private static <T> T joinUnwrapping(CompletableFuture<T> future) {
+        try {
+            return future.join();
+        } catch (CompletionException wrapped) {
+            Throwable cause = wrapped.getCause();
+            if (cause instanceof RuntimeException runtime) throw runtime;
+            if (cause instanceof Error error) throw error;
+            throw wrapped;
+        }
+    }
+
+    private static boolean isMissingTerrain(Throwable failure) {
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Throwable cur = failure; cur != null && seen.add(cur); cur = cur.getCause()) {
+            if (cur instanceof MissingTerrainException) return true;
+        }
+        return false;
     }
 
     /** A start that threw, not yet given up: whatever asked fails, and is asked again later. */
@@ -988,48 +1079,113 @@ final class VanillaStructures {
 
     private Long2ObjectOpenHashMap<Patch> overlay(Start start) {
         long key = startKey(start.kind, start.chunkX, start.chunkZ);
-        CompletableFuture<Long2ObjectOpenHashMap<Patch>> future = overlays.get(key);
-        if (future == null) {
-            CompletableFuture<Long2ObjectOpenHashMap<Patch>> mine = new CompletableFuture<>();
-            if (overlays.size() > 256) overlays.values().removeIf(CompletableFuture::isDone);
-            future = overlays.putIfAbsent(key, mine);
-            if (future == null) {
-                future = mine;
-                try {
-                    mine.complete(build(start));
-                } catch (java.util.concurrent.CancellationException closing) {
-                    overlays.remove(key, mine); // the world is closing: nothing half laid out is kept
-                    mine.complete(new Long2ObjectOpenHashMap<>());
-                } catch (RuntimeException | LinkageError e) {
-                    LOGGER.warn("Cubic world: structure {} failed to place at chunk {}, {}",
-                            registries.registryOrThrow(Registries.STRUCTURE).getKey(start.start.getStructure()), start.chunkX, start.chunkZ, e);
-                    mine.complete(new Long2ObjectOpenHashMap<>());
-                }
+        Long2ObjectOpenHashMap<Patch> cached = overlayCache.get(key);
+        if (cached != null) return cached;
+        CompletableFuture<Long2ObjectOpenHashMap<Patch>> existing = buildingOverlays.get(key);
+        if (existing != null) return joinUnwrapping(existing);
+        CompletableFuture<Long2ObjectOpenHashMap<Patch>> mine = new CompletableFuture<>();
+        existing = buildingOverlays.putIfAbsent(key, mine);
+        if (existing != null) return joinUnwrapping(existing);
+        try {
+            Long2ObjectOpenHashMap<Patch> built = build(start);
+            overlayCache.put(key, built);
+            mine.complete(built);
+            return built;
+        } catch (java.util.concurrent.CancellationException closing) {
+            // The world is closing: nothing half laid out is kept.
+            Long2ObjectOpenHashMap<Patch> empty = new Long2ObjectOpenHashMap<>();
+            mine.complete(empty);
+            return empty;
+        } catch (MissingTerrainException missing) {
+            mine.completeExceptionally(missing);
+            throw missing;
+        } catch (RuntimeException | LinkageError e) {
+            if (isMissingTerrain(e)) {
+                mine.completeExceptionally(e);
+                throw e;
+            }
+            LOGGER.warn("Cubic world: structure {} failed to place at chunk {}, {}",
+                    registries.registryOrThrow(Registries.STRUCTURE).getKey(start.start.getStructure()), start.chunkX, start.chunkZ, e);
+            Long2ObjectOpenHashMap<Patch> empty = new Long2ObjectOpenHashMap<>();
+            overlayCache.put(key, empty);
+            mine.complete(empty);
+            return empty;
+        } catch (Error err) {
+            mine.completeExceptionally(err);
+            throw err;
+        } finally {
+            buildingOverlays.remove(key, mine);
+        }
+    }
+
+    /** For tests: clears the overlay cache to exercise eviction and rebuilds against cached starts. */
+    void clearOverlaysForTest() {
+        overlayCache.clear();
+    }
+
+    /**
+     * Returns an un-mutated {@link StructureStart} for {@link #build(Start)} so vanilla's stateful
+     * {@code placeInChunk} (chests, settled Y, etc.) never corrupts the cached {@code start.start}
+     * if this overlay is later evicted and rebuilt.
+     */
+    private StructureStart freshStart(Start start) {
+        if (level != null) {
+            try {
+                StructurePieceSerializationContext context = StructurePieceSerializationContext.fromLevel(level);
+                ChunkPos chunk = new ChunkPos(start.chunkX, start.chunkZ);
+                StructureStart copy = StructureStart.loadStaticStart(context, start.start.createTag(context, chunk), seed);
+                if (copy != null && copy.isValid()) return copy;
+            } catch (RuntimeException | LinkageError failure) {
+                LOGGER.debug("Cubic world: could not NBT-clone start of {} at {}, {}; regenerating fresh start",
+                        registries.registryOrThrow(Registries.STRUCTURE).getKey(start.start.getStructure()),
+                        start.chunkX, start.chunkZ, failure);
             }
         }
-        return future.join();
+        Start regenerated = makeStart(kinds.get(start.kind), start.chunkX, start.chunkZ);
+        return regenerated != null ? regenerated.start : start.start;
+    }
+
+    @Nullable private volatile Registry<Biome> fallbackBiomes;
+
+    private Registry<Biome> biomeRegistry() {
+        if (biomeRegistry != null) return biomeRegistry;
+        Registry<Biome> cached = fallbackBiomes;
+        if (cached != null) return cached;
+        net.minecraft.core.MappedRegistry<Biome> reg = new net.minecraft.core.MappedRegistry<>(Registries.BIOME, com.mojang.serialization.Lifecycle.stable());
+        int[] idx = {0};
+        host.possibleBiomes().forEach(h -> {
+            var key = h.unwrapKey().orElseGet(() -> net.minecraft.resources.ResourceKey.create(Registries.BIOME,
+                    net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("test", "biome_" + idx[0]++)));
+            if (!reg.containsKey(key)) reg.register(key, h.value(), net.minecraft.core.RegistrationInfo.BUILT_IN);
+        });
+        reg.freeze();
+        fallbackBiomes = reg;
+        return reg;
     }
 
     private Long2ObjectOpenHashMap<Patch> build(Start start) {
+        StructureStart working = freshStart(start);
         Frame frame = start.frame;
-        StructureLevel world = new StructureLevel(level, new Reader(), frame.shift, frame.minY, frame.height, frame.sea,
+        int[] yBounds = StructureLevel.bounds(start.low, start.reach.maxY(), frame.minY, frame.height, frame.shift);
+        StructureLevel world = new StructureLevel(level, biomeRegistry(), new Reader(), frame.shift, yBounds[0], yBounds[1], frame.sea,
                 new BlockPos(start.chunkX << 4, (start.reach.minY() + start.reach.maxY()) >> 1, start.chunkZ << 4),
-                start.start.getStructure() instanceof OceanMonumentStructure ? start.start.getBoundingBox().minY() - 64 : CubeWorld.MIN_Y, seed,
+                working.getStructure() instanceof OceanMonumentStructure ? working.getBoundingBox().minY() - 64 : CubeWorld.MIN_Y, seed,
                 RandomSource.create(startKey(start.kind, start.chunkX, start.chunkZ) ^ seed));
-        host.prepare(reads(start.start.getPieces(), start.frame.shift, start.start.getStructure().terrainAdaptation(), start.chunkX, start.chunkZ));
+        host.prepare(reads(working.getPieces(), start.frame.shift, working.getStructure().terrainAdaptation(), start.chunkX, start.chunkZ));
         stopIfClosed();
-        adapt(world, start);
-        BoundingBox box = start.start.getBoundingBox();
-        int[] seeds = seeding.getOrDefault(start.start.getStructure(), new int[]{GenerationStep.Decoration.SURFACE_STRUCTURES.ordinal(), 0});
+        adapt(world, start, working);
+        BoundingBox box = working.getBoundingBox();
+        int[] seeds = seeding.getOrDefault(working.getStructure(), new int[]{GenerationStep.Decoration.SURFACE_STRUCTURES.ordinal(), 0});
         WorldgenRandom random = new WorldgenRandom(new XoroshiroRandomSource(0L));
-        StructureManager structures = level.structureManager();
+        StructureManager structures = level == null ? null : level.structureManager();
         for (int cx = Math.max(box.minX() >> 4, start.chunkX - REACH); cx <= Math.min(box.maxX() >> 4, start.chunkX + REACH); cx++)
             for (int cz = Math.max(box.minZ() >> 4, start.chunkZ - REACH); cz <= Math.min(box.maxZ() >> 4, start.chunkZ + REACH); cz++) {
                 long decoration = random.setDecorationSeed(seed, cx << 4, cz << 4);
                 random.setFeatureSeed(decoration, seeds[1], seeds[0]);
                 stopIfClosed();
-                BoundingBox chunkBox = new BoundingBox(cx << 4, frame.minY + 1, cz << 4, (cx << 4) + 15, frame.minY + frame.height - 1, (cz << 4) + 15);
-                start.start.placeInChunk(world, structures, frame, random, chunkBox, new ChunkPos(cx, cz));
+                BoundingBox chunkBox = new BoundingBox(cx << 4, Math.max(yBounds[0], frame.minY + 1), cz << 4,
+                        (cx << 4) + 15, yBounds[0] + yBounds[1] - 1, (cz << 4) + 15);
+                working.placeInChunk(world, structures, frame, random, chunkBox, new ChunkPos(cx, cz));
             }
         world.postProcessAll();
         return patches(world);
@@ -1118,6 +1274,14 @@ final class VanillaStructures {
             finally { lock.unlock(); }
         }
 
+        /** Clears both generations atomically; for tests. */
+        void clear() {
+            lock.lock();
+            try {
+                maps = new Pair<>(new ConcurrentHashMap<>(), new ConcurrentHashMap<>());
+            } finally { lock.unlock(); }
+        }
+
         /** Lock held. */
         private V keep(long key, V value) {
             Pair<V> now = maps;
@@ -1150,35 +1314,61 @@ final class VanillaStructures {
         boolean writeLocked() { return lock.isLocked(); }
     }
 
-    /** Buckets a laid-out structure by cube. */
-    private static Long2ObjectOpenHashMap<Patch> patches(StructureLevel world) {
+    /** Buckets a laid-out structure (blocks, block entities, entities, and pending ticks) by cube. */
+    static Long2ObjectOpenHashMap<Patch> patches(StructureLevel world) {
         Long2ObjectOpenHashMap<ShortArrayList> at = new Long2ObjectOpenHashMap<>();
         Long2ObjectOpenHashMap<List<BlockState>> states = new Long2ObjectOpenHashMap<>();
         Long2ObjectOpenHashMap<List<CompoundTag>> blockEntities = new Long2ObjectOpenHashMap<>(), entities = new Long2ObjectOpenHashMap<>();
+        Long2ObjectOpenHashMap<List<CubeCodec.PendingTick<Block>>> blockTicks = new Long2ObjectOpenHashMap<>();
+        Long2ObjectOpenHashMap<List<CubeCodec.PendingTick<Fluid>>> fluidTicks = new Long2ObjectOpenHashMap<>();
+        LongOpenHashSet allCubes = new LongOpenHashSet();
         for (var entry : world.blocks.long2ObjectEntrySet()) {
             long pos = entry.getLongKey();
             BlockPos real = world.at(pos);
             int x = real.getX(), y = real.getY(), z = real.getZ();
             if (!CubeWorld.inRange(y)) continue;
             long cube = SectionPos.asLong(x >> 4, y >> 4, z >> 4);
+            allCubes.add(cube);
             at.computeIfAbsent(cube, k -> new ShortArrayList()).add((short) ((y & 15) << 8 | (z & 15) << 4 | x & 15));
             states.computeIfAbsent(cube, k -> new ArrayList<>()).add(entry.getValue());
         }
-        for (CompoundTag tag : world.blockEntityTags())
-            blockEntities.computeIfAbsent(SectionPos.asLong(tag.getInt("x") >> 4, tag.getInt("y") >> 4, tag.getInt("z") >> 4), k -> new ArrayList<>()).add(tag);
+        for (CompoundTag tag : world.blockEntityTags()) {
+            long cube = SectionPos.asLong(tag.getInt("x") >> 4, tag.getInt("y") >> 4, tag.getInt("z") >> 4);
+            allCubes.add(cube);
+            blockEntities.computeIfAbsent(cube, k -> new ArrayList<>()).add(tag);
+        }
         for (CompoundTag tag : world.entities) {
             ListTag pos = tag.getList("Pos", Tag.TAG_DOUBLE);
             if (pos.size() != 3) continue;
             int x = (int) Math.floor(pos.getDouble(0)), y = (int) Math.floor(pos.getDouble(1)), z = (int) Math.floor(pos.getDouble(2));
-            entities.computeIfAbsent(SectionPos.asLong(x >> 4, y >> 4, z >> 4), k -> new ArrayList<>()).add(tag);
+            long cube = SectionPos.asLong(x >> 4, y >> 4, z >> 4);
+            allCubes.add(cube);
+            entities.computeIfAbsent(cube, k -> new ArrayList<>()).add(tag);
         }
-        Long2ObjectOpenHashMap<Patch> patches = new Long2ObjectOpenHashMap<>();
-        for (long cube : at.keySet()) {
-            patches.put(cube, new Patch(at.get(cube).toShortArray(), states.get(cube).toArray(BlockState[]::new),
-                    blockEntities.getOrDefault(cube, List.of()), entities.getOrDefault(cube, List.of())));
+        for (CubeCodec.PendingTick<Block> tick : world.capturedBlockTicks()) {
+            long cube = SectionPos.asLong(tick.x() >> 4, tick.y() >> 4, tick.z() >> 4);
+            allCubes.add(cube);
+            blockTicks.computeIfAbsent(cube, k -> new ArrayList<>()).add(tick);
         }
-        for (long cube : entities.keySet())
-            if (!patches.containsKey(cube)) patches.put(cube, new Patch(new short[0], new BlockState[0], List.of(), entities.get(cube)));
+        for (CubeCodec.PendingTick<Fluid> tick : world.capturedFluidTicks()) {
+            long cube = SectionPos.asLong(tick.x() >> 4, tick.y() >> 4, tick.z() >> 4);
+            allCubes.add(cube);
+            fluidTicks.computeIfAbsent(cube, k -> new ArrayList<>()).add(tick);
+        }
+        Long2ObjectOpenHashMap<Patch> patches = new Long2ObjectOpenHashMap<>(allCubes.size());
+        short[] emptyAt = new short[0];
+        BlockState[] emptyStates = new BlockState[0];
+        for (long cube : allCubes) {
+            ShortArrayList a = at.get(cube);
+            List<BlockState> s = states.get(cube);
+            patches.put(cube, new Patch(
+                    a == null ? emptyAt : a.toShortArray(),
+                    s == null ? emptyStates : s.toArray(BlockState[]::new),
+                    blockEntities.getOrDefault(cube, List.of()),
+                    entities.getOrDefault(cube, List.of()),
+                    blockTicks.getOrDefault(cube, List.of()),
+                    fluidTicks.getOrDefault(cube, List.of())));
+        }
         return patches;
     }
 
@@ -1187,13 +1377,13 @@ final class VanillaStructures {
      * rigid piece the ground is built up to its floor and over it the ground is cut away, both
      * sloping off at one block per block out to {@link #ADAPT}; buried structures are wrapped in rock.
      */
-    private void adapt(StructureLevel world, Start start) {
-        TerrainAdjustment how = start.start.getStructure().terrainAdaptation();
+    private void adapt(StructureLevel world, Start start, StructureStart working) {
+        TerrainAdjustment how = working.getStructure().terrainAdaptation();
         if (how == TerrainAdjustment.NONE) return;
         int shift = start.frame.shift;
         List<BoundingBox> boxes = new ArrayList<>();
         IntArrayList floors = new IntArrayList();
-        for (StructurePiece piece : start.start.getPieces()) {
+        for (StructurePiece piece : working.getPieces()) {
             int delta = 0;
             if (piece instanceof PoolElementStructurePiece pool) {
                 if (pool.getElement().getProjection() != StructureTemplatePool.Projection.RIGID) continue;

@@ -638,7 +638,11 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     @Override public LevelChunkSection generate(int cx, int cy, int cz) { return generate(cx, cy, cz, new ArrayList<>(), new ArrayList<>()); }
 
-    @Override public void attach(ServerLevel level) { detached = false; vanilla = new VanillaStructures(level, new StructureHost(), seed); }
+    @Override public void attach(ServerLevel level) {
+        detached = false;
+        below.attach(level.registryAccess(), level.dimensionType());
+        vanilla = new VanillaStructures(level, new StructureHost(), seed);
+    }
 
     /** For tests: reads a base cube through {@link StructureHost#cube(int, int, int)}. */
     @Nullable LevelChunkSection structureCube(int cx, int cy, int cz) { return new StructureHost().cube(cx, cy, cz); }
@@ -669,14 +673,21 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     private static final int MOST_PREPARED = 4096;
 
     @Override public LevelChunkSection generate(int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities) {
+        return generate(cx, cy, cz, blockEntities, entities, new ArrayList<>(), new ArrayList<>());
+    }
+
+    @Override public LevelChunkSection generate(int cx, int cy, int cz, List<CompoundTag> blockEntities, List<CompoundTag> entities,
+                                                List<io.earthplatform.minecraft.cubic.CubeCodec.PendingTick<Block>> blockTicks,
+                                                List<io.earthplatform.minecraft.cubic.CubeCodec.PendingTick<net.minecraft.world.level.material.Fluid>> fluidTicks) {
         LevelChunkSection section = terrain(cx, cy, cz, blockEntities, entities);
         Vegetation.bees(section, cx << 4, cy << 4, cz << 4, blockEntities);
         VanillaStructures structures = vanilla;
         if (structures != null) {
-            structures.place(section, cx, cy, cz, blockEntities, entities);
+            structures.place(section, cx, cy, cz, blockEntities, entities, blockTicks, fluidTicks);
             section.recalcBlockCounts();
         }
         dropStrayBlockEntities(section, cx, cy, cz, blockEntities);
+        dropStrayTicks(section, cx, cy, cz, blockTicks, fluidTicks);
         return section;
     }
 
@@ -692,6 +703,26 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             BlockState state = section.getBlockState(tag.getInt("x") & 15, tag.getInt("y") & 15, tag.getInt("z") & 15);
             return type == null || !type.isValid(state);
         });
+    }
+
+    /** Drops pending structure ticks whose target block or fluid was overwritten by another structure in the same cube. */
+    private static void dropStrayTicks(LevelChunkSection section, int cx, int cy, int cz,
+                                       List<io.earthplatform.minecraft.cubic.CubeCodec.PendingTick<Block>> blockTicks,
+                                       List<io.earthplatform.minecraft.cubic.CubeCodec.PendingTick<net.minecraft.world.level.material.Fluid>> fluidTicks) {
+        if (!blockTicks.isEmpty()) {
+            blockTicks.removeIf(tick -> {
+                var pos = tick.pos();
+                if (pos.getX() >> 4 != cx || pos.getY() >> 4 != cy || pos.getZ() >> 4 != cz) return true;
+                return !section.getBlockState(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15).is(tick.type());
+            });
+        }
+        if (!fluidTicks.isEmpty()) {
+            fluidTicks.removeIf(tick -> {
+                var pos = tick.pos();
+                if (pos.getX() >> 4 != cx || pos.getY() >> 4 != cy || pos.getZ() >> 4 != cz) return true;
+                return !section.getBlockState(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15).getFluidState().is(tick.type());
+            });
+        }
     }
 
     @Override public @Nullable net.minecraft.core.BlockPos locate(java.util.function.Predicate<net.minecraft.world.level.levelgen.structure.Structure> structure, int x, int z, int radius) {

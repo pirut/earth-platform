@@ -5,14 +5,17 @@ import io.earthplatform.minecraft.EarthPlatformMod;
 import io.netty.buffer.Unpooled;
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.Registry;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.block.Block;
@@ -22,6 +25,9 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
 import net.minecraft.world.level.chunk.PalettedContainerRO;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.Fluids;
+import net.minecraft.world.ticks.TickPriority;
 
 /** Disk (NBT) and network (section bytes) forms of a cube. */
 public final class CubeCodec {
@@ -32,6 +38,10 @@ public final class CubeCodec {
     public static final String UNPOPULATED = "unpopulated";
     /** Entities a fresh cube starts with (chest minecarts), not yet placed in the level. */
     public static final String ENTITIES = "entities";
+    /** Optional scheduled block ticks captured during structure generation, awaiting neighbor-gated dispatch. */
+    public static final String BLOCK_TICKS = "block_ticks";
+    /** Optional scheduled fluid ticks captured during structure generation, awaiting neighbor-gated dispatch. */
+    public static final String FLUID_TICKS = "fluid_ticks";
     private static final Codec<PalettedContainer<BlockState>> STATES = PalettedContainer.codecRW(
             Block.BLOCK_STATE_REGISTRY, BlockState.CODEC, PalettedContainer.Strategy.SECTION_STATES, Blocks.AIR.defaultBlockState());
     private final Codec<PalettedContainerRO<Holder<Biome>>> biomes;
@@ -43,7 +53,36 @@ public final class CubeCodec {
                 PalettedContainer.Strategy.SECTION_BIOMES, biomeRegistry.getHolderOrThrow(Biomes.PLAINS));
     }
 
-    public record Decoded(LevelChunkSection section, List<CompoundTag> blockEntities) {}
+    /** One scheduled block or fluid tick captured during structure generation, at an absolute real block position. */
+    public record PendingTick<T>(BlockPos pos, T type, int delay, TickPriority priority) {
+        public PendingTick {
+            pos = pos.immutable();
+            delay = Math.max(0, delay);
+            priority = priority == null ? TickPriority.NORMAL : priority;
+        }
+
+        public int x() { return pos.getX(); }
+        public int y() { return pos.getY(); }
+        public int z() { return pos.getZ(); }
+    }
+
+    /** Undrained structure block and fluid ticks belonging to one cube. */
+    public record PendingTicks(List<PendingTick<Block>> blocks, List<PendingTick<Fluid>> fluids) {
+        public static final PendingTicks EMPTY = new PendingTicks(List.of(), List.of());
+
+        public PendingTicks {
+            blocks = blocks == null || blocks.isEmpty() ? List.of() : List.copyOf(blocks);
+            fluids = fluids == null || fluids.isEmpty() ? List.of() : List.copyOf(fluids);
+        }
+
+        public boolean isEmpty() { return blocks.isEmpty() && fluids.isEmpty(); }
+    }
+
+    public record Decoded(LevelChunkSection section, List<CompoundTag> blockEntities, PendingTicks pendingTicks) {
+        public Decoded(LevelChunkSection section, List<CompoundTag> blockEntities) {
+            this(section, blockEntities, PendingTicks.EMPTY);
+        }
+    }
 
     /** Main thread: block entities are saved through their owners. */
     public CompoundTag write(Cube cube, HolderLookup.Provider registries) {
@@ -59,14 +98,103 @@ public final class CubeCodec {
 
     /** Any thread: a cube just as the generator made it, with its block entities still as tags. */
     public CompoundTag writeGenerated(int x, int y, int z, LevelChunkSection section, List<CompoundTag> blockEntities) {
+        return writeGenerated(x, y, z, section, blockEntities, PendingTicks.EMPTY);
+    }
+
+    /** Any thread: a generated cube with optional undrained structure ticks. */
+    public CompoundTag writeGenerated(int x, int y, int z, LevelChunkSection section, List<CompoundTag> blockEntities, PendingTicks pendingTicks) {
         CompoundTag tag = sectionTag(x, y, z, section);
         if (!blockEntities.isEmpty()) {
             ListTag entities = new ListTag();
             entities.addAll(blockEntities);
             tag.put("block_entities", entities);
         }
+        writePendingTicks(tag, pendingTicks);
         tag.putBoolean(UNTOUCHED, true);
         return tag;
+    }
+
+    /** Any thread: writes optional pending block/fluid tick lists to a cube tag; omits empty lists for backward compatibility. */
+    public static void writePendingTicks(CompoundTag tag, PendingTicks pendingTicks) {
+        if (pendingTicks == null || pendingTicks.isEmpty()) return;
+        if (!pendingTicks.blocks().isEmpty()) {
+            ListTag list = new ListTag();
+            for (PendingTick<Block> tick : pendingTicks.blocks()) {
+                ResourceLocation id = BuiltInRegistries.BLOCK.getKey(tick.type());
+                if (id == null) continue;
+                list.add(tickTag(id, tick.pos(), tick.delay(), tick.priority()));
+            }
+            if (!list.isEmpty()) tag.put(BLOCK_TICKS, list);
+        }
+        if (!pendingTicks.fluids().isEmpty()) {
+            ListTag list = new ListTag();
+            for (PendingTick<Fluid> tick : pendingTicks.fluids()) {
+                if (tick.type() == Fluids.EMPTY) continue;
+                ResourceLocation id = BuiltInRegistries.FLUID.getKey(tick.type());
+                if (id == null) continue;
+                list.add(tickTag(id, tick.pos(), tick.delay(), tick.priority()));
+            }
+            if (!list.isEmpty()) tag.put(FLUID_TICKS, list);
+        }
+    }
+
+    private static CompoundTag tickTag(ResourceLocation id, BlockPos pos, int delay, TickPriority priority) {
+        CompoundTag entry = new CompoundTag();
+        entry.putString("id", id.toString());
+        entry.putInt("x", pos.getX());
+        entry.putInt("y", pos.getY());
+        entry.putInt("z", pos.getZ());
+        entry.putInt("delay", Math.max(0, delay));
+        entry.putInt("priority", priority.getValue());
+        return entry;
+    }
+
+    /** Any thread: reads optional pending block/fluid ticks; absent lists yield empty and unknown registry IDs are skipped safely. */
+    public static PendingTicks readPendingTicks(CompoundTag tag) {
+        boolean hasBlocks = tag.contains(BLOCK_TICKS, Tag.TAG_LIST);
+        boolean hasFluids = tag.contains(FLUID_TICKS, Tag.TAG_LIST);
+        if (!hasBlocks && !hasFluids) return PendingTicks.EMPTY;
+        List<PendingTick<Block>> blocks = List.of();
+        if (hasBlocks) {
+            ListTag list = tag.getList(BLOCK_TICKS, Tag.TAG_COMPOUND);
+            if (!list.isEmpty()) {
+                List<PendingTick<Block>> parsed = new ArrayList<>(list.size());
+                for (Tag raw : list) {
+                    CompoundTag entry = (CompoundTag) raw;
+                    ResourceLocation id = ResourceLocation.tryParse(entry.getString("id"));
+                    if (id == null) continue;
+                    var block = BuiltInRegistries.BLOCK.getOptional(id);
+                    if (block.isEmpty()) continue;
+                    parsed.add(new PendingTick<>(
+                            new BlockPos(entry.getInt("x"), entry.getInt("y"), entry.getInt("z")),
+                            block.get(),
+                            Math.max(0, entry.getInt("delay")),
+                            TickPriority.byValue(entry.getInt("priority"))));
+                }
+                blocks = parsed;
+            }
+        }
+        List<PendingTick<Fluid>> fluids = List.of();
+        if (hasFluids) {
+            ListTag list = tag.getList(FLUID_TICKS, Tag.TAG_COMPOUND);
+            if (!list.isEmpty()) {
+                List<PendingTick<Fluid>> parsed = new ArrayList<>(list.size());
+                for (Tag raw : list) {
+                    CompoundTag entry = (CompoundTag) raw;
+                    ResourceLocation id = ResourceLocation.tryParse(entry.getString("id"));
+                    if (id == null) continue;
+                    var fluid = BuiltInRegistries.FLUID.getOptional(id);
+                    if (fluid.isEmpty() || fluid.get() == Fluids.EMPTY) continue;
+                    parsed.add(new PendingTick<>(
+                            new BlockPos(entry.getInt("x"), entry.getInt("y"), entry.getInt("z")),
+                            fluid.get(),
+                            Math.max(0, entry.getInt("delay")),
+                            TickPriority.byValue(entry.getInt("priority"))));
+                }
+                fluids = parsed;
+            }
+        }
+        return blocks.isEmpty() && fluids.isEmpty() ? PendingTicks.EMPTY : new PendingTicks(blocks, fluids);
     }
 
     private CompoundTag sectionTag(int x, int y, int z, LevelChunkSection section) {
@@ -97,7 +225,7 @@ public final class CubeCodec {
                 .promotePartial(error -> missing(tag, error)).getOrThrow();
         LevelChunkSection section = new LevelChunkSection(states, biomeData);
         section.recalcBlockCounts();
-        return new Decoded(section, tags(tag, "block_entities"));
+        return new Decoded(section, tags(tag, "block_entities"), readPendingTicks(tag));
     }
 
     private static void missing(CompoundTag tag, String error) {
