@@ -178,10 +178,12 @@ final class VanillaStructures {
      */
     private final Generations<StructureStart> realStarts = new Generations<>(4096);
     /**
-     * The starts reaching chunk columns at real heights, as {@link #startsAt} answers: published by
-     * whichever thread lays the column out, so the server thread only reads them.
+     * Columns whose starts are laid out and prepared (moved for deep starts, settled for
+     * {@code shift == 0} starts on reload): stores {@link Start} descriptors so {@link #startsAt}
+     * always resolves the latest settled/moved {@link StructureStart} from {@link #realStarts}
+     * without any stale-snapshot publication race.
      */
-    private final Generations<List<StructureStart>> known = new Generations<>(4096);
+    private final Generations<List<Start>> known = new Generations<>(4096);
     /**
      * Columns and starts being laid out aside, at most {@link #MOST_QUEUED} at once. Mob spawns
      * probing every chunk round every player, and columns loaded from the save, may fill only
@@ -366,6 +368,18 @@ final class VanillaStructures {
      * The nearest start of a wanted structure within {@code radius} chunks of a block column, as
      * the centre of its pieces at real heights, or null. Slow where starts are not yet known.
      */
+    /** Lookup-boundary placement check: treats StartFailed and transient MissingTerrainException as absent. */
+    private boolean startsInForLookup(Kind kind, int chunkX, int chunkZ) {
+        try {
+            return startsIn(kind, chunkX, chunkZ);
+        } catch (StartFailed | MissingTerrainException failed) {
+            return false;
+        } catch (RuntimeException e) {
+            if (isMissingTerrain(e)) return false;
+            throw e;
+        }
+    }
+
     @Nullable BlockPos locate(java.util.function.Predicate<Structure> wanted, int x, int z, int radius) {
         if (!generate) return null;
         int cx = x >> 4, cz = z >> 4;
@@ -378,7 +392,7 @@ final class VanillaStructures {
                 int r = Math.min(radius, OWN_PLACEMENT_SEARCH);
                 for (int qz = cz - r; qz <= cz + r; qz++) for (int qx = cx - r; qx <= cx + r; qx++) {
                     long d = (long) (qx - cx) * (qx - cx) + (long) (qz - cz) * (qz - cz);
-                    if (d <= (long) r * r && startsIn(kind, qx, qz)) candidates.add(new long[]{d, kind.index, qx, qz});
+                    if (d <= (long) r * r && startsInForLookup(kind, qx, qz)) candidates.add(new long[]{d, kind.index, qx, qz});
                 }
                 continue;
             }
@@ -393,9 +407,11 @@ final class VanillaStructures {
         candidates.sort(java.util.Comparator.comparingLong(c -> c[0]));
         for (long[] c : candidates) {
             Kind kind = kinds.get((int) c[1]);
-            if (!startsIn(kind, (int) c[2], (int) c[3])) continue;
             Start start;
-            try { start = start(kind, (int) c[2], (int) c[3]); }
+            try {
+                if (!startsIn(kind, (int) c[2], (int) c[3])) continue;
+                start = start(kind, (int) c[2], (int) c[3]);
+            }
             catch (StartFailed | MissingTerrainException failed) { continue; } // asked again next time
             catch (RuntimeException e) { if (isMissingTerrain(e)) continue; throw e; }
             if (start == null || !wanted.test(start.start.getStructure())) continue;
@@ -446,18 +462,26 @@ final class VanillaStructures {
         if (!generate) return List.of();
         long key = ChunkPos.asLong(cx, cz);
         boolean server = onServerThread.getAsBoolean();
-        List<StructureStart> ready = known.get(key);
+        List<Start> knownLaid = known.get(key);
+        List<StructureStart> ready = knownLaid == null ? null : realIfMade(knownLaid);
         if (ready == null) {
-            List<Start> laid = columns.get(key); // laid out when the column's cubes generated or loaded
+            List<Start> laid = knownLaid != null ? knownLaid : columns.get(key); // laid out when the column's cubes generated or loaded
             if (laid != null) ready = server ? realIfMade(laid) : real(laid);
-            if (ready != null) known.offer(key, ready); // the server thread: kept only if no other thread is writing
+            if (ready != null && knownLaid == null && allRealStartsPresent(laid)) known.offer(key, laid); // the server thread: kept only if no other thread is writing
         }
         if (ready != null) return only(ready, wanted);
         Predicate<Kind> holding = wanted == null ? kind -> true
                 : kind -> kind.set.value().structures().stream().anyMatch(e -> wanted.test(e.structure().value()));
         if (isReentrantStart()) {
             // Inside a structure-generation callback: read cached starts only and never publish partial columns.
-            return only(real(reaching(cx, cz, holding)), wanted);
+            try {
+                return only(real(reaching(cx, cz, holding)), wanted);
+            } catch (StartFailed | MissingTerrainException failed) {
+                return List.of();
+            } catch (RuntimeException e) {
+                if (isMissingTerrain(e)) return List.of();
+                throw e;
+            }
         }
         if (server) {
             // Mods ask from players' ticks which structure a player stands in (YUNG's desert temples every tick),
@@ -466,12 +490,12 @@ final class VanillaStructures {
             // set's placement grid there costs seconds a tick with sets whose placement reads its config each
             // time (Create: Structures Arise). Every generated cube lays its column out, so where a player
             // stands is known; a column not yet laid out is laid out aside, and until then the answer is none.
-            if (!backingOff(key)) ask(asked, key, () -> startsLaidOut(cx, cz), probe);
+            if (!backingOff(key)) ask(asked, key, () -> startsLaidOut(cx, cz, true), probe);
             return List.of();
         }
         try {
             if (wanted != null && !columns.containsKey(key)) return only(real(reaching(cx, cz, holding)), wanted);
-            return only(startsLaidOut(cx, cz), wanted);
+            return only(startsLaidOut(cx, cz, false), wanted);
         } catch (StartFailed | MissingTerrainException failed) {
             return List.of(); // nothing kept: asked again next time
         } catch (RuntimeException e) {
@@ -490,17 +514,33 @@ final class VanillaStructures {
         return List.copyOf(real);
     }
 
-    private List<StructureStart> startsLaidOut(int cx, int cz) {
+    private List<StructureStart> startsLaidOut(int cx, int cz, boolean settle) {
         long key = ChunkPos.asLong(cx, cz);
-        List<Start> laid = column(cx, cz);
-        List<StructureStart> ready = known.get(key);
-        if (ready == null) known.put(key, ready = real(laid));
+        List<Start> laid = columns.get(key);
+        if (laid == null) {
+            laid = reaching(cx, cz, kind -> true);
+            if (!settle) laid = columns.putIfAbsent(key, laid);
+        }
+        for (Start start : laid) {
+            if (start.frame.shift != 0) real(start);
+            else if (settle && realStarts.get(startKey(start.kind, start.chunkX, start.chunkZ)) == null) overlay(start);
+        }
+        if (settle) laid = columns.putIfAbsent(key, laid);
+        if (settle || allRealStartsPresent(laid)) known.put(key, laid);
         failed.remove(key);
-        return ready;
+        return real(laid);
+    }
+
+    private boolean allRealStartsPresent(List<Start> laid) {
+        for (Start start : laid) {
+            if (realStarts.get(startKey(start.kind, start.chunkX, start.chunkZ)) == null) return false;
+        }
+        return true;
     }
 
     /** The starts at real heights where each is already made, without making deep ones' copies here; null if one is not. */
     @Nullable private List<StructureStart> realIfMade(List<Start> laid) {
+        if (laid.isEmpty()) return List.of();
         List<StructureStart> real = new ArrayList<>(laid.size());
         for (Start start : laid) {
             long key = startKey(start.kind, start.chunkX, start.chunkZ);
@@ -523,7 +563,12 @@ final class VanillaStructures {
         if (!generate || closed) return;
         long key = ChunkPos.asLong(cx, cz);
         if (known.get(key) != null || backingOff(key)) return;
-        ask(asked, key, () -> startsLaidOut(cx, cz), true);
+        List<Start> laid = columns.get(key);
+        if (laid != null && allRealStartsPresent(laid)) {
+            known.offer(key, laid);
+            return;
+        }
+        ask(asked, key, () -> startsLaidOut(cx, cz, true), true);
     }
 
     /**
@@ -535,14 +580,14 @@ final class VanillaStructures {
     boolean ready(int cx, int cz) {
         if (!generate || closed) return true;
         long key = ChunkPos.asLong(cx, cz);
-        if (known.get(key) != null) return true;
-        List<Start> laid = columns.get(key);
-        List<StructureStart> real = laid == null ? null : realIfMade(laid);
-        if (real != null) {
-            known.offer(key, real);
+        List<Start> knownLaid = known.get(key);
+        if (knownLaid != null && realIfMade(knownLaid) != null) return true;
+        List<Start> laid = knownLaid != null ? knownLaid : columns.get(key);
+        if (laid != null && allRealStartsPresent(laid)) {
+            if (knownLaid == null) known.offer(key, laid);
             return true;
         }
-        if (!backingOff(key)) ask(asked, key, () -> startsLaidOut(cx, cz), false);
+        if (!backingOff(key)) ask(asked, key, () -> startsLaidOut(cx, cz, true), false);
         return false;
     }
 
@@ -591,7 +636,8 @@ final class VanillaStructures {
                 } catch (java.util.concurrent.CancellationException closing) {
                     // the world is closing
                 } catch (RuntimeException | LinkageError failure) {
-                    if (pending != askedStarts) failedAt(key, failure);
+                    // Transient MissingTerrainException must never poison column backoff so lookups recover immediately.
+                    if (pending != askedStarts && !isMissingTerrain(failure)) failedAt(key, failure);
                 } finally {
                     pending.remove(key);
                     queued.decrementAndGet();
@@ -620,14 +666,17 @@ final class VanillaStructures {
             if (server) {
                 // A start already laid out is answered; one not yet known is laid out aside.
                 if (kind.set.value().structures().stream().noneMatch(e -> e.structure().value() == structure)) continue;
-                if (!startsIn(kind, chunkX, chunkZ)) continue;
+                if (!startsInForLookup(kind, chunkX, chunkZ)) continue;
                 long key = startKey(kind.index, chunkX, chunkZ);
                 Optional<Start> cached = starts.get(key);
                 if (cached == null) {
                     Kind laying = kind;
                     ask(askedStarts, key, () -> {
                         Start made = start(laying, chunkX, chunkZ);
-                        if (made != null) real(made); // a deep start's copy too, so the next ask only reads
+                        if (made != null) {
+                            if (made.frame.shift != 0) real(made); // a deep start's copy too, so the next ask only reads
+                            else if (realStarts.get(key) == null) overlay(made);
+                        }
                     }, probe);
                     continue;
                 }
@@ -639,9 +688,11 @@ final class VanillaStructures {
                 return made;
             }
             if (kind.set.value().structures().stream().noneMatch(e -> e.structure().value() == structure)) continue;
-            if (!startsIn(kind, chunkX, chunkZ)) continue;
             Start start;
-            try { start = start(kind, chunkX, chunkZ); }
+            try {
+                if (!startsIn(kind, chunkX, chunkZ)) continue;
+                start = start(kind, chunkX, chunkZ);
+            }
             catch (StartFailed | MissingTerrainException failed) { continue; }
             catch (RuntimeException e) { if (isMissingTerrain(e)) continue; throw e; }
             if (start != null && start.start.getStructure() == structure) return real(start);
@@ -800,8 +851,9 @@ final class VanillaStructures {
         if (cached != null) return cached;
         if (isReentrantStart()) return reaching(cx, cz, kind -> true);
         List<Start> made = columns.putIfAbsent(key, reaching(cx, cz, kind -> true));
-        // At real heights too, made here (deep starts' copies take a few milliseconds), so the server thread only reads them.
-        if (known.get(key) == null) known.put(key, real(made));
+        // Deep starts' moved copies are made here (a few milliseconds), so the server thread only reads them.
+        for (Start start : made) if (start.frame.shift != 0) real(start);
+        if (known.get(key) == null && allRealStartsPresent(made)) known.put(key, made);
         return made;
     }
 
@@ -1279,25 +1331,8 @@ final class VanillaStructures {
                     working.getReferences(),
                     new PiecesContainer(working.getPieces()));
             realStarts.put(startKey(start.kind, start.chunkX, start.chunkZ), settled);
-            refreshKnown(start);
         }
         return patches(world);
-    }
-
-    /** Refreshes already-published {@link #known} columns covered by a newly settled {@code shift == 0} start. */
-    private void refreshKnown(Start start) {
-        int minCx = Math.max(start.reach.minX() >> 4, start.chunkX - REACH);
-        int maxCx = Math.min(start.reach.maxX() >> 4, start.chunkX + REACH);
-        int minCz = Math.max(start.reach.minZ() >> 4, start.chunkZ - REACH);
-        int maxCz = Math.min(start.reach.maxZ() >> 4, start.chunkZ + REACH);
-        for (int cz = minCz; cz <= maxCz; cz++) {
-            for (int cx = minCx; cx <= maxCx; cx++) {
-                long colKey = ChunkPos.asLong(cx, cz);
-                if (known.get(colKey) == null) continue;
-                List<Start> laid = columns.get(colKey);
-                if (laid != null) known.put(colKey, real(laid));
-            }
-        }
     }
 
     /**

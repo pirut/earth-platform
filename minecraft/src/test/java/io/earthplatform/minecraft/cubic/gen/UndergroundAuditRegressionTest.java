@@ -72,6 +72,7 @@ import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
 import net.minecraft.world.level.levelgen.feature.Feature;
 import net.minecraft.world.level.levelgen.feature.FeaturePlaceContext;
+import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.levelgen.feature.configurations.NoneFeatureConfiguration;
 import net.minecraft.world.level.levelgen.placement.PlacedFeature;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
@@ -85,6 +86,8 @@ import net.minecraft.world.level.levelgen.structure.pieces.StructurePieceSeriali
 import net.minecraft.world.level.levelgen.structure.pieces.StructurePieceType;
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement;
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadType;
+import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement;
+import net.minecraft.world.level.levelgen.structure.placement.StructurePlacementType;
 import net.minecraft.world.level.levelgen.structure.structures.BuriedTreasurePieces;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.Fluids;
@@ -298,6 +301,103 @@ class UndergroundAuditRegressionTest {
         assertEquals(64, cachedBefore.getPieces().get(0).getBoundingBox().minY());
     }
 
+    @Test void warmOnReloadSettlesShiftZeroSurfaceBoundsWithoutDirectBuild() throws Exception {
+        int earthGround = 180;
+        AtomicInteger createdPieces = new AtomicInteger();
+        Structure hut = new Structure(new Structure.StructureSettings(
+                HolderSet.direct(plains), Map.of(), GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE)) {
+            @Override protected Optional<GenerationStub> findGenerationPoint(GenerationContext context) {
+                if (context.chunkPos().x != 0 || context.chunkPos().z != 0) return Optional.empty();
+                createdPieces.incrementAndGet();
+                int x = context.chunkPos().getMinBlockX(), z = context.chunkPos().getMinBlockZ();
+                BoundingBox initial = new BoundingBox(x, 64, z, x + 7, 71, z + 7);
+                return Optional.of(new GenerationStub(new BlockPos(x, 64, z),
+                        b -> b.addPiece(new SettlingSurfacePiece(initial))));
+            }
+            @Override public StructureType<?> type() { return () -> MapCodec.unit(this); }
+        };
+        RegistryAccess registries = singleStructureRegistries("test_reload_settling_hut", hut);
+        Thread server = Thread.currentThread();
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, hostOf((x, z) -> earthGround), 1L);
+        structures.serverThread(() -> Thread.currentThread() == server);
+        try {
+            // Simulate loading saved cubes after a server restart: only warm() is called, never place()/build().
+            structures.warm(0, 0);
+            for (long until = System.currentTimeMillis() + 20_000;
+                 (!structures.laidOut(0, 0) || !structures.ready(0, 0)) && System.currentTimeMillis() < until;
+                 Thread.sleep(10)) {}
+            assertTrue(structures.laidOut(0, 0), "warm() must lay out and publish saved column");
+            assertTrue(structures.ready(0, 0), "ready() must become true once warm() finishes settling");
+
+            List<StructureStart> starts = structures.startsAt(0, 0);
+            assertEquals(1, starts.size());
+            assertEquals(earthGround, starts.get(0).getBoundingBox().minY(),
+                    "UNDER-02: warm() on reload must publish settled shift == 0 minY bounds");
+            assertEquals(earthGround + 7, starts.get(0).getBoundingBox().maxY(),
+                    "UNDER-02: warm() on reload must publish settled shift == 0 maxY bounds");
+
+            StructureStart byRef = structures.startOf(hut, 0, 0);
+            assertNotNull(byRef);
+            assertEquals(earthGround, byRef.getBoundingBox().minY(), "startOf() on reload must return settled bounds");
+
+            BlockPos located = structures.locate(s -> s == hut, 0, 0, 4);
+            assertNotNull(located);
+            assertTrue(located.getY() >= earthGround && located.getY() <= earthGround + 7,
+                    "locate() on reload must return settled Y center (got " + located.getY() + ")");
+
+            // Cached start.start must remain pristine: clearing overlays and calling place() still settles cleanly.
+            structures.clearOverlaysForTest();
+            LevelChunkSection rebuilt = airSection();
+            structures.place(rebuilt, 0, earthGround >> 4, 0, new ArrayList<>(), new ArrayList<>());
+            assertEquals(Blocks.SPRUCE_PLANKS, rebuilt.getBlockState(2, earthGround & 15, 2).getBlock(),
+                    "rebuilding after warm() + overlay eviction must still place settled blocks");
+            assertTrue(createdPieces.get() >= 2, "overlay builds must use fresh working copies rather than mutating cached start");
+        } finally {
+            structures.close();
+        }
+    }
+
+    @Test void columnBeforeBuildNeverPublishesStaleUnsettledKnownSnapshot() {
+        int earthGround = 192;
+        Structure hut = new Structure(new Structure.StructureSettings(
+                HolderSet.direct(plains), Map.of(), GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE)) {
+            @Override protected Optional<GenerationStub> findGenerationPoint(GenerationContext context) {
+                if (context.chunkPos().x != 0 || context.chunkPos().z != 0) return Optional.empty();
+                int x = context.chunkPos().getMinBlockX(), z = context.chunkPos().getMinBlockZ();
+                BoundingBox initial = new BoundingBox(x, 64, z, x + 7, 71, z + 7);
+                return Optional.of(new GenerationStub(new BlockPos(x, 64, z),
+                        b -> b.addPiece(new SettlingSurfacePiece(initial))));
+            }
+            @Override public StructureType<?> type() { return () -> MapCodec.unit(this); }
+        };
+        RegistryAccess registries = singleStructureRegistries("test_known_race_hut", hut);
+        Thread server = Thread.currentThread();
+        AtomicBoolean asServer = new AtomicBoolean(false);
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, hostOf((x, z) -> earthGround), 1L);
+        structures.serverThread(() -> asServer.get() && Thread.currentThread() == server);
+
+        // 1. column() computes via clears() BEFORE build()/place() populates realStarts.
+        assertFalse(structures.clears(4, 4));
+        // 2. Both off-server and server-thread startsAt() read the column before build() runs.
+        assertEquals(64, structures.startsAt(0, 0).get(0).getBoundingBox().minY());
+        asServer.set(true);
+        assertEquals(64, structures.startsAt(0, 0).get(0).getBoundingBox().minY());
+
+        // 3. Generation worker runs place()/build(), populating realStarts with settled bounds.
+        asServer.set(false);
+        LevelChunkSection sec = airSection();
+        structures.place(sec, 0, earthGround >> 4, 0, new ArrayList<>(), new ArrayList<>());
+        assertEquals(Blocks.SPRUCE_PLANKS, sec.getBlockState(2, earthGround & 15, 2).getBlock());
+
+        // 4. Subsequent startsAt() on BOTH server thread and off-server thread immediately returns settled bounds.
+        assertEquals(earthGround, structures.startsAt(0, 0).get(0).getBoundingBox().minY(),
+                "off-server startsAt() must immediately see settled realStarts without stale known snapshot");
+        asServer.set(true);
+        assertEquals(earthGround, structures.startsAt(0, 0).get(0).getBoundingBox().minY(),
+                "server-thread startsAt() must immediately see settled realStarts without stale known snapshot");
+        assertTrue(structures.ready(0, 0), "ready() must see all settled realStarts immediately");
+    }
+
     @Test void freshStartExercisesRealNbtCloneRejectsPartialCloneAndNeverMutatesCachedStart() {
         // Case A: Real NBT clone succeeds on a serializable vanilla piece without regenerating via makeStart.
         AtomicInteger fullCloneGens = new AtomicInteger();
@@ -435,7 +535,11 @@ class UndergroundAuditRegressionTest {
         VanillaStructures singleFlight = new VanillaStructures(null,
                 singleStructureRegistries("single_flight", gated), randomState, true, hostOf((x, z) -> 100), 1L);
 
-        ExecutorService pool = Executors.newFixedThreadPool(4);
+        ExecutorService pool = Executors.newFixedThreadPool(4, r -> {
+            Thread t = new Thread(r, "test-single-flight");
+            t.setDaemon(true);
+            return t;
+        });
         try {
             List<Future<StructureStart>> futures = new ArrayList<>();
             Callable<StructureStart> task = () -> singleFlight.startOf(gated, 0, 0);
@@ -452,6 +556,7 @@ class UndergroundAuditRegressionTest {
             }
             assertEquals(1, generations.get(), "UNDER-05: concurrent cold STARTS callers must invoke makeStart once");
         } finally {
+            release.countDown();
             pool.shutdownNow();
         }
 
@@ -503,6 +608,120 @@ class UndergroundAuditRegressionTest {
         assertNotNull(resilient.locate(s -> s == simple, 0, 0, 2), "locate must succeed immediately once terrain returns");
     }
 
+    @Test void asyncStartsAtRecoversImmediatelyFromMissingTerrainWithoutColumnBackoff() throws Exception {
+        AtomicInteger offlineMode = new AtomicInteger(1); // 1 = direct, 2 = wrapped, 0 = online
+        AtomicInteger attempts = new AtomicInteger();
+        Structure simple = new Structure(new Structure.StructureSettings(
+                HolderSet.direct(plains), Map.of(), GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE)) {
+            @Override protected Optional<GenerationStub> findGenerationPoint(GenerationContext context) {
+                if (context.chunkPos().x != 0 || context.chunkPos().z != 0) return Optional.empty();
+                int x = context.chunkPos().getMinBlockX(), z = context.chunkPos().getMinBlockZ();
+                int y = context.chunkGenerator().getBaseHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG,
+                        context.heightAccessor(), context.randomState());
+                BoundingBox box = new BoundingBox(x, y, z, x + 8, y + 8, z + 8);
+                return Optional.of(new GenerationStub(new BlockPos(x, y, z),
+                        b -> b.addPiece(new SimplePiece(box, (lvl, bx) -> {}))));
+            }
+            @Override public StructureType<?> type() { return () -> MapCodec.unit(this); }
+        };
+        Thread server = Thread.currentThread();
+        VanillaStructures structures = new VanillaStructures(null,
+                singleStructureRegistries("async_missing_terrain", simple), randomState, true,
+                hostOf((x, z) -> {
+                    attempts.incrementAndGet();
+                    int mode = offlineMode.get();
+                    if (mode == 1) throw new MissingTerrainException("async tile offline");
+                    if (mode == 2) throw new RuntimeException("wrapped", new MissingTerrainException("async wrapped tile offline"));
+                    return 100;
+                }), 1L);
+        structures.serverThread(() -> Thread.currentThread() == server);
+        // Set a huge backoff so if MissingTerrainException wrongly entered `failed`, recovery would never happen in time.
+        structures.retryAfter(TimeUnit.HOURS.toNanos(1));
+        try {
+            for (int mode : new int[]{1, 2}) {
+                offlineMode.set(mode);
+                int before = attempts.get();
+                assertTrue(structures.startsAt(0, 0).isEmpty(), "async server-thread startsAt queues background lookup (mode " + mode + ")");
+                for (long until = System.currentTimeMillis() + 10_000;
+                     (attempts.get() == before || structures.queued() > 0) && System.currentTimeMillis() < until;
+                     Thread.sleep(10)) {}
+                assertTrue(attempts.get() > before, "async worker must have attempted layout in mode " + mode);
+                assertEquals(0, structures.queued());
+                assertFalse(structures.laidOut(0, 0), "column must not be marked laid out on missing terrain");
+            }
+
+            // Flip terrain online WITHOUT shortening retryAfter: must recover immediately with zero backoff!
+            offlineMode.set(0);
+            for (long until = System.currentTimeMillis() + 10_000;
+                 !structures.ready(0, 0) && System.currentTimeMillis() < until;
+                 Thread.sleep(10)) {}
+            assertTrue(structures.ready(0, 0), "ready() must recover immediately after MissingTerrainException without 1h backoff");
+            assertEquals(1, structures.startsAt(0, 0).size(), "async startsAt() must return structure immediately after recovery");
+        } finally {
+            structures.close();
+        }
+    }
+
+    @Test void customPlacementRuleThrowingMissingTerrainIsHandledAtLookupBoundaries() {
+        AtomicInteger offlineMode = new AtomicInteger(1); // 1 = direct, 2 = wrapped, 0 = online
+        Structure custom = new Structure(new Structure.StructureSettings(
+                HolderSet.direct(plains), Map.of(), GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE)) {
+            @Override protected Optional<GenerationStub> findGenerationPoint(GenerationContext context) {
+                int x = context.chunkPos().getMinBlockX(), z = context.chunkPos().getMinBlockZ();
+                BoundingBox box = new BoundingBox(x, 100, z, x + 8, 108, z + 8);
+                return Optional.of(new GenerationStub(new BlockPos(x, 100, z),
+                        b -> b.addPiece(new SimplePiece(box, (lvl, bx) -> {}))));
+            }
+            @Override public StructureType<?> type() { return () -> MapCodec.unit(this); }
+        };
+        // Non-RandomSpreadStructurePlacement so kind.spread == null (exercises custom-placement path in locate & startOf).
+        StructurePlacement flakyPlacement = new StructurePlacement(
+                net.minecraft.core.Vec3i.ZERO, StructurePlacement.FrequencyReductionMethod.DEFAULT, 1.0f, 12345, Optional.empty()) {
+            @Override protected boolean isPlacementChunk(ChunkGeneratorStructureState state, int chunkX, int chunkZ) {
+                int mode = offlineMode.get();
+                if (mode == 1) throw new MissingTerrainException("custom placement terrain missing");
+                if (mode == 2) throw new RuntimeException("wrapped", new MissingTerrainException("custom placement wrapped missing"));
+                return chunkX == 0 && chunkZ == 0;
+            }
+            @Override public StructurePlacementType<?> type() { return () -> MapCodec.unit(this); }
+        };
+
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath("test", "custom_placement_structure");
+        MappedRegistry<Structure> structureReg = new MappedRegistry<>(Registries.STRUCTURE, Lifecycle.stable());
+        Holder.Reference<Structure> holder = structureReg.register(ResourceKey.create(Registries.STRUCTURE, id), custom, RegistrationInfo.BUILT_IN);
+        structureReg.freeze();
+        MappedRegistry<StructureSet> setReg = new MappedRegistry<>(Registries.STRUCTURE_SET, Lifecycle.stable());
+        setReg.register(ResourceKey.create(Registries.STRUCTURE_SET, id),
+                new StructureSet(List.of(StructureSet.entry(holder)), flakyPlacement), RegistrationInfo.BUILT_IN);
+        setReg.freeze();
+        RegistryAccess registries = new RegistryAccess.ImmutableRegistryAccess(List.of(structureReg, setReg)).freeze();
+
+        Thread server = Thread.currentThread();
+        AtomicBoolean asServer = new AtomicBoolean(false);
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, hostOf((x, z) -> 100), 1L);
+        structures.serverThread(() -> asServer.get() && Thread.currentThread() == server);
+
+        for (int mode : new int[]{1, 2}) {
+            offlineMode.set(mode);
+            asServer.set(false);
+            assertNull(structures.locate(s -> s == custom, 0, 0, 2),
+                    "locate() must handle custom placement MissingTerrainException (mode " + mode + ")");
+            assertNull(structures.startOf(custom, 0, 0),
+                    "off-server startOf() must handle custom placement MissingTerrainException (mode " + mode + ")");
+            assertTrue(structures.startsAt(0, 0).isEmpty(),
+                    "startsAt() must handle custom placement MissingTerrainException (mode " + mode + ")");
+            asServer.set(true);
+            assertNull(structures.startOf(custom, 0, 0),
+                    "server-thread startOf() must handle custom placement MissingTerrainException (mode " + mode + ")");
+        }
+
+        offlineMode.set(0);
+        asServer.set(false);
+        assertNotNull(structures.locate(s -> s == custom, 0, 0, 2), "locate() must succeed once custom placement recovers");
+        assertNotNull(structures.startOf(custom, 0, 0), "startOf() must succeed once custom placement recovers");
+        assertEquals(1, structures.startsAt(0, 0).size(), "startsAt() must succeed once custom placement recovers");
+    }
+
     @Test void reentrantStartSelfReentryAndLockInversionNeverDeadlock() throws Exception {
         // Part A: Same-key self-reentry inside findGenerationPoint (holding STARTS) returns without deadlock or empty-column poisoning.
         VanillaStructures[] selfRef = new VanillaStructures[1];
@@ -525,7 +744,11 @@ class UndergroundAuditRegressionTest {
                 singleStructureRegistries("test_self_reentry", selfReentrant), randomState, true, hostOf((x, z) -> 100), 1L);
         selfRef[0] = selfWorld;
 
-        ExecutorService single = Executors.newSingleThreadExecutor();
+        ExecutorService single = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "test-self-reentry");
+            t.setDaemon(true);
+            return t;
+        });
         try {
             StructureStart result = single.submit(() -> selfWorld.startOf(selfReentrant, 0, 0)).get(5, TimeUnit.SECONDS);
             assertNotNull(result, "same-key reentrant start must complete cleanly");
@@ -569,21 +792,26 @@ class UndergroundAuditRegressionTest {
             try { results[0] = pairWorld.startOf(crossReentrant, 0, 0); }
             catch (Throwable t) { errors[0] = t; }
         }, "test-worker-A");
+        workerA.setDaemon(true);
         Thread workerB = new Thread(() -> {
             try { results[1] = pairWorld.startOf(crossReentrant, 1, 0); }
             catch (Throwable t) { errors[1] = t; }
         }, "test-worker-B");
+        workerB.setDaemon(true);
 
         workerA.start();
-        assertTrue(workerAInStarts.await(5, TimeUnit.SECONDS), "worker A must acquire STARTS");
-        workerB.start();
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (workerB.getState() != Thread.State.BLOCKED && System.nanoTime() < deadline) {
-            Thread.sleep(5);
+        try {
+            assertTrue(workerAInStarts.await(5, TimeUnit.SECONDS), "worker A must acquire STARTS");
+            workerB.start();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (workerB.getState() != Thread.State.BLOCKED && System.nanoTime() < deadline) {
+                Thread.sleep(5);
+            }
+            assertEquals(Thread.State.BLOCKED, workerB.getState(),
+                    "worker B must have claimed computingStarts(1, 0) and blocked on STARTS");
+        } finally {
+            workerBBlockedOnStarts.countDown();
         }
-        assertEquals(Thread.State.BLOCKED, workerB.getState(),
-                "worker B must have claimed computingStarts(1, 0) and blocked on STARTS");
-        workerBBlockedOnStarts.countDown();
 
         workerA.join(5_000);
         workerB.join(5_000);

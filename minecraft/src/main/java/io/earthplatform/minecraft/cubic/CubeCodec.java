@@ -150,6 +150,14 @@ public final class CubeCodec {
         return entry;
     }
 
+    /** Returns whether {@code (x, y, z)} lies in world Y range and directly inside {@code cubeKey}'s unpacked coordinates. */
+    private static boolean belongsToCube(long cubeKey, int x, int y, int z) {
+        return CubeWorld.inRange(y)
+                && (x >> 4) == CubeKey.x(cubeKey)
+                && (y >> 4) == CubeKey.y(cubeKey)
+                && (z >> 4) == CubeKey.z(cubeKey);
+    }
+
     /** Filters pending ticks to only those whose absolute block coordinates lie inside {@code cubeKey}. */
     public static PendingTicks filterForCube(long cubeKey, @Nullable PendingTicks ticks) {
         if (ticks == null || ticks.isEmpty()) return PendingTicks.EMPTY;
@@ -157,8 +165,7 @@ public final class CubeCodec {
         List<PendingTick<Block>> keptBlocks = null;
         for (int i = 0; i < blocks.size(); i++) {
             PendingTick<Block> tick = blocks.get(i);
-            boolean inside = CubeWorld.inRange(tick.y())
-                    && CubeKey.pack(tick.x() >> 4, tick.y() >> 4, tick.z() >> 4) == cubeKey;
+            boolean inside = belongsToCube(cubeKey, tick.x(), tick.y(), tick.z());
             if (!inside) {
                 if (keptBlocks == null) keptBlocks = new ArrayList<>(blocks.subList(0, i));
             } else if (keptBlocks != null) {
@@ -169,8 +176,7 @@ public final class CubeCodec {
         List<PendingTick<Fluid>> keptFluids = null;
         for (int i = 0; i < fluids.size(); i++) {
             PendingTick<Fluid> tick = fluids.get(i);
-            boolean inside = CubeWorld.inRange(tick.y())
-                    && CubeKey.pack(tick.x() >> 4, tick.y() >> 4, tick.z() >> 4) == cubeKey;
+            boolean inside = belongsToCube(cubeKey, tick.x(), tick.y(), tick.z());
             if (!inside) {
                 if (keptFluids == null) keptFluids = new ArrayList<>(fluids.subList(0, i));
             } else if (keptFluids != null) {
@@ -210,7 +216,7 @@ public final class CubeCodec {
                     var block = BuiltInRegistries.BLOCK.getOptional(id);
                     if (block.isEmpty()) continue;
                     int x = entry.getInt("x"), y = entry.getInt("y"), z = entry.getInt("z");
-                    if (!CubeWorld.inRange(y) || CubeKey.pack(x >> 4, y >> 4, z >> 4) != cubeKey) continue;
+                    if (!belongsToCube(cubeKey, x, y, z)) continue;
                     parsed.add(new PendingTick<>(
                             new BlockPos(x, y, z),
                             block.get(),
@@ -232,7 +238,7 @@ public final class CubeCodec {
                     var fluid = BuiltInRegistries.FLUID.getOptional(id);
                     if (fluid.isEmpty() || fluid.get() == Fluids.EMPTY) continue;
                     int x = entry.getInt("x"), y = entry.getInt("y"), z = entry.getInt("z");
-                    if (!CubeWorld.inRange(y) || CubeKey.pack(x >> 4, y >> 4, z >> 4) != cubeKey) continue;
+                    if (!belongsToCube(cubeKey, x, y, z)) continue;
                     parsed.add(new PendingTick<>(
                             new BlockPos(x, y, z),
                             fluid.get(),
