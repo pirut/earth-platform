@@ -625,6 +625,7 @@ class RiverMapSeamAndCancelTest {
         // 2. End-to-end replacement flight check: caller 1 cancels and exits; caller 2 launches a replacement
         // flight for the same key while producer 1 unwinds completely (through post-drain tryPublish/finally)
         // without clobbering memory or caller 2's flight.
+        MemoryPressure.reset();
         int tilesPerDrain = (2 * Drainage.SPREAD + 1) * (2 * Drainage.SPREAD + 1);
         CountDownLatch flight1Entered = new CountDownLatch(tilesPerDrain);
         CountDownLatch releaseFlight1 = new CountDownLatch(1);
@@ -669,48 +670,53 @@ class RiverMapSeamAndCancelTest {
         };
 
         try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
-            CountDownLatch caller1Exited = new CountDownLatch(1);
-            Future<Throwable> caller1 = pool.submit(() -> {
-                try {
-                    drainage.links(45.0, 10.0, 45.001, 10.001, (la, lo, tla, tlo, area) -> {});
-                    return null;
-                } catch (Throwable t) {
-                    return t;
-                } finally {
-                    caller1Exited.countDown();
-                }
-            });
-            assertTrue(flight1Entered.await(5, TimeUnit.SECONDS), "all flight 1 tile loaders must park before cancel");
-            assertTrue(caller1.cancel(true));
-            assertTrue(caller1Exited.await(5, TimeUnit.SECONDS), "cancelled caller 1 must exit immediately");
-            assertEquals(0, drainage.inFlightWaiters(), "cancelled flight must have detached all waiters");
-            assertEquals(0, drainage.cachedRegions(), "cancelled flight must not have populated memory");
+            try {
+                CountDownLatch caller1Exited = new CountDownLatch(1);
+                Future<Throwable> caller1 = pool.submit(() -> {
+                    try {
+                        drainage.links(45.0, 10.0, 45.001, 10.001, (la, lo, tla, tlo, area) -> {});
+                        return null;
+                    } catch (Throwable t) {
+                        return t;
+                    } finally {
+                        caller1Exited.countDown();
+                    }
+                });
+                assertTrue(flight1Entered.await(5, TimeUnit.SECONDS), "all flight 1 tile loaders must park before cancel");
+                assertTrue(caller1.cancel(true));
+                assertTrue(caller1Exited.await(5, TimeUnit.SECONDS), "cancelled caller 1 must exit immediately");
+                assertEquals(0, drainage.inFlightWaiters(), "cancelled flight must have detached all waiters");
+                assertEquals(0, drainage.cachedRegions(), "cancelled flight must not have populated memory");
 
-            // Start replacement flight for the same region while flight 1 is still finishing.
-            secondFlightStarted.set(true);
-            Future<Throwable> caller2 = pool.submit(() -> {
-                try {
-                    drainage.links(45.0, 10.0, 45.001, 10.001, (la, lo, tla, tlo, area) -> {});
-                    return null;
-                } catch (Throwable t) {
-                    return t;
-                }
-            });
-            assertTrue(flight2Entered.await(5, TimeUnit.SECONDS), "replacement flight must start cleanly");
+                // Start replacement flight for the same region while flight 1 is still finishing.
+                secondFlightStarted.set(true);
+                Future<Throwable> caller2 = pool.submit(() -> {
+                    try {
+                        drainage.links(45.0, 10.0, 45.001, 10.001, (la, lo, tla, tlo, area) -> {});
+                        return null;
+                    } catch (Throwable t) {
+                        return t;
+                    }
+                });
+                assertTrue(flight2Entered.await(5, TimeUnit.SECONDS), "replacement flight must start cleanly");
 
-            // Release flight 1 and wait until producer 1's entire task (including post-drain tryPublish/finally)
-            // has completely exited while replacement flight 2 is still blocked.
-            releaseFlight1.countDown();
-            assertTrue(flight1ProducerFinished.await(5, TimeUnit.SECONDS),
-                    "cancelled producer 1 must finish post-drain unwinding while flight 2 is still blocked");
-            assertEquals(0, drainage.cachedRegions(), "cancelled flight 1 must not publish into cache");
-            assertEquals(1, drainage.inFlightWaiters(), "replacement flight 2 must remain active");
+                // Release flight 1 and wait until producer 1's entire task (including post-drain tryPublish/finally)
+                // has completely exited while replacement flight 2 is still blocked.
+                releaseFlight1.countDown();
+                assertTrue(flight1ProducerFinished.await(5, TimeUnit.SECONDS),
+                        "cancelled producer 1 must finish post-drain unwinding while flight 2 is still blocked");
+                assertEquals(0, drainage.cachedRegions(), "cancelled flight 1 must not publish into cache");
+                assertEquals(1, drainage.inFlightWaiters(), "replacement flight 2 must remain active");
 
-            releaseFlight2.countDown();
-            Throwable caller2Result = caller2.get(5, TimeUnit.SECONDS);
-            assertNull(caller2Result, "replacement flight caller must succeed cleanly, got " + caller2Result);
-            assertTrue(flight2ProducerFinished.await(5, TimeUnit.SECONDS), "replacement producer 2 must finish cleanly");
-            assertEquals(1, drainage.cachedRegions(), "replacement flight must publish into cache");
+                releaseFlight2.countDown();
+                Throwable caller2Result = caller2.get(5, TimeUnit.SECONDS);
+                assertNull(caller2Result, "replacement flight caller must succeed cleanly, got " + caller2Result);
+                assertTrue(flight2ProducerFinished.await(5, TimeUnit.SECONDS), "replacement producer 2 must finish cleanly");
+                assertEquals(1, drainage.cachedRegions(), "replacement flight must publish into cache");
+            } finally {
+                releaseFlight1.countDown();
+                releaseFlight2.countDown();
+            }
         }
     }
 
