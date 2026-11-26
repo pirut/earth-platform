@@ -603,9 +603,11 @@ class PendingTicksCodecAndDispatchTest {
                         (state, pos) -> {
                             ranBlocks.add(pos);
                             if (pos.equals(aMatchBlock)) {
-                                // Mid-pass unloads: unload cube B itself and unload one face neighbor of cube C.
+                                // Mid-pass unloads: unload cube B itself (matching forget() clearing pendingTicks)
+                                // and unload one face neighbor of cube C.
                                 loaded.remove(keyB);
                                 liveCubes.remove(keyB);
+                                pending.remove(keyB);
                                 loaded.remove(neighborOfC);
                             }
                         }),
@@ -619,6 +621,47 @@ class PendingTicksCodecAndDispatchTest {
         assertEquals(List.of(aMatchFluid), ranFluids,
                 "only matching live fluid tick with resident cube and 6 neighbors must execute");
         assertTrue(cubeA.dirty && cubeA.modified && !cubeA.edited, "cubeA must be marked unsaved without edited");
+        assertFalse(pending.containsKey(keyA), "cubeA due ticks must be drained after execution");
+        assertFalse(pending.containsKey(keyB), "forgotten cubeB must have no pending ticks");
+
+        // Cube C lost a neighbor mid-pass: its due block and fluid ticks MUST remain in pendingTicks (not lost)
+        // and cube C must be dropped from readyNeighbors until residency changes.
+        assertTrue(pending.containsKey(keyC), "cubeC due ticks must survive a mid-pass neighbor unload");
+        assertEquals(1, pending.get(keyC).blocks().size(), "cubeC due block tick must remain queued at delay 0");
+        assertEquals(0, pending.get(keyC).blocks().get(0).delay());
+        assertEquals(1, pending.get(keyC).fluids().size(), "cubeC due fluid tick must remain queued at delay 0");
+        assertEquals(0, pending.get(keyC).fluids().get(0).delay());
+        assertFalse(cubeC.dirty, "skipped cubeC must not be marked unsaved before its ticks execute");
+
+        // While neighborOfC remains unloaded with no residency change, cubeC is not rescanned and does not execute.
+        assertEquals(0, dispatcher.tick(
+                pending, loaded::contains, (x, z) -> true,
+                tick -> ServerCubeWorld.PendingTickDispatcher.runIfLiveBlockTick(
+                        tick, liveCubes::get, loaded::contains, (state, pos) -> ranBlocks.add(pos)),
+                tick -> ServerCubeWorld.PendingTickDispatcher.runIfLiveFluidTick(
+                        tick, liveCubes::get, loaded::contains, (fluid, pos) -> ranFluids.add(pos)),
+                key -> ServerCubeWorld.PendingTickDispatcher.markCubeUnsaved(key, liveCubes::get)));
+        assertEquals(0, dispatcher.lastScannedCount(), "skipped cubeC must leave readyNeighbors until residency changes");
+
+        // Reload cube C's missing neighbor and notify residency change: cube C's preserved due ticks resume and execute!
+        loaded.add(neighborOfC);
+        dispatcher.noteResidencyChange();
+        assertEquals(2, dispatcher.tick(
+                pending, loaded::contains, (x, z) -> true,
+                tick -> ServerCubeWorld.PendingTickDispatcher.runIfLiveBlockTick(
+                        tick, liveCubes::get, loaded::contains, (state, pos) -> ranBlocks.add(pos)),
+                tick -> ServerCubeWorld.PendingTickDispatcher.runIfLiveFluidTick(
+                        tick, liveCubes::get, loaded::contains, (fluid, pos) -> ranFluids.add(pos)),
+                key -> ServerCubeWorld.PendingTickDispatcher.markCubeUnsaved(key, liveCubes::get)));
+        assertEquals(List.of(aMatchBlock, cBlockPos), ranBlocks,
+                "cubeC due block tick must resume and execute after its neighbor reloads");
+        assertEquals(List.of(aMatchFluid, cFluidPos), ranFluids,
+                "cubeC due fluid tick must resume and execute after its neighbor reloads");
+        assertFalse(pending.containsKey(keyC), "cubeC pending ticks must be drained once resumed and executed");
+        assertTrue(cubeC.dirty && cubeC.modified && !cubeC.edited, "cubeC must be marked unsaved without edited");
+
+        // Remove neighborOfC again for the direct helper checks below.
+        loaded.remove(neighborOfC);
 
         // Direct unit verification of the production recheck helpers on unloaded cube, missing neighbor, and state mismatch.
         assertFalse(ServerCubeWorld.PendingTickDispatcher.runIfLiveBlockTick(

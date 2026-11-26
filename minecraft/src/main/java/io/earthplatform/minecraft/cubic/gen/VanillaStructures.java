@@ -364,10 +364,6 @@ final class VanillaStructures {
         }
     }
 
-    /**
-     * The nearest start of a wanted structure within {@code radius} chunks of a block column, as
-     * the centre of its pieces at real heights, or null. Slow where starts are not yet known.
-     */
     /** Lookup-boundary placement check: treats StartFailed and transient MissingTerrainException as absent. */
     private boolean startsInForLookup(Kind kind, int chunkX, int chunkZ) {
         try {
@@ -380,6 +376,10 @@ final class VanillaStructures {
         }
     }
 
+    /**
+     * The nearest start of a wanted structure within {@code radius} chunks of a block column, as
+     * the centre of its pieces at real heights, or null. Slow where starts are not yet known.
+     */
     @Nullable BlockPos locate(java.util.function.Predicate<Structure> wanted, int x, int z, int radius) {
         if (!generate) return null;
         int cx = x >> 4, cz = z >> 4;
@@ -463,13 +463,16 @@ final class VanillaStructures {
         long key = ChunkPos.asLong(cx, cz);
         boolean server = onServerThread.getAsBoolean();
         List<Start> knownLaid = known.get(key);
-        List<StructureStart> ready = knownLaid == null ? null : realIfMade(knownLaid);
-        if (ready == null) {
-            List<Start> laid = knownLaid != null ? knownLaid : columns.get(key); // laid out when the column's cubes generated or loaded
-            if (laid != null) ready = server ? realIfMade(laid) : real(laid);
-            if (ready != null && knownLaid == null && allRealStartsPresent(laid)) known.offer(key, laid); // the server thread: kept only if no other thread is writing
+        List<Start> laid = knownLaid != null ? knownLaid : columns.get(key); // laid out when the column's cubes generated or loaded
+        List<StructureStart> ready = laid == null ? null : (server ? realIfMade(laid) : real(laid));
+        if (ready != null) {
+            if (allRealStartsPresent(laid)) {
+                if (knownLaid == null) known.offer(key, laid); // the server thread: kept only if no other thread is writing
+            } else if (server && !backingOff(key)) {
+                ask(asked, key, () -> startsLaidOut(cx, cz, true), probe);
+            }
+            return only(ready, wanted);
         }
-        if (ready != null) return only(ready, wanted);
         Predicate<Kind> holding = wanted == null ? kind -> true
                 : kind -> kind.set.value().structures().stream().anyMatch(e -> wanted.test(e.structure().value()));
         if (isReentrantStart()) {
@@ -517,6 +520,7 @@ final class VanillaStructures {
     private List<StructureStart> startsLaidOut(int cx, int cz, boolean settle) {
         long key = ChunkPos.asLong(cx, cz);
         List<Start> laid = columns.get(key);
+        if (laid == null) laid = known.get(key);
         if (laid == null) {
             laid = reaching(cx, cz, kind -> true);
             if (!settle) laid = columns.putIfAbsent(key, laid);
@@ -526,7 +530,7 @@ final class VanillaStructures {
             else if (settle && realStarts.get(startKey(start.kind, start.chunkX, start.chunkZ)) == null) overlay(start);
         }
         if (settle) laid = columns.putIfAbsent(key, laid);
-        if (settle || allRealStartsPresent(laid)) known.put(key, laid);
+        if (allRealStartsPresent(laid)) known.put(key, laid);
         failed.remove(key);
         return real(laid);
     }
@@ -562,10 +566,11 @@ final class VanillaStructures {
     void warm(int cx, int cz) {
         if (!generate || closed) return;
         long key = ChunkPos.asLong(cx, cz);
-        if (known.get(key) != null || backingOff(key)) return;
-        List<Start> laid = columns.get(key);
+        if (backingOff(key)) return;
+        List<Start> knownLaid = known.get(key);
+        List<Start> laid = knownLaid != null ? knownLaid : columns.get(key);
         if (laid != null && allRealStartsPresent(laid)) {
-            known.offer(key, laid);
+            if (knownLaid == null) known.offer(key, laid);
             return;
         }
         ask(asked, key, () -> startsLaidOut(cx, cz, true), true);
@@ -581,7 +586,6 @@ final class VanillaStructures {
         if (!generate || closed) return true;
         long key = ChunkPos.asLong(cx, cz);
         List<Start> knownLaid = known.get(key);
-        if (knownLaid != null && realIfMade(knownLaid) != null) return true;
         List<Start> laid = knownLaid != null ? knownLaid : columns.get(key);
         if (laid != null && allRealStartsPresent(laid)) {
             if (knownLaid == null) known.offer(key, laid);
@@ -683,8 +687,14 @@ final class VanillaStructures {
                 Start start = cached.orElse(null);
                 if (start == null || start.start.getStructure() != structure) continue;
                 StructureStart made = realStarts.get(key);
-                if (made == null && start.frame.shift == 0) made = start.start;
-                if (made == null) ask(askedStarts, key, () -> real(start), probe); // a deep start's copy, made aside
+                if (made == null) {
+                    if (start.frame.shift != 0) {
+                        ask(askedStarts, key, () -> real(start), probe); // a deep start's copy, made aside
+                        return null;
+                    }
+                    ask(askedStarts, key, () -> overlay(start), probe); // settle shift == 0 bounds aside (or retry after MissingTerrainException / eviction)
+                    return start.start;
+                }
                 return made;
             }
             if (kind.set.value().structures().stream().noneMatch(e -> e.structure().value() == structure)) continue;
@@ -1179,7 +1189,7 @@ final class VanillaStructures {
     private Long2ObjectOpenHashMap<Patch> overlay(Start start) {
         long key = startKey(start.kind, start.chunkX, start.chunkZ);
         Long2ObjectOpenHashMap<Patch> cached = overlayCache.get(key);
-        if (cached != null) return cached;
+        if (cached != null && (start.frame.shift != 0 || realStarts.get(key) != null)) return cached;
         CompletableFuture<Long2ObjectOpenHashMap<Patch>> existing = buildingOverlays.get(key);
         if (existing != null) return joinUnwrapping(existing);
         CompletableFuture<Long2ObjectOpenHashMap<Patch>> mine = new CompletableFuture<>();
@@ -1187,7 +1197,7 @@ final class VanillaStructures {
         if (existing != null) return joinUnwrapping(existing);
         try {
             Long2ObjectOpenHashMap<Patch> afterLock = overlayCache.get(key);
-            if (afterLock != null) {
+            if (afterLock != null && (start.frame.shift != 0 || realStarts.get(key) != null)) {
                 mine.complete(afterLock);
                 return afterLock;
             }
@@ -1211,6 +1221,7 @@ final class VanillaStructures {
             LOGGER.warn("Cubic world: structure {} failed to place at chunk {}, {}",
                     registries.registryOrThrow(Registries.STRUCTURE).getKey(start.start.getStructure()), start.chunkX, start.chunkZ, e);
             Long2ObjectOpenHashMap<Patch> empty = new Long2ObjectOpenHashMap<>();
+            if (start.frame.shift == 0) realStarts.put(key, start.start);
             overlayCache.put(key, empty);
             mine.complete(empty);
             return empty;
@@ -1228,6 +1239,11 @@ final class VanillaStructures {
     /** For tests: clears the overlay cache to exercise eviction and rebuilds against cached starts. */
     void clearOverlaysForTest() {
         overlayCache.clear();
+    }
+
+    /** For tests: clears the realStarts cache to exercise eviction while known/columns remain cached. */
+    void clearRealStartsForTest() {
+        realStarts.clear();
     }
 
     /** For tests: supplies a serialization context when no live {@link ServerLevel} is attached. */
@@ -1289,11 +1305,18 @@ final class VanillaStructures {
     }
 
     private Long2ObjectOpenHashMap<Patch> build(Start start) {
+        long key = startKey(start.kind, start.chunkX, start.chunkZ);
         Frame frame = start.frame;
         int[] yBounds = StructureLevel.bounds(start.low, start.reach.maxY(), frame.minY, frame.height, frame.shift);
-        if (yBounds == null) return new Long2ObjectOpenHashMap<>();
+        if (yBounds == null) {
+            if (frame.shift == 0) realStarts.put(key, start.start);
+            return new Long2ObjectOpenHashMap<>();
+        }
         StructureStart working = freshStart(start);
-        if (working == null) return new Long2ObjectOpenHashMap<>();
+        if (working == null) {
+            if (frame.shift == 0) realStarts.put(key, start.start);
+            return new Long2ObjectOpenHashMap<>();
+        }
         long rngSeed = ((long) start.kind << 56 | ((long) start.chunkX & 0xFFFFFFFL) << 28 | (long) start.chunkZ & 0xFFFFFFFL) ^ seed;
         StructureLevel world = new StructureLevel(level, biomeRegistry(), new Reader(), frame.shift, yBounds[0], yBounds[1], frame.sea,
                 new BlockPos(start.chunkX << 4, (start.reach.minY() + start.reach.maxY()) >> 1, start.chunkZ << 4),
@@ -1322,15 +1345,18 @@ final class VanillaStructures {
                 }
         }
         world.postProcessAll();
-        if (frame.shift == 0 && working.isValid()) {
+        if (frame.shift == 0) {
             // Preserve settled piece bounds (e.g. temples, witch huts, igloos, shipwrecks) for real() / structure-at
-            // lookups while keeping cached start.start pristine for future overlay rebuilds.
-            StructureStart settled = new StructureStart(
-                    working.getStructure(),
-                    working.getChunkPos(),
-                    working.getReferences(),
-                    new PiecesContainer(working.getPieces()));
-            realStarts.put(startKey(start.kind, start.chunkX, start.chunkZ), settled);
+            // lookups while keeping cached start.start pristine for future overlay rebuilds; record start.start as a
+            // settled sentinel if working became invalid so realStarts presence reliably distinguishes settled vs evicted.
+            StructureStart settled = working.isValid()
+                    ? new StructureStart(
+                            working.getStructure(),
+                            working.getChunkPos(),
+                            working.getReferences(),
+                            new PiecesContainer(working.getPieces()))
+                    : start.start;
+            realStarts.put(key, settled);
         }
         return patches(world);
     }

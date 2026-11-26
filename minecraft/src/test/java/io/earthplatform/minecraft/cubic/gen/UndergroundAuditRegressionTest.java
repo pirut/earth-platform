@@ -398,6 +398,186 @@ class UndergroundAuditRegressionTest {
         assertTrue(structures.ready(0, 0), "ready() must see all settled realStarts immediately");
     }
 
+    @Test void realStartsEvictionReSettlesShiftZeroBoundsViaWarmAndReady() throws Exception {
+        int earthGround = 188;
+        Structure hut = new Structure(new Structure.StructureSettings(
+                HolderSet.direct(plains), Map.of(), GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE)) {
+            @Override protected Optional<GenerationStub> findGenerationPoint(GenerationContext context) {
+                if (context.chunkPos().x != 0 || context.chunkPos().z != 0) return Optional.empty();
+                int x = context.chunkPos().getMinBlockX(), z = context.chunkPos().getMinBlockZ();
+                BoundingBox initial = new BoundingBox(x, 64, z, x + 7, 71, z + 7);
+                return Optional.of(new GenerationStub(new BlockPos(x, 64, z),
+                        b -> b.addPiece(new SettlingSurfacePiece(initial))));
+            }
+            @Override public StructureType<?> type() { return () -> MapCodec.unit(this); }
+        };
+        RegistryAccess registries = singleStructureRegistries("test_evict_resettling_hut", hut);
+        Thread server = Thread.currentThread();
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, hostOf((x, z) -> earthGround), 1L);
+        structures.serverThread(() -> Thread.currentThread() == server);
+        try {
+            // 1. Initial settle via warm().
+            structures.warm(0, 0);
+            for (long until = System.currentTimeMillis() + 20_000;
+                 !structures.ready(0, 0) && System.currentTimeMillis() < until;
+                 Thread.sleep(10)) {}
+            assertTrue(structures.ready(0, 0));
+            assertEquals(earthGround, structures.startsAt(0, 0).get(0).getBoundingBox().minY());
+
+            // 2. Evict realStarts while known and overlayCache STILL retain the column/overlay -> warm() must re-settle.
+            structures.clearRealStartsForTest();
+            assertTrue(structures.laidOut(0, 0), "known must still hold the column after realStarts eviction");
+            structures.warm(0, 0);
+            for (long until = System.currentTimeMillis() + 20_000;
+                 !structures.ready(0, 0) && System.currentTimeMillis() < until;
+                 Thread.sleep(10)) {}
+            assertTrue(structures.ready(0, 0), "ready() must become true once warm() finishes re-settling");
+            assertEquals(earthGround, structures.startsAt(0, 0).get(0).getBoundingBox().minY(),
+                    "warm() must re-settle shift == 0 minY bounds after realStarts eviction");
+            assertEquals(earthGround + 7, structures.startsAt(0, 0).get(0).getBoundingBox().maxY(),
+                    "warm() must re-settle shift == 0 maxY bounds after realStarts eviction");
+
+            // 3. Evict realStarts again while known still holds the column -> ready() must report false and re-settle.
+            structures.clearRealStartsForTest();
+            assertTrue(structures.laidOut(0, 0));
+            assertFalse(structures.ready(0, 0),
+                    "ready() must return false when shift == 0 realStarts entry was evicted while known remains");
+            for (long until = System.currentTimeMillis() + 20_000;
+                 !structures.ready(0, 0) && System.currentTimeMillis() < until;
+                 Thread.sleep(10)) {}
+            assertTrue(structures.ready(0, 0), "ready() must return true once async re-settlement completes");
+            assertEquals(earthGround, structures.startsAt(0, 0).get(0).getBoundingBox().minY(),
+                    "ready() must restore settled shift == 0 minY bounds after realStarts eviction");
+            assertEquals(earthGround + 7, structures.startsAt(0, 0).get(0).getBoundingBox().maxY(),
+                    "ready() must restore settled shift == 0 maxY bounds after realStarts eviction");
+        } finally {
+            structures.close();
+        }
+    }
+
+    @Test void serverStartsAtOnColumnOnlyLayoutQueuesAsyncSettlement() throws Exception {
+        int earthGround = 204;
+        Structure hut = new Structure(new Structure.StructureSettings(
+                HolderSet.direct(plains), Map.of(), GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE)) {
+            @Override protected Optional<GenerationStub> findGenerationPoint(GenerationContext context) {
+                if (context.chunkPos().x != 0 || context.chunkPos().z != 0) return Optional.empty();
+                int x = context.chunkPos().getMinBlockX(), z = context.chunkPos().getMinBlockZ();
+                BoundingBox initial = new BoundingBox(x, 64, z, x + 7, 71, z + 7);
+                return Optional.of(new GenerationStub(new BlockPos(x, 64, z),
+                        b -> b.addPiece(new SettlingSurfacePiece(initial))));
+            }
+            @Override public StructureType<?> type() { return () -> MapCodec.unit(this); }
+        };
+        RegistryAccess registries = singleStructureRegistries("test_server_startsat_settle_hut", hut);
+        Thread server = Thread.currentThread();
+        AtomicBoolean asServer = new AtomicBoolean(false);
+        VanillaStructures structures = new VanillaStructures(null, registries, randomState, true, hostOf((x, z) -> earthGround), 1L);
+        structures.serverThread(() -> asServer.get() && Thread.currentThread() == server);
+        try {
+            // Populate columns via clears() -> column() ONLY (never calling ready(), warm(), or place()).
+            assertFalse(structures.clears(4, 4));
+            assertFalse(structures.laidOut(0, 0), "column() alone must not publish unsettled shift == 0 to known");
+
+            // Server-thread startsAt() returns immediately (non-blocking) and triggers async settlement in background.
+            asServer.set(true);
+            List<StructureStart> immediate = structures.startsAt(0, 0);
+            assertEquals(1, immediate.size());
+
+            // Poll server-thread startsAt() ONLY (still never calling ready() or warm()) until async settling completes.
+            List<StructureStart> settled = immediate;
+            for (long until = System.currentTimeMillis() + 20_000;
+                 settled.get(0).getBoundingBox().minY() != earthGround && System.currentTimeMillis() < until;
+                 Thread.sleep(10)) {
+                settled = structures.startsAt(0, 0);
+            }
+            assertEquals(earthGround, settled.get(0).getBoundingBox().minY(),
+                    "server-thread startsAt() on column()-only layout must queue async settling and return settled minY");
+            assertEquals(earthGround + 7, settled.get(0).getBoundingBox().maxY(),
+                    "server-thread startsAt() on column()-only layout must return settled maxY");
+        } finally {
+            structures.close();
+        }
+    }
+
+    @Test void startOfRetriesSettlementAfterTransientMissingTerrainInOverlay() throws Exception {
+        int earthGround = 196;
+        Structure hut = new Structure(new Structure.StructureSettings(
+                HolderSet.direct(plains), Map.of(), GenerationStep.Decoration.SURFACE_STRUCTURES, TerrainAdjustment.NONE)) {
+            @Override protected Optional<GenerationStub> findGenerationPoint(GenerationContext context) {
+                if (context.chunkPos().x != 0 || context.chunkPos().z != 0) return Optional.empty();
+                int x = context.chunkPos().getMinBlockX(), z = context.chunkPos().getMinBlockZ();
+                BoundingBox initial = new BoundingBox(x, 64, z, x + 7, 71, z + 7);
+                return Optional.of(new GenerationStub(new BlockPos(x, 64, z),
+                        b -> b.addPiece(new SettlingSurfacePiece(initial))));
+            }
+            @Override public StructureType<?> type() { return () -> MapCodec.unit(this); }
+        };
+        RegistryAccess registries = singleStructureRegistries("test_startof_retry_overlay_hut", hut);
+        Thread server = Thread.currentThread();
+
+        // Case A: Server-thread startOf() where start() succeeds (caching in starts) while initial overlay() throws MissingTerrainException.
+        AtomicBoolean serverOverlayOffline = new AtomicBoolean(true);
+        VanillaStructures.Host serverHost = new VanillaStructures.Host() {
+            @Override public int ground(int x, int z) { return earthGround; }
+            @Override public int water(int x, int z) { return 62; }
+            @Override public Holder<Biome> biome(int x, int y, int z) { return plains; }
+            @Override public int floor(int x, int z) { return earthGround; }
+            @Nullable @Override public LevelChunkSection cube(int cx, int cy, int cz) { return null; }
+            @Override public BlockState fill(int x, int y, int z, int depth) { return Blocks.STONE.defaultBlockState(); }
+            @Override public int seaLevel() { return 63; }
+            @Override public Stream<Holder<Biome>> possibleBiomes() { return Stream.of(plains); }
+            @Override public void prepare(it.unimi.dsi.fastutil.longs.LongCollection cubes) {
+                if (serverOverlayOffline.get()) throw new MissingTerrainException("overlay terrain offline");
+            }
+        };
+        VanillaStructures serverStructures = new VanillaStructures(null, registries, randomState, true, serverHost, 1L);
+        serverStructures.serverThread(() -> Thread.currentThread() == server);
+        try {
+            // Cold server-thread startOf() queues start() + overlay(): start() caches in starts, overlay() throws MissingTerrainException.
+            assertNull(serverStructures.startOf(hut, 0, 0));
+            for (long until = System.currentTimeMillis() + 20_000;
+                 serverStructures.queued() > 0 && System.currentTimeMillis() < until;
+                 Thread.sleep(10)) {}
+            // Confirm start() IS now cached in starts while realStarts is still unsettled (64).
+            StructureStart unsettled = serverStructures.startOf(hut, 0, 0);
+            assertNotNull(unsettled, "start() should be cached even though overlay() threw MissingTerrainException");
+            assertEquals(64, unsettled.getBoundingBox().minY());
+            for (long until = System.currentTimeMillis() + 20_000;
+                 serverStructures.queued() > 0 && System.currentTimeMillis() < until;
+                 Thread.sleep(10)) {}
+
+            // Terrain recovers: next server-thread startOf() must retry overlay() even though start is already cached!
+            serverOverlayOffline.set(false);
+            StructureStart settled = serverStructures.startOf(hut, 0, 0);
+            for (long until = System.currentTimeMillis() + 20_000;
+                 (settled == null || settled.getBoundingBox().minY() != earthGround) && System.currentTimeMillis() < until;
+                 Thread.sleep(10)) {
+                settled = serverStructures.startOf(hut, 0, 0);
+            }
+            assertNotNull(settled);
+            assertEquals(earthGround, settled.getBoundingBox().minY(),
+                    "server-thread startOf() must retry overlay() and return settled minY after terrain recovers");
+            assertEquals(earthGround + 7, settled.getBoundingBox().maxY(),
+                    "server-thread startOf() must return settled maxY after terrain recovers");
+
+            // Also verify realStarts eviction while starts + overlayCache remain cached re-settles via server-thread startOf().
+            serverStructures.clearRealStartsForTest();
+            StructureStart resettled = serverStructures.startOf(hut, 0, 0);
+            for (long until = System.currentTimeMillis() + 20_000;
+                 (resettled == null || resettled.getBoundingBox().minY() != earthGround) && System.currentTimeMillis() < until;
+                 Thread.sleep(10)) {
+                resettled = serverStructures.startOf(hut, 0, 0);
+            }
+            assertNotNull(resettled);
+            assertEquals(earthGround, resettled.getBoundingBox().minY(),
+                    "server-thread startOf() must re-settle shift == 0 minY after realStarts eviction");
+            assertEquals(earthGround + 7, resettled.getBoundingBox().maxY(),
+                    "server-thread startOf() must re-settle shift == 0 maxY after realStarts eviction");
+        } finally {
+            serverStructures.close();
+        }
+    }
+
     @Test void freshStartExercisesRealNbtCloneRejectsPartialCloneAndNeverMutatesCachedStart() {
         // Case A: Real NBT clone succeeds on a serializable vanilla piece without regenerating via makeStart.
         AtomicInteger fullCloneGens = new AtomicInteger();

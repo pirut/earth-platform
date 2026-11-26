@@ -1559,35 +1559,47 @@ public final class ServerCubeWorld extends CubeWorld {
                 readyNeighbors.add(key);
                 if (!chunkTicking.test(cx, cz)) continue;
 
-                List<CubeCodec.PendingTick<Block>> remainingBlocks = null;
-                for (CubeCodec.PendingTick<Block> tick : ticks.blocks()) {
+                boolean decremented = false;
+                List<CubeCodec.PendingTick<Block>> currentBlocks = ticks.blocks();
+                List<CubeCodec.PendingTick<Block>> nextBlocks = null;
+                for (int i = 0; i < currentBlocks.size(); i++) {
+                    CubeCodec.PendingTick<Block> tick = currentBlocks.get(i);
                     if (tick.delay() <= 0) {
                         if (dueBlocks == null) dueBlocks = new ArrayList<>();
                         dueBlocks.add(new DueTick<>(key, tick));
+                        if (nextBlocks != null) nextBlocks.add(tick);
                     } else {
-                        if (remainingBlocks == null) remainingBlocks = new ArrayList<>();
-                        remainingBlocks.add(new CubeCodec.PendingTick<>(tick.pos(), tick.type(), tick.delay() - 1, tick.priority()));
+                        if (nextBlocks == null) {
+                            nextBlocks = new ArrayList<>(currentBlocks.size());
+                            for (int j = 0; j < i; j++) nextBlocks.add(currentBlocks.get(j));
+                        }
+                        nextBlocks.add(new CubeCodec.PendingTick<>(tick.pos(), tick.type(), tick.delay() - 1, tick.priority()));
+                        decremented = true;
                     }
                 }
-                List<CubeCodec.PendingTick<Fluid>> remainingFluids = null;
-                for (CubeCodec.PendingTick<Fluid> tick : ticks.fluids()) {
+                List<CubeCodec.PendingTick<Fluid>> currentFluids = ticks.fluids();
+                List<CubeCodec.PendingTick<Fluid>> nextFluids = null;
+                for (int i = 0; i < currentFluids.size(); i++) {
+                    CubeCodec.PendingTick<Fluid> tick = currentFluids.get(i);
                     if (tick.delay() <= 0) {
                         if (dueFluids == null) dueFluids = new ArrayList<>();
                         dueFluids.add(new DueTick<>(key, tick));
+                        if (nextFluids != null) nextFluids.add(tick);
                     } else {
-                        if (remainingFluids == null) remainingFluids = new ArrayList<>();
-                        remainingFluids.add(new CubeCodec.PendingTick<>(tick.pos(), tick.type(), tick.delay() - 1, tick.priority()));
+                        if (nextFluids == null) {
+                            nextFluids = new ArrayList<>(currentFluids.size());
+                            for (int j = 0; j < i; j++) nextFluids.add(currentFluids.get(j));
+                        }
+                        nextFluids.add(new CubeCodec.PendingTick<>(tick.pos(), tick.type(), tick.delay() - 1, tick.priority()));
+                        decremented = true;
                     }
                 }
-                if (remainingBlocks == null && remainingFluids == null) {
-                    pendingTicks.remove(key);
-                    readyNeighbors.remove(key);
-                } else {
+                if (decremented) {
                     pendingTicks.put(key, new CubeCodec.PendingTicks(
-                            remainingBlocks == null ? List.of() : remainingBlocks,
-                            remainingFluids == null ? List.of() : remainingFluids));
+                            nextBlocks != null ? nextBlocks : currentBlocks,
+                            nextFluids != null ? nextFluids : currentFluids));
+                    onChanged.accept(key);
                 }
-                onChanged.accept(key);
             }
 
             int executed = 0;
@@ -1595,7 +1607,12 @@ public final class ServerCubeWorld extends CubeWorld {
                 if (dueBlocks.size() > 1) dueBlocks.sort(Comparator.comparingInt(d -> d.tick().priority().getValue()));
                 for (DueTick<Block> due : dueBlocks) {
                     long key = due.cubeKey();
-                    if (!cubeLoaded.test(key) || !neighborsLoaded(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), cubeLoaded)) continue;
+                    if (!cubeLoaded.test(key) || !neighborsLoaded(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), cubeLoaded)) {
+                        readyNeighbors.remove(key);
+                        continue;
+                    }
+                    if (!consumeDueBlockTick(pendingTicks, readyNeighbors, key, due.tick())) continue;
+                    onChanged.accept(key);
                     executeBlock.accept(due.tick());
                     executed++;
                 }
@@ -1604,12 +1621,74 @@ public final class ServerCubeWorld extends CubeWorld {
                 if (dueFluids.size() > 1) dueFluids.sort(Comparator.comparingInt(d -> d.tick().priority().getValue()));
                 for (DueTick<Fluid> due : dueFluids) {
                     long key = due.cubeKey();
-                    if (!cubeLoaded.test(key) || !neighborsLoaded(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), cubeLoaded)) continue;
+                    if (!cubeLoaded.test(key) || !neighborsLoaded(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), cubeLoaded)) {
+                        readyNeighbors.remove(key);
+                        continue;
+                    }
+                    if (!consumeDueFluidTick(pendingTicks, readyNeighbors, key, due.tick())) continue;
+                    onChanged.accept(key);
                     executeFluid.accept(due.tick());
                     executed++;
                 }
             }
             return executed;
+        }
+
+        private static <T> int findTickIndex(List<CubeCodec.PendingTick<T>> list, CubeCodec.PendingTick<T> target) {
+            for (int i = 0; i < list.size(); i++) {
+                if (list.get(i) == target) return i;
+            }
+            for (int i = 0; i < list.size(); i++) {
+                if (list.get(i).equals(target)) return i;
+            }
+            return -1;
+        }
+
+        private static <T> List<CubeCodec.PendingTick<T>> withoutIndex(List<CubeCodec.PendingTick<T>> list, int removeIndex) {
+            if (list.size() == 1) return List.of();
+            List<CubeCodec.PendingTick<T>> remaining = new ArrayList<>(list.size() - 1);
+            for (int i = 0; i < list.size(); i++) {
+                if (i != removeIndex) remaining.add(list.get(i));
+            }
+            return remaining;
+        }
+
+        private static boolean consumeDueBlockTick(
+                Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pendingTicks,
+                LongOpenHashSet readyNeighbors,
+                long key,
+                CubeCodec.PendingTick<Block> target) {
+            CubeCodec.PendingTicks current = pendingTicks.get(key);
+            if (current == null) return false;
+            int idx = findTickIndex(current.blocks(), target);
+            if (idx < 0) return false;
+            List<CubeCodec.PendingTick<Block>> remainingBlocks = withoutIndex(current.blocks(), idx);
+            if (remainingBlocks.isEmpty() && current.fluids().isEmpty()) {
+                pendingTicks.remove(key);
+                readyNeighbors.remove(key);
+            } else {
+                pendingTicks.put(key, new CubeCodec.PendingTicks(remainingBlocks, current.fluids()));
+            }
+            return true;
+        }
+
+        private static boolean consumeDueFluidTick(
+                Long2ObjectOpenHashMap<CubeCodec.PendingTicks> pendingTicks,
+                LongOpenHashSet readyNeighbors,
+                long key,
+                CubeCodec.PendingTick<Fluid> target) {
+            CubeCodec.PendingTicks current = pendingTicks.get(key);
+            if (current == null) return false;
+            int idx = findTickIndex(current.fluids(), target);
+            if (idx < 0) return false;
+            List<CubeCodec.PendingTick<Fluid>> remainingFluids = withoutIndex(current.fluids(), idx);
+            if (current.blocks().isEmpty() && remainingFluids.isEmpty()) {
+                pendingTicks.remove(key);
+                readyNeighbors.remove(key);
+            } else {
+                pendingTicks.put(key, new CubeCodec.PendingTicks(current.blocks(), remainingFluids));
+            }
+            return true;
         }
     }
 
