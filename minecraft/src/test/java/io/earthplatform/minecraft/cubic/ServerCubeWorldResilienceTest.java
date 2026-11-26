@@ -1396,7 +1396,7 @@ class ServerCubeWorldResilienceTest {
         assertEquals(1, serverQueue.size());
         assertFalse(queuedOpen.isDone());
         assertDoesNotThrow(() -> serverQueue.remove(0).run());
-        assertDoesNotThrow(() -> queuedOpen.get(1, TimeUnit.SECONDS));
+        assertDoesNotThrow(() -> queuedOpen.get(5, TimeUnit.SECONDS));
         assertEquals(1, commitCalls.get());
 
         // 4. Queued commit when world flips closing before the server thread executes it:
@@ -1413,7 +1413,7 @@ class ServerCubeWorldResilienceTest {
         worldClosing.set(true);
         assertDoesNotThrow(() -> serverQueue.remove(0).run(), "server-thread task must never throw on closing");
         assertEquals(1, commitCalls.get(), "commit callback must not run after world begins closing");
-        ExecutionException closingExec = assertThrows(ExecutionException.class, queuedClosing::get);
+        ExecutionException closingExec = assertThrows(ExecutionException.class, () -> queuedClosing.get(5, TimeUnit.SECONDS));
         ServerCubeWorld.PregenerationRejectedException queuedRejected =
                 assertInstanceOf(ServerCubeWorld.PregenerationRejectedException.class, closingExec.getCause());
         assertTrue(queuedRejected.getMessage().contains("closing"), queuedRejected.getMessage());
@@ -1436,16 +1436,17 @@ class ServerCubeWorldResilienceTest {
                 commitCalls::incrementAndGet,
                 new AtomicBoolean()));
         assertEquals(2, commitCalls.get(), "direct server-thread commit must not run when closing");
-        ExecutionException directClosingExec = assertThrows(ExecutionException.class, directClosing::get);
+        ExecutionException directClosingExec = assertThrows(ExecutionException.class, () -> directClosing.get(5, TimeUnit.SECONDS));
         assertInstanceOf(ServerCubeWorld.PregenerationRejectedException.class, directClosingExec.getCause());
     }
 
     @Test
     void pregeneratedCommitCapturesCallbackFailuresWithoutThrowingIntoServerExecutor() {
         IllegalStateException boom = new IllegalStateException("commit callback boom");
+        AssertionError error = new AssertionError("commit callback fatal error");
         List<Runnable> serverQueue = new ArrayList<>();
 
-        // 1. Queued path: running the queued task on the server executor must NOT throw; failure is captured in future.
+        // 1. Queued path (RuntimeException): running the queued task on the server executor must NOT throw; failure is captured in future.
         CompletableFuture<Void> queuedFuture = ServerCubeWorld.schedulePregeneratedCommit(
                 false,
                 () -> true,
@@ -1457,10 +1458,10 @@ class ServerCubeWorldResilienceTest {
         assertDoesNotThrow(() -> serverQueue.remove(0).run(),
                 "unchecked commit callback failure must never escape into the server executor");
         assertTrue(queuedFuture.isCompletedExceptionally());
-        ExecutionException queuedExec = assertThrows(ExecutionException.class, queuedFuture::get);
+        ExecutionException queuedExec = assertThrows(ExecutionException.class, () -> queuedFuture.get(5, TimeUnit.SECONDS));
         assertSame(boom, queuedExec.getCause());
 
-        // 2. Direct server-thread path: schedulePregeneratedCommit captures the failure in the returned future instead of throwing.
+        // 2. Direct server-thread path (RuntimeException): schedulePregeneratedCommit captures the failure in the returned future instead of throwing.
         CompletableFuture<Void> directFuture = assertDoesNotThrow(() -> ServerCubeWorld.schedulePregeneratedCommit(
                 true,
                 () -> true,
@@ -1469,10 +1470,10 @@ class ServerCubeWorldResilienceTest {
                 () -> { throw boom; },
                 new AtomicBoolean()));
         assertTrue(directFuture.isCompletedExceptionally());
-        ExecutionException directExec = assertThrows(ExecutionException.class, directFuture::get);
+        ExecutionException directExec = assertThrows(ExecutionException.class, () -> directFuture.get(5, TimeUnit.SECONDS));
         assertSame(boom, directExec.getCause());
 
-        // 3. submitPregeneratedCommit unwraps and rethrows the exact failure to the caller on both paths.
+        // 3. submitPregeneratedCommit unwraps and rethrows the exact RuntimeException to the caller on both paths.
         IllegalStateException thrownDirect = assertThrows(IllegalStateException.class, () ->
                 ServerCubeWorld.submitPregeneratedCommit(
                         true,
@@ -1492,6 +1493,54 @@ class ServerCubeWorldResilienceTest {
                         () -> { throw boom; },
                         100L));
         assertSame(boom, thrownQueued);
+
+        // 4. Queued path (Error): running the queued task on the server executor must NOT throw; Error is captured in future.
+        CompletableFuture<Void> queuedErrorFuture = ServerCubeWorld.schedulePregeneratedCommit(
+                false,
+                () -> true,
+                serverQueue::add,
+                () -> false,
+                () -> { throw error; },
+                new AtomicBoolean());
+        assertEquals(1, serverQueue.size());
+        assertDoesNotThrow(() -> serverQueue.remove(0).run(),
+                "Error from commit callback must never escape into the server executor");
+        assertTrue(queuedErrorFuture.isCompletedExceptionally());
+        ExecutionException queuedErrorExec = assertThrows(ExecutionException.class, () -> queuedErrorFuture.get(5, TimeUnit.SECONDS));
+        assertSame(error, queuedErrorExec.getCause());
+
+        // 5. Direct server-thread path (Error): schedulePregeneratedCommit captures the Error in the returned future instead of throwing.
+        CompletableFuture<Void> directErrorFuture = assertDoesNotThrow(() -> ServerCubeWorld.schedulePregeneratedCommit(
+                true,
+                () -> true,
+                Runnable::run,
+                () -> false,
+                () -> { throw error; },
+                new AtomicBoolean()));
+        assertTrue(directErrorFuture.isCompletedExceptionally());
+        ExecutionException directErrorExec = assertThrows(ExecutionException.class, () -> directErrorFuture.get(5, TimeUnit.SECONDS));
+        assertSame(error, directErrorExec.getCause());
+
+        // 6. submitPregeneratedCommit unwraps and rethrows the exact Error to the caller on both paths.
+        AssertionError thrownDirectError = assertThrows(AssertionError.class, () ->
+                ServerCubeWorld.submitPregeneratedCommit(
+                        true,
+                        () -> true,
+                        Runnable::run,
+                        () -> false,
+                        () -> { throw error; },
+                        100L));
+        assertSame(error, thrownDirectError);
+
+        AssertionError thrownQueuedError = assertThrows(AssertionError.class, () ->
+                ServerCubeWorld.submitPregeneratedCommit(
+                        false,
+                        () -> true,
+                        Runnable::run,
+                        () -> false,
+                        () -> { throw error; },
+                        100L));
+        assertSame(error, thrownQueuedError);
     }
 
     @Test
@@ -1538,8 +1587,9 @@ class ServerCubeWorldResilienceTest {
                 () -> false, k -> null, (k, tag) -> {}, entry -> true, (k, err) -> {});
         LongArrayList candidates = LongArrayList.of(CubeKey.pack(3, 4, 5));
         IllegalStateException boom = new IllegalStateException("isLoaded failure");
+        AssertionError error = new AssertionError("isLoaded fatal error");
 
-        // 1. Direct server-thread path (onServerThread == true) must capture filterPregenerateKeys failures in the future.
+        // 1. Direct server-thread path (RuntimeException) must capture filterPregenerateKeys failures in the future.
         CompletableFuture<LongArrayList> directFuture = assertDoesNotThrow(() ->
                 ServerCubeWorld.coordinatePregenerateKeysAsync(
                         candidates,
@@ -1551,10 +1601,10 @@ class ServerCubeWorldResilienceTest {
                         untouched,
                         new AtomicBoolean()));
         assertTrue(directFuture.isCompletedExceptionally());
-        ExecutionException directExec = assertThrows(ExecutionException.class, directFuture::get);
+        ExecutionException directExec = assertThrows(ExecutionException.class, () -> directFuture.get(5, TimeUnit.SECONDS));
         assertSame(boom, directExec.getCause());
 
-        // coordinatePregenerateKeys still unwraps and propagates the exact failure.
+        // coordinatePregenerateKeys still unwraps and propagates the exact RuntimeException.
         IllegalStateException unwrapped = assertThrows(IllegalStateException.class, () ->
                 ServerCubeWorld.coordinatePregenerateKeys(
                         candidates,
@@ -1567,7 +1617,7 @@ class ServerCubeWorldResilienceTest {
                         100L));
         assertSame(boom, unwrapped);
 
-        // 2. Queued server-thread path must also never throw into the server executor when isLoaded throws.
+        // 2. Queued server-thread path (RuntimeException) must also never throw into the server executor when isLoaded throws.
         List<Runnable> serverQueue = new ArrayList<>();
         CompletableFuture<LongArrayList> queuedFuture = ServerCubeWorld.coordinatePregenerateKeysAsync(
                 candidates,
@@ -1581,7 +1631,64 @@ class ServerCubeWorldResilienceTest {
         assertEquals(1, serverQueue.size());
         assertDoesNotThrow(() -> serverQueue.remove(0).run());
         assertTrue(queuedFuture.isCompletedExceptionally());
-        ExecutionException queuedExec = assertThrows(ExecutionException.class, queuedFuture::get);
+        ExecutionException queuedExec = assertThrows(ExecutionException.class, () -> queuedFuture.get(5, TimeUnit.SECONDS));
         assertSame(boom, queuedExec.getCause());
+
+        // 3. Direct server-thread path (Error) must capture Error in the future instead of throwing.
+        CompletableFuture<LongArrayList> directErrorFuture = assertDoesNotThrow(() ->
+                ServerCubeWorld.coordinatePregenerateKeysAsync(
+                        candidates,
+                        true,
+                        () -> true,
+                        Runnable::run,
+                        () -> false,
+                        key -> { throw error; },
+                        untouched,
+                        new AtomicBoolean()));
+        assertTrue(directErrorFuture.isCompletedExceptionally());
+        ExecutionException directErrorExec = assertThrows(ExecutionException.class, () -> directErrorFuture.get(5, TimeUnit.SECONDS));
+        assertSame(error, directErrorExec.getCause());
+
+        // 4. Queued server-thread path (Error) must never throw into the server executor and must capture Error in the future.
+        CompletableFuture<LongArrayList> queuedErrorFuture = ServerCubeWorld.coordinatePregenerateKeysAsync(
+                candidates,
+                false,
+                () -> true,
+                serverQueue::add,
+                () -> false,
+                key -> { throw error; },
+                untouched,
+                new AtomicBoolean());
+        assertEquals(1, serverQueue.size());
+        assertDoesNotThrow(() -> serverQueue.remove(0).run(),
+                "Error from key filter must never escape into the server executor");
+        assertTrue(queuedErrorFuture.isCompletedExceptionally());
+        ExecutionException queuedErrorExec = assertThrows(ExecutionException.class, () -> queuedErrorFuture.get(5, TimeUnit.SECONDS));
+        assertSame(error, queuedErrorExec.getCause());
+
+        // 5. coordinatePregenerateKeys unwraps and rethrows the exact Error on both direct and queued paths.
+        AssertionError unwrappedDirectError = assertThrows(AssertionError.class, () ->
+                ServerCubeWorld.coordinatePregenerateKeys(
+                        candidates,
+                        true,
+                        () -> true,
+                        Runnable::run,
+                        () -> false,
+                        key -> { throw error; },
+                        untouched,
+                        100L));
+        assertSame(error, unwrappedDirectError);
+
+        AssertionError unwrappedQueuedError = assertThrows(AssertionError.class, () ->
+                ServerCubeWorld.coordinatePregenerateKeys(
+                        candidates,
+                        false,
+                        () -> true,
+                        Runnable::run,
+                        () -> false,
+                        key -> { throw error; },
+                        untouched,
+                        100L));
+        assertSame(error, unwrappedQueuedError);
     }
 }
