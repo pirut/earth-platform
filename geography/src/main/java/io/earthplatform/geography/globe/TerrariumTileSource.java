@@ -30,6 +30,8 @@ import javax.imageio.ImageIO;
  */
 public final class TerrariumTileSource implements AutoCloseable {
     public static final String DATASET_ID = "terrarium-v1";
+    /** Refined cleaning & despiking mode; shares the raw {@value #DATASET_ID} PNG disk cache. */
+    public static final String V2_ID = "terrarium-v2";
     public static final URI AWS_TERRAIN_TILES = URI.create("https://s3.amazonaws.com/elevation-tiles-prod/terrarium/");
     public static final int TILE_SIZE = 256;
     public static final int MAX_ZOOM = 15;
@@ -55,6 +57,8 @@ public final class TerrariumTileSource implements AutoCloseable {
     private final Path cacheRoot;
     private final boolean allowNetwork;
     private final int maxTilesInMemory;
+    private final int maxCleanInMemory;
+    private final boolean v2;
     private final Duration timeout;
     private final HttpClient http;
     private final Semaphore transfers;
@@ -63,6 +67,8 @@ public final class TerrariumTileSource implements AutoCloseable {
     private final Map<Long, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
     /** Tiles' raw values being read, so a tile and its neighbours' seams wanting the same one fetch it once. */
     private final Map<Long, CompletableFuture<float[]>> rawInFlight = new ConcurrentHashMap<>();
+    /** Cleaned pre-layer tiles being built, so concurrent repair/Copernicus checks share one read. */
+    private final Map<Long, CompletableFuture<float[]>> cleanInFlight = new ConcurrentHashMap<>();
     /** Better sources laid over the composite, in order; see {@link ElevationLayer}. */
     private final java.util.List<ElevationLayer> layers;
     private final AtomicLong downloads = new AtomicLong(), diskHits = new AtomicLong(), memoryHits = new AtomicLong(), failures = new AtomicLong();
@@ -75,13 +81,23 @@ public final class TerrariumTileSource implements AutoCloseable {
      * @param maxConcurrentTransfers simultaneous HTTP requests
      */
     public TerrariumTileSource(URI base, Path cacheRoot, boolean allowNetwork, int maxTilesInMemory, int maxConcurrentTransfers, Duration timeout) throws IOException {
-        this(base, cacheRoot, allowNetwork, maxTilesInMemory, maxConcurrentTransfers, timeout, java.util.List.of());
+        this(base, cacheRoot, allowNetwork, maxTilesInMemory, maxConcurrentTransfers, timeout, java.util.List.of(), false);
     }
 
     /** @param layers better sources laid over each tile after its cleaning, in order (later ones win) */
     public TerrariumTileSource(URI base, Path cacheRoot, boolean allowNetwork, int maxTilesInMemory, int maxConcurrentTransfers, Duration timeout,
                                java.util.List<ElevationLayer> layers) throws IOException {
+        this(base, cacheRoot, allowNetwork, maxTilesInMemory, maxConcurrentTransfers, timeout, layers, false);
+    }
+
+    /**
+     * @param layers better sources laid over each tile after its cleaning, in order (later ones win)
+     * @param v2     true for {@value #V2_ID} cleaning (un-layered z11 repair reference, border-safe despiking)
+     */
+    public TerrariumTileSource(URI base, Path cacheRoot, boolean allowNetwork, int maxTilesInMemory, int maxConcurrentTransfers, Duration timeout,
+                               java.util.List<ElevationLayer> layers, boolean v2) throws IOException {
         this.layers = java.util.List.copyOf(layers);
+        this.v2 = v2;
         this.base = Objects.requireNonNull(base);
         if (!base.toString().endsWith("/")) throw new IllegalArgumentException("Tile base URI must end with /");
         if (maxTilesInMemory < 1 || maxConcurrentTransfers < 1 || timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("Invalid tile source budget");
@@ -89,6 +105,7 @@ public final class TerrariumTileSource implements AutoCloseable {
         this.cacheRoot = cacheRoot;
         this.allowNetwork = allowNetwork;
         this.maxTilesInMemory = maxTilesInMemory;
+        this.maxCleanInMemory = Math.max(CLEAN_KEEP, maxTilesInMemory / 4);
         this.timeout = timeout;
         this.transfers = new Semaphore(maxConcurrentTransfers);
         this.executor = Executors.newFixedThreadPool(maxConcurrentTransfers, runnable -> {
@@ -118,7 +135,7 @@ public final class TerrariumTileSource implements AutoCloseable {
                     float[] values = read(zoom, x, y);
                     for (int i = first(plans); i < layers.size(); i++) refine(layers.get(i), zoom, x, y, values, plans.get(i));
                     TileRepair.repairImpossibleDepths(values);
-                    if (zoom >= TileDespike.SPIKE_ZOOM) TileDespike.despike(values, zoom, y);
+                    if (zoom >= TileDespike.SPIKE_ZOOM) TileDespike.despike(values, zoom, y, v2);
                     synchronized (memory) {
                         memory.putAndTrim(key, values, maxTilesInMemory);
                     }
@@ -154,13 +171,69 @@ public final class TerrariumTileSource implements AutoCloseable {
      */
     private void repair(float[] values, int zoom, int x, int y) {
         int shift = zoom - REFERENCE_ZOOM;
-        float[] reference;
-        try {
-            reference = tile(REFERENCE_ZOOM, x >> shift, y >> shift);
-        } catch (MissingTerrainException missing) {
+        int rx = x >> shift, ry = y >> shift;
+        if (!v2) {
+            float[] reference;
+            try {
+                reference = tile(REFERENCE_ZOOM, rx, ry);
+            } catch (MissingTerrainException missing) {
+                return;
+            }
+            TileRepair.repair(values, reference, shift, x, y);
             return;
         }
-        TileRepair.repair(values, reference, shift, x, y);
+        float[] reference = cleaned(REFERENCE_ZOOM, rx, ry);
+        int span = TILE_SIZE >> shift;
+        int ox = (x & ((1 << shift) - 1)) * span, oy = (y & ((1 << shift) - 1)) * span;
+        if (ox >= 2 && ox + span + 2 <= TILE_SIZE && oy >= 2 && oy + span + 2 <= TILE_SIZE) {
+            TileRepair.repair(values, reference, shift, x, y);
+            return;
+        }
+        repairWithBorder(values, reference, rx, ry, shift, span, ox, oy);
+    }
+
+    /**
+     * Repairs a fine tile lying on or near the edge of its {@link #REFERENCE_ZOOM} reference tile using a
+     * 2-pixel border from adjacent un-layered {@link #cleaned} reference tiles so bilinear sampling and
+     * the 4x4 relief window stay continuous across z11 boundaries. Only the Mercator Y grid edge clamps
+     * the source row while still wrapping X into east/west neighbours; transient neighbour misses propagate
+     * {@link MissingTerrainException} so callers retry rather than caching a clamped tile.
+     */
+    private void repairWithBorder(float[] values, float[] reference, int rx, int ry, int shift, int span, int ox, int oy) {
+        int pad = 2, side = span + 2 * pad;
+        float[] patch = new float[side * side];
+        float[][] neighbours = new float[9][];
+        boolean[] tried = new boolean[9];
+        neighbours[4] = reference;
+        tried[4] = true;
+        int refTiles = 1 << REFERENCE_ZOOM;
+        for (int pj = 0; pj < side; pj++) {
+            int gy = oy - pad + pj;
+            int dy = Math.floorDiv(gy, TILE_SIZE);
+            int ly = Math.floorMod(gy, TILE_SIZE);
+            int ny = ry + dy;
+            if (ny < 0) {
+                dy = 0;
+                ly = 0;
+                ny = 0;
+            } else if (ny >= refTiles) {
+                dy = 0;
+                ly = TILE_SIZE - 1;
+                ny = refTiles - 1;
+            }
+            for (int pk = 0; pk < side; pk++) {
+                int gx = ox - pad + pk;
+                int dx = Math.floorDiv(gx, TILE_SIZE);
+                int lx = Math.floorMod(gx, TILE_SIZE);
+                int slot = (dy + 1) * 3 + (dx + 1);
+                if (!tried[slot]) {
+                    tried[slot] = true;
+                    neighbours[slot] = cleaned(REFERENCE_ZOOM, Math.floorMod(rx + dx, refTiles), ny);
+                }
+                patch[pj * side + pk] = neighbours[slot][ly * TILE_SIZE + lx];
+            }
+        }
+        TileRepair.repairPatch(values, patch, side, side, pad, pad, shift);
     }
 
     /**
@@ -196,19 +269,48 @@ public final class TerrariumTileSource implements AutoCloseable {
         }
         MemoryPressure.enterHeavy();
         try {
-            // Its seams' neighbours start beside it, as early() starts a whole tile's: one after another they kept
-            // a Copernicus check, and every tile of a new place behind it, waiting four downloads longer.
-            earlyNeighbours(zoom, x, y);
-            float[] values = read(zoom, x, y);
-            synchronized (cleanMemory) {
-                cleanMemory.putAndTrim(key, values, CLEAN_KEEP);
+            CompletableFuture<float[]> mine = new CompletableFuture<>();
+            CompletableFuture<float[]> shared = cleanInFlight.putIfAbsent(key, mine);
+            if (shared == null) {
+                try {
+                    // Its seams' neighbours start beside it, as early() starts a whole tile's: one after another they kept
+                    // a Copernicus check, and every tile of a new place behind it, waiting four downloads longer.
+                    earlyNeighbours(zoom, x, y);
+                    float[] values = read(zoom, x, y);
+                    synchronized (cleanMemory) {
+                        cleanMemory.putAndTrim(key, values, maxCleanInMemory);
+                    }
+                    mine.complete(values);
+                    return values;
+                } catch (Throwable failure) {
+                    failures.incrementAndGet();
+                    mine.completeExceptionally(failure);
+                    if (failure instanceof MissingTerrainException missing) throw missing;
+                    if (failure instanceof InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new MissingTerrainException("Interrupted reading elevation tile " + zoom + "/" + x + "/" + y);
+                    }
+                    if (failure instanceof IOException io) {
+                        throw new MissingTerrainException("Elevation tile " + zoom + "/" + x + "/" + y + " failed: " + io);
+                    }
+                    if (failure instanceof RuntimeException runtime) throw runtime;
+                    if (failure instanceof Error error) throw error;
+                    throw new MissingTerrainException("Elevation tile " + zoom + "/" + x + "/" + y + " failed: " + failure);
+                } finally {
+                    cleanInFlight.remove(key, mine);
+                }
             }
-            return values;
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new MissingTerrainException("Interrupted reading elevation tile " + zoom + "/" + x + "/" + y);
-        } catch (IOException failure) {
-            throw new MissingTerrainException("Elevation tile " + zoom + "/" + x + "/" + y + " failed: " + failure);
+            try {
+                return DataWaits.get(shared, timeout.toMillis() * 4, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new MissingTerrainException("Interrupted waiting for elevation tile " + zoom + "/" + x + "/" + y);
+            } catch (TimeoutException late) {
+                throw new MissingTerrainException("Timed out waiting for elevation tile " + zoom + "/" + x + "/" + y);
+            } catch (ExecutionException failed) {
+                if (failed.getCause() instanceof MissingTerrainException missing) throw missing;
+                throw new MissingTerrainException("Elevation tile " + zoom + "/" + x + "/" + y + " failed: " + failed.getCause());
+            }
         } finally { MemoryPressure.exitHeavy(); }
     }
 
@@ -222,11 +324,30 @@ public final class TerrariumTileSource implements AutoCloseable {
     private java.util.List<CompletableFuture<Object>> early(int zoom, int x, int y) {
         if (zoom > REFERENCE_ZOOM + 1) {
             int shift = zoom - REFERENCE_ZOOM;
-            boolean known;
-            synchronized (memory) { known = memory.containsKey(key(REFERENCE_ZOOM, x >> shift, y >> shift)); }
-            if (!known) Thread.ofVirtual().start(() -> {
-                try { tile(REFERENCE_ZOOM, x >> shift, y >> shift); } catch (RuntimeException missing) { /* repair() does without */ }
-            });
+            int rx = x >> shift, ry = y >> shift;
+            long refKey = key(REFERENCE_ZOOM, rx, ry);
+            if (v2) {
+                prefetchCleaned(rx, ry);
+                int span = TILE_SIZE >> shift;
+                int ox = (x & ((1 << shift) - 1)) * span, oy = (y & ((1 << shift) - 1)) * span;
+                int minDx = ox < 2 ? -1 : 0, maxDx = ox + span + 2 > TILE_SIZE ? 1 : 0;
+                int minDy = oy < 2 ? -1 : 0, maxDy = oy + span + 2 > TILE_SIZE ? 1 : 0;
+                int refTiles = 1 << REFERENCE_ZOOM;
+                for (int dy = minDy; dy <= maxDy; dy++) {
+                    int ny = ry + dy;
+                    if (ny < 0 || ny >= refTiles) continue;
+                    for (int dx = minDx; dx <= maxDx; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        prefetchCleaned(Math.floorMod(rx + dx, refTiles), ny);
+                    }
+                }
+            } else {
+                boolean known;
+                synchronized (memory) { known = memory.containsKey(refKey); }
+                if (!known) Thread.ofVirtual().start(() -> {
+                    try { tile(REFERENCE_ZOOM, rx, ry); } catch (RuntimeException missing) { /* repair() does without */ }
+                });
+            }
         }
         java.util.List<CompletableFuture<Object>> plans = new java.util.ArrayList<>(layers.size());
         for (ElevationLayer layer : layers) {
@@ -242,6 +363,15 @@ public final class TerrariumTileSource implements AutoCloseable {
         }
         earlyNeighbours(zoom, x, y);
         return plans;
+    }
+
+    private void prefetchCleaned(int rx, int ry) {
+        long refKey = key(REFERENCE_ZOOM, rx, ry);
+        boolean known;
+        synchronized (cleanMemory) { known = cleanMemory.containsKey(refKey); }
+        if (!known && !cleanInFlight.containsKey(refKey)) Thread.ofVirtual().start(() -> {
+            try { cleaned(REFERENCE_ZOOM, rx, ry); } catch (RuntimeException missing) { /* repair() meets it */ }
+        });
     }
 
     /**

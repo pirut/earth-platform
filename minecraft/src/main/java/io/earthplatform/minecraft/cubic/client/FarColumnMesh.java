@@ -19,7 +19,6 @@ import static io.earthplatform.minecraft.cubic.client.FarMesher.groundRow;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.hides;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.match;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.multiply;
-import static io.earthplatform.minecraft.cubic.client.FarMesher.normals;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.quad;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.seeThrough;
 import static io.earthplatform.minecraft.cubic.client.FarMesher.shade;
@@ -44,7 +43,9 @@ import io.earthplatform.minecraft.cubic.client.FarMesher.Side;
 import io.earthplatform.minecraft.cubic.client.FarMesher.WaterLook;
 import io.earthplatform.minecraft.cubic.far.Far;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import javax.annotation.Nullable;
 import net.minecraft.client.renderer.LightTexture;
@@ -52,6 +53,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 
@@ -74,8 +76,12 @@ final class FarColumnMesh {
     final float[] surface;
     /** Each voxel column's ground slope as a {@link FarMesher#normalCode}. */
     final int[] normals;
+    /** Ground top heights (this column and cardinal neighbours) shared by slope normals and downhill seam closure. */
+    final FarMesher.GroundHeights groundHeights;
     /** Each voxel column's highest ground row (not water or trees), or -1. */
     final int[] groundRows = new int[256];
+    /** Downhill-seam extended ground top heights (18 x 18 matching {@link #groundHeights}), or null if none extended. */
+    @Nullable final int[] extendedTops;
     /** What each voxel column's ground shows on top and on its step risers (see {@link FarMesher#evenCover}), or null for its own block. */
     @Nullable final BlockState[] cover;
     final FarFaceMerger opaqueFlat = new FarFaceMerger(), waterFlat = new FarFaceMerger();
@@ -92,47 +98,58 @@ final class FarColumnMesh {
     private final FarLooks.Recent recent;
 
     FarColumnMesh(Job job) {
+        boolean smooth = smooth(job);
+        boolean hasDrawn = job.drawn() != null && !job.drawn().isEmpty();
+        // Match FarMesher.buildPrepared: smooth ground, near-cube masking and packet edit overlays
+        // materialize dense sections up front so surface(), groundRow() and meshing stay exact.
+        if (smooth || job.packet() != null && (hasDrawn || job.packet().editCount() != 0)) {
+            job = job.dense();
+        }
         this.job = job;
         recent = FarLooks.Recent.of(job.looks(), job.faces());
         texturedWater = job.textured() && job.level() <= TEXTURED_WATER_LEVELS;
         v = 1 << job.level();
         voxel = v * UNIT;
-        coverage = FarMesher.CACHE_COVERAGE && job.drawn() != null && !job.drawn().isEmpty()
+        coverage = FarMesher.CACHE_COVERAGE && hasDrawn
                 ? new FarCoverage(job.level(), job.x0(), job.z0(), job.bottom(),
-                job.height(), job.drops(), job.drawn()) : null;
+                job.height(), job.drops(), job.sides(), job.drawn()) : null;
         tops = tops(job);
         sideTops = sideTops(job);
         sideSurfaces = sideSurfaces(job);
         surface = surface(job, v);
         for (int cell = 0; cell < 256; cell++) groundRows[cell] = groundRow(job, cell & 15, cell >> 4);
-        normals = normals(job, voxel);
+        groundHeights = FarMesher.groundHeights(job, voxel, groundRows);
+        normals = FarMesher.normals(groundHeights, voxel);
         cover = job.level() >= COVER_FROM ? evenCover(job, groundRows) : null;
+        extendedTops = !smooth && hasDrawn ? computeExtendedTops() : null;
     }
 
     Built build() {
         // The ground is drawn as one smooth surface rather than voxels, so only water is meshed voxel by voxel.
         // Trees are part of that surface: a leaf voxel this far out is 32 blocks or more, and as a box it floated over the slope.
         boolean smooth = smooth(job);
-        if(job.packet()!=null) {
-            java.util.BitSet candidates=FarRunCandidates.make(job.packet());
-            for(int bit=candidates.nextSetBit(0);bit>=0;bit=candidates.nextSetBit(bit+1)) {
-                int cell=bit&255,row=bit>>>8,x=cell&15,z=cell>>4;
-                BlockState state=job.packet().block(x,row,z);
-                if(!state.isAir())voxel(state,x,row,z);
+        if (job.packet() != null) {
+            // Smooth jobs, near-cube masks and edit overlays were densified in the constructor above.
+            java.util.BitSet candidates = FarRunCandidates.make(job.packet());
+            for (int bit = candidates.nextSetBit(0); bit >= 0; bit = candidates.nextSetBit(bit + 1)) {
+                int cell = bit & 255, row = bit >>> 8, x = cell & 15, z = cell >> 4;
+                BlockState state = job.packet().block(x, row, z);
+                if (state.isAir()) continue;
+                voxel(state, x, row, z);
             }
         } else {
-        LevelChunkSection[] sections = job.sections();
-        for (int si = 0; si < sections.length; si++) {
-            LevelChunkSection section = sections[si];
-            if (section == null || section.hasOnlyAir()) continue;
-            for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
-                BlockState state = section.getBlockState(x, y, z);
-                if (state.isAir() || smooth && !seeThrough(state)) continue;
-                int vy = si * 16 + y;
-                if (drawn(x, vy, z)) continue;
-                voxel(state, x, vy, z);
+            LevelChunkSection[] sections = job.sections();
+            for (int si = 0; si < sections.length; si++) {
+                LevelChunkSection section = sections[si];
+                if (section == null || section.hasOnlyAir()) continue;
+                for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+                    BlockState state = section.getBlockState(x, y, z);
+                    if (state.isAir() || smooth && !seeThrough(state)) continue;
+                    int vy = si * 16 + y;
+                    if (drawn(x, vy, z)) continue;
+                    voxel(state, x, vy, z);
+                }
             }
-        }
         }
         if (!smooth) emitBottomCap();
         IntArrayList[] groups = new IntArrayList[GROUPS];
@@ -186,6 +203,10 @@ final class FarColumnMesh {
         // Under water, sky light fades a level per block of water above, as it does near by.
         int sky = liquid ? 15 : Mth.clamp(15 - (int) (surface[cell] - ((vy + 1) * voxel - drop) / (float) UNIT), 0, 15);
         int bottom = vy * voxel - drop, top = bottom + Math.round(voxel * Far.fill(state));
+        if (!liquid && vy == groundRows[cell] && extendedTops != null) {
+            int ext = extendedTops[(z + 1) * 18 + x + 1];
+            if (ext > top) top = ext;
+        }
         int seamTop = groundRows[cell] >= 0 ? groundRows[cell] : tops[cell];
         Holder<Biome> biome = null;
         for (Direction direction : DIRECTIONS) {
@@ -204,57 +225,77 @@ final class FarColumnMesh {
                 continue;
             }
             int nx = x + direction.getStepX(), nz = z + direction.getStepZ(), wall = side(nx, nz);
-            int neighbourDrop = wall < 0 ? job.drops()[nz * 16 + nx] : sideDrop(wall, nx, nz, drop);
-            // The neighbour's rows sit delta lower than ours: our face meets two of them, split where they meet.
-            int delta = neighbourDrop - drop, lowRow, highRow, split;
-            if (delta >= 0) { lowRow = vy; highRow = vy + 1; split = bottom + voxel - delta; }
-            else { lowRow = vy - 1; highRow = vy; split = bottom - delta; }
-            for (int part = 0; part < 2; part++) {
-                int from = part == 0 ? bottom : Math.max(bottom, split), to = part == 0 ? Math.min(split, top) : top;
+            int neighbourDrop = FarMesher.drop(job.drops(), job.sides(), nx, nz);
+            if (top <= bottom) continue;
+            int nbAt = (nz + 1) * 18 + nx + 1;
+            int nbExtTop = extendedTops != null ? extendedTops[nbAt] : Integer.MIN_VALUE;
+            int nbOrigTop = nbExtTop != Integer.MIN_VALUE ? groundHeights.height()[nbAt] : Integer.MIN_VALUE;
+            // Our face spans [bottom, top), which meets every neighbour row overlapping that range
+            // (normally 1-2 rows, or more when top was extended up to a near-cube floor seam).
+            int firstRow = Math.floorDiv(bottom + neighbourDrop, voxel);
+            int lastRow = Math.floorDiv(top - 1 + neighbourDrop, voxel);
+            for (int row = firstRow; row <= lastRow; row++) {
+                int from = Math.max(bottom, row * voxel - neighbourDrop);
+                int to = Math.min(top, (row + 1) * voxel - neighbourDrop);
                 if (to <= from) continue;
-                int row = part == 0 ? lowRow : highRow;
                 BlockState neighbour = at(job, nx, row, nz);
-                int group;
-                if (drawn(nx, row, nz)) {
-                    // The cubes there are drawn up close; water carries on into theirs without a wall.
-                    if (liquid && seeThrough(neighbour) || vy < seamTop - SEAM_DEPTH) continue;
-                    group = direction.get3DDataValue();
-                } else if (hides(state, neighbour, direction)) {
-                    if (wall < 0) continue;
-                    if (liquid) {
-                        // Where a coarser or finer level's water meets this, at a slightly different
-                        // height, a wall of water closes the slit that showed the dark bed below.
-                        if (vy < tops[cell] - WALL_DEPTH) continue;
-                        // It reaches only as far below what stands beside as the two differ, as the
-                        // other level's surface there lies near both: a level lake gets no wall at
-                        // all. Far off the depth buffer can't hide one under the other level's
-                        // water, and it showed as a line across the lake.
-                        int beside = sideSurfaces[wall][wall < 2 ? x : z], low = from;
-                        if (beside != Integer.MIN_VALUE) {
-                            int own = Math.round(surface[cell] * UNIT);
-                            low = Math.max(from, Math.min(own, beside) - Math.abs(own - beside));
-                        }
-                        if (to <= low) continue;
-                        if (biome == null) biome = FarMesher.biome(job,x,vy,z);
-                        waterFace(waterWall(wall), state, biome, direction, x, z, low, to - low);
-                        continue;
+                if (nbExtTop > nbOrigTop && from < nbExtTop && to > nbOrigTop && neighbour.isAir()) {
+                    assert from >= nbOrigTop;
+                    int hiddenTo = Math.min(to, nbExtTop);
+                    biome = emitSideSlice(state, biome, direction, x, vy, z, cell, nx, row, nz, wall, liquid, sky, seamTop, from, hiddenTo, neighbour, true);
+                    if (hiddenTo < to) {
+                        biome = emitSideSlice(state, biome, direction, x, vy, z, cell, nx, row, nz, wall, liquid, sky, seamTop, hiddenTo, to, neighbour, false);
                     }
-                    if (vy < sideTops[wall][wall < 2 ? x : z] - WALL_DEPTH) continue;
-                    group = FIRST_WALL + wall;
-                } else group = direction.get3DDataValue();
-                if (biome == null) biome = FarMesher.biome(job,x,vy,z);
-                if (liquid) waterFace(water(), state, biome, direction, x, z, from, to - from);
-                else {
-                    int index = direction.get3DDataValue() - 2;
-                    // The ground's own step risers look like the ground's top, so a gentle slope of
-                    // voxel stairs reads as one surface rather than stripes of top and side texture.
-                    List<Piece> list = pieces[index][cell];
-                    if (list == null) list = pieces[index][cell] = new ArrayList<>(2);
-                    boolean ground = vy == groundRows[cell];
-                    list.add(new Piece(from, to, look(ground ? cover(cell, state) : state, biome, ground ? Direction.UP : direction, sky, cell), group));
+                } else {
+                    biome = emitSideSlice(state, biome, direction, x, vy, z, cell, nx, row, nz, wall, liquid, sky, seamTop, from, to, neighbour, false);
                 }
             }
         }
+    }
+
+    @Nullable private Holder<Biome> emitSideSlice(BlockState state, @Nullable Holder<Biome> biome, Direction direction,
+            int x, int vy, int z, int cell, int nx, int row, int nz, int wall, boolean liquid, int sky, int seamTop,
+            int from, int to, BlockState neighbour, boolean extendedSolid) {
+        int group;
+        if (!extendedSolid && drawn(nx, row, nz)) {
+            // The cubes there are drawn up close; water carries on into theirs without a wall.
+            if (liquid && seeThrough(neighbour) || vy < seamTop - SEAM_DEPTH) return biome;
+            group = direction.get3DDataValue();
+        } else if (extendedSolid || hides(state, neighbour, direction)) {
+            if (wall < 0) return biome;
+            if (liquid) {
+                // Where a coarser or finer level's water meets this, at a slightly different
+                // height, a wall of water closes the slit that showed the dark bed below.
+                if (vy < tops[cell] - WALL_DEPTH) return biome;
+                // It reaches only as far below what stands beside as the two differ, as the
+                // other level's surface there lies near both: a level lake gets no wall at
+                // all. Far off the depth buffer can't hide one under the other level's
+                // water, and it showed as a line across the lake.
+                int beside = sideSurfaces[wall][wall < 2 ? x : z], low = from;
+                if (beside != Integer.MIN_VALUE) {
+                    int own = Math.round(surface[cell] * UNIT);
+                    low = Math.max(from, Math.min(own, beside) - Math.abs(own - beside));
+                }
+                if (to <= low) return biome;
+                if (biome == null) biome = FarMesher.biome(job, x, vy, z);
+                waterFace(waterWall(wall), state, biome, direction, x, z, low, to - low);
+                return biome;
+            }
+            if (vy < sideTops[wall][wall < 2 ? x : z] - WALL_DEPTH) return biome;
+            group = FIRST_WALL + wall;
+        } else group = direction.get3DDataValue();
+        if (biome == null) biome = FarMesher.biome(job, x, vy, z);
+        if (liquid) waterFace(water(), state, biome, direction, x, z, from, to - from);
+        else {
+            int index = direction.get3DDataValue() - 2;
+            // The ground's own step risers look like the ground's top, so a gentle slope of
+            // voxel stairs reads as one surface rather than stripes of top and side texture.
+            List<Piece> list = pieces[index][cell];
+            if (list == null) list = pieces[index][cell] = new ArrayList<>(2);
+            boolean ground = vy == groundRows[cell];
+            list.add(new Piece(from, to, look(ground ? cover(cell, state) : state, biome, ground ? Direction.UP : direction, sky, cell), group));
+        }
+        return biome;
     }
 
     private BlockState cover(int cell, BlockState own) {
@@ -265,14 +306,120 @@ final class FarColumnMesh {
         return coverage == null ? FarMesher.drawn(job, x, vy, z) : coverage.drawn(x, vy, z);
     }
 
+    private boolean cubeDrawn(int x, int cy, int z) {
+        return coverage == null ? FarMesher.cubeDrawn(job, x, cy, z) : coverage.cubeDrawn(x, cy, z);
+    }
+
+    private boolean anyCubeDrawn(int x, int cy, int z) {
+        return coverage == null ? FarMesher.anyCubeDrawn(job, x, cy, z) : coverage.anyCubeDrawn(x, cy, z);
+    }
+
+    private static boolean isIce(BlockState state) {
+        return state.is(Blocks.ICE) || state.is(Blocks.PACKED_ICE)
+                || state.is(Blocks.BLUE_ICE) || state.is(Blocks.FROSTED_ICE);
+    }
+
+    @Nullable private int[] computeExtendedTops() {
+        int[] ext = new int[18 * 18];
+        Arrays.fill(ext, Integer.MIN_VALUE);
+        boolean any = false;
+        long ownCeiling = (long) job.height() * voxel;
+        for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+            int cell = z * 16 + x, gy = groundRows[cell];
+            if (gy < 0 || drawn(x, gy, z)) continue;
+            int at = (z + 1) * 18 + x + 1, origTop = groundHeights.height()[at];
+            int top = downhillSeamTop(x, gy, z, at(job, x, gy, z), job.drops()[cell], origTop, ownCeiling, -1, null);
+            if (top > origTop) { ext[at] = top; any = true; }
+        }
+        Side[] sides = job.sides();
+        for (int wall = 0; wall < 4 && sides != null; wall++) {
+            Side next = sides[wall];
+            if (next == null || next.sections() == null && next.packet() == null || next.drops() == null) continue;
+            LongOpenHashSet sideDrawn = next.drawn();
+            if (sideDrawn == null || sideDrawn.isEmpty()) continue;
+            int sideRows = next.height();
+            if (FarMesher.smooth(job.level(), job.smoothFrom(), next.bottom(), sideRows, sideDrawn)) continue;
+            int rowShift = (next.bottom() - job.bottom()) * 16;
+            long sideCeiling = (long) (sideRows + rowShift) * voxel;
+            for (int along = 0; along < 16; along++) {
+                int nx = wall == 2 ? -1 : wall == 3 ? 16 : along;
+                int nz = wall == 0 ? -1 : wall == 1 ? 16 : along;
+                int sx = nx & 15, sz = nz & 15;
+                int sideRow = FarMesher.groundRow(next, sx, sz);
+                if (sideRow < 0) continue;
+                int sideDrop = next.drops()[sz * 16 + sx];
+                if (FarMesher.drawn(sideDrawn, job.level(), job.x0(), job.z0(), next.bottom(), nx, sideRow, nz, sideDrop)) continue;
+                int gy = sideRow + rowShift;
+                int at = (nz + 1) * 18 + nx + 1, origTop = groundHeights.height()[at];
+                int top = downhillSeamTop(nx, gy, nz, at(job, nx, gy, nz), sideDrop, origTop, sideCeiling, wall, next);
+                if (top > origTop) { ext[at] = top; any = true; }
+            }
+        }
+        return any ? ext : null;
+    }
+
     /**
-     * The drop of a voxel column in the next column; unknown columns count as level with this
-     * one. Both columns lower their rows the same way, so a drop compares directly with ours.
+     * Closes the downhill horizontal slit below the lowest loaded near-cube floor {@code y_floor}
+     * (#264): when a dry, non-ice ground surface voxel sits immediately below a fully drawn near
+     * cube with zero drawn coverage in its own cube row, its sampled top strictly below
+     * {@code y_floor} within both the voxel and block gap limits, air in every overlapped row above
+     * it, and a non-cliff uphill cardinal neighbour rising to or above {@code y_floor} with near
+     * coverage at {@code topCy + 1}, extend the far top strictly up to {@code y_floor} (never above
+     * {@code y_floor} or the column ceiling).
      */
-    private int sideDrop(int wall, int nx, int nz, int own) {
-        Side side = job.sides() == null ? null : job.sides()[wall];
-        if (side == null || (nx < 0 || nx > 15) && (nz < 0 || nz > 15)) return own;
-        return side.drops()[(nz & 15) * 16 + (nx & 15)];
+    private int downhillSeamTop(int x, int vy, int z, BlockState state, int drop, int top,
+                                long columnCeiling, int sideWall, @Nullable Side side) {
+        if (!state.getFluidState().isEmpty() || isIce(state)) return top;
+        long baseY256 = (long) job.bottom() * (16L * voxel);
+        long worldTop256 = baseY256 + top;
+        int topCy = (int) Math.floorDiv(worldTop256, 16L * UNIT);
+        boolean cellAnyDrawn = side == null ? anyCubeDrawn(x, topCy, z)
+                : FarMesher.anyCubeDrawn(side.drawn(), job.level(), job.x0(), job.z0(), x, topCy, z);
+        boolean aboveFullDrawn = side == null ? cubeDrawn(x, topCy + 1, z)
+                : FarMesher.cubeDrawn(side.drawn(), job.level(), job.x0(), job.z0(), x, topCy + 1, z);
+        if (cellAnyDrawn || !aboveFullDrawn) return top;
+        long yFloor256 = (topCy + 1L) * (16L * UNIT);
+        long gap = yFloor256 - worldTop256;
+        long maxGap = Math.min(2L * voxel, 4L * UNIT);
+        if (gap <= 0 || gap > maxGap) return top;
+        long yFloorRel = yFloor256 - baseY256;
+        if (yFloorRel > columnCeiling) return top;
+        int lastRow = Math.floorDiv(top + (int) gap - 1 + drop, voxel);
+        for (int r = vy + 1; r <= lastRow; r++) {
+            if (!at(job, x, r, z).isAir()) return top;
+        }
+        long maxRise = Math.min(3L * voxel, 12L * UNIT);
+        long midpointLimit = Math.min(voxel, 2L * UNIT);
+        int[] heights = groundHeights.height();
+        boolean[] known = groundHeights.known();
+        boolean uphill = false;
+        for (int dir = 0; dir < 4; dir++) {
+            int dx = dir == 2 ? -1 : dir == 3 ? 1 : 0;
+            int dz = dir == 0 ? -1 : dir == 1 ? 1 : 0;
+            int nx = x + dx, nz = z + dz;
+            int nb;
+            if (nx >= -1 && nx <= 16 && nz >= -1 && nz <= 16) {
+                int nAt = (nz + 1) * 18 + nx + 1;
+                if (!known[nAt]) continue;
+                nb = heights[nAt];
+            } else if (side != null && dir == sideWall) {
+                int sx = nx & 15, sz = nz & 15;
+                int sRow = FarMesher.groundRow(side, sx, sz) + (side.bottom() - job.bottom()) * 16;
+                nb = (sRow + 1) * voxel - side.drops()[sz * 16 + sx];
+            } else {
+                continue;
+            }
+            if (nb < yFloorRel) continue;
+            if ((long) nb - top > maxRise) continue;
+            if (gap > midpointLimit && (long) top + nb < 2L * yFloorRel) continue;
+            boolean nbCubeDrawn = side == null ? anyCubeDrawn(nx, topCy + 1, nz)
+                    : FarMesher.anyCubeDrawn(side.drawn(), job.level(), job.x0(), job.z0(), nx, topCy + 1, nz);
+            if (!nbCubeDrawn) continue;
+            uphill = true;
+            break;
+        }
+        if (!uphill) return top;
+        return top + (int) gap;
     }
 
     /**

@@ -1,8 +1,10 @@
 package io.earthplatform.minecraft.cubic;
 
+import io.earthplatform.geography.MissingTerrainException;
 import io.earthplatform.geography.globe.NamedThreads;
 import io.earthplatform.geography.globe.TickShare;
 import io.earthplatform.minecraft.EarthPlatformMod;
+import io.earthplatform.minecraft.diagnostics.PerfFailures;
 import io.earthplatform.minecraft.cubic.far.FarServer;
 import io.earthplatform.minecraft.cubic.gen.CubeGenerator;
 import io.earthplatform.minecraft.cubic.jet.JetStream;
@@ -10,11 +12,13 @@ import io.earthplatform.minecraft.cubic.net.CubePayloads;
 import io.earthplatform.minecraft.cubic.net.Throttle;
 import io.earthplatform.minecraft.platform.Platform;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongPredicate;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.longs.LongSets;
 import java.io.IOException;
@@ -23,17 +27,38 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
+import java.util.function.BiPredicate;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+import java.util.function.IntFunction;
+import java.util.function.LongConsumer;
+import java.util.function.LongFunction;
+import java.util.function.LongSupplier;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 import javax.annotation.Nullable;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
@@ -57,6 +82,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
 import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.storage.LevelResource;
 
@@ -80,9 +106,9 @@ public final class ServerCubeWorld extends CubeWorld {
     private volatile boolean closing;
     private final FarServer far;
     private final LongOpenHashSet pending = new LongOpenHashSet();
-    /** Cubes whose generation failed (say, terrain data was unreachable), with the tick to try again. */
-    private final Long2IntOpenHashMap retryAt = new Long2IntOpenHashMap();
-    private int failures, lastFailureLog = Integer.MIN_VALUE / 2;
+    /** Per-session bounded LRU retry state with exponential backoff (never persisted to disk). */
+    private final FailureRetries failureRetries = new FailureRetries();
+    private int failures;
     private final ConcurrentLinkedQueue<Ready> ready = new ConcurrentLinkedQueue<>();
     private final Map<UUID, Watcher> watchers = new HashMap<>();
     /** Players' cube positions and the reach around them, for workers deciding whether a request is still wanted. */
@@ -105,6 +131,8 @@ public final class ServerCubeWorld extends CubeWorld {
     private final LongOpenHashSet unpopulated = new LongOpenHashSet();
     /** Entities that freshly generated cubes start with (chest minecarts), placed once their chunk ticks entities. */
     private final Long2ObjectOpenHashMap<List<CompoundTag>> unplacedEntities = new Long2ObjectOpenHashMap<>();
+    /** Generation-captured structure block and fluid ticks, owned by their cube until due and executed once the cube's chunk ticks and its 6 face neighbors are loaded. */
+    private final PendingTickDispatcher pendingTickDispatcher = new PendingTickDispatcher();
     private int ticks;
     private boolean closed;
 
@@ -145,10 +173,10 @@ public final class ServerCubeWorld extends CubeWorld {
      */
     /** A cube made or read off the server thread; {@code baseline} is its column's generated sky tops, read there too, or null. */
     private record Ready(long key, int x, int y, int z, @Nullable LevelChunkSection section, List<CompoundTag> blockEntities,
-                         List<CompoundTag> entities, boolean saved, boolean edited, boolean surface, boolean kept, @Nullable RuntimeException failure, int open,
+                         List<CompoundTag> entities, CubeCodec.PendingTicks pendingTicks, boolean saved, boolean edited, boolean surface, boolean kept, @Nullable RuntimeException failure, int open,
                          @Nullable int[] baseline) {
         Ready withBaseline(@Nullable int[] tops) {
-            return new Ready(key, x, y, z, section, blockEntities, entities, saved, edited, surface, kept, failure, open, tops);
+            return new Ready(key, x, y, z, section, blockEntities, entities, pendingTicks, saved, edited, surface, kept, failure, open, tops);
         }
     }
     private record Lit(long key, int stamp, @Nullable byte[] values) {}
@@ -197,10 +225,24 @@ public final class ServerCubeWorld extends CubeWorld {
         this.reads = Executors.newFixedThreadPool(2, NamedThreads.numbered("Earth cube reader", THREADS, Thread.NORM_PRIORITY - 1));
         this.surveys = new ColumnSurveys(SurfaceFlight.ENABLED, ALL_BURIED, workers,
                 (column, x, z) -> ColumnSurvey.of(column, x, z, generator, storage, SurfaceFlight.ENABLED));
+        this.untouchedStores = new UntouchedStoreQueue<>(
+                () -> closed,
+                cubes::get,
+                this.storage::put,
+                entry -> entry.owedAnimals() == unpopulated.contains(entry.key())
+                        && Objects.equals(entry.entities(), unplacedEntities.getOrDefault(entry.key(), List.of()))
+                        && Objects.equals(entry.pendingTicks(), pendingTickDispatcher.getOrDefault(entry.key(), CubeCodec.PendingTicks.EMPTY)),
+                (key, failure) -> EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure),
+                UntouchedStoreQueue.DEFAULT_DRAIN_TIMEOUT_MILLIS,
+                System::nanoTime,
+                server.getServer()::isSameThread);
         workers.execute(() -> {
             try {
                 long[] found = storage.savedFrom(SKY_CUBE).toLongArray();
-                if (found.length > 0) server.getServer().execute(() -> skyBuilds.addAll(LongArrayList.wrap(found)));
+                if (found.length > 0) server.getServer().execute(() -> {
+                    if (!server.getServer().isSameThread() || closed || closing) return;
+                    skyBuilds.addAll(LongArrayList.wrap(found));
+                });
             } catch (IOException | RuntimeException failure) {
                 EarthPlatformMod.LOGGER.error("Could not list builds in the sky", failure);
             }
@@ -268,10 +310,16 @@ public final class ServerCubeWorld extends CubeWorld {
         }
     }
 
+    @Override protected void adopt(Cube cube) {
+        super.adopt(cube);
+        pendingTickDispatcher.noteResidencyChange();
+    }
+
     @Override protected void forget(Cube cube) {
         super.forget(cube);
         light.remove(cube.key);
         lightStamps.remove(cube.key);
+        pendingTickDispatcher.remove(cube.key);
     }
 
     @Override public void blockChanged(BlockPos pos) {
@@ -288,20 +336,29 @@ public final class ServerCubeWorld extends CubeWorld {
      */
     private boolean request(long key, boolean always) {
         if (closed || cubes.containsKey(key) || pending.contains(key)) return false;
-        if (retryAt.containsKey(key)) {
-            if (ticks < retryAt.get(key)) return false;
-            retryAt.remove(key);
-        }
-        pending.add(key);
+        if (failureRetries.isBlocked(key, ticks)) return false;
         int x = CubeKey.x(key), y = CubeKey.y(key), z = CubeKey.z(key);
-        // Read from the save first, on threads of their own, so a saved cube never waits behind cubes being generated.
-        reads.execute(() -> {
-            if (closing) return; // a read queued as the world closes would hold its region's lock against the last save
+        // Drain any pending async untouched store for this key before reading storage, then read on the reader pool.
+        return submitReadRequest(key, pending, untouchedStores, reads, () -> {
+            if (closing) { droppedKeys.add(key); return; } // a read queued as the world closes would hold its region's lock against the last save
             if (!always && !wanted(x, y, z)) { droppedKeys.add(key); dropped.increment(); return; }
             Ready saved = readSaved(key, x, y, z);
             if (saved != null) {
                 primeTops(x, z).whenComplete((tops, failure) -> {
-                    if (closing || failure != null) return; // cancelled as the world closed
+                    if (closing) {
+                        droppedKeys.add(key);
+                        return;
+                    }
+                    if (failure != null) {
+                        Throwable cause = failure instanceof CompletionException && failure.getCause() != null ? failure.getCause() : failure;
+                        if (cause instanceof CancellationException) {
+                            droppedKeys.add(key);
+                        } else {
+                            RuntimeException runtime = cause instanceof RuntimeException r ? r : new RuntimeException(cause);
+                            ready.add(new Ready(key, x, y, z, null, List.of(), List.of(), CubeCodec.PendingTicks.EMPTY, false, false, false, false, runtime, 0, null));
+                        }
+                        return;
+                    }
                     ready.add(saved.withBaseline(tops));
                     generated.increment();
                 });
@@ -313,11 +370,28 @@ public final class ServerCubeWorld extends CubeWorld {
                     if (always || wanted(x, y, z)) { ready.add(generateCube(key, x, y, z)); generated.increment(); }
                     else { droppedKeys.add(key); dropped.increment(); }
                 });
-            } catch (java.util.concurrent.RejectedExecutionException closing) {
-                // the world closed meanwhile
+            } catch (RejectedExecutionException rejected) {
+                droppedKeys.add(key);
             }
         });
-        return true;
+    }
+
+    /**
+     * Attempts a non-blocking drain of any pending untouched store for {@code key} before dispatching
+     * {@code readTask}: if the pending snapshot is still encoding or failed to write, defers the reload
+     * (returning {@code false}) without blocking the server thread or reading stale storage.
+     */
+    static boolean submitReadRequest(long key, LongOpenHashSet pending, UntouchedStoreQueue<?> untouchedStores,
+                                     Executor reads, Runnable readTask) {
+        if (!untouchedStores.tryDrainKeyNow(key)) return false;
+        pending.add(key);
+        try {
+            reads.execute(readTask);
+            return true;
+        } catch (RejectedExecutionException rejected) {
+            pending.remove(key);
+            return false;
+        }
     }
 
     /** Workers: whether a cube is still near a player, as of the last tick. */
@@ -344,9 +418,9 @@ public final class ServerCubeWorld extends CubeWorld {
         try {
             CompoundTag saved = storage.read(key);
             if (saved == null) return null;
-            CubeCodec.Decoded decoded = codec.read(saved);
+            CubeCodec.Decoded decoded = codec.read(saved, key);
             generator.loaded(x, y, z);
-            return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), CubeCodec.tags(saved, CubeCodec.ENTITIES), true,
+            return new Ready(key, x, y, z, decoded.section(), decoded.blockEntities(), CubeCodec.tags(saved, CubeCodec.ENTITIES), decoded.pendingTicks(), true,
                     !saved.getBoolean(CubeCodec.UNTOUCHED), saved.getBoolean(CubeCodec.UNPOPULATED), false, null, openFaces(decoded.section()), null);
         } catch (IOException | RuntimeException failure) {
             EarthPlatformMod.LOGGER.error("Could not read saved cube {}; regenerating it", CubeKey.toString(key), failure);
@@ -358,59 +432,36 @@ public final class ServerCubeWorld extends CubeWorld {
     private Ready generateCube(long key, int x, int y, int z) {
         try {
             List<CompoundTag> blockEntities = new ArrayList<>(), entities = new ArrayList<>();
-            LevelChunkSection section = generator.generate(x, y, z, blockEntities, entities);
+            List<CubeCodec.PendingTick<Block>> blockTicks = new ArrayList<>();
+            List<CubeCodec.PendingTick<Fluid>> fluidTicks = new ArrayList<>();
+            LevelChunkSection section = generator.generate(x, y, z, blockEntities, entities, blockTicks, fluidTicks);
+            CubeCodec.PendingTicks ticks = blockTicks.isEmpty() && fluidTicks.isEmpty()
+                    ? CubeCodec.PendingTicks.EMPTY
+                    : new CubeCodec.PendingTicks(List.copyOf(blockTicks), List.copyOf(fluidTicks));
             int[] band = surfaceBand(x, z);
             boolean surface = band[0] + SAVED_BELOW == y;
-            return new Ready(key, x, y, z, section, blockEntities, entities, false, false, surface, y >= band[0] && y <= band[1], null, openFaces(section),
+            return new Ready(key, x, y, z, section, blockEntities, entities, ticks, false, false, surface, y >= band[0] && y <= band[1], null, openFaces(section),
                     server.getServer().isSameThread() ? null : baselineNow(x, z));
         } catch (RuntimeException failure) {
-            return new Ready(key, x, y, z, null, List.of(), List.of(), false, false, false, false, failure, 0, null);
+            return new Ready(key, x, y, z, null, List.of(), List.of(), CubeCodec.PendingTicks.EMPTY, false, false, false, false, failure, 0, null);
         }
     }
 
-    /** Cube columns' generated sky tops, being read or read for {@link #primeTops}. */
-    private final java.util.concurrent.ConcurrentHashMap<Long, CompletableFuture<int[]>> primed = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Cube columns' generated sky tops, being read or read for {@link #primeTops}, with bounded retries. */
+    private final TopPrimer topPrimer = new TopPrimer(
+            this::baselineOf,
+            net.minecraft.Util.ioPool(),
+            tries -> CompletableFuture.delayedExecutor(Math.min(30, 1L << Math.min(tries, 5)), TimeUnit.SECONDS, net.minecraft.Util.ioPool()),
+            () -> closing,
+            TopPrimer.MAX_RETRIES);
 
     /**
      * Any thread but the server's. Reads, on the IO pool, the generated sky tops of a saved cube's
-     * column, which go with the cube so the server thread never reads terrain to adopt it. A
-     * generated cube's worker reads them making the cube; a saved one's read them only by laying its
-     * structures out, and since that is done aside the server thread was left to fetch the terrain
-     * itself, waiting seconds a tick after a restart. The cube is handed out once they are read;
-     * other cubes of the column wait on the same read without holding a thread. Where the map data
-     * is not in yet, the read is tried again later off the server thread, never left to adoption;
-     * when the world closes, reads still to come are cancelled.
+     * column, which go with the cube so the server thread never reads terrain to adopt it. Retries
+     * are bounded and failed futures are evicted cleanly so {@link #pending} slots can never leak.
      */
     private CompletableFuture<int[]> primeTops(int cubeX, int cubeZ) {
-        long column = CubeKey.column(cubeX, cubeZ);
-        CompletableFuture<int[]> mine = new CompletableFuture<>(), reading = primed.putIfAbsent(column, mine);
-        if (reading != null) return reading;
-        if (primed.size() > 4096) primed.values().removeIf(future -> future.isDone() && future != mine);
-        prime(cubeX, cubeZ, mine, 0);
-        return mine;
-    }
-
-    private void prime(int cubeX, int cubeZ, CompletableFuture<int[]> into, int tries) {
-        long column = CubeKey.column(cubeX, cubeZ);
-        java.util.concurrent.Executor pool = tries == 0 ? net.minecraft.Util.ioPool()
-                : CompletableFuture.delayedExecutor(Math.min(30, 1L << Math.min(tries, 5)), TimeUnit.SECONDS, net.minecraft.Util.ioPool());
-        try {
-            pool.execute(() -> {
-                if (closing) {
-                    into.cancel(false);
-                    primed.remove(column, into);
-                    return;
-                }
-                try {
-                    into.complete(baselineOf(cubeX, cubeZ));
-                } catch (RuntimeException missing) {
-                    prime(cubeX, cubeZ, into, tries + 1); // the map data is not in yet: read again later, here, not on the server thread
-                }
-            });
-        } catch (java.util.concurrent.RejectedExecutionException closed) {
-            into.cancel(false);
-            primed.remove(column, into);
-        }
+        return topPrimer.prime(cubeX, cubeZ);
     }
 
     /** A column's generated sky tops, as {@link #baselineTop} gives them; throws where its map data is missing. */
@@ -423,12 +474,11 @@ public final class ServerCubeWorld extends CubeWorld {
     /** Workers, for a cube just generated, whose map data is in: its column's sky tops, kept for the column's other cubes. */
     @Nullable private int[] baselineNow(int cubeX, int cubeZ) {
         long column = CubeKey.column(cubeX, cubeZ);
-        CompletableFuture<int[]> had = primed.get(column);
-        if (had != null && had.isDone() && !had.isCompletedExceptionally()) return had.getNow(null);
+        int[] had = topPrimer.getIfReady(column);
+        if (had != null) return had;
         try {
             int[] tops = baselineOf(cubeX, cubeZ);
-            if (primed.size() > 4096) primed.values().removeIf(CompletableFuture::isDone);
-            primed.putIfAbsent(column, CompletableFuture.completedFuture(tops));
+            topPrimer.recordKnown(column, tops);
             return tops;
         } catch (RuntimeException missing) {
             return null;
@@ -437,11 +487,56 @@ public final class ServerCubeWorld extends CubeWorld {
 
     /** Synchronous load for places that must exist this tick, such as an arrival point. */
     @Nullable public Cube loadNow(int x, int y, int z) {
+        if (closed) return null;
         long key = CubeKey.pack(x, y, z);
         Cube cube = cubes.get(key);
         if (cube != null) return cube;
-        adoptReady(produce(key, x, y, z));
-        return cubes.get(key);
+        return loadNowUncached(key, untouchedStores, () -> produce(key, x, y, z), this::adoptReady, this::readoptPending, cubes::get);
+    }
+
+    /**
+     * Re-adopts an authoritative pending untouched snapshot directly into {@link #cubes} when its
+     * storage write failed during synchronous reload so stale storage is never loaded over it.
+     */
+    private void readoptPending(UntouchedStoreQueue.Entry<?> entry) {
+        Cube cube = entry.cube();
+        cube.modified = true;
+        cube.dirty = true;
+        if (entry.owedAnimals()) unpopulated.add(cube.key);
+        else unpopulated.remove(cube.key);
+        if (!entry.entities().isEmpty()) unplacedEntities.put(cube.key, new ArrayList<>(entry.entities()));
+        else unplacedEntities.remove(cube.key);
+        adopt(cube);
+        CubeCodec.PendingTicks validTicks = CubeCodec.filterForCube(cube.key, entry.pendingTicks());
+        pendingTickDispatcher.put(cube.key, validTicks);
+        surveys.openBehind(cube.x, cube.y, cube.z, openFaces(cube.section), quietCap());
+        server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
+        CubicPoiClaims.reclaim(server, SectionPos.of(cube.x, cube.y, cube.z));
+        refreshTops(cube);
+        staleLightAround(cube.x, cube.y, cube.z);
+    }
+
+    /**
+     * Drains any pending untouched store for {@code key} before synchronous {@code produce}/{@code adopt}.
+     * If draining fails (write error or timeout), never falls through to stale storage: re-adopts the
+     * authoritative pending cube directly when no worker is concurrently encoding it, or fails cleanly
+     * when a worker encode is still in flight.
+     */
+    @Nullable static <R> Cube loadNowUncached(long key, UntouchedStoreQueue<?> untouchedStores,
+                                              Supplier<R> producer, Consumer<R> adopter,
+                                              Consumer<UntouchedStoreQueue.Entry<?>> readopter,
+                                              LongFunction<Cube> lookup) {
+        if (!untouchedStores.drainKey(key)) {
+            UntouchedStoreQueue.Entry<?> pendingEntry = untouchedStores.takeReAdoptable(key);
+            if (pendingEntry != null) {
+                readopter.accept(pendingEntry);
+                return lookup.apply(key);
+            }
+            throw new IllegalStateException("Pending untouched save for cube " + CubeKey.toString(key)
+                    + " is still in flight and could not be drained before synchronous reload");
+        }
+        adopter.accept(producer.get());
+        return lookup.apply(key);
     }
 
     /** Loads the cubes around a block synchronously, for checks such as a respawn bed. */
@@ -566,22 +661,52 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     /**
+     * Thrown when off-thread pregeneration cannot be coordinated or committed because the Earth world
+     * is closing or the server thread is no longer scheduling tasks. Callers such as Chunky must let
+     * this propagate rather than counting an unwritten column as complete.
+     */
+    public static final class PregenerationRejectedException extends IllegalStateException {
+        public PregenerationRejectedException(String message) {
+            super(message);
+        }
+
+        public PregenerationRejectedException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    /**
      * Any thread; blocks on map data. Generates and saves the cubes of a column that a visit would
      * save ({@link #surfaceBand}), for pre-generation mods such as Chunky. Cubes already saved are
      * kept; the store happens on the server thread.
      */
     public void pregenerate(int cubeX, int cubeZ) {
-        if (closed) return;
+        if (closed || closing) throw new PregenerationRejectedException("Earth world is closing");
         int[] band = surfaceBand(cubeX, cubeZ);
+        LongArrayList candidates = new LongArrayList(Math.max(0, band[1] - band[0] + 1));
+        for (int y = band[0]; y <= band[1]; y++) candidates.add(CubeKey.pack(cubeX, y, cubeZ));
+        // Coordinate on the server thread before off-thread storage reads so loaded/pending keys are skipped or flushed first.
+        LongArrayList allowed = coordinatePregenerateKeys(candidates);
+        if (allowed.isEmpty()) {
+            if (closed || closing) throw new PregenerationRejectedException("Earth world is closing");
+            return;
+        }
         LongArrayList keys = new LongArrayList();
         List<CompoundTag> tags = new ArrayList<>();
-        for (int y = band[0]; y <= band[1]; y++) {
-            long key = CubeKey.pack(cubeX, y, cubeZ);
+        for (int i = 0; i < allowed.size(); i++) {
+            if (closed || closing) throw new PregenerationRejectedException("Earth world is closing");
+            long key = allowed.getLong(i);
+            int y = CubeKey.y(key);
             try { if (storage.read(key) != null) continue; }
             catch (IOException failure) { continue; }
             List<CompoundTag> blockEntities = new ArrayList<>(), entities = new ArrayList<>();
-            LevelChunkSection section = generator.generate(cubeX, y, cubeZ, blockEntities, entities);
-            CompoundTag tag = codec.writeGenerated(cubeX, y, cubeZ, section, blockEntities);
+            List<CubeCodec.PendingTick<Block>> blockTicks = new ArrayList<>();
+            List<CubeCodec.PendingTick<Fluid>> fluidTicks = new ArrayList<>();
+            LevelChunkSection section = generator.generate(cubeX, y, cubeZ, blockEntities, entities, blockTicks, fluidTicks);
+            CubeCodec.PendingTicks ticks = blockTicks.isEmpty() && fluidTicks.isEmpty()
+                    ? CubeCodec.PendingTicks.EMPTY
+                    : new CubeCodec.PendingTicks(List.copyOf(blockTicks), List.copyOf(fluidTicks));
+            CompoundTag tag = codec.writeGenerated(cubeX, y, cubeZ, section, blockEntities, ticks);
             if (y == band[0] + SAVED_BELOW) tag.putBoolean(CubeCodec.UNPOPULATED, true);
             if (!entities.isEmpty()) {
                 net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
@@ -591,44 +716,278 @@ public final class ServerCubeWorld extends CubeWorld {
             keys.add(key);
             tags.add(tag);
         }
+        if (closed || closing) throw new PregenerationRejectedException("Earth world is closing");
         if (tags.isEmpty()) return;
-        server.getServer().execute(() -> {
-            if (closed) return;
-            for (int i = 0; i < tags.size(); i++) {
-                long key = keys.getLong(i);
-                // A cube loaded meanwhile is saved from its own state when it unloads.
-                if (cubes.containsKey(key)) continue;
-                try { storage.put(key, tags.get(i)); }
-                catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure); }
+        submitPregeneratedCommit(
+                server.getServer().isSameThread(),
+                server.getServer()::isSameThread,
+                server.getServer(),
+                () -> closed || closing,
+                () -> {
+                    int stored = commitPregenerated(keys, tags, () -> closed || closing, cubes::containsKey, untouchedStores, storage);
+                    // Written as it goes, so a long run does not hold every region in memory until the next save.
+                    if (stored > 0 && (pregenerated += stored) >= 2048) {
+                        pregenerated = 0;
+                        storage.flushLater();
+                    }
+                },
+                PREGENERATE_COORDINATION_TIMEOUT_MILLIS);
+    }
+
+    /**
+     * Schedules the server-thread commit for a pregenerated column and captures its outcome in the returned
+     * future. Never lets unchecked exceptions or shutdown rejections escape into the server executor or out
+     * of the direct server-thread branch.
+     */
+    static CompletableFuture<Void> schedulePregeneratedCommit(boolean onServerThread,
+                                                              BooleanSupplier isServerThread,
+                                                              Executor serverThread,
+                                                              BooleanSupplier isClosed,
+                                                              Runnable commitOnServerThread,
+                                                              AtomicBoolean cancelled) {
+        CompletableFuture<Void> committed = new CompletableFuture<>();
+        if (onServerThread) {
+            if (cancelled.get()) {
+                committed.cancel(false);
+                return committed;
             }
-            // Written as it goes, so a long run does not hold every region in memory until the next save.
-            if ((pregenerated += tags.size()) >= 2048) {
-                pregenerated = 0;
-                storage.flushLater();
+            try {
+                if (isClosed.getAsBoolean()) {
+                    committed.completeExceptionally(new PregenerationRejectedException("Earth world is closing"));
+                    return committed;
+                }
+                commitOnServerThread.run();
+                committed.complete(null);
+            } catch (Throwable failure) {
+                committed.completeExceptionally(failure);
             }
-        });
+            return committed;
+        }
+        try {
+            serverThread.execute(() -> {
+                if (cancelled.get() || committed.isCancelled()) return;
+                try {
+                    // MinecraftServer (BlockableEventLoop) runs execute() inline on the caller thread once stopServer()
+                    // disables scheduling; never touch server-thread state off-thread.
+                    if (!isServerThread.getAsBoolean()) {
+                        committed.completeExceptionally(new PregenerationRejectedException(
+                                isClosed.getAsBoolean() ? "Earth world is closing" : "Server thread is no longer scheduling tasks"));
+                        return;
+                    }
+                    if (isClosed.getAsBoolean()) {
+                        committed.completeExceptionally(new PregenerationRejectedException("Earth world is closing"));
+                        return;
+                    }
+                    commitOnServerThread.run();
+                    committed.complete(null);
+                } catch (Throwable failure) {
+                    committed.completeExceptionally(failure);
+                }
+            });
+        } catch (RejectedExecutionException rejected) {
+            committed.completeExceptionally(new PregenerationRejectedException(
+                    isClosed.getAsBoolean() ? "Earth world is closing" : "Server thread rejected pregeneration commit",
+                    rejected));
+        }
+        return committed;
+    }
+
+    /**
+     * Submits and awaits the server-thread commit for a pregenerated column. Rejects with
+     * {@link PregenerationRejectedException} if the world closes before the commit runs, if scheduling
+     * falls back inline off-thread during shutdown, or if waiting times out or is interrupted (cancelling
+     * the queued task so any late execution is a no-op).
+     */
+    static void submitPregeneratedCommit(boolean onServerThread, BooleanSupplier isServerThread,
+                                         Executor serverThread, BooleanSupplier isClosed,
+                                         Runnable commitOnServerThread, long timeoutMillis) {
+        AtomicBoolean cancelled = new AtomicBoolean();
+        CompletableFuture<Void> committed = schedulePregeneratedCommit(
+                onServerThread, isServerThread, serverThread, isClosed, commitOnServerThread, cancelled);
+        try {
+            committed.get(Math.max(1L, timeoutMillis), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            cancelled.set(true);
+            committed.cancel(false);
+            Thread.currentThread().interrupt();
+            throw new PregenerationRejectedException(
+                    isClosed.getAsBoolean() ? "Earth world is closing" : "Interrupted waiting for server thread commit during pregeneration",
+                    interrupted);
+        } catch (TimeoutException timedOut) {
+            cancelled.set(true);
+            committed.cancel(false);
+            throw new PregenerationRejectedException(
+                    isClosed.getAsBoolean() ? "Earth world is closing" : "Timed out waiting " + timeoutMillis + " ms for server thread commit during pregeneration",
+                    timedOut);
+        } catch (ExecutionException failed) {
+            cancelled.set(true);
+            committed.cancel(false);
+            Throwable cause = failed.getCause() != null ? failed.getCause() : failed;
+            if (cause instanceof RuntimeException runtime) throw runtime;
+            if (cause instanceof Error error) throw error;
+            throw new PregenerationRejectedException("Server thread pregeneration commit failed", cause);
+        }
+    }
+
+    private static final long PREGENERATE_COORDINATION_TIMEOUT_MILLIS = 5_000L;
+
+    private LongArrayList coordinatePregenerateKeys(LongArrayList candidates) {
+        return coordinatePregenerateKeys(
+                candidates,
+                server.getServer().isSameThread(),
+                server.getServer()::isSameThread,
+                server.getServer(),
+                () -> closed || closing,
+                cubes::containsKey,
+                untouchedStores,
+                PREGENERATE_COORDINATION_TIMEOUT_MILLIS);
+    }
+
+    /**
+     * Coordinates pregeneration key filtering on the server thread before off-thread storage reads.
+     * On timeout, interruption, or server-thread failure, cancels the queued task so it becomes a no-op
+     * if executed later and propagates a {@link PregenerationRejectedException} (so callers such as Chunky
+     * record the column failure rather than treating it as successfully generated), unless the world is closing/closed.
+     */
+    static LongArrayList coordinatePregenerateKeys(LongArrayList candidates, boolean onServerThread,
+                                                   Executor serverThread, BooleanSupplier isClosed,
+                                                   LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores,
+                                                   long timeoutMillis) {
+        return coordinatePregenerateKeys(candidates, onServerThread, () -> true, serverThread, isClosed, isLoaded, untouchedStores, timeoutMillis);
+    }
+
+    /**
+     * Schedules or runs pregeneration key filtering and captures any {@link Throwable} in the returned
+     * future on both direct ({@code onServerThread == true}) and queued paths.
+     */
+    static CompletableFuture<LongArrayList> coordinatePregenerateKeysAsync(LongArrayList candidates, boolean onServerThread,
+                                                                           BooleanSupplier isServerThread,
+                                                                           Executor serverThread, BooleanSupplier isClosed,
+                                                                           LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores,
+                                                                           AtomicBoolean cancelled) {
+        CompletableFuture<LongArrayList> checked = new CompletableFuture<>();
+        if (onServerThread) {
+            if (cancelled.get()) {
+                checked.cancel(false);
+                return checked;
+            }
+            try {
+                checked.complete(filterPregenerateKeys(candidates, isClosed, isLoaded, untouchedStores));
+            } catch (Throwable failure) {
+                checked.completeExceptionally(failure);
+            }
+            return checked;
+        }
+        try {
+            serverThread.execute(() -> {
+                if (cancelled.get() || checked.isCancelled()) return;
+                try {
+                    // MinecraftServer (BlockableEventLoop) runs execute() inline on the caller thread once stopServer()
+                    // disables scheduling; never touch server-thread state (cubes, untouchedStores) off-thread.
+                    if (!isServerThread.getAsBoolean()) {
+                        if (isClosed.getAsBoolean()) {
+                            checked.complete(new LongArrayList());
+                        } else {
+                            checked.completeExceptionally(new PregenerationRejectedException("Server thread is no longer scheduling tasks"));
+                        }
+                        return;
+                    }
+                    checked.complete(filterPregenerateKeys(candidates, isClosed, isLoaded, untouchedStores));
+                } catch (Throwable failure) {
+                    checked.completeExceptionally(failure);
+                }
+            });
+        } catch (RejectedExecutionException rejected) {
+            if (isClosed.getAsBoolean()) {
+                checked.complete(new LongArrayList());
+            } else {
+                checked.completeExceptionally(new PregenerationRejectedException("Server thread rejected pregeneration coordination", rejected));
+            }
+        }
+        return checked;
+    }
+
+    static LongArrayList coordinatePregenerateKeys(LongArrayList candidates, boolean onServerThread,
+                                                   BooleanSupplier isServerThread,
+                                                   Executor serverThread, BooleanSupplier isClosed,
+                                                   LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores,
+                                                   long timeoutMillis) {
+        AtomicBoolean cancelled = new AtomicBoolean();
+        CompletableFuture<LongArrayList> checked = coordinatePregenerateKeysAsync(
+                candidates, onServerThread, isServerThread, serverThread, isClosed, isLoaded, untouchedStores, cancelled);
+        try {
+            return checked.get(Math.max(1L, timeoutMillis), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            cancelled.set(true);
+            checked.cancel(false);
+            Thread.currentThread().interrupt();
+            if (isClosed.getAsBoolean()) return new LongArrayList();
+            throw new PregenerationRejectedException("Interrupted waiting for server thread during pregeneration", interrupted);
+        } catch (TimeoutException timedOut) {
+            cancelled.set(true);
+            checked.cancel(false);
+            if (isClosed.getAsBoolean()) return new LongArrayList();
+            throw new PregenerationRejectedException("Timed out waiting " + timeoutMillis + " ms for server thread during pregeneration", timedOut);
+        } catch (ExecutionException failed) {
+            cancelled.set(true);
+            checked.cancel(false);
+            Throwable cause = failed.getCause() != null ? failed.getCause() : failed;
+            if (cause instanceof RuntimeException runtime) throw runtime;
+            if (cause instanceof Error error) throw error;
+            throw new PregenerationRejectedException("Server thread pregeneration coordination failed", cause);
+        }
+    }
+
+    /** Server thread: filters out keys already loaded or with an un-committed untouched snapshot before off-thread pregen reads storage. */
+    static LongArrayList filterPregenerateKeys(LongArrayList candidates, BooleanSupplier isClosed,
+                                               LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores) {
+        LongArrayList allowed = new LongArrayList(candidates.size());
+        if (isClosed.getAsBoolean()) return allowed;
+        for (int i = 0; i < candidates.size(); i++) {
+            long key = candidates.getLong(i);
+            if (isLoaded.test(key)) continue;
+            if (untouchedStores.hasPending(key) && !untouchedStores.tryDrainKeyNow(key)) continue;
+            allowed.add(key);
+        }
+        return allowed;
+    }
+
+    /** Server thread: writes pregenerated tags only if the key is neither loaded, pending in untouchedStores, nor already written to storage. */
+    static int commitPregenerated(LongArrayList keys, List<CompoundTag> tags, BooleanSupplier isClosed,
+                                  LongPredicate isLoaded, UntouchedStoreQueue<?> untouchedStores,
+                                  CubeStorage storage) {
+        if (isClosed.getAsBoolean()) return 0;
+        int stored = 0;
+        for (int i = 0; i < tags.size(); i++) {
+            long key = keys.getLong(i);
+            // A cube loaded meanwhile, still pending an untouched write, or committed between read and write must never be overwritten.
+            if (isLoaded.test(key) || untouchedStores.hasPending(key)) continue;
+            try {
+                if (storage.read(key) != null) continue;
+                storage.put(key, tags.get(i));
+                stored++;
+            } catch (IOException failure) {
+                EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure);
+            }
+        }
+        return stored;
     }
 
     private void adoptReady(Ready result) {
         pending.remove(result.key);
         if (cubes.containsKey(result.key)) return;
         if (result.section == null) {
-            // Leave a gap and try again shortly rather than stall: the data may come back.
-            if (retryAt.size() > 8192) retryAt.clear();
-            retryAt.put(result.key, ticks + 100);
+            // In-memory per-session exponential backoff: never persist an empty placeholder cube.
             failures++;
-            if (ticks - lastFailureLog > 200) {
-                lastFailureLog = ticks;
-                EarthPlatformMod.LOGGER.warn("Could not generate cube {} ({} failures so far); retrying", CubeKey.toString(result.key), failures, result.failure);
-            }
+            recordNearFailure(failureRetries, result.key, ticks, failures, result.failure);
             return;
         }
+        failureRetries.recordSuccess(result.key);
         Cube cube = new Cube(result.x, result.y, result.z, result.section);
+        CubeCodec.PendingTicks validTicks = CubeCodec.filterForCube(result.key, result.pendingTicks);
         // Generated ground is saved, as vanilla saves every chunk it generates: a fresh cube in the surface band when it
-        // unloads, and any cube once play changes it.
-        cube.modified = true;
-        cube.dirty = !result.saved && result.kept;
-        cube.edited = result.edited;
+        // unloads, any fresh cube with undrained structure ticks (keeping UNTOUCHED intact), and any cube once play changes it.
+        initializeAdoptedCubeFlags(cube, result.saved, result.kept, result.edited, validTicks);
         if (result.surface) unpopulated.add(result.key);
         if (!result.entities.isEmpty()) unplacedEntities.put(result.key, result.entities);
         for (CompoundTag tag : result.blockEntities) {
@@ -637,6 +996,7 @@ public final class ServerCubeWorld extends CubeWorld {
             if (entity != null) cube.blockEntities.put(pos, entity);
         }
         adopt(cube);
+        if (!validTicks.isEmpty()) pendingTickDispatcher.put(result.key, validTicks);
         surveys.openBehind(cube.x, cube.y, cube.z, result.open, quietCap());
         // Points of interest at cubic heights live only in memory: rebuild them from the blocks.
         server.getPoiManager().checkConsistencyWithBlocks(SectionPos.of(cube.x, cube.y, cube.z), cube.section);
@@ -645,6 +1005,39 @@ public final class ServerCubeWorld extends CubeWorld {
         if (result.baseline != null && !tops.containsKey(column)) tops.put(column, result.baseline.clone()); // read off this thread
         refreshTops(cube);
         staleLightAround(cube.x, cube.y, cube.z);
+    }
+
+    /**
+     * Initializes persistence flags for an adopted cube: fresh cubes outside the surface save band
+     * with pending structure ticks are marked unsaved (preserving {@code UNTOUCHED}) so undrained
+     * ticks survive unload before dispatch.
+     */
+    static void initializeAdoptedCubeFlags(Cube cube, boolean saved, boolean kept, boolean edited,
+                                           @Nullable CubeCodec.PendingTicks pendingTicks) {
+        cube.modified = true;
+        cube.dirty = !saved && kept;
+        cube.edited = edited;
+        if (!saved && pendingTicks != null && !pendingTicks.isEmpty()) cube.markUnsaved();
+    }
+
+    /** Records a near-cube generation failure under {@link PerfFailures.Stage#NEAR_GENERATION} with backoff and rate-limited logging. */
+    static FailureRetries.RetryState recordNearFailure(FailureRetries failureRetries, long key, int currentTick,
+                                                       long totalFailures, @Nullable Throwable failure) {
+        FailureRetries.RetryState state = failureRetries.recordFailure(key, currentTick, failure);
+        if (failure != null) {
+            PerfFailures.record(PerfFailures.Stage.NEAR_GENERATION, FailureRetries.rootCause(failure));
+        }
+        if (failureRetries.shouldLog(currentTick, failure)) {
+            int delaySeconds = Math.max(1, (state.nextRetryTick() - currentTick) / 20);
+            if (state.deterministic()) {
+                EarthPlatformMod.LOGGER.error("Unexpected failure generating cube {} (attempt {}, retrying in {}s, {} failures so far)",
+                        CubeKey.toString(key), state.attempts(), delaySeconds, totalFailures, failure);
+            } else {
+                EarthPlatformMod.LOGGER.warn("Could not generate cube {} due to missing terrain data (attempt {}, retrying in {}s, {} failures so far)",
+                        CubeKey.toString(key), state.attempts(), delaySeconds, totalFailures, failure);
+            }
+        }
+        return state;
     }
 
     // Ticking ------------------------------------------------------------------------------------
@@ -754,6 +1147,7 @@ public final class ServerCubeWorld extends CubeWorld {
         flushChanges();
         far.tick(server.players());
         lightCubes();
+        dispatchPendingTicks();
         if (ticks % 20 == 0) populate();
         if (ticks % 40 == 0) unloadUnwatched(h + 2, v + 2);
         randomTicks(h, v);
@@ -1059,18 +1453,29 @@ public final class ServerCubeWorld extends CubeWorld {
     private void unload(int h, int v) {
         List<Cube> drop = new ArrayList<>();
         for (long key : ResidentCubes.unloadable(cubes.keySet(), key -> watched(key, h, v, cubes.get(key).edited), resident)) drop.add(cubes.get(key));
-        if (drop.isEmpty()) return;
-        for (Cube cube : drop) {
+        unloadMaintenance(drop, cube -> {
             store(cube);
             forget(cube);
             ((io.earthplatform.minecraft.cubic.CubicPoiStore) server.getPoiManager()).earthplatform$forget(SectionPos.asLong(cube.x, cube.y, cube.z));
-        }
-        // Keep sky tops near players only; far columns are rebuilt from the generator and cubes.
-        tops.long2ObjectEntrySet().removeIf(entry -> !columnWatched(entry.getLongKey(), h * 3) && !resident.holdsColumn(entry.getLongKey()));
-        surveys.prune(column -> columnWatched(column, h * 3) || resident.holdsColumn(column));
-        long start = System.nanoTime();
-        storage.flushLater();
-        Timings.CUBE_FLUSH.since(start);
+        }, tops, surveys, column -> columnWatched(column, h * 3) || resident.holdsColumn(column), () -> {
+            long start = System.nanoTime();
+            storage.flushLater();
+            Timings.CUBE_FLUSH.since(start);
+        });
+    }
+
+    /**
+     * Evicts {@code drop}, prunes unwatched sky tops and column surveys even when zero cubes are
+     * evicted (so failed surveys for departed columns retry cleanly on return), and flushes storage
+     * when at least one cube was unloaded.
+     */
+    static void unloadMaintenance(List<Cube> drop, Consumer<Cube> evict, Long2ObjectOpenHashMap<int[]> tops,
+                                  ColumnSurveys surveys, LongPredicate keepColumn, Runnable flushLater) {
+        for (Cube cube : drop) evict.accept(cube);
+        // Keep sky tops and surveys near players only; far columns are rebuilt from the generator and cubes.
+        tops.long2ObjectEntrySet().removeIf(entry -> !keepColumn.test(entry.getLongKey()));
+        surveys.prune(keepColumn);
+        if (!drop.isEmpty()) flushLater.run();
     }
 
     /**
@@ -1154,7 +1559,11 @@ public final class ServerCubeWorld extends CubeWorld {
         }
     }
 
-    /** Adds the entities fresh cubes start with, once their chunk ticks entities, and keeps those cubes saved from then on. */
+    /**
+     * Adds the entities fresh cubes start with, once their chunk ticks entities, and marks those
+     * cubes unsaved (preserving {@code UNTOUCHED} so {@link FarServer} and buried-cube culling
+     * still treat them as generated terrain) so entities are never spawned twice.
+     */
     private void placeEntities() {
         if (unplacedEntities.isEmpty()) return;
         for (long key : unplacedEntities.keySet().toLongArray()) {
@@ -1163,9 +1572,341 @@ public final class ServerCubeWorld extends CubeWorld {
             if (!server.isNaturalSpawningAllowed(new ChunkPos(cube.x, cube.z))) continue;
             for (CompoundTag tag : unplacedEntities.remove(key)) {
                 Entity entity = EntityType.loadEntityRecursive(tag, server, e -> e);
-                if (entity != null) server.addFreshEntity(entity);
+                if (entity != null) server.addFreshEntityWithPassengers(entity);
             }
+            // Keep UNTOUCHED intact (markUnsaved, not markModified) while persisting empty entities on save/unload.
             cube.markUnsaved();
+        }
+    }
+
+    /**
+     * Advances and executes cube-owned generation-captured structure ticks on the server thread once
+     * each cube's carrier chunk ticks blocks and its 6 in-world face neighbors are resident. Delayed
+     * ticks remain owned by their cube until due, so unload/reload preserves remaining delays and
+     * never executes against an unloaded cube.
+     */
+    private void dispatchPendingTicks() {
+        if (pendingTickDispatcher.isEmpty() || !server.tickRateManager().runsNormally()) return;
+        pendingTickDispatcher.tick(
+                cubes::containsKey,
+                (cx, cz) -> server.shouldTickBlocksAt(ChunkPos.asLong(cx, cz)),
+                tick -> PendingTickDispatcher.runIfLiveBlockTick(
+                        tick, cubes::get, cubes::containsKey,
+                        (state, pos) -> state.tick(server, pos, server.getRandom())),
+                tick -> PendingTickDispatcher.runIfLiveFluidTick(
+                        tick, cubes::get, cubes::containsKey,
+                        (fluid, pos) -> fluid.tick(server, pos)),
+                key -> PendingTickDispatcher.markCubeUnsaved(key, cubes::get));
+    }
+
+    /**
+     * Cube-owned, neighbor-gated scheduler and executor for generation-captured structure block and
+     * fluid ticks: owns per-cube mutable queues (decrementing remaining delay only while the cube +
+     * all in-range 6 face neighbors are resident and its carrier chunk ticks) and executes due ticks
+     * across all ready cubes in stable ascending {@link net.minecraft.world.ticks.TickPriority} order
+     * with O(1) node unlinking and strict queue/node reference identity so structure fluids and
+     * redstone never run against {@link CubeWorld#UNLOADED}, replacement queues are never consumed
+     * by stale pass entries, and remaining delays survive unload/reload. Tracks residency changes so
+     * edge-of-volume cubes with missing neighbors are not re-scanned every tick.
+     */
+    static final class PendingTickDispatcher {
+        private static final class TickNode<T> {
+            CubeCodec.PendingTick<T> tick;
+            TickNode<T> prev;
+            TickNode<T> next;
+            boolean active = true;
+
+            TickNode(CubeCodec.PendingTick<T> tick) {
+                this.tick = tick;
+            }
+        }
+
+        private static final class TickList<T> {
+            private TickNode<T> head;
+            private TickNode<T> tail;
+            private int size;
+
+            TickList(List<CubeCodec.PendingTick<T>> ticks) {
+                for (int i = 0; i < ticks.size(); i++) {
+                    append(ticks.get(i));
+                }
+            }
+
+            private void append(CubeCodec.PendingTick<T> tick) {
+                TickNode<T> node = new TickNode<>(tick);
+                if (tail == null) {
+                    head = tail = node;
+                } else {
+                    node.prev = tail;
+                    tail.next = node;
+                    tail = node;
+                }
+                size++;
+            }
+
+            boolean isEmpty() { return size == 0; }
+
+            void unlink(TickNode<T> node) {
+                if (!node.active) return;
+                node.active = false;
+                if (node.prev != null) node.prev.next = node.next;
+                else head = node.next;
+                if (node.next != null) node.next.prev = node.prev;
+                else tail = node.prev;
+                node.prev = null;
+                node.next = null;
+                size--;
+            }
+
+            List<CubeCodec.PendingTick<T>> snapshot() {
+                if (size == 0) return List.of();
+                List<CubeCodec.PendingTick<T>> out = new ArrayList<>(size);
+                for (TickNode<T> node = head; node != null; node = node.next) {
+                    out.add(node.tick);
+                }
+                return out;
+            }
+        }
+
+        private static final class CubeQueue {
+            final TickList<Block> blocks;
+            final TickList<Fluid> fluids;
+            @Nullable private CubeCodec.PendingTicks cachedSnapshot;
+
+            CubeQueue(CubeCodec.PendingTicks ticks) {
+                this.blocks = new TickList<>(ticks.blocks());
+                this.fluids = new TickList<>(ticks.fluids());
+                this.cachedSnapshot = ticks;
+            }
+
+            boolean isEmpty() { return blocks.isEmpty() && fluids.isEmpty(); }
+
+            void invalidateSnapshot() { cachedSnapshot = null; }
+
+            CubeCodec.PendingTicks snapshot() {
+                CubeCodec.PendingTicks snap = cachedSnapshot;
+                if (snap == null) {
+                    snap = isEmpty()
+                            ? CubeCodec.PendingTicks.EMPTY
+                            : new CubeCodec.PendingTicks(blocks.snapshot(), fluids.snapshot());
+                    cachedSnapshot = snap;
+                }
+                return snap;
+            }
+        }
+
+        private record DueTick<T>(long cubeKey, CubeQueue ownerQueue, TickNode<T> node) {}
+
+        private final Long2ObjectOpenHashMap<CubeQueue> queues = new Long2ObjectOpenHashMap<>();
+        private final LongOpenHashSet readyNeighbors = new LongOpenHashSet();
+        private long residencyVersion;
+        private long scannedVersion = -1L;
+        private int lastScannedCount;
+
+        boolean isEmpty() { return queues.isEmpty(); }
+
+        boolean containsKey(long key) { return queues.containsKey(key); }
+
+        @Nullable CubeCodec.PendingTicks get(long key) {
+            CubeQueue queue = queues.get(key);
+            return queue == null ? null : queue.snapshot();
+        }
+
+        CubeCodec.PendingTicks getOrDefault(long key, CubeCodec.PendingTicks fallback) {
+            CubeQueue queue = queues.get(key);
+            return queue == null ? fallback : queue.snapshot();
+        }
+
+        void put(long key, @Nullable CubeCodec.PendingTicks ticks) {
+            if (ticks == null || ticks.isEmpty()) {
+                remove(key);
+                return;
+            }
+            queues.put(key, new CubeQueue(ticks));
+            readyNeighbors.add(key);
+            residencyVersion++;
+        }
+
+        void remove(long key) {
+            queues.remove(key);
+            readyNeighbors.remove(key);
+        }
+
+        void noteResidencyChange() { residencyVersion++; }
+
+        int lastScannedCount() { return lastScannedCount; }
+
+        static boolean neighborsLoaded(int cx, int cy, int cz, LongPredicate cubeLoaded) {
+            if (!cubeLoaded.test(CubeKey.pack(cx - 1, cy, cz)) || !cubeLoaded.test(CubeKey.pack(cx + 1, cy, cz))) return false;
+            if (!cubeLoaded.test(CubeKey.pack(cx, cy, cz - 1)) || !cubeLoaded.test(CubeKey.pack(cx, cy, cz + 1))) return false;
+            if (CubeWorld.inRange((cy - 1) << 4) && !cubeLoaded.test(CubeKey.pack(cx, cy - 1, cz))) return false;
+            if (CubeWorld.inRange((cy + 1) << 4) && !cubeLoaded.test(CubeKey.pack(cx, cy + 1, cz))) return false;
+            return true;
+        }
+
+        /** Production {@code onChanged} callback: marks the resident cube unsaved without setting {@code edited}. */
+        static void markCubeUnsaved(long key, java.util.function.LongFunction<Cube> cubeLookup) {
+            Cube cube = cubeLookup.apply(key);
+            if (cube != null) cube.markUnsaved();
+        }
+
+        /** Production per-tick guard for due block ticks: verifies owning cube + 6 neighbors and matching live block state. */
+        static boolean runIfLiveBlockTick(
+                CubeCodec.PendingTick<Block> tick,
+                java.util.function.LongFunction<Cube> cubeLookup,
+                LongPredicate cubeLoaded,
+                java.util.function.BiConsumer<BlockState, BlockPos> runner) {
+            Cube cube = cubeLookup.apply(CubeKey.ofBlock(tick.pos()));
+            if (cube == null || !neighborsLoaded(cube.x, cube.y, cube.z, cubeLoaded)) return false;
+            BlockState state = cube.get(tick.x(), tick.y(), tick.z());
+            if (!state.is(tick.type())) return false;
+            runner.accept(state, tick.pos());
+            return true;
+        }
+
+        /** Production per-tick guard for due fluid ticks: verifies owning cube + 6 neighbors and matching live fluid state. */
+        static boolean runIfLiveFluidTick(
+                CubeCodec.PendingTick<Fluid> tick,
+                java.util.function.LongFunction<Cube> cubeLookup,
+                LongPredicate cubeLoaded,
+                java.util.function.BiConsumer<FluidState, BlockPos> runner) {
+            Cube cube = cubeLookup.apply(CubeKey.ofBlock(tick.pos()));
+            if (cube == null || !neighborsLoaded(cube.x, cube.y, cube.z, cubeLoaded)) return false;
+            FluidState fluid = cube.get(tick.x(), tick.y(), tick.z()).getFluidState();
+            if (!fluid.is(tick.type())) return false;
+            runner.accept(fluid, tick.pos());
+            return true;
+        }
+
+        int tick(
+                LongPredicate cubeLoaded,
+                BiPredicate<Integer, Integer> chunkTicking,
+                Consumer<CubeCodec.PendingTick<Block>> executeBlock,
+                Consumer<CubeCodec.PendingTick<Fluid>> executeFluid,
+                LongConsumer onChanged) {
+            if (queues.isEmpty()) {
+                readyNeighbors.clear();
+                scannedVersion = residencyVersion;
+                lastScannedCount = 0;
+                return 0;
+            }
+            boolean rescanAll = scannedVersion != residencyVersion;
+            long[] candidates;
+            if (rescanAll) {
+                candidates = queues.keySet().toLongArray();
+                readyNeighbors.clear();
+                scannedVersion = residencyVersion;
+            } else {
+                if (readyNeighbors.isEmpty()) {
+                    lastScannedCount = 0;
+                    return 0;
+                }
+                candidates = readyNeighbors.toLongArray();
+            }
+            if (candidates.length > 1) java.util.Arrays.sort(candidates);
+            lastScannedCount = candidates.length;
+
+            List<DueTick<Block>> dueBlocks = null;
+            List<DueTick<Fluid>> dueFluids = null;
+            for (long key : candidates) {
+                CubeQueue queue = queues.get(key);
+                if (queue == null || queue.isEmpty()) {
+                    queues.remove(key);
+                    readyNeighbors.remove(key);
+                    continue;
+                }
+                if (!cubeLoaded.test(key)) {
+                    queues.remove(key);
+                    readyNeighbors.remove(key);
+                    continue;
+                }
+                int cx = CubeKey.x(key), cy = CubeKey.y(key), cz = CubeKey.z(key);
+                if (!neighborsLoaded(cx, cy, cz, cubeLoaded)) {
+                    readyNeighbors.remove(key);
+                    continue;
+                }
+                readyNeighbors.add(key);
+                if (!chunkTicking.test(cx, cz)) continue;
+
+                boolean decremented = false;
+                for (TickNode<Block> node = queue.blocks.head; node != null; node = node.next) {
+                    CubeCodec.PendingTick<Block> tick = node.tick;
+                    if (tick.delay() <= 0) {
+                        if (dueBlocks == null) dueBlocks = new ArrayList<>();
+                        dueBlocks.add(new DueTick<>(key, queue, node));
+                    } else {
+                        node.tick = new CubeCodec.PendingTick<>(tick.pos(), tick.type(), tick.delay() - 1, tick.priority());
+                        decremented = true;
+                    }
+                }
+                for (TickNode<Fluid> node = queue.fluids.head; node != null; node = node.next) {
+                    CubeCodec.PendingTick<Fluid> tick = node.tick;
+                    if (tick.delay() <= 0) {
+                        if (dueFluids == null) dueFluids = new ArrayList<>();
+                        dueFluids.add(new DueTick<>(key, queue, node));
+                    } else {
+                        node.tick = new CubeCodec.PendingTick<>(tick.pos(), tick.type(), tick.delay() - 1, tick.priority());
+                        decremented = true;
+                    }
+                }
+                if (decremented) {
+                    queue.invalidateSnapshot();
+                    onChanged.accept(key);
+                }
+            }
+
+            int executed = 0;
+            if (dueBlocks != null) {
+                if (dueBlocks.size() > 1) dueBlocks.sort(Comparator.comparingInt(d -> d.node().tick.priority().getValue()));
+                for (DueTick<Block> due : dueBlocks) {
+                    long key = due.cubeKey();
+                    if (queues.get(key) != due.ownerQueue() || !due.node().active) continue;
+                    if (!cubeLoaded.test(key) || !neighborsLoaded(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), cubeLoaded)) {
+                        readyNeighbors.remove(key);
+                        continue;
+                    }
+                    consumeDueBlockTick(key, due.ownerQueue(), due.node());
+                    onChanged.accept(key);
+                    executeBlock.accept(due.node().tick);
+                    executed++;
+                }
+            }
+            if (dueFluids != null) {
+                if (dueFluids.size() > 1) dueFluids.sort(Comparator.comparingInt(d -> d.node().tick.priority().getValue()));
+                for (DueTick<Fluid> due : dueFluids) {
+                    long key = due.cubeKey();
+                    if (queues.get(key) != due.ownerQueue() || !due.node().active) continue;
+                    if (!cubeLoaded.test(key) || !neighborsLoaded(CubeKey.x(key), CubeKey.y(key), CubeKey.z(key), cubeLoaded)) {
+                        readyNeighbors.remove(key);
+                        continue;
+                    }
+                    consumeDueFluidTick(key, due.ownerQueue(), due.node());
+                    onChanged.accept(key);
+                    executeFluid.accept(due.node().tick);
+                    executed++;
+                }
+            }
+            return executed;
+        }
+
+        private void consumeDueBlockTick(long key, CubeQueue ownerQueue, TickNode<Block> node) {
+            ownerQueue.blocks.unlink(node);
+            if (ownerQueue.isEmpty()) {
+                queues.remove(key);
+                readyNeighbors.remove(key);
+            } else {
+                ownerQueue.invalidateSnapshot();
+            }
+        }
+
+        private void consumeDueFluidTick(long key, CubeQueue ownerQueue, TickNode<Fluid> node) {
+            ownerQueue.fluids.unlink(node);
+            if (ownerQueue.isEmpty()) {
+                queues.remove(key);
+                readyNeighbors.remove(key);
+            } else {
+                ownerQueue.invalidateSnapshot();
+            }
         }
     }
 
@@ -1263,15 +2004,19 @@ public final class ServerCubeWorld extends CubeWorld {
 
     // Saving -------------------------------------------------------------------------------------
 
+    /** Server thread: in-flight untouched async writes, drained before flush/close so dirty cubes are never lost. */
+    private final UntouchedStoreQueue<CompoundTag> untouchedStores;
+
     private void store(Cube cube) { store(cube, false); }
 
     /** {@code now} stores even an untouched cube on this thread, as when the world closes. */
     private void store(Cube cube, boolean now) {
         if (!cube.modified || !cube.dirty) return;
         if (!cube.edited && !now) { storeUntouched(cube); return; }
+        untouchedStores.supersede(cube.key);
         try {
             CompoundTag tag = codec.write(cube, server.registryAccess());
-            // Owed first animals or starting entities stay owed to the next visit.
+            // Owed first animals, starting entities, or structure ticks stay owed to the next visit.
             if (unpopulated.contains(cube.key)) tag.putBoolean(CubeCodec.UNPOPULATED, true);
             List<CompoundTag> owed = unplacedEntities.get(cube.key);
             if (owed != null && !owed.isEmpty()) {
@@ -1279,6 +2024,7 @@ public final class ServerCubeWorld extends CubeWorld {
                 list.addAll(owed);
                 tag.put(CubeCodec.ENTITIES, list);
             }
+            CubeCodec.writePendingTicks(tag, pendingTickDispatcher.get(cube.key));
             storage.put(cube.key, tag);
             cube.dirty = false;
             // Edited rock now comes back from the save, not the generator, so it is never stood in for.
@@ -1295,13 +2041,13 @@ public final class ServerCubeWorld extends CubeWorld {
     }
 
     /**
-     * Stores a cube saved just as generated, encoding it on a worker: a traveler leaves many behind,
-     * and each would otherwise cost the server thread. Should it be edited or a newer copy loaded before
-     * the store lands, that is saved in its turn; one lost (the server stopping) is generated again, the
-     * same, when next asked for.
+     * Stores a cube saved just as generated, encoding it on a worker: {@code cube.dirty} stays true
+     * until {@code storage.put} actually commits. {@link #save()} commits already-encoded entries via
+     * {@link UntouchedStoreQueue#commitReady()} without blocking or encoding synchronously on the server
+     * thread, while {@link #close()} finishes all pending writes with retries via
+     * {@link UntouchedStoreQueue#drainAll()} before closing storage.
      */
     private void storeUntouched(Cube cube) {
-        cube.dirty = false;
         long key = cube.key;
         int x = cube.x, y = cube.y, z = cube.z;
         LevelChunkSection section = new LevelChunkSection(cube.section.getStates().copy(), cube.section.getBiomes());
@@ -1312,28 +2058,17 @@ public final class ServerCubeWorld extends CubeWorld {
         boolean owedAnimals = unpopulated.contains(key);
         List<CompoundTag> owed = unplacedEntities.get(key);
         List<CompoundTag> entities = owed == null ? List.of() : List.copyOf(owed);
-        workers.execute(() -> {
-            CompoundTag tag;
-            try {
-                tag = codec.writeGenerated(x, y, z, section, blockEntities);
-                if (owedAnimals) tag.putBoolean(CubeCodec.UNPOPULATED, true);
-                if (!entities.isEmpty()) {
-                    net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
-                    list.addAll(entities);
-                    tag.put(CubeCodec.ENTITIES, list);
-                }
-            } catch (RuntimeException failure) {
-                EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure);
-                return;
+        CubeCodec.PendingTicks owedTicks = pendingTickDispatcher.getOrDefault(key, CubeCodec.PendingTicks.EMPTY);
+        untouchedStores.enqueue(cube, owedAnimals, entities, owedTicks, () -> {
+            CompoundTag tag = codec.writeGenerated(x, y, z, section, blockEntities, owedTicks);
+            if (owedAnimals) tag.putBoolean(CubeCodec.UNPOPULATED, true);
+            if (!entities.isEmpty()) {
+                net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
+                list.addAll(entities);
+                tag.put(CubeCodec.ENTITIES, list);
             }
-            server.getServer().execute(() -> {
-                // A copy loaded since, or this one edited since, is stored from its own state instead.
-                Cube now = cubes.get(key);
-                if (closed || cube.edited || now != null && now != cube) return;
-                try { storage.put(key, tag); }
-                catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not store cube {}", CubeKey.toString(key), failure); }
-            });
-        });
+            return tag;
+        }, workers, server.getServer());
     }
 
     private void flushStorage() {
@@ -1343,6 +2078,7 @@ public final class ServerCubeWorld extends CubeWorld {
 
     public void save() {
         for (Cube cube : cubes.values()) store(cube);
+        untouchedStores.commitReady();
         flushStorage();
         far.flush();
     }
@@ -1363,12 +2099,12 @@ public final class ServerCubeWorld extends CubeWorld {
                 try { reads.awaitTermination(Math.max(1, until - System.nanoTime()), TimeUnit.NANOSECONDS); break; }
                 catch (InterruptedException interrupt) { interrupted = true; }
             }
-            for (CompletableFuture<int[]> prime : primed.values()) prime.cancel(false);
+            topPrimer.cancelAll();
             tickets.close();
             resident.clear();
             for (Cube cube : cubes.values()) store(cube, true);
-            try { storage.close(); }
-            catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not write cube regions", failure); }
+            try { finishShutdownDrain(untouchedStores, storage::close); }
+            catch (IOException failure) { EarthPlatformMod.LOGGER.error("Could not finish saving cube regions on shutdown", failure); }
             closed = true;
             generator.detach();
             surveys.close();
@@ -1390,4 +2126,801 @@ public final class ServerCubeWorld extends CubeWorld {
 
     /** Iterates loaded cubes; exposed for diagnostics. */
     public Iterator<Cube> loaded() { return cubes.values().iterator(); }
+
+    // Resilience helpers (package-private for direct unit testing) -------------------------------
+
+    /**
+     * In-memory, per-session bounded LRU retry state for failed near cubes: classifies transient
+     * {@link MissingTerrainException} (walking the full cause chain with cycle protection) separately
+     * from unexpected deterministic runtime failures, applies exponential backoff, and rate-limits
+     * stack-trace logging per distinct failure signature.
+     */
+    static final class FailureRetries {
+        static final int MAX_ENTRIES = 8192;
+        static final int LOG_RATE_LIMIT_TICKS = 200;
+        private static final int MAX_LOG_SIGNATURES = 64;
+        /** 5s -> 10s -> 20s -> 40s -> 60s at 20 ticks/s. */
+        static final int[] TRANSIENT_BACKOFF_TICKS = {100, 200, 400, 800, 1200};
+        /** 30s -> 120s -> 300s at 20 ticks/s (never permanent, never persisted). */
+        static final int[] DETERMINISTIC_BACKOFF_TICKS = {600, 2400, 6000};
+
+        record RetryState(int attempts, int nextRetryTick, boolean deterministic) {}
+
+        private final int maxEntries;
+        private final Long2ObjectLinkedOpenHashMap<RetryState> states;
+        private final LinkedHashMap<String, Integer> lastLogBySignature;
+
+        FailureRetries() { this(MAX_ENTRIES); }
+
+        FailureRetries(int maxEntries) {
+            this.maxEntries = Math.max(1, maxEntries);
+            this.states = new Long2ObjectLinkedOpenHashMap<>(Math.min(64, this.maxEntries));
+            this.lastLogBySignature = new LinkedHashMap<>(16, 0.75f, true) {
+                @Override protected boolean removeEldestEntry(Map.Entry<String, Integer> eldest) {
+                    return size() > MAX_LOG_SIGNATURES;
+                }
+            };
+        }
+
+        /** Walks the full cause chain with a cycle guard to detect wrapped {@link MissingTerrainException}. */
+        static boolean isTransientTerrainFailure(@Nullable Throwable failure) {
+            if (failure == null) return false;
+            Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+            for (Throwable cur = failure; cur != null && seen.add(cur); cur = cur.getCause()) {
+                if (cur instanceof MissingTerrainException) return true;
+            }
+            return false;
+        }
+
+        /** Returns the {@link MissingTerrainException} if present in the cause chain, otherwise the deepest root cause. */
+        static Throwable rootCause(Throwable failure) {
+            Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+            Throwable deepest = failure;
+            for (Throwable cur = failure; cur != null && seen.add(cur); cur = cur.getCause()) {
+                if (cur instanceof MissingTerrainException) return cur;
+                deepest = cur;
+            }
+            return deepest;
+        }
+
+        static String failureSignature(@Nullable Throwable failure) {
+            if (failure == null) return "null";
+            Throwable root = rootCause(failure);
+            StackTraceElement[] trace = root.getStackTrace();
+            String frame = trace != null && trace.length > 0 ? trace[0].toString() : "no-stack";
+            return root.getClass().getName() + "@" + frame;
+        }
+
+        boolean isBlocked(long key, int currentTick) {
+            RetryState state = states.getAndMoveToLast(key);
+            return state != null && currentTick < state.nextRetryTick();
+        }
+
+        RetryState recordFailure(long key, int currentTick, @Nullable Throwable failure) {
+            boolean deterministic = !isTransientTerrainFailure(failure);
+            RetryState previous = states.get(key);
+            int attempts = previous == null ? 1 : previous.attempts() + 1;
+            int[] schedule = deterministic ? DETERMINISTIC_BACKOFF_TICKS : TRANSIENT_BACKOFF_TICKS;
+            int delay = schedule[Math.min(attempts - 1, schedule.length - 1)];
+            RetryState next = new RetryState(attempts, currentTick + delay, deterministic);
+            states.putAndMoveToLast(key, next);
+            while (states.size() > maxEntries) states.removeFirst();
+            return next;
+        }
+
+        void recordSuccess(long key) {
+            states.remove(key);
+        }
+
+        boolean shouldLog(int currentTick, @Nullable Throwable failure) {
+            String signature = failureSignature(failure);
+            Integer last = lastLogBySignature.get(signature);
+            if (last != null && currentTick - last < LOG_RATE_LIMIT_TICKS) return false;
+            lastLogBySignature.put(signature, currentTick);
+            return true;
+        }
+
+        @Nullable RetryState state(long key) { return states.get(key); }
+
+        int size() { return states.size(); }
+    }
+
+    /**
+     * Bounded-retry sky-top primer for saved cubes: evicts failed/cancelled futures from {@code primed}
+     * and completes them exceptionally once retries are exhausted so {@code pending} slots never leak.
+     */
+    static final class TopPrimer {
+        static final int MAX_RETRIES = 3;
+        private static final int MAX_CACHED_COLUMNS = 4096;
+
+        private final ConcurrentHashMap<Long, CompletableFuture<int[]>> primed = new ConcurrentHashMap<>();
+        private final BiFunction<Integer, Integer, int[]> baselineReader;
+        private final Executor ioExecutor;
+        private final IntFunction<Executor> retryScheduler;
+        private final BooleanSupplier isClosing;
+        private final int maxRetries;
+
+        TopPrimer(BiFunction<Integer, Integer, int[]> baselineReader, Executor ioExecutor,
+                  IntFunction<Executor> retryScheduler, BooleanSupplier isClosing, int maxRetries) {
+            this.baselineReader = baselineReader;
+            this.ioExecutor = ioExecutor;
+            this.retryScheduler = retryScheduler;
+            this.isClosing = isClosing;
+            this.maxRetries = Math.max(0, maxRetries);
+        }
+
+        CompletableFuture<int[]> prime(int cubeX, int cubeZ) {
+            long column = CubeKey.column(cubeX, cubeZ);
+            CompletableFuture<int[]> mine = new CompletableFuture<>(), reading = primed.putIfAbsent(column, mine);
+            if (reading != null) return reading;
+            if (primed.size() > MAX_CACHED_COLUMNS) primed.values().removeIf(future -> future.isDone() && future != mine);
+            attempt(cubeX, cubeZ, column, mine, 0);
+            return mine;
+        }
+
+        private void attempt(int cubeX, int cubeZ, long column, CompletableFuture<int[]> into, int tries) {
+            if (isClosing.getAsBoolean() || into.isCancelled()) {
+                primed.remove(column, into);
+                into.cancel(false);
+                return;
+            }
+            Executor pool = tries == 0 ? ioExecutor : retryScheduler.apply(tries);
+            try {
+                pool.execute(() -> {
+                    if (isClosing.getAsBoolean() || into.isCancelled()) {
+                        primed.remove(column, into);
+                        into.cancel(false);
+                        return;
+                    }
+                    try {
+                        into.complete(baselineReader.apply(cubeX, cubeZ));
+                    } catch (RuntimeException failure) {
+                        if (!isClosing.getAsBoolean() && !into.isCancelled()
+                                && tries < maxRetries && FailureRetries.isTransientTerrainFailure(failure)) {
+                            attempt(cubeX, cubeZ, column, into, tries + 1);
+                            return;
+                        }
+                        primed.remove(column, into);
+                        into.completeExceptionally(failure);
+                    } catch (Error error) {
+                        primed.remove(column, into);
+                        into.completeExceptionally(error);
+                        throw error;
+                    }
+                });
+            } catch (RejectedExecutionException rejected) {
+                primed.remove(column, into);
+                into.cancel(false);
+            }
+        }
+
+        @Nullable int[] getIfReady(long column) {
+            CompletableFuture<int[]> had = primed.get(column);
+            return had != null && had.isDone() && !had.isCompletedExceptionally() ? had.getNow(null) : null;
+        }
+
+        void recordKnown(long column, int[] tops) {
+            if (primed.size() > MAX_CACHED_COLUMNS) primed.values().removeIf(CompletableFuture::isDone);
+            primed.putIfAbsent(column, CompletableFuture.completedFuture(tops));
+        }
+
+        void cancelAll() {
+            for (CompletableFuture<int[]> future : primed.values()) future.cancel(false);
+            primed.clear();
+        }
+
+        int size() { return primed.size(); }
+    }
+
+    /**
+     * Drains all pending untouched cube writes (waiting for in-flight workers and executing remaining
+     * retries) before closing storage, always closing storage even on drain error and surfacing any
+     * persistent shutdown save failure as an {@link IOException}.
+     */
+    static void finishShutdownDrain(UntouchedStoreQueue<?> untouchedStores, AutoCloseable storageCloser) throws IOException {
+        UntouchedStoreQueue.DrainResult drainResult = UntouchedStoreQueue.DrainResult.OK;
+        Throwable drainFailure = null;
+        Throwable storageFailure = null;
+        try {
+            drainResult = untouchedStores.drainAll();
+        } catch (Throwable failure) {
+            drainFailure = failure;
+        } finally {
+            try {
+                storageCloser.close();
+            } catch (Throwable failure) {
+                storageFailure = failure;
+            }
+        }
+        if (drainFailure != null) {
+            if (storageFailure != null) drainFailure.addSuppressed(storageFailure);
+            if (drainFailure instanceof IOException io) throw io;
+            if (drainFailure instanceof RuntimeException runtime) throw runtime;
+            if (drainFailure instanceof Error error) throw error;
+            throw new IOException("Unexpected failure draining pending untouched cubes", drainFailure);
+        }
+        if (!drainResult.ok()) {
+            IOException drainError = new IOException(
+                    "Could not save " + drainResult.failedCount() + " pending untouched cube(s) before closing storage",
+                    drainResult.firstFailure());
+            if (storageFailure != null) drainError.addSuppressed(storageFailure);
+            throw drainError;
+        }
+        if (storageFailure != null) {
+            if (storageFailure instanceof IOException io) throw io;
+            if (storageFailure instanceof Error error) throw error;
+            throw new IOException("Failed to close cube storage", storageFailure);
+        }
+    }
+
+    /**
+     * Tracks in-flight async untouched cube serializations on the server thread: {@code cube.dirty} is
+     * cleared only after {@code writer} commits, {@link #commitReady()} commits only worker-completed
+     * entries and resubmits encode-failed/rejected entries off-thread without ever encoding on the server
+     * thread, {@link #tryDrainKeyNow(long)} provides non-blocking reload gating for {@code request()},
+     * {@link #drainKey(long)} + {@link #takeReAdoptable(long)} guard synchronous {@code loadNow()}, and
+     * {@link #drainAll()} finishes all in-flight encodes and remaining retries on {@code close()} without
+     * ever invoking an encoder concurrently with a running worker.
+     */
+    static final class UntouchedStoreQueue<T> {
+        static final int MAX_EVICTED_RETRIES = 3;
+        static final long DEFAULT_DRAIN_TIMEOUT_MILLIS = 5_000L;
+        static final long INITIAL_RETRY_BACKOFF_NANOS = TimeUnit.SECONDS.toNanos(1);
+        static final long MAX_RETRY_BACKOFF_NANOS = TimeUnit.SECONDS.toNanos(30);
+
+        @FunctionalInterface interface Writer<T> { void write(long key, T tag) throws IOException; }
+        @FunctionalInterface interface ErrorLogger { void log(long key, Throwable failure); }
+
+        record DrainResult(int failedCount, @Nullable Throwable firstFailure) {
+            static final DrainResult OK = new DrainResult(0, null);
+            boolean ok() { return failedCount == 0; }
+        }
+
+        private static final class Attempt<T> {
+            final AtomicBoolean claimed = new AtomicBoolean();
+            final CompletableFuture<T> encoded = new CompletableFuture<>();
+            boolean handled;
+        }
+
+        static final class Entry<T> {
+            private final long key;
+            private final Cube cube;
+            private final boolean owedAnimals;
+            private final List<CompoundTag> entities;
+            private final CubeCodec.PendingTicks pendingTicks;
+            private final Supplier<T> encoder;
+            private final Executor workerPool;
+            private final Executor serverThread;
+            private Attempt<T> attempt = new Attempt<>();
+            private T cachedTag;
+            private boolean rejected;
+            private boolean encodeFailed;
+            private boolean writeFailed;
+            private int failures;
+            private long nextRetryAtNanos;
+            private boolean retryScheduled;
+            @Nullable private Throwable lastFailure;
+
+            Entry(Cube cube, boolean owedAnimals, List<CompoundTag> entities, Supplier<T> encoder,
+                  Executor workerPool, Executor serverThread) {
+                this(cube, owedAnimals, entities, CubeCodec.PendingTicks.EMPTY, encoder, workerPool, serverThread);
+            }
+
+            Entry(Cube cube, boolean owedAnimals, List<CompoundTag> entities, CubeCodec.PendingTicks pendingTicks,
+                  Supplier<T> encoder, Executor workerPool, Executor serverThread) {
+                this.key = cube.key;
+                this.cube = cube;
+                this.owedAnimals = owedAnimals;
+                this.entities = entities;
+                this.pendingTicks = pendingTicks == null ? CubeCodec.PendingTicks.EMPTY : pendingTicks;
+                this.encoder = encoder;
+                this.workerPool = workerPool;
+                this.serverThread = serverThread;
+            }
+
+            long key() { return key; }
+            Cube cube() { return cube; }
+            boolean owedAnimals() { return owedAnimals; }
+            List<CompoundTag> entities() { return entities; }
+            CubeCodec.PendingTicks pendingTicks() { return pendingTicks; }
+            boolean isWorkerInFlight() { return attempt.claimed.get() && !attempt.encoded.isDone(); }
+        }
+
+        private final Long2ObjectOpenHashMap<Entry<T>> pending = new Long2ObjectOpenHashMap<>();
+        private final BooleanSupplier isClosed;
+        private final LongFunction<Cube> currentCube;
+        private final Writer<T> writer;
+        private final Predicate<Entry<T>> metadataUnchanged;
+        private final ErrorLogger errorLogger;
+        private final long drainTimeoutMillis;
+        private final LongSupplier clockNanos;
+        private final BooleanSupplier isServerThread;
+
+        UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
+                            Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger) {
+            this(isClosed, currentCube, writer, metadataUnchanged, errorLogger, DEFAULT_DRAIN_TIMEOUT_MILLIS, System::nanoTime, () -> true);
+        }
+
+        UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
+                            Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger, long drainTimeoutMillis) {
+            this(isClosed, currentCube, writer, metadataUnchanged, errorLogger, drainTimeoutMillis, System::nanoTime, () -> true);
+        }
+
+        UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
+                            Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger, long drainTimeoutMillis,
+                            LongSupplier clockNanos) {
+            this(isClosed, currentCube, writer, metadataUnchanged, errorLogger, drainTimeoutMillis, clockNanos, () -> true);
+        }
+
+        UntouchedStoreQueue(BooleanSupplier isClosed, LongFunction<Cube> currentCube, Writer<T> writer,
+                            Predicate<Entry<T>> metadataUnchanged, ErrorLogger errorLogger, long drainTimeoutMillis,
+                            LongSupplier clockNanos, BooleanSupplier isServerThread) {
+            this.isClosed = isClosed;
+            this.currentCube = currentCube;
+            this.writer = writer;
+            this.metadataUnchanged = metadataUnchanged;
+            this.errorLogger = errorLogger;
+            this.drainTimeoutMillis = Math.max(1L, drainTimeoutMillis);
+            this.clockNanos = Objects.requireNonNull(clockNanos, "clockNanos");
+            this.isServerThread = Objects.requireNonNull(isServerThread, "isServerThread");
+        }
+
+        private void scheduleRetryBackoff(Entry<T> entry) {
+            if (entry.failures < Integer.MAX_VALUE) entry.failures++;
+            int shift = Math.min(Math.max(0, entry.failures - 1), 16);
+            long delay = Math.min(MAX_RETRY_BACKOFF_NANOS, INITIAL_RETRY_BACKOFF_NANOS << shift);
+            entry.nextRetryAtNanos = clockNanos.getAsLong() + delay;
+            entry.retryScheduled = true;
+        }
+
+        private boolean isRetryDue(Entry<T> entry) {
+            return !entry.retryScheduled || (clockNanos.getAsLong() - entry.nextRetryAtNanos >= 0L);
+        }
+
+        void enqueue(Cube cube, boolean owedAnimals, List<CompoundTag> entities, Supplier<T> encoder,
+                     Executor workerPool, Executor serverThread) {
+            enqueue(cube, owedAnimals, entities, CubeCodec.PendingTicks.EMPTY, encoder, workerPool, serverThread);
+        }
+
+        void enqueue(Cube cube, boolean owedAnimals, List<CompoundTag> entities, CubeCodec.PendingTicks pendingTicks,
+                     Supplier<T> encoder, Executor workerPool, Executor serverThread) {
+            CubeCodec.PendingTicks normalizedTicks = pendingTicks == null ? CubeCodec.PendingTicks.EMPTY : pendingTicks;
+            Entry<T> existing = pending.get(cube.key);
+            if (existing != null && existing.cube == cube
+                    && existing.owedAnimals == owedAnimals
+                    && Objects.equals(existing.entities, entities)
+                    && Objects.equals(existing.pendingTicks, normalizedTicks)
+                    && !existing.encodeFailed && !existing.writeFailed && !existing.rejected) {
+                return;
+            }
+            Entry<T> entry = new Entry<>(cube, owedAnimals, entities, normalizedTicks, encoder, workerPool, serverThread);
+            pending.put(cube.key, entry);
+            submitAttempt(entry, entry.attempt);
+        }
+
+        private void submitAttempt(Entry<T> entry, Attempt<T> attempt) {
+            try {
+                entry.workerPool.execute(() -> {
+                    if (!attempt.claimed.compareAndSet(false, true)) return;
+                    T tag;
+                    try {
+                        tag = entry.encoder.get();
+                    } catch (Throwable failure) {
+                        attempt.encoded.completeExceptionally(failure);
+                        entry.serverThread.execute(() -> {
+                            // MinecraftServer (BlockableEventLoop) runs execute() inline on the caller thread
+                            // once stopServer() disables scheduling; leave entry pending for Server thread drain.
+                            if (!isServerThread.getAsBoolean()) return;
+                            onWorkerFailure(entry, attempt, failure);
+                        });
+                        return;
+                    }
+                    attempt.encoded.complete(tag);
+                    entry.serverThread.execute(() -> {
+                        if (!isServerThread.getAsBoolean()) return;
+                        onWorkerSuccess(entry, attempt, tag);
+                    });
+                });
+            } catch (RejectedExecutionException rejected) {
+                entry.rejected = true;
+                entry.lastFailure = rejected;
+                scheduleRetryBackoff(entry);
+            }
+        }
+
+        private void resubmitOffThread(Entry<T> entry) {
+            if (entry.isWorkerInFlight()) return;
+            Attempt<T> next = new Attempt<>();
+            entry.attempt = next;
+            entry.encodeFailed = false;
+            entry.rejected = false;
+            entry.retryScheduled = false;
+            submitAttempt(entry, next);
+        }
+
+        void supersede(long key) {
+            pending.remove(key);
+        }
+
+        boolean hasPending(long key) {
+            return pending.containsKey(key);
+        }
+
+        private boolean isInvalidated(Entry<T> entry, @Nullable Cube now) {
+            return entry.cube.edited || (now != null && now != entry.cube);
+        }
+
+        private void onWorkerSuccess(Entry<T> entry, Attempt<T> attempt, T tag) {
+            if (entry.attempt != attempt || attempt.handled) return;
+            attempt.handled = true;
+            entry.cachedTag = tag;
+            commit(entry, tag, false);
+        }
+
+        private void onWorkerFailure(Entry<T> entry, Attempt<T> attempt, Throwable failure) {
+            if (entry.attempt != attempt || attempt.handled) return;
+            attempt.handled = true;
+            fail(entry, failure, false);
+        }
+
+        private void fail(Entry<T> entry, Throwable failure, boolean retainOnFailure) {
+            if (pending.get(entry.key) != entry) return;
+            entry.lastFailure = failure;
+            errorLogger.log(entry.key, failure);
+            Cube now = currentCube.apply(entry.key);
+            if (isClosed.getAsBoolean() || isInvalidated(entry, now)) {
+                pending.remove(entry.key);
+                return;
+            }
+            // Never discard an evicted (or caller-retained) authoritative snapshot when encode retries fail.
+            if (retainOnFailure || now == null) {
+                entry.encodeFailed = true;
+                scheduleRetryBackoff(entry);
+                return;
+            }
+            pending.remove(entry.key);
+        }
+
+        /**
+         * Attempts to write {@code tag} for {@code entry}. Returns {@code true} only if {@code writer.write()}
+         * succeeded or the entry was already invalidated/superseded; returns {@code false} if closed or write failed.
+         * Evicted authoritative snapshots are retained in {@code pending} with exponential retry backoff until
+         * committed, invalidated, or re-adopted.
+         */
+        private boolean commit(Entry<T> entry, T tag, boolean retainOnFailure) {
+            if (pending.get(entry.key) != entry) return true;
+            Cube now = currentCube.apply(entry.key);
+            if (isClosed.getAsBoolean()) {
+                pending.remove(entry.key);
+                entry.lastFailure = new IOException("Cube world closed before saving pending cube " + CubeKey.toString(entry.key));
+                return false;
+            }
+            if (isInvalidated(entry, now)) {
+                pending.remove(entry.key);
+                return true;
+            }
+            try {
+                writer.write(entry.key, tag);
+                pending.remove(entry.key);
+                entry.writeFailed = false;
+                entry.encodeFailed = false;
+                entry.rejected = false;
+                entry.retryScheduled = false;
+                entry.lastFailure = null;
+                if (!entry.cube.edited && (now == null || metadataUnchanged.test(entry))) {
+                    entry.cube.dirty = false;
+                }
+                return true;
+            } catch (IOException | RuntimeException failure) {
+                entry.lastFailure = failure;
+                errorLogger.log(entry.key, failure);
+                entry.cachedTag = tag;
+                entry.writeFailed = true;
+                if (isClosed.getAsBoolean() || isInvalidated(entry, now)) {
+                    pending.remove(entry.key);
+                    return false;
+                }
+                // Never discard an evicted (or caller-retained) authoritative snapshot when write retries fail.
+                if (retainOnFailure || now == null) {
+                    scheduleRetryBackoff(entry);
+                    return false;
+                }
+                pending.remove(entry.key);
+                return false;
+            }
+        }
+
+        /**
+         * Server thread ({@code save()}): drops invalidated entries, commits only entries whose worker
+         * encoding already finished (plus write-retry entries with a cached tag), and resubmits any
+         * encode-failed or rejected entries off-thread without ever calling {@code encoder.get()} on
+         * the server thread.
+         */
+        void commitReady() {
+            if (pending.isEmpty()) return;
+            List<Entry<T>> snapshot = new ArrayList<>(pending.values());
+            for (Entry<T> entry : snapshot) {
+                if (pending.get(entry.key) != entry) continue;
+                Cube now = currentCube.apply(entry.key);
+                if (isClosed.getAsBoolean() || isInvalidated(entry, now)) {
+                    pending.remove(entry.key);
+                    continue;
+                }
+                if (entry.writeFailed && entry.cachedTag != null) {
+                    if (isRetryDue(entry)) {
+                        commit(entry, entry.cachedTag, false);
+                    }
+                    continue;
+                }
+                if (entry.encodeFailed || entry.rejected) {
+                    if (isRetryDue(entry)) {
+                        resubmitOffThread(entry);
+                    }
+                    continue;
+                }
+                Attempt<T> attempt = entry.attempt;
+                if (!attempt.encoded.isDone()) continue;
+                try {
+                    T tag = attempt.encoded.get();
+                    if (!attempt.handled) {
+                        attempt.handled = true;
+                        entry.cachedTag = tag;
+                        commit(entry, tag, false);
+                    }
+                } catch (ExecutionException failed) {
+                    if (!attempt.handled) {
+                        attempt.handled = true;
+                        fail(entry, failed.getCause() != null ? failed.getCause() : failed, false);
+                        if (pending.get(entry.key) == entry && entry.encodeFailed && isRetryDue(entry)) {
+                            resubmitOffThread(entry);
+                        }
+                    }
+                } catch (CancellationException cancelled) {
+                    if (!attempt.handled) {
+                        attempt.handled = true;
+                        fail(entry, cancelled, false);
+                        if (pending.get(entry.key) == entry && entry.encodeFailed && isRetryDue(entry)) {
+                            resubmitOffThread(entry);
+                        }
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    entry.lastFailure = interrupted;
+                    errorLogger.log(entry.key, interrupted);
+                }
+            }
+        }
+
+        /**
+         * Non-blocking reload check for async {@code request()}: returns {@code true} if nothing is pending
+         * (or invalidated), or if an already-encoded snapshot committed cleanly to {@code writer}. Returns
+         * {@code false} without blocking or encoding on the server thread if encoding is still in flight or
+         * writing failed, so the caller defers reload instead of reading stale storage.
+         */
+        boolean tryDrainKeyNow(long key) {
+            Entry<T> entry = pending.get(key);
+            if (entry == null) return true;
+            Cube now = currentCube.apply(key);
+            if (isClosed.getAsBoolean()) {
+                pending.remove(key);
+                return false;
+            }
+            if (isInvalidated(entry, now)) {
+                pending.remove(key);
+                return true;
+            }
+            if (entry.writeFailed && entry.cachedTag != null) {
+                if (!isRetryDue(entry)) return false;
+                return commit(entry, entry.cachedTag, false);
+            }
+            if (entry.encodeFailed || entry.rejected) {
+                if (isRetryDue(entry)) {
+                    resubmitOffThread(entry);
+                }
+                return false;
+            }
+            Attempt<T> attempt = entry.attempt;
+            if (!attempt.encoded.isDone()) return false;
+            try {
+                T tag = attempt.encoded.get();
+                attempt.handled = true;
+                entry.cachedTag = tag;
+                return commit(entry, tag, false);
+            } catch (ExecutionException failed) {
+                if (!attempt.handled) {
+                    attempt.handled = true;
+                    fail(entry, failed.getCause() != null ? failed.getCause() : failed, false);
+                    if (pending.get(key) == entry && entry.encodeFailed && isRetryDue(entry)) {
+                        resubmitOffThread(entry);
+                    }
+                }
+                return false;
+            } catch (CancellationException cancelled) {
+                if (!attempt.handled) {
+                    attempt.handled = true;
+                    fail(entry, cancelled, false);
+                    if (pending.get(key) == entry && entry.encodeFailed && isRetryDue(entry)) {
+                        resubmitOffThread(entry);
+                    }
+                }
+                return false;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                entry.lastFailure = interrupted;
+                errorLogger.log(entry.key, interrupted);
+                return false;
+            }
+        }
+
+        /**
+         * Blocking drain for synchronous {@code loadNow()}: returns {@code true} ONLY when nothing is pending
+         * (or invalidated) or the pending snapshot committed cleanly to {@code writer}. When {@code false} is
+         * returned, the pending snapshot remains authoritative and callers must call {@link #takeReAdoptable(long)}
+         * rather than reading stale storage.
+         */
+        boolean drainKey(long key) {
+            Entry<T> entry = pending.get(key);
+            if (entry == null) return true;
+            Cube now = currentCube.apply(key);
+            if (isClosed.getAsBoolean()) {
+                pending.remove(key);
+                return false;
+            }
+            if (isInvalidated(entry, now)) {
+                pending.remove(key);
+                return true;
+            }
+            return drainEntryOnce(entry, true);
+        }
+
+        /**
+         * If {@code key} still has an authoritative pending snapshot that is NOT currently being encoded on
+         * a worker thread, removes it from {@code pending}, marks its cube dirty, and returns it for direct
+         * re-adoption into {@code cubes}. Returns {@code null} if a worker encode is still in flight or closed.
+         */
+        @Nullable Entry<T> takeReAdoptable(long key) {
+            if (isClosed.getAsBoolean()) return null;
+            Entry<T> entry = pending.get(key);
+            if (entry == null || entry.isWorkerInFlight()) return null;
+            pending.remove(key);
+            entry.cube.modified = true;
+            entry.cube.dirty = true;
+            return entry;
+        }
+
+        /**
+         * Blocking drain for {@code close()}: finishes all pending untouched entries (waiting for in-flight
+         * worker encodes without concurrent encoding and executing remaining write/encode retries) before
+         * storage is closed, returning the count and first cause of any entries that still could not be saved.
+         */
+        DrainResult drainAll() {
+            if (pending.isEmpty()) return DrainResult.OK;
+            int failedCount = 0;
+            Throwable firstFailure = null;
+            // Drain non-in-flight entries first so in-flight worker encodes can finish concurrently.
+            List<Entry<T>> firstPass = new ArrayList<>(pending.values());
+            List<Entry<T>> deferred = new ArrayList<>();
+            for (Entry<T> entry : firstPass) {
+                if (pending.get(entry.key) != entry) continue;
+                if (entry.isWorkerInFlight()) {
+                    deferred.add(entry);
+                    continue;
+                }
+                if (!drainEntryWithRetries(entry)) {
+                    failedCount++;
+                    if (firstFailure == null) firstFailure = entry.lastFailure;
+                }
+            }
+            for (Entry<T> entry : deferred) {
+                if (pending.get(entry.key) != entry) continue;
+                if (!drainEntryWithRetries(entry)) {
+                    failedCount++;
+                    if (firstFailure == null) firstFailure = entry.lastFailure;
+                }
+            }
+            return new DrainResult(failedCount, firstFailure);
+        }
+
+        private boolean drainEntryWithRetries(Entry<T> entry) {
+            if (pending.get(entry.key) != entry) return true;
+            Cube now = currentCube.apply(entry.key);
+            if (isClosed.getAsBoolean()) {
+                pending.remove(entry.key);
+                entry.lastFailure = new IOException("Cube world closed before saving pending cube " + CubeKey.toString(entry.key));
+                return false;
+            }
+            if (isInvalidated(entry, now)) {
+                pending.remove(entry.key);
+                return true;
+            }
+            boolean alreadyFailed = entry.writeFailed || entry.encodeFailed || entry.rejected;
+            if (drainEntryOnce(entry, false)) return true;
+            int remainingRetries = alreadyFailed ? MAX_EVICTED_RETRIES - 1 : MAX_EVICTED_RETRIES;
+            while (pending.get(entry.key) == entry && !entry.isWorkerInFlight() && remainingRetries-- > 0) {
+                if (entry.writeFailed && entry.cachedTag != null) {
+                    if (commit(entry, entry.cachedTag, false)) return true;
+                } else if (entry.encodeFailed || entry.rejected) {
+                    if (retryEncodeSync(entry, false)) return true;
+                } else {
+                    break;
+                }
+            }
+            return false;
+        }
+
+        private boolean retryEncodeSync(Entry<T> entry, boolean retainOnFailure) {
+            try {
+                T tag = entry.encoder.get();
+                entry.encodeFailed = false;
+                entry.rejected = false;
+                entry.cachedTag = tag;
+                return commit(entry, tag, retainOnFailure);
+            } catch (Throwable failure) {
+                fail(entry, failure, retainOnFailure);
+                return false;
+            }
+        }
+
+        private boolean drainEntryOnce(Entry<T> entry, boolean retainOnFailure) {
+            if (pending.get(entry.key) != entry) return true;
+            if (entry.writeFailed && entry.cachedTag != null) {
+                return commit(entry, entry.cachedTag, retainOnFailure);
+            }
+            if (entry.encodeFailed) {
+                return retryEncodeSync(entry, retainOnFailure);
+            }
+            Attempt<T> attempt = entry.attempt;
+            if (attempt.claimed.compareAndSet(false, true)) {
+                try {
+                    T tag = entry.encoder.get();
+                    entry.rejected = false;
+                    entry.cachedTag = tag;
+                    attempt.encoded.complete(tag);
+                    attempt.handled = true;
+                    return commit(entry, tag, retainOnFailure);
+                } catch (Throwable failure) {
+                    attempt.encoded.completeExceptionally(failure);
+                    attempt.handled = true;
+                    fail(entry, failure, retainOnFailure);
+                    return false;
+                }
+            }
+            // Already claimed by a worker: wait for its future and NEVER invoke entry.encoder.get() concurrently.
+            try {
+                T tag = attempt.encoded.get(drainTimeoutMillis, TimeUnit.MILLISECONDS);
+                attempt.handled = true;
+                entry.cachedTag = tag;
+                return commit(entry, tag, retainOnFailure);
+            } catch (ExecutionException failed) {
+                Throwable cause = failed.getCause() != null ? failed.getCause() : failed;
+                if (!attempt.handled) {
+                    attempt.handled = true;
+                    fail(entry, cause, retainOnFailure);
+                } else {
+                    entry.lastFailure = cause;
+                }
+                return false;
+            } catch (TimeoutException timedOut) {
+                // Worker is still encoding the same PalettedContainer: leave entry pending/dirty instead of concurrent encode.
+                entry.lastFailure = timedOut;
+                errorLogger.log(entry.key, timedOut);
+                return false;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                entry.lastFailure = interrupted;
+                errorLogger.log(entry.key, interrupted);
+                return false;
+            } catch (CancellationException cancelled) {
+                if (!attempt.handled) {
+                    attempt.handled = true;
+                    fail(entry, cancelled, retainOnFailure);
+                } else {
+                    entry.lastFailure = cancelled;
+                }
+                return false;
+            }
+        }
+
+        int pendingCount() { return pending.size(); }
+    }
 }

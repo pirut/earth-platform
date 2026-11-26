@@ -33,7 +33,7 @@ class ColumnSurveysTest {
         }
     }
 
-    @Test void offEveryColumnIsAskedForOnceAndAFailureStaysAsBefore() {
+    @Test void offFailedSurveyRetriesWithBoundedBackoffAndRecovers() {
         Rig rig = new Rig(false);
         for (int x = 0; x < 500; x++) assertEquals(ColumnSurveys.UNKNOWN_LOW, rig.surveys.lowest(x, 0, ColumnSurveys.ANY));
         assertEquals(500, rig.surveys.inFlight(), "no limit, as before");
@@ -43,11 +43,54 @@ class ColumnSurveysTest {
         rig.finish(0);
         assertEquals(40, rig.surveys.lowest(3, 0, ColumnSurveys.ANY));
         assertEquals(SurfaceFlight.UNKNOWN, rig.surveys.surfaceBounds(3, 0), "off, no surface bounds are kept");
-        for (int tick : new int[] {100, 10_000, 1_000_000}) {
-            rig.surveys.drain(tick);
-            assertEquals(Integer.MIN_VALUE, rig.surveys.lowest(7, 0, ColumnSurveys.ANY), "the failed ground, as on main");
+        assertEquals(Integer.MIN_VALUE, rig.surveys.lowest(7, 0, ColumnSurveys.ANY));
+        assertTrue(rig.queued.isEmpty(), "not retried before RETRY_TICKS");
+
+        // Before backoff elapses, still not retried.
+        rig.surveys.drain(ColumnSurveys.RETRY_TICKS - 1);
+        rig.surveys.lowest(7, 0, ColumnSurveys.ANY);
+        assertTrue(rig.queued.isEmpty(), "waits out backoff before retrying");
+
+        // Once backoff elapses and the transient failure clears, the column recovers instead of staying poisoned.
+        rig.failing = column -> false;
+        rig.surveys.drain(ColumnSurveys.RETRY_TICKS);
+        rig.surveys.lowest(7, 0, ColumnSurveys.ANY);
+        assertEquals(1, rig.queued.size(), "off, a failed survey is retried once backoff expires");
+        rig.finish(ColumnSurveys.RETRY_TICKS);
+        assertEquals(40, rig.surveys.lowest(7, 0, ColumnSurveys.ANY), "recovered ground replaces FAILED");
+        assertEquals(501, rig.asked);
+
+        // Once recovered, never asked for again.
+        rig.surveys.drain(1_000_000);
+        rig.surveys.lowest(7, 0, ColumnSurveys.ANY);
+        assertTrue(rig.queued.isEmpty());
+    }
+
+    @Test void offPersistentFailureStopsAfterBoundedRetriesAndResetsOnPrune() {
+        Rig rig = new Rig(false);
+        long column = CubeKey.column(9, -3);
+        rig.failing = c -> true;
+        rig.surveys.lowest(9, -3, ColumnSurveys.ANY);
+        rig.finish(0);
+        int at = 0;
+        for (int retry = 1; retry <= ColumnSurveys.RETRIES; retry++) {
+            int wait = ColumnSurveys.RETRY_TICKS << (retry - 1);
+            rig.surveys.drain(at + wait);
+            rig.surveys.lowest(9, -3, ColumnSurveys.ANY);
+            assertEquals(1, rig.queued.size(), "retry " + retry + " scheduled");
+            at += wait;
+            rig.finish(at);
         }
-        assertEquals(500, rig.asked, "off, a failed survey is never asked for again");
+        assertEquals(1 + ColumnSurveys.RETRIES, rig.asked);
+        rig.surveys.drain(Integer.MAX_VALUE - 1);
+        rig.surveys.lowest(9, -3, ColumnSurveys.ANY);
+        assertTrue(rig.queued.isEmpty(), "bounded retries stop after RETRIES");
+
+        rig.surveys.prune(c -> c != column);
+        rig.failing = c -> false;
+        rig.surveys.lowest(9, -3, ColumnSurveys.ANY);
+        rig.finish(Integer.MAX_VALUE - 1);
+        assertEquals(40, rig.surveys.lowest(9, -3, ColumnSurveys.ANY), "pruned column retries cleanly");
     }
 
     /**

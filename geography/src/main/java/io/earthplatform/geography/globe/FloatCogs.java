@@ -40,8 +40,14 @@ final class FloatCogs implements AutoCloseable {
     private final int maxBlocksInMemory;
     /** The finest levels whose block tables are never read; see the constructor. */
     private final int skipLevels;
+    static final long FORBIDDEN_TTL_NANOS = TimeUnit.MINUTES.toNanos(10);
+    private static final int MAX_FORBIDDEN_ENTRIES = 16_384;
+
     private final RangeFiles files;
     private final Map<Integer, CompletableFuture<Header>> headers = new ConcurrentHashMap<>();
+    /** Bounded in-memory TTL cache for HTTP 403 replies so transient denials self-heal without poisoning disk. */
+    private final ConcurrentHashMap<Integer, Long> forbiddenUntil = new ConcurrentHashMap<>();
+    private volatile long forbiddenTtlNanos = FORBIDDEN_TTL_NANOS;
     private final LruMap<Long, float[]> memory = new LruMap<>(32);
     private long memoryBytes;
     /** Keeps {@link #shedMemory} registered for as long as this source is alive. */
@@ -127,6 +133,7 @@ final class FloatCogs implements AutoCloseable {
     record Level(int width, int height, int block, long[] offsets, long[] counts) {}
     record Header(Level[] levels, double x0, double y0, double pixelX, double pixelY, boolean bigEndian, int predictor, boolean compressed) {
         static final Header MISSING = new Header(new Level[0], 0, 0, 0, 0, false, 1, true);
+        static final Header FORBIDDEN = new Header(new Level[0], 0, 0, 0, 0, false, 1, true);
         int overviews() { return levels.length; }
     }
     /** An overview of the file that holds a point. */
@@ -383,14 +390,48 @@ final class FloatCogs implements AutoCloseable {
         }
     }
 
+    /** Package-private for tests: adjusts the in-memory TTL for HTTP 403 negative caching. */
+    void setForbiddenTtlNanos(long ttlNanos) {
+        this.forbiddenTtlNanos = Math.max(0L, ttlNanos);
+    }
+
+    private boolean isForbiddenCached(int file) {
+        Long until = forbiddenUntil.get(file);
+        if (until == null) return false;
+        if (System.nanoTime() - until < 0) return true;
+        forbiddenUntil.remove(file, until);
+        return false;
+    }
+
+    private void rememberForbidden(int file) {
+        long now = System.nanoTime();
+        if (forbiddenUntil.size() >= MAX_FORBIDDEN_ENTRIES) {
+            forbiddenUntil.entrySet().removeIf(e -> now - e.getValue() >= 0);
+            if (forbiddenUntil.size() >= MAX_FORBIDDEN_ENTRIES) forbiddenUntil.clear();
+        }
+        forbiddenUntil.put(file, now + forbiddenTtlNanos);
+    }
+
     private Header header(int file) {
         // Asked for every pixel read: a header already read is returned at once, without naming the file.
         CompletableFuture<Header> known = headers.get(file);
         if (known != null && known.isDone() && !known.isCompletedExceptionally()) return known.join();
+        if (isForbiddenCached(file)) {
+            Path cached = cached(names.apply(file), ".header");
+            if (cached == null || !Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) return Header.MISSING;
+        }
         CompletableFuture<Header> mine = new CompletableFuture<>(), shared = headers.putIfAbsent(file, mine);
         if (shared == null) {
-            try { mine.complete(readHeader(file)); }
-            catch (Throwable failure) {
+            try {
+                Header loaded = readHeader(file);
+                if (loaded == Header.FORBIDDEN) {
+                    mine.complete(Header.MISSING);
+                    // Do not pin 403 forever in headers: rely on forbiddenUntil so it self-heals after TTL.
+                    headers.remove(file, mine);
+                } else {
+                    mine.complete(loaded);
+                }
+            } catch (Throwable failure) {
                 files.failures.incrementAndGet();
                 mine.completeExceptionally(failure);
                 // A failed header is retried by the next caller.
@@ -408,29 +449,43 @@ final class FloatCogs implements AutoCloseable {
     private Header readHeader(int file) throws IOException, InterruptedException {
         String name = names.apply(file);
         Path cached = cached(name, ".header"), missing = cached(name, ".none");
-        if (missing != null && Files.exists(missing)) return Header.MISSING;
         if (cached != null && Files.isRegularFile(cached, LinkOption.NOFOLLOW_LINKS)) {
             try {
                 Header header = CogHeader.parse(Pieces.of(DiskCache.read(cached)), skipLevels);
+                forbiddenUntil.remove(file);
                 files.diskHits.incrementAndGet();
                 return header;
             } catch (IOException | RuntimeException corrupt) {
                 Files.deleteIfExists(cached);
             }
         }
+        boolean legacyNone = false;
+        if (missing != null && Files.exists(missing)) {
+            if (RangeFiles.isConfirmedNotFoundMarker(missing) || !allowNetwork) return Header.MISSING;
+            // Legacy 0-byte (or unversioned) .none file: revalidate once online.
+            legacyNone = true;
+        }
         if (!allowNetwork) throw new MissingTerrainException(what + " " + name + " not cached and network access is disabled");
-        byte[] start = files.fetch(base.resolve(name), 0, HEADER_BYTES);
-        if (start == null) {
-            if (missing != null) DiskCache.write(missing, new byte[0]);
+        if (isForbiddenCached(file)) return Header.FORBIDDEN;
+        RangeFiles.FetchResult startResult = files.fetchResult(base.resolve(name), 0, HEADER_BYTES);
+        if (startResult.isNotFound()) {
+            if (missing != null) DiskCache.write(missing, RangeFiles.CONFIRMED_NOT_FOUND_MARKER);
             return Header.MISSING;
         }
+        if (startResult.isForbidden()) {
+            // Preserve any legacy .none marker for future offline sessions; record 403 strictly in memory.
+            rememberForbidden(file);
+            return Header.FORBIDDEN;
+        }
         Pieces pieces = new Pieces();
-        pieces.add(0, start);
+        pieces.add(0, startResult.bytes());
         // Directories and their arrays may lie anywhere in the file, even at its end: each part the
         // parse finds it lacks is fetched where it lies, and the parse runs again.
         while (true) {
             try {
                 Header header = CogHeader.parse(pieces, skipLevels);
+                forbiddenUntil.remove(file);
+                if (legacyNone && missing != null) Files.deleteIfExists(missing);
                 if (cached != null) DiskCache.write(cached, pieces.bytes());
                 return header;
             } catch (UnsupportedFile unsupported) {
@@ -445,7 +500,11 @@ final class FloatCogs implements AutoCloseable {
                     TerrariumTileSource.warnOnce(what + " " + name, "Cannot read " + what + " " + name + "; leaving it out", need);
                     return Header.MISSING;
                 }
-                byte[] more = files.fetch(base.resolve(name), need.offset, length);
+                RangeFiles.FetchResult moreResult = files.fetchResult(base.resolve(name), need.offset, length);
+                if (moreResult.isForbidden()) {
+                    throw new MissingTerrainException(what + " " + name + " temporarily forbidden while reading header (HTTP 403)");
+                }
+                byte[] more = moreResult.isOk() ? moreResult.bytes() : null;
                 // A file that ends before its own header says is as unreadable however often it is asked for.
                 if (more == null || more.length < need.length) {
                     TerrariumTileSource.warnOnce(what + " " + name, "Cannot read " + what + " " + name + ": it ends before its header does; leaving it out", need);

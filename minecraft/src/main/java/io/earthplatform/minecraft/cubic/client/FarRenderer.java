@@ -493,7 +493,7 @@ public final class FarRenderer {
             return section == null ? net.minecraft.world.level.block.Blocks.AIR.defaultBlockState() : section.getBlockState(x, row & 15, z);
         }
 
-        FarMesher.Side side() { return new FarMesher.Side(sections, bottom, drops, packet); }
+        FarMesher.Side side() { return new FarMesher.Side(sections, bottom, drops, packet, drawnCubes); }
 
         int baseY() { return bottom * Far.width(level); }
 
@@ -1265,6 +1265,12 @@ public final class FarRenderer {
             columns.remove(column.key);
             places.remove(column);
             unlink(column);
+            // A masked neighbour now sees this evicted side as absent: neighbour at() reads air,
+            // border drops fall back to its own edge, and border seam faces/extensions can change.
+            for (int i = 0; i < 4; i++) {
+                Column side = held(column.neighbour(i));
+                if (side != null && side.drawnCubes != null) schedule(side);
+            }
             columnsVersion++;
             if (listed(column)) walkStale = true;
             dueColumns.remove(column);
@@ -1471,6 +1477,16 @@ public final class FarRenderer {
         column.drawnCubes = set;
         if (set != null) masked.add(column);
         else masked.remove(column);
+        scheduleMasked(column, lost);
+        // Cardinal neighbours with drawn cubes read this column's drawnCubes snapshot to predict
+        // its smoothing and border downhill-seam extensions; remesh them when this snapshot changes.
+        for (int i = 0; i < 4; i++) {
+            Column side = beside(column, i);
+            if (side != null && side.drawnCubes != null) scheduleMasked(side, lost);
+        }
+    }
+
+    private void scheduleMasked(Column column, boolean lost) {
         if (lost && column.drawnPick == pickSerial) {
             due(column, ticks);
             return;

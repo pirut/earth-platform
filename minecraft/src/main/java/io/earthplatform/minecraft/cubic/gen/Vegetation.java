@@ -12,6 +12,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtOps;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
@@ -30,6 +31,7 @@ import net.minecraft.world.level.block.state.properties.BambooLeaves;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.material.Fluids;
 
 /**
  * What grows on a {@link SurfaceGenerator}'s ground, as vanilla grows it: grass, ferns, flowers,
@@ -85,11 +87,26 @@ final class Vegetation {
                 } else if (h + 1 <= y0 + 15 && water[gi] + 1 >= y0) underwater(section, x0 + lx, y0, z0 + lz, h, water[gi], s);
             } else if (h + 1 + TALLEST_PLANT >= y0 && h <= y0 + 15) ground(section, x0 + lx, y0, z0 + lz, gi, height, water, s);
         }
-        trees.place(x0, y0, z0, x0 + 15, y0 + 15, z0 + 15, false, true, (x, y, z, state, kind) -> put(section, x - x0, y - y0, z - z0, state, kind));
+        placeTrees(section, x0, y0, z0, height, water);
+    }
+
+    /** Writes only trees reaching into the cube at (x0, y0, z0), used for sky cubes above ground and plants. */
+    void placeTrees(LevelChunkSection section, int x0, int y0, int z0, int[] height, int[] water) {
+        trees.place(x0, y0, z0, x0 + 15, y0 + 15, z0 + 15, false, true,
+                (x, y, z, state, kind, aquatic) -> put(section, x - x0, y - y0, z - z0, height, water, state, kind, aquatic));
     }
 
     /** How high above the ground the trees around this cube column can reach. */
     int tallest(int cx, int cz) { return trees.tallest(cx, cz); }
+
+    /** Whether any tree rooted in a neighbouring chunk reaches into chunk (cx, cz) at or above {@code y0}. */
+    boolean hasOverhangingTrees(int cx, int cz, int y0, int colMax) { return trees.hasOverhangingTrees(cx, cz, y0, colMax); }
+
+    /** Whether any local or neighbouring tree reaches into chunk {@code (cx, cz)} at or above {@code y0}. */
+    boolean hasTreesReaching(int cx, int cz, int y0, int colMax) { return trees.hasTreesReaching(cx, cz, y0, colMax); }
+
+    /** Drops cached tree chunks and ceilings when memory runs short. */
+    void shedCaches() { trees.shedCaches(); }
 
     /** Writes the trees in a box, for far terrain. */
     void trees(int x0, int y0, int z0, int x1, int y1, int z1, boolean giantsOnly, TreeShape.Sink sink) {
@@ -152,8 +169,10 @@ final class Vegetation {
             if (roll < s.grass() / 5) plant = state(Blocks.DEAD_BUSH);
             else if (roll < s.grass() / 3 && top == COARSE_DIRT) plant = state(Blocks.SHORT_GRASS);
         } else if (top.is(Blocks.WATER)) {
-            // Marsh pools level with the ground: lily pads.
-            if (roll < 90) plant = state(Blocks.LILY_PAD);
+            // Marsh pools level with the ground: freeze in cold biomes, lily pads in warm ones.
+            if (snowy || gen.iced(s, x, z)) {
+                if (h >= y0 && h <= y0 + 15) replaceWater(section, lx, h - y0, lz, ICE);
+            } else if (roll < 90) plant = state(Blocks.LILY_PAD);
         } else if (top == MUD) {
             if (biome.is(Biomes.MANGROVE_SWAMP) && roll < 120) plant = state(Blocks.MOSS_CARPET);
         } else if (soil) {
@@ -179,7 +198,7 @@ final class Vegetation {
             // Cold ground is under snow, with a few plants showing through.
             if (snowy && stalk == null && !(plant != null && plant.is(Blocks.SWEET_BERRY_BUSH)) && roll >= s.grass() / 3) plant = SNOW;
         }
-        if (snowy && plant == null && stalk == null && !top.is(Blocks.POWDER_SNOW) && !top.is(Blocks.ICE) && !top.is(Blocks.PACKED_ICE)) plant = SNOW;
+        if (snowy && plant == null && stalk == null && !top.is(Blocks.WATER) && !top.is(Blocks.POWDER_SNOW) && !top.is(Blocks.ICE) && !top.is(Blocks.PACKED_ICE)) plant = SNOW;
         if (plant == SNOW && top.hasProperty(SnowyDirtBlock.SNOWY) && h >= y0 && h <= y0 + 15 && section.getBlockState(lx, h - y0, lz) == top)
             section.setBlockState(lx, h - y0, lz, top.setValue(SnowyDirtBlock.SNOWY, true), false);
         int y = h + 1;
@@ -308,21 +327,30 @@ final class Vegetation {
     // Placement ------------------------------------------------------------------------------------
 
     /**
-     * A tree block at a section-local position: trunks replace what is there, crowns fill air,
-     * plants and water (waterlogged where they can be), and ground blocks replace only ground.
+     * A tree block at a section-local position: trunks replace non-water (and water only for
+     * water-admitted aquatic trees), crowns fill air, plants and water (waterlogged where they
+     * can be), and ground blocks replace only dry ground unless the planted tree is aquatic.
      */
-    private static void put(LevelChunkSection section, int lx, int ly, int lz, BlockState state, byte kind) {
+    private static void put(LevelChunkSection section, int lx, int ly, int lz, int[] height, int[] water, BlockState state, byte kind, boolean aquatic) {
         BlockState here = section.getBlockState(lx, ly, lz);
-        boolean water = here.is(Blocks.WATER);
+        var fluid = here.getFluidState();
+        // Check Fluids.WATER / FLOWING_WATER alongside FluidTags.WATER so unit tests running before tag binding still detect waterlogged flora.
+        boolean inWater = fluid.is(FluidTags.WATER) || fluid.is(Fluids.WATER) || fluid.is(Fluids.FLOWING_WATER);
+        int gi = (lz + 1) * 18 + lx + 1;
         switch (kind) {
-            case TreeShape.GROUND -> { if (here.isAir() || !here.getFluidState().isEmpty()) return; }
+            case TreeShape.GROUND -> {
+                if (here.isAir() || !here.getFluidState().isEmpty()) return;
+                if (!aquatic && water[gi] != DRY && water[gi] >= height[gi]) return;
+            }
             case TreeShape.CROWN -> {
                 if (!here.isAir() && !here.canBeReplaced()) return;
-                if (water && !state.hasProperty(BlockStateProperties.WATERLOGGED)) return;
+                if (inWater && !state.hasProperty(BlockStateProperties.WATERLOGGED)) return;
             }
-            default -> {}
+            default -> {
+                if (inWater && !aquatic) return;
+            }
         }
-        if (state.hasProperty(BlockStateProperties.WATERLOGGED)) state = state.setValue(BlockStateProperties.WATERLOGGED, water);
+        if (state.hasProperty(BlockStateProperties.WATERLOGGED)) state = state.setValue(BlockStateProperties.WATERLOGGED, inWater);
         section.setBlockState(lx, ly, lz, state, false);
     }
 

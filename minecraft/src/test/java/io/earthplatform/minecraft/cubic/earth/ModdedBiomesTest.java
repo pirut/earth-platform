@@ -211,7 +211,8 @@ class ModdedBiomesTest {
         assertEquals("regions_unexplored:redwoods", id(ruResolved.redwoodForest));
         assertEquals("regions_unexplored:bayou", id(ruResolved.bayou));
         assertEquals("regions_unexplored:marsh", id(ruResolved.marsh));
-        assertEquals("regions_unexplored:tundra", id(ruResolved.tundra));
+        // regions_unexplored:tundra at 0.1f is freezing (< 0.15f), so the non-snowy tundra slot must fall back to meadow.
+        assertEquals("minecraft:meadow", id(ruResolved.tundra));
         assertEquals("regions_unexplored:steppe", id(ruResolved.coldDesert));
         assertEquals("regions_unexplored:frozen_pine_taiga", id(ruResolved.snowyConiferousForest));
 
@@ -231,6 +232,41 @@ class ModdedBiomesTest {
         Registry<Biome> warmSnowy = registryWith(Map.of("biomesoplenty:snowy_coniferous_forest", 0.5f));
         ModdedBiomes resolved = ModdedBiomes.resolve(warmSnowy, id -> Optional.empty(), true);
         assertEquals("minecraft:snowy_taiga", id(resolved.snowyConiferousForest));
+    }
+
+    @Test void nonSnowySlotsRejectFreezingBiomesAndFrozenTundra() {
+        var freezing = new java.util.LinkedHashMap<String, Float>();
+        for (String id : BOP_REALISTIC) {
+            if (!id.endsWith("snowy_coniferous_forest")) freezing.put(id, -0.2f);
+        }
+        freezing.put("regions_unexplored:tundra", 0.1f);
+        freezing.put("regions_unexplored:frozen_tundra", 0.5f);
+        freezing.put("biomeswevegone:maple_taiga", 0.05f);
+        freezing.put("biomeswevegone:aspen_boreal", 0.0f);
+
+        ModdedBiomes resolved = ModdedBiomes.resolve(registryWith(freezing), id -> Optional.empty(), true);
+        assertFalse(resolved.active(), "freezing candidates must not be accepted into non-snowy slots");
+        assertEquals("minecraft:meadow", id(resolved.tundra));
+        assertEquals("minecraft:swamp", id(resolved.bog));
+        assertEquals("minecraft:taiga", id(resolved.moor));
+        assertEquals("minecraft:taiga", id(resolved.coniferousForest));
+        assertEquals("minecraft:forest", id(resolved.mapleWoods));
+        assertEquals("minecraft:birch_forest", id(resolved.aspenGlade));
+        assertEquals("minecraft:desert", id(resolved.coldDesert));
+        assertEquals("minecraft:windswept_hills", id(resolved.highland));
+
+        // Non-snowy regions_unexplored:tundra (>= 0.15f) is still accepted.
+        ModdedBiomes warmRu = ModdedBiomes.resolve(registryWith(Map.of("regions_unexplored:tundra", 0.2f)), id -> Optional.empty(), true);
+        assertEquals("regions_unexplored:tundra", id(warmRu.tundra));
+
+        // Every resolved slot in a full BOP registry upholds its temperature contract.
+        ModdedBiomes bop = ModdedBiomes.resolve(bopRegistry(), id -> Optional.empty(), true);
+        assertTrue(bop.snowyConiferousForest.value().getBaseTemperature() < 0.15f);
+        for (var slot : List.of(bop.tundra, bop.highland, bop.moor, bop.bog, bop.wetland, bop.marsh,
+                bop.coldDesert, bop.firClearing, bop.coniferousForest, bop.aspenGlade, bop.mapleWoods)) {
+            assertTrue(slot.value().getBaseTemperature() >= 0.15f,
+                    "non-snowy slot " + id(slot) + " must have baseTemperature >= 0.15f");
+        }
     }
 
     @Test void disabledToggleRevertsAllSlotsAndBlocksToVanilla() {

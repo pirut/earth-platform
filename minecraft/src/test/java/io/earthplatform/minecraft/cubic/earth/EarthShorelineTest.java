@@ -49,13 +49,11 @@ import org.junit.jupiter.api.Test;
  */
 class EarthShorelineTest {
     private static final double HOME_LAT = 36.2, HOME_LON = -75.8;
-    private static final int SQUARE_SOUTH = 36, SQUARE_WEST = -78;
-    private static final String SQUARE_NAME = "ESA_WorldCover_10m_2021_v200_N36W078_Map.tif";
     private static final int BLOCK_SIZE = 1024;
     private static final int BLOCK_BYTES = BLOCK_SIZE * BLOCK_SIZE;
     private static final int HEADER_OFFSET = 65536;
 
-    private static Registry<Biome> biomes;
+    static Registry<Biome> biomes;
 
     @BeforeAll
     static void bootRegistries() throws Exception {
@@ -231,27 +229,39 @@ class EarthShorelineTest {
      * Local HTTP fixture serving synthetic Terrarium PNGs and a multi-overview WorldCover TIFF
      * defined directly in relative block coordinates {@code (dx, dz)} around {@link #HOME_LAT}, {@link #HOME_LON}.
      */
-    private static final class SyntheticWorld implements AutoCloseable {
+    static final class SyntheticWorld implements AutoCloseable {
         private final HttpServer server;
-        private final TerrariumTileSource tiles;
-        private final WorldCoverSource cover;
-        private final EarthGenerator generator;
+        final TerrariumTileSource tiles;
+        final WorldCoverSource cover;
+        final EarthGenerator generator;
         private final MercatorGrid grid;
-        private final int homeX, homeZ;
+        final int homeX, homeZ;
+        private final int squareSouth, squareWest;
+        private final String squareName;
         private final DoubleBinaryOperator elevationAt;
         private final IntBinaryOperator coverAt;
+        final java.util.concurrent.atomic.AtomicInteger terrariumRequests = new java.util.concurrent.atomic.AtomicInteger();
         private final ConcurrentHashMap<String, byte[]> pngCache = new ConcurrentHashMap<>();
         private final byte[] tiffHeader;
         private final int[][] blockMeta; // [globalId] -> {overview, tileRow, tileCol}
 
         SyntheticWorld(DoubleBinaryOperator elevationAt, IntBinaryOperator coverAt) throws IOException {
+            this(biomes, HOME_LAT, HOME_LON, elevationAt, coverAt);
+        }
+
+        SyntheticWorld(Registry<Biome> biomeRegistry, double lat, double lon, DoubleBinaryOperator elevationAt, IntBinaryOperator coverAt) throws IOException {
             this.elevationAt = elevationAt;
             this.coverAt = coverAt;
-            EarthSettings settings = EarthSettings.at(HOME_LAT, HOME_LON);
+            EarthSettings settings = EarthSettings.at(lat, lon);
             this.grid = new MercatorGrid(settings.metresPerBlock());
-            GeoPoint home = new GeoPoint(HOME_LAT, HOME_LON);
+            GeoPoint home = new GeoPoint(lat, lon);
             this.homeX = (int) Math.floor(grid.blockX(home));
             this.homeZ = (int) Math.floor(grid.blockZ(home));
+            this.squareSouth = Math.floorDiv((int) Math.floor(lat), WorldCoverSource.SQUARE) * WorldCoverSource.SQUARE;
+            this.squareWest = Math.floorDiv((int) Math.floor(lon), WorldCoverSource.SQUARE) * WorldCoverSource.SQUARE;
+            this.squareName = String.format(java.util.Locale.ROOT, "ESA_WorldCover_10m_2021_v200_%c%02d%c%03d_Map.tif",
+                    squareSouth >= 0 ? 'N' : 'S', Math.abs(squareSouth),
+                    squareWest >= 0 ? 'E' : 'W', Math.abs(squareWest));
 
             TiffLayout layout = buildWorldCoverHeader();
             this.tiffHeader = layout.header;
@@ -266,7 +276,7 @@ class EarthShorelineTest {
             URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/");
             this.tiles = new TerrariumTileSource(base.resolve("terrarium/"), null, true, 128, 8, Duration.ofSeconds(10), List.of());
             this.cover = new WorldCoverSource(base.resolve("worldcover/"), null, true, 64, 8, Duration.ofSeconds(10));
-            this.generator = new EarthGenerator(1234L, biomes, settings, tiles, cover, null, null);
+            this.generator = new EarthGenerator(1234L, biomeRegistry, settings, tiles, cover, null, null);
         }
 
         void ground(int dx, int dz, int[] out) {
@@ -274,6 +284,7 @@ class EarthShorelineTest {
         }
 
         private void serveTerrarium(HttpExchange exchange) throws IOException {
+            terrariumRequests.incrementAndGet();
             String path = exchange.getRequestURI().getPath();
             String key = path.substring("/terrarium/".length());
             byte[] png = pngCache.computeIfAbsent(key, this::renderTerrariumTile);
@@ -319,7 +330,7 @@ class EarthShorelineTest {
 
         private void serveWorldCover(HttpExchange exchange) throws IOException {
             String path = exchange.getRequestURI().getPath();
-            if (!path.endsWith("/" + SQUARE_NAME)) {
+            if (!path.endsWith("/" + squareName)) {
                 exchange.sendResponseHeaders(404, -1);
                 exchange.close();
                 return;
@@ -333,13 +344,14 @@ class EarthShorelineTest {
             }
             byte[] slice;
             if (start == 0) {
-                int len = (int) Math.min(tiffHeader.length, end - start + 1);
+                int len = (int) Math.min(HEADER_OFFSET, end - start + 1);
                 slice = Arrays.copyOf(tiffHeader, len);
             } else {
                 int id = (int) ((start - HEADER_OFFSET) / BLOCK_BYTES);
                 int[] meta = blockMeta[id];
                 slice = renderWorldCoverBlock(meta[0], meta[1], meta[2]);
             }
+            exchange.getResponseHeaders().set("Content-Range", "bytes " + start + "-" + (start + slice.length - 1) + "/" + (HEADER_OFFSET + (long) blockMeta.length * BLOCK_BYTES));
             exchange.sendResponseHeaders(206, slice.length);
             exchange.getResponseBody().write(slice);
             exchange.close();
@@ -352,8 +364,8 @@ class EarthShorelineTest {
             for (int i = 0; i < BLOCK_SIZE; i++) {
                 double fx = (tileCol * BLOCK_SIZE + i + 0.5) * step;
                 double fy = (tileRow * BLOCK_SIZE + i + 0.5) * step;
-                double lon = SQUARE_WEST + fx / WorldCoverSource.PIXELS_PER_DEGREE;
-                double lat = (SQUARE_SOUTH + WorldCoverSource.SQUARE) - fy / WorldCoverSource.PIXELS_PER_DEGREE;
+                double lon = squareWest + fx / WorldCoverSource.PIXELS_PER_DEGREE;
+                double lat = (squareSouth + WorldCoverSource.SQUARE) - fy / WorldCoverSource.PIXELS_PER_DEGREE;
                 dx[i] = grid.blockX(new GeoPoint(0, lon)) - homeX;
                 dz[i] = grid.blockZ(new GeoPoint(lat, 0)) - homeZ;
             }

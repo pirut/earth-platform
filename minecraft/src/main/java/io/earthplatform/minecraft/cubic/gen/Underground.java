@@ -92,6 +92,14 @@ final class Underground {
     }
     boolean vanillaCaves() { return vanillaCaves != null; }
 
+    /** Supplies live registries and dimension type to modded ore features once a server level attaches. */
+    void attach(net.minecraft.core.RegistryAccess registries, net.minecraft.world.level.dimension.DimensionType dimensionType) {
+        modOres.attach(registries, dimensionType);
+    }
+
+    /** For tests: direct access to modded ore placement. */
+    ModOres modOres() { return modOres; }
+
     // Floor ---------------------------------------------------------------------------------------
 
     private static final int NODE = 128, REACH = 128, STEP = 64;
@@ -175,11 +183,16 @@ final class Underground {
         return value;
     }
 
+    /** 22/20/22-bit mixed cube key for {@link #caveFields}, collision-free across the entire Earth span. */
+    static long caveFieldKey(int cx, int cy, int cz) {
+        return it.unimi.dsi.fastutil.HashCommon.mix(io.earthplatform.minecraft.cubic.CubeKey.pack(cx, cy, cz));
+    }
+
     /** Cave noise over one cube: vanilla's cells, or the older caves' 4-block grid of 5³ nodes. */
     double[] caveField(int x0, int y0, int z0) {
         VanillaCaves caves = vanillaCaves;
         if (caves != null) {
-            long key = it.unimi.dsi.fastutil.HashCommon.mix(((long) (x0 >> 4) & 0x1FFFFF) << 42 | ((long) (y0 >> 4) & 0x1FFFFF) << 21 | (z0 >> 4) & 0x1FFFFF);
+            long key = caveFieldKey(x0 >> 4, y0 >> 4, z0 >> 4);
             ConcurrentHashMap<Long, double[]> fields = caveFields;
             double[] cached = fields.get(key);
             if (cached != null) return cached;
@@ -377,7 +390,7 @@ final class Underground {
                 List<CompoundTag> blockEntities, List<CompoundTag> entities) {
         veins(section, cx, cy, cz);
         modOres.place(section, cx, cy, cz);
-        if (kind != null) plants(section, cx, cy, cz, kind);
+        if (kind != null) plants(section, cx, cy, cz, kind, blockEntities);
         structures.place(section, cx, cy, cz, blockEntities, entities);
     }
 
@@ -551,7 +564,7 @@ final class Underground {
      * regions. Plants need the block beside them inside this cube, so the cube's outer layers
      * above and below go bare.
      */
-    private void plants(LevelChunkSection section, int cx, int cy, int cz, Kind kind) {
+    void plants(LevelChunkSection section, int cx, int cy, int cz, Kind kind, List<CompoundTag> blockEntities) {
         RandomSource random = random(seed ^ mix(cx, cy, cz) ^ 0x504C414E54L);
         int x0 = cx << 4, y0 = cy << 4, z0 = cz << 4;
         for (int ly = 1; ly < 15; ly++) for (int lz = 0; lz < 16; lz++) for (int lx = 0; lx < 16; lx++) {
@@ -577,10 +590,16 @@ final class Underground {
                     boolean patch = Math.floorMod(mix(x0 + lx >> 2, y0 + ly >> 2, z0 + lz >> 2), 100) < 60;
                     if (floor && stone(below) && patch) {
                         section.setBlockState(lx, ly - 1, lz, SCULK, false);
-                        if (roll < 12) section.setBlockState(lx, ly, lz, Blocks.SCULK_SENSOR.defaultBlockState(), false);
-                        else if (roll < 16) section.setBlockState(lx, ly, lz, SHRIEKER, false);
-                        else if (roll < 18) section.setBlockState(lx, ly - 1, lz, Blocks.SCULK_CATALYST.defaultBlockState(), false);
-                        else if (roll < 120) section.setBlockState(lx, ly, lz, VEIN_DOWN, false);
+                        if (roll < 12) {
+                            section.setBlockState(lx, ly, lz, Blocks.SCULK_SENSOR.defaultBlockState(), false);
+                            blockEntities.add(sculkBlockEntity("minecraft:sculk_sensor", x0 + lx, y0 + ly, z0 + lz));
+                        } else if (roll < 16) {
+                            section.setBlockState(lx, ly, lz, SHRIEKER, false);
+                            blockEntities.add(sculkBlockEntity("minecraft:sculk_shrieker", x0 + lx, y0 + ly, z0 + lz));
+                        } else if (roll < 18) {
+                            section.setBlockState(lx, ly - 1, lz, Blocks.SCULK_CATALYST.defaultBlockState(), false);
+                            blockEntities.add(sculkBlockEntity("minecraft:sculk_catalyst", x0 + lx, y0 + ly - 1, z0 + lz));
+                        } else if (roll < 120) section.setBlockState(lx, ly, lz, VEIN_DOWN, false);
                     } else if (ceiling && stone(above) && patch) {
                         section.setBlockState(lx, ly + 1, lz, SCULK, false);
                     } else if (ceiling && roll < 60) section.setBlockState(lx, ly, lz, VEIN_UP, false);
@@ -609,6 +628,15 @@ final class Underground {
                 }
             }
         }
+    }
+
+    private static CompoundTag sculkBlockEntity(String id, int x, int y, int z) {
+        CompoundTag tag = new CompoundTag();
+        tag.putString("id", id);
+        tag.putInt("x", x);
+        tag.putInt("y", y);
+        tag.putInt("z", z);
+        return tag;
     }
 
     private static boolean stone(BlockState state) { return rock(state); }
