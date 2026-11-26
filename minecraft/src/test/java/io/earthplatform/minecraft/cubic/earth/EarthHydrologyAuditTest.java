@@ -3,6 +3,8 @@ package io.earthplatform.minecraft.cubic.earth;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.sun.net.httpserver.HttpServer;
+import io.earthplatform.geography.GeoPoint;
+import io.earthplatform.geography.globe.MercatorGrid;
 import io.earthplatform.geography.MissingTerrainException;
 import io.earthplatform.geography.globe.Drainage;
 import io.earthplatform.geography.globe.MemoryPressure;
@@ -13,11 +15,15 @@ import io.earthplatform.geography.globe.TerrariumTileSource;
 import io.earthplatform.geography.globe.WorldCoverSource;
 import io.earthplatform.minecraft.cubic.earth.EarthGenerator.HydroCache;
 import io.earthplatform.minecraft.cubic.gen.SurfaceGenerator;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -363,7 +369,7 @@ class EarthHydrologyAuditTest {
 
                 // Populate gen.reaches ABOVE its 25% memory-pressure budget (1024), and gen.crests above 8192.
                 EarthGenerator.Reaches dummyReach = new EarthGenerator.Reaches(
-                        new double[]{0}, new boolean[]{false}, new float[256], new long[4], new long[4], new long[4], null);
+                        new double[]{0}, new boolean[]{false}, new float[256], new long[4], new long[4], new long[4], new long[4], null);
                 for (long k = 0; k < 3_000; k++) gen.reaches.put(k, dummyReach);
                 for (long k = 0; k < 10_000; k++) gen.crests.put(k, Boolean.TRUE);
                 assertTrue(gen.reaches.size() > 1024, "precondition: reaches must exceed 25% budget before pressure");
@@ -896,6 +902,151 @@ class EarthHydrologyAuditTest {
             assertEquals(WorldCoverSource.BARE, v2.cover(world.homeX + 80, world.homeZ, 1));
             assertFalse(v2.isWorldCoverWater(world.homeX + 80, world.homeZ, 1),
                     "warm dry BARE pixel must remain false");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void injectUniformRiverTiles(RiverMap map, GeoPoint center, boolean drainedBit) throws Exception {
+        Field field = RiverMap.class.getDeclaredField("memory");
+        field.setAccessible(true);
+        Map<Long, Object> memory = (Map<Long, Object>) field.get(map);
+        Constructor<?> tracedCtor = Class.forName(RiverMap.class.getName() + "$Traced")
+                .getDeclaredConstructor(long.class, byte[].class, byte[].class, long[].class);
+        tracedCtor.setAccessible(true);
+
+        int tile = 256, cell = 16;
+        int col = Math.floorMod((int) Math.floor((center.longitude() + 180.0) * SurfaceWaterSource.PIXELS_PER_DEGREE),
+                SurfaceWaterSource.ACROSS);
+        int row = (int) Math.floor((SurfaceWaterSource.NORTH - center.latitude()) * SurfaceWaterSource.PIXELS_PER_DEGREE);
+        int tx0 = col / tile, ty0 = row / tile;
+        for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+            int tx = tx0 + dx, ty = ty0 + dy;
+            if (ty < 0 || ty * tile >= SurfaceWaterSource.DOWN) continue;
+            long key = (long) ty << 32 | Math.floorMod(tx, SurfaceWaterSource.ACROSS / tile);
+            byte[] strength = new byte[tile * tile];
+            byte[] cells = new byte[(tile / cell) * (tile / cell)];
+            Arrays.fill(strength, (byte) 255);
+            Arrays.fill(cells, (byte) 255);
+            long[] drained = new long[(tile * tile) / 64];
+            if (drainedBit) Arrays.fill(drained, -1L);
+            memory.put(key, tracedCtor.newInstance(key, strength, cells, drained));
+        }
+    }
+
+    @Test
+    void trollveggenSlopingMountainShadowIsStrippedInV2AcrossNearFarAndUnbackedRiversWhileValleyAndDrainedStayWet() throws Exception {
+        EarthShorelineTest.bootRegistries();
+        AtomicInteger surfaceWaterRequests = new AtomicInteger();
+        AtomicInteger drainageTileCalls = new AtomicInteger();
+
+        HttpServer waterServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        waterServer.createContext("/water/", exchange -> {
+            surfaceWaterRequests.incrementAndGet();
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        waterServer.start();
+
+        // Reproduce Trollveggen's exact failure geometry:
+        // - Wide sloping mountain face (dz < 200, slope = 0.45 <= CLIFF_SHADOW_STEEP = 0.7, rising > 300 m)
+        //   covered by a giant WorldCover WATER shadow band (1300 x 750 blocks -> > 5000 pixels & spans WATER_CELL
+        //   borders so strayCell skips it), with SNOW_AND_ICE on the ridges above/beside it.
+        // - Small 24x24 BARE pocket inside the shadow at (200, -300) so RiverMap strength >= EDGE produces rawCover == RIVER.
+        // - Flat 100 m valley floor (dz >= 200) with a flat valley river (dz in [300, 500]).
+        try (EarthShorelineTest.SyntheticWorld world = new EarthShorelineTest.SyntheticWorld(
+                (dx, dz) -> dz < 200.0 ? 100.0 + (200.0 - dz) * 0.45 : 100.0,
+                (dx, dz) -> {
+                    if (Math.abs(dx - 200) <= 12 && Math.abs(dz + 300) <= 12) return WorldCoverSource.BARE;
+                    if (dz >= -650 && dz <= 100 && Math.abs(dx) <= 650) return WorldCoverSource.WATER;
+                    if (dz < -650 && dz >= -1000 && Math.abs(dx) <= 900) return WorldCoverSource.SNOW_AND_ICE;
+                    if (dz >= -650 && dz <= -200 && Math.abs(dx) > 650 && Math.abs(dx) <= 900) return WorldCoverSource.SNOW_AND_ICE;
+                    if (dz >= 300 && dz <= 500 && Math.abs(dx) <= 1200) return WorldCoverSource.WATER;
+                    return WorldCoverSource.BARE;
+                });
+             SurfaceWaterSource sws = new SurfaceWaterSource(
+                     URI.create("http://127.0.0.1:" + waterServer.getAddress().getPort() + "/water/"),
+                     null, true, 4, 1, Duration.ofSeconds(5))) {
+            Drainage spyDrainage = new Drainage(
+                    (zoom, tx, ty) -> {
+                        drainageTileCalls.incrementAndGet();
+                        throw new AssertionError("unexpected Drainage tile fetch");
+                    },
+                    (lat, lon) -> 1000.0, 4);
+
+            // 1. Legacy (!hydrologyV2): leaves the sloping mountain shadow WET and carves it down as glacial.
+            int[] legacyShadow = new int[2];
+            world.ground(0, -300, legacyShadow);
+            assertNotEquals(SurfaceGenerator.DRY, legacyShadow[1],
+                    "precondition: legacy (!hydrologyV2) must leave sloping mountain shadow wet");
+            assertTrue(legacyShadow[1] < EarthGenerator.SEA + 280,
+                    "precondition: legacy must drop/carve 325 m sloping shadow down to glacial lowWater, got " + legacyShadow[1]);
+
+            // 2. Hydrology v2 (with spyRivers to guarantee far-LOD never queries Drainage or SurfaceWaterSource):
+            //    strips the sloping mountain shadow to DRY at both near (voxel=1) and far LOD (voxel=64),
+            //    while keeping the flat valley river WET.
+            RiverMap spyRivers = new RiverMap(sws, spyDrainage, 8, true);
+            EarthGenerator v2Far = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null, spyRivers);
+            v2Far.enableHydrologyV2();
+            int[] farShadow = new int[2];
+            v2Far.farGround(6, world.homeX, world.homeZ - 300, farShadow);
+            assertEquals(SurfaceGenerator.DRY, farShadow[1],
+                    "v2 coarse far-LOD (voxel=64) must strip sloping mountain shadow to DRY");
+            assertEquals(0, drainageTileCalls.get(),
+                    "coarse far-LOD (> RIVER_VOXEL) must never query Drainage");
+            assertEquals(0, surfaceWaterRequests.get(),
+                    "coarse far-LOD (> RIVER_VOXEL) must never query SurfaceWaterSource");
+
+            int[] farValley = new int[2];
+            v2Far.farGround(6, world.homeX, world.homeZ + 400, farValley);
+            assertNotEquals(SurfaceGenerator.DRY, farValley[1],
+                    "flat valley river must remain WET at far LOD in v2");
+
+            EarthGenerator v2Near = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null);
+            v2Near.enableHydrologyV2();
+            int[] nearShadow = new int[2];
+            v2Near.ground(world.homeX, world.homeZ - 300, nearShadow);
+            assertEquals(SurfaceGenerator.DRY, nearShadow[1],
+                    "v2 near LOD (voxel=1) must strip sloping mountain shadow to DRY");
+
+            int[] nearValley = new int[2];
+            v2Near.ground(world.homeX, world.homeZ + 400, nearValley);
+            assertNotEquals(SurfaceGenerator.DRY, nearValley[1],
+                    "flat valley river must remain WET at near LOD in v2");
+
+            // 3. Unbacked RIVER pixel (RiverMap JRC hit with drained == false) inside the sloping shadow:
+            //    stripped to DRY in hydrologyV2, whereas Drainage-backed (drained == true) stays WET!
+            MercatorGrid grid = new MercatorGrid(world.generator.settings().metresPerBlock());
+            GeoPoint riverPoint = grid.tryGeographic(world.homeX + 200.5, world.homeZ - 299.5);
+            assertNotNull(riverPoint);
+
+            RiverMap unbackedRivers = new RiverMap(sws, spyDrainage, 16, true);
+            injectUniformRiverTiles(unbackedRivers, riverPoint, false);
+            EarthGenerator v2Unbacked = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null, unbackedRivers);
+            v2Unbacked.enableHydrologyV2();
+            int[] unbackedRiverOut = new int[2];
+            v2Unbacked.ground(world.homeX + 200, world.homeZ - 300, unbackedRiverOut);
+            assertEquals(SurfaceGenerator.DRY, unbackedRiverOut[1],
+                    "unbacked RIVER pixel (drained == false) inside sloping shadow must be stripped to DRY in v2");
+
+            RiverMap drainedRivers = new RiverMap(sws, spyDrainage, 16, true);
+            injectUniformRiverTiles(drainedRivers, riverPoint, true);
+            EarthGenerator v2Drained = new EarthGenerator(1234L, EarthShorelineTest.biomes, world.generator.settings(),
+                    world.tiles, world.cover, null, null, drainedRivers);
+            v2Drained.enableHydrologyV2();
+            int[] drainedRiverOut = new int[2];
+            v2Drained.ground(world.homeX + 200, world.homeZ - 300, drainedRiverOut);
+            assertNotEquals(SurfaceGenerator.DRY, drainedRiverOut[1],
+                    "Drainage-backed RIVER stream (drained == true) inside sloping shadow must stay WET in v2");
+
+            int[] drainedWaterOut = new int[2];
+            v2Drained.ground(world.homeX, world.homeZ - 300, drainedWaterOut);
+            assertNotEquals(SurfaceGenerator.DRY, drainedWaterOut[1],
+                    "Drainage-backed WorldCover mountain stream (drained == true) inside sloping shadow must stay WET in v2");
+        } finally {
+            waterServer.stop(0);
         }
     }
 }

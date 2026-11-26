@@ -80,4 +80,116 @@ class EarthGlacierWaterTest {
         assertTrue(EarthGenerator.isGlacierFront(4, 1));
         assertTrue(EarthGenerator.isGlacierFront(20, 2));
     }
+
+    @Test
+    void slopingShadowBodyClassifierSeparatesShadowsFromLakesAndShallowWater() {
+        assertTrue(EarthGenerator.isSlopingShadowBody(180, 0, 863.0),
+                "Trollveggen-like 0% flat shadow spanning 863 m must classify as sloping shadow");
+        assertTrue(EarthGenerator.isSlopingShadowBody(20, 1, EarthGenerator.SHADOW_MIN_SPAN + 1.0),
+                "5% flat (< 10%) body spanning more than SHADOW_MIN_SPAN must classify as sloping shadow");
+        assertFalse(EarthGenerator.isSlopingShadowBody(10, 1, 200.0),
+                "10% flat body (flat * 10 == evaluated) must NOT classify as sloping shadow");
+        assertFalse(EarthGenerator.isSlopingShadowBody(100, 30, 80.0),
+                "proglacial lake with 30% flat surface must NOT classify as sloping shadow");
+        assertFalse(EarthGenerator.isSlopingShadowBody(50, 0, EarthGenerator.SHADOW_MIN_SPAN),
+                "shallow body with span <= SHADOW_MIN_SPAN (24 m) must NOT classify as sloping shadow");
+        assertFalse(EarthGenerator.isSlopingShadowBody(0, 0, 500.0),
+                "body with zero evaluated samples must NOT classify as sloping shadow");
+    }
+
+    @Test
+    void detectShadowsPreservesProglacialLakesAndDrownedReservoirs() {
+        float[] water = new float[SPAN * SPAN], ground = new float[SPAN * SPAN];
+        boolean[] iceAt = new boolean[SPAN * SPAN], seaAt = new boolean[SPAN * SPAN];
+        setupSteppedLake(water, ground, iceAt, true);
+
+        EarthGenerator.SteppedWater glacialResult = EarthGenerator.drownedGround(
+                SPAN, water, ground, iceAt, () -> {}, seaAt,
+                (wi, wj, di, dj) -> ground[dj * SPAN + di],
+                new IntArrayFIFOQueue(), true);
+        assertNull(glacialResult.sunk(), "proglacial lake must not be classified as drowned with detectShadows=true");
+        assertNotNull(glacialResult.glacial(), "proglacial lake must remain glacial with detectShadows=true");
+        assertNull(glacialResult.shadow(), "proglacial lake must not be marked as mountain shadow");
+
+        Arrays.fill(iceAt, false);
+        setupSteppedLake(water, ground, iceAt, false);
+        EarthGenerator.SteppedWater reservoirResult = EarthGenerator.drownedGround(
+                SPAN, water, ground, iceAt, () -> {}, seaAt,
+                (wi, wj, di, dj) -> ground[dj * SPAN + di],
+                new IntArrayFIFOQueue(), true);
+        assertNotNull(reservoirResult.sunk(), "drowned reservoir must remain sunk with detectShadows=true");
+        assertNull(reservoirResult.glacial(), "drowned reservoir must not be glacial with detectShadows=true");
+        assertNull(reservoirResult.shadow(), "drowned reservoir must not be marked as mountain shadow");
+    }
+
+    @Test
+    void slopingMountainShadowIsMaskedWithoutTrippingGlacialWhileFlatValleyRiverStaysUnmarked() {
+        float[] water = new float[SPAN * SPAN], ground = new float[SPAN * SPAN];
+        boolean[] iceAt = new boolean[SPAN * SPAN], seaAt = new boolean[SPAN * SPAN];
+        Arrays.fill(water, Float.NaN);
+        Arrays.fill(ground, Float.NaN);
+
+        // Background mountain wall: rows 0..17 slope down at 0.45 m/block (28.8 m per 64-block sample);
+        // rows 18..23 form a flat 100 m valley floor.
+        for (int j = 0; j < SPAN; j++) {
+            float elev = j <= 17 ? 100f + (18 - j) * 28.8f : 100f;
+            for (int i = 0; i < SPAN; i++) {
+                ground[j * SPAN + i] = elev;
+            }
+        }
+        // Wide sloping mountain shadow body: rows 4..13, cols 4..11 (> 250 m vertical span, >= 3 crossings, 0% flat).
+        for (int j = 4; j <= 13; j++) {
+            for (int i = 4; i <= 11; i++) {
+                int at = j * SPAN + i;
+                water[at] = ground[at];
+                ground[at] = Float.NaN;
+            }
+        }
+        // Attached narrow 1-sample-wide sloping tail descending from row 14..17 at col 8 (not wideWater, grad = 0.45).
+        for (int j = 14; j <= 17; j++) {
+            int at = j * SPAN + 8;
+            water[at] = ground[at];
+            ground[at] = Float.NaN;
+        }
+        // Elevated SNOW_AND_ICE along the dry ridges above/beside the shadow, tripping isGlacierFront in legacy mode.
+        for (int j = 0; j <= 7; j++) {
+            for (int i = 0; i < SPAN; i++) {
+                int at = j * SPAN + i;
+                if (!Float.isNaN(ground[at])) iceAt[at] = true;
+            }
+        }
+        // Flat valley river at rows 19..21, cols 2..21 (grad == 0.0 <= 0.15) touching a foot pixel at (8, 18).
+        water[18 * SPAN + 8] = ground[18 * SPAN + 8];
+        ground[18 * SPAN + 8] = Float.NaN;
+        for (int j = 19; j <= 21; j++) {
+            for (int i = 2; i <= 21; i++) {
+                int at = j * SPAN + i;
+                water[at] = 100f;
+                ground[at] = Float.NaN;
+            }
+        }
+
+        // Hydrology v2 (detectShadows = true): shadow body + narrow sloping tail are masked, never glacial/sunk;
+        // flat valley river remains completely unmarked.
+        EarthGenerator.SteppedWater v2 = EarthGenerator.drownedGround(
+                SPAN, water, ground, iceAt, () -> {}, seaAt,
+                (wi, wj, di, dj) -> ground[dj * SPAN + di],
+                new IntArrayFIFOQueue(), true);
+        assertNull(v2.sunk(), "sloping mountain shadow must not classify as drowned reservoir");
+        assertNull(v2.glacial(), "sloping mountain shadow touching snow/ice must not classify as glacial");
+        assertNotNull(v2.shadow(), "sloping mountain shadow must produce a shadow mask");
+        assertTrue(v2.shadow()[8 * SPAN + 8], "wide shadow interior must be marked shadowed");
+        assertTrue(v2.shadow()[16 * SPAN + 8], "attached narrow sloping tail must be marked shadowed");
+        assertFalse(v2.shadow()[20 * SPAN + 8], "flat valley river below sloping tail must remain unmarked");
+        assertFalse(v2.shadow()[20 * SPAN + 14], "flat valley river away from tail must remain unmarked");
+
+        // Legacy (detectShadows = false): preserves pre-v2 glacial classification with no shadow mask.
+        EarthGenerator.SteppedWater legacy = EarthGenerator.drownedGround(
+                SPAN, water, ground, iceAt, () -> {}, seaAt,
+                (wi, wj, di, dj) -> ground[dj * SPAN + di],
+                new IntArrayFIFOQueue(), false);
+        assertNull(legacy.shadow(), "legacy detectShadows=false must never allocate shadow mask");
+        assertNotNull(legacy.glacial(), "legacy detectShadows=false must preserve glacial classification");
+        assertNull(legacy.sunk(), "legacy sloping shadow touching ice should match glacial branch");
+    }
 }
