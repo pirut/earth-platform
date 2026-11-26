@@ -218,18 +218,33 @@ class EarthGlacierWaterTest {
         assertEquals(0.25, EarthGenerator.waterSlope(water, span, 5 * span + 2, 64.0), 1e-9,
                 "one-sided difference (116 - 100) / 64 = 0.25");
 
-        // Diagonal-only fallback when no cardinal wet neighbour exists.
+        // Cliff-to-pool rim kink: two-sided min one-sided difference reads 0.0 on the flat pool rim
+        // while preserving true slope on the continuous ramp.
+        water[7 * span + 2] = 128.8f;
+        water[7 * span + 3] = 100f;
+        water[7 * span + 4] = 100f;
+        assertEquals(0.0, EarthGenerator.waterSlope(water, span, 7 * span + 3, 64.0), 1e-9,
+                "flat pool rim meeting cliff apron must read 0.0 via min one-sided difference");
+
+        // Diagonal-only fallback when no cardinal wet neighbour exists uses minimum diagonal slope.
         water[1 * span + 1] = 100f;
         water[2 * span + 2] = 164f;
         assertEquals(64.0 / (64.0 * Math.sqrt(2.0)), EarthGenerator.waterSlope(water, span, 1 * span + 1, 64.0), 1e-9,
                 "diagonal-only wet neighbour must divide by spacingMetres * sqrt(2)");
+        water[0 * span + 2] = 116f;
+        assertEquals(16.0 / (64.0 * Math.sqrt(2.0)), EarthGenerator.waterSlope(water, span, 1 * span + 1, 64.0), 1e-9,
+                "diagonal-only fallback with multiple diagonal neighbours must return minimum diagonal slope");
 
-        // Isolated wet sample and dry sample return NaN.
+        // Isolated wet sample, dry sample, and invalid spacingMetres return NaN.
         water[0 * span + 7] = 50f;
         assertTrue(Double.isNaN(EarthGenerator.waterSlope(water, span, 0 * span + 7, 64.0)),
                 "isolated wet sample with no wet neighbours must return NaN");
         assertTrue(Double.isNaN(EarthGenerator.waterSlope(water, span, 0 * span + 0, 64.0)),
                 "dry sample must return NaN");
+        for (double badSpacing : new double[]{0.0, -64.0, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+            assertTrue(Double.isNaN(EarthGenerator.waterSlope(water, span, 5 * span + 3, badSpacing)),
+                    "invalid spacingMetres=" + badSpacing + " must return NaN");
+        }
     }
 
     @Test
@@ -269,10 +284,10 @@ class EarthGlacierWaterTest {
         assertNull(result.glacial(), "mixed shadow+pool body must not classify as glacial");
         assertNotNull(result.shadow(), "sloping shadow apron must produce shadow mask");
         assertTrue(result.shadow()[7 * SPAN + 10], "sloping apron interior must be marked shadowed");
-        for (int j = 16; j <= 18; j++) {
-            for (int i = 9; i <= 11; i++) {
+        for (int j = 15; j <= 19; j++) {
+            for (int i = 8; i <= 12; i++) {
                 assertFalse(result.shadow()[j * SPAN + i],
-                        "connected 5x5 flat pool interior (" + i + "," + j + ") must remain unmarked");
+                        "connected 5x5 flat pool sample (" + i + "," + j + ") including rim and corners must remain unmarked");
             }
         }
     }
@@ -310,7 +325,8 @@ class EarthGlacierWaterTest {
         }
         // Branch C: 2-step sloping tail at (6, 10)..(6, 11) diagonally 8-connected at (7, 12) to a
         // 5x5 flat lake (rows 7..11, cols 12..16, water = 100) AND to a 5x5 gently-sloping wide body
-        // (rows 1..5, cols 12..16, water = 500 - (i - 12) * 14 -> 0.21875 slope, wideWater interior).
+        // (rows 1..5, cols 12..16, water = 500 - (i - 12) * 7.5 - (j - 1) * 7.5 -> <= DROP cardinal steps
+        // so 0 Phase 1 crossings, while diagonal waterSlope = hypot(7.5/64, 7.5/64) = 0.166 > 0.15).
         water[6 * span + 10] = 490f; ground[6 * span + 10] = Float.NaN;
         water[6 * span + 11] = 460f; ground[6 * span + 11] = Float.NaN;
         for (int j = 7; j <= 11; j++) {
@@ -323,7 +339,7 @@ class EarthGlacierWaterTest {
         for (int j = 1; j <= 5; j++) {
             for (int i = 12; i <= 16; i++) {
                 int at = j * span + i;
-                water[at] = 500f - (i - 12) * 14f;
+                water[at] = 500f - (i - 12) * 7.5f - (j - 1) * 7.5f;
                 ground[at] = Float.NaN;
             }
         }
@@ -350,11 +366,11 @@ class EarthGlacierWaterTest {
             assertFalse(result.shadow()[11 * span + i],
                     "flat river at col " + i + " beside 400 m valley walls must remain unshadowed");
         }
-        // Branch C: neither the 8-connected flat lake nor the wideWater interior of the sloping wide body is flooded.
-        for (int j = 8; j <= 10; j++) {
-            for (int i = 13; i <= 15; i++) {
+        // Branch C: neither the 8-connected flat lake (all 25 samples) nor the wideWater interior of the sloping wide body is flooded.
+        for (int j = 7; j <= 11; j++) {
+            for (int i = 12; i <= 16; i++) {
                 assertFalse(result.shadow()[j * span + i],
-                        "8-connected flat lake interior (" + i + "," + j + ") must remain unshadowed");
+                        "8-connected flat lake sample (" + i + "," + j + ") must remain unshadowed");
             }
         }
         for (int j = 2; j <= 4; j++) {
@@ -494,5 +510,261 @@ class EarthGlacierWaterTest {
                 assertNull(result.sunk(), "0.22-slope retreated glacier tongue must not classify as sunk");
             }
         }
+    }
+
+    @Test
+    void cornerConnectedFlatPoolKeepsAllTwentyFiveSamplesUnmarkedThroughPhaseTwo() {
+        for (boolean cardinalTailToCorner : new boolean[]{false, true}) {
+            float[] water = new float[SPAN * SPAN], ground = new float[SPAN * SPAN];
+            boolean[] iceAt = new boolean[SPAN * SPAN], seaAt = new boolean[SPAN * SPAN];
+            Arrays.fill(water, Float.NaN);
+            Arrays.fill(ground, Float.NaN);
+
+            for (int j = 0; j < SPAN; j++) {
+                float elev = j <= 14 ? 100f + (15 - j) * 28.8f : 100f;
+                for (int i = 0; i < SPAN; i++) ground[j * SPAN + i] = elev;
+            }
+            // Sloping 0.45-grade shadow apron: rows 1..14, cols 2..13.
+            for (int j = 1; j <= 14; j++) {
+                for (int i = 2; i <= 13; i++) {
+                    int at = j * SPAN + i;
+                    water[at] = ground[at];
+                    ground[at] = Float.NaN;
+                }
+            }
+            if (cardinalTailToCorner) {
+                // 1-wide sloping spur at (14, 14) meeting the NW corner (14, 15) cardinally.
+                water[14 * SPAN + 14] = 128.8f;
+                ground[14 * SPAN + 14] = Float.NaN;
+            }
+            // 5x5 flat pool at rows 15..19, cols 14..18 meeting the apron at single corner (14, 15).
+            for (int j = 15; j <= 19; j++) {
+                for (int i = 14; i <= 18; i++) {
+                    int at = j * SPAN + i;
+                    water[at] = 100f;
+                    ground[at] = Float.NaN;
+                }
+            }
+
+            EarthGenerator.SteppedWater result = EarthGenerator.drownedGround(
+                    SPAN, water, ground, iceAt, () -> {}, seaAt,
+                    (wi, wj, di, dj) -> ground[dj * SPAN + di],
+                    new IntArrayFIFOQueue(), true, 64.0);
+
+            assertNotNull(result.shadow(), "sloping shadow apron must produce shadow mask");
+            assertTrue(result.shadow()[7 * SPAN + 7], "shadow apron interior must be marked shadowed");
+            for (int j = 15; j <= 19; j++) {
+                for (int i = 14; i <= 18; i++) {
+                    assertFalse(result.shadow()[j * SPAN + i],
+                            "corner-connected 5x5 flat pool sample (" + i + "," + j + ") must remain unmarked (cardinalTail=" + cardinalTailToCorner + ")");
+                }
+            }
+        }
+    }
+
+    @Test
+    void steepWalledDrownedVGorgeReservoirStaysSunkInV2() {
+        // Steep V-gorge reservoir: 0% flat old-DEM floor (0.45 grade on both canyon walls) surrounded by
+        // level waterline shores at 260 m (p90Water <= medianShore + DROP) -> must classify as sunk, NOT shadow.
+        for (boolean levelBasinShores : new boolean[]{true, false}) {
+            float[] water = new float[SPAN * SPAN], ground = new float[SPAN * SPAN];
+            boolean[] iceAt = new boolean[SPAN * SPAN], seaAt = new boolean[SPAN * SPAN];
+            Arrays.fill(water, Float.NaN);
+            Arrays.fill(ground, Float.NaN);
+
+            for (int j = 0; j < SPAN; j++) {
+                for (int i = 0; i < SPAN; i++) {
+                    // V-gorge cross section centered at col 10, sloping down toward south as well.
+                    float vWall = 100f + Math.abs(i - 10) * 28.8f + (16 - j) * 5f;
+                    ground[j * SPAN + i] = levelBasinShores ? 260f : vWall;
+                }
+            }
+            for (int j = 3; j <= 16; j++) {
+                for (int i = 6; i <= 14; i++) {
+                    int at = j * SPAN + i;
+                    water[at] = 100f + Math.abs(i - 10) * 28.8f + (16 - j) * 5f;
+                    ground[at] = Float.NaN;
+                }
+            }
+
+            EarthGenerator.SteppedWater result = EarthGenerator.drownedGround(
+                    SPAN, water, ground, iceAt, () -> {}, seaAt,
+                    (wi, wj, di, dj) -> ground[dj * SPAN + di],
+                    new IntArrayFIFOQueue(), true, 64.0);
+
+            if (levelBasinShores) {
+                assertNull(result.shadow(), "steep V-gorge drowned reservoir inside basin waterline must NOT classify as shadow");
+                assertNull(result.glacial(), "non-glacial V-gorge reservoir must not classify as glacial");
+                assertNotNull(result.sunk(), "steep V-gorge drowned reservoir must classify as sunk");
+                assertEquals(260f, result.sunk()[10 * SPAN + 10], 1e-3f, "reservoir must take its 260 m waterline");
+            } else {
+                assertNotNull(result.shadow(), "same sloping water with sloping mountain shores must classify as shadow");
+                assertNull(result.sunk(), "sloping mountain shadow must not classify as sunk");
+            }
+        }
+    }
+
+    @Test
+    void phaseOneCrossingsAreInvariantUnderNorthSouthReflection() {
+        // Exact 2x2 wideWater matrix [[107, 114], [160, 100]] surrounded by a 1-sample wet rim:
+        // undirected wide-wide drop edges = 3 (>= DROWNED_CROSSINGS) regardless of N-S orientation.
+        int span = 12;
+        float[] waterNormal = new float[span * span], groundNormal = new float[span * span];
+        boolean[] iceNormal = new boolean[span * span], seaNormal = new boolean[span * span];
+        Arrays.fill(waterNormal, Float.NaN);
+        Arrays.fill(groundNormal, 100f);
+
+        // 4x4 wet patch at rows 4..7, cols 4..7 so rows 5..6, cols 5..6 are the exact 2x2 wideWater interior.
+        float[][] patch = {
+                { 97f,  97f, 124f, 124f},
+                { 97f, 107f, 114f, 124f},
+                {170f, 160f, 100f,  90f},
+                {170f, 170f,  90f,  90f},
+        };
+        for (int r = 0; r < 4; r++) {
+            for (int c = 0; c < 4; c++) {
+                int at = (4 + r) * span + (4 + c);
+                waterNormal[at] = patch[r][c];
+                groundNormal[at] = Float.NaN;
+            }
+        }
+
+        float[] waterReflected = new float[span * span], groundReflected = new float[span * span];
+        boolean[] iceReflected = new boolean[span * span], seaReflected = new boolean[span * span];
+        for (int j = 0; j < span; j++) {
+            int rj = span - 1 - j;
+            for (int i = 0; i < span; i++) {
+                waterReflected[rj * span + i] = waterNormal[j * span + i];
+                groundReflected[rj * span + i] = groundNormal[j * span + i];
+            }
+        }
+
+        EarthGenerator.SteppedWater normal = EarthGenerator.drownedGround(
+                span, waterNormal, groundNormal, iceNormal, () -> {}, seaNormal,
+                (wi, wj, di, dj) -> groundNormal[dj * span + di],
+                new IntArrayFIFOQueue(), true, 32.0);
+        EarthGenerator.SteppedWater reflected = EarthGenerator.drownedGround(
+                span, waterReflected, groundReflected, iceReflected, () -> {}, seaReflected,
+                (wi, wj, di, dj) -> groundReflected[dj * span + di],
+                new IntArrayFIFOQueue(), true, 32.0);
+
+        assertNotNull(normal.shadow(), "normal [[107,114],[160,100]] must count 3 undirected crossings and classify as shadow");
+        assertNotNull(reflected.shadow(), "N-S reflected [[160,100],[107,114]] must count 3 undirected crossings and classify as shadow");
+        for (int j = 0; j < span; j++) {
+            int rj = span - 1 - j;
+            for (int i = 0; i < span; i++) {
+                assertEquals(normal.shadow()[j * span + i], reflected.shadow()[rj * span + i],
+                        "shadow mask must be strictly invariant under N-S reflection at (" + i + "," + j + ")");
+            }
+        }
+    }
+
+    @Test
+    void phaseTwoShadowTailNeverOverwritesQualifyingFallingWaterFaceAndRespectsGlacialTailThreshold() {
+        int span = 32;
+        float[] water = new float[span * span], ground = new float[span * span];
+        boolean[] iceAt = new boolean[span * span], seaAt = new boolean[span * span];
+        Arrays.fill(water, Float.NaN);
+        Arrays.fill(ground, 150f);
+
+        // Wide sloping shadow core on the left: rows 1..7, cols 1..7 (0.47 slope, elev 570..390).
+        for (int j = 1; j <= 7; j++) {
+            for (int i = 1; i <= 7; i++) {
+                int at = j * span + i;
+                water[at] = 600f - j * 30f;
+                ground[at] = Float.NaN;
+            }
+        }
+        // Narrow 1-wide sloping shadow tail descending east along row 6, cols 8..12 (elev 400..320, > 300 + BANK),
+        // directly touching the waterfall face at (13, 6).
+        for (int i = 8; i <= 12; i++) {
+            int at = 6 * span + i;
+            water[at] = 420f - (i - 7) * 20f;
+            ground[at] = Float.NaN;
+        }
+        // Upper flat lake (>= FALL_POOL = 8): rows 2..4, cols 12..15 (12 samples at 300 m).
+        for (int j = 2; j <= 4; j++) {
+            for (int i = 12; i <= 15; i++) {
+                int at = j * span + i;
+                water[at] = 300f;
+                ground[at] = Float.NaN;
+            }
+        }
+        // Lower flat lake (>= FALL_POOL = 8): rows 9..11, cols 12..15 (12 samples at 200 m).
+        for (int j = 9; j <= 11; j++) {
+            for (int i = 12; i <= 15; i++) {
+                int at = j * span + i;
+                water[at] = 200f;
+                ground[at] = Float.NaN;
+            }
+        }
+        // Qualifying narrow stepped waterfall face: rows 5..8, col 13 (elev 280, 260, 240, 220; 0.31 slope > 0.15).
+        float[] faceElev = {280f, 260f, 240f, 220f};
+        for (int k = 0; k < faceElev.length; k++) {
+            int at = (5 + k) * span + 13;
+            water[at] = faceElev[k];
+            ground[at] = Float.NaN;
+        }
+
+        EarthGenerator.SteppedWater result = EarthGenerator.drownedGround(
+                span, water, ground, iceAt, () -> {}, seaAt,
+                (wi, wj, di, dj) -> ground[dj * span + di],
+                new IntArrayFIFOQueue(), true, 64.0);
+
+        assertTrue(result.fallsComputed(), "drownedGround must precompute falls when shadow cores exist");
+        assertNotNull(result.falls(), "qualifying waterfall face between two FALL_POOL lakes must populate falls[]");
+        assertNotNull(result.shadow(), "sloping shadow core must produce shadow mask");
+        assertTrue(result.shadow()[4 * span + 4], "shadow core interior must be shadowed");
+        for (int i = 8; i <= 12; i++) {
+            assertTrue(result.shadow()[6 * span + i], "shadow tail at (" + i + ",6) must be shadowed");
+        }
+        for (int j = 5; j <= 8; j++) {
+            int at = j * span + 13;
+            assertFalse(Float.isNaN(result.falls()[at]), "waterfall face sample (13," + j + ") must keep its falls[] level");
+            assertFalse(result.shadow()[at], "Phase 2 shadow tail must NEVER overwrite qualifying waterfall face at (13," + j + ")");
+        }
+
+        // Glacier-front shadow core (0.39 slope touching SNOW_AND_ICE) uses SHADOW_GLACIAL_FLAT_GRAD (0.30) in Phase 2:
+        // a 0.22-grade tail stays unshadowed while a 0.39-grade tail is shadowed.
+        float[] gWater = new float[SPAN * SPAN], gGround = new float[SPAN * SPAN];
+        boolean[] gIce = new boolean[SPAN * SPAN], gSea = new boolean[SPAN * SPAN];
+        Arrays.fill(gWater, Float.NaN);
+        Arrays.fill(gGround, Float.NaN);
+        for (int j = 0; j < SPAN; j++) {
+            float elev = 100f + (SPAN - 1 - j) * 25f;
+            for (int i = 0; i < SPAN; i++) gGround[j * SPAN + i] = elev;
+        }
+        for (int j = 2; j <= 10; j++) {
+            for (int i = 4; i <= 11; i++) {
+                int at = j * SPAN + i;
+                gWater[at] = gGround[at];
+                gGround[at] = Float.NaN;
+            }
+        }
+        for (int j = 0; j <= 6; j++) {
+            for (int i = 0; i < SPAN; i++) {
+                if (!Float.isNaN(gGround[j * SPAN + i])) gIce[j * SPAN + i] = true;
+            }
+        }
+        // Tail A (col 6): 0.22 grade (14 m / 64 m <= 0.30) -> must stay unshadowed off glacier-front core.
+        float base = gWater[10 * SPAN + 6];
+        for (int step = 1; step <= 4; step++) {
+            int at = (10 + step) * SPAN + 6;
+            gWater[at] = base - step * 14f;
+            gGround[at] = Float.NaN;
+        }
+        // Tail B (col 9): 0.39 grade (25 m / 64 m > 0.30) -> must be shadowed off glacier-front core.
+        for (int step = 1; step <= 4; step++) {
+            int at = (10 + step) * SPAN + 9;
+            gWater[at] = base - step * 25f;
+            gGround[at] = Float.NaN;
+        }
+        EarthGenerator.SteppedWater gRes = EarthGenerator.drownedGround(
+                SPAN, gWater, gGround, gIce, () -> {}, gSea,
+                (wi, wj, di, dj) -> gGround[dj * SPAN + di],
+                new IntArrayFIFOQueue(), true, 64.0);
+        assertNotNull(gRes.shadow(), "steep glacier-front shadow core must produce shadow mask");
+        assertTrue(gRes.shadow()[12 * SPAN + 9], "0.39-grade tail off glacier-front shadow core must be shadowed");
+        assertFalse(gRes.shadow()[12 * SPAN + 6], "0.22-grade tail (<= 0.30) off glacier-front shadow core must stay unshadowed");
     }
 }
