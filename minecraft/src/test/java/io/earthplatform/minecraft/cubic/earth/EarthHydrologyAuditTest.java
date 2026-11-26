@@ -1832,21 +1832,30 @@ class EarthHydrologyAuditTest {
             v2.enableHydrologyV2();
 
             int probeZ = midGapWorld.homeZ;
+            int[] oldProbeMetres = {4, 8, 12, 16, 24, 32};
             int midGapX = Integer.MIN_VALUE;
             for (int off = gapStart - 30; off <= gapStart - 10; off++) {
                 int x = midGapWorld.homeX + off;
+                double invMpb = 1.0 / midGapGrid.groundMetresPerBlock(x + 0.5, probeZ + 0.5);
+                int oldCol16 = (int) Math.floor(x + 16.0 * invMpb);
+                int oldCol24 = (int) Math.floor(x + 24.0 * invMpb);
                 boolean okV1V8 = true;
                 for (int voxel : new int[]{1, 8}) {
-                    for (int r : new int[]{0, 4, 8, 12, 16, 24, 32}) {
-                        if (!v2.isWorldCoverWater(x + r, probeZ, voxel)) {
+                    if (!v2.isWorldCoverWater(x, probeZ, voxel)) {
+                        okV1V8 = false;
+                        break;
+                    }
+                    for (int r : oldProbeMetres) {
+                        int oldCol = (int) Math.floor(x + r * invMpb);
+                        if (!v2.isWorldCoverWater(oldCol, probeZ, voxel)) {
                             okV1V8 = false;
                             break;
                         }
                     }
                     if (!okV1V8) break;
                     boolean dryInMid = false;
-                    for (int r = 17; r <= 23; r++) {
-                        if (!v2.isWorldCoverWater(x + r, probeZ, voxel)) {
+                    for (int cx = oldCol16 + 1; cx < oldCol24; cx++) {
+                        if (!v2.isWorldCoverWater(cx, probeZ, voxel)) {
                             dryInMid = true;
                             break;
                         }
@@ -1857,15 +1866,18 @@ class EarthHydrologyAuditTest {
                     }
                 }
                 if (!okV1V8) continue;
-                if ((x + 24 - midGapWorld.homeX) >= gapEnd + 1 && v2.isWorldCoverWater(x, probeZ, 64)) {
+                if ((oldCol24 - midGapWorld.homeX) >= gapEnd + 1 && v2.isWorldCoverWater(x, probeZ, 64)) {
                     midGapX = x;
                     break;
                 }
             }
             assertNotEquals(Integer.MIN_VALUE, midGapX,
-                    "precondition: must locate sloping column with wet {0,4,8,12,16,24,32}, dry rib in 17..23 m at voxel=1 & 8, and wet origin at voxel=64");
+                    "precondition: must locate sloping column with wet origin and old discrete-probe columns floor(x + r/mpb) for {4,8,12,16,24,32}, dry rib strictly between oldCol(16) and oldCol(24) at voxel=1 & 8, and wet origin at voxel=64");
             // Verify DEM slope precondition at BOTH voxel = 1 and voxel = 8: origin is steep (> SHADOW_FLAT_GRAD)
-            // and the old probe target at +24 m (voxel=1) or +24/+32 m (voxel=8) is genuinely flat (<= SHADOW_FLAT_GRAD).
+            // and the old discrete probe's actual sampled columns oldCol(24) or oldCol(32) are genuinely flat (<= SHADOW_FLAT_GRAD).
+            double invMpbMid = 1.0 / midGapGrid.groundMetresPerBlock(midGapX + 0.5, probeZ + 0.5);
+            int oldCol24 = (int) Math.floor(midGapX + 24.0 * invMpbMid);
+            int oldCol32 = (int) Math.floor(midGapX + 32.0 * invMpbMid);
             double[] demSample = new double[3];
             for (int[] lv : new int[][]{{0, 1}, {3, 8}}) {
                 int zLevel = (int) zoomMethod.invoke(v2, Math.max(1, lv[0]));
@@ -1875,12 +1887,13 @@ class EarthHydrologyAuditTest {
                 double originSlope = Math.hypot(demSample[0], demSample[1]) / mpbOrigin;
                 assertTrue(originSlope > EarthGenerator.SHADOW_FLAT_GRAD,
                         "precondition: origin must be steep at voxel=" + lv[1] + ", got slope " + originSlope);
-                dem.sample(midGapX + 24.5, probeZ + 0.5, demSample);
-                double slope24 = Math.hypot(demSample[0], demSample[1]) / midGapGrid.groundMetresPerBlock(midGapX + 24.5, probeZ + 0.5);
-                dem.sample(midGapX + 32.5, probeZ + 0.5, demSample);
-                double slope32 = Math.hypot(demSample[0], demSample[1]) / midGapGrid.groundMetresPerBlock(midGapX + 32.5, probeZ + 0.5);
+                dem.sample(oldCol24 + 0.5, probeZ + 0.5, demSample);
+                double slope24 = Math.hypot(demSample[0], demSample[1]) / midGapGrid.groundMetresPerBlock(oldCol24 + 0.5, probeZ + 0.5);
+                dem.sample(oldCol32 + 0.5, probeZ + 0.5, demSample);
+                double slope32 = Math.hypot(demSample[0], demSample[1]) / midGapGrid.groundMetresPerBlock(oldCol32 + 0.5, probeZ + 0.5);
                 assertTrue(slope24 <= EarthGenerator.SHADOW_FLAT_GRAD || slope32 <= EarthGenerator.SHADOW_FLAT_GRAD,
-                        "precondition: old discrete probe must see flat water at +24 m or +32 m for voxel=" + lv[1]
+                        "precondition: old discrete probe must see flat water at oldCol(24)=" + oldCol24
+                                + " or oldCol(32)=" + oldCol32 + " for voxel=" + lv[1]
                                 + " (slope24=" + slope24 + ", slope32=" + slope32 + ")");
             }
             assertTrue(v2.inShadowReach(midGapX, probeZ, Double.NaN, 100.0),
@@ -1889,15 +1902,15 @@ class EarthHydrologyAuditTest {
             int[] outV1 = new int[2], outV8 = new int[2], outV64 = new int[2];
             v2.ground(midGapX, probeZ, outV1);
             v2.farGround(3, midGapX, probeZ, outV8);
-            // At voxel = 64 (overview 2, ~17 m pixels at 62.5° N), the dry rib spans wider than the 8 m (16, 24) gap,
-            // while midGapX itself remains mapped water and must still strip to DRY.
+            // Coarse-LOD smoke check: at voxel = 64 (overview 2, ~17 m pixels at 62.5° N), the dry rib spans wider
+            // than the 8 m (16, 24) gap, while midGapX itself remains mapped water and must still strip to DRY.
             v2.farGround(6, midGapX, probeZ, outV64);
             assertEquals(SurfaceGenerator.DRY, outV1[1],
-                    "mid-ray dry rock rib in 17..23 m must stop DDA ray march and strip shadow column to DRY at voxel = 1");
+                    "mid-ray dry rock rib between oldCol(16) and oldCol(24) must stop DDA ray march and strip shadow column to DRY at voxel = 1");
             assertEquals(SurfaceGenerator.DRY, outV8[1],
-                    "mid-ray dry rock rib in 17..23 m must stop DDA ray march and strip shadow column to DRY at voxel = 8");
+                    "mid-ray dry rock rib between oldCol(16) and oldCol(24) must stop DDA ray march and strip shadow column to DRY at voxel = 8");
             assertEquals(SurfaceGenerator.DRY, outV64[1],
-                    "dry rock rib must stop DDA ray march and strip shadow column to DRY at voxel = 64");
+                    "coarse-LOD smoke check: shadow column must still strip to DRY at voxel = 64");
         }
 
         // Part D: Rotated-ray exact 2D DDA single-column dry-gap test.
@@ -1906,6 +1919,7 @@ class EarthHydrologyAuditTest {
         //         FIRST and stops on the dry column, whereas a naive r += 1.0 march jumped directly to (ox + 1, oz + 1)
         //         and reached flat water at r = 4 ((ox + 3, oz + 2)).
         int cutX = 140, cutZ = 0;
+        // SyntheticWorld fetches DEM tiles lazily on first dem1.sample / ground call, after flatS[0] is populated.
         double[] flatS = { Double.NaN };
         try (EarthShorelineTest.SyntheticWorld rotatedWorld = new EarthShorelineTest.SyntheticWorld(
                 EarthShorelineTest.biomes, 62.5, 7.7,
@@ -1925,6 +1939,7 @@ class EarthHydrologyAuditTest {
             EarthGenerator v2 = new EarthGenerator(1234L, EarthShorelineTest.biomes, rotatedWorld.generator.settings(),
                     rotatedWorld.tiles, rotatedWorld.cover, null, null);
             v2.enableHydrologyV2();
+            MercatorGrid rotatedGrid = new MercatorGrid(rotatedWorld.generator.settings().metresPerBlock());
 
             int ox = Integer.MIN_VALUE, oz = Integer.MIN_VALUE;
             outer:
@@ -1956,7 +1971,7 @@ class EarthHydrologyAuditTest {
             GlobalElevation dem1 = (GlobalElevation) elevationMethod.invoke(v2, z1, 1);
             double[] gOrigin = new double[3], gFlat = new double[3];
             dem1.sample(ox + 0.5, oz + 0.5, gOrigin);
-            double mpb = midGapGrid.groundMetresPerBlock(ox + 0.5, oz + 0.5);
+            double mpb = rotatedGrid.groundMetresPerBlock(ox + 0.5, oz + 0.5);
             double originSlope = Math.hypot(gOrigin[0], gOrigin[1]) / mpb;
             assertTrue(originSlope > EarthGenerator.SHADOW_FLAT_GRAD,
                     "precondition: rotated-ray origin must be steep (> 0.15), got " + originSlope);
@@ -1970,7 +1985,7 @@ class EarthHydrologyAuditTest {
                     "precondition: naive r = 1.0 step would land on dz = +1 (skipping dry (ox+1,oz))");
 
             dem1.sample(ox + 3.5, oz + 2.5, gFlat);
-            double flatSlope = Math.hypot(gFlat[0], gFlat[1]) / midGapGrid.groundMetresPerBlock(ox + 3.5, oz + 2.5);
+            double flatSlope = Math.hypot(gFlat[0], gFlat[1]) / rotatedGrid.groundMetresPerBlock(ox + 3.5, oz + 2.5);
             assertTrue(flatSlope <= EarthGenerator.SHADOW_FLAT_GRAD,
                     "precondition: water at r = 4 ((ox+3,oz+2)) must be flat (<= 0.15), got " + flatSlope);
             assertTrue(v2.inShadowReach(ox, oz, Double.NaN, 100.0),
@@ -1981,6 +1996,104 @@ class EarthHydrologyAuditTest {
             assertEquals(SurfaceGenerator.DRY, rotOut[1],
                     "exact 2D DDA must cross dry (ox+1,oz) along (+0.8,+0.6) instead of jumping to (ox+1,oz+1) and strip to DRY");
         }
+    }
+
+    @Test
+    void hasNearbyFlatWaterExactDdaCornerTiesAndRadialOwnership() {
+        // 1. Near-45° distinct crossing order: X crosses before Z by ~1.4142e-10 (< 1e-9).
+        //    With (1, 0) dry, (0, 1) wet+steep, and the SE quadrant (px >= 1 && pz >= 1) wet+flat,
+        //    exact DDA must visit dry (1, 0) first and stop instead of treating it as a simultaneous corner tie.
+        double near45Major = 0.7071067812572583;
+        double near45Minor = 0.7071067811158369;
+        EarthGenerator.GridColumnPredicate near45Water =
+                (px, pz) -> (px == 0 && pz == 0) || (px == 0 && pz == 1) || (px >= 1 && pz >= 1);
+        EarthGenerator.GridColumnPredicate seQuadrantFlat = (px, pz) -> px >= 1 && pz >= 1;
+        assertFalse(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -near45Major, -near45Minor, 32.0, 4.0, near45Water, seQuadrantFlat),
+                "near-45° ray with |dirX| > |dirZ| must cross dry (1,0) first and must not jump diagonally to (1,1)");
+        assertTrue(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -near45Minor, -near45Major, 32.0, 4.0, near45Water, seQuadrantFlat),
+                "near-45° ray with |dirZ| > |dirX| must cross wet (0,1) first and reach flat SE water");
+
+        // 2. Exact-45° corner tie (tMaxX == tMaxZ bit-for-bit at every step via integer step counters):
+        //    both flanking orthogonal columns dry -> blocked; either flanking column wet -> passes.
+        double sqrtHalf = Math.sqrt(0.5);
+        EarthGenerator.GridColumnPredicate exactTieBothDry =
+                (px, pz) -> (px == 0 && pz == 0) || (px >= 1 && pz >= 1);
+        assertFalse(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -sqrtHalf, -sqrtHalf, 32.0, 4.0, exactTieBothDry, seQuadrantFlat),
+                "exact-45° corner tie with both (1,0) and (0,1) dry must stop");
+        assertTrue(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -sqrtHalf, -sqrtHalf, 32.0, 4.0, near45Water, seQuadrantFlat),
+                "exact-45° corner tie with wet (0,1) and dry (1,0) must step to (1,1) and reach flat water");
+        EarthGenerator.GridColumnPredicate exactTieEastWet =
+                (px, pz) -> (px == 0 && pz == 0) || (px == 1 && pz == 0) || (px >= 1 && pz >= 1);
+        assertTrue(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -sqrtHalf, -sqrtHalf, 32.0, 4.0, exactTieEastWet, seQuadrantFlat),
+                "exact-45° corner tie with wet (1,0) and dry (0,1) must step to (1,1) and reach flat water");
+        // Verify zero cumulative FP drift on exact-45° ties at step 10: dry diagonal wall at (10,9) & (9,10) still blocks,
+        // while making one flanking column (10,9) wet lets the ray pass through to flat water at (10,10)+.
+        EarthGenerator.GridColumnPredicate step10DryWall =
+                (px, pz) -> px >= 0 && pz >= 0 && !(px == 10 && pz == 9) && !(px == 9 && pz == 10);
+        assertFalse(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -sqrtHalf, -sqrtHalf, 32.0, 4.0, step10DryWall, (px, pz) -> px >= 10 && pz >= 10),
+                "exact-45° corner tie at step 10 must stay bit-for-bit exact and stop on dry (10,9) & (9,10)");
+        EarthGenerator.GridColumnPredicate step10OneFlankWet =
+                (px, pz) -> px >= 0 && pz >= 0 && !(px == 9 && pz == 10);
+        assertTrue(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -sqrtHalf, -sqrtHalf, 32.0, 4.0, step10OneFlankWet, (px, pz) -> px >= 10 && pz >= 10),
+                "exact-45° corner tie at step 10 must pass when flanking column (10,9) is wet");
+
+        // 3a. Exact half-open [tEnter, tExit) maxBlocks boundary on cardinal ray:
+        //     column +32 owns [31.5, 32.5), so maxBlocks = 31.4999995 must NOT enter or probe +32,
+        //     whereas maxBlocks = 31.5 MUST enter and probe +32.
+        List<Integer> visitedCardinal = new ArrayList<>();
+        List<Integer> probedCardinal = new ArrayList<>();
+        EarthGenerator.GridColumnPredicate cardinalWater = (px, pz) -> {
+            if (pz == 0 && px > 0) visitedCardinal.add(px);
+            return pz == 0 && px >= 0;
+        };
+        assertFalse(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -1.0, 0.0, 31.4999995, 4.0, cardinalWater, (px, pz) -> {
+                    if (pz == 0) probedCardinal.add(px);
+                    return px == 32 && pz == 0;
+                }),
+                "cardinal ray with maxBlocks = 31.4999995 must not enter column +32 ([31.5, 32.5))");
+        assertFalse(visitedCardinal.contains(32), "column +32 must not be visited when maxBlocks = 31.4999995");
+        assertTrue(probedCardinal.contains(31), "endpoint column +31 ([30.5, 31.5)) must be probed when maxBlocks = 31.4999995");
+        assertTrue(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -1.0, 0.0, 31.5, 4.0, (px, pz) -> pz == 0 && px >= 0, (px, pz) -> px == 32 && pz == 0),
+                "cardinal ray with maxBlocks = 31.5 must enter and probe column +32 ([31.5, 32.5))");
+
+        // 3b. Exact half-open [tEnter, tExit) DEM step ownership for dirX = 0.8750001:
+        //     column (3, 2) exits at tExit = 3.5 / 0.8750001 = 3.9999995429 < 4.0 and must NOT consume nextDemR = 4.0;
+        //     column (4, 2) owns [3.9999995429, 5.142856555) containing r = 4.0 and MUST be probed.
+        double dirX = 0.8750001;
+        double dirZ = Math.sqrt(1.0 - dirX * dirX);
+        EarthGenerator.GridColumnPredicate narrowChain = (px, pz) ->
+                (px == 0 && pz == 0) || (px == 1 && pz == 0) || (px == 1 && pz == 1)
+                        || (px == 2 && pz == 1) || (px == 3 && pz == 1)
+                        || (px == 3 && pz == 2) || (px == 4 && pz == 2);
+        List<String> probedChain = new ArrayList<>();
+        assertFalse(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -dirX, -dirZ, 32.0, 4.0, narrowChain, (px, pz) -> {
+                    probedChain.add(px + "," + pz);
+                    return px == 3 && pz == 2;
+                }),
+                "column (3,2) exiting at 3.9999995429 must not consume nextDemR = 4.0 early");
+        assertFalse(probedChain.contains("3,2"), "column (3,2) must not be probed for nextDemR = 4.0");
+        assertTrue(probedChain.contains("4,2"), "column (4,2) owning r = 4.0 must be probed");
+        assertTrue(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -dirX, -dirZ, 32.0, 4.0, narrowChain, (px, pz) -> px == 4 && pz == 2),
+                "column (4,2) containing r = 4.0 must return true when flat");
+
+        // 3c. Exact DEM boundary tExit == nextDemR: (3, 0) owns [2.5, 3.5) and (4, 0) owns [3.5, 4.5).
+        assertFalse(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -1.0, 0.0, 10.0, 3.5, (px, pz) -> pz == 0 && px >= 0 && px <= 6, (px, pz) -> px == 3 && pz == 0),
+                "column (3,0) with tExit == nextDemR (3.5) must not own r = 3.5 under half-open [tEnter, tExit)");
+        assertTrue(
+                EarthGenerator.hasNearbyFlatWater(0, 0, -1.0, 0.0, 10.0, 3.5, (px, pz) -> pz == 0 && px >= 0 && px <= 6, (px, pz) -> px == 4 && pz == 0),
+                "column (4,0) with tEnter == nextDemR (3.5) must own r = 3.5 under half-open [tEnter, tExit)");
     }
 
     @Test

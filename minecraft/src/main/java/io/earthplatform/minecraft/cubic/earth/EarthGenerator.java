@@ -991,18 +991,21 @@ public final class EarthGenerator extends SurfaceGenerator {
                 : isWorldCoverWater(memo, px, pz, voxel);
     }
 
+    @FunctionalInterface
+    interface GridColumnPredicate {
+        boolean test(int x, int z);
+    }
+
     /**
-     * LOD-invariant 8-direction exact 2D grid DDA (Amanatides &amp; Woo) from column centre {@code (x + 0.5, z + 0.5)}
-     * for continuously connected flat water ({@link #physicalSlope} {@code <= SHADOW_FLAT_GRAD}) within
-     * {@value #FLAT_PROBE_METRES} physical metres, capped at {@value #FLAT_PROBE_MAX_BLOCKS} blocks so 32 m stays
-     * exact up to 82.8° N without bounding-box blowup near the poles. Visits every traversed column (stopping
-     * immediately on any dry column or 45° diagonal dry wall) while sampling DEM slope only every
-     * {@value #FLAT_PROBE_SLOPE_STEP_METRES} physical metres and at the ray endpoint. Uses {@link #cover} at near
-     * LOD ({@code voxel <= RIVER_VOXEL}) so narrow {@code RIVER}-only streams are followed, and
-     * {@link #isWorldCoverWater} above {@link #RIVER_VOXEL} so far-LOD workers never touch
-     * {@link RiverMap}, {@link SurfaceWaterSource}, or {@link io.earthplatform.geography.globe.Drainage}.
+     * Pure 8-direction exact 2D grid DDA (Amanatides &amp; Woo) from column centre {@code (x + 0.5, z + 0.5)}
+     * with exact corner ties ({@code tMaxX == tMaxZ}) and exact half-open {@code [tEnter, tExit)} radial ownership.
+     * Steps through continuously connected water columns up to {@code maxBlocks} (rejecting any dry column or
+     * exact corner-tie dry wall where both flanking orthogonal columns are dry) and probes {@code isFlat}
+     * whenever the column owns a {@code demStepBlocks} multiple ({@code nextDemR < tExit}) or the ray endpoint
+     * ({@code tExit > maxBlocks}).
      */
-    private boolean hasNearbyFlatWater(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel, double gx, double gz) {
+    static boolean hasNearbyFlatWater(int x, int z, double gx, double gz, double maxBlocks, double demStepBlocks,
+                                      GridColumnPredicate isWater, GridColumnPredicate isFlat) {
         double norm = Math.hypot(gx, gz);
         double ux = norm > 1e-6 ? gx / norm : 1.0;
         double uz = norm > 1e-6 ? gz / norm : 0.0;
@@ -1010,46 +1013,68 @@ public final class EarthGenerator extends SurfaceGenerator {
         double d2x = (ux + uz) * INV_SQRT2, d2z = (uz - ux) * INV_SQRT2;
         double[] dx = {ux, -ux, -uz, uz, d1x, -d1x, d2x, -d2x};
         double[] dz = {uz, -uz, ux, -ux, d1z, -d1z, d2z, -d2z};
+        for (int d = 0; d < 8; d++) {
+            double dirX = dx[d], dirZ = dz[d];
+            int stepX = dirX > 0.0 ? 1 : (dirX < 0.0 ? -1 : 0);
+            int stepZ = dirZ > 0.0 ? 1 : (dirZ < 0.0 ? -1 : 0);
+            double tDeltaX = stepX != 0 ? 1.0 / Math.abs(dirX) : Double.POSITIVE_INFINITY;
+            double tDeltaZ = stepZ != 0 ? 1.0 / Math.abs(dirZ) : Double.POSITIVE_INFINITY;
+            int stepsX = 0, stepsZ = 0;
+            double tMaxX = stepX != 0 ? 0.5 * tDeltaX : Double.POSITIVE_INFINITY;
+            double tMaxZ = stepZ != 0 ? 0.5 * tDeltaZ : Double.POSITIVE_INFINITY;
+            int px = x, pz = z;
+            int demSteps = 1;
+            double nextDemR = demStepBlocks;
+            while (Math.min(tMaxX, tMaxZ) <= maxBlocks) {
+                if (tMaxX == tMaxZ) {
+                    int nx = px + stepX, nz = pz + stepZ;
+                    if (!isWater.test(nx, pz) && !isWater.test(px, nz)) break;
+                    px = nx;
+                    pz = nz;
+                    tMaxX = (++stepsX + 0.5) * tDeltaX;
+                    tMaxZ = (++stepsZ + 0.5) * tDeltaZ;
+                } else if (tMaxX < tMaxZ) {
+                    px += stepX;
+                    tMaxX = (++stepsX + 0.5) * tDeltaX;
+                } else {
+                    pz += stepZ;
+                    tMaxZ = (++stepsZ + 0.5) * tDeltaZ;
+                }
+                if (!isWater.test(px, pz)) break;
+                double tExit = Math.min(tMaxX, tMaxZ);
+                boolean endpoint = tExit > maxBlocks;
+                if (nextDemR < tExit || endpoint) {
+                    if (isFlat.test(px, pz)) return true;
+                    while (nextDemR < tExit) nextDemR = ++demSteps * demStepBlocks;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * LOD-invariant 8-direction exact 2D grid DDA (Amanatides &amp; Woo) from column centre {@code (x + 0.5, z + 0.5)}
+     * for continuously connected flat water ({@link #physicalSlope} {@code <= SHADOW_FLAT_GRAD}) within
+     * {@value #FLAT_PROBE_METRES} physical metres, capped at {@value #FLAT_PROBE_MAX_BLOCKS} blocks so 32 m stays
+     * exact up to 82.8° N without bounding-box blowup near the poles. Visits every traversed column with exact
+     * corner ties ({@code tMaxX == tMaxZ}) and exact half-open {@code [tEnter, tExit)} radial ownership while
+     * sampling DEM slope every {@value #FLAT_PROBE_SLOPE_STEP_METRES} physical metres and at the ray endpoint.
+     * Uses {@link #cover} at near LOD ({@code voxel <= RIVER_VOXEL}) so narrow {@code RIVER}-only streams are
+     * followed, and {@link #isWorldCoverWater} above {@link #RIVER_VOXEL} so far-LOD workers never touch
+     * {@link RiverMap}, {@link SurfaceWaterSource}, or {@link io.earthplatform.geography.globe.Drainage}.
+     */
+    private boolean hasNearbyFlatWater(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel, double gx, double gz) {
         double mpb = grid.groundMetresPerBlock(x + 0.5, z + 0.5);
         double invMpb = mpb > 0.0 && Double.isFinite(mpb) ? 1.0 / mpb : 1.0;
         double maxBlocks = Math.min(FLAT_PROBE_METRES * invMpb, FLAT_PROBE_MAX_BLOCKS);
         double demStepBlocks = Math.max(1.0, FLAT_PROBE_SLOPE_STEP_METRES * invMpb);
         double[] probe = new double[3];
-        for (int d = 0; d < 8; d++) {
-            double dirX = dx[d], dirZ = dz[d];
-            int stepX = dirX > 1e-9 ? 1 : (dirX < -1e-9 ? -1 : 0);
-            int stepZ = dirZ > 1e-9 ? 1 : (dirZ < -1e-9 ? -1 : 0);
-            double tDeltaX = stepX != 0 ? 1.0 / Math.abs(dirX) : Double.POSITIVE_INFINITY;
-            double tDeltaZ = stepZ != 0 ? 1.0 / Math.abs(dirZ) : Double.POSITIVE_INFINITY;
-            double tMaxX = stepX != 0 ? 0.5 * tDeltaX : Double.POSITIVE_INFINITY;
-            double tMaxZ = stepZ != 0 ? 0.5 * tDeltaZ : Double.POSITIVE_INFINITY;
-            int px = x, pz = z;
-            double nextDemR = demStepBlocks;
-            while (Math.min(tMaxX, tMaxZ) <= maxBlocks + 1e-6) {
-                if (Math.abs(tMaxX - tMaxZ) <= 1e-9) {
-                    int nx = px + stepX, nz = pz + stepZ;
-                    if (!isConnectedWater(memo, nx, pz, voxel) && !isConnectedWater(memo, px, nz, voxel)) break;
-                    px = nx;
-                    pz = nz;
-                    tMaxX += tDeltaX;
-                    tMaxZ += tDeltaZ;
-                } else if (tMaxX < tMaxZ) {
-                    px += stepX;
-                    tMaxX += tDeltaX;
-                } else {
-                    pz += stepZ;
-                    tMaxZ += tDeltaZ;
-                }
-                if (!isConnectedWater(memo, px, pz, voxel)) break;
-                double tExit = Math.min(Math.min(tMaxX, tMaxZ), maxBlocks);
-                if (tExit + 1e-6 >= nextDemR || tExit >= maxBlocks - 1e-6) {
+        return hasNearbyFlatWater(x, z, gx, gz, maxBlocks, demStepBlocks,
+                (px, pz) -> isConnectedWater(memo, px, pz, voxel),
+                (px, pz) -> {
                     dem.sample(px + 0.5, pz + 0.5, probe);
-                    if (physicalSlope(px, pz, probe[0], probe[1]) <= SHADOW_FLAT_GRAD) return true;
-                    while (nextDemR <= tExit + 1e-6) nextDemR += demStepBlocks;
-                }
-            }
-        }
-        return false;
+                    return physicalSlope(px, pz, probe[0], probe[1]) <= SHADOW_FLAT_GRAD;
+                });
     }
 
     /** Least rise of a cliff's face per block back from the sea; blocks a cove may cut in or a headland stand out; blocks within which the whole face climbs. */
