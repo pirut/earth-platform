@@ -227,6 +227,11 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             surface[dz * 16 + dx] = surface(x0 + dx, z0 + dz, y, w[i], slope);
             layers[dz * 16 + dx] = layers(x0 + dx, z0 + dz);
         }
+        // Water falling over a chunk boundary reads the four cardinal 1-block border strips in falls()
+        // (excluding the four diagonal corners, which falls() never inspects).
+        for (int d = 1; d <= 16; d++) {
+            maxWater = Math.max(maxWater, Math.max(Math.max(w[d], w[17 * 18 + d]), Math.max(w[d * 18], w[d * 18 + 17])));
+        }
         Column made = new Column(h, w, surface, layers, min, max, maxWater);
         if (columns.size() > MemoryPressure.scaled(8192)) columns.clear();
         columns.putIfAbsent(key, made);
@@ -436,7 +441,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
             // Where water steps down beside this column it pours over the edge here, as it does up close, rather
             // than leaving a dark slot under the higher water's lip.
             int beside = Math.max(Math.max(water[g - 1], water[g + 1]), Math.max(water[g - 18], water[g + 18]));
-            if (beside != DRY && beside > Math.max(h, water[g])) {
+            if (beside != DRY && beside > Math.max(h, water[g]) && (v <= 8 || water[g] > h)) {
                 pours[cell] = Math.floorDiv(beside, v) * v;
                 max = Math.max(max, beside);
             }

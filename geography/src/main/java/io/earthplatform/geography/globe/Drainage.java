@@ -214,17 +214,23 @@ public final class Drainage {
         }
         java.util.concurrent.FutureTask<Void> rained = new java.util.concurrent.FutureTask<>(() -> RangeFiles.all(rainRows), null);
         Thread.ofVirtual().start(rained);
-        RangeFiles.all(loads);
-        int[] down = new int[SIDE * SIDE], order = flood(height, down);
+        int[] down, order;
         try {
-            DataWaits.get(rained);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new MissingTerrainException("Interrupted while reading rain");
-        } catch (java.util.concurrent.ExecutionException failed) {
-            if (failed.getCause() instanceof RuntimeException runtime) throw runtime;
-            if (failed.getCause() instanceof Error error) throw error;
-            throw new IllegalStateException(failed.getCause());
+            RangeFiles.all(loads);
+            down = new int[SIDE * SIDE];
+            order = flood(height, down);
+            try {
+                DataWaits.get(rained);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new MissingTerrainException("Interrupted while reading rain");
+            } catch (java.util.concurrent.ExecutionException failed) {
+                if (failed.getCause() instanceof RuntimeException runtime) throw runtime;
+                if (failed.getCause() instanceof Error error) throw error;
+                throw new IllegalStateException(failed.getCause());
+            }
+        } finally {
+            rained.cancel(true);
         }
         float[] area = new float[SIDE * SIDE];
         double[] row = new double[SIDE];
