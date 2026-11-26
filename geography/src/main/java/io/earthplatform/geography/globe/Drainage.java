@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
 
 /**
  * Streams the elevation's valleys carry, for rivers too narrow for any satellite water map.
@@ -62,9 +64,51 @@ public final class Drainage {
     private final Rain rain;
     private final int maxRegions;
     private final LruMap<Long, Region> memory = new LruMap<>(16);
-    private final Map<Long, CompletableFuture<Region>> inFlight = new ConcurrentHashMap<>();
+    private final Map<Long, InFlight> inFlight = new ConcurrentHashMap<>();
     /** One drained tile: per pixel, the direction (0 to 7) a kept stream steps on in, or -1; and the ground it drains. */
     private record Region(byte[] step, float[] area) {}
+
+    /**
+     * Single-flight region computation decoupled from any single caller's cancellation: cancelling one
+     * waiter detaches it immediately without interrupting a shared producer still needed by other callers,
+     * while cancelling the last active waiter interrupts the unshared work cleanly.
+     */
+    private static final class InFlight {
+        final CompletableFuture<Region> future = new CompletableFuture<>();
+        private FutureTask<Region> task;
+        private int waiters;
+        private boolean cancelled;
+
+        synchronized boolean attach() {
+            if (cancelled) return false;
+            waiters++;
+            return true;
+        }
+
+        synchronized void start(FutureTask<Region> task) {
+            this.task = task;
+            if (cancelled) {
+                task.cancel(true);
+            } else {
+                Thread.ofVirtual().start(task);
+            }
+        }
+
+        synchronized boolean detach() {
+            if (--waiters > 0 || future.isDone()) return false;
+            cancelled = true;
+            if (task != null) task.cancel(true);
+            return true;
+        }
+
+        synchronized int waiterCount() { return waiters; }
+    }
+
+    int inFlightWaiters() {
+        int total = 0;
+        for (InFlight flight : inFlight.values()) total += flight.waiterCount();
+        return total;
+    }
 
     /** @param rain yearly precipitation, or null to count all ground as wet */
     public Drainage(GlobalElevation.Tiles tiles, Rain rain, int maxRegions) {
@@ -83,13 +127,16 @@ public final class Drainage {
         long size = (long) TILE << ZOOM;
         long x0 = (long) Math.floor(pixelX(west, ZOOM)), x1 = (long) Math.floor(pixelX(east, ZOOM));
         long y0 = Math.max(0, (long) Math.floor(pixelY(north, ZOOM))), y1 = Math.min(size - 1, (long) Math.floor(pixelY(south, ZOOM)));
-        for (long y = y0; y <= y1; y++) for (long x = x0; x <= x1; x++) {
+        for (long y = y0; y <= y1; y++) {
+            if (Thread.currentThread().isInterrupted()) throw new MissingTerrainException("Interrupted while reading drainage links");
+            for (long x = x0; x <= x1; x++) {
             long gx = Math.floorMod(x, size);
             Region region = region((int) (gx / TILE), (int) (y / TILE));
             int at = (int) ((y % TILE) * TILE + gx % TILE), step = region.step[at];
             if (step < 0) continue;
             sink.accept(latitude(y + 0.5, ZOOM), longitude(x + 0.5, ZOOM),
                     latitude(y + NY[step] + 0.5, ZOOM), longitude(x + NX[step] + 0.5, ZOOM), region.area[at]);
+            }
         }
     }
 
@@ -125,6 +172,7 @@ public final class Drainage {
         long[] key = {-1, -1};
         float[][] last = new float[2][];
         for (int j = 0; j < latitudes.length; j++) {
+            if (Thread.currentThread().isInterrupted()) throw new MissingTerrainException("Interrupted while reading drainage elevation");
             double fy = pixelY(latitudes[j], FINE_ZOOM) - 0.5;
             long iy = (long) Math.floor(fy);
             double ty = fy - iy;
@@ -171,23 +219,61 @@ public final class Drainage {
         synchronized (memory) { region = memory.get(key); }
         if (region != null) return region;
         TickShare.giveWay();
-        CompletableFuture<Region> mine = new CompletableFuture<>(), shared = inFlight.putIfAbsent(key, mine);
-        if (shared == null) {
-            try {
-                Region made = drain(tx, ty);
-                synchronized (memory) {
-                    memory.putAndTrim(key, made, maxRegions);
-                }
-                mine.complete(made);
-            } catch (Throwable failure) {
-                mine.completeExceptionally(failure);
-                throw failure;
-            } finally {
-                inFlight.remove(key, mine);
-            }
-            shared = mine;
+        if (Thread.currentThread().isInterrupted()) {
+            throw new MissingTerrainException("Interrupted while waiting on drainage");
         }
-        return DataWaits.join(shared);
+        InFlight flight;
+        boolean owner;
+        while (true) {
+            InFlight existing = inFlight.get(key);
+            if (existing != null) {
+                if (existing.attach()) {
+                    flight = existing;
+                    owner = false;
+                    break;
+                }
+                inFlight.remove(key, existing);
+                continue;
+            }
+            InFlight mine = new InFlight();
+            mine.attach();
+            if (inFlight.putIfAbsent(key, mine) == null) {
+                flight = mine;
+                owner = true;
+                break;
+            }
+        }
+        if (owner) {
+            InFlight owned = flight;
+            FutureTask<Region> task = new FutureTask<>(() -> {
+                try {
+                    Region made = drain(tx, ty);
+                    synchronized (memory) {
+                        memory.putAndTrim(key, made, maxRegions);
+                    }
+                    owned.future.complete(made);
+                    return made;
+                } catch (Throwable failure) {
+                    owned.future.completeExceptionally(failure);
+                    return null;
+                } finally {
+                    inFlight.remove(key, owned);
+                }
+            });
+            owned.start(task);
+        }
+        try {
+            return DataWaits.get(flight.future);
+        } catch (InterruptedException interrupted) {
+            if (flight.detach()) inFlight.remove(key, flight);
+            Thread.currentThread().interrupt();
+            throw new MissingTerrainException("Interrupted while waiting on drainage");
+        } catch (ExecutionException failed) {
+            Throwable cause = failed.getCause();
+            if (cause instanceof RuntimeException runtime) throw runtime;
+            if (cause instanceof Error error) throw error;
+            throw new IllegalStateException(cause);
+        }
     }
 
     private Region drain(int tx, int ty) {
@@ -297,7 +383,13 @@ public final class Drainage {
                 size = push(heap, size, key(height[at], at));
             }
         }
+        if (Thread.currentThread().isInterrupted()) {
+            throw new MissingTerrainException("Interrupted while flooding drainage");
+        }
         while (head < tail || size > 0) {
+            if ((popped & 4095) == 0 && Thread.currentThread().isInterrupted()) {
+                throw new MissingTerrainException("Interrupted while flooding drainage");
+            }
             int at;
             float level;
             if (head < tail) {
@@ -379,7 +471,13 @@ public final class Drainage {
             rx[k] = (int) Math.round(RING * Math.cos(2 * Math.PI * k / 16));
             ry[k] = (int) Math.round(RING * Math.sin(2 * Math.PI * k / 16));
         }
+        if (Thread.currentThread().isInterrupted()) {
+            throw new MissingTerrainException("Interrupted while filtering drainage");
+        }
         for (int at = 0; at < n; at++) {
+            if ((at & 4095) == 0 && Thread.currentThread().isInterrupted()) {
+                throw new MissingTerrainException("Interrupted while filtering drainage");
+            }
             if (area[at] < STREAM_AREA) continue;
             stream[at] = true;
             int x = at % side, y = at / side;

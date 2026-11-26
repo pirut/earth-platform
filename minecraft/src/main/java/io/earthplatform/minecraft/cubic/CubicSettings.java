@@ -76,6 +76,8 @@ public final class CubicSettings {
     private static Drainage drainage;
     private static RiverMap rivers, riversAndStreams, riversV2, riversAndStreamsV2;
     private static ImagerySource imagery;
+    /** Test-only override for {@link #cacheFolder()} so headless unit tests can exercise {@link #open}. */
+    static volatile Path cacheFolderOverride;
 
     private CubicSettings() {}
 
@@ -117,6 +119,9 @@ public final class CubicSettings {
                 // Worlds made before narrow rivers keep their land as it was; older river worlds keep v1 window-local joins.
                 String riversId = properties.getProperty("earth.rivers", "");
                 boolean globalRiverJoin = globalRiverJoin(riversId, file);
+                // Worlds made before hydrology v2 keep legacy cliff-shadow, drowned-reservoir, shore and river-bank rules.
+                String hydrologyId = properties.getProperty("earth.hydrology", "");
+                boolean hydrologyV2 = hydrologyV2(hydrologyId, file);
                 // Worlds made before streams from the elevation keep only the rivers seen from space.
                 String streamsId = properties.getProperty("earth.streams", "");
                 if (!streamsId.isEmpty() && !Drainage.ID.equals(streamsId))
@@ -135,6 +140,7 @@ public final class CubicSettings {
                         coverId.isEmpty() || imageryId.isEmpty() ? null : imagery(), coverId.isEmpty() || riversId.isEmpty() ? null : streamsId.isEmpty() ? rivers(globalRiverJoin) : riversAndStreams(globalRiverJoin),
                         coverId.isEmpty() || groundId.isEmpty() ? null : bareEarth(elevationId));
                 if (cavesId.isEmpty()) earth.legacyCaves();
+                if (hydrologyV2) earth.enableHydrologyV2();
                 String surveysId = properties.getProperty("earth.riverSurveys", "");
                 if (!surveysId.isEmpty() && !EstonianRivers.ID.equals(surveysId))
                     throw new IllegalStateException("Unsupported river surveys '" + surveysId + "' in " + file);
@@ -199,6 +205,7 @@ public final class CubicSettings {
         properties.setProperty("earth.cover", WorldCoverSource.DATASET_ID);
         properties.setProperty("earth.climate", ClimateSource.DATASET_ID);
         properties.setProperty("earth.rivers", riversPin());
+        properties.setProperty("earth.hydrology", hydrologyPin());
         properties.setProperty("earth.streams", Drainage.ID);
         properties.setProperty("earth.riverSurveys", EstonianRivers.ID);
         properties.setProperty("earth.ground", BareEarth.ID);
@@ -442,7 +449,35 @@ public final class CubicSettings {
         return gsi;
     }
 
-    private static Path cacheFolder() { return Loader.INSTANCE.gameDir().resolve("earthplatform").resolve("cache"); }
+    private static Path cacheFolder() {
+        Path override = cacheFolderOverride;
+        return override != null ? override : Loader.INSTANCE.gameDir().resolve("earthplatform").resolve("cache");
+    }
+
+    /** Resets cached data sources after headless unit tests that redirect {@link #cacheFolderOverride}. */
+    static synchronized void resetForTests() {
+        for (TerrariumTileSource source : tiles.values()) source.close();
+        tiles.clear();
+        ground.clear();
+        if (cover != null) { cover.close(); cover = null; }
+        if (climate != null) { climate.close(); climate = null; }
+        if (surfaceWater != null) { surfaceWater.close(); surfaceWater = null; }
+        if (canopy != null) { canopy.close(); canopy = null; }
+        if (imagery != null) { imagery.close(); imagery = null; }
+        if (copernicus != null) { copernicus.close(); copernicus = null; }
+        if (rema != null) { rema.close(); rema = null; }
+        if (hrdem != null) { hrdem.close(); hrdem = null; }
+        if (ign != null) { ign.close(); ign = null; }
+        if (gsi != null) { gsi.close(); gsi = null; }
+        for (int i = 0; i < usgs.length; i++) {
+            if (usgs[i] != null) { usgs[i].close(); usgs[i] = null; }
+        }
+        drainage = null;
+        rivers = null;
+        riversAndStreams = null;
+        riversV2 = null;
+        riversAndStreamsV2 = null;
+    }
 
     /** Old worlds retain the frozen legacy ground source. DGM5 replaces the corrected surface where it has data. */
     private static synchronized BareEarth bareEarth(String pin) {
@@ -516,6 +551,23 @@ public final class CubicSettings {
             }
         }
         return cover;
+    }
+
+    /** The {@code earth.hydrology} pin for new Earth worlds. */
+    static String hydrologyPin() {
+        return EarthGenerator.HYDROLOGY_V2;
+    }
+
+    /** Whether an {@code earth.hydrology} pin enables v2 terrain-affecting hydrology rules. */
+    static boolean isHydrologyV2(String hydrologyId) {
+        if (hydrologyId.isEmpty() || "v1".equals(hydrologyId)) return false;
+        if (EarthGenerator.HYDROLOGY_V2.equals(hydrologyId)) return true;
+        throw new IllegalStateException("Unsupported hydrology '" + hydrologyId + "'");
+    }
+
+    private static boolean hydrologyV2(String hydrologyId, Path file) {
+        try { return isHydrologyV2(hydrologyId); }
+        catch (IllegalStateException failure) { throw new IllegalStateException("Unsupported hydrology '" + hydrologyId + "' in " + file); }
     }
 
     /** The {@code earth.rivers} pin for new Earth worlds: global-coordinate, order-invariant gap joining. */

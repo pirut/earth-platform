@@ -45,6 +45,26 @@ public final class EstonianRivers {
         return Index.contains(mx, mz, radius);
     }
 
+    /** Whether a surveyed channel lies within {@code radiusMetres} ground metres of {@code (x, z)}. */
+    public static boolean containsWithin(GlobeProjection grid, double x, double z, double radiusMetres) {
+        double mx, mz;
+        if (grid instanceof MercatorGrid mercator) {
+            mx = x * mercator.metresPerBlock();
+            mz = z * mercator.metresPerBlock();
+            // Fast rejection outside Estonia. Avoid loading the index in worlds that never visit it.
+            if (mx < 2_430_000 || mx > 3_150_000 || mz < -8_320_000 || mz > -7_860_000) return false;
+        } else {
+            GeoPoint point = grid.tryGeographic(x, z);
+            if (point == null || point.latitude() < 57.3 || point.latitude() > 60.0
+                    || point.longitude() < 21.5 || point.longitude() > 28.5) return false;
+            mx = MercatorGrid.UNIT.blockX(point);
+            mz = MercatorGrid.UNIT.blockZ(point);
+            if (mx < 2_430_000 || mx > 3_150_000 || mz < -8_320_000 || mz > -7_860_000) return false;
+        }
+        double radius = Math.max(HALF_WIDTH, Math.max(0.0, radiusMetres)) * Math.cosh(mz / MercatorGrid.RADIUS);
+        return Index.contains(mx, mz, radius);
+    }
+
     private static int cell(double v) { return (int) Math.floor(v / CELL); }
     private static int key(int x, int z) { return x << 16 | z & 0xffff; }
 

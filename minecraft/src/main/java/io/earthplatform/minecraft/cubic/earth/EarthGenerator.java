@@ -133,76 +133,87 @@ public final class EarthGenerator extends SurfaceGenerator {
     @Nullable private final ClimateSource climate;
     @Nullable private final ImagerySource imagery;
     @Nullable private final ImageryGround imageryGround;
+    /** Pin value for {@code earth.hydrology} enabling v2 cliff-shadow, reservoir isolation, shore and river-bank rules. */
+    public static final String HYDROLOGY_V2 = "v2";
     /** Narrow rivers the land cover misses, or null in worlds made before them. */
     @Nullable private final RiverMap rivers;
     private boolean surveyedRivers;
-    /** Keeps hydrology caches registered with {@link MemoryPressure} for as long as this generator is alive. */
+    private boolean hydrologyV2;
+    /** Keeps hydrology caches registered with {@link MemoryPressure} once all cache fields are initialized. */
     @SuppressWarnings("unused")
-    private final MemoryPressure.Hook pressure = MemoryPressure.keep(this::shedCaches);
+    private final MemoryPressure.Hook pressure;
 
     /**
      * Bounded two-generation hydrology cache scaled by {@link MemoryPressure#scaled(int)} and trimmed
      * on memory pressure, replacing unscaled {@link ConcurrentHashMap} caches with catastrophic clear().
+     * Packs {@code (young, old)} in an immutable {@link Gen} snapshot so lookups, bounded promotions,
+     * rotations, replacements and sheds never race across generations.
      */
     static final class HydroCache<V> {
+        private record Gen<V>(ConcurrentHashMap<Long, V> young, ConcurrentHashMap<Long, V> old) {}
+
         private final int baseSize;
-        private volatile ConcurrentHashMap<Long, V> young = new ConcurrentHashMap<>();
-        private volatile ConcurrentHashMap<Long, V> old = new ConcurrentHashMap<>();
+        private volatile Gen<V> gen = new Gen<>(new ConcurrentHashMap<>(), new ConcurrentHashMap<>());
 
         HydroCache(int baseSize) { this.baseSize = baseSize; }
 
         int capacity() { return MemoryPressure.scaled(baseSize); }
 
-        int size() { return young.size() + old.size(); }
+        int size() {
+            Gen<V> g = this.gen;
+            return g.young.size() + g.old.size();
+        }
 
         @Nullable V get(long key) {
-            V value = young.get(key);
+            Gen<V> g = this.gen;
+            V value = g.young.get(key);
             if (value != null) return value;
-            value = old.get(key);
-            if (value != null) young.putIfAbsent(key, value);
+            value = g.old.get(key);
+            if (value != null && g.young.size() < capacity()) g.young.putIfAbsent(key, value);
             return value;
         }
 
         void put(long key, V value) {
-            ConcurrentHashMap<Long, V> map = young;
-            int limit = capacity();
-            if (map.size() >= limit) {
-                synchronized (this) {
-                    if (young == map) {
-                        old = map;
-                        young = new ConcurrentHashMap<>();
-                    }
-                }
-            }
-            young.putIfAbsent(key, value);
+            Gen<V> g = rotateIfFull();
+            g.young.putIfAbsent(key, value);
         }
 
         void putOrReplace(long key, V value) {
-            ConcurrentHashMap<Long, V> map = young;
-            int limit = capacity();
-            if (map.size() >= limit) {
-                synchronized (this) {
-                    if (young == map) {
-                        old = map;
-                        young = new ConcurrentHashMap<>();
-                    }
-                }
+            synchronized (this) {
+                Gen<V> g = rotateIfFullLocked();
+                g.young.put(key, value);
+                g.old.remove(key);
             }
-            young.put(key, value);
+        }
+
+        private Gen<V> rotateIfFull() {
+            Gen<V> g = this.gen;
+            if (g.young.size() < capacity()) return g;
+            synchronized (this) {
+                return rotateIfFullLocked();
+            }
+        }
+
+        private Gen<V> rotateIfFullLocked() {
+            Gen<V> g = this.gen;
+            if (g.young.size() >= capacity()) {
+                g = new Gen<>(new ConcurrentHashMap<>(), g.young);
+                this.gen = g;
+            }
+            return g;
         }
 
         void shed() {
             synchronized (this) {
-                old = new ConcurrentHashMap<>();
+                Gen<V> g = this.gen;
                 int limit = capacity();
-                int excess = young.size() - limit;
-                if (excess > 0) {
-                    var iterator = young.keySet().iterator();
-                    while (excess-- > 0 && iterator.hasNext()) {
-                        iterator.next();
-                        iterator.remove();
-                    }
+                ConcurrentHashMap<Long, V> nextYoung = new ConcurrentHashMap<>(Math.min(g.young.size(), limit));
+                int kept = 0;
+                for (var entry : g.young.entrySet()) {
+                    if (kept++ >= limit) break;
+                    nextYoung.put(entry.getKey(), entry.getValue());
                 }
+                this.gen = new Gen<>(nextYoung, new ConcurrentHashMap<>());
             }
         }
     }
@@ -370,6 +381,8 @@ public final class EarthGenerator extends SurfaceGenerator {
             @Override public double metresPerBlock(double z) { return grid.groundMetresPerBlock(0, z); }
             @Override public double metresPerBlock(double x, double z) { return grid.groundMetresPerBlock(x, z); }
         });
+        // Register memory pressure hook last so every HydroCache field is guaranteed initialized before shedCaches() can run.
+        this.pressure = MemoryPressure.keep(this::shedCaches);
     }
 
     @Override protected Strata.Layers layers(int x, int z) { return strata.layers(x, z, SEA + 0.5); }
@@ -396,6 +409,15 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** Use regional river surveys in worlds pinned to them. */
     public void enableSurveyedRivers() { surveyedRivers = rivers != null; }
+
+    /** Enable v2 hydrology rules (cliff-shadow filter, reservoir isolation, shore floor, surveyed river bank) in pinned worlds. */
+    public void enableHydrologyV2() { hydrologyV2 = true; }
+
+    /** Whether v2 terrain-affecting hydrology rules are enabled for this world. */
+    public boolean hydrologyV2() { return hydrologyV2; }
+
+    /** Narrow river map used by this world, or null when disabled. */
+    @Nullable public RiverMap rivers() { return rivers; }
 
     @Override public int[] arrival() {
         double[] b = grid.toBlock(settings.latitude(), settings.longitude());
@@ -697,23 +719,24 @@ public final class EarthGenerator extends SurfaceGenerator {
                 return;
             }
             boolean river = rivers != null && rawCover(memo, x, z, voxel) == RIVER;
-            boolean[] glacial = river ? null : new boolean[1];
-            int surface = river ? riverSurface(x, z) : lakeSurface(dem, x, z, voxel, glacial);
+            boolean[] lakeFlags = river ? null : new boolean[2];
+            int surface = river ? riverSurface(x, z) : lakeSurface(dem, x, z, voxel, lakeFlags);
+            boolean isGlacial = lakeFlags != null && lakeFlags[0];
+            boolean isFalling = lakeFlags != null && lakeFlags[1];
             // Shadowed cliffs can map as water; water never lies on a steep slope well above its own level. Only
             // mountains cast such shadows: in flat country a steep rise under water is a seam between surveys, and
             // keeping it as land stood thin stone walls in rivers. Water over a retreated glacier tongue sits below
             // the older survey's ice slope rather than in a cliff's shadow.
-            boolean shadow = (glacial == null || !glacial[0]) && steep > 0.7 && SEA + 0.5 + metres - surface > 4 && relief(x, z) > MOUNTAINS;
+            boolean shadow = !isGlacial && steep > 0.7 && SEA + 0.5 + metres - surface > 4 && relief(x, z) > MOUNTAINS;
             // Nor does a narrow river run over a mountain's top. The surface water record sees shadows, melt and late snow
             // on bare summits, and the river map traced them across Fuji's crater rim as ragged pools; a river's level is
             // the lowest ground round it, down the slope beyond the rim, so they sank into pits with pillars standing in them.
             if (!shadow && river && relief(x, z) > MOUNTAINS && crest(x, z)) shadow = true;
             // Steep mountain rock walls cast deep shadows that satellite optical water masks mistake for rivers or patches.
-            // Strip unbacked steep-cliff water unless backed by catchment drainage or an adjacent gentler water reach.
-            if (!shadow && (glacial == null || !glacial[0]) && steep > CLIFF_SHADOW_STEEP && relief(x, z) > MOUNTAINS
-                    && !(surveyedRivers && voxel <= RIVER_VOXEL && EstonianRivers.contains(grid, x + 0.5, z + 0.5, voxel))
-                    && cliffShadowWater(dem, memo, x, z, voxel, sample[0], sample[1], steep)) {
-                shadow = true;
+            // Strip unbacked steep-cliff water in hydrology v2 unless glacial, falling-reach, surveyed, drainage-backed,
+            // or continuously connected to a nearby gentler water reach.
+            if (!shadow && hydrologyV2 && steep > CLIFF_SHADOW_STEEP) {
+                shadow = cliffShadowWater(dem, memo, x, z, voxel, sample[0], sample[1], steep, isGlacial, isFalling);
             }
             // Water by the coast is the sea, and so is water at sea level that joins it, as estuaries and lagoons do,
             // which otherwise stood a block above the sea around it wherever the survey read a little over 0 m.
@@ -798,23 +821,35 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /**
      * Pure physical classifier for steep mountain rock-wall shadow water (#254):
-     * rejects non-glacial water on steep mountain faces ({@code steep > 0.7}, {@code relief > MOUNTAINS})
-     * only when it is neither backed by {@link io.earthplatform.geography.globe.Drainage} nor adjacent to
-     * a gentler water reach.
+     * rejects non-glacial, non-falling, non-surveyed water on steep mountain faces
+     * ({@code steep > 0.7}, {@code relief > MOUNTAINS}) only when it is neither backed by
+     * {@link io.earthplatform.geography.globe.Drainage} nor continuously connected to a nearby
+     * gentler water reach.
      */
-    static boolean isSteepCliffShadow(double steep, double relief, boolean glacial,
-                                      boolean drainageBacked, boolean nearbyGentleWater) {
-        if (glacial || steep <= CLIFF_SHADOW_STEEP || relief <= MOUNTAINS) return false;
+    static boolean isSteepCliffShadow(double steep, double relief, boolean glacial, boolean fallingReach,
+                                      boolean surveyedRiver, boolean drainageBacked, boolean nearbyGentleWater) {
+        if (glacial || fallingReach || surveyedRiver || steep <= CLIFF_SHADOW_STEEP || relief <= MOUNTAINS) return false;
         return !drainageBacked && !nearbyGentleWater;
     }
 
     private boolean cliffShadowWater(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel,
-                                     double gx, double gz, double steep) {
-        if (rivers != null) {
-            GeoPoint point = grid.tryGeographic(x + 0.5, z + 0.5);
-            if (point != null && rivers.drained(point.latitude(), point.longitude())) return false;
+                                     double gx, double gz, double steep, boolean glacial, boolean fallingReach) {
+        double rel = relief(x, z);
+        if (glacial || fallingReach || steep <= CLIFF_SHADOW_STEEP || rel <= MOUNTAINS) {
+            return isSteepCliffShadow(steep, rel, glacial, fallingReach, false, false, false);
         }
-        return isSteepCliffShadow(steep, MOUNTAINS + 1, false, false, hasNearbyGentleWater(dem, memo, x, z, voxel, gx, gz));
+        boolean surveyed = surveyedRivers && voxel <= RIVER_VOXEL && EstonianRivers.contains(grid, x + 0.5, z + 0.5, voxel);
+        if (surveyed) return isSteepCliffShadow(steep, rel, glacial, fallingReach, true, false, false);
+        // Probe cheap connected local water BEFORE touching RiverMap/Drainage, and never call rivers.drained()
+        // above RIVER_VOXEL where far-LOD workers do not prefetch rivers.
+        boolean nearbyGentle = hasNearbyGentleWater(dem, memo, x, z, voxel, gx, gz);
+        if (nearbyGentle) return isSteepCliffShadow(steep, rel, glacial, fallingReach, false, false, true);
+        boolean drainageBacked = false;
+        if (rivers != null && voxel <= RIVER_VOXEL) {
+            GeoPoint point = grid.tryGeographic(x + 0.5, z + 0.5);
+            drainageBacked = point != null && rivers.drained(point.latitude(), point.longitude());
+        }
+        return isSteepCliffShadow(steep, rel, glacial, fallingReach, false, drainageBacked, false);
     }
 
     private boolean hasNearbyGentleWater(GlobalElevation dem, CoverMemo memo, int x, int z, int voxel, double gx, double gz) {
@@ -823,14 +858,20 @@ public final class EarthGenerator extends SurfaceGenerator {
         double uz = norm > 1e-6 ? gz / norm : 0.0;
         double[] dx = {ux, -ux, -uz, uz};
         double[] dz = {uz, -uz, ux, -ux};
+        double scale = Math.max(1.0, voxel / 8.0);
         double[] probe = new double[3];
-        for (double dist : CLIFF_PROBE_DISTANCES) {
-            double r = Math.max(dist, voxel * 2.0);
-            for (int d = 0; d < 4; d++) {
+        for (int d = 0; d < 4; d++) {
+            double prevR = 0.0;
+            for (double dist : CLIFF_PROBE_DISTANCES) {
+                double r = dist * scale;
+                double midR = 0.5 * (prevR + r);
+                int mx = Mth.floor(x + dx[d] * midR), mz = Mth.floor(z + dz[d] * midR);
+                if (cover(memo, mx, mz, voxel) != WorldCoverSource.WATER) break;
                 int px = Mth.floor(x + dx[d] * r), pz = Mth.floor(z + dz[d] * r);
-                if (cover(memo, px, pz, voxel) != WorldCoverSource.WATER) continue;
+                if (cover(memo, px, pz, voxel) != WorldCoverSource.WATER) break;
                 dem.sample(px + 0.5, pz + 0.5, probe);
                 if (Math.hypot(probe[0], probe[1]) <= GENTLE_WATER_STEEP) return true;
+                prevR = r;
             }
         }
         return false;
@@ -1632,7 +1673,9 @@ public final class EarthGenerator extends SurfaceGenerator {
      */
     private int riverBank(int x, int z, int voxel) {
         if (voxel > RIVER_VOXEL) return DRY;
-        if (surveyedRivers && EstonianRivers.contains(grid, x + 0.5, z + 0.5, BANK_RINGS[BANK_RINGS.length - 1] * voxel * 2)) {
+        if (hydrologyV2 && surveyedRivers
+                && EstonianRivers.containsWithin(grid, x + 0.5, z + 0.5,
+                        BANK_RINGS[BANK_RINGS.length - 1] * voxel * grid.groundMetresPerBlock(x + 0.5, z + 0.5))) {
             return riverSurface(x, z) - BANK;
         }
         if (rivers == null) return DRY;
@@ -2089,7 +2132,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Cells around a search's start where narrow inlets and shores are traced on the 64-block water grid (about 8 km). */
     private static final int INLET_REACH = 32;
     /** Whether each cell's water joins the open sea, as far as searches have found (only cached when unsplit). */
-    final HydroCache<Boolean> openSea = new HydroCache<>(1 << 15);
+    final HydroCache<Boolean> openSea = new HydroCache<>(1 << 16);
     private final ConcurrentHashMap<Long, CompletableFuture<Boolean>> openSeaInFlight = new ConcurrentHashMap<>();
 
     /**
@@ -2296,7 +2339,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         return lakeSurface(dem, x, z, voxel, null);
     }
 
-    private int lakeSurface(GlobalElevation dem, double x, double z, int voxel, @Nullable boolean[] glacialOut) {
+    private int lakeSurface(GlobalElevation dem, double x, double z, int voxel, @Nullable boolean[] flagsOut) {
         double r = Math.max(8, voxel);
         double lowest = dem.metres(x + 0.5, z + 0.5);
         lowest = Math.min(lowest, Math.min(dem.metres(x + 0.5 + r, z + 0.5), dem.metres(x + 0.5 - r, z + 0.5)));
@@ -2330,6 +2373,7 @@ public final class EarthGenerator extends SurfaceGenerator {
             Reaches reaches = reachLevels(ix + (c & 1), iz + (c >> 1));
             int pick = reaches.levels.length - 1;
             for (int k = 0; k < reaches.levels.length; k++) if (reaches.levels[k] >= floor - DROP) { pick = k; break; }
+            if (hydrologyV2 && reaches.drownedLevels[pick] && lowest - reaches.levels[pick] > DROP) continue;
             offered[c] = reaches.levels[pick];
             drownedOffer[c] = reaches.drownedLevels[pick];
         }
@@ -2358,13 +2402,20 @@ public final class EarthGenerator extends SurfaceGenerator {
         double[] heights = new double[16], distances = new double[16];
         boolean[] drownedFlags = new boolean[16];
         boolean drownedNear = false, fallingNear = false, glacialNear = false;
+        double legacyDrownedBy = Double.NaN;
         for (int dj = -1; dj <= 2; dj++) for (int di = -1; di <= 2; di++) {
             int si = bx + di, sj = bz + dj, k = Math.floorMod(sj, WATER_SAMPLES) * WATER_SAMPLES + Math.floorMod(si, WATER_SAMPLES);
             Reaches reaches = reachLevels(Math.floorDiv(si, WATER_SAMPLES), Math.floorDiv(sj, WATER_SAMPLES));
             float height = reaches.samples[k];
+            boolean drownedAt = (reaches.drowned[k >> 6] >>> (k & 63) & 1) != 0;
+            if (!hydrologyV2 && !Float.isNaN(height) && drownedAt) {
+                legacyDrownedBy = Double.isNaN(legacyDrownedBy) ? height : Math.min(legacyDrownedBy, height);
+            }
             double d2 = (sx - si) * (sx - si) + (sz - sj) * (sz - sj);
             if (Float.isNaN(height) || d2 >= NEAR * NEAR) continue;
-            boolean drownedAt = (reaches.drowned[k >> 6] >>> (k & 63) & 1) != 0;
+            // In hydrology v2, a lower drowned reservoir outside this column's DROP elevation band cannot win
+            // nearest over a sub-grid upland pond sitting between sample centres.
+            if (hydrologyV2 && drownedAt && isLowerDrownedOutsideBand(height, level, lowest)) continue;
             heights[found] = height;
             drownedFlags[found] = drownedAt;
             distances[found++] = d2;
@@ -2393,14 +2444,22 @@ public final class EarthGenerator extends SurfaceGenerator {
         // Water with no drowned water close by, as a stream below a dam whose cell's reach is the reservoir's, keeps
         // to its banks.
         if (found == 0) drowned = false;
-        // Nor does water stand above drowned water beside it within the same elevation band: on a reservoir's shore,
-        // where the survey reads the slopes above the old valley, it climbed them in steps, while an unrelated higher
-        // upland pond nearby stays isolated at its own level.
-        if (!drowned && !Double.isNaN(level)) {
+        if (!hydrologyV2) {
+            if (!drowned && !Double.isNaN(legacyDrownedBy) && !Double.isNaN(level) && level > legacyDrownedBy) {
+                level = legacyDrownedBy;
+                drowned = true;
+            }
+        } else if (!drowned && !Double.isNaN(level)) {
+            // Nor does water stand above drowned water beside it within the same elevation band: on a reservoir's shore,
+            // where the survey reads the slopes above the old valley, it climbed them in steps, while an unrelated higher
+            // upland pond nearby stays isolated at its own level.
             double drownedBy = applyDrownedBy(level, heights, drownedFlags, found);
             if (!Double.isNaN(drownedBy)) { level = drownedBy; drowned = true; }
         }
-        if (glacialOut != null) glacialOut[0] = glacialNear;
+        if (flagsOut != null) {
+            flagsOut[0] = glacialNear;
+            if (flagsOut.length > 1) flagsOut[1] = fallingNear;
+        }
         if (Double.isNaN(level)) return local;
         int surface = Mth.floor(SEA + 0.5 + level);
         // A drowned level, and a falls face snapped to the reach above it, can sit on the wall rather than
@@ -2425,12 +2484,21 @@ public final class EarthGenerator extends SurfaceGenerator {
      * elevation band ({@link #DROP} m), or {@code NaN} when none qualifies. Prevents a lower drowned
      * reservoir from pulling an unrelated upland pond into a deep sinkhole.
      */
+    /**
+     * Whether a drowned reservoir sample at {@code drownedHeight} lies more than {@link #DROP} m below
+     * the column's local reach elevation band, so it must not adopt an upland pond sitting between sample centres.
+     */
+    static boolean isLowerDrownedOutsideBand(double drownedHeight, double cellLevel, double localLowest) {
+        double reference = !Double.isNaN(cellLevel) ? Math.max(cellLevel, localLowest) : localLowest;
+        return reference - drownedHeight > DROP;
+    }
+
     static double applyDrownedBy(double level, double[] heights, boolean[] drowned, int found) {
         double drownedBy = Double.NaN;
         for (int k = 0; k < found; k++) {
             if (!drowned[k]) continue;
             double d = heights[k];
-            if (d < level && Math.abs(level - d) <= DROP) {
+            if (d < level && level - d <= DROP) {
                 drownedBy = Double.isNaN(drownedBy) ? d : Math.min(drownedBy, d);
             }
         }
@@ -2576,7 +2644,7 @@ public final class EarthGenerator extends SurfaceGenerator {
      * lie on a falls' face ({@link #fallingWater}); and, if any, the level of the drowned water
      * closing round each of its dry samples ({@link #drownedLand}), or NaN.
      */
-    private record Reaches(double[] levels, boolean[] drownedLevels, float[] samples, long[] drowned, long[] falling, long[] glacial, @Nullable float[] drownedLand) {}
+    record Reaches(double[] levels, boolean[] drownedLevels, float[] samples, long[] drowned, long[] falling, long[] glacial, @Nullable float[] drownedLand) {}
     /** Fewest of a cell's own samples a reach needs to keep its own level there, rather than count as a stray reading. */
     private static final int REACH_SAMPLES = 3;
     /** How far, in samples, a column takes its level from the surveyed water samples near it. */
@@ -3501,7 +3569,8 @@ public final class EarthGenerator extends SurfaceGenerator {
             for (int step = 0; step < 2; step++) {
                 double r = step == 0 ? near : far;
                 double px = x + RING_X[k] * r, pz = z + RING_Z[k] * r;
-                if (cover(memo, Mth.floor(px), Mth.floor(pz), voxel) == WorldCoverSource.WATER && !seaWater(px, pz, voxel)) best = Math.max(best, waterSurface(dem, px, pz, voxel));
+                int sx = hydrologyV2 ? Mth.floor(px) : (int) px, sz = hydrologyV2 ? Mth.floor(pz) : (int) pz;
+                if (cover(memo, sx, sz, voxel) == WorldCoverSource.WATER && !seaWater(px, pz, voxel)) best = Math.max(best, waterSurface(dem, px, pz, voxel));
             }
         }
         return best;

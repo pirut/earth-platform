@@ -8,6 +8,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.material.Fluids;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -16,7 +17,13 @@ import org.junit.jupiter.api.Test;
  * suppression on dry cells when {@code v > 8}).
  */
 class SurfaceGeneratorHydrologyTest {
-    private static final BlockState FALLING_WATER = Fluids.FLOWING_WATER.getFlowing(8, true).createLegacyBlock();
+    private static BlockState fallingWater;
+
+    @BeforeAll
+    static void bootMinecraftRegistries() {
+        SurfacePacketFixtures.biomes();
+        fallingWater = Fluids.FLOWING_WATER.getFlowing(8, true).createLegacyBlock();
+    }
 
     private static SurfaceGenerator waterfallScene(BorderKind border) {
         return new SurfaceGenerator(42L, SurfacePacketFixtures.biomes(), RandomSource.create(42L)) {
@@ -68,7 +75,7 @@ class SurfaceGeneratorHydrologyTest {
                     int y = y0 + ly;
                     BlockState state = section.getBlockState(expectedLx, ly, expectedLz);
                     if (y <= 120) {
-                        assertEquals(FALLING_WATER, state,
+                        assertEquals(fallingWater, state,
                                 "expected continuous FALLING_WATER at y=" + y + " for " + border + " border");
                     } else {
                         assertTrue(state.isAir(), "expected air above y=120 at y=" + y + " for " + border);

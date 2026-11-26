@@ -2,6 +2,8 @@ package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -59,6 +61,12 @@ public final class RiverMap {
     /** Radius, in pixels, of the widest water left out as a lake or wide river (it fits a disc this wide). */
     static final int WIDE = 3;
     private static final int TILE = 256, MARGIN = 56, SPAN = TILE + 2 * MARGIN, CELL = 16;
+    /** V2 halo margin and window span, strictly exceeding {@link #MAX_CHAIN_REACH} plus seed walk/morphology tail. */
+    static final int V2_MARGIN = 144, V2_SPAN = TILE + 2 * V2_MARGIN;
+    /** Maximum Euclidean distance from a seed end a v2 hop chain may travel, guaranteeing both sides of a seam see the seed. */
+    static final int MAX_CHAIN_REACH = 96;
+    /** Border strip kept seed-free in v2 so artificial window-clipped river ends never initiate hop chains. */
+    private static final int V2_EDGE = 16;
     private static final float SOLID = 0.5f;
     /** Pixels round a stream step's ends searched for the valley floor; extra pixels round a step its course may take. */
     static final int SNAP = 3, ROOM = 4;
@@ -260,7 +268,7 @@ public final class RiverMap {
         List<Runnable> loads = new ArrayList<>();
         // The streams' drained land is the longest wait, so it starts at once beside the water record's reads.
         if (drainage != null) {
-            double margin = MARGIN / SurfaceWaterSource.PIXELS_PER_DEGREE;
+            double margin = margin() / SurfaceWaterSource.PIXELS_PER_DEGREE;
             double top = SurfaceWaterSource.NORTH - (double) Math.max(0, r0) * TILE / SurfaceWaterSource.PIXELS_PER_DEGREE + margin;
             double bottom = SurfaceWaterSource.NORTH - (double) (r1 + 1) * TILE / SurfaceWaterSource.PIXELS_PER_DEGREE - margin;
             double left = (double) c0 * TILE / SurfaceWaterSource.PIXELS_PER_DEGREE - 180 - margin;
@@ -320,45 +328,52 @@ public final class RiverMap {
     /** Steps along each of {@link #DIRECTIONS} that span a gap of {@value #CLOSE} pixels. */
     private static final int[] CLOSE_STEPS = java.util.Arrays.stream(DIRECTIONS).mapToInt(d -> Math.max(1, (int) Math.round(CLOSE / Math.hypot(d[0], d[1])))).toArray();
 
+    private int margin() { return globalJoin ? V2_MARGIN : MARGIN; }
+    private int span() { return TILE + 2 * margin(); }
+
     private Traced trace(long key, int x0, int y0) {
-        int originX = x0 - MARGIN, originY = y0 - MARGIN;
+        int margin = margin(), span = span();
+        int originX = x0 - margin, originY = y0 - margin;
         // The streams are worked out while the occurrence pixels are read, which may wait on downloads.
-        java.util.concurrent.FutureTask<float[]> streams = drainage == null ? null : new java.util.concurrent.FutureTask<>(() -> streams(originX, originY));
+        java.util.concurrent.FutureTask<float[]> streams = drainage == null ? null : new java.util.concurrent.FutureTask<>(() -> streams(originX, originY, span));
         if (streams != null) Thread.ofVirtual().start(streams);
-        int[] occurrence = new int[SPAN * SPAN];
+        int[] occurrence = new int[span * span];
         float[] streamValues;
         try {
-            for (int j = 0; j < SPAN; j++) for (int i = 0; i < SPAN; i++)
-                occurrence[j * SPAN + i] = source.occurrence(originX + i, originY + j);
+            for (int j = 0; j < span; j++) {
+                if (Thread.currentThread().isInterrupted()) throw new MissingTerrainException("Interrupted while reading surface water");
+                for (int i = 0; i < span; i++)
+                    occurrence[j * span + i] = source.occurrence(originX + i, originY + j);
+            }
             streamValues = streams == null ? null : finished(streams);
         } finally {
             if (streams != null) streams.cancel(true);
         }
-        float[] strength = trace(occurrence, streamValues, SPAN, originX, originY, globalJoin);
+        float[] strength = trace(occurrence, streamValues, span, originX, originY, globalJoin);
         byte[] out = new byte[TILE * TILE], cells = new byte[(TILE / CELL) * (TILE / CELL)];
         for (int j = 0; j < TILE; j++) for (int i = 0; i < TILE; i++) {
-            int value = Math.round(Math.min(1, strength[(j + MARGIN) * SPAN + i + MARGIN]) * 255);
+            int value = Math.round(Math.min(1, strength[(j + margin) * span + i + margin]) * 255);
             out[j * TILE + i] = (byte) value;
             int cell = (j / CELL) * (TILE / CELL) + i / CELL;
             if (value > (cells[cell] & 0xFF)) cells[cell] = (byte) value;
         }
-        long[] drainedBits = packDrained(streamValues);
+        long[] drainedBits = packDrained(streamValues, span, margin);
         return new Traced(key, out, cells, drainedBits);
     }
 
     /** Packs drainage stream presence (dilated by {@value #SNAP} pixels) into the interior tile bitset, or null when dry. */
-    private static long[] packDrained(float[] streamValues) {
+    private static long[] packDrained(float[] streamValues, int span, int margin) {
         if (streamValues == null) return null;
         boolean any = false;
-        boolean[] raw = new boolean[SPAN * SPAN];
+        boolean[] raw = new boolean[span * span];
         for (int k = 0; k < raw.length; k++) {
             if (streamValues[k] > 0) { raw[k] = true; any = true; }
         }
         if (!any) return null;
-        boolean[] backed = grow(raw, SPAN, SNAP);
+        boolean[] backed = grow(raw, span, SNAP);
         long[] bits = null;
         for (int j = 0; j < TILE; j++) for (int i = 0; i < TILE; i++) {
-            if (!backed[(j + MARGIN) * SPAN + i + MARGIN]) continue;
+            if (!backed[(j + margin) * span + i + margin]) continue;
             if (bits == null) bits = new long[TILE * TILE / 64];
             int k = j * TILE + i;
             bits[k >>> 6] |= 1L << (k & 63);
@@ -419,19 +434,22 @@ public final class RiverMap {
      * valley floor costs {@value #CLIMB} a metre, with spurs off the courses pruned. Strength per
      * pixel, rising from {@link #STREAM} for the smallest stream to full for a river.
      */
-    private float[] streams(int column, int row) {
-        int span = SPAN, n = span * span;
+    private float[] streams(int column, int row, int span) {
+        if (Thread.currentThread().isInterrupted()) throw new MissingTerrainException("Interrupted while tracing streams");
+        int n = span * span;
         float[] height = new float[n];
         double[] latitudes = new double[span], longitudes = new double[span];
         for (int j = 0; j < span; j++) latitudes[j] = SurfaceWaterSource.NORTH - (row + j + 0.5) / SurfaceWaterSource.PIXELS_PER_DEGREE;
         for (int i = 0; i < span; i++) longitudes[i] = (column + i + 0.5) / SurfaceWaterSource.PIXELS_PER_DEGREE - 180;
         drainage.metres(latitudes, longitudes, height);
+        if (Thread.currentThread().isInterrupted()) throw new MissingTerrainException("Interrupted while tracing streams");
         float[] floor = lowest(height, span, FLOOR);
         float[] streams = new float[n];
         double north = SurfaceWaterSource.NORTH - (double) row / SurfaceWaterSource.PIXELS_PER_DEGREE;
         double south = SurfaceWaterSource.NORTH - (double) (row + span) / SurfaceWaterSource.PIXELS_PER_DEGREE;
         double west = (double) column / SurfaceWaterSource.PIXELS_PER_DEGREE - 180, east = (double) (column + span) / SurfaceWaterSource.PIXELS_PER_DEGREE - 180;
         drainage.links(south, west, north, east, (latitude, longitude, toLatitude, toLongitude, area) -> {
+            if (Thread.currentThread().isInterrupted()) throw new MissingTerrainException("Interrupted while tracing streams");
             int ax = (int) Math.floor((longitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE) - column;
             int ay = (int) Math.floor((SurfaceWaterSource.NORTH - latitude) * SurfaceWaterSource.PIXELS_PER_DEGREE) - row;
             int bx = (int) Math.floor((toLongitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE) - column;
@@ -441,6 +459,7 @@ public final class RiverMap {
             float strength = (float) (STREAM + (1 - STREAM) * Math.min(1, share));
             course(height, floor, streams, span, snap(height, span, ax, ay), snap(height, span, bx, by), strength);
         });
+        if (Thread.currentThread().isInterrupted()) throw new MissingTerrainException("Interrupted while tracing streams");
         boolean[] on = new boolean[n];
         for (int k = 0; k < n; k++) on[k] = streams[k] > 0;
         prune(on, span, SPUR);
@@ -471,7 +490,11 @@ public final class RiverMap {
         cost[start] = 0;
         previous[start] = -1;
         queue.add(new double[]{0, start});
+        int visited = 0;
         while (!queue.isEmpty()) {
+            if ((visited++ & 1023) == 0 && Thread.currentThread().isInterrupted()) {
+                throw new MissingTerrainException("Interrupted while tracing stream course");
+            }
             double[] top = queue.poll();
             int at = (int) top[1];
             if (top[0] > cost[at]) continue;
@@ -537,6 +560,24 @@ public final class RiverMap {
     }
 
     static void join(float[] f, boolean[] solid, int span, int originX, int originY, boolean globalJoin) {
+        join(f, solid, span, originX, originY, globalJoin, false);
+    }
+
+    /** Test helper verifying v2 global join is invariant to reversed end and candidate enumeration order. */
+    static float[] traceGlobalReversed(int[] occurrence, int span, int originX, int originY) {
+        int n = span * span;
+        float[] v = new float[n];
+        for (int k = 0; k < n; k++) v[k] = Math.max(0, Math.min(1, (occurrence[k] - NONE) / (float) (FULL - NONE)));
+        float[] f = close(v, span);
+        boolean[] solid = new boolean[n];
+        for (int k = 0; k < n; k++) solid[k] = f[k] >= SOLID;
+        join(f, solid, span, originX, originY, true, true);
+        boolean[] wide = open(solid, span, WIDE);
+        for (int k = 0; k < n; k++) if (wide[k]) f[k] = 0;
+        return f;
+    }
+
+    private static void join(float[] f, boolean[] solid, int span, int originX, int originY, boolean globalJoin, boolean reverseOrder) {
         boolean[] skeleton = thin(solid, span);
         int[] line = label(skeleton, span);
         int lines = 0;
@@ -545,7 +586,7 @@ public final class RiverMap {
         for (int l : line) size[l]++;
         for (int l = 0; l <= lines; l++) root[l] = l;
         List<End> ends = new ArrayList<>();
-        int edge = 4;
+        int edge = globalJoin ? Math.min(V2_EDGE, span / 8) : 4;
         for (int y = edge; y < span - edge; y++) for (int x = edge; x < span - edge; x++) {
             if (!skeleton[y * span + x] || size[line[y * span + x]] < LONG || !end(skeleton, span, x, y)) continue;
             // Walk back along the line, over the corners of its stair steps; a short spur off a junction is no end.
@@ -586,7 +627,8 @@ public final class RiverMap {
         columns = new int[rowStart[span]];
         for (int k = 0, at = 0; k < line.length; k++) if (line[k] != 0) columns[at++] = k % span;
         if (globalJoin) {
-            joinGlobal(f, solid, line, size, root, ends, rowStart, columns, span, originX, originY);
+            if (reverseOrder) Collections.reverse(ends);
+            joinGlobal(f, solid, line, size, root, ends, rowStart, columns, span, originX, originY, reverseOrder);
             return;
         }
         for (End start : ends) {
@@ -628,26 +670,45 @@ public final class RiverMap {
         }
     }
 
-    private record HopEnd(int x, int y, double dx, double dy, double width, int line, int hop) {}
+    private record HopEnd(int x, int y, double dx, double dy, double width, int line, int hop, int seedX, int seedY) {}
 
     private record Candidate(HopEnd at, int tx, int ty, int target, double score,
                              int firstX, int firstY, int secondX, int secondY,
-                             int atGlobalX, int atGlobalY) implements Comparable<Candidate> {
+                             int atGlobalX, int atGlobalY, int targetGlobalX, int targetGlobalY,
+                             int seedGlobalX, int seedGlobalY) implements Comparable<Candidate> {
         @Override public int compareTo(Candidate other) {
-            int cmp = Double.compare(this.score, other.score);
-            if (cmp != 0) return cmp;
-            cmp = Integer.compare(this.firstX, other.firstX);
-            if (cmp != 0) return cmp;
-            cmp = Integer.compare(this.firstY, other.firstY);
-            if (cmp != 0) return cmp;
-            cmp = Integer.compare(this.secondX, other.secondX);
-            if (cmp != 0) return cmp;
-            cmp = Integer.compare(this.secondY, other.secondY);
-            if (cmp != 0) return cmp;
-            cmp = Integer.compare(this.atGlobalX, other.atGlobalX);
-            if (cmp != 0) return cmp;
-            return Integer.compare(this.atGlobalY, other.atGlobalY);
+            return compareCandidateKeys(
+                    this.score, this.firstX, this.firstY, this.secondX, this.secondY,
+                    this.at.hop, this.atGlobalX, this.atGlobalY, this.targetGlobalX, this.targetGlobalY,
+                    this.seedGlobalX, this.seedGlobalY,
+                    other.score, other.firstX, other.firstY, other.secondX, other.secondY,
+                    other.at.hop, other.atGlobalX, other.atGlobalY, other.targetGlobalX, other.targetGlobalY,
+                    other.seedGlobalX, other.seedGlobalY);
         }
+    }
+
+    private static int compareGlobalPoint(int ax, int ay, int bx, int by) {
+        int cmp = Integer.compare(ax, bx);
+        return cmp != 0 ? cmp : Integer.compare(ay, by);
+    }
+
+    private static int compareCandidateKeys(double scoreA, int firstXA, int firstYA, int secondXA, int secondYA,
+                                            int hopA, int atGXA, int atGYA, int targetGXA, int targetGYA, int seedGXA, int seedGYA,
+                                            double scoreB, int firstXB, int firstYB, int secondXB, int secondYB,
+                                            int hopB, int atGXB, int atGYB, int targetGXB, int targetGYB, int seedGXB, int seedGYB) {
+        int cmp = Double.compare(scoreA, scoreB);
+        if (cmp != 0) return cmp;
+        cmp = compareGlobalPoint(firstXA, firstYA, firstXB, firstYB);
+        if (cmp != 0) return cmp;
+        cmp = compareGlobalPoint(secondXA, secondYA, secondXB, secondYB);
+        if (cmp != 0) return cmp;
+        cmp = Integer.compare(hopA, hopB);
+        if (cmp != 0) return cmp;
+        cmp = compareGlobalPoint(atGXA, atGYA, atGXB, atGYB);
+        if (cmp != 0) return cmp;
+        cmp = compareGlobalPoint(targetGXA, targetGYA, targetGXB, targetGYB);
+        if (cmp != 0) return cmp;
+        return compareGlobalPoint(seedGXA, seedGYA, seedGXB, seedGYB);
     }
 
     private static int globalX(int originX, int localX) {
@@ -655,50 +716,76 @@ public final class RiverMap {
     }
 
     private static Candidate bestCandidate(HopEnd at, boolean[] solid, int[] line, int[] root,
-                                           int[] rowStart, int[] columns, int span, int originX, int originY) {
+                                           int[] rowStart, int[] columns, int span, int originX, int originY, boolean reverseOrder) {
         int own = find(root, at.line);
-        int tx = -1, ty = -1;
-        double best = Double.MAX_VALUE;
-        for (int y = Math.max(0, at.y - JOIN); y <= Math.min(span - 1, at.y + JOIN); y++)
-            for (int c = first(columns, rowStart[y], rowStart[y + 1], at.x - JOIN); c < rowStart[y + 1] && columns[c] <= at.x + JOIN; c++) {
+        int gax = globalX(originX, at.x), gay = originY + at.y;
+        int seedGX = globalX(originX, at.seedX), seedGY = originY + at.seedY;
+        long reachSquared = (long) MAX_CHAIN_REACH * MAX_CHAIN_REACH;
+        Candidate best = null;
+        double bestScore = Double.MAX_VALUE;
+        int yMin = Math.max(0, at.y - JOIN), yMax = Math.min(span - 1, at.y + JOIN);
+        int yStart = reverseOrder ? yMax : yMin, yEnd = reverseOrder ? yMin - 1 : yMax + 1, yStep = reverseOrder ? -1 : 1;
+        for (int y = yStart; y != yEnd; y += yStep) {
+            int cMin = first(columns, rowStart[y], rowStart[y + 1], at.x - JOIN);
+            int cMax = cMin;
+            while (cMax < rowStart[y + 1] && columns[cMax] <= at.x + JOIN) cMax++;
+            int cStart = reverseOrder ? cMax - 1 : cMin, cEnd = reverseOrder ? cMin - 1 : cMax, cStep = reverseOrder ? -1 : 1;
+            for (int c = cStart; c != cEnd; c += cStep) {
                 int x = columns[c], l = line[y * span + x];
                 double gx = x - at.x, gy = y - at.y, squared = gx * gx + gy * gy;
                 if (squared > JOIN * JOIN || squared < 1 || find(root, l) == own) continue;
+                long sdx = x - at.seedX, sdy = y - at.seedY;
+                if (sdx * sdx + sdy * sdy > reachSquared) continue;
                 double d = Math.hypot(gx, gy), ahead = (at.dx * gx + at.dy * gy) / d;
                 if (ahead < 0.5 + 0.4 * d / JOIN) continue;
                 double score = d * (2 - ahead);
-                if (score < best && wet(solid, span, x, y) <= NARROW) { best = score; tx = x; ty = y; }
+                if (score > bestScore) continue;
+                if (wet(solid, span, x, y) > NARROW) continue;
+                int gbx = globalX(originX, x), gby = originY + y;
+                boolean aFirst = compareGlobalPoint(gax, gay, gbx, gby) <= 0;
+                int fx = aFirst ? gax : gbx, fy = aFirst ? gay : gby;
+                int sx = aFirst ? gbx : gax, sy = aFirst ? gby : gay;
+                if (best == null || compareCandidateKeys(
+                        score, fx, fy, sx, sy, at.hop, gax, gay, gbx, gby, seedGX, seedGY,
+                        best.score, best.firstX, best.firstY, best.secondX, best.secondY,
+                        best.at.hop, best.atGlobalX, best.atGlobalY, best.targetGlobalX, best.targetGlobalY,
+                        best.seedGlobalX, best.seedGlobalY) < 0) {
+                    bestScore = score;
+                    best = new Candidate(at, x, y, l, score, fx, fy, sx, sy, gax, gay, gbx, gby, seedGX, seedGY);
+                }
             }
-        if (tx < 0) return null;
-        int gax = globalX(originX, at.x), gay = originY + at.y;
-        int gbx = globalX(originX, tx), gby = originY + ty;
-        boolean aFirst = gax < gbx || (gax == gbx && gay <= gby);
-        return new Candidate(at, tx, ty, line[ty * span + tx], best,
-                aFirst ? gax : gbx, aFirst ? gay : gby,
-                aFirst ? gbx : gax, aFirst ? gby : gay,
-                gax, gay);
+        }
+        return best;
     }
 
     /**
-     * Global-coordinate, order-invariant gap joining ({@value #V2_ID}): evaluates candidate joins
-     * in canonical global order by {@code (score, firstGlobalX, firstGlobalY, secondGlobalX, secondGlobalY)},
-     * computes an endpoint-symmetric global meander phase, and paints curves in canonical endpoint
-     * orientation with translation-invariant relative offsets so adjacent tile windows agree bit-for-bit.
+     * Global-coordinate, order-invariant gap joining ({@value #V2_ID}): seeds inside the
+     * {@value #V2_EDGE}-px-inset window with a bounded {@value #MAX_CHAIN_REACH}-px chain reach
+     * strictly inside {@value #V2_MARGIN}, resolves both per-end candidate selection and PQ dispatch
+     * under a single total global comparator, uses endpoint-symmetric tangents, width and meander
+     * phase whenever both endpoints are identified, and paints curves in canonical orientation with
+     * translation-invariant relative offsets.
      */
     private static void joinGlobal(float[] f, boolean[] solid, int[] line, int[] size, int[] root,
-                                   List<End> ends, int[] rowStart, int[] columns, int span, int originX, int originY) {
+                                   List<End> ends, int[] rowStart, int[] columns, int span, int originX, int originY, boolean reverseOrder) {
+        Map<Integer, End> endByPixel = new HashMap<>(ends.size() * 2 + 1);
+        for (End e : ends) endByPixel.put(e.y * span + e.x, e);
         java.util.PriorityQueue<Candidate> queue = new java.util.PriorityQueue<>();
         for (End start : ends) {
-            Candidate candidate = bestCandidate(new HopEnd(start.x, start.y, start.dx, start.dy, start.width, start.line, 0),
-                    solid, line, root, rowStart, columns, span, originX, originY);
+            Candidate candidate = bestCandidate(new HopEnd(start.x, start.y, start.dx, start.dy, start.width, start.line, 0, start.x, start.y),
+                    solid, line, root, rowStart, columns, span, originX, originY, reverseOrder);
             if (candidate != null) queue.add(candidate);
         }
+        int processed = 0;
         while (!queue.isEmpty()) {
+            if ((processed++ & 255) == 0 && Thread.currentThread().isInterrupted()) {
+                throw new MissingTerrainException("Interrupted while joining rivers");
+            }
             Candidate cand = queue.poll();
             HopEnd at = cand.at;
             int own = find(root, at.line), targetRoot = find(root, cand.target);
             if (own == targetRoot) {
-                Candidate next = bestCandidate(at, solid, line, root, rowStart, columns, span, originX, originY);
+                Candidate next = bestCandidate(at, solid, line, root, rowStart, columns, span, originX, originY, reverseOrder);
                 if (next != null) queue.add(next);
                 continue;
             }
@@ -706,26 +793,40 @@ public final class RiverMap {
             double gx = tx - at.x, gy = ty - at.y, d = Math.hypot(gx, gy);
             double hx = at.dx + gx / d, hy = at.dy + gy / d, h = Math.hypot(hx, hy);
             hx /= h; hy /= h;
+            End targetEnd = endByPixel.get(ty * span + tx);
+            boolean symmetric = targetEnd != null && (targetEnd.dx * (-gx) + targetEnd.dy * (-gy)) > 0;
+            double tax = at.dx * d, tay = at.dy * d;
+            double tbx = symmetric ? -targetEnd.dx * d : hx * d;
+            double tby = symmetric ? -targetEnd.dy * d : hy * d;
+            double width = symmetric ? 0.5 * (at.width + targetEnd.width) : at.width;
             int phase = (int) Math.floorMod(cand.firstX * 31L + cand.firstY * 17L, 7L);
             boolean aFirst = cand.atGlobalX == cand.firstX && cand.atGlobalY == cand.firstY;
             if (aFirst) {
-                paintGlobal(f, span, at.x, at.y, at.dx * d, at.dy * d, tx, ty, hx * d, hy * d, at.width, phase);
+                paintGlobal(f, span, at.x, at.y, tax, tay, tx, ty, tbx, tby, width, phase);
             } else {
-                paintGlobal(f, span, tx, ty, -hx * d, -hy * d, at.x, at.y, -at.dx * d, -at.dy * d, at.width, phase);
+                paintGlobal(f, span, tx, ty, -tbx, -tby, at.x, at.y, -tax, -tay, width, phase);
             }
             root[targetRoot] = own;
             if (size[target] >= LONG || at.hop + 1 >= HOPS) continue;
-            // Go on from the glimpse's far side.
+            // Go on from the glimpse's far side, breaking exact projection ties by global coordinates.
             int fx = tx, fy = ty;
+            int gxFar = globalX(originX, fx), gyFar = originY + fy;
             double furthest = Double.NEGATIVE_INFINITY;
-            for (int y = Math.max(0, ty - LONG); y <= Math.min(span - 1, ty + LONG); y++)
-                for (int x = Math.max(0, tx - LONG); x <= Math.min(span - 1, tx + LONG); x++) {
+            int fyMin = Math.max(0, ty - LONG), fyMax = Math.min(span - 1, ty + LONG);
+            int fxMin = Math.max(0, tx - LONG), fxMax = Math.min(span - 1, tx + LONG);
+            int fyStart = reverseOrder ? fyMax : fyMin, fyEnd = reverseOrder ? fyMin - 1 : fyMax + 1, fyStep = reverseOrder ? -1 : 1;
+            int fxStart = reverseOrder ? fxMax : fxMin, fxEnd = reverseOrder ? fxMin - 1 : fxMax + 1, fxStep = reverseOrder ? -1 : 1;
+            for (int y = fyStart; y != fyEnd; y += fyStep)
+                for (int x = fxStart; x != fxEnd; x += fxStep) {
                     if (line[y * span + x] != target) continue;
                     double along = (x - tx) * hx + (y - ty) * hy;
-                    if (along > furthest) { furthest = along; fx = x; fy = y; }
+                    int cgx = globalX(originX, x), cgy = originY + y;
+                    if (along > furthest || (along == furthest && compareGlobalPoint(cgx, cgy, gxFar, gyFar) < 0)) {
+                        furthest = along; fx = x; fy = y; gxFar = cgx; gyFar = cgy;
+                    }
                 }
-            HopEnd nextEnd = new HopEnd(fx, fy, hx, hy, at.width, target, at.hop + 1);
-            Candidate next = bestCandidate(nextEnd, solid, line, root, rowStart, columns, span, originX, originY);
+            HopEnd nextEnd = new HopEnd(fx, fy, hx, hy, at.width, target, at.hop + 1, at.seedX, at.seedY);
+            Candidate next = bestCandidate(nextEnd, solid, line, root, rowStart, columns, span, originX, originY, reverseOrder);
             if (next != null) queue.add(next);
         }
     }
