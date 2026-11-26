@@ -53,7 +53,7 @@ class EarthShorelineTest {
     private static final int BLOCK_BYTES = BLOCK_SIZE * BLOCK_SIZE;
     private static final int HEADER_OFFSET = 65536;
 
-    private static Registry<Biome> biomes;
+    static Registry<Biome> biomes;
 
     @BeforeAll
     static void bootRegistries() throws Exception {
@@ -231,8 +231,8 @@ class EarthShorelineTest {
      */
     static final class SyntheticWorld implements AutoCloseable {
         private final HttpServer server;
-        private final TerrariumTileSource tiles;
-        private final WorldCoverSource cover;
+        final TerrariumTileSource tiles;
+        final WorldCoverSource cover;
         final EarthGenerator generator;
         private final MercatorGrid grid;
         final int homeX, homeZ;

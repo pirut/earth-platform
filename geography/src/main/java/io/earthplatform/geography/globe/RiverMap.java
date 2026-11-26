@@ -2,6 +2,8 @@ package io.earthplatform.geography.globe;
 
 import io.earthplatform.geography.MissingTerrainException;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -59,6 +61,19 @@ public final class RiverMap {
     /** Radius, in pixels, of the widest water left out as a lake or wide river (it fits a disc this wide). */
     static final int WIDE = 3;
     private static final int TILE = 256, MARGIN = 56, SPAN = TILE + 2 * MARGIN, CELL = 16;
+    /**
+     * V2 halo margin and window span ({@code 180 > 96 + 40 + 10 + 16 = 162}, leaving room for
+     * {@link #MAX_CHAIN_REACH}, {@link #LOCAL_CONNECT_RADIUS}, {@link #WALK}, {@link #V2_EDGE},
+     * and morphology/spline slack for chains heading toward the tile; assumes chains reaching the
+     * tile do not detour far past their seed away from the tile).
+     */
+    static final int V2_MARGIN = 180, V2_SPAN = TILE + 2 * V2_MARGIN;
+    /** Maximum Euclidean distance from a seed end a v2 hop chain may travel, guaranteeing both sides of a seam see the seed. */
+    static final int MAX_CHAIN_REACH = 96;
+    /** Half-width of the Chebyshev box around a candidate join's midpoint for strictly local connectivity checks in v2. */
+    static final int LOCAL_CONNECT_RADIUS = 40;
+    /** Border strip kept seed-free in v2 so artificial window-clipped river ends never initiate hop chains. */
+    private static final int V2_EDGE = 16;
     private static final float SOLID = 0.5f;
     /** Pixels round a stream step's ends searched for the valley floor; extra pixels round a step its course may take. */
     static final int SNAP = 3, ROOM = 4;
@@ -69,29 +84,65 @@ public final class RiverMap {
     static final int SPUR = 3, BESIDE = 12;
     /** Strength of the smallest stream's line, enough that it stays unbroken where it runs aslant. */
     private static final float STREAM = 0.7f;
+    /** Global-coordinate, order-invariant river gap joining; shares the {@link SurfaceWaterSource#DATASET_ID} disk cache. */
+    public static final String V2_ID = SurfaceWaterSource.DATASET_ID + "+global-join-v2";
     /** Retain the original sampler for matched performance comparisons. */
     private static final boolean FAST_SAMPLE = !"false".equals(System.getProperty("earthplatform.rivers.fastSample"));
 
     private final SurfaceWaterSource source;
     private final Drainage drainage;
     private final int maxTiles;
+    private final boolean globalJoin;
     private final LruMap<Long, Traced> memory = new LruMap<>(64);
     private final Map<Long, CompletableFuture<Traced>> inFlight = new ConcurrentHashMap<>();
     private final ThreadLocal<Traced> recent = new ThreadLocal<>();
 
-    /** One traced square: strength per pixel (0 to 255), and the most in each {@value #CELL}-pixel cell. */
-    private record Traced(long key, byte[] strength, byte[] cells) {}
+    /** One traced square: strength per pixel (0 to 255), cell maxima, and optional drainage-backing bitset. */
+    private record Traced(long key, byte[] strength, byte[] cells, long[] drained) {
+        Traced(long key, byte[] strength, byte[] cells) {
+            this(key, strength, cells, null);
+        }
+    }
 
     public RiverMap(SurfaceWaterSource source, int maxTiles) {
-        this(source, null, maxTiles);
+        this(source, null, maxTiles, false);
     }
 
     /** @param drainage streams too narrow for the occurrence pixels, or null for the occurrence alone */
     public RiverMap(SurfaceWaterSource source, Drainage drainage, int maxTiles) {
+        this(source, drainage, maxTiles, false);
+    }
+
+    /**
+     * @param drainage   streams too narrow for the occurrence pixels, or null for the occurrence alone
+     * @param globalJoin true for {@value #V2_ID} global-coordinate, order-invariant gap joining
+     */
+    public RiverMap(SurfaceWaterSource source, Drainage drainage, int maxTiles, boolean globalJoin) {
         this.source = Objects.requireNonNull(source);
         this.drainage = drainage;
         if (maxTiles < 4) throw new IllegalArgumentException("River map needs room for at least four squares");
         this.maxTiles = maxTiles;
+        this.globalJoin = globalJoin;
+    }
+
+    /** Whether this river map uses {@value #V2_ID} global-coordinate, order-invariant gap joining. */
+    public boolean isGlobalJoin() {
+        return globalJoin;
+    }
+
+    /** Whether a latitude and longitude lies within {@value #SNAP} pixels of a {@link Drainage} stream. */
+    public boolean drained(double latitude, double longitude) {
+        if (drainage == null) return false;
+        double fx = (longitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE;
+        double fy = (SurfaceWaterSource.NORTH - latitude) * SurfaceWaterSource.PIXELS_PER_DEGREE;
+        if (!Double.isFinite(fx) || !Double.isFinite(fy)) return false;
+        int row = (int) Math.floor(fy);
+        if (row < 0 || row >= SurfaceWaterSource.DOWN) return false;
+        int column = Math.floorMod((int) Math.floor(fx), SurfaceWaterSource.ACROSS);
+        long[] bits = traced(column, row).drained;
+        if (bits == null) return false;
+        int k = (row % TILE) * TILE + column % TILE;
+        return (bits[k >>> 6] >>> (k & 63) & 1L) != 0;
     }
 
     /** River strength, 0 to 1, at a latitude and longitude. */
@@ -224,7 +275,7 @@ public final class RiverMap {
         List<Runnable> loads = new ArrayList<>();
         // The streams' drained land is the longest wait, so it starts at once beside the water record's reads.
         if (drainage != null) {
-            double margin = MARGIN / SurfaceWaterSource.PIXELS_PER_DEGREE;
+            double margin = margin() / SurfaceWaterSource.PIXELS_PER_DEGREE;
             double top = SurfaceWaterSource.NORTH - (double) Math.max(0, r0) * TILE / SurfaceWaterSource.PIXELS_PER_DEGREE + margin;
             double bottom = SurfaceWaterSource.NORTH - (double) (r1 + 1) * TILE / SurfaceWaterSource.PIXELS_PER_DEGREE - margin;
             double left = (double) c0 * TILE / SurfaceWaterSource.PIXELS_PER_DEGREE - 180 - margin;
@@ -284,22 +335,57 @@ public final class RiverMap {
     /** Steps along each of {@link #DIRECTIONS} that span a gap of {@value #CLOSE} pixels. */
     private static final int[] CLOSE_STEPS = java.util.Arrays.stream(DIRECTIONS).mapToInt(d -> Math.max(1, (int) Math.round(CLOSE / Math.hypot(d[0], d[1])))).toArray();
 
+    private int margin() { return globalJoin ? V2_MARGIN : MARGIN; }
+    private int span() { return TILE + 2 * margin(); }
+
     private Traced trace(long key, int x0, int y0) {
+        int margin = margin(), span = span();
+        int originX = x0 - margin, originY = y0 - margin;
         // The streams are worked out while the occurrence pixels are read, which may wait on downloads.
-        java.util.concurrent.FutureTask<float[]> streams = drainage == null ? null : new java.util.concurrent.FutureTask<>(() -> streams(x0 - MARGIN, y0 - MARGIN));
+        java.util.concurrent.FutureTask<float[]> streams = drainage == null ? null : new java.util.concurrent.FutureTask<>(() -> streams(originX, originY, span));
         if (streams != null) Thread.ofVirtual().start(streams);
-        int[] occurrence = new int[SPAN * SPAN];
-        for (int j = 0; j < SPAN; j++) for (int i = 0; i < SPAN; i++)
-            occurrence[j * SPAN + i] = source.occurrence(x0 - MARGIN + i, y0 - MARGIN + j);
-        float[] strength = trace(occurrence, streams == null ? null : finished(streams), SPAN);
+        int[] occurrence = new int[span * span];
+        float[] streamValues;
+        try {
+            for (int j = 0; j < span; j++) {
+                if (Thread.currentThread().isInterrupted()) throw new MissingTerrainException("Interrupted while reading surface water");
+                for (int i = 0; i < span; i++)
+                    occurrence[j * span + i] = source.occurrence(originX + i, originY + j);
+            }
+            streamValues = streams == null ? null : finished(streams);
+        } finally {
+            if (streams != null) streams.cancel(true);
+        }
+        float[] strength = trace(occurrence, streamValues, span, originX, originY, globalJoin);
         byte[] out = new byte[TILE * TILE], cells = new byte[(TILE / CELL) * (TILE / CELL)];
         for (int j = 0; j < TILE; j++) for (int i = 0; i < TILE; i++) {
-            int value = Math.round(Math.min(1, strength[(j + MARGIN) * SPAN + i + MARGIN]) * 255);
+            int value = Math.round(Math.min(1, strength[(j + margin) * span + i + margin]) * 255);
             out[j * TILE + i] = (byte) value;
             int cell = (j / CELL) * (TILE / CELL) + i / CELL;
             if (value > (cells[cell] & 0xFF)) cells[cell] = (byte) value;
         }
-        return new Traced(key, out, cells);
+        long[] drainedBits = packDrained(streamValues, span, margin);
+        return new Traced(key, out, cells, drainedBits);
+    }
+
+    /** Packs drainage stream presence (dilated by {@value #SNAP} pixels) into the interior tile bitset, or null when dry. */
+    private static long[] packDrained(float[] streamValues, int span, int margin) {
+        if (streamValues == null) return null;
+        boolean any = false;
+        boolean[] raw = new boolean[span * span];
+        for (int k = 0; k < raw.length; k++) {
+            if (streamValues[k] > 0) { raw[k] = true; any = true; }
+        }
+        if (!any) return null;
+        boolean[] backed = grow(raw, span, SNAP);
+        long[] bits = null;
+        for (int j = 0; j < TILE; j++) for (int i = 0; i < TILE; i++) {
+            if (!backed[(j + margin) * span + i + margin]) continue;
+            if (bits == null) bits = new long[TILE * TILE / 64];
+            int k = j * TILE + i;
+            bits[k >>> 6] |= 1L << (k & 63);
+        }
+        return bits;
     }
 
     private static float[] finished(java.util.concurrent.FutureTask<float[]> task) {
@@ -315,13 +401,18 @@ public final class RiverMap {
         }
     }
 
-    /** Strength, 0 to 1, per pixel of a square {@code span} pixels across from its occurrence pixels. */
+    /** Strength, 0 to 1, per pixel of a square {@code span} pixels across from its occurrence pixels (legacy v1). */
     static float[] trace(int[] occurrence, int span) {
-        return trace(occurrence, null, span);
+        return trace(occurrence, null, span, 0, 0, false);
     }
 
-    /** As {@link #trace(int[], int)}, with streams' strength per pixel laid in where no narrow river shows beside them. */
+    /** As {@link #trace(int[], int)}, with streams' strength per pixel laid in where no narrow river shows beside them (legacy v1). */
     static float[] trace(int[] occurrence, float[] streams, int span) {
+        return trace(occurrence, streams, span, 0, 0, false);
+    }
+
+    /** Strength per pixel using either legacy window-local joining or global-coordinate order-invariant joining. */
+    static float[] trace(int[] occurrence, float[] streams, int span, int originX, int originY, boolean globalJoin) {
         int n = span * span;
         float[] v = new float[n];
         for (int k = 0; k < n; k++) v[k] = Math.max(0, Math.min(1, (occurrence[k] - NONE) / (float) (FULL - NONE)));
@@ -337,7 +428,7 @@ public final class RiverMap {
                 solid[k] |= streams[k] >= SOLID;
             }
         }
-        join(f, solid, span);
+        join(f, solid, span, originX, originY, globalJoin);
         // Leave out wide water: pixels inside a disc of the given radius that fits wholly in water, and the disc.
         boolean[] wide = open(solid, span, WIDE);
         for (int k = 0; k < n; k++) if (wide[k]) f[k] = 0;
@@ -350,19 +441,22 @@ public final class RiverMap {
      * valley floor costs {@value #CLIMB} a metre, with spurs off the courses pruned. Strength per
      * pixel, rising from {@link #STREAM} for the smallest stream to full for a river.
      */
-    private float[] streams(int column, int row) {
-        int span = SPAN, n = span * span;
+    private float[] streams(int column, int row, int span) {
+        if (Thread.currentThread().isInterrupted()) throw new MissingTerrainException("Interrupted while tracing streams");
+        int n = span * span;
         float[] height = new float[n];
         double[] latitudes = new double[span], longitudes = new double[span];
         for (int j = 0; j < span; j++) latitudes[j] = SurfaceWaterSource.NORTH - (row + j + 0.5) / SurfaceWaterSource.PIXELS_PER_DEGREE;
         for (int i = 0; i < span; i++) longitudes[i] = (column + i + 0.5) / SurfaceWaterSource.PIXELS_PER_DEGREE - 180;
         drainage.metres(latitudes, longitudes, height);
+        if (Thread.currentThread().isInterrupted()) throw new MissingTerrainException("Interrupted while tracing streams");
         float[] floor = lowest(height, span, FLOOR);
         float[] streams = new float[n];
         double north = SurfaceWaterSource.NORTH - (double) row / SurfaceWaterSource.PIXELS_PER_DEGREE;
         double south = SurfaceWaterSource.NORTH - (double) (row + span) / SurfaceWaterSource.PIXELS_PER_DEGREE;
         double west = (double) column / SurfaceWaterSource.PIXELS_PER_DEGREE - 180, east = (double) (column + span) / SurfaceWaterSource.PIXELS_PER_DEGREE - 180;
         drainage.links(south, west, north, east, (latitude, longitude, toLatitude, toLongitude, area) -> {
+            if (Thread.currentThread().isInterrupted()) throw new MissingTerrainException("Interrupted while tracing streams");
             int ax = (int) Math.floor((longitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE) - column;
             int ay = (int) Math.floor((SurfaceWaterSource.NORTH - latitude) * SurfaceWaterSource.PIXELS_PER_DEGREE) - row;
             int bx = (int) Math.floor((toLongitude + 180) * SurfaceWaterSource.PIXELS_PER_DEGREE) - column;
@@ -372,6 +466,7 @@ public final class RiverMap {
             float strength = (float) (STREAM + (1 - STREAM) * Math.min(1, share));
             course(height, floor, streams, span, snap(height, span, ax, ay), snap(height, span, bx, by), strength);
         });
+        if (Thread.currentThread().isInterrupted()) throw new MissingTerrainException("Interrupted while tracing streams");
         boolean[] on = new boolean[n];
         for (int k = 0; k < n; k++) on[k] = streams[k] > 0;
         prune(on, span, SPUR);
@@ -402,7 +497,11 @@ public final class RiverMap {
         cost[start] = 0;
         previous[start] = -1;
         queue.add(new double[]{0, start});
+        int visited = 0;
         while (!queue.isEmpty()) {
+            if ((visited++ & 1023) == 0 && Thread.currentThread().isInterrupted()) {
+                throw new MissingTerrainException("Interrupted while tracing stream course");
+            }
             double[] top = queue.poll();
             int at = (int) top[1];
             if (top[0] > cost[at]) continue;
@@ -464,7 +563,33 @@ public final class RiverMap {
      * the river or the river a stream runs into. Lines already joined are not joined again.
      */
     static void join(float[] f, boolean[] solid, int span) {
+        join(f, solid, span, 0, 0, false);
+    }
+
+    static void join(float[] f, boolean[] solid, int span, int originX, int originY, boolean globalJoin) {
+        join(f, solid, span, originX, originY, globalJoin, false);
+    }
+
+    /** Test helper verifying v2 global join is invariant to reversed end and candidate enumeration order. */
+    static float[] traceGlobalReversed(int[] occurrence, int span, int originX, int originY) {
+        int n = span * span;
+        float[] v = new float[n];
+        for (int k = 0; k < n; k++) v[k] = Math.max(0, Math.min(1, (occurrence[k] - NONE) / (float) (FULL - NONE)));
+        float[] f = close(v, span);
+        boolean[] solid = new boolean[n];
+        for (int k = 0; k < n; k++) solid[k] = f[k] >= SOLID;
+        join(f, solid, span, originX, originY, true, true);
+        boolean[] wide = open(solid, span, WIDE);
+        for (int k = 0; k < n; k++) if (wide[k]) f[k] = 0;
+        return f;
+    }
+
+    private static void join(float[] f, boolean[] solid, int span, int originX, int originY, boolean globalJoin, boolean reverseOrder) {
         boolean[] skeleton = thin(solid, span);
+        if (globalJoin) {
+            joinGlobal(f, solid, skeleton, span, originX, originY, reverseOrder);
+            return;
+        }
         int[] line = label(skeleton, span);
         int lines = 0;
         for (int l : line) lines = Math.max(lines, l);
@@ -472,8 +597,7 @@ public final class RiverMap {
         for (int l : line) size[l]++;
         for (int l = 0; l <= lines; l++) root[l] = l;
         List<End> ends = new ArrayList<>();
-        int edge = 4;
-        for (int y = edge; y < span - edge; y++) for (int x = edge; x < span - edge; x++) {
+        for (int y = 4; y < span - 4; y++) for (int x = 4; x < span - 4; x++) {
             if (!skeleton[y * span + x] || size[line[y * span + x]] < LONG || !end(skeleton, span, x, y)) continue;
             // Walk back along the line, over the corners of its stair steps; a short spur off a junction is no end.
             int px = x, py = y, steps = 0;
@@ -547,6 +671,305 @@ public final class RiverMap {
                         if (along > furthest) { furthest = along; fx = x; fy = y; }
                     }
                 at = new End(fx, fy, hx, hy, start.width, target);
+            }
+        }
+    }
+
+    private record HopEnd(int x, int y, double dx, double dy, double width, int hop, int seedX, int seedY) {}
+
+    private record Candidate(HopEnd at, int tx, int ty, double score,
+                             int firstX, int firstY, int secondX, int secondY,
+                             int atGlobalX, int atGlobalY, int targetGlobalX, int targetGlobalY,
+                             int seedGlobalX, int seedGlobalY) {}
+
+    private static int compareGlobalPoint(int ax, int ay, int bx, int by) {
+        int cmp = Integer.compare(ax, bx);
+        return cmp != 0 ? cmp : Integer.compare(ay, by);
+    }
+
+    private static int compareCandidateKeys(double scoreA, int firstXA, int firstYA, int secondXA, int secondYA,
+                                            int hopA, int atGXA, int atGYA, int targetGXA, int targetGYA, int seedGXA, int seedGYA,
+                                            double scoreB, int firstXB, int firstYB, int secondXB, int secondYB,
+                                            int hopB, int atGXB, int atGYB, int targetGXB, int targetGYB, int seedGXB, int seedGYB) {
+        int cmp = Double.compare(scoreA, scoreB);
+        if (cmp != 0) return cmp;
+        cmp = compareGlobalPoint(firstXA, firstYA, firstXB, firstYB);
+        if (cmp != 0) return cmp;
+        cmp = compareGlobalPoint(secondXA, secondYA, secondXB, secondYB);
+        if (cmp != 0) return cmp;
+        cmp = Integer.compare(hopA, hopB);
+        if (cmp != 0) return cmp;
+        cmp = compareGlobalPoint(atGXA, atGYA, atGXB, atGYB);
+        if (cmp != 0) return cmp;
+        cmp = compareGlobalPoint(targetGXA, targetGYA, targetGXB, targetGYB);
+        if (cmp != 0) return cmp;
+        return compareGlobalPoint(seedGXA, seedGYA, seedGXB, seedGYB);
+    }
+
+    private static int globalX(int originX, int localX) {
+        return Math.floorMod(originX + localX, SurfaceWaterSource.ACROSS);
+    }
+
+    /**
+     * Collects up to {@code limit} pixels of the 8-connected skeleton component containing {@code (sx, sy)}.
+     * Strictly local (visits at most {@code limit} pixels within Chebyshev distance {@code < limit}).
+     */
+    private static int collectComponentUpTo(boolean[] skeleton, int span, int sx, int sy, int limit, int[] out) {
+        int start = sy * span + sx;
+        if (!skeleton[start]) return 0;
+        out[0] = start;
+        int head = 0, count = 1;
+        while (head < count && count < limit) {
+            int k = out[head++], x = k % span, y = k / span;
+            for (int d = 0; d < 8 && count < limit; d++) {
+                int qx = x + NX[d], qy = y + NY[d];
+                if (!at(skeleton, span, qx, qy)) continue;
+                int q = qy * span + qx;
+                boolean seen = false;
+                for (int i = 0; i < count; i++) {
+                    if (out[i] == q) { seen = true; break; }
+                }
+                if (!seen) out[count++] = q;
+            }
+        }
+        return count;
+    }
+
+    private static boolean containsPixel(int[] pixels, int count, int pixel) {
+        for (int i = 0; i < count; i++) {
+            if (pixels[i] == pixel) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Whether {@code (ax, ay)} and {@code (bx, by)} are 8-connected on the immutable {@code skeleton}
+     * within a strictly local Chebyshev box of radius {@value #LOCAL_CONNECT_RADIUS} centred on their midpoint.
+     */
+    private static boolean locallyConnected(boolean[] skeleton, int span, int ax, int ay, int bx, int by,
+                                            int[] stampGrid, int[] queue, int[] stampRef) {
+        if (ax == bx && ay == by) return true;
+        int mx = (ax + bx) >> 1, my = (ay + by) >> 1;
+        int boxX0 = mx - LOCAL_CONNECT_RADIUS, boxY0 = my - LOCAL_CONNECT_RADIUS;
+        int minX = Math.max(0, boxX0), maxX = Math.min(span - 1, mx + LOCAL_CONNECT_RADIUS);
+        int minY = Math.max(0, boxY0), maxY = Math.min(span - 1, my + LOCAL_CONNECT_RADIUS);
+        if (ax < minX || ax > maxX || ay < minY || ay > maxY || bx < minX || bx > maxX || by < minY || by > maxY) {
+            return false;
+        }
+        int stamp = ++stampRef[0];
+        if (stamp == Integer.MAX_VALUE) {
+            java.util.Arrays.fill(stampGrid, 0);
+            stamp = stampRef[0] = 1;
+        }
+        int side = 2 * LOCAL_CONNECT_RADIUS + 1;
+        int startLocal = (ay - boxY0) * side + (ax - boxX0);
+        int goalLocal = (by - boxY0) * side + (bx - boxX0);
+        stampGrid[startLocal] = stamp;
+        int head = 0, tail = 0;
+        queue[tail++] = startLocal;
+        while (head < tail) {
+            int cur = queue[head++];
+            int lx = cur % side, ly = cur / side;
+            int x = boxX0 + lx, y = boxY0 + ly;
+            for (int d = 0; d < 8; d++) {
+                int nx = x + NX[d], ny = y + NY[d];
+                if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
+                if (!skeleton[ny * span + nx]) continue;
+                int nextLocal = (ny - boxY0) * side + (nx - boxX0);
+                if (nextLocal == goalLocal) return true;
+                if (stampGrid[nextLocal] == stamp) continue;
+                stampGrid[nextLocal] = stamp;
+                queue[tail++] = nextLocal;
+            }
+        }
+        return false;
+    }
+
+    private static Candidate bestCandidate(HopEnd at, boolean[] solid, boolean[] skeleton,
+                                           int[] visitedGlimpses, int visitedCount,
+                                           int[] stampGrid, int[] bfsQueue, int[] stampRef,
+                                           int[] rowStart, int[] columns, int span, int originX, int originY, boolean reverseOrder) {
+        int gax = globalX(originX, at.x), gay = originY + at.y;
+        int seedGX = globalX(originX, at.seedX), seedGY = originY + at.seedY;
+        long reachSquared = (long) MAX_CHAIN_REACH * MAX_CHAIN_REACH;
+        Candidate best = null;
+        double bestScore = Double.MAX_VALUE;
+        int yMin = Math.max(0, at.y - JOIN), yMax = Math.min(span - 1, at.y + JOIN);
+        int yStart = reverseOrder ? yMax : yMin, yEnd = reverseOrder ? yMin - 1 : yMax + 1, yStep = reverseOrder ? -1 : 1;
+        for (int y = yStart; y != yEnd; y += yStep) {
+            int cMin = first(columns, rowStart[y], rowStart[y + 1], at.x - JOIN);
+            int cMax = cMin;
+            while (cMax < rowStart[y + 1] && columns[cMax] <= at.x + JOIN) cMax++;
+            int cStart = reverseOrder ? cMax - 1 : cMin, cEnd = reverseOrder ? cMin - 1 : cMax, cStep = reverseOrder ? -1 : 1;
+            for (int c = cStart; c != cEnd; c += cStep) {
+                int x = columns[c];
+                double gx = x - at.x, gy = y - at.y, squared = gx * gx + gy * gy;
+                if (squared > JOIN * JOIN || squared < 1) continue;
+                long sdx = x - at.seedX, sdy = y - at.seedY;
+                if (sdx * sdx + sdy * sdy > reachSquared) continue;
+                double d = Math.hypot(gx, gy), ahead = (at.dx * gx + at.dy * gy) / d;
+                if (ahead < 0.5 + 0.4 * d / JOIN) continue;
+                double score = d * (2 - ahead);
+                if (score > bestScore) continue;
+                if (wet(solid, span, x, y) > NARROW) continue;
+                if (containsPixel(visitedGlimpses, visitedCount, y * span + x)) continue;
+                if (locallyConnected(skeleton, span, at.x, at.y, x, y, stampGrid, bfsQueue, stampRef)) continue;
+                if (at.hop > 0 && Math.abs(x - at.seedX) <= LOCAL_CONNECT_RADIUS && Math.abs(y - at.seedY) <= LOCAL_CONNECT_RADIUS
+                        && locallyConnected(skeleton, span, at.seedX, at.seedY, x, y, stampGrid, bfsQueue, stampRef)) {
+                    continue;
+                }
+                int gbx = globalX(originX, x), gby = originY + y;
+                boolean aFirst = compareGlobalPoint(gax, gay, gbx, gby) <= 0;
+                int fx = aFirst ? gax : gbx, fy = aFirst ? gay : gby;
+                int sx = aFirst ? gbx : gax, sy = aFirst ? gby : gay;
+                if (best == null || compareCandidateKeys(
+                        score, fx, fy, sx, sy, at.hop, gax, gay, gbx, gby, seedGX, seedGY,
+                        best.score, best.firstX, best.firstY, best.secondX, best.secondY,
+                        best.at.hop, best.atGlobalX, best.atGlobalY, best.targetGlobalX, best.targetGlobalY,
+                        best.seedGlobalX, best.seedGlobalY) < 0) {
+                    bestScore = score;
+                    best = new Candidate(at, x, y, score, fx, fy, sx, sy, gax, gay, gbx, gby, seedGX, seedGY);
+                }
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Strictly local, global-coordinate, order-invariant gap joining ({@value #V2_ID}):
+     * avoids window-wide component labelling and window-wide union-find completely. Segment length
+     * ({@value #LONG}) and already-connected checks ({@value #LOCAL_CONNECT_RADIUS}) are bounded local
+     * BFS queries over the immutable skeleton, each seed traces its own bounded ({@value #MAX_CHAIN_REACH}-px)
+     * hop chain without mutating cross-seed connectivity state, and curves are painted in canonical
+     * global orientation with endpoint-symmetric tangents, width and meander phase.
+     */
+    private static void joinGlobal(float[] f, boolean[] solid, boolean[] skeleton, int span, int originX, int originY, boolean reverseOrder) {
+        int[] compScratch = new int[LONG];
+        List<End> ends = new ArrayList<>();
+        int edge = Math.min(V2_EDGE, span / 8);
+        for (int y = edge; y < span - edge; y++) for (int x = edge; x < span - edge; x++) {
+            if (!skeleton[y * span + x] || !end(skeleton, span, x, y)) continue;
+            if (collectComponentUpTo(skeleton, span, x, y, LONG, compScratch) < LONG) continue;
+            int px = x, py = y, steps = 0;
+            List<Integer> seen = new ArrayList<>(List.of(y * span + x));
+            while (steps < WALK) {
+                int bx = -1, by = -1, count = 0;
+                int[] cx = new int[8], cy = new int[8];
+                for (int d = 0; d < 8; d++) {
+                    int qx = px + NX[d], qy = py + NY[d];
+                    if (!at(skeleton, span, qx, qy) || seen.contains(qy * span + qx)) continue;
+                    cx[count] = qx; cy[count++] = qy;
+                }
+                boolean together = count > 0;
+                for (int i = 0; i < count; i++) for (int j = i + 1; j < count; j++)
+                    together &= Math.abs(cx[i] - cx[j]) <= 1 && Math.abs(cy[i] - cy[j]) <= 1;
+                if (!together) break;
+                double far = -1;
+                for (int i = 0; i < count; i++) {
+                    seen.add(cy[i] * span + cx[i]);
+                    double d = Math.hypot(cx[i] - x, cy[i] - y);
+                    if (d > far) { far = d; bx = cx[i]; by = cy[i]; }
+                }
+                px = bx; py = by; steps++;
+            }
+            if (steps < 3) continue;
+            double dx = x - px, dy = y - py, length = Math.hypot(dx, dy);
+            if (length == 0) continue;
+            int wet = wet(solid, span, x, y);
+            if (wet > NARROW) continue;
+            ends.add(new End(x, y, dx / length, dy / length, Math.max(1, wet / 5.0), 0));
+        }
+        int[] rowStart = new int[span + 1];
+        for (int k = 0; k < skeleton.length; k++) if (skeleton[k]) rowStart[k / span + 1]++;
+        for (int y = 0; y < span; y++) rowStart[y + 1] += rowStart[y];
+        int[] columns = new int[rowStart[span]];
+        for (int k = 0, at = 0; k < skeleton.length; k++) if (skeleton[k]) columns[at++] = k % span;
+
+        Map<Integer, End> endByPixel = new HashMap<>(ends.size() * 2 + 1);
+        for (End e : ends) endByPixel.put(e.y * span + e.x, e);
+        if (reverseOrder) Collections.reverse(ends);
+
+        int bfsSide = 2 * LOCAL_CONNECT_RADIUS + 1;
+        int[] stampGrid = new int[bfsSide * bfsSide];
+        int[] bfsQueue = new int[bfsSide * bfsSide];
+        int[] stampRef = {0};
+        int[] visitedGlimpses = new int[HOPS * LONG];
+        int processed = 0;
+        for (End start : ends) {
+            if ((processed++ & 255) == 0 && Thread.currentThread().isInterrupted()) {
+                throw new MissingTerrainException("Interrupted while joining rivers");
+            }
+            HopEnd at = new HopEnd(start.x, start.y, start.dx, start.dy, start.width, 0, start.x, start.y);
+            int visitedCount = 0;
+            for (int hop = 0; hop < HOPS; hop++) {
+                Candidate cand = bestCandidate(at, solid, skeleton, visitedGlimpses, visitedCount,
+                        stampGrid, bfsQueue, stampRef, rowStart, columns, span, originX, originY, reverseOrder);
+                if (cand == null) break;
+                int tx = cand.tx, ty = cand.ty;
+                double gx = tx - at.x, gy = ty - at.y, d = Math.hypot(gx, gy);
+                double hx = at.dx + gx / d, hy = at.dy + gy / d, h = Math.hypot(hx, hy);
+                hx /= h; hy /= h;
+                End targetEnd = endByPixel.get(ty * span + tx);
+                boolean symmetric = targetEnd != null && (targetEnd.dx * (-gx) + targetEnd.dy * (-gy)) > 0;
+                double tax = at.dx * d, tay = at.dy * d;
+                double tbx = symmetric ? -targetEnd.dx * d : hx * d;
+                double tby = symmetric ? -targetEnd.dy * d : hy * d;
+                double width = symmetric ? 0.5 * (at.width + targetEnd.width) : at.width;
+                int phase = (int) Math.floorMod(cand.firstX * 31L + cand.firstY * 17L, 7L);
+                boolean aFirst = cand.atGlobalX == cand.firstX && cand.atGlobalY == cand.firstY;
+                if (aFirst) {
+                    paintGlobal(f, span, at.x, at.y, tax, tay, tx, ty, tbx, tby, width, phase);
+                } else {
+                    paintGlobal(f, span, tx, ty, -tbx, -tby, at.x, at.y, -tax, -tay, width, phase);
+                }
+                int compCount = collectComponentUpTo(skeleton, span, tx, ty, LONG, compScratch);
+                if (compCount >= LONG || hop + 1 >= HOPS) break;
+                for (int i = 0; i < compCount; i++) visitedGlimpses[visitedCount++] = compScratch[i];
+                // Go on from the glimpse's far side, breaking exact projection ties by global coordinates.
+                int fx = tx, fy = ty;
+                int gxFar = globalX(originX, fx), gyFar = originY + fy;
+                double furthest = Double.NEGATIVE_INFINITY;
+                int iStart = reverseOrder ? compCount - 1 : 0, iEnd = reverseOrder ? -1 : compCount, iStep = reverseOrder ? -1 : 1;
+                for (int i = iStart; i != iEnd; i += iStep) {
+                    int pixel = compScratch[i], x = pixel % span, y = pixel / span;
+                    double along = (x - tx) * hx + (y - ty) * hy;
+                    int cgx = globalX(originX, x), cgy = originY + y;
+                    if (along > furthest || (along == furthest && compareGlobalPoint(cgx, cgy, gxFar, gyFar) < 0)) {
+                        furthest = along; fx = x; fy = y; gxFar = cgx; gyFar = cgy;
+                    }
+                }
+                at = new HopEnd(fx, fy, hx, hy, at.width, hop + 1, start.x, start.y);
+            }
+        }
+    }
+
+    /** Translation-invariant Hermite meander paint from canonical integer endpoints {@code (ax, ay) -> (bx, by)}. */
+    private static void paintGlobal(float[] f, int span, int ax, int ay, double tax, double tay,
+                                    int bx, int by, double tbx, double tby, double width, int phase) {
+        double rx = bx - ax, ry = by - ay;
+        double length = Math.hypot(rx, ry);
+        int steps = (int) Math.ceil(length * 4) + 1;
+        double radius = Math.max(0.5, width / 2 - 0.25);
+        double bends = Math.max(1, Math.round(length / MEANDER)), swing = Math.min(3, length * 0.07);
+        int r = (int) Math.ceil(radius);
+        for (int s = 0; s <= steps; s++) {
+            double t = (double) s / steps, t2 = t * t, t3 = t2 * t;
+            double h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+            double ox = h01 * rx + h10 * tax + h11 * tbx;
+            double oy = h01 * ry + h10 * tay + h11 * tby;
+            double dx = (-6 * t2 + 6 * t) * rx + (3 * t2 - 4 * t + 1) * tax + (3 * t2 - 2 * t) * tbx;
+            double dy = (-6 * t2 + 6 * t) * ry + (3 * t2 - 4 * t + 1) * tay + (3 * t2 - 2 * t) * tby;
+            double norm = Math.hypot(dx, dy);
+            if (norm > 0) {
+                double side = swing * Math.sin(Math.PI * bends * t + phase) * Math.sin(Math.PI * t);
+                ox += -dy / norm * side;
+                oy += dx / norm * side;
+            }
+            int cx = (int) Math.round(ox), cy = (int) Math.round(oy);
+            for (int j = -r; j <= r; j++) for (int i = -r; i <= r; i++) {
+                int qx = ax + cx + i, qy = ay + cy + j;
+                if (qx < 0 || qy < 0 || qx >= span || qy >= span) continue;
+                if (Math.hypot((cx + i) - ox, (cy + j) - oy) <= radius) f[qy * span + qx] = Math.max(f[qy * span + qx], 1);
             }
         }
     }
