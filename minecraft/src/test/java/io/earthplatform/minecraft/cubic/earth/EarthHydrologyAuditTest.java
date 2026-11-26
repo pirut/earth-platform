@@ -1801,6 +1801,76 @@ class EarthHydrologyAuditTest {
         } finally {
             waterServer.stop(0);
         }
+
+        // Part C: Mid-ray dry rock rib (18..23 m) between wet sloping water (0..16 m) and flat water (>= 24 m)
+        //         MUST stop continuous 1-block ray marching and strip to DRY at voxel = 1, voxel = 8, AND voxel = 64
+        //         (discrete {4, 8, 12, 16, 24, 32} jumps previously skipped right over 18..23 m).
+        EarthSettings midGapSettings = EarthSettings.at(62.5, 7.7);
+        MercatorGrid midGapGrid = new MercatorGrid(midGapSettings.metresPerBlock());
+        int midHomeX = (int) Math.floor(midGapGrid.blockX(new GeoPoint(62.5, 7.7)));
+        int midSquareWest = Math.floorDiv((int) Math.floor(7.7), WorldCoverSource.SQUARE) * WorldCoverSource.SQUARE;
+        double approxLon = midGapGrid.geographic(midHomeX + 177.5, midGapGrid.blockZ(new GeoPoint(62.5, 7.7))).longitude();
+        int ov2Col = (int) Math.round(((approxLon - midSquareWest) * WorldCoverSource.PIXELS_PER_DEGREE) / 4.0 - 0.5);
+        double ov2CenterLon = midSquareWest + ((ov2Col + 0.5) * 4.0) / WorldCoverSource.PIXELS_PER_DEGREE;
+        double ov0CenterLon = midSquareWest + (ov2Col * 4.0 + 2.5) / WorldCoverSource.PIXELS_PER_DEGREE;
+        int gapStart = (int) Math.round(midGapGrid.blockX(new GeoPoint(0, ov2CenterLon)) - midHomeX);
+        int gapEnd = (int) Math.round(midGapGrid.blockX(new GeoPoint(0, ov0CenterLon)) - midHomeX);
+        try (EarthShorelineTest.SyntheticWorld midGapWorld = new EarthShorelineTest.SyntheticWorld(
+                EarthShorelineTest.biomes, 62.5, 7.7,
+                (dx, dz) -> dx < gapEnd + 1 ? 100.0 + (gapEnd + 1 - dx) * 0.45 : 100.0,
+                (dx, dz) -> {
+                    if (dx >= -1150 && dx < gapStart && Math.abs(dz) <= 850) return WorldCoverSource.WATER;
+                    if (dx > gapEnd && dx <= 320 && Math.abs(dz) <= 850) return WorldCoverSource.WATER;
+                    return WorldCoverSource.BARE;
+                })) {
+            EarthGenerator v2 = new EarthGenerator(1234L, EarthShorelineTest.biomes, midGapWorld.generator.settings(),
+                    midGapWorld.tiles, midGapWorld.cover, null, null);
+            v2.enableHydrologyV2();
+
+            int probeZ = midGapWorld.homeZ;
+            int midGapX = Integer.MIN_VALUE;
+            for (int off = gapStart - 30; off <= gapStart - 10; off++) {
+                int x = midGapWorld.homeX + off;
+                boolean wet0to16 = true;
+                for (int r = 0; r <= 16; r++) {
+                    if (!v2.isWorldCoverWater(x + r, probeZ, 1)) {
+                        wet0to16 = false;
+                        break;
+                    }
+                }
+                if (!wet0to16) continue;
+                boolean dry18to23 = false;
+                for (int r = 18; r <= 23; r++) {
+                    if (!v2.isWorldCoverWater(x + r, probeZ, 1)) {
+                        dry18to23 = true;
+                        break;
+                    }
+                }
+                if (!dry18to23) continue;
+                if (v2.isWorldCoverWater(x + 24, probeZ, 1)
+                        && (x + 24 - midGapWorld.homeX) >= gapEnd + 1
+                        && v2.isWorldCoverWater(x, probeZ, 8)
+                        && v2.isWorldCoverWater(x, probeZ, 64)) {
+                    midGapX = x;
+                    break;
+                }
+            }
+            assertNotEquals(Integer.MIN_VALUE, midGapX,
+                    "precondition: must locate sloping column with wet 0..16 m, dry rib in 18..23 m, and flat water at 24 m");
+            assertTrue(v2.inShadowReach(midGapX, probeZ, Double.NaN, 100.0),
+                    "precondition: mid-ray gap column must lie inside the shadow reach");
+
+            int[] outV1 = new int[2], outV8 = new int[2], outV64 = new int[2];
+            v2.ground(midGapX, probeZ, outV1);
+            v2.farGround(3, midGapX, probeZ, outV8);
+            v2.farGround(6, midGapX, probeZ, outV64);
+            assertEquals(SurfaceGenerator.DRY, outV1[1],
+                    "mid-ray dry rock rib at 18..23 m must stop ray march and strip shadow column to DRY at voxel = 1");
+            assertEquals(SurfaceGenerator.DRY, outV8[1],
+                    "mid-ray dry rock rib at 18..23 m must stop ray march and strip shadow column to DRY at voxel = 8");
+            assertEquals(SurfaceGenerator.DRY, outV64[1],
+                    "mid-ray dry rock rib at 18..23 m must stop ray march and strip shadow column to DRY at voxel = 64");
+        }
     }
 
     @Test

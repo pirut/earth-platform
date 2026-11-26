@@ -978,8 +978,10 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     private static final double INV_SQRT2 = 1.0 / Math.sqrt(2.0);
-    /** Step-continuous physical ground distances (metres) probed along each ray in {@link #hasNearbyFlatWater}. */
-    private static final double[] FLAT_PROBE_DISTANCES = {4.0, 8.0, 12.0, 16.0, 24.0, 32.0};
+    /** Maximum physical ground reach (metres) probed along each ray in {@link #hasNearbyFlatWater}. */
+    private static final double FLAT_PROBE_METRES = 32.0;
+    /** Physical ground interval (metres) between DEM slope probes along each ray in {@link #hasNearbyFlatWater}. */
+    private static final double FLAT_PROBE_SLOPE_STEP_METRES = 4.0;
     /** Upper block-radius cap for {@link #hasNearbyFlatWater} (keeps 32 m exact up to 82.8° N on Mercator grids). */
     private static final double FLAT_PROBE_MAX_BLOCKS = 256.0;
 
@@ -990,11 +992,13 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     /**
-     * LOD-invariant 8-direction step-continuous probe for continuously connected flat water ({@link #physicalSlope}
-     * {@code <= SHADOW_FLAT_GRAD}) across {@link #FLAT_PROBE_DISTANCES} physical metres of {@code (x, z)}, capped
-     * at {@value #FLAT_PROBE_MAX_BLOCKS} blocks so 32 m stays exact up to 82.8° N without bounding-box blowup near
-     * the poles. Stops immediately along a ray at any dry gap. Uses {@link #cover} at near LOD
-     * ({@code voxel <= RIVER_VOXEL}) so narrow {@code RIVER}-only streams are followed, and
+     * LOD-invariant 8-direction continuous 1-block ray march from column centre {@code (x + 0.5, z + 0.5)} for
+     * continuously connected flat water ({@link #physicalSlope} {@code <= SHADOW_FLAT_GRAD}) within
+     * {@value #FLAT_PROBE_METRES} physical metres, capped at {@value #FLAT_PROBE_MAX_BLOCKS} blocks so 32 m stays
+     * exact up to 82.8° N without bounding-box blowup near the poles. Checks cover continuity at every 1-block step
+     * (stopping immediately on any dry gap {@code >= 1} block wide) while sampling DEM slope only every
+     * {@value #FLAT_PROBE_SLOPE_STEP_METRES} physical metres and at the ray endpoint. Uses {@link #cover} at near
+     * LOD ({@code voxel <= RIVER_VOXEL}) so narrow {@code RIVER}-only streams are followed, and
      * {@link #isWorldCoverWater} above {@link #RIVER_VOXEL} so far-LOD workers never touch
      * {@link RiverMap}, {@link SurfaceWaterSource}, or {@link io.earthplatform.geography.globe.Drainage}.
      */
@@ -1008,18 +1012,31 @@ public final class EarthGenerator extends SurfaceGenerator {
         double[] dz = {uz, -uz, ux, -ux, d1z, -d1z, d2z, -d2z};
         double mpb = grid.groundMetresPerBlock(x + 0.5, z + 0.5);
         double invMpb = mpb > 0.0 && Double.isFinite(mpb) ? 1.0 / mpb : 1.0;
+        double maxBlocks = Math.min(FLAT_PROBE_METRES * invMpb, FLAT_PROBE_MAX_BLOCKS);
+        double demStepBlocks = Math.max(1.0, FLAT_PROBE_SLOPE_STEP_METRES * invMpb);
         double[] probe = new double[3];
         for (int d = 0; d < 8; d++) {
             int lastPx = x, lastPz = z;
-            for (double dist : FLAT_PROBE_DISTANCES) {
-                double r = Math.min(dist * invMpb, FLAT_PROBE_MAX_BLOCKS);
-                int px = Mth.floor(x + dx[d] * r), pz = Mth.floor(z + dz[d] * r);
-                if (px == lastPx && pz == lastPz) continue;
-                lastPx = px;
-                lastPz = pz;
-                if (!isConnectedWater(memo, px, pz, voxel)) break;
-                dem.sample(px + 0.5, pz + 0.5, probe);
-                if (physicalSlope(px, pz, probe[0], probe[1]) <= SHADOW_FLAT_GRAD) return true;
+            int lastDemPx = x, lastDemPz = z;
+            double nextDemR = demStepBlocks;
+            for (double r = 1.0; ; r += 1.0) {
+                boolean last = r >= maxBlocks - 1e-6;
+                double clampedR = last ? maxBlocks : r;
+                int px = Mth.floor(x + 0.5 + dx[d] * clampedR);
+                int pz = Mth.floor(z + 0.5 + dz[d] * clampedR);
+                if (px != lastPx || pz != lastPz) {
+                    lastPx = px;
+                    lastPz = pz;
+                    if (!isConnectedWater(memo, px, pz, voxel)) break;
+                }
+                if ((clampedR + 1e-6 >= nextDemR || last) && (px != lastDemPx || pz != lastDemPz)) {
+                    lastDemPx = px;
+                    lastDemPz = pz;
+                    dem.sample(px + 0.5, pz + 0.5, probe);
+                    if (physicalSlope(px, pz, probe[0], probe[1]) <= SHADOW_FLAT_GRAD) return true;
+                    while (nextDemR <= clampedR + 1e-6) nextDemR += demStepBlocks;
+                }
+                if (last) break;
             }
         }
         return false;
@@ -3065,18 +3082,31 @@ public final class EarthGenerator extends SurfaceGenerator {
                     }
                 }
             }
-            if (!detectShadows) {
-                if (crossings < DROWNED_CROSSINGS) continue;
-            } else if (crossings < DROWNED_CROSSINGS) {
+            double[] preSlopes = null;
+            int preEvaluated = 0, preFlat = 0;
+            if (crossings < DROWNED_CROSSINGS) {
+                if (!detectShadows) continue;
                 // High-latitude or diagonally rotated sloping shadows can have cardinal steps <= DROP (0 crossings)
-                // while still spanning > SHADOW_MIN_SPAN; bail out with zero allocations on flat lakes before dryGround.
+                // while still spanning > SHADOW_MIN_SPAN; bail out on flat lakes and gentle wide rivers before
+                // dryGround. Checking against SHADOW_FLAT_GRAD (<= SHADOW_GLACIAL_FLAT_GRAD) is strictly sound:
+                // any body failing at 0.15 can never classify as a shadow even when glacierFront is true.
                 double minW = Double.POSITIVE_INFINITY, maxW = Double.NEGATIVE_INFINITY;
                 for (int m = 0; m < body.size(); m++) {
                     double w = water[body.getInt(m)];
                     if (w < minW) minW = w;
                     if (w > maxW) maxW = w;
                 }
-                if (maxW - minW <= SHADOW_MIN_SPAN) continue;
+                double bodySpan = maxW - minW;
+                if (bodySpan <= SHADOW_MIN_SPAN) continue;
+                preSlopes = new double[body.size()];
+                for (int m = 0; m < body.size(); m++) {
+                    double ws = waterSlope(water, span, body.getInt(m), spacingMetres);
+                    preSlopes[m] = ws;
+                    if (Double.isNaN(ws)) continue;
+                    preEvaluated++;
+                    if (ws <= SHADOW_FLAT_GRAD) preFlat++;
+                }
+                if (!isSlopingShadowBody(preEvaluated, preFlat, bodySpan)) continue;
             }
             dryGround.run();
             double[] bodyWater = new double[body.size()];
@@ -3091,16 +3121,18 @@ public final class EarthGenerator extends SurfaceGenerator {
                 for (int d = 0; d < 8; d += 2) {
                     int ni = i + (int) RING_X[d], nj = j + (int) RING_Z[d], n = nj * span + ni;
                     if (ni >= 0 && nj >= 0 && ni < span && nj < span) {
-                        if (seaAt[n]) {
-                            touchesSea = true;
-                        } else if (!touchesSea && !Float.isNaN(water[n]) && !wideWater(water, span, ni, nj)) {
-                            // A steep (> DROP/sample) fjord-wall shadow descending perpendicularly into seaAt leaves
-                            // a 1-sample non-wide wet rim outside body; detect sea contact through that rim too.
-                            for (int d2 = 0; d2 < 8; d2 += 2) {
-                                int si = ni + (int) RING_X[d2], sj = nj + (int) RING_Z[d2];
-                                if (si >= 0 && sj >= 0 && si < span && sj < span && seaAt[sj * span + si]) {
-                                    touchesSea = true;
-                                    break;
+                        if (detectShadows && !touchesSea) {
+                            if (seaAt[n]) {
+                                touchesSea = true;
+                            } else if (!Float.isNaN(water[n]) && !wideWater(water, span, ni, nj)) {
+                                // A steep (> DROP/sample) fjord-wall shadow descending perpendicularly into seaAt leaves
+                                // a 1-sample non-wide wet rim outside body; detect sea contact through that rim too.
+                                for (int d2 = 0; d2 < 8; d2 += 2) {
+                                    int si = ni + (int) RING_X[d2], sj = nj + (int) RING_Z[d2];
+                                    if (si >= 0 && sj >= 0 && si < span && sj < span && seaAt[sj * span + si]) {
+                                        touchesSea = true;
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -3129,14 +3161,22 @@ public final class EarthGenerator extends SurfaceGenerator {
                     && bodyWater[(bodyWater.length * 9) / 10] <= around[around.length / 4];
             if (detectShadows && !drownedBasin) {
                 double flatGrad = glacierFront ? SHADOW_GLACIAL_FLAT_GRAD : SHADOW_FLAT_GRAD;
-                double[] slopes = new double[body.size()];
-                int evaluated = 0, flat = 0;
-                for (int m = 0; m < body.size(); m++) {
-                    double ws = waterSlope(water, span, body.getInt(m), spacingMetres);
-                    slopes[m] = ws;
-                    if (Double.isNaN(ws)) continue;
-                    evaluated++;
-                    if (ws <= flatGrad) flat++;
+                double[] slopes = preSlopes;
+                int evaluated, flat;
+                if (slopes != null && !glacierFront) {
+                    evaluated = preEvaluated;
+                    flat = preFlat;
+                } else {
+                    if (slopes == null) slopes = new double[body.size()];
+                    evaluated = 0;
+                    flat = 0;
+                    for (int m = 0; m < body.size(); m++) {
+                        double ws = preSlopes != null ? preSlopes[m] : waterSlope(water, span, body.getInt(m), spacingMetres);
+                        slopes[m] = ws;
+                        if (Double.isNaN(ws)) continue;
+                        evaluated++;
+                        if (ws <= flatGrad) flat++;
+                    }
                 }
                 double bodySpan = bodyWater[bodyWater.length - 1] - bodyWater[0];
                 if (isSlopingShadowBody(evaluated, flat, bodySpan)) {
@@ -3310,9 +3350,10 @@ public final class EarthGenerator extends SurfaceGenerator {
         float[] height = new float[count];
         for (int at = 0; at < count; at++) height[at] = seaAt[at] || shadow != null && shadow[at] ? Float.NaN : sunk != null && !Float.isNaN(sunk[at]) ? sunk[at] : glacial != null && !Float.isNaN(glacial[at]) ? glacial[at] : water[at];
         // Reaches: water joined within a drop, each with its size and the lowest quarter of its heights.
-        // Pieces 8-adjacent to a Phase 1 shadow core must be at least half flat/leveled (flatCount * 2 >= size)
-        // to qualify as a FALL_POOL so a shadow core's unmasked 1-sample-wide contour rim (even with a 1-cell
-        // flat tip) cannot masquerade as an upper lake, while unrelated steep rivers keep exact FALL_POOL behavior.
+        // Pieces whose samples are majority 8-adjacent to a Phase 1 shadow core (shadowAdjacent * 2 >= size)
+        // must be at least half flat/leveled (flatCount * 2 >= size) to qualify as a FALL_POOL so a shadow
+        // core's unmasked 1-sample-wide contour rim (even with a 1-cell flat tip) cannot masquerade as an
+        // upper lake, while steep rivers brushing a shadow core at a few contacts keep exact FALL_POOL behavior.
         int[] piece = new int[count];
         java.util.Arrays.fill(piece, -1);
         it.unimi.dsi.fastutil.ints.IntArrayList sizes = new it.unimi.dsi.fastutil.ints.IntArrayList(), members = new it.unimi.dsi.fastutil.ints.IntArrayList();
@@ -3322,7 +3363,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         for (int start = 0; start < count; start++) {
             if (piece[start] >= 0 || Float.isNaN(height[start])) continue;
             int id = sizes.size(), size = 0;
-            boolean touchesShadow = false;
+            int shadowAdjacent = 0;
             int flatCount = 0;
             piece[start] = id;
             queue.enqueue(start);
@@ -3337,21 +3378,25 @@ public final class EarthGenerator extends SurfaceGenerator {
                         if (!Double.isNaN(ws) && ws <= SHADOW_FLAT_GRAD) flatCount++;
                     }
                 }
+                boolean nearShadow = false;
                 for (int dj = -1; dj <= 1; dj++) for (int di = -1; di <= 1; di++) {
                     int ni = i + di, nj = j + dj, n = nj * span + ni;
                     if (ni < 0 || nj < 0 || ni >= span || nj >= span) continue;
                     if (poolEligible != null && shadow[n]) {
-                        touchesShadow = true;
+                        nearShadow = true;
                         continue;
                     }
                     if (piece[n] >= 0 || Float.isNaN(height[n]) || Math.abs(height[n] - height[at]) > DROP) continue;
                     piece[n] = id;
                     queue.enqueue(n);
                 }
+                if (nearShadow) shadowAdjacent++;
             }
             java.util.Arrays.sort(heights, 0, size);
             sizes.add(size);
-            if (poolEligible != null) poolEligible.add(size >= FALL_POOL && (!touchesShadow || flatCount * 2 >= size));
+            if (poolEligible != null) {
+                poolEligible.add(size >= FALL_POOL && (shadowAdjacent * 2 < size || flatCount * 2 >= size));
+            }
             levels.add(heights[size / 4]);
         }
         // Pockets: small reaches joined to each other, and the big reaches beside them.
