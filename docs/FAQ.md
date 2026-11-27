@@ -8,6 +8,9 @@ Yes. One block is one meter in every direction around the place your world start
 **Where is everything?**
 `/earth where` gives your latitude, longitude and real height. `/earth visit <place>` and `/earth goto <latitude> <longitude>` take you anywhere; `/earth places` lists famous spots. On servers only operators can travel unless the server turns on `anyoneCanTravel`. See [Playing on the Earth](PLAYING.md).
 
+**Can I go to the poles?**
+Not on the default Web Mercator map. It stops at about 85.05° north and south, so there is no ground past that line. For polar exploration, pick **BTE Dymaxion (1:1)** from the **Projection** button in Create World, Earth, Customize. That projection covers both poles at about 1:1 scale worldwide. Existing worlds are not changed. On a server, set `defaultProjection = "bte-dymaxion-v1"` in `config/earthplatform-common.toml` before the world is created.
+
 **Why are there no cities, roads or buildings?**
 On purpose. Built-up land becomes the wild land around it, so the world is yours to build. Vanilla villages, temples, strongholds and other structures still generate.
 
@@ -15,7 +18,7 @@ On purpose. Built-up land becomes the wild land around it, so the world is yours
 Mountains, valleys, coasts and lakes come from measured elevation (about 30 m apart in most places, finer in some countries). Forests, deserts, ice and wetlands come from 10 m satellite land cover. Smaller bumps, caves, ores, individual trees and plants are procedural. Use it for fun, not for navigation or route planning.
 
 **Can I play survival?**
-Yes. Mining, crafting, mobs, beds, death and respawn, the Nether and the End all work as usual. Nether portals built on the Earth link to the Nether and back.
+Yes. Mining, crafting, mobs, beds, death and respawn, the Nether and the End all work as usual. Mobs from other mods are covered under [Which other mods work?](#other-mods). Nether portals built on the Earth link to the Nether and back.
 
 **How do I travel long distances in survival?**
 Ride the jet stream: fly an elytra up above about Y 9,200 and the wind carries you at over 1,000 blocks a second. At sea, ride an ocean current: sprint while you paddle a boat forward on the open sea and it carries you at about 900 blocks a second. See [The jet stream](PLAYING.md#the-jet-stream) and [Ocean currents](PLAYING.md#ocean-currents).
@@ -48,6 +51,12 @@ The starting place has not finished downloading. Check your connection; the scre
 **Far terrain pops in or looks blocky.**
 Distant terrain is built in levels that get coarser with distance and refine as you approach. Higher far terrain detail keeps finer levels further out at the cost of memory.
 
+**How do I change the far view or sharpness?**
+On the pause menu, the far view slider sets how far the far terrain reaches, and the sharpness control sets how sharp it looks (Fast to Ultra). Both change at once. For every Earth setting, open Mods → Earth Platform → Config, or use **All Earth settings** on Sodium's Earth page in Video Settings.
+
+**Far terrain doesn't load on Fabric.**
+Build 76 fixed this. On Fabric the horizon stayed off, because the check wanted an OpenGL 3.3 flag that Fabric's OpenGL 3.2 window never sets. Update to the latest build.
+
 ## Shaders
 
 **Which shader packs work?**
@@ -62,10 +71,15 @@ No. Use the official Photon zip at its defaults. Earth Platform adapts it for Ap
 **My log says "Failed to parse an ResourceLocation in item.properties".**
 Harmless; it comes from Photon itself.
 
+## Downloads
+
+**My browser or Windows warns about the `.jar`.**
+A `.jar` is a runnable Java program, so browsers and antivirus tools often show a generic warning when one is downloaded from the web. Official builds are published on [GitHub Releases](https://github.com/pirut/earth-platform/releases/latest), [Modrinth](https://modrinth.com/mod/earth-platform) and CurseForge. Each GitHub release lists a SHA-256 checksum for every jar, both as a `.sha256` file and in the release notes, so you can check the file you downloaded against it.
+
 ## Other mods
 
 **Which other mods work?**
-Most do. Tested in the Earth world: Xaero's Minimap and World Map, JourneyMap, Create (contraptions, mechanical arms, pulleys, scaffolding and elevators), Waystones, Mekanism (including the Digital Miner and multiblocks), Immersive Engineering, the Twilight Forest, JEI, EMI, Jade, AppleSkin, Ars Nouveau, Applied Energistics 2 networks, Refined Storage 2, Iron's Spells, FTB Quests and Teams, Farmer's Delight, Sophisticated Backpacks, Supplementaries, YUNG's structures, and Open Parties and Claims. Tinkers' Construct and Botania have no NeoForge 1.21.1 release yet. Terralith and other biome mods have no effect on the Earth, since the real climate picks the biomes. Cobblemon, the Aether, Quark, Handcrafted, Nature's Compass and Lithium work too, and so do Create Aeronautics ships and AE2 spatial storage. CC: Tweaked (ComputerCraft) works on both the NeoForge and Fabric builds: computers, turtles, monitors, wired and wireless modems, rednet, GPS, disk drives, printers, speakers and pocket computers, at any height. Sodium and Iris need the versions in the [install guide](INSTALL.md#shaders-optional).
+Most do. Tested in the Earth world: Xaero's Minimap and World Map, JourneyMap, Create (contraptions, mechanical arms, pulleys, scaffolding and elevators), Waystones, Mekanism (including the Digital Miner and multiblocks), Immersive Engineering, the Twilight Forest, JEI, EMI, Jade, AppleSkin, Ars Nouveau, Applied Energistics 2 networks, Refined Storage 2, Iron's Spells, FTB Quests and Teams, Farmer's Delight, Sophisticated Backpacks, Supplementaries, YUNG's structures, and Open Parties and Claims. Tinkers' Construct and Botania have no NeoForge 1.21.1 release yet. Biomes O' Plenty, Regions Unexplored and Oh The Biomes We've Gone are supported: their biomes and surface blocks are used where they fit Earth's climates and landscapes. They are on by default since build 77; `moddedBiomes` in `config/earthplatform-common.toml` turns them off. Terralith and other biome mods don't change Earth biomes yet, because the real climate picks each place's biome from vanilla and those three mods. Cobblemon, the Aether, Quark, Handcrafted, Nature's Compass and Lithium work too, and so do Create Aeronautics ships and AE2 spatial storage. CC: Tweaked (ComputerCraft) works on both the NeoForge and Fabric builds: computers, turtles, monitors, wired and wireless modems, rednet, GPS, disk drives, printers, speakers and pocket computers, at any height. Sodium and Iris need the versions in the [install guide](INSTALL.md#shaders-optional).
 
 [Create Sky](https://www.curseforge.com/minecraft/mc-mods/create-sky) 0.1.0 can draw its clouds and cloud shadows in NeoForge Earth worlds. Its default cloud base moves up to Y 2563 on Earth, and its settings still adjust the deck. Install Create Sky on the server as well as the client for local storms. Run `/weather` from inside the Earth dimension to create or clear a storm there.
 
