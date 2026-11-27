@@ -4777,7 +4777,8 @@ public final class EarthGenerator extends SurfaceGenerator {
             if (code == WorldCoverSource.TREE_COVER && temperate && t >= 16 && local.rain() > 1100) {
                 // Warm, wet temperate lowlands' broad flat floodplains are cypress and tupelo swamp, as on the Mississippi,
                 // in the Carolinas' low country and on the Paraná delta.
-                if (y < SEA + 40 && steep < 0.25 && patch > -0.2 && floodplain(x, z))
+                // Not on a barrier island or the low strip behind a beach: open-sea coast stays coastal woods, not mud.
+                if (y < SEA + 40 && steep < 0.25 && patch > -0.2 && !seaWithin(x, z, BEACH_REACH, voxel) && floodplain(x, z))
                     return new Surface(modded.bayou, patch > 0.5 ? MUD : GRASS, DIRT, 45, 0, 0, 260, 280, false);
                 // Warm temperate savanna woods: tall pines standing apart over grass, as in the South's longleaf flatwoods.
                 if (biome == Ecoregions.TEMPERATE_GRASSLAND) return new Surface(plains, GRASS, DIRT, 30, 10, 0, 300, 320, false);
@@ -5506,14 +5507,17 @@ public final class EarthGenerator extends SurfaceGenerator {
         return Math.max(0.03, 0.85 * t * t * (3 - 2 * t));
     }
 
+    /** Patch value below which temperate woods turn dark old-growth: a rare pocket, not a third of every forest. */
+    static final double OLD_GROVE_PATCH = -0.68;
+
     /**
      * Temperate broadleaf woods: mostly the given forest, with birch stands, flowery glades and dark,
      * dense old groves, and cherry groves where cherries grow wild, in East Asia and the Himalaya.
      */
-    private Surface groves(double patch, int x, int z, Local local, Surface usual, ModdedBiomes modded) {
+    Surface groves(double patch, int x, int z, Local local, Surface usual, ModdedBiomes modded) {
         if (patch > 0.35) return new Surface(birchForest, GRASS, DIRT, 82, 0, 8, 90, 130, false);
         if (patch > 0.22) return new Surface(flowerForest, GRASS, DIRT, 45, 0, 1, 100, 320, false);
-        if (patch < -0.45) return new Surface(modded.oldGrowthWoodland, GRASS, DIRT, 92, 0, 1, 80, 100, false, Tree.DARK_OAK);
+        if (patch < OLD_GROVE_PATCH) return new Surface(modded.oldGrowthWoodland, GRASS, DIRT, 92, 0, 1, 80, 100, false, Tree.DARK_OAK);
         // Cherry groves stand together in a few large stands, with clearings, not speckled through every wood.
         if (patch < 0 && patches.getValue(x / 450.0 + 13.7, z / 450.0 - 71.3) > 0.6 && cherries(x, z, local)) return new Surface(cherryGrove, GRASS, DIRT, 35, 0, 0, 200, 420, false, Tree.CHERRY);
         return usual;
@@ -5910,7 +5914,7 @@ public final class EarthGenerator extends SurfaceGenerator {
                     // Jungle only where the ecoregion is tropical forest, as in south China; Florida's warm woods are oak and pine.
                     // Humid subtropical forest, where winters are cool, is evergreen broadleaf and laurel rather than jungle: dense,
                     // dark groves among broadleaf woods, as on south China's hills.
-                    : t > 20 && tropicalForest(x, z) ? patch < 0 ? new Surface(modded.oldGrowthWoodland, GRASS, DIRT, 90, 0, 0, 80, 100, false, Tree.DARK_OAK)
+                    : t > 20 && tropicalForest(x, z) ? patch < -0.35 ? new Surface(modded.oldGrowthWoodland, GRASS, DIRT, 90, 0, 0, 80, 100, false, Tree.DARK_OAK)
                             : new Surface(modded.woodland, GRASS, DIRT, 88, 0, 0, 100, 130, true)
                     : t > 20 ? new Surface(modded.woodland, GRASS, DIRT, 70, 4, 0, 180, 200, false)
                     : groves(patch, x, z, local, new Surface(modded.woodland, GRASS, DIRT, 85, 0, 1, 100, 130, false), modded);

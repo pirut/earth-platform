@@ -593,10 +593,10 @@ final class Trees {
         return raced != null ? raced : made;
     }
 
-    /** A tree feature, a huge mushroom, or a mod's own kind of feature, which might be a tree. */
-    private static boolean treeLike(ConfiguredFeature<?, ?> feature) {
+    /** A tree feature or a mod's own kind of feature, which might be a tree. Huge mushrooms are not trees here. */
+    static boolean treeLike(ConfiguredFeature<?, ?> feature) {
         Feature<?> kind = feature.feature();
-        if (kind == Feature.TREE || kind == Feature.HUGE_RED_MUSHROOM || kind == Feature.HUGE_BROWN_MUSHROOM || feature.config() instanceof TreeConfiguration) return true;
+        if (kind == Feature.TREE || feature.config() instanceof TreeConfiguration) return true;
         ResourceLocation id = BuiltInRegistries.FEATURE.getKey(kind);
         return id != null && !id.getNamespace().equals("minecraft");
     }
