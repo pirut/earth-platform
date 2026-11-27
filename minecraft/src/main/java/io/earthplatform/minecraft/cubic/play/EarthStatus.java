@@ -51,6 +51,7 @@ public final class EarthStatus {
     private int second;
     private int downloading, recent;
     private volatile boolean unreachable;
+    private boolean wasUnreachable;
     private CompletableFuture<Boolean> probe;
     private long nextProbe;
     private final Map<UUID, Payload> sent = new HashMap<>();
@@ -80,6 +81,14 @@ public final class EarthStatus {
             nextProbe = now + 15_000;
         }
         if (unreachable && totalDownloads > downloads[(slot + WINDOW - 1) % WINDOW]) unreachable = false;
+        var downHosts = new java.util.TreeSet<>(HostBackoff.downHosts());
+        if (unreachable) downHosts.add(TerrariumTileSource.AWS_TERRAIN_TILES.getAuthority());
+        boolean nowUnreachable = !downHosts.isEmpty();
+        if (nowUnreachable && !wasUnreachable) {
+            EarthPlatformMod.LOGGER.warn("Earth data servers unreachable: {} (elevation probe failed: {}). Check connectivity, firewall/proxy settings and latest.log",
+                    String.join(", ", downHosts), unreachable);
+        }
+        wasUnreachable = nowUnreachable;
     }
 
     static boolean offlineMode() { return Boolean.getBoolean("earthplatform.earth.offline"); }

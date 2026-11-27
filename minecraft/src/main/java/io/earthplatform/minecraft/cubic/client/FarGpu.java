@@ -1064,7 +1064,10 @@ final class FarGpu {
             try { vanilla[fade] = Program.link(header + FarShaders.VERTEX, header + FarShaders.FRAGMENT, "far terrain"); }
             catch (IllegalStateException failure) {
                 vanillaFailed[fade] = true;
-                if (fade == NO_FADE) EarthPlatformMod.LOGGER.error("Far terrain shader failed to build; far terrain is off", failure);
+                if (fade == NO_FADE) {
+                    EarthPlatformMod.LOGGER.error("Far terrain shader failed to build; far terrain is off", failure);
+                    FarTerrainNotices.request(FarTerrainNotice.Reason.SHADER_BUILD);
+                }
                 else EarthPlatformMod.LOGGER.warn("Far terrain's fade between levels failed to build; levels meet without it", failure);
             }
         }
@@ -1211,7 +1214,10 @@ final class FarGpu {
         pack[fade] = linkPack(jitter, header + FarShaders.PACK_FALLBACK, "far terrain (plain, shader pack)", header, false);
         if (pack[fade] == null) {
             packFailed[fade] = true;
-            if (fade == NO_FADE) EarthPlatformMod.LOGGER.error("Far terrain shader failed to build");
+            if (fade == NO_FADE) {
+                EarthPlatformMod.LOGGER.error("Far terrain shader failed to build");
+                FarTerrainNotices.request(FarTerrainNotice.Reason.SHADER_BUILD);
+            }
         } else if (fade == NO_FADE) {
             packJittered = pack[fade].jittered;
         }

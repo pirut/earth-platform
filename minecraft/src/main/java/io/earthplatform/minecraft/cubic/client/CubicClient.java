@@ -111,6 +111,7 @@ public final class CubicClient {
     private static long tickedAt;
 
     public static void tick() {
+        FarTerrainNotices.tick();
         tickedAt = System.nanoTime();
         hold();
         ClientCubeWorld world = ClientCubeWorld.current();
