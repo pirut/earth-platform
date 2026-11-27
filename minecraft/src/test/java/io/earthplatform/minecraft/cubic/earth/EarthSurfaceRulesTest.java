@@ -92,6 +92,34 @@ class EarthSurfaceRulesTest {
     }
 
     @Test
+    void polarOceanSedimentAndPlantsFollowClimateWithoutAddingSouthernPolarBears() {
+        int[] south = earth.block(-70, 0);
+        for (int depth : new int[] {15, 60}) {
+            Surface frozen = earth.oceanSurface(south[0], south[1], depth, -9);
+            assertTrue(frozen.biome().is(depth == 15 ? Biomes.COLD_OCEAN : Biomes.DEEP_COLD_OCEAN));
+            assertTrue(frozen.top().is(Blocks.GRAVEL));
+            assertTrue(frozen.under().is(Blocks.GRAVEL));
+            assertFalse(earth.underwaterPlants(frozen, south[0], south[1]),
+                    "freezing southern water stays bare, including open channels between ice floes");
+        }
+        int[] north = earth.block(70, 0);
+        Surface arctic = earth.oceanSurface(north[0], north[1], 15, -9);
+        assertTrue(arctic.biome().is(Biomes.FROZEN_OCEAN));
+        assertTrue(arctic.top().is(Blocks.GRAVEL));
+        assertFalse(earth.underwaterPlants(arctic, north[0], north[1]));
+
+        int[] temperate = earth.block(50, 0);
+        Surface cold = earth.oceanSurface(temperate[0], temperate[1], 15, 3);
+        assertTrue(cold.biome().is(Biomes.COLD_OCEAN));
+        assertTrue(cold.top().is(Blocks.SAND));
+        assertTrue(earth.underwaterPlants(cold, temperate[0], temperate[1]));
+        assertFalse(earth.iced(cold, temperate[0], temperate[1]));
+        assertTrue(earth.oceanSurface(south[0], south[1], 15, -2).top().is(Blocks.SAND),
+                "the frozen-ocean threshold is strictly below -2 degrees");
+        assertTrue(earth.oceanSurface(south[0], south[1], 15, -2.01).top().is(Blocks.GRAVEL));
+    }
+
+    @Test
     void montaneBareRockAbove3000mStaysSubnivalRockNotGreenGrass() {
         // Tian Shan above Almaty: MONTANE_GRASSLAND ecoregion (767).
         int[] at = earth.block(43.13, 77.08);

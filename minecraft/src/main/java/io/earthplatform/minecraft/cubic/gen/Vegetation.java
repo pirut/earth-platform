@@ -245,7 +245,7 @@ final class Vegetation {
 
     private void underwater(LevelChunkSection section, int x, int y0, int z, int h, int water, Surface s) {
         int depth = water - h, lx = x & 15, lz = z & 15;
-        if (depth <= 0) return;
+        if (depth <= 0 || !gen.underwaterPlants(s, x, z)) return;
         Holder<Biome> b = s.biome();
         long r = gen.mix(x, water, z);
         int roll = (int) Math.floorMod(r, 1000);

@@ -4445,17 +4445,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         double t = local == null ? temperature(x, z, y) : local.temperature();
         if (water != DRY && water != SEA && cover != null) return lake(x, z, y, water, t, voxel);
         if (water != DRY) {
-            int depth = water - y;
-            // Warm seas are turquoise only over reefs and shallows; deeper water is dark blue, as from above.
-            // The depths that part them wander by several blocks, and warm shallows turn lukewarm before they
-            // turn deep: cut at one depth, the bed's steps drew hard-edged navy boxes in turquoise lagoons.
-            // No polar bears in the south: the Southern Ocean is cold ocean, iced over by iced() as frozen ocean is.
-            double deep = depth + seaWobble(x, z);
-            Holder<Biome> b = t < -2 && latitude(x, z) > -50 ? frozenOcean : t < 6 ? (deep > 40 ? deepColdOcean : coldOcean)
-                    : t > 15 ? (deep > (t > 21 ? 2 * SHALLOWS : 40) ? deepLukewarmOcean : t > 21 && deep <= SHALLOWS ? warmOcean : lukewarmOcean)
-                    : deep > 40 ? deepOcean : ocean;
-            BlockState floor = depth < 30 ? SAND : GRAVEL;
-            return new Surface(b, floor, floor, 0, 0, 0, 0, 0, false);
+            return oceanSurface(x, z, water - y, t);
         }
         // Summed block steps over two blocks each way, as a rough rise per run.
         double steep = slope / 2.4;
@@ -4538,6 +4528,29 @@ public final class EarthGenerator extends SurfaceGenerator {
         }
         if (top != GRASS || slope > 6) trees = 0;
         return new Surface(b, top, top == GRASS || top == COARSE_DIRT ? DIRT : STONE, trees, spruce, birch, grass, flowers, ferns);
+    }
+
+    /** Ocean biome and sediment from climate and depth; southern freezing seas keep their bear-free biome. */
+    Surface oceanSurface(int x, int z, int depth, double t) {
+        // Warm seas are turquoise only over reefs and shallows; deeper water is dark blue, as from above.
+        // The depths that part them wander by several blocks, and warm shallows turn lukewarm before they
+        // turn deep: cut at one depth, the bed's steps drew hard-edged navy boxes in turquoise lagoons.
+        // No polar bears in the south: the Southern Ocean is cold ocean, iced over by iced() as frozen ocean is.
+        double deep = depth + seaWobble(x, z);
+        Holder<Biome> b = t < -2 && latitude(x, z) > -50 ? frozenOcean : t < 6 ? (deep > 40 ? deepColdOcean : coldOcean)
+                : t > 15 ? (deep > (t > 21 ? 2 * SHALLOWS : 40) ? deepLukewarmOcean : t > 21 && deep <= SHALLOWS ? warmOcean : lukewarmOcean)
+                : deep > 40 ? deepOcean : ocean;
+        // Freezing shallows at either pole keep dark sediment, including open water between ice floes.
+        BlockState floor = t >= -2 && depth < 30 ? SAND : GRAVEL;
+        return new Surface(b, floor, floor, 0, 0, 0, 0, 0, false);
+    }
+
+    @Override protected boolean underwaterPlants(Surface surface, int x, int z) {
+        if (!super.underwaterPlants(surface, x, z)) return false;
+        if (surface.biome() != coldOcean && surface.biome() != deepColdOcean) return true;
+        // Ice covers only part of a freezing sea. Its open channels should not become kelp/seagrass beds.
+        double t = cover == null ? temperature(x, z, SEA) : local(x, z, SEA).temperature();
+        return t >= -2;
     }
 
     /**
