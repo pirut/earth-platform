@@ -4367,16 +4367,25 @@ public final class EarthGenerator extends SurfaceGenerator {
     /** Blocks above the sea and in from it that bare ground counts as beach. */
     private static final int BEACH_RISE = 8, BEACH_REACH = 64;
 
-    /** Whether sea water lies within {@code r} blocks of a column, looking out at half and full reach. */
+    /**
+     * Whether sea water lies within {@code r} blocks of a column, looking out at 8, 16, 32 and 64 blocks (up to {@code r})
+     * so narrow inlets are not stepped over. Wide voxels and quick stand-ins never touch the hydrology: they ask the land
+     * cover for water that also sits at sea level in the coarse elevation, so a freshwater lake up in the hills is not the sea.
+     */
     private boolean seaWithin(int x, int z, int r, int voxel) {
-        for (int d = r / 2; d <= r; d += r / 2)
+        boolean coarse = voxel >= SHORE_VOXEL || quick();
+        for (int d = 8; d <= r; d <<= 1)
             for (int k = 0; k < 8; k++) {
                 int px = x + (int) (RING_X[k] * d), pz = z + (int) (RING_Z[k] * d);
-                // Wide voxels ask the land cover: the water's full-detail ground a hundred kilometres out costs far more than
-                // the voxel is worth, and so low and close, mapped water is nearly always the sea.
-                if (voxel >= SHORE_VOXEL ? cover(px, pz, voxel) == WorldCoverSource.WATER : waterY(px, pz) == SEA) return true;
+                if (coarse ? coarseSea(px, pz, Math.max(voxel, SHORE_VOXEL)) : waterY(px, pz) == SEA) return true;
             }
         return false;
+    }
+
+    /** Mapped water at about sea level, from the land cover and coarse elevation alone; never full-resolution hydrology. */
+    private boolean coarseSea(int px, int pz, int voxel) {
+        if (cover(px, pz, voxel) != WorldCoverSource.WATER) return false;
+        return plain[COARSEST_ZOOM].metres(px + 0.5, pz + 0.5) <= 1.0;
     }
 
     /**

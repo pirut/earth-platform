@@ -468,8 +468,8 @@ class EarthSurfaceRulesTest {
             EarthGenerator gen = world.generator;
             Surface coarse = gen.surface(world.homeX, world.homeZ, gen.seaLevel() + 1, EarthGenerator.DRY, 0, 64, null);
             assertNotNull(coarse);
-            assertEquals(0, world.terrariumRequests.get(),
-                    "coarse far LOD (voxel=64) dry WATER pixel must not trigger fine-resolution seaSurrounded/waterY elevation fetches");
+            assertTrue(world.maxTerrariumZoom.get() <= 9,
+                    "coarse far LOD (voxel=64) dry WATER pixel must not trigger fine-resolution seaSurrounded/waterY elevation fetches, deepest zoom=" + world.maxTerrariumZoom.get());
             assertTrue(coarse.biome().is(Biomes.MANGROVE_SWAMP) || coarse.biome().is(Biomes.SWAMP),
                     "coarse far LOD mangrove estuary pixel should keep marshyFallback without calling seaSurrounded, got " + coarse.biome());
         }
@@ -639,6 +639,51 @@ class EarthSurfaceRulesTest {
         }
         assertEquals(0, coastalBayou, "tree cover right next to the open sea must not become muddy swamp");
         assertTrue(inlandBayou > 0, "inland floodplain tree cover must still be able to become bayou");
+    }
+
+    private int bayouCount(EarthShorelineTest.SyntheticWorld w, EarthGenerator.Local climate, int voxel, int quickLevel) {
+        int n = 0;
+        w.generator.previewing(quickLevel);
+        try {
+            for (int dz = 0; dz < 400; dz += 3) {
+                var c = w.generator.covered(WorldCoverSource.TREE_COVER, w.homeX + 4, w.homeZ + dz,
+                        w.generator.seaLevel() + 2, climate, 0.1, 50, 1, voxel);
+                if (c != null && c.biome().is(Biomes.SWAMP)) n++;
+            }
+        } finally {
+            w.generator.previewing(0);
+        }
+        return n;
+    }
+
+    private double[] broadleafSite() {
+        for (double[] c : new double[][]{{35.5, -78.0}, {34.0, -80.5}, {36.0, -80.0}, {35.0, -85.0}, {38.0, -90.0}, {32.5, -84.0}, {37.0, -77.5}})
+            if (Ecoregions.get().biome(Ecoregions.get().ecoregion(c[0], c[1])) == Ecoregions.TEMPERATE_BROADLEAF) return c;
+        throw new AssertionError("a temperate broadleaf ecoregion fixture site must exist");
+    }
+
+    @Test
+    void narrowInletStillCountsAsCoastForBayou() throws Exception {
+        double[] site = broadleafSite();
+        var warmWet = new EarthGenerator.Local(ClimateZone.SUBTROPICAL, 17.5, 26.0, 1300, ClimateSource.ET);
+        // A nine-block-wide arm of sea, 4 to 12 blocks west of the sample column: nothing at 32 or 64 blocks out sees it.
+        try (var w = new EarthShorelineTest.SyntheticWorld(biomes, site[0], site[1],
+                (dx, dz) -> dx >= -12 && dx <= -4 ? -5.0 : 2.0,
+                (dx, dz) -> dx >= -12 && dx <= -4 ? WorldCoverSource.WATER : WorldCoverSource.TREE_COVER)) {
+            assertEquals(0, bayouCount(w, warmWet, 1, 0), "a narrow sea inlet beside tree cover must still veto muddy swamp");
+        }
+    }
+
+    @Test
+    void quickAndCoarseInlandLakeKeepsBayouWithoutFullHydrology() throws Exception {
+        double[] site = broadleafSite();
+        var warmWet = new EarthGenerator.Local(ClimateZone.SUBTROPICAL, 17.5, 26.0, 1300, ClimateSource.ET);
+        // A freshwater lake 10 m up, beside the floodplain: mapped water but not the sea.
+        try (var w = new EarthShorelineTest.SyntheticWorld(biomes, site[0], site[1],
+                (dx, dz) -> dx <= -2 ? 10.0 : 11.0, (dx, dz) -> dx <= -2 ? WorldCoverSource.WATER : WorldCoverSource.TREE_COVER)) {
+            assertTrue(bayouCount(w, warmWet, 1, 5) > 0, "quick preview next to an inland lake must keep bayou");
+            assertTrue(bayouCount(w, warmWet, 64, 0) > 0, "coarse voxels next to an inland lake must keep bayou");
+        }
     }
 
     @Test
