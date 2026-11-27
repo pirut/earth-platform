@@ -5041,8 +5041,7 @@ public final class EarthGenerator extends SurfaceGenerator {
         if (t < 0) return new Surface(snowyBeach, SAND, SAND, 0, 0, 0, 0, 0, false);
         if (!dune && t < 6 && steep > 0.4 && modded.gravelBeach != beach)
             return new Surface(modded.gravelBeach, GRAVEL, GRAVEL, 0, 0, 0, 0, 0, false);
-        // Dunes with palms and warm-coast plants are for warm shores; a cool coast (Iceland's, 2 to 5 C) keeps the plain beach.
-        Holder<Biome> biome = dune && t >= PALM_MIN_TEMPERATURE ? modded.duneBeach : beach;
+        Holder<Biome> biome = dune ? modded.duneBeach : beach;
         if (modded.hasWhiteSand() && t > 22 && maps != null) {
             int r = rock(x, z);
             if (r == EarthMaps.CARBONATE || r == EarthMaps.NO_ROCK)
@@ -5653,6 +5652,12 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     @Override protected boolean cappedCrowns() { return canopy != null; }
+
+    /** Palms other mods add to a biome grow only where the climate allows, by the same rule as the regional ones. */
+    @Override protected boolean palmsGrow(int x, int z, int y) {
+        Local local = local(x, z, y);
+        return palmClimate(local.zone(), local.temperature());
+    }
 
     @Override protected boolean customTrees() { return customTreesOverride != null ? customTreesOverride : EarthConfig.customTrees(); }
 

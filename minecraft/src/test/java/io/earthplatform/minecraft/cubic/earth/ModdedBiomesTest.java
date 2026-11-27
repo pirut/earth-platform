@@ -369,8 +369,6 @@ class ModdedBiomesTest {
             Surface bBeach = bopGen.beachSurface(0, 0, 18, 0.1, true);
             assertEquals("minecraft:beach", id(vBeach.biome()));
             assertEquals("biomesoplenty:dune_beach", id(bBeach.biome()));
-            // A cool coast (Iceland's, 2 to 5 C) keeps the plain beach, not the warm dune beach.
-            assertEquals("minecraft:beach", id(bopGen.beachSurface(0, 0, 3, 0.1, true).biome()));
             Surface vGravel = vanillaGen.beachSurface(0, 0, 3, 0.5, false);
             Surface bGravel = bopGen.beachSurface(0, 0, 3, 0.5, false);
             assertEquals("minecraft:beach", id(vGravel.biome()));

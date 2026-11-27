@@ -69,6 +69,12 @@ class EarthRegionalTreesTest {
                     true, true, true, beach, SurfaceGenerator.Tree.JUNGLE, 50), warm + " beach, no temperature");
         }
 
+        // A mod-added palm (biomeswevegone:palm_trees) is gated by the same rule: rejected cold, allowed warm.
+        assertFalse(EarthGenerator.palmClimate(ClimateZone.SUBPOLAR_OCEANIC, 3));
+        assertFalse(EarthGenerator.palmClimate(ClimateZone.OCEANIC, 8));
+        assertFalse(EarthGenerator.palmClimate(null, 3));
+        assertTrue(EarthGenerator.palmClimate(ClimateZone.RAINFOREST, 26));
+
         // Boreal taiga -> BOREAL_PINE
         assertEquals(RegionalTrees.Species.BOREAL_PINE, EarthGenerator.chooseRegionalTree(
                 ClimateZone.SUBARCTIC, -2, Ecoregions.BOREAL, Ecoregions.PALEARCTIC,

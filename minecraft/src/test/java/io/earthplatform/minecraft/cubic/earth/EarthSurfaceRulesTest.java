@@ -610,6 +610,24 @@ class EarthSurfaceRulesTest {
         }
     }
 
+    @Test
+    void coldLatitudeFallbackGrowsNoPalmsAndTropicsStill() {
+        // No climate data here, so local() falls back to the latitude-derived temperature.
+        var beach = biomes.getHolderOrThrow(Biomes.BEACH);
+        var sand = Blocks.SAND.defaultBlockState();
+        var shore = new Surface(beach, sand, sand, 40, 0, 0, 0, 0, false, Tree.JUNGLE);
+        int[] iceland = earth.block(64.1, -21.9);
+        int[] tropics = earth.block(5.0, 0.0);
+        int y = earth.seaLevel() + 2;
+        assertFalse(earth.palmsGrow(iceland[0], iceland[1], y), "Iceland's latitude is too cold for any palm");
+        assertTrue(earth.palmsGrow(tropics[0], tropics[1], y), "the tropics grow palms");
+        for (long roll = 0; roll < 400; roll++) {
+            long r = roll << 36;
+            assertNotEquals(io.earthplatform.minecraft.cubic.gen.RegionalTrees.Species.PALM,
+                    earth.regionalTree(iceland[0], iceland[1], y, shore, Tree.JUNGLE, r), "Iceland beach, roll " + roll);
+        }
+    }
+
     private static double linear(int srgb) {
         double c = srgb / 255.0;
         return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);

@@ -443,7 +443,7 @@ final class Trees {
      * A tree another mod adds to a biome's vegetation (a walnut in the plains, a palm on the beach),
      * with the attempts per chunk, the deepest water and the ground its own placement asks for.
      */
-    private record Added(ConfiguredFeature<?, ?> feature, float perChunk, int deepest, @Nullable BlockState survives, BlockState soil) {}
+    private record Added(ConfiguredFeature<?, ?> feature, float perChunk, int deepest, @Nullable BlockState survives, BlockState soil, boolean palm) {}
     /** A biome's added trees; {@code scaled} where the biome has vanilla trees, whose density the land cover sets, so theirs follows it too. */
     private record Additions(Added[] trees, float perChunk, boolean scaled) {}
     private record Rooting(BlockState survives, BlockState top) {}
@@ -493,6 +493,7 @@ final class Trees {
         for (Added tree : here.trees) {
             at += tree.perChunk * scale * 256;
             if (roll >= at) continue;
+            if (tree.palm && !gen.palmsGrow(x, z, h)) return null;
             if (tree.deepest <= 0) {
                 if (water != DRY && water >= h || !dryFooting(x, z, false)) return null;
             } else if (water != DRY && water - h > tree.deepest) return null;
@@ -537,6 +538,7 @@ final class Trees {
             at += tree.perChunk;
             if (pick < at) { chosen = tree; break; }
         }
+        if (chosen.palm && !gen.palmsGrow(x, z, h)) return null;
         int deepest = Math.max(chosen.deepest, ModdedBiomes.isWetland(surface.biome()) ? 2 : 0);
         if (deepest <= 0) {
             if (water != DRY && water >= h || !dryFooting(x, z, false)) return null;
@@ -561,7 +563,7 @@ final class Trees {
         if (steps.size() > step) for (Holder<PlacedFeature> placed : steps.get(step)) {
             ConfiguredFeature<?, ?> feature = placed.value().feature().value();
             if (feature.getFeatures().noneMatch(Trees::treeLike)) continue;
-            Added tree = added(placed.value());
+            Added tree = added(placed);
             if (tree != null && tree.perChunk > 0 && shapes(tree.feature, tree.soil).length > 0) found.add(tree);
         }
         float total = 0;
@@ -583,7 +585,7 @@ final class Trees {
             if (namespace.equals("minecraft") || namespace.equals(EarthPlatformMod.MOD_ID)) continue;
             ConfiguredFeature<?, ?> feature = placed.value().feature().value();
             if (feature.getFeatures().noneMatch(Trees::treeLike)) continue;
-            Added tree = added(placed.value());
+            Added tree = added(placed);
             if (tree != null && tree.perChunk > 0 && shapes(tree.feature, tree.soil).length > 0) found.add(tree);
         }
         float total = 0;
@@ -605,7 +607,17 @@ final class Trees {
      * Reads an added tree's placement: its count and rarity give the attempts per chunk, its water
      * depth filter the deepest water, its would-survive check the sapling that names its ground.
      */
-    @Nullable private Added added(PlacedFeature placed) {
+    /** Whether a feature's id names a palm (palm_trees, coconut_palm, palmetto): a token starting with "palm". */
+    static boolean palmId(@Nullable ResourceLocation id) {
+        if (id == null) return false;
+        for (String token : id.getPath().toLowerCase(java.util.Locale.ROOT).split("[^a-z0-9]+")) if (token.startsWith("palm")) return true;
+        return false;
+    }
+
+    @Nullable private Added added(Holder<PlacedFeature> holder) {
+        PlacedFeature placed = holder.value();
+        boolean palm = holder.unwrapKey().map(k -> palmId(k.location())).orElse(false)
+                || placed.feature().unwrapKey().map(k -> palmId(k.location())).orElse(false);
         float perChunk = 1;
         int deepest = 0;
         BlockState survives = null;
@@ -636,7 +648,7 @@ final class Trees {
             for (BlockState top : SOILS) if (survives(survives, top)) { soil = top; break; }
             if (soil == null) return null;
         }
-        return new Added(placed.feature().value(), perChunk, deepest, survives, soil);
+        return new Added(placed.feature().value(), perChunk, deepest, survives, soil, palm);
     }
 
     private static float mean(JsonElement count, RandomSource random) {

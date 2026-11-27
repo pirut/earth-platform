@@ -168,6 +168,14 @@ class RegionalTreesTest {
         }
     }
 
+    @Test void modAddedPalmFeaturesAreRecognisedById() {
+        for (String palm : new String[] {"biomeswevegone:palm_trees", "mod:coconut_palm", "mod:palm_tree", "mod:palmetto", "mod:beach/Palm_Grove"})
+            assertTrue(Trees.palmId(net.minecraft.resources.ResourceLocation.parse(palm.toLowerCase())), palm);
+        for (String other : new String[] {"biomeswevegone:oak_trees", "mod:balm_tree", "mod:napalmless"})
+            assertFalse(Trees.palmId(net.minecraft.resources.ResourceLocation.parse(other)), other);
+        assertFalse(Trees.palmId(null));
+    }
+
     @Test void regionalTreesAreDeterministic() {
         for (RegionalTrees.Species species : RegionalTrees.Species.values()) {
             assertEquals(placed(RegionalTrees.grow(12345L, species)), placed(RegionalTrees.grow(12345L, species)),
